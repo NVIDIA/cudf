@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from libcpp cimport bool as cbool
@@ -44,7 +44,7 @@ cpdef Table gather(
 )
 
 cpdef Table scatter(
-    TableOrListOfScalars source,
+    TableOrListOfScalars source: Table | list[Scalar],
     Column scatter_map,
     Table target_table,
     object stream = *,
@@ -58,7 +58,7 @@ cpdef ColumnOrTable empty_like(
 cpdef Column allocate_like(
     Column input_column,
     mask_allocation_policy policy,
-    size=*,
+    object size=*,
     object stream = *,
     DeviceMemoryResource mr=*,
 )
@@ -90,9 +90,13 @@ cpdef Column shift(
     DeviceMemoryResource mr=*,
 )
 
-cpdef list slice(ColumnOrTable input, list indices, object stream = *)
+cpdef ColumnOrTable reverse(
+    ColumnOrTable input, object stream = *, DeviceMemoryResource mr=*
+)
 
-cpdef list split(ColumnOrTable input, list splits, object stream = *)
+cpdef list[ColumnOrTable] slice(ColumnOrTable input, list indices, object stream = *)
+
+cpdef list[ColumnOrTable] split(ColumnOrTable input, list splits, object stream = *)
 
 cpdef Column copy_if_else(
     LeftCopyIfElseOperand lhs,
@@ -103,7 +107,7 @@ cpdef Column copy_if_else(
 )
 
 cpdef Table boolean_mask_scatter(
-    TableOrListOfScalars input,
+    TableOrListOfScalars input: Table | list[Scalar],
     Table target,
     Column boolean_mask,
     object stream = *,

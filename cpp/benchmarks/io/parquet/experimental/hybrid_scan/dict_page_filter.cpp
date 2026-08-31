@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -86,7 +86,7 @@ void BM_filter_string_row_groups_with_dicts_common(nvbench::state& state,
 
       // Get dictionary page byte ranges
       dict_page_byte_ranges =
-        std::get<1>(reader->secondary_filters_byte_ranges(input_row_group_indices, read_opts));
+        reader->dictionary_pages_byte_ranges(input_row_group_indices, read_opts);
       CUDF_EXPECTS(not dict_page_byte_ranges.empty(), "No dictionary page byte ranges found");
 
       // Fetch dictionary page data

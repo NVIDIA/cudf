@@ -22,7 +22,7 @@
 #include <cudf/io/parquet_schema.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
+#include <cuda/stream>
 
 #include <memory>
 #include <optional>
@@ -55,7 +55,7 @@ class reader_impl {
   explicit reader_impl(std::vector<std::unique_ptr<datasource>>&& sources,
                        std::vector<FileMetaData>&& parquet_metadatas,
                        parquet_reader_options const& options,
-                       rmm::cuda_stream_view stream,
+                       cuda::stream_ref stream,
                        rmm::device_async_resource_ref mr);
 
   /**
@@ -104,7 +104,7 @@ class reader_impl {
                        std::vector<std::unique_ptr<datasource>>&& sources,
                        std::vector<FileMetaData>&& parquet_metadatas,
                        parquet_reader_options const& options,
-                       rmm::cuda_stream_view stream,
+                       cuda::stream_ref stream,
                        rmm::device_async_resource_ref mr);
 
   reader_impl(reader_impl const&)            = delete;
@@ -187,6 +187,27 @@ class reader_impl {
    * @param read_info The range of rows to be read in the subpass
    */
   void preprocess_chunk_strings(read_mode mode, row_range const& read_info);
+
+  /**
+   * @brief Detect per-column eligibility for direct Parquet-dict → DICTIONARY32 transcode, and
+   * apply the required host-side mutations to `_output_buffers` and `subpass.pages`.
+   *
+   * Must be called after `prepare_data()`. Populates `_dict_transcode_eligible` with a bool per
+   * input column indicating whether the column will be assembled as a DICTIONARY32 output later in
+   * `assemble_dict_transcoded_columns`. That member is the sole signal of whether the fast path is
+   * active: `assemble_dict_transcoded_columns` no-ops when no column is eligible.
+   *
+   * @param mode Value indicating if the data sources are read all at once or chunk by chunk
+   */
+  void prepare_dict_transcode(read_mode mode);
+
+  /**
+   * @brief Assemble DICTIONARY32 output columns for input columns that were marked eligible by
+   * `prepare_dict_transcode`.
+   *
+   * @param out_columns The output columns vector to transcode in place.
+   */
+  void assemble_dict_transcoded_columns(std::vector<std::unique_ptr<column>>& out_columns);
 
   /**
    * @brief Copies over the relevant page mask information for the subpass
@@ -474,34 +495,6 @@ class reader_impl {
                                                                          size_t chunk_num_rows);
 
   /**
-   * @brief Synthesize source index column
-   *
-   * @param num_rows_per_source Number of rows per parquet source
-   * @param stream CUDA stream used for device memory operations and kernel launches
-   * @param mr Device memory resource to use for device memory allocation
-   * @return Synthesized source index column
-   */
-  [[nodiscard]] std::unique_ptr<column> synthesize_source_index_column(
-    std::span<std::size_t const> num_rows_per_source,
-    rmm::cuda_stream_view stream,
-    rmm::device_async_resource_ref mr);
-
-  /**
-   * @brief Synthesize file-local row index column
-   *
-   * For each output row, the column contains the row's index within its parquet source file,
-   * accounting for row group selection and row bounds.
-   *
-   * @param read_info Row range of the output chunk relative to the first row of the first
-   *                  selected row group
-   * @param stream CUDA stream used for device memory operations and kernel launches
-   * @param mr Device memory resource to use for device memory allocation
-   * @return Synthesized row index column
-   */
-  [[nodiscard]] std::unique_ptr<column> synthesize_row_index_column(
-    row_range const& read_info, rmm::cuda_stream_view stream, rmm::device_async_resource_ref mr);
-
-  /**
    * @brief Computes the names of columns to be read from the file, if specified.
    *
    * @param options The reader options
@@ -517,7 +510,7 @@ class reader_impl {
    */
   void apply_decimal_width_cast(std::vector<std::unique_ptr<cudf::column>>& out_columns);
 
-  rmm::cuda_stream_view _stream;
+  cuda::stream_ref _stream;
   rmm::device_async_resource_ref _mr{cudf::get_current_device_resource_ref()};
 
   // Reader configs.
@@ -542,13 +535,15 @@ class reader_impl {
     bool prepend_source_index_column = false;
     // Whether to prepend the file-local row index column to the output
     bool prepend_row_index_column = false;
+    // Whether to try outputting DICTIONARY32 columns for fully dict-encoded string columns
+    bool output_dict_columns = false;
   } _options;
 
-  // name to reference converter to extract AST output filter
-  named_to_reference_converter _expr_conv{std::nullopt, table_metadata{}, true};
+  // Converts the input filter to AST output filter.
+  parquet_filter_normalizer _expr_conv{std::nullopt, table_metadata{}, true};
 
   std::vector<std::unique_ptr<datasource>> _sources;
-  std::unique_ptr<aggregate_reader_metadata> _metadata;
+  std::shared_ptr<aggregate_reader_metadata> _metadata;
 
   // Number of sources
   size_t _num_sources{0};
@@ -582,6 +577,9 @@ class reader_impl {
   // are offset indexes available for selected row groups
   bool _has_offset_index = false;
 
+  // whether sparse page I/O is enabled
+  bool _sparse_page_io = false;
+
   std::optional<std::vector<reader_column_schema>> _reader_column_schema;
 
   // chunked reading happens in 2 parts:
@@ -600,6 +598,10 @@ class reader_impl {
 
   std::size_t _output_chunk_read_limit{0};  // output chunk size limit in bytes
   std::size_t _input_pass_read_limit{0};    // input pass memory usage limit in bytes
+
+  // Per-input-column flag indicating whether that column was selected for direct
+  // Parquet-dict → DICTIONARY32 transcode.
+  std::vector<bool> _dict_transcode_eligible;
 };
 
 }  // namespace cudf::io::parquet::detail

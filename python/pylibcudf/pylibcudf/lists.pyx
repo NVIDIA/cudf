@@ -33,7 +33,7 @@ from pylibcudf.libcudf.lists.sorting cimport (
     stable_sort_lists as cpp_stable_sort_lists,
 )
 from pylibcudf.libcudf.lists.stream_compaction cimport (
-    apply_boolean_mask as cpp_apply_boolean_mask,
+    apply_retention_mask as cpp_apply_retention_mask,
     apply_deletion_mask as cpp_apply_deletion_mask,
     distinct as cpp_distinct,
 )
@@ -59,6 +59,12 @@ from .column cimport Column, ListsColumnView
 from .scalar cimport Scalar
 from .table cimport Table
 from .utils cimport _get_stream, _get_memory_resource
+
+import warnings
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pylibcudf.typing import CudaStreamLike
 from cuda.bindings.cyruntime cimport cudaStream_t
 
 __all__ = [
@@ -66,6 +72,7 @@ __all__ = [
     "DuplicateFindOption",
     "apply_boolean_mask",
     "apply_deletion_mask",
+    "apply_retention_mask",
     "concatenate_list_elements",
     "concatenate_rows",
     "contains",
@@ -88,7 +95,7 @@ __all__ = [
 cpdef Table explode_outer(
     Table input,
     size_type explode_column_idx,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """Explode a column of lists into rows.
@@ -126,7 +133,7 @@ cpdef Table explode_outer(
 
 cpdef Column concatenate_rows(
     Table input,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """Concatenate multiple lists columns into a single lists column row-wise.
@@ -163,7 +170,7 @@ cpdef Column concatenate_rows(
 cpdef Column concatenate_list_elements(
     Column input,
     concatenate_null_policy null_policy,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """Concatenate multiple lists on the same row into a single list.
@@ -200,7 +207,7 @@ cpdef Column concatenate_list_elements(
 cpdef Column contains(
     Column input,
     ColumnOrScalar search_key,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """Create a column of bool values indicating whether
@@ -257,7 +264,7 @@ cpdef Column contains(
 
 cpdef Column contains_nulls(
     Column input,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """Create a column of bool values indicating whether
@@ -297,7 +304,7 @@ cpdef Column index_of(
     Column input,
     ColumnOrScalar search_key,
     duplicate_find_option find_option,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """Create a column of index values indicating the position of a search
@@ -352,7 +359,7 @@ cpdef Column index_of(
 
 cpdef Column reverse(
     Column input,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """Reverse the element order within each list of the input column.
@@ -388,7 +395,7 @@ cpdef Column segmented_gather(
     Column input,
     Column gather_map_list,
     out_of_bounds_policy bounds_policy=out_of_bounds_policy.DONT_CHECK,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """Create a column with elements gathered based on the indices in gather_map_list
@@ -443,7 +450,7 @@ cpdef Column segmented_gather(
 cpdef Column extract_list_element(
     Column input,
     ColumnOrSizeType index,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """Create a column of extracted list elements.
@@ -486,7 +493,7 @@ cpdef Column extract_list_element(
 
 cpdef Column count_elements(
     Column input,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """Count the number of rows in each
@@ -525,7 +532,7 @@ cpdef Column sequences(
     Column starts,
     Column sizes,
     Column steps = None,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """Create a lists column in which each row contains a sequence of
@@ -583,7 +590,7 @@ cpdef Column sort_lists(
     order sort_order,
     null_order na_position,
     bool stable = False,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """Sort the elements within a list in each row of a list column.
@@ -641,7 +648,7 @@ cpdef Column difference_distinct(
     Column rhs,
     null_equality nulls_equal=null_equality.EQUAL,
     nan_equality nans_equal=nan_equality.ALL_EQUAL,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """Create a column of index values indicating the position of a search
@@ -692,7 +699,7 @@ cpdef Column have_overlap(
     Column rhs,
     null_equality nulls_equal=null_equality.EQUAL,
     nan_equality nans_equal=nan_equality.ALL_EQUAL,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """Check if lists at each row of the given lists columns overlap.
@@ -742,7 +749,7 @@ cpdef Column intersect_distinct(
     Column rhs,
     null_equality nulls_equal=null_equality.EQUAL,
     nan_equality nans_equal=nan_equality.ALL_EQUAL,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """Create a lists column of distinct elements common to two input lists columns.
@@ -792,7 +799,7 @@ cpdef Column union_distinct(
     Column rhs,
     null_equality nulls_equal=null_equality.EQUAL,
     nan_equality nans_equal=nan_equality.ALL_EQUAL,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """Create a lists column of distinct elements found in
@@ -838,33 +845,33 @@ cpdef Column union_distinct(
     return Column.from_libcudf(move(c_result), _stream, mr)
 
 
-cpdef Column apply_boolean_mask(
+cpdef Column apply_retention_mask(
     Column input,
-    Column boolean_mask,
-    object stream=None,
+    Column retention_mask,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
-    """Filters elements in each row of the input lists column using a boolean mask
+    """Filters elements in each row of the input lists column using a retention mask.
 
-    For details, see :cpp:func:`apply_boolean_mask`.
+    For details, see :cpp:func:`apply_retention_mask`.
 
     Parameters
     ----------
     input : Column
         The input column.
-    boolean_mask : Column
-        The boolean mask.
+    retention_mask : Column
+        The boolean mask whose true values retain input elements.
     stream : Stream | None
         CUDA stream on which to perform the operation.
 
     Returns
     -------
     Column
-        A Column of filtered elements based upon the boolean mask.
+        A Column of filtered elements based upon the retention mask.
     """
     cdef unique_ptr[column] c_result
     cdef ListsColumnView list_view = input.list_view()
-    cdef ListsColumnView mask_view = boolean_mask.list_view()
+    cdef ListsColumnView mask_view = retention_mask.list_view()
 
     cdef Stream _stream = _get_stream(stream)
     cdef cudaStream_t _cs = _stream.view().value()
@@ -873,7 +880,7 @@ cpdef Column apply_boolean_mask(
     cdef lists_column_view c_list_view = list_view.view()
     cdef lists_column_view c_mask_view = mask_view.view()
     with nogil:
-        c_result = cpp_apply_boolean_mask(
+        c_result = cpp_apply_retention_mask(
             c_list_view,
             c_mask_view,
             _cs,
@@ -882,10 +889,25 @@ cpdef Column apply_boolean_mask(
     return Column.from_libcudf(move(c_result), _stream, mr)
 
 
+cpdef Column apply_boolean_mask(
+    Column input,
+    Column boolean_mask,
+    object stream: CudaStreamLike | None = None,
+    DeviceMemoryResource mr=None,
+):
+    """Deprecated alias for :func:`apply_retention_mask`."""
+    warnings.warn(
+        "apply_boolean_mask is deprecated; use apply_retention_mask instead",
+        FutureWarning,
+        stacklevel=2,
+    )
+    return apply_retention_mask(input, boolean_mask, stream, mr)
+
+
 cpdef Column apply_deletion_mask(
     Column input,
     Column deletion_mask,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """Filters elements in each row of the input lists column using a deletion mask.
@@ -928,7 +950,7 @@ cpdef Column distinct(
     Column input,
     null_equality nulls_equal,
     nan_equality nans_equal,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """Create a new list column without duplicate elements in each list.

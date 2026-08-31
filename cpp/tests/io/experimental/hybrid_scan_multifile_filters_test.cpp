@@ -15,15 +15,12 @@
 #include <cudf/io/experimental/hybrid_scan_multifile.hpp>
 #include <cudf/io/parquet.hpp>
 #include <cudf/io/parquet_io_utils.hpp>
-#include <cudf/io/text/byte_range_info.hpp>
 #include <cudf/scalar/scalar.hpp>
 #include <cudf/table/table_view.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
-
-#include <rmm/device_buffer.hpp>
 
 #include <algorithm>
 #include <cstdint>
@@ -39,7 +36,7 @@ namespace {
  * @brief Copy fixed-width column data to a host vector
  */
 template <typename T>
-auto host_row_mask_data(cudf::column_view const& column, rmm::cuda_stream_view stream)
+auto host_row_mask_data(cudf::column_view const& column, cuda::stream_ref stream)
 {
   return cudf::detail::make_host_vector<T>(
     cudf::device_span<T const>(column.data<T>(), static_cast<size_t>(column.size())), stream);
@@ -74,7 +71,7 @@ std::vector<char> create_empty_parquet_with_stats()
  * @brief Build a scalar literal matching a filter column type
  */
 template <typename T>
-auto make_scalar(cudf::size_type value, rmm::cuda_stream_view stream)
+auto make_scalar(cudf::size_type value, cuda::stream_ref stream)
 {
   if constexpr (cudf::is_timestamp<T>()) {
     return cudf::timestamp_scalar<T>(T(typename T::duration(value)), true, stream);
@@ -483,6 +480,68 @@ TEST_F(HybridScanMultifileFiltersTest, FilterRowGroupsWithStats)
   EXPECT_TRUE(stats_filtered.back().empty());
 }
 
+TEST_F(HybridScanMultifileFiltersTest, FilterRowGroupsWithBloomFilters)
+{
+  using T                    = uint32_t;
+  auto constexpr num_sources = 32;
+  auto const stream          = cudf::get_default_stream();
+
+  // num_sources sources, each with the same schema
+  std::vector<std::vector<char>> file_buffers;
+  file_buffers.reserve(num_sources);
+  for (int i = 0; i < num_sources; ++i) {
+    srand(0xb100 + i);
+    file_buffers.emplace_back(std::get<1>(create_parquet_with_stats<T, 1>()));
+  }
+
+  auto inputs = multifile_inputs(build_source_info(file_buffers));
+
+  // An equality predicate makes col0 eligible for bloom filtering. cuDF's Parquet writer does not
+  // emit bloom filters, so the per-source bloom byte ranges come back empty (same as single-file).
+  {
+    auto literal_value = cudf::numeric_scalar<T>(T{42}, true, stream);
+    auto literal       = cudf::ast::literal(literal_value);
+    auto col_ref       = cudf::ast::column_name_reference("col0");
+    auto filter        = cudf::ast::operation(cudf::ast::ast_operator::EQUAL, col_ref, literal);
+
+    auto options      = cudf::io::parquet_reader_options::builder().filter(filter).build();
+    auto const reader = std::make_unique<cudf::io::parquet::experimental::hybrid_scan_multifile>(
+      inputs.footer_byte_spans, options);
+
+    auto const input_row_group_indices = reader->all_row_groups(options);
+    ASSERT_EQ(input_row_group_indices.size(), num_sources);
+
+    auto const [bloom_byte_ranges, bloom_source_map] =
+      reader->bloom_filters_byte_ranges(input_row_group_indices, options);
+    // cuDF's Parquet writer does not emit bloom filters, so the ranges come back empty. The source
+    // map is parallel to the ranges and must always match them in length (here, both empty).
+    EXPECT_TRUE(bloom_byte_ranges.empty());
+    EXPECT_EQ(bloom_byte_ranges.size(), bloom_source_map.size());
+  }
+
+  // Without any bloom-eligible (equality) predicate, bloom filtering is a no-op: the reader returns
+  // the input row groups unchanged, one inner vector per source. Validates the multifile bloom
+  // filter API delegation and per-source output shape.
+  {
+    auto literal_value = cudf::numeric_scalar<T>(T{50}, true, stream);
+    auto literal       = cudf::ast::literal(literal_value);
+    auto col_ref       = cudf::ast::column_name_reference("col0");
+    auto filter        = cudf::ast::operation(cudf::ast::ast_operator::LESS, col_ref, literal);
+
+    auto options      = cudf::io::parquet_reader_options::builder().filter(filter).build();
+    auto const reader = std::make_unique<cudf::io::parquet::experimental::hybrid_scan_multifile>(
+      inputs.footer_byte_spans, options);
+
+    auto const input_row_group_indices = reader->all_row_groups(options);
+    ASSERT_EQ(input_row_group_indices.size(), num_sources);
+
+    auto const empty_bloom_data = std::vector<cudf::device_span<uint8_t const>>{};
+    auto const bloom_filtered   = reader->filter_row_groups_with_bloom_filters(
+      empty_bloom_data, input_row_group_indices, options, stream);
+    EXPECT_EQ(bloom_filtered, input_row_group_indices);
+  }
+}
+
 TEST_F(HybridScanMultifileFiltersTest, BuildAllTrueRowMask)
 {
   using T                    = uint64_t;
@@ -526,6 +585,28 @@ TEST_F(HybridScanMultifileFiltersTest, BuildAllTrueRowMask)
 
   row_group_indices = reader->all_row_groups(options);
   test_all_true_row_mask(row_group_indices);
+}
+
+TEST_F(HybridScanMultifileFiltersTest, SparsePayloadPagesWithoutOffsetIndexes)
+{
+  using T = uint32_t;
+
+  auto file_buffers = std::vector<std::vector<char>>{};
+  file_buffers.emplace_back(std::get<1>(create_parquet_with_stats<T, 1>()));
+  auto inputs = multifile_inputs(build_source_info(file_buffers));
+
+  auto const options = cudf::io::parquet_reader_options::builder().column_names({"col1"}).build();
+  auto reader =
+    cudf::io::parquet::experimental::hybrid_scan_multifile{inputs.footer_byte_spans, options};
+
+  auto const stream     = cudf::get_default_stream();
+  auto const mr         = cudf::get_current_device_resource_ref();
+  auto const row_groups = reader.all_row_groups(options);
+  auto const row_mask   = reader.build_all_true_row_mask(row_groups, stream, mr);
+
+  EXPECT_THROW(
+    std::ignore = reader.payload_pages_byte_ranges(row_groups, row_mask->view(), options, stream),
+    cudf::logic_error);
 }
 
 template <typename T>

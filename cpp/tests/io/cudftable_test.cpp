@@ -398,13 +398,12 @@ TEST_F(CudftableTest, Lists)
 
   cudf::test::lists_column_wrapper<int32_t> child_list{{1, 2}, {3, 4}, {5, 6, 7}, {8}, {}, {9, 10}};
   auto lists_of_lists_offsets =
-    cudf::test::fixed_width_column_wrapper<cudf::size_type>{0, 2, 4, 6, 6}.release();
+    cudf::test::fixed_width_column_wrapper<int32_t>{0, 2, 4, 6, 6}.release();
   auto lists_of_lists_col = cudf::make_lists_column(
     4, std::move(lists_of_lists_offsets), child_list.release(), 0, rmm::device_buffer{});
 
   cudf::test::strings_column_wrapper strings_child{"hello", "world", "foo", "bar", "baz", "test"};
-  auto strings_offsets =
-    cudf::test::fixed_width_column_wrapper<cudf::size_type>{0, 2, 5, 5, 6}.release();
+  auto strings_offsets = cudf::test::fixed_width_column_wrapper<int32_t>{0, 2, 5, 5, 6}.release();
   auto lists_of_strings_col = cudf::make_lists_column(
     4, std::move(strings_offsets), strings_child.release(), 0, rmm::device_buffer{});
 
@@ -416,7 +415,7 @@ TEST_F(CudftableTest, Lists)
     cudf::timestamp_ms{500ms},
     cudf::timestamp_ms{600ms}};
   auto timestamps_offsets =
-    cudf::test::fixed_width_column_wrapper<cudf::size_type>{0, 2, 3, 3, 6}.release();
+    cudf::test::fixed_width_column_wrapper<int32_t>{0, 2, 3, 3, 6}.release();
   auto lists_of_timestamps_col = cudf::make_lists_column(
     4, std::move(timestamps_offsets), timestamps_child.release(), 0, rmm::device_buffer{});
 
@@ -426,15 +425,13 @@ TEST_F(CudftableTest, Lists)
     cudf::duration_ns{3000ns},
     cudf::duration_ns{4000ns},
     cudf::duration_ns{5000ns}};
-  auto durations_offsets =
-    cudf::test::fixed_width_column_wrapper<cudf::size_type>{0, 2, 3, 3, 5}.release();
+  auto durations_offsets = cudf::test::fixed_width_column_wrapper<int32_t>{0, 2, 3, 3, 5}.release();
   auto lists_of_durations_col = cudf::make_lists_column(
     4, std::move(durations_offsets), durations_child.release(), 0, rmm::device_buffer{});
 
   cudf::test::fixed_point_column_wrapper<int32_t> decimal32_child{
     {12345, -67890, 99999, 0}, {true, true, true, true}, scale_type{2}};
-  auto decimal32_offsets =
-    cudf::test::fixed_width_column_wrapper<cudf::size_type>{0, 2, 3, 3, 4}.release();
+  auto decimal32_offsets = cudf::test::fixed_width_column_wrapper<int32_t>{0, 2, 3, 3, 4}.release();
   auto lists_of_decimals_col = cudf::make_lists_column(
     4, std::move(decimal32_offsets), decimal32_child.release(), 0, rmm::device_buffer{});
 
@@ -442,7 +439,7 @@ TEST_F(CudftableTest, Lists)
   cudf::test::strings_column_wrapper struct_col2{"a", "b", "c", "d", "e", "f"};
   cudf::test::structs_column_wrapper struct_col{{struct_col1, struct_col2}};
   auto lists_of_structs_offsets =
-    cudf::test::fixed_width_column_wrapper<cudf::size_type>{0, 1, 3, 4, 6}.release();
+    cudf::test::fixed_width_column_wrapper<int32_t>{0, 1, 3, 4, 6}.release();
   auto lists_of_structs_col = cudf::make_lists_column(
     4, std::move(lists_of_structs_offsets), struct_col.release(), 0, rmm::device_buffer{});
 
@@ -488,11 +485,11 @@ TEST_F(CudftableTest, DeepNestingLists)
 {
   cudf::test::lists_column_wrapper<int32_t> level3_list{{1, 2}, {3, 4}, {5}, {6, 7, 8}};
 
-  auto level2_offsets = cudf::test::fixed_width_column_wrapper<cudf::size_type>{0, 2, 4}.release();
+  auto level2_offsets = cudf::test::fixed_width_column_wrapper<int32_t>{0, 2, 4}.release();
   auto level2_list    = cudf::make_lists_column(
     2, std::move(level2_offsets), level3_list.release(), 0, rmm::device_buffer{});
 
-  auto level1_offsets = cudf::test::fixed_width_column_wrapper<cudf::size_type>{0, 2}.release();
+  auto level1_offsets = cudf::test::fixed_width_column_wrapper<int32_t>{0, 2}.release();
   auto level1_list    = cudf::make_lists_column(
     1, std::move(level1_offsets), std::move(level2_list), 0, rmm::device_buffer{});
 
@@ -515,7 +512,7 @@ TEST_F(CudftableTest, DeviceBufferSource)
   rmm::device_buffer device_buffer(buffer.size(), cudf::get_default_stream());
   auto const stream = cudf::get_default_stream();
   CUDF_CUDA_TRY(cudaMemcpyAsync(
-    device_buffer.data(), buffer.data(), buffer.size(), cudaMemcpyHostToDevice, stream.value()));
+    device_buffer.data(), buffer.data(), buffer.size(), cudaMemcpyDefault, stream.value()));
   // Ensure the data is copied to the device before the host read, because the host read does not
   // take the stream
   stream.synchronize();

@@ -10,9 +10,10 @@
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_buffer.hpp>
 #include <rmm/resource_ref.hpp>
+
+#include <cuda/stream>
 
 #include <cassert>
 #include <memory>
@@ -165,7 +166,7 @@ class table_device_view : public detail::table_device_view_base<column_device_vi
    */
   static std::unique_ptr<table_device_view, std::function<void(table_device_view*)>> create(
     table_view source_view,
-    rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+    cuda::stream_ref stream           = cudf::get_default_stream(),
     rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
  private:
@@ -197,7 +198,7 @@ class mutable_table_device_view
    */
   static std::unique_ptr<mutable_table_device_view, std::function<void(mutable_table_device_view*)>>
   create(mutable_table_view source_view,
-         rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+         cuda::stream_ref stream           = cudf::get_default_stream(),
          rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
  private:
@@ -217,7 +218,7 @@ class mutable_table_device_view
 template <typename ColumnDeviceView, typename HostTableView>
 std::pair<std::unique_ptr<rmm::device_buffer>, ColumnDeviceView*> create_column_device_views(
   HostTableView source_view,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 }  // namespace CUDF_EXPORT cudf

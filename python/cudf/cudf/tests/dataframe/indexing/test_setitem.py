@@ -119,7 +119,7 @@ def test_listcol_setitem_retain_dtype():
     df1["b"] = df1["c"]
     # Performing a copy to trigger a copy dtype which is obtained by accessing
     # `ListColumn.children` that would have been corrupted in previous call
-    # prior to this fix: https://github.com/rapidsai/cudf/pull/10151/
+    # prior to this fix: https://github.com/NVIDIA/cudf/pull/10151/
     df2 = df1.copy()
     assert df2["a"].dtype == df["a"].dtype
 

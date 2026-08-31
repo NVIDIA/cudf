@@ -65,7 +65,14 @@ from .traits cimport is_floating_point
 from .types cimport DataType
 from .utils cimport _get_memory_resource, _get_stream
 from functools import singledispatch
+from typing import Any, TYPE_CHECKING, TypeAlias
+
 from ._interop_helpers import ArrowLike, ColumnMetadata
+
+if TYPE_CHECKING:
+    from pylibcudf.typing import CudaStreamLike
+
+NpGeneric: TypeAlias = Any
 
 try:
     import pyarrow as pa
@@ -99,7 +106,7 @@ __all__ = ["Scalar"]
 # the best we can do is to grab the current memory resource at the time of
 # construction and keep it alive until the Scalar is destroyed (for potential
 # problems with this approach, see https://github.com/rapidsai/rmm/issues/1515;
-# the solution will be to address https://github.com/rapidsai/cudf/issues/15170
+# the solution will be to address https://github.com/NVIDIA/cudf/issues/15170
 # and also pass mrs all the way down to every rmm Python API to avoid its
 # default mrs). This is done in the `__cinit__` method below.
 #
@@ -153,7 +160,7 @@ cdef class Scalar:
         """The type of data in the column."""
         return self._data_type
 
-    cpdef bool is_valid(self, object stream = None):
+    cpdef bool is_valid(self, object stream: CudaStreamLike | None = None):
         """True if the scalar is valid, false if not"""
         cdef Stream _stream = _get_stream(stream)
         cdef cudaStream_t _cs = _stream.view().value()
@@ -162,7 +169,7 @@ cdef class Scalar:
     def to_arrow(
         self,
         metadata: ColumnMetadata | str | None = None,
-        stream: Stream | None = None,
+        object stream: CudaStreamLike | None = None,
     ) -> ArrowLike:
         """Create a PyArrow array from a pylibcudf scalar.
 
@@ -170,7 +177,7 @@ cdef class Scalar:
         ----------
         metadata : ColumnMetadata | str | None
             The metadata to attach to the scalar.
-        stream : Stream | None
+        stream : CudaStreamLike | None
             CUDA stream on which to perform the operation.
 
         Returns
@@ -185,9 +192,9 @@ cdef class Scalar:
 
     @staticmethod
     def from_arrow(
-        pa_val,
+        pa_val: Any,
         dtype: DataType | None = None,
-        stream: Stream | None = None
+        object stream: CudaStreamLike | None = None,
     ) -> Scalar:
         """
         Convert a pyarrow scalar to a pylibcudf.Scalar.
@@ -199,7 +206,7 @@ cdef class Scalar:
         dtype: DataType | None
             The datatype to cast the value to. If None,
             the type is inferred from the pyarrow scalar.
-        stream : Stream | None
+        stream : CudaStreamLike | None
             CUDA stream on which to perform the operation.
 
         Returns
@@ -248,11 +255,11 @@ cdef class Scalar:
     @classmethod
     def from_py(
         cls,
-        py_val,
+        py_val: Any,
         dtype: DataType | None = None,
-        stream: Stream | None = None,
+        object stream: CudaStreamLike | None = None,
         mr: DeviceMemoryResource | None = None
-    ):
+    ) -> Scalar:
         """
         Convert a Python standard library object to a Scalar.
 
@@ -263,7 +270,7 @@ cdef class Scalar:
         dtype: DataType | None
             The datatype to cast the value to. If None,
             the type is inferred from `py_val`.
-        stream : Stream | None
+        stream : CudaStreamLike | None
             CUDA stream on which to perform the operation.
         mr : DeviceMemoryResource | None
             Memory resource for allocations
@@ -281,10 +288,10 @@ cdef class Scalar:
     @classmethod
     def from_numpy(
         cls,
-        np_val,
-        stream: Stream | None = None,
+        np_val: NpGeneric,
+        object stream: CudaStreamLike | None = None,
         mr: DeviceMemoryResource | None = None
-    ):
+    ) -> Scalar:
         """
         Convert a NumPy scalar to a Scalar.
 
@@ -292,7 +299,7 @@ cdef class Scalar:
         ----------
         np_val: numpy.generic
             Value to convert to a pylibcudf.Scalar
-        stream : Stream | None
+        stream : CudaStreamLike | None
             CUDA stream on which to perform the operation.
         mr : DeviceMemoryResource | None
             Memory resource for allocations
@@ -307,13 +314,15 @@ cdef class Scalar:
         mr = _get_memory_resource(mr)
         return _from_numpy(np_val, _stream, mr)
 
-    def to_py(self, stream: Stream | None = None):
+    def to_py(
+        self, object stream: CudaStreamLike | None = None
+    ) -> None | int | float | str | bool | decimal.Decimal:
         """
         Convert a Scalar to a Python scalar.
 
         Parameters
         ----------
-        stream : Stream | None
+        stream : CudaStreamLike | None
             CUDA stream on which to perform the operation.
 
         Returns

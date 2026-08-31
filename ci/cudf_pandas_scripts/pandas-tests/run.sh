@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES.  All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 set -euo pipefail
@@ -14,9 +14,22 @@ rapids-logger "Check GPU usage"
 nvidia-smi
 
 PANDAS_TESTS_BRANCH=${1}
+# Optional sharding args: run.sh <branch> [shard_id] [num_shards]
+# When num_shards is provided, only this shard's subset of the suite runs and
+# the diff against the nightly results is deferred to the separate
+# pandas-tests-summary job, which merges every shard's results first.
+SHARD_ID=${2:-}
+NUM_SHARDS=${3:-}
+SHARD_ARGS=()
+if [[ -n "${NUM_SHARDS}" ]]; then
+    SHARD_ARGS=(--shard-id "${SHARD_ID}" --num-shards "${NUM_SHARDS}")
+fi
 RAPIDS_FULL_VERSION=$(<./VERSION)
 rapids-logger "Running Pandas tests using $PANDAS_TESTS_BRANCH branch and rapids-version $RAPIDS_FULL_VERSION"
 rapids-logger "PR number: ${RAPIDS_REF_NAME:-"unknown"}"
+if [[ -n "${NUM_SHARDS}" ]]; then
+    rapids-logger "Running shard ${SHARD_ID} of ${NUM_SHARDS}"
+fi
 
 RAPIDS_PY_CUDA_SUFFIX="$(rapids-wheel-ctk-name-gen "${RAPIDS_CUDA_VERSION}")"
 
@@ -42,6 +55,7 @@ timeout 90m bash python/cudf/cudf/pandas/scripts/run-pandas-tests.sh \
   --max-worker-restart=3 \
   --junitxml="${RAPIDS_TESTS_DIR}/junit-cudf-pandas.xml" \
   --dist worksteal \
+  ${SHARD_ARGS[@]+"${SHARD_ARGS[@]}"} \
   --report-log="${PANDAS_TESTS_BRANCH}.json" 2>&1
 
 SUMMARY_FILE_NAME=${PANDAS_TESTS_BRANCH}-results.json
@@ -54,16 +68,25 @@ if [[ "${PANDAS_TESTS_BRANCH}" == "main" ]]; then
     exit ${EXITCODE}
 fi
 
+# When this run is one shard of a sharded PR run, it only holds part of the
+# results. The diff against the nightly is computed once, by the
+# pandas-tests-summary job, after merging every shard's results. This shard
+# just uploads its partial results (pr-results.json) for that job to collect.
+if [[ -n "${NUM_SHARDS}" ]]; then
+    rapids-logger "Shard ${SHARD_ID}/${NUM_SHARDS}: skipping diff (done by pandas-tests-summary). Exit: ${EXITCODE}"
+    exit ${EXITCODE}
+fi
+
 
 MAIN_RUN_ID=$(
     gh run list                       \
         -w "Pandas Test Job"          \
         -b "$(<./RAPIDS_BRANCH)"      \
-        --repo 'rapidsai/cudf'        \
+        --repo 'NVIDIA/cudf'          \
         --status success              \
         --limit 7                     \
         --json 'createdAt,databaseId' \
-        --jq 'sort_by(.createdAt) | reverse | .[0] | .databaseId'
+        --jq 'sort_by(.createdAt) | reverse | .[0].databaseId // empty'
 )
 
 if [[ -z "${MAIN_RUN_ID}" ]]; then
@@ -73,7 +96,7 @@ fi
 
 rapids-logger "Fetching latest available results from nightly: ${MAIN_RUN_ID}"
 gh run download                  \
-    --repo 'rapidsai/cudf'        \
+    --repo 'NVIDIA/cudf'          \
     --name main-results.json \
     $MAIN_RUN_ID
 

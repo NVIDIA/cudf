@@ -616,6 +616,30 @@ def test_sum_decimal(dtype):
     assert_eq(expected, got)
 
 
+@pytest.mark.parametrize(
+    "dtype",
+    [
+        cudf.Decimal64Dtype(6, 3),
+        cudf.Decimal64Dtype(10, 6),
+        cudf.Decimal64Dtype(16, 7),
+        cudf.Decimal32Dtype(6, 3),
+        cudf.Decimal128Dtype(20, 7),
+        cudf.Decimal128Dtype(15, 2),
+    ],
+)
+def test_mean_decimal(dtype):
+    data = [str(x) for x in np.array([1, 11, 111]) / 100]
+    expected = pd.Series([float(x) for x in data]).mean()
+    got = cudf.Series(data).astype(dtype).mean()
+    assert_eq(expected, got)
+
+
+def test_mean_decimal_skipna():
+    s = cudf.Series(["1.00", None, "3.00"]).astype(cudf.Decimal128Dtype(15, 2))
+    assert_eq(s.mean(), 2.0)
+    assert pd.isna(s.mean(skipna=False))
+
+
 def test_product(numeric_types_as_str):
     data = np.arange(10, dtype=numeric_types_as_str)
     sr = cudf.Series(data)

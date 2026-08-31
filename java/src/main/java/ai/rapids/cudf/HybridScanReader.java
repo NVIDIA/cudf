@@ -241,29 +241,32 @@ public class HybridScanReader implements AutoCloseable {
   }
 
   /**
-   * Get the byte ranges in the source file that hold the bloom filter and dictionary page
-   * data needed for the next round of row-group pruning.
+   * Get the byte ranges in the source file that hold the column-chunk bloom filter data
+   * needed for the next round of row-group pruning.
+   *
+   * <p>The ordering follows the C++ reader's ordering and is meaningful: the i-th entry
+   * corresponds to the i-th column chunk needing a bloom filter. The result may be empty.
+   *
+   * <p>Device buffers for these ranges must be allocated using a 32-byte aligned memory
+   * resource.
    */
-  public SecondaryFilterRanges secondaryFiltersByteRanges(int[] rowGroupIndices) {
+  public ByteRange[] bloomFiltersByteRanges(int[] rowGroupIndices) {
     assertNotClosed();
     requireNonNullRowGroups(rowGroupIndices);
-    long[] packed = secondaryFiltersByteRanges(cleaner.nativeHandle, rowGroupIndices);
-    // Layout: [numBloomRanges, bloom_o0, bloom_s0, ..., dict_o0, dict_s0, ...]
-    int numBloom = (int) packed[0];
-    int totalRanges = (packed.length - 1) / 2;
-    int numDict = totalRanges - numBloom;
-    ByteRange[] bloom = new ByteRange[numBloom];
-    ByteRange[] dict = new ByteRange[numDict];
-    int idx = 1;
-    for (int i = 0; i < numBloom; i++) {
-      bloom[i] = new ByteRange(packed[idx], packed[idx + 1]);
-      idx += 2;
-    }
-    for (int i = 0; i < numDict; i++) {
-      dict[i] = new ByteRange(packed[idx], packed[idx + 1]);
-      idx += 2;
-    }
-    return new SecondaryFilterRanges(bloom, dict);
+    return decodeRanges(bloomFiltersByteRanges(cleaner.nativeHandle, rowGroupIndices));
+  }
+
+  /**
+   * Get the byte ranges in the source file that hold the column-chunk dictionary page
+   * data used for row-group pruning of (in)equality predicates.
+   *
+   * <p>The ordering follows the C++ reader's ordering and is meaningful: the i-th entry
+   * corresponds to the i-th column chunk needing a dictionary page. The result may be empty.
+   */
+  public ByteRange[] dictionaryPagesByteRanges(int[] rowGroupIndices) {
+    assertNotClosed();
+    requireNonNullRowGroups(rowGroupIndices);
+    return decodeRanges(dictionaryPagesByteRanges(cleaner.nativeHandle, rowGroupIndices));
   }
 
   // TODO: add filterRowGroupsWithBloomFilters(int[] rowGroups) once the Java Parquet
@@ -722,7 +725,8 @@ public class HybridScanReader implements AutoCloseable {
 
   // Filtering
   private static native int[] filterRowGroupsWithStats(long handle, int[] rowGroupIndices);
-  private static native long[] secondaryFiltersByteRanges(long handle, int[] rowGroupIndices);
+  private static native long[] bloomFiltersByteRanges(long handle, int[] rowGroupIndices);
+  private static native long[] dictionaryPagesByteRanges(long handle, int[] rowGroupIndices);
   private static native int[] filterRowGroupsWithDictionaryPages(long handle,
                                                                  long[] bufferAddresses,
                                                                  long[] bufferLengths,

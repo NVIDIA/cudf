@@ -454,7 +454,7 @@ class DataFrame:
         -------
         Filtered dataframe
         """
-        table = plc.stream_compaction.apply_boolean_mask(
+        table = plc.stream_compaction.apply_retention_mask(
             self.table, mask.obj, stream=self.stream
         )
         return (

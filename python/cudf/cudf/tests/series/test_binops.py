@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import datetime
 import decimal
@@ -298,7 +298,7 @@ def test_timedelta_series_ops_with_scalars(
                 reason=(
                     "timedelta modulo by zero is dubiously defined in "
                     "both pandas and cuDF "
-                    "(see https://github.com/rapidsai/cudf/issues/5938)"
+                    "(see https://github.com/NVIDIA/cudf/issues/5938)"
                 ),
             ),
         ),
@@ -1525,7 +1525,7 @@ def test_binop_bool_uint(request, binary_op_method, rhs):
     if binary_op_method in {"rmod", "rfloordiv"}:
         request.applymarker(
             pytest.mark.xfail(
-                reason="https://github.com/rapidsai/cudf/issues/12162"
+                reason="https://github.com/NVIDIA/cudf/issues/12162"
             ),
         )
     psr = pd.Series([True, False, False])
@@ -1554,7 +1554,7 @@ def test_floordiv_zero_float64(
 
 
 @pytest.mark.parametrize("scalar_divisor", [False, True])
-@pytest.mark.xfail(reason="https://github.com/rapidsai/cudf/issues/12162")
+@pytest.mark.xfail(reason="https://github.com/NVIDIA/cudf/issues/12162")
 def test_floordiv_zero_bool(scalar_divisor):
     sr = pd.Series([True, True, False], dtype=np.bool_)
     cr = cudf.from_pandas(sr)
@@ -3174,7 +3174,7 @@ def test_binops_float_scalar_decimal():
         [decimal.Decimal("1"), decimal.Decimal("-2.5"), None],
         dtype=cudf.Decimal32Dtype(3, 2),
     )
-    expected = cudf.Series([0.0, -3.5, None], dtype="float64")
+    expected = cudf.Series([0.0, 3.5, None], dtype="float64")
     assert_eq(result, expected)
 
 

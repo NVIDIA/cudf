@@ -21,7 +21,6 @@
 #include <cudf/utilities/traits.hpp>
 #include <cudf/utilities/type_checks.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_buffer.hpp>
 #include <rmm/exec_policy.hpp>
 #include <rmm/mr/polymorphic_allocator.hpp>
@@ -29,6 +28,7 @@
 #include <cuco/extent.cuh>
 #include <cuco/static_set.cuh>
 #include <cuda/iterator>
+#include <cuda/stream>
 
 #include <optional>
 
@@ -198,7 +198,7 @@ __device__ __forceinline__ bool is_error_set(kernel_error::pointer error)
 __device__ __forceinline__ int32_t get_int32_type_len(LogicalType const& logical_type)
 {
   // Note: This function has been extracted from the snippet at:
-  // https://github.com/rapidsai/cudf/blob/c89c83c00c729a86c56570693b627f31408bc2c9/cpp/src/io/parquet/page_decode.cuh#L1278-L1287
+  // https://github.com/NVIDIA/cudf/blob/c89c83c00c729a86c56570693b627f31408bc2c9/cpp/src/io/parquet/page_decode.cuh#L1278-L1287
 
   // Check for smaller bitwidths
   if (logical_type.type == LogicalType::INTEGER) {
@@ -223,7 +223,7 @@ __device__ __forceinline__ void decode_int96timestamp(uint8_t const* int96_ptr,
                                                       int64_t* timestamp64)
 {
   // Note: This function has been modified from the original at
-  // https://github.com/rapidsai/cudf/blob/c89c83c00c729a86c56570693b627f31408bc2c9/cpp/src/io/parquet/page_data.cuh#L133-L198
+  // https://github.com/NVIDIA/cudf/blob/c89c83c00c729a86c56570693b627f31408bc2c9/cpp/src/io/parquet/page_data.cuh#L133-L198
 
   int64_t nanos = cudf::io::unaligned_load<uint64_t>(int96_ptr);
   int64_t days  = cudf::io::unaligned_load<uint32_t>(int96_ptr + sizeof(int64_t));
@@ -293,8 +293,14 @@ CUDF_KERNEL void query_dictionaries(cudf::device_span<T> decoded_data,
 
   // Evaluate the scalar against all cuco hash sets of this column
   for (auto set_idx = group.thread_rank(); set_idx < total_row_groups; set_idx += group.size()) {
-    // If the set is empty (no dictionary page data), then skip the dictionary page filter
-    if (set_offsets[set_idx + 1] - set_offsets[set_idx] == 0) {
+    // Number of values in this hash set
+    auto const num_set_values = value_offsets[set_idx + 1] - value_offsets[set_idx];
+
+    // Skip the dictionary page filter for a column chunk with no dictionary page. Emptiness must be
+    // read from the value count and not from the number of slots, because cuco rounds every
+    // capacity up to at least one bucket, so an empty dictionary still has slots. Its set was never
+    // built, so probing it would report the literal as absent and prune the row group.
+    if (num_set_values == 0) {
       result[set_idx] = operators[scalar_idx] == ast::ast_operator::EQUAL;
       continue;
     }
@@ -311,8 +317,6 @@ CUDF_KERNEL void query_dictionaries(cudf::device_span<T> decoded_data,
                                              storage_ref};
     auto set_find_ref = hash_set_ref.rebind_operators(cuco::contains);
 
-    // Number of values in this hash set
-    auto const num_set_values = value_offsets[set_idx + 1] - value_offsets[set_idx];
     // Literal value to find in this hash set
     auto const literal_value = scalar.value<T>();
 
@@ -447,7 +451,7 @@ __device__ T decode_fixed_width_value(PageInfo const& page,
       // Handle durations
       else if constexpr (cudf::is_duration<T>()) {
         // Note: This function has been extracted from the snippet at:
-        // https://github.com/rapidsai/cudf/blob/594d26768ce86b9c2f389e851ae1afb77032c879/cpp/src/io/parquet/decode_fixed.cu#L159-L163
+        // https://github.com/NVIDIA/cudf/blob/594d26768ce86b9c2f389e851ae1afb77032c879/cpp/src/io/parquet/decode_fixed.cu#L159-L163
 
         // Reading INT32 TIME_MILLIS into 64-bit DURATION_MILLISECONDS
         // TIME_MILLIS is the only duration type stored as int32:
@@ -901,6 +905,8 @@ CUDF_KERNEL void __launch_bounds__(DECODE_BLOCK_SIZE)
     results[i][row_group_idx] = false;
   }
 
+  group.sync();
+
   // Decode values from the current dictionary page with the current thread block
   for (auto value_idx = group.thread_rank(); value_idx < page.num_input_values;
        value_idx += group.num_threads()) {
@@ -962,7 +968,7 @@ struct dictionary_caster {
    */
   [[nodiscard]] std::vector<std::unique_ptr<cudf::column>> build_columns(
     cudf::host_span<rmm::device_buffer> results_buffers,
-    rmm::cuda_stream_view stream,
+    cuda::stream_ref stream,
     rmm::device_async_resource_ref mr)
   {
     auto columns = std::vector<std::unique_ptr<cudf::column>>{};
@@ -997,7 +1003,7 @@ struct dictionary_caster {
   std::vector<std::unique_ptr<cudf::column>> evaluate_many_literals(
     cudf::host_span<ast::literal* const> literals,
     cudf::host_span<ast::ast_operator const> operators,
-    rmm::cuda_stream_view stream,
+    cuda::stream_ref stream,
     rmm::device_async_resource_ref mr)
   {
     // Host vectors to store the running number of hash set slots and decoded values for all
@@ -1046,10 +1052,10 @@ struct dictionary_caster {
 
     // Create a single bulk storage used by all cuco hash sets
     auto set_storage =
-      storage_type{total_set_storage_size, rmm::mr::polymorphic_allocator<char>{}, stream.value()};
+      storage_type{total_set_storage_size, rmm::mr::polymorphic_allocator<char>{}, stream.get()};
 
     // Initialize storage with the empty key sentinel
-    set_storage.initialize_async(EMPTY_KEY_SENTINEL, {stream.value()});
+    set_storage.initialize_async(EMPTY_KEY_SENTINEL, {stream.get()});
 
     // Device vector to store the decoded values for all dictionaries
     rmm::device_uvector<T> decoded_data{total_num_values, stream, default_mr};
@@ -1083,16 +1089,16 @@ struct dictionary_caster {
       // Decode fixed width dictionaries and insert them to cuco hash sets, one dictionary per
       // thread block
       build_fixed_width_dictionaries<T>
-        <<<total_row_groups, DECODE_BLOCK_SIZE, 0, stream.value()>>>(pages.device_begin(),
-                                                                     chunks.device_begin(),
-                                                                     decoded_data,
-                                                                     set_storage.data(),
-                                                                     set_offsets.data(),
-                                                                     value_offsets.data(),
-                                                                     physical_type,
-                                                                     num_dictionary_columns,
-                                                                     dictionary_col_idx,
-                                                                     error_code.data());
+        <<<total_row_groups, DECODE_BLOCK_SIZE, 0, stream.get()>>>(pages.device_begin(),
+                                                                   chunks.device_begin(),
+                                                                   decoded_data,
+                                                                   set_storage.data(),
+                                                                   set_offsets.data(),
+                                                                   value_offsets.data(),
+                                                                   physical_type,
+                                                                   num_dictionary_columns,
+                                                                   dictionary_col_idx,
+                                                                   error_code.data());
       CUDF_CUDA_TRY(cudaGetLastError());
 
     } else {
@@ -1110,7 +1116,7 @@ struct dictionary_caster {
 
       // Decode string dictionaries and insert them to cuco hash sets, one dictionary per
       // warp
-      build_string_dictionaries<<<num_blocks, DECODE_BLOCK_SIZE, 0, stream.value()>>>(
+      build_string_dictionaries<<<num_blocks, DECODE_BLOCK_SIZE, 0, stream.get()>>>(
         pages.device_begin(),
         decoded_data,
         set_storage.data(),
@@ -1151,17 +1157,18 @@ struct dictionary_caster {
 
     // Query one predicate against all cuco hash sets of this column using a thread block
     query_dictionaries<T>
-      <<<total_num_literals, query_block_size, 0, stream.value()>>>(decoded_data,
-                                                                    results_ptrs,
-                                                                    scalars.data(),
-                                                                    d_operators.data(),
-                                                                    set_storage.data(),
-                                                                    set_offsets.data(),
-                                                                    value_offsets.data(),
-                                                                    total_row_groups,
-                                                                    physical_type);
+      <<<total_num_literals, query_block_size, 0, stream.get()>>>(decoded_data,
+                                                                  results_ptrs,
+                                                                  scalars.data(),
+                                                                  d_operators.data(),
+                                                                  set_storage.data(),
+                                                                  set_offsets.data(),
+                                                                  value_offsets.data(),
+                                                                  total_row_groups,
+                                                                  physical_type);
     CUDF_CUDA_TRY(cudaGetLastError());
 
+    stream.sync();
     // Build the BOOL8 columns from the results buffers
     return build_columns(results_buffers, stream, mr);
   }
@@ -1181,7 +1188,7 @@ struct dictionary_caster {
   std::vector<std::unique_ptr<cudf::column>> evaluate_few_literals(
     cudf::host_span<ast::literal* const> literals,
     cudf::host_span<ast::ast_operator const> operators,
-    rmm::cuda_stream_view stream,
+    cuda::stream_ref stream,
     rmm::device_async_resource_ref mr)
   {
     // Get the total number of scalars and literals
@@ -1226,16 +1233,16 @@ struct dictionary_caster {
       // Decode fixed width dictionaries and evaluate literals against them, one dictionary per
       // thread block
       evaluate_few_fixed_width_literals<T>
-        <<<total_row_groups, DECODE_BLOCK_SIZE, 0, stream.value()>>>(pages.device_begin(),
-                                                                     chunks.device_begin(),
-                                                                     results_ptrs,
-                                                                     scalars.data(),
-                                                                     d_operators.data(),
-                                                                     physical_type,
-                                                                     total_num_literals,
-                                                                     num_dictionary_columns,
-                                                                     dictionary_col_idx,
-                                                                     error_code.data());
+        <<<total_row_groups, DECODE_BLOCK_SIZE, 0, stream.get()>>>(pages.device_begin(),
+                                                                   chunks.device_begin(),
+                                                                   results_ptrs,
+                                                                   scalars.data(),
+                                                                   d_operators.data(),
+                                                                   physical_type,
+                                                                   total_num_literals,
+                                                                   num_dictionary_columns,
+                                                                   dictionary_col_idx,
+                                                                   error_code.data());
       CUDF_CUDA_TRY(cudaGetLastError());
     } else {
       static_assert(DECODE_BLOCK_SIZE % cudf::detail::warp_size == 0,
@@ -1250,7 +1257,7 @@ struct dictionary_caster {
 
       // Decode string dictionaries and evaluate all literals against them, one dictionary per
       // warp
-      evaluate_few_string_literals<<<num_blocks, DECODE_BLOCK_SIZE, 0, stream.value()>>>(
+      evaluate_few_string_literals<<<num_blocks, DECODE_BLOCK_SIZE, 0, stream.get()>>>(
         pages.device_begin(),
         results_ptrs,
         scalars.data(),
@@ -1277,7 +1284,7 @@ struct dictionary_caster {
     cudf::data_type dtype,
     cudf::host_span<ast::literal* const> literals,
     cudf::host_span<ast::ast_operator const> operators,
-    rmm::cuda_stream_view stream,
+    cuda::stream_ref stream,
     rmm::device_async_resource_ref mr)
   {
     // Boolean, List, Struct, Dictionary types are not supported
@@ -1315,7 +1322,7 @@ class dictionary_expression_converter : public equality_literals_collector {
   dictionary_expression_converter(ast::expression const& expr,
                                   cudf::host_span<cudf::data_type const> output_dtypes,
                                   cudf::host_span<std::vector<ast::literal*> const> literals,
-                                  rmm::cuda_stream_view stream)
+                                  cuda::stream_ref stream)
     : _literals{literals},
       _always_true_scalar{std::make_unique<cudf::numeric_scalar<bool>>(true, true, stream)},
       _always_true{std::make_unique<ast::literal>(*_always_true_scalar)}
@@ -1360,13 +1367,11 @@ class dictionary_expression_converter : public equality_literals_collector {
     auto const input_op       = expr.get_operator();
     auto const operator_arity = cudf::ast::detail::ast_operator_arity(input_op);
 
-    // Unary operation
+    // Membership filters cannot evaluate unary operations. Visit operands and push always true
     if (operator_arity == 1) {
-      auto visit_operands_fn = [this](auto const& operands) {
-        return this->visit_operands(operands);
-      };
-      return parquet::detail::apply_unary_membership_transform(
-        expr, _dictionary_expr, *_always_true, *this, visit_operands_fn);
+      std::ignore = this->visit_operands(expr.get_operands());
+      _dictionary_expr.push(ast::operation{ast_operator::IDENTITY, *_always_true});
+      return *_always_true;
     }
 
     // Binary operation
@@ -1447,7 +1452,7 @@ aggregate_reader_metadata::apply_dictionary_filter(
   std::span<data_type const> output_dtypes,
   std::span<int const> dictionary_col_schemas,
   std::reference_wrapper<ast::expression const> filter,
-  rmm::cuda_stream_view stream) const
+  cuda::stream_ref stream) const
 {
   // Number of input table columns
   auto const num_input_columns = static_cast<cudf::size_type>(output_dtypes.size());

@@ -11,6 +11,9 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING, Any, cast
 
+import kvikio
+import kvikio.defaults
+
 import pylibcudf as plc
 import rmm.mr
 from cudf_streaming.partition_utils import (
@@ -38,8 +41,11 @@ from cudf_polars.engine.core import (
     all_gather_host_data,
     check_reserved_keys,
     evaluate_on_rank,
+    make_kvikio_monitor,
+    reset_kvikio_monitor,
     reset_statistics_from_options,
     resolve_rapidsmpf_options,
+    take_io_summary,
 )
 from cudf_polars.engine.hardware_binding import (
     HardwareBindingPolicy,
@@ -62,6 +68,9 @@ from cudf_polars.utils.config import (
     MemoryResourceConfig,
     SPMDContext,
     StreamingExecutor,
+    configure_kvikio,
+    resolve_kvikio_nthreads,
+    resolve_kvikio_statistics,
 )
 
 if TYPE_CHECKING:
@@ -422,7 +431,14 @@ class SPMDEngine(StreamingEngine):
         engine_options: dict[str, Any] | None = None,
     ) -> None:
         executor_options = executor_options or {}
+        executor_options.setdefault(
+            "kvikio_nthreads", resolve_kvikio_nthreads(executor_options)
+        )
+        executor_options.setdefault(
+            "kvikio_statistics", resolve_kvikio_statistics(executor_options)
+        )
         engine_options = engine_options or {}
+
         quent_context: QuentContext | None = executor_options.get("quent_context")
         if quent_context is not None:
             self._quent_logger = cudf_polars.quent._logging.QuentLogger()
@@ -435,6 +451,8 @@ class SPMDEngine(StreamingEngine):
             engine_options.get("hardware_binding", HardwareBindingPolicy()),
         )
         bind_to_gpu(hw_binding)
+
+        configure_kvikio(executor_options["kvikio_nthreads"])
 
         self.rapidsmpf_options = resolve_rapidsmpf_options(rapidsmpf_options)
         mr_config: MemoryResourceConfig = engine_options.get(
@@ -468,6 +486,10 @@ class SPMDEngine(StreamingEngine):
 
         self._store_uid = uuid.uuid4().hex
         exit_stack = contextlib.ExitStack()
+        self._kvikio_monitor = make_kvikio_monitor(
+            enabled=executor_options["kvikio_statistics"]
+        )
+        exit_stack.callback(self._stop_kvikio_monitor)
 
         # TODO: there's no reason our API needs a plain dict[str, Any] rather than
         # a typed config object here.
@@ -553,6 +575,12 @@ class SPMDEngine(StreamingEngine):
             exit_stack.close()
             raise
 
+    def _stop_kvikio_monitor(self) -> None:
+        """Stop this rank's kvikio monitor if any; called from exit-stack."""
+        if self._kvikio_monitor is not None:
+            self._kvikio_monitor.stop()
+            self._kvikio_monitor = None
+
     def _cleanup_ctx(self) -> None:
         """
         Shut down the current ``self._ctx`` if any; called from exit-stack.
@@ -627,9 +655,17 @@ class SPMDEngine(StreamingEngine):
             existing_quent_context = existing_executor_options.get("quent_context")
             if existing_quent_context is not None:
                 executor_options.setdefault("quent_context", existing_quent_context)
+            existing_kvikio_nthreads = existing_executor_options.get("kvikio_nthreads")
+            if existing_kvikio_nthreads is not None:
+                executor_options.setdefault("kvikio_nthreads", existing_kvikio_nthreads)
+        configure_kvikio(executor_options["kvikio_nthreads"])
+        executor_options.setdefault(
+            "kvikio_statistics", resolve_kvikio_statistics(executor_options)
+        )
         engine_options = engine_options or {}
         quent_context: QuentContext | None = executor_options.get("quent_context")
         rapidsmpf_options = resolve_rapidsmpf_options(rapidsmpf_options)
+        self.rapidsmpf_options = rapidsmpf_options
 
         # Collective: synchronize all ranks before tearing down the Context.
         if self._comm.nranks > 1:
@@ -645,6 +681,9 @@ class SPMDEngine(StreamingEngine):
             self._comm.progress_thread.statistics, rapidsmpf_options
         )
         statistics.clear()
+        self._kvikio_monitor = reset_kvikio_monitor(
+            self._kvikio_monitor, enabled=executor_options["kvikio_statistics"]
+        )
 
         self._ctx = Context.from_options(
             self._comm.logger, self._base_mr, rapidsmpf_options, statistics
@@ -802,6 +841,34 @@ class SPMDEngine(StreamingEngine):
         if clear:
             self.context.statistics().clear()
         return [Statistics.deserialize(r) for r in results]
+
+    def gather_io_summary(self, *, clear: bool = False) -> dict[int, kvikio.Summary]:
+        """
+        Collect kvikio I/O statistics from every rank via an all-gather.
+
+        This is a collective operation, every rank must call it.
+
+        Parameters
+        ----------
+        clear
+            If ``True``, restart each rank's measured span after reading.
+
+        Returns
+        -------
+        A :class:`kvikio.Summary` per rank, keyed by rank index, omitting
+        ranks that are not counting.
+        """
+        summary = take_io_summary(self._kvikio_monitor, clear=clear)
+        # A rank that is not counting sends nothing, which is distinguishable
+        # from a zeroed summary because the latter is a fixed, non-empty size.
+        data = b"" if summary is None else summary.serialize()
+        with reserve_op_id() as op_id:
+            results = all_gather_host_data(self.comm, self.context.br(), op_id, data)
+        return {
+            rank: kvikio.Summary.deserialize(r)
+            for rank, r in enumerate(results)
+            if r != b""
+        }
 
     def shutdown(self) -> None:
         """

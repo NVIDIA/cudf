@@ -70,7 +70,7 @@ namespace CUDF_EXPORT cudf {
 std::vector<packed_table> contiguous_split(
   cudf::table_view const& input,
   std::vector<size_type> const& splits,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 namespace detail {
@@ -104,6 +104,7 @@ struct contiguous_split_state;
  * // data. In memory constrained cases, this can be used to set aside scratch memory
  * // for `chunked_pack` at the beginning of a program.
  * auto mr = cudf::get_current_device_resource_ref();
+ * cuda::stream_ref stream = cudf::get_default_stream();
  *
  * // Define a buffer size for each chunk: the larger the buffer is, the more SMs can be
  * // occupied by this algorithm.
@@ -116,7 +117,7 @@ struct contiguous_split_state;
  * //
  * std::size_t user_buffer_size = 128*1024*1024;
  *
- * auto chunked_packer = cudf::chunked_pack::create(tv, user_buffer_size, mr);
+ * auto chunked_packer = cudf::chunked_pack::create(tv, user_buffer_size, stream, mr);
  *
  * std::size_t host_offset = 0;
  * auto host_buffer = ...; // obtain a host buffer you would like to copy to
@@ -134,7 +135,7 @@ struct contiguous_split_state;
  *     user_buffer.data(),
  *     bytes_copied,
  *     cudaMemcpyDefault,
- *     stream);
+ *     stream.get());
  *
  *   host_offset += bytes_copied;
  * }
@@ -155,7 +156,7 @@ class chunked_pack {
   explicit chunked_pack(
     cudf::table_view const& input,
     std::size_t user_buffer_size,
-    rmm::cuda_stream_view stream           = cudf::get_default_stream(),
+    cuda::stream_ref stream                = cudf::get_default_stream(),
     rmm::device_async_resource_ref temp_mr = cudf::get_current_device_resource_ref());
 
   /**
@@ -222,7 +223,7 @@ class chunked_pack {
   [[nodiscard]] static std::unique_ptr<chunked_pack> create(
     cudf::table_view const& input,
     std::size_t user_buffer_size,
-    rmm::cuda_stream_view stream           = cudf::get_default_stream(),
+    cuda::stream_ref stream                = cudf::get_default_stream(),
     rmm::device_async_resource_ref temp_mr = cudf::get_current_device_resource_ref());
 
  private:
@@ -244,7 +245,7 @@ class chunked_pack {
  *         and device memory respectively
  */
 packed_columns pack(cudf::table_view const& input,
-                    rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+                    cuda::stream_ref stream           = cudf::get_default_stream(),
                     rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -261,7 +262,7 @@ packed_columns pack(cudf::table_view const& input,
  */
 std::size_t packed_size(
   cudf::table_view const& input,
-  rmm::cuda_stream_view stream           = cudf::get_default_stream(),
+  cuda::stream_ref stream                = cudf::get_default_stream(),
   rmm::device_async_resource_ref temp_mr = cudf::get_current_device_resource_ref());
 
 /**

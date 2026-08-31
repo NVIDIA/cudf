@@ -57,6 +57,7 @@ class Scope(enum.StrEnum):
 
     PLAN = "plan"
     ACTOR = "actor"
+    IO_TASK = "io_task"
     EVALUATE_IR_NODE = "evaluate_ir_node"
 
 

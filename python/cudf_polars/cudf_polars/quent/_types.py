@@ -3,7 +3,7 @@
 
 """Quent telemetry tracing."""
 
-# TODO: https://github.com/rapidsai/cudf/issues/22949 use the bindings from quent
+# TODO: https://github.com/NVIDIA/cudf/issues/22949 use the bindings from quent
 
 from __future__ import annotations
 

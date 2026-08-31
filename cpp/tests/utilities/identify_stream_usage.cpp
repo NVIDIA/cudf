@@ -6,8 +6,8 @@
 #include <cudf/detail/utilities/stream_pool.hpp>
 
 #include <rmm/cuda_stream.hpp>
-#include <rmm/cuda_stream_view.hpp>
 
+#include <cuda/stream>
 #include <cuda_runtime.h>
 
 #include <dlfcn.h>
@@ -48,7 +48,7 @@ namespace cudf {
 namespace test {
 #endif
 
-rmm::cuda_stream_view const get_default_stream()
+cuda::stream_ref const get_default_stream()
 {
   static rmm::cuda_stream stream{};
   return stream;
@@ -67,21 +67,15 @@ namespace detail {
  */
 class test_cuda_stream_pool : public cuda_stream_pool {
  public:
-  rmm::cuda_stream_view get_stream() override { return cudf::test::get_default_stream(); }
-  [[maybe_unused]] rmm::cuda_stream_view get_stream(stream_id_type stream_id) override
-  {
-    return cudf::test::get_default_stream();
-  }
+  cuda::stream_ref get_stream() override { return cudf::test::get_default_stream(); }
 
-  std::vector<rmm::cuda_stream_view> get_streams(std::size_t count) override
+  std::vector<cuda::stream_ref> get_streams(std::size_t count) override
   {
-    return std::vector<rmm::cuda_stream_view>(count, cudf::test::get_default_stream());
+    return std::vector<cuda::stream_ref>(count, cudf::test::get_default_stream());
   }
-
-  [[nodiscard]] std::size_t get_stream_pool_size() const override { return 1UL; }
 };
 
-cuda_stream_pool* create_global_cuda_stream_pool() { return new test_cuda_stream_pool(); }
+cuda_stream_pool* create_cuda_stream_pool() { return new test_cuda_stream_pool(); }
 
 }  // namespace detail
 #endif
@@ -92,7 +86,7 @@ bool stream_is_invalid(cudaStream_t stream)
 {
 #ifdef STREAM_MODE_TESTING
   // In this mode the _only_ valid stream is the one returned by cudf::test::get_default_stream.
-  return (stream != cudf::test::get_default_stream().value());
+  return (stream != cudf::test::get_default_stream().get());
 #else
   // We explicitly list the possibilities rather than using
   // `cudf::get_default_stream().value()` because there is no guarantee that
@@ -218,6 +212,10 @@ void sanitizer_subscriber::callback(Sanitizer_CallbackDomain domain,
           CHECK_STREAM_ARG(cudaMemcpy3DPeerAsync_ptsz, 7000, stream);
           CHECK_STREAM_ARG(cudaMemcpyAsync, 3020, stream);
           CHECK_STREAM_ARG(cudaMemcpyAsync_ptsz, 7000, stream);
+#if CUDART_VERSION >= 13000
+          CHECK_STREAM_ARG(cudaMemcpyBatchAsync, 13000, stream);
+          CHECK_STREAM_ARG(cudaMemcpyBatchAsync_ptsz, 13000, stream);
+#endif
           CHECK_STREAM_ARG(cudaMemcpyFromSymbolAsync, 3020, stream);
           CHECK_STREAM_ARG(cudaMemcpyFromSymbolAsync_ptsz, 7000, stream);
           CHECK_STREAM_ARG(cudaMemcpyToSymbolAsync, 3020, stream);

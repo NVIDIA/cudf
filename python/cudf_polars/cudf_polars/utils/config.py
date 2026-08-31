@@ -29,6 +29,11 @@ import json
 import os
 from typing import TYPE_CHECKING, Any, Generic, Literal, TypeVar
 
+import kvikio
+import kvikio.defaults
+
+import pylibcudf.utils
+
 if TYPE_CHECKING:
     import uuid
     from collections.abc import Callable
@@ -49,18 +54,97 @@ if TYPE_CHECKING:
 
 
 __all__ = [
+    "UNSPECIFIED",
     "Cluster",
     "ConfigOptions",
     "DaskContext",
     "DynamicPlanningOptions",
     "InMemoryExecutor",
     "JoinFilterPushdownOptions",
+    "MaxConcurrentIOTasks",
     "ParquetOptions",
     "RayContext",
     "SPMDContext",
     "StreamingExecutor",
     "StreamingFallbackMode",
+    "Unspecified",
 ]
+
+
+class Unspecified:
+    """
+    Sentinel value meaning "no value was explicitly provided".
+
+    The singleton instance :data:`UNSPECIFIED` is used as the default for every
+    :class:`StreamingOptions` field, as well as for
+    ``ParquetOptions.prefetch_file_metadata``. When a field is still
+    ``UNSPECIFIED`` after construction (i.e. neither an explicit value nor a
+    matching environment variable was provided), the consuming component decides
+    on the semantics.
+    """
+
+    _instance: Unspecified | None = None
+
+    def __new__(cls) -> Unspecified:
+        """Return the singleton instance."""
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+        return cls._instance
+
+    def __repr__(self) -> str:
+        """Return ``"UNSPECIFIED"``."""
+        return "UNSPECIFIED"
+
+
+UNSPECIFIED = Unspecified()
+"""Singleton sentinel for all :class:`StreamingOptions` fields, as well as for
+``ParquetOptions.prefetch_file_metadata``.
+
+A field set to ``UNSPECIFIED`` after construction means no explicit value and no
+matching environment variable was found; the consuming component decides on the
+semantics.
+"""
+
+
+@dataclasses.dataclass(frozen=True)
+class MaxConcurrentIOTasks:
+    """Concurrent IO task defaults for local and remote scan paths."""
+
+    local: int = 2
+    remote: int = 8
+
+    @staticmethod
+    def parse_env(raw: str) -> int | dict[str, int] | None:
+        """Parse an environment-variable value."""
+        raw = raw.strip()
+        try:
+            return int(raw)
+        except ValueError:
+            value = json.loads(raw)
+            MaxConcurrentIOTasks.from_config(value)
+            return value
+
+    @classmethod
+    def from_config(
+        cls, value: int | dict[str, int] | MaxConcurrentIOTasks | None
+    ) -> MaxConcurrentIOTasks:
+        """Construct from the supported configuration shapes."""
+        if value is None:
+            return cls()
+        if isinstance(value, int):
+            return cls(local=value, remote=value)
+        if isinstance(value, MaxConcurrentIOTasks):
+            return value
+        if not isinstance(value, dict):
+            raise TypeError("max_concurrent_io_tasks must be an int, dict, or None")
+        return cls(**value)
+
+    def __post_init__(self) -> None:
+        """Validate local and remote values."""
+        if type(self.local) is not int or type(self.remote) is not int:
+            raise TypeError("max_concurrent_io_tasks values must be ints")
+        if self.local < 1 or self.remote < 1:
+            raise ValueError("max_concurrent_io_tasks values must be positive")
 
 
 def _env_get_int(name: str, default: int) -> int:
@@ -161,6 +245,45 @@ def _make_default_factory(
     return default_factory
 
 
+def resolve_kvikio_statistics(executor_options: dict[str, Any]) -> bool:
+    """Resolve whether kvikio I/O statistics are collected, with env var fallback."""
+    value = executor_options.get("kvikio_statistics")
+    if value is None:
+        value = os.environ.get("CUDF_POLARS__EXECUTOR__KVIKIO_STATISTICS")
+        if value is None:
+            return False
+    return value if isinstance(value, bool) else _bool_converter(value)
+
+
+def resolve_kvikio_nthreads(executor_options: dict[str, Any]) -> int:
+    """Resolve kvikio thread count from executor options with env var fallback."""
+    return int(
+        executor_options.get(
+            "kvikio_nthreads",
+            os.environ.get(
+                "CUDF_POLARS__EXECUTOR__KVIKIO_NTHREADS",
+                os.environ.get("KVIKIO_NTHREADS", "256"),
+            ),
+        )
+    )
+
+
+def configure_kvikio(nthreads: int) -> None:
+    """Set the remote I/O backend to ``EASY_THREADPOOL`` with ``nthreads`` threads."""
+    # HACK: libcudf calls set_up_kvikio() on the first IO op and that resets the thread
+    # pool (default is 4 if KVIKIO_NTHREADS is unset), undoing anything we set via
+    # kvikio.defaults. We call it here with our nthreads so later when it's called in
+    # libcudf it's a no-op. The explicit kvikio.defaults.set below handles subsequent
+    # calls to configure_kvikio (call_once only fires once).
+    pylibcudf.utils._set_up_kvikio(nthreads)
+    kvikio.defaults.set(
+        {
+            "num_threads": nthreads,
+            "remote_io_backend": kvikio.RemoteIOBackend.EASY_THREADPOOL,
+        }
+    )
+
+
 def _bool_converter(v: str) -> bool:
     lowered = v.lower()
     if lowered in {"true", "yes", "y", "1"}:
@@ -219,17 +342,20 @@ class ParquetOptions:
 
         Set to 0 to avoid row-group sampling. Note that row-group sampling
         will also be skipped if ``max_footer_samples`` is 0.
-    use_rapidsmpf_native
-        Whether to use the native rapidsmpf node for parquet reading.
-        This option is only used by the streaming executor.
-        Default is False.
     prefetch_file_metadata
         Whether to prefetch parquet file metadata and pass it through
-        `parquet_metadatas` to avoid rereading file footers.
+        `parquet_metadatas` to avoid rereading file footers. Not supported
+        by the in-memory executor, where it defaults to disabled. For the
+        streaming executor, it defaults to being enabled for remote URIs
+        (e.g. ``s3://``) only; pass ``True`` to also prefetch local files.
     use_jit_filter
         Whether to use JIT compilation for post-read filtering in Parquet scans.
         When enabled, filter predicates are JIT-compiled to CUDA kernels for
         improved performance on large datasets with complex filters.
+        Default is False.
+    use_hybrid_scan
+        Whether to use the two-pass ``HybridScanReader`` for ``SplitScan``
+        tasks when a predicate can be pushed down to a parquet filter.
         Default is False.
     """
 
@@ -265,19 +391,31 @@ class ParquetOptions:
             f"{_env_prefix}__MAX_ROW_GROUP_SAMPLES", int, default=1
         )
     )
-    use_rapidsmpf_native: bool = dataclasses.field(
+    prefetch_file_metadata: bool | Unspecified = dataclasses.field(
         default_factory=_make_default_factory(
-            f"{_env_prefix}__USE_RAPIDSMPF_NATIVE",
+            f"{_env_prefix}__PREFETCH_FILE_METADATA",
+            _bool_converter,
+            default=UNSPECIFIED,
+        )
+    )
+    use_hybrid_scan: bool = dataclasses.field(
+        default_factory=_make_default_factory(
+            f"{_env_prefix}__USE_HYBRID_SCAN",
             _bool_converter,
             default=False,
         )
     )
-    prefetch_file_metadata: bool = dataclasses.field(
+    # Internal benchmarking flag. When False, skips stats and bloom-filter pruning
+    # before the first pass of a hybrid scan so you can measure two-pass read
+    # overhead in isolation. No reason to set this to False in production.
+    _hybrid_scan_stats_pruning: bool = dataclasses.field(
         default_factory=_make_default_factory(
-            f"{_env_prefix}__PREFETCH_FILE_METADATA",
+            f"{_env_prefix}__HYBRID_SCAN_STATS_PRUNING",
             _bool_converter,
-            default=False,
-        )
+            default=True,
+        ),
+        init=False,
+        repr=False,
     )
     use_jit_filter: bool = dataclasses.field(
         default_factory=_make_default_factory(
@@ -300,14 +438,13 @@ class ParquetOptions:
             raise TypeError("max_footer_samples must be an int")
         if not isinstance(self.max_row_group_samples, int):
             raise TypeError("max_row_group_samples must be an int")
-        if not isinstance(self.use_rapidsmpf_native, bool):
-            raise TypeError("use_rapidsmpf_native must be a bool")
-        if not isinstance(self.prefetch_file_metadata, bool):
-            raise TypeError("prefetch_file_metadata must be a bool")
-
-        if self.use_rapidsmpf_native and self.prefetch_file_metadata:
-            raise NotImplementedError(
-                "'use_rapidsmpf_native=True' does not currently support 'prefetch_file_metadata=True'"
+        if not isinstance(self.prefetch_file_metadata, (bool, Unspecified)):
+            raise TypeError("prefetch_file_metadata must be a bool when specified")
+        if not isinstance(self.use_hybrid_scan, bool):
+            raise TypeError("use_hybrid_scan must be a bool")
+        if self.use_hybrid_scan and self.prefetch_file_metadata is False:
+            raise ValueError(
+                "use_hybrid_scan requires prefetch_file_metadata to be enabled"
             )
         if not isinstance(self.use_jit_filter, bool):
             raise TypeError("use_jit_filter must be a bool")
@@ -671,7 +808,7 @@ class StreamingExecutor:
 
         This can be set via
 
-        - keyword argument to ``polars.GPUEngine``
+        - ``executor_options`` passed to ``polars.GPUEngine``
         - the ``CUDF_POLARS__EXECUTOR__TARGET_PARTITION_SIZE`` environment variable
 
         By default, cudf-polars uses the minimum of 1.5GB or 2.5% of the minimum
@@ -699,12 +836,42 @@ class StreamingExecutor:
 
         Enable through environment variables with
         ``CUDF_POLARS__EXECUTOR__JOIN_FILTER_PUSHDOWN=1``.
-    max_io_threads
-        Maximum number of IO threads. Default is 4.
-        This controls the parallelism of IO operations when reading data.
+    max_concurrent_io_tasks
+        Maximum number of concurrent IO tasks for each scan node. The default
+        uses ``2`` for local paths and ``8`` for scans with remote URIs.
+        Passing an ``int`` uses the same value for all scans. Passing a dict
+        with ``local`` and/or ``remote`` keys tunes local and remote paths
+        separately. Omit the option, or pass ``None``, to use the default
+        policy. This can be set via
+
+        - ``executor_options`` passed to ``polars.GPUEngine``
+        - the ``CUDF_POLARS__EXECUTOR__MAX_CONCURRENT_IO_TASKS`` environment
+          variable, as an int or JSON dict
     num_py_executors
         Maximum number of workers for the Python ThreadPoolExecutor.
         Default is 8.
+    kvikio_nthreads
+        Number of threads in the kvikio ``EASY_THREADPOOL`` thread pool.
+        Defaults to 256, which is tuned for cloud object-store IO. This can be
+        set via
+
+        - ``executor_options`` passed to ``polars.GPUEngine``
+        - the ``CUDF_POLARS__EXECUTOR__KVIKIO_NTHREADS`` environment variable
+        - the ``KVIKIO_NTHREADS`` environment variable (lower precedence)
+
+        .. warning::
+
+            kvikio uses a single process-wide thread pool. When a streaming
+            engine is created, it configures that pool to ``kvikio_nthreads``
+            threads. This operation blocks until all in-flight kvikio IO in the
+            process completes and then rebuilds the pool. As a result:
+
+            - Any code in the same process that is using kvikio concurrently at
+              engine creation time will be disrupted.
+            - Any ``kvikio.defaults.set("num_threads", N)`` call made before
+              engine creation will be overridden. Use the ``kvikio_nthreads``
+              executor option or ``KVIKIO_NTHREADS`` environment variable
+              instead.
     quent_context
         Quent tracing context. When ``None`` (default), Quent tracing is disabled.
         Pass a :class:`~cudf_polars.quent.QuentContext` instance to enable tracing.
@@ -766,14 +933,26 @@ class StreamingExecutor:
     join_filter_pushdown: JoinFilterPushdownOptions | None = dataclasses.field(
         default_factory=JoinFilterPushdownOptions
     )
-    max_io_threads: int = dataclasses.field(
+    max_concurrent_io_tasks: MaxConcurrentIOTasks = dataclasses.field(
         default_factory=_make_default_factory(
-            f"{_env_prefix}__MAX_IO_THREADS", int, default=4
+            f"{_env_prefix}__MAX_CONCURRENT_IO_TASKS",
+            lambda raw: MaxConcurrentIOTasks.from_config(
+                MaxConcurrentIOTasks.parse_env(raw)
+            ),
+            default=MaxConcurrentIOTasks(),
         )
     )
     num_py_executors: int = dataclasses.field(
         default_factory=_make_default_factory(
             f"{_env_prefix}__NUM_PY_EXECUTORS", int, default=8
+        )
+    )
+    kvikio_nthreads: int = dataclasses.field(
+        default_factory=lambda: resolve_kvikio_nthreads({})
+    )
+    kvikio_statistics: bool = dataclasses.field(
+        default_factory=_make_default_factory(
+            f"{_env_prefix}__KVIKIO_STATISTICS", _bool_converter, default=False
         )
     )
 
@@ -844,7 +1023,6 @@ class StreamingExecutor:
             object.__setattr__(self, "sink_to_directory", True)
         elif self.sink_to_directory is None:
             object.__setattr__(self, "sink_to_directory", False)
-
         # Type / value check everything else
         if not isinstance(self.max_rows_per_partition, int):
             raise TypeError("max_rows_per_partition must be an int")
@@ -856,10 +1034,12 @@ class StreamingExecutor:
             raise TypeError("sink_to_directory must be bool")
         if not isinstance(self.client_device_threshold, float):
             raise TypeError("client_device_threshold must be a float")
-        if not isinstance(self.max_io_threads, int):
-            raise TypeError("max_io_threads must be an int")
         if not isinstance(self.num_py_executors, int):
             raise TypeError("num_py_executors must be an int")
+        if not isinstance(self.kvikio_nthreads, int):
+            raise TypeError("kvikio_nthreads must be an int")
+        if self.kvikio_nthreads <= 0:
+            raise ValueError("kvikio_nthreads must be positive")
 
     def __hash__(self) -> int:  # noqa: D105
         # dynamic_planning factory, a dataclass, isn't natively hashable. We'll dump it
@@ -867,6 +1047,9 @@ class StreamingExecutor:
         d = dataclasses.asdict(self)
         d["dynamic_planning"] = json.dumps(d["dynamic_planning"])
         d["join_filter_pushdown"] = json.dumps(d["join_filter_pushdown"])
+        d["max_concurrent_io_tasks"] = json.dumps(
+            d["max_concurrent_io_tasks"], sort_keys=True
+        )
 
         # Hash the quent context UUIDs as ints
         quent_context = d["quent_context"]
@@ -941,6 +1124,27 @@ class ConfigOptions(Generic[ExecutorType]):
     device: int | None = None
     memory_resource_config: MemoryResourceConfig | None = None
 
+    @staticmethod
+    def dict_factory(items: list[tuple[str, Any]]) -> dict[str, Any]:
+        """
+        ``dict_factory`` for :func:`dataclasses.asdict`.
+
+        Converts any :data:`UNSPECIFIED` value to ``None``
+        (e.g. ParquetOptions.prefetch_file_metadata) so the resulting
+        dict can be serialized with :func:`json.dumps`.
+
+        Parameters
+        ----------
+        items
+            The ``(key, value)`` pairs for a single dataclass level, as passed
+            by :func:`dataclasses.asdict`.
+
+        Returns
+        -------
+        A dict with :data:`UNSPECIFIED` values replaced by ``None``.
+        """
+        return {k: (None if isinstance(v, Unspecified) else v) for k, v in items}
+
     def drop_unserializable(self) -> ConfigOptions[ExecutorType]:
         """
         Return a copy safe to pickle to a worker/actor.
@@ -980,9 +1184,31 @@ class ConfigOptions(Generic[ExecutorType]):
         if user_parquet_options is None:
             user_parquet_options = {}
 
+        # Engine-dependent default: only prefetch for the streaming executor.
+        # Skipped if the user or the environment has already set a value.
+        prefetch_default = UNSPECIFIED if user_executor == "streaming" else False
+        prefetch_env_set = (
+            os.environ.get(f"{ParquetOptions._env_prefix}__PREFETCH_FILE_METADATA")
+            is not None
+        )
+
         if isinstance(user_parquet_options, dict):
+            user_parquet_options = dict(user_parquet_options)
+            if (
+                "prefetch_file_metadata" not in user_parquet_options
+                and not prefetch_env_set
+            ):
+                user_parquet_options["prefetch_file_metadata"] = prefetch_default
             parquet_options = ParquetOptions(**user_parquet_options)
         else:
+            if (
+                isinstance(user_parquet_options.prefetch_file_metadata, Unspecified)
+                and not prefetch_env_set
+            ):
+                user_parquet_options = dataclasses.replace(
+                    user_parquet_options,
+                    prefetch_file_metadata=prefetch_default,
+                )
             parquet_options = user_parquet_options
         # This is set in polars, and so can't be overridden by the environment
         user_raise_on_fail = engine.config.get("raise_on_fail", False)
@@ -1011,7 +1237,7 @@ class ConfigOptions(Generic[ExecutorType]):
         match user_executor:
             case "in-memory":
                 executor = InMemoryExecutor(**user_executor_options)
-                if parquet_options.prefetch_file_metadata:
+                if parquet_options.prefetch_file_metadata is True:
                     raise NotImplementedError(
                         "Prefetching is not supported for the in-memory executor."
                     )
@@ -1019,6 +1245,12 @@ class ConfigOptions(Generic[ExecutorType]):
                 user_executor_options = user_executor_options.copy()
                 if "min_device_size" not in user_executor_options:
                     user_executor_options["min_device_size"] = get_total_device_memory()
+                if "max_concurrent_io_tasks" in user_executor_options:
+                    user_executor_options["max_concurrent_io_tasks"] = (
+                        MaxConcurrentIOTasks.from_config(
+                            user_executor_options["max_concurrent_io_tasks"]
+                        )
+                    )
 
                 # Handle dynamic_planning: check user config, then env var
                 user_dynamic_planning = user_executor_options.get(

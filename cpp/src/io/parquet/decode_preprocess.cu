@@ -48,7 +48,7 @@ using unused_state_buf = page_state_buffers_s<0, 0, 0>;
  * @param block The cooperative thread block
  */
 template <typename level_t>
-__device__ void update_page_sizes(page_state_s* s,
+__device__ void update_page_sizes(auto* s,
                                   int target_value_count,
                                   level_t const* const rep,
                                   level_t const* const def,
@@ -69,11 +69,11 @@ __device__ void update_page_sizes(page_state_s* s,
   } temp_storage;
 
   // how many input level values we've processed in the page so far
-  int value_count = s->input_value_count;
+  int value_count = s->progress.input_value_count;
   // how many rows we've processed in the page so far
-  int row_count = s->input_row_count;
+  int row_count = s->progress.input_row_count;
   // how many leaf values we've processed in the page so far
-  int leaf_count = s->input_leaf_count;
+  int leaf_count = s->progress.input_leaf_count;
   // whether or not we need to continue checking for the first row
   bool skipped_values_set = s->setup.page.skipped_values >= 0;
 
@@ -100,7 +100,7 @@ __device__ void update_page_sizes(page_state_s* s,
       block.sync();
 
       // get absolute thread leaf index
-      int const is_new_leaf = (d >= s->nesting_info[max_depth - 1].max_def_level);
+      int const is_new_leaf = (d >= s->nesting.nesting_info[max_depth - 1].max_def_level);
       int thread_leaf_count, block_leaf_count;
       block_scan(temp_storage.scan_storage)
         .InclusiveSum(is_new_leaf, thread_leaf_count, block_leaf_count);
@@ -108,7 +108,7 @@ __device__ void update_page_sizes(page_state_s* s,
 
       // if this thread is in row bounds
       int const row_index = (thread_row_count + row_count) - 1;
-      in_row_bounds       = (row_index >= s->row_index_lower_bound) &&
+      in_row_bounds       = (row_index >= s->progress.row_index_lower_bound) &&
                       (row_index < (s->setup.first_row + s->setup.num_rows));
 
       // if we have not set skipped values yet, see if we found the first in-bounds row
@@ -150,11 +150,11 @@ __device__ void update_page_sizes(page_state_s* s,
 
   // update final outputs
   if (!t) {
-    s->input_value_count = value_count;
+    s->progress.input_value_count = value_count;
 
     // only used in the skip_rows/num_rows case
-    s->input_leaf_count = leaf_count;
-    s->input_row_count  = row_count;
+    s->progress.input_leaf_count = leaf_count;
+    s->progress.input_row_count  = row_count;
   }
 
   block.sync();
@@ -170,7 +170,7 @@ __device__ void update_page_sizes(page_state_s* s,
  * @param[in] block The current thread block cooperative group
  */
 __device__ void compute_page_sizes_for_pruned_pages(PageInfo* page,
-                                                    page_state_s* const state,
+                                                    auto* const state,
                                                     bool has_repetition,
                                                     bool is_base_pass,
                                                     cg::thread_block const& block)
@@ -248,13 +248,13 @@ CUDF_KERNEL void __launch_bounds__(preprocess_block_size)
                             size_t num_rows,
                             bool is_base_pass)
 {
-  __shared__ __align__(16) page_state_s state_g;
+  __shared__ __align__(16) full_page_decode_state state_g;
 
-  page_state_s* const s = &state_g;
-  auto const block      = cg::this_thread_block();
-  int const page_idx    = cg::this_grid().block_rank();
-  int const t           = block.thread_rank();
-  PageInfo* pp          = &pages[page_idx];
+  auto* const s      = &state_g;
+  auto const block   = cg::this_thread_block();
+  int const page_idx = cg::this_grid().block_rank();
+  int const t        = block.thread_rank();
+  PageInfo* pp       = &pages[page_idx];
 
   // whether or not we have repetition levels (lists)
   bool has_repetition = chunks[pp->chunk_idx].max_level[level_type::REPETITION] > 0;
@@ -326,15 +326,15 @@ CUDF_KERNEL void __launch_bounds__(preprocess_block_size)
   if (!t) {
     s->setup.page.skipped_values      = -1;
     s->setup.page.skipped_leaf_values = 0;
-    s->input_row_count                = 0;
-    s->input_value_count              = 0;
+    s->progress.input_row_count       = 0;
+    s->progress.input_value_count     = 0;
 
     // in the base pass, we're computing the number of rows, make sure we visit absolutely
     // everything
     if (is_base_pass) {
-      s->setup.first_row       = 0;
-      s->setup.num_rows        = cuda::std::numeric_limits<int32_t>::max();
-      s->row_index_lower_bound = -1;
+      s->setup.first_row                = 0;
+      s->setup.num_rows                 = cuda::std::numeric_limits<int32_t>::max();
+      s->progress.row_index_lower_bound = -1;
     }
   }
 
@@ -393,11 +393,11 @@ CUDF_KERNEL void __launch_bounds__(level_decode_block_size)
 {
   __shared__ __align__(16) level_scan_state state_g;
 
-  level_scan_state* const s = &state_g;
-  auto const block          = cg::this_thread_block();
-  int const page_idx        = cg::this_grid().block_rank();
-  int const t               = block.thread_rank();
-  PageInfo* pp              = &pages[page_idx];
+  auto* const s      = &state_g;
+  auto const block   = cg::this_thread_block();
+  int const page_idx = blockIdx.x;
+  int const t        = block.thread_rank();
+  PageInfo* pp       = &pages[page_idx];
 
   // Return early if this page is pruned
   if (not page_mask.empty() and not page_mask[page_idx]) { return; }
@@ -411,17 +411,14 @@ CUDF_KERNEL void __launch_bounds__(level_decode_block_size)
   // whether or not we have repetition levels (lists)
   bool const has_repetition = chunks[pp->chunk_idx].max_level[level_type::REPETITION] > 0;
 
-  // the required number of runs in shared memory we will need to provide the
-  // rle_stream object
-  constexpr int rle_run_buffer_size =
-    rle_stream_required_run_buffer_size<level_decode_block_size>();
+  // Each page is decoded by two blocks where blockIdx.y maps to def/rep level
+  int const stream_id = blockIdx.y;
 
-  // the level stream decoders. max_output_values is max to remove rolling buffer
-  __shared__ rle_run def_runs[rle_run_buffer_size];
-  __shared__ rle_run rep_runs[rle_run_buffer_size];
+  // The chunked-expand rle_stream does not need a shared-memory ring buffer of
+  // run headers; it parses runs directly into per-chunk tables, so we
+  // default-construct the decoder here.
   static constexpr int max_output_values = cuda::std::numeric_limits<int>::max();
-  rle_stream<level_t, level_decode_block_size, max_output_values>
-    decoders[level_type::NUM_LEVEL_TYPES] = {{def_runs}, {rep_runs}};
+  using decoder_stream_t = rle_stream_chunked<level_t, level_decode_block_size, max_output_values>;
 
   // Shared-memory staging scratch for the encoded level streams. Level streams
   // for a page are usually small (definition/repetition levels are dominated by
@@ -429,58 +426,36 @@ CUDF_KERNEL void __launch_bounds__(level_decode_block_size)
   // dependent global loads. Staging the bytes into shared memory once removes
   // that latency from fill_run_batch(). Streams larger than the per-stream
   // budget fall back to parsing from global with no behavior change.
-  using rle_stream_t = rle_stream<level_t, level_decode_block_size, max_output_values>;
-  __shared__ __align__(16) uint8_t stage[rle_stream_t::smem_stage_size];
+  __shared__ __align__(16) uint8_t stage[decoder_stream_t::smem_stage_size];
   __shared__ cuda::barrier<cuda::thread_scope_block> copy_barrier;
-
-  // Get the level decode buffers for this page
-  auto* const def = reinterpret_cast<level_t*>(pp->lvl_decode_buf[level_type::DEFINITION]);
-  auto* const rep = reinterpret_cast<level_t*>(pp->lvl_decode_buf[level_type::REPETITION]);
 
   // Determine how many values need to be decoded
   size_t const num_to_decode =
     precompute_page_num_values_in_range(*pp, chunks[pp->chunk_idx], min_row, num_rows);
   if (num_to_decode == 0) { return; }
 
-  // Initialize the stream decoders
+  // Skip if this block's stream is absent for this page.
   bool const process_nulls = should_process_nulls(s);
-  if (has_repetition) {
-    cg::invoke_one(block, [&]() { init(&copy_barrier, block.size()); });
-    block.sync();
-    decoders[level_type::REPETITION].init(block,
-                                          s->setup.col.level_bits[level_type::REPETITION],
-                                          s->stream.abs_lvl_start[level_type::REPETITION],
-                                          s->stream.abs_lvl_end[level_type::REPETITION],
-                                          rep,
-                                          num_to_decode,
-                                          stage,
-                                          &copy_barrier);
-    copy_barrier.arrive_and_wait();
-    decoders[level_type::REPETITION].decode_next(t, num_to_decode);
-  }
+  if (stream_id == level_type::REPETITION && !has_repetition) { return; }
+  if (stream_id == level_type::DEFINITION && !process_nulls) { return; }
 
-  // Decode levels for this page up to the last row needed.
-  // If skipping the first rows, we still need to decode their levels.
-  // This is because we need to determine the number of non-null values we skipped.
-  // Note that for lists we haven't computed skipped_leaf_values yet; this is used as input for
-  // that.
-  // Must sync as shared variables in decode_next() are shared between decoders!!
+  // Dispatch to the level stream this block owns.
+  auto* const out = reinterpret_cast<level_t*>(pp->lvl_decode_buf[stream_id]);
+
+  decoder_stream_t decoder{};
+  cg::invoke_one(block, [&]() { init(&copy_barrier, block.size()); });
   block.sync();
-
-  if (process_nulls) {
-    cg::invoke_one(block, [&]() { init(&copy_barrier, block.size()); });
-    block.sync();
-    decoders[level_type::DEFINITION].init(block,
-                                          s->setup.col.level_bits[level_type::DEFINITION],
-                                          s->stream.abs_lvl_start[level_type::DEFINITION],
-                                          s->stream.abs_lvl_end[level_type::DEFINITION],
-                                          def,
-                                          num_to_decode,
-                                          stage,
-                                          &copy_barrier);
-    copy_barrier.arrive_and_wait();
-    decoders[level_type::DEFINITION].decode_next(t, num_to_decode);
-  }
+  decoder.init(block,
+               s->setup.col.level_bits[stream_id],
+               s->stream.abs_lvl_start[stream_id],
+               s->stream.abs_lvl_end[stream_id],
+               out,
+               num_to_decode,
+               stage,
+               &copy_barrier,
+               decoder_stream_t::smem_stage_size);
+  copy_barrier.arrive_and_wait();
+  decoder.decode_next(t, num_to_decode);
 }
 
 }  // anonymous namespace
@@ -495,7 +470,7 @@ void compute_page_sizes(cudf::detail::hostdevice_span<PageInfo> pages,
                         size_t num_rows,
                         bool compute_num_rows,
                         int level_type_size,
-                        rmm::cuda_stream_view stream)
+                        cuda::stream_ref stream)
 {
   CUDF_FUNC_RANGE();
 
@@ -510,11 +485,11 @@ void compute_page_sizes(cudf::detail::hostdevice_span<PageInfo> pages,
   // If uses_custom_row_bounds is set to true, we have to do a second pass later that "trims"
   // the starting and ending read values to account for these bounds.
   if (level_type_size == 1) {
-    compute_page_sizes_kernel<uint8_t><<<dim_grid, dim_block, 0, stream.value()>>>(
+    compute_page_sizes_kernel<uint8_t><<<dim_grid, dim_block, 0, stream.get()>>>(
       pages.device_ptr(), chunks, page_mask, min_row, num_rows, compute_num_rows);
     CUDF_CUDA_TRY(cudaGetLastError());
   } else {
-    compute_page_sizes_kernel<uint16_t><<<dim_grid, dim_block, 0, stream.value()>>>(
+    compute_page_sizes_kernel<uint16_t><<<dim_grid, dim_block, 0, stream.get()>>>(
       pages.device_ptr(), chunks, page_mask, min_row, num_rows, compute_num_rows);
     CUDF_CUDA_TRY(cudaGetLastError());
   }
@@ -529,23 +504,23 @@ void preprocess_levels(cudf::detail::hostdevice_span<PageInfo> pages,
                        size_t min_row,
                        size_t num_rows,
                        int level_type_size,
-                       rmm::cuda_stream_view stream)
+                       cuda::stream_ref stream)
 {
   CUDF_FUNC_RANGE();
 
   if (pages.size() == 0) { return; }
 
   dim3 dim_block(level_decode_block_size, 1);
-  dim3 dim_grid(pages.size(), 1);  // 1 threadblock per page
+  dim3 dim_grid(pages.size(), 2);  // 2 threadblocks per page: one per level stream
 
   if (level_type_size == 1) {
     preprocess_levels_kernel<uint8_t, level_decode_block_size>
-      <<<dim_grid, dim_block, 0, stream.value()>>>(
+      <<<dim_grid, dim_block, 0, stream.get()>>>(
         pages.device_ptr(), chunks, page_mask, min_row, num_rows);
     CUDF_CUDA_TRY(cudaGetLastError());
   } else {
     preprocess_levels_kernel<uint16_t, level_decode_block_size>
-      <<<dim_grid, dim_block, 0, stream.value()>>>(
+      <<<dim_grid, dim_block, 0, stream.get()>>>(
         pages.device_ptr(), chunks, page_mask, min_row, num_rows);
     CUDF_CUDA_TRY(cudaGetLastError());
   }

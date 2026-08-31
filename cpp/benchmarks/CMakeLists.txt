@@ -138,7 +138,7 @@ ConfigureNVBench(FILTER_NVBENCH filter/minmax_filter.cpp)
 # * stream_compaction benchmark -------------------------------------------------------------------
 ConfigureNVBench(
   STREAM_COMPACTION_NVBENCH
-  stream_compaction/apply_boolean_mask.cpp
+  stream_compaction/apply_mask.cpp
   stream_compaction/distinct.cpp
   stream_compaction/stable_distinct.cpp
   stream_compaction/stream_compaction_common.cpp
@@ -296,8 +296,8 @@ ConfigureNVBench(
 # ##################################################################################################
 # * parquet reader benchmark ----------------------------------------------------------------------
 ConfigureNVBench(
-  PARQUET_READER_NVBENCH io/parquet/parquet_reader_input.cpp io/parquet/parquet_reader_options.cpp
-  io/parquet/reader_common.cpp
+  PARQUET_READER_NVBENCH io/parquet/parquet_reader_input.cpp io/parquet/parquet_reader_encoding.cpp
+  io/parquet/parquet_reader_options.cpp io/parquet/reader_common.cpp
 )
 
 # ##################################################################################################
@@ -350,6 +350,11 @@ target_compile_definitions(
           CROARING_COMPILER_SUPPORTS_AVX512=0
 )
 target_link_libraries(PARQUET_DELETION_VECTORS_NVBENCH PRIVATE roaring)
+
+# ##################################################################################################
+# * parquet variant extract benchmark
+# ----------------------------------------------------------------------
+ConfigureNVBench(VARIANT_NVBENCH io/parquet/experimental/variant/extract.cpp)
 
 # ##################################################################################################
 # * parquet multithread reader benchmark
@@ -414,8 +419,13 @@ add_dependencies(BINARYOP_NVBENCH cudf_benchmark_fragments)
 # * transform benchmark
 # ---------------------------------------------------------------------------------
 ConfigureNVBench(
-  TRANSFORM_NVBENCH transform/encode.cpp transform/polynomials.cpp
-  transform/polynomials_concurrent.cpp transform/transform.cpp
+  TRANSFORM_NVBENCH
+  transform/encode.cpp
+  transform/polynomials.cpp
+  transform/polynomials_concurrent.cpp
+  transform/transform.cpp
+  transform/transform_dispatch.cpp
+  transform/transform_widetable.cpp
 )
 
 # ##################################################################################################
@@ -432,6 +442,7 @@ ConfigureNVBench(
   text/replace.cpp
   text/subword.cpp
   text/tokenize.cpp
+  text/unicode_normalize.cpp
   text/vocab.cpp
 )
 

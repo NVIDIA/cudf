@@ -13,6 +13,10 @@ from pylibcudf.libcudf.table.table cimport table
 from pylibcudf.scalar cimport Scalar
 from pylibcudf.table cimport Table
 from pylibcudf.utils cimport _get_stream, _get_memory_resource
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pylibcudf.typing import CudaStreamLike
 from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 from rmm.pylibrmm.stream cimport Stream
 
@@ -24,7 +28,7 @@ __all__ = ["partition", "rpartition"]
 cpdef Table partition(
     Column input,
     Scalar delimiter=None,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """
@@ -75,7 +79,7 @@ cpdef Table partition(
 cpdef Table rpartition(
     Column input,
     Scalar delimiter=None,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """

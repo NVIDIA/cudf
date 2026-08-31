@@ -26,12 +26,19 @@ from .column cimport Column
 from .expressions cimport Expression
 from .table cimport Table
 from .utils cimport _get_stream, _get_memory_resource
+
+import warnings
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pylibcudf.typing import CudaStreamLike
 from cuda.bindings.cyruntime cimport cudaStream_t
 
 __all__ = [
     "DuplicateKeepOption",
     "apply_boolean_mask",
     "apply_deletion_mask",
+    "apply_retention_mask",
     "distinct",
     "distinct_indices",
     "drop_nans",
@@ -43,9 +50,9 @@ __all__ = [
 
 cpdef Table drop_nulls(
     Table source_table,
-    list keys,
+    list keys: list[int],
     size_type keep_threshold,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """Filters out rows from the input table based on the presence of nulls.
@@ -83,9 +90,9 @@ cpdef Table drop_nulls(
 
 cpdef Table drop_nans(
     Table source_table,
-    list keys,
+    list keys: list[int],
     size_type keep_threshold,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """Filters out rows from the input table based on the presence of NaNs.
@@ -121,22 +128,22 @@ cpdef Table drop_nans(
     return Table.from_libcudf(move(c_result), _stream, mr)
 
 
-cpdef Table apply_boolean_mask(
+cpdef Table apply_retention_mask(
     Table source_table,
-    Column boolean_mask,
-    object stream=None,
+    Column retention_mask,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
-    """Filters out rows from the input table based on a boolean mask.
+    """Filters rows of the input table using a retention mask.
 
-    For details, see :cpp:func:`apply_boolean_mask`.
+    For details, see :cpp:func:`apply_retention_mask`.
 
     Parameters
     ----------
     source_table : Table
         The input table to filter.
-    boolean_mask : Column
-        The boolean mask to apply to the input table.
+    retention_mask : Column
+        The boolean mask whose true values retain input rows.
 
     Returns
     -------
@@ -150,18 +157,33 @@ cpdef Table apply_boolean_mask(
     mr = _get_memory_resource(mr)
 
     cdef table_view c_source_table = source_table.view()
-    cdef column_view c_boolean_mask = boolean_mask.view()
+    cdef column_view c_retention_mask = retention_mask.view()
     with nogil:
-        c_result = cpp_stream_compaction.apply_boolean_mask(
-            c_source_table, c_boolean_mask, _cs, mr.get_mr()
+        c_result = cpp_stream_compaction.apply_retention_mask(
+            c_source_table, c_retention_mask, _cs, mr.get_mr()
         )
     return Table.from_libcudf(move(c_result), _stream, mr)
+
+
+cpdef Table apply_boolean_mask(
+    Table source_table,
+    Column boolean_mask,
+    object stream: CudaStreamLike | None = None,
+    DeviceMemoryResource mr=None,
+):
+    """Deprecated alias for :func:`apply_retention_mask`."""
+    warnings.warn(
+        "apply_boolean_mask is deprecated; use apply_retention_mask instead",
+        FutureWarning,
+        stacklevel=2,
+    )
+    return apply_retention_mask(source_table, boolean_mask, stream, mr)
 
 
 cpdef Table apply_deletion_mask(
     Table source_table,
     Column deletion_mask,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """Filters out rows from the input table using a deletion mask.
@@ -197,10 +219,10 @@ cpdef Table apply_deletion_mask(
 
 cpdef Table unique(
     Table input,
-    list keys,
+    list keys: list[int],
     duplicate_keep_option keep,
     null_equality nulls_equal,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """Filter duplicate consecutive rows from the input table.
@@ -246,11 +268,11 @@ cpdef Table unique(
 
 cpdef Table distinct(
     Table input,
-    list keys,
+    list keys: list[int],
     duplicate_keep_option keep,
     null_equality nulls_equal,
     nan_equality nans_equal,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """Get the distinct rows from the input table.
@@ -297,7 +319,7 @@ cpdef Column distinct_indices(
     duplicate_keep_option keep,
     null_equality nulls_equal,
     nan_equality nans_equal,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """Get the indices of the distinct rows from the input table.
@@ -336,11 +358,11 @@ cpdef Column distinct_indices(
 
 cpdef Table stable_distinct(
     Table input,
-    list keys,
+    list keys: list[int],
     duplicate_keep_option keep,
     null_equality nulls_equal,
     nan_equality nans_equal,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """Get the distinct rows from the input table, preserving input order.
@@ -386,7 +408,7 @@ cpdef Table filter(
     Table predicate_table,
     Expression predicate_expr,
     Table filter_table,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """Filters a table using a predicate expression.

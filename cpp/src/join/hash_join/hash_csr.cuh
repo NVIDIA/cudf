@@ -15,9 +15,15 @@
 
 namespace cudf::detail {
 
+/// One open-addressed slot: the row hash and the index of the build row that claimed it.
 using hash_table_entry_type = cuco::pair<hash_value_type, size_type>;
-using build_position_type   = cuco::pair<cuda::std::uint32_t, size_type>;
 
+/// Where a build row landed: the slot it claimed and its rank among the rows sharing that slot.
+/// Computing the rank during the build lets retrieval index straight into the CSR without a
+/// second pass.
+using build_position_type = cuco::pair<cuda::std::uint32_t, size_type>;
+
+/// Device-side view of the open-addressed table, linearly probed with a power-of-two capacity.
 struct hash_table_ref {
   hash_table_entry_type* entries;
   cuda::std::uint32_t capacity;  ///< Power of two, so the probe index is a mask instead of a modulo

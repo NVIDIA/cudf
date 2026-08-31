@@ -598,6 +598,35 @@ def test_masked_bool_truth(value, valid, expected):
     assert bool(out.get()[0]) is expected
 
 
+@pytest.mark.parametrize(
+    "value,valid,expected",
+    [
+        (1.0, True, True),  # valid & truthy
+        (-2.5, True, True),  # valid & truthy (negative)
+        (0.0, True, False),  # valid & falsy
+        (float("nan"), True, True),  # nan is truthy, like Python
+        (1.0, False, False),  # invalid -> False regardless of payload
+    ],
+)
+def test_masked_bool_truth_float(value, valid, expected):
+    """``bool(m)`` on a float payload tests ``payload != 0`` (not fptoui)."""
+
+    @cuda.jit(
+        types.void(types.boolean[::1], types.float64[::1], types.boolean[::1])
+    )
+    def k(out, a, av):
+        out[0] = bool(Masked(a[0], av[0]))
+
+    out = cp.zeros(1, dtype=np.bool_)
+    _launch(
+        k,
+        out,
+        cp.array([value], dtype=np.float64),
+        cp.array([valid], dtype=np.bool_),
+    )
+    assert bool(out.get()[0]) is expected
+
+
 def test_masked_bool_in_if_condition():
     """A Masked used directly in an ``if`` uses its truth value."""
 

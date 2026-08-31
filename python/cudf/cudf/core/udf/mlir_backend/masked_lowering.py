@@ -415,12 +415,24 @@ def _lower_masked_invert(
 def _lower_masked_truth(
     builder: MLIRLower, target: Var, args: list[Var], kwargs: list
 ) -> None:
-    """``bool(m)`` / ``operator.truth(m)``: ``m.valid and bool(m.value)``."""
+    """``bool(m)`` / ``operator.truth(m)``: ``m.valid and bool(m.value)``.
+
+    Float payloads take a dedicated path: ``convert(float -> i1)`` lowers via
+    ``arith.fptoui`` to a 1-bit integer, which truncates rather than testing
+    truthiness (e.g. ``bool(1.0)`` would come out ``False``). Compute
+    ``payload != 0`` directly instead; the unordered ``UNE`` predicate also
+    gives the Python-correct ``bool(nan) is True``.
+    """
     m = builder.load_var(args[0])
     st = llvm.StructType(m.type)
     m_val, m_valid = _extract_masked_value_valid(m, st.body[0], st.body[1])
-    bool_mlir_ty = builder.get_mlir_type(types.boolean)
-    payload_as_bool = bool_of(convert(m_val, bool_mlir_ty))
+    inner_ty = builder.get_numba_type(args[0].name).value_type
+    if isinstance(inner_ty, types.Float):
+        zero = arith.constant(m_val.type, 0.0)
+        payload_as_bool = arith.cmpf(arith.CmpFPredicate.UNE, m_val, zero)
+    else:
+        bool_mlir_ty = builder.get_mlir_type(types.boolean)
+        payload_as_bool = bool_of(convert(m_val, bool_mlir_ty))
     result = arith.select(m_valid, payload_as_bool, false())
     builder.store_var(target, result)
 

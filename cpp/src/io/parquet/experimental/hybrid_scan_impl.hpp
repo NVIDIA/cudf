@@ -115,13 +115,6 @@ class hybrid_scan_reader_impl : public parquet::detail::reader_impl {
     cuda::stream_ref stream);
 
   /**
-   * @copydoc cudf::io::parquet::experimental::hybrid_scan_reader::secondary_filters_byte_ranges
-   */
-  [[nodiscard]] std::pair<std::vector<byte_range_info>, std::vector<byte_range_info>>
-  secondary_filters_byte_ranges(std::span<std::vector<size_type> const> row_group_indices,
-                                parquet_reader_options const& options);
-
-  /**
    * @copydoc cudf::io::parquet::experimental::hybrid_scan_multifile::bloom_filters_byte_ranges
    */
   [[nodiscard]] std::pair<std::vector<byte_range_info>, std::vector<size_type>>

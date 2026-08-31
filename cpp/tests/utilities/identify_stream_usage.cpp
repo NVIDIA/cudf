@@ -6,8 +6,8 @@
 #include <cudf/detail/utilities/stream_pool.hpp>
 
 #include <rmm/cuda_stream.hpp>
-#include <rmm/cuda_stream_view.hpp>
 
+#include <cuda/stream>
 #include <cuda_runtime.h>
 
 #include <dlfcn.h>
@@ -48,7 +48,7 @@ namespace cudf {
 namespace test {
 #endif
 
-rmm::cuda_stream_view const get_default_stream()
+cuda::stream_ref const get_default_stream()
 {
   static rmm::cuda_stream stream{};
   return stream;
@@ -86,7 +86,7 @@ bool stream_is_invalid(cudaStream_t stream)
 {
 #ifdef STREAM_MODE_TESTING
   // In this mode the _only_ valid stream is the one returned by cudf::test::get_default_stream.
-  return (stream != cudf::test::get_default_stream().value());
+  return (stream != cudf::test::get_default_stream().get());
 #else
   // We explicitly list the possibilities rather than using
   // `cudf::get_default_stream().value()` because there is no guarantee that

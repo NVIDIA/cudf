@@ -6,10 +6,11 @@
 #pragma once
 #include <cudf/table/table_view.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_buffer.hpp>
 #include <rmm/device_uvector.hpp>
 #include <rmm/resource_ref.hpp>
+
+#include <cuda/stream>
 
 #include <cstddef>
 #include <cstdint>
@@ -62,7 +63,7 @@ struct device_bloom_filter {
    * filter size.
    */
   static std::unique_ptr<rmm::device_buffer> storage(std::size_t filter_size,
-                                                     rmm::cuda_stream_view stream,
+                                                     cuda::stream_ref stream,
                                                      rmm::device_async_resource_ref mr);
 
   /**
@@ -88,7 +89,7 @@ struct device_bloom_filter {
    * @param mr Memory resource for allocations.
    */
   void add(cudf::table_view const& values_to_hash,
-           rmm::cuda_stream_view stream,
+           cuda::stream_ref stream,
            rmm::device_async_resource_ref mr);
 
   /**
@@ -99,7 +100,7 @@ struct device_bloom_filter {
    *
    * @throws std::logic_error If `other` is not compatible with this filter.
    */
-  void merge(device_bloom_filter const& other, rmm::cuda_stream_view stream);
+  void merge(device_bloom_filter const& other, cuda::stream_ref stream);
 
   /**
    * @brief Return a mask of which rows are contained in the filter.
@@ -111,7 +112,7 @@ struct device_bloom_filter {
    * @return Mask vector to be used for filtering the table.
    */
   [[nodiscard]] rmm::device_uvector<bool> contains(cudf::table_view const& values,
-                                                   rmm::cuda_stream_view stream,
+                                                   cuda::stream_ref stream,
                                                    rmm::device_async_resource_ref mr) const;
 
   /**

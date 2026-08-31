@@ -115,13 +115,6 @@ class hybrid_scan_reader_impl : public parquet::detail::reader_impl {
     cuda::stream_ref stream);
 
   /**
-   * @copydoc cudf::io::parquet::experimental::hybrid_scan_reader::secondary_filters_byte_ranges
-   */
-  [[nodiscard]] std::pair<std::vector<byte_range_info>, std::vector<byte_range_info>>
-  secondary_filters_byte_ranges(std::span<std::vector<size_type> const> row_group_indices,
-                                parquet_reader_options const& options);
-
-  /**
    * @copydoc cudf::io::parquet::experimental::hybrid_scan_multifile::bloom_filters_byte_ranges
    */
   [[nodiscard]] std::pair<std::vector<byte_range_info>, std::vector<size_type>>
@@ -600,7 +593,7 @@ class hybrid_scan_reader_impl : public parquet::detail::reader_impl {
    * and only if in_row_mask[i] is valid and true
    *
    * Updates the output row mask to reflect the final valid and surviving rows from the input row
-   * mask. This is inline with the masking behavior of cudf::detail::apply_boolean_mask
+   * mask. This is inline with the masking behavior of cudf::apply_retention_mask.
    *
    * @param in_row_mask Input row mask column
    * @param out_row_mask Output row mask column

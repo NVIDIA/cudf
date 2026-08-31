@@ -286,9 +286,9 @@ fetch_byte_ranges_to_device_async_impl(
   cudf::host_span<std::reference_wrapper<cudf::io::datasource> const> datasources,
   cudf::host_span<cudf::host_span<cudf::io::text::byte_range_info const> const>
     byte_ranges_per_source,
+  bool serialize_submissions,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr,
-  bool serialize_submissions)
+  rmm::device_async_resource_ref mr)
 {
   auto const num_sources = datasources.size();
 
@@ -479,9 +479,9 @@ fetch_bloom_filters_to_device_impl(
   cudf::host_span<std::reference_wrapper<cudf::io::datasource> const> datasources,
   cudf::host_span<cudf::host_span<cudf::io::text::byte_range_info const> const>
     bloom_filter_byte_ranges_per_source,
+  bool serialize_submissions,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr,
-  bool serialize_submissions)
+  rmm::device_async_resource_ref mr)
 {
   auto const num_sources = datasources.size();
   CUDF_EXPECTS(num_sources == bloom_filter_byte_ranges_per_source.size(),
@@ -725,9 +725,9 @@ fetch_byte_ranges_to_device_async(cudf::io::datasource& datasource,
   auto [buffers, fetched_byte_ranges, fut] = fetch_byte_ranges_to_device_async_impl(
     {datasources.data(), datasources.size()},
     {byte_ranges_per_source.data(), byte_ranges_per_source.size()},
+    policy == io_submission_policy::SERIALIZE,
     stream,
-    mr.get_output_mr(),
-    policy == io_submission_policy::SERIALIZE);
+    mr.get_output_mr());
 
   return {std::move(buffers), std::move(fetched_byte_ranges.front()), std::move(fut)};
 }
@@ -753,9 +753,9 @@ fetch_byte_ranges_to_device_async(
   return fetch_byte_ranges_to_device_async_impl(
     datasources,
     {byte_range_spans_per_source.data(), byte_range_spans_per_source.size()},
+    policy == io_submission_policy::SERIALIZE,
     stream,
-    mr.get_output_mr(),
-    policy == io_submission_policy::SERIALIZE);
+    mr.get_output_mr());
 }
 
 std::pair<std::vector<rmm::device_buffer>, std::vector<cudf::device_span<uint8_t const>>>
@@ -776,9 +776,9 @@ fetch_bloom_filters_to_device(
   auto [buffers, fetched_byte_ranges] = fetch_bloom_filters_to_device_impl(
     {datasources.data(), datasources.size()},
     {bloom_filter_byte_ranges_per_source.data(), bloom_filter_byte_ranges_per_source.size()},
+    policy == io_submission_policy::SERIALIZE,
     stream,
-    mr.get_output_mr(),
-    policy == io_submission_policy::SERIALIZE);
+    mr.get_output_mr());
 
   return {std::move(buffers), std::move(fetched_byte_ranges.front())};
 }
@@ -805,9 +805,9 @@ fetch_bloom_filters_to_device(
   return fetch_bloom_filters_to_device_impl(datasources,
                                             {bloom_filter_byte_range_spans_per_source.data(),
                                              bloom_filter_byte_range_spans_per_source.size()},
+                                            policy == io_submission_policy::SERIALIZE,
                                             stream,
-                                            mr.get_output_mr(),
-                                            policy == io_submission_policy::SERIALIZE);
+                                            mr.get_output_mr());
 }
 
 std::tuple<std::vector<rmm::device_buffer>,

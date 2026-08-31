@@ -23,7 +23,6 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/traits.hpp>
 #include <cudf/utilities/type_checks.hpp>
-#include <cudf/utilities/type_dispatcher.hpp>
 
 #include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
@@ -139,56 +138,25 @@ struct compute_children_offsets_fn {
  * @brief Functor for mapping the old indices values to the new indices values
  *        based on the new keys arrangement after concatenation
  *
- * @tparam IndexType Integral type of the (already widened) indices column
+ * Indices are read through an indexalator, so any integral indices type is
+ * remapped without type dispatch.
  */
-template <typename IndexType>
 struct map_indices_fn {
   cuda::std::span<offsets_pair const> d_offsets;
   cuda::std::span<size_type const> d_keys_remap;
-  column_device_view d_indices;
+  column_device_view d_indices;  // for null checks only
+  cudf::detail::input_indexalator d_input;
 
-  __device__ IndexType operator()(size_type idx) const
+  __device__ size_type operator()(size_type idx) const
   {
-    if (d_indices.is_null(idx)) { return IndexType{0}; }
+    if (d_indices.is_null(idx)) { return 0; }
     auto cmp = [] __device__(auto const& lhs, auto const& rhs) { return lhs.second < rhs.second; };
     auto col_iter = thrust::upper_bound(
                       thrust::seq, d_offsets.begin(), d_offsets.end(), offsets_pair{0, idx}, cmp) -
                     1;
-    auto col_idx         = cuda::std::distance(d_offsets.begin(), col_iter);
-    auto key_offset      = d_offsets[col_idx].first;
-    auto const old_index = static_cast<size_type>(d_indices.element<IndexType>(idx));
-    return static_cast<IndexType>(d_keys_remap[key_offset + old_index]);
-  }
-};
-
-/**
- * @brief Dispatches map_indices_fn on the indices type so that the indices are
- *        read and written with their actual width (INT8/INT16/INT32/...).
- */
-struct remap_indices_fn {
-  template <typename IndexType>
-  void operator()(column_device_view const& d_indices,
-                  mutable_column_view const& output,
-                  cuda::std::span<offsets_pair const> d_offsets,
-                  cuda::std::span<size_type const> d_keys_remap,
-                  rmm::cuda_stream_view stream,
-                  rmm::device_async_resource_ref mr) const
-    requires(cudf::is_index_type<IndexType>())
-  {
-    auto policy = rmm::exec_policy_nosync(stream, mr);
-    auto iota   = cuda::counting_iterator<size_type>{0};
-    thrust::transform(policy,
-                      iota,
-                      iota + output.size(),
-                      output.begin<IndexType>(),
-                      map_indices_fn<IndexType>{d_offsets, d_keys_remap, d_indices});
-  }
-
-  template <typename IndexType, typename... Args>
-  void operator()(Args&&...) const
-    requires(!cudf::is_index_type<IndexType>())
-  {
-    CUDF_FAIL("dictionary indices must be an integral index type");
+    auto col_idx    = cuda::std::distance(d_offsets.begin(), col_iter);
+    auto key_offset = d_offsets[col_idx].first;
+    return d_keys_remap[key_offset + d_input[idx]];
   }
 };
 
@@ -301,17 +269,12 @@ std::unique_ptr<column> concatenate(host_span<column_view const> columns,
   // remap the input indices values to the new indices for the new keys order
   auto indices_column = make_numeric_column(
     all_indices->type(), all_indices->size(), mask_state::UNALLOCATED, stream, mr);
-  auto output_view      = indices_column->mutable_view();
   auto input_view       = column_device_view::create(all_indices->view(), stream, temp_mr);
+  auto d_input          = cudf::detail::indexalator_factory::make_input_iterator(all_indices->view());
+  auto d_output         = cudf::detail::indexalator_factory::make_output_iterator(indices_column->mutable_view());
   auto children_offsets = child_offsets_fn.create_children_offsets(stream, temp_mr);
-  cudf::type_dispatcher(all_indices->type(),
-                        remap_indices_fn{},
-                        *input_view,
-                        output_view,
-                        cuda::std::span<offsets_pair const>{children_offsets},
-                        cuda::std::span<size_type const>{final_remap},
-                        stream,
-                        temp_mr);
+  auto map_fn           = map_indices_fn{children_offsets, final_remap, *input_view, d_input};
+  thrust::transform(policy, iota, iota + all_indices->size(), d_output, map_fn);
 
   // remove the bitmask from the all_indices
   auto null_count = all_indices->null_count();  // get before release()

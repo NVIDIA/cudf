@@ -100,14 +100,19 @@ CUDF_KERNEL void hash_csr_probe_count_kernel(size_type num_rows,
       match_counts[index] = IsOuter ? cuda::std::max(count, size_type{1}) : count;
     }
 
-    if (found && matched_slots != nullptr) {
-      auto matched_slot_ref =
-        cuda::atomic_ref<cuda::std::uint32_t, cuda::thread_scope_device>{matched_slots[slot]};
-      auto expected = cuda::std::uint32_t{0};
-      if (matched_slot_ref.compare_exchange_strong(
-            expected, cuda::std::uint32_t{1}, cuda::memory_order_relaxed)) {
-        cuda::atomic_ref<cuda::std::uint64_t, cuda::thread_scope_device>{*matched_build_rows}
-          .fetch_add(static_cast<cuda::std::uint64_t>(count), cuda::memory_order_relaxed);
+    // Only right and full joins consume the matched-row tally, and `matched_slots` is null for
+    // every other kind, so this whole block compiles away outside outer joins rather than costing
+    // a branch per probe row.
+    if constexpr (IsOuter) {
+      if (found && matched_slots != nullptr) {
+        auto matched_slot_ref =
+          cuda::atomic_ref<cuda::std::uint32_t, cuda::thread_scope_device>{matched_slots[slot]};
+        auto expected = cuda::std::uint32_t{0};
+        if (matched_slot_ref.compare_exchange_strong(
+              expected, cuda::std::uint32_t{1}, cuda::memory_order_relaxed)) {
+          cuda::atomic_ref<cuda::std::uint64_t, cuda::thread_scope_device>{*matched_build_rows}
+            .fetch_add(static_cast<cuda::std::uint64_t>(count), cuda::memory_order_relaxed);
+        }
       }
     }
   }

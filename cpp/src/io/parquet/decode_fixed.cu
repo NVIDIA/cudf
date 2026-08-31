@@ -83,7 +83,7 @@ __device__ static void scan_block_exclusive_sum(
 }
 
 /**
- * @brief Write a batch of decoded dictionary indices directly as INT32 output values.
+ * @brief Write a batch of decoded dictionary indices directly as signed integer output values.
  *
  * Used by the Parquet-dict → DICTIONARY32 transcode path: instead of materializing the dictionary
  * keys, the per-row dictionary indices are emitted verbatim as the signed integer indices child
@@ -134,7 +134,6 @@ __device__ void decode_dict_indices_as_int32(
         return thread_pos;
       }();
 
-      auto* dst = reinterpret_cast<int32_t*>(data_out) + dst_pos;
       // string chunks index a string_index_pair table; fixed-width chunks index the raw
       // dictionary page, whose entries are the physical value width
       auto const entry_size = s->setup.col.physical_type == Type::BYTE_ARRAY
@@ -149,7 +148,7 @@ __device__ void decode_dict_indices_as_int32(
         switch (s->output_cvt.dtype_len) {
           case 1: reinterpret_cast<int8_t*>(data_out)[dst_pos] = static_cast<int8_t>(idx); break;
           case 2: reinterpret_cast<int16_t*>(data_out)[dst_pos] = static_cast<int16_t>(idx); break;
-          default: *dst = idx; break;
+          default: reinterpret_cast<int32_t*>(data_out)[dst_pos] = idx; break;
         }
       }
     }

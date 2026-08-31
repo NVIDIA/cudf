@@ -118,14 +118,17 @@ void update_from_chunk(column_eligibility& e, ColumnChunkDesc const& chunk)
  * @brief Compute per-input-column eligibility for Parquet-dict → DICTIONARY32 transcode.
  *
  * A column is eligible iff
- *  - the corresponding output buffer is currently typed as STRING (i.e. a flat string column),
- *  - every chunk of that column is a BYTE_ARRAY string chunk with a dictionary page,
+ *  - the corresponding output buffer is a flat STRING column, or a flat fixed-width column whose
+ *    decode is a plain copy of INT32/INT64 physical values (no decimal, timestamp-unit, or width
+ *    conversion) -- the buffer's logical type becomes the DICTIONARY32 keys type,
+ *  - every chunk of that column is a matching chunk of that type with a dictionary page,
  *  - every data page of every chunk of that column uses DICTIONARY encoding,
  *  - the chunk has a flat (non-list, non-nested) schema.
  *
  * @param pass The pass intermediate data holding host-side chunks and pages
  * @param input_columns The reader's input column descriptors
- * @param output_buffers The output column buffers (used to detect flat STRING columns)
+ * @param output_buffers The output column buffers (used to detect eligible flat columns and
+ * their logical key types)
  * @return A vector of per-input-column eligibility records, indexed by input column
  */
 [[nodiscard]] std::vector<column_eligibility> compute_dict_transcode_eligibility(

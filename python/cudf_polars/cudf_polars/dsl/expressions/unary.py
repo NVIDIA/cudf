@@ -816,7 +816,7 @@ class UnaryFunction(Expr):
             if not index.is_valid(stream=df.stream):
                 if unmasked.null_count != unmasked.size:
                     valid = plc.unary.is_valid(unmasked.obj, stream=df.stream)
-                    filtered = plc.stream_compaction.apply_boolean_mask(
+                    filtered = plc.stream_compaction.apply_retention_mask(
                         plc.Table([val.obj]), valid, stream=df.stream
                     )
                     return Column(

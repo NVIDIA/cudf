@@ -10,6 +10,7 @@ import pytest
 import cudf
 from cudf.core.character_normalizer import CharacterNormalizer
 from cudf.core.tokenize_vocabulary import TokenizeVocabulary
+from cudf.core.unicode_normalizer import UnicodeNormalizer
 from cudf.testing import assert_eq
 
 
@@ -272,6 +273,43 @@ def test_normalize_characters():
     actual = normalizer.normalize(strings.str)
     assert type(expected) is type(actual)
     assert_eq(expected, actual)
+
+
+def test_unicode_normalize():
+    # Minimal unicode_data DataFrame: é (U+00E9) and combining acute (U+0301),
+    # plus ﬁ ligature (U+FB01) with compatibility-only decomposition.
+    unicode_data = cudf.DataFrame(
+        {
+            "cp": cudf.Series(["00E9", "0301", "FB01"]),
+            "ccc": cudf.Series([0, 230, 0], dtype="int32"),
+            "decomp": cudf.Series(["0065 0301", "", "<compat> 0066 0069"]),
+        }
+    )
+
+    # NFC: decomposed e + combining acute → precomposed é; ﬁ unchanged
+    nfc = UnicodeNormalizer(unicode_data, form="NFC")
+    assert_eq(
+        nfc.normalize(cudf.Series(["é", "café", "ﬁ", None])),
+        cudf.Series(["é", "café", "ﬁ", None]),
+    )
+
+    # NFD: precomposed é (U+00E9) → e (U+0065) + combining acute (U+0301)
+    nfd = UnicodeNormalizer(unicode_data, form="NFD")
+    assert_eq(
+        nfd.normalize(cudf.Series(["é"])),
+        cudf.Series(["é"]),
+    )
+
+    # NFKC: ﬁ ligature expands to "fi"
+    nfkc = UnicodeNormalizer(unicode_data, form="NFKC")
+    assert_eq(
+        nfkc.normalize(cudf.Series(["ﬁ", "café"])),
+        cudf.Series(["fi", "café"]),
+    )
+
+    # invalid form raises ValueError
+    with pytest.raises(ValueError, match="Invalid normalization form"):
+        UnicodeNormalizer(unicode_data, form="XYZ")
 
 
 @pytest.mark.parametrize(

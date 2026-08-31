@@ -73,7 +73,7 @@ template <typename Hasher>
 template <join_kind Join>
 std::size_t hash_join<Hasher>::join_size(cudf::table_view const& left,
                                          cuda::stream_ref stream,
-                                         rmm::device_async_resource_ref mr) const
+                                         [[maybe_unused]] rmm::device_async_resource_ref mr) const
 {
   static_assert(Join == join_kind::FULL_JOIN);
 

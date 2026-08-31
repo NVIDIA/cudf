@@ -209,9 +209,11 @@ class hash_join {
   [[nodiscard]] std::size_t join_size(cudf::table_view const& left, cuda::stream_ref stream) const;
 
   template <join_kind Join>
+  /// The resource is accepted for signature parity with the other size APIs; every allocation
+  /// here is temporary and comes from the current device resource.
   [[nodiscard]] std::size_t join_size(cudf::table_view const& left,
                                       cuda::stream_ref stream,
-                                      rmm::device_async_resource_ref mr) const;
+                                      [[maybe_unused]] rmm::device_async_resource_ref mr) const;
 };
 
 }  // namespace detail

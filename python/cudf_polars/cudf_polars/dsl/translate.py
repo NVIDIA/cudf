@@ -906,6 +906,10 @@ def _(node: plrs._ir_nodes.Sink, translator: Translator, schema: Schema) -> ir.I
     else:
         path = file["target"]["inner"]
 
+    df = translator.translate_ir(n=node.input)
+    if any(_contains_array(dtype.polars_type) for dtype in df.schema.values()):
+        raise NotImplementedError(_ARRAY_PASSTHROUGH_ERROR)
+
     return ir.Sink(
         schema=schema,
         kind=sink_kind,
@@ -913,7 +917,7 @@ def _(node: plrs._ir_nodes.Sink, translator: Translator, schema: Schema) -> ir.I
         parquet_options=translator.config_options.parquet_options,
         options=options,
         cloud_options=cloud_options,
-        df=translator.translate_ir(n=node.input),
+        df=df,
     )
 
 

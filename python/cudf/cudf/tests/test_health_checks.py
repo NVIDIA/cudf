@@ -32,11 +32,13 @@ def test_rapids_doctor_runs_required_and_cudf_health_checks():
         encoding="utf-8",
         timeout=120,
     )
+    output = f"{result.stdout}\n{result.stderr}"
 
-    # A successful RAPIDS Doctor exit code means all discovered checks passed,
-    # including the registered cuDF checks validated above.
+    # A successful RAPIDS Doctor exit code means all discovered checks passed.
     assert result.returncode == 0, (
         f"rapids doctor exited with return code {result.returncode}\n"
         f"stdout:\n{result.stdout}\n"
         f"stderr:\n{result.stderr}"
     )
+    for name in _CUDF_HEALTH_CHECKS:
+        assert f"Found check '{name}'" in output, output

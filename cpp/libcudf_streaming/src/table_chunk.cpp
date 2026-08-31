@@ -20,7 +20,7 @@
 
 namespace cudf_streaming {
 
-table_chunk::table_chunk(std::unique_ptr<cudf::table> table, rmm::cuda_stream_view stream)
+table_chunk::table_chunk(std::unique_ptr<cudf::table> table, cuda::stream_ref stream)
   : table_{std::move(table)}, stream_{stream}, is_spillable_{true}
 {
   RAPIDSMPF_EXPECTS(table_ != nullptr, "table pointer cannot be null", std::invalid_argument);
@@ -31,7 +31,7 @@ table_chunk::table_chunk(std::unique_ptr<cudf::table> table, rmm::cuda_stream_vi
 }
 
 table_chunk::table_chunk(cudf::table_view table_view,
-                         rmm::cuda_stream_view stream,
+                         cuda::stream_ref stream,
                          rapidsmpf::OwningWrapper&& owner,
                          exclusive_view exclusive_view)
   : owner_{std::move(owner)},
@@ -93,7 +93,7 @@ table_chunk& table_chunk::operator=(table_chunk&& other) noexcept
   return *this;
 }
 
-rmm::cuda_stream_view table_chunk::stream() const noexcept { return stream_; }
+cuda::stream_ref table_chunk::stream() const noexcept { return stream_; }
 
 std::size_t table_chunk::data_alloc_size(rapidsmpf::MemoryType mem_type) const
 {

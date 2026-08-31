@@ -129,7 +129,7 @@ void BM_filter_min_max(nvbench::state& state)
         auto filter_table         = cudf::table_view{filter_column_views};
         auto const filter_boolean = cudf::compute_column(predicate_table, tree.back(), stream, mr);
         auto const result =
-          cudf::apply_boolean_mask(filter_table, filter_boolean->view(), stream, mr);
+          cudf::apply_retention_mask(filter_table, filter_boolean->view(), stream, mr);
       } break;
       case engine_type::JIT: {
         cudf::filter_input predicate_inputs[] = {

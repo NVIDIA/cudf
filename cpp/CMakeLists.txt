@@ -182,21 +182,18 @@ set(CUDF_CUDA_FLAGS "")
 set(CUDF_CXX_DEFINITIONS "")
 set(CUDF_CUDA_DEFINITIONS "")
 
+if(CMAKE_CUDA_COMPILER_VERSION VERSION_GREATER_EQUAL 13.0.0)
+  set(DEFAULT_CUDF_LTO_ARCHITECTURE 75)
+else()
+  set(DEFAULT_CUDF_LTO_ARCHITECTURE 70)
+endif()
+
 # LTO IR can only be linked for targets greater than or equal to its architecture. An explicit
 # override must therefore not exceed the architecture of any target GPU on which it will be linked.
 set(CUDF_LTO_ARCHITECTURE
-    ""
-    CACHE STRING "LTO fragment architecture; empty selects the minimum supported by the toolkit"
+    "${DEFAULT_CUDF_LTO_ARCHITECTURE}"
+    CACHE STRING "LTO fragment architecture"
 )
-
-if(CUDF_LTO_ARCHITECTURE STREQUAL "")
-  foreach(architecture IN LISTS CMAKE_CUDA_ARCHITECTURES_ALL)
-    string(REGEX MATCH "^[0-9]+" architecture "${architecture}")
-    if(architecture AND (NOT CUDF_LTO_ARCHITECTURE OR architecture LESS CUDF_LTO_ARCHITECTURE))
-      set(CUDF_LTO_ARCHITECTURE "${architecture}")
-    endif()
-  endforeach()
-endif()
 
 if(NOT CUDF_LTO_ARCHITECTURE MATCHES "^[0-9]+$")
   message(FATAL_ERROR "CUDF_LTO_ARCHITECTURE must be a numeric architecture")
@@ -924,7 +921,7 @@ add_library(
   src/lists/segmented_sort.cu
   src/lists/sequences.cu
   src/lists/set_operations.cu
-  src/lists/stream_compaction/apply_boolean_mask.cu
+  src/lists/stream_compaction/apply_mask.cu
   src/lists/stream_compaction/distinct.cu
   src/lists/utilities.cu
   src/merge/merge.cu
@@ -1023,7 +1020,7 @@ add_library(
   src/sort/stable_sort_column.cu
   src/sort/stable_sort.cu
   src/sort/top_k.cu
-  src/stream_compaction/apply_boolean_mask.cu
+  src/stream_compaction/apply_mask.cu
   src/stream_compaction/distinct.cu
   src/stream_compaction/distinct_helpers.cu
   src/stream_compaction/distinct_helpers_flat_nan_equal_any.cu

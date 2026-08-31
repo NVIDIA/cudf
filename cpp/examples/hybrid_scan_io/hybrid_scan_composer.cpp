@@ -129,15 +129,12 @@ std::vector<cudf::size_type> apply_row_group_filters(
     }
   }
 
-  // Get bloom filter and dictionary page byte ranges from the reader
-  std::vector<cudf::io::text::byte_range_info> bloom_filter_byte_ranges;
+  // Get dictionary page byte ranges from the reader
   std::vector<cudf::io::text::byte_range_info> dict_page_byte_ranges;
-  if (filters.contains(hybrid_scan_filter_type::ROW_GROUPS_WITH_DICT_PAGES) or
-      filters.contains(hybrid_scan_filter_type::ROW_GROUPS_WITH_BLOOM_FILTERS)) {
-    if (verbose) { std::cout << "READER: Get bloom filter and dictionary page byte ranges...\n"; }
+  if (filters.contains(hybrid_scan_filter_type::ROW_GROUPS_WITH_DICT_PAGES)) {
+    if (verbose) { std::cout << "READER: Get dictionary page byte ranges...\n"; }
     timer.reset();
-    std::tie(bloom_filter_byte_ranges, dict_page_byte_ranges) =
-      reader.secondary_filters_byte_ranges(current_row_group_indices, options);
+    dict_page_byte_ranges = reader.dictionary_pages_byte_ranges(current_row_group_indices, options);
     if (verbose) { timer.print_elapsed_millis(); }
   }
 
@@ -146,8 +143,7 @@ std::vector<cudf::size_type> apply_row_group_filters(
   // Filter row groups with dictionary pages
   std::vector<cudf::size_type> dictionary_page_filtered_row_group_indices;
   dictionary_page_filtered_row_group_indices.reserve(current_row_group_indices.size());
-  if (filters.contains(hybrid_scan_filter_type::ROW_GROUPS_WITH_DICT_PAGES) and
-      dict_page_byte_ranges.size()) {
+  if (not dict_page_byte_ranges.empty()) {
     if (verbose) { std::cout << "READER: Filter row groups with dictionary pages...\n"; }
     timer.reset();
 
@@ -170,11 +166,19 @@ std::vector<cudf::size_type> apply_row_group_filters(
     std::cout << "SKIP: Row group filtering with dictionary pages...\n\n";
   }
 
+  // Get bloom filter byte ranges from the reader
+  std::vector<cudf::io::text::byte_range_info> bloom_filter_byte_ranges;
+  if (filters.contains(hybrid_scan_filter_type::ROW_GROUPS_WITH_BLOOM_FILTERS)) {
+    if (verbose) { std::cout << "READER: Get bloom filter byte ranges...\n"; }
+    timer.reset();
+    bloom_filter_byte_ranges = reader.bloom_filters_byte_ranges(current_row_group_indices, options);
+    if (verbose) { timer.print_elapsed_millis(); }
+  }
+
   // Filter row groups with bloom filters
   std::vector<cudf::size_type> bloom_filtered_row_group_indices;
   bloom_filtered_row_group_indices.reserve(current_row_group_indices.size());
-  if (filters.contains(hybrid_scan_filter_type::ROW_GROUPS_WITH_BLOOM_FILTERS) and
-      bloom_filter_byte_ranges.size()) {
+  if (not bloom_filter_byte_ranges.empty()) {
     // Fetch 32-byte aligned bloom filter data buffers from the input file buffer
     auto constexpr bloom_filter_alignment = rmm::CUDA_ALLOCATION_ALIGNMENT;
     auto aligned_mr = rmm::mr::aligned_resource_adaptor(temp_mr, bloom_filter_alignment);

@@ -218,9 +218,14 @@ class MaskedScalarNullOp(AbstractTemplate):
         return None
 
 
-# Resolve the underlying scalar op on the value type, wrap the result.
 class MaskedScalarUnaryOp(AbstractTemplate):
-    def generic(self, args, kws):
+    """``<op>(Masked)``: resolve the underlying scalar op on the value type
+    and wrap the result back in a ``MaskedType``.
+    """
+
+    def generic(
+        self, args: tuple[types.Type, ...], kws: dict
+    ) -> Signature | None:
         if len(args) == 1 and isinstance(args[0], MaskedType):
             return_type = self.context.resolve_function_type(
                 self.key, (args[0].value_type,), kws
@@ -229,34 +234,49 @@ class MaskedScalarUnaryOp(AbstractTemplate):
         return None
 
 
-# ``bool(m)`` / ``operator.truth(m)`` -> boolean. The runtime result is
-# ``m.valid and bool(m.value)``; the *type* is a plain boolean (used
-# directly in ``if`` conditions).
 class MaskedScalarTruth(AbstractTemplate):
-    def generic(self, args, kws):
+    """``bool(m)`` / ``operator.truth(m)`` -> boolean.
+
+    The runtime result is ``m.valid and bool(m.value)``; the *type* is a
+    plain boolean (used directly in ``if`` conditions).
+    """
+
+    def generic(
+        self, args: tuple[types.Type, ...], kws: dict
+    ) -> Signature | None:
         if len(args) == 1 and isinstance(args[0], MaskedType):
             return nb_signature(types.boolean, args[0])
         return None
 
 
-# ``float(m)`` -> Masked(float64); ``int(m)`` -> Masked(int64).
 class MaskedScalarFloatCast(AbstractTemplate):
-    def generic(self, args, kws):
+    """``float(m)`` -> ``Masked(float64)``."""
+
+    def generic(
+        self, args: tuple[types.Type, ...], kws: dict
+    ) -> Signature | None:
         if len(args) == 1 and isinstance(args[0], MaskedType):
             return nb_signature(MaskedType(types.float64), args[0])
         return None
 
 
 class MaskedScalarIntCast(AbstractTemplate):
-    def generic(self, args, kws):
+    """``int(m)`` -> ``Masked(int64)``."""
+
+    def generic(
+        self, args: tuple[types.Type, ...], kws: dict
+    ) -> Signature | None:
         if len(args) == 1 and isinstance(args[0], MaskedType):
             return nb_signature(MaskedType(types.int64), args[0])
         return None
 
 
-# ``abs(m)`` -> Masked(result).
 class MaskedScalarAbsoluteValue(AbstractTemplate):
-    def generic(self, args, kws):
+    """``abs(m)`` -> ``Masked(result)``."""
+
+    def generic(
+        self, args: tuple[types.Type, ...], kws: dict
+    ) -> Signature | None:
         if len(args) == 1 and isinstance(args[0], MaskedType):
             return_type = self.context.resolve_function_type(
                 self.key, (args[0].value_type,), kws

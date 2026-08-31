@@ -313,8 +313,19 @@ def _lower_masked_binary_null(
     builder.store_var(target, packed)
 
 
-def _make_temp_var(builder, base_var, name_suffix, numba_type):
-    """TODO: write docstring."""
+def _make_temp_var(
+    builder: MLIRLower,
+    base_var: Var,
+    name_suffix: str,
+    numba_type: types.Type,
+) -> Var:
+    """Create a fresh typed IR ``Var`` for staging an intermediate value.
+
+    Used to feed the masked payload into a registered scalar lowering (which
+    operates on plain IR vars) and to receive its result. The name is derived
+    from ``base_var`` plus ``name_suffix`` so typemap keys stay unique when one
+    operand feeds several unary calls in a single expression.
+    """
     scope = getattr(base_var, "scope", None)
     loc = getattr(base_var, "loc", None)
     name = f"$masked_uop_{base_var.name}_{name_suffix}"
@@ -323,22 +334,23 @@ def _make_temp_var(builder, base_var, name_suffix, numba_type):
     return temp
 
 
-# Generic unary: delegate the scalar op to the registered numba_cuda_mlir
-# scalar lowering (``math.sin`` -> math dialect, ``operator.neg`` -> arith,
-# etc.), then re-wrap with the operand's validity.
-def _make_lower_masked_unary(op):
-    def _lower(builder, target, args, kwargs):
+def _make_lower_masked_unary(op: Callable) -> Callable:
+    """``<op>(Masked)``: delegate the scalar op to the registered
+    numba_cuda_mlir scalar lowering (``math.sin`` -> math dialect,
+    ``operator.neg`` -> arith, etc.), then re-wrap with the operand's
+    validity bit.
+    """
+
+    def _lower(
+        builder: MLIRLower, target: Var, args: list[Var], kwargs: list
+    ) -> None:
         target_type = builder.get_numba_type(target.name)
         result_inner_ty = target_type.value_type
-        operand_inner_ty = builder.get_numba_type(
-            args[0].name
-        ).value_type
+        operand_inner_ty = builder.get_numba_type(args[0].name).value_type
 
         m = builder.load_var(args[0])
         st = llvm.StructType(m.type)
-        m_val, m_valid = _extract_masked_value_valid(
-            m, st.body[0], st.body[1]
-        )
+        m_val, m_valid = _extract_masked_value_valid(m, st.body[0], st.body[1])
         m_val = convert(m_val, builder.get_mlir_type(operand_inner_ty))
 
         sig = result_inner_ty(operand_inner_ty)
@@ -365,19 +377,21 @@ def _make_lower_masked_unary(op):
             builder.load_var(out_var),
             builder.get_mlir_type(result_inner_ty),
         )
-        packed = _pack_masked(
-            builder, target_type, result_val, m_valid
-        )
+        packed = _pack_masked(builder, target_type, result_val, m_valid)
         builder.store_var(target, packed)
 
     return _lower
 
 
-# ``operator.invert`` (bitwise ~) on Masked integers: there is no scalar
-# @lower for invert, so do ``xori(x, -1)``. The all-ones mask is the
-# signed constant -1 (two's complement); ``(1<<width)-1`` would overflow
-# the signed IntegerAttr range for i64.
-def _lower_masked_invert(builder, target, args, kwargs):
+def _lower_masked_invert(
+    builder: MLIRLower, target: Var, args: list[Var], kwargs: list
+) -> None:
+    """``operator.invert`` (bitwise ~) on Masked integers.
+
+    There is no scalar ``@lower`` for invert, so compute ``xori(x, -1)``. The
+    all-ones mask is the signed constant -1 (two's complement); ``(1<<width)-1``
+    would overflow the signed IntegerAttr range for i64.
+    """
     target_type = builder.get_numba_type(target.name)
     result_inner_ty = target_type.value_type
     operand_inner_ty = builder.get_numba_type(args[0].name).value_type
@@ -398,8 +412,10 @@ def _lower_masked_invert(builder, target, args, kwargs):
     builder.store_var(target, packed)
 
 
-# bool(m) / truth: ``m.valid and bool(m.value)``.
-def _lower_masked_truth(builder, target, args, kwargs):
+def _lower_masked_truth(
+    builder: MLIRLower, target: Var, args: list[Var], kwargs: list
+) -> None:
+    """``bool(m)`` / ``operator.truth(m)``: ``m.valid and bool(m.value)``."""
     m = builder.load_var(args[0])
     st = llvm.StructType(m.type)
     m_val, m_valid = _extract_masked_value_valid(m, st.body[0], st.body[1])
@@ -409,22 +425,21 @@ def _lower_masked_truth(builder, target, args, kwargs):
     builder.store_var(target, result)
 
 
-# int(m) -> Masked(int64); float(m) -> Masked(float64).
-def _make_lower_masked_numeric_cast():
-    def _lower(builder, target, args, kwargs):
+def _make_lower_masked_numeric_cast() -> Callable:
+    """``int(m)`` -> ``Masked(int64)`` / ``float(m)`` -> ``Masked(float64)``:
+    cast the payload to the target value type, preserving the validity bit.
+    """
+
+    def _lower(
+        builder: MLIRLower, target: Var, args: list[Var], kwargs: list
+    ) -> None:
         target_type = builder.get_numba_type(target.name)
-        target_value_mlir_ty = builder.get_mlir_type(
-            target_type.value_type
-        )
+        target_value_mlir_ty = builder.get_mlir_type(target_type.value_type)
         m = builder.load_var(args[0])
         st = llvm.StructType(m.type)
-        m_val, m_valid = _extract_masked_value_valid(
-            m, st.body[0], st.body[1]
-        )
+        m_val, m_valid = _extract_masked_value_valid(m, st.body[0], st.body[1])
         casted = builder.mlir_convert(m_val, target_value_mlir_ty)
-        packed = _pack_masked(
-            builder, target_type, casted, m_valid
-        )
+        packed = _pack_masked(builder, target_type, casted, m_valid)
         builder.store_var(target, packed)
 
     return _lower

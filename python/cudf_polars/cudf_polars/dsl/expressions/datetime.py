@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 import polars as pl
-from polars.exceptions import ComputeError, InvalidOperationError
+from polars.exceptions import ComputeError, InvalidOperationError, SchemaError
 
 import pylibcudf as plc
 
@@ -603,6 +603,11 @@ class TemporalFunction(Expr):
             from cudf_polars.dsl.expressions.literal import Literal
 
             ambiguous = self.children[1]
+            if ambiguous.dtype.id() != plc.TypeId.STRING:
+                raise SchemaError(
+                    "invalid series dtype: expected `String`, got "
+                    f"`{ambiguous.dtype.polars_type}`"
+                )
             if isinstance(ambiguous, Literal):
                 self.ambiguous_scalar = ambiguous.value
                 if self.ambiguous_scalar is not None and self.ambiguous_scalar not in {

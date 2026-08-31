@@ -187,6 +187,30 @@ def test_replace_time_zone_invalid_ambiguous_per_row_raises(engine, target):
             q.collect(engine=engine)
 
 
+@pytest.mark.parametrize("source", ["UTC", None])
+@pytest.mark.parametrize("target", ["Europe/Amsterdam", "Etc/GMT", "UTC", None])
+def test_replace_time_zone_non_string_ambiguous_raises(engine, source, target):
+    q = pl.LazyFrame(
+        {
+            "a": [datetime.datetime(2018, 10, 28, 2, 30)],
+            "int_col": [1],
+        }
+    ).select(
+        pl.col("a")
+        .dt.replace_time_zone(source)
+        .dt.replace_time_zone(target, ambiguous=pl.col("int_col"))
+    )
+    assert_ir_translation_raises(q, engine, pl.exceptions.SchemaError)
+
+
+@pytest.mark.parametrize("target", ["Europe/Amsterdam", "UTC"])
+def test_replace_time_zone_null_ambiguous_literal_raises(engine, target):
+    q = pl.LazyFrame({"a": [datetime.datetime(2018, 10, 28, 2, 30)]}).select(
+        pl.col("a").dt.replace_time_zone(target, ambiguous=pl.lit(None))
+    )
+    assert_ir_translation_raises(q, engine, pl.exceptions.SchemaError)
+
+
 def test_replace_time_zone_same_zone_ambiguous_instant(engine):
     q = (
         pl.LazyFrame({"a": [datetime.datetime(2018, 10, 28, 2, 30)]})

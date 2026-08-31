@@ -39,6 +39,7 @@
 #include <memory>
 #include <optional>
 #include <stdexcept>
+#include <string_view>
 #include <utility>
 
 using ParquetDecompressionTest = DecompressionTest<ParquetReaderTest>;
@@ -6336,4 +6337,207 @@ TEST_F(ParquetReaderTest, NestedMismatchedSchemaColumnValidation)
              .build();
     EXPECT_THROW(cudf::io::read_parquet(opts), std::invalid_argument);
   }
+}
+namespace {
+
+/**
+ * @brief Create an optional struct with required children
+ *
+ * @param children Child columns without null masks
+ * @param num_rows Number of rows
+ * @param should_propagate_nulls Whether to push the struct's nulls down into its children
+ * @return Optional struct column with every seventh row null
+ */
+std::unique_ptr<cudf::column> make_optional_struct(
+  std::vector<std::unique_ptr<cudf::column>>&& children,
+  cudf::size_type num_rows,
+  bool should_propagate_nulls)
+{
+  auto const validity =
+    cudf::detail::make_counting_transform_iterator(0, [](auto i) { return (i % 7) != 0; });
+  auto [null_mask, null_count] = cudf::test::detail::make_null_mask(validity, validity + num_rows);
+  return should_propagate_nulls
+           ? cudf::make_structs_column(
+               num_rows, std::move(children), null_count, std::move(null_mask))
+           : cudf::create_structs_hierarchy(
+               num_rows, std::move(children), null_count, std::move(null_mask));
+}
+
+}  // namespace
+
+TEST_F(ParquetReaderTest, TwoRequiredStringLeavesWithNullableAncestor)
+{
+  // Build a table with an optional struct { required string, required string } column
+  // to test the case with two required strings sharing an immediate nullable ancestor.
+
+  constexpr cudf::size_type num_rows = 2000;
+  constexpr auto const value         = std::string_view{"fixed_width_payload"};
+
+  auto const values = cuda::make_constant_iterator(value);
+  cudf::test::strings_column_wrapper a_col{values, values + num_rows};
+  cudf::test::strings_column_wrapper b_col{values, values + num_rows};
+
+  std::vector<std::unique_ptr<cudf::column>> children;
+  children.push_back(a_col.release());
+  children.push_back(b_col.release());
+  auto struct_col = make_optional_struct(std::move(children), num_rows, false);
+
+  auto const filepath =
+    temp_env->get_temp_filepath("TwoRequiredStringLeavesWithNullableAncestor.parquet");
+
+  // Write the table to Parquet
+  {
+    auto const written = table_view{{struct_col->view()}};
+    cudf::io::table_input_metadata input_metadata(written);
+    input_metadata.column_metadata[0].set_name("s");
+    input_metadata.column_metadata[0].child(0).set_name("a").set_nullability(false);
+    input_metadata.column_metadata[0].child(1).set_name("b").set_nullability(false);
+
+    cudf::io::write_parquet(
+      cudf::io::parquet_writer_options::builder(cudf::io::sink_info{filepath}, written)
+        .metadata(std::move(input_metadata))
+        .dictionary_policy(cudf::io::dictionary_policy::NEVER)
+        .compression(cudf::io::compression_type::NONE)
+        .build());
+  }
+
+  // Build expected table from written struct's children
+  auto const expected =
+    make_optional_struct(std::move(struct_col->release().children), num_rows, true);
+
+  // Read the table from Parquet
+  auto const result = cudf::io::read_parquet(
+    cudf::io::parquet_reader_options::builder(cudf::io::source_info{filepath}).build());
+
+  // Compare
+  CUDF_TEST_EXPECT_TABLES_EQUAL(table_view{{expected->view()}}, result.tbl->view());
+}
+
+TEST_F(ParquetReaderTest, RequiredStringLeafWithSeparatedNullableAncestor)
+{
+  // Build a table with an optional struct { required struct { required string } } column
+  // to test the case with an nullable ancestor of a required string separated by a required
+  // struct.
+
+  constexpr cudf::size_type num_rows = 2000;
+  constexpr auto const value         = std::string_view{"fixed_width_payload"};
+
+  auto const values = cuda::make_constant_iterator(value);
+  cudf::test::strings_column_wrapper child_col{values, values + num_rows};
+
+  std::vector<std::unique_ptr<cudf::column>> inner_children;
+  inner_children.push_back(child_col.release());
+  auto inner_struct =
+    cudf::create_structs_hierarchy(num_rows, std::move(inner_children), 0, rmm::device_buffer{});
+
+  std::vector<std::unique_ptr<cudf::column>> outer_children;
+  outer_children.push_back(std::move(inner_struct));
+  auto outer_struct = make_optional_struct(std::move(outer_children), num_rows, false);
+
+  auto const filepath =
+    temp_env->get_temp_filepath("RequiredStringLeafWithSeparatedNullableAncestor.parquet");
+
+  // Write the table to Parquet
+  {
+    auto const written = table_view{{outer_struct->view()}};
+    cudf::io::table_input_metadata input_metadata(written);
+    input_metadata.column_metadata[0]
+      .set_name("outer")
+      .child(0)
+      .set_name("inner")
+      .set_nullability(false)
+      .child(0)
+      .set_name("value")
+      .set_nullability(false);
+
+    cudf::io::write_parquet(
+      cudf::io::parquet_writer_options::builder(cudf::io::sink_info{filepath}, written)
+        .metadata(std::move(input_metadata))
+        .dictionary_policy(cudf::io::dictionary_policy::NEVER)
+        .compression(cudf::io::compression_type::NONE)
+        .build());
+  }
+
+  // Build expected table from written struct's children
+  auto const expected =
+    make_optional_struct(std::move(outer_struct->release().children), num_rows, true);
+  // Read the table from Parquet
+  auto const result = cudf::io::read_parquet(
+    cudf::io::parquet_reader_options::builder(cudf::io::source_info{filepath}).build());
+
+  // Compare
+  CUDF_TEST_EXPECT_TABLES_EQUAL(table_view{{expected->view()}}, result.tbl->view());
+}
+
+TEST_F(ParquetReaderTest, RequiredStringLeafWithNullableAncestorUnderList)
+{
+  // Build a table with a required list <optional struct { required string }> column to test the
+  // case with a nullable ancestor of a required string inside a list
+
+  constexpr cudf::size_type num_lists    = 500;
+  constexpr cudf::size_type list_size    = 4;
+  constexpr cudf::size_type num_elements = num_lists * list_size;
+  constexpr auto const value             = std::string_view{"fixed_width_payload"};
+
+  auto const values = cuda::make_constant_iterator(value);
+  cudf::test::strings_column_wrapper child_col{values, values + num_elements};
+
+  std::vector<std::unique_ptr<cudf::column>> children;
+  children.push_back(child_col.release());
+  auto struct_col = make_optional_struct(std::move(children), num_elements, false);
+
+  auto offsets = cudf::detail::make_counting_transform_iterator(
+    0, [](auto i) { return static_cast<cudf::size_type>(i * list_size); });
+  column_wrapper<cudf::size_type> offsets_col(offsets, offsets + num_lists + 1);
+
+  auto list_col = cudf::make_lists_column(
+    num_lists, offsets_col.release(), std::move(struct_col), 0, rmm::device_buffer{});
+
+  auto const filepath =
+    temp_env->get_temp_filepath("RequiredStringLeafWithNullableAncestorUnderList.parquet");
+
+  // Write the table to Parquet
+  {
+    auto const written = table_view{{list_col->view()}};
+    cudf::io::table_input_metadata input_metadata(written);
+    input_metadata.column_metadata[0]
+      .set_name("outer")
+      .child(1)
+      .set_name("inner")
+      .child(0)
+      .set_name("value")
+      .set_nullability(false);
+
+    cudf::io::write_parquet(
+      cudf::io::parquet_writer_options::builder(cudf::io::sink_info{filepath}, written)
+        .metadata(std::move(input_metadata))
+        .dictionary_policy(cudf::io::dictionary_policy::NEVER)
+        .compression(cudf::io::compression_type::NONE)
+        .build());
+  }
+
+  // Build expected table from written offsets and the leaf strings
+  auto written_contents = list_col->release();
+  auto exp_offsets =
+    std::move(written_contents.children[cudf::lists_column_view::offsets_column_index]);
+  auto const written_struct =
+    written_contents.children[cudf::lists_column_view::child_column_index]->view();
+
+  auto const struct_validity = cudf::is_valid(written_struct);
+  auto exp_leaf =
+    cudf::copy_if_else(written_struct.child(0), cudf::string_scalar{""}, struct_validity->view());
+
+  std::vector<std::unique_ptr<cudf::column>> exp_children;
+  exp_children.push_back(std::move(exp_leaf));
+  auto exp_struct = make_optional_struct(std::move(exp_children), num_elements, false);
+
+  auto const expected = cudf::make_lists_column(
+    num_lists, std::move(exp_offsets), std::move(exp_struct), 0, rmm::device_buffer{});
+
+  // Read the table from Parquet
+  auto const result = cudf::io::read_parquet(
+    cudf::io::parquet_reader_options::builder(cudf::io::source_info{filepath}).build());
+
+  // Compare
+  CUDF_TEST_EXPECT_TABLES_EQUAL(table_view{{expected->view()}}, result.tbl->view());
 }

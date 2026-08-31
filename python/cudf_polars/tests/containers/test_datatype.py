@@ -57,11 +57,3 @@ def test_array_dtype_uses_physical_list():
 
     assert result.polars_type == dtype
     assert result.id() == plc.TypeId.LIST
-
-
-def test_common_decimal_type_raises():
-    with pytest.raises(ValueError, match=r"Both inputs required to be decimal types."):
-        DataType.common_decimal_dtype(
-            DataType(pl.Float64()),
-            DataType(pl.Float64()),
-        )

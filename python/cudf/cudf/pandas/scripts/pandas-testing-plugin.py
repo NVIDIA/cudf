@@ -1,6 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+import hashlib
 import json
 import sys
 import traceback
@@ -8,6 +9,68 @@ from collections import defaultdict
 from functools import wraps
 
 import pytest
+
+
+def positive_int(value):
+    value = int(value)
+    if value < 0:
+        raise ValueError(f"Argument {value} must be non-negative")
+    return value
+
+
+def pytest_addoption(parser):
+    """Add options to split the test suite into deterministic shards.
+
+    Adapted from https://github.com/AdamGleave/pytest-shard so a single
+    pandas-tests job can be parallelized across multiple CI runners. With the
+    defaults (``--num-shards 1``) the full suite runs, so existing
+    (non-sharded) invocations are unaffected.
+    """
+    group = parser.getgroup("shard")
+    group.addoption(
+        "--shard-id",
+        dest="shard_id",
+        type=positive_int,
+        default=0,
+        help="Zero-based index of this shard.",
+    )
+    group.addoption(
+        "--num-shards",
+        dest="num_shards",
+        type=positive_int,
+        default=1,
+        help="Total number of shards.",
+    )
+
+
+def _sha256_hash(value: str) -> int:
+    return int.from_bytes(hashlib.sha256(value.encode()).digest(), "little")
+
+
+def partition_items_by_shard(items, shard_id, num_shards):
+    """Split ``items`` into those assigned to ``shard_id`` and the rest.
+
+    Assignment is by a stable hash of each item's node id, so every pytest
+    worker (and every shard) partitions the suite identically and the shards
+    are disjoint and collectively exhaustive.
+    """
+    selected, deselected = [], []
+    for item in items:
+        target = (
+            selected
+            if (_sha256_hash(item.nodeid) % num_shards == shard_id)
+            else deselected
+        )
+        target.append(item)
+    return selected, deselected
+
+
+def pytest_report_collectionfinish(config, items):
+    if config.getoption("num_shards") > 1:
+        return (
+            f"Running {len(items)} items in shard "
+            f"{config.getoption('shard_id')}/{config.getoption('num_shards')}"
+        )
 
 
 def replace_kwargs(new_kwargs):
@@ -731,6 +794,7 @@ NODEIDS_THAT_FAIL = {
     "tests/extension/test_arrow.py::TestArrowArray::test_concat_mixed_dtypes[decimal128(7, 3)]": "TODO: Add a reason for failure",
     "tests/extension/test_arrow.py::TestArrowArray::test_groupby_agg_extension[decimal128(7, 3)]": "TODO: Add a reason for failure",
     "tests/extension/test_arrow.py::TestArrowArray::test_reduce_frame[decimal128(7, 3)-mean-False]": "TODO: Add a reason for failure",
+    "tests/extension/test_arrow.py::TestArrowArray::test_reduce_frame[decimal128(7, 3)-mean-True]": "cudf returns float to match duckdb/Polars",
     "tests/extension/test_arrow.py::TestArrowArray::test_reduce_frame[decimal128(7, 3)-median-True]": "TODO: Add a reason for failure",
     "tests/extension/test_arrow.py::TestArrowArray::test_reduce_frame[decimal128(7, 3)-prod-False]": "TODO: Add a reason for failure",
     "tests/extension/test_arrow.py::TestArrowArray::test_reduce_frame[decimal128(7, 3)-sum-False]": "TODO: Add a reason for failure",
@@ -1625,6 +1689,7 @@ NODEIDS_THAT_FAIL = {
     "tests/frame/test_query_eval.py::TestDataFrameQueryNumExprPython::test_query_numexpr_with_min_and_max_columns": "TODO: Add a reason for failure",
     "tests/frame/test_query_eval.py::TestDataFrameQueryPythonPython::test_query_numexpr_with_min_and_max_columns": "TODO: Add a reason for failure",
     "tests/frame/test_query_eval.py::TestDataFrameQueryWithMultiIndex::test_query_multiindex_get_index_resolvers": "TODO: Add a reason for failure",
+    "tests/frame/test_reductions.py::TestDataFrameAnalytics::test_mean_mixed_string_decimal": "Returns float instead of object",
     "tests/frame/test_reductions.py::TestDataFrameAnalytics::test_median": "AssertionError: Attributes of Series are different",
     "tests/frame/test_reductions.py::TestDataFrameReductions::test_min_max_dt64_with_NaT_precision": "AssertionError: Series are different",
     "tests/frame/test_reductions.py::test_reduction_axis_none_returns_scalar[Float64-False-kurt]": "TODO: Add a reason for failure",
@@ -2476,7 +2541,6 @@ NODEIDS_THAT_FAIL = {
     "tests/io/formats/test_format.py::TestSeriesFormatting::test_freq_name_separation": "AssertionError: assert 'Freq: D, Name: 0' in '2000-01-01    0.189053\n2000-01-02   -0.522748\n2000-01-03   -0.413064\\...",
     "tests/io/formats/test_ipython_compat.py::TestTableSchemaRepr::test_publishes": "TODO: Add a reason for failure",
     "tests/io/formats/test_ipython_compat.py::TestTableSchemaRepr::test_publishes_not_implemented": "TODO: Add a reason for failure",
-    "tests/io/formats/test_to_csv.py::TestToCSV::test_to_csv_compression_dict[tar]": "TODO: Add a reason for failure",
     "tests/io/formats/test_to_csv.py::TestToCSV::test_to_csv_date_format": "TODO: Add a reason for failure",
     "tests/io/formats/test_to_csv.py::TestToCSV::test_to_csv_different_datetime_formats": "TODO: Add a reason for failure",
     "tests/io/formats/test_to_csv.py::TestToCSV::test_to_csv_float_ea_nan_distinguish[False]": "AssertionError: assert 'a,b\\n,c\\n,c\\n3.0,c\\n' == 'a,b\\nnan,c\\n,c\\n3.0,c\\n'",
@@ -2589,7 +2653,6 @@ NODEIDS_THAT_FAIL = {
     "tests/io/test_common.py::test_pickle_reader[read_pickle]": "TODO: Add a reason for failure",
     "tests/io/test_common.py::test_pickle_reader[read_sas]": "TODO: Add a reason for failure",
     "tests/io/test_common.py::test_pickle_reader[read_stata]": "TODO: Add a reason for failure",
-    "tests/io/test_compression.py::test_ambiguous_archive_tar": "TODO: Add a reason for failure",
     "tests/io/test_compression.py::test_compression_size[bz2-to_json-obj0]": "TODO: Add a reason for failure",
     "tests/io/test_compression.py::test_compression_size[bz2-to_json-obj1]": "TODO: Add a reason for failure",
     "tests/io/test_compression.py::test_compression_size[gzip-to_json-obj0]": "TODO: Add a reason for failure",
@@ -3476,33 +3539,12 @@ NODEIDS_THAT_FAIL = {
     "tests/strings/test_cat.py::test_str_cat_categorical[series-category-category-None-False]": "AssertionError: Attributes of Series are different",
     "tests/strings/test_cat.py::test_str_cat_categorical[series-category-object--False]": "AssertionError: Attributes of Series are different",
     "tests/strings/test_cat.py::test_str_cat_categorical[series-category-object-None-False]": "AssertionError: Attributes of Series are different",
-    "tests/strings/test_extract.py::test_extract_dataframe_capture_groups_index[bool-dtype-string=object]": "AssertionError: DataFrame.iloc[:, 0] (column name='0') are different",
-    "tests/strings/test_extract.py::test_extract_dataframe_capture_groups_index[categorical-string=object]": "AssertionError: DataFrame.iloc[:, 0] (column name='0') are different",
     "tests/strings/test_extract.py::test_extract_dataframe_capture_groups_index[datetime-string=object]": "AssertionError: DataFrame.iloc[:, 0] (column name='0') are different",
-    "tests/strings/test_extract.py::test_extract_dataframe_capture_groups_index[datetime-tz-string=object]": "AssertionError: DataFrame.iloc[:, 0] (column name='0') are different",
     "tests/strings/test_extract.py::test_extract_dataframe_capture_groups_index[float32-string=object]": "AssertionError: DataFrame.iloc[:, 0] (column name='0') are different",
     "tests/strings/test_extract.py::test_extract_dataframe_capture_groups_index[float64-string=object]": "AssertionError: DataFrame.iloc[:, 0] (column name='0') are different",
-    "tests/strings/test_extract.py::test_extract_dataframe_capture_groups_index[int16-string=object]": "AssertionError: DataFrame.iloc[:, 0] (column name='0') are different",
-    "tests/strings/test_extract.py::test_extract_dataframe_capture_groups_index[int32-string=object]": "AssertionError: DataFrame.iloc[:, 0] (column name='0') are different",
-    "tests/strings/test_extract.py::test_extract_dataframe_capture_groups_index[int64-string=object]": "AssertionError: DataFrame.iloc[:, 0] (column name='0') are different",
-    "tests/strings/test_extract.py::test_extract_dataframe_capture_groups_index[int8-string=object]": "AssertionError: DataFrame.iloc[:, 0] (column name='0') are different",
-    "tests/strings/test_extract.py::test_extract_dataframe_capture_groups_index[interval-string=object]": "AssertionError: DataFrame.iloc[:, 0] (column name='0') are different",
-    "tests/strings/test_extract.py::test_extract_dataframe_capture_groups_index[multi-string=object]": "AssertionError: DataFrame.iloc[:, 0] (column name='0') are different",
-    "tests/strings/test_extract.py::test_extract_dataframe_capture_groups_index[nullable_bool-string=object]": "AssertionError: DataFrame.iloc[:, 0] (column name='0') are different",
-    "tests/strings/test_extract.py::test_extract_dataframe_capture_groups_index[nullable_float-string=object]": "AssertionError: DataFrame.iloc[:, 0] (column name='0') are different",
-    "tests/strings/test_extract.py::test_extract_dataframe_capture_groups_index[nullable_int-string=object]": "AssertionError: DataFrame.iloc[:, 0] (column name='0') are different",
-    "tests/strings/test_extract.py::test_extract_dataframe_capture_groups_index[nullable_uint-string=object]": "AssertionError: DataFrame.iloc[:, 0] (column name='0') are different",
     "tests/strings/test_extract.py::test_extract_dataframe_capture_groups_index[object-string=object]": "AssertionError: DataFrame.iloc[:, 0] (column name='0') are different",
-    "tests/strings/test_extract.py::test_extract_dataframe_capture_groups_index[range-string=object]": "AssertionError: DataFrame.iloc[:, 0] (column name='0') are different",
-    "tests/strings/test_extract.py::test_extract_dataframe_capture_groups_index[repeats-string=object]": "AssertionError: DataFrame.iloc[:, 0] (column name='0') are different",
-    "tests/strings/test_extract.py::test_extract_dataframe_capture_groups_index[string-pyarrow-string=object]": "AssertionError: DataFrame.iloc[:, 0] (column name='0') are different",
-    "tests/strings/test_extract.py::test_extract_dataframe_capture_groups_index[string-python-string=object]": "AssertionError: DataFrame.iloc[:, 0] (column name='0') are different",
-    "tests/strings/test_extract.py::test_extract_dataframe_capture_groups_index[string-string=object]": "AssertionError: DataFrame.iloc[:, 0] (column name='0') are different",
     "tests/strings/test_extract.py::test_extract_dataframe_capture_groups_index[tuples-string=object]": "AssertionError: DataFrame.iloc[:, 0] (column name='0') are different",
-    "tests/strings/test_extract.py::test_extract_dataframe_capture_groups_index[uint16-string=object]": "AssertionError: DataFrame.iloc[:, 0] (column name='0') are different",
-    "tests/strings/test_extract.py::test_extract_dataframe_capture_groups_index[uint32-string=object]": "AssertionError: DataFrame.iloc[:, 0] (column name='0') are different",
     "tests/strings/test_extract.py::test_extract_dataframe_capture_groups_index[uint64-string=object]": "AssertionError: DataFrame.iloc[:, 0] (column name='0') are different",
-    "tests/strings/test_extract.py::test_extract_dataframe_capture_groups_index[uint8-string=object]": "AssertionError: DataFrame.iloc[:, 0] (column name='0') are different",
     "tests/strings/test_extract.py::test_extract_expand_False_mixed_object": "AssertionError: DataFrame.iloc[:, 0] (column name='0') are different",
     "tests/strings/test_extract.py::test_extract_expand_True[string=object]": "AssertionError: DataFrame.iloc[:, 0] (column name='0') are different",
     "tests/strings/test_extract.py::test_extract_expand_True_mixed_object": "AssertionError: DataFrame.iloc[:, 0] (column name='0') are different",
@@ -3664,8 +3706,6 @@ NODEIDS_THAT_FAIL = {
     "tests/tools/test_to_datetime.py::TestOrigin::test_julian": "AssertionError: Attributes of Series are different",
     "tests/tools/test_to_datetime.py::TestOrigin::test_to_datetime_out_of_bounds_with_format_arg[%Y-%d-%m %H:%M:%S-None]": "TODO: Add a reason for failure",
     "tests/tools/test_to_datetime.py::TestOrigin::test_to_datetime_out_of_bounds_with_format_arg[%Y-%m-%d %H:%M:%S-None]": "TODO: Add a reason for failure",
-    "tests/tools/test_to_datetime.py::TestTimeConversionFormats::test_to_datetime_format_weeks[False-2013020-%Y%U%w-2013-01-13]": "AssertionError: assert Timestamp('2013-01-19 00:00:00') == Timestamp('2013-01-13 00:00:00')",
-    "tests/tools/test_to_datetime.py::TestTimeConversionFormats::test_to_datetime_format_weeks[True-2013020-%Y%U%w-2013-01-13]": "AssertionError: assert Timestamp('2013-01-19 00:00:00') == Timestamp('2013-01-13 00:00:00')",
     "tests/tools/test_to_datetime.py::TestToDatetime::test_mixed_offsets_with_native_datetime_utc_false_raises": "assert False",
     "tests/tools/test_to_datetime.py::TestToDatetime::test_to_datetime_arrow[index-None-False]": "AssertionError: assert DatetimeIndex([1965-04-03 00:00:00, 1965-04-17 00:00:00, 1965-05-01 00:00:00,\n       1965-05-...",
     "tests/tools/test_to_datetime.py::TestToDatetime::test_to_datetime_arrow[index-US/Central-False]": "AssertionError: assert Index([1965-04-03 00:00:00-06:00, 1965-04-17 00:00:00-06:00,\n       1965-05-01 00:00:00-05:00...",
@@ -5229,6 +5269,288 @@ NODEIDS_TO_SKIP: dict[str, str] = {
     "tests/window/moments/test_moments_consistency_rolling.py::test_rolling_apply_consistency_sum[all_data7-rolling_consistency_cases0-False-sum]": "pandas xfails, but xpasses with cudf.pandas",
 }
 
+#: Tests that only fail when the suite is split across shards. Sharding
+#: changes the order tests run in, and cudf.pandas has order-dependent
+#: behaviour these expose. They are applied ONLY to sharded runs so the
+#: unsharded nightly and local runs keep exercising them -- skipping them
+#: everywhere would quietly drop the coverage instead of narrowing it.
+NODEIDS_TO_SKIP_WHEN_SHARDED: dict[str, str] = {
+    "tests/plotting/test_datetimelike.py::TestTSPlot::test_line_plot_datetime_frame[D]": "Flaky under test sharding: cudf.pandas behavior is test-order-dependent (see #22992)",
+    "tests/plotting/test_datetimelike.py::TestTSPlot::test_line_plot_datetime_frame[W]": "Flaky under test sharding: cudf.pandas behavior is test-order-dependent (see #22992)",
+    "tests/plotting/test_datetimelike.py::TestTSPlot::test_line_plot_datetime_frame[s]": "Flaky under test sharding: cudf.pandas behavior is test-order-dependent (see #22992)",
+    "tests/plotting/test_datetimelike.py::TestTSPlot::test_line_plot_inferred_freq[ME]": "Flaky under test sharding: cudf.pandas behavior is test-order-dependent (see #22992)",
+    "tests/strings/test_extract.py::test_extract_dataframe_capture_groups_index[bool-dtype-string=object]": "Flaky under test sharding: cudf.pandas behavior is test-order-dependent (see #22992)",
+    "tests/strings/test_extract.py::test_extract_dataframe_capture_groups_index[categorical-string=object]": "Flaky under test sharding: cudf.pandas behavior is test-order-dependent (see #22992)",
+    "tests/strings/test_extract.py::test_extract_dataframe_capture_groups_index[datetime-tz-string=object]": "Flaky under test sharding: cudf.pandas behavior is test-order-dependent (see #22992)",
+    "tests/strings/test_extract.py::test_extract_dataframe_capture_groups_index[int16-string=object]": "Flaky under test sharding: cudf.pandas behavior is test-order-dependent (see #22992)",
+    "tests/strings/test_extract.py::test_extract_dataframe_capture_groups_index[int32-string=object]": "Flaky under test sharding: cudf.pandas behavior is test-order-dependent (see #22992)",
+    "tests/strings/test_extract.py::test_extract_dataframe_capture_groups_index[int64-string=object]": "Flaky under test sharding: cudf.pandas behavior is test-order-dependent (see #22992)",
+    "tests/strings/test_extract.py::test_extract_dataframe_capture_groups_index[int8-string=object]": "Flaky under test sharding: cudf.pandas behavior is test-order-dependent (see #22992)",
+    "tests/strings/test_extract.py::test_extract_dataframe_capture_groups_index[interval-string=object]": "Flaky under test sharding: cudf.pandas behavior is test-order-dependent (see #22992)",
+    "tests/strings/test_extract.py::test_extract_dataframe_capture_groups_index[multi-string=object]": "Flaky under test sharding: cudf.pandas behavior is test-order-dependent (see #22992)",
+    "tests/strings/test_extract.py::test_extract_dataframe_capture_groups_index[nullable_bool-string=object]": "Flaky under test sharding: cudf.pandas behavior is test-order-dependent (see #22992)",
+    "tests/strings/test_extract.py::test_extract_dataframe_capture_groups_index[nullable_float-string=object]": "Flaky under test sharding: cudf.pandas behavior is test-order-dependent (see #22992)",
+    "tests/strings/test_extract.py::test_extract_dataframe_capture_groups_index[nullable_int-string=object]": "Flaky under test sharding: cudf.pandas behavior is test-order-dependent (see #22992)",
+    "tests/strings/test_extract.py::test_extract_dataframe_capture_groups_index[nullable_uint-string=object]": "Flaky under test sharding: cudf.pandas behavior is test-order-dependent (see #22992)",
+    "tests/strings/test_extract.py::test_extract_dataframe_capture_groups_index[range-string=object]": "Flaky under test sharding: cudf.pandas behavior is test-order-dependent (see #22992)",
+    "tests/strings/test_extract.py::test_extract_dataframe_capture_groups_index[repeats-string=object]": "Flaky under test sharding: cudf.pandas behavior is test-order-dependent (see #22992)",
+    "tests/strings/test_extract.py::test_extract_dataframe_capture_groups_index[string-pyarrow-string=object]": "Flaky under test sharding: cudf.pandas behavior is test-order-dependent (see #22992)",
+    "tests/strings/test_extract.py::test_extract_dataframe_capture_groups_index[string-python-string=object]": "Flaky under test sharding: cudf.pandas behavior is test-order-dependent (see #22992)",
+    "tests/strings/test_extract.py::test_extract_dataframe_capture_groups_index[string-string=object]": "Flaky under test sharding: cudf.pandas behavior is test-order-dependent (see #22992)",
+    "tests/strings/test_extract.py::test_extract_dataframe_capture_groups_index[uint16-string=object]": "Flaky under test sharding: cudf.pandas behavior is test-order-dependent (see #22992)",
+    "tests/strings/test_extract.py::test_extract_dataframe_capture_groups_index[uint32-string=object]": "Flaky under test sharding: cudf.pandas behavior is test-order-dependent (see #22992)",
+    "tests/strings/test_extract.py::test_extract_dataframe_capture_groups_index[uint8-string=object]": "Flaky under test sharding: cudf.pandas behavior is test-order-dependent (see #22992)",
+    "tests/strings/test_find_replace.py::test_pyarrow_ambiguous_group_references[pyarrow_string_dtype0-(\\\\w+) (\\\\w+) (\\\\w+)-\\\\20]": "Flaky under test sharding: cudf.pandas behavior is test-order-dependent (see #22992)",
+    "tests/strings/test_find_replace.py::test_pyarrow_backend_group_replacement[\\\\[(\\\\d+)\\\\]-(\\\\1)-expected_list1]": "Flaky under test sharding: cudf.pandas behavior is test-order-dependent (see #22992)",
+    "tests/extension/test_arrow.py::TestArrowArray::test_compare_array[timestamp[ns]-eq]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/frame/test_stack_unstack.py::TestStackUnstackMultiLevel::test_stack_names_and_numbers[False]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/frame/test_stack_unstack.py::TestStackUnstackMultiLevel::test_stack_names_and_numbers[True]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/groupby/methods/test_value_counts.py::test_against_frame_and_seriesgroupby[False-False-False-None-True-proportion-function]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/groupby/methods/test_value_counts.py::test_against_frame_and_seriesgroupby[False-False-True-False-False-count-column]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/groupby/methods/test_value_counts.py::test_against_frame_and_seriesgroupby[False-False-True-False-False-count-function]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/groupby/methods/test_value_counts.py::test_against_frame_and_seriesgroupby[False-False-True-True-True-proportion-column]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/groupby/methods/test_value_counts.py::test_against_frame_and_seriesgroupby[True-False-False-None-True-proportion-function]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/groupby/methods/test_value_counts.py::test_against_frame_and_seriesgroupby[True-False-True-False-False-count-column]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/groupby/methods/test_value_counts.py::test_against_frame_and_seriesgroupby[True-False-True-False-True-proportion-function]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/groupby/methods/test_value_counts.py::test_against_frame_and_seriesgroupby[True-False-True-True-False-count-function]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/groupby/methods/test_value_counts.py::test_against_frame_and_seriesgroupby[True-False-True-True-True-proportion-function]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/indexes/interval/test_interval.py::TestIntervalIndex::test_maybe_convert_i8_errors[Index-datetime64[us, US/Eastern]-datetime64[us]]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/indexes/interval/test_interval.py::TestIntervalIndex::test_maybe_convert_i8_errors[scalar-datetime64[us, US/Eastern]-datetime64[us]]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/indexes/interval/test_interval.py::TestIntervalIndex::test_maybe_convert_i8_errors[scalar-datetime64[us, US/Eastern]-timedelta64[us]]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/indexes/multi/test_formats.py::TestRepr::test_tuple_width": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/plotting/frame/test_frame.py::TestDataFramePlots::test_memory_leak[area]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/plotting/frame/test_frame.py::TestDataFramePlots::test_memory_leak[line]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/plotting/frame/test_frame.py::TestDataFramePlots::test_plot_period_index_makes_no_right_shift[120min]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/plotting/frame/test_frame.py::TestDataFramePlots::test_plot_period_index_makes_no_right_shift[3M]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/plotting/frame/test_frame.py::TestDataFramePlots::test_plot_period_index_makes_no_right_shift[7h]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/plotting/frame/test_frame.py::TestDataFramePlots::test_plot_period_index_makes_no_right_shift[h]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/plotting/frame/test_frame.py::TestDataFramePlots::test_scatter_line_xticks": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/plotting/frame/test_frame.py::TestDataFramePlots::test_xcompat_plot_period": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/plotting/frame/test_frame_subplots.py::TestDataFramePlotsSubplots::test_subplots_timeseries[line]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/plotting/test_datetimelike.py::TestTSPlot::test_axis_limits[obj1]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/plotting/test_datetimelike.py::TestTSPlot::test_business_freq": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/plotting/test_datetimelike.py::TestTSPlot::test_check_xticks_rot": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/plotting/test_datetimelike.py::TestTSPlot::test_finder_annual": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/plotting/test_datetimelike.py::TestTSPlot::test_finder_hourly": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/plotting/test_datetimelike.py::TestTSPlot::test_finder_monthly": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/plotting/test_datetimelike.py::TestTSPlot::test_finder_quarterly": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/plotting/test_datetimelike.py::TestTSPlot::test_format_timedelta_ticks_wide[s]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/plotting/test_datetimelike.py::TestTSPlot::test_format_timedelta_ticks_wide[us]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/plotting/test_datetimelike.py::TestTSPlot::test_line_plot_datetime_frame[1B30Min]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/plotting/test_datetimelike.py::TestTSPlot::test_line_plot_datetime_frame[QE-DEC]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/plotting/test_datetimelike.py::TestTSPlot::test_line_plot_datetime_frame[YE]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/plotting/test_datetimelike.py::TestTSPlot::test_line_plot_datetime_series[h]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/plotting/test_datetimelike.py::TestTSPlot::test_line_plot_datetime_series[min]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/plotting/test_datetimelike.py::TestTSPlot::test_line_plot_datetime_series[s]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/plotting/test_datetimelike.py::TestTSPlot::test_line_plot_datetime_series[YE]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/plotting/test_datetimelike.py::TestTSPlot::test_line_plot_inferred_freq[h]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/plotting/test_datetimelike.py::TestTSPlot::test_line_plot_inferred_freq[min]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/plotting/test_datetimelike.py::TestTSPlot::test_line_plot_period_frame[ME]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/plotting/test_datetimelike.py::TestTSPlot::test_line_plot_period_frame[W]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/plotting/test_datetimelike.py::TestTSPlot::test_line_plot_period_mlt_frame[1s]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/plotting/test_datetimelike.py::TestTSPlot::test_line_plot_period_mlt_frame[3s]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/plotting/test_datetimelike.py::TestTSPlot::test_line_plot_period_mlt_frame[4D]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/plotting/test_datetimelike.py::TestTSPlot::test_line_plot_period_mlt_frame[5min]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/plotting/test_datetimelike.py::TestTSPlot::test_line_plot_period_mlt_frame[7h]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/plotting/test_datetimelike.py::TestTSPlot::test_line_plot_period_mlt_frame[8W]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/plotting/test_datetimelike.py::TestTSPlot::test_line_plot_period_mlt_series[11M]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/plotting/test_datetimelike.py::TestTSPlot::test_line_plot_period_mlt_series[1s]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/plotting/test_datetimelike.py::TestTSPlot::test_line_plot_period_mlt_series[3Y]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/plotting/test_datetimelike.py::TestTSPlot::test_line_plot_period_mlt_series[7h]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/plotting/test_datetimelike.py::TestTSPlot::test_line_plot_period_series[h]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/plotting/test_datetimelike.py::TestTSPlot::test_line_plot_period_series[M]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/plotting/test_datetimelike.py::TestTSPlot::test_line_plot_period_series[min]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/plotting/test_datetimelike.py::TestTSPlot::test_line_plot_period_series[Q]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/plotting/test_datetimelike.py::TestTSPlot::test_mixed_freq_hf_first": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/plotting/test_datetimelike.py::TestTSPlot::test_mixed_freq_lf_first": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/plotting/test_datetimelike.py::TestTSPlot::test_mixed_freq_lf_first_hourly": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/plotting/test_datetimelike.py::TestTSPlot::test_mixed_freq_shared_ax": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/plotting/test_datetimelike.py::TestTSPlot::test_pickle_fig[DataFrame-idx0]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/plotting/test_datetimelike.py::TestTSPlot::test_pickle_fig[DataFrame-idx1]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/plotting/test_datetimelike.py::TestTSPlot::test_pickle_fig[Series-idx0]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/plotting/test_datetimelike.py::TestTSPlot::test_pickle_fig[Series-idx3]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/plotting/test_datetimelike.py::TestTSPlot::test_secondary_upsample": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/plotting/test_datetimelike.py::TestTSPlot::test_secondary_y_ts": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/plotting/test_datetimelike.py::TestTSPlot::test_to_weekly_resampling_disallow_how_kwd": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/plotting/test_datetimelike.py::TestTSPlot::test_ts_plot_format_coord[D-t = 2014-01-01  y = 1.000000]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/plotting/test_datetimelike.py::TestTSPlot::test_ts_plot_format_coord[YE-DEC-t = 2014  y = 1.000000]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/plotting/test_series.py::TestSeriesPlots::test_ts_area_lim": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_api.py::test_api_per_method[index-empty1-rpartition1-category]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_api.py::test_api_per_method[index-empty1-rpartition1-object]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_api.py::test_api_per_method[index-empty1-rpartition2-category]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_api.py::test_api_per_method[index-empty1-rpartition2-object]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_extract.py::test_extract_dataframe_capture_groups_index[bool-dtype-string=str[python]]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_extract.py::test_extract_dataframe_capture_groups_index[categorical-string=str[python]]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_extract.py::test_extract_dataframe_capture_groups_index[datetime-string=string[pyarrow]]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_extract.py::test_extract_dataframe_capture_groups_index[datetime-string=str[pyarrow]]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_extract.py::test_extract_dataframe_capture_groups_index[datetime-string=str[python]]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_extract.py::test_extract_dataframe_capture_groups_index[datetime-tz-string=string[pyarrow]]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_extract.py::test_extract_dataframe_capture_groups_index[datetime-tz-string=string[python]]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_extract.py::test_extract_dataframe_capture_groups_index[datetime-tz-string=str[python]]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_extract.py::test_extract_dataframe_capture_groups_index[float32-string=string[pyarrow]]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_extract.py::test_extract_dataframe_capture_groups_index[float32-string=str[pyarrow]]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_extract.py::test_extract_dataframe_capture_groups_index[float32-string=str[python]]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_extract.py::test_extract_dataframe_capture_groups_index[float64-string=string[pyarrow]]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_extract.py::test_extract_dataframe_capture_groups_index[int16-string=string[pyarrow]]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_extract.py::test_extract_dataframe_capture_groups_index[int16-string=str[python]]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_extract.py::test_extract_dataframe_capture_groups_index[int32-string=string[pyarrow]]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_extract.py::test_extract_dataframe_capture_groups_index[int32-string=str[pyarrow]]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_extract.py::test_extract_dataframe_capture_groups_index[int32-string=str[python]]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_extract.py::test_extract_dataframe_capture_groups_index[int8-string=string[pyarrow]]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_extract.py::test_extract_dataframe_capture_groups_index[interval-string=string[pyarrow]]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_extract.py::test_extract_dataframe_capture_groups_index[multi-string=string[python]]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_extract.py::test_extract_dataframe_capture_groups_index[multi-string=str[pyarrow]]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_extract.py::test_extract_dataframe_capture_groups_index[nullable_bool-string=str[python]]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_extract.py::test_extract_dataframe_capture_groups_index[nullable_float-string=string[pyarrow]]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_extract.py::test_extract_dataframe_capture_groups_index[nullable_float-string=string[python]]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_extract.py::test_extract_dataframe_capture_groups_index[nullable_float-string=str[python]]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_extract.py::test_extract_dataframe_capture_groups_index[nullable_int-string=string[pyarrow]]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_extract.py::test_extract_dataframe_capture_groups_index[nullable_uint-string=string[python]]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_extract.py::test_extract_dataframe_capture_groups_index[nullable_uint-string=str[python]]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_extract.py::test_extract_dataframe_capture_groups_index[object-string=string[pyarrow]]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_extract.py::test_extract_dataframe_capture_groups_index[object-string=string[python]]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_extract.py::test_extract_dataframe_capture_groups_index[object-string=str[python]]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_extract.py::test_extract_dataframe_capture_groups_index[range-string=string[pyarrow]]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_extract.py::test_extract_dataframe_capture_groups_index[range-string=string[python]]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_extract.py::test_extract_dataframe_capture_groups_index[range-string=str[pyarrow]]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_extract.py::test_extract_dataframe_capture_groups_index[repeats-string=string[pyarrow]]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_extract.py::test_extract_dataframe_capture_groups_index[repeats-string=str[pyarrow]]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_extract.py::test_extract_dataframe_capture_groups_index[repeats-string=str[python]]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_extract.py::test_extract_dataframe_capture_groups_index[string-pyarrow-string=string[pyarrow]]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_extract.py::test_extract_dataframe_capture_groups_index[string-python-string=string[pyarrow]]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_extract.py::test_extract_dataframe_capture_groups_index[string-string=string[pyarrow]]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_extract.py::test_extract_dataframe_capture_groups_index[string-string=string[python]]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_extract.py::test_extract_dataframe_capture_groups_index[string-string=str[python]]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_extract.py::test_extract_dataframe_capture_groups_index[tuples-string=string[python]]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_extract.py::test_extract_dataframe_capture_groups_index[tuples-string=str[pyarrow]]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_extract.py::test_extract_dataframe_capture_groups_index[uint16-string=string[pyarrow]]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_extract.py::test_extract_dataframe_capture_groups_index[uint16-string=string[python]]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_extract.py::test_extract_dataframe_capture_groups_index[uint16-string=str[pyarrow]]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_extract.py::test_extract_dataframe_capture_groups_index[uint32-string=string[pyarrow]]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_extract.py::test_extract_dataframe_capture_groups_index[uint32-string=string[python]]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_extract.py::test_extract_dataframe_capture_groups_index[uint64-string=string[pyarrow]]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_extract.py::test_extract_dataframe_capture_groups_index[uint8-string=string[pyarrow]]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_extract.py::test_extract_dataframe_capture_groups_index[uint8-string=str[python]]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_extract.py::test_extract_end_of_string[string=object]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_extract.py::test_extract_expand_capture_groups_index[bool-dtype-string=string[python]]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_extract.py::test_extract_expand_capture_groups_index[bool-dtype-string=str[pyarrow]]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_extract.py::test_extract_expand_capture_groups_index[categorical-string=string[pyarrow]]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_extract.py::test_extract_expand_capture_groups_index[categorical-string=str[pyarrow]]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_extract.py::test_extract_expand_capture_groups_index[categorical-string=str[python]]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_extract.py::test_extract_expand_capture_groups_index[datetime-string=string[pyarrow]]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_extract.py::test_extract_expand_capture_groups_index[datetime-string=string[python]]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_extract.py::test_extract_expand_capture_groups_index[datetime-tz-string=string[pyarrow]]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_extract.py::test_extract_expand_capture_groups_index[float32-string=str[pyarrow]]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_extract.py::test_extract_expand_capture_groups_index[float64-string=str[pyarrow]]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_extract.py::test_extract_expand_capture_groups_index[float64-string=str[python]]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_extract.py::test_extract_expand_capture_groups_index[int16-string=str[python]]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_extract.py::test_extract_expand_capture_groups_index[int32-string=string[pyarrow]]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_extract.py::test_extract_expand_capture_groups_index[int32-string=str[pyarrow]]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_extract.py::test_extract_expand_capture_groups_index[int64-string=string[pyarrow]]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_extract.py::test_extract_expand_capture_groups_index[int64-string=str[pyarrow]]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_extract.py::test_extract_expand_capture_groups_index[int8-string=string[python]]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_extract.py::test_extract_expand_capture_groups_index[int8-string=str[python]]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_extract.py::test_extract_expand_capture_groups_index[interval-string=string[pyarrow]]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_extract.py::test_extract_expand_capture_groups_index[interval-string=string[python]]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_extract.py::test_extract_expand_capture_groups_index[interval-string=str[pyarrow]]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_extract.py::test_extract_expand_capture_groups_index[multi-string=string[pyarrow]]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_extract.py::test_extract_expand_capture_groups_index[multi-string=str[pyarrow]]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_extract.py::test_extract_expand_capture_groups_index[nullable_bool-string=string[pyarrow]]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_extract.py::test_extract_expand_capture_groups_index[nullable_bool-string=string[python]]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_extract.py::test_extract_expand_capture_groups_index[nullable_bool-string=str[pyarrow]]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_extract.py::test_extract_expand_capture_groups_index[nullable_bool-string=str[python]]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_extract.py::test_extract_expand_capture_groups_index[nullable_float-string=string[pyarrow]]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_extract.py::test_extract_expand_capture_groups_index[nullable_float-string=str[python]]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_extract.py::test_extract_expand_capture_groups_index[nullable_int-string=string[python]]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_extract.py::test_extract_expand_capture_groups_index[nullable_int-string=str[pyarrow]]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_extract.py::test_extract_expand_capture_groups_index[nullable_int-string=str[python]]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_extract.py::test_extract_expand_capture_groups_index[nullable_uint-string=string[python]]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_extract.py::test_extract_expand_capture_groups_index[nullable_uint-string=str[python]]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_extract.py::test_extract_expand_capture_groups_index[object-string=string[pyarrow]]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_extract.py::test_extract_expand_capture_groups_index[range-string=str[python]]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_extract.py::test_extract_expand_capture_groups_index[repeats-string=string[python]]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_extract.py::test_extract_expand_capture_groups_index[string-pyarrow-string=string[pyarrow]]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_extract.py::test_extract_expand_capture_groups_index[string-pyarrow-string=string[python]]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_extract.py::test_extract_expand_capture_groups_index[string-python-string=str[python]]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_extract.py::test_extract_expand_capture_groups_index[string-string=str[pyarrow]]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_extract.py::test_extract_expand_capture_groups_index[tuples-string=string[python]]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_extract.py::test_extract_expand_capture_groups_index[tuples-string=str[python]]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_extract.py::test_extract_expand_capture_groups_index[uint16-string=string[python]]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_extract.py::test_extract_expand_capture_groups_index[uint16-string=str[pyarrow]]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_extract.py::test_extract_expand_capture_groups_index[uint32-string=string[pyarrow]]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_extract.py::test_extract_expand_capture_groups_index[uint32-string=str[python]]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_extract.py::test_extract_expand_capture_groups_index[uint64-string=string[pyarrow]]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_extract.py::test_extract_expand_capture_groups_index[uint64-string=string[python]]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_extract.py::test_extract_expand_capture_groups_index[uint64-string=str[pyarrow]]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_extract.py::test_extract_expand_capture_groups_index[uint8-string=string[pyarrow]]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_extract.py::test_extract_expand_capture_groups_index[uint8-string=str[pyarrow]]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_extract.py::test_extract_expand_capture_groups_index[uint8-string=str[python]]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_extract.py::test_extract_expand_capture_groups[string=string[pyarrow]]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_extract.py::test_extract_expand_capture_groups[string=string[python]]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_extract.py::test_extract_expand_capture_groups[string=str[pyarrow]]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_extract.py::test_extract_expand_capture_groups[string=str[python]]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_extract.py::test_extract_expand_index_raises": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_extract.py::test_extract_expand_True_single_capture_group[index-string=str[pyarrow]]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_extract.py::test_extract_index_one_two_groups": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_extract.py::test_extract_optional_groups[string=string[pyarrow]]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_extract.py::test_extract_optional_groups[string=string[python]]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_extract.py::test_extract_optional_groups[string=str[pyarrow]]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_extract.py::test_extract_series[string=string[pyarrow]-None]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_extract.py::test_extract_series[string=string[pyarrow]-series_name]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_extract.py::test_extract_series[string=string[python]-None]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_extract.py::test_extract_series[string=str[python]-None]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_find_replace.py::test_contains_compiled_regex_flags[string=string[pyarrow]]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_find_replace.py::test_contains_compiled_regex[string=object]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_find_replace.py::test_contains_compiled_regex[string=string[pyarrow]]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_find_replace.py::test_contains_end_of_string[string=string[pyarrow]]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_find_replace.py::test_contains_lookarounds[string=object-na5-ab-expected_data4]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_find_replace.py::test_contains_lookarounds[string=object-_NoDefault.no_default-ab-expected_data4]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_find_replace.py::test_contains_lookarounds[string=str[pyarrow]-None-ab-expected_data4]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_find_replace.py::test_contains_lookarounds[string=str[python]-na5-ab-expected_data4]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_find_replace.py::test_contains_lookarounds[string=str[python]-None-ab-expected_data4]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_find_replace.py::test_contains_moar[string=string[pyarrow]]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_find_replace.py::test_contains_na_kwarg_for_nullable_string_dtype[string[pyarrow]-False-False-False]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_find_replace.py::test_contains_na_kwarg_for_nullable_string_dtype[string[pyarrow]-False-None-expected0]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_find_replace.py::test_contains_na_kwarg_for_nullable_string_dtype[string[pyarrow]-False-True-True]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_find_replace.py::test_contains_na_kwarg_for_nullable_string_dtype[string[pyarrow]-True-False-False]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_find_replace.py::test_contains_na_kwarg_for_nullable_string_dtype[string[pyarrow]-True-None-expected0]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_find_replace.py::test_replace_end_of_string[string=string[pyarrow]]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_find_replace.py::test_replace_end_of_string[string=str[pyarrow]]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_find_replace.py::test_startswith[False-None-object-pat1]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_find_replace.py::test_startswith[True-None-object-foo]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_string_array.py::test_string_array_boolean_array[string[pyarrow]-isdigit-expected0]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_string_array.py::test_string_array_boolean_array[string[pyarrow]-isnumeric-expected4]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_string_array.py::test_string_array[string[pyarrow]-contains]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_string_array.py::test_string_array[string[pyarrow]-endswith2]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_string_array.py::test_string_array[string[pyarrow]-endswith3]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_string_array.py::test_string_array[string[pyarrow]-endswith4]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_string_array.py::test_string_array[string[pyarrow]-isdecimal]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_string_array.py::test_string_array[string[pyarrow]-isdigit]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_string_array.py::test_string_array[string[pyarrow]-istitle]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_string_array.py::test_string_array[string[pyarrow]-len]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_string_array.py::test_string_array[string[pyarrow]-startswith0]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_string_array.py::test_string_array[string[pyarrow]-startswith1]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_string_array.py::test_string_array[string[pyarrow]-startswith3]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_string_array.py::test_string_array[string[python]-len]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_strings.py::test_empty_str_methods[string=object]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_strings.py::test_empty_str_methods[string=str[pyarrow]]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_strings.py::test_ismethods[string=string[pyarrow]-isalnum-expected1]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_strings.py::test_ismethods[string=string[pyarrow]-isnumeric-expected4]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_strings.py::test_len[string=string[python]]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_strings.py::test_slice_replace[string=string[pyarrow]-None--2-z-expected5]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_strings.py::test_slice_replace[string=string[python]--1-None-z-expected4]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_strings.py::test_slice_replace[string=str[python]--10-3-z-expected7]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    "tests/strings/test_strings.py::test_slice_replace[string=str[python]-None--2-z-expected5]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
+    # Failing in sharded pandas-tests CI run 32294121723 (shard 1, job
+    # 96216291366). Both are nondeterministic rather than deterministic
+    # incompatibilities: test_stack_multiple_out_of_bounds[True] and the
+    # sibling unstack tests pass in the other shard, and
+    # test_to_datetime_iso8601_fails passed in the previous run of this
+    # same shard.
+    "tests/frame/test_stack_unstack.py::TestStackUnstackMultiLevel::test_stack_multiple_out_of_bounds[False]": "Flaky under test sharding: cudf.pandas behavior is test-order-dependent (see #22992)",
+    "tests/tools/test_to_datetime.py::TestToDatetimeMisc::test_to_datetime_iso8601_fails[True-2012-01-01-%Y-%m-%d %H]": "Flaky under test sharding: cudf.pandas behavior is test-order-dependent (see #22992)",
+}
+
 # Keep keys in alphabetical order
 NODEIDS_THAT_MAY_FAIL = {
     "tests/groupby/test_numeric_only.py::TestNumericOnly::test_extrema[max]": "Environment-sensitive TypeError expectation",
@@ -5244,15 +5566,50 @@ def pytest_configure(config):
         "comparison for tests with small GPU-vs-CPU floating-point drift.",
     )
 
+    # Validate the sharding options before collection rather than during it.
+    # A misconfigured CI matrix should fail in seconds instead of after
+    # collecting the whole pandas suite, and raising here gives a clean usage
+    # error rather than a pytest INTERNALERROR.
+    num_shards = config.getoption("num_shards")
+    shard_id = config.getoption("shard_id")
+    if num_shards < 1:
+        raise pytest.UsageError(
+            f"--num-shards ({num_shards}) must be at least 1"
+        )
+    if not 0 <= shard_id < num_shards:
+        raise pytest.UsageError(
+            f"--shard-id ({shard_id}) must be in "
+            f"[0, --num-shards ({num_shards}))"
+        )
+
 
 @pytest.hookimpl(trylast=True)
 def pytest_collection_modifyitems(session, config, items):
+    num_shards = config.getoption("num_shards")
+    sharded = num_shards > 1
+    if sharded:
+        shard_id = config.getoption("shard_id")
+        # Keep only this shard's items before applying skip/xfail markers so
+        # the markers are only attached to the tests this shard will run.
+        items[:], deselected = partition_items_by_shard(
+            items, shard_id, num_shards
+        )
+        if deselected:
+            # Tell pytest what the other shards took, so reporting plugins
+            # account for them instead of seeing them vanish at collection.
+            config.hook.pytest_deselected(items=deselected)
     for item in items:
         if any(
             substr in item.nodeid for substr in NODEIDS_TOLERANT_INDEX_COMPARE
         ):
             item.add_marker(pytest.mark.tolerant_index_compare)
         if (reason := NODEIDS_TO_SKIP.get(item.nodeid, None)) is not None:
+            item.add_marker(pytest.mark.skip(reason=reason))
+        elif (
+            sharded
+            and (reason := NODEIDS_TO_SKIP_WHEN_SHARDED.get(item.nodeid, None))
+            is not None
+        ):
             item.add_marker(pytest.mark.skip(reason=reason))
         elif (
             reason := next(

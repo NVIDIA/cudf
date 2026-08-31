@@ -10,16 +10,18 @@
 
 #include <kvikio/defaults.hpp>
 
+#include <cstdint>
+#include <optional>
 #include <string>
 
 namespace cudf::io {
 
 namespace kvikio_integration {
 
-void set_up_kvikio()
+void set_up_kvikio(std::optional<uint32_t> nthreads)
 {
   static std::once_flag flag{};
-  std::call_once(flag, [] {
+  std::call_once(flag, [nthreads] {
     // Workaround for https://github.com/NVIDIA/cudf/issues/14140, where cuFileDriverOpen errors
     // out if no CUDA calls have been made before it. This is a no-op if the CUDA context is already
     // initialized.
@@ -28,8 +30,8 @@ void set_up_kvikio()
     auto const compat_mode = kvikio::getenv_or("KVIKIO_COMPAT_MODE", kvikio::CompatMode::ON);
     kvikio::defaults::set_compat_mode(compat_mode);
 
-    auto const nthreads = cudf::detail::getenv_or<unsigned int>("KVIKIO_NTHREADS", 4u);
-    kvikio::defaults::set_thread_pool_nthreads(nthreads);
+    auto const n = nthreads.value_or(cudf::detail::getenv_or<unsigned int>("KVIKIO_NTHREADS", 4u));
+    kvikio::defaults::set_thread_pool_nthreads(n);
   });
 }
 

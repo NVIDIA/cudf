@@ -9,6 +9,7 @@ from libcpp.memory cimport make_unique, unique_ptr
 from libcpp.utility cimport move
 from pylibcudf.libcudf.table.table_view cimport table_view as cpp_table_view
 from pylibcudf.table cimport Table
+from cudf_streaming.stream_ref cimport stream_ref
 
 from rapidsmpf._detail.exception_handling cimport ex_handler
 from rapidsmpf.memory.buffer_resource cimport (BufferResource,
@@ -46,7 +47,7 @@ cdef extern from * nogil:
     std::unique_ptr<cudf_streaming::table_chunk>
     cpp_from_table_view_with_owner(
         cudf::table_view view,
-        rmm::cuda_stream_view stream,
+        cuda::stream_ref stream,
         PyObject *owner,
         void(*py_deleter)(void *),
         bool exclusive_view
@@ -182,7 +183,7 @@ cdef class TableChunk:
         persists even when the chunk is transferred through Channels.
 
         """
-        cdef cuda_stream_view _stream = stream.view()
+        cdef stream_ref _stream = stream_ref(stream.view().value())
         cdef cpp_table_view view = table.view()
         return TableChunk.from_handle(
             cpp_from_table_view_with_owner(
@@ -313,7 +314,7 @@ cdef class TableChunk:
             The CUDA stream.
         """
         return Stream._from_cudaStream_t(
-            deref(self.handle_ptr()).stream().value()
+            deref(self.handle_ptr()).stream().get()
         )
 
     def data_alloc_size(self, mem_type=None):

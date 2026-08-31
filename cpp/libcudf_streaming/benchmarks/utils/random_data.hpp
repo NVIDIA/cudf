@@ -49,7 +49,7 @@ std::size_t constexpr random_table_size_lower_bound(cudf::size_type ncolumns, cu
 rmm::device_uvector<std::int32_t> random_device_vector(std::size_t nelem,
                                                        std::int32_t min_val,
                                                        std::int32_t max_val,
-                                                       rmm::cuda_stream_view stream,
+                                                       cuda::stream_ref stream,
                                                        rmm::device_async_resource_ref mr);
 
 /**
@@ -70,7 +70,7 @@ rmm::device_uvector<std::int32_t> random_device_vector(std::size_t nelem,
 std::unique_ptr<cudf::column> random_column(cudf::size_type nrows,
                                             std::int32_t min_val,
                                             std::int32_t max_val,
-                                            rmm::cuda_stream_view stream,
+                                            cuda::stream_ref stream,
                                             rmm::device_async_resource_ref mr);
 
 /**
@@ -93,7 +93,7 @@ cudf::table random_table(cudf::size_type ncolumns,
                          cudf::size_type nrows,
                          std::int32_t min_val,
                          std::int32_t max_val,
-                         rmm::cuda_stream_view stream,
+                         cuda::stream_ref stream,
                          rmm::device_async_resource_ref mr);
 
 /**

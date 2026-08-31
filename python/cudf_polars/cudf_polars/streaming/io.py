@@ -257,7 +257,7 @@ def _read_with_hybrid_scan(
             )
 
             if row_group_indices:
-                bloom_ranges, _ = reader.secondary_filters_byte_ranges(
+                bloom_ranges = reader.bloom_filters_byte_ranges(
                     row_group_indices, options
                 )
                 if bloom_ranges:

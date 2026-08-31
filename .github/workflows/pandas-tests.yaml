@@ -58,7 +58,7 @@ jobs:
       branch: ${{ inputs.branch }}
       date: ${{ inputs.date }}
       sha: ${{ inputs.sha }}
-      node_type: "gpu-l4-latest-1"
+      node_type: "gpu-rtxpro6000-latest-1"
       container_image: "rapidsai/citestwheel:26.10-latest"
       script: "ci/cudf_pandas_scripts/pandas-tests/run.sh main ${{ matrix.shard_id }} ${{ needs.pandas-tests-shards.outputs.num_shards }}"
       file_to_upload: ./main-results.json

@@ -656,6 +656,7 @@ ConfigureTest(
   text/stemmer_tests.cpp
   text/subword_tests.cpp
   text/tokenize_tests.cpp
+  text/unicode_normalize_tests.cpp
 )
 
 # ##################################################################################################
@@ -841,6 +842,7 @@ ConfigureTest(
   streams/text/replace_test.cpp
   streams/text/stemmer_test.cpp
   streams/text/tokenize_test.cpp
+  streams/text/unicode_normalize_test.cpp
   STREAM_MODE
   testing
 )

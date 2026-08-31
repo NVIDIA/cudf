@@ -192,9 +192,10 @@ class hybrid_scan_metadata {
  * Row group pruning (OPTIONAL): Start with either a list of custom or all row group indices in the
  * parquet file and optionally filter it using a byte range and/or the filter expression using
  * column chunk statistics, dictionaries and bloom filters. Byte ranges for column chunk dictionary
- * pages and bloom filters within parquet file may be obtained via `secondary_filters_byte_ranges()`
- * function. The byte ranges may be read into device buffers and their device spans may be passed
- * to the row group filtration functions.
+ * pages and bloom filters within parquet file may be obtained via the
+ * `dictionary_pages_byte_ranges()` and `bloom_filters_byte_ranges()` functions respectively. The
+ * byte ranges may be read into device buffers and their device spans may be passed to the row group
+ * filtration functions.
  * @code{.cpp}
  * // Start with a list of all parquet row group indices from the file footer
  * auto all_row_group_indices = reader->all_row_groups(options);
@@ -216,9 +217,9 @@ class hybrid_scan_metadata {
  * // Update current row group indices to now track the stats-filtered row group indices
  * current_row_group_indices = stats_filtered_row_group_indices;
  *
- * // Get byte ranges of bloom filters and dictionaries for the current row groups
- * auto [bloom_filter_byte_ranges, dict_page_byte_ranges] =
- *   reader->secondary_filters_byte_ranges(current_row_group_indices, options);
+ * // Get byte ranges of dictionary pages for the current row groups
+ * auto dict_page_byte_ranges =
+ *   reader->dictionary_pages_byte_ranges(current_row_group_indices, options);
  *
  * // Optional: Prune row groups if we have valid dictionary pages
  * auto dict_filtered_row_group_indices = std::vector<size_type>{};
@@ -237,13 +238,20 @@ class hybrid_scan_metadata {
  *   current_row_group_indices = dict_filtered_row_group_indices;
  * }
  *
+ * // Get byte ranges of bloom filters for the current row groups
+ * auto bloom_filter_byte_ranges =
+ *   reader->bloom_filters_byte_ranges(current_row_group_indices, options);
+ *
  * // Optional: Prune row groups if we have valid bloom filters
  * auto bloom_filtered_row_group_indices = std::vector<size_type>{};
  *
  * if (bloom_filter_byte_ranges.size()) {
- *   // Fetch bloom filter byte ranges into device buffers and create spans
+ *   // Fetch 32-byte aligned bloom filter data buffers from the input file buffer
+ *   auto constexpr bloom_filter_alignment = rmm::CUDA_ALLOCATION_ALIGNMENT;
+ *   auto aligned_mr = rmm::mr::aligned_resource_adaptor(mr, bloom_filter_alignment);
  *   auto [bloom_filter_buffers, bloom_filter_data, bloom_filter_tasks] =
- *     parquet::fetch_byte_ranges_to_device_async(datasource, bloom_filter_byte_ranges, stream, mr);
+ *     parquet::fetch_byte_ranges_to_device_async(
+ *       datasource, bloom_filter_byte_ranges, stream, aligned_mr);
  *   bloom_filter_tasks.get();
  *
  *   // Prune row groups using bloom filters
@@ -466,45 +474,26 @@ class hybrid_scan_reader {
     cuda::stream_ref stream) const;
 
   /**
-   * @brief Get byte ranges of bloom filters and dictionary pages (secondary filters) for row group
-   *        pruning
+   * @brief Get byte ranges of bloom filters for row group pruning
    *
    * @note Device buffers for bloom filter byte ranges must be allocated using a 32 byte
    *       aligned memory resource
    *
    * @param row_group_indices Input row groups indices
    * @param options Parquet reader options
-   * @return Pair of vectors of byte ranges of column chunk with bloom filters and dictionary
-   *         pages subject to filter predicate
+   * @return Vector of byte ranges to column chunk bloom filters subject to the filter predicate
    */
-  [[nodiscard]] std::pair<std::vector<byte_range_info>, std::vector<byte_range_info>>
-  secondary_filters_byte_ranges(std::span<size_type const> row_group_indices,
-                                parquet_reader_options const& options) const;
-
-  /**
-   * @brief Filter the row groups using column chunk dictionary pages
-   *
-   * @param dictionary_page_data Device spans of dictionary page data of column chunks with an
-   * (in)equality predicate, in the same order as the byte ranges returned by
-   * `secondary_filters_byte_ranges` including empty spans against empty byte ranges
-   * @param row_group_indices Input row groups indices
-   * @param options Parquet reader options
-   * @param stream CUDA stream used for device memory operations and kernel launches
-   * @return Filtered row group indices
-   */
-  [[nodiscard]] std::vector<size_type> filter_row_groups_with_dictionary_pages(
-    std::span<cudf::device_span<uint8_t const> const> dictionary_page_data,
-    std::span<size_type const> row_group_indices,
-    parquet_reader_options const& options,
-    cuda::stream_ref stream) const;
+  [[nodiscard]] std::vector<byte_range_info> bloom_filters_byte_ranges(
+    std::span<size_type const> row_group_indices, parquet_reader_options const& options) const;
 
   /**
    * @brief Filter the row groups using column chunk bloom filters
    *
    * @note The `bloom_filter_data` device spans must point to 32-byte aligned addresses
    *
-   * @param bloom_filter_data Device spans of bloom filter data of column chunks with an equality
-   *                          predicate
+   * @param bloom_filter_data Device spans of header-stripped bloom filter bitsets of column chunks
+   *                          with an equality predicate, ordered to match the bloom filter byte
+   *                          ranges returned by `bloom_filters_byte_ranges`
    * @param row_group_indices Input row groups indices
    * @param options Parquet reader options
    * @param stream CUDA stream used for device memory operations and kernel launches
@@ -512,6 +501,33 @@ class hybrid_scan_reader {
    */
   [[nodiscard]] std::vector<size_type> filter_row_groups_with_bloom_filters(
     std::span<cudf::device_span<uint8_t const> const> bloom_filter_data,
+    std::span<size_type const> row_group_indices,
+    parquet_reader_options const& options,
+    cuda::stream_ref stream) const;
+
+  /**
+   * @brief Get byte ranges of column chunk dictionary pages for row group pruning
+   *
+   * @param row_group_indices Input row groups indices
+   * @param options Parquet reader options
+   * @return Vector of byte ranges to column chunk dictionary pages subject to the filter predicate
+   */
+  [[nodiscard]] std::vector<byte_range_info> dictionary_pages_byte_ranges(
+    std::span<size_type const> row_group_indices, parquet_reader_options const& options) const;
+
+  /**
+   * @brief Filter the row groups using column chunk dictionary pages
+   *
+   * @param dictionary_page_data Device spans of dictionary page data of column chunks with an
+   * (in)equality predicate, in the same order as the byte ranges returned by
+   * `dictionary_pages_byte_ranges` including empty spans against empty byte ranges
+   * @param row_group_indices Input row groups indices
+   * @param options Parquet reader options
+   * @param stream CUDA stream used for device memory operations and kernel launches
+   * @return Filtered row group indices
+   */
+  [[nodiscard]] std::vector<size_type> filter_row_groups_with_dictionary_pages(
+    std::span<cudf::device_span<uint8_t const> const> dictionary_page_data,
     std::span<size_type const> row_group_indices,
     parquet_reader_options const& options,
     cuda::stream_ref stream) const;

@@ -17,11 +17,49 @@
 
 #include <cuda/stream>
 
+#include <concepts>
 #include <memory>
 #include <optional>
+#include <type_traits>
 #include <utility>
+#include <variant>
 
 namespace cudf::detail {
+
+/**
+ * @brief Normalized delta source for a single range-window endpoint.
+ *
+ * A range-window endpoint carries at most one delta, and each endpoint kind supplies it
+ * differently: `bounded_closed`/`bounded_open` hold a single scalar delta (exposed as a
+ * `cudf::scalar const*`), the column-valued endpoints hold a per-row delta `cudf::column_view`, and
+ * `unbounded`/`current_row` carry no delta at all (`std::monostate`). Normalizing to this variant
+ * lets a single typed value be threaded through the dispatch stack instead of a pair of nullable
+ * pointers, while keeping the endpoints' public accessors unchanged.
+ */
+using range_window_delta = std::variant<std::monostate, cudf::scalar const*, cudf::column_view>;
+
+/**
+ * @brief Normalize a range-window endpoint's delta into a single typed source.
+ *
+ * `unbounded`/`current_row` carry no delta and normalize to `std::monostate`; every other endpoint
+ * forwards its public `delta()` accessor (a `cudf::scalar const*` for the scalar-valued bounded
+ * windows, a `cudf::column_view` for the column-valued ones).
+ *
+ * @tparam Window The endpoint tag type.
+ * @param window The endpoint tag.
+ * @return The endpoint's delta as a `range_window_delta`.
+ */
+template <typename Window>
+[[nodiscard]] range_window_delta normalize_delta(Window const& window)
+{
+  using WindowType = std::remove_cvref_t<Window>;
+  if constexpr (std::same_as<WindowType, cudf::unbounded> ||
+                std::same_as<WindowType, cudf::current_row>) {
+    return std::monostate{};
+  } else {
+    return window.delta();
+  }
+}
 
 /**
  * @brief Constructs preceding and following window-size columns for a single-column RANGE window.

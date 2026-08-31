@@ -86,7 +86,7 @@ std::unique_ptr<column> make_range_window(
 
   return std::visit(
     [&](auto const& window_bound) -> std::unique_ptr<column> {
-      auto const delta = window_bound.delta();
+      auto const delta = normalize_delta(window_bound);
       // Type-independent invariants for a per-row delta column are enforced once here, regardless
       // of the orderby type. The orderby-type-specific type relationship is checked per-type in
       // range_window_clamper::operator().

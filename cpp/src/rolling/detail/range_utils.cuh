@@ -5,6 +5,7 @@
 
 #pragma once
 
+#include "range_rolling.hpp"
 #include "rolling_utils.cuh"
 
 #include <cudf/column/column.hpp>
@@ -144,7 +145,7 @@ struct comparator_impl<T, bounded_open_column> {
  * timestamp orderby columns.
  */
 template <typename WindowType>
-[[nodiscard]] constexpr bool is_column_range_window()
+[[nodiscard]] constexpr CUDF_HOST_DEVICE bool is_column_range_window()
 {
   return cuda::std::is_same_v<WindowType, bounded_closed_column> ||
          cuda::std::is_same_v<WindowType, bounded_open_column>;
@@ -685,9 +686,12 @@ struct range_window_clamper {
         static_assert(cudf::is_numeric_not_bool<OrderbyT>() || cudf::is_timestamp<OrderbyT>(),
                       "Column-valued RANGE bounds support only numeric and timestamp orderby "
                          "columns.");
-        auto const* delta_col = as_column_delta(delta);
+        // A column-valued window normalizes to a `column_view` delta, so extract it directly:
+        // `std::get` makes that invariant explicit and throws if normalization and dispatch ever
+        // disagree, rather than silently dereferencing a null accessor result.
+        auto const& delta_col = std::get<column_view>(delta);
         if constexpr (cudf::is_numeric_not_bool<OrderbyT>()) {
-          auto const* d_row_delta = delta_col->data<OrderbyT>();
+          auto const* d_row_delta = delta_col.data<OrderbyT>();
           expand_bounded(grouping,
                          direction,
                          order,
@@ -697,7 +701,7 @@ struct range_window_clamper {
                          result_view,
                          stream);
         } else {
-          auto const* d_row_delta = delta_col->data<typename OrderbyT::duration>();
+          auto const* d_row_delta = delta_col.data<typename OrderbyT::duration>();
           expand_bounded(grouping,
                          direction,
                          order,
@@ -708,7 +712,10 @@ struct range_window_clamper {
                          stream);
         }
       } else {
-        auto const* d_row_delta = static_cast<ScalarT const*>(as_scalar_delta(delta))->data();
+        // A scalar-valued bounded window normalizes to a `scalar const*` delta; extract it directly
+        // for the same reason.
+        auto const* d_row_delta =
+          static_cast<ScalarT const*>(std::get<scalar const*>(delta))->data();
         expand_bounded(grouping,
                        direction,
                        order,

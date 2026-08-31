@@ -99,13 +99,14 @@ hash_join<Hasher>::join_retrieve(cudf::table_view const& left,
   CUDF_EXPECTS(join_size == static_cast<std::size_t>(actual_size),
                "The provided join output size is incorrect");
 
-  // `finalize_full_join` appends one entry per unmatched right row.  Reserve that exact tail up
-  // front so it grows into retained capacity instead of reallocating and copying both vectors.
-  // Shrinking below the capacity only lowers the logical size, so retrieval still sees `join_size`.
+  // `finalize_full_join` resizes to `join_size + _right.num_rows()` unconditionally, so reserve
+  // that same upper bound up front and it grows into retained capacity instead of reallocating and
+  // copying both vectors.  Reserving only the unmatched tail would fall short whenever any right
+  // row matched, which is the common case.  Shrinking below the capacity only lowers the logical
+  // size, so retrieval still sees `join_size`.
   auto const allocation_size = [&]() -> std::size_t {
     if constexpr (Join == join_kind::FULL_JOIN) {
-      auto const matched_right_rows = matched_build_rows.value(stream);
-      return join_size + static_cast<std::size_t>(_right.num_rows()) - matched_right_rows;
+      return join_size + static_cast<std::size_t>(_right.num_rows());
     } else {
       return join_size;
     }

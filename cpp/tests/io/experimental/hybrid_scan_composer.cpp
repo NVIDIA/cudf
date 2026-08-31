@@ -79,9 +79,9 @@ auto apply_hybrid_scan_filters(cudf::io::datasource& datasource,
   // Update current row group indices
   current_row_group_indices = stats_filtered_row_group_indices;
 
-  // Get bloom filter and dictionary page byte ranges from the reader
-  auto [bloom_filter_byte_ranges, dict_page_byte_ranges] =
-    reader.secondary_filters_byte_ranges(current_row_group_indices, options);
+  // Get dictionary page byte ranges from the reader
+  auto const dict_page_byte_ranges =
+    reader.dictionary_pages_byte_ranges(current_row_group_indices, options);
 
   // If we have dictionary page byte ranges, filter row groups with dictionary pages
   std::vector<cudf::size_type> dictionary_page_filtered_row_group_indices;
@@ -100,6 +100,10 @@ auto apply_hybrid_scan_filters(cudf::io::datasource& datasource,
     // Update current row group indices
     current_row_group_indices = dictionary_page_filtered_row_group_indices;
   }
+
+  // Get bloom filter byte ranges from the reader
+  auto const bloom_filter_byte_ranges =
+    reader.bloom_filters_byte_ranges(current_row_group_indices, options);
 
   // If we have bloom filter byte ranges, filter row groups with bloom filters
   std::vector<cudf::size_type> bloom_filtered_row_group_indices;

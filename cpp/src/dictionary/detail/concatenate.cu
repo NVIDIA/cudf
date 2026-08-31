@@ -276,9 +276,10 @@ std::unique_ptr<column> concatenate(host_span<column_view const> columns,
   // concatenated keys no longer fit in it (e.g. two INT8 dictionaries with 200 distinct keys).
   auto indices_type = std::accumulate(
     columns.begin(), columns.end(), data_type{type_id::INT8}, [](data_type widest, auto cv) {
-      auto dict_view = dictionary_column_view(cv);
-      if (dict_view.is_empty()) { return widest; }
-      auto const t = dict_view.indices().type();
+      // an empty dictionary column may carry no children at all, but a sliced-to-empty
+      // view still has an indices child whose type participates in the selection
+      if (cv.num_children() == 0) { return widest; }
+      auto const t = dictionary_column_view(cv).indices().type();
       return cudf::size_of(t) > cudf::size_of(widest) ? t : widest;
     });
   auto const needed_type = get_indices_type_for_size(keys_column->size());

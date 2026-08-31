@@ -25,15 +25,18 @@ def test_cudf_health_checks_are_registered():
 def test_rapids_doctor_runs_required_and_cudf_health_checks():
     """Verify RAPIDS Doctor successfully runs all discovered checks."""
     result = subprocess.run(
-        ["rapids", "doctor"],
+        ["rapids", "doctor", "--verbose"],
         capture_output=True,
         check=False,
         text=True,
         encoding="utf-8",
         timeout=120,
     )
-    output = f"{result.stdout}\n{result.stderr}"
 
     # A successful RAPIDS Doctor exit code means all discovered checks passed,
     # including the registered cuDF checks validated above.
-    assert result.returncode == 0, output
+    assert result.returncode == 0, (
+        f"rapids doctor exited with return code {result.returncode}\n"
+        f"stdout:\n{result.stdout}\n"
+        f"stderr:\n{result.stderr}"
+    )

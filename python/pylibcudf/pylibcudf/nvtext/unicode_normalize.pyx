@@ -61,10 +61,10 @@ cdef class UnicodeNormalizer:
         cdef table_view c_data = unicode_data.view()
         cdef Stream _stream = _get_stream(stream)
         cdef cudaStream_t _cs = _stream.view().value()
-        mr = _get_memory_resource(mr)
+        cdef DeviceMemoryResource _mr = _get_memory_resource(mr)
         with nogil:
             self.c_obj = move(
-                cpp_create_unicode_normalizer(c_data, form, _cs, mr.get_mr())
+                cpp_create_unicode_normalizer(c_data, form, _cs, _mr.get_mr())
             )
 
     __hash__ = None
@@ -99,10 +99,12 @@ cpdef Column normalize_unicode(
     Column
         New strings column of normalized UTF-8 strings.
     """
+    if normalizer is None:
+        raise TypeError("normalizer must not be None")
     cdef unique_ptr[column] c_result
     cdef Stream _stream = _get_stream(stream)
     cdef cudaStream_t _cs = _stream.view().value()
-    mr = _get_memory_resource(mr)
+    cdef DeviceMemoryResource _mr = _get_memory_resource(mr)
 
     cdef column_view c_input = input.view()
     with nogil:
@@ -110,7 +112,7 @@ cpdef Column normalize_unicode(
             c_input,
             dereference(normalizer.c_obj.get()),
             _cs,
-            mr.get_mr(),
+            _mr.get_mr(),
         )
 
-    return Column.from_libcudf(move(c_result), _stream, mr)
+    return Column.from_libcudf(move(c_result), _stream, _mr)

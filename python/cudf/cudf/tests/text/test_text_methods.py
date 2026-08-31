@@ -289,7 +289,7 @@ def test_unicode_normalize():
     # NFC: decomposed e + combining acute → precomposed é; ﬁ unchanged
     nfc = UnicodeNormalizer(unicode_data, form="NFC")
     assert_eq(
-        nfc.normalize(cudf.Series(["é", "café", "ﬁ", None])),
+        nfc.normalize(cudf.Series(["é", "café", "ﬁ", None])),
         cudf.Series(["é", "café", "ﬁ", None]),
     )
 

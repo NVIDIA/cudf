@@ -78,6 +78,12 @@ def test_null_strings(nfc_normalizer):
     assert_column_eq(expected, result)
 
 
+def test_empty_column(nfc_normalizer):
+    arr = pa.array([], type=pa.string())
+    result = normalize_unicode(plc.Column.from_arrow(arr), nfc_normalizer)
+    assert_column_eq(arr, result)
+
+
 def test_ascii_passthrough(nfc_normalizer):
     arr = pa.array(["hello", "world", "abc 123", ""])
     result = normalize_unicode(plc.Column.from_arrow(arr), nfc_normalizer)

@@ -107,7 +107,11 @@ static void bench_dictionary_concatenate_indices(nvbench::state& state)
   state.add_global_memory_reads<uint8_t>(input_table.alloc_size());
   auto result = cudf::concatenate(views, stream);
   state.add_global_memory_writes<uint8_t>(result->alloc_size());
-  state.add_element_count(cudf::dictionary_column_view(result->view()).keys_size(), "output_keys");
+  // throughput is per processed index; the resulting key count is a plain summary
+  state.add_element_count(static_cast<double>(num_rows) * num_cols);
+  auto& keys_summary = state.add_summary("output_keys");
+  keys_summary.set_string("description", "Number of keys in the concatenated dictionary");
+  keys_summary.set_int64("value", cudf::dictionary_column_view(result->view()).keys_size());
 
   state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.value()));
   auto const mem_stats_logger = cudf::memory_stats_logger();

@@ -120,27 +120,15 @@ hash_join<Hasher>::join_retrieve(cudf::table_view const& left,
   cudf::prefetch::detail::prefetch(*left_indices, stream);
   cudf::prefetch::detail::prefetch(*right_indices, stream);
 
-  if constexpr (Join == join_kind::INNER_JOIN) {
-    launch_hash_csr_retrieve_kernel<false>(actual_size,
-                                           left.num_rows(),
-                                           offsets.data(),
-                                           probe_slots.data(),
-                                           _impl->csr(),
-                                           0,
-                                           left_indices->data(),
-                                           right_indices->data(),
-                                           stream);
-  } else {
-    launch_hash_csr_retrieve_kernel<true>(actual_size,
-                                          left.num_rows(),
-                                          offsets.data(),
-                                          probe_slots.data(),
-                                          _impl->csr(),
-                                          0,
-                                          left_indices->data(),
-                                          right_indices->data(),
-                                          stream);
-  }
+  launch_hash_csr_retrieve_kernel<Join != join_kind::INNER_JOIN>(actual_size,
+                                                                 left.num_rows(),
+                                                                 offsets.data(),
+                                                                 probe_slots.data(),
+                                                                 _impl->csr(),
+                                                                 0,
+                                                                 left_indices->data(),
+                                                                 right_indices->data(),
+                                                                 stream);
 
   auto join_indices = std::pair(std::move(left_indices), std::move(right_indices));
 

@@ -63,7 +63,7 @@ cdef class gpumemoryview:
     It will be expanded to encompass more memoryview functionality over time.
     """
     # TODO: dlpack support
-    def __init__(self, object obj):
+    def __init__(self, object obj: Any):
         try:
             cai = obj.__cuda_array_interface__
         except AttributeError:

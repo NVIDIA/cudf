@@ -2227,6 +2227,66 @@ def test_empty_file_pandas_compat_raises(tmp_path):
             cudf.read_csv(str(empty_file))
 
 
+@pytest.mark.parametrize(
+    "buffer,kwargs",
+    [
+        ("a,b\n", {}),
+        ("", {"names": ["a", "b"]}),
+    ],
+)
+def test_empty_csv_with_columns_pandas_compat(buffer, kwargs):
+    with cudf.option_context("mode.pandas_compatible", True):
+        got = cudf.read_csv(StringIO(buffer), **kwargs)
+
+    expect = pd.read_csv(StringIO(buffer), **kwargs)
+    # With no rows to infer from, pandas falls back to ``object`` for these
+    # columns while cudf types them as strings. cudf has no object dtype
+    # (``object`` maps to DEFAULT_STRING_DTYPE), so the dtypes can never
+    # match here; what this test is about is that the columns survive at all.
+    assert_eq(expect, got, check_dtype=False)
+
+
+@pytest.mark.parametrize(
+    "name,fmt",
+    [
+        ("archive.tar", "tar"),
+        ("archive.tgz", "tar"),
+        ("archive.tar.gz", "tar"),
+        ("archive.tar.bz2", "tar"),
+        ("archive.tar.xz", "tar"),
+        ("archive.tar.zst", "tar"),
+        ("data.xz", "xz"),
+        ("data.zst", "zstd"),
+    ],
+)
+def test_read_csv_unreadable_compression_raises(tmp_path, name, fmt):
+    # libcudf cannot decompress these, and left alone it parses the container's
+    # bytes as CSV instead of failing -- an empty tar comes back as a (0, 1)
+    # frame whose column name is a run of NULs. Raising keeps cudf.pandas
+    # falling back to pandas, which reads them correctly.
+    path = tmp_path / name
+    path.write_bytes(b"\0" * 10240)
+    with pytest.raises(NotImplementedError, match=fmt):
+        cudf.read_csv(str(path))
+
+
+def test_read_csv_explicit_unsupported_compression_raises(tmp_path):
+    path = tmp_path / "does_not_exist.csv"
+    with pytest.raises(NotImplementedError, match="tar"):
+        cudf.read_csv(str(path), compression="tar")
+
+
+def test_read_csv_empty_tar_matches_pandas(tmp_path):
+    # Regression guard: pandas raises for a zero-file archive, so cudf must not
+    # quietly return a frame built from the tar's padding.
+    path = tmp_path / "empty.tar"
+    path.write_bytes(b"\0" * 10240)
+    with pytest.raises(ValueError):
+        pd.read_csv(path)
+    with pytest.raises(NotImplementedError):
+        cudf.read_csv(str(path))
+
+
 def test_read_csv_gcs(monkeypatch):
     gcsfs = pytest.importorskip("gcsfs")
     pdf = pd.DataFrame(

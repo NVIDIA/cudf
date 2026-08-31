@@ -79,7 +79,7 @@ struct random_number_generator {
 std::unique_ptr<cudf::column> generate_random_string_column(cudf::size_type lower,
                                                             cudf::size_type upper,
                                                             cudf::size_type num_rows,
-                                                            rmm::cuda_stream_view stream,
+                                                            cuda::stream_ref stream,
                                                             rmm::device_async_resource_ref mr)
 {
   CUDF_BENCHMARK_RANGE();
@@ -107,7 +107,7 @@ template <typename T>
 std::unique_ptr<cudf::column> generate_random_numeric_column(T lower,
                                                              T upper,
                                                              cudf::size_type num_rows,
-                                                             rmm::cuda_stream_view stream,
+                                                             cuda::stream_ref stream,
                                                              rmm::device_async_resource_ref mr)
 {
   CUDF_BENCHMARK_RANGE();
@@ -127,33 +127,33 @@ template std::unique_ptr<cudf::column> generate_random_numeric_column<int8_t>(
   int8_t lower,
   int8_t upper,
   cudf::size_type num_rows,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr);
 
 template std::unique_ptr<cudf::column> generate_random_numeric_column<int16_t>(
   int16_t lower,
   int16_t upper,
   cudf::size_type num_rows,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr);
 
 template std::unique_ptr<cudf::column> generate_random_numeric_column<cudf::size_type>(
   cudf::size_type lower,
   cudf::size_type upper,
   cudf::size_type num_rows,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr);
 
 template std::unique_ptr<cudf::column> generate_random_numeric_column<double>(
   double lower,
   double upper,
   cudf::size_type num_rows,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr);
 
 std::unique_ptr<cudf::column> generate_primary_key_column(cudf::scalar const& start,
                                                           cudf::size_type num_rows,
-                                                          rmm::cuda_stream_view stream,
+                                                          cuda::stream_ref stream,
                                                           rmm::device_async_resource_ref mr)
 {
   CUDF_BENCHMARK_RANGE();
@@ -162,7 +162,7 @@ std::unique_ptr<cudf::column> generate_primary_key_column(cudf::scalar const& st
 
 std::unique_ptr<cudf::column> generate_repeat_string_column(std::string const& value,
                                                             cudf::size_type num_rows,
-                                                            rmm::cuda_stream_view stream,
+                                                            cuda::stream_ref stream,
                                                             rmm::device_async_resource_ref mr)
 {
   CUDF_BENCHMARK_RANGE();
@@ -173,7 +173,7 @@ std::unique_ptr<cudf::column> generate_repeat_string_column(std::string const& v
 std::unique_ptr<cudf::column> generate_random_string_column_from_set(
   cudf::host_span<char const* const> set,
   cudf::size_type num_rows,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr)
 {
   CUDF_BENCHMARK_RANGE();
@@ -199,7 +199,7 @@ template <typename T>
 std::unique_ptr<cudf::column> generate_repeat_sequence_column(T seq_length,
                                                               bool zero_indexed,
                                                               cudf::size_type num_rows,
-                                                              rmm::cuda_stream_view stream,
+                                                              cuda::stream_ref stream,
                                                               rmm::device_async_resource_ref mr)
 {
   CUDF_BENCHMARK_RANGE();
@@ -224,14 +224,14 @@ template std::unique_ptr<cudf::column> generate_repeat_sequence_column<int8_t>(
   int8_t seq_length,
   bool zero_indexed,
   cudf::size_type num_rows,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr);
 
 template std::unique_ptr<cudf::column> generate_repeat_sequence_column<cudf::size_type>(
   cudf::size_type seq_length,
   bool zero_indexed,
   cudf::size_type num_rows,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr);
 
 }  // namespace cudf::datagen

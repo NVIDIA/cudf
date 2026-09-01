@@ -1743,7 +1743,7 @@ template <template <typename> class hash_function>
 std::pair<std::unique_ptr<table>, std::vector<size_type>> hash_partition(
   table_view const& input,
   table_view const& table_to_hash,
-  int num_partitions,
+  size_type num_partitions,
   uint32_t seed,
   cuda::stream_ref stream,
   rmm::device_async_resource_ref mr)
@@ -1791,7 +1791,7 @@ std::pair<std::unique_ptr<table>, std::vector<size_type>> partition(
 std::pair<std::unique_ptr<table>, std::vector<size_type>> hash_partition(
   table_view const& input,
   table_view const& keys,
-  int num_partitions,
+  size_type num_partitions,
   hash_id hash_function,
   uint32_t seed,
   cuda::stream_ref stream,
@@ -1816,7 +1816,7 @@ std::pair<std::unique_ptr<table>, std::vector<size_type>> hash_partition(
 std::pair<std::unique_ptr<table>, std::vector<size_type>> hash_partition(
   table_view const& input,
   std::vector<size_type> const& columns_to_hash,
-  int num_partitions,
+  size_type num_partitions,
   hash_id hash_function,
   uint32_t seed,
   cuda::stream_ref stream,
@@ -1830,7 +1830,7 @@ std::pair<std::unique_ptr<table>, std::vector<size_type>> hash_partition(
 std::pair<std::unique_ptr<table>, std::vector<size_type>> hash_partition(
   table_view const& input,
   table_view const& keys,
-  int num_partitions,
+  size_type num_partitions,
   hash_id hash_function,
   uint32_t seed,
   cuda::stream_ref stream,

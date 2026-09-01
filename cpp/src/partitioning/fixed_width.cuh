@@ -31,7 +31,7 @@ enum class layout {
  * @param value Value whose ceiling base-2 logarithm is requested
  * @return `ceil(log2(value))`, or zero when `value` is zero or one
  */
-constexpr int ceil_log2(std::uint64_t value) noexcept
+constexpr std::int32_t ceil_log2(std::uint64_t value) noexcept
 {
   return value < 2 ? 0 : cuda::std::bit_width(value - 1);
 }
@@ -60,7 +60,8 @@ constexpr layout pick_layout(size_type num_partitions, size_type rows_per_block)
  */
 struct packed_view {
   device_span<std::uint32_t> values;  ///< Packed metadata values, one for each input row
-  int partition_bits;  ///< Number of low-order bits reserved for the partition identifier
+  std::int32_t partition_bits;        ///< Number of low-order bits reserved for the partition
+                                      ///< identifier
 
   /**
    * @brief Returns the number of rows represented by this view.

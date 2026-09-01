@@ -106,6 +106,10 @@ class DataFrame:
         self.table = plc.Table([c.obj for c in self.columns], num_rows=num_rows)
         self.stream = stream
 
+    def _size_bytes(self) -> int:
+        """Return the size of the dataframe in bytes."""
+        return sum(c.device_buffer_size() for c in self.table.columns())
+
     def copy(self) -> Self:
         """Return a shallow copy of self."""
         return type(self)(

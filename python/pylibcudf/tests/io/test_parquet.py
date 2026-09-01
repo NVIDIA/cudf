@@ -957,8 +957,9 @@ def test_read_parquet_filters_jit(
     )
 
 
-def _write_source_index_sources(tmp_path) -> list:
-    """Write two parquet sources with differing row counts."""
+@pytest.fixture
+def source_index_sources(tmp_path) -> list[os.PathLike[str]]:
+    """Two parquet sources with differing row counts."""
     path_0 = tmp_path / "part-0.parquet"
     path_1 = tmp_path / "part-1.parquet"
     write_table(pa.table({"a": pa.array([1, 2, 3], type=pa.int64())}), path_0)
@@ -966,11 +967,11 @@ def _write_source_index_sources(tmp_path) -> list:
     return [path_0, path_1]
 
 
-def test_read_parquet_prepend_source_index_column_default(tmp_path) -> None:
-    sources = _write_source_index_sources(tmp_path)
-
+def test_read_parquet_prepend_source_index_column_default(
+    source_index_sources,
+) -> None:
     options = plc.io.parquet.ParquetReaderOptions.builder(
-        plc.io.SourceInfo(sources)
+        plc.io.SourceInfo(source_index_sources)
     ).build()
 
     assert options.is_enabled_prepend_source_index_column() is False
@@ -985,12 +986,10 @@ def test_read_parquet_prepend_source_index_column_default(tmp_path) -> None:
 
 @pytest.mark.parametrize("use_builder", [False, True])
 def test_read_parquet_prepend_source_index_column(
-    tmp_path, use_builder
+    source_index_sources, use_builder
 ) -> None:
-    sources = _write_source_index_sources(tmp_path)
-
     builder = plc.io.parquet.ParquetReaderOptions.builder(
-        plc.io.SourceInfo(sources)
+        plc.io.SourceInfo(source_index_sources)
     )
     if use_builder:
         options = builder.prepend_source_index_column(True).build()
@@ -1014,12 +1013,12 @@ def test_read_parquet_prepend_source_index_column(
 
 
 def test_read_parquet_prepend_source_index_column_with_filter(
-    tmp_path,
+    source_index_sources,
 ) -> None:
-    sources = _write_source_index_sources(tmp_path)
-
     options = (
-        plc.io.parquet.ParquetReaderOptions.builder(plc.io.SourceInfo(sources))
+        plc.io.parquet.ParquetReaderOptions.builder(
+            plc.io.SourceInfo(source_index_sources)
+        )
         .prepend_source_index_column(True)
         .build()
     )

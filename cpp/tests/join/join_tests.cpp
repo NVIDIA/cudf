@@ -163,7 +163,7 @@ std::unique_ptr<cudf::table> inner_join(
       [](cudf::table_view const& left,
          cudf::table_view const& right,
          cudf::null_equality compare_nulls,
-         rmm::cuda_stream_view stream,
+         cuda::stream_ref stream,
          rmm::device_async_resource_ref mr) {
         std::vector<cudf::size_type> right_key_indices(right.num_columns());
         std::iota(right_key_indices.begin(), right_key_indices.end(), 0);

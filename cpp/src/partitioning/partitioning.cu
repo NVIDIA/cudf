@@ -244,8 +244,9 @@ CUDF_KERNEL void compute_row_partition_numbers(row_hasher_t the_hasher,
 
     // Record the size of this partition in this block.  The flat index is
     // `num_partitions * grid_size`, which exceeds `size_type` for large partition counts, so it
-    // must be computed in a wider type to match the buffer's `std::size_t` allocation.
-    auto const write_location = static_cast<std::size_t>(partition_number) * gridDim.x + blockIdx.x;
+    // must be computed in `thread_index_type` like every other wide index in these kernels.
+    auto const write_location =
+      static_cast<thread_index_type>(partition_number) * gridDim.x + blockIdx.x;
     block_partition_sizes[write_location] = block_partition_size;
     partition_number += blockDim.x;
   }
@@ -436,7 +437,7 @@ __device__ void scan_partition_counts(cg::thread_block const& block,
     auto const partition = tile + static_cast<size_type>(block.thread_rank());
     auto const count =
       partition < num_partitions
-        ? block_partition_sizes[static_cast<std::size_t>(partition) * gridDim.x + blockIdx.x]
+        ? block_partition_sizes[static_cast<thread_index_type>(partition) * gridDim.x + blockIdx.x]
         : size_type{0};
     auto const prefix = tile_prefix;
     size_type partition_end;
@@ -487,7 +488,8 @@ __device__ void prepare_partition_copy(cg::thread_block const& block,
   for (size_type partition = block.thread_rank(); partition < num_partitions;
        partition += block.size()) {
     global_partition_offsets[partition] =
-      scanned_block_partition_sizes[static_cast<std::size_t>(partition) * gridDim.x + blockIdx.x];
+      scanned_block_partition_sizes[static_cast<thread_index_type>(partition) * gridDim.x +
+                                    blockIdx.x];
   }
 
   // Convert each row's partition-local offset into its slot in the CTA payload buffer.

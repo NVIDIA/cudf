@@ -128,6 +128,10 @@ class ShuffleManager:
             br = self._manager.context.br()
             # Three allocations of the chunk's packed size: the key table, the
             # reorder, then the pack.
+            #
+            # Charging the key table a whole chunk is an approximation, not a
+            # bound. A key expression that expands its input evaluates to more
+            # than the chunk's packed size and under-reserves.
             chunk_nbytes = py_split_and_pack_cost(chunk.table_view(), chunk.stream, br)
             reservation = await reserve_memory(
                 self._manager.context,

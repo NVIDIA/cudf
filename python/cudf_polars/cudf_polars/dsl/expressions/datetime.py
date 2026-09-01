@@ -55,13 +55,12 @@ def _tz_transition_columns(
 
 
 def _local_wall_clock(
-    column: plc.Column, from_zone: str | None, tzif_dir: str | None, stream: Stream
+    column: plc.Column, from_zone_desc: tuple[str, str] | None, stream: Stream
 ) -> plc.Column:
     """Convert UTC timestamps to naive wall-clock timestamps in ``from_zone``."""
-    if tzif_dir is None:
+    if from_zone_desc is None:
         return column
-    # tzif_dir is not None implies from_zone is a str (from TemporalFunction.__init__)
-    data = _tz_transition_columns(cast("str", from_zone), tzif_dir, stream)
+    data = _tz_transition_columns(*from_zone_desc, stream)
     if data is None:
         return column
     transition_times, offsets = data
@@ -679,6 +678,11 @@ class TemporalFunction(Expr):
             to_zone = self.options[0]
             non_existent = self.options[1]
             from_dir, to_dir = self.tzif_dirs
+            from_zone_desc = (
+                (from_zone, from_dir)
+                if from_zone is not None and from_dir is not None
+                else None
+            )
             stream = df.stream
             same_zone = from_zone == to_zone or (from_dir is None and to_dir is None)
             if same_zone and (from_dir is None or self.ambiguous_scalar == "raise"):
@@ -690,7 +694,7 @@ class TemporalFunction(Expr):
                     null_order=column.null_order,
                     name=column.name,
                 )
-            local = _local_wall_clock(column.obj, from_zone, from_dir, stream)
+            local = _local_wall_clock(column.obj, from_zone_desc, stream)
             if to_dir is None:
                 return Column(
                     _apply_ambiguous_without_transitions(

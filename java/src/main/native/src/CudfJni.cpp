@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2025, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -74,6 +74,17 @@ jobject allocate_host_buffer(JNIEnv* env,
     env->GetMethodID(host_memory_allocator_class, "allocate", HOST_MEMORY_BUFFER_SIG("JZ"));
   jobject ret =
     env->CallObjectMethod(host_memory_allocator, allocateMethodId, amount, prefer_pinned);
+
+  if (env->ExceptionCheck()) { throw std::runtime_error("allocateHostBuffer threw an exception"); }
+  return ret;
+}
+
+jobject allocate_host_buffer(JNIEnv* env, jlong amount, jobject host_memory_allocator)
+{
+  auto const host_memory_allocator_class = env->GetObjectClass(host_memory_allocator);
+  auto const allocateMethodId =
+    env->GetMethodID(host_memory_allocator_class, "allocate", HOST_MEMORY_BUFFER_SIG("J"));
+  jobject ret = env->CallObjectMethod(host_memory_allocator, allocateMethodId, amount);
 
   if (env->ExceptionCheck()) { throw std::runtime_error("allocateHostBuffer threw an exception"); }
   return ret;

@@ -427,6 +427,15 @@ public final class Table implements AutoCloseable {
   private static native void writeParquetEnd(long handle);
 
   /**
+   * Finish writing out parquet and return its footer metadata.
+   * @param handle the handle. Do not use again once this returns.
+   * @param hostMemoryAllocator allocator for the returned host buffer
+   * @return a host buffer containing a metadata-only Parquet file
+   */
+  private static native HostMemoryBuffer writeParquetEndAndGetFooter(long handle,
+      HostMemoryAllocator hostMemoryAllocator);
+
+  /**
    * Read in ORC formatted data.
    * @param filterColumnNames name of the columns to read, or an empty array if we want to read
    *                          all of them
@@ -1678,8 +1687,10 @@ public final class Table implements AutoCloseable {
     }
   }
 
-  private static class ParquetTableWriter extends TableWriter {
-    HostBufferConsumer consumer;
+  /** A chunked Parquet writer that can return its footer metadata when closed. */
+  public static final class ParquetTableWriter extends TableWriter {
+    private HostBufferConsumer consumer;
+    private final HostMemoryAllocator hostMemoryAllocator;
 
     private ParquetTableWriter(ParquetWriterOptions options, File outputFile) {
       super(writeParquetFileBegin(options.getFlatColumnNames(),
@@ -1702,6 +1713,7 @@ public final class Table implements AutoCloseable {
           options.getFlatParquetFieldId(),
           outputFile.getAbsolutePath()));
       this.consumer = null;
+      this.hostMemoryAllocator = DefaultHostMemoryAllocator.get();
     }
 
     private ParquetTableWriter(ParquetWriterOptions options, HostBufferConsumer consumer,
@@ -1726,6 +1738,7 @@ public final class Table implements AutoCloseable {
           options.getFlatParquetFieldId(),
           consumer, hostMemoryAllocator));
       this.consumer = consumer;
+      this.hostMemoryAllocator = hostMemoryAllocator;
     }
 
     @Override
@@ -1739,13 +1752,59 @@ public final class Table implements AutoCloseable {
     @Override
     public void close() throws CudfException {
       if (writerHandle != 0) {
-        writeParquetEnd(writerHandle);
+        finish(false);
       }
+    }
+
+    /**
+     * Finish writing and return the Parquet footer metadata.
+     *
+     * <p>The returned buffer is a metadata-only Parquet file containing the leading {@code PAR1}
+     * magic, the serialized file metadata, the footer length, and the trailing {@code PAR1}
+     * magic. The caller must close the returned buffer.
+     *
+     * @return an owned host buffer containing the Parquet footer metadata
+     * @throws IllegalStateException if the writer was already closed
+     */
+    public HostMemoryBuffer closeAndGetFooter() throws CudfException {
+      if (writerHandle == 0) {
+        throw new IllegalStateException("Writer was already closed");
+      }
+      return finish(true);
+    }
+
+    private HostMemoryBuffer finish(boolean returnFooter) {
+      long handle = writerHandle;
       writerHandle = 0;
-      if (consumer != null) {
-        consumer.done();
-        consumer = null;
+      HostBufferConsumer currentConsumer = consumer;
+      consumer = null;
+      HostMemoryBuffer footer = null;
+      try {
+        if (returnFooter) {
+          footer = writeParquetEndAndGetFooter(handle, hostMemoryAllocator);
+        } else {
+          writeParquetEnd(handle);
+        }
+      } catch (RuntimeException | Error e) {
+        if (currentConsumer != null) {
+          try {
+            currentConsumer.done();
+          } catch (RuntimeException | Error doneError) {
+            e.addSuppressed(doneError);
+          }
+        }
+        throw e;
       }
+
+      try {
+        if (currentConsumer != null) {
+          currentConsumer.done();
+        }
+      } catch (RuntimeException | Error e) {
+        CleanupHelpers.closeAndSuppress(footer, e);
+        throw e;
+      }
+      return footer;
     }
   }
 
@@ -1753,9 +1812,10 @@ public final class Table implements AutoCloseable {
    * Get a table writer to write parquet data to a file.
    * @param options the parquet writer options.
    * @param outputFile where to write the file.
-   * @return a table writer to use for writing out multiple tables.
+   * @return a Parquet table writer to use for writing out multiple tables.
    */
-  public static TableWriter writeParquetChunked(ParquetWriterOptions options, File outputFile) {
+  public static ParquetTableWriter writeParquetChunked(ParquetWriterOptions options,
+                                                       File outputFile) {
     return new ParquetTableWriter(options, outputFile);
   }
 
@@ -1765,16 +1825,16 @@ public final class Table implements AutoCloseable {
    * @param consumer a class that will be called when host buffers are ready with parquet
    *                 formatted data in them.
    * @param hostMemoryAllocator allocator for host memory buffers
-   * @return a table writer to use for writing out multiple tables.
+   * @return a Parquet table writer to use for writing out multiple tables.
    */
-  public static TableWriter writeParquetChunked(ParquetWriterOptions options,
-                                                HostBufferConsumer consumer,
-                                                HostMemoryAllocator hostMemoryAllocator) {
+  public static ParquetTableWriter writeParquetChunked(ParquetWriterOptions options,
+                                                       HostBufferConsumer consumer,
+                                                       HostMemoryAllocator hostMemoryAllocator) {
     return new ParquetTableWriter(options, consumer, hostMemoryAllocator);
   }
 
-  public static TableWriter writeParquetChunked(ParquetWriterOptions options,
-                                                HostBufferConsumer consumer) {
+  public static ParquetTableWriter writeParquetChunked(ParquetWriterOptions options,
+                                                       HostBufferConsumer consumer) {
     return writeParquetChunked(options, consumer, DefaultHostMemoryAllocator.get());
   }
 

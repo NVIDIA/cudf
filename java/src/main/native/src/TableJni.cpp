@@ -2453,6 +2453,35 @@ JNIEXPORT void JNICALL Java_ai_rapids_cudf_Table_writeParquetEnd(JNIEnv* env, jc
   JNI_CATCH(env, );
 }
 
+JNIEXPORT jobject JNICALL Java_ai_rapids_cudf_Table_writeParquetEndAndGetFooter(
+  JNIEnv* env, jclass, jlong j_state, jobject host_memory_allocator)
+{
+  JNI_NULL_CHECK(env, j_state, "null state", nullptr);
+  JNI_NULL_CHECK(env, host_memory_allocator, "null host memory allocator", nullptr);
+
+  using namespace cudf::io;
+  cudf::jni::native_parquet_writer_handle* state =
+    reinterpret_cast<cudf::jni::native_parquet_writer_handle*>(j_state);
+  std::unique_ptr<cudf::jni::native_parquet_writer_handle> make_sure_we_delete(state);
+  JNI_TRY
+  {
+    cudf::jni::auto_set_device(env);
+    auto footer = state->writer->close();
+    CUDF_EXPECTS(footer != nullptr, "Parquet writer returned a null footer");
+
+    auto result = cudf::jni::allocate_host_buffer(
+      env, static_cast<jlong>(footer->size()), host_memory_allocator);
+    auto const result_size = cudf::jni::get_host_buffer_length(env, result);
+    CUDF_EXPECTS(result_size >= static_cast<jlong>(footer->size()),
+                 "Allocated host buffer is too small for the Parquet footer");
+    std::memcpy(reinterpret_cast<void*>(cudf::jni::get_host_buffer_address(env, result)),
+                footer->data(),
+                footer->size());
+    return result;
+  }
+  JNI_CATCH(env, nullptr);
+}
+
 JNIEXPORT jlongArray JNICALL
 Java_ai_rapids_cudf_Table_readORCFromDataSource(JNIEnv* env,
                                                 jclass,

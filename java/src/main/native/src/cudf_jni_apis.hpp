@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -95,6 +95,11 @@ jobject allocate_host_buffer(JNIEnv* env,
                              jlong amount,
                              jboolean prefer_pinned,
                              jobject host_memory_allocator);
+
+/**
+ * Allocate a HostMemoryBuffer using the allocator's default pinning preference.
+ */
+jobject allocate_host_buffer(JNIEnv* env, jlong amount, jobject host_memory_allocator);
 
 /**
  * Get the address of a HostMemoryBuffer

@@ -4721,6 +4721,88 @@ def test_parquet_reader_mismatched_nullability_structs(tmp_path):
     )
 
 
+def test_parquet_not_equal_with_nan_stats(tmp_path):
+    """`col != v` must not prune matching `NaN` rows."""
+    import pylibcudf as plc
+    from pylibcudf.expressions import (
+        ASTOperator,
+        ColumnNameReference,
+        Literal,
+        Operation,
+    )
+
+    path = tmp_path / "nan_not_equal.parquet"
+    pq.write_table(
+        pa.table({"x": [float("nan"), 5.0, 7.0, 8.0]}), path, row_group_size=2
+    )
+
+    # Sanity check the fixture: NaN is excluded, so row group 0 looks constant
+    stats = pq.ParquetFile(path).metadata.row_group(0).column(0).statistics
+    assert_eq(stats.min, 5.0)
+    assert_eq(stats.max, 5.0)
+
+    scalar = plc.Scalar.from_arrow(pa.scalar(5.0))
+    filter_expr = Operation(
+        ASTOperator.NOT_EQUAL, ColumnNameReference("x"), Literal(scalar)
+    )
+
+    source = plc.io.SourceInfo([str(path)])
+    options = plc.io.parquet.ParquetReaderOptions.builder(source).build()
+    options.set_filter(filter_expr)
+    result = plc.io.parquet.read_parquet(options)
+
+    # Neither row group may be pruned: rg0 holds a NaN, rg1 holds 7.0 and 8.0
+    assert_eq(result.num_row_groups_after_stats_filter, 2)
+    got = result.tbl.to_arrow().column(0).to_pylist()
+    assert_eq(len(got), 3)
+    assert_eq(math.isnan(got[0]), True)
+    assert_eq(got[1:], [7.0, 8.0])
+
+
+def test_parquet_negated_ordering_with_nan_stats(tmp_path):
+    """`NOT(col < v)` must not prune matching `NaN` rows."""
+    import pylibcudf as plc
+    from pylibcudf.expressions import (
+        ASTOperator,
+        ColumnNameReference,
+        Literal,
+        Operation,
+    )
+
+    # One row group per 3 rows. The first holds NaN alongside small values, so its
+    # statistics are min=1.0/max=2.0 and `vmax >= 50` is false for it.
+    values = [float("nan"), 1.0, 2.0, 100.0, 200.0, 300.0]
+    path = tmp_path / "nan_ordering.parquet"
+    pq.write_table(pa.table({"x": values}), path, row_group_size=3)
+
+    # Sanity check the fixture actually reproduces the Arrow statistics behaviour
+    stats = pq.ParquetFile(path).metadata.row_group(0).column(0).statistics
+    assert_eq(stats.has_min_max, True)
+    assert_eq(stats.min, 1.0)
+    assert_eq(stats.max, 2.0)
+
+    col = ColumnNameReference("x")
+    lit = Literal(plc.Scalar.from_arrow(pa.scalar(50.0)))
+    filter_expr = Operation(
+        ASTOperator.NOT, Operation(ASTOperator.LESS, col, lit)
+    )
+
+    source = plc.io.SourceInfo([str(path)])
+    options = plc.io.parquet.ParquetReaderOptions.builder(source).build()
+    options.set_filter(filter_expr)
+    got = (
+        plc.io.parquet.read_parquet(options)
+        .tbl.to_arrow()
+        .column(0)
+        .to_pylist()
+    )
+
+    # NOT(x < 50) is true for NaN and for 100/200/300, and false for 1.0/2.0
+    assert_eq(len(got), 4)
+    assert_eq(math.isnan(got[0]), True)
+    assert_eq(got[1:], [100.0, 200.0, 300.0])
+
+
 @pytest.mark.skipif(
     pa.__version__ == "19.0.0",
     reason="https://github.com/apache/arrow/issues/45283, https://github.com/NVIDIA/cudf/issues/17806",

@@ -429,41 +429,44 @@ __device__ cuda::std::pair<size_t, size_t> totalDeltaByteArraySize(uint8_t const
 
   // two warps will traverse the prefixes and suffixes and sum them up
   auto const warp_id = warp.meta_group_rank();
-  auto const db      = (warp_id == 0) ? &prefixes : warp_id == 1 ? &suffixes : nullptr;
 
   size_t total_bytes = 0;
   uleb128_t max_len  = 0;
 
-  if (db != nullptr) {
+  // traverse one decoder's values, accumulating into total_bytes/max_len. dispatched below on a
+  // compile-time-constant decoder per warp rather than a runtime-selected `db` pointer: selecting
+  // the object at runtime makes the compiler speculatively load both prefixes and suffixes on
+  // every `db->` access, so the suffix warp reads prefix state (and vice versa) while the other
+  // warp writes it, which compute-sanitizer racecheck reports as a cross-warp hazard.
+  auto const traverse = [&](delta_binary_decoder& db) {
     // initialize with first value (which is stored in last_value)
-    if (lane_id == 0 && start_value == 0) { total_bytes = db->last_value; }
+    if (lane_id == 0 && start_value == 0) { total_bytes = db.last_value; }
 
     uleb128_t lane_sum = 0;
     uleb128_t lane_max = 0;
-    while (db->current_value_idx < end_value &&
-           db->current_value_idx < db->num_encoded_values(true)) {
-      if (not db->advance_past_first_value(warp)) { break; }
+    while (db.current_value_idx < end_value && db.current_value_idx < db.num_encoded_values(true)) {
+      if (not db.advance_past_first_value(warp)) { break; }
 
       // decode one warp_size-wide pass at a time and read it back immediately: a whole
       // mini-block is only fully resident in the rolling buffer while it fits, but a single
       // pass always is
-      uint32_t const num_pass = db->values_per_mb / warp_size;
+      uint32_t const num_pass = db.values_per_mb / warp_size;
       for (uint32_t p = 0; p < num_pass; p++) {
-        db->calc_mini_block_pass(p, warp);
+        db.calc_mini_block_pass(p, warp);
 
         // get per lane sum for this pass
-        uint32_t const idx = db->current_value_idx + p * warp_size + lane_id;
-        if (idx >= start_value && idx < end_value && idx < db->value_count) {
-          lane_sum += db->value[rolling_index<delta_rolling_buf_size>(idx)];
+        uint32_t const idx = db.current_value_idx + p * warp_size + lane_id;
+        if (idx >= start_value && idx < end_value && idx < db.value_count) {
+          lane_sum += db.value[rolling_index<delta_rolling_buf_size>(idx)];
         }
         // need lane_max over all values, not just in bounds
-        if (idx < db->value_count) {
-          lane_max = max(lane_max, db->value[rolling_index<delta_rolling_buf_size>(idx)]);
+        if (idx < db.value_count) {
+          lane_max = max(lane_max, db.value[rolling_index<delta_rolling_buf_size>(idx)]);
         }
       }
 
       warp.sync();
-      if (lane_id == 0) { db->setup_next_mini_block(true); }
+      if (lane_id == 0) { db.setup_next_mini_block(true); }
       warp.sync();
     }
 
@@ -475,6 +478,12 @@ __device__ cuda::std::pair<size_t, size_t> totalDeltaByteArraySize(uint8_t const
       total_bytes += warp_sum;
       max_len = warp_max;
     }
+  };
+
+  if (warp_id == 0) {
+    traverse(prefixes);
+  } else if (warp_id == 1) {
+    traverse(suffixes);
   }
   block.sync();
 

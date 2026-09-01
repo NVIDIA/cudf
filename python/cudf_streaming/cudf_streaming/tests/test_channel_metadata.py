@@ -53,6 +53,7 @@ def _two_key_ordering_from_boundary_values(
     string_values: list[str | None],
     *,
     strict_boundaries: bool = False,
+    locally_ordered: bool = True,
 ) -> Ordering:
     """Two-key Ordering with mixed INT64/STRING boundary columns."""
     return Ordering(
@@ -82,11 +83,15 @@ def _two_key_ordering_from_boundary_values(
             ),
         ),
         strict_boundaries=strict_boundaries,
+        locally_ordered=locally_ordered,
     )
 
 
 def _two_key_order_scheme(
-    context: Context, *, strict_boundaries: bool = False
+    context: Context,
+    *,
+    strict_boundaries: bool = False,
+    locally_ordered: bool = True,
 ) -> OrderScheme:
     """Two-key OrderScheme with a 1-row boundary table (2 partitions)."""
     return OrderScheme(
@@ -96,6 +101,7 @@ def _two_key_order_scheme(
                 [100],
                 ["abc"],
                 strict_boundaries=strict_boundaries,
+                locally_ordered=locally_ordered,
             )
         ]
     )
@@ -138,6 +144,7 @@ def test_order_scheme(context: Context) -> None:
     )
     assert ordering.column_indices == (0, 1)
     assert not ordering.strict_boundaries
+    assert ordering.locally_ordered
     assert ordering.num_boundaries == 1
     assert "OrderScheme" in repr(o1)
 
@@ -218,6 +225,7 @@ def test_order_scheme_multiple_orderings(context: Context) -> None:
     assert len(scheme.orderings) == 2
     assert scheme.orderings[0].keys == first.keys
     assert scheme.orderings[0].strict_boundaries == first.strict_boundaries
+    assert scheme.orderings[0].locally_ordered == first.locally_ordered
     assert scheme.orderings[0].num_boundaries == first.num_boundaries
     assert scheme.orderings[1].keys == second.keys
 
@@ -255,8 +263,20 @@ def test_ordering_with_keys(context: Context) -> None:
     assert ordering2.keys[1].column_index == 3
     assert ordering2.num_boundaries == ordering.num_boundaries
     assert ordering2.strict_boundaries == ordering.strict_boundaries
+    assert ordering2.locally_ordered == ordering.locally_ordered
     # Schemes with different key indices but shared boundaries are boundary-aligned
     assert ordering.boundaries_aligned_with(ordering2, context.br())
+
+
+def test_ordering_with_locally_ordered(context: Context) -> None:
+    """with_locally_ordered shares boundaries and updates local row-order metadata."""
+    ordering = _two_key_order_scheme(context).orderings[0]
+    unordered = ordering.with_locally_ordered(locally_ordered=False)
+    assert unordered.keys == ordering.keys
+    assert unordered.num_boundaries == ordering.num_boundaries
+    assert unordered.strict_boundaries == ordering.strict_boundaries
+    assert not unordered.locally_ordered
+    assert ordering.boundaries_aligned_with(unordered, context.br())
 
 
 @pytest.mark.parametrize(
@@ -286,6 +306,7 @@ def test_ordering_as_strict(
     assert strict_ordering.keys == ordering.keys
     assert strict_ordering.num_boundaries == ordering.num_boundaries
     assert strict_ordering.strict_boundaries
+    assert strict_ordering.locally_ordered == ordering.locally_ordered
     assert not ordering.boundaries_aligned_with(strict_ordering, context.br())
     assert strict_ordering.boundaries_aligned_with(
         strict_ordering2, context.br()
@@ -341,6 +362,13 @@ def test_ordering_boundaries_aligned_with(context: Context) -> None:
         strict_boundaries=True,
     )
     assert not o1.boundaries_aligned_with(o_strict, context.br())
+
+    o_unordered = Ordering(
+        keys,
+        _make_boundaries(context, df),
+        locally_ordered=False,
+    )
+    assert o1.boundaries_aligned_with(o_unordered, context.br())
 
 
 def test_order_scheme_key_column_mismatch(context: Context) -> None:
@@ -494,6 +522,7 @@ def test_message_roundtrip_with_order_scheme(context: Context) -> None:
                 ],
                 boundaries,
                 strict_boundaries=True,
+                locally_ordered=False,
             )
         ]
     )
@@ -515,6 +544,7 @@ def test_message_roundtrip_with_order_scheme(context: Context) -> None:
     )
     assert got_m.partitioning.local == "inherit"
     assert ordering.strict_boundaries
+    assert not ordering.locally_ordered
     assert ordering.num_boundaries == 2
     assert got_m.partitioning.inter_rank.orderings[0].boundaries_aligned_with(
         order_scheme.orderings[0], context.br()

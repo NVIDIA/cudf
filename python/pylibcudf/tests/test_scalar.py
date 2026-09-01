@@ -133,6 +133,23 @@ def test_from_py_int_with_positive_scale_decimal_dtype(val, expected):
     assert result.type().scale() == 2
 
 
+@pytest.mark.parametrize("scale", [0, -2])
+def test_from_py_int_with_max_precision_decimal_dtype(scale):
+    val = int("9" * (38 + scale))
+    result = plc.Scalar.from_py(val, DataType(TypeId.DECIMAL128, scale))
+    assert result.to_arrow().as_py() == decimal.Decimal(val)
+    assert result.type().scale() == scale
+
+
+@pytest.mark.parametrize(
+    "val", [decimal.Decimal("9" * 38), decimal.Decimal("9." + "9" * 37)]
+)
+def test_from_py_max_precision_decimal(val):
+    result = plc.Scalar.from_py(val)
+    assert result.to_arrow().as_py() == val
+    assert result.type().scale() == val.as_tuple().exponent
+
+
 @pytest.mark.parametrize(
     "val,tid,error,msg",
     [

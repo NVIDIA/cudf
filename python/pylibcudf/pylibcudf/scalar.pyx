@@ -838,7 +838,9 @@ def _(
     cdef Stream _stream = stream
     cdef cudaStream_t _cs = _stream.view().value()
     scale = py_val.as_tuple().exponent
-    as_int = int(py_val.scaleb(-scale))
+    # 38 for the max precision of DECIMAL128
+    with decimal.localcontext(prec=38):
+        as_int = int(py_val.scaleb(-scale))
 
     cdef int128_t val = <int128_t>as_int
 

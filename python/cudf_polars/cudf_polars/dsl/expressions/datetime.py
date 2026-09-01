@@ -133,10 +133,10 @@ def _ambiguous_nonexistent(
     ambiguous_cond = plc.binaryop.binary_operation(
         clock_new, clock_old, plc.binaryop.BinaryOperator.LESS, bool_type, stream=stream
     )
-    (ambiguous_begin,) = plc.stream_compaction.apply_boolean_mask(
+    (ambiguous_begin,) = plc.stream_compaction.apply_retention_mask(
         plc.Table([clock_new]), ambiguous_cond, stream=stream
     ).columns()
-    (ambiguous_end,) = plc.stream_compaction.apply_boolean_mask(
+    (ambiguous_end,) = plc.stream_compaction.apply_retention_mask(
         plc.Table([clock_old]), ambiguous_cond, stream=stream
     ).columns()
     if ambiguous_begin.size() == 0:
@@ -161,10 +161,10 @@ def _ambiguous_nonexistent(
         bool_type,
         stream=stream,
     )
-    (nonexistent_begin,) = plc.stream_compaction.apply_boolean_mask(
+    (nonexistent_begin,) = plc.stream_compaction.apply_retention_mask(
         plc.Table([clock_old]), nonexistent_cond, stream=stream
     ).columns()
-    (nonexistent_end,) = plc.stream_compaction.apply_boolean_mask(
+    (nonexistent_end,) = plc.stream_compaction.apply_retention_mask(
         plc.Table([clock_new]), nonexistent_cond, stream=stream
     ).columns()
     if nonexistent_begin.size() == 0:
@@ -231,7 +231,7 @@ def _apply_ambiguous(
             is_invalid, plc.aggregation.any(), bool_type, stream=stream
         ).to_py(stream=stream)
     ):
-        (invalid_values,) = plc.stream_compaction.apply_boolean_mask(
+        (invalid_values,) = plc.stream_compaction.apply_retention_mask(
             plc.Table([ambiguous_column]), is_invalid, stream=stream
         ).columns()
         invalid = invalid_values.to_scalar(stream=stream).to_py(stream=stream)

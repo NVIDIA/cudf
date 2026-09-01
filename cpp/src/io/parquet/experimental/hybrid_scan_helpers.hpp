@@ -395,8 +395,8 @@ class dictionary_literals_collector : public equality_literals_collector {
 };
 
 /**
- * @brief Converts named columns to index reference columns and pushes logical negations down to
- * expression leaves
+ * @brief Converts named columns to index reference columns and rewrites the expression into
+ * negation normal form, pushing logical negations down to the leaves
  */
 class parquet_filter_normalizer : public parquet::detail::parquet_filter_normalizer {
  public:

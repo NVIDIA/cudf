@@ -467,7 +467,16 @@ def _(
     elif is_floating_point(dtype):
         return _from_py(float(py_val), dtype, _stream, mr)
     elif is_fixed_point(dtype):
-        return _from_py(decimal.Decimal(py_val), dtype, _stream, mr)
+        scale = (<DataType>dtype).scale()
+        if scale > 0:
+            unscaled = abs(py_val) // 10 ** scale
+            unscaled = -unscaled if py_val < 0 else unscaled
+        else:
+            unscaled = py_val * 10 ** -scale
+        # 38 for the max precision of DECIMAL128
+        with decimal.localcontext(prec=38):
+            py_dec = decimal.Decimal(unscaled).scaleb(scale)
+        return _from_py(py_dec, dtype, _stream, mr)
     else:
         c_dtype = <DataType>dtype
     cdef type_id tid = c_dtype.id()

@@ -114,14 +114,23 @@ def test_from_py_with_dtype(val, tid):
 @pytest.mark.parametrize(
     "tid", [TypeId.DECIMAL32, TypeId.DECIMAL64, TypeId.DECIMAL128]
 )
-@pytest.mark.parametrize("scale", [0, -2, 2])
+@pytest.mark.parametrize("scale", [0, -2, -30])
 @pytest.mark.parametrize("val", [0, 1, -5, 42])
 def test_from_py_int_with_decimal_dtype(val, tid, scale):
     dtype = DataType(tid, scale)
     result = plc.Scalar.from_py(val, dtype)
     assert result.to_py() == decimal.Decimal(val)
     assert result.type().id() == TypeId.DECIMAL128
-    assert result.type().scale() == 0
+    assert result.type().scale() == scale
+
+
+@pytest.mark.parametrize(
+    "val,expected", [(0, 0), (42, 0), (150, 100), (-250, -200)]
+)
+def test_from_py_int_with_positive_scale_decimal_dtype(val, expected):
+    result = plc.Scalar.from_py(val, DataType(TypeId.DECIMAL128, 2))
+    assert result.to_py() == decimal.Decimal(expected)
+    assert result.type().scale() == 2
 
 
 @pytest.mark.parametrize(

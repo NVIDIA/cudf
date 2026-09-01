@@ -304,9 +304,16 @@ struct delta_byte_array_decoder {
     while (skip_pos < start_val) {
       // warp 0 decodes a pass of prefixes and warp 1 a pass of suffixes. this will potentially
       // decode past start_val, and those values stay resident in the rolling buffers for the
-      // decode loop that follows.
-      auto* const db = warp.meta_group_rank() == 0 ? &prefixes : &suffixes;
-      if (warp.meta_group_rank() < 2) { db->decode_next_pass(warp); }
+      // decode loop that follows. dispatch on a compile-time-constant decoder per warp (as the
+      // main decode loop does) rather than a runtime-selected `db` pointer: selecting the object
+      // at runtime makes the compiler speculatively load both prefixes and suffixes on every
+      // `db->` access, so the suffix warp reads prefix state (and vice versa) while the other
+      // warp writes it, which compute-sanitizer racecheck reports as a cross-warp hazard.
+      if (warp.meta_group_rank() == 0) {
+        prefixes.decode_next_pass(warp);
+      } else if (warp.meta_group_rank() == 1) {
+        suffixes.decode_next_pass(warp);
+      }
       block.sync();
 
       // warp 0 reconstructs this round's skipped strings into the temp scratch (the helpers
@@ -483,11 +490,12 @@ CUDF_KERNEL void __launch_bounds__(decode_delta_binary_block_size)
     auto const& ni = s->nesting.nesting_info[s->setup.col.max_nesting_depth - 1];
     if (ni.valid_map != nullptr) {
       int const num_values = ni.valid_map_offset - init_valid_map_offset;
-      zero_fill_null_positions_shared<decode_block_size>(s,
-                                                         s->output_cvt.dtype_len,
-                                                         init_valid_map_offset,
-                                                         num_values,
-                                                         static_cast<int>(block.thread_rank()));
+      zero_fill_null_positions_shared<decode_delta_binary_block_size>(
+        s,
+        s->output_cvt.dtype_len,
+        init_valid_map_offset,
+        num_values,
+        static_cast<int>(block.thread_rank()));
     }
   }
 

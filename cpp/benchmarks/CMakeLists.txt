@@ -442,6 +442,7 @@ ConfigureNVBench(
   text/replace.cpp
   text/subword.cpp
   text/tokenize.cpp
+  text/unicode_normalize.cpp
   text/vocab.cpp
 )
 

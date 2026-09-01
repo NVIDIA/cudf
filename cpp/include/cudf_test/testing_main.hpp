@@ -55,13 +55,13 @@ struct pinned_pool {
 
   void* allocate_sync(std::size_t bytes, std::size_t alignment = rmm::CUDA_ALLOCATION_ALIGNMENT)
   {
-    return pool_mr.allocate(cuda::stream_ref{cudaStreamLegacy}, bytes, alignment);
+    return pool_mr.allocate(cuda::stream_ref{cudaStream_t{nullptr}}, bytes, alignment);
   }
   void deallocate_sync(void* p,
                        std::size_t bytes,
                        std::size_t alignment = rmm::CUDA_ALLOCATION_ALIGNMENT) noexcept
   {
-    pool_mr.deallocate(cuda::stream_ref{cudaStreamLegacy}, p, bytes, alignment);
+    pool_mr.deallocate(cuda::stream_ref{cudaStream_t{nullptr}}, p, bytes, alignment);
   }
   void* allocate(cuda::stream_ref s,
                  std::size_t bytes,

@@ -61,14 +61,14 @@ class stream_checking_resource_adaptor final {
 
   void* allocate_sync(std::size_t bytes, std::size_t alignment = rmm::CUDA_ALLOCATION_ALIGNMENT)
   {
-    return upstream_.allocate(cuda::stream_ref{cudaStreamLegacy}, bytes, alignment);
+    return upstream_.allocate(cuda::stream_ref{cudaStream_t{nullptr}}, bytes, alignment);
   }
 
   void deallocate_sync(void* ptr,
                        std::size_t bytes,
                        std::size_t alignment = rmm::CUDA_ALLOCATION_ALIGNMENT) noexcept
   {
-    upstream_.deallocate(cuda::stream_ref{cudaStreamLegacy}, ptr, bytes, alignment);
+    upstream_.deallocate(cuda::stream_ref{cudaStream_t{nullptr}}, ptr, bytes, alignment);
   }
 
   void* allocate(cuda::stream_ref stream,

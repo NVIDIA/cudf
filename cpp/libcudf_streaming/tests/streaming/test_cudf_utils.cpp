@@ -15,7 +15,7 @@ class BaseEstimatedMemoryUsageTest : public ::testing::Test {
  protected:
   void SetUp() override { stream = cudf::get_default_stream(); }
 
-  cuda::stream_ref stream{cudaStreamLegacy};
+  cuda::stream_ref stream{cudaStream_t{nullptr}};
 };
 
 /**

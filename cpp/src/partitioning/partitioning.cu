@@ -953,17 +953,18 @@ std::pair<std::unique_ptr<table>, std::vector<size_type>> partition_global_scatt
   size_type num_partitions,
   Hasher hasher,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cudf::memory_resources mr)
 {
   CUDF_EXPECTS(num_partitions < std::numeric_limits<size_type>::max(),
                "num_partitions exceeds cudf's supported limit");
 
-  auto row_partition_numbers = rmm::device_uvector<size_type>(num_rows, stream);
+  auto row_partition_numbers =
+    rmm::device_uvector<size_type>(num_rows, stream, mr.get_temporary_mr());
 
   // Compute partition number for each row
   if (is_power_two(num_partitions)) {
     auto const partitioner = bitwise_partitioner<hash_value_type>(num_partitions);
-    thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    thrust::transform(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
                       cuda::counting_iterator<size_type>(0),
                       cuda::counting_iterator<size_type>(num_rows),
                       row_partition_numbers.begin(),
@@ -972,7 +973,7 @@ std::pair<std::unique_ptr<table>, std::vector<size_type>> partition_global_scatt
                       });
   } else {
     auto const partitioner = modulo_partitioner<hash_value_type>(num_partitions);
-    thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    thrust::transform(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
                       cuda::counting_iterator<size_type>(0),
                       cuda::counting_iterator<size_type>(num_rows),
                       row_partition_numbers.begin(),
@@ -1001,7 +1002,7 @@ std::pair<std::unique_ptr<table>, std::vector<size_type>> partition_global_scatt
                                         upper_level,
                                         num_rows,
                                         stream.get());
-    rmm::device_buffer temp_storage(temp_storage_bytes, stream);
+    rmm::device_buffer temp_storage(temp_storage_bytes, stream, mr.get_temporary_mr());
     cub::DeviceHistogram::HistogramEven(temp_storage.data(),
                                         temp_storage_bytes,
                                         row_partition_numbers.data(),
@@ -1015,7 +1016,7 @@ std::pair<std::unique_ptr<table>, std::vector<size_type>> partition_global_scatt
 
   // Exclusive scan on histogram to get partition offsets.
   // histogram has num_partitions+1 elements; after scan, histogram[num_partitions] = num_rows.
-  thrust::exclusive_scan(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+  thrust::exclusive_scan(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
                          histogram.begin(),
                          histogram.end(),
                          histogram.begin());
@@ -1026,7 +1027,7 @@ std::pair<std::unique_ptr<table>, std::vector<size_type>> partition_global_scatt
   // Build scatter map: atomically increment partition offsets
   rmm::device_uvector<size_type> scatter_map(num_rows, stream);
   thrust::transform(
-    rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
     row_partition_numbers.begin(),
     row_partition_numbers.end(),
     scatter_map.begin(),
@@ -1036,7 +1037,7 @@ std::pair<std::unique_ptr<table>, std::vector<size_type>> partition_global_scatt
     });
 
   // Scatter input rows into partitioned output
-  auto output = detail::scatter(input, scatter_map, input, stream, mr);
+  auto output = detail::scatter(input, scatter_map, input, stream, mr.get_output_mr());
 
   stream.sync();  // Pinned async D2H copy must finish before returning host vec
 
@@ -1082,7 +1083,7 @@ std::pair<std::unique_ptr<table>, std::vector<size_type>> partition_staged_scatt
   size_type rows_per_thread,
   partition_column_groups const& column_groups,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cudf::memory_resources mr)
 {
   // Cover the input with CTAs using the selected number of rows per thread.
   auto const grid_size =
@@ -1093,9 +1094,10 @@ std::pair<std::unique_ptr<table>, std::vector<size_type>> partition_staged_scatt
 
   // Allocate one count for every CTA/partition pair and pinned storage for the final partition
   // starts copied back to the host.
-  auto block_partition_sizes = rmm::device_uvector<size_type>(num_cta_partition_counts, stream);
+  auto block_partition_sizes =
+    rmm::device_uvector<size_type>(num_cta_partition_counts, stream, mr.get_temporary_mr());
   auto scanned_block_partition_sizes =
-    rmm::device_uvector<size_type>(num_cta_partition_counts, stream);
+    rmm::device_uvector<size_type>(num_cta_partition_counts, stream, mr.get_temporary_mr());
   auto host_partition_offsets =
     cudf::detail::make_pinned_vector_async<size_type>(num_partitions + 1, stream);
   host_partition_offsets[num_partitions] = num_rows;
@@ -1109,7 +1111,7 @@ std::pair<std::unique_ptr<table>, std::vector<size_type>> partition_staged_scatt
   // Counts are partition-major: all CTA counts for partition 0, then all CTA counts for partition
   // 1, and so on. The scan therefore provides both each CTA's output offset and every partition's
   // global start.
-  thrust::exclusive_scan(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+  thrust::exclusive_scan(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
                          block_partition_sizes.begin(),
                          block_partition_sizes.end(),
                          scanned_block_partition_sizes.begin());
@@ -1152,8 +1154,8 @@ std::pair<std::unique_ptr<table>, std::vector<size_type>> partition_staged_scatt
       auto const& source      = input.column(column_index);
       auto const output_mask_state =
         source.nullable() && !source.has_nulls() ? mask_state::ALL_VALID : mask_state::UNALLOCATED;
-      auto output =
-        cudf::make_fixed_width_column(source.type(), source.size(), output_mask_state, stream, mr);
+      auto output = cudf::make_fixed_width_column(
+        source.type(), source.size(), output_mask_state, stream, mr.get_output_mr());
       auto output_view         = output->mutable_view();
       auto const element_width = static_cast<size_type>(cudf::size_of(source.type()));
 
@@ -1166,7 +1168,7 @@ std::pair<std::unique_ptr<table>, std::vector<size_type>> partition_staged_scatt
     }
 
     auto device_columns = rmm::device_uvector<fixed_width_column_descriptor>(
-      host_columns.size(), stream, cudf::get_current_device_resource_ref());
+      host_columns.size(), stream, mr.get_temporary_mr());
     cudf::detail::cuda_memcpy_async<fixed_width_column_descriptor>(
       device_span<fixed_width_column_descriptor>{device_columns},
       host_span<fixed_width_column_descriptor const>{host_columns},
@@ -1195,7 +1197,8 @@ std::pair<std::unique_ptr<table>, std::vector<size_type>> partition_staged_scatt
   }
 
   // Build one output-to-input map shared by all gathered columns and staged validity masks.
-  auto gather_map = rmm::device_uvector<size_type>(gather_map_required ? num_rows : 0, stream);
+  auto gather_map = rmm::device_uvector<size_type>(
+    gather_map_required ? num_rows : 0, stream, mr.get_temporary_mr());
   if (gather_map_required) {
     auto const shared_memory =
       staged_scatter_smem<BlockSize>{num_partitions, rows_per_thread, sizeof(size_type)}.bytes;
@@ -1217,7 +1220,7 @@ std::pair<std::unique_ptr<table>, std::vector<size_type>> partition_staged_scatt
                            fixed_width_outputs,
                            detail::gather_bitmask_op::DONT_CHECK,
                            stream,
-                           mr);
+                           mr.get_output_mr());
   }
 
   // Gather all remaining columns as one table so strings, nested columns, dictionaries, and their
@@ -1229,7 +1232,7 @@ std::pair<std::unique_ptr<table>, std::vector<size_type>> partition_staged_scatt
                                          out_of_bounds_policy::DONT_CHECK,
                                          negative_index_policy::NOT_ALLOWED,
                                          stream,
-                                         mr);
+                                         mr.get_output_mr());
 
     variable_width_outputs = gathered->release();
   }
@@ -1278,7 +1281,7 @@ std::pair<std::unique_ptr<table>, std::vector<size_type>> partition_scatter(
   Partitioner partitioner,
   PartitionMetadataView partition_metadata,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cudf::memory_resources mr)
 {
   auto const grid_size = static_cast<size_type>(
     cudf::detail::grid_1d{num_rows, SCATTER_BLOCK_SIZE, SCATTER_ROWS_PER_THREAD}.num_blocks);
@@ -1288,9 +1291,10 @@ std::pair<std::unique_ptr<table>, std::vector<size_type>> partition_scatter(
 
   // The metadata CTA owns every row it visits. Its histogram records how many rows it contributes
   // to each partition, and each row stores its offset within that CTA-local partition.
-  auto block_partition_sizes = rmm::device_uvector<size_type>(num_cta_partition_counts, stream);
+  auto block_partition_sizes =
+    rmm::device_uvector<size_type>(num_cta_partition_counts, stream, mr.get_temporary_mr());
   auto scanned_block_partition_sizes =
-    rmm::device_uvector<size_type>(num_cta_partition_counts, stream);
+    rmm::device_uvector<size_type>(num_cta_partition_counts, stream, mr.get_temporary_mr());
   auto host_partition_offsets =
     cudf::detail::make_pinned_vector_async<size_type>(num_partitions + 1, stream);
   host_partition_offsets[num_partitions] = num_rows;
@@ -1302,7 +1306,7 @@ std::pair<std::unique_ptr<table>, std::vector<size_type>> partition_scatter(
   // Counts are partition-major: all CTA counts for partition 0, then all CTA counts for partition
   // 1, and so on. The scan therefore provides both each CTA's output offset and every partition's
   // global start.
-  thrust::exclusive_scan(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+  thrust::exclusive_scan(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
                          block_partition_sizes.begin(),
                          block_partition_sizes.end(),
                          scanned_block_partition_sizes.begin());
@@ -1318,7 +1322,8 @@ std::pair<std::unique_ptr<table>, std::vector<size_type>> partition_scatter(
                                   cudaMemcpyDefault,
                                   stream.get()));
 
-  auto row_output_locations = rmm::device_uvector<size_type>(num_rows, stream);
+  auto row_output_locations =
+    rmm::device_uvector<size_type>(num_rows, stream, mr.get_temporary_mr());
   compute_row_output_locations<<<grid_size, SCATTER_BLOCK_SIZE, histogram_bytes, stream.get()>>>(
     partition_metadata,
     row_output_locations.data(),
@@ -1326,7 +1331,7 @@ std::pair<std::unique_ptr<table>, std::vector<size_type>> partition_scatter(
     scanned_block_partition_sizes.data());
   CUDF_CUDA_TRY(cudaGetLastError());
 
-  auto output = detail::scatter(input, row_output_locations, input, stream, mr);
+  auto output = detail::scatter(input, row_output_locations, input, stream, mr.get_output_mr());
   stream.sync();  // Async partition-offset copy must complete
   auto partition_offsets =
     std::vector<size_type>(host_partition_offsets.begin(), host_partition_offsets.end());
@@ -1364,13 +1369,14 @@ std::pair<std::unique_ptr<table>, std::vector<size_type>> run_staged_scatter(
   size_type rows_per_thread,
   partition_column_groups const& column_groups,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cudf::memory_resources mr)
 {
   static_assert(std::is_same_v<PartitionMetadataView, detail::partition_metadata::packed_view> ||
                 std::is_same_v<PartitionMetadataView, detail::partition_metadata::default_view>);
 
   if constexpr (std::is_same_v<PartitionMetadataView, detail::partition_metadata::packed_view>) {
-    auto packed_metadata = rmm::device_uvector<std::uint32_t>(num_rows, stream);
+    auto packed_metadata =
+      rmm::device_uvector<std::uint32_t>(num_rows, stream, mr.get_temporary_mr());
     auto const partition_bits =
       detail::partition_metadata::ceil_log2(static_cast<std::uint64_t>(num_partitions));
     auto const metadata = detail::partition_metadata::packed_view{
@@ -1386,9 +1392,10 @@ std::pair<std::unique_ptr<table>, std::vector<size_type>> run_staged_scatter(
                                                stream,
                                                mr);
   } else {
-    auto row_partitions        = rmm::device_uvector<size_type>(num_rows, stream);
-    auto row_partition_offsets = rmm::device_uvector<size_type>(num_rows, stream);
-    auto const metadata        = detail::partition_metadata::default_view{
+    auto row_partitions = rmm::device_uvector<size_type>(num_rows, stream, mr.get_temporary_mr());
+    auto row_partition_offsets =
+      rmm::device_uvector<size_type>(num_rows, stream, mr.get_temporary_mr());
+    auto const metadata = detail::partition_metadata::default_view{
       device_span<size_type>{row_partitions}, device_span<size_type>{row_partition_offsets}};
     return partition_staged_scatter<BlockSize>(input,
                                                num_rows,
@@ -1430,7 +1437,7 @@ std::pair<std::unique_ptr<table>, std::vector<size_type>> dispatch_partition_imp
   Hasher hasher,
   Partitioner partitioner,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cudf::memory_resources mr)
 {
   auto const column_groups = group_columns(input);
 
@@ -1513,7 +1520,8 @@ std::pair<std::unique_ptr<table>, std::vector<size_type>> dispatch_partition_imp
       scatter_histogram_bytes <=
         scatter_max_smem_bytes(
           cuda::std::type_identity<detail::partition_metadata::packed_view>{})) {
-    auto packed_metadata = rmm::device_uvector<std::uint32_t>(num_rows, stream);
+    auto packed_metadata =
+      rmm::device_uvector<std::uint32_t>(num_rows, stream, mr.get_temporary_mr());
     auto const partition_bits =
       detail::partition_metadata::ceil_log2(static_cast<std::uint64_t>(num_partitions));
     auto const metadata = detail::partition_metadata::packed_view{
@@ -1523,9 +1531,10 @@ std::pair<std::unique_ptr<table>, std::vector<size_type>> dispatch_partition_imp
   } else if (scatter_histogram_bytes <=
              scatter_max_smem_bytes(
                cuda::std::type_identity<detail::partition_metadata::default_view>{})) {
-    auto row_partitions        = rmm::device_uvector<size_type>(num_rows, stream);
-    auto row_partition_offsets = rmm::device_uvector<size_type>(num_rows, stream);
-    auto const metadata        = detail::partition_metadata::default_view{
+    auto row_partitions = rmm::device_uvector<size_type>(num_rows, stream, mr.get_temporary_mr());
+    auto row_partition_offsets =
+      rmm::device_uvector<size_type>(num_rows, stream, mr.get_temporary_mr());
+    auto const metadata = detail::partition_metadata::default_view{
       device_span<size_type>{row_partitions}, device_span<size_type>{row_partition_offsets}};
     return partition_scatter(
       input, num_rows, num_partitions, hasher, partitioner, metadata, stream, mr);
@@ -1553,7 +1562,7 @@ std::pair<std::unique_ptr<table>, std::vector<size_type>> dispatch_hash_partitio
   size_type num_partitions,
   Hasher hasher,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cudf::memory_resources mr)
 {
   if (is_power_two(num_partitions)) {
     auto const partitioner = bitwise_partitioner<hash_value_type>{num_partitions};
@@ -1586,7 +1595,7 @@ std::pair<std::unique_ptr<table>, std::vector<size_type>> hash_partition_table(
   size_type num_partitions,
   uint32_t seed,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cudf::memory_resources mr)
 {
   auto const num_rows = table_to_hash.num_rows();
   if (detail::is_fixed_width_partition_compatible(table_to_hash)) {

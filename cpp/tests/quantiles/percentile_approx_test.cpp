@@ -4,6 +4,7 @@
  */
 
 #include <cudf_test/base_fixture.hpp>
+#include <cudf_test/column_utilities.hpp>
 #include <cudf_test/column_wrapper.hpp>
 #include <cudf_test/iterator_utilities.hpp>
 #include <cudf_test/tdigest_utilities.hpp>
@@ -12,6 +13,7 @@
 
 #include <cudf/detail/tdigest/tdigest.hpp>
 #include <cudf/groupby.hpp>
+#include <cudf/lists/lists_column_view.hpp>
 #include <cudf/quantiles.hpp>
 #include <cudf/reduction.hpp>
 #include <cudf/tdigest/tdigest_column_view.hpp>
@@ -21,6 +23,13 @@
 
 #include <cuda/iterator>
 #include <cuda/stream>
+
+#include <algorithm>
+#include <cmath>
+#include <cstddef>
+#include <iterator>
+#include <utility>
+#include <vector>
 
 namespace {
 struct percentile_approx_dispatch {
@@ -220,6 +229,101 @@ std::pair<rmm::device_buffer, cudf::size_type> make_null_mask(cudf::column_view 
   auto itr = cudf::test::iterators::valids_at_multiples_of(2);
   return cudf::test::detail::make_null_mask(itr, itr + col.size());
 }
+
+std::vector<double> make_compressed_test_values(cudf::size_type group, cudf::size_type row_count)
+{
+  std::vector<double> values(row_count);
+  for (cudf::size_type i = 0; i < row_count; ++i) {
+    auto const permutation =
+      static_cast<double>((i * 37 + group * 101) % row_count) - (row_count / 2.0);
+    auto const trend = static_cast<double>(i) * (0.015 + 0.003 * group);
+    auto const wave  = std::sin(static_cast<double>(i) * 0.037 + group) * (9.0 + group);
+    values[i]        = permutation * (1.5 + 0.2 * group) + trend + wave + group * 500.0;
+  }
+  return values;
+}
+
+double exact_host_quantile(std::vector<double> const& sorted_values, double percentile)
+{
+  auto const rank       = percentile * static_cast<double>(sorted_values.size() - 1);
+  auto const lower_rank = static_cast<std::size_t>(std::floor(rank));
+  auto const upper_rank = static_cast<std::size_t>(std::ceil(rank));
+  if (lower_rank == upper_rank) { return sorted_values[lower_rank]; }
+
+  auto const weight = rank - static_cast<double>(lower_rank);
+  return sorted_values[lower_rank] +
+         (sorted_values[upper_rank] - sorted_values[lower_rank]) * weight;
+}
+
+std::pair<double, double> empirical_rank_interval(std::vector<double> const& sorted_values,
+                                                  double value)
+{
+  auto const denominator = static_cast<double>(sorted_values.size() - 1);
+  auto const first       = std::lower_bound(sorted_values.begin(), sorted_values.end(), value);
+
+  if (first != sorted_values.end() && *first == value) {
+    auto const last = std::upper_bound(first, sorted_values.end(), value);
+    return {static_cast<double>(std::distance(sorted_values.begin(), first)) / denominator,
+            static_cast<double>(std::distance(sorted_values.begin(), last) - 1) / denominator};
+  }
+
+  if (first == sorted_values.begin()) { return {0.0, 0.0}; }
+  if (first == sorted_values.end()) { return {1.0, 1.0}; }
+
+  auto const upper_index = static_cast<std::size_t>(std::distance(sorted_values.begin(), first));
+  auto const lower_index = upper_index - 1;
+  auto const lower_value = sorted_values[lower_index];
+  auto const upper_value = sorted_values[upper_index];
+  auto const fraction    = (value - lower_value) / (upper_value - lower_value);
+  auto const rank        = (static_cast<double>(lower_index) + fraction) / denominator;
+  return {rank, rank};
+}
+
+std::vector<std::vector<double>> lists_column_to_host(cudf::column_view const& column)
+{
+  auto const lists   = cudf::lists_column_view{column};
+  auto const offsets = cudf::test::to_host<cudf::size_type>(lists.offsets()).first;
+  auto const child   = cudf::test::to_host<double>(lists.child()).first;
+
+  std::vector<std::vector<double>> result(lists.size());
+  for (cudf::size_type row = 0; row < lists.size(); ++row) {
+    result[row].assign(child.begin() + offsets[row], child.begin() + offsets[row + 1]);
+  }
+  return result;
+}
+
+void expect_approx_percentiles_near_exact(std::vector<double> const& values,
+                                          std::vector<double> const& percentiles,
+                                          std::vector<double> const& actual,
+                                          double max_rank_error)
+{
+  ASSERT_EQ(actual.size(), percentiles.size());
+
+  auto sorted_values = values;
+  std::sort(sorted_values.begin(), sorted_values.end());
+  for (std::size_t idx = 0; idx < percentiles.size(); ++idx) {
+    ASSERT_TRUE(std::isfinite(actual[idx]));
+    ASSERT_GE(actual[idx], sorted_values.front());
+    ASSERT_LE(actual[idx], sorted_values.back());
+
+    auto const [rank_low, rank_high] = empirical_rank_interval(sorted_values, actual[idx]);
+    auto const nearest_rank          = std::clamp(percentiles[idx], rank_low, rank_high);
+    auto const rank_error            = std::abs(percentiles[idx] - nearest_rank);
+    auto const exact                 = exact_host_quantile(sorted_values, percentiles[idx]);
+
+    EXPECT_LE(rank_error, max_rank_error)
+      << "percentile=" << percentiles[idx] << " actual_rank=[" << rank_low << ", " << rank_high
+      << "] exact_value=" << exact << " actual_value=" << actual[idx];
+  }
+}
+
+struct scoped_cpu_clustering_setting {
+  bool const previous = cudf::tdigest::detail::is_cpu_cluster_computation_disabled;
+  ~scoped_cpu_clustering_setting()
+  {
+    cudf::tdigest::detail::is_cpu_cluster_computation_disabled = previous;
+  }
+};
 
 void simple_with_nulls_test(cudf::data_type input_type, std::vector<std::pair<int, int>> params)
 {
@@ -490,6 +594,93 @@ TEST_F(PercentileApproxTest, GroupByWithNullsGold)
     cudf::test::lists_column_wrapper<double>{{1, 1, 5, 7, 9}, {10, 20, 30, 40, 50}};
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*result, expected);
 }
+
+namespace {
+
+TEST_F(PercentileApproxTest, CompressedTdigestsAgainstHostQuantiles)
+{
+  auto const max_centroids  = 20;
+  auto const rows_per_group = 4096;
+  // Regression budget validated for max_centroids=20 with both clustering paths.
+  auto const max_rank_error = 0.025;
+  auto const percentiles    = std::vector<double>{0.01, 0.10, 0.25, 0.50, 0.75, 0.90, 0.99};
+  auto const percentiles_column =
+    cudf::test::fixed_width_column_wrapper<double>(percentiles.begin(), percentiles.end());
+  auto const group_values = std::vector<std::vector<double>>{
+    make_compressed_test_values(0, rows_per_group),
+    make_compressed_test_values(1, rows_per_group),
+  };
+
+  auto const restore_cpu_clustering_setting = scoped_cpu_clustering_setting{};
+  // Small group counts use host-side cluster compression by default. Exercise both cluster
+  // compression paths because the compressed centroid layout is what percentile_approx consumes.
+  for (auto const cpu_clustering_disabled : {true, false}) {
+    SCOPED_TRACE(::testing::Message() << "cpu_clustering_disabled=" << cpu_clustering_disabled);
+    cudf::tdigest::detail::is_cpu_cluster_computation_disabled = cpu_clustering_disabled;
+
+    for (auto const& values : group_values) {
+      auto const values_column =
+        cudf::test::fixed_width_column_wrapper<double>(values.begin(), values.end());
+      auto const tdigest =
+        cudf::reduce(values_column,
+                     *cudf::make_tdigest_aggregation<cudf::reduce_aggregation>(max_centroids),
+                     cudf::data_type{cudf::type_id::STRUCT});
+      auto const tdigest_col = cudf::make_column_from_scalar(*tdigest, 1);
+      auto const result      = cudf::percentile_approx(tdigest_col->view(), percentiles_column);
+
+      auto const actual = lists_column_to_host(result->view());
+      ASSERT_EQ(actual.size(), 1);
+      expect_approx_percentiles_near_exact(values, percentiles, actual.front(), max_rank_error);
+    }
+
+    std::vector<int32_t> keys;
+    std::vector<double> values;
+    keys.reserve(rows_per_group * group_values.size());
+    values.reserve(rows_per_group * group_values.size());
+    for (cudf::size_type row = 0; row < rows_per_group; ++row) {
+      for (std::size_t group = 0; group < group_values.size(); ++group) {
+        keys.push_back(static_cast<int32_t>(group));
+        values.push_back(group_values[group][row]);
+      }
+    }
+
+    auto const keys_column =
+      cudf::test::fixed_width_column_wrapper<int32_t>(keys.begin(), keys.end());
+    auto const values_column =
+      cudf::test::fixed_width_column_wrapper<double>(values.begin(), values.end());
+
+    cudf::groupby::groupby gb(cudf::table_view{{keys_column}});
+    std::vector<cudf::groupby::aggregation_request> requests;
+    std::vector<std::unique_ptr<cudf::groupby_aggregation>> aggregations;
+    aggregations.push_back(
+      cudf::make_tdigest_aggregation<cudf::groupby_aggregation>(max_centroids));
+    requests.push_back({values_column, std::move(aggregations)});
+    auto const groupby_result = gb.aggregate(requests);
+
+    cudf::tdigest::tdigest_column_view tdv(*groupby_result.second[0].results[0]);
+    auto const result = cudf::percentile_approx(tdv, percentiles_column);
+
+    auto const actual = lists_column_to_host(result->view());
+    auto const result_keys =
+      cudf::test::to_host<int32_t>(groupby_result.first->get_column(0)).first;
+    ASSERT_EQ(actual.size(), result_keys.size());
+    ASSERT_EQ(actual.size(), group_values.size());
+    std::vector<bool> saw_group(group_values.size(), false);
+    for (std::size_t row = 0; row < actual.size(); ++row) {
+      auto const key = result_keys[row];
+      ASSERT_GE(key, 0);
+      ASSERT_LT(key, static_cast<int32_t>(group_values.size()));
+      ASSERT_FALSE(saw_group[key]);
+      saw_group[key] = true;
+      expect_approx_percentiles_near_exact(
+        group_values[key], percentiles, actual[row], max_rank_error);
+    }
+    EXPECT_TRUE(std::all_of(
+      saw_group.cbegin(), saw_group.cend(), [](bool const was_seen) { return was_seen; }));
+  }
+}
+
+}  // namespace
 
 TEST_F(PercentileApproxTest, ReductionWithLowRowCount)
 {

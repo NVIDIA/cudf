@@ -227,6 +227,43 @@ TEST_F(StringsSplitTest, RSplitWhitespaceWithMax)
   CUDF_TEST_EXPECT_TABLES_EQUAL(*results, *expected);
 }
 
+TEST_F(StringsSplitTest, SplitWhitespaceCapNotReached)
+{
+  // maxsplit=2 (max_tokens=3): "a  b  " and " a " have only 2 and 1 natural tokens respectively
+  // and must not retain trailing whitespace; "a  b  c  d" hits the cap and retains "c  d".
+  auto const input = cudf::test::strings_column_wrapper({"a  b  ", " a ", "a  b  c  d"});
+  auto const sv    = cudf::strings_column_view(input);
+
+  auto const split_result = cudf::strings::split(sv, cudf::string_scalar(""), 2);
+  auto c0                 = cudf::test::strings_column_wrapper({"a", "a", "a"});
+  auto c1                 = cudf::test::strings_column_wrapper({"b", "", "b"}, {true, false, true});
+  auto c2 = cudf::test::strings_column_wrapper({"", "", "c  d"}, {false, false, true});
+  std::vector<std::unique_ptr<cudf::column>> split_cols;
+  split_cols.push_back(c0.release());
+  split_cols.push_back(c1.release());
+  split_cols.push_back(c2.release());
+  CUDF_TEST_EXPECT_TABLES_EQUIVALENT(*split_result,
+                                     *std::make_unique<cudf::table>(std::move(split_cols)));
+
+  // Same for rsplit: " a  b  " and " a " must not retain leading whitespace on the first slot.
+  auto const rinput = cudf::test::strings_column_wrapper({"  b  a", " a ", "d  c  b  a"});
+  auto const rsv    = cudf::strings_column_view(rinput);
+
+  auto const rsplit_result = cudf::strings::rsplit(rsv, cudf::string_scalar(""), 2);
+  // "  b  a"  → token_count=2, cap not reached → col0="b", col1="a",   col2=null
+  // " a "     → token_count=1, cap not reached → col0="a", col1=null,  col2=null
+  // "d  c  b  a" → token_count=3, cap reached  → col0="d  c", col1="b", col2="a"
+  auto r0 = cudf::test::strings_column_wrapper({"b", "a", "d  c"});
+  auto r1 = cudf::test::strings_column_wrapper({"a", "", "b"}, {true, false, true});
+  auto r2 = cudf::test::strings_column_wrapper({"", "", "a"}, {false, false, true});
+  std::vector<std::unique_ptr<cudf::column>> rsplit_cols;
+  rsplit_cols.push_back(r0.release());
+  rsplit_cols.push_back(r1.release());
+  rsplit_cols.push_back(r2.release());
+  CUDF_TEST_EXPECT_TABLES_EQUIVALENT(*rsplit_result,
+                                     *std::make_unique<cudf::table>(std::move(rsplit_cols)));
+}
+
 TEST_F(StringsSplitTest, SplitRecord)
 {
   auto const validity = cudf::test::iterators::null_at(1);
@@ -423,6 +460,34 @@ TEST_F(StringsSplitTest, MultiByteDelimiters)
     CUDF_TEST_EXPECT_TABLES_EQUIVALENT(*result, *expected);
 
     result = cudf::strings::rsplit(view, cudf::string_scalar("}:{"));
+    CUDF_TEST_EXPECT_TABLES_EQUIVALENT(*result, *expected);
+  }
+
+  // Delimiter longer than some string rows — those rows are returned as-is
+  input = cudf::test::strings_column_wrapper({"a", "ab::cd", "b", "ef::gh::ij", "c"});
+  view  = cudf::strings_column_view(input);
+  {
+    auto result   = cudf::strings::split_record(view, cudf::string_scalar("::"));
+    auto expected = LCW({LCW{"a"}, LCW{"ab", "cd"}, LCW{"b"}, LCW{"ef", "gh", "ij"}, LCW{"c"}});
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(result->view(), expected);
+    result = cudf::strings::rsplit_record(view, cudf::string_scalar("::"));
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(result->view(), expected);
+  }
+  {
+    auto result = cudf::strings::split(view, cudf::string_scalar("::"));
+    auto c0     = cudf::test::strings_column_wrapper({"a", "ab", "b", "ef", "c"});
+    auto c1     = cudf::test::strings_column_wrapper({"", "cd", "", "gh", ""},
+                                                     {false, true, false, true, false});
+    auto c2     = cudf::test::strings_column_wrapper({"", "", "", "ij", ""},
+                                                     {false, false, false, true, false});
+    std::vector<std::unique_ptr<cudf::column>> expected_columns;
+    expected_columns.push_back(c0.release());
+    expected_columns.push_back(c1.release());
+    expected_columns.push_back(c2.release());
+    auto expected = std::make_unique<cudf::table>(std::move(expected_columns));
+    CUDF_TEST_EXPECT_TABLES_EQUIVALENT(*result, *expected);
+
+    result = cudf::strings::rsplit(view, cudf::string_scalar("::"));
     CUDF_TEST_EXPECT_TABLES_EQUIVALENT(*result, *expected);
   }
 }
@@ -854,6 +919,34 @@ TEST_F(StringsSplitTest, AllNullsCase)
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(part_result->view(), input);
   part_result = cudf::strings::split_part(sv, cudf::string_scalar("-"), 1);
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(part_result->view(), input);
+}
+
+TEST_F(StringsSplitTest, SplitWhitespaceCapNotReachedWideStrings)
+{
+  auto const pad = std::string(200, 'x');
+  using LCW      = cudf::test::lists_column_wrapper<cudf::string_view>;
+
+  {
+    auto const h_input =
+      std::vector<std::string>({"a  " + pad + "  ", " " + pad + " ", "a  " + pad + "  b  c"});
+    auto const input = cudf::test::strings_column_wrapper(h_input.begin(), h_input.end());
+    auto const sv    = cudf::strings_column_view(input);
+
+    auto const result = cudf::strings::split_record(sv, cudf::string_scalar(""), 2);
+    LCW expected({LCW{"a", pad}, LCW{pad}, LCW{"a", pad, "b  c"}});
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(result->view(), expected);
+  }
+
+  {
+    auto const h_input =
+      std::vector<std::string>({"  " + pad + "  a", " " + pad + " ", "c  b  " + pad + "  a"});
+    auto const input = cudf::test::strings_column_wrapper(h_input.begin(), h_input.end());
+    auto const sv    = cudf::strings_column_view(input);
+
+    auto const result = cudf::strings::rsplit_record(sv, cudf::string_scalar(""), 2);
+    LCW expected({LCW{pad, "a"}, LCW{pad}, LCW{"c  b", pad, "a"}});
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(result->view(), expected);
+  }
 }
 
 TEST_F(StringsSplitTest, SplitPart)

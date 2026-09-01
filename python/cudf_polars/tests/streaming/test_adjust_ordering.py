@@ -54,6 +54,7 @@ def _make_ordering(
     order: plc.types.Order = plc.types.Order.ASCENDING,
     null_order: plc.types.NullOrder = plc.types.NullOrder.BEFORE,
     strict: bool = True,
+    locally_ordered: bool = True,
     stream: Stream,
 ) -> Ordering:
     boundary_rows: list[_Boundary] = (
@@ -87,6 +88,7 @@ def _make_ordering(
             br=context.br(),
         ),
         strict_boundaries=strict,
+        locally_ordered=locally_ordered,
     )
 
 
@@ -524,6 +526,70 @@ def test_adjust_ordering_multi_chunk_input(spmd_engine: SPMDEngine) -> None:
                 context,
                 comm,
                 [_frame([0, 1]), _frame([2, 3, 4, 5]), _frame([6, 7]), _frame([])],
+                input_ordering,
+                output_ordering,
+                collective_id=op_id,
+            )
+        )
+
+    _assert_partition_output(output, {0: [0, 1, 2, 3], 1: [4, 5, 6, 7]})
+
+
+@pytest.mark.spmd
+def test_adjust_ordering_locally_sorts_unordered_input(
+    spmd_engine: SPMDEngine,
+) -> None:
+    context = spmd_engine.context
+    comm = spmd_engine.comm
+    if comm.nranks != 1:
+        pytest.skip("This test covers local chunk sorting.")
+
+    stream = context.br().stream_pool.get_stream()
+    input_ordering = _make_ordering(
+        context,
+        4,
+        locally_ordered=False,
+        stream=stream,
+    )
+    output_ordering = _make_ordering(context, 4, stream=stream)
+    with reserve_op_id() as op_id:
+        output = asyncio.run(
+            _adjust_and_collect(
+                context,
+                comm,
+                [_frame([3, 0, 2, 1]), _frame([7, 5, 6, 4])],
+                input_ordering,
+                output_ordering,
+                collective_id=op_id,
+            )
+        )
+
+    _assert_partition_output(output, {0: [0, 1, 2, 3], 1: [4, 5, 6, 7]})
+
+
+@pytest.mark.spmd
+def test_adjust_ordering_merges_locally_unordered_multi_chunk_output(
+    spmd_engine: SPMDEngine,
+) -> None:
+    context = spmd_engine.context
+    comm = spmd_engine.comm
+    if comm.nranks != 1:
+        pytest.skip("This test covers local chunk sorting.")
+
+    stream = context.br().stream_pool.get_stream()
+    input_ordering = _make_ordering(
+        context,
+        4,
+        locally_ordered=False,
+        stream=stream,
+    )
+    output_ordering = _make_ordering(context, 4, stream=stream)
+    with reserve_op_id() as op_id:
+        output = asyncio.run(
+            _adjust_and_collect(
+                context,
+                comm,
+                [_frame([3, 0]), _frame([2, 1]), _frame([7, 5]), _frame([6, 4])],
                 input_ordering,
                 output_ordering,
                 collective_id=op_id,

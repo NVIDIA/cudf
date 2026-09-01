@@ -111,12 +111,12 @@ TYPED_TEST(TypedScalarTestWithoutFixedPoint, SetValue)
 TEST_F(ScalarTest, AsyncSetValueOwnsHostSource)
 {
   rmm::cuda_stream stream;
-  auto const stream_ref = cuda::stream_ref{stream.get()};
+  auto const stream_ref = cuda::stream_ref{stream.value()};
   int32_t source        = 42;
   lifetime_test_scalar scalar{0, true, stream_ref};
   host_func_gate gate;
   CUDF_CUDA_TRY(cudaLaunchHostFunc(
-    stream.get(), [](void* data) { static_cast<host_func_gate*>(data)->wait(); }, &gate));
+    stream.value(), [](void* data) { static_cast<host_func_gate*>(data)->wait(); }, &gate));
 
   scalar.set_data_async(source, stream_ref);
   source = -1;
@@ -129,7 +129,7 @@ TEST_F(ScalarTest, AsyncSetValueOwnsHostSource)
 TEST_F(ScalarTest, AsyncStringConstructionOwnsHostSource)
 {
   rmm::cuda_stream stream;
-  auto const stream_ref = cuda::stream_ref{stream.get()};
+  auto const stream_ref = cuda::stream_ref{stream.value()};
   host_func_gate gate;
   auto upstream = cudf::get_current_device_resource_ref();
   int allocations{0};

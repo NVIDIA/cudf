@@ -225,6 +225,7 @@ exclude_patterns = [
 pygments_style = "sphinx"
 
 html_theme_options = {
+    "public_docs_features": os.environ.get("CI") == "true",
     "external_links": [],
     "icon_links": [],
     "github_url": "https://github.com/rapidsai/cudf",

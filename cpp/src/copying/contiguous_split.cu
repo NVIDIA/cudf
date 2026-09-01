@@ -71,7 +71,7 @@ struct src_buf_info {
                int _parent_offsets_index,
                bool _is_validity,
                size_type _column_offset,
-               size_type _independent_size = -1)
+               size_type _keys_row_count)
     : type(_type),
       offsets(detail::offsetalator_factory::make_input_iterator(offsets)),
       is_offsets{!offsets.is_empty()},
@@ -79,7 +79,7 @@ struct src_buf_info {
       parent_offsets_index(_parent_offsets_index),
       is_validity(_is_validity),
       column_offset(_column_offset),
-      independent_size(_independent_size)
+      keys_row_count(_keys_row_count)
   {
   }
 
@@ -88,13 +88,13 @@ struct src_buf_info {
                int _parent_offsets_index,
                bool _is_validity,
                size_type _column_offset,
-               size_type _independent_size = -1)
+               size_type _keys_row_count)
     : type(_type),
       offset_stack_pos(_offset_stack_pos),
       parent_offsets_index(_parent_offsets_index),
       is_validity(_is_validity),
       column_offset(_column_offset),
-      independent_size(_independent_size)
+      keys_row_count(_keys_row_count)
   {
   }
 
@@ -105,9 +105,9 @@ struct src_buf_info {
   int parent_offsets_index;  // immediate parent that has offsets, or -1 if none
   bool is_validity;          // if I am a validity buffer
   size_type column_offset;   // offset in the case of a sliced column
-  // row count of my containing dictionary-keys subtree, or -1 if my row range comes from the
+  // row count of the dictionary keys column I belong to, or -1 if my row range comes from the
   // split indices
-  size_type independent_size;
+  size_type keys_row_count;
 };
 
 /**
@@ -471,7 +471,7 @@ size_type count_src_bufs(InputIter begin, InputIter end)
  * @param parent_offset_index Index into src_buf_info output array indicating our nearest
  * containing list parent. -1 if we have no list parent
  * @param offset_depth Current offset nesting depth (how many list levels deep we are)
- * @param independent_size Row count of the containing dictionary keys column, or -1 if the row
+ * @param keys_row_count Row count of the containing dictionary keys column, or -1 if the row
  * range comes from the split indices
  *
  * @returns next src_buf_output after processing this range of input columns
@@ -483,10 +483,10 @@ std::pair<src_buf_info*, size_type> setup_source_buf_info(InputIter begin,
                                                           src_buf_info* head,
                                                           src_buf_info* current,
                                                           cuda::stream_ref stream,
-                                                          int offset_stack_pos       = 0,
-                                                          int parent_offset_index    = -1,
-                                                          int offset_depth           = 0,
-                                                          size_type independent_size = -1);
+                                                          int offset_stack_pos     = 0,
+                                                          int parent_offset_index  = -1,
+                                                          int offset_depth         = 0,
+                                                          size_type keys_row_count = -1);
 
 /**
  * @brief Functor that builds source buffer information based on input columns.
@@ -497,7 +497,7 @@ std::pair<src_buf_info*, size_type> setup_source_buf_info(InputIter begin,
 struct buf_info_functor {
   src_buf_info* head;
   // row count of the dictionary-keys subtree we are inside of, or -1
-  size_type independent_size{-1};
+  size_type keys_row_count{-1};
 
   template <typename T>
   std::pair<src_buf_info*, size_type> operator()(column_view const& col,
@@ -513,12 +513,8 @@ struct buf_info_functor {
     }
 
     // info for the data buffer
-    *current = src_buf_info(col.type().id(),
-                            offset_stack_pos,
-                            parent_offset_index,
-                            false,
-                            col.offset(),
-                            independent_size);
+    *current = src_buf_info(
+      col.type().id(), offset_stack_pos, parent_offset_index, false, col.offset(), keys_row_count);
 
     return {current + 1, offset_stack_pos + offset_depth};
   }
@@ -532,7 +528,7 @@ struct buf_info_functor {
   {
     // info for the validity buffer
     *current = src_buf_info(
-      type_id::INT32, offset_stack_pos, parent_offset_index, true, col.offset(), independent_size);
+      type_id::INT32, offset_stack_pos, parent_offset_index, true, col.offset(), keys_row_count);
 
     return {current + 1, offset_stack_pos + offset_depth};
   }
@@ -565,7 +561,7 @@ std::pair<src_buf_info*, size_type> buf_info_functor::operator()<cudf::string_vi
                           has_offsets_child ? ((current + 1) - head) : parent_offset_index,
                           false,
                           col.offset(),
-                          independent_size);
+                          keys_row_count);
 
   // if I have offsets, I need to include that in the stack size
   offset_stack_pos += has_offsets_child ? offset_depth + 1 : offset_depth;
@@ -586,7 +582,7 @@ std::pair<src_buf_info*, size_type> buf_info_functor::operator()<cudf::string_vi
                             parent_offset_index,
                             false,
                             col.offset(),
-                            independent_size);
+                            keys_row_count);
 
     current++;
     offset_stack_pos += offset_depth;
@@ -618,7 +614,7 @@ std::pair<src_buf_info*, size_type> buf_info_functor::operator()<cudf::list_view
   // list columns hold no actual data, but we need to keep a record
   // of it so we know it's size when we are constructing the output columns
   *current = src_buf_info(
-    type_id::LIST, offset_stack_pos, parent_offset_index, false, col.offset(), independent_size);
+    type_id::LIST, offset_stack_pos, parent_offset_index, false, col.offset(), keys_row_count);
   current++;
   offset_stack_pos += offset_depth;
 
@@ -634,7 +630,7 @@ std::pair<src_buf_info*, size_type> buf_info_functor::operator()<cudf::list_view
                           parent_offset_index,
                           false,
                           col.offset(),
-                          independent_size);
+                          keys_row_count);
   current++;
   offset_stack_pos += offset_depth;
 
@@ -650,7 +646,7 @@ std::pair<src_buf_info*, size_type> buf_info_functor::operator()<cudf::list_view
                                offset_stack_pos,
                                parent_offset_index,
                                offset_depth,
-                               independent_size);
+                               keys_row_count);
 }
 
 template <>
@@ -670,7 +666,7 @@ std::pair<src_buf_info*, size_type> buf_info_functor::operator()<cudf::struct_vi
   // struct columns hold no actual data, but we need to keep a record
   // of it so we know it's size when we are constructing the output columns
   *current = src_buf_info(
-    type_id::STRUCT, offset_stack_pos, parent_offset_index, false, col.offset(), independent_size);
+    type_id::STRUCT, offset_stack_pos, parent_offset_index, false, col.offset(), keys_row_count);
   current++;
   offset_stack_pos += offset_depth;
 
@@ -691,7 +687,7 @@ std::pair<src_buf_info*, size_type> buf_info_functor::operator()<cudf::struct_vi
                                offset_stack_pos,
                                parent_offset_index,
                                offset_depth,
-                               independent_size);
+                               keys_row_count);
 }
 
 template <>
@@ -714,7 +710,7 @@ std::pair<src_buf_info*, size_type> buf_info_functor::operator()<cudf::dictionar
                           parent_offset_index,
                           false,
                           col.offset(),
-                          independent_size);
+                          keys_row_count);
   current++;
   offset_stack_pos += offset_depth;
 
@@ -724,27 +720,34 @@ std::pair<src_buf_info*, size_type> buf_info_functor::operator()<cudf::dictionar
 
   // the indices child carries the parent's row range, but not its validity
   dictionary_column_view const dcv(col);
-  auto const indices                  = column_view{dcv.indices().type(),
-                                   col.size(),
-                                   dcv.indices().head(),
-                                   dcv.indices().null_mask(),
-                                   dcv.indices().null_count(),
-                                   col.offset()};
-  std::tie(current, offset_stack_pos) = setup_source_buf_info(&indices,
-                                                              &indices + 1,
+  std::vector<column_view> const indices{column_view{dcv.indices().type(),
+                                                     col.size(),
+                                                     dcv.indices().head(),
+                                                     dcv.indices().null_mask(),
+                                                     dcv.indices().null_count(),
+                                                     col.offset()}};
+  std::tie(current, offset_stack_pos) = setup_source_buf_info(indices.begin(),
+                                                              indices.end(),
                                                               head,
                                                               current,
                                                               stream,
                                                               offset_stack_pos,
                                                               parent_offset_index,
                                                               offset_depth,
-                                                              independent_size);
+                                                              keys_row_count);
 
   // the keys child is not indexed by the split's row range: every partition gets all of the keys,
   // so it becomes the root of its own row range
-  auto const keys = dcv.keys();
-  return setup_source_buf_info(
-    &keys, &keys + 1, head, current, stream, offset_stack_pos, -1, offset_depth, keys.size());
+  std::vector<column_view> const keys{dcv.keys()};
+  return setup_source_buf_info(keys.begin(),
+                               keys.end(),
+                               head,
+                               current,
+                               stream,
+                               offset_stack_pos,
+                               -1,
+                               offset_depth,
+                               keys.front().size());
 }
 
 template <typename InputIter>
@@ -756,12 +759,12 @@ std::pair<src_buf_info*, size_type> setup_source_buf_info(InputIter begin,
                                                           int offset_stack_pos,
                                                           int parent_offset_index,
                                                           int offset_depth,
-                                                          size_type independent_size)
+                                                          size_type keys_row_count)
 {
   std::for_each(begin, end, [&](column_view const& col) {
     std::tie(current, offset_stack_pos) =
       cudf::type_dispatcher(col.type(),
-                            buf_info_functor{head, independent_size},
+                            buf_info_functor{head, keys_row_count},
                             col,
                             current,
                             offset_stack_pos,
@@ -1321,10 +1324,10 @@ std::unique_ptr<packed_partition_buf_size_and_dst_buf_info> compute_splits(
       }
       // make sure to include the -column- offset on the root column in our calculation.
       // buffers under a dictionary's keys child are copied in full for every partition.
-      auto const independent = src_info.independent_size >= 0;
-      int64_t row_start      = (independent ? 0 : d_indices[split_index]) + root_column_offset;
+      auto const all_keys = src_info.keys_row_count >= 0;
+      int64_t row_start   = (all_keys ? 0 : d_indices[split_index]) + root_column_offset;
       int64_t row_end =
-        (independent ? src_info.independent_size : d_indices[split_index + 1]) + root_column_offset;
+        (all_keys ? src_info.keys_row_count : d_indices[split_index + 1]) + root_column_offset;
       while (stack_size > 0) {
         stack_size--;
         auto& d_info = d_src_buf_info[offset_stack[stack_size]];

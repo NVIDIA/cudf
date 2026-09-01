@@ -15,7 +15,7 @@ import rmm
 from rmm._cuda import gpu
 
 import cudf_polars.callback
-import cudf_polars.quent._context
+import cudf_polars.quent
 import cudf_polars.utils.config
 from cudf_polars.callback import (
     _is_concurrent_managed_access_supported,
@@ -559,9 +559,7 @@ def test_hash_streaming_executor() -> None:
     config = ConfigOptions.from_polars_engine(
         pl.GPUEngine(
             executor="streaming",
-            executor_options={
-                "quent_context": cudf_polars.quent._context.QuentContext()
-            },
+            executor_options={"quent_context": cudf_polars.quent.QuentContext()},
         )
     )
     assert hash(config.executor) == hash(config.executor)

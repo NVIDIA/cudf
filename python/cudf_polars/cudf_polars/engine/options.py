@@ -29,7 +29,7 @@ from cudf_polars.utils.config import (
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from cudf_polars.quent._context import QuentContext
+    from cudf_polars.quent import QuentContext
     from cudf_polars.utils.config import (
         JoinFilterPushdownOptions,
         ParquetOptions,

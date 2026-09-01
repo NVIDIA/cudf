@@ -69,7 +69,6 @@ except ImportError:
 try:
     import cudf_polars.dsl.tracing
     import cudf_polars.quent
-    import cudf_polars.quent._context
     from cudf_polars.dsl.ir import IRExecutionContext
     from cudf_polars.dsl.tracing import Scope
     from cudf_polars.dsl.translate import Translator
@@ -816,7 +815,7 @@ def get_executor_options(
     executor_options: dict[str, Any] = (
         run_config.streaming_options.to_executor_options()
     )
-    executor_options["quent_context"] = cudf_polars.quent._context.QuentContext(
+    executor_options["quent_context"] = cudf_polars.quent.QuentContext(
         engine=cudf_polars.quent.Engine(id=run_config.run_id)
     )
 

@@ -83,10 +83,11 @@ __device__ static void scan_block_exclusive_sum(
 }
 
 /**
- * @brief Write a batch of decoded dictionary indices directly as INT32 output values.
+ * @brief Write a batch of decoded dictionary indices directly as signed integer output values.
  *
  * Used by the Parquet-dict → DICTIONARY32 transcode path: instead of materializing the dictionary
- * keys, the per-row dictionary indices are emitted verbatim as the INT32 indices child of the
+ * keys, the per-row dictionary indices are emitted verbatim as the signed integer indices child
+ * (INT8/INT16/INT32, per the chunk's dict_index_bytes) of the
  * output DICTIONARY32 column.
  *
  * @tparam block_size Number of threads per block
@@ -133,13 +134,22 @@ __device__ void decode_dict_indices_as_int32(
         return thread_pos;
       }();
 
-      auto* dst           = reinterpret_cast<int32_t*>(data_out) + dst_pos;
-      auto const num_keys = static_cast<uint32_t>(s->stream.dict_size / sizeof(string_index_pair));
-      auto const idx      = sb->dict_idx[rolling_index<state_buf::dict_buf_size>(src_pos)];
+      // string chunks index a string_index_pair table; fixed-width chunks index the raw
+      // dictionary page, whose entries are the physical value width
+      auto const entry_size = s->setup.col.physical_type == Type::BYTE_ARRAY
+                                ? sizeof(string_index_pair)
+                                : static_cast<size_t>(s->output_cvt.dtype_len_in);
+      auto const num_keys   = static_cast<uint32_t>(s->stream.dict_size / entry_size);
+      auto const idx        = sb->dict_idx[rolling_index<state_buf::dict_buf_size>(src_pos)];
       if (idx >= num_keys) {
         s->set_error_code(decode_error::DATA_STREAM_OVERRUN);
       } else {
-        *dst = idx;
+        // the index width follows dictionary::get_indices_type_for_size for the key count
+        switch (s->output_cvt.dtype_len) {
+          case 1: reinterpret_cast<int8_t*>(data_out)[dst_pos] = static_cast<int8_t>(idx); break;
+          case 2: reinterpret_cast<int16_t*>(data_out)[dst_pos] = static_cast<int16_t>(idx); break;
+          default: reinterpret_cast<int32_t*>(data_out)[dst_pos] = idx; break;
+        }
       }
     }
 
@@ -1306,7 +1316,7 @@ CUDF_KERNEL void __launch_bounds__(decode_block_size_t, 8)
   if constexpr (has_strings_t || has_lists_t || is_dict_int32_t) {
     if (process_nulls) {
       uint32_t const dtype_len = [&]() -> uint32_t {
-        if constexpr (is_dict_int32_t) { return sizeof(int32_t); }
+        if constexpr (is_dict_int32_t) { return s->setup.col.dict_index_bytes; }
         if constexpr (has_strings_t) { return sizeof(cudf::size_type); }
         return s->output_cvt.dtype_len;
       }();

@@ -436,7 +436,4 @@ template CUDF_EXPORT void column_buffer_base<pointer_type>::create_with_mask(
 template CUDF_EXPORT std::unique_ptr<column> column_buffer_base<pointer_type>::make_column(
   column_name_info*, std::optional<reader_column_schema> const&, cuda::stream_ref) &&;
 
-template class column_buffer_base<pointer_type>;
-template class column_buffer_base<string_type>;
-
 }  // namespace cudf::io::detail

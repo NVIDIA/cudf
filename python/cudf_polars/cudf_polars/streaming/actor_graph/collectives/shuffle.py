@@ -122,23 +122,23 @@ class ShuffleManager:
             )
 
         async def insert_hash_keys(
-            self, chunk: TableChunk, key_table: plc.Table
+            self, chunk: TableChunk, keys: tuple[NamedExpr, ...], schema: Schema
         ) -> None:
-            """Partition chunk by hash of a row-aligned key table and insert."""
+            """Partition chunk by hash of ``keys`` evaluated over it, and insert."""
             br = self._manager.context.br()
-            # `partition_and_pack_cost` covers a reorder plus a pack, which is what
-            # the hash partitioning below and the split-and-pack after it need.
+            # Three allocations of the chunk's packed size: the key table, the
+            # reorder, then the pack.
+            chunk_nbytes = py_split_and_pack_cost(chunk.table_view(), chunk.stream, br)
             reservation = await reserve_memory(
                 self._manager.context,
-                py_partition_and_pack_cost(chunk.table_view(), chunk.stream, br),
+                3 * chunk_nbytes,
                 # The chunk's data moves into shuffler-owned packed buffers,
                 # nothing lasting is added.
                 net_memory_delta=0,
             )
-            reorder_nbytes = py_split_and_pack_cost(
-                chunk.table_view(), chunk.stream, br
-            )
-            with opaque_memory_usage(reservation.split(reorder_nbytes)):
+            with opaque_memory_usage(reservation.split(chunk_nbytes)):
+                key_table = _evaluate_key_table(chunk, keys, schema)
+            with opaque_memory_usage(reservation.split(chunk_nbytes)):
                 partitioned_table, offsets = plc.partitioning.hash_partition(
                     chunk.table_view(),
                     key_table,
@@ -542,9 +542,7 @@ async def _global_shuffle(
                     msg, br=context.br()
                 ).make_available_and_spill(context.br(), allow_overbooking=True)
                 if columns_to_hash is None:
-                    await inserter.insert_hash_keys(
-                        chunk, _evaluate_key_table(chunk, keys_to_hash, input_schema)
-                    )
+                    await inserter.insert_hash_keys(chunk, keys_to_hash, input_schema)
                 else:
                     await inserter.insert_hash(
                         chunk,

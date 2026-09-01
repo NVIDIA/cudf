@@ -331,12 +331,12 @@ class stats_columns_collector : public ast::detail::expression_transformer {
   std::reference_wrapper<ast::expression const> visit(ast::operation const& expr) override;
 
   /**
-   * @brief Return a boolean vector indicating input columns that can participate in stats based
+   * @brief Return a boolean vector indicating which input columns can participate in stats based
    * filtering
    *
    * @return Boolean vector indicating input columns that can participate in stats based filtering
    */
-  std::pair<thrust::host_vector<bool>, bool> get_stats_columns_mask() &&;
+  thrust::host_vector<bool> get_stats_columns_mask() &&;
 
  protected:
   explicit stats_columns_collector(std::span<cudf::data_type const> output_dtypes);
@@ -345,7 +345,6 @@ class stats_columns_collector : public ast::detail::expression_transformer {
 
  private:
   thrust::host_vector<bool> _columns_mask;
-  bool _has_is_null_operator = false;
 };
 
 /**
@@ -354,13 +353,12 @@ class stats_columns_collector : public ast::detail::expression_transformer {
  * This is used in row group filtering based on predicate.
  * statistics min value of a column is referenced by column_index*3
  * statistics max value of a column is referenced by column_index*3+1
- * statistics is_null value of a column is referenced by column_index*3+2
+ * statistics all_nulls value of a column is referenced by column_index*3+2
  */
 class stats_expression_converter : public stats_columns_collector {
  public:
   stats_expression_converter(ast::expression const& expr,
                              std::span<cudf::data_type const> output_dtypes,
-                             bool has_is_null_operator,
                              cuda::stream_ref stream);
 
   // Bring all overrides of `visit` from stats_columns_collector into scope
@@ -384,6 +382,16 @@ class stats_expression_converter : public stats_columns_collector {
   thrust::host_vector<bool> get_stats_columns_mask() && = delete;
 
  private:
+  /**
+   * @brief Push `not_all_null AND stats_expr` for a column, so that a chunk holding nothing but
+   * nulls is pruned by a predicate needing a non-null value to match, rather than kept because its
+   * absent min and max leave the comparison null
+   *
+   * @param col_index Index of the column in the input table
+   * @param stats_expr Statistics expression to guard, already pushed onto the tree
+   */
+  void push_non_null_guard(size_type col_index, ast::expression const& stats_expr);
+
   ast::tree _stats_expr;
   cudf::size_type _stats_cols_per_column;
   std::unique_ptr<cudf::numeric_scalar<bool>> _always_true_scalar;

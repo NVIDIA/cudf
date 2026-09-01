@@ -332,7 +332,9 @@ TEST_F(ParquetWriterTest, Struct)
 
   cudf::io::parquet_reader_options read_args =
     cudf::io::parquet_reader_options::builder(cudf::io::source_info(filepath));
-  cudf::io::read_parquet(read_args);
+  auto const result = cudf::io::read_parquet(read_args);
+
+  CUDF_TEST_EXPECT_TABLES_EQUAL(expected, result.tbl->view());
 }
 
 // custom data sink that supports device writes. uses plain file io.

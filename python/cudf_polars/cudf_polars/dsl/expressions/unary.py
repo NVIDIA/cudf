@@ -128,6 +128,8 @@ class UnaryFunction(Expr):
             "hist",
             "index_of",
             "mask_nans",
+            "max_by",
+            "min_by",
             "mode",
             "null_count",
             "pct_change",
@@ -790,6 +792,54 @@ class UnaryFunction(Expr):
                     modes,
                     [plc.types.Order.ASCENDING],
                     [plc.types.NullOrder.BEFORE],
+                    stream=df.stream,
+                ).columns()[0],
+                dtype=self.dtype,
+            )
+        if self.name in ("max_by", "min_by"):
+            val, by = (child.evaluate(df, context=context) for child in self.children)
+            if val.size != by.size:
+                raise pl.exceptions.ShapeError(
+                    f"'by' column in {self.name} expression has incorrect length: "
+                    f"expected {val.size}, got {by.size}"
+                )
+            unmasked = by
+            by = by.mask_nans(stream=df.stream)
+            agg = (
+                plc.aggregation.argmax()
+                if self.name == "max_by"
+                else plc.aggregation.argmin()
+            )
+            index = plc.reduce.reduce(
+                by.obj, agg, plc.types.SIZE_TYPE, stream=df.stream
+            )
+            if not index.is_valid(stream=df.stream):
+                if unmasked.null_count != unmasked.size:
+                    valid = plc.unary.is_valid(unmasked.obj, stream=df.stream)
+                    filtered = plc.stream_compaction.apply_retention_mask(
+                        plc.Table([val.obj]), valid, stream=df.stream
+                    )
+                    return Column(
+                        plc.copying.slice(
+                            filtered.columns()[0], [0, 1], stream=df.stream
+                        )[0],
+                        dtype=self.dtype,
+                    )
+                return Column(
+                    plc.Column.from_scalar(
+                        plc.Scalar.from_py(None, self.dtype.plc_type, stream=df.stream),
+                        1,
+                        stream=df.stream,
+                    ),
+                    dtype=self.dtype,
+                )
+            if val.is_scalar:
+                return val
+            return Column(
+                plc.copying.gather(
+                    plc.Table([val.obj]),
+                    plc.Column.from_scalar(index, 1, stream=df.stream),
+                    plc.copying.OutOfBoundsPolicy.NULLIFY,
                     stream=df.stream,
                 ).columns()[0],
                 dtype=self.dtype,

@@ -13,9 +13,12 @@ import pytest
 
 import polars as pl
 
+import pylibcudf as plc
 from cudf_streaming.table_chunk import TableChunk
 
-from cudf_polars.containers import DataFrame
+from cudf_polars.containers import DataFrame, DataType
+from cudf_polars.dsl import expr
+from cudf_polars.dsl.ir import Distinct, Empty, GroupBy
 from cudf_polars.engine.options import StreamingOptions
 from cudf_polars.streaming.actor_graph import groupby as groupby_actor_graph
 from cudf_polars.streaming.actor_graph.collectives.shuffle import ShuffleManager
@@ -100,6 +103,33 @@ def test_partition_count_for_rank_uses_contiguous_ownership(
         for rank in range(nranks)
     ]
     assert counts == expected
+
+
+def test_order_sensitive_execution_does_not_imply_output_order() -> None:
+    schema = {"key": DataType(pl.Int64()), "value": DataType(pl.Int64())}
+    key = expr.NamedExpr("key", expr.Col(schema["key"], "key"))
+    groupby = GroupBy(
+        schema,
+        (key,),
+        (),
+        False,  # noqa: FBT003
+        None,
+        Empty(schema),
+    )
+    distinct = Distinct(
+        schema,
+        plc.stream_compaction.DuplicateKeepOption.KEEP_FIRST,
+        None,
+        None,
+        False,  # noqa: FBT003
+        Empty(schema),
+    )
+
+    with patch.object(groupby_actor_graph, "_has_stable_sorted_agg", return_value=True):
+        assert groupby_actor_graph._maintain_order(groupby)
+    assert not groupby.preserves_output_order
+    assert groupby_actor_graph._maintain_order(distinct)
+    assert not distinct.preserves_output_order
 
 
 @pytest.mark.parametrize("keys", [("key",), ("key", "key2")])

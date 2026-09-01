@@ -332,7 +332,9 @@ TEST_F(ParquetWriterTest, Struct)
 
   cudf::io::parquet_reader_options read_args =
     cudf::io::parquet_reader_options::builder(cudf::io::source_info(filepath));
-  cudf::io::read_parquet(read_args);
+  auto const result = cudf::io::read_parquet(read_args);
+
+  CUDF_TEST_EXPECT_TABLES_EQUAL(expected, result.tbl->view());
 }
 
 // custom data sink that supports device writes. uses plain file io.
@@ -2313,6 +2315,31 @@ TEST_F(ParquetWriterTest, DeltaBinaryStartsWithNulls)
   auto const expected = table_view({col});
 
   auto const filepath = temp_env->get_temp_filepath("DeltaBinaryStartsWithNulls.parquet");
+  cudf::io::parquet_writer_options out_opts =
+    cudf::io::parquet_writer_options::builder(cudf::io::sink_info{filepath}, expected)
+      .write_v2_headers(true)
+      .dictionary_policy(cudf::io::dictionary_policy::NEVER);
+  cudf::io::write_parquet(out_opts);
+
+  cudf::io::parquet_reader_options in_opts =
+    cudf::io::parquet_reader_options::builder(cudf::io::source_info{filepath});
+  auto result = cudf::io::read_parquet(in_opts);
+  CUDF_TEST_EXPECT_TABLES_EQUAL(expected, result.tbl->view());
+}
+
+TEST_F(ParquetWriterTest, DeltaBinaryNzIdxTailIteration33)
+{
+  // Exercise a non-null DELTA_BINARY_PACKED column whose row count crosses one 32-value
+  // non-null index word. This guards the writer tail path from dropping or corrupting the
+  // final value after the last full word.
+  constexpr int num_rows = 33;
+
+  auto const values = cuda::counting_iterator<int32_t>{0};
+  auto const col =
+    cudf::test::fixed_width_column_wrapper<int32_t>{values, values + num_rows, no_nulls()};
+  auto const expected = table_view({col});
+
+  auto const filepath = temp_env->get_temp_filepath("DeltaBinaryNzIdxTailIteration33.parquet");
   cudf::io::parquet_writer_options out_opts =
     cudf::io::parquet_writer_options::builder(cudf::io::sink_info{filepath}, expected)
       .write_v2_headers(true)

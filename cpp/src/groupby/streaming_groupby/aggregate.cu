@@ -60,7 +60,7 @@ void streaming_groupby::impl::do_aggregate(table_view const& data, cuda::stream_
     cuda::counting_iterator<int64_t>(0),
     static_cast<int64_t>(batch_size) * num_agg_cols,
     detail::hash::compute_single_pass_aggs_dense_output_fn{
-      result.target_indices.begin(), _d_agg_kinds.data(), *d_values, *_d_agg_results});
+      result.target_indices.begin(), _d_agg_kinds->data(), *d_values, *_d_agg_results});
 }
 
 }  // namespace cudf::groupby

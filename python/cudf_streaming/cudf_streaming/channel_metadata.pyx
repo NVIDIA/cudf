@@ -128,7 +128,7 @@ cdef class OrderKey:
 
 
 cdef class Ordering:
-    """A valid ordering description for sorted/range-partitioned data."""
+    """A valid ordering description for order-partitioned data."""
 
     def __init__(
         self,
@@ -136,12 +136,16 @@ cdef class Ordering:
         TableChunk boundaries not None,
         *,
         bint strict_boundaries = False,
+        bint locally_ordered = True,
     ):
         cdef vector[cpp_OrderKey] cpp_keys
         for key in keys:
             cpp_keys.push_back((<OrderKey?>key)._handle)
         self._handle = cpp_Ordering(
-            move(cpp_keys), move(boundaries.release_handle()), strict_boundaries
+            move(cpp_keys),
+            move(boundaries.release_handle()),
+            strict_boundaries,
+            locally_ordered,
         )
 
     @staticmethod
@@ -153,7 +157,12 @@ cdef class Ordering:
     def as_strict(self) -> Ordering:
         """Return an equivalent ``Ordering`` with strict boundaries."""
         return Ordering.from_cpp(
-            cpp_Ordering(self._handle.keys, self._handle.boundaries, True)
+            cpp_Ordering(
+                self._handle.keys,
+                self._handle.boundaries,
+                True,
+                self._handle.locally_ordered,
+            )
         )
 
     @property
@@ -176,6 +185,11 @@ cdef class Ordering:
         return self._handle.strict_boundaries
 
     @property
+    def locally_ordered(self) -> bool:
+        """Whether rows within each partition are ordered by the ordering keys."""
+        return self._handle.locally_ordered
+
+    @property
     def num_boundaries(self) -> int:
         """Number of boundary rows (N-1 for N partitions)."""
         return self._handle.boundaries.get().shape().first
@@ -190,7 +204,7 @@ cdef class Ordering:
             Buffer resource to associate with the returned table chunk.
         """
         cdef const cpp_TableChunk* chunk = self._handle.boundaries.get()
-        cdef Stream stream = Stream._from_cudaStream_t(chunk.stream().value())
+        cdef Stream stream = Stream._from_cudaStream_t(chunk.stream().get())
         tbl = Table.from_table_view_of_arbitrary(
             chunk.table_view(), owner=self, stream=stream
         )
@@ -204,6 +218,12 @@ cdef class Ordering:
         for key in new_keys:
             cpp_keys.push_back((<OrderKey?>key)._handle)
         return Ordering.from_cpp(self._handle.with_keys(move(cpp_keys)))
+
+    def with_locally_ordered(self, *, bint locally_ordered) -> Ordering:
+        """Return a new ``Ordering`` with updated local row-order metadata."""
+        return Ordering.from_cpp(
+            self._handle.with_locally_ordered(locally_ordered)
+        )
 
     def boundaries_aligned_with(
         self, Ordering other not None, BufferResource br not None
@@ -223,17 +243,18 @@ cdef class Ordering:
     def __repr__(self):
         return (
             f"Ordering({self.keys!r}, "
-            f"strict_boundaries={self.strict_boundaries})"
+            f"strict_boundaries={self.strict_boundaries}, "
+            f"locally_ordered={self.locally_ordered})"
         )
 
 
 cdef class OrderScheme:
-    """Order-based partitioning scheme for sorted/range-partitioned data.
+    """Order-based partitioning scheme for order-partitioned data.
 
-    An OrderScheme advertises that the same stream is sorted/range-partitioned
-    with respect to any individual ``Ordering`` it contains. Consumers should
-    inspect the ``Ordering`` they intend to use for keys, boundaries, and
-    strictness.
+    An OrderScheme advertises that the same stream is order-partitioned with
+    respect to any individual ``Ordering`` it contains. Consumers should inspect
+    the ``Ordering`` they intend to use for keys, boundaries, strictness, and
+    local row-order metadata.
 
     Parameters
     ----------

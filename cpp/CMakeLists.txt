@@ -182,6 +182,24 @@ set(CUDF_CUDA_FLAGS "")
 set(CUDF_CXX_DEFINITIONS "")
 set(CUDF_CUDA_DEFINITIONS "")
 
+if(CMAKE_CUDA_COMPILER_VERSION VERSION_GREATER_EQUAL 13.0.0)
+  set(DEFAULT_CUDF_LTO_ARCHITECTURE 75)
+else()
+  set(DEFAULT_CUDF_LTO_ARCHITECTURE 70)
+endif()
+
+# LTO IR can only be linked for targets greater than or equal to its architecture. An explicit
+# override must therefore not exceed the architecture of any target GPU on which it will be linked.
+set(CUDF_LTO_ARCHITECTURE
+    "${DEFAULT_CUDF_LTO_ARCHITECTURE}"
+    CACHE STRING "LTO fragment architecture"
+)
+
+if(NOT CUDF_LTO_ARCHITECTURE MATCHES "^[0-9]+$")
+  message(FATAL_ERROR "CUDF_LTO_ARCHITECTURE must be a numeric architecture")
+endif()
+message(VERBOSE "CUDF: Using ${CUDF_LTO_ARCHITECTURE} as the common LTO architecture")
+
 # For now, disable CMake's automatic module scanning for C++ files. There is an sccache bug in the
 # version RAPIDS uses in CI that causes it to handle the resulting -M* flags incorrectly with
 # gcc>=14. We can remove this once we upgrade to a newer sccache version.
@@ -430,6 +448,9 @@ if(NOT BUILD_SHARED_LIBS)
     install(TARGETS conda_env EXPORT cudf-exports)
   endif()
 endif()
+
+# ##################################################################################################
+# * JIT embedding ----------------------------------------------------------------------------------
 
 rtcx_add_embed(cudf_cuda_embed)
 
@@ -805,6 +826,7 @@ add_library(
   src/io/parquet/reader_impl_preprocess.cu
   src/io/parquet/reader_impl_preprocess_utils.cu
   src/io/parquet/stats_filter_helpers.cpp
+  src/io/parquet/synthetic_column_helpers.cu
   src/io/parquet/writer_impl.cu
   src/io/parquet/writer_impl_helpers.cpp
   src/io/parquet/decode_fixed.cu
@@ -879,6 +901,7 @@ add_library(
   src/join/mixed_join_kernels_semi.cu
   src/join/mixed_join_semi.cu
   src/join/sort_merge_join.cu
+  src/join/streaming_hash_join.cu
   src/json/json_path.cu
   src/lists/contains.cu
   src/lists/combine/concatenate_list_elements.cu
@@ -899,7 +922,7 @@ add_library(
   src/lists/segmented_sort.cu
   src/lists/sequences.cu
   src/lists/set_operations.cu
-  src/lists/stream_compaction/apply_boolean_mask.cu
+  src/lists/stream_compaction/apply_mask.cu
   src/lists/stream_compaction/distinct.cu
   src/lists/utilities.cu
   src/merge/merge.cu
@@ -998,7 +1021,7 @@ add_library(
   src/sort/stable_sort_column.cu
   src/sort/stable_sort.cu
   src/sort/top_k.cu
-  src/stream_compaction/apply_boolean_mask.cu
+  src/stream_compaction/apply_mask.cu
   src/stream_compaction/distinct.cu
   src/stream_compaction/distinct_helpers.cu
   src/stream_compaction/distinct_helpers_flat_nan_equal_any.cu
@@ -1103,6 +1126,7 @@ add_library(
   src/text/bpe/byte_pair_encoding.cu
   src/text/bpe/load_merge_pairs.cu
   src/text/tokenize.cu
+  src/text/unicode_normalize.cu
   src/text/vocabulary_tokenize.cu
   src/text/wordpiece_tokenize.cu
   src/transform/bools_to_mask.cu
@@ -1218,8 +1242,10 @@ target_include_directories(
 )
 
 target_compile_definitions(
-  cudf PUBLIC "$<$<COMPILE_LANGUAGE:CXX>:${CUDF_CXX_DEFINITIONS}>"
-              "$<BUILD_INTERFACE:$<$<COMPILE_LANGUAGE:CUDA>:${CUDF_CUDA_DEFINITIONS}>>"
+  cudf
+  PUBLIC "$<$<COMPILE_LANGUAGE:CXX>:${CUDF_CXX_DEFINITIONS}>"
+         "$<BUILD_INTERFACE:$<$<COMPILE_LANGUAGE:CUDA>:${CUDF_CUDA_DEFINITIONS}>>"
+         "CUDF_LTO_ARCHITECTURE=${CUDF_LTO_ARCHITECTURE}"
 )
 
 # Per-thread default stream

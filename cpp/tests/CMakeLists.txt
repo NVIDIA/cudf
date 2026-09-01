@@ -177,6 +177,7 @@ ConfigureTest(
   join/direct_join_tests.cpp
   join/distinct_join_tests.cpp
   join/key_remapping_tests.cpp
+  join/streaming_hash_join_tests.cpp
   GPUS 1
   PERCENT 100
 )
@@ -302,6 +303,7 @@ ConfigureTest(FILTER_TEST filter/filter_test.cpp)
 ConfigureTest(
   INTEROP_TEST
   interop/arrow_data_structures_test.cpp
+  interop/nanoarrow_utils.cpp
   interop/to_arrow_device_test.cpp
   interop/to_arrow_host_test.cpp
   interop/from_arrow_device_test.cpp
@@ -513,7 +515,7 @@ ConfigureTest(
 # * stream compaction tests -----------------------------------------------------------------------
 ConfigureTest(
   STREAM_COMPACTION_TEST
-  stream_compaction/apply_boolean_mask_tests.cpp
+  stream_compaction/apply_mask_tests.cpp
   stream_compaction/distinct_tests.cpp
   stream_compaction/drop_nans_tests.cpp
   stream_compaction/drop_nulls_tests.cpp
@@ -654,6 +656,7 @@ ConfigureTest(
   text/stemmer_tests.cpp
   text/subword_tests.cpp
   text/tokenize_tests.cpp
+  text/unicode_normalize_tests.cpp
 )
 
 # ##################################################################################################
@@ -738,7 +741,7 @@ ConfigureTest(
   lists/set_operations/intersect_distinct_tests.cpp
   lists/set_operations/union_distinct_tests.cpp
   lists/sort_lists_tests.cpp
-  lists/stream_compaction/apply_boolean_mask_tests.cpp
+  lists/stream_compaction/apply_mask_tests.cpp
   lists/stream_compaction/distinct_tests.cpp
   GPUS 1
   PERCENT 70
@@ -839,6 +842,7 @@ ConfigureTest(
   streams/text/replace_test.cpp
   streams/text/stemmer_test.cpp
   streams/text/tokenize_test.cpp
+  streams/text/unicode_normalize_test.cpp
   STREAM_MODE
   testing
 )

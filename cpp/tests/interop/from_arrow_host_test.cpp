@@ -115,62 +115,6 @@ struct direct_arrow_c_producer {
 
 }  // namespace
 
-// create a cudf::table and equivalent arrow table with host memory
-std::tuple<std::unique_ptr<cudf::table>, nanoarrow::UniqueSchema, nanoarrow::UniqueArray>
-get_nanoarrow_host_tables(cudf::size_type length)
-{
-  auto [table, schema, test_data] = get_nanoarrow_cudf_table(length);
-
-  auto int64_array = get_nanoarrow_array<int64_t>(test_data.int64_data, test_data.validity);
-  auto string_array =
-    get_nanoarrow_array<cudf::string_view>(test_data.string_data, test_data.validity);
-  cudf::dictionary_column_view view(table->get_column(2).view());
-  auto keys       = cudf::test::to_host<int64_t>(view.keys()).first;
-  auto indices    = cudf::test::to_host<uint32_t>(view.indices()).first;
-  auto dict_array = get_nanoarrow_dict_array(std::vector<int64_t>(keys.begin(), keys.end()),
-                                             std::vector<int32_t>(indices.begin(), indices.end()),
-                                             test_data.validity);
-  auto boolarray  = get_nanoarrow_array<bool>(test_data.bool_data, test_data.bool_validity);
-  auto list_array = get_nanoarrow_list_array<int64_t>(test_data.list_int64_data,
-                                                      test_data.list_offsets,
-                                                      test_data.list_int64_data_validity,
-                                                      test_data.list_validity);
-
-  nanoarrow::UniqueArray arrow;
-  NANOARROW_THROW_NOT_OK(ArrowArrayInitFromSchema(arrow.get(), schema.get(), nullptr));
-  arrow->length = length;
-
-  int64_array.move(arrow->children[0]);
-  string_array.move(arrow->children[1]);
-  dict_array.move(arrow->children[2]);
-  boolarray.move(arrow->children[3]);
-  list_array.move(arrow->children[4]);
-
-  int64_array  = get_nanoarrow_array<int64_t>(test_data.int64_data, test_data.validity);
-  string_array = get_nanoarrow_array<cudf::string_view>(test_data.string_data, test_data.validity);
-  int64_array.move(arrow->children[5]->children[0]);
-  string_array.move(arrow->children[5]->children[1]);
-
-  ArrowBitmap struct_validity;
-  ArrowBitmapInit(&struct_validity);
-  NANOARROW_THROW_NOT_OK(ArrowBitmapReserve(&struct_validity, length));
-  ArrowBitmapAppendInt8Unsafe(
-    &struct_validity, reinterpret_cast<int8_t const*>(test_data.bool_data_validity.data()), length);
-  arrow->children[5]->length = length;
-  ArrowArraySetValidityBitmap(arrow->children[5], &struct_validity);
-  arrow->children[5]->null_count =
-    length - ArrowBitCountSet(ArrowArrayValidityBitmap(arrow->children[5])->buffer.data, 0, length);
-
-  ArrowError error;
-  if (ArrowArrayFinishBuilding(arrow.get(), NANOARROW_VALIDATION_LEVEL_MINIMAL, &error) !=
-      NANOARROW_OK) {
-    std::cerr << ArrowErrorMessage(&error) << std::endl;
-    CUDF_FAIL("failed to build example arrays");
-  }
-
-  return std::make_tuple(std::move(table), std::move(schema), std::move(arrow));
-}
-
 struct FromArrowHostDeviceTest : public cudf::test::BaseFixture {};
 
 template <typename T>
@@ -1080,32 +1024,6 @@ TEST_F(FromArrowHostDeviceTest, DictionaryIndicesType)
   cudf::table_view from_struct{
     std::vector<cudf::column_view>(got_cudf_col_view.child_begin(), got_cudf_col_view.child_end())};
   CUDF_TEST_EXPECT_TABLES_EQUAL(got_cudf_table->view(), from_struct);
-}
-
-void slice_host_nanoarrow(ArrowArray* arr, int64_t start, int64_t end)
-{
-  auto op = [&](ArrowArray* array) {
-    // slicing only needs to happen at the top level of an array
-    array->offset = start;
-    array->length = end - start;
-    if (array->null_count != 0) {
-      array->null_count =
-        array->length -
-        ArrowBitCountSet(ArrowArrayValidityBitmap(array)->buffer.data, start, end - start);
-    }
-  };
-
-  if (arr->n_children == 0) {
-    op(arr);
-    return;
-  }
-
-  // since we want to simulate a sliced table where the children are sliced,
-  // we slice each individual child of the record batch
-  arr->length = end - start;
-  for (int64_t i = 0; i < arr->n_children; ++i) {
-    op(arr->children[i]);
-  }
 }
 
 TEST_F(FromArrowHostDeviceTest, StringViewType)

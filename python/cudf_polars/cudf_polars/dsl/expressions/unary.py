@@ -119,6 +119,7 @@ class UnaryFunction(Expr):
             "diff",
             "drop_nans",
             "drop_nulls",
+            "entropy",
             "extend_constant",
             "fill_null",
             "fill_null_with_strategy",
@@ -127,6 +128,8 @@ class UnaryFunction(Expr):
             "hist",
             "index_of",
             "mask_nans",
+            "max_by",
+            "min_by",
             "mode",
             "null_count",
             "pct_change",
@@ -221,6 +224,10 @@ class UnaryFunction(Expr):
             raise NotImplementedError(f"Unary function {name=}")  # pragma: no cover
         if self.name == "index_of" and plc.traits.is_nested(children[0].dtype.plc_type):
             raise NotImplementedError("index_of on nested types is not supported")
+        if self.name == "entropy" and not plc.traits.is_numeric_not_bool(
+            children[0].dtype.plc_type
+        ):
+            raise NotImplementedError("entropy requires a numeric input")
         if self.name == "fill_null_with_strategy" and self.options[1] not in {0, None}:
             raise NotImplementedError(
                 "Filling null values with limit specified is not yet supported."
@@ -399,7 +406,7 @@ class UnaryFunction(Expr):
             )
         result = column.obj
         if old.obj.null_count() != old.size:
-            nonnull_old, nonnull_new = plc.stream_compaction.apply_boolean_mask(
+            nonnull_old, nonnull_new = plc.stream_compaction.apply_retention_mask(
                 plc.Table([old.obj, new.obj]),
                 plc.unary.is_valid(old.obj, stream=df.stream),
                 stream=df.stream,
@@ -407,7 +414,7 @@ class UnaryFunction(Expr):
             result = plc.replace.find_and_replace_all(
                 result, nonnull_old, nonnull_new, stream=df.stream
             )
-        null_new = plc.stream_compaction.apply_boolean_mask(
+        null_new = plc.stream_compaction.apply_retention_mask(
             plc.Table([new.obj]),
             plc.unary.is_null(old.obj, stream=df.stream),
             stream=df.stream,
@@ -581,7 +588,7 @@ class UnaryFunction(Expr):
                 stream=df.stream,
             )
             return Column(
-                plc.stream_compaction.apply_boolean_mask(
+                plc.stream_compaction.apply_retention_mask(
                     plc.Table([indices]), column.obj, stream=df.stream
                 ).columns()[0],
                 dtype=self.dtype,
@@ -613,6 +620,76 @@ class UnaryFunction(Expr):
                 plc.Column.from_scalar(
                     plc.Scalar.from_py(
                         column.null_count, self.dtype.plc_type, stream=df.stream
+                    ),
+                    1,
+                    stream=df.stream,
+                ),
+                dtype=self.dtype,
+            )
+        if self.name == "entropy":
+            base, normalize = self.options
+            column = self.children[0].evaluate(df, context=context)
+            if (
+                column.size == 0
+                or column.null_count == column.size
+                or (column.size == 1 and normalize)
+            ):
+                return Column(
+                    plc.Column.from_scalar(
+                        plc.Scalar.from_py(0.0, self.dtype.plc_type, stream=df.stream),
+                        1,
+                        stream=df.stream,
+                    ),
+                    dtype=self.dtype,
+                )
+            pk = column.astype(self.dtype, stream=df.stream).obj
+            col_ref: plc.expressions.Expression = plc.expressions.ColumnReference(0)
+            if normalize:
+                total = plc.reduce.reduce(
+                    pk, plc.aggregation.sum(), self.dtype.plc_type, stream=df.stream
+                )
+                col_ref = plc.expressions.Operation(
+                    plc.expressions.ASTOperator.DIV,
+                    col_ref,
+                    plc.expressions.Literal(total),
+                )
+            log_value = plc.expressions.Operation(
+                plc.expressions.ASTOperator.LOG, col_ref
+            )
+            if base != math.e:
+                log_value = plc.expressions.Operation(
+                    plc.expressions.ASTOperator.DIV,
+                    log_value,
+                    plc.expressions.Operation(
+                        plc.expressions.ASTOperator.LOG,
+                        plc.expressions.Literal(
+                            plc.Scalar.from_py(
+                                base, self.dtype.plc_type, stream=df.stream
+                            )
+                        ),
+                    ),
+                )
+            expression = plc.expressions.Operation(
+                plc.expressions.ASTOperator.MUL,
+                plc.expressions.Literal(
+                    plc.Scalar.from_py(-1.0, self.dtype.plc_type, stream=df.stream)
+                ),
+                plc.expressions.Operation(
+                    plc.expressions.ASTOperator.MUL,
+                    col_ref,
+                    log_value,
+                ),
+            )
+            terms = plc.transform.compute_column(
+                plc.Table([pk]), expression, stream=df.stream
+            )
+            return Column(
+                plc.Column.from_scalar(
+                    plc.reduce.reduce(
+                        terms,
+                        plc.aggregation.sum(),
+                        self.dtype.plc_type,
+                        stream=df.stream,
                     ),
                     1,
                     stream=df.stream,
@@ -750,7 +827,7 @@ class UnaryFunction(Expr):
                 plc.DataType(plc.TypeId.BOOL8),
                 stream=df.stream,
             )
-            modes = plc.stream_compaction.apply_boolean_mask(
+            modes = plc.stream_compaction.apply_retention_mask(
                 keys_table, mask, stream=df.stream
             )
             return Column(
@@ -758,6 +835,54 @@ class UnaryFunction(Expr):
                     modes,
                     [plc.types.Order.ASCENDING],
                     [plc.types.NullOrder.BEFORE],
+                    stream=df.stream,
+                ).columns()[0],
+                dtype=self.dtype,
+            )
+        if self.name in ("max_by", "min_by"):
+            val, by = (child.evaluate(df, context=context) for child in self.children)
+            if val.size != by.size:
+                raise pl.exceptions.ShapeError(
+                    f"'by' column in {self.name} expression has incorrect length: "
+                    f"expected {val.size}, got {by.size}"
+                )
+            unmasked = by
+            by = by.mask_nans(stream=df.stream)
+            agg = (
+                plc.aggregation.argmax()
+                if self.name == "max_by"
+                else plc.aggregation.argmin()
+            )
+            index = plc.reduce.reduce(
+                by.obj, agg, plc.types.SIZE_TYPE, stream=df.stream
+            )
+            if not index.is_valid(stream=df.stream):
+                if unmasked.null_count != unmasked.size:
+                    valid = plc.unary.is_valid(unmasked.obj, stream=df.stream)
+                    filtered = plc.stream_compaction.apply_retention_mask(
+                        plc.Table([val.obj]), valid, stream=df.stream
+                    )
+                    return Column(
+                        plc.copying.slice(
+                            filtered.columns()[0], [0, 1], stream=df.stream
+                        )[0],
+                        dtype=self.dtype,
+                    )
+                return Column(
+                    plc.Column.from_scalar(
+                        plc.Scalar.from_py(None, self.dtype.plc_type, stream=df.stream),
+                        1,
+                        stream=df.stream,
+                    ),
+                    dtype=self.dtype,
+                )
+            if val.is_scalar:
+                return val
+            return Column(
+                plc.copying.gather(
+                    plc.Table([val.obj]),
+                    plc.Column.from_scalar(index, 1, stream=df.stream),
+                    plc.copying.OutOfBoundsPolicy.NULLIFY,
                     stream=df.stream,
                 ).columns()[0],
                 dtype=self.dtype,
@@ -1164,7 +1289,7 @@ class UnaryFunction(Expr):
                 plc.Scalar.from_py(1, self.dtype.plc_type, stream=df.stream),
                 stream=df.stream,
             )
-            matched = plc.stream_compaction.apply_boolean_mask(
+            matched = plc.stream_compaction.apply_retention_mask(
                 plc.Table([indices]), mask, stream=df.stream
             ).columns()[0]
             if matched.size() == 0:
@@ -1319,18 +1444,22 @@ class UnaryFunction(Expr):
                 dtype=self.dtype,
             )
         elif self.name == "as_struct":
-            children = [
-                child.evaluate(df, context=context).obj for child in self.children
-            ]
+            children = [child.evaluate(df, context=context) for child in self.children]
+            non_unit_sizes = [c.size for c in children if c.size != 1]
+            broadcasted = broadcast(
+                *children,
+                target_length=max(non_unit_sizes) if non_unit_sizes else None,
+                stream=df.stream,
+            )
             return Column(
                 plc.Column(
                     data_type=self.dtype.plc_type,
-                    size=children[0].size(),
+                    size=broadcasted[0].size,
                     data=None,
                     mask=None,
                     null_count=0,
                     offset=0,
-                    children=children,
+                    children=[c.obj for c in broadcasted],
                 ),
                 dtype=self.dtype,
             )

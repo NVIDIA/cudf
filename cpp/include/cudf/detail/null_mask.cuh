@@ -19,7 +19,6 @@
 #include <rmm/exec_policy.hpp>
 
 #include <cooperative_groups.h>
-#include <cooperative_groups/reduce.h>
 #include <cub/block/block_reduce.cuh>
 #include <cub/device/device_segmented_reduce.cuh>
 #include <cuda/atomic>
@@ -160,18 +159,10 @@ CUDF_KERNEL void segmented_offset_bitmask_binop(Binop op,
                                                 size_type const* const segment_offsets,
                                                 size_type* const null_counts)
 {
-  namespace cg = cooperative_groups;
-
-  // Treat the whole block as a single tile
-  __shared__ cg::block_tile_memory<block_size> tile_memory;
-  auto const block = cg::this_thread_block(tile_memory);
-  auto const tile  = cg::tiled_partition<block_size>(block);
-
   // Blocks are assigned to segments in consecutive groups of `blocks_per_segment`
-  auto const block_rank       = static_cast<size_type>(block.group_index().x);
+  auto const block_rank       = static_cast<size_type>(blockIdx.x);
   auto const segment_id       = block_rank / blocks_per_segment;
   auto const block_in_segment = block_rank % blocks_per_segment;
-  // Uniform across the block, so the collective below is still reached by all of the tile's threads
   if (segment_id >= num_segments) { return; }
 
   auto const segment_start = segment_offsets[segment_id];
@@ -188,7 +179,7 @@ CUDF_KERNEL void segmented_offset_bitmask_binop(Binop op,
 
   // Process the mask such that each thread of the segment's blocks handles different words
   for (auto destination_word_index =
-         block_in_segment * block_size + static_cast<size_type>(tile.thread_rank());
+         block_in_segment * block_size + static_cast<size_type>(threadIdx.x);
        destination_word_index < destination_size;
        destination_word_index += blocks_per_segment * block_size) {
     bitmask_type destination_word = identity;
@@ -221,13 +212,15 @@ CUDF_KERNEL void segmented_offset_bitmask_binop(Binop op,
     destination[destination_word_index] = destination_word;
   }
 
-  // Reduce the null counts across the block, then across the blocks of the segment
-  auto const block_null_count = cg::reduce(tile, thread_null_count, cg::plus<size_type>());
-  if (block_null_count > 0) {
-    cg::invoke_one(tile, [&] {
-      cuda::atomic_ref<size_type, cuda::thread_scope_device>{null_counts[segment_id]}.fetch_add(
-        block_null_count, cuda::std::memory_order_relaxed);
-    });
+  // Reduce the null counts across the block, then accumulate across the blocks of the segment.
+  // Use cub::BlockReduce (instead of cg::reduce + block_tile_memory) to avoid shared-memory races
+  // that compute-sanitizer detects in CG's multi-warp reduction tree.
+  using BlockReduce = cub::BlockReduce<size_type, block_size>;
+  __shared__ typename BlockReduce::TempStorage temp_storage;
+  auto const block_null_count = BlockReduce(temp_storage).Sum(thread_null_count);
+  if (threadIdx.x == 0 && block_null_count > 0) {
+    cuda::atomic_ref<size_type, cuda::thread_scope_device>{null_counts[segment_id]}.fetch_add(
+      block_null_count, cuda::std::memory_order_relaxed);
   }
 }
 

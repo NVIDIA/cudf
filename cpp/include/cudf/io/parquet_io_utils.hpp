@@ -15,6 +15,7 @@
 #include <cuda/stream>
 
 #include <cstddef>
+#include <cstdint>
 #include <functional>
 #include <future>
 #include <span>
@@ -41,8 +42,8 @@ using cudf::io::text::byte_range_info;
 /**
  * @brief Controls whether I/O submissions are serialized across callers.
  */
-enum class io_submission_policy : bool {
-  SERIALIZE,  ///< Serialize submissions across callers.
+enum class io_submission_policy : int8_t {
+  SERIALIZE,  ///< Serialize submissions across callers that use this policy
   INTERLEAVE  ///< Allow submissions from different callers to interleave.
 };
 
@@ -219,6 +220,9 @@ fetch_bloom_filters_to_device(
  * @ingroup io_utils
  *
  * @deprecated Use the overload that takes `io_submission_policy`.
+ * 
+ * @note The `io_submission_policy::SERIALIZE` policy is equivalent to the 
+ * behavior of this deprecated function.
  *
  * @param datasource Input datasource
  * @param byte_ranges Byte ranges to fetch
@@ -244,6 +248,9 @@ fetch_byte_ranges_to_device_async(
  * @ingroup io_utils
  *
  * @deprecated Use the overload that takes `io_submission_policy`.
+ * 
+ * @note The `io_submission_policy::SERIALIZE` policy is equivalent to the 
+ * behavior of this deprecated function.
  *
  * @param datasources Input datasources
  * @param byte_ranges_per_source Vector of byte ranges to fetch, one per datasource
@@ -269,6 +276,9 @@ fetch_byte_ranges_to_device_async(
  * @ingroup io_utils
  *
  * @deprecated Use the overload that takes `io_submission_policy`.
+ * 
+ * @note The `io_submission_policy::SERIALIZE` policy is equivalent to the 
+ * behavior of this deprecated function.
  *
  * @param datasource Input datasource
  * @param bloom_filter_byte_ranges Byte ranges of complete bloom filters to fetch, must span a
@@ -292,6 +302,9 @@ fetch_bloom_filters_to_device(cudf::io::datasource& datasource,
  * @ingroup io_utils
  *
  * @deprecated Use the overload that takes `io_submission_policy`.
+ * 
+ * @note The `io_submission_policy::SERIALIZE` policy is equivalent to the 
+ * behavior of this deprecated function.
  *
  * @param datasources Input datasources
  * @param bloom_filter_byte_ranges_per_source Byte ranges of complete bloom filters to fetch, one

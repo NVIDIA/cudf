@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 import asyncio
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 from cudf_streaming.channel_metadata import ChannelMetadata
 from cudf_streaming.table_chunk import (
@@ -18,7 +18,7 @@ from rapidsmpf.streaming.core.actor import define_actor
 from rapidsmpf.streaming.core.message import Message
 from rapidsmpf.streaming.core.spillable_messages import SpillableMessages
 
-from cudf_polars.dsl.ir import IR, Empty
+from cudf_polars.dsl.ir import IR, Empty, Join
 from cudf_polars.streaming.actor_graph.dispatch import (
     generate_ir_sub_network,
 )
@@ -28,8 +28,10 @@ from cudf_polars.streaming.actor_graph.utils import (
     _leading_order_keys,
     chunk_to_frame,
     chunkwise_evaluate,
+    clear_local_ordering,
     empty_table_chunk,
     gather_in_task_group,
+    join_preserves_side_order,
     make_spill_function,
     maybe_remap_partitioning,
     process_children,
@@ -46,6 +48,17 @@ if TYPE_CHECKING:
     from cudf_polars.containers import DataFrame
     from cudf_polars.dsl.ir import IRExecutionContext
     from cudf_polars.streaming.actor_graph.dispatch import SubNetGenerator
+
+
+def _preserves_local_order(ir: IR, partitioning_index: int | None = None) -> bool:
+    """Return True when this IR node preserves advertised local row order."""
+    if isinstance(ir, Join) and partitioning_index is not None:
+        # partitioning_index is the child whose partitioning we forwarded
+        # (0 = left, 1 = right). Local row order holds only when join
+        # maintain_order covers that side.
+        side: Literal["left", "right"] = "left" if partitioning_index == 0 else "right"
+        return join_preserves_side_order(ir.options[5], side)
+    return ir.preserves_output_order
 
 
 @define_actor()
@@ -81,11 +94,14 @@ async def default_node_single(
     ) as tracer:
         # Recv metadata and prepare output metadata
         metadata_in = await recv_metadata(ch_in, context)
+        partitioning = maybe_remap_partitioning(
+            ir, metadata_in.partitioning, context=context
+        )
+        if not _preserves_local_order(ir):
+            partitioning = clear_local_ordering(partitioning)
         metadata_out = ChannelMetadata(
             local_count=metadata_in.local_count,
-            partitioning=maybe_remap_partitioning(
-                ir, metadata_in.partitioning, context=context
-            ),
+            partitioning=partitioning,
             duplicated=metadata_in.duplicated,
         )
 
@@ -159,6 +175,8 @@ async def default_node_multi(
                     child_ir=ir.children[idx],
                     context=context,
                 )
+                if not _preserves_local_order(ir, partitioning_index):
+                    partitioning = clear_local_ordering(partitioning)
         metadata = ChannelMetadata(
             local_count=local_count,
             partitioning=partitioning,

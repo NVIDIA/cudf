@@ -55,8 +55,10 @@ from cudf_polars.streaming.actor_graph.utils import (
     _update_ordering_indices,
     allgather_reduce,
     chunk_to_frame,
+    clear_local_ordering,
     empty_table_chunk,
     gather_in_task_group,
+    join_preserves_side_order,
     maybe_remap_partitioning,
     process_children,
     recv_metadata,
@@ -368,6 +370,8 @@ async def _broadcast_join(
             child_ir=ir.children[0],
             context=context,
         )
+        if not join_preserves_side_order(ir.options[5], "left"):
+            partitioning = clear_local_ordering(partitioning)
     else:
         small_ch, large_ch = ch_left, ch_right
         small_child, large_child = left, right
@@ -383,6 +387,8 @@ async def _broadcast_join(
             if ir.options[0] == "Right"
             else None
         )
+        if not join_preserves_side_order(ir.options[5], "right"):
+            partitioning = clear_local_ordering(partitioning)
 
     small_duplicated = small_metadata.duplicated
     need_allgather = comm.nranks > 1 and not small_duplicated

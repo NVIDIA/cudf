@@ -269,9 +269,10 @@ std::unique_ptr<column> concatenate(host_span<column_view const> columns,
   // remap the input indices values to the new indices for the new keys order
   auto indices_column = make_numeric_column(
     all_indices->type(), all_indices->size(), mask_state::UNALLOCATED, stream, mr);
-  auto input_view       = column_device_view::create(all_indices->view(), stream, temp_mr);
-  auto d_input          = cudf::detail::indexalator_factory::make_input_iterator(all_indices->view());
-  auto d_output         = cudf::detail::indexalator_factory::make_output_iterator(indices_column->mutable_view());
+  auto input_view = column_device_view::create(all_indices->view(), stream, temp_mr);
+  auto d_input    = cudf::detail::indexalator_factory::make_input_iterator(all_indices->view());
+  auto d_output =
+    cudf::detail::indexalator_factory::make_output_iterator(indices_column->mutable_view());
   auto children_offsets = child_offsets_fn.create_children_offsets(stream, temp_mr);
   auto map_fn           = map_indices_fn{children_offsets, final_remap, *input_view, d_input};
   thrust::transform(policy, iota, iota + all_indices->size(), d_output, map_fn);

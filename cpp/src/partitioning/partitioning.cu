@@ -13,7 +13,9 @@
 #include <cudf/detail/row_operator/hashing.cuh>
 #include <cudf/detail/scatter.hpp>
 #include <cudf/detail/utilities/cuda.cuh>
+#include <cudf/detail/utilities/cuda.hpp>
 #include <cudf/detail/utilities/grid_1d.cuh>
+#include <cudf/detail/utilities/integer_utils.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/hashing/detail/hashing.hpp>
 #include <cudf/hashing/detail/murmurhash3_x86_32.cuh>
@@ -86,7 +88,7 @@ class modulo_partitioner {
 template <typename T>
 bool is_power_two(T number)
 {
-  return (0 == (number & (number - 1)));
+  return std::has_single_bit(static_cast<std::make_unsigned_t<T>>(number));
 }
 
 /**
@@ -380,9 +382,10 @@ bool requires_gather_map(partition_column_groups const& column_groups,
  * @param iteration Grid-stride iteration processed by the current thread
  * @return CTA-local row index
  */
+template <size_type BlockSize>
 __device__ size_type local_row_index(size_type iteration)
 {
-  return iteration * static_cast<size_type>(blockDim.x) + static_cast<size_type>(threadIdx.x);
+  return iteration * BlockSize + static_cast<size_type>(threadIdx.x);
 }
 
 /**
@@ -391,10 +394,12 @@ __device__ size_type local_row_index(size_type iteration)
  * @param iteration Grid-stride iteration processed by the current thread
  * @return Global input row index
  */
+template <size_type BlockSize>
 __device__ thread_index_type global_row_index(size_type iteration)
 {
-  return cudf::detail::grid_1d::global_thread_id() +
-         static_cast<thread_index_type>(iteration) * cudf::detail::grid_1d::grid_stride();
+  return cudf::detail::grid_1d::global_thread_id<BlockSize>() +
+         static_cast<thread_index_type>(iteration) *
+           cudf::detail::grid_1d::grid_stride<BlockSize>();
 }
 
 /**
@@ -485,13 +490,14 @@ __device__ void prepare_partition_copy(cg::thread_block const& block,
 
   // Convert each row's partition-local offset into its slot in the CTA payload buffer.
   for (size_type iteration = 0; iteration < rows_per_thread; ++iteration) {
-    auto const global_row = global_row_index(iteration);
+    auto const global_row = global_row_index<BlockSize>(iteration);
     if (global_row < static_cast<thread_index_type>(num_rows)) {
       auto const row = static_cast<size_type>(global_row);
       size_type partition;
       size_type offset;
       partition_metadata.load(row, partition, offset);
-      local_slots[local_row_index(iteration)] = local_partition_offsets[partition] + offset;
+      local_slots[local_row_index<BlockSize>(iteration)] =
+        local_partition_offsets[partition] + offset;
     }
   }
   block.sync();
@@ -514,7 +520,7 @@ __device__ void prepare_partition_copy(cg::thread_block const& block,
  * @param local_partition_offsets CTA-local partition offsets
  * @param global_partition_offsets Output offset for each CTA partition
  */
-template <typename InputIterator, typename OutputIterator, typename Word>
+template <size_type BlockSize, typename InputIterator, typename OutputIterator, typename Word>
 __device__ void copy_partitioned_values(cg::thread_block const& block,
                                         InputIterator input,
                                         OutputIterator output,
@@ -528,10 +534,11 @@ __device__ void copy_partitioned_values(cg::thread_block const& block,
 {
   // Input values are consumed once, so avoid retaining their cache lines in L2.
   for (size_type iteration = 0; iteration < rows_per_thread; ++iteration) {
-    auto const global_row = global_row_index(iteration);
+    auto const global_row = global_row_index<BlockSize>(iteration);
     if (global_row < static_cast<thread_index_type>(num_rows)) {
-      auto const row                                   = static_cast<size_type>(global_row);
-      payload[local_slots[local_row_index(iteration)]] = cub::ThreadLoad<cub::LOAD_CS>(input + row);
+      auto const row = static_cast<size_type>(global_row);
+      payload[local_slots[local_row_index<BlockSize>(iteration)]] =
+        cub::ThreadLoad<cub::LOAD_CS>(input + row);
     }
   }
   block.sync();
@@ -565,8 +572,11 @@ struct staged_scatter_smem {
                                                  size_type rows_per_thread,
                                                  size_type element_width)
   {
-    auto const rows_per_block      = static_cast<std::size_t>(BlockSize) * rows_per_thread;
-    local_slots_offset             = rows_per_block * element_width;
+    auto const rows_per_block = static_cast<std::size_t>(BlockSize) * rows_per_thread;
+    // The slot region is followed by `size_type` arrays, so round its end up to that alignment
+    // rather than relying on `element_width` and the block size to happen to leave it aligned.
+    local_slots_offset =
+      cudf::util::round_up_safe(rows_per_block * element_width, alignof(size_type));
     local_partition_offsets_offset = local_slots_offset + rows_per_block * sizeof(size_type);
     global_partition_offsets_offset =
       local_partition_offsets_offset +
@@ -641,16 +651,16 @@ CUDF_KERNEL void copy_fixed_width_columns(fixed_width_column_descriptor const* c
     auto const descriptor = columns[column_index];
     /** @brief Copies one descriptor using its physical storage-word type. */
     auto const copy_column = [&]<typename Word>() {
-      copy_partitioned_values(block,
-                              reinterpret_cast<Word const*>(descriptor.input),
-                              reinterpret_cast<Word*>(descriptor.output),
-                              reinterpret_cast<Word*>(payload),
-                              local_slots,
-                              num_rows,
-                              num_partitions,
-                              rows_per_thread,
-                              local_partition_offsets,
-                              global_partition_offsets);
+      copy_partitioned_values<BlockSize>(block,
+                                         reinterpret_cast<Word const*>(descriptor.input),
+                                         reinterpret_cast<Word*>(descriptor.output),
+                                         reinterpret_cast<Word*>(payload),
+                                         local_slots,
+                                         num_rows,
+                                         num_partitions,
+                                         rows_per_thread,
+                                         local_partition_offsets,
+                                         global_partition_offsets);
     };
 
     switch (descriptor.element_width) {
@@ -709,16 +719,16 @@ CUDF_KERNEL void compute_gather_map(size_type num_rows,
                                     local_partition_offsets,
                                     global_partition_offsets);
 
-  copy_partitioned_values(block,
-                          cuda::counting_iterator<size_type>{0},
-                          gather_map,
-                          payload,
-                          local_slots,
-                          num_rows,
-                          num_partitions,
-                          rows_per_thread,
-                          local_partition_offsets,
-                          global_partition_offsets);
+  copy_partitioned_values<BlockSize>(block,
+                                     cuda::counting_iterator<size_type>{0},
+                                     gather_map,
+                                     payload,
+                                     local_slots,
+                                     num_rows,
+                                     num_partitions,
+                                     rows_per_thread,
+                                     local_partition_offsets,
+                                     global_partition_offsets);
 }
 
 /**
@@ -798,17 +808,17 @@ std::vector<fixed_width_copy_batch> make_fixed_width_copy_batches(table_view con
 
   static_assert(std::is_same_v<PartitionMetadataView, detail::partition_metadata::packed_view> ||
                 std::is_same_v<PartitionMetadataView, detail::partition_metadata::default_view>);
-  // This makes the output sector count additive across columns.
-  static_assert(BlockSize % L2_SECTOR_BYTES == 0);
+  // A whole number of warps per block makes the output sector count additive across columns.
+  static_assert(BlockSize % cudf::detail::warp_size == 0);
 
   int device{};
   CUDF_CUDA_TRY(cudaGetDevice(&device));
-  cudaDeviceProp properties{};
-  CUDF_CUDA_TRY(cudaGetDeviceProperties(&properties, device));
+  int l2_cache_bytes{};
+  CUDF_CUDA_TRY(cudaDeviceGetAttribute(&l2_cache_bytes, cudaDevAttrL2CacheSize, device));
 
   // Limit one batch to this many L2 sectors.
   auto const l2_sector_budget =
-    static_cast<std::uint64_t>(static_cast<double>(std::max(properties.l2CacheSize, 0)) *
+    static_cast<std::uint64_t>(static_cast<double>(std::max(l2_cache_bytes, 0)) *
                                L2_CACHE_USAGE_FRACTION) /
     L2_SECTOR_BYTES;
 
@@ -828,7 +838,7 @@ std::vector<fixed_width_copy_batch> make_fixed_width_copy_batches(table_view con
   auto const ctas_per_active_wave =
     std::min<std::uint64_t>(static_cast<std::uint64_t>(grid_size),
                             static_cast<std::uint64_t>(active_ctas_per_sm) *
-                              static_cast<std::uint64_t>(properties.multiProcessorCount));
+                              static_cast<std::uint64_t>(cudf::detail::num_multiprocessors()));
   auto const rows_per_active_wave = ctas_per_active_wave * static_cast<std::uint64_t>(BlockSize) *
                                     static_cast<std::uint64_t>(rows_per_thread);
 

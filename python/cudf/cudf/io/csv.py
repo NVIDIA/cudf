@@ -6,7 +6,7 @@ import csv
 import itertools
 import os
 from collections.abc import Collection, Mapping
-from io import BytesIO, StringIO
+from io import BytesIO, StringIO, TextIOBase
 from typing import TYPE_CHECKING, cast
 
 import numpy as np
@@ -56,7 +56,6 @@ _UNREADABLE_COMPRESSION_SUFFIXES: tuple[tuple[str, str], ...] = (
     (".tar", "tar"),
     (".tgz", "tar"),
     (".xz", "xz"),
-    (".zst", "zstd"),
 )
 
 #: What libcudf can actually decompress, keyed by the ``pandas`` spelling.
@@ -65,6 +64,7 @@ _COMPRESSION_MAP = {
     "gzip": plc.io.types.CompressionType.GZIP,
     "bz2": plc.io.types.CompressionType.BZIP2,
     "zip": plc.io.types.CompressionType.ZIP,
+    "zstd": plc.io.types.CompressionType.ZSTD,
 }
 
 
@@ -424,9 +424,11 @@ def to_csv(
         )
         raise NotImplementedError(error_msg)
 
-    if compression:
-        error_msg = "Writing compressed csv is not currently supported in cudf"
-        raise NotImplementedError(error_msg)
+    if compression and compression != "zstd":
+        raise NotImplementedError(
+            f"Compression {compression} is not supported. "
+            "Only 'zstd' is supported for CSV compression."
+        )
 
     if quoting not in (csv.QUOTE_MINIMAL, csv.QUOTE_NONE):
         raise NotImplementedError(
@@ -445,8 +447,25 @@ def to_csv(
 
     return_as_string = False
     if path_or_buf is None:
+        # compressed output is binary, so it cannot be returned as a string
+        if compression:
+            raise ValueError(
+                f"Compression {compression} is not supported when returning "
+                "the CSV output as a string; please provide `path_or_buf`."
+            )
         path_or_buf = StringIO()
         return_as_string = True
+    elif (
+        compression
+        and isinstance(path_or_buf, TextIOBase)
+        and not hasattr(path_or_buf, "buffer")
+    ):
+        # a text sink with no underlying binary buffer decodes what it is given as
+        # UTF-8, which compressed output is not
+        raise ValueError(
+            f"Compression {compression} is not supported for text-mode sinks; "
+            "please pass a path or a binary file object."
+        )
 
     path_or_buf = ioutils.get_writer_filepath_or_buffer(
         path_or_data=path_or_buf, mode="w", storage_options=storage_options
@@ -497,6 +516,7 @@ def to_csv(
                 rows_per_chunk=rows_per_chunk,
                 index=index,
                 quoting=quoting,
+                compression=compression,
             )
     else:
         _plc_write_csv(
@@ -509,6 +529,7 @@ def to_csv(
             rows_per_chunk=rows_per_chunk,
             index=index,
             quoting=quoting,
+            compression=compression,
         )
 
     if return_as_string:
@@ -526,6 +547,7 @@ def _plc_write_csv(
     rows_per_chunk: int = 8,
     index: bool = True,
     quoting: int = csv.QUOTE_MINIMAL,
+    compression: str | None = None,
 ) -> None:
     iter_columns = (
         itertools.chain(table.index._columns, table._columns)
@@ -534,6 +556,12 @@ def _plc_write_csv(
     )
     # Materialize iterator to avoid consuming it during access context setup
     columns_list = list(iter_columns)
+
+    plc_compression = (
+        plc.io.types.CompressionType.ZSTD
+        if compression == "zstd"
+        else plc.io.types.CompressionType.NONE
+    )
 
     with access_columns(*columns_list, mode="read", scope="internal"):
         columns = [col.plc_column for col in columns_list]
@@ -576,6 +604,7 @@ def _plc_write_csv(
                     .true_value("True")
                     .false_value("False")
                     .quoting(quote_style)
+                    .compression(plc_compression)
                     .build()
                 )
             )

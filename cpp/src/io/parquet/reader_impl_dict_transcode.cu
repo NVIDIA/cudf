@@ -204,7 +204,7 @@ void remap_dict_indices_by_chunk(cudf::device_span<int32_t> indices,
       // Chunk owning `row` is the last offset <= row.
       auto const it = thrust::upper_bound(thrust::seq, row_offsets.begin(), row_offsets.end(), row);
       auto const k  = static_cast<size_type>(it - row_offsets.begin() - 1);
-      // If the chunk has no keys, the index is 0.
+      // Guard for all-null case.
       if (key_counts_prefix[k] == key_counts_prefix[k + 1]) {
         indices[row] = 0;
         return;
@@ -433,13 +433,10 @@ void reader_impl::assemble_dict_transcoded_columns(
       // The per-chunk key ranges are contiguous in `pass.str_dict_index` iff this is the only
       // eligible string column: chunks are laid out row-group-major, so a second string column
       // interleaves its chunks between this one's.
-      bool contiguous = true;
-      for (size_t k = 0; k + 1 < chunk_indices.size(); ++k) {
-        if (key_offset_of(k + 1) != key_offset_of(k) + chunk_key_counts[k]) {
-          contiguous = false;
-          break;
-        }
-      }
+      auto const contiguous = std::all_of(
+        cuda::counting_iterator<size_t>{0},
+        cuda::counting_iterator{chunk_indices.size() - 1},
+        [&](size_t k) { return key_offset_of(k + 1) == key_offset_of(k) + chunk_key_counts[k]; });
 
       // Device copies of the per-chunk row/key boundaries, reused by the strided key gather below
       // and by `remap_dict_indices_by_chunk`.

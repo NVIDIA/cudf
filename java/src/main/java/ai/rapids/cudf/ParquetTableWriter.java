@@ -9,6 +9,10 @@ import java.io.File;
 
 /** A chunked Parquet writer that can return its footer metadata when closed. */
 public final class ParquetTableWriter extends TableWriter {
+  static {
+    NativeDepsLoader.loadNativeDeps();
+  }
+
   private HostBufferConsumer consumer;
   private final HostMemoryAllocator hostMemoryAllocator;
 
@@ -86,6 +90,12 @@ public final class ParquetTableWriter extends TableWriter {
    * <p>The returned buffer is a metadata-only Parquet file containing the leading {@code PAR1}
    * magic, the serialized file metadata, the footer length, and the trailing {@code PAR1}
    * magic. The caller must close the returned buffer.
+   *
+   * <p>This is a complete metadata-only Parquet file rather than raw footer bytes. Callers can
+   * pass it to a Parquet reader to obtain row-group metadata, offsets, and column metrics without
+   * rereading the output file. libcudf creates the buffer from the writer's in-memory metadata
+   * during successful finalization; the downstream Parquet reader is responsible for validating
+   * the serialized metadata it consumes.
    *
    * @return an owned host buffer containing the Parquet footer metadata
    * @throws CudfException if finalizing the Parquet writer fails

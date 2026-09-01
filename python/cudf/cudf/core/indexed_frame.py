@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import copy
+import operator
 import itertools
 import textwrap
 import warnings
@@ -2421,6 +2422,90 @@ class IndexedFrame(Frame):
         slicer = [slice(None, None)] * self.ndim
         slicer[axis] = slice(before, after)
         return self.loc[tuple(slicer)].copy()
+        
+    @_performance_tracking
+    def between_time(
+        self,
+        start_time,
+        end_time,
+        include_start: bool = True,
+        include_end: bool = True,
+    ) -> Self:
+        """
+        Select values between particular times of the day (e.g., 9:00-9:30 AM).
+
+        By setting ``start_time`` to be later than ``end_time``, you can get
+        the times that are *not* between the two times.
+
+        Parameters
+        ----------
+        start_time : datetime.time or str
+            Initial time as a time filter limit.
+        end_time : datetime.time or str
+            End time as a time filter limit.
+        include_start : bool, default True
+            Whether the start time needs to be included in the result.
+        include_end : bool, default True
+            Whether the end time needs to be included in the result.
+
+        Returns
+        -------
+        Series or DataFrame
+            Data from the original object filtered to the specified
+            time range.
+
+        Raises
+        ------
+        TypeError
+            If the index is not a :class:`~cudf.DatetimeIndex`.
+
+        Examples
+        --------
+        >>> import cudf
+        >>> i = cudf.date_range('2018-04-09', periods=4, freq='1D20min')
+        >>> ts = cudf.DataFrame({'A': [1, 2, 3, 4]}, index=i)
+        >>> ts
+                             A
+        2018-04-09 00:00:00  1
+        2018-04-10 00:20:00  2
+        2018-04-11 00:40:00  3
+        2018-04-12 01:00:00  4
+        >>> ts.between_time('0:15', '0:45')
+                             A
+        2018-04-10 00:20:00  2
+        2018-04-11 00:40:00  3
+        """
+        from pandas.core.tools.times import to_time
+
+        if not isinstance(self.index, cudf.DatetimeIndex):
+            raise TypeError("Index must be DatetimeIndex")
+
+        start_time = to_time(start_time)
+        end_time = to_time(end_time)
+
+        def _time_to_seconds(t):
+            return t.hour * 3600 + t.minute * 60 + t.second
+
+        start_secs = _time_to_seconds(start_time)
+        end_secs = _time_to_seconds(end_time)
+
+        idx = self.index
+        row_secs = idx.hour * 3600 + idx.minute * 60 + idx.second
+
+        left_op = operator.ge if include_start else operator.gt
+        right_op = operator.le if include_end else operator.lt
+
+        if start_secs <= end_secs:
+            mask = left_op(row_secs, start_secs) & right_op(
+                row_secs, end_secs
+            )
+        else:
+            mask = left_op(row_secs, start_secs) | right_op(
+                row_secs, end_secs
+            )
+
+        return self[mask]
+    
 
     @property
     def loc(self):

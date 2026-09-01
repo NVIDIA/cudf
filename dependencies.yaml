@@ -303,6 +303,7 @@ files:
       - depends_on_libnvcomp
       - depends_on_librmm
       - depends_on_rapids_logger
+      - run_libcudf
   py_build_pylibcudf:
     output: pyproject
     matrix:
@@ -1071,6 +1072,11 @@ dependencies:
           # Cap below 3.0.4 (rather than just excluding it) until a fixed
           # release is confirmed upstream, then raise the bound.
           - &pandas pandas>=3.0.0,<3.0.4a0
+  run_libcudf:
+    common:
+      - output_types: [requirements, pyproject]
+        packages:
+          - cuda-pathfinder
   run_pylibcudf:
     common:
       - output_types: [conda, requirements, constraints, pyproject]

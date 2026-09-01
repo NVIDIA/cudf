@@ -497,7 +497,7 @@ jobs:
     if: fromJSON(needs.changed-files.outputs.changed_file_groups).test_java
     with:
       build_type: pull-request
-      node_type: "gpu-l4-latest-1"
+      node_type: "gpu-rtxpro6000-latest-1"
       arch: "amd64"
       container_image: "rapidsai/ci-conda:26.10-latest"
       script: "ci/test_java.sh"
@@ -551,7 +551,7 @@ jobs:
     with:
       build_type: pull-request
       arch: ${{ matrix.ARCH }}
-      node_type: "gpu-l4-latest-1"
+      node_type: ${{ matrix.ARCH == 'amd64' && 'gpu-rtxpro6000-latest-1' || 'gpu-l4-latest-1' }}
       container_image: "rapidsai/ci-wheel:26.10-cuda${{ matrix.CUDA_VER }}-${{ matrix.LINUX_VER }}-py${{ matrix.PY_VER }}"
       script: "ci/test_packaged_java.sh"
   conda-notebook-tests:
@@ -567,7 +567,7 @@ jobs:
     if: fromJSON(needs.changed-files.outputs.changed_file_groups).test_notebooks
     with:
       build_type: pull-request
-      node_type: "gpu-l4-latest-1"
+      node_type: "gpu-rtxpro6000-latest-1"
       arch: "amd64"
       container_image: "rapidsai/ci-conda:26.10-latest"
       script: "ci/test_notebooks.sh"
@@ -584,7 +584,7 @@ jobs:
     if: fromJSON(needs.changed-files.outputs.changed_file_groups).build_docs
     with:
       build_type: pull-request
-      node_type: "gpu-l4-latest-1"
+      node_type: "gpu-rtxpro6000-latest-1"
       arch: "amd64"
       container_image: "rapidsai/ci-conda:26.10-latest"
       script: "ci/build_docs.sh"
@@ -881,7 +881,7 @@ jobs:
       branch: ${{ inputs.branch }}
       date: ${{ inputs.date }}
       sha: ${{ inputs.sha }}
-      node_type: "gpu-l4-latest-1"
+      node_type: "gpu-rtxpro6000-latest-1"
       continue-on-error: true
       container_image: "rapidsai/ci-conda:26.10-latest"
       script: |
@@ -902,7 +902,7 @@ jobs:
       branch: ${{ inputs.branch }}
       date: ${{ inputs.date }}
       sha: ${{ inputs.sha }}
-      node_type: "gpu-l4-latest-1"
+      node_type: "gpu-rtxpro6000-latest-1"
       continue-on-error: true
       container_image: "rapidsai/ci-conda:26.10-latest"
       script: "ci/test_cuml_compat.sh"
@@ -944,7 +944,7 @@ jobs:
       branch: ${{ inputs.branch }}
       date: ${{ inputs.date }}
       sha: ${{ inputs.sha }}
-      node_type: "gpu-l4-latest-1"
+      node_type: "gpu-rtxpro6000-latest-1"
       container_image: "rapidsai/citestwheel:26.10-latest"
       script: "ci/cudf_pandas_scripts/pandas-tests/run.sh pr ${{ matrix.shard_id }} ${{ needs.pandas-tests-shards.outputs.num_shards }}"
       file_to_upload: ./pr-results.json
@@ -989,7 +989,7 @@ jobs:
       branch: ${{ inputs.branch }}
       date: ${{ inputs.date }}
       sha: ${{ inputs.sha }}
-      node_type: "gpu-l4-latest-1"
+      node_type: "gpu-rtxpro6000-latest-1"
       container_image: "rapidsai/ci-conda:26.10-latest"
       script: ci/test_narwhals.sh
   spark-rapids-jni:

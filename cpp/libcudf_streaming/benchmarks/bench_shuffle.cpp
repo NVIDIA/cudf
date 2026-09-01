@@ -507,13 +507,12 @@ int main(int argc, char** argv)
                     std::runtime_error);
   auto pinned_pool_properties =
     args.pinned_mem_disable ? rapidsmpf::PinnedMemoryDisabled : rapidsmpf::PinnedPoolProperties{};
-  auto br = rapidsmpf::BufferResource::create(
-    rmm_mr,
-    std::move(pinned_pool_properties),
-    std::move(memory_limits),
-    std::chrono::milliseconds{1},
-    std::make_shared<rmm::cuda_stream_pool>(16, rmm::cuda_stream::flags::non_blocking),
-    stats);
+  auto br = rapidsmpf::BufferResource::create(rmm_mr,
+                                              std::move(pinned_pool_properties),
+                                              std::move(memory_limits),
+                                              std::chrono::milliseconds{1},
+                                              std::make_shared<rapidsmpf::StreamPool>(16),
+                                              stats);
   // `BufferResource` wraps the device resource in an internal tracking
   // `RmmResourceAdaptor` (exposed via `device_mr_adaptor()`). Install the
   // tracking adaptor as the current device resource so libcudf temporary

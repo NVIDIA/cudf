@@ -265,7 +265,7 @@ auto filter_row_groups_with_dictionaries_impl(InputType& inputs,
       dict_page_data, row_group_indices, options, stream);
   } else {
     auto const dict_page_byte_ranges =
-      reader.secondary_filters_byte_ranges(row_group_indices, options).second;
+      reader.dictionary_pages_byte_ranges(row_group_indices, options);
     CUDF_EXPECTS(dict_page_byte_ranges.size() > 0, "No dictionary page byte ranges found");
 
     [[maybe_unused]] auto [dict_page_buffers, dict_page_data, dict_page_tasks] =

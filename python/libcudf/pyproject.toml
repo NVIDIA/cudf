@@ -26,6 +26,7 @@ classifiers = [
     "Environment :: GPU :: NVIDIA CUDA",
 ]
 dependencies = [
+    "cuda-pathfinder",
     "cuda-toolkit[nvrtc]==13.*",
     "libkvikio==26.10.*,>=0.0.0a0",
     "librmm==26.10.*,>=0.0.0a0",

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -117,7 +117,7 @@ TEST_F(HybridScanTest, DictionaryPageFiltering)
   auto input_row_group_indices = reader->all_row_groups(in_opts);
 
   auto const dict_byte_ranges =
-    std::get<1>(reader->secondary_filters_byte_ranges(input_row_group_indices, in_opts));
+    reader->dictionary_pages_byte_ranges(input_row_group_indices, in_opts);
   auto [dict_page_buffers, dict_page_data, dict_page_tasks] =
     cudf::io::parquet::fetch_byte_ranges_to_device_async(datasource_ref,
                                                          dict_byte_ranges,

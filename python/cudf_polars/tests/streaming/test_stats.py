@@ -161,11 +161,18 @@ def test_parquet_source_info_uses_decoded_dtype_floor(
         }
         num_row_groups_per_file = (1, 1)
 
-        def __init__(self, paths: tuple[str, ...], max_footer_samples: int) -> None:
+        def __init__(
+            self,
+            paths: tuple[str, ...],
+            max_footer_samples: int,
+            *,
+            parse_hybrid_metadata: bool = False,
+        ) -> None:
             self.paths = paths
             self.max_footer_samples = max_footer_samples
             self.sampled_file_count = 1
             self.total_file_count = len(paths)
+            self.cached_parquet_info = None
 
     sampled_cols: list[str] = []
 
@@ -271,23 +278,48 @@ def test_parquet_source_info_stores_footers_when_all_files_sampled(
     )
 
 
-def test_parquet_source_info_omits_footers_when_paths_are_sampled(
+def test_parquet_source_info_stores_sampled_footers_when_partially_sampled(
     tmp_path: pathlib.Path,
     df_and_schema: tuple[pl.DataFrame, Schema],
 ) -> None:
     _clear_source_info_cache()
     df, schema = df_and_schema
-    make_partitioned_source(df, tmp_path, "parquet", n_files=5)
+    n_files = 5
+    max_footer_samples = 2
+    make_partitioned_source(df, tmp_path, "parquet", n_files=n_files)
     paths = tuple(str(p) for p in sorted(tmp_path.iterdir()))
     info = _build_parquet_source(
         paths,
         frozenset(df.columns),
         tuple(schema.items()),
-        max_footer_samples=2,
+        max_footer_samples=max_footer_samples,
         max_row_group_samples=0,
     )
 
-    assert info.cached_parquet_info is None
+    assert info.cached_parquet_info is not None
+    assert len(info.cached_parquet_info) == max_footer_samples
+    cached_paths = {cached.path for cached in info.cached_parquet_info}
+    assert cached_paths <= set(paths)
+
+
+def test_parquet_source_info_preserves_footers_on_empty_needed_cols(
+    tmp_path: pathlib.Path,
+    df_and_schema: tuple[pl.DataFrame, Schema],
+) -> None:
+    _clear_source_info_cache()
+    df, schema = df_and_schema
+    make_partitioned_source(df, tmp_path, "parquet", n_files=2)
+    paths = tuple(str(p) for p in sorted(tmp_path.iterdir()))
+    info = _build_parquet_source(
+        paths,
+        frozenset(),
+        tuple(schema.items()),
+        max_footer_samples=10,
+        max_row_group_samples=0,
+    )
+
+    assert info.cached_parquet_info is not None
+    assert len(info.cached_parquet_info) == len(paths)
 
 
 def test_parquet_metadata_reads_footers(

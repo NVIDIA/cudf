@@ -80,6 +80,178 @@ struct transform_output {
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
+ * @brief Describes a transform input independently of a particular column.
+ *
+ * An input specification contains the type information needed to reflect and retrieve a transform
+ * kernel. Dictionary specifications recursively describe their indices and keys through `children`.
+ * String specifications retain their offsets child type so `INT32` and `INT64` layouts can be
+ * distinguished.
+ */
+struct transform_input_spec {
+  type_id type = type_id::EMPTY;  ///< Logical type of the input
+
+  bool is_scalar = false;  ///< Whether the input is presented to the UDF as a scalar
+
+  std::vector<transform_input_spec> children =
+    {};  ///< Specifications of dictionary children or string offsets
+};
+
+/**
+ * @brief Describes a transform output independently of a particular output column.
+ *
+ * The string-offset setting identifies the device-view representation required by the kernel. The
+ * nullability setting is retained so inputs to `transform_program::run` can be validated against
+ * the output policy used to construct the program.
+ */
+struct transform_output_spec {
+  type_id type = type_id::EMPTY;  ///< Logical type of the output
+
+  output_nullability nullability =
+    output_nullability::PRESERVE;  ///< Null-mask policy for the output
+
+  bool has_string_offsets = false;  ///< Whether a string output uses preallocated offsets
+  std::vector<transform_output_spec> children =
+    {};  ///< Specifications of string offsets or nested child columns
+};
+
+/**
+ * @brief A reusable transform program that retains a JIT-compiled kernel.
+ *
+ * Construction retrieves the kernel for the UDF and the supplied input and output specifications.
+ * Subsequent calls to `run` reuse that kernel.
+ * Runtime inputs and outputs must be compatible with the specifications used at construction.
+ *
+ */
+struct transform_program {
+ private:
+  struct impl;
+
+  std::unique_ptr<impl> impl_;  ///< The implementation of the transform program
+
+ public:
+  /**
+   * @brief Constructs a reusable program by deriving specifications from transform arguments.
+   *
+   * The UDF kernel is retrieved during construction and retained for subsequent calls to `run`.
+   * The input and output objects are inspected only to derive their specifications and are not
+   * retained.
+   *
+   * @param udf The PTX or CUDA source for the transform UDF
+   * @param source_type The source type of `udf`
+   * @param is_null_aware Whether the UDF receives row inputs as optional values
+   * @param user_data User-defined device data, not owned by the program, retained and passed to the
+   * UDF by `run`
+   * @param inputs Inputs from which to derive the input specifications
+   * @param outputs Outputs from which to derive the output type and nullability specifications
+   * @param string_offsets Optional string offsets used to determine each string output
+   * representation
+   */
+  transform_program(std::string const& udf,
+                    udf_source_type source_type,
+                    null_aware is_null_aware,
+                    std::optional<void*> user_data,
+                    std::span<transform_input const> inputs,
+                    std::span<transform_output const> outputs,
+                    std::span<std::unique_ptr<column> const> string_offsets);
+
+  /**
+   * @brief Constructs a reusable program from explicit input and output specifications.
+   *
+   * This overload enables composition without requiring concrete columns when the program is
+   * created. The UDF kernel is retrieved during construction and retained for subsequent calls to
+   * `run`.
+   *
+   * @param udf The PTX or CUDA source for the transform UDF
+   * @param source_type The source type of `udf`
+   * @param is_null_aware Whether the UDF receives row inputs as optional values
+   * @param user_data User-defined device data, not owned by the program, retained and passed to the
+   * UDF by `run`
+   * @param inputs Specifications of the transform inputs
+   * @param outputs Specifications of the transform outputs
+   */
+  transform_program(std::string const& udf,
+                    udf_source_type source_type,
+                    null_aware is_null_aware,
+                    std::optional<void*> user_data,
+                    std::span<transform_input_spec const> inputs,
+                    std::span<transform_output_spec const> outputs);
+
+  /**
+   * @brief Constructs a reusable program for an AST expression.
+   *
+   * The expression is lowered and its kernel is retrieved during construction. Literal values are
+   * retained by the program, while column inputs are rebound to the table passed to `run`.
+   *
+   * @param table A table whose schema is used to lower the expression and retrieve its kernel
+   * @param expressions The AST expressions to lower and construct the program from
+   * @param stream CUDA stream used for device memory operations during construction
+   * @param mr Device memory resource used for device memory allocations during construction
+   */
+  transform_program(table_view const& table,
+                    std::span<std::reference_wrapper<ast::expression const> const> expressions,
+                    cuda::stream_ref stream           = cudf::get_default_stream(),
+                    rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+
+  /**
+   * @brief Move constructor for transform_program
+   * @param other The transform_program to move from
+   */
+  transform_program(transform_program&& other);
+
+  /**
+   * @brief Move assignment operator for transform_program
+   * @param other The transform_program to move from
+   * @return A reference to the current transform_program
+   */
+  transform_program& operator=(transform_program&& other);
+
+  transform_program(transform_program const&)            = delete;  ///< Deleted copy constructor
+  transform_program& operator=(transform_program const&) = delete;  ///< Deleted copy assignment
+  ~transform_program();                                             ///< Destructor
+
+  /**
+   * @brief Runs the transform program on the given inputs and outputs.
+   *
+   * @throws std::invalid_argument if the inputs, outputs, or string offsets are not compatible with
+   * the specifications used to construct the program
+   *
+   * @param inputs The inputs to the transform program
+   * @param outputs The outputs of the transform program
+   * @param string_offsets For string output columns, the offsets can be pre-allocated and passed in
+   * to prevent overhead of compacting string views into run-end strings column.
+   * @param row_size The row size of the transform operation. If not provided, it will be inferred
+   * from the inputs.
+   * @param stream CUDA stream used for device memory operations and kernel launches
+   * @param mr Device memory resource used to allocate the returned column's device memory
+   * @return A table containing the columns resulting from applying the transform function to every
+   * element of the input according to the output specifications
+   */
+  std::unique_ptr<table> run(
+    std::span<transform_input const> inputs,
+    std::span<transform_output const> outputs,
+    std::vector<std::unique_ptr<column>>&& string_offsets,
+    std::optional<size_type> row_size,
+    cuda::stream_ref stream           = cudf::get_default_stream(),
+    rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+
+  /**
+   * @brief Evaluates the AST expressions used to construct this program on a table.
+   *
+   * @throws std::invalid_argument if the table is not compatible with the specifications used to
+   * construct the program
+   *
+   * @param table The table used for expression evaluation
+   * @param stream CUDA stream used for device memory operations and kernel launches
+   * @param mr Device memory resource used to allocate the returned column device memory
+   * @return The table resulting from evaluating the expression
+   */
+  std::unique_ptr<table> run(
+    table_view const& table,
+    cuda::stream_ref stream           = cudf::get_default_stream(),
+    rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+};
+
+/**
  * @brief Creates a new table by applying a transform function against every
  * element of the input columns.
  *
@@ -327,7 +499,7 @@ std::unique_ptr<column> compute_column_jit(
 std::unique_ptr<table> compute_table_jit(
   table_view const& table,
   std::span<std::reference_wrapper<ast::expression const> const> expressions,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**

@@ -317,10 +317,10 @@ def assert_column_equal(
             ):
                 # non-null values must be the same
                 columns_equal = cp.allclose(
-                    left.apply_boolean_mask(
+                    left.apply_retention_mask(
                         left.isnull().unary_operator("not")
                     ).values,
-                    right.apply_boolean_mask(
+                    right.apply_retention_mask(
                         right.isnull().unary_operator("not")
                     ).values,
                 )

@@ -65,24 +65,31 @@ scoped_current_device_resource memory_resource_test_harness::fail_on_current_dev
 
 void memory_resource_test_harness::synchronize(cuda::stream_ref stream) const { stream.sync(); }
 
-void memory_resource_test_harness::expect_output_allocations_live(cuda::stream_ref stream) const
+rmm::mr::statistics_resource_adaptor::counter
+memory_resource_test_harness::expect_output_allocations_live(cuda::stream_ref stream) const
 {
   synchronize(stream);
-  EXPECT_GT(_output_mr.get_bytes_counter().value, 0);
+  auto const counter = _output_mr.get_bytes_counter();
+  EXPECT_GT(counter.value, 0);
+  return counter;
 }
 
-void memory_resource_test_harness::expect_temporary_allocation_activity(
-  cuda::stream_ref stream) const
+rmm::mr::statistics_resource_adaptor::counter
+memory_resource_test_harness::expect_temporary_allocation_activity(cuda::stream_ref stream) const
 {
   synchronize(stream);
-  EXPECT_GT(_temporary_mr.get_bytes_counter().total, 0);
+  auto const counter = _temporary_mr.get_bytes_counter();
+  EXPECT_GT(counter.total, 0);
+  return counter;
 }
 
-void memory_resource_test_harness::expect_temporary_allocations_released(
-  cuda::stream_ref stream) const
+rmm::mr::statistics_resource_adaptor::counter
+memory_resource_test_harness::expect_temporary_allocations_released(cuda::stream_ref stream) const
 {
   synchronize(stream);
-  EXPECT_EQ(_temporary_mr.get_bytes_counter().value, 0);
+  auto const counter = _temporary_mr.get_bytes_counter();
+  EXPECT_EQ(counter.value, 0);
+  return counter;
 }
 
 void memory_resource_test_harness::expect_resource_usage(std::size_t expected_output_bytes,

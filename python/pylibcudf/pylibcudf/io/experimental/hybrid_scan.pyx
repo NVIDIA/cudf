@@ -6,7 +6,6 @@ from libc.stdint cimport uint8_t, uintptr_t
 from libc.stddef cimport size_t
 from libcpp cimport bool
 from libcpp.memory cimport make_unique, unique_ptr
-from libcpp.pair cimport pair
 from libcpp.span cimport span as std_span
 from libcpp.utility cimport move
 from libcpp.vector cimport vector
@@ -39,6 +38,7 @@ from pylibcudf.utils cimport _get_memory_resource, _get_stream
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
     from typing_extensions import Buffer
     from pylibcudf.typing import CudaStreamLike
 
@@ -170,8 +170,8 @@ cdef class HybridScanReader:
 
     def __init__(
         self,
-        const uint8_t[::1] footer_bytes,
-        ParquetReaderOptions options
+        const uint8_t[::1] footer_bytes: Buffer,
+        ParquetReaderOptions options,
     ):
         cdef const uint8_t* footer_ptr = <const uint8_t*>0
         if len(footer_bytes) > 0:
@@ -363,12 +363,17 @@ cdef class HybridScanReader:
             ))
         return list(filtered)
 
-    def secondary_filters_byte_ranges(
+    def bloom_filters_byte_ranges(
         self,
         list row_group_indices: list[int],
         ParquetReaderOptions options
-    ) -> tuple[list[ByteRangeInfo], list[ByteRangeInfo]]:
-        """Get byte ranges of bloom filters and dictionary pages.
+    ) -> list[ByteRangeInfo]:
+        """Get byte ranges of bloom filters for row group pruning.
+
+        Notes
+        -----
+        Device buffers for bloom filter byte ranges must be allocated using a 32 byte
+        aligned memory resource.
 
         Parameters
         ----------
@@ -379,25 +384,45 @@ cdef class HybridScanReader:
 
         Returns
         -------
-        tuple[list[ByteRangeInfo], list[ByteRangeInfo]]
-            Tuple of (bloom_filter_ranges, dictionary_page_ranges)
+        list[ByteRangeInfo]
+            Byte ranges to column chunk bloom filters subject to the filter predicate
         """
         cdef vector[size_type] indices_vec = row_group_indices
-        cdef pair[vector[byte_range_info], vector[byte_range_info]] ranges
-        cdef cpp_hybrid_scan_reader* reader_ptr = self.c_obj.get()
+        cdef vector[byte_range_info] ranges
         with nogil:
-            ranges = move(reader_ptr.secondary_filters_byte_ranges(
+            ranges = move(self.c_obj.get()[0].bloom_filters_byte_ranges(
                 std_span[const_size_type](indices_vec.data(), indices_vec.size()),
                 options.c_obj
             ))
+        return [ByteRangeInfo(r.offset(), r.size()) for r in ranges]
 
-        bloom_ranges = [
-            ByteRangeInfo(r.offset(), r.size()) for r in ranges.first
-        ]
-        dict_ranges = [
-            ByteRangeInfo(r.offset(), r.size()) for r in ranges.second
-        ]
-        return (bloom_ranges, dict_ranges)
+    def dictionary_pages_byte_ranges(
+        self,
+        list row_group_indices: list[int],
+        ParquetReaderOptions options
+    ) -> list[ByteRangeInfo]:
+        """Get byte ranges of column chunk dictionary pages for row group pruning.
+
+        Parameters
+        ----------
+        row_group_indices : list[int]
+            Input row group indices
+        options : ParquetReaderOptions
+            Parquet reader options
+
+        Returns
+        -------
+        list[ByteRangeInfo]
+            Byte ranges to column chunk dictionary pages subject to the filter predicate
+        """
+        cdef vector[size_type] indices_vec = row_group_indices
+        cdef vector[byte_range_info] ranges
+        with nogil:
+            ranges = move(self.c_obj.get()[0].dictionary_pages_byte_ranges(
+                std_span[const_size_type](indices_vec.data(), indices_vec.size()),
+                options.c_obj
+            ))
+        return [ByteRangeInfo(r.offset(), r.size()) for r in ranges]
 
     def filter_row_groups_with_dictionary_pages(
         self,
@@ -490,9 +515,9 @@ cdef class HybridScanReader:
     def build_all_true_row_mask(
         self,
         list row_group_indices,
-        object stream=None,
+        object stream: CudaStreamLike | None = None,
         DeviceMemoryResource mr=None
-    ):
+    ) -> Column:
         """Build an all-true boolean survival column for the given row groups.
 
         Parameters
@@ -814,7 +839,7 @@ cdef class HybridScanReader:
         list row_group_indices: list[int],
         Column row_mask,
         cpp_use_data_page_mask mask_data_pages,
-        object column_chunk_data,
+        object column_chunk_data: Sequence,
         ParquetReaderOptions options,
         object stream: CudaStreamLike | None = None,
         DeviceMemoryResource mr=None
@@ -905,7 +930,7 @@ cdef class HybridScanReader:
         list row_group_indices: list[int],
         Column row_mask,
         cpp_use_data_page_mask mask_data_pages,
-        object column_chunk_data,
+        object column_chunk_data: Sequence,
         ParquetReaderOptions options,
         object stream: CudaStreamLike | None = None,
         DeviceMemoryResource mr=None

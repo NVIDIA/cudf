@@ -12,7 +12,7 @@
 #include <cudf_streaming/parquet.hpp>
 #include <cudf_streaming/table_chunk.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
+#include <cuda/stream>
 
 #include <rapidsmpf/cuda_stream.hpp>
 #include <rapidsmpf/memory/memory_type.hpp>
@@ -195,7 +195,7 @@ class FileCache {
  * @return Message representing the read chunk.
  */
 rapidsmpf::streaming::Message read_parquet_chunk(std::shared_ptr<rapidsmpf::streaming::Context> ctx,
-                                                 rmm::cuda_stream_view stream,
+                                                 cuda::stream_ref stream,
                                                  cudf::io::parquet_reader_options options,
                                                  std::uint64_t sequence_number)
 {

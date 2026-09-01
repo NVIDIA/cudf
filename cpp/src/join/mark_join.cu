@@ -575,7 +575,7 @@ std::unique_ptr<rmm::device_uvector<cudf::size_type>> mark_join::mark_probe_and_
   if (null_contribution > 0) {
     auto const bitmask_buffer_and_ptr = build_row_bitmask(_left, stream);
     auto const row_bitmask_ptr        = bitmask_buffer_and_ptr.second;
-    thrust::copy_if(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    thrust::copy_if(rmm::exec_policy_nosync(stream, temp_mr),
                     cuda::counting_iterator<size_type>{0},
                     cuda::counting_iterator{_left.num_rows()},
                     result.begin() + unmatched_valid,
@@ -741,7 +741,7 @@ std::unique_ptr<rmm::device_uvector<cudf::size_type>> mark_join::semi_anti_join(
 {
   clear_marks(stream);
 
-  auto const preprocessed_right = [right, stream] {
+  auto const preprocessed_right = [&right, stream] {
     cudf::scoped_range range{"mark_join::semi_anti_join::preprocessed_right"};
     return cudf::detail::row::equality::preprocessed_table::create(
       right, stream, cudf::get_current_device_resource_ref());

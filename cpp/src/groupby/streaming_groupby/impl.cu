@@ -89,7 +89,6 @@ streaming_groupby::impl::impl(host_span<size_type const> key_indices,
   : _max_distinct_keys{max_distinct_keys},
     _null_handling{null_handling},
     _mr{std::move(mr)},
-    _d_agg_kinds{0, cuda::stream_ref{cudaStreamLegacy}, cudf::get_current_device_resource_ref()},
     _d_agg_results{nullptr, +[](mutable_table_device_view*) {}}
 {
   CUDF_EXPECTS(max_distinct_keys > 0, "max_distinct_keys must be positive.", std::invalid_argument);
@@ -170,7 +169,8 @@ void streaming_groupby::impl::initialize(table_view const& data, cuda::stream_re
       decltype(_d_agg_results){raii.release(), +[](mutable_table_device_view* t) { t->destroy(); }};
   }
 
-  _d_agg_kinds = cudf::detail::make_device_uvector_async(_agg_kinds, stream, mr);
+  _d_agg_kinds = std::make_unique<rmm::device_uvector<aggregation::Kind>>(
+    cudf::detail::make_device_uvector_async(_agg_kinds, stream, mr));
 
   // Map each column in `values_view` back to its index in `data`.
   _value_col_indices.reserve(values_view.num_columns());

@@ -79,19 +79,6 @@ class aggregate_reader_metadata : public aggregate_reader_metadata_base {
 
  public:
   /**
-   * @brief Check whether selected columns have column and offset indexes
-   *
-   * Schema indices are mapped to each source before locating the column chunks.
-   *
-   * @param row_group_indices Row group indices, one vector per source
-   * @param schema_indices Schema indices from the first source
-   * @return A pair indicating column-index and offset-index presence, respectively
-   */
-  [[nodiscard]] std::pair<bool, bool> page_index_presence(
-    std::span<std::vector<size_type> const> row_group_indices,
-    std::span<size_type const> schema_indices) const;
-
-  /**
    * @brief Constructor for aggregate_reader_metadata
    *
    * @param footer_bytes Host span of Parquet file footer buffer bytes, one per source
@@ -119,11 +106,6 @@ class aggregate_reader_metadata : public aggregate_reader_metadata_base {
   aggregate_reader_metadata& operator=(aggregate_reader_metadata&&)      = default;
 
   /**
-   * @brief Initialize the internal variables
-   */
-  void initialize_internals(bool use_arrow_schema, bool has_cols_from_mismatched_srcs);
-
-  /**
    * @brief Fetch the byte range of the page index in each Parquet file
    *
    * @return Vector of byte ranges of the page index, one per source
@@ -136,6 +118,19 @@ class aggregate_reader_metadata : public aggregate_reader_metadata_base {
    * @return Vector of file metadata, one per source
    */
   [[nodiscard]] std::vector<FileMetaData> parquet_metadatas() const;
+
+  /**
+   * @brief Check whether selected columns have column and offset indexes
+   *
+   * Schema indices are mapped to each source before locating the column chunks.
+   *
+   * @param row_group_indices Row group indices, one vector per source
+   * @param schema_indices Schema indices from the first source
+   * @return A pair indicating column-index and offset-index presence, respectively
+   */
+  [[nodiscard]] std::pair<bool, bool> page_index_presence(
+    std::span<std::vector<size_type> const> row_group_indices,
+    std::span<size_type const> schema_indices) const;
 
   /**
    * @brief Setup and populate the page index structs in every source's `FileMetaData`
@@ -400,8 +395,8 @@ class dictionary_literals_collector : public equality_literals_collector {
 };
 
 /**
- * @brief Converts named columns to index reference columns and pushes logical negations down to
- * expression leaves
+ * @brief Converts named columns to index reference columns and rewrites the expression into
+ * negation normal form, pushing logical negations down to the leaves
  */
 class parquet_filter_normalizer : public parquet::detail::parquet_filter_normalizer {
  public:

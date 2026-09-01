@@ -115,13 +115,6 @@ class hybrid_scan_reader_impl : public parquet::detail::reader_impl {
     cuda::stream_ref stream);
 
   /**
-   * @copydoc cudf::io::parquet::experimental::hybrid_scan_reader::secondary_filters_byte_ranges
-   */
-  [[nodiscard]] std::pair<std::vector<byte_range_info>, std::vector<byte_range_info>>
-  secondary_filters_byte_ranges(std::span<std::vector<size_type> const> row_group_indices,
-                                parquet_reader_options const& options);
-
-  /**
    * @copydoc cudf::io::parquet::experimental::hybrid_scan_multifile::bloom_filters_byte_ranges
    */
   [[nodiscard]] std::pair<std::vector<byte_range_info>, std::vector<size_type>>
@@ -395,6 +388,16 @@ class hybrid_scan_reader_impl : public parquet::detail::reader_impl {
   void set_sparse_pass_page_mask(std::span<cudf::device_span<uint8_t const> const> page_data);
 
   /**
+   * @brief Mark output buffers nullable when page pruning synthesizes null rows
+   */
+  void mark_buffers_nullable_for_pruned_pages();
+
+  /**
+   * @brief Initialize the mutable output-buffer template for this materialization
+   */
+  void reset_output_buffers_template();
+
+  /**
    * @brief Select the columns to be read based on the read mode
    *
    * @param read_columns_mode Read mode indicating if we are reading filter or payload columns
@@ -590,7 +593,7 @@ class hybrid_scan_reader_impl : public parquet::detail::reader_impl {
    * and only if in_row_mask[i] is valid and true
    *
    * Updates the output row mask to reflect the final valid and surviving rows from the input row
-   * mask. This is inline with the masking behavior of cudf::detail::apply_boolean_mask
+   * mask. This is inline with the masking behavior of cudf::apply_retention_mask.
    *
    * @param in_row_mask Input row mask column
    * @param out_row_mask Output row mask column
@@ -615,6 +618,8 @@ class hybrid_scan_reader_impl : public parquet::detail::reader_impl {
   aggregate_reader_metadata* _extended_metadata;
 
   std::optional<std::vector<std::string>> _filter_columns_names;
+
+  std::vector<cudf::io::detail::inline_column_buffer> _original_output_buffers_template;
 
   cudf::size_type _row_mask_offset{0};
   bool _output_chunk_produced{false};

@@ -216,13 +216,13 @@ def test_hybrid_scan_filter_row_groups_with_stats(
     assert filtered == expected_row_groups
 
 
-def test_hybrid_scan_secondary_filters_byte_ranges(
+def test_hybrid_scan_bloom_filter_and_dictionary_page_byte_ranges(
     simple_hybrid_scan_reader: HybridScanReader,
     simple_parquet_options: plc.io.parquet.ParquetReaderOptions,
     num_rows: int,
 ) -> None:
     """Test getting bloom filter and dictionary page byte ranges."""
-    # Need to set a filter for secondary filters to work
+    # Need to set a filter for either kind of byte range to be reported
     # Filter: col0 >= num_rows // 10
     filter_threshold = num_rows // 10
     filter_expression = Operation(
@@ -240,10 +240,11 @@ def test_hybrid_scan_secondary_filters_byte_ranges(
         simple_parquet_options
     )
 
-    bloom_ranges, dict_ranges = (
-        simple_hybrid_scan_reader.secondary_filters_byte_ranges(
-            all_row_groups, simple_parquet_options
-        )
+    bloom_ranges = simple_hybrid_scan_reader.bloom_filters_byte_ranges(
+        all_row_groups, simple_parquet_options
+    )
+    dict_ranges = simple_hybrid_scan_reader.dictionary_pages_byte_ranges(
+        all_row_groups, simple_parquet_options
     )
 
     # These should be lists of ByteRangeInfo
@@ -864,17 +865,21 @@ def test_hybrid_scan_filter_row_groups_with_dictionary_pages_negation(
         reader.reset_column_selection()
         simple_parquet_options.set_filter(filter_expression)
         all_row_groups = reader.all_row_groups(simple_parquet_options)
-        _, dictionary_ranges = reader.secondary_filters_byte_ranges(
+        dictionary_ranges = reader.dictionary_pages_byte_ranges(
             all_row_groups, simple_parquet_options
         )
+        # the caller is responsible for keeping the source bytes alive until
+        # synchronize_stream() below runs.
+        # See https://github.com/rapidsai/rmm/issues/2521
+        dict_page_bytes = [
+            simple_parquet_bytes[r.offset : r.offset + r.size]
+            for r in dictionary_ranges
+        ]
         dictionary_data = [
             plc.gpumemoryview(
-                rmm.DeviceBuffer.to_device(
-                    simple_parquet_bytes[r.offset : r.offset + r.size],
-                    plc.utils._get_stream(),
-                )
+                rmm.DeviceBuffer.to_device(b, plc.utils._get_stream())
             )
-            for r in dictionary_ranges
+            for b in dict_page_bytes
         ]
         synchronize_stream()
         return reader.filter_row_groups_with_dictionary_pages(

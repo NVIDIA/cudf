@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+import math
+import sys
 from decimal import Decimal
 from functools import partial
 from typing import TYPE_CHECKING, Any, ClassVar
@@ -24,7 +26,7 @@ if TYPE_CHECKING:
 
     from cudf_polars.containers import DataFrame, DataType
 
-__all__ = ["Agg", "Item", "SortedAgg"]
+__all__ = ["Agg", "Item", "Kurtosis", "Skew", "SortedAgg"]
 
 
 class Item(Expr):
@@ -490,3 +492,231 @@ class Agg(Expr):
         # preprocessed into pylibcudf requests.
         child = self.children[0]
         return self.op(child.evaluate(df, context=context), stream=df.stream)
+
+
+class Skew(Expr):
+    """Sample skewness of a column."""
+
+    __slots__ = ("bias",)
+    _non_child = ("dtype", "bias")
+
+    def __init__(self, dtype: DataType, bias: bool, child: Expr) -> None:  # noqa: FBT001
+        self.dtype = dtype
+        self.bias = bias
+        self.children = (child,)
+        self.is_pointwise = False
+
+    @staticmethod
+    def _central_moments(
+        column: plc.Column, plc_type: plc.DataType, *, stream: Stream
+    ) -> tuple[float, float, float]:
+        """
+        Compute the ``mean`` and central moments ``m2``, ``m3``.
+
+        Nulls are excluded by the ``mean`` reductions.
+
+        Notes
+        -----
+        This follows Polars' per-chunk moment accumulation
+        (``SkewState::from_iter`` in ``polars-compute/src/moment.rs``), which
+        also centers on the mean before summing. This numerically stable
+        two-pass computation reduces the mean first, then reduces the centered
+        powers ``mean((x - mean)**k)``.
+
+        Could be done in a single pass with https://www.osti.gov/servlets/purl/1028931
+        and in a single kernel with https://github.com/NVIDIA/cudf/pull/23621.
+        """
+        mean = plc.reduce.reduce(
+            column, plc.aggregation.mean(), plc_type, stream=stream
+        ).to_py(stream=stream)
+        table = plc.Table([column])
+        dev = plc.expressions.Operation(
+            plc.expressions.ASTOperator.SUB,
+            plc.expressions.ColumnReference(0),
+            plc.expressions.Literal(plc.Scalar.from_py(mean, plc_type, stream=stream)),
+        )
+        mul = plc.expressions.ASTOperator.MUL
+        dev2 = plc.expressions.Operation(mul, dev, dev)
+        dev3 = plc.expressions.Operation(mul, dev2, dev)
+        d2 = plc.transform.compute_column(table, dev2, stream=stream)
+        d3 = plc.transform.compute_column(table, dev3, stream=stream)
+        return (  # type: ignore[return-value]
+            mean,
+            plc.reduce.reduce(
+                d2, plc.aggregation.mean(), plc_type, stream=stream
+            ).to_py(stream=stream),
+            plc.reduce.reduce(
+                d3, plc.aggregation.mean(), plc_type, stream=stream
+            ).to_py(stream=stream),
+        )
+
+    @staticmethod
+    def _finalize(n: int, mean: float, m2: float, m3: float, *, bias: bool) -> float:
+        """
+        Compute the sample skewness from the mean and central moments.
+
+        Notes
+        -----
+        This follows Polars' ``SkewState::finalize``
+        (``polars-compute/src/moment.rs``): the biased Fisher-Pearson
+        coefficient ``m3 / m2**1.5`` (returning NaN when the variance is
+        effectively zero, matching Polars' ``m2 <= (eps * mean)**2`` check),
+        with the sample bias correction ``sqrt(n * (n - 1)) / (n - 2)``
+        applied when ``bias=False``.
+
+        Overflow follows IEEE-754 (producing ``inf``/``nan``) matching Rust,
+        rather than raising Python's ``OverflowError``.
+        """
+        eps = sys.float_info.epsilon
+        is_zero = m2 <= (eps * mean) * (eps * mean)
+        if is_zero:
+            biased = math.nan
+        else:
+            try:
+                denom = m2**1.5
+            except OverflowError:
+                denom = math.inf
+            biased = m3 / denom
+        if bias:
+            return biased
+        return math.sqrt(n * (n - 1)) / (n - 2) * biased
+
+    def do_evaluate(
+        self, df: DataFrame, *, context: ExecutionContext = ExecutionContext.FRAME
+    ) -> Column:
+        """Evaluate this expression given a dataframe for context."""
+        (child,) = self.children
+        column = child.evaluate(df, context=context)
+        n = column.size - column.null_count
+        if n == 0 or (not self.bias and n <= 2):
+            value: float | None = None
+        else:
+            casted = column.astype(self.dtype, stream=df.stream)
+            mean, m2, m3 = self._central_moments(
+                casted.obj, self.dtype.plc_type, stream=df.stream
+            )
+            value = self._finalize(n, mean, m2, m3, bias=self.bias)
+        return Column(
+            plc.Column.from_scalar(
+                plc.Scalar.from_py(value, self.dtype.plc_type, stream=df.stream),
+                1,
+                stream=df.stream,
+            ),
+            dtype=self.dtype,
+        )
+
+
+class Kurtosis(Expr):
+    """Kurtosis (Fisher or Pearson) of a column."""
+
+    __slots__ = ("bias", "fisher")
+    _non_child = ("dtype", "fisher", "bias")
+
+    def __init__(
+        self,
+        dtype: DataType,
+        fisher: bool,  # noqa: FBT001
+        bias: bool,  # noqa: FBT001
+        child: Expr,
+    ) -> None:
+        self.dtype = dtype
+        self.fisher = fisher
+        self.bias = bias
+        self.children = (child,)
+        self.is_pointwise = False
+
+    @staticmethod
+    def _central_moments(
+        column: plc.Column, plc_type: plc.DataType, *, stream: Stream
+    ) -> tuple[float, float, float]:
+        """
+        Compute the ``mean`` and central moments ``m2``, ``m4``.
+
+        Nulls are excluded by the ``mean`` reductions.
+
+        Notes
+        -----
+        This follows Polars' per-chunk moment accumulation
+        (``KurtosisState::from_iter`` in ``polars-compute/src/moment.rs``),
+        which also centers on the mean before summing. This numerically stable
+        two-pass computation reduces the mean first, then reduces the centered
+        powers ``mean((x - mean)**k)``.
+
+        Could be done in a single pass with https://www.osti.gov/servlets/purl/1028931
+        and in a single kernel with https://github.com/NVIDIA/cudf/pull/23621.
+        """
+        mean = plc.reduce.reduce(
+            column, plc.aggregation.mean(), plc_type, stream=stream
+        ).to_py(stream=stream)
+        table = plc.Table([column])
+        dev = plc.expressions.Operation(
+            plc.expressions.ASTOperator.SUB,
+            plc.expressions.ColumnReference(0),
+            plc.expressions.Literal(plc.Scalar.from_py(mean, plc_type, stream=stream)),
+        )
+        mul = plc.expressions.ASTOperator.MUL
+        dev2 = plc.expressions.Operation(mul, dev, dev)
+        dev4 = plc.expressions.Operation(mul, dev2, dev2)
+        d2 = plc.transform.compute_column(table, dev2, stream=stream)
+        d4 = plc.transform.compute_column(table, dev4, stream=stream)
+        return (  # type: ignore[return-value]
+            mean,
+            plc.reduce.reduce(
+                d2, plc.aggregation.mean(), plc_type, stream=stream
+            ).to_py(stream=stream),
+            plc.reduce.reduce(
+                d4, plc.aggregation.mean(), plc_type, stream=stream
+            ).to_py(stream=stream),
+        )
+
+    @staticmethod
+    def _finalize(
+        n: int, mean: float, m2: float, m4: float, *, fisher: bool, bias: bool
+    ) -> float:
+        """
+        Compute the kurtosis from the mean and central moments.
+
+        Notes
+        -----
+        This follows Polars' ``KurtosisState::finalize``
+        (``polars-compute/src/moment.rs``): the biased estimate
+        ``m4 / m2**2`` (returning NaN when the variance is effectively zero,
+        matching Polars' ``m2 <= (eps * mean)**2`` check), the k-statistic
+        bias correction applied when ``bias=False``, and subtracting 3.0 for
+        Fisher's definition.
+        """
+        eps = sys.float_info.epsilon
+        is_zero = m2 <= (eps * mean) * (eps * mean)
+        biased = math.nan if is_zero else m4 / (m2 * m2)
+        if bias:
+            out = biased
+        else:
+            nm1_nm2 = (n - 1) / (n - 2)
+            np1_nm3 = (n + 1) / (n - 3)
+            nm1_nm3 = (n - 1) / (n - 3)
+            out = nm1_nm2 * (np1_nm3 * biased - 3.0 * nm1_nm3) + 3.0
+        return out - 3.0 if fisher else out
+
+    def do_evaluate(
+        self, df: DataFrame, *, context: ExecutionContext = ExecutionContext.FRAME
+    ) -> Column:
+        """Evaluate this expression given a dataframe for context."""
+        (child,) = self.children
+        column = child.evaluate(df, context=context)
+        n = column.size - column.null_count
+        if n == 0 or (not self.bias and n <= 3):
+            value: float | None = None
+        else:
+            casted = column.astype(self.dtype, stream=df.stream)
+            mean, m2, m4 = self._central_moments(
+                casted.obj, self.dtype.plc_type, stream=df.stream
+            )
+            value = self._finalize(n, mean, m2, m4, fisher=self.fisher, bias=self.bias)
+        return Column(
+            plc.Column.from_scalar(
+                plc.Scalar.from_py(value, self.dtype.plc_type, stream=df.stream),
+                1,
+                stream=df.stream,
+            ),
+            dtype=self.dtype,
+        )

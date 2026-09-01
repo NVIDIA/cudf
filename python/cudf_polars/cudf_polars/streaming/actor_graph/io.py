@@ -13,8 +13,12 @@ from typing import TYPE_CHECKING, Any, cast
 
 import polars as pl
 
+import pylibcudf as plc
 from cudf_streaming.channel_metadata import ChannelMetadata
-from cudf_streaming.table_chunk import TableChunk
+from cudf_streaming.table_chunk import (
+    TableChunk,
+    make_table_chunks_available_or_wait,
+)
 from rapidsmpf.memory.memory_reservation import opaque_memory_usage
 from rapidsmpf.streaming.core.memory_reserve_or_wait import reserve_memory
 from rapidsmpf.streaming.core.message import Message
@@ -43,7 +47,7 @@ from cudf_polars.streaming.io import (
 from cudf_polars.streaming.rank_aware_source import RankAwareSource
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Sequence
+    from collections.abc import Callable, Iterable, Sequence
 
     from rapidsmpf.communicator.communicator import Communicator
     from rapidsmpf.streaming.core.channel import Channel
@@ -57,6 +61,17 @@ if TYPE_CHECKING:
         PartitionInfo,
     )
     from cudf_polars.streaming.io import FusedScan, SplitScan
+    from cudf_polars.utils.config import MaxConcurrentIOTasks
+
+
+def resolve_max_concurrent_io_tasks(
+    max_concurrent_io_tasks: MaxConcurrentIOTasks,
+    paths: Iterable[str],
+) -> int:
+    """Resolve the scan-local IO producer count."""
+    if any(plc.io.SourceInfo._is_remote_uri(path) for path in paths):
+        return max_concurrent_io_tasks.remote
+    return max_concurrent_io_tasks.local
 
 
 class Lineariser:
@@ -280,7 +295,9 @@ def _(
 ) -> tuple[dict[IR, list[Any]], dict[IR, ChannelManager]]:
     config_options = rec.state["config_options"]
     rows_per_partition = config_options.executor.max_rows_per_partition
-    num_producers = rec.state["max_concurrent_io_tasks"]
+    num_producers = resolve_max_concurrent_io_tasks(
+        rec.state["max_concurrent_io_tasks"], ()
+    )
     # Use target_partition_size as the estimated chunk size
     estimated_chunk_bytes = config_options.executor.target_partition_size
 
@@ -674,7 +691,10 @@ def _(
     config_options = rec.state["config_options"]
     executor = config_options.executor
     partition_info = rec.state["partition_info"][ir]
-    num_producers = rec.state["max_concurrent_io_tasks"]
+    num_producers = resolve_max_concurrent_io_tasks(
+        rec.state["max_concurrent_io_tasks"],
+        ir.base_scan.paths,
+    )
     channels: dict[IR, ChannelManager] = {ir: ChannelManager(rec.state["context"])}
 
     assert partition_info.io_plan is not None, "Scan node must have a partition plan"
@@ -765,9 +785,15 @@ async def sink_node(
                 _prepare_sink_directory(ir.sink.path)
                 i = 0
                 while (msg := await ch_in.recv(context)) is not None:
-                    chunk = TableChunk.from_message(
-                        msg, br=context.br()
-                    ).make_available_and_spill(context.br(), allow_overbooking=True)
+                    chunk = TableChunk.from_message(msg, br=context.br())
+                    # Terminal: the chunk is dropped after the write, so its
+                    # whole footprint leaves the system.
+                    chunk, _ = await make_table_chunks_available_or_wait(
+                        context,
+                        chunk,
+                        reserve_extra=0,
+                        net_memory_delta=-chunk.data_alloc_size(),
+                    )
                     df = chunk_to_frame(chunk, child_ir)
                     part_path = f"{path_root}.{str(i).zfill(count_width)}.{suffix}"
                     await ir_context.to_thread(
@@ -785,9 +811,15 @@ async def sink_node(
                 # Write chunks to a single file
                 writer_state = None
                 while (msg := await ch_in.recv(context)) is not None:
-                    chunk = TableChunk.from_message(
-                        msg, br=context.br()
-                    ).make_available_and_spill(context.br(), allow_overbooking=True)
+                    chunk = TableChunk.from_message(msg, br=context.br())
+                    # Terminal: the chunk is dropped after the write, so its
+                    # whole footprint leaves the system.
+                    chunk, _ = await make_table_chunks_available_or_wait(
+                        context,
+                        chunk,
+                        reserve_extra=0,
+                        net_memory_delta=-chunk.data_alloc_size(),
+                    )
                     # Multiple chunks - use chunked writer
                     df = chunk_to_frame(chunk, child_ir)
                     writer_state = await ir_context.to_thread(

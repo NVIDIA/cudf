@@ -79,17 +79,6 @@ jobject allocate_host_buffer(JNIEnv* env,
   return ret;
 }
 
-jobject allocate_host_buffer(JNIEnv* env, jlong amount, jobject host_memory_allocator)
-{
-  auto const host_memory_allocator_class = env->GetObjectClass(host_memory_allocator);
-  auto const allocateMethodId =
-    env->GetMethodID(host_memory_allocator_class, "allocate", HOST_MEMORY_BUFFER_SIG("J"));
-  jobject ret = env->CallObjectMethod(host_memory_allocator, allocateMethodId, amount);
-
-  if (env->ExceptionCheck()) { throw std::runtime_error("allocateHostBuffer threw an exception"); }
-  return ret;
-}
-
 jlong get_host_buffer_address(JNIEnv* env, jobject buffer)
 {
   return env->GetLongField(buffer, Host_buffer_address);

@@ -10165,7 +10165,7 @@ public class TableTest extends CudfTestBase {
              .column(1, 2, 3)
              .column("a", "b", "c")
              .build();
-         Table.ParquetTableWriter writer =
+         ParquetTableWriter writer =
              Table.writeParquetChunked(options, tempFile.getFile())) {
       writer.write(table);
       writer.write(table);
@@ -10193,7 +10193,7 @@ public class TableTest extends CudfTestBase {
              .column("a", "b", "c")
              .build();
          MyBufferConsumer consumer = new MyBufferConsumer();
-         Table.ParquetTableWriter writer =
+         ParquetTableWriter writer =
              Table.writeParquetChunked(options, consumer, allocator)) {
       writer.write(table);
       try (HostMemoryBuffer footer = writer.closeAndGetFooter()) {
@@ -10215,7 +10215,7 @@ public class TableTest extends CudfTestBase {
         .build();
     try (TempFile tempFile = TempFile.create("discarded-footer", ".parquet");
          Table table = new Table.TestBuilder().column(1, 2, 3).build()) {
-      Table.ParquetTableWriter writer = Table.writeParquetChunked(options, tempFile.getFile());
+      ParquetTableWriter writer = Table.writeParquetChunked(options, tempFile.getFile());
       writer.write(table);
       writer.close();
       assertThrows(IllegalStateException.class, writer::closeAndGetFooter);

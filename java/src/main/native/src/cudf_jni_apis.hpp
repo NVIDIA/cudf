@@ -97,11 +97,6 @@ jobject allocate_host_buffer(JNIEnv* env,
                              jobject host_memory_allocator);
 
 /**
- * Allocate a HostMemoryBuffer using the allocator's default pinning preference.
- */
-jobject allocate_host_buffer(JNIEnv* env, jlong amount, jobject host_memory_allocator);
-
-/**
  * Get the address of a HostMemoryBuffer
  */
 jlong get_host_buffer_address(JNIEnv* env, jobject buffer);

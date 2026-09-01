@@ -2243,28 +2243,29 @@ JNIEXPORT jlongArray JNICALL Java_ai_rapids_cudf_Table_readAvro(JNIEnv* env,
 }
 
 JNIEXPORT long JNICALL
-Java_ai_rapids_cudf_Table_writeParquetBufferBegin(JNIEnv* env,
-                                                  jclass,
-                                                  jobjectArray j_col_names,
-                                                  jint j_num_children,
-                                                  jintArray j_children,
-                                                  jbooleanArray j_col_nullability,
-                                                  jobjectArray j_metadata_keys,
-                                                  jobjectArray j_metadata_values,
-                                                  jint j_compression,
-                                                  jint j_row_group_size_rows,
-                                                  jlong j_row_group_size_bytes,
-                                                  jlong j_max_dictionary_size,
-                                                  jint j_dictionary_policy,
-                                                  jint j_stats_freq,
-                                                  jbooleanArray j_isInt96,
-                                                  jintArray j_precisions,
-                                                  jbooleanArray j_is_map,
-                                                  jbooleanArray j_is_binary,
-                                                  jbooleanArray j_hasParquetFieldIds,
-                                                  jintArray j_parquetFieldIds,
-                                                  jobject consumer,
-                                                  jobject host_memory_allocator)
+Java_ai_rapids_cudf_ParquetTableWriter_writeParquetBufferBegin(
+  JNIEnv* env,
+  jclass,
+  jobjectArray j_col_names,
+  jint j_num_children,
+  jintArray j_children,
+  jbooleanArray j_col_nullability,
+  jobjectArray j_metadata_keys,
+  jobjectArray j_metadata_values,
+  jint j_compression,
+  jint j_row_group_size_rows,
+  jlong j_row_group_size_bytes,
+  jlong j_max_dictionary_size,
+  jint j_dictionary_policy,
+  jint j_stats_freq,
+  jbooleanArray j_isInt96,
+  jintArray j_precisions,
+  jbooleanArray j_is_map,
+  jbooleanArray j_is_binary,
+  jbooleanArray j_hasParquetFieldIds,
+  jintArray j_parquetFieldIds,
+  jobject consumer,
+  jobject host_memory_allocator)
 {
   JNI_NULL_CHECK(env, j_col_names, "null columns", 0);
   JNI_NULL_CHECK(env, j_col_nullability, "null nullability", 0);
@@ -2329,27 +2330,28 @@ Java_ai_rapids_cudf_Table_writeParquetBufferBegin(JNIEnv* env,
 }
 
 JNIEXPORT long JNICALL
-Java_ai_rapids_cudf_Table_writeParquetFileBegin(JNIEnv* env,
-                                                jclass,
-                                                jobjectArray j_col_names,
-                                                jint j_num_children,
-                                                jintArray j_children,
-                                                jbooleanArray j_col_nullability,
-                                                jobjectArray j_metadata_keys,
-                                                jobjectArray j_metadata_values,
-                                                jint j_compression,
-                                                jint j_row_group_size_rows,
-                                                jlong j_row_group_size_bytes,
-                                                jlong j_max_dictionary_size,
-                                                jint j_dictionary_policy,
-                                                jint j_stats_freq,
-                                                jbooleanArray j_isInt96,
-                                                jintArray j_precisions,
-                                                jbooleanArray j_is_map,
-                                                jbooleanArray j_is_binary,
-                                                jbooleanArray j_hasParquetFieldIds,
-                                                jintArray j_parquetFieldIds,
-                                                jstring j_output_path)
+Java_ai_rapids_cudf_ParquetTableWriter_writeParquetFileBegin(
+  JNIEnv* env,
+  jclass,
+  jobjectArray j_col_names,
+  jint j_num_children,
+  jintArray j_children,
+  jbooleanArray j_col_nullability,
+  jobjectArray j_metadata_keys,
+  jobjectArray j_metadata_values,
+  jint j_compression,
+  jint j_row_group_size_rows,
+  jlong j_row_group_size_bytes,
+  jlong j_max_dictionary_size,
+  jint j_dictionary_policy,
+  jint j_stats_freq,
+  jbooleanArray j_isInt96,
+  jintArray j_precisions,
+  jbooleanArray j_is_map,
+  jbooleanArray j_is_binary,
+  jbooleanArray j_hasParquetFieldIds,
+  jintArray j_parquetFieldIds,
+  jstring j_output_path)
 {
   JNI_NULL_CHECK(env, j_col_names, "null columns", 0);
   JNI_NULL_CHECK(env, j_col_nullability, "null nullability", 0);
@@ -2413,7 +2415,7 @@ Java_ai_rapids_cudf_Table_writeParquetFileBegin(JNIEnv* env,
   JNI_CATCH(env, 0);
 }
 
-JNIEXPORT void JNICALL Java_ai_rapids_cudf_Table_writeParquetChunk(
+JNIEXPORT void JNICALL Java_ai_rapids_cudf_ParquetTableWriter_writeParquetChunk(
   JNIEnv* env, jclass, jlong j_state, jlong j_table, jlong mem_size)
 {
   JNI_NULL_CHECK(env, j_table, "null table", );
@@ -2437,7 +2439,9 @@ JNIEXPORT void JNICALL Java_ai_rapids_cudf_Table_writeParquetChunk(
   JNI_CATCH(env, );
 }
 
-JNIEXPORT void JNICALL Java_ai_rapids_cudf_Table_writeParquetEnd(JNIEnv* env, jclass, jlong j_state)
+JNIEXPORT void JNICALL Java_ai_rapids_cudf_ParquetTableWriter_writeParquetEnd(JNIEnv* env,
+                                                                              jclass,
+                                                                              jlong j_state)
 {
   JNI_NULL_CHECK(env, j_state, "null state", );
 
@@ -2453,7 +2457,7 @@ JNIEXPORT void JNICALL Java_ai_rapids_cudf_Table_writeParquetEnd(JNIEnv* env, jc
   JNI_CATCH(env, );
 }
 
-JNIEXPORT jobject JNICALL Java_ai_rapids_cudf_Table_writeParquetEndAndGetFooter(
+JNIEXPORT jobject JNICALL Java_ai_rapids_cudf_ParquetTableWriter_writeParquetEndAndGetFooter(
   JNIEnv* env, jclass, jlong j_state, jobject host_memory_allocator)
 {
   JNI_NULL_CHECK(env, j_state, "null state", nullptr);
@@ -2470,7 +2474,7 @@ JNIEXPORT jobject JNICALL Java_ai_rapids_cudf_Table_writeParquetEndAndGetFooter(
     CUDF_EXPECTS(footer != nullptr, "Parquet writer returned a null footer");
 
     auto result = cudf::jni::allocate_host_buffer(
-      env, static_cast<jlong>(footer->size()), host_memory_allocator);
+      env, static_cast<jlong>(footer->size()), true, host_memory_allocator);
     auto const result_size = cudf::jni::get_host_buffer_length(env, result);
     CUDF_EXPECTS(result_size == static_cast<jlong>(footer->size()),
                  "Allocated host buffer size does not match the Parquet footer");

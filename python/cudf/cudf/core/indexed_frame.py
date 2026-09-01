@@ -5,8 +5,8 @@
 from __future__ import annotations
 
 import copy
-import operator
 import itertools
+import operator
 import textwrap
 import warnings
 from collections import Counter
@@ -2501,17 +2501,12 @@ class IndexedFrame(Frame):
         right_op = operator.le if include_end else operator.lt
 
         if start_secs <= end_secs:
-            mask = left_op(row_secs, start_secs) & right_op(
-                row_secs, end_secs
-            )
+            mask = left_op(row_secs, start_secs) & right_op(row_secs, end_secs)
         else:
-            mask = left_op(row_secs, start_secs) | right_op(
-                row_secs, end_secs
-            )
+            mask = left_op(row_secs, start_secs) | right_op(row_secs, end_secs)
 
         return self[mask]
 
-    
     @_performance_tracking
     def at_time(self, time, axis: int = 0) -> Self:
         """
@@ -2561,7 +2556,6 @@ class IndexedFrame(Frame):
         row_secs = idx.hour * 3600 + idx.minute * 60 + idx.second
 
         return self[row_secs == target_secs]
-    
 
     @property
     def loc(self):

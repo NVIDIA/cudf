@@ -14,10 +14,16 @@ from cudf_streaming.channel_metadata import Ordering
 from cudf_streaming.partition_utils import (
     packed_data_from_cudf_packed_columns,
     unpack_and_concat,
+    unpack_and_concat_cost,
 )
-from cudf_streaming.table_chunk import TableChunk
+from cudf_streaming.table_chunk import (
+    TableChunk,
+    make_table_chunks_available_or_wait,
+)
 from pylibcudf.contiguous_split import pack
+from rapidsmpf.memory.memory_reservation import opaque_memory_usage
 from rapidsmpf.streaming.coll.sparse_alltoall import SparseAlltoall
+from rapidsmpf.streaming.core.memory_reserve_or_wait import reserve_memory
 from rapidsmpf.streaming.core.message import Message
 
 from cudf_polars.containers import DataFrame, DataType
@@ -305,14 +311,25 @@ def _remote_pids_from_source(
     ]
 
 
-def _unpack_remote_partition(
+async def _unpack_remote_partition(
+    context: Context,
     packed: PackedData,
     stream: Stream,
-    br: BufferResource,
 ) -> TableChunk:
     """Unpack one remote output-partition payload."""
+    br = context.br()
+    partitions = [packed]
+    # The cost covers the concatenated output plus moving any
+    # host-resident partitions to device. The packed inputs stay live
+    # until the concat finishes and are released after, so the net
+    # change is about zero.
+    reservation = await reserve_memory(
+        context,
+        unpack_and_concat_cost(partitions),
+        net_memory_delta=0,
+    )
     return TableChunk.from_pylibcudf_table(
-        unpack_and_concat([packed], stream=stream, br=br),
+        unpack_and_concat(partitions, stream=stream, br=br, reservation=reservation),
         stream,
         exclusive_view=True,
         br=br,
@@ -324,7 +341,12 @@ def _copy_to_owned_chunk(
     stream: Stream,
     br: BufferResource,
 ) -> TableChunk:
-    """Copy a table view into a uniquely-owned chunk."""
+    """
+    Copy a table view into a uniquely-owned chunk.
+
+    Makes no memory reservation of its own. The caller must reserve the
+    copy's device memory, see ``_OutputPartitionBuffer.collect_output_partition``.
+    """
     table = table.copy(stream=stream, mr=br.device_mr)
     return TableChunk.from_pylibcudf_table(
         table,
@@ -370,15 +392,26 @@ class _OutputPartitionBuffer:
             if msg is None:
                 self.input_done = True
                 break
-            chunk = TableChunk.from_message(
-                msg, br=self.context.br()
-            ).make_available_and_spill(self.context.br(), allow_overbooking=True)
-            if chunk.table_view().num_rows() == 0:
+            chunk = TableChunk.from_message(msg, br=self.context.br())
+            if chunk.shape[0] == 0:
+                # Nothing to split, so skip the unspill and its reservation.
                 continue
-            with stream_ordered_after(
-                self.context.br().stream_pool.get_stream,
-                upstreams=(chunk.stream, self.boundary_chunk.stream),
-            ) as stream:
+            # The pieces copied out below hold the same rows as the chunk, so
+            # they need room for roughly a second copy of it and leave the
+            # total unchanged.
+            chunk, extra = await make_table_chunks_available_or_wait(
+                self.context,
+                chunk,
+                reserve_extra=chunk.data_alloc_size(),
+                net_memory_delta=0,
+            )
+            with (
+                opaque_memory_usage(extra),
+                stream_ordered_after(
+                    self.context.br().stream_pool.get_stream,
+                    upstreams=(chunk.stream, self.boundary_chunk.stream),
+                ) as stream,
+            ):
                 table = chunk.table_view()
                 splits = _split_points(
                     table,
@@ -582,7 +615,7 @@ async def _adjust_ordering_impl(
                 exchange.extract(source_rank),
                 strict=True,
             ):
-                chunk = _unpack_remote_partition(packed, stream, context.br())
+                chunk = await _unpack_remote_partition(context, packed, stream)
                 if chunk.table_view().num_rows() > 0:
                     _store_chunk(context, remote_pieces, pid, chunk)
             pieces_by_source[source_rank] = remote_pieces

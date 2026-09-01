@@ -15,7 +15,10 @@ import polars as pl
 
 import pylibcudf as plc
 from cudf_streaming.channel_metadata import ChannelMetadata
-from cudf_streaming.table_chunk import TableChunk
+from cudf_streaming.table_chunk import (
+    TableChunk,
+    make_table_chunks_available_or_wait,
+)
 from rapidsmpf.memory.memory_reservation import opaque_memory_usage
 from rapidsmpf.streaming.core.memory_reserve_or_wait import reserve_memory
 from rapidsmpf.streaming.core.message import Message
@@ -782,9 +785,15 @@ async def sink_node(
                 _prepare_sink_directory(ir.sink.path)
                 i = 0
                 while (msg := await ch_in.recv(context)) is not None:
-                    chunk = TableChunk.from_message(
-                        msg, br=context.br()
-                    ).make_available_and_spill(context.br(), allow_overbooking=True)
+                    chunk = TableChunk.from_message(msg, br=context.br())
+                    # Terminal: the chunk is dropped after the write, so its
+                    # whole footprint leaves the system.
+                    chunk, _ = await make_table_chunks_available_or_wait(
+                        context,
+                        chunk,
+                        reserve_extra=0,
+                        net_memory_delta=-chunk.data_alloc_size(),
+                    )
                     df = chunk_to_frame(chunk, child_ir)
                     part_path = f"{path_root}.{str(i).zfill(count_width)}.{suffix}"
                     await ir_context.to_thread(
@@ -802,9 +811,15 @@ async def sink_node(
                 # Write chunks to a single file
                 writer_state = None
                 while (msg := await ch_in.recv(context)) is not None:
-                    chunk = TableChunk.from_message(
-                        msg, br=context.br()
-                    ).make_available_and_spill(context.br(), allow_overbooking=True)
+                    chunk = TableChunk.from_message(msg, br=context.br())
+                    # Terminal: the chunk is dropped after the write, so its
+                    # whole footprint leaves the system.
+                    chunk, _ = await make_table_chunks_available_or_wait(
+                        context,
+                        chunk,
+                        reserve_extra=0,
+                        net_memory_delta=-chunk.data_alloc_size(),
+                    )
                     # Multiple chunks - use chunked writer
                     df = chunk_to_frame(chunk, child_ir)
                     writer_state = await ir_context.to_thread(

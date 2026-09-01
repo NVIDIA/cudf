@@ -10,6 +10,7 @@
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#project-information
 
 import datetime
+import os
 
 import dask_cudf
 from packaging.version import Version
@@ -59,6 +60,7 @@ html_static_path = ["_static"]
 pygments_style = "sphinx"
 
 html_theme_options = {
+    "public_docs_features": os.environ.get("CI") == "true",
     "external_links": [],
     "github_url": "https://github.com/NVIDIA/cudf",
     "show_toc_level": 1,

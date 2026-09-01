@@ -852,7 +852,7 @@ async def allgather_and_reduce(
     """
     allgather = AllGatherManager(context, comm, collective_id)
     with allgather.inserting() as inserter:
-        inserter.insert(0, local_chunk)
+        await inserter.insert(0, local_chunk)
     stream = ir_context.get_cuda_stream()
     concat_chunk = TableChunk.from_pylibcudf_table(
         await allgather.extract_concatenated(stream, ir_context=ir_context),

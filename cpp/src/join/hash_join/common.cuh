@@ -5,6 +5,7 @@
 #pragma once
 
 #include "hash_join_impl.cuh"
+#include "join/join_common_utils.hpp"
 
 #include <cudf/detail/join/hash_join.hpp>
 #include <cudf/hashing/detail/murmurhash3_x86_32.cuh>

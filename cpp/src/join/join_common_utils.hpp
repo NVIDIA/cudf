@@ -31,6 +31,15 @@ constexpr int DEFAULT_JOIN_BLOCK_SIZE = 128;
  */
 double checked_load_factor(double load_factor);
 
+/**
+ * @brief Validates the probe-side input to a hash join.
+ *
+ * @param right Build-side join keys
+ * @param left Probe-side join keys
+ * @param has_nulls Whether the build-side hash table supports nulls
+ */
+void validate_hash_join_probe(table_view const& right, table_view const& left, bool has_nulls);
+
 // Convenient alias for a pair of unique pointers to device uvectors.
 using VectorPair = std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
                              std::unique_ptr<rmm::device_uvector<size_type>>>;

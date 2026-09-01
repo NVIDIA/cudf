@@ -250,8 +250,21 @@ class IR(Node["IR"]):
     _non_child_args: tuple[Any, ...]
     # The number of non-child arguments to pass to do_evaluate.
     _n_non_child_args: ClassVar[int]
+    # Class-level opt-in for :attr:`preserves_output_order`.
+    _preserves_output_order: ClassVar[bool] = False
     schema: Schema
     """Mapping from column names to their data types."""
+
+    @property
+    def preserves_output_order(self) -> bool:
+        """
+        Whether output rows appear in the same relative order as this node's input.
+
+        Only meaningful for nodes with a single input. Multi-input nodes
+        (``Join``, ``Union``) need per-child reasoning and are handled by
+        their streaming actors.
+        """
+        return self._preserves_output_order
 
     def get_hashable(self) -> Hashable:
         """
@@ -1560,6 +1573,7 @@ class Cache(IR):
     Used for CSE at the plan level.
     """
 
+    _preserves_output_order: ClassVar[bool] = True
     __slots__ = ("key", "refcount")
     _non_child = ("schema", "key", "refcount")
     _n_non_child_args = 2
@@ -1784,6 +1798,11 @@ class Select(IR):
         ):  # pragma: no cover
             raise NotImplementedError(f"Unsupported scan type: {df.typ}")
 
+    @property
+    def preserves_output_order(self) -> bool:
+        """Whether the selected expressions keep input appearance order."""
+        return all(e.all_pointwise() for e in self.exprs)
+
     @staticmethod
     def _is_len_expr(exprs: tuple[expr.NamedExpr, ...]) -> bool:  # pragma: no cover
         if len(exprs) == 1:
@@ -1913,6 +1932,7 @@ class Reduce(IR):
 class Rolling(IR):
     """Perform a (possibly grouped) rolling aggregation."""
 
+    _preserves_output_order: ClassVar[bool] = True
     __slots__ = (
         "agg_requests",
         "closed_window",
@@ -2160,6 +2180,11 @@ class GroupBy(IR):
             maintain_order,
             self.zlice,
         )
+
+    @property
+    def preserves_output_order(self) -> bool:
+        """Whether grouped rows keep input appearance order."""
+        return self.maintain_order
 
     @classmethod
     @log_do_evaluate
@@ -3158,6 +3183,11 @@ class HStack(IR):
         self._non_child_args = (self.columns, self.should_broadcast)
         self.children = (df,)
 
+    @property
+    def preserves_output_order(self) -> bool:
+        """Whether the stacked expressions keep input appearance order."""
+        return all(e.all_pointwise() for e in self.columns)
+
     @classmethod
     @log_do_evaluate
     @nvtx_annotate_cudf_polars(message="HStack")
@@ -3221,6 +3251,11 @@ class Distinct(IR):
         self.stable = stable
         self._non_child_args = (keep, subset, zlice, stable)
         self.children = (df,)
+
+    @property
+    def preserves_output_order(self) -> bool:
+        """Whether distinct rows keep input appearance order."""
+        return self.stable
 
     _KEEP_MAP: ClassVar[dict[str, plc.stream_compaction.DuplicateKeepOption]] = {
         "first": plc.stream_compaction.DuplicateKeepOption.KEEP_FIRST,
@@ -3370,6 +3405,7 @@ class Sort(IR):
 class Slice(IR):
     """Slice a dataframe."""
 
+    _preserves_output_order: ClassVar[bool] = True
     __slots__ = ("length", "offset")
     _non_child = ("schema", "offset", "length")
     _n_non_child_args = 2
@@ -3398,6 +3434,7 @@ class Slice(IR):
 class Filter(IR):
     """Filter a dataframe with a boolean mask."""
 
+    _preserves_output_order: ClassVar[bool] = True
     __slots__ = ("mask",)
     _non_child = ("schema", "mask")
     _n_non_child_args = 1
@@ -3423,6 +3460,7 @@ class Filter(IR):
 class Projection(IR):
     """Select a subset of columns from a dataframe."""
 
+    _preserves_output_order: ClassVar[bool] = True
     __slots__ = ()
     _non_child = ("schema",)
     _n_non_child_args = 1
@@ -3610,6 +3648,11 @@ class MapFunction(IR):
                     tuple(nulls_last),
                 )
         self._non_child_args = (schema, name, self.options)
+
+    @property
+    def preserves_output_order(self) -> bool:
+        """Whether this map keeps input appearance order."""
+        return self.name in {"rechunk", "rename", "row_index", "hint_sorted"}
 
     def get_hashable(self) -> Hashable:
         """

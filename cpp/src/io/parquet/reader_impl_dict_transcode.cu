@@ -204,6 +204,11 @@ void remap_dict_indices_by_chunk(cudf::device_span<int32_t> indices,
       // Chunk owning `row` is the last offset <= row.
       auto const it = thrust::upper_bound(thrust::seq, row_offsets.begin(), row_offsets.end(), row);
       auto const k  = static_cast<size_type>(it - row_offsets.begin() - 1);
+      // If the chunk has no keys, the index is 0.
+      if (key_counts_prefix[k] == key_counts_prefix[k + 1]) {
+        indices[row] = 0;
+        return;
+      }
       auto const stacked_pos = key_counts_prefix[k] + indices[row];
       indices[row]           = stacked_to_unique[stacked_pos];
     });

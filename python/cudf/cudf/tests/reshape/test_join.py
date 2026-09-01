@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 
@@ -200,8 +200,9 @@ def test_dataframe_join_combine_cats():
     lhs_pd.index = lhs_pd.index.astype(pd.StringDtype(na_value=np.nan))
     rhs_pd.index = rhs_pd.index.astype(pd.StringDtype(na_value=np.nan))
 
+    # Categorical keys with different category sets decategorize to their
+    # common (string) dtype, matching pandas.
     expect = lhs_pd.join(rhs_pd, how="outer")
-    expect.index = expect.index.astype("category")
     got = lhs.join(rhs, how="outer")
 
     assert_eq(expect.index.sort_values(), got.index.sort_values())
@@ -238,15 +239,12 @@ def test_dataframe_join_mismatch_cats(how):
     got = join_gdf.fillna(-1).to_pandas()
     expect = join_pdf.fillna(-1)  # note: cudf join doesn't mask NA
 
-    # We yield a categorical here whereas pandas gives Object.
-    expect.index = expect.index.astype("category")
     # cudf creates the columns in different order than pandas for right join
     if how == "right":
         got = got[["data_col_left", "data_col_right"]]
 
-    expect.data_col_right = expect.data_col_right.astype(np.int64)
-    expect.data_col_left = expect.data_col_left.astype(np.int64)
-
+    # Unmatched rows introduce NaN, upcasting the integer data columns to
+    # float64 (matching pandas).
     assert_join_results_equal(expect, got, how=how, check_categorical=False)
 
 

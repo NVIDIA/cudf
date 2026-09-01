@@ -89,7 +89,7 @@ CUDF_HOST_DEVICE inline constexpr Rep ipow(T exponent)
   // Note: Including an array here introduces too much register pressure
   // https://simple.wikipedia.org/wiki/Exponentiation_by_squaring
   // This is the iterative equivalent of the recursive definition (faster)
-  // Quick-bench for squaring: http://quick-bench.com/Wg7o7HYQC9FW5M0CO0wQAjSwP_Y
+  // Quick-bench for squaring: https://quick-bench.com:443/q/Wg7o7HYQC9FW5M0CO0wQAjSwP_Y
   if (exponent == 0) { return static_cast<Rep>(1); }
   auto extra  = static_cast<Rep>(1);
   auto square = static_cast<Rep>(Base);

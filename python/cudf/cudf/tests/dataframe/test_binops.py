@@ -420,7 +420,7 @@ def test_df_sr_binop(psr, colnames, binary_op):
         operator.mod,
         operator.pow,
         # comparison ops will temporarily XFAIL
-        # see PR  https://github.com/rapidsai/cudf/pull/7491
+        # see PR  https://github.com/NVIDIA/cudf/pull/7491
         pytest.param(operator.eq, marks=pytest.mark.xfail),
         pytest.param(operator.lt, marks=pytest.mark.xfail),
         pytest.param(operator.le, marks=pytest.mark.xfail),
@@ -486,14 +486,10 @@ def test_different_shapes_and_same_columns(arithmetic_op):
     assert_eq(cd_frame, pd_frame)
 
 
-def test_different_shapes_and_columns_with_unaligned_indices(
-    request, arithmetic_op
-):
-    if arithmetic_op is operator.pow:
-        # cudf's INT_POW computes in int64 and overflows where pandas
-        # computes float pow
-        msg = "int64 INT_POW overflows where pandas computes float pow"
-        request.applymarker(pytest.mark.xfail(reason=msg))
+def test_different_shapes_and_columns_with_unaligned_indices(arithmetic_op):
+    # ``pow`` no longer overflows here: aligning the unaligned indices
+    # introduces missing rows, which now promote the integer operands to
+    # float64 (pandas semantics), so the pow is computed in float.
 
     # Test with a RangeIndex
     pdf1 = pd.DataFrame({"x": [4, 3, 2, 1], "y": [7, 3, 8, 6]})

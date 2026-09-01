@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import ast
 import functools
@@ -55,7 +55,7 @@ from .types cimport DataType
 
 
 # Aliases for simplicity
-ctypedef unique_ptr[libcudf_exp.expression] expression_ptr
+ctypedef unique_ptr[libcudf_exp.expression] _expression_ptr
 
 __all__ = [
     "ASTOperator",
@@ -108,111 +108,111 @@ cdef class Literal(Expression):
         # TODO: Accept type-erased scalar in AST C++ code
         # Then a lot of this code can be deleted
         if tid == type_id.INT64:
-            self.c_obj = <expression_ptr> move(make_unique[libcudf_exp.literal](
+            self.c_obj = <_expression_ptr> move(make_unique[libcudf_exp.literal](
                 <numeric_scalar[int64_t] &>dereference(self.scalar.c_obj)
             ))
         elif tid == type_id.INT32:
-            self.c_obj = <expression_ptr> move(make_unique[libcudf_exp.literal](
+            self.c_obj = <_expression_ptr> move(make_unique[libcudf_exp.literal](
                 <numeric_scalar[int32_t] &>dereference(self.scalar.c_obj)
             ))
         elif tid == type_id.INT16:
-            self.c_obj = <expression_ptr> move(make_unique[libcudf_exp.literal](
+            self.c_obj = <_expression_ptr> move(make_unique[libcudf_exp.literal](
                 <numeric_scalar[int16_t] &>dereference(self.scalar.c_obj)
             ))
         elif tid == type_id.INT8:
-            self.c_obj = <expression_ptr> move(make_unique[libcudf_exp.literal](
+            self.c_obj = <_expression_ptr> move(make_unique[libcudf_exp.literal](
                 <numeric_scalar[int8_t] &>dereference(self.scalar.c_obj)
             ))
         elif tid == type_id.UINT64:
-            self.c_obj = <expression_ptr> move(make_unique[libcudf_exp.literal](
+            self.c_obj = <_expression_ptr> move(make_unique[libcudf_exp.literal](
                 <numeric_scalar[uint64_t] &>dereference(self.scalar.c_obj)
             ))
         elif tid == type_id.UINT32:
-            self.c_obj = <expression_ptr> move(make_unique[libcudf_exp.literal](
+            self.c_obj = <_expression_ptr> move(make_unique[libcudf_exp.literal](
                 <numeric_scalar[uint32_t] &>dereference(self.scalar.c_obj)
             ))
         elif tid == type_id.UINT16:
-            self.c_obj = <expression_ptr> move(make_unique[libcudf_exp.literal](
+            self.c_obj = <_expression_ptr> move(make_unique[libcudf_exp.literal](
                 <numeric_scalar[uint16_t] &>dereference(self.scalar.c_obj)
             ))
         elif tid == type_id.UINT8:
-            self.c_obj = <expression_ptr> move(make_unique[libcudf_exp.literal](
+            self.c_obj = <_expression_ptr> move(make_unique[libcudf_exp.literal](
                 <numeric_scalar[uint8_t] &>dereference(self.scalar.c_obj)
             ))
         elif tid == type_id.BOOL8:
-            self.c_obj = <expression_ptr> move(make_unique[libcudf_exp.literal](
+            self.c_obj = <_expression_ptr> move(make_unique[libcudf_exp.literal](
                 <numeric_scalar[bool] &>dereference(self.scalar.c_obj)
             ))
         elif tid == type_id.FLOAT64:
-            self.c_obj = <expression_ptr> move(make_unique[libcudf_exp.literal](
+            self.c_obj = <_expression_ptr> move(make_unique[libcudf_exp.literal](
                 <numeric_scalar[double] &>dereference(self.scalar.c_obj)
             ))
         elif tid == type_id.FLOAT32:
-            self.c_obj = <expression_ptr> move(make_unique[libcudf_exp.literal](
+            self.c_obj = <_expression_ptr> move(make_unique[libcudf_exp.literal](
                 <numeric_scalar[float] &>dereference(self.scalar.c_obj)
             ))
         elif tid == type_id.STRING:
-            self.c_obj = <expression_ptr> move(make_unique[libcudf_exp.literal](
+            self.c_obj = <_expression_ptr> move(make_unique[libcudf_exp.literal](
                 <string_scalar &>dereference(self.scalar.c_obj)
             ))
         elif tid == type_id.DECIMAL32:
-            self.c_obj = <expression_ptr> move(make_unique[libcudf_exp.literal](
+            self.c_obj = <_expression_ptr> move(make_unique[libcudf_exp.literal](
                 <fixed_point_scalar[decimal32] &>dereference(self.scalar.c_obj)
             ))
         elif tid == type_id.DECIMAL64:
-            self.c_obj = <expression_ptr> move(make_unique[libcudf_exp.literal](
+            self.c_obj = <_expression_ptr> move(make_unique[libcudf_exp.literal](
                 <fixed_point_scalar[decimal64] &>dereference(self.scalar.c_obj)
             ))
         elif tid == type_id.DECIMAL128:
-            self.c_obj = <expression_ptr> move(make_unique[libcudf_exp.literal](
+            self.c_obj = <_expression_ptr> move(make_unique[libcudf_exp.literal](
                 <fixed_point_scalar[decimal128] &>dereference(self.scalar.c_obj)
             ))
         elif tid == type_id.TIMESTAMP_NANOSECONDS:
-            self.c_obj = <expression_ptr> move(make_unique[libcudf_exp.literal](
+            self.c_obj = <_expression_ptr> move(make_unique[libcudf_exp.literal](
                 <timestamp_scalar[timestamp_ns] &>dereference(self.scalar.c_obj)
             ))
         elif tid == type_id.TIMESTAMP_MICROSECONDS:
-            self.c_obj = <expression_ptr> move(make_unique[libcudf_exp.literal](
+            self.c_obj = <_expression_ptr> move(make_unique[libcudf_exp.literal](
                 <timestamp_scalar[timestamp_us] &>dereference(self.scalar.c_obj)
             ))
         elif tid == type_id.TIMESTAMP_MILLISECONDS:
-            self.c_obj = <expression_ptr> move(make_unique[libcudf_exp.literal](
+            self.c_obj = <_expression_ptr> move(make_unique[libcudf_exp.literal](
                 <timestamp_scalar[timestamp_ms] &>dereference(self.scalar.c_obj)
             ))
         elif tid == type_id.TIMESTAMP_MILLISECONDS:
-            self.c_obj = <expression_ptr> move(make_unique[libcudf_exp.literal](
+            self.c_obj = <_expression_ptr> move(make_unique[libcudf_exp.literal](
                 <timestamp_scalar[timestamp_ms] &>dereference(self.scalar.c_obj)
             ))
         elif tid == type_id.TIMESTAMP_SECONDS:
-            self.c_obj = <expression_ptr> move(make_unique[libcudf_exp.literal](
+            self.c_obj = <_expression_ptr> move(make_unique[libcudf_exp.literal](
                 <timestamp_scalar[timestamp_s] &>dereference(self.scalar.c_obj)
             ))
         elif tid == type_id.TIMESTAMP_DAYS:
-            self.c_obj = <expression_ptr> move(make_unique[libcudf_exp.literal](
+            self.c_obj = <_expression_ptr> move(make_unique[libcudf_exp.literal](
                 <timestamp_scalar[timestamp_D] &>dereference(self.scalar.c_obj)
             ))
         elif tid == type_id.DURATION_NANOSECONDS:
-            self.c_obj = <expression_ptr> move(make_unique[libcudf_exp.literal](
+            self.c_obj = <_expression_ptr> move(make_unique[libcudf_exp.literal](
                 <duration_scalar[duration_ns] &>dereference(self.scalar.c_obj)
             ))
         elif tid == type_id.DURATION_MICROSECONDS:
-            self.c_obj = <expression_ptr> move(make_unique[libcudf_exp.literal](
+            self.c_obj = <_expression_ptr> move(make_unique[libcudf_exp.literal](
                 <duration_scalar[duration_us] &>dereference(self.scalar.c_obj)
             ))
         elif tid == type_id.DURATION_MILLISECONDS:
-            self.c_obj = <expression_ptr> move(make_unique[libcudf_exp.literal](
+            self.c_obj = <_expression_ptr> move(make_unique[libcudf_exp.literal](
                 <duration_scalar[duration_ms] &>dereference(self.scalar.c_obj)
             ))
         elif tid == type_id.DURATION_MILLISECONDS:
-            self.c_obj = <expression_ptr> move(make_unique[libcudf_exp.literal](
+            self.c_obj = <_expression_ptr> move(make_unique[libcudf_exp.literal](
                 <duration_scalar[duration_ms] &>dereference(self.scalar.c_obj)
             ))
         elif tid == type_id.DURATION_SECONDS:
-            self.c_obj = <expression_ptr> move(make_unique[libcudf_exp.literal](
+            self.c_obj = <_expression_ptr> move(make_unique[libcudf_exp.literal](
                 <duration_scalar[duration_s] &>dereference(self.scalar.c_obj)
             ))
         elif tid == type_id.DURATION_DAYS:
-            self.c_obj = <expression_ptr> move(make_unique[libcudf_exp.literal](
+            self.c_obj = <_expression_ptr> move(make_unique[libcudf_exp.literal](
                 <duration_scalar[duration_D] &>dereference(self.scalar.c_obj)
             ))
         else:
@@ -239,7 +239,7 @@ cdef class ColumnReference(Expression):
         size_type index,
         table_reference table_source=table_reference.LEFT
     ):
-        self.c_obj = <expression_ptr>move(make_unique[libcudf_exp.column_reference](
+        self.c_obj = <_expression_ptr>move(make_unique[libcudf_exp.column_reference](
             index, table_source
         ))
 
@@ -263,11 +263,11 @@ cdef class Operation(Expression):
         self.left = left
         self.right = right
         if right is None:
-            self.c_obj = <expression_ptr> move(make_unique[libcudf_exp.operation](
+            self.c_obj = <_expression_ptr> move(make_unique[libcudf_exp.operation](
                 op, dereference(left.c_obj)
             ))
         else:
-            self.c_obj = <expression_ptr> move(make_unique[libcudf_exp.operation](
+            self.c_obj = <_expression_ptr> move(make_unique[libcudf_exp.operation](
                 op, dereference(left.c_obj), dereference(right.c_obj)
             ))
 
@@ -284,7 +284,7 @@ cdef class ColumnNameReference(Expression):
         (provided when the expression is evaluated).
     """
     def __cinit__(self, str name):
-        self.c_obj = <expression_ptr> \
+        self.c_obj = <_expression_ptr> \
             move(make_unique[libcudf_exp.column_name_reference](
                 <string>(name.encode("utf-8"))
             ))
@@ -360,7 +360,7 @@ _python_cudf_function_map = {
 }
 
 
-class ExpressionTransformer(ast.NodeVisitor):
+class _ExpressionTransformer(ast.NodeVisitor):
     """A NodeVisitor specialized for constructing a libcudf expression tree.
 
     This visitor is designed to handle AST nodes that have libcudf equivalents.
@@ -476,7 +476,7 @@ class ExpressionTransformer(ast.NodeVisitor):
 
 
 @functools.lru_cache(256)
-def to_expression(str expr, tuple column_names):
+def to_expression(str expr, tuple column_names: tuple[str, ...]) -> Expression:
     """
     Create an expression for `pylibcudf.transform.compute_column`.
 
@@ -498,7 +498,7 @@ def to_expression(str expr, tuple column_names):
     Expression
         Expression for the given expr and col_names
     """
-    visitor = ExpressionTransformer(
+    visitor = _ExpressionTransformer(
         {name: ColumnReference(i) for i, name in enumerate(column_names)}
     )
     return visitor.visit(ast.parse(expr))

@@ -31,7 +31,7 @@ from cudf.testing._utils import (
 # Removal of these deprecated features is no longer imminent. They will not be
 # removed until a suitable alternative has been implemented. As a result, we
 # also do not want to stop testing them yet.
-# https://github.com/rapidsai/cudf/issues/11519
+# https://github.com/NVIDIA/cudf/issues/11519
 pytestmark = pytest.mark.filterwarnings(
     "ignore:(num_rows|skiprows) is deprecated and will be removed."
 )
@@ -868,7 +868,12 @@ def test_orc_write_bool_statistics(tmp_path, datadir, nrows):
             assert normalized_equals(actual_valid_count, stats_valid_count)
 
 
+@pytest.mark.skipif(
+    version.parse(pa.__version__) >= version.parse("24"),
+    reason="PyArrow 24 cannot read legacy out-of-range ORC timestamps",
+)
 def test_orc_reader_gmt_timestamps(datadir):
+
     path = datadir / "TestOrcFile.gmt.orc"
 
     pdf = pd.read_orc(path)
@@ -1430,7 +1435,12 @@ def test_chunked_orc_writer_lists():
     assert_eq(expect, got)
 
 
+@pytest.mark.skipif(
+    version.parse(pa.__version__) >= version.parse("24"),
+    reason="PyArrow 24 cannot read legacy out-of-range ORC timestamps",
+)
 def test_writer_timestamp_stream_size(datadir, tmp_path):
+
     pdf_fname = datadir / "TestOrcFile.largeTimestamps.orc"
     gdf_fname = tmp_path / "gdf.orc"
 
@@ -1726,7 +1736,7 @@ def test_orc_columns_and_index_param(index_obj, index, columns):
         ),
     ],
 )
-@pytest.mark.xfail(reason="https://github.com/rapidsai/cudf/issues/12026")
+@pytest.mark.xfail(reason="https://github.com/NVIDIA/cudf/issues/12026")
 def test_orc_columns_and_index_param_read_index(index_obj, index, columns):
     run_orc_columns_and_index_param(index_obj, index, columns)
 
@@ -1846,7 +1856,7 @@ def test_orc_writer_negative_timestamp():
 
 
 @pytest.mark.skip(
-    reason="Bug specific to rockylinux8: https://github.com/rapidsai/cudf/issues/15802",
+    reason="Bug specific to rockylinux8: https://github.com/NVIDIA/cudf/issues/15802",
 )
 def test_orc_reader_apache_negative_timestamp(datadir):
     path = datadir / "TestOrcFile.apache_timestamp.orc"
@@ -1918,7 +1928,7 @@ def test_reader_row_index_order(data):
 
 # Test the corner case where empty blocks are compressed
 # Decompressed data size is zero, even though compressed data size is non-zero
-# For more information see https://github.com/rapidsai/cudf/issues/13608
+# For more information see https://github.com/NVIDIA/cudf/issues/13608
 def test_orc_reader_empty_decomp_data(datadir):
     path = datadir / "TestOrcFile.Spark.EmptyDecompData.orc"
 
@@ -2017,7 +2027,7 @@ def test_orc_reader_desynced_timestamp(datadir, inputfile):
     # is progressed faster than the SECONDARY stream (nanosecond) at the start of a row
     # group. In this case, the "run cache manager" in the decoder kernel is used to
     # orchestrate the dual-stream processing.
-    # For more information, see https://github.com/rapidsai/cudf/issues/17155.
+    # For more information, see https://github.com/NVIDIA/cudf/issues/17155.
 
     path = datadir / inputfile
 

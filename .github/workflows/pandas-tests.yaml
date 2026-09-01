@@ -21,23 +21,68 @@ on:
 permissions: {}
 
 jobs:
+  pandas-tests-shards:
+    # Single source of truth for the shard count: both the matrix below and the
+    # num-shards argument the scripts receive are derived from NUM_SHARDS here,
+    # so the two can no longer drift apart.
+    permissions: {}
+    runs-on: ubuntu-latest
+    outputs:
+      num_shards: ${{ steps.shards.outputs.num_shards }}
+      shard_ids: ${{ steps.shards.outputs.shard_ids }}
+    steps:
+      - id: shards
+        env:
+          NUM_SHARDS: 2
+        run: |
+          {
+            echo "num_shards=${NUM_SHARDS}"
+            echo "shard_ids=$(seq 0 $((NUM_SHARDS - 1)) | jq -sc .)"
+          } >> "$GITHUB_OUTPUT"
   pandas-tests:
-      # run the Pandas unit tests
-      permissions:
-        actions: read
-        contents: read
-        id-token: write
-        packages: read
-        pull-requests: read
-      secrets: inherit # zizmor: ignore[secrets-inherit]
-      uses: rapidsai/shared-workflows/.github/workflows/custom-job.yaml@main
-      with:
-        build_type: nightly
-        branch: ${{ inputs.branch }}
-        date: ${{ inputs.date }}
-        sha: ${{ inputs.sha }}
-        node_type: "gpu-l4-latest-1"
-        container_image: "rapidsai/citestwheel:26.08-latest"
-        script: ci/cudf_pandas_scripts/pandas-tests/run.sh main
-        file_to_upload: ./main-results.json
-        artifact-name: main-results.json
+    # run the Pandas unit tests, sharded across runners.
+    needs: pandas-tests-shards
+    strategy:
+      fail-fast: false
+      matrix:
+        shard_id: ${{ fromJSON(needs.pandas-tests-shards.outputs.shard_ids) }}
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+      packages: read
+      pull-requests: read
+    uses: rapidsai/shared-workflows/.github/workflows/custom-job.yaml@main
+    with:
+      build_type: nightly
+      branch: ${{ inputs.branch }}
+      date: ${{ inputs.date }}
+      sha: ${{ inputs.sha }}
+      node_type: "gpu-rtxpro6000-latest-1"
+      container_image: "rapidsai/citestwheel:26.10-latest"
+      script: "ci/cudf_pandas_scripts/pandas-tests/run.sh main ${{ matrix.shard_id }} ${{ needs.pandas-tests-shards.outputs.num_shards }}"
+      file_to_upload: ./main-results.json
+      artifact-name: "pandas-test-main-results-${{ matrix.shard_id }}"
+  pandas-tests-merge:
+    # Merge the sharded results back into the single main-results.json artifact
+    # that PR runs diff against. Deliberately runs only when every shard
+    # succeeded: a partial baseline would surface as spurious "new failures" in
+    # PRs, so it is better for the nightly to have no successful run at all.
+    needs: [pandas-tests, pandas-tests-shards]
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+      packages: read
+      pull-requests: read
+    uses: rapidsai/shared-workflows/.github/workflows/custom-job.yaml@main
+    with:
+      build_type: nightly
+      branch: ${{ inputs.branch }}
+      date: ${{ inputs.date }}
+      sha: ${{ inputs.sha }}
+      node_type: "cpu8"
+      container_image: "rapidsai/citestwheel:26.10-latest"
+      script: "ci/cudf_pandas_scripts/pandas-tests/merge-nightly.sh ${{ needs.pandas-tests-shards.outputs.num_shards }}"
+      file_to_upload: ./main-results.json
+      artifact-name: main-results.json

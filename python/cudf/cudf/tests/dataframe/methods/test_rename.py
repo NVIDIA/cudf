@@ -79,11 +79,14 @@ def test_rename_reset_label_dtype():
     assert_eq(result, expected)
 
 
-def test_dataframe_rename_columns_keep_type():
+def test_dataframe_rename_columns_reinfers_label_dtype():
+    # pandas rebuilds the columns Index from the transformed labels on
+    # rename, re-inferring its dtype (int8 -> int64) rather than
+    # preserving it.
     gdf = cudf.DataFrame([[1, 2, 3]])
     gdf.columns = cudf.Index([4, 5, 6], dtype=np.int8)
     result = gdf.rename({4: 50}, axis="columns").columns
-    expected = pd.Index([50, 5, 6], dtype=np.int8)
+    expected = pd.Index([50, 5, 6], dtype=np.int64)
     assert_eq(result, expected)
 
 

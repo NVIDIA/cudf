@@ -109,12 +109,11 @@ endif()
 find_package(nvtx3 REQUIRED)
 
 if(NOT TARGET nvcomp
-   AND NOT TARGET nvcomp::nvcomp
+   AND NOT TARGET nvcomp::nvcomp_static
    AND NOT DEFINED ENV{CUDF_INSTALL_DIR}
 )
   include(${CUDF_SOURCE_DIR}/cmake/thirdparty/get_nvcomp.cmake)
 endif()
-find_package(nvcomp REQUIRED)
 
 # ##################################################################################################
 # * find JNI --------------------------------------------------------------------------------------
@@ -248,7 +247,7 @@ target_compile_definitions(
 target_link_options(cudfjni PRIVATE "-Wl,--no-undefined")
 
 set(CUDF_ENABLE_ARROW_PARQUET ON)
-include(../../../../cpp/cmake/thirdparty/get_arrow.cmake)
+include(cmake/thirdparty/get_arrow.cmake)
 target_link_libraries(cudfjni PRIVATE ${ARROW_LIBRARIES})
 
 if(USE_GDS)
@@ -268,30 +267,19 @@ endif()
 
 # ##################################################################################################
 # * link libraries --------------------------------------------------------------------------------
-
-set(CUDF_LINK PUBLIC cudf::cudf)
 if(CUDF_JNI_LIBCUDF_STATIC)
-  # Whole-link libcudf.a into the shared library but not its dependencies
-  set(CUDF_LINK PRIVATE -Wl,--whole-archive cudf::cudf -Wl,--no-whole-archive)
+  target_link_libraries(cudfjni PRIVATE $<LINK_LIBRARY:WHOLE_ARCHIVE,cudf::cudf>)
+else()
+  target_link_libraries(cudfjni PUBLIC cudf::cudf)
 endif()
 
-# When nvcomp is installed we need to use nvcomp::nvcomp but from the cudf build directory it will
-# just be nvcomp.
-target_link_libraries(
-  cudfjni ${CUDF_LINK} PRIVATE nvtx3::nvtx3-cpp $<TARGET_NAME_IF_EXISTS:nvcomp>
-                               $<TARGET_NAME_IF_EXISTS:nvcomp::nvcomp>
-)
+get_target_property(cudf_static_linked_projects cudf::cudf CUDF_STATIC_LINKED_PROJECTS)
+if(nvcomp IN_LIST cudf_static_linked_projects)
+  target_link_libraries(cudfjni PRIVATE $<COMPILE_ONLY:nvcomp::nvcomp_static>)
+else()
+  target_link_libraries(cudfjni PRIVATE nvcomp::nvcomp)
 
-# ##################################################################################################
-# * cudart options --------------------------------------------------------------------------------
-#   cudart can be statically linked or dynamically linked. The python ecosystem wants dynamic
-#   linking
-
-set_target_properties(cudfjni PROPERTIES CUDA_RUNTIME_LIBRARY Static)
-
-# ##################################################################################################
-# * install shared libraries ----------------------------------------------------------------------
-if(TARGET nvcomp::nvcomp)
+  # * install nvcomp for tests
   add_custom_command(
     TARGET cudfjni
     PRE_LINK
@@ -300,3 +288,11 @@ if(TARGET nvcomp::nvcomp)
     COMMENT "Copying nvcomp libraries to ${PROJECT_BINARY_DIR}"
   )
 endif()
+
+target_link_libraries(cudfjni PRIVATE nvtx3::nvtx3-cpp)
+
+# ##################################################################################################
+# * cudart options --------------------------------------------------------------------------------
+#   cudart can be statically linked or dynamically linked. The python ecosystem wants dynamic
+#   linking
+set_target_properties(cudfjni PROPERTIES CUDA_RUNTIME_LIBRARY Static)

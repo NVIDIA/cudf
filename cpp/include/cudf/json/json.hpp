@@ -143,7 +143,7 @@ class get_json_object_options {
  * Applies a JSONPath string to an incoming strings column where each row in the column
  * is a valid json string.  The output is returned by row as a strings column.
  *
- * https://tools.ietf.org/id/draft-goessner-dispatch-jsonpath-00.html
+ * https://datatracker.ietf.org/doc/id/draft-goessner-dispatch-jsonpath-00.html
  * Implements only the operators: $ . [] *
  *
  * @throw std::invalid_argument if provided an invalid operator or an empty name
@@ -159,7 +159,7 @@ std::unique_ptr<cudf::column> get_json_object(
   cudf::strings_column_view const& col,
   cudf::string_scalar const& json_path,
   get_json_object_options options   = get_json_object_options{},
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /** @} */  // end of doxygen group

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -13,17 +13,14 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/functional>
 #include <cuda/iterator>
 #include <cuda/std/tuple>
+#include <cuda/stream>
 #include <thrust/for_each.h>
-#include <thrust/iterator/permutation_iterator.h>
-#include <thrust/iterator/transform_output_iterator.h>
-#include <thrust/iterator/zip_iterator.h>
 #include <thrust/scan.h>
 #include <thrust/sort.h>
 #include <thrust/transform.h>
@@ -36,9 +33,9 @@ using row_offset_t = size_type;
 
 #ifdef CSR_DEBUG_PRINT
 template <typename T>
-void print(device_span<T const> d_vec, std::string name, rmm::cuda_stream_view stream)
+void print(device_span<T const> d_vec, std::string name, cuda::stream_ref stream)
 {
-  stream.synchronize();
+  stream.sync();
   auto h_vec = cudf::detail::make_std_vector(d_vec, stream);
   std::cout << name << " = ";
   for (auto e : h_vec) {
@@ -102,7 +99,7 @@ std::tuple<compressed_sparse_row, column_tree_properties> reduce_to_column_tree(
   device_span<row_offset_t const> row_offsets,
   bool is_array_of_arrays,
   NodeIndexT row_array_parent_col_id,
-  rmm::cuda_stream_view stream)
+  cuda::stream_ref stream)
 {
   CUDF_FUNC_RANGE();
 
@@ -160,21 +157,20 @@ std::tuple<compressed_sparse_row, column_tree_properties> reduce_to_column_tree(
   }
 
   rmm::device_uvector<NodeIndexT> parent_col_ids(num_columns, stream);
-  thrust::transform_output_iterator parent_col_ids_it(parent_col_ids.begin(),
-                                                      parent_nodeids_to_colids{rev_mapped_col_ids});
+  cuda::transform_output_iterator parent_col_ids_it(parent_col_ids.begin(),
+                                                    parent_nodeids_to_colids{rev_mapped_col_ids});
   rmm::device_uvector<row_offset_t> max_row_offsets(num_columns, stream);
   rmm::device_uvector<NodeT> column_categories(num_columns, stream);
   thrust::copy_n(
     rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-    thrust::make_zip_iterator(thrust::make_permutation_iterator(
-                                unpermuted_tree.parent_node_ids.begin(), reordering_index.begin()),
-                              thrust::make_permutation_iterator(unpermuted_max_row_offsets.begin(),
-                                                                reordering_index.begin()),
-                              thrust::make_permutation_iterator(
-                                unpermuted_tree.node_categories.begin(), reordering_index.begin())),
+    cuda::make_zip_iterator(
+      cuda::make_permutation_iterator(unpermuted_tree.parent_node_ids.begin(),
+                                      reordering_index.begin()),
+      cuda::make_permutation_iterator(unpermuted_max_row_offsets.begin(), reordering_index.begin()),
+      cuda::make_permutation_iterator(unpermuted_tree.node_categories.begin(),
+                                      reordering_index.begin())),
     num_columns,
-    thrust::make_zip_iterator(
-      parent_col_ids_it, max_row_offsets.begin(), column_categories.begin()));
+    cuda::make_zip_iterator(parent_col_ids_it, max_row_offsets.begin(), column_categories.begin()));
 
 #ifdef CSR_DEBUG_PRINT
   print<NodeIndexT>(reordering_index, "h_reordering_index", stream);
@@ -214,9 +210,9 @@ std::tuple<compressed_sparse_row, column_tree_properties> reduce_to_column_tree(
     if (num_columns > 1) {
       thrust::transform_inclusive_scan(
         rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-        thrust::make_zip_iterator(cuda::counting_iterator<NodeIndexT>{1}, row_idx.begin() + 1),
-        thrust::make_zip_iterator(cuda::counting_iterator<NodeIndexT>{1} + num_columns,
-                                  row_idx.end()),
+        cuda::make_zip_iterator(cuda::counting_iterator<NodeIndexT>{1}, row_idx.begin() + 1),
+        cuda::make_zip_iterator(cuda::counting_iterator<NodeIndexT>{1} + num_columns,
+                                row_idx.end()),
         row_idx.begin() + 1,
         cuda::proclaim_return_type<NodeIndexT>([] __device__(auto a) {
           auto n   = cuda::std::get<0>(a);
@@ -225,8 +221,12 @@ std::tuple<compressed_sparse_row, column_tree_properties> reduce_to_column_tree(
         }),
         cuda::std::plus<NodeIndexT>{});
     } else {
-      auto single_node = 1;
-      row_idx.set_element_async(1, single_node, stream);
+      // Uses thrust::fill instead of device_uvector::set_element_async to prevent the case where
+      // single_node goes out of scope before the memcpy-async(stream) completes. This is also
+      // allows us to make the copy without incurring a stream synchronize.
+      auto single_node = NodeIndexT{1};
+      auto exec_policy = rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref());
+      thrust::fill(exec_policy, row_idx.begin() + 1, row_idx.end(), single_node);
     }
 
 #ifdef CSR_DEBUG_PRINT

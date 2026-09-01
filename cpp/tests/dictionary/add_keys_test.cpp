@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -56,6 +56,29 @@ TEST_F(DictionaryAddKeysTest, WithNull)
   cudf::dictionary_column_view view(result->view());
   auto decoded = cudf::dictionary::decode(result->view());
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(decoded->view(), input);  // new keys should not change anything
+}
+
+TEST_F(DictionaryAddKeysTest, DuplicateKeys)
+{
+  auto input = cudf::test::dictionary_column_wrapper<std::string>(
+    {"eee", "aaa", "ddd", "bbb", "ccc", "ccc", "ccc", "eee", "aaa"});
+
+  auto const dup_keys  = cudf::test::strings_column_wrapper{"aaa", "ccc", "eee", "ccc"};
+  auto const with_dups = cudf::dictionary::set_keys(input, dup_keys);  // force duplicate keys
+
+  // add_keys with a key already present
+  auto const added_keys  = cudf::test::strings_column_wrapper{"ccc", "fff"};
+  auto const result      = cudf::dictionary::add_keys(with_dups->view(), added_keys);
+  auto const result_view = cudf::dictionary_column_view(result->view());
+
+  // old 4 keys + "fff" only — "ccc" must not have been added a third time
+  EXPECT_EQ(result_view.keys_size(), 5);
+
+  // indices are unchanged so decode should match what set_keys produced
+  auto expected_decoded = cudf::test::strings_column_wrapper(
+    {"eee", "aaa", "", "", "ccc", "ccc", "ccc", "eee", "aaa"}, {1, 1, 0, 0, 1, 1, 1, 1, 1});
+  auto const decoded = cudf::dictionary::decode(result_view);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(decoded->view(), expected_decoded);
 }
 
 TEST_F(DictionaryAddKeysTest, Errors)

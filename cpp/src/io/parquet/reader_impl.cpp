@@ -8,13 +8,16 @@
 #include "column_path_helpers.hpp"
 #include "error.hpp"
 #include "runtime/context.hpp"
+#include "synthetic_column_helpers.hpp"
 
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/stream_compaction.hpp>
 #include <cudf/detail/structs/utilities.hpp>
 #include <cudf/detail/transform.hpp>
 #include <cudf/detail/utilities/stream_pool.hpp>
+#include <cudf/dictionary/detail/encode.hpp>
 #include <cudf/io/parquet_schema.hpp>
+#include <cudf/logger.hpp>
 #include <cudf/null_mask.hpp>
 #include <cudf/stream_compaction.hpp>
 #include <cudf/strings/detail/utilities.hpp>
@@ -262,6 +265,11 @@ void reader_impl::decode_page_data(read_mode mode, size_t skip_rows, size_t num_
     decode_data(decode_kernel_mask::STRING_STREAM_SPLIT_LIST);
   }
 
+  // launch dict-index-as-int32 decoder for flat columns
+  if (BitAnd(kernel_mask, decode_kernel_mask::DICT_INT32) != 0) {
+    decode_data(decode_kernel_mask::DICT_INT32);
+  }
+
   // launch delta byte array decoder
   if (BitAnd(kernel_mask, decode_kernel_mask::DELTA_BYTE_ARRAY) != 0) {
     decode_delta_byte_array(subpass.pages,
@@ -397,6 +405,9 @@ void reader_impl::decode_page_data(read_mode mode, size_t skip_rows, size_t num_
   // Invalidate output buffer nullmasks at row indices spanned by pruned pages
   update_output_nullmasks_for_pruned_pages(subpass_page_mask_span(), skip_rows, num_rows);
 
+  // Fill output offsets for pruned pages before retrieving large string initial offsets.
+  fill_pruned_offsets(skip_rows, num_rows, initial_str_offsets);
+
   // Copy over initial string offsets from device
   auto h_initial_str_offsets = cudf::detail::make_pinned_vector_async(initial_str_offsets, _stream);
 
@@ -439,9 +450,15 @@ void reader_impl::decode_page_data(read_mode mode, size_t skip_rows, size_t num_
         }
         // Nested large strings column
         else if (input_col.nesting_depth() > 0) {
-          CUDF_EXPECTS(h_initial_str_offsets[idx] != std::numeric_limits<size_t>::max(),
-                       "Encountered invalid initial offset for large string column");
-          out_buf.set_initial_string_offset(h_initial_str_offsets[idx]);
+          // A fully pruned list may have no string child values and therefore no page from which
+          // to record an initial offset.
+          if (out_buf.size == 0) {
+            out_buf.set_initial_string_offset(0);
+          } else {
+            CUDF_EXPECTS(h_initial_str_offsets[idx] != std::numeric_limits<size_t>::max(),
+                         "Encountered invalid initial offset for large string column");
+            out_buf.set_initial_string_offset(h_initial_str_offsets[idx]);
+          }
         }
       }
     }
@@ -476,15 +493,15 @@ void reader_impl::decode_page_data(read_mode mode, size_t skip_rows, size_t num_
     }
   }
 
-  _stream.synchronize();
+  _stream.sync();
 }
 
-reader_impl::reader_impl() : _options{} {}
+reader_impl::reader_impl() : _stream{cudaStream_t{nullptr}}, _options{} {}
 
 reader_impl::reader_impl(std::vector<std::unique_ptr<datasource>>&& sources,
                          std::vector<FileMetaData>&& parquet_metadatas,
                          parquet_reader_options const& options,
-                         rmm::cuda_stream_view stream,
+                         cuda::stream_ref stream,
                          rmm::device_async_resource_ref mr)
   : reader_impl(0 /*chunk_read_limit*/,
                 0 /*input_pass_read_limit*/,
@@ -501,7 +518,7 @@ reader_impl::reader_impl(std::size_t chunk_read_limit,
                          std::vector<std::unique_ptr<datasource>>&& sources,
                          std::vector<FileMetaData>&& file_metadatas,
                          parquet_reader_options const& options,
-                         rmm::cuda_stream_view stream,
+                         cuda::stream_ref stream,
                          rmm::device_async_resource_ref mr)
   : _stream{std::move(stream)},
     _mr{std::move(mr)},
@@ -515,20 +532,30 @@ reader_impl::reader_impl(std::size_t chunk_read_limit,
              options.is_enabled_use_jit_filter(),
              options.is_enabled_case_sensitive_names(),
              options.is_enabled_prepend_source_index_column(),
-             options.is_enabled_prepend_row_index_column()},
+             options.is_enabled_prepend_row_index_column(),
+             options.is_enabled_output_dict_columns()},
     _sources{std::move(sources)},
     _output_chunk_read_limit{chunk_read_limit},
     _input_pass_read_limit{pass_read_limit}
 {
+  // The direct parquet-dict → DICTIONARY32 transcode fast path only supports single-pass,
+  // non-chunked reads.
+  if (_options.output_dict_columns and (chunk_read_limit != 0 or pass_read_limit != 0)) {
+    CUDF_LOG_WARN(
+      "output_dict_columns: the direct parquet-dict transcode fast path is disabled for chunked / "
+      "multi-pass reads (non-zero chunk_read_limit or pass_read_limit); falling back to encoding "
+      "DICTIONARY32 columns at the output.");
+  }
+
   // Open and parse the source dataset metadata
   CUDF_EXPECTS(file_metadatas.empty() or file_metadatas.size() == _sources.size(),
                "Encountered a mismatch in the number of provided data sources and metadatas");
 
-  _metadata = file_metadatas.empty() ? std::make_unique<aggregate_reader_metadata>(
+  _metadata = file_metadatas.empty() ? std::make_shared<aggregate_reader_metadata>(
                                          _sources,
                                          options.is_enabled_use_arrow_schema(),
                                          has_cols_from_mismatched_sources(options))
-                                     : std::make_unique<aggregate_reader_metadata>(
+                                     : std::make_shared<aggregate_reader_metadata>(
                                          std::forward<std::vector<FileMetaData>>(file_metadatas),
                                          options.is_enabled_use_arrow_schema(),
                                          has_cols_from_mismatched_sources(options));
@@ -543,8 +570,7 @@ reader_impl::reader_impl(std::size_t chunk_read_limit,
   _reader_column_schema = options.get_column_schema();
 
   // Select only columns required by the options and filter
-  auto select_column_names =
-    get_column_projection(options, options.is_enabled_ignore_missing_columns());
+  auto select_column_names = get_column_projection(options);
 
   std::optional<std::vector<std::string>> filter_only_columns_names;
   auto const has_column_selection = options.get_column_names().has_value() or
@@ -567,12 +593,11 @@ reader_impl::reader_impl(std::size_t chunk_read_limit,
     std::back_inserter(_output_buffers_template),
     [](auto const& buff) { return cudf::io::detail::inline_column_buffer::empty_like(buff); });
 
-  // Save the name to reference converter to extract output filter AST in
-  // `preprocess_file()` and `finalize_output()`
+  // Save the normalized output filter for `preprocess_file()` and `finalize_output()`.
   table_metadata metadata;
   populate_metadata(metadata);
   _expr_conv =
-    named_to_reference_converter(options.get_filter(), metadata, _options.case_sensitive_names);
+    parquet_filter_normalizer(options.get_filter(), metadata, _options.case_sensitive_names);
 }
 
 void reader_impl::prepare_data(read_mode mode)
@@ -687,6 +712,12 @@ table_with_metadata reader_impl::read_chunk_internal(read_mode mode)
   auto& subpass         = *pass.subpass;
   auto const& read_info = subpass.output_chunk_read_info[subpass.current_output_chunk];
 
+  // If the caller asked for direct parquet-dict → DICTIONARY32 transcode, detect per-column
+  // eligibility and mutate `_output_buffers` / `subpass.pages` before we allocate column buffers
+  // or dispatch decode kernels. This has to happen before `preprocess_chunk_strings` /
+  // `allocate_columns` because those branch on `subpass.kernel_mask` and on `out_buf.type`.
+  prepare_dict_transcode(mode);
+
   // computes:
   // PageNestingInfo::batch_size for each level of nesting, for each page, taking row bounds into
   // account. PageInfo::skipped_values, which tells us where to start decoding in the input to
@@ -735,6 +766,12 @@ table_with_metadata reader_impl::read_chunk_internal(read_mode mode)
       out_columns.emplace_back(make_column(_output_buffers[i], nullptr, metadata, _stream));
     }
   }
+
+  // For any columns that were selected for direct parquet-dict → DICTIONARY32 transcode in
+  // `prepare_dict_transcode`, the entries in `out_columns` are currently INT32 indices columns.
+  // Assemble them into DICTIONARY32 columns here by attaching per-chunk keys; concatenate
+  // remaps indices to the unified keys child.
+  assemble_dict_transcoded_columns(out_columns);
 
   out_columns =
     cudf::structs::detail::enforce_null_consistency(std::move(out_columns), _stream, _mr);
@@ -804,8 +841,10 @@ std::vector<size_t> reader_impl::calculate_output_num_rows_per_source(size_t con
 }
 
 std::optional<std::vector<std::string>> reader_impl::get_column_projection(
-  parquet_reader_options const& options, bool ignore_missing_columns) const
+  parquet_reader_options const& options) const
 {
+  auto const ignore_missing_columns = ignore_missing_columns_policy(options);
+
   auto const has_column_names     = options.get_column_names().has_value();
   auto const has_column_indices   = options.get_column_indices().has_value();
   auto const has_column_field_ids = options.get_column_field_ids().has_value();
@@ -883,7 +922,7 @@ column_selection_options reader_impl::make_column_selection_options(
     .selection_mode         = selection_mode,
     .include_index          = options.is_enabled_use_pandas_metadata(),
     .strings_to_categorical = options.is_enabled_convert_strings_to_categories(),
-    .ignore_missing_columns = options.is_enabled_ignore_missing_columns(),
+    .ignore_missing_columns = ignore_missing_columns_policy(options),
     .timestamp_type_id      = options.get_timestamp_type().id(),
     .decimal_type_id        = options.get_decimal_width(),
     .case_sensitive_names   = options.is_enabled_case_sensitive_names()};
@@ -906,6 +945,24 @@ table_with_metadata reader_impl::finalize_output(read_mode mode,
   }
 
   apply_decimal_width_cast(out_columns);
+
+  // Encode any remaining flat STRING columns to DICTIONARY32 via a post-hoc
+  // `dictionary::detail::encode`: columns not produced by the direct transcode fast path, or all of
+  // them when the fast path was disabled (e.g. under a filter). This is applied to the FINAL output
+  // table below -- after any filter is evaluated -- so the filter still operates on STRING columns
+  // and the dictionary is built over only the surviving rows.
+  auto const encode_output_dict_columns =
+    [&](std::unique_ptr<table> tbl) -> std::unique_ptr<table> {
+    if (not _options.output_dict_columns) { return tbl; }
+    auto columns = tbl->release();
+    for (auto& col : columns) {
+      if (col and col->type().id() == type_id::STRING) {
+        col =
+          cudf::dictionary::detail::encode(col->view(), data_type{type_id::INT32}, _stream, _mr);
+      }
+    }
+    return std::make_unique<table>(std::move(columns));
+  };
 
   if (!_output_metadata) {
     populate_metadata(out_metadata);
@@ -933,8 +990,9 @@ table_with_metadata reader_impl::finalize_output(read_mode mode,
   // Prepend the source and row index columns if requested
   {
     if (_options.prepend_row_index_column) {
-      out_columns.emplace(out_columns.begin(),
-                          synthesize_row_index_column(read_info, _stream, _mr));
+      out_columns.emplace(
+        out_columns.begin(),
+        synthesize_row_index_column(_file_itm_data.row_groups, read_info, _stream, _mr));
       out_metadata.schema_info.emplace(out_metadata.schema_info.begin(),
                                        column_name_info{.name = "row_index", .is_nullable = false});
     }
@@ -974,15 +1032,16 @@ table_with_metadata reader_impl::finalize_output(read_mode mode,
       // Exclude columns present in filter only in output
       auto output_table = cudf::detail::apply_mask(
         only_output, *predicate, cudf::detail::mask_type::RETENTION, _stream, _mr);
-      return {std::move(output_table), std::move(out_metadata)};
+      return {encode_output_dict_columns(std::move(output_table)), std::move(out_metadata)};
     } else {
       auto output_table = cudf::filter(
         read_table->view(), final_filter_expr.value().get(), only_output, _stream, _mr);
 
-      return {std::move(output_table), std::move(out_metadata)};
+      return {encode_output_dict_columns(std::move(output_table)), std::move(out_metadata)};
     }
   }
-  return {std::make_unique<table>(std::move(out_columns)), std::move(out_metadata)};
+  return {encode_output_dict_columns(std::make_unique<table>(std::move(out_columns))),
+          std::move(out_metadata)};
 }
 
 table_with_metadata reader_impl::read()
@@ -1041,7 +1100,7 @@ void reader_impl::update_output_nullmasks_for_pruned_pages(cudf::host_span<bool 
   }
 
   auto page_and_mask_begin =
-    thrust::make_zip_iterator(cuda::std::make_tuple(pages.host_begin(), page_mask.begin()));
+    cuda::make_zip_iterator(cuda::std::make_tuple(pages.host_begin(), page_mask.begin()));
 
   auto null_masks = std::vector<bitmask_type*>{};
   auto begin_bits = std::vector<cudf::size_type>{};
@@ -1124,10 +1183,11 @@ void reader_impl::update_output_nullmasks_for_pruned_pages(cudf::host_span<bool 
     std::fill(pinned_valids.begin(), pinned_valids.end(), false);
     cudf::set_null_masks_safe(
       pinned_null_masks, pinned_begin_bits, pinned_end_bits, pinned_valids, _stream);
+    _stream.sync();
   }
   // Otherwise, update the nullmasks in a loop
   else {
-    auto nullmask_iter = thrust::make_zip_iterator(cuda::std::make_tuple(
+    auto nullmask_iter = cuda::make_zip_iterator(cuda::std::make_tuple(
       pinned_null_masks.begin(), pinned_begin_bits.begin(), pinned_end_bits.begin()));
     std::for_each(
       nullmask_iter, nullmask_iter + pinned_null_masks.size(), [&](auto const& nullmask_tuple) {

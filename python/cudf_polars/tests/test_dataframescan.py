@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from __future__ import annotations
@@ -13,7 +13,6 @@ from cudf_polars.testing.asserts import (
     assert_gpu_result_equal,
     assert_ir_translation_raises,
 )
-from cudf_polars.testing.engine_utils import is_streaming_engine
 from cudf_polars.utils.versions import POLARS_VERSION_LT_138
 
 
@@ -88,13 +87,7 @@ def test_dataframescan_with_decimals(engine: pl.GPUEngine):
     POLARS_VERSION_LT_138,
     reason="height parameter added in Polars 1.38",
 )
-def test_dataframescan_zero_width_with_rows(engine: pl.GPUEngine, request):
-    request.applymarker(
-        pytest.mark.xfail(
-            is_streaming_engine(engine),
-            reason="https://github.com/rapidsai/cudf/issues/21644",
-        )
-    )
+def test_dataframescan_zero_width_with_rows(engine: pl.GPUEngine):
     df = pl.LazyFrame(height=5)
     q = df.select(pl.len())
     assert_gpu_result_equal(q, engine=engine)

@@ -1,24 +1,26 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
 #include <cudf_test/base_fixture.hpp>
 #include <cudf_test/column_utilities.hpp>
 #include <cudf_test/column_wrapper.hpp>
+#include <cudf_test/memory_resource_utilities.hpp>
 #include <cudf_test/type_lists.hpp>
 
 #include <cudf/column/column_view.hpp>
 #include <cudf/detail/row_operator/lexicographic.cuh>
 #include <cudf/detail/utilities/vector_factories.hpp>
+#include <cudf/table/table.hpp>
 #include <cudf/table/table_device_view.cuh>
 #include <cudf/table/table_view.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/stream>
 #include <thrust/transform.h>
 
 #include <vector>
@@ -31,7 +33,7 @@ void row_comparison(cudf::table_view input1,
                     cudf::mutable_column_view output,
                     std::vector<cudf::order> const& column_order)
 {
-  rmm::cuda_stream_view stream{cudf::get_default_stream()};
+  cuda::stream_ref stream{cudf::get_default_stream()};
 
   auto const comparator = cudf::detail::row::lexicographic::two_table_comparator{
     input1, input2, column_order, {}, stream};
@@ -128,4 +130,32 @@ TEST_F(TableViewTest, SelectNoColumns)
 
   cudf::table_view selected = t.select({});
   EXPECT_EQ(selected.num_columns(), 0);
+}
+
+TEST_F(TableViewTest, ExplicitDeviceViewMemoryResourceControl)
+{
+  auto harness = cudf::test::memory_resource_test_harness{this->mr()};
+  auto stream  = cudf::get_default_stream();
+  std::vector<std::unique_ptr<cudf::column>> columns;
+  columns.push_back(cudf::test::strings_column_wrapper({"one", "two"}).release());
+  auto input = cudf::table{std::move(columns)};
+
+  auto immutable_view = [&] {
+    auto current_scope = harness.fail_on_current_device_resource_use();
+    auto result        = cudf::table_device_view::create(input.view(), stream, harness.output_mr());
+    harness.synchronize(stream);
+    return result;
+  }();
+  auto mutable_view = [&] {
+    auto current_scope = harness.fail_on_current_device_resource_use();
+    auto result =
+      cudf::mutable_table_device_view::create(input.mutable_view(), stream, harness.output_mr());
+    harness.synchronize(stream);
+    return result;
+  }();
+
+  harness.expect_output_allocations_live(stream);
+  immutable_view.reset();
+  mutable_view.reset();
+  harness.expect_no_live_allocations(stream);
 }

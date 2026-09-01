@@ -215,7 +215,7 @@ rapidsmpf::streaming::Actor consumer(std::shared_ptr<rapidsmpf::streaming::Conte
 rapidsmpf::Duration run(std::shared_ptr<rapidsmpf::streaming::Context> ctx,
                         std::shared_ptr<rapidsmpf::Communicator> comm,
                         ArgumentParser const& args,
-                        rmm::cuda_stream_view stream)
+                        cuda::stream_ref stream)
 {
   constexpr std::int32_t min_val        = 0;
   constexpr std::int32_t max_val        = 10;
@@ -331,22 +331,24 @@ int main(int argc, char** argv)
 
   auto stats = rapidsmpf::Statistics::create();
 
-  auto pinned_mr = args.pinned_mem_disable ? rapidsmpf::PinnedMemoryResource::Disabled
-                                           : rapidsmpf::PinnedMemoryResource::make_if_available();
-  auto br        = rapidsmpf::BufferResource::create(
-    rmm_mr,
-    pinned_mr,
-    std::move(memory_limits),
-    std::nullopt,
-    std::make_shared<rmm::cuda_stream_pool>(16, rmm::cuda_stream::flags::non_blocking),
-    stats);
+  RAPIDSMPF_EXPECTS(args.pinned_mem_disable || rapidsmpf::is_pinned_memory_resources_supported(),
+                    "pinned host memory is not supported on this system; pass `-L` to disable it.",
+                    std::runtime_error);
+  auto pinned_pool_properties =
+    args.pinned_mem_disable ? rapidsmpf::PinnedMemoryDisabled : rapidsmpf::PinnedPoolProperties{};
+  auto br = rapidsmpf::BufferResource::create(rmm_mr,
+                                              std::move(pinned_pool_properties),
+                                              std::move(memory_limits),
+                                              std::nullopt,
+                                              std::make_shared<rapidsmpf::StreamPool>(16),
+                                              stats);
   // `BufferResource` wraps the device resource in an internal tracking
   // `RmmResourceAdaptor` (exposed via `device_mr_adaptor()`). Install it as
   // the current device resource so libcudf temp allocations are also tracked.
   auto& stat_enabled_mr = br->device_mr_adaptor();
   rmm::mr::set_current_device_resource(stat_enabled_mr);
 
-  rmm::cuda_stream_view stream = cudf::get_default_stream();
+  cuda::stream_ref stream = cudf::get_default_stream();
 
   // Print benchmark/hardware info.
   {
@@ -425,7 +427,7 @@ int main(int argc, char** argv)
   if (args.enable_memory_profiler) {
     log->print(statistics->report({
       .mr        = stat_enabled_mr,
-      .pinned_mr = pinned_mr,
+      .pinned_mr = br->try_pinned_mr(),
       .header    = "Statistics (of the last run):",
     }));
   } else {

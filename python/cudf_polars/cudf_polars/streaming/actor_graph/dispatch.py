@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 """Dispatching for the RapidsMPF streaming runtime."""
 
@@ -21,7 +21,11 @@ if TYPE_CHECKING:
         PartitionInfo,
         StatsCollector,
     )
-    from cudf_polars.utils.config import ConfigOptions, StreamingExecutor
+    from cudf_polars.utils.config import (
+        ConfigOptions,
+        MaxConcurrentIOTasks,
+        StreamingExecutor,
+    )
 
 
 class FanoutInfo(NamedTuple):
@@ -51,9 +55,8 @@ class GenState(TypedDict):
         Dictionary mapping IR nodes to fanout information.
     ir_context
         The execution context for the IR node.
-    max_io_threads
-        The maximum number of IO threads to use for
-        a single IO node.
+    max_concurrent_io_tasks
+        The local and remote IO task limits to use for scan nodes.
     stats
         Statistics collector.
     collective_id_map
@@ -66,7 +69,7 @@ class GenState(TypedDict):
     partition_info: MutableMapping[IR, PartitionInfo]
     fanout_nodes: dict[IR, FanoutInfo]
     ir_context: IRExecutionContext
-    max_io_threads: int
+    max_concurrent_io_tasks: MaxConcurrentIOTasks
     stats: StatsCollector
     collective_id_map: dict[IR, list[int]]
 

@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from cython.operator cimport dereference
@@ -9,6 +9,10 @@ from libcpp.utility cimport move
 
 from pylibcudf.column cimport Column
 from pylibcudf.utils cimport _get_stream, _get_memory_resource
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pylibcudf.typing import CudaStreamLike
 from rmm.pylibrmm.stream cimport Stream
 from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 from pylibcudf.libcudf.column.column cimport column
@@ -43,12 +47,12 @@ cdef class ByteRangeInfo:
         self.c_obj = byte_range_info(offset, size)
 
     @property
-    def offset(self):
+    def offset(self) -> int:
         """Get the offset in bytes."""
         return self.c_obj.offset()
 
     @property
-    def size(self):
+    def size(self) -> int:
         """Get the size in bytes."""
         return self.c_obj.size()
 
@@ -63,15 +67,15 @@ cdef class ParseOptions:
         Only rows starting inside this byte range will be
         part of the output column.
 
-    strip_delimiters : bool, default True
+    strip_delimiters : bool, default False
         Whether delimiters at the end of rows should
         be stripped from the output column.
     """
     def __init__(
         self,
         *,
-        byte_range=None,
-        strip_delimiters=False,
+        byte_range: tuple[int, int] | list[int] | None = None,
+        strip_delimiters: bool = False,
     ):
         self.c_options = cpp_text.parse_options()
         if byte_range is not None:
@@ -94,7 +98,7 @@ cdef class DataChunkSource:
         Filename or data itself.
     """
 
-    def __cinit__(self, str data):
+    def __cinit__(self, str data) -> None:
         # Need to keep a reference alive for make_source
         self.data_ref = data.encode()
 
@@ -194,7 +198,7 @@ cpdef Column multibyte_split(
     DataChunkSource source,
     str delimiter,
     ParseOptions options=None,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """

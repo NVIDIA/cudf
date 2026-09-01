@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -8,7 +8,7 @@
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
+#include <cuda/stream>
 
 #include <cstddef>
 #include <cstdint>
@@ -19,46 +19,46 @@ namespace hashing::detail {
 
 std::unique_ptr<column> murmurhash3_x86_32(table_view const& input,
                                            uint32_t seed,
-                                           rmm::cuda_stream_view,
+                                           cuda::stream_ref,
                                            rmm::device_async_resource_ref mr);
 
 std::unique_ptr<table> murmurhash3_x64_128(table_view const& input,
                                            uint64_t seed,
-                                           rmm::cuda_stream_view,
+                                           cuda::stream_ref,
                                            rmm::device_async_resource_ref mr);
 
 std::unique_ptr<column> md5(table_view const& input,
-                            rmm::cuda_stream_view stream,
+                            cuda::stream_ref stream,
                             rmm::device_async_resource_ref mr);
 
 std::unique_ptr<column> sha1(table_view const& input,
-                             rmm::cuda_stream_view stream,
+                             cuda::stream_ref stream,
                              rmm::device_async_resource_ref mr);
 
 std::unique_ptr<column> sha224(table_view const& input,
-                               rmm::cuda_stream_view stream,
+                               cuda::stream_ref stream,
                                rmm::device_async_resource_ref mr);
 
 std::unique_ptr<column> sha256(table_view const& input,
-                               rmm::cuda_stream_view stream,
+                               cuda::stream_ref stream,
                                rmm::device_async_resource_ref mr);
 
 std::unique_ptr<column> sha384(table_view const& input,
-                               rmm::cuda_stream_view stream,
+                               cuda::stream_ref stream,
                                rmm::device_async_resource_ref mr);
 
 std::unique_ptr<column> sha512(table_view const& input,
-                               rmm::cuda_stream_view stream,
+                               cuda::stream_ref stream,
                                rmm::device_async_resource_ref mr);
 
 std::unique_ptr<column> xxhash_32(table_view const& input,
                                   uint64_t seed,
-                                  rmm::cuda_stream_view,
+                                  cuda::stream_ref,
                                   rmm::device_async_resource_ref mr);
 
 std::unique_ptr<column> xxhash_64(table_view const& input,
                                   uint64_t seed,
-                                  rmm::cuda_stream_view,
+                                  cuda::stream_ref,
                                   rmm::device_async_resource_ref mr);
 
 /* SPDX-SnippetBegin
@@ -68,7 +68,7 @@ std::unique_ptr<column> xxhash_64(table_view const& input,
  * Copyright 2005-2014 Daniel James.
  * Use, modification and distribution is subject to the Boost Software
  * License, Version 1.0. (See accompanying file LICENSE_1_0.txt or copy at
- * http://www.boost.org/LICENSE_1_0.txt)
+ * https://www.boost.org/LICENSE_1_0.txt)
  */
 /**
  * @brief Combines two hash values into a single hash value.
@@ -93,7 +93,7 @@ CUDF_HOST_DEVICE constexpr uint32_t hash_combine(uint32_t lhs, uint32_t rhs)
  * Copyright 2005-2014 Daniel James.
  * Use, modification and distribution is subject to the Boost Software
  * License, Version 1.0. (See accompanying file LICENSE_1_0.txt or copy at
- * http://www.boost.org/LICENSE_1_0.txt)
+ * https://www.boost.org/LICENSE_1_0.txt)
  */
 /**
  * @brief Combines two 64-bit hash values into a single hash value.

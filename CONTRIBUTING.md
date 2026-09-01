@@ -3,11 +3,11 @@
 Contributions to cuDF fall into the following categories:
 
 1. To report a bug, request a new feature, or report a problem with documentation, please file an
-   [issue](https://github.com/rapidsai/cudf/issues/new/choose) describing the problem or new feature
+   [issue](https://github.com/NVIDIA/cudf/issues/new/choose) describing the problem or new feature
    in detail. The RAPIDS team evaluates and triages issues, and schedules them for a release. If you
    believe the issue needs priority attention, please comment on the issue to notify the team.
 2. To propose and implement a new feature, please file a new feature request
-   [issue](https://github.com/rapidsai/cudf/issues/new/choose). Describe the intended feature and
+   [issue](https://github.com/NVIDIA/cudf/issues/new/choose). Describe the intended feature and
    discuss the design and implementation with the team and community. Once the team agrees that the
    plan looks good, go ahead and implement it, using the [code contributions](#code-contributions)
    guide below.
@@ -32,7 +32,7 @@ conda install cudf -c rapidsai-nightly -c conda-forge
 ```
 
 3. Build and view the docs locally following the instructions in the [Building
-documentation docs](https://docs.rapids.ai/api/cudf/stable/cudf/developer_guide/documentation/#building-and-viewing-docs)
+documentation docs](https://docs.rapids.ai/api/cudf/stable/developer_guide/documentation/#building-documentation)
 4. Follow steps 7-10 in the section [Your first issue](#your-first-issue)
 
 ## Code contributions
@@ -42,15 +42,15 @@ documentation docs](https://docs.rapids.ai/api/cudf/stable/cudf/developer_guide/
 1. Follow the guide at the bottom of this page for
    [Setting up your build environment](#setting-up-your-build-environment).
 2. Find an issue to work on. The best way is to look for the
-   [good first issue](https://github.com/rapidsai/cudf/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22)
-   or [help wanted](https://github.com/rapidsai/cudf/issues?q=is%3Aissue+is%3Aopen+label%3A%22help+wanted%22)
+   [good first issue](https://github.com/NVIDIA/cudf/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22)
+   or [help wanted](https://github.com/NVIDIA/cudf/issues?q=is%3Aissue+is%3Aopen+label%3A%22help+wanted%22)
    labels.
 3. Comment on the issue stating that you are going to work on it.
 4. Create a fork of the cudf repository and check out a branch with a name that
    describes your planned work. For example, `fix-documentation`.
 5. Write code to address the issue or implement the feature.
 6. Add unit tests and unit benchmarks.
-7. [Create your pull request](https://github.com/rapidsai/cudf/compare). To run continuous integration (CI) tests without requesting review, open a draft pull request.
+7. [Create your pull request](https://github.com/NVIDIA/cudf/compare). To run continuous integration (CI) tests without requesting review, open a draft pull request.
 8. Verify that CI passes all [status checks](https://docs.github.com/en/pull-requests/collaborating-with-pull-requests/collaborating-on-repositories-with-code-quality-features/about-status-checks).
    Fix if needed.
 9. Wait for other developers to review your code and update code as needed.
@@ -66,10 +66,10 @@ If you are unsure about anything, don't hesitate to comment on issues and ask fo
 
 Once you have gotten your feet wet and are more comfortable with the code, you can look at the
 prioritized issues for our next release in our
-[project boards](https://github.com/rapidsai/cudf/projects).
+[project boards](https://github.com/NVIDIA/cudf/projects).
 
 **Note:** Always look at the release board that is
-[currently under development](https://docs.rapids.ai/maintainers) for issues to work on. This is
+[currently under development](https://docs.rapids.ai/maintainers/) for issues to work on. This is
 where RAPIDS developers also focus their efforts.
 
 Look at the unassigned issues, and find an issue to which you are comfortable contributing. Start
@@ -98,7 +98,7 @@ Compilers:
 CUDA/GPU Runtime:
 
 * CUDA 12.2+
-* Volta architecture or better ([Compute Capability](https://docs.nvidia.com/deploy/cuda-compatibility/) >=7.0)
+* Volta architecture or better ([Compute Capability](https://docs.nvidia.com/deploy/cuda-compatibility/latest/) >=7.0)
 
 You can obtain CUDA from
 [https://developer.nvidia.com/cuda-downloads](https://developer.nvidia.com/cuda-downloads).
@@ -109,7 +109,7 @@ You can obtain CUDA from
 
 ```bash
 CUDF_HOME=$(pwd)/cudf
-git clone https://github.com/rapidsai/cudf.git $CUDF_HOME
+git clone https://github.com/NVIDIA/cudf.git $CUDF_HOME
 cd $CUDF_HOME
 ```
 
@@ -327,7 +327,7 @@ This will bring up an interactive prompt to select which spelling fixes to apply
 
 The [C++ Developer Guide](cpp/doxygen/developer_guide/DEVELOPER_GUIDE.md) includes details on contributing to libcudf C++ code.
 
-The [Python Developer Guide](https://docs.rapids.ai/api/cudf/stable/cudf/developer_guide/index.html) includes details on contributing to cuDF Python code.
+The [Python Developer Guide](https://docs.rapids.ai/api/cudf/stable/cudf/developer_guide/) includes details on contributing to cuDF Python code.
 
 
 ## Attribution

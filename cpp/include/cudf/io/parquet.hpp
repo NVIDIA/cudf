@@ -110,6 +110,8 @@ class parquet_reader_options {
   type_id _decimal_width{type_id::EMPTY};
   // Whether to use JIT compilation for filtering
   bool _use_jit_filter = false;
+  // Whether to output flat string columns as DICT32 encoded columns
+  bool _output_dict_columns = false;
   // Whether column name matching is case sensitive. In case of multiple
   // case-insensitive matches, the first matched column is selected
   bool _case_sensitive_names = true;
@@ -341,6 +343,20 @@ class parquet_reader_options {
   }
 
   /**
+   * @brief Returns whether the reader returns flat string columns as DICTIONARY32 encoded columns
+   *
+   * When true, the reader outputs STRING columns as DICTIONARY32 encoded columns. A DICTIONARY32
+   * column consists of an INT32 indices child and a STRING keys child.
+   *
+   * When AST/JIT filters are set, the direct transcode fast path is disabled.
+   * String columns are materialized, then operated on by the filter. The filtered results are then
+   * encoded as DICTIONARY32 columns.
+   *
+   * @return `true` if the reader returns flat string columns as DICTIONARY32 encoded columns
+   */
+  [[nodiscard]] bool is_enabled_output_dict_columns() const { return _output_dict_columns; }
+
+  /**
    * @brief Set a new source location
    *
    * @param src New `source_info`.
@@ -398,9 +414,9 @@ class parquet_reader_options {
   void set_column_names(std::vector<std::string> column_names)
   {
     CUDF_EXPECTS(not _column_indices.has_value(),
-                 "Cannot select columns by indices and names simultaneously");
+                 "Cannot select columns by names and indices simultaneously");
     CUDF_EXPECTS(not _column_field_ids.has_value(),
-                 "Cannot select columns by field IDs and names simultaneously");
+                 "Cannot select columns by names and field IDs simultaneously");
     _column_names = std::move(column_names);
   }
 
@@ -420,7 +436,10 @@ class parquet_reader_options {
     CUDF_EXPECTS(not _column_names.has_value(),
                  "Cannot select columns by indices and names simultaneously");
     CUDF_EXPECTS(not _column_field_ids.has_value(),
-                 "Cannot select columns by field IDs and indices simultaneously");
+                 "Cannot select columns by indices and field IDs simultaneously");
+    CUDF_EXPECTS(
+      not _allow_mismatched_pq_schemas,
+      "Cannot select columns by indices and allow mismatched Parquet schemas simultaneously");
     _column_indices = std::move(col_indices);
   }
 
@@ -527,7 +546,13 @@ class parquet_reader_options {
    * @param val Boolean indicating whether to read matching projected and filter columns from
    * mismatched Parquet sources.
    */
-  void enable_allow_mismatched_pq_schemas(bool val) { _allow_mismatched_pq_schemas = val; }
+  void enable_allow_mismatched_pq_schemas(bool val)
+  {
+    CUDF_EXPECTS(
+      not val or not _column_indices.has_value(),
+      "Cannot enable reading mismatched Parquet schemas when selecting columns by index");
+    _allow_mismatched_pq_schemas = val;
+  }
 
   /**
    * @brief Sets to enable/disable ignoring of non-existent projected columns while reading.
@@ -595,6 +620,13 @@ class parquet_reader_options {
   void set_decimal_width(type_id width) { _decimal_width = width; }
 
   /**
+   * @brief Sets whether to use JIT for filtering.
+   *
+   * @param val Boolean indicating whether to enable JIT filtering.
+   */
+  void enable_use_jit_filter(bool val) { _use_jit_filter = val; }
+
+  /**
    * @brief Sets whether column name matching is case sensitive.
    *
    * @note When disabled, if there are multiple case-insensitive matches, the first
@@ -617,6 +649,13 @@ class parquet_reader_options {
    * @param val Boolean indicating whether to prepend the row index column.
    */
   void enable_prepend_row_index_column(bool val) { _prepend_row_index_column = val; }
+
+  /**
+   * @brief Sets to enable/disable trying to output DICTIONARY32 columns for flat string columns.
+   *
+   * @param val Boolean indicating whether to output DICTIONARY32 columns for flat string columns
+   */
+  void enable_output_dict_columns(bool val) { _output_dict_columns = val; }
 };
 
 /**
@@ -720,7 +759,7 @@ class parquet_reader_options_builder {
    */
   parquet_reader_options_builder& convert_strings_to_categories(bool val)
   {
-    options._convert_strings_to_categories = val;
+    options.enable_convert_strings_to_categories(val);
     return *this;
   }
 
@@ -732,7 +771,7 @@ class parquet_reader_options_builder {
    */
   parquet_reader_options_builder& use_pandas_metadata(bool val)
   {
-    options._use_pandas_metadata = val;
+    options.enable_use_pandas_metadata(val);
     return *this;
   }
 
@@ -744,7 +783,7 @@ class parquet_reader_options_builder {
    */
   parquet_reader_options_builder& use_arrow_schema(bool val)
   {
-    options._use_arrow_schema = val;
+    options.enable_use_arrow_schema(val);
     return *this;
   }
 
@@ -759,7 +798,7 @@ class parquet_reader_options_builder {
    */
   parquet_reader_options_builder& allow_mismatched_pq_schemas(bool val)
   {
-    options._allow_mismatched_pq_schemas = val;
+    options.enable_allow_mismatched_pq_schemas(val);
     return *this;
   }
 
@@ -772,7 +811,7 @@ class parquet_reader_options_builder {
    */
   parquet_reader_options_builder& ignore_missing_columns(bool val)
   {
-    options._ignore_missing_columns = val;
+    options.enable_ignore_missing_columns(val);
     return *this;
   }
 
@@ -784,7 +823,7 @@ class parquet_reader_options_builder {
    */
   parquet_reader_options_builder& set_column_schema(std::vector<reader_column_schema> val)
   {
-    options._reader_column_schema = std::move(val);
+    options.set_column_schema(std::move(val));
     return *this;
   }
 
@@ -847,7 +886,7 @@ class parquet_reader_options_builder {
    */
   parquet_reader_options_builder& timestamp_type(data_type type)
   {
-    options._timestamp_type = type;
+    options.set_timestamp_type(type);
     return *this;
   }
 
@@ -860,19 +899,19 @@ class parquet_reader_options_builder {
    */
   parquet_reader_options_builder& decimal_width(type_id width)
   {
-    options._decimal_width = width;
+    options.set_decimal_width(width);
     return *this;
   }
 
   /**
-   * @brief Enable/disable use of JIT for filter step.
+   * @brief Sets whether to use JIT for filtering.
    *
-   * @param use_jit_filter Boolean value whether to use JIT filter
+   * @param val Boolean indicating whether to enable JIT filtering.
    * @return this for chaining
    */
-  parquet_reader_options_builder& use_jit_filter(bool use_jit_filter)
+  parquet_reader_options_builder& use_jit_filter(bool val)
   {
-    options._use_jit_filter = use_jit_filter;
+    options.enable_use_jit_filter(val);
     return *this;
   }
 
@@ -887,7 +926,7 @@ class parquet_reader_options_builder {
    */
   parquet_reader_options_builder& case_sensitive_names(bool val)
   {
-    options._case_sensitive_names = val;
+    options.enable_case_sensitive_names(val);
     return *this;
   }
 
@@ -899,7 +938,7 @@ class parquet_reader_options_builder {
    */
   parquet_reader_options_builder& prepend_source_index_column(bool val)
   {
-    options._prepend_source_index_column = val;
+    options.enable_prepend_source_index_column(val);
     return *this;
   }
 
@@ -911,7 +950,24 @@ class parquet_reader_options_builder {
    */
   parquet_reader_options_builder& prepend_row_index_column(bool val)
   {
-    options._prepend_row_index_column = val;
+    options.enable_prepend_row_index_column(val);
+    return *this;
+  }
+
+  /**
+   * @brief Sets options for enabling/disabling output of DICTIONARY32 columns for flat string
+   * columns.
+   *
+   * @param val Boolean value whether to output flat string columns as DICTIONARY32 encoded columns
+   *
+   * @note When enabled, the output columns will be of type DICTIONARY32. When disabled, the output
+   * columns will be of type STRING.
+   *
+   * @return this for chaining
+   */
+  parquet_reader_options_builder& output_dict_columns(bool val)
+  {
+    options.enable_output_dict_columns(val);
     return *this;
   }
 
@@ -952,7 +1008,7 @@ class parquet_reader_options_builder {
  */
 table_with_metadata read_parquet(
   parquet_reader_options const& options,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -983,7 +1039,7 @@ table_with_metadata read_parquet(
   std::vector<std::unique_ptr<cudf::io::datasource>>&& sources,
   std::vector<parquet::FileMetaData>&& parquet_metadatas,
   parquet_reader_options const& options,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -1021,7 +1077,7 @@ class chunked_parquet_reader {
   chunked_parquet_reader(
     std::size_t chunk_read_limit,
     parquet_reader_options const& options,
-    rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+    cuda::stream_ref stream           = cudf::get_default_stream(),
     rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
   /**
@@ -1045,7 +1101,7 @@ class chunked_parquet_reader {
     std::vector<std::unique_ptr<cudf::io::datasource>>&& sources,
     std::vector<parquet::FileMetaData>&& parquet_metadatas,
     parquet_reader_options const& options,
-    rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+    cuda::stream_ref stream           = cudf::get_default_stream(),
     rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
   /**
@@ -1071,7 +1127,7 @@ class chunked_parquet_reader {
     std::size_t chunk_read_limit,
     std::size_t pass_read_limit,
     parquet_reader_options const& options,
-    rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+    cuda::stream_ref stream           = cudf::get_default_stream(),
     rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
   /**
@@ -1102,7 +1158,7 @@ class chunked_parquet_reader {
     std::vector<std::unique_ptr<cudf::io::datasource>>&& sources,
     std::vector<parquet::FileMetaData>&& parquet_metadatas,
     parquet_reader_options const& options,
-    rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+    cuda::stream_ref stream           = cudf::get_default_stream(),
     rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
   /**
@@ -1901,7 +1957,7 @@ class parquet_writer_options_builder
  */
 
 std::unique_ptr<std::vector<uint8_t>> write_parquet(
-  parquet_writer_options const& options, rmm::cuda_stream_view stream = cudf::get_default_stream());
+  parquet_writer_options const& options, cuda::stream_ref stream = cudf::get_default_stream());
 
 /**
  * @brief Merges multiple raw metadata blobs that were previously created by write_parquet
@@ -2005,7 +2061,7 @@ class chunked_parquet_writer {
    * @param[in] stream CUDA stream used for device memory operations and kernel launches
    */
   chunked_parquet_writer(chunked_parquet_writer_options const& options,
-                         rmm::cuda_stream_view stream = cudf::get_default_stream());
+                         cuda::stream_ref stream = cudf::get_default_stream());
   /**
    * @brief Default destructor.
    *        This is added to not leak detail API

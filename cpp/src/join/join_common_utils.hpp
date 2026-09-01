@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -9,16 +9,36 @@
 #include <cudf/types.hpp>
 #include <cudf/utilities/span.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_uvector.hpp>
 #include <rmm/resource_ref.hpp>
 
+#include <cuda/stream>
+
 #include <memory>
+#include <optional>
 #include <utility>
 
 namespace cudf::detail {
 
 constexpr int DEFAULT_JOIN_BLOCK_SIZE = 128;
+
+/**
+ * @brief Validates and returns a hash-table load factor.
+ *
+ * @param load_factor The load factor to validate
+ * @return The validated load factor
+ * @throws std::invalid_argument if `load_factor` is not in (0, 1]
+ */
+double checked_load_factor(double load_factor);
+
+/**
+ * @brief Validates the probe-side input to a hash join.
+ *
+ * @param right Build-side join keys
+ * @param left Probe-side join keys
+ * @param has_nulls Whether the build-side hash table supports nulls
+ */
+void validate_hash_join_probe(table_view const& right, table_view const& left, bool has_nulls);
 
 // Convenient alias for a pair of unique pointers to device uvectors.
 using VectorPair = std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
@@ -39,7 +59,7 @@ using VectorPair = std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
  * @return Join output indices vector pair
  */
 VectorPair get_trivial_left_join_indices(table_view const& left,
-                                         rmm::cuda_stream_view stream,
+                                         cuda::stream_ref stream,
                                          rmm::device_async_resource_ref mr);
 
 /**
@@ -56,6 +76,8 @@ VectorPair get_trivial_left_join_indices(table_view const& left,
  * @param left_table_num_rows Number of rows in the left table (0 → every right row is
  *                            unmatched, fast path).
  * @param right_table_num_rows Number of rows in the right table.
+ * @param right_matches Optional precomputed flags indicating which right rows matched. When absent,
+ *                      the flags are derived from `indices.second`.
  * @param stream CUDA stream used for device memory operations and kernel launches.
  * @param mr Device memory resource used to allocate working storage.
  *
@@ -64,7 +86,8 @@ VectorPair get_trivial_left_join_indices(table_view const& left,
 VectorPair finalize_full_join(VectorPair&& indices,
                               size_type left_table_num_rows,
                               size_type right_table_num_rows,
-                              rmm::cuda_stream_view stream,
+                              std::optional<cudf::device_span<size_type const>> right_matches,
+                              cuda::stream_ref stream,
                               rmm::device_async_resource_ref mr);
 
 /**
@@ -91,7 +114,7 @@ VectorPair finalize_full_join(
   cudf::host_span<cudf::device_span<size_type const> const> right_partials,
   size_type left_table_num_rows,
   size_type right_table_num_rows,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr);
 
 }  // namespace cudf::detail

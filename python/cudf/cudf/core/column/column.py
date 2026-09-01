@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import datetime
 import pickle
 import warnings
 from collections.abc import (
@@ -1073,7 +1074,7 @@ class ColumnBase(Serializable, BinaryOperand, Reducible):
             arbitrary = cp.ascontiguousarray(arbitrary)
 
         # TODO: Can remove once from_cuda_array_interface can handle masks
-        # https://github.com/rapidsai/cudf/issues/19122
+        # https://github.com/NVIDIA/cudf/issues/19122
         if (mask := cai.get("mask", None)) is not None:
             cai_copy = cai.copy()
             cai_copy.pop("mask")
@@ -1172,7 +1173,7 @@ class ColumnBase(Serializable, BinaryOperand, Reducible):
             pandas_array = pandas_nullable_dtype.__from_arrow__(pa_array)
             return pd.Index(pandas_array, copy=False)
         else:
-            # xref https://github.com/rapidsai/cudf/issues/21120
+            # xref https://github.com/NVIDIA/cudf/issues/21120
             # TODO: Revisit using pa_array.to_pandas() once pandas 3.0 is supported
             np_array = pa_array.to_numpy(zero_copy_only=False, writable=True)
             return pd.Index(
@@ -1259,7 +1260,7 @@ class ColumnBase(Serializable, BinaryOperand, Reducible):
         replaced = self
         if old_plc.null_count() == 1:
             old_isnull_plc = plc.unary.is_null(old_plc)
-            (filtered_column,) = plc.stream_compaction.apply_boolean_mask(
+            (filtered_column,) = plc.stream_compaction.apply_retention_mask(
                 plc.Table([new_plc]), old_isnull_plc
             ).columns()
             replacement_for_null = filtered_column.to_scalar().to_py()
@@ -1341,7 +1342,7 @@ class ColumnBase(Serializable, BinaryOperand, Reducible):
         result = self._reduce(
             "all", skipna=True, min_count=min_count, **kwargs
         )
-        if np.isnan(result):
+        if result is pd.NA or np.isnan(result):
             # Empty after dropping NaN/nulls - return np.bool_
             result = np.bool_(True)
 
@@ -1364,9 +1365,19 @@ class ColumnBase(Serializable, BinaryOperand, Reducible):
             )
         if self.size == 0:
             return False
-        if not skipna and (self.has_nulls() or self.nan_count > 0):
+        is_masked_dtype = is_pandas_nullable_extension_dtype(self.dtype)
+        if not skipna and (
+            self.nan_count > 0 or (not is_masked_dtype and self.has_nulls())
+        ):
+            # NaN values (and the NaN null sentinel of numpy dtypes) are
+            # truthy. For pandas nullable extension dtypes <NA> is not
+            # truthy; Kleene logic below decides between True and <NA>.
             return True
-        elif skipna and self.null_count == self.size:
+        if self.null_count == self.size:
+            if not skipna:
+                # All-null nullable column with skipna=False: Kleene
+                # any([NA, ...]) with no True values is <NA>.
+                return _get_nan_for_dtype(self.dtype)
             return False
 
         # For any(), we want NaN values to be treated as truthy.
@@ -1374,10 +1385,20 @@ class ColumnBase(Serializable, BinaryOperand, Reducible):
         result = self._reduce(
             "any", skipna=True, min_count=min_count, **kwargs
         )
-        if np.isnan(result):
+        if result is pd.NA or np.isnan(result):
             # Empty after dropping NaN/nulls
             # If skipna=False, NaN values should be treated as truthy
             result = np.bool_(not skipna)
+
+        # For pandas nullable extension dtypes with skipna=False, a False
+        # result in the presence of nulls is <NA> under Kleene logic.
+        if (
+            not result
+            and not skipna
+            and self.null_count > 0
+            and is_masked_dtype
+        ):
+            return _get_nan_for_dtype(self.dtype)
         return result
 
     def dropna(self) -> Self:
@@ -1812,7 +1833,7 @@ class ColumnBase(Serializable, BinaryOperand, Reducible):
                 # Both value and key are aligned to self. Thus, the values
                 # corresponding to the false values in key should be
                 # ignored.
-                value = value.apply_boolean_mask(key)
+                value = value.apply_retention_mask(key)
                 # After applying boolean mask, the length of value equals
                 # the number of elements to scatter, we can skip computing
                 # the sum of ``key`` below.
@@ -2014,8 +2035,8 @@ class ColumnBase(Serializable, BinaryOperand, Reducible):
             # Each point is evenly spaced, index values don't matter
             known_x = cp.flatnonzero(valid_locs.values)
         else:
-            known_x = index._column.apply_boolean_mask(valid_locs).values
-        known_y = col.apply_boolean_mask(valid_locs).values
+            known_x = index._column.apply_retention_mask(valid_locs).values
+        known_y = col.apply_retention_mask(valid_locs).values
 
         result = cp.interp(index.to_cupy(), known_x, known_y)
 
@@ -2044,7 +2065,7 @@ class ColumnBase(Serializable, BinaryOperand, Reducible):
         return (
             ColumnBase.from_range(range(len(self)))  # type: ignore[return-value]
             .astype(SIZE_TYPE_DTYPE)
-            .apply_boolean_mask(mask)
+            .apply_retention_mask(mask)
         )
 
     def _find_first_and_last(self, value: ScalarLike) -> tuple[int, int]:
@@ -2168,7 +2189,7 @@ class ColumnBase(Serializable, BinaryOperand, Reducible):
             # nulls, these nulls should be replaced by whether or not the
             # haystack contains a null.
             # TODO: this is unnecessary if we resolve
-            # https://github.com/rapidsai/cudf/issues/14515 by
+            # https://github.com/NVIDIA/cudf/issues/14515 by
             # providing a mode in which cudf::contains does not mask
             # the result.
             result = result.fillna(rhs.null_count > 0)
@@ -2372,15 +2393,23 @@ class ColumnBase(Serializable, BinaryOperand, Reducible):
     def as_decimal_column(self, dtype: DecimalDtype) -> DecimalColumn:
         raise NotImplementedError()
 
-    def apply_boolean_mask(self, mask: ColumnBase) -> ColumnBase:
+    def apply_retention_mask(self, mask: ColumnBase) -> ColumnBase:
         if mask.dtype.kind != "b":
-            raise ValueError("boolean_mask is not boolean type.")
+            raise ValueError("retention_mask is not boolean type.")
 
         return PylibcudfFunction(
-            plc.stream_compaction.apply_boolean_mask,
+            plc.stream_compaction.apply_retention_mask,
             same_dtype_policy,
             result_index=0,
         ).execute_with_args(ColumnList(self), mask)
+
+    def apply_boolean_mask(self, mask: ColumnBase) -> ColumnBase:
+        warnings.warn(
+            "apply_boolean_mask is deprecated; use apply_retention_mask instead",
+            FutureWarning,
+            stacklevel=2,
+        )
+        return self.apply_retention_mask(mask)
 
     def argsort(
         self,
@@ -2959,6 +2988,11 @@ class ColumnBase(Serializable, BinaryOperand, Reducible):
                 return col_dtype.type(0)
             if op == "product":
                 return col_dtype.type(1)
+            if is_pandas_nullable_extension_dtype(self.dtype):
+                # pandas returns <NA> for empty/all-null reductions of
+                # nullable dtypes even when the reduction result dtype is
+                # a plain numpy dtype (e.g. Int64.mean() -> float64).
+                return _get_nan_for_dtype(self.dtype)
             return _get_nan_for_dtype(col_dtype)
 
         # Perform the actual reduction
@@ -3864,9 +3898,17 @@ def as_column(
                     length=length,
                 )
             elif (
-                isinstance(element, (pd.Timestamp, pd.Timedelta, pd.Interval))
+                isinstance(
+                    element,
+                    (datetime.datetime, datetime.timedelta, pd.Interval),
+                )
                 or element is pd.NaT
             ):
+                # datetime.datetime/timedelta cover their pd.Timestamp/
+                # pd.Timedelta subclasses; routing stdlib datetimes through
+                # pandas keeps mixed datetime+non-datetime inputs on the
+                # object-dtype path (MixedTypeError) instead of silently
+                # coercing them.
                 # TODO: Remove this after
                 # https://github.com/apache/arrow/issues/26492
                 # is fixed.
@@ -3891,7 +3933,7 @@ def as_column(
             ):
                 # TODO: Need to re-visit this cast and fill_null
                 # calls while addressing the following issue:
-                # https://github.com/rapidsai/cudf/issues/14149
+                # https://github.com/NVIDIA/cudf/issues/14149
                 arbitrary = arbitrary.cast(pa.float64())
                 arbitrary = pc.fill_null(arbitrary, np.nan)
             if (

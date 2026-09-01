@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -39,7 +39,7 @@ void nvbench_hm_inner_join(nvbench::state& state,
                               cudf::table_view const& right_input,
                               cudf::null_equality compare_nulls) {
       auto smj = cudf::sort_merge_join(right_input, cudf::sorted::NO, compare_nulls);
-      return smj.inner_join(left_input, cudf::sorted::NO);
+      return smj.inner_join(left_input);
     };
     BM_join<Nullable, Algorithm, NullEquality>(state, dtypes, sort_merge_join, multiplicity);
   }
@@ -73,7 +73,7 @@ void nvbench_hm_left_join(nvbench::state& state,
                             cudf::table_view const& right_input,
                             cudf::null_equality compare_nulls) {
     auto smj = cudf::sort_merge_join(right_input, cudf::sorted::NO, compare_nulls);
-    return smj.left_join(left_input, cudf::sorted::NO);
+    return smj.left_join(left_input);
   };
   if constexpr (Algorithm == join_t::HASH) {
     BM_join<Nullable, Algorithm, NullEquality>(state, dtypes, hash_join, multiplicity);

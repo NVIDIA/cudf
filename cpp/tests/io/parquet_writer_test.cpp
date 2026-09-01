@@ -14,7 +14,10 @@
 #include <cudf_test/table_utilities.hpp>
 
 #include <cudf/column/column_factories.hpp>
+#include <cudf/copying.hpp>
+#include <cudf/filling.hpp>
 #include <cudf/io/data_sink.hpp>
+#include <cudf/io/detail/codec.hpp>
 #include <cudf/io/parquet.hpp>
 #include <cudf/io/parquet_metadata.hpp>
 #include <cudf/io/parquet_schema.hpp>
@@ -34,11 +37,55 @@
 #include <fstream>
 #include <functional>
 #include <iterator>
+#include <limits>
 #include <random>
+#include <ranges>
+#include <stdexcept>
 
 using cudf::test::iterators::no_nulls;
 
-using ParquetCompressionTest = CompressionTest<ParquetWriterTest>;
+namespace {
+
+/**
+ * @brief Create a list column with `num_rows` rows of `rows_per_row` values each.
+ */
+template <typename T>
+std::unique_ptr<cudf::column> make_wide_list_column(cudf::size_type num_rows,
+                                                    cudf::size_type rows_per_row)
+  requires(cudf::is_integral_not_bool<T>())
+{
+  // Compute in int64_t and validate before narrowing to cudf::size_type to avoid overflow
+  auto const total_values = static_cast<int64_t>(num_rows) * static_cast<int64_t>(rows_per_row);
+  CUDF_EXPECTS(total_values <= std::numeric_limits<cudf::size_type>::max(),
+               "Total list values exceeds cudf::size_type");
+  auto const offsets =
+    cudf::detail::make_counting_transform_iterator(cudf::size_type{0}, [rows_per_row](auto row) {
+      return static_cast<cudf::size_type>(static_cast<int64_t>(rows_per_row) * row);
+    });
+  auto child = cudf::sequence(static_cast<cudf::size_type>(total_values),
+                              cudf::numeric_scalar<T>(0),
+                              cudf::numeric_scalar<T>(1));
+
+  return cudf::make_lists_column(
+    num_rows,
+    cudf::test::fixed_width_column_wrapper<cudf::size_type>(offsets, offsets + num_rows + 1)
+      .release(),
+    std::move(child),
+    0,
+    rmm::device_buffer{});
+}
+
+// Only the `Nvcomp` instantiation requires device GZIP support (nvCOMP 5.3+). The host
+// instantiations must keep running on older nvCOMP: `LIBCUDF_HOST_COMPRESSION=OFF` cannot force a
+// device path that does not exist, so those cases would silently compress on the host instead.
+#define SKIP_IF_NVCOMP_GZIP_UNSUPPORTED()                                     \
+  do {                                                                        \
+    auto const [impl, comp] = GetParam();                                     \
+    if (comp == cudf::io::compression_type::GZIP && impl == "NVCOMP" &&       \
+        not cudf::io::detail::is_device_compression_supported(comp)) {        \
+      GTEST_SKIP() << "Device GZIP compression requires nvCOMP 5.3 or later"; \
+    }                                                                         \
+  } while (0)
 
 template <typename mask_op_t>
 void test_durations(mask_op_t mask_op, bool use_byte_stream_split, bool arrow_schema)
@@ -108,6 +155,8 @@ void test_durations(mask_op_t mask_op, bool use_byte_stream_split, bool arrow_sc
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(durations_us, result.tbl->view().column(3));
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(durations_ns, result.tbl->view().column(4));
 }
+
+}  // namespace
 
 TEST_F(ParquetWriterTest, Durations)
 {
@@ -283,7 +332,9 @@ TEST_F(ParquetWriterTest, Struct)
 
   cudf::io::parquet_reader_options read_args =
     cudf::io::parquet_reader_options::builder(cudf::io::source_info(filepath));
-  cudf::io::read_parquet(read_args);
+  auto const result = cudf::io::read_parquet(read_args);
+
+  CUDF_TEST_EXPECT_TABLES_EQUAL(expected, result.tbl->view());
 }
 
 // custom data sink that supports device writes. uses plain file io.
@@ -305,20 +356,20 @@ class custom_test_data_sink : public cudf::io::data_sink {
 
   [[nodiscard]] bool supports_device_write() const override { return true; }
 
-  void device_write(void const* gpu_data, size_t size, rmm::cuda_stream_view stream) override
+  void device_write(void const* gpu_data, size_t size, cuda::stream_ref stream) override
   {
     this->device_write_async(gpu_data, size, stream).get();
   }
 
   std::future<void> device_write_async(void const* gpu_data,
                                        size_t size,
-                                       rmm::cuda_stream_view stream) override
+                                       cuda::stream_ref stream) override
   {
     return std::async(std::launch::deferred, [=, this] {
       char* ptr = nullptr;
       CUDF_CUDA_TRY(cudaMallocHost(&ptr, size));
-      CUDF_CUDA_TRY(cudaMemcpyAsync(ptr, gpu_data, size, cudaMemcpyDefault, stream.value()));
-      stream.synchronize();
+      CUDF_CUDA_TRY(cudaMemcpyAsync(ptr, gpu_data, size, cudaMemcpyDefault, stream.get()));
+      stream.sync();
       outfile_.write(ptr, size);
       CUDF_CUDA_TRY(cudaFreeHost(ptr));
     });
@@ -934,7 +985,7 @@ TEST_F(ParquetWriterTest, FloatingPointWithNaNStatsOmittedAcrossFragments)
 
 TEST_F(ParquetWriterTest, FloatingPointWithNaNStatsOmittedNested)
 {
-  // NaN detection must reach a float leaf nested in a LIST column (rapidsai/cudf#22817).
+  // NaN detection must reach a float leaf nested in a LIST column (NVIDIA/cudf#22817).
   auto constexpr nanf = std::numeric_limits<float>::quiet_NaN();
   cudf::test::lists_column_wrapper<float> list_col{{1.0f, nanf, 3.0f}, {4.0f, 5.0f}};
   auto const expected = table_view{{list_col}};
@@ -1350,6 +1401,100 @@ TEST_F(ParquetWriterTest, DictionaryNeverTest)
   EXPECT_FALSE(used_dict());
 }
 
+TEST_F(ParquetWriterTest, DictionaryEntryLimitListTest)
+{
+  // Create list column smaller and larger than the max dictionary size under the ADAPTIVE policy. A
+  // column chunk larger than the max dictionary size must fall back to plain encoding.
+  constexpr size_t max_dict_size = 1024 * 1024;
+
+  // Each distinct value repeats 10 times, so plain encoding stays larger than dictionary encoding
+  auto const make_list_col = [](cudf::size_type vals_per_row, cudf::size_type cardinality) {
+    constexpr cudf::size_type num_rows = 100'000;
+
+    auto const num_leaves = num_rows * vals_per_row;
+    auto leaf_values      = cudf::detail::make_counting_transform_iterator(
+      0, [cardinality](auto i) { return static_cast<int32_t>(i % cardinality); });
+    cudf::test::fixed_width_column_wrapper<int32_t> leaves(leaf_values, leaf_values + num_leaves);
+    auto offset_values = cudf::detail::make_counting_transform_iterator(
+      0, [vals_per_row](auto i) { return static_cast<cudf::size_type>(i * vals_per_row); });
+    cudf::test::fixed_width_column_wrapper<cudf::size_type> offsets(offset_values,
+                                                                    offset_values + num_rows + 1);
+    return cudf::make_lists_column(
+      num_rows, offsets.release(), leaves.release(), 0, rmm::device_buffer{});
+  };
+
+  constexpr cudf::size_type max_dict_entries = max_dict_size / sizeof(int32_t);
+
+  constexpr cudf::size_type vals_per_row_under = 20;
+  auto const col0                             = make_list_col(vals_per_row_under, max_dict_entries);
+  constexpr cudf::size_type vals_per_row_over = 40;
+  auto const col1 = make_list_col(vals_per_row_over, max_dict_entries + 1);
+
+  auto const expected = table_view{{*col0, *col1}};
+
+  // Helper to test dictionary selection with different fragment sizes under ADAPTIVE policy.
+  auto const test_dictionary_selection = [&](table_view const& input,
+                                             std::vector<bool> const& expected_dictionary,
+                                             std::string tag,
+                                             std::optional<cudf::size_type> frag_size =
+                                               std::nullopt) {
+    SCOPED_TRACE(tag);
+
+    if (input.num_rows() == 0) { return; }
+
+    auto const filepath =
+      temp_env->get_temp_filepath("DictionaryEntryLimitListTest-" + tag + ".parquet");
+    {
+      auto out_opts =
+        cudf::io::parquet_writer_options::builder(cudf::io::sink_info{filepath}, input)
+          .compression(cudf::io::compression_type::NONE)
+          .dictionary_policy(cudf::io::dictionary_policy::ADAPTIVE)
+          .max_dictionary_size(max_dict_size)
+          .build();
+      if (frag_size.has_value()) { out_opts.set_max_page_fragment_size(frag_size.value()); }
+      cudf::io::write_parquet(out_opts);
+    }
+
+    auto const source = cudf::io::datasource::create(filepath);
+    cudf::io::parquet::FileMetaData fmd;
+    read_footer(source, &fmd);
+
+    // Both columns must land in a single chunk for the cardinalities above to be the per-chunk
+    // dictionary entry counts.
+    ASSERT_EQ(fmd.row_groups.size(), 1);
+
+    ASSERT_EQ(fmd.row_groups[0].columns.size(), expected_dictionary.size());
+    auto used_dict = [&fmd](size_t col_idx) {
+      auto const& encodings = fmd.row_groups[0].columns[col_idx].meta_data.encodings;
+      return std::any_of(encodings.cbegin(), encodings.cend(), [](auto enc) {
+        return enc == cudf::io::parquet::Encoding::PLAIN_DICTIONARY or
+               enc == cudf::io::parquet::Encoding::RLE_DICTIONARY;
+      });
+    };
+
+    std::ranges::for_each(std::views::iota(size_t{0}, expected_dictionary.size()),
+                          [&](size_t i) { EXPECT_EQ(used_dict(i), expected_dictionary[i]); });
+  };
+
+  test_dictionary_selection(expected, {true, false}, "DefaultFragments");
+  test_dictionary_selection(expected, {true, false}, "SmallFragments", 50);
+
+  std::vector<bool> const valid{true, true, false, true, true};
+  auto [null_mask, null_count] = cudf::test::detail::make_null_mask(valid.begin(), valid.end());
+  constexpr auto num_repeated_leaves = cudf::size_type{1'000};
+  auto const repeated_leaves         = cuda::make_constant_iterator<int32_t>(1);
+  auto offsets_col =
+    cudf::test::fixed_width_column_wrapper<cudf::size_type>{0, 2, 2, 2, 2, num_repeated_leaves + 2}
+      .release();
+  auto values_col = cudf::test::fixed_width_column_wrapper<int32_t>(
+                      repeated_leaves, repeated_leaves + num_repeated_leaves + 2)
+                      .release();
+  auto null_and_empty_lists = cudf::make_lists_column(
+    5, std::move(offsets_col), std::move(values_col), null_count, std::move(null_mask));
+  auto const sliced_input = cudf::slice(null_and_empty_lists->view(), {1, 5}).front();
+  test_dictionary_selection(table_view{{sliced_input}}, {true}, "SlicedInput");
+}
+
 TEST_F(ParquetWriterTest, DictionaryAdaptiveTest)
 {
   constexpr unsigned int nrows = 65'536U;
@@ -1357,9 +1502,8 @@ TEST_F(ParquetWriterTest, DictionaryAdaptiveTest)
   constexpr unsigned int cardinality = 32'768U;
 
   // single value will have a small dictionary
-  auto elements0 = cudf::detail::make_counting_transform_iterator(
-    0, [](auto i) { return "a unique string value suffixed with 1"; });
-  auto const col0 = cudf::test::strings_column_wrapper(elements0, elements0 + nrows);
+  auto const elements0 = cuda::make_constant_iterator("a unique string value suffixed with 1");
+  auto const col0      = cudf::test::strings_column_wrapper(elements0, elements0 + nrows);
 
   // high cardinality will have a large dictionary
   auto elements1  = cudf::detail::make_counting_transform_iterator(0, [cardinality](auto i) {
@@ -1535,9 +1679,12 @@ TEST_F(ParquetWriterTest, UserNullabilityInvalid)
   EXPECT_THROW(cudf::io::write_parquet(write_opts), cudf::logic_error);
 }
 
+using ParquetCompressionTest = CompressionTest<ParquetWriterTest>;
+
 TEST_P(ParquetCompressionTest, CompStats)
 {
   auto const compression_type = std::get<1>(GetParam());
+  SKIP_IF_NVCOMP_GZIP_UNSUPPORTED();
 
   auto table = create_random_fixed_table<int>(1, 55000, true);
 
@@ -1566,6 +1713,7 @@ TEST_P(ParquetCompressionTest, CompStats)
 TEST_P(ParquetCompressionTest, CompStatsEmptyTable)
 {
   auto const compression_type = std::get<1>(GetParam());
+  SKIP_IF_NVCOMP_GZIP_UNSUPPORTED();
 
   auto table_no_rows = create_random_fixed_table<int>(20, 0, false);
 
@@ -1586,6 +1734,7 @@ TEST_P(ParquetCompressionTest, RoundTripBasic)
 {
   constexpr auto num_rows     = 12000;
   auto const compression_type = std::get<1>(GetParam());
+  SKIP_IF_NVCOMP_GZIP_UNSUPPORTED();
 
   // Generate compressible data
   auto int_sequence =
@@ -1627,6 +1776,7 @@ TEST_P(ParquetCompressionTest, SkipCompression)
   constexpr auto row_group_rows = 2 * page_rows;
   constexpr auto num_rows       = 2 * row_group_rows;
   auto const compression_type   = std::get<1>(GetParam());
+  SKIP_IF_NVCOMP_GZIP_UNSUPPORTED();
 
   auto compressible_seq =
     cudf::detail::make_counting_transform_iterator(0, [](auto i) { return i / 4; });
@@ -1670,6 +1820,7 @@ INSTANTIATE_TEST_CASE_P(Nvcomp,
                         ::testing::Combine(::testing::Values("NVCOMP"),
                                            ::testing::Values(cudf::io::compression_type::AUTO,
                                                              cudf::io::compression_type::SNAPPY,
+                                                             cudf::io::compression_type::GZIP,
                                                              cudf::io::compression_type::LZ4,
                                                              cudf::io::compression_type::ZSTD)));
 
@@ -1684,6 +1835,7 @@ INSTANTIATE_TEST_CASE_P(Host,
                         ::testing::Combine(::testing::Values("HOST", "HYBRID", "AUTO"),
                                            ::testing::Values(cudf::io::compression_type::AUTO,
                                                              cudf::io::compression_type::SNAPPY,
+                                                             cudf::io::compression_type::GZIP,
                                                              cudf::io::compression_type::ZSTD)));
 
 TEST_F(ParquetWriterTest, NoNullsAsNonNullable)
@@ -2175,6 +2327,31 @@ TEST_F(ParquetWriterTest, DeltaBinaryStartsWithNulls)
   CUDF_TEST_EXPECT_TABLES_EQUAL(expected, result.tbl->view());
 }
 
+TEST_F(ParquetWriterTest, DeltaBinaryNzIdxTailIteration33)
+{
+  // Exercise a non-null DELTA_BINARY_PACKED column whose row count crosses one 32-value
+  // non-null index word. This guards the writer tail path from dropping or corrupting the
+  // final value after the last full word.
+  constexpr int num_rows = 33;
+
+  auto const values = cuda::counting_iterator<int32_t>{0};
+  auto const col =
+    cudf::test::fixed_width_column_wrapper<int32_t>{values, values + num_rows, no_nulls()};
+  auto const expected = table_view({col});
+
+  auto const filepath = temp_env->get_temp_filepath("DeltaBinaryNzIdxTailIteration33.parquet");
+  cudf::io::parquet_writer_options out_opts =
+    cudf::io::parquet_writer_options::builder(cudf::io::sink_info{filepath}, expected)
+      .write_v2_headers(true)
+      .dictionary_policy(cudf::io::dictionary_policy::NEVER);
+  cudf::io::write_parquet(out_opts);
+
+  cudf::io::parquet_reader_options in_opts =
+    cudf::io::parquet_reader_options::builder(cudf::io::source_info{filepath});
+  auto result = cudf::io::read_parquet(in_opts);
+  CUDF_TEST_EXPECT_TABLES_EQUAL(expected, result.tbl->view());
+}
+
 std::pair<std::unique_ptr<cudf::table>, cudf::io::table_input_metadata>
 make_byte_stream_split_table(bool as_struct)
 {
@@ -2437,20 +2614,20 @@ class custom_test_memmap_sink : public cudf::io::data_sink {
 
   [[nodiscard]] bool supports_device_write() const override { return supports_device_writes; }
 
-  void device_write(void const* gpu_data, size_t size, rmm::cuda_stream_view stream) override
+  void device_write(void const* gpu_data, size_t size, cuda::stream_ref stream) override
   {
     this->device_write_async(gpu_data, size, stream).get();
   }
 
   std::future<void> device_write_async(void const* gpu_data,
                                        size_t size,
-                                       rmm::cuda_stream_view stream) override
+                                       cuda::stream_ref stream) override
   {
     return std::async(std::launch::deferred, [=, this] {
       char* ptr = nullptr;
       CUDF_CUDA_TRY(cudaMallocHost(&ptr, size));
-      CUDF_CUDA_TRY(cudaMemcpyAsync(ptr, gpu_data, size, cudaMemcpyDefault, stream.value()));
-      stream.synchronize();
+      CUDF_CUDA_TRY(cudaMemcpyAsync(ptr, gpu_data, size, cudaMemcpyDefault, stream.get()));
+      stream.sync();
       mm_writer->host_write(ptr, size);
       CUDF_CUDA_TRY(cudaFreeHost(ptr));
     });
@@ -2856,4 +3033,71 @@ TEST_F(ParquetWriterTest, DISABLED_SizeTypeOverflow)
   auto const result = cudf::io::read_parquet(read_opts);
 
   CUDF_TEST_EXPECT_TABLES_EQUAL(cudf::table_view({col->view()}), result.tbl->view());
+}
+
+TEST_F(ParquetWriterTest, OversizedRowThrows)
+{
+  // A single 2.4GB row cannot be split any further, so report a catchable host error.
+  auto const col      = make_wide_list_column<int32_t>(1, 600'000'000);
+  auto const expected = cudf::table_view{{col->view()}};
+
+  std::vector<char> buffer;
+  cudf::io::parquet_writer_options const out_opts =
+    cudf::io::parquet_writer_options::builder(cudf::io::sink_info{&buffer}, expected)
+      .compression(cudf::io::compression_type::NONE)
+      .dictionary_policy(cudf::io::dictionary_policy::NEVER)
+      .stats_level(cudf::io::STATISTICS_NONE);
+
+  EXPECT_THROW(cudf::io::write_parquet(out_opts), std::overflow_error);
+}
+
+struct ParquetWriterSizeLimitsPageModeTest : public ParquetWriterTest,
+                                             public ::testing::WithParamInterface<bool> {};
+
+INSTANTIATE_TEST_CASE_P(PageHeaderVersion,
+                        ParquetWriterSizeLimitsPageModeTest,
+                        ::testing::Values(false, true));
+
+TEST_P(ParquetWriterSizeLimitsPageModeTest, DISABLED_WideRowsSplitFragmentsAndRowGroups)
+{
+  auto const write_v2_headers = GetParam();
+
+  // Four rows of 1GB data each. The writer must shrink page fragments to fit them in a page, and
+  // then also produce at least two row groups to keep each buffer within `EncColumnChunk`'s
+  // addressable range (UINT32_MAX).
+  constexpr cudf::size_type num_rows         = 4;
+  constexpr cudf::size_type elements_per_row = 250'000'000;
+
+  auto const col      = make_wide_list_column<int32_t>(num_rows, elements_per_row);
+  auto const expected = cudf::table_view{{col->view()}};
+
+  auto const filepath = temp_env->get_temp_filepath("WideRowsSplitFragments.parquet");
+  cudf::io::parquet_writer_options const out_opts =
+    cudf::io::parquet_writer_options::builder(cudf::io::sink_info{filepath}, expected)
+      .compression(cudf::io::compression_type::NONE)
+      .dictionary_policy(cudf::io::dictionary_policy::NEVER)
+      .stats_level(cudf::io::STATISTICS_NONE)
+      .write_v2_headers(write_v2_headers)
+      .row_group_size_bytes(std::numeric_limits<size_t>::max())
+      .row_group_size_rows(1'000'000)
+      .max_page_size_bytes(512 * 1024)
+      .max_page_size_rows(20'000)
+      .max_page_fragment_size(5'000);
+  cudf::io::write_parquet(out_opts);
+
+  auto const metadata = cudf::io::read_parquet_metadata(cudf::io::source_info{filepath});
+  EXPECT_EQ(metadata.num_rows(), num_rows);
+  EXPECT_GT(metadata.num_rowgroups(), 1);
+
+  auto const last_rowgroup = metadata.num_rowgroups() - 1;
+  auto const rows_in_last_rowgroup =
+    static_cast<cudf::size_type>(metadata.rowgroup_metadata()[last_rowgroup].at("num_rows"));
+  cudf::io::parquet_reader_options const in_opts =
+    cudf::io::parquet_reader_options::builder(cudf::io::source_info{filepath})
+      .row_groups({{last_rowgroup}});
+  auto const result = cudf::io::read_parquet(in_opts);
+
+  auto const expected_tail =
+    cudf::slice(col->view(), {num_rows - rows_in_last_rowgroup, num_rows}).front();
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(result.tbl->view().column(0), expected_tail);
 }

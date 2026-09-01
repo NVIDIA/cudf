@@ -4,33 +4,41 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
-from typing import TYPE_CHECKING, Any, Literal
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any, Literal, TypeAlias, assert_never
 
-import pylibcudf as plc
-from cudf_streaming.bloom_filter import BloomFilter
 from cudf_streaming.channel_metadata import (
     ChannelMetadata,
     HashScheme,
+    OrderKey,
+    OrderScheme,
     Partitioning,
 )
 from cudf_streaming.table_chunk import (
     TableChunk,
     make_table_chunks_available_or_wait,
 )
-from pylibcudf.hashing import LIBCUDF_DEFAULT_HASH_SEED
 from rapidsmpf.memory.memory_reservation import opaque_memory_usage
 from rapidsmpf.streaming.core.actor import define_actor
 from rapidsmpf.streaming.core.memory_reserve_or_wait import (
+    missing_net_memory_delta,
     reserve_memory,
 )
-from rapidsmpf.streaming.core.message import Message
 
 from cudf_polars.containers import DataFrame
 from cudf_polars.dsl.ir import IR, Join
 from cudf_polars.dsl.utils.naming import names_to_indices
-from cudf_polars.streaming.actor_graph.collectives.allgather import AllGatherManager
-from cudf_polars.streaming.actor_graph.collectives.shuffle import _global_shuffle
+from cudf_polars.streaming.actor_graph.collectives.allgather import (
+    AllGatherManager,
+)
+from cudf_polars.streaming.actor_graph.collectives.ordering import (
+    _partition_range,
+    adjust_ordering,
+)
+from cudf_polars.streaming.actor_graph.collectives.shuffle import (
+    _global_shuffle,
+    _key_column_indices,
+)
 from cudf_polars.streaming.actor_graph.dispatch import (
     generate_ir_sub_network,
 )
@@ -44,10 +52,13 @@ from cudf_polars.streaming.actor_graph.utils import (
     NormalizedPartitioning,
     TableSizeStats,
     _sample_chunks,
+    _update_ordering_indices,
     allgather_reduce,
     chunk_to_frame,
+    clear_local_ordering,
     empty_table_chunk,
     gather_in_task_group,
+    join_preserves_side_order,
     maybe_remap_partitioning,
     process_children,
     recv_metadata,
@@ -59,13 +70,14 @@ from cudf_polars.streaming.repartition import Repartition
 from cudf_polars.streaming.utils import _concat
 
 if TYPE_CHECKING:
-    from collections.abc import Coroutine, Iterable, MutableMapping
+    from collections.abc import MutableMapping
 
-    from cudf_streaming.bloom_filter import BloomFilterChunk
+    from cudf_streaming.channel_metadata import Ordering
     from rapidsmpf.communicator.communicator import Communicator
     from rapidsmpf.streaming.core.channel import Channel
     from rapidsmpf.streaming.core.context import Context
 
+    from cudf_polars.dsl.expr import NamedExpr
     from cudf_polars.dsl.ir import IR, IRExecutionContext
     from cudf_polars.streaming.actor_graph.dispatch import SubNetGenerator
     from cudf_polars.streaming.actor_graph.tracing import ActorTracer
@@ -74,47 +86,59 @@ if TYPE_CHECKING:
 
 
 @dataclass(frozen=True)
-class JoinStrategy:
-    """Summary of sampling and strategy selection for a dynamic join."""
+class BroadcastJoinStrategy:
+    """Broadcast one side to all ranks."""
 
-    left_meta: ChannelMetadata | None = None
-    """Metadata from left channel"""
-    right_meta: ChannelMetadata | None = None
-    """Metadata from right channel"""
-    broadcast_side: Literal["left", "right"] | None = None
-    """The side to broadcast. If None, the strategy is a shuffle join."""
-    shuffle_modulus: int = 0
-    """The shuffle modulus. Only used for shuffle joins."""
-    output_indices: tuple[int, ...] = ()
-    """The shuffle indices for the output. Only used for shuffle joins."""
-    left_indices: tuple[int, ...] = ()
-    """The shuffle indices for the left side. Only used for shuffle joins."""
-    right_indices: tuple[int, ...] = ()
-    """The shuffle indices for the right side. Only used for shuffle joins."""
+    side: Literal["left", "right"]
 
 
 @dataclass(frozen=True)
-class JoinPrefilterDecision:
-    """Decision for an optional join-key prefilter stage."""
+class ShuffleJoinStrategy:
+    """Hash-shuffle both sides before joining."""
 
-    left_rows: int
-    right_rows: int
-    threshold: float
-    filter_side: Literal["left", "right"] | None = None
-    build_indices: tuple[int, ...] = ()
-    apply_indices: tuple[int, ...] = ()
-    key_column_count: int = 0
-    small_large_ratio: float | None = None
-    reason_skipped: str | None = None
+    shuffle_modulus: int = 0
+    """The shuffle modulus."""
+    output_indices: tuple[int, ...] = ()
+    """Output key-column indices for output metadata."""
+    left_indices: tuple[int, ...] = ()
+    """Left input key-column indices."""
+    right_indices: tuple[int, ...] = ()
+    """Right input key-column indices."""
+    left_keys: tuple[NamedExpr, ...] = ()
+    """Left key expressions."""
+    right_keys: tuple[NamedExpr, ...] = ()
+    """Right key expressions."""
 
-    @property
-    def enabled(self) -> bool:
-        """Whether this decision applies a prefilter."""
-        return self.reason_skipped is None and self.filter_side is not None
 
-    def trace_dict(self) -> dict[str, Any]:
-        """Return structured trace metadata for this decision."""
-        return asdict(self)
+@dataclass(frozen=True)
+class OrderedJoinStrategy:
+    """Align existing ordered partitioning before joining."""
+
+    output_indices: tuple[int, ...]
+    """Output key-column indices for output metadata."""
+    left_indices: tuple[int, ...]
+    """Left input key-column indices."""
+    right_indices: tuple[int, ...]
+    """Right input key-column indices."""
+    left_keys: tuple[NamedExpr, ...]
+    """Left key expressions."""
+    right_keys: tuple[NamedExpr, ...]
+    """Right key expressions."""
+    left_input_ordering: Ordering
+    """Input ordering for the left side."""
+    right_input_ordering: Ordering
+    """Input ordering for the right side."""
+    left_output_ordering: Ordering
+    """Aligned output ordering for the left side."""
+    right_output_ordering: Ordering
+    """Aligned output ordering for the right side."""
+    output_ordering: Ordering
+    """Join-output ordering metadata."""
+
+
+JoinStrategy: TypeAlias = (
+    BroadcastJoinStrategy | ShuffleJoinStrategy | OrderedJoinStrategy
+)
 
 
 @define_actor()
@@ -172,7 +196,7 @@ async def broadcast_join_actor(
             ch_out,
             ch_left,
             ch_right,
-            JoinStrategy(broadcast_side=broadcast_side),
+            BroadcastJoinStrategy(side=broadcast_side),
             [collective_id],
             target_partition_size,
             tracer=tracer,
@@ -210,7 +234,7 @@ async def _collect_small_side_for_broadcast(
         allgather = AllGatherManager(context, comm, collective_id)
         with allgather.inserting() as inserter:
             for s_id in range(len(chunks)):
-                inserter.insert(s_id, chunks.pop(0))
+                await inserter.insert(s_id, chunks.pop(0))
         stream = ir_context.get_cuda_stream()
         gathered = await allgather.extract_concatenated(stream, ir_context=ir_context)
         # When every rank inserted zero chunks, the AllGather has no schema
@@ -311,7 +335,7 @@ async def _broadcast_join(
     ch_out: Channel[TableChunk],
     ch_left: Channel[TableChunk],
     ch_right: Channel[TableChunk],
-    strategy: JoinStrategy,
+    strategy: BroadcastJoinStrategy,
     collective_ids: list[int],
     target_partition_size: int,
     *,
@@ -330,8 +354,7 @@ async def _broadcast_join(
     )
 
     collective_id = collective_ids.pop(0) if collective_ids else 0
-    broadcast_side = strategy.broadcast_side
-    assert broadcast_side is not None
+    broadcast_side = strategy.side
     left, right = ir.children
     if tracer is not None:
         tracer.decision = f"broadcast_{broadcast_side}"
@@ -347,6 +370,8 @@ async def _broadcast_join(
             child_ir=ir.children[0],
             context=context,
         )
+        if not join_preserves_side_order(ir.options[5], "left"):
+            partitioning = clear_local_ordering(partitioning)
     else:
         small_ch, large_ch = ch_left, ch_right
         small_child, large_child = left, right
@@ -362,6 +387,8 @@ async def _broadcast_join(
             if ir.options[0] == "Right"
             else None
         )
+        if not join_preserves_side_order(ir.options[5], "right"):
+            partitioning = clear_local_ordering(partitioning)
 
     small_duplicated = small_metadata.duplicated
     need_allgather = comm.nranks > 1 and not small_duplicated
@@ -388,6 +415,14 @@ async def _broadcast_join(
     )
 
     while (msg := await large_ch.recv(context)) is not None:
+        # Unknown: the large chunk is freed but the join output replaces
+        # it, and its size depends on selectivity we cannot estimate here.
+        large_chunk, _ = await make_table_chunks_available_or_wait(
+            context,
+            TableChunk.from_message(msg, br=context.br()),
+            reserve_extra=0,
+            net_memory_delta=missing_net_memory_delta,
+        )
         await _broadcast_join_large_chunk(
             context,
             ir,
@@ -395,9 +430,7 @@ async def _broadcast_join(
             ch_out,
             small_dfs,
             small_child,
-            TableChunk.from_message(msg, br=context.br()).make_available_and_spill(
-                context.br(), allow_overbooking=True
-            ),
+            large_chunk,
             large_child,
             msg.sequence_number,
             small_size,
@@ -411,23 +444,111 @@ async def _broadcast_join(
 def _get_key_indices(
     ir: Join,
     n_partitioned_keys: int | None,
-) -> tuple[tuple[int, ...], tuple[int, ...], tuple[int, ...]]:
+) -> tuple[
+    tuple[int, ...],
+    tuple[int, ...],
+    tuple[int, ...],
+    tuple[NamedExpr, ...],
+    tuple[NamedExpr, ...],
+]:
     left, right = ir.children
-    left_key_indices = names_to_indices(ir.left_on, left.schema)
-    right_key_indices = names_to_indices(ir.right_on, right.schema)
-
-    n_keys = (
-        n_partitioned_keys if n_partitioned_keys is not None else len(left_key_indices)
-    )
+    n_keys = n_partitioned_keys if n_partitioned_keys is not None else len(ir.left_on)
+    left_keys = ir.left_on[:n_keys]
+    right_keys = ir.right_on[:n_keys]
+    left_key_indices = _key_column_indices(left_keys, left.schema) or ()
+    right_key_indices = _key_column_indices(right_keys, right.schema) or ()
     if ir.options[0] == "Right":
-        join_keys_for_output = ir.right_on
+        output_keys = right_keys
     else:
-        join_keys_for_output = ir.left_on
-    output_key_indices = names_to_indices(join_keys_for_output, ir.schema)
+        output_keys = left_keys
+    output_key_indices = (
+        _key_column_indices(output_keys, ir.schema)
+        if left_key_indices and right_key_indices
+        else None
+    )
     return (
-        left_key_indices[:n_keys],
-        right_key_indices[:n_keys],
-        output_key_indices[:n_keys],
+        left_key_indices,
+        right_key_indices,
+        output_key_indices or (),
+        left_keys,
+        right_keys,
+    )
+
+
+def _ordering_prefix_matches(
+    ordering: Ordering,
+    reference: Ordering,
+    column_indices: tuple[int, ...],
+) -> bool:
+    """True when ordering has the same leading order semantics as reference."""
+    if len(ordering.keys) < len(column_indices):
+        return False
+    if len(reference.keys) < len(column_indices):
+        return False
+    expected = tuple(
+        OrderKey(index, key.order, key.null_order)
+        for index, key in zip(
+            column_indices, reference.keys[: len(column_indices)], strict=True
+        )
+    )
+    return ordering.keys[: len(expected)] == expected
+
+
+def _make_ordered_strategy(
+    ir: Join,
+    left_partitioning: NormalizedPartitioning,
+    right_partitioning: NormalizedPartitioning,
+) -> OrderedJoinStrategy | None:
+    """Make an ordered strategy when both sides can align to strict boundaries."""
+    if ir.options[0] not in ("Inner", "Left", "Semi", "Anti"):
+        return None
+
+    left_scheme = left_partitioning.inter_rank_scheme
+    right_scheme = right_partitioning.inter_rank_scheme
+    if not isinstance(left_scheme, OrderScheme) or not isinstance(
+        right_scheme, OrderScheme
+    ):
+        return None
+
+    left_ordering = left_scheme.orderings[0]
+    right_ordering = right_scheme.orderings[0]
+    # adjust_ordering needs a strict target partitioning. Prefer the left side
+    # for output metadata, then fall back to the right side if only it is strict.
+    reference = left_ordering if left_ordering.strict_boundaries else right_ordering
+    if not reference.strict_boundaries:
+        return None
+
+    reference_key_count = len(reference.keys)
+    (
+        left_key_indices,
+        right_key_indices,
+        output_key_indices,
+        left_keys,
+        right_keys,
+    ) = _get_key_indices(ir, reference_key_count)
+    if not (
+        len(left_key_indices)
+        == len(right_key_indices)
+        == len(output_key_indices)
+        == reference_key_count
+    ):
+        return None
+    if not _ordering_prefix_matches(left_ordering, reference, left_key_indices):
+        return None
+    if not _ordering_prefix_matches(right_ordering, reference, right_key_indices):
+        return None
+
+    return OrderedJoinStrategy(
+        output_indices=output_key_indices,
+        left_indices=left_key_indices,
+        right_indices=right_key_indices,
+        left_keys=left_keys[:reference_key_count],
+        right_keys=right_keys[:reference_key_count],
+        left_input_ordering=left_ordering,
+        right_input_ordering=right_ordering,
+        left_output_ordering=_update_ordering_indices(reference, left_key_indices),
+        right_output_ordering=_update_ordering_indices(reference, right_key_indices),
+        output_ordering=_update_ordering_indices(reference, output_key_indices),
     )
 
 
@@ -466,12 +587,17 @@ async def _join_chunks(
             f"Left: {left_msg.sequence_number}, Right: {right_msg.sequence_number}"
         )
 
-        left_chunk = TableChunk.from_message(
-            left_msg, br=context.br()
-        ).make_available_and_spill(context.br(), allow_overbooking=True)
-        right_chunk = TableChunk.from_message(
-            right_msg, br=context.br()
-        ).make_available_and_spill(context.br(), allow_overbooking=True)
+        # Unknown: both chunks are freed but the join output replaces them,
+        # and its size depends on selectivity we cannot estimate here.
+        (left_chunk, right_chunk), _ = await make_table_chunks_available_or_wait(
+            context,
+            [
+                TableChunk.from_message(left_msg, br=context.br()),
+                TableChunk.from_message(right_msg, br=context.br()),
+            ],
+            reserve_extra=0,
+            net_memory_delta=missing_net_memory_delta,
+        )
 
         input_bytes = sum(
             col.device_buffer_size()
@@ -509,7 +635,7 @@ async def _join_chunks(
 
 def _log_shuffle_strategy_decision(
     tracer: ActorTracer,
-    strategy: JoinStrategy,
+    strategy: ShuffleJoinStrategy,
     partitioning_left: NormalizedPartitioning,
     partitioning_right: NormalizedPartitioning,
 ) -> None:
@@ -533,318 +659,6 @@ def _log_shuffle_strategy_decision(
         tracer.decision = "shuffle"
 
 
-async def passthrough_split(
-    context: Context,
-    ch_in: Channel[TableChunk],
-    ch_split: Channel[TableChunk],
-    ch_out: Channel[TableChunk],
-    *,
-    indices: Iterable[int],
-) -> None:
-    """
-    Pass all messages from ch_in to ch_out, copying key columns to ch_split.
-
-    Parameters
-    ----------
-    context
-         Streaming context
-    ch_in
-         Channel to consume
-    ch_split
-         Channel to send key columns to
-    ch_out
-         Channel to forward ch_in to
-    indices
-         Column indices of the input table to send to ch_split
-
-    Notes
-    -----
-    This sends everything to ch_split before forwarding to ch_out, so the
-    consumer must consume all of ch_split before consuming ch_out.
-    """
-    meta = await recv_metadata(ch_in, context)
-    await send_metadata(ch_out, context, meta)
-    buffer = context.spillable_messages()
-    mids = []
-    while (msg := await ch_in.recv(context)) is not None:
-        chunk = await TableChunk.from_message(
-            msg, br=context.br()
-        ).make_available_or_wait(context, net_memory_delta=0)
-        columns = chunk.table_view().columns()
-        key_table = TableChunk.from_pylibcudf_table(
-            plc.Table(
-                [
-                    columns[i].copy(chunk.stream, mr=context.br().device_mr)
-                    for i in indices
-                ]
-            ),
-            chunk.stream,
-            exclusive_view=True,
-            br=context.br(),
-        )
-        mids.append(buffer.insert(Message(msg.sequence_number, chunk)))
-        await ch_split.send(context, Message(msg.sequence_number, key_table))
-    await ch_split.drain(context)
-    for mid in mids:
-        await ch_out.send(context, buffer.extract(mid=mid))
-    await ch_out.drain(context)
-
-
-def _select_join_prefilter(
-    join_type: Literal["Inner", "Left", "Right", "Full", "Semi", "Anti", "Cross"],
-    left_rows: int,
-    right_rows: int,
-    left_key_indices: tuple[int, ...],
-    right_key_indices: tuple[int, ...],
-    *,
-    threshold: float,
-    max_key_columns: int | None,
-) -> JoinPrefilterDecision:
-    """
-    Determine whether to apply a prefilter to a join.
-
-    Parameters
-    ----------
-    join_type
-        Type of join.
-    left_rows
-        Estimated number of rows in the left table.
-    right_rows
-        Estimated number of rows in the right table.
-    left_key_indices
-        Column indices of the join keys in the left table.
-    right_key_indices
-        Column indices of the join keys in the right table.
-    threshold
-        Small-to-large row-count ratio at or above which filtering is disabled.
-    max_key_columns
-        Maximum number of columns to use from the key prefix. ``None`` uses all
-        join-key columns.
-
-    Returns
-    -------
-    JoinPrefilterDecision
-        The selected prefilter configuration, or the reason it was skipped.
-    """
-    key_column_count = len(left_key_indices)
-    assert key_column_count == len(right_key_indices), (
-        "left and right join key counts must match"
-    )
-    if threshold == 0.0:
-        return JoinPrefilterDecision(
-            left_rows=left_rows,
-            right_rows=right_rows,
-            threshold=threshold,
-            reason_skipped="disabled",
-        )
-
-    if max_key_columns is not None:
-        key_column_count = min(key_column_count, max_key_columns)
-
-    if join_type not in ("Inner", "Semi", "Left", "Anti", "Right"):
-        return JoinPrefilterDecision(
-            left_rows=left_rows,
-            right_rows=right_rows,
-            threshold=threshold,
-            key_column_count=key_column_count,
-            reason_skipped="unsupported_join_type",
-        )
-
-    small_rows, large_rows = sorted((left_rows, right_rows))
-    ratio = small_rows / large_rows if large_rows > 0 else None
-    filter_side: Literal["left", "right"] | None = None
-    reason_skipped: str | None = None
-
-    if join_type in ("Inner", "Semi"):
-        filter_side = "right" if left_rows <= right_rows else "left"
-    elif join_type in ("Left", "Anti"):
-        if left_rows >= right_rows:
-            reason_skipped = "no_legal_large_side"
-        else:
-            filter_side = "right"
-    else:
-        if right_rows >= left_rows:
-            reason_skipped = "no_legal_large_side"
-        else:
-            filter_side = "left"
-
-    if reason_skipped is None:
-        if ratio is None:
-            reason_skipped = "no_large_side"
-        elif ratio >= threshold:
-            reason_skipped = "ratio_above_threshold"
-
-    if reason_skipped is not None:
-        filter_side = None
-
-    if filter_side == "right":
-        build_indices = left_key_indices[:key_column_count]
-        apply_indices = right_key_indices[:key_column_count]
-    elif filter_side == "left":
-        build_indices = right_key_indices[:key_column_count]
-        apply_indices = left_key_indices[:key_column_count]
-    else:
-        build_indices = ()
-        apply_indices = ()
-
-    return JoinPrefilterDecision(
-        left_rows=left_rows,
-        right_rows=right_rows,
-        threshold=threshold,
-        filter_side=filter_side,
-        build_indices=build_indices,
-        apply_indices=apply_indices,
-        key_column_count=key_column_count,
-        small_large_ratio=ratio,
-        reason_skipped=reason_skipped,
-    )
-
-
-async def trace_row_count_passthrough(
-    context: Context,
-    ch_in: Channel[TableChunk],
-    ch_out: Channel[TableChunk],
-    trace_stats: dict[str, Any],
-    *,
-    row_count_key: str,
-) -> None:
-    """Forward a table-chunk channel while counting rows."""
-    metadata = await recv_metadata(ch_in, context)
-    await send_metadata(ch_out, context, metadata)
-    row_count = 0
-    while (msg := await ch_in.recv(context)) is not None:
-        chunk = TableChunk.from_message(msg, br=context.br())
-        row_count += chunk.shape[0]
-        await ch_out.send(context, Message(msg.sequence_number, chunk))
-    trace_stats[row_count_key] = row_count
-    await ch_out.drain(context)
-
-
-def make_filter_tasks(
-    context: Context,
-    comm: Communicator,
-    *,
-    ch_left: Channel[TableChunk],
-    ch_right: Channel[TableChunk],
-    decision: JoinPrefilterDecision,
-    tag: int,
-    trace_stats: dict[str, Any] | None,
-) -> tuple[
-    Channel[TableChunk],
-    Channel[TableChunk],
-    list[Coroutine[Any, Any, None]],
-    list[Channel],
-]:
-    """
-    Create bloom filter tasks for a pair of channels participating in a shuffle join.
-
-    Parameters
-    ----------
-    context
-        Streaming context
-    comm
-        Communicator
-    ch_left
-        Left input channel
-    ch_right
-        Right input channel
-    decision
-        Selected prefilter decision
-    tag
-        Collective ID for combining partial filters across ranks
-    trace_stats
-        Mutable trace metadata to update with actual row counts, or None
-
-    Returns
-    -------
-    tuple
-       Of new left and right channels, coroutines to await, and new channels to shutdown on error.
-    """
-    assert decision.enabled
-    assert decision.filter_side in ("left", "right")
-    bloom_build_output: Channel[BloomFilterChunk] = context.create_channel()
-    bloom_build_input: Channel[TableChunk] = context.create_channel()
-    passthrough_output: Channel[TableChunk] = context.create_channel()
-    if decision.filter_side == "right":
-        passthrough_input = ch_left
-        ch_left = passthrough_output
-        build_indices = decision.build_indices
-        bloom_apply_input = ch_right
-        apply_indices = decision.apply_indices
-        ch_right = context.create_channel()
-        bloom_apply_output = ch_right
-    else:
-        passthrough_input = ch_right
-        ch_right = passthrough_output
-        build_indices = decision.build_indices
-        bloom_apply_input = ch_left
-        apply_indices = decision.apply_indices
-        ch_left = context.create_channel()
-        bloom_apply_output = ch_left
-
-    # TODO: configure based on GPU L2 size
-    nblocks = BloomFilter.fitting_num_blocks(32 * 1024 * 1024)
-    filter = BloomFilter(context, comm, LIBCUDF_DEFAULT_HASH_SEED, nblocks)
-    filter_tasks: list[Coroutine[Any, Any, None]] = []
-    chs_to_shutdown = [
-        bloom_build_output,
-        bloom_build_input,
-        passthrough_output,
-    ]
-
-    apply_input = bloom_apply_input
-    apply_output = bloom_apply_output
-    if trace_stats is not None:
-        counted_apply_input: Channel[TableChunk] = context.create_channel()
-        raw_apply_output: Channel[TableChunk] = context.create_channel()
-        filter_tasks.extend(
-            [
-                trace_row_count_passthrough(
-                    context,
-                    bloom_apply_input,
-                    counted_apply_input,
-                    trace_stats,
-                    row_count_key="input_rows",
-                ),
-                trace_row_count_passthrough(
-                    context,
-                    raw_apply_output,
-                    bloom_apply_output,
-                    trace_stats,
-                    row_count_key="output_rows",
-                ),
-            ]
-        )
-        chs_to_shutdown.extend([counted_apply_input, raw_apply_output])
-        apply_input = counted_apply_input
-        apply_output = raw_apply_output
-
-    filter_tasks = [
-        *filter_tasks,
-        passthrough_split(
-            context,
-            passthrough_input,
-            bloom_build_input,
-            passthrough_output,
-            indices=build_indices,
-        ),
-        filter.build(
-            context,
-            bloom_build_input,
-            bloom_build_output,
-            tag,
-        ),
-        filter.apply(
-            context,
-            bloom_build_output,
-            apply_input,
-            apply_output,
-            apply_indices,
-        ),
-    ]
-    return ch_left, ch_right, filter_tasks, chs_to_shutdown
-
-
 async def _shuffle_join(
     context: Context,
     comm: Communicator,
@@ -853,14 +667,10 @@ async def _shuffle_join(
     ch_out: Channel[TableChunk],
     ch_left: Channel[TableChunk],
     ch_right: Channel[TableChunk],
-    strategy: JoinStrategy,
+    strategy: ShuffleJoinStrategy,
     collective_ids: list[int],
     *,
-    row_counts: tuple[int, int],
     tracer: ActorTracer | None,
-    prefilter_threshold: float,
-    prefilter_max_key_columns: int | None,
-    prefilter_trace: bool,
 ) -> None:
     """Execute a shuffle (hash) join."""
     # Send output metadata
@@ -878,38 +688,6 @@ async def _shuffle_join(
         duplicated=False,
     )
     await send_metadata(ch_out, context, metadata_out)
-    left_rows, right_rows = row_counts
-    bloom_tag = collective_ids.pop(0)
-    left_key_indices, right_key_indices, _ = _get_key_indices(ir, None)
-    prefilter_decision = _select_join_prefilter(
-        ir.options[0],
-        left_rows,
-        right_rows,
-        left_key_indices,
-        right_key_indices,
-        threshold=prefilter_threshold,
-        max_key_columns=prefilter_max_key_columns,
-    )
-    prefilter_trace_stats = prefilter_decision.trace_dict()
-
-    if tracer is not None:
-        tracer.set_extra("join_prefilter", prefilter_trace_stats)
-
-    if prefilter_decision.enabled:
-        if tracer is not None:
-            tracer.decision = f"{tracer.decision or 'shuffle'}_prefiltered"
-        ch_left, ch_right, filter_tasks, chs_to_shutdown = make_filter_tasks(
-            context,
-            comm,
-            ch_left=ch_left,
-            ch_right=ch_right,
-            decision=prefilter_decision,
-            tag=bloom_tag,
-            trace_stats=prefilter_trace_stats if prefilter_trace else None,
-        )
-    else:
-        filter_tasks = []
-        chs_to_shutdown = []
     # Construct a shuffle-shuffle-join pipeline.
     # The shuffle operations will pass chunks through unchanged
     # if the data is already partitioned correctly.
@@ -918,21 +696,20 @@ async def _shuffle_join(
     # note: this is an actor inside of an actor. How should we log that in our traces?
     async with shutdown_on_error(
         context,
-        *chs_to_shutdown,
         ch_left_shuffle,
         ch_right_shuffle,
         trace_ir=ir,
         ir_context=ir_context,
     ):
         actor_tasks = [
-            *filter_tasks,
             _global_shuffle(
                 context,
                 comm,
                 ir_context,
                 ch_left_shuffle,
                 ch_left,
-                strategy.left_indices,
+                strategy.left_keys,
+                ir.children[0].schema,
                 strategy.shuffle_modulus,
                 collective_ids.pop(0),
             ),
@@ -942,7 +719,8 @@ async def _shuffle_join(
                 ir_context,
                 ch_right_shuffle,
                 ch_right,
-                strategy.right_indices,
+                strategy.right_keys,
+                ir.children[1].schema,
                 strategy.shuffle_modulus,
                 collective_ids.pop(0),
             ),
@@ -959,15 +737,130 @@ async def _shuffle_join(
         await gather_in_task_group(*actor_tasks)
 
 
+def _local_count_for_ordering(comm: Communicator, ordering: Ordering) -> int:
+    """Return this rank's local partition count for a contiguous Ordering."""
+    npartitions = ordering.num_boundaries + 1
+    start, stop = _partition_range(comm.rank, comm.nranks, npartitions)
+    return stop - start
+
+
+async def _adjust_ordered_join_side(
+    context: Context,
+    comm: Communicator,
+    schema_ir: IR,
+    ir_context: IRExecutionContext,
+    ch_out: Channel[TableChunk],
+    ch_in: Channel[TableChunk],
+    input_ordering: Ordering,
+    output_ordering: Ordering,
+    *,
+    collective_id: int,
+) -> None:
+    """Send metadata, then align one join side to output_ordering."""
+    await send_metadata(
+        ch_out,
+        context,
+        ChannelMetadata(
+            local_count=_local_count_for_ordering(comm, output_ordering),
+            partitioning=Partitioning(
+                OrderScheme([output_ordering]),
+                local="inherit",
+            ),
+            duplicated=False,
+        ),
+    )
+    await adjust_ordering(
+        context,
+        comm,
+        schema_ir,
+        ir_context,
+        ch_out,
+        ch_in,
+        input_ordering,
+        output_ordering,
+        collective_id=collective_id,
+    )
+
+
+async def _ordered_join(
+    context: Context,
+    comm: Communicator,
+    ir: Join,
+    ir_context: IRExecutionContext,
+    ch_out: Channel[TableChunk],
+    ch_left: Channel[TableChunk],
+    ch_right: Channel[TableChunk],
+    strategy: OrderedJoinStrategy,
+    collective_ids: list[int],
+    *,
+    tracer: ActorTracer | None,
+) -> None:
+    """Align ordered inputs to common boundaries, then join partition-wise."""
+    metadata_out = ChannelMetadata(
+        local_count=_local_count_for_ordering(comm, strategy.output_ordering),
+        partitioning=Partitioning(
+            OrderScheme([strategy.output_ordering]),
+            local="inherit",
+        ),
+        duplicated=False,
+    )
+    await send_metadata(ch_out, context, metadata_out)
+
+    await gather_in_task_group(
+        recv_metadata(ch_left, context),
+        recv_metadata(ch_right, context),
+    )
+    ch_left_adjusted = context.create_channel()
+    ch_right_adjusted = context.create_channel()
+    async with shutdown_on_error(
+        context,
+        ch_left_adjusted,
+        ch_right_adjusted,
+        trace_ir=ir,
+        ir_context=ir_context,
+    ):
+        await gather_in_task_group(
+            _adjust_ordered_join_side(
+                context,
+                comm,
+                ir.children[0],
+                ir_context,
+                ch_left_adjusted,
+                ch_left,
+                strategy.left_input_ordering,
+                strategy.left_output_ordering,
+                collective_id=collective_ids.pop(0),
+            ),
+            _adjust_ordered_join_side(
+                context,
+                comm,
+                ir.children[1],
+                ir_context,
+                ch_right_adjusted,
+                ch_right,
+                strategy.right_input_ordering,
+                strategy.right_output_ordering,
+                collective_id=collective_ids.pop(0),
+            ),
+            _join_chunks(
+                context,
+                ir,
+                ir_context,
+                ch_out,
+                ch_left_adjusted,
+                ch_right_adjusted,
+                tracer=tracer,
+            ),
+        )
+
+
 def _make_shuffle_strategy(
     ir: Join,
     shuffle_modulus: int,
     left_partitioning: NormalizedPartitioning,
     right_partitioning: NormalizedPartitioning,
-    left_metadata: ChannelMetadata,
-    right_metadata: ChannelMetadata,
-) -> JoinStrategy:
-    """Make a shuffle strategy."""
+) -> ShuffleJoinStrategy:
+    """Make a hash-partitioned join strategy."""
 
     # Use the coarsest prefix so we only shuffle on keys one side may already have
     def _num_indices(partitioning: NormalizedPartitioning) -> int:
@@ -986,17 +879,21 @@ def _make_shuffle_strategy(
     else:
         n_partitioned_keys = None  # both unpartitioned: shuffle on all join keys
 
-    left_key_indices, right_key_indices, output_key_indices = _get_key_indices(
-        ir, n_partitioned_keys
-    )
+    (
+        left_key_indices,
+        right_key_indices,
+        output_key_indices,
+        left_keys,
+        right_keys,
+    ) = _get_key_indices(ir, n_partitioned_keys)
 
-    return JoinStrategy(
-        left_meta=left_metadata,
-        right_meta=right_metadata,
+    return ShuffleJoinStrategy(
         shuffle_modulus=shuffle_modulus,
         output_indices=output_key_indices,
         left_indices=left_key_indices,
         right_indices=right_key_indices,
+        left_keys=left_keys,
+        right_keys=right_keys,
     )
 
 
@@ -1043,7 +940,7 @@ async def _aggregate_estimates(
     return new_left_sample, new_right_sample
 
 
-async def _choose_strategy_from_samples(
+def _choose_strategy_from_samples(
     comm: Communicator,
     ir: Join,
     left_metadata: ChannelMetadata,
@@ -1069,8 +966,6 @@ async def _choose_strategy_from_samples(
             left_partitioning.inter_rank_scheme.modulus,
             left_partitioning,
             right_partitioning,
-            left_metadata,
-            right_metadata,
         )
 
     left_total, right_total = left_sample.total_size, right_sample.total_size
@@ -1119,7 +1014,7 @@ async def _choose_strategy_from_samples(
     elif can_broadcast_right:
         broadcast_side = "right"
     if broadcast_side is not None:
-        return JoinStrategy(broadcast_side=broadcast_side)
+        return BroadcastJoinStrategy(side=broadcast_side)
 
     # Couldn't broadcast - Use a shuffle join instead.
     estimated_output_size = max(left_total, right_total)
@@ -1149,8 +1044,6 @@ async def _choose_strategy_from_samples(
         shuffle_modulus,
         left_partitioning,
         right_partitioning,
-        left_metadata,
-        right_metadata,
     )
 
     if tracer is not None:
@@ -1232,6 +1125,29 @@ async def _choose_strategy(
             chunks=ChunkStore(context),
             total_chunks=right_metadata.local_count,
         )
+    elif (
+        not left_metadata.duplicated
+        and not right_metadata.duplicated
+        and (
+            ordered_strategy := _make_ordered_strategy(
+                ir,
+                left_partitioning,
+                right_partitioning,
+            )
+        )
+        is not None
+    ):
+        if tracer is not None:
+            tracer.decision = "ordered"
+        left_sample = TableSizeStats(
+            chunks=ChunkStore(context),
+            total_chunks=left_metadata.local_count,
+        )
+        right_sample = TableSizeStats(
+            chunks=ChunkStore(context),
+            total_chunks=right_metadata.local_count,
+        )
+        return left_sample, right_sample, ordered_strategy
     else:
         # Need to shuffle or broadcast - Use sampled data to choose a strategy
         chunkwise = False
@@ -1262,7 +1178,7 @@ async def _choose_strategy(
             collective_ids,
         )
 
-    strategy = await _choose_strategy_from_samples(
+    strategy = _choose_strategy_from_samples(
         comm,
         ir,
         left_metadata,
@@ -1294,9 +1210,9 @@ async def join_actor(
     """
     Dynamic Join actor that selects the best strategy at runtime.
 
-    Receives metadata from the left and right channels, then either
-    executes a shuffle join or a broadcast join. Strategy is chosen
-    at runtime from sampled chunks when partitioning is not aligned.
+    Receives metadata from the left and right channels, then executes a
+    broadcast, hash-partitioned, or ordered join. Strategy is chosen at
+    runtime from metadata and sampled chunks when partitioning is not aligned.
 
     Parameters
     ----------
@@ -1374,7 +1290,7 @@ async def join_actor(
             ch_left = ch_left_replay
             ch_right = ch_right_replay
 
-            if strategy.broadcast_side is not None:
+            if isinstance(strategy, BroadcastJoinStrategy):
                 actor_tasks.append(
                     _broadcast_join(
                         context,
@@ -1390,23 +1306,22 @@ async def join_actor(
                         tracer=tracer,
                     )
                 )
-            else:
-                dynamic_options = executor.dynamic_planning
-                prefilter_threshold = (
-                    dynamic_options.join_prefilter_threshold
-                    if dynamic_options is not None
-                    else 0.0
+            elif isinstance(strategy, OrderedJoinStrategy):
+                actor_tasks.append(
+                    _ordered_join(
+                        context,
+                        comm,
+                        ir,
+                        ir_context,
+                        ch_out,
+                        ch_left,
+                        ch_right,
+                        strategy,
+                        collective_ids,
+                        tracer=tracer,
+                    )
                 )
-                prefilter_max_key_columns = (
-                    dynamic_options.join_prefilter_max_key_columns
-                    if dynamic_options is not None
-                    else 1
-                )
-                prefilter_trace = (
-                    dynamic_options.join_prefilter_trace
-                    if dynamic_options is not None
-                    else False
-                )
+            elif isinstance(strategy, ShuffleJoinStrategy):
                 actor_tasks.append(
                     _shuffle_join(
                         context,
@@ -1418,16 +1333,11 @@ async def join_actor(
                         ch_right,
                         strategy,
                         collective_ids,
-                        row_counts=(
-                            left_sample.total_rows,
-                            right_sample.total_rows,
-                        ),
                         tracer=tracer,
-                        prefilter_threshold=prefilter_threshold,
-                        prefilter_max_key_columns=prefilter_max_key_columns,
-                        prefilter_trace=prefilter_trace,
                     )
                 )
+            else:
+                assert_never(strategy)
             await gather_in_task_group(*actor_tasks)
 
 
@@ -1505,12 +1415,12 @@ def _(
     ):
         # Dynamic join - decide strategy at runtime
         collective_ids = list(rec.state["collective_id_map"].get(ir, []))
-        # Join uses up to 4 collective IDs: allgather, left shuffle, right
-        # shuffle, and bloom filter.
-        if len(collective_ids) < 4:
+        # Join uses up to 3 collective IDs: allgather, left shuffle, and
+        # right shuffle.
+        if len(collective_ids) < 3:
             raise ValueError(
-                "Dynamic join requires 4 reserved collective IDs "
-                "(allgather + left shuffle + right shuffle + bloom filter); got "
+                "Dynamic join requires 3 reserved collective IDs "
+                "(allgather + left shuffle + right shuffle); got "
                 f"{len(collective_ids)} for this Join. "
                 "Ensure ReserveOpIDs is run with dynamic_planning enabled."
             )

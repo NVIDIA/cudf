@@ -28,7 +28,7 @@ jobs:
     permissions:
       contents: read
     container:
-      image: rapidsai/ci-conda:26.08-latest
+      image: rapidsai/ci-conda:26.10-latest
     outputs:
       tests: ${{ steps.find-tests.outputs.tests }}
     steps:
@@ -45,11 +45,11 @@ jobs:
     name: Run ${{ inputs.tool_name }} on ${{ matrix.test_name }}
     needs: discover-sanitizer-tests
     if: ${{ !cancelled() }}
-    runs-on: linux-amd64-gpu-l4-latest-1
+    runs-on: linux-amd64-gpu-rtxpro6000-latest-1
     permissions:
       contents: read
     container:
-      image: rapidsai/ci-conda:26.08-latest
+      image: rapidsai/ci-conda:26.10-latest
       options: --gpus all
     continue-on-error: true
     strategy:

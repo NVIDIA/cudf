@@ -216,13 +216,13 @@ def test_hybrid_scan_filter_row_groups_with_stats(
     assert filtered == expected_row_groups
 
 
-def test_hybrid_scan_secondary_filters_byte_ranges(
+def test_hybrid_scan_bloom_filter_and_dictionary_page_byte_ranges(
     simple_hybrid_scan_reader: HybridScanReader,
     simple_parquet_options: plc.io.parquet.ParquetReaderOptions,
     num_rows: int,
 ) -> None:
     """Test getting bloom filter and dictionary page byte ranges."""
-    # Need to set a filter for secondary filters to work
+    # Need to set a filter for either kind of byte range to be reported
     # Filter: col0 >= num_rows // 10
     filter_threshold = num_rows // 10
     filter_expression = Operation(
@@ -240,10 +240,11 @@ def test_hybrid_scan_secondary_filters_byte_ranges(
         simple_parquet_options
     )
 
-    bloom_ranges, dict_ranges = (
-        simple_hybrid_scan_reader.secondary_filters_byte_ranges(
-            all_row_groups, simple_parquet_options
-        )
+    bloom_ranges = simple_hybrid_scan_reader.bloom_filters_byte_ranges(
+        all_row_groups, simple_parquet_options
+    )
+    dict_ranges = simple_hybrid_scan_reader.dictionary_pages_byte_ranges(
+        all_row_groups, simple_parquet_options
     )
 
     # These should be lists of ByteRangeInfo
@@ -348,7 +349,7 @@ def test_hybrid_scan_materialize_columns(
     filter_data = [
         plc.gpumemoryview(
             rmm.DeviceBuffer.to_device(
-                simple_parquet_bytes[r.offset : r.offset + r.size],
+                memoryview(simple_parquet_bytes)[r.offset : r.offset + r.size],
                 plc.utils._get_stream(stream),
             )
         )
@@ -383,7 +384,7 @@ def test_hybrid_scan_materialize_columns(
     payload_data = [
         plc.gpumemoryview(
             rmm.DeviceBuffer.to_device(
-                simple_parquet_bytes[r.offset : r.offset + r.size],
+                memoryview(simple_parquet_bytes)[r.offset : r.offset + r.size],
                 plc.utils._get_stream(stream),
             )
         )
@@ -474,7 +475,7 @@ def test_hybrid_scan_single_step_materialize(
     all_columns_data = [
         plc.gpumemoryview(
             rmm.DeviceBuffer.to_device(
-                simple_parquet_bytes[r.offset : r.offset + r.size],
+                memoryview(simple_parquet_bytes)[r.offset : r.offset + r.size],
                 plc.utils._get_stream(stream),
             )
         )
@@ -556,7 +557,7 @@ def test_hybrid_scan_has_next_table_chunk(
     filter_data = [
         plc.gpumemoryview(
             rmm.DeviceBuffer.to_device(
-                simple_parquet_bytes[r.offset : r.offset + r.size],
+                memoryview(simple_parquet_bytes)[r.offset : r.offset + r.size],
                 plc.utils._get_stream(),
             )
         )
@@ -626,7 +627,7 @@ def test_hybrid_scan_chunked_reading(
     filter_data = [
         plc.gpumemoryview(
             rmm.DeviceBuffer.to_device(
-                simple_parquet_bytes[r.offset : r.offset + r.size],
+                memoryview(simple_parquet_bytes)[r.offset : r.offset + r.size],
                 plc.utils._get_stream(stream),
             )
         )
@@ -708,6 +709,188 @@ def test_hybrid_scan_construct_row_group_passes(
         )
 
 
+def _col0_stats_negation_cases() -> list[
+    tuple[str, Operation, Operation, list[int]]
+]:
+    """Cases of (id, negated, equivalent unnegated, surviving row groups)."""
+
+    def _literal(value: int) -> Literal:
+        return Literal(
+            plc.Scalar.from_arrow(pa.scalar(value, type=pa.uint32()))
+        )
+
+    lt_250 = Operation(
+        ASTOperator.LESS, ColumnNameReference("col0"), _literal(250)
+    )
+    ge_250 = Operation(
+        ASTOperator.GREATER_EQUAL,
+        ColumnNameReference("col0"),
+        _literal(250),
+    )
+    lt_500 = Operation(
+        ASTOperator.LESS, ColumnNameReference("col0"), _literal(500)
+    )
+    ge_500 = Operation(
+        ASTOperator.GREATER_EQUAL,
+        ColumnNameReference("col0"),
+        _literal(500),
+    )
+    lt_750 = Operation(
+        ASTOperator.LESS, ColumnNameReference("col0"), _literal(750)
+    )
+    ge_750 = Operation(
+        ASTOperator.GREATER_EQUAL,
+        ColumnNameReference("col0"),
+        _literal(750),
+    )
+    eq_100 = Operation(
+        ASTOperator.EQUAL, ColumnNameReference("col0"), _literal(100)
+    )
+    ne_100 = Operation(
+        ASTOperator.NOT_EQUAL,
+        ColumnNameReference("col0"),
+        _literal(100),
+    )
+
+    return [
+        # Collapses to col0 < 250
+        (
+            "double_negation",
+            Operation(ASTOperator.NOT, Operation(ASTOperator.NOT, lt_250)),
+            lt_250,
+            [0],
+        ),
+        # Becomes col0 == 100
+        (
+            "not_equal_to_equal",
+            Operation(ASTOperator.NOT, ne_100),
+            eq_100,
+            [0],
+        ),
+        # Becomes col0 != 100, which stats cannot prune with
+        (
+            "equal_to_not_equal",
+            Operation(ASTOperator.NOT, eq_100),
+            ne_100,
+            [0, 1, 2, 3],
+        ),
+        # De Morgan over AND, giving col0 < 250 OR col0 >= 500
+        (
+            "de_morgan_and",
+            Operation(
+                ASTOperator.NOT,
+                Operation(ASTOperator.LOGICAL_AND, ge_250, lt_500),
+            ),
+            Operation(ASTOperator.LOGICAL_OR, lt_250, ge_500),
+            [0, 2, 3],
+        ),
+        # De Morgan over OR, giving col0 >= 250 AND col0 < 750
+        (
+            "de_morgan_or",
+            Operation(
+                ASTOperator.NOT,
+                Operation(ASTOperator.LOGICAL_OR, lt_250, ge_750),
+            ),
+            Operation(ASTOperator.LOGICAL_AND, ge_250, lt_750),
+            [1, 2],
+        ),
+    ]
+
+
+@pytest.mark.parametrize(
+    "negated,unnegated,expected",
+    [
+        pytest.param(negated, unnegated, expected, id=name)
+        for name, negated, unnegated, expected in _col0_stats_negation_cases()
+    ],
+)
+def test_hybrid_scan_filter_row_groups_with_stats_negation(
+    simple_hybrid_scan_reader: HybridScanReader,
+    simple_parquet_options: plc.io.parquet.ParquetReaderOptions,
+    negated: Operation,
+    unnegated: Operation,
+    expected: list[int],
+) -> None:
+    """A negated filter must prune exactly like its unnegated equivalent."""
+
+    reader = simple_hybrid_scan_reader
+
+    def prune(filter_expression: Operation) -> list[int]:
+        reader.reset_column_selection()
+        simple_parquet_options.set_filter(filter_expression)
+        all_row_groups = reader.all_row_groups(simple_parquet_options)
+        return reader.filter_row_groups_with_stats(
+            all_row_groups, simple_parquet_options
+        )
+
+    assert prune(negated) == expected
+    assert prune(unnegated) == expected
+
+
+@pytest.mark.parametrize(
+    "negated,unnegated,expected",
+    [
+        # col1 holds 250 distinct strings per row group, so `col1 != v` never
+        # sees a dictionary made up only of `v` and cannot prune
+        pytest.param(
+            ASTOperator.EQUAL,
+            ASTOperator.NOT_EQUAL,
+            [0, 1, 2, 3],
+            id="equal_to_not_equal",
+        ),
+        # `col1 == "str_0"` keeps only the row group whose dictionary holds it
+        pytest.param(
+            ASTOperator.NOT_EQUAL,
+            ASTOperator.EQUAL,
+            [0],
+            id="not_equal_to_equal",
+        ),
+    ],
+)
+def test_hybrid_scan_filter_row_groups_with_dictionary_pages_negation(
+    simple_parquet_bytes: bytes,
+    simple_hybrid_scan_reader: HybridScanReader,
+    simple_parquet_options: plc.io.parquet.ParquetReaderOptions,
+    negated: ASTOperator,
+    unnegated: ASTOperator,
+    expected: list[int],
+) -> None:
+    """`NOT(col == v)` must prune what `col != v` prunes, and converse."""
+
+    col1 = ColumnNameReference("col1")
+    needle = Literal(plc.Scalar.from_arrow(pa.scalar("str_0")))
+    reader = simple_hybrid_scan_reader
+
+    def prune(filter_expression: Operation) -> list[int]:
+        reader.reset_column_selection()
+        simple_parquet_options.set_filter(filter_expression)
+        all_row_groups = reader.all_row_groups(simple_parquet_options)
+        dictionary_ranges = reader.dictionary_pages_byte_ranges(
+            all_row_groups, simple_parquet_options
+        )
+        # the caller is responsible for keeping the source bytes alive until
+        # synchronize_stream() below runs.
+        # See https://github.com/rapidsai/rmm/issues/2521
+        dict_page_bytes = [
+            simple_parquet_bytes[r.offset : r.offset + r.size]
+            for r in dictionary_ranges
+        ]
+        dictionary_data = [
+            plc.gpumemoryview(
+                rmm.DeviceBuffer.to_device(b, plc.utils._get_stream())
+            )
+            for b in dict_page_bytes
+        ]
+        synchronize_stream()
+        return reader.filter_row_groups_with_dictionary_pages(
+            dictionary_data, all_row_groups, simple_parquet_options
+        )
+
+    inner = Operation(negated, col1, needle)
+    assert prune(Operation(ASTOperator.NOT, inner)) == expected
+    assert prune(Operation(unnegated, col1, needle)) == expected
+
+
 def test_hybrid_scan_metadata_with_page_index(
     simple_parquet_bytes: bytes,
     simple_hybrid_scan_reader: HybridScanReader,
@@ -716,8 +899,8 @@ def test_hybrid_scan_metadata_with_page_index(
 ) -> None:
     """Test that page index setup enables page-level filtering.
 
-    This test mirrors the C++ TestMetadata test. It verifies that:
-    1. Before setup_page_index(), methods requiring page index will fail
+    This test mirrors the C++ page-index filter tests. It verifies that:
+    1. Before setup_page_index(), filter column page pruning using page-statistics will fail
     2. After fetching page index bytes and calling setup_page_index(),
        the page index is available and page-level operations work correctly
     """
@@ -746,7 +929,7 @@ def test_hybrid_scan_metadata_with_page_index(
     assert len(all_row_groups) > 0
 
     # Try to use build_row_mask_with_page_index_stats BEFORE setup_page_index
-    # This should raise an error because page index is not set up yet
+    # This should raise an error because column and offset indexes are not set up yet
     try:
         simple_hybrid_scan_reader.build_row_mask_with_page_index_stats(
             all_row_groups, simple_parquet_options

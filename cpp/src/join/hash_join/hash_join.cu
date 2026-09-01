@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -25,6 +25,7 @@
 
 #include <limits>
 #include <memory>
+#include <utility>
 
 namespace cudf::detail {
 
@@ -43,20 +44,6 @@ bool is_trivial_join(table_view const& left, table_view const& right, join_kind 
   return false;
 }
 
-void validate_hash_join_probe(table_view const& right, table_view const& left, bool has_nulls)
-{
-  CUDF_EXPECTS(0 != left.num_columns(), "Hash join left table is empty", std::invalid_argument);
-  CUDF_EXPECTS(right.num_columns() == left.num_columns(),
-               "Mismatch in number of columns to be joined on",
-               std::invalid_argument);
-  CUDF_EXPECTS(has_nulls || !cudf::has_nested_nulls(left),
-               "Left table has nulls while right table was not hashed with null check.",
-               std::invalid_argument);
-  CUDF_EXPECTS(cudf::have_same_types(right, left),
-               "Mismatch in joining column data types",
-               cudf::data_type_error);
-}
-
 namespace {
 void build_hash_join(
   cudf::table_view const& right,
@@ -65,7 +52,7 @@ void build_hash_join(
   bool has_nested_nulls,
   null_equality nulls_equal,
   [[maybe_unused]] bitmask_type const* bitmask,
-  rmm::cuda_stream_view stream)
+  cuda::stream_ref stream)
 {
   CUDF_EXPECTS(0 != right.num_columns(), "Selected right dataset is empty", std::invalid_argument);
   CUDF_EXPECTS(0 != right.num_rows(), "Right side table has no rows", std::invalid_argument);
@@ -74,12 +61,12 @@ void build_hash_join(
     auto const iter = cudf::detail::make_counting_transform_iterator(0, pair_fn{d_hasher});
 
     if (nulls_equal == cudf::null_equality::EQUAL or not nullable(right)) {
-      hash_table.insert(iter, iter + right.num_rows(), stream.value());
+      hash_table.insert(iter, iter + right.num_rows(), stream.get());
     } else {
       auto const stencil = cuda::counting_iterator<size_type>{0};
       auto const pred    = row_is_valid{bitmask};
 
-      hash_table.insert_if(iter, iter + right.num_rows(), stencil, pred, stream.value());
+      hash_table.insert_if(iter, iter + right.num_rows(), stencil, pred, stream.get());
     }
   };
 
@@ -102,8 +89,9 @@ template <typename Hasher>
 hash_join<Hasher>::hash_join(cudf::table_view const& right,
                              bool has_nulls,
                              cudf::null_equality compare_nulls,
-                             rmm::cuda_stream_view stream)
-  : hash_join{right, has_nulls, compare_nulls, CUCO_DESIRED_LOAD_FACTOR, stream}
+                             cuda::stream_ref stream,
+                             cuda::mr::any_resource<cuda::mr::device_accessible> mr)
+  : hash_join{right, has_nulls, compare_nulls, CUCO_DESIRED_LOAD_FACTOR, stream, std::move(mr)}
 {
 }
 
@@ -112,29 +100,27 @@ hash_join<Hasher>::hash_join(cudf::table_view const& right,
                              bool has_nulls,
                              cudf::null_equality compare_nulls,
                              double load_factor,
-                             rmm::cuda_stream_view stream)
+                             cuda::stream_ref stream,
+                             cuda::mr::any_resource<cuda::mr::device_accessible> mr)
   : _has_nulls(has_nulls),
     _is_empty{right.num_rows() == 0},
     _nulls_equal{compare_nulls},
     _impl{std::make_unique<impl>(impl{typename impl::hash_table_t{
       cuco::extent{static_cast<size_t>(right.num_rows())},
-      load_factor,
+      checked_load_factor(load_factor),
       cuco::empty_key{cuco::pair{std::numeric_limits<hash_value_type>::max(), cudf::JoinNoMatch}},
       {},
       {},
       {},
       {},
-      rmm::mr::polymorphic_allocator<char>{},
-      stream.value()}})},
+      rmm::mr::polymorphic_allocator<char>{std::move(mr)},
+      stream.get()}})},
     _right{right},
-    _preprocessed_right{cudf::detail::row::equality::preprocessed_table::create(_right, stream)}
+    _preprocessed_right{cudf::detail::row::equality::preprocessed_table::create(
+      _right, stream, cudf::get_current_device_resource_ref())}
 {
   CUDF_FUNC_RANGE();
   CUDF_EXPECTS(0 != right.num_columns(), "Hash join right table is empty", std::invalid_argument);
-  CUDF_EXPECTS(load_factor > 0 && load_factor <= 1,
-               "Invalid load factor: must be greater than 0 and less than or equal to 1.",
-               std::invalid_argument);
-
   if (_is_empty) { return; }
 
   auto const row_bitmask =
@@ -148,16 +134,20 @@ hash_join<Hasher>::hash_join(cudf::table_view const& right,
                                 stream);
 }
 
-template hash_join<hash_join_hasher>::hash_join(cudf::table_view const& right,
-                                                bool has_nulls,
-                                                cudf::null_equality compare_nulls,
-                                                rmm::cuda_stream_view stream);
+template hash_join<hash_join_hasher>::hash_join(
+  cudf::table_view const& right,
+  bool has_nulls,
+  cudf::null_equality compare_nulls,
+  cuda::stream_ref stream,
+  cuda::mr::any_resource<cuda::mr::device_accessible> mr);
 
-template hash_join<hash_join_hasher>::hash_join(cudf::table_view const& right,
-                                                bool has_nulls,
-                                                cudf::null_equality compare_nulls,
-                                                double load_factor,
-                                                rmm::cuda_stream_view stream);
+template hash_join<hash_join_hasher>::hash_join(
+  cudf::table_view const& right,
+  bool has_nulls,
+  cudf::null_equality compare_nulls,
+  double load_factor,
+  cuda::stream_ref stream,
+  cuda::mr::any_resource<cuda::mr::device_accessible> mr);
 
 template <typename Hasher>
 hash_join<Hasher>::~hash_join() = default;
@@ -172,9 +162,14 @@ hash_join::~hash_join() = default;
 
 hash_join::hash_join(cudf::table_view const& right,
                      null_equality compare_nulls,
-                     rmm::cuda_stream_view stream)
-  : hash_join(
-      right, nullable_join::YES, compare_nulls, cudf::detail::CUCO_DESIRED_LOAD_FACTOR, stream)
+                     cuda::stream_ref stream,
+                     cuda::mr::any_resource<cuda::mr::device_accessible> mr)
+  : hash_join(right,
+              nullable_join::YES,
+              compare_nulls,
+              cudf::detail::CUCO_DESIRED_LOAD_FACTOR,
+              stream,
+              std::move(mr))
 {
 }
 
@@ -182,9 +177,10 @@ hash_join::hash_join(cudf::table_view const& right,
                      nullable_join has_nulls,
                      null_equality compare_nulls,
                      double load_factor,
-                     rmm::cuda_stream_view stream)
+                     cuda::stream_ref stream,
+                     cuda::mr::any_resource<cuda::mr::device_accessible> mr)
   : _impl{std::make_unique<impl_type const>(
-      right, has_nulls == nullable_join::YES, compare_nulls, load_factor, stream)}
+      right, has_nulls == nullable_join::YES, compare_nulls, load_factor, stream, std::move(mr))}
 {
 }
 
@@ -192,7 +188,7 @@ std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
           std::unique_ptr<rmm::device_uvector<size_type>>>
 hash_join::inner_join(cudf::table_view const& left,
                       std::optional<std::size_t> output_size,
-                      rmm::cuda_stream_view stream,
+                      cuda::stream_ref stream,
                       rmm::device_async_resource_ref mr) const
 {
   return _impl->inner_join(left, output_size, stream, mr);
@@ -202,7 +198,7 @@ std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
           std::unique_ptr<rmm::device_uvector<size_type>>>
 hash_join::left_join(cudf::table_view const& left,
                      std::optional<std::size_t> output_size,
-                     rmm::cuda_stream_view stream,
+                     cuda::stream_ref stream,
                      rmm::device_async_resource_ref mr) const
 {
   return _impl->left_join(left, output_size, stream, mr);
@@ -212,48 +208,44 @@ std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
           std::unique_ptr<rmm::device_uvector<size_type>>>
 hash_join::full_join(cudf::table_view const& left,
                      std::optional<std::size_t> output_size,
-                     rmm::cuda_stream_view stream,
+                     cuda::stream_ref stream,
                      rmm::device_async_resource_ref mr) const
 {
   return _impl->full_join(left, output_size, stream, mr);
 }
 
-std::size_t hash_join::inner_join_size(cudf::table_view const& left,
-                                       rmm::cuda_stream_view stream) const
+std::size_t hash_join::inner_join_size(cudf::table_view const& left, cuda::stream_ref stream) const
 {
   return _impl->inner_join_size(left, stream);
 }
 
-std::size_t hash_join::left_join_size(cudf::table_view const& left,
-                                      rmm::cuda_stream_view stream) const
+std::size_t hash_join::left_join_size(cudf::table_view const& left, cuda::stream_ref stream) const
 {
   return _impl->left_join_size(left, stream);
 }
 
 std::size_t hash_join::full_join_size(cudf::table_view const& left,
-                                      rmm::cuda_stream_view stream,
+                                      cuda::stream_ref stream,
                                       rmm::device_async_resource_ref mr) const
 {
   return _impl->full_join_size(left, stream, mr);
 }
 
 cudf::join_match_context hash_join::inner_join_match_context(
-  cudf::table_view const& left,
-  rmm::cuda_stream_view stream,
-  rmm::device_async_resource_ref mr) const
+  cudf::table_view const& left, cuda::stream_ref stream, rmm::device_async_resource_ref mr) const
 {
   return _impl->inner_join_match_context(left, stream, mr);
 }
 
 cudf::join_match_context hash_join::left_join_match_context(cudf::table_view const& left,
-                                                            rmm::cuda_stream_view stream,
+                                                            cuda::stream_ref stream,
                                                             rmm::device_async_resource_ref mr) const
 {
   return _impl->left_join_match_context(left, stream, mr);
 }
 
 cudf::join_match_context hash_join::full_join_match_context(cudf::table_view const& left,
-                                                            rmm::cuda_stream_view stream,
+                                                            cuda::stream_ref stream,
                                                             rmm::device_async_resource_ref mr) const
 {
   return _impl->full_join_match_context(left, stream, mr);
@@ -262,7 +254,7 @@ cudf::join_match_context hash_join::full_join_match_context(cudf::table_view con
 std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
           std::unique_ptr<rmm::device_uvector<size_type>>>
 hash_join::partitioned_inner_join(cudf::join_partition_context const& context,
-                                  rmm::cuda_stream_view stream,
+                                  cuda::stream_ref stream,
                                   rmm::device_async_resource_ref mr) const
 {
   CUDF_FUNC_RANGE();
@@ -272,7 +264,7 @@ hash_join::partitioned_inner_join(cudf::join_partition_context const& context,
 std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
           std::unique_ptr<rmm::device_uvector<size_type>>>
 hash_join::partitioned_left_join(cudf::join_partition_context const& context,
-                                 rmm::cuda_stream_view stream,
+                                 cuda::stream_ref stream,
                                  rmm::device_async_resource_ref mr) const
 {
   CUDF_FUNC_RANGE();
@@ -282,7 +274,7 @@ hash_join::partitioned_left_join(cudf::join_partition_context const& context,
 std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
           std::unique_ptr<rmm::device_uvector<size_type>>>
 hash_join::partitioned_full_join(cudf::join_partition_context const& context,
-                                 rmm::cuda_stream_view stream,
+                                 cuda::stream_ref stream,
                                  rmm::device_async_resource_ref mr) const
 {
   CUDF_FUNC_RANGE();

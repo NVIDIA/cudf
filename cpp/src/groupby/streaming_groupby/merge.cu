@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -12,10 +12,10 @@
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/iterator>
+#include <cuda/stream>
 #include <thrust/for_each.h>
 
 #include <string>
@@ -88,7 +88,7 @@ struct merge_single_pass_aggs_fn {
 
 }  // namespace
 
-void streaming_groupby::impl::do_merge(impl const& other, rmm::cuda_stream_view stream)
+void streaming_groupby::impl::do_merge(impl const& other, cuda::stream_ref stream)
 {
   CUDF_EXPECTS(!_invalidated,
                "streaming_groupby is in an invalidated state from a prior failure; "
@@ -138,7 +138,7 @@ void streaming_groupby::impl::do_merge(impl const& other, rmm::cuda_stream_view 
     cuda::counting_iterator<int64_t>(0),
     static_cast<int64_t>(other_distinct_keys) * num_agg_cols,
     merge_single_pass_aggs_fn{
-      result.target_indices.begin(), _d_agg_kinds.data(), *d_source, *_d_agg_results});
+      result.target_indices.begin(), _d_agg_kinds->data(), *d_source, *_d_agg_results});
 }
 
 }  // namespace cudf::groupby

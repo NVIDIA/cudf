@@ -18,12 +18,12 @@
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/table/table_device_view.cuh>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cuco/static_set.cuh>
 #include <cuda/iterator>
+#include <cuda/stream>
 #include <thrust/for_each.h>
 
 namespace cudf::groupby::detail::hash {
@@ -34,7 +34,7 @@ std::pair<rmm::device_uvector<size_type>, bool> compute_single_pass_aggs(
   bitmask_type const* row_bitmask,
   std::span<aggregation_request const> requests,
   cudf::detail::result_cache* cache,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr)
 {
   // Collect the single-pass aggregations that can be processed in this function.
@@ -93,9 +93,9 @@ std::pair<rmm::device_uvector<size_type>, bool> compute_single_pass_aggs(
   rmm::device_uvector<size_type> block_cardinality(grid_size, stream);
 
   // Flag indicating whether a global memory aggregation fallback is required or not.
-  rmm::device_scalar<cuda::std::atomic_flag> needs_global_memory_fallback(stream);
+  rmm::device_uvector<cuda::std::atomic_flag> needs_global_memory_fallback(1, stream);
   CUDF_CUDA_TRY(cudaMemsetAsync(
-    needs_global_memory_fallback.data(), 0, sizeof(cuda::std::atomic_flag), stream.value()));
+    needs_global_memory_fallback.data(), 0, sizeof(cuda::std::atomic_flag), stream.get()));
 
   auto set_ref_insert = global_set.ref(cuco::op::insert_and_find);
   compute_mapping_indices(grid_size,
@@ -110,13 +110,13 @@ std::pair<rmm::device_uvector<size_type>, bool> compute_single_pass_aggs(
 
   auto const needs_fallback = [&] {
     cuda::std::atomic_flag h_needs_fallback;
-    // Cannot use `device_scalar::value` as it requires a copy constructor, which
-    // `atomic_flag` doesn't have.
+    // Cannot use a value-returning helper because atomic_flag is not copy-constructible;
+    // copy the raw bytes back to host instead.
     CUDF_CUDA_TRY(cudf::detail::memcpy_async(&h_needs_fallback,
                                              needs_global_memory_fallback.data(),
                                              sizeof(cuda::std::atomic_flag),
                                              stream));
-    stream.synchronize();
+    stream.sync();
     return h_needs_fallback.test(cuda::std::memory_order_relaxed);
   }();
   if (needs_fallback) { return run_aggs_by_global_mem_kernel(); }

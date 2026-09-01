@@ -14,6 +14,10 @@ from pylibcudf.libcudf.strings cimport capitalize as cpp_capitalize
 from pylibcudf.scalar cimport Scalar
 from pylibcudf.strings.char_types cimport string_character_types
 from pylibcudf.utils cimport _get_stream, _get_memory_resource
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pylibcudf.typing import CudaStreamLike
 from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 from rmm.pylibrmm.stream cimport Stream
 
@@ -25,10 +29,10 @@ __all__ = ["capitalize", "is_title", "title"]
 cpdef Column capitalize(
     Column input,
     Scalar delimiters=None,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
     # TODO: default scalar values
-    # https://github.com/rapidsai/cudf/issues/15505
+    # https://github.com/NVIDIA/cudf/issues/15505
 ):
     """Returns a column of capitalized strings.
 
@@ -76,7 +80,7 @@ cpdef Column capitalize(
 cpdef Column title(
     Column input,
     string_character_types sequence_type=string_character_types.ALPHA,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """Modifies first character of each word to upper-case and lower-cases
@@ -109,7 +113,7 @@ cpdef Column title(
     return Column.from_libcudf(move(c_result), _stream, mr)
 
 
-cpdef Column is_title(Column input, object stream=None, DeviceMemoryResource mr=None):
+cpdef Column is_title(Column input, object stream: CudaStreamLike | None = None, DeviceMemoryResource mr=None):
     """Checks if the strings in the input column are title formatted.
 
     For details, see :cpp:func:`is_title`.

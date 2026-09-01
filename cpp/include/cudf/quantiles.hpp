@@ -53,7 +53,7 @@ std::unique_ptr<column> quantile(
   interpolation interp               = interpolation::LINEAR,
   column_view const& ordered_indices = {},
   bool exact                         = true,
-  rmm::cuda_stream_view stream       = cudf::get_default_stream(),
+  cuda::stream_ref stream            = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr  = cudf::get_current_device_resource_ref());
 
 /**
@@ -94,13 +94,13 @@ std::unique_ptr<table> quantiles(
   cudf::sorted is_input_sorted                   = sorted::NO,
   std::vector<order> const& column_order         = {},
   std::vector<null_order> const& null_precedence = {},
-  rmm::cuda_stream_view stream                   = cudf::get_default_stream(),
+  cuda::stream_ref stream                        = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr              = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Calculate approximate percentiles on an input tdigest column.
  *
- * tdigest (https://arxiv.org/pdf/1902.04023.pdf) columns are produced specifically
+ * tdigest (https://arxiv.org/pdf/1902.04023) columns are produced specifically
  * by the TDIGEST and MERGE_TDIGEST aggregations.  These columns represent
  * compressed representations of a very large input data set that can be
  * queried for quantile information.
@@ -123,7 +123,7 @@ std::unique_ptr<table> quantiles(
 std::unique_ptr<column> percentile_approx(
   tdigest::tdigest_column_view const& input,
   column_view const& percentiles,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /** @} */  // end of group

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -8,13 +8,17 @@
 #include <cudf/column/column_factories.hpp>
 #include <cudf/transform.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_uvector.hpp>
+
+#include <cuda/stream>
+
+#include <array>
+#include <utility>
 
 std::tuple<std::unique_ptr<cudf::column>, std::vector<int32_t>> transform(
   cudf::table_view const& table)
 {
-  auto stream = rmm::cuda_stream_default;
+  auto stream = cudf::get_default_stream();
   auto mr     = cudf::get_current_device_resource_ref();
 
   /// Convert a phone number to E.164 international phone format
@@ -120,16 +124,20 @@ __device__ void e164_format(void* scratch,
                                     cudf::scalar_column_view(*min_visible_age),
                                     cudf::scalar_column_view(*size)};
 
-  auto formatted = cudf::transform_extended(inputs,
-                                            udf,
-                                            cudf::data_type{cudf::type_id::STRING},
-                                            cudf::udf_source_type::CUDA,
-                                            scratch.data(),
-                                            cudf::null_aware::NO,
-                                            std::nullopt,
-                                            cudf::output_nullability::PRESERVE,
-                                            stream,
-                                            mr);
+  auto formatted = std::move(
+    cudf::transform(udf,
+                    cudf::udf_source_type::CUDA,
+                    cudf::null_aware::NO,
+                    scratch.data(),
+                    inputs,
+                    std::array{cudf::transform_output{cudf::data_type{cudf::type_id::STRING},
+                                                      cudf::output_nullability::PRESERVE}},
+                    {},
+                    std::nullopt,
+                    stream,
+                    mr)
+      ->release()
+      .front());
 
   return std::make_tuple(std::move(formatted), transformed);
 }

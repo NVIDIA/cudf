@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from pylibcudf.libcudf cimport context as cpp_context
@@ -7,7 +7,7 @@ from pylibcudf.libcudf cimport context as cpp_context
 __all__ = ["clear_jit_cache", "enable_jit_cache"]
 
 
-cpdef enable_jit_cache(bool enable):
+cpdef void enable_jit_cache(bool enable):
     """Enable or disable the JIT program cache.
 
     When disabled, the cache will not be used for storing or retrieving
@@ -22,7 +22,7 @@ cpdef enable_jit_cache(bool enable):
     cpp_context.enable_jit_cache(enable)
 
 
-cpdef clear_jit_cache():
+cpdef void clear_jit_cache():
     """Clear the JIT program cache, removing all cached programs from memory
     and disk.
     """

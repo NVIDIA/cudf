@@ -9,15 +9,15 @@ multi-GPU engines.
 
 ```{eval-rst}
 .. autoclass:: cudf_polars.engine.ray.RayEngine
-   :members: from_options, gather_cluster_info, gather_statistics, global_statistics, shutdown, nranks
+   :members: from_options, gather_cluster_info, gather_statistics, global_statistics, gather_io_summary, shutdown, nranks
    :show-inheritance:
 
 .. autoclass:: cudf_polars.engine.dask.DaskEngine
-   :members: from_options, gather_cluster_info, gather_statistics, global_statistics, shutdown, nranks
+   :members: from_options, gather_cluster_info, gather_statistics, global_statistics, gather_io_summary, shutdown, nranks
    :show-inheritance:
 
 .. autoclass:: cudf_polars.engine.spmd.SPMDEngine
-   :members: from_options, gather_cluster_info, gather_statistics, global_statistics, shutdown, nranks, rank, comm, context
+   :members: from_options, gather_cluster_info, gather_statistics, global_statistics, gather_io_summary, shutdown, nranks, rank, comm, context
    :show-inheritance:
 
 .. autoclass:: cudf_polars.engine.default_singleton_engine.DefaultSingletonEngine
@@ -29,11 +29,20 @@ The engine classes share a common base class:
 
 ```{eval-rst}
 .. autoclass:: cudf_polars.engine.core.StreamingEngine
-   :members: gather_cluster_info, gather_statistics, global_statistics, shutdown, nranks
+   :members: gather_cluster_info, gather_statistics, global_statistics, gather_io_summary, shutdown, nranks
    :show-inheritance:
 
 .. autoclass:: cudf_polars.engine.core.ClusterInfo
    :members:
+```
+
+## Persisted results
+
+Returned by `engine.execute()` to keep query results GPU-resident (see {doc}`execute`).
+
+```{eval-rst}
+.. autoclass:: cudf_polars.engine.persisted_result.PersistedQueryResult
+   :members: lazy, release
 ```
 
 ## Configuration
@@ -67,6 +76,7 @@ Most users interact with them through `StreamingOptions` fields rather than dire
 .. automodule:: cudf_polars.utils.config
    :members:
       DynamicPlanningOptions,
+      JoinFilterPushdownOptions,
       MemoryResourceConfig,
       ParquetOptions,
       StreamingExecutor,

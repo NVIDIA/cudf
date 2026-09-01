@@ -77,70 +77,99 @@ def test_sort_rapidsmpf(streaming_engine_factory, options) -> None:
     assert_gpu_result_equal(q, engine=streaming_engine, check_row_order=True)
 
 
-def test_is_already_partitioned():
-    # Unit test for _is_already_partitioned helper
-    chunks = 4
-    columns = (0, 1)
-    modulus = 8
-    nranks = 1
-
-    # Exact match: should return True
-    metadata_match = ChannelMetadata(
-        chunks,
-        partitioning=Partitioning(
-            inter_rank=HashScheme(columns, modulus),
-            local="inherit",
-        ),
+@pytest.mark.parametrize(
+    "join_expr",
+    [
+        pl.col("y") * 2,
+        [pl.col("y"), pl.col("a") + 1],
+    ],
+)
+@pytest.mark.parametrize(
+    "dynamic_planning",
+    [None, {}],
+    ids=["static-planning", "dynamic-planning"],
+)
+def test_join_non_col_keys_rapidsmpf(
+    streaming_engine_factory, join_expr, dynamic_planning
+) -> None:
+    """Pointwise expression keys are evaluated transiently for hash shuffling."""
+    engine = streaming_engine_factory(
+        StreamingOptions(
+            max_rows_per_partition=1,
+            target_partition_size=1,
+            broadcast_limit=1,
+            dynamic_planning=dynamic_planning,
+            raise_on_fail=True,
+        )
     )
-    assert _is_already_partitioned(metadata_match, columns, modulus, nranks) is True
-
-    # Different columns: should return False
-    metadata_diff_cols = ChannelMetadata(
-        chunks,
-        partitioning=Partitioning(
-            inter_rank=HashScheme((0,), modulus),
-            local="inherit",
-        ),
+    left = pl.LazyFrame(
+        {
+            "a": [1, 2, 3, 4] * 3,
+            "y": [10, 20, 30, 40] * 3,
+            "val_l": range(12),
+        }
     )
+    right = pl.LazyFrame(
+        {
+            "a": [1, 2, 3, 4] * 2,
+            "y": [10, 20, 30, 40] * 2,
+            "val_r": range(8),
+        }
+    )
+    q = left.join(right, on=join_expr, how="inner", coalesce=True)
+    assert_gpu_result_equal(q, engine=engine, check_row_order=False)
+
+
+@pytest.mark.parametrize(
+    "dynamic_planning",
+    [None, {}],
+    ids=["static-planning", "dynamic-planning"],
+)
+def test_join_asymmetric_non_col_keys_rapidsmpf(
+    streaming_engine_factory, dynamic_planning
+) -> None:
+    """Asymmetric pointwise expressions can be hash-shuffled without payload columns."""
+    engine = streaming_engine_factory(
+        StreamingOptions(
+            max_rows_per_partition=1,
+            target_partition_size=1,
+            broadcast_limit=1,
+            dynamic_planning=dynamic_planning,
+            raise_on_fail=True,
+        )
+    )
+    left = pl.LazyFrame({"a": [1, 2, 3, 4], "val_l": ["x", "y", "z", "w"]})
+    right = pl.LazyFrame({"b": [2, 3, 4, 5], "val_r": ["p", "q", "r", "s"]})
+    q = left.join(right, left_on=pl.col("a") + 1, right_on=pl.col("b"), how="inner")
+    assert_gpu_result_equal(q, engine=engine, check_row_order=False)
+
+
+def _partitioning(columns=(0, 1), modulus=8, local="inherit"):
+    """The partitioning `test_is_already_partitioned` queries for, unless overridden."""
+    return Partitioning(inter_rank=HashScheme(columns, modulus), local=local)
+
+
+@pytest.mark.parametrize(
+    "partitioning,expected",
+    [
+        pytest.param(_partitioning(), True, id="exact-match"),
+        pytest.param(_partitioning(columns=(0,)), False, id="different-columns"),
+        pytest.param(_partitioning(modulus=16), False, id="different-modulus"),
+        pytest.param(_partitioning(local=None), False, id="local-none"),
+        pytest.param(
+            _partitioning(local=HashScheme((0,), 4)), False, id="local-not-inherit"
+        ),
+        pytest.param(None, False, id="no-partitioning"),
+    ],
+)
+def test_is_already_partitioned(partitioning, expected):
+    metadata = ChannelMetadata(4, partitioning=partitioning)
     assert (
-        _is_already_partitioned(metadata_diff_cols, columns, modulus, nranks) is False
+        _is_already_partitioned(
+            metadata, columns_to_hash=(0, 1), num_partitions=8, nranks=1
+        )
+        is expected
     )
-
-    # Different local partitioning: should return False
-    metadata_diff_local = ChannelMetadata(
-        chunks,
-        partitioning=Partitioning(
-            inter_rank=HashScheme(columns, modulus),
-            local=None,
-        ),
-    )
-    assert (
-        _is_already_partitioned(metadata_diff_local, columns, modulus, nranks) is False
-    )
-
-    # Different modulus: should return False
-    metadata_diff_mod = ChannelMetadata(
-        chunks,
-        partitioning=Partitioning(
-            inter_rank=HashScheme(columns, 16),
-            local="inherit",
-        ),
-    )
-    assert _is_already_partitioned(metadata_diff_mod, columns, modulus, nranks) is False
-
-    # No partitioning: should return False
-    metadata_none = ChannelMetadata(chunks)
-    assert _is_already_partitioned(metadata_none, columns, modulus, nranks) is False
-
-    # Local not "inherit": should return False
-    metadata_local = ChannelMetadata(
-        chunks,
-        partitioning=Partitioning(
-            inter_rank=HashScheme(columns, modulus),
-            local=HashScheme((0,), 4),
-        ),
-    )
-    assert _is_already_partitioned(metadata_local, columns, modulus, nranks) is False
 
 
 @pytest.mark.spmd
@@ -163,7 +192,7 @@ def test_local_repartitioner_hash(spmd_engine, local_count) -> None:
                 context, comm, num_partitions=comm.nranks, collective_id=op_id
             )
             async with shuffle.inserting() as inserter:
-                inserter.insert_hash(
+                await inserter.insert_hash(
                     TableChunk.from_pylibcudf_table(
                         cudf_df.table, stream, exclusive_view=True, br=context.br()
                     ),
@@ -174,7 +203,7 @@ def test_local_repartitioner_hash(spmd_engine, local_count) -> None:
             await local.repartition_by_hash(columns_to_hash=(0,), stream=stream)
 
             for pid in local.local_partitions():
-                tbl = local.extract_chunk(pid, stream)
+                tbl = await local.extract_chunk(pid, stream)
                 results.append(
                     (
                         pid,
@@ -231,7 +260,7 @@ def test_local_repartitioner_index(spmd_engine, local_count) -> None:
                 context, comm, num_partitions=comm.nranks, collective_id=op_id
             )
             async with shuffle.inserting() as inserter:
-                inserter.insert_index(
+                await inserter.insert_index(
                     TableChunk.from_pylibcudf_table(
                         payload_df.table, stream, exclusive_view=True, br=context.br()
                     ),
@@ -244,7 +273,7 @@ def test_local_repartitioner_index(spmd_engine, local_count) -> None:
             await local.repartition_by_index(partition_col=0, stream=stream)
 
             for pid in local.local_partitions():
-                tbl = local.extract_chunk(pid, stream)
+                tbl = await local.extract_chunk(pid, stream)
                 results.append(
                     (
                         pid,

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -212,7 +212,7 @@ class stats_caster_base {
     std::vector<bitmask_type> null_mask;
     cudf::size_type null_count = 0;
 
-    host_column(size_type total_row_groups, rmm::cuda_stream_view stream)
+    host_column(size_type total_row_groups, cuda::stream_ref stream)
       : val{cudf::detail::make_host_vector<T>(total_row_groups, stream)},
         chars{cudf::detail::make_empty_host_vector<char>(initial_chars_capacity, stream)},
         null_mask(cudf::util::div_rounding_up_safe<cudf::size_type>(
@@ -255,7 +255,7 @@ class stats_caster_base {
                              rmm::device_uvector<size_type>>
     make_strings_children(cudf::host_span<cudf::string_view const> host_strings,
                           cudf::host_span<char const> host_chars,
-                          rmm::cuda_stream_view stream,
+                          cuda::stream_ref stream,
                           rmm::device_async_resource_ref mr)
     {
       auto offsets =
@@ -270,31 +270,32 @@ class stats_caster_base {
       auto d_chars   = cudf::detail::make_device_uvector_async(host_chars, stream, mr);
       auto d_offsets = cudf::detail::make_device_uvector_async(offsets, stream, mr);
       auto d_sizes   = cudf::detail::make_device_uvector_async(sizes, stream, mr);
-      stream.synchronize();  // ensures the vectors are not destroyed before the copy is completed
+      stream.sync();  // ensures the vectors are not destroyed before the copy is completed
       return {std::move(d_chars), std::move(d_offsets), std::move(d_sizes)};
     }
 
     [[nodiscard]] std::unique_ptr<column> inline to_device(cudf::data_type dtype,
-                                                           rmm::cuda_stream_view stream,
+                                                           cuda::stream_ref stream,
                                                            rmm::device_async_resource_ref mr) const
     {
       if constexpr (std::is_same_v<T, string_view>) {
         auto [d_chars, d_offsets, _] = make_strings_children(val, chars, stream, mr);
+        auto null_mask_buffer        = rmm::device_buffer{
+          null_mask.data(), cudf::bitmask_allocation_size_bytes(val.size()), stream, mr};
+        stream.sync();
         return cudf::make_strings_column(
           val.size(),
           std::make_unique<column>(std::move(d_offsets), rmm::device_buffer{0, stream, mr}, 0),
           d_chars.release(),
           null_count,
-          rmm::device_buffer{
-            null_mask.data(), cudf::bitmask_allocation_size_bytes(val.size()), stream, mr});
+          std::move(null_mask_buffer));
       }
+      auto data             = cudf::detail::make_device_uvector_async(val, stream, mr);
+      auto null_mask_buffer = rmm::device_buffer{
+        null_mask.data(), cudf::bitmask_allocation_size_bytes(val.size()), stream, mr};
+      stream.sync();
       return std::make_unique<column>(
-        dtype,
-        val.size(),
-        cudf::detail::make_device_uvector_async(val, stream, mr).release(),
-        rmm::device_buffer{
-          null_mask.data(), cudf::bitmask_allocation_size_bytes(val.size()), stream, mr},
-        null_count);
+        dtype, val.size(), data.release(), std::move(null_mask_buffer), null_count);
     }
   };
 };
@@ -305,9 +306,8 @@ class stats_caster_base {
  */
 class stats_columns_collector : public ast::detail::expression_transformer {
  public:
-  stats_columns_collector() = default;
-
-  stats_columns_collector(ast::expression const& expr, cudf::size_type num_columns);
+  stats_columns_collector(ast::expression const& expr,
+                          std::span<cudf::data_type const> output_dtypes);
 
   /**
    * @copydoc ast::detail::expression_transformer::visit(ast::literal const& )
@@ -331,22 +331,20 @@ class stats_columns_collector : public ast::detail::expression_transformer {
   std::reference_wrapper<ast::expression const> visit(ast::operation const& expr) override;
 
   /**
-   * @brief Return a boolean vector indicating input columns that can participate in stats based
+   * @brief Return a boolean vector indicating which input columns can participate in stats based
    * filtering
    *
    * @return Boolean vector indicating input columns that can participate in stats based filtering
    */
-  std::pair<thrust::host_vector<bool>, bool> get_stats_columns_mask() &&;
+  thrust::host_vector<bool> get_stats_columns_mask() &&;
 
  protected:
-  std::vector<std::reference_wrapper<ast::expression const>> visit_operands(
-    cudf::host_span<std::reference_wrapper<ast::expression const> const> operands);
+  explicit stats_columns_collector(std::span<cudf::data_type const> output_dtypes);
 
-  size_type _num_columns;
+  std::span<cudf::data_type const> _output_dtypes;
 
  private:
   thrust::host_vector<bool> _columns_mask;
-  bool _has_is_null_operator = false;
 };
 
 /**
@@ -355,14 +353,13 @@ class stats_columns_collector : public ast::detail::expression_transformer {
  * This is used in row group filtering based on predicate.
  * statistics min value of a column is referenced by column_index*3
  * statistics max value of a column is referenced by column_index*3+1
- * statistics is_null value of a column is referenced by column_index*3+2
+ * statistics all_nulls value of a column is referenced by column_index*3+2
  */
 class stats_expression_converter : public stats_columns_collector {
  public:
   stats_expression_converter(ast::expression const& expr,
-                             size_type num_columns,
-                             bool has_is_null_operator,
-                             rmm::cuda_stream_view stream);
+                             std::span<cudf::data_type const> output_dtypes,
+                             cuda::stream_ref stream);
 
   // Bring all overrides of `visit` from stats_columns_collector into scope
   using stats_columns_collector::visit;
@@ -385,6 +382,16 @@ class stats_expression_converter : public stats_columns_collector {
   thrust::host_vector<bool> get_stats_columns_mask() && = delete;
 
  private:
+  /**
+   * @brief Push `not_all_null AND stats_expr` for a column, so that a chunk holding nothing but
+   * nulls is pruned by a predicate needing a non-null value to match, rather than kept because its
+   * absent min and max leave the comparison null
+   *
+   * @param col_index Index of the column in the input table
+   * @param stats_expr Statistics expression to guard, already pushed onto the tree
+   */
+  void push_non_null_guard(size_type col_index, ast::expression const& stats_expr);
+
   ast::tree _stats_expr;
   cudf::size_type _stats_cols_per_column;
   std::unique_ptr<cudf::numeric_scalar<bool>> _always_true_scalar;

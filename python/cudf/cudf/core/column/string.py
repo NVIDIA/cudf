@@ -231,12 +231,13 @@ class StringColumn(ColumnBase, Scannable):
         self, skipna: bool = True, min_count: int = 0, **kwargs: Any
     ) -> ScalarLike:
         """Check if all string values are truthy (non-empty)."""
-        if skipna and self.null_count == self.size:
-            return True
-        elif not skipna and self.has_nulls():
-            # pandas 3 treats the NaN null sentinel as truthy, matching
-            # numpy semantics, so all(skipna=False) returns True when all
-            # values are null.
+        if self.null_count == self.size:
+            # With skipna=True nulls are dropped, so all-null is vacuously
+            # True. pandas 3 treats the NaN null sentinel as truthy,
+            # matching numpy semantics, so all(skipna=False) is True too.
+            # A partially-null column must NOT short-circuit here: the
+            # result depends on the truthiness of the non-null strings
+            # (e.g. all([NaN, ""], skipna=False) is False).
             return True
         raise NotImplementedError("`all` not implemented for `StringColumn`")
 
@@ -272,8 +273,18 @@ class StringColumn(ColumnBase, Scannable):
             )
 
         cast_func: Callable[[plc.Column, plc.DataType], plc.Column]
+        data = self
         if dtype.kind in {"i", "u"}:
-            if not self.is_all_integer():
+            if data.str_contains("_").any():
+                # Python (PEP 515) allows underscores between digits in
+                # integer literals (e.g. "123_1" == 1231) but libcudf does
+                # not. Strip only the valid underscores so invalid ones
+                # (e.g. "_12", "12_", "1__2") still fail like pandas.
+                # Two passes: the first can skip an underscore whose
+                # neighboring digit was consumed by a previous match.
+                data = data.replace_with_backrefs(r"(\d)_(\d)", r"\1\2")
+                data = data.replace_with_backrefs(r"(\d)_(\d)", r"\1\2")
+            if not data.is_all_integer():
                 raise ValueError(
                     "Could not convert strings to integer "
                     "type due to presence of non-integer values."
@@ -289,11 +300,11 @@ class StringColumn(ColumnBase, Scannable):
         else:
             raise ValueError(f"dtype must be a numerical type, not {dtype}")
         plc_dtype = dtype_to_pylibcudf_type(dtype)
-        with self.access(mode="read", scope="internal"):
+        with data.access(mode="read", scope="internal"):
             return cast(
                 "cudf.core.column.numerical.NumericalColumn",
                 ColumnBase.create(
-                    cast_func(self.plc_column, plc_dtype), dtype
+                    cast_func(data.plc_column, plc_dtype), dtype
                 ),
             )
 
@@ -318,7 +329,9 @@ class StringColumn(ColumnBase, Scannable):
                     "cuDF does not yet support timezone-aware datetimes"
                 )
             is_nat = self == "NaT"
-            without_nat = self.apply_boolean_mask(is_nat.unary_operator("not"))
+            without_nat = self.apply_retention_mask(
+                is_nat.unary_operator("not")
+            )
             char_counts = without_nat.count_characters()  # type: ignore[attr-defined]
             if char_counts.distinct_count(dropna=True) != 1:
                 # Unfortunately disables OK cases like:
@@ -342,7 +355,7 @@ class StringColumn(ColumnBase, Scannable):
             if target_unit != "s" and len(without_nat):
                 # libcudf parses directly into int64 values of the
                 # target unit and silently wraps on overflow
-                # (see https://github.com/rapidsai/cudf/issues/23247).
+                # (see https://github.com/NVIDIA/cudf/issues/23247).
                 # Parse to seconds first (which cannot realistically
                 # overflow) and reject values whose whole-second part
                 # falls outside the target unit's range, like pandas
@@ -382,7 +395,7 @@ class StringColumn(ColumnBase, Scannable):
         return result_col
 
     def as_datetime_column(self, dtype: np.dtype) -> DatetimeColumn:
-        not_null = self.apply_boolean_mask(self.notnull())
+        not_null = self.apply_retention_mask(self.notnull())
         if len(not_null) == 0:
             # We should hit the self.null_count == len(self) condition
             # so format doesn't matter

@@ -880,33 +880,41 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
   }
 
   /**
-   * Create a deep copy of the column while replacing the null mask. The resultant null mask is the
-   * bitwise {@code mergeOp} of null masks in the columns given as arguments, AND-ed with this column's
-   * existing null mask.
+   * Replace the null mask of a column. The resultant null mask is the bitwise {@code mergeOp} of
+   * null masks in the columns given as arguments, AND-ed with this column's existing null mask.
+   *
+   * If applying the null mask would be a no-op, the original column is returned with incremented
+   * refcount. Otherwise, a deep copy of the column is made (for a non-owning ColumnView, a deep copy
+   * must be made in either case).
    *
    * For STRUCT columns the new mask is also pushed down into every descendant column, to
    * stay consistent with the parent. For LIST/STRING columns the resultant offsets are
    * sanitized to not contain any non-empty nulls.
    *
-   * If {@code columns} is empty, this column's null mask is dropped entirely (every row is
-   * treated as valid).
+   * If {@code columns} is empty, the column is returned unchanged (no-op).
    *
-   * @param mergeOp binary operator (BITWISE_AND and BITWISE_OR only)
+   * @param mergeOp binary operator (either BITWISE_AND or BITWISE_OR)
    * @param columns array of columns whose null masks are merged, must have identical number of rows.
    * @return the new ColumnVector with merged null mask.
+   * @deprecated Use {@link ColumnVector#mergeAndSetValidity(BinaryOp, ColumnView...)} instead.
    */
-  public final ColumnVector mergeAndSetValidity(BinaryOp mergeOp, ColumnView... columns) {
+  @Deprecated
+  public ColumnVector mergeAndSetValidity(BinaryOp mergeOp, ColumnView... columns) {
     assert mergeOp == BinaryOp.BITWISE_AND || mergeOp == BinaryOp.BITWISE_OR : "Only BITWISE_AND and BITWISE_OR supported right now";
     long[] columnViews = new long[columns.length];
     long size = getRowCount();
 
-    for(int i = 0; i < columns.length; i++) {
+    for (int i = 0; i < columns.length; i++) {
       assert columns[i] != null : "Column vectors passed may not be null";
       assert columns[i].getRowCount() == size : "Row count mismatch, all columns must be the same size";
       columnViews[i] = columns[i].getNativeView();
     }
 
-    return new ColumnVector(bitwiseMergeAndSetValidity(getNativeView(), columnViews, mergeOp.nativeId));
+    long mergeOutput = bitwiseMergeAndSetValidity(getNativeView(), columnViews, mergeOp.nativeId);
+    if (mergeOutput == 0) {  // no-op, the current column is unchanged
+      return copyToColumnVector();
+    }
+    return new ColumnVector(mergeOutput);
   }
 
   /////////////////////////////////////////////////////////////////////////////
@@ -3337,7 +3345,7 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
    * Applies a JSONPath string to an incoming strings column where each row in the column
    * is a valid json string.  The output is returned by row as a strings column.
    *
-   * For reference, https://tools.ietf.org/id/draft-goessner-dispatch-jsonpath-00.html
+   * For reference, https://datatracker.ietf.org/doc/id/draft-goessner-dispatch-jsonpath-00.html
    * Note: Only implements the operators: $ . [] *
    *
    * @param path The JSONPath string to be applied to each row
@@ -3355,7 +3363,7 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
    * Applies a JSONPath string to an incoming strings column where each row in the column
    * is a valid json string.  The output is returned by row as a strings column.
    *
-   * For reference, https://tools.ietf.org/id/draft-goessner-dispatch-jsonpath-00.html
+   * For reference, https://datatracker.ietf.org/doc/id/draft-goessner-dispatch-jsonpath-00.html
    * Note: Only implements the operators: $ . [] *
    *
    * @param path The JSONPath string to be applied to each row
@@ -4434,34 +4442,42 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
   }
 
   /**
-   * Filters elements in each row of this LIST column using `booleanMaskView`
+   * Filters elements in each row of this LIST column using `retentionMaskView`
    * LIST of booleans as a mask.
    * <p>
    * Given a list-of-bools column, the function produces
    * a new `LIST` column of the same type as this column, where each element is copied
-   * from the row *only* if the corresponding `boolean_mask` is non-null and `true`.
+   * from the row *only* if the corresponding `retention_mask` is non-null and `true`.
    * <p>
    * E.g.
-   * column       = { {0,1,2}, {3,4}, {5,6,7}, {8,9} };
-   * boolean_mask = { {0,1,1}, {1,0}, {1,1,1}, {0,0} };
-   * results      = { {1,2},   {3},   {5,6,7}, {} };
+   * column         = { {0,1,2}, {3,4}, {5,6,7}, {8,9} };
+   * retention_mask = { {0,1,1}, {1,0}, {1,1,1}, {0,0} };
+   * results        = { {1,2},   {3},   {5,6,7}, {} };
    * <p>
-   * This column and `boolean_mask` must have the same number of rows.
+   * This column and `retention_mask` must have the same number of rows.
    * The output column has the same number of rows as this column.
    * An element is copied to an output row *only*
-   * if the corresponding boolean_mask element is `true`.
+   * if the corresponding retention_mask element is `true`.
    * An output row is invalid only if the row is invalid.
    *
-   * @param booleanMaskView A nullable list of bools column used to filter elements in this column
+   * @param retentionMaskView A nullable list of bools column used to filter elements in this column
    * @return List column of the same type as this column, containing filtered list rows
-   * @throws CudfException if `boolean_mask` is not a "lists of bools" column
-   * @throws CudfException if this column and `boolean_mask` have different number of rows
+   * @throws CudfException if `retention_mask` is not a "lists of bools" column
+   * @throws CudfException if this column and `retention_mask` have different number of rows
    */
-  public final ColumnVector applyBooleanMask(ColumnView booleanMaskView) {
+  public final ColumnVector applyRetentionMask(ColumnView retentionMaskView) {
     assert (getType().equals(DType.LIST));
-    assert (booleanMaskView.getType().equals(DType.LIST));
-    assert (getRowCount() == booleanMaskView.getRowCount());
-    return new ColumnVector(applyBooleanMask(getNativeView(), booleanMaskView.getNativeView()));
+    assert (retentionMaskView.getType().equals(DType.LIST));
+    assert (getRowCount() == retentionMaskView.getRowCount());
+    return new ColumnVector(applyRetentionMask(getNativeView(), retentionMaskView.getNativeView()));
+  }
+
+  /**
+   * @deprecated Use {@link #applyRetentionMask(ColumnView)} instead.
+   */
+  @Deprecated
+  public final ColumnVector applyBooleanMask(ColumnView booleanMaskView) {
+    return applyRetentionMask(booleanMaskView);
   }
 
   /**
@@ -5188,15 +5204,17 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
   private static native long normalizeNANsAndZeros(long viewHandle) throws CudfException;
 
   /**
-   * Native method to deep copy a column while replacing the null mask. The null mask is the
+   * Native method to replace a column's null mask. The null mask is the
    * bitwise merge of the null masks in the columns given as arguments.
    *
-   * @param baseHandle column view of the column that is deep copied.
+   * @param baseHandle column view of the column whose null mask is being replaced.
    * @param viewHandles array of views whose null masks are merged, must have identical row counts.
-   * @return native handle of the copied cudf column with replaced null mask.
+   * @param mergeOp native id of the binary op (BITWISE_AND or BITWISE_OR) used to merge the null masks.
+   * @return native handle of the resulting column, or 0 when the original is unchanged
+   *         (a no-op) and no copied column was produced.
    */
   private static native long bitwiseMergeAndSetValidity(long baseHandle, long[] viewHandles,
-                                                        int nullConfig) throws CudfException;
+                                                        int mergeOp) throws CudfException;
 
   ////////
   // Native cudf::column_view life cycle and metadata access methods. Life cycle methods
@@ -5239,7 +5257,8 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
 
   static native long generateListOffsets(long handle) throws CudfException;
 
-  static native long applyBooleanMask(long arrayColumnView, long booleanMaskHandle) throws CudfException;
+  static native long applyRetentionMask(long arrayColumnView, long retentionMaskHandle)
+      throws CudfException;
 
   static native boolean hasNonEmptyNulls(long handle) throws CudfException;
 

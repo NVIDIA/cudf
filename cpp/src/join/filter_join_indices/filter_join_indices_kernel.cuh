@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -8,7 +8,6 @@
 
 #include <cudf/ast/detail/expression_evaluator.cuh>
 #include <cudf/ast/detail/expression_parser.hpp>
-#include <cudf/detail/join/join.hpp>
 #include <cudf/detail/utilities/cuda.cuh>
 #include <cudf/detail/utilities/grid_1d.cuh>
 #include <cudf/join/join.hpp>
@@ -16,7 +15,7 @@
 #include <cudf/types.hpp>
 #include <cudf/utilities/span.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
+#include <cuda/stream>
 
 namespace cudf::detail {
 
@@ -92,10 +91,10 @@ void launch_filter_gather_map_kernel(
   cudf::detail::grid_1d const& config,
   std::size_t shmem_per_block,
   bool* predicate_results,
-  rmm::cuda_stream_view stream)
+  cuda::stream_ref stream)
 {
   filter_join_indices_kernel<MAX_BLOCK_SIZE, has_nulls, has_complex_type>
-    <<<config.num_blocks, config.num_threads_per_block, shmem_per_block, stream.value()>>>(
+    <<<config.num_blocks, config.num_threads_per_block, shmem_per_block, stream.get()>>>(
       left_table,
       right_table,
       left_indices,

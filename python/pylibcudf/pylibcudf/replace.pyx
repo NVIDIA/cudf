@@ -19,6 +19,10 @@ from pylibcudf.libcudf.replace import \
 from .column cimport Column
 from .scalar cimport Scalar
 from .utils cimport _get_stream, _get_memory_resource
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pylibcudf.typing import CudaStreamLike
 from cuda.bindings.cyruntime cimport cudaStream_t
 
 __all__ = [
@@ -32,8 +36,8 @@ __all__ = [
 
 cpdef Column replace_nulls(
     Column source_column,
-    ReplacementType replacement,
-    object stream=None,
+    ReplacementType replacement: Column | Scalar | ReplacePolicy,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """Replace nulls in source_column.
@@ -130,7 +134,7 @@ cpdef Column find_and_replace_all(
     Column source_column,
     Column values_to_replace,
     Column replacement_values,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """Replace all occurrences of values_to_replace with replacement_values.
@@ -182,7 +186,7 @@ cpdef Column clamp(
     Scalar hi,
     Scalar lo_replace=None,
     Scalar hi_replace=None,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """Clamp the values in source_column to the range [lo, hi].
@@ -248,7 +252,7 @@ cpdef Column clamp(
 cpdef Column normalize_nans_and_zeros(
     Column source_column,
     bool inplace=False,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """Normalize NaNs and zeros in source_column.

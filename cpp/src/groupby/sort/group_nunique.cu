@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -11,11 +11,10 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/iterator>
-#include <thrust/iterator/transform_iterator.h>
+#include <cuda/stream>
 
 namespace cudf {
 namespace groupby {
@@ -66,7 +65,7 @@ std::unique_ptr<column> group_nunique(column_view const& values,
                                       size_type const num_groups,
                                       cudf::device_span<size_type const> group_offsets,
                                       null_policy null_handling,
-                                      rmm::cuda_stream_view stream,
+                                      cuda::stream_ref stream,
                                       rmm::device_async_resource_ref mr)
 {
   CUDF_EXPECTS(num_groups >= 0, "number of groups cannot be negative");
@@ -78,12 +77,14 @@ std::unique_ptr<column> group_nunique(column_view const& values,
 
   if (num_groups == 0) { return result; }
 
+  auto temp_mr           = cudf::get_current_device_resource_ref();
   auto const values_view = table_view{{values}};
-  auto const comparator  = cudf::detail::row::equality::self_comparator{values_view, stream};
+  auto const comparator =
+    cudf::detail::row::equality::self_comparator{values_view, stream, temp_mr};
 
-  auto const d_values_view = column_device_view::create(values, stream);
+  auto const d_values_view = column_device_view::create(values, stream, temp_mr);
 
-  auto d_result = rmm::device_uvector<size_type>(group_labels.size(), stream);
+  auto d_result = rmm::device_uvector<size_type>(group_labels.size(), stream, temp_mr);
 
   auto const comparator_helper = [&](auto const d_equal) {
     auto fn = is_unique_iterator_fn{nullate::DYNAMIC{values.has_nulls()},
@@ -92,7 +93,7 @@ std::unique_ptr<column> group_nunique(column_view const& values,
                                     null_handling,
                                     group_offsets.data(),
                                     group_labels.data()};
-    thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    thrust::transform(rmm::exec_policy_nosync(stream, temp_mr),
                       cuda::counting_iterator<size_type>{0},
                       cuda::counting_iterator<size_type>{values.size()},
                       d_result.begin(),

@@ -117,11 +117,11 @@ The steps below reproduce the PDS-H benchmark results using cudf.pandas.
 ### Setup
 
 Install `cudf` following the
-[RAPIDS installation guide](https://docs.rapids.ai/install). For nightly wheels:
+[RAPIDS installation guide](https://docs.rapids.ai/install/). For nightly wheels:
 
 ```bash
 CUDA_MAJOR=$(nvidia-smi | grep -oP 'CUDA Version: \K[0-9]+')
-pip install --extra-index-url https://pypi.anaconda.org/rapidsai-wheels-nightly/simple \
+pip install --extra-index-url https://pypi.anaconda.org/rapidsai-wheels-nightly/simple/ \
     "cudf-cu${CUDA_MAJOR}>=0.0.0a0"
 ```
 
@@ -146,7 +146,7 @@ tpchgen-cli parquet -o "${DATA_PATH}" -s ${SCALE_FACTOR}
 
 `tpchgen-cli` generates Decimal and `datetime.date` columns. pandas cannot use these types
 in arithmetic, so convert them to float64 and timestamp before running the benchmark. This
-conversion step may not be needed in the future (see [#21204](https://github.com/rapidsai/cudf/issues/21204)).
+conversion step may not be needed in the future (see [#21204](https://github.com/NVIDIA/cudf/issues/21204)).
 
 ```python
 from pathlib import Path

@@ -9,6 +9,7 @@
 #include <cudf/scalar/scalar.hpp>
 
 #include <memory>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -16,54 +17,57 @@ namespace cudf {
 namespace jni {
 namespace ast {
 
-/**
- * A class to capture all of the resources associated with a compiled AST expression.
- * AST nodes do not own their child nodes, so every node in the expression tree
- * must be explicitly tracked in order to free the underlying resources for each node.
- *
- * This should be cleaned up a bit after the libcudf AST refactoring in
- * https://github.com/rapidsai/cudf/pull/8815 when a virtual destructor is added to the
- * base AST node type. Then we do not have to track every AST node type separately.
- */
+/** A class to capture all resources associated with a compiled AST expression. */
 class compiled_expr {
-  /** All expression nodes within the expression tree */
-  std::vector<std::unique_ptr<cudf::ast::expression>> expressions;
-
   /** GPU scalar instances that correspond to literal nodes */
   std::vector<std::unique_ptr<cudf::scalar>> scalars;
 
+  /** All expression nodes within the expression tree */
+  cudf::ast::tree expressions;
+
  public:
-  cudf::ast::literal& add_literal(std::unique_ptr<cudf::ast::literal> literal_ptr,
-                                  std::unique_ptr<cudf::scalar> scalar_ptr)
+  template <typename ScalarType>
+  cudf::ast::literal const& add_literal(ScalarType& scalar,
+                                        std::unique_ptr<cudf::scalar> scalar_ptr)
   {
-    expressions.push_back(std::move(literal_ptr));
     scalars.push_back(std::move(scalar_ptr));
-    return static_cast<cudf::ast::literal&>(*expressions.back());
+    return expressions.emplace<cudf::ast::literal>(scalar);
   }
 
-  cudf::ast::column_reference& add_column_ref(std::unique_ptr<cudf::ast::column_reference> ref_ptr)
+  cudf::ast::column_reference const& add_column_ref(cudf::size_type column_index,
+                                                    cudf::ast::table_reference table_ref)
   {
-    expressions.push_back(std::move(ref_ptr));
-    return static_cast<cudf::ast::column_reference&>(*expressions.back());
+    return expressions.emplace<cudf::ast::column_reference>(column_index, table_ref);
   }
 
-  /** @brief Take ownership of @p ref_ptr; returns a reference stable for the lifetime of this
-   * compiled_expr. */
-  cudf::ast::column_name_reference& add_column_name_ref(
-    std::unique_ptr<cudf::ast::column_name_reference> ref_ptr)
+  cudf::ast::column_name_reference const& add_column_name_ref(std::string column_name)
   {
-    expressions.push_back(std::move(ref_ptr));
-    return static_cast<cudf::ast::column_name_reference&>(*expressions.back());
+    return expressions.emplace<cudf::ast::column_name_reference>(std::move(column_name));
   }
 
-  cudf::ast::operation& add_operation(std::unique_ptr<cudf::ast::operation> expr_ptr)
+  cudf::ast::operation const& add_operation(cudf::ast::ast_operator op,
+                                            cudf::ast::expression const& child)
   {
-    expressions.push_back(std::move(expr_ptr));
-    return static_cast<cudf::ast::operation&>(*expressions.back());
+    return expressions.emplace<cudf::ast::operation>(op, child);
   }
+
+  cudf::ast::operation const& add_operation(cudf::ast::ast_operator op,
+                                            cudf::ast::expression const& left,
+                                            cudf::ast::expression const& right)
+  {
+    return expressions.emplace<cudf::ast::operation>(op, left, right);
+  }
+
+  template <typename F>
+  cudf::ast::expression const& add_jit_expression(F&& factory)
+  {
+    return factory(expressions);
+  }
+
+  [[nodiscard]] bool has_literals() const { return !scalars.empty(); }
 
   /** Return the expression node at the top of the tree */
-  cudf::ast::expression& get_top_expression() const { return *expressions.back(); }
+  cudf::ast::expression const& get_top_expression() const { return expressions.back(); }
 };
 
 }  // namespace ast

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -11,14 +11,15 @@
 #include <cudf/strings/strings_column_view.hpp>
 #include <cudf/structs/struct_view.hpp>
 #include <cudf/utilities/default_stream.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
+#include <rmm/resource_ref.hpp>
 
 #include <cuda/iterator>
 #include <cuda/std/utility>
-#include <thrust/iterator/transform_iterator.h>
+#include <cuda/stream>
 
 #include <functional>
 
@@ -226,7 +227,7 @@ class alignas(16) column_device_view : public column_device_view_core {
    * @brief Iterator for navigating this column
    */
   template <typename T>
-  using const_iterator = thrust::transform_iterator<detail::value_accessor<T>, count_it>;
+  using const_iterator = cuda::transform_iterator<detail::value_accessor<T>, count_it>;
 
   /**
    * @brief Return an iterator to the first element of the column.
@@ -274,14 +275,14 @@ class alignas(16) column_device_view : public column_device_view_core {
    */
   template <typename T, typename Nullate>
   using const_optional_iterator =
-    thrust::transform_iterator<detail::optional_accessor<T, Nullate>, count_it>;
+    cuda::transform_iterator<detail::optional_accessor<T, Nullate>, count_it>;
 
   /**
    * @brief Pair iterator for navigating this column
    */
   template <typename T, bool has_nulls>
   using const_pair_iterator =
-    thrust::transform_iterator<detail::pair_accessor<T, has_nulls>, count_it>;
+    cuda::transform_iterator<detail::pair_accessor<T, has_nulls>, count_it>;
 
   /**
    * @brief Pair rep iterator for navigating this column
@@ -290,7 +291,7 @@ class alignas(16) column_device_view : public column_device_view_core {
    */
   template <typename T, bool has_nulls>
   using const_pair_rep_iterator =
-    thrust::transform_iterator<detail::pair_rep_accessor<T, has_nulls>, count_it>;
+    cuda::transform_iterator<detail::pair_rep_accessor<T, has_nulls>, count_it>;
 
   /**
    * @brief Return an optional iterator to the first element of the column.
@@ -498,11 +499,14 @@ class alignas(16) column_device_view : public column_device_view_core {
    *
    * @param source_view The `column_view` to make usable in device code
    * @param stream CUDA stream used for device memory operations for children columns.
+   * @param mr Device memory resource used to allocate the returned child-view storage
    * @return A `unique_ptr` to a `column_device_view` that makes the data from
    *`source_view` available in device memory.
    */
   static std::unique_ptr<column_device_view, std::function<void(column_device_view*)>> create(
-    column_view source_view, rmm::cuda_stream_view stream = cudf::get_default_stream());
+    column_view source_view,
+    cuda::stream_ref stream           = cudf::get_default_stream(),
+    rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
   /**
    * @brief Destroy the `column_device_view` object.
@@ -645,13 +649,15 @@ class alignas(16) mutable_column_device_view : public mutable_column_device_view
    *
    * @param source_view The `column_view` to make usable in device code
    * @param stream CUDA stream used for device memory operations for children columns.
+   * @param mr Device memory resource used to allocate the returned child-view storage
    * @return A `unique_ptr` to a `mutable_column_device_view` that makes the
    * data from `source_view` available in device memory.
    */
   static std::unique_ptr<mutable_column_device_view,
                          std::function<void(mutable_column_device_view*)>>
   create(mutable_column_view source_view,
-         rmm::cuda_stream_view stream = cudf::get_default_stream());
+         cuda::stream_ref stream           = cudf::get_default_stream(),
+         rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
   /**
    * @brief Returns reference to element at the specified index.
@@ -694,7 +700,7 @@ class alignas(16) mutable_column_device_view : public mutable_column_device_view
    * @brief Iterator for navigating this column
    */
   template <typename T>
-  using iterator = thrust::transform_iterator<detail::mutable_value_accessor<T>, count_it>;
+  using iterator = cuda::transform_iterator<detail::mutable_value_accessor<T>, count_it>;
 
   /**
    * @brief Return first element (accounting for offset) after underlying data

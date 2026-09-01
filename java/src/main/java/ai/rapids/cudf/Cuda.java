@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2023, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 package ai.rapids.cudf;
@@ -410,7 +410,7 @@ public class Cuda {
   /**
    * Gets the major CUDA compute capability of the current device.
    *
-   * For reference: https://developer.nvidia.com/cuda-gpus
+   * For reference: https://developer.nvidia.com/cuda/gpus
    * Hardware Generation	Compute Capability
    *     Ampere	                8.x
    *     Turing	                7.5
@@ -428,7 +428,7 @@ public class Cuda {
   /**
    * Gets the minor CUDA compute capability of the current device.
    *
-   * For reference: https://developer.nvidia.com/cuda-gpus
+   * For reference: https://developer.nvidia.com/cuda/gpus
    * Hardware Generation	Compute Capability
    *     Ampere	                8.x
    *     Turing	                7.5

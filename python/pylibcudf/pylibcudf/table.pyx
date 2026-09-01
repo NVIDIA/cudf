@@ -1,6 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+from collections.abc import Sequence
 from cython.operator cimport dereference
 
 from cpython.pycapsule cimport (
@@ -34,6 +35,10 @@ from pylibcudf.libcudf.types cimport size_type
 from .column cimport Column
 from .types cimport DataType
 from .utils cimport _get_stream, _get_memory_resource
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pylibcudf.typing import CudaStreamLike
 from pylibcudf._interop_helpers cimport (
     _release_schema,
     _release_array,
@@ -76,7 +81,7 @@ cdef class Table:
     """
     __hash__ = None
 
-    def __init__(self, columns, num_rows=None):
+    def __init__(self, columns: Sequence[Column], num_rows=None):
         columns = tuple(columns)
         if not all(isinstance(c, Column) for c in columns):
             raise ValueError("All columns must be pylibcudf Column objects")
@@ -97,7 +102,7 @@ cdef class Table:
     def to_arrow(
         self,
         metadata: list[ColumnMetadata | str] | None = None,
-        stream: Stream | None = None,
+        object stream: CudaStreamLike | None = None,
     ) -> ArrowLike:
         """Create a pyarrow table from a pylibcudf table.
 
@@ -105,7 +110,7 @@ cdef class Table:
         ----------
         metadata : list[ColumnMetadata | str] | None
             The metadata to attach to the columns of the table.
-        stream : Stream | None
+        stream : CudaStreamLike | None
             CUDA stream on which to perform the operation.
 
         Returns
@@ -127,7 +132,7 @@ cdef class Table:
     def from_arrow(
         obj: ArrowLike,
         dtype: DataType | None = None,
-        object stream=None,
+        object stream: CudaStreamLike | None = None,
         DeviceMemoryResource mr=None
     ) -> Table:
         """
@@ -149,7 +154,7 @@ cdef class Table:
             An object implementing one of the Arrow C data interface methods.
         dtype: DataType
             The pylibcudf data type.
-        stream : Stream | None
+        stream : CudaStreamLike | None
             CUDA stream on which to perform the operation.
         mr : DeviceMemoryResource | None
             Device memory resource for allocations.
@@ -342,7 +347,7 @@ cdef class Table:
         """The columns in this table."""
         return self._columns
 
-    cpdef list release(self):
+    cpdef list[Column] release(self):
         """Release ownership of this table's columns and leave it empty.
 
         Returns
@@ -355,16 +360,16 @@ cdef class Table:
         self._num_rows = 0
         return columns
 
-    cpdef tuple shape(self):
+    cpdef tuple[int, int] shape(self):
         """The shape of this table"""
         return (self.num_rows(), self.num_columns())
 
-    cpdef Table copy(self, object stream=None, DeviceMemoryResource mr=None):
+    cpdef Table copy(self, object stream: CudaStreamLike | None = None, DeviceMemoryResource mr=None):
         """Create a deep copy of the table.
 
         Parameters
         ----------
-        stream : Stream | None
+        stream : CudaStreamLike | None
             CUDA stream on which to perform the operation.
         mr : DeviceMemoryResource | None
             Device memory resource for allocations.
@@ -404,7 +409,7 @@ cdef class Table:
 
         return PyCapsule_New(<void*>raw_schema_ptr, "arrow_schema", _release_schema)
 
-    def _to_host_array(self, object stream):
+    def _to_host_array(self, object stream: CudaStreamLike):
         cdef ArrowArray* raw_host_array_ptr
         cdef Stream _stream = _get_stream(stream)
         cdef cudaStream_t _cs = _stream.view().value()

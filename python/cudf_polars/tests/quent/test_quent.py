@@ -449,10 +449,9 @@ def test_lower_ir_graph_with_node_map() -> None:
         ir, config_options, concurrent.futures.ThreadPoolExecutor()
     )
 
-    _lowered_ir, _partition_info, node_map = lower_ir_graph_with_node_map(
-        ir, config_options, stats
-    )
+    lowering, node_map = lower_ir_graph_with_node_map(ir, config_options, stats)
 
+    assert lowering.optimized is ir
     assert len(node_map) > 0
     for physical_sid, logical_sids in node_map.items():
         assert isinstance(physical_sid, str)

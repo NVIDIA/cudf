@@ -83,7 +83,7 @@ class DecimalColumn(NumericalBaseColumn):
         # Narrow type for mypy - we know col_dtype is a decimal type
         assert isinstance(col_dtype, DecimalDtype)
         p = col_dtype.precision
-        # https://docs.microsoft.com/en-us/sql/t-sql/data-types/precision-scale-and-length-transact-sql
+        # https://learn.microsoft.com/en-us/sql/t-sql/data-types/precision-scale-and-length-transact-sql
         nrows = len(self)
         if reduction_op in {"min", "max"}:
             new_p = p
@@ -99,6 +99,23 @@ class DecimalColumn(NumericalBaseColumn):
             )
         precision = max(min(new_p, col_dtype.MAX_PRECISION), 0)
         return type(col_dtype)(precision, scale)
+
+    def _reduce(
+        self,
+        op: str,
+        skipna: bool = True,
+        min_count: int = 0,
+        **kwargs: Any,
+    ) -> ScalarLike:
+        if op == "mean":
+            # pyarrow would return a pyarrow.Decimal128Scalar (decimal)
+            # while duckdb and Polars returns a float64 (float)
+            return self.astype(np.dtype(np.float64))._reduce(
+                op, skipna=skipna, min_count=min_count, **kwargs
+            )
+        return super()._reduce(
+            op, skipna=skipna, min_count=min_count, **kwargs
+        )
 
     @property
     def __cuda_array_interface__(self) -> Mapping[str, Any]:
@@ -162,7 +179,7 @@ class DecimalColumn(NumericalBaseColumn):
             )
 
     # Decimals in libcudf don't support truediv, see
-    # https://github.com/rapidsai/cudf/pull/7435 for explanation.
+    # https://github.com/NVIDIA/cudf/pull/7435 for explanation.
     def __truediv__(self, other: ColumnBinaryOperand) -> ColumnBase:
         return self._binaryop(other, "__div__")
 
@@ -177,7 +194,10 @@ class DecimalColumn(NumericalBaseColumn):
             if not isinstance(other, NumericalBaseColumn):
                 return NotImplemented
             elif other.dtype.kind == "f":
-                return self.astype(other.dtype)._binaryop(other, op)
+                casted = self.astype(other.dtype)
+                if reflect:
+                    return other._binaryop(casted, op)
+                return casted._binaryop(other, op)
             elif other.dtype.kind == "b":
                 raise TypeError(
                     "Decimal columns only support binary operations with "
@@ -205,7 +225,11 @@ class DecimalColumn(NumericalBaseColumn):
                 )
             other_cudf_dtype = self.dtype._from_decimal(Decimal(other))  # type: ignore[union-attr]
         elif isinstance(other, float):
-            return self._binaryop(as_column(other, length=len(self)), op)
+            other_col = as_column(other, length=len(self))
+            casted = self.astype(other_col.dtype)
+            if reflect:
+                return other_col._binaryop(casted, op)
+            return casted._binaryop(other_col, op)
         elif is_na_like(other):
             other = pa.scalar(None, type=cudf_dtype_to_pa_type(self.dtype))
             other_cudf_dtype = self.dtype
@@ -344,7 +368,7 @@ def _get_decimal_type(
     precision & scale when performing the binary operation
     `op` for the given dtypes.
 
-    For precision & scale calculations see : https://docs.microsoft.com/en-us/sql/t-sql/data-types/precision-scale-and-length-transact-sql
+    For precision & scale calculations see : https://learn.microsoft.com/en-us/sql/t-sql/data-types/precision-scale-and-length-transact-sql
     """
 
     # This should at some point be hooked up to libcudf's

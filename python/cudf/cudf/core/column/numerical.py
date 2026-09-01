@@ -911,20 +911,23 @@ class NumericalColumn(NumericalBaseColumn):
                 self.dtype
             ):
                 # Short-circuit the cast if the dtypes are equivalent
-                # but not the same type object.
+                # but not the same type object. Do NOT mutate self._dtype:
+                # the column object may be shared with the caller's frame.
                 if (
                     is_pandas_nullable_extension_dtype(dtype)
                     and isinstance(self.dtype, np.dtype)
                     and self.dtype.kind == "f"
                 ):
-                    # If the dtype is a pandas nullable extension type, we need to
-                    # float column doesn't have any NaNs.
+                    # NaNs must become nulls before viewing as a masked dtype.
                     res = self.nans_to_nulls()
-                    res._dtype = dtype
-                    return res
-                else:
-                    self._dtype = dtype
-                    return self
+                    return cast(
+                        "NumericalColumn",
+                        ColumnBase.create(res.plc_column, dtype),
+                    )
+                return cast(
+                    "NumericalColumn",
+                    ColumnBase.create(self.plc_column, dtype),
+                )
             if self.dtype.kind == "f" and dtype.kind in "iu":
                 if not is_pandas_nullable_extension_dtype(dtype) and (
                     self.nan_count > 0
@@ -1223,6 +1226,10 @@ class NumericalColumn(NumericalBaseColumn):
             else to_dtype
         )
 
+        if len(self) == 0 and to_dtype_numpy.kind in "iufb":
+            # An empty column can be cast to any numeric dtype losslessly.
+            return True
+
         if self_dtype_numpy.kind == to_dtype_numpy.kind:
             # Check if self dtype can be safely cast to to_dtype
             # For same kinds, we can compare the sizes
@@ -1232,7 +1239,7 @@ class NumericalColumn(NumericalBaseColumn):
                 if self_dtype_numpy.kind == "f":
                     # Exclude 'np.inf', '-np.inf'
                     not_inf = (self != np.inf) & (self != -np.inf)
-                    col = self.apply_boolean_mask(not_inf)
+                    col = self.apply_retention_mask(not_inf)
                 else:
                     col = self
 

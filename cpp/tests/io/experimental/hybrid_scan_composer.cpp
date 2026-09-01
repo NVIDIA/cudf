@@ -63,7 +63,7 @@ std::unique_ptr<hybrid_scan_reader> setup_reader(cudf::io::datasource& datasourc
 auto apply_hybrid_scan_filters(cudf::io::datasource& datasource,
                                hybrid_scan_reader const& reader,
                                cudf::io::parquet_reader_options const& options,
-                               rmm::cuda_stream_view stream,
+                               cuda::stream_ref stream,
                                rmm::device_async_resource_ref mr)
 {
   // Get all row groups from the reader
@@ -79,9 +79,9 @@ auto apply_hybrid_scan_filters(cudf::io::datasource& datasource,
   // Update current row group indices
   current_row_group_indices = stats_filtered_row_group_indices;
 
-  // Get bloom filter and dictionary page byte ranges from the reader
-  auto [bloom_filter_byte_ranges, dict_page_byte_ranges] =
-    reader.secondary_filters_byte_ranges(current_row_group_indices, options);
+  // Get dictionary page byte ranges from the reader
+  auto const dict_page_byte_ranges =
+    reader.dictionary_pages_byte_ranges(current_row_group_indices, options);
 
   // If we have dictionary page byte ranges, filter row groups with dictionary pages
   std::vector<cudf::size_type> dictionary_page_filtered_row_group_indices;
@@ -100,6 +100,10 @@ auto apply_hybrid_scan_filters(cudf::io::datasource& datasource,
     // Update current row group indices
     current_row_group_indices = dictionary_page_filtered_row_group_indices;
   }
+
+  // Get bloom filter byte ranges from the reader
+  auto const bloom_filter_byte_ranges =
+    reader.bloom_filters_byte_ranges(current_row_group_indices, options);
 
   // If we have bloom filter byte ranges, filter row groups with bloom filters
   std::vector<cudf::size_type> bloom_filtered_row_group_indices;
@@ -133,7 +137,7 @@ std::tuple<std::unique_ptr<cudf::table>, std::unique_ptr<cudf::table>> hybrid_sc
   cudf::ast::operation const& filter_expression,
   std::optional<std::vector<std::string>> const& payload_column_names,
   bool case_sensitive_names,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr,
   rmm::mr::aligned_resource_adaptor& aligned_mr)
 {
@@ -209,7 +213,7 @@ std::tuple<std::unique_ptr<cudf::table>, std::unique_ptr<cudf::table>> chunked_h
   cudf::ast::operation const& filter_expression,
   std::optional<std::vector<std::string>> const& payload_column_names,
   bool case_sensitive_names,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr,
   rmm::mr::aligned_resource_adaptor& aligned_mr)
 {
@@ -324,7 +328,7 @@ std::unique_ptr<cudf::table> hybrid_scan_single_step(
   cudf::ast::operation const& filter_expression,
   std::optional<std::vector<std::string>> const& column_names,
   bool case_sensitive_names,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr)
 {
   // Create reader options with empty source info
@@ -365,7 +369,7 @@ std::unique_ptr<cudf::table> chunked_hybrid_scan_single_step(
   cudf::ast::operation const& filter_expression,
   std::optional<std::vector<std::string>> const& column_names,
   bool case_sensitive_names,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr)
 {
   // Create reader options with empty source info

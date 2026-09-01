@@ -229,7 +229,7 @@ def test_groupby_apply_jit_unary_reductions(
                     and dtype.kind == "f"
                 )
             ),
-            reason=("https://github.com/rapidsai/cudf/issues/14860"),
+            reason=("https://github.com/NVIDIA/cudf/issues/14860"),
         )
     )
     dataset = groupby_jit_datasets[dataset].copy(deep=True)
@@ -303,7 +303,7 @@ def test_groupby_apply_jit_reductions_special_vals(
         pytest.param(
             np.nan,
             marks=pytest.mark.xfail(
-                reason="https://github.com/rapidsai/cudf/issues/13832"
+                reason="https://github.com/NVIDIA/cudf/issues/13832"
             ),
         ),
         np.inf,
@@ -367,7 +367,7 @@ def test_groupby_apply_jit_correlation(dataset, groupby_jit_datasets, dtype):
 
     if np.dtype(dtype).kind == "f":
         # Correlation of floating types is not yet supported:
-        # https://github.com/rapidsai/cudf/issues/13839
+        # https://github.com/NVIDIA/cudf/issues/13839
         m = (
             f"Series.corr\\(Series\\) is not "
             f"supported for \\({dtype}, {dtype}\\)"
@@ -492,7 +492,7 @@ def test_groupby_apply_jit_args(func, args, groupby_jit_data_small):
 
 
 def test_groupby_apply_jit_block_divergence():
-    # https://github.com/rapidsai/cudf/issues/12686
+    # https://github.com/NVIDIA/cudf/issues/12686
     df = cudf.DataFrame(
         {
             "a": [0, 0, 0, 1, 1, 1],
@@ -580,9 +580,6 @@ def test_groupby_apply_return_col_from_df():
 
     got = df.groupby("id").apply(func, include_groups=False)
     expect = pdf.groupby("id").apply(func, include_groups=False)
-    # pandas seems to erroneously add an extra MI level of ids
-    # TODO: Figure out how pandas groupby.apply determines the columns
-    expect = pd.DataFrame(expect.droplevel(1), columns=got.columns)
     assert_groupby_results_equal(expect, got)
 
 
@@ -746,6 +743,55 @@ def test_groupby_apply_return_series_dataframe(func, args):
     actual = gdf.groupby(["key"]).apply(func, *args, include_groups=False)
 
     assert_groupby_results_equal(expected, actual)
+
+
+def test_groupby_apply_series_results_misaligned_lengths():
+    # Series results whose per-group lengths differ from their input are
+    # concatenated with the group keys as the outer index level, each key
+    # repeated by its chunk's actual length, keeping the UDF-returned
+    # index as the inner level (pandas GH8467) -- even when the total
+    # output length coincides with len(df) (2 + 3 == 3 + 2 here).
+    pdf = pd.DataFrame({"k": [1, 1, 2, 2, 2], "v": [10, 20, 30, 40, 50]})
+    gdf = cudf.from_pandas(pdf)
+
+    def make_swap_sizes(series_type):
+        # group 1 has 2 rows -> 3 outputs; group 2 has 3 rows -> 2 outputs
+        def swap_sizes(g):
+            if len(g) == 2:
+                return series_type([1, 2, 3])
+            return series_type([4, 5])
+
+        return swap_sizes
+
+    expected = pdf.groupby("k").apply(
+        make_swap_sizes(pd.Series), include_groups=False
+    )
+    actual = gdf.groupby("k").apply(
+        make_swap_sizes(cudf.Series), include_groups=False
+    )
+    assert_eq(expected, actual)
+
+
+def test_groupby_apply_series_results_fresh_index():
+    # Per-group result lengths match the input, but the UDF rewrote the
+    # index: the UDF-returned index is kept as the inner level rather
+    # than the input rows' original labels.
+    pdf = pd.DataFrame({"k": [1, 1, 2, 2, 2], "v": [10, 20, 30, 40, 50]})
+    gdf = cudf.from_pandas(pdf)
+
+    def make_fresh_index(series_type):
+        def fresh_index(g):
+            return series_type(range(len(g)))
+
+        return fresh_index
+
+    expected = pdf.groupby("k").apply(
+        make_fresh_index(pd.Series), include_groups=False
+    )
+    actual = gdf.groupby("k").apply(
+        make_fresh_index(cudf.Series), include_groups=False
+    )
+    assert_eq(expected, actual)
 
 
 @pytest.mark.parametrize(

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -20,14 +20,16 @@
 #include <cudf/strings/detail/strings_column_factories.cuh>
 #include <cudf/strings/string_view.cuh>
 #include <cudf/strings/strings_column_view.hpp>
+#include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
+#include <rmm/device_uvector.hpp>
 
 #include <cuda/atomic>
 #include <cuda/iterator>
 #include <cuda/std/functional>
+#include <cuda/stream>
 #include <thrust/copy.h>
 #include <thrust/for_each.h>
 #include <thrust/transform.h>
@@ -376,8 +378,6 @@ struct split_ws_tokenizer_fn : base_ws_split_tokenizer<split_ws_tokenizer_fn> {
   {
     auto const base_ptr = d_strings.head<char>();  // d_delimiters, pos_begin/end based on this ptr
     auto const token_count = static_cast<size_type>(d_tokens.size());
-    auto const all_tokens =
-      (max_tokens == cuda::std::numeric_limits<size_type>::max()) || (token_count == 1);
 
     // build the index-pair of each token for this string
     size_type token_idx = 0;
@@ -388,7 +388,8 @@ struct split_ws_tokenizer_fn : base_ws_split_tokenizer<split_ws_tokenizer_fn> {
         ++last_pos;
         continue;
       }
-      auto const end_pos    = all_tokens || (token_idx + 1 < token_count) ? d_pos : pos_end;
+      auto const end_pos =
+        (token_count < max_tokens) || (token_idx + 1 < token_count) ? d_pos : pos_end;
       d_tokens[token_idx++] = string_index_pair{base_ptr + last_pos, end_pos - last_pos};
 
       last_pos = d_pos + 1;
@@ -419,8 +420,6 @@ struct rsplit_ws_tokenizer_fn : base_ws_split_tokenizer<rsplit_ws_tokenizer_fn> 
     auto const base_ptr = d_strings.head<char>();  // d_delimiters, pos_begin/end based on this ptr
     auto const token_count = static_cast<size_type>(d_tokens.size());
     auto const delim_count = static_cast<size_type>(delimiters.size());
-    auto const all_tokens =
-      (max_tokens == cuda::std::numeric_limits<size_type>::max()) || (token_count == 1);
 
     // build the index-pair of each token for this string
     auto last_pos       = pos_end;
@@ -432,7 +431,8 @@ struct rsplit_ws_tokenizer_fn : base_ws_split_tokenizer<rsplit_ws_tokenizer_fn> 
         continue;
       }
       // store the token into the output vector right-to-left
-      auto const start_pos = all_tokens || (token_idx + 1 < token_count) ? d_pos + 1 : pos_begin;
+      auto const start_pos =
+        (token_count < max_tokens) || (token_idx + 1 < token_count) ? d_pos + 1 : pos_begin;
       d_tokens[token_count - token_idx - 1] =
         string_index_pair{base_ptr + start_pos, last_pos - start_pos};
 
@@ -450,6 +450,263 @@ struct rsplit_ws_tokenizer_fn : base_ws_split_tokenizer<rsplit_ws_tokenizer_fn> 
   {
   }
 };
+
+// Per-string kernel outperforms the global-scan split_helper for short strings;
+// fall back to split_helper above this average byte length per non-null string.
+// This value was determined using the split benchmarks by varying the row width
+// and the row count using an RTX A6000.
+constexpr size_type AVG_CHAR_BYTES_THRESHOLD = 120;
+
+// Per-string token count — returns number of tokens (delimiters found + 1), capped at max_tokens.
+struct token_count_fn {
+  column_device_view const d_strings;
+  string_view const d_delimiter;
+  size_type const max_tokens;
+
+  __device__ size_type operator()(size_type const idx) const
+  {
+    if (d_strings.is_null(idx)) { return 0; }
+    auto const d_str    = d_strings.element<string_view>(idx);
+    auto const del_size = d_delimiter.size_bytes();
+    size_type count     = 1;
+    size_type pos       = 0;
+    while (pos + del_size <= d_str.size_bytes()) {
+      if (d_delimiter.compare(d_str.data() + pos, del_size) == 0) {
+        if (++count == max_tokens) { break; }
+        pos += del_size;
+      } else {
+        ++pos;
+      }
+    }
+    return count;
+  }
+};
+
+// Per-string token count for whitespace split — returns number of non-whitespace runs, capped at
+// max_tokens. Both forward and backward splits produce the same count.
+struct ws_token_count_fn {
+  column_device_view const d_strings;
+  size_type const max_tokens;
+
+  __device__ size_type operator()(size_type const idx) const
+  {
+    if (d_strings.is_null(idx)) { return 0; }
+    auto const d_str = d_strings.element<string_view>(idx);
+    auto const size  = d_str.size_bytes();
+    auto const base  = d_str.data();
+    size_type count  = 0;
+    bool in_token    = false;
+    for (size_type i = 0; i < size && count < max_tokens; ++i) {
+      bool const is_ws = is_whitespace(static_cast<char_utf8>(base[i]));
+      if (!is_ws && !in_token) {
+        ++count;
+        in_token = true;
+      } else if (is_ws) {
+        in_token = false;
+      }
+    }
+    return count;
+  }
+};
+
+// Extract tokens left-to-right for non-whitespace split.
+struct split_extract_fn {
+  column_device_view const d_strings;
+  string_view const d_delimiter;
+  cudf::detail::input_offsetalator const d_token_offsets;
+  string_index_pair* const d_tokens;
+
+  __device__ void operator()(size_type const idx) const
+  {
+    if (d_strings.is_null(idx)) { return; }
+    auto const d_str        = d_strings.element<string_view>(idx);
+    auto const token_offset = d_token_offsets[idx];
+    auto const token_count  = static_cast<size_type>(d_token_offsets[idx + 1] - token_offset);
+    auto* const d_result    = d_tokens + token_offset;
+    auto const size         = d_str.size_bytes();
+    auto const del_size     = d_delimiter.size_bytes();
+    auto const base         = d_str.data();
+
+    if (size == 0) {
+      d_result[0] = string_index_pair{"", 0};
+      return;
+    }
+    size_type token_idx = 0;
+    size_type last_pos  = 0;
+    size_type pos       = 0;
+    while (pos + del_size <= size && token_idx < token_count - 1) {
+      if (d_delimiter.compare(base + pos, del_size) == 0) {
+        d_result[token_idx++] = string_index_pair{base + last_pos, pos - last_pos};
+        last_pos              = pos + del_size;
+        pos                   = last_pos;
+      } else {
+        ++pos;
+      }
+    }
+    d_result[token_idx] = string_index_pair{base + last_pos, size - last_pos};
+  }
+};
+
+// Extract tokens right-to-left for non-whitespace split.
+struct rsplit_extract_fn {
+  column_device_view const d_strings;
+  string_view const d_delimiter;
+  cudf::detail::input_offsetalator const d_token_offsets;
+  string_index_pair* const d_tokens;
+
+  __device__ void operator()(size_type const idx) const
+  {
+    if (d_strings.is_null(idx)) { return; }
+    auto const d_str        = d_strings.element<string_view>(idx);
+    auto const token_offset = d_token_offsets[idx];
+    auto const token_count  = static_cast<size_type>(d_token_offsets[idx + 1] - token_offset);
+    auto* const d_result    = d_tokens + token_offset;
+    auto const size         = d_str.size_bytes();
+    auto const del_size     = d_delimiter.size_bytes();
+    auto const base         = d_str.data();
+
+    if (size == 0) {
+      d_result[0] = string_index_pair{"", 0};
+      return;
+    }
+    size_type token_idx = 0;
+    size_type last_end  = size;
+    size_type pos       = size - del_size;
+    while (pos >= 0 && token_idx < token_count - 1) {
+      if (d_delimiter.compare(base + pos, del_size) == 0) {
+        auto const start                      = pos + del_size;
+        d_result[token_count - 1 - token_idx] = string_index_pair{base + start, last_end - start};
+        last_end                              = pos;
+        pos -= del_size;
+        ++token_idx;
+      } else {
+        --pos;
+      }
+    }
+    d_result[0] = string_index_pair{base, last_end};
+  }
+};
+
+// Extract whitespace tokens left-to-right. Leading/trailing whitespace is skipped; consecutive
+// whitespace counts as one delimiter. The last slot retains trailing whitespace when max_tokens
+// is reached.
+struct split_ws_extract_fn {
+  column_device_view const d_strings;
+  cudf::detail::input_offsetalator const d_token_offsets;
+  string_index_pair* const d_tokens;
+  size_type const max_tokens;
+
+  __device__ void operator()(size_type const idx) const
+  {
+    if (d_strings.is_null(idx)) { return; }
+    auto const d_str        = d_strings.element<string_view>(idx);
+    auto const token_offset = d_token_offsets[idx];
+    auto const token_count  = static_cast<size_type>(d_token_offsets[idx + 1] - token_offset);
+    if (token_count == 0) { return; }
+    auto* const d_result = d_tokens + token_offset;
+    auto const size      = d_str.size_bytes();
+    auto const base      = d_str.data();
+    size_type token_idx  = 0;
+    size_type i          = 0;
+    while (i < size && is_whitespace(static_cast<char_utf8>(base[i]))) {
+      ++i;
+    }
+    while (i < size && token_idx < token_count) {
+      auto const tok_start = i;
+      if ((token_count < max_tokens) || (token_idx + 1 < token_count)) {
+        while (i < size && !is_whitespace(static_cast<char_utf8>(base[i]))) {
+          ++i;
+        }
+        d_result[token_idx++] = string_index_pair{base + tok_start, i - tok_start};
+        while (i < size && is_whitespace(static_cast<char_utf8>(base[i]))) {
+          ++i;
+        }
+      } else {
+        // cap reached at last slot: preserve rest of string including trailing whitespace
+        d_result[token_idx++] = string_index_pair{base + tok_start, size - tok_start};
+      }
+    }
+  }
+};
+
+// Extract whitespace tokens right-to-left. Trailing/leading whitespace is skipped; the first
+// output slot retains leading whitespace when max_tokens is reached.
+struct rsplit_ws_extract_fn {
+  column_device_view const d_strings;
+  cudf::detail::input_offsetalator const d_token_offsets;
+  string_index_pair* const d_tokens;
+  size_type const max_tokens;
+
+  __device__ void operator()(size_type const idx) const
+  {
+    if (d_strings.is_null(idx)) { return; }
+    auto const d_str        = d_strings.element<string_view>(idx);
+    auto const token_offset = d_token_offsets[idx];
+    auto const token_count  = static_cast<size_type>(d_token_offsets[idx + 1] - token_offset);
+    if (token_count == 0) { return; }
+    auto* const d_result = d_tokens + token_offset;
+    auto const size      = d_str.size_bytes();
+    auto const base      = d_str.data();
+    size_type token_idx  = 0;
+    size_type i          = size - 1;
+    while (i >= 0 && is_whitespace(static_cast<char_utf8>(base[i]))) {
+      --i;
+    }
+    while (i >= 0 && token_idx < token_count) {
+      auto const tok_end = i + 1;
+      if ((token_count < max_tokens) || (token_idx + 1 < token_count)) {
+        while (i >= 0 && !is_whitespace(static_cast<char_utf8>(base[i]))) {
+          --i;
+        }
+        auto const tok_start = i + 1;
+        d_result[token_count - 1 - token_idx] =
+          string_index_pair{base + tok_start, tok_end - tok_start};
+        ++token_idx;
+        while (i >= 0 && is_whitespace(static_cast<char_utf8>(base[i]))) {
+          --i;
+        }
+      } else {
+        // cap reached at first output slot: preserve rest from beginning including leading ws
+        d_result[0] = string_index_pair{base, tok_end};
+        break;
+      }
+    }
+  }
+};
+
+/**
+ * @brief Common implementation for per-row split helpers
+ *
+ * Three kernel launches: count tokens per string, prefix-sum into offsets, extract tokens.
+ * The extract functor is constructed via make_extract once d_offsets and d_tokens are known.
+ * Returns the same (offsets, tokens) pair as split_helper so callers are interchangeable.
+ */
+template <typename CountFn, typename MakeExtractFn>
+std::pair<std::unique_ptr<column>, rmm::device_uvector<string_index_pair>> split_per_row_impl(
+  column_device_view const& d_strings,
+  CountFn count_fn,
+  MakeExtractFn make_extract,
+  cuda::stream_ref stream,
+  rmm::device_async_resource_ref mr)
+{
+  auto const strings_count = d_strings.size();
+  auto const temp_mr       = cudf::get_current_device_resource_ref();
+  auto const iota_itr      = cuda::counting_iterator<size_type>{0};
+  auto const policy        = rmm::exec_policy_nosync(stream, temp_mr);
+
+  auto token_counts = rmm::device_uvector<size_type>(strings_count, stream, temp_mr);
+  thrust::transform(policy, iota_itr, iota_itr + strings_count, token_counts.begin(), count_fn);
+
+  auto [offsets, total_tokens] =
+    cudf::detail::make_offsets_child_column(token_counts.begin(), token_counts.end(), stream, mr);
+  auto const d_offsets = cudf::detail::offsetalator_factory::make_input_iterator(offsets->view());
+
+  auto tokens = rmm::device_uvector<string_index_pair>(total_tokens, stream, mr);
+  if (total_tokens > 0) {
+    thrust::for_each_n(policy, iota_itr, strings_count, make_extract(d_offsets, tokens.data()));
+  }
+  return {std::move(offsets), std::move(tokens)};
+}
 
 /**
  * @brief Count the number of delimiters in a strings column
@@ -508,7 +765,7 @@ std::pair<std::unique_ptr<column>, rmm::device_uvector<string_index_pair>> split
   strings_column_view const& input,
   Tokenizer tokenizer,
   DelimiterFn delimiter_fn,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr)
 {
   auto [first_offset, last_offset] = get_first_and_last_offset(input, stream);
@@ -524,7 +781,7 @@ std::pair<std::unique_ptr<column>, rmm::device_uvector<string_index_pair>> split
     auto const num_blocks                = util::div_rounding_up_safe(
       util::div_rounding_up_safe(chars_bytes, static_cast<int64_t>(bytes_per_thread)), block_size);
     count_delimiters_kernel<DelimiterFn, block_size, bytes_per_thread>
-      <<<num_blocks, block_size, 0, stream.value()>>>(delimiter_fn, chars_bytes, d_count.data());
+      <<<num_blocks, block_size, 0, stream.get()>>>(delimiter_fn, chars_bytes, d_count.data());
     CUDF_CUDA_TRY(cudaGetLastError());
   }
 

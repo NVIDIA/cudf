@@ -16,6 +16,7 @@
 #include <cudf/detail/utilities/grid_1d.cuh>
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/io/experimental/variant.hpp>
+#include <cudf/io/experimental/variant_spec.hpp>
 #include <cudf/lists/lists_column_device_view.cuh>
 #include <cudf/lists/lists_column_view.hpp>
 #include <cudf/null_mask.hpp>
@@ -27,20 +28,23 @@
 #include <cudf/utilities/span.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_buffer.hpp>
 #include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/functional>
+#include <cuda/iterator>
+#include <cuda/numeric>
 #include <cuda/std/cstring>
 #include <cuda/std/limits>
 #include <cuda/std/optional>
 #include <cuda/std/type_traits>
 #include <cuda/std/utility>
+#include <cuda/stream>
 
 #include <cstdint>
 #include <limits>
+#include <optional>
 #include <string_view>
 #include <vector>
 
@@ -54,32 +58,13 @@ constexpr int variant_version_v1 = 1;
 constexpr size_type variant_header_bytes = 1;
 
 // Low 2 bits of a value's metadata byte: the basic type.
-enum class basic_type : uint8_t { primitive = 0, short_string = 1, object = 2, array = 3 };
+using basic_type = variant_basic_type;
 
 // For a primitive value, the value_header is the physical type id of the payload.
-enum class primitive_type : uint8_t {
-  null                 = 0,
-  boolean_true         = 1,
-  boolean_false        = 2,
-  int8                 = 3,
-  int16                = 4,
-  int32                = 5,
-  int64                = 6,
-  float64              = 7,
-  decimal4             = 8,
-  decimal8             = 9,
-  decimal16            = 10,
-  date                 = 11,
-  timestamp_micros     = 12,
-  timestamp_ntz_micros = 13,
-  float32              = 14,
-  binary               = 15,
-  long_string          = 16,
-  time_ntz_micros      = 17,
-  timestamp_nanos      = 18,
-  timestamp_ntz_nanos  = 19,
-  uuid                 = 20,
-};
+using primitive_type = variant_primitive_type;
+
+// The status of a VARIANT operation.
+using op_status = variant_operation_status;
 
 __device__ cuda::std::optional<uint64_t> read_uint64(device_span<uint8_t const> data,
                                                      size_type pos,
@@ -91,7 +76,6 @@ __device__ cuda::std::optional<uint64_t> read_uint64(device_span<uint8_t const> 
   return v;
 }
 
-// Safely narrow a decoded value to size_type
 __device__ cuda::std::optional<size_type> narrow_cast(cuda::std::optional<uint64_t> value)
 {
   if (!value.has_value() ||
@@ -101,7 +85,7 @@ __device__ cuda::std::optional<size_type> narrow_cast(cuda::std::optional<uint64
   return static_cast<size_type>(value.value());
 }
 
-__device__ basic_type variant_basic_type(uint8_t value_metadata)
+__device__ basic_type decode_basic_type(uint8_t value_metadata)
 {
   return static_cast<basic_type>(value_metadata & 0x03);
 }
@@ -165,34 +149,33 @@ __device__ cuda::std::optional<uint64_t> variant_value_length(device_span<uint8_
 {
   if (enc.size() < 1) { return cuda::std::nullopt; }
   auto const value_metadata = enc[0];
-  auto const btype          = variant_basic_type(value_metadata);
+  auto const btype          = decode_basic_type(value_metadata);
   auto const value_header   = variant_value_header(value_metadata);
 
-  if (btype == basic_type::primitive) {
-    // The leading header byte plus a payload keyed by the physical type id
+  if (btype == basic_type::PRIMITIVE) {
     uint64_t payload = 0;
     switch (static_cast<primitive_type>(value_header)) {
-      case primitive_type::null:
-      case primitive_type::boolean_true:
-      case primitive_type::boolean_false: break;  // no payload
-      case primitive_type::int8: payload = 1; break;
-      case primitive_type::int16: payload = 2; break;
-      case primitive_type::int32:
-      case primitive_type::date:
-      case primitive_type::float32: payload = 4; break;
-      case primitive_type::int64:
-      case primitive_type::float64:
-      case primitive_type::timestamp_micros:
-      case primitive_type::timestamp_ntz_micros:
-      case primitive_type::time_ntz_micros:
-      case primitive_type::timestamp_nanos:
-      case primitive_type::timestamp_ntz_nanos: payload = 8; break;
-      case primitive_type::decimal4: payload = 1 + 4; break;    // scale + int32
-      case primitive_type::decimal8: payload = 1 + 8; break;    // scale + int64
-      case primitive_type::decimal16: payload = 1 + 16; break;  // scale + int128
-      case primitive_type::uuid: payload = 16; break;
-      case primitive_type::binary:
-      case primitive_type::long_string: {
+      case primitive_type::NULLVAL:
+      case primitive_type::BOOLEAN_TRUE:
+      case primitive_type::BOOLEAN_FALSE: break;  // no payload
+      case primitive_type::INT8: payload = 1; break;
+      case primitive_type::INT16: payload = 2; break;
+      case primitive_type::INT32:
+      case primitive_type::DATE:
+      case primitive_type::FLOAT32: payload = 4; break;
+      case primitive_type::INT64:
+      case primitive_type::FLOAT64:
+      case primitive_type::TIMESTAMP_MICROS:
+      case primitive_type::TIMESTAMP_NTZ_MICROS:
+      case primitive_type::TIME_NTZ_MICROS:
+      case primitive_type::TIMESTAMP_NANOS:
+      case primitive_type::TIMESTAMP_NTZ_NANOS: payload = 8; break;
+      case primitive_type::DECIMAL4: payload = 1 + 4; break;    // scale + int32
+      case primitive_type::DECIMAL8: payload = 1 + 8; break;    // scale + int64
+      case primitive_type::DECIMAL16: payload = 1 + 16; break;  // scale + int128
+      case primitive_type::UUID: payload = 16; break;
+      case primitive_type::BINARY:
+      case primitive_type::LONG_STRING: {
         constexpr int length_prefix_bytes = 4;
         auto const len = read_uint64(enc, variant_header_bytes, length_prefix_bytes);
         if (!len.has_value()) { return cuda::std::nullopt; }
@@ -204,14 +187,14 @@ __device__ cuda::std::optional<uint64_t> variant_value_length(device_span<uint8_
     return variant_header_bytes + payload;
   }
 
-  if (btype == basic_type::short_string) {
+  if (btype == basic_type::SHORT_STRING) {
     // The value header is the payload length, following the header byte.
     return variant_header_bytes + static_cast<uint64_t>(value_header);
   }
 
   // Object / array: the encoded size is the header bytes (metadata byte, element count, optional
   // field-id list, and offset list)
-  bool const is_object = btype == basic_type::object;
+  bool const is_object = btype == basic_type::OBJECT;
   auto const [offset_size, id_size, num_elements_size] =
     decode_object_array_header(value_header, is_object);
 
@@ -229,73 +212,105 @@ __device__ cuda::std::optional<uint64_t> variant_value_length(device_span<uint8_
   return values_base + sentinel.value();
 }
 
+// Parsed offset table of a metadata dictionary blob, produced once per row by
+// `parse_metadata_dictionary` and reused for every `name_for_id` lookup along a row's path (a
+// path may step through several objects, each needing id-to-name resolution against the same
+// dictionary) instead of re-parsing and re-validating `meta` on every step.
+struct metadata_dictionary {
+  size_type offset_size;
+  size_type offsets_start;
+  size_type strings_base;
+  size_type strings_declared;
+  size_type num_entries;
+};
+
 /**
- * @brief Find the dictionary index of a key in a VARIANT metadata blob.
+ * @brief Parse and validate a metadata dictionary blob's offset table.
  *
- * The metadata blob is the per-row string dictionary, laid out as:
- *
- *   byte 0:          header        | version (4) | sorted (1) | unused (1) | offset_size-1 (2) |
- *   bytes 1..:       dictionary_size   (offset_size bytes, little-endian) = number of keys N
- *   next (N+1)*offset_size bytes:  offsets[0..N]   (offset_size bytes each, little-endian)
- *   remaining bytes: string_data   (concatenated UTF-8 key bytes)
- *
- * `offset_size` (1..4 bytes, from the header) is the width of every dictionary_size/offset entry.
- * Key `i` occupies `string_data[offsets[i] : offsets[i+1]]`; the trailing offset `offsets[N]` is
- * the total length of `string_data`. Offsets are relative to the start of `string_data`, i.e. to `1
- * + offset_size + (N+1)*offset_size`.
- *
- * @param meta The metadata blob bytes for a single row
- * @param key The key to search for
- * @return The dictionary index of `key`, or nullopt if absent or the blob is malformed
+ * @param meta The metadata blob for this row
+ * @return The parsed offset table, or a failure status if `meta` is malformed
  */
-__device__ cuda::std::optional<size_type> find_key_in_metadata(device_span<uint8_t const> meta,
-                                                               cudf::string_view key)
+__device__ cuda::std::pair<metadata_dictionary, op_status> parse_metadata_dictionary(
+  device_span<uint8_t const> meta)
 {
   auto const meta_len = static_cast<size_type>(meta.size());
-  if (meta_len < 1) { return cuda::std::nullopt; }
+  if (meta_len < 1) { return {{}, op_status::MALFORMED_VARIANT}; }
+  auto const meta_header = meta[0];
+  if ((meta_header & 0x0F) != variant_version_v1) { return {{}, op_status::MALFORMED_VARIANT}; }
+  auto const meta_offset_size = ((meta_header >> 6) & 0x03) + 1;
 
-  auto const header = meta[0];
-  int const version = header & 0x0F;
-  if (version != variant_version_v1) { return cuda::std::nullopt; }
-  int const offset_size = ((header >> 6) & 0x03) + 1;
+  size_type meta_pos          = 1;
+  auto const num_meta_entries = narrow_cast(read_uint64(meta, meta_pos, meta_offset_size));
+  if (!num_meta_entries.has_value()) { return {{}, op_status::MALFORMED_VARIANT}; }
+  meta_pos += meta_offset_size;
 
-  size_type pos          = 1;
-  auto const num_entries = narrow_cast(read_uint64(meta, pos, offset_size));
-  if (!num_entries.has_value()) { return cuda::std::nullopt; }
-  pos += offset_size;
+  auto const meta_offsets_start = meta_pos;
+  auto const meta_offsets_bytes =
+    (static_cast<uint64_t>(num_meta_entries.value()) + 1) * meta_offset_size;
+  if (cuda::std::cmp_greater(meta_offsets_bytes, meta_len - meta_offsets_start)) {
+    return {{}, op_status::MALFORMED_VARIANT};
+  }
+  auto const meta_strings_base   = meta_offsets_start + static_cast<size_type>(meta_offsets_bytes);
+  auto const meta_strings_extent = meta_len - meta_strings_base;
 
-  auto const offsets_start = pos;
-  auto const offsets_bytes = (static_cast<uint64_t>(num_entries.value()) + 1) * offset_size;
-  if (offsets_bytes > static_cast<uint64_t>(meta_len - offsets_start)) {
+  // Parquet VARIANT spec requires offsets[0] == 0; any other value is malformed.
+  auto const first_off = read_uint64(meta, meta_offsets_start, meta_offset_size);
+  if (!first_off.has_value() || first_off.value() != 0) {
+    return {{}, op_status::MALFORMED_VARIANT};
+  }
+
+  // Read the terminal offset offsets[num_entries] up front: it is the authoritative size of the
+  // string-data region, so every individual entry's end offset must be bounded by it below, not
+  // just by the physical buffer remainder (`meta_strings_extent`) -- the same distinction the
+  // object value's own sentinel/values_region check makes for field values.
+  auto const terminal_off_pos =
+    meta_offsets_start + static_cast<size_type>(num_meta_entries.value()) * meta_offset_size;
+  auto const terminal_off = read_uint64(meta, terminal_off_pos, meta_offset_size);
+  if (!terminal_off.has_value() ||
+      cuda::std::cmp_greater(terminal_off.value(), meta_strings_extent)) {
+    return {{}, op_status::MALFORMED_VARIANT};
+  }
+
+  return {metadata_dictionary{.offset_size      = meta_offset_size,
+                              .offsets_start    = meta_offsets_start,
+                              .strings_base     = meta_strings_base,
+                              .strings_declared = static_cast<size_type>(terminal_off.value()),
+                              .num_entries      = num_meta_entries.value()},
+          op_status::SUCCESS};
+}
+
+// O(1) name lookup by id: two offset reads into the metadata table. `field_id` may come directly
+// from untrusted object data (an out-of-range dictionary index), so it is bounds checked against
+// the metadata dictionary size before use, and the offset positions are computed in 64-bit
+// arithmetic to avoid overflowing `size_type` for large ids.
+__device__ cuda::std::optional<cudf::string_view> name_for_id(metadata_dictionary const& dict,
+                                                              device_span<uint8_t const> meta,
+                                                              size_type field_id)
+{
+  if (field_id < 0 || cuda::std::cmp_greater_equal(field_id, dict.num_entries)) {
     return cuda::std::nullopt;
   }
-
-  auto start_off = read_uint64(meta, offsets_start, offset_size);
-  if (!start_off.has_value()) { return cuda::std::nullopt; }
-  auto const strings_base = offsets_start + static_cast<size_type>(offsets_bytes);
-  // Bytes available for dictionary string payloads
-  auto const strings_extent = meta_len - strings_base;
-  for (size_type i = 0; i < num_entries.value(); ++i) {
-    auto const end_off = read_uint64(meta, offsets_start + (i + 1) * offset_size, offset_size);
-    if (!end_off.has_value()) { return cuda::std::nullopt; }
-    if (end_off.value() < start_off.value() || end_off.value() > strings_extent) {
-      return cuda::std::nullopt;
-    }
-    cudf::string_view const entry{
-      reinterpret_cast<char const*>(meta.data() + strings_base + start_off.value()),
-      static_cast<size_type>(end_off.value() - start_off.value())};
-    if (entry == key) { return i; }
-    start_off = end_off;
+  auto const start_pos =
+    static_cast<uint64_t>(dict.offsets_start) + static_cast<uint64_t>(field_id) * dict.offset_size;
+  auto const end_pos = start_pos + static_cast<uint64_t>(dict.offset_size);
+  if (cuda::std::cmp_greater(end_pos, meta.size())) { return cuda::std::nullopt; }
+  auto const s = read_uint64(meta, static_cast<size_type>(start_pos), dict.offset_size);
+  auto const e = read_uint64(meta, static_cast<size_type>(end_pos), dict.offset_size);
+  if (!s.has_value() || !e.has_value()) { return cuda::std::nullopt; }
+  if (e.value() < s.value() || cuda::std::cmp_greater(e.value(), dict.strings_declared)) {
+    return cuda::std::nullopt;
   }
-  return cuda::std::nullopt;
+  return cudf::string_view{
+    reinterpret_cast<char const*>(meta.data() + dict.strings_base + s.value()),
+    static_cast<size_type>(e.value() - s.value())};
 }
 
 /**
- * @brief Locate the encoded bytes of a single field within an object value by field id.
+ * @brief Locate the encoded bytes of a single field within an object value by field name.
  *
- * An object value is laid out as:
+ * Object value layout, following the 1-byte value metadata header (basic_type=object in the low 2
+ * bits; value_header in the high 6 bits, see decode_object_array_header):
  *
- *   byte 0:        value metadata | basic_type=object (2) | value_header (6) |
  *   bytes 1..:     num_elements   (num_elements_size bytes) = number of fields N
  *   next N*field_id_size bytes:        field_ids[0..N-1]   (sorted by field name)
  *   next (N+1)*field_offset_size bytes: field_offsets[0..N] (relative to values_base)
@@ -303,119 +318,346 @@ __device__ cuda::std::optional<size_type> find_key_in_metadata(device_span<uint8
  *
  * `num_elements_size`, `field_id_size`, and `field_offset_size` come from the value header (see
  * decode_object_array_header). The trailing offset `field_offsets[N]` is the total size of the
- * values region. This scans `field_ids` for `id`, then uses the matching `field_offsets[i]` to
- * slice out the field's value, whose length is derived from its own header via
- * variant_value_length.
+ * values region.
  *
- * Per the spec, field ids/offsets are ordered by the corresponding field names (lexicographically),
- * but the values themselves may be in any order, so `field_offsets` are not necessarily monotonic —
- * hence the value length is taken from each field's own header rather than from offset deltas.
+ * Per the spec, `field_ids[0..N-1]` are ordered by the corresponding field name
+ * (lexicographically), not by the numeric id value, and the values themselves may be in any order,
+ * so `field_offsets` are not necessarily monotonic -- hence the value length is taken from each
+ * field's own header rather than from offset deltas.
  *
+ * `field_ids[0..N-1]` is ordered by name (a per-object invariant, independent of whether the
+ * metadata dictionary itself happens to be sorted), so it can be binary searched directly against
+ * `key` without first resolving `key` to a dictionary id: each probe turns `field_ids[mid]` into
+ * its dictionary name via an O(1) lookup in `meta` (the metadata offset table is indexed directly
+ * by id) and compares that name against `key`, giving O(log N) with no separate name-to-id lookup
+ * over the (potentially much larger) dictionary.
+ *
+ * Not using thrust::lower_bound since it does not propagate entry read failures.
+ *
+ * @param dict The already-parsed metadata dictionary offset table for `meta` (see
+ *             parse_metadata_dictionary), reused across every path step so it is not re-parsed
+ *             and re-validated once per object
+ * @param meta The metadata blob for this row, used to resolve field ids to names
  * @param val The object value bytes
- * @param id The dictionary index of the field to locate
+ * @param key The name of the field to locate
  * @return The encoded bytes of the field value, or an empty span if `val` is not an object, the
- *         field is absent, or the blob is malformed
+ *         field is absent, or either blob is malformed
  */
-__device__ device_span<uint8_t const> locate_object_field(device_span<uint8_t const> val, int id)
+__device__ cuda::std::pair<device_span<uint8_t const>, op_status> locate_object_field(
+  metadata_dictionary const& dict,
+  device_span<uint8_t const> meta,
+  device_span<uint8_t const> val,
+  cudf::string_view key)
 {
   auto const val_len = static_cast<size_type>(val.size());
-  if (val_len < 1) { return {}; }
+  if (val_len < 1) { return {{}, op_status::MALFORMED_VARIANT}; }
   auto const value_metadata = val[0];
-  if (variant_basic_type(value_metadata) != basic_type::object) { return {}; }
+  if (decode_basic_type(value_metadata) != basic_type::OBJECT) {
+    return {{}, op_status::MISSING_PATH};
+  }
 
   auto const [offset_size, id_size, num_elements_size] =
     decode_object_array_header(variant_value_header(value_metadata), true);
 
   size_type pos         = 1;
   auto const num_fields = narrow_cast(read_uint64(val, pos, num_elements_size));
-  if (!num_fields.has_value()) { return {}; }
+  if (!num_fields.has_value()) { return {{}, op_status::MALFORMED_VARIANT}; }
+  if (num_fields.value() == 0) { return {{}, op_status::MISSING_PATH}; }
   pos += num_elements_size;
 
   auto const ids_start = pos;
   auto const ids_bytes = static_cast<uint64_t>(num_fields.value()) * id_size;
-  if (ids_bytes > val_len - ids_start) { return {}; }
+  if (ids_bytes > val_len - ids_start) { return {{}, op_status::MALFORMED_VARIANT}; }
 
   auto const offsets_start = ids_start + static_cast<size_type>(ids_bytes);
   auto const offsets_bytes = (static_cast<uint64_t>(num_fields.value()) + 1) * offset_size;
-  if (offsets_bytes > val_len - offsets_start) { return {}; }
+  if (offsets_bytes > val_len - offsets_start) { return {{}, op_status::MALFORMED_VARIANT}; }
 
-  auto const values_base = offsets_start + static_cast<size_type>(offsets_bytes);
-  // Maximum legitimate field-offset value: bytes available after values_base
+  auto const values_base   = offsets_start + static_cast<size_type>(offsets_bytes);
   auto const values_extent = val_len - values_base;
 
-  // Find the matching field ID and its start offset
+  // Read the sentinel (terminal offset at index num_fields) to get the authoritative end of the
+  // values region.  Using the physical remainder (values_extent) would allow a malformed object
+  // to reference bytes beyond the sentinel, passing validation despite corrupt data.
+  auto const sentinel_raw =
+    read_uint64(val, offsets_start + num_fields.value() * offset_size, offset_size);
+  if (!sentinel_raw.has_value() || sentinel_raw.value() > static_cast<uint64_t>(values_extent)) {
+    return {{}, op_status::MALFORMED_VARIANT};
+  }
+  auto const values_region = static_cast<size_type>(sentinel_raw.value());
+
+  // Binary search field_ids[0..N-1] by resolving each probe to its name and comparing against
+  // `key` directly
   bool found           = false;
   uint64_t match_start = 0;
-  for (size_type i = 0; i < num_fields.value(); ++i) {
-    auto const current_id = read_uint64(val, ids_start + i * id_size, id_size);
-    if (!current_id.has_value()) { return {}; }
-    if (cuda::std::cmp_not_equal(current_id.value(), id)) { continue; }
-
-    auto const match_offset = read_uint64(val, offsets_start + i * offset_size, offset_size);
-    if (!match_offset.has_value()) { return {}; }
-    if (match_offset.value() > values_extent) { return {}; }
-    match_start = match_offset.value();
-    found       = true;
-    break;
+  size_type lo         = 0;
+  size_type hi         = num_fields.value();
+  while (lo < hi) {
+    size_type const mid = lo + (hi - lo) / 2;
+    auto const probe_id = narrow_cast(read_uint64(val, ids_start + mid * id_size, id_size));
+    if (!probe_id.has_value()) { return {{}, op_status::MALFORMED_VARIANT}; }
+    auto const probe_name = name_for_id(dict, meta, probe_id.value());
+    if (!probe_name.has_value()) { return {{}, op_status::MALFORMED_VARIANT}; }
+    int const cmp = probe_name.value().compare(key);
+    if (cmp == 0) {
+      auto const match_offset = read_uint64(val, offsets_start + mid * offset_size, offset_size);
+      if (!match_offset.has_value()) { return {{}, op_status::MALFORMED_VARIANT}; }
+      if (match_offset.value() > static_cast<uint64_t>(values_region)) {
+        return {{}, op_status::MALFORMED_VARIANT};
+      }
+      match_start = match_offset.value();
+      found       = true;
+      break;
+    }
+    if (cmp < 0) {
+      lo = mid + 1;
+    } else {
+      hi = mid;
+    }
   }
-  if (!found) { return {}; }
+  if (!found) { return {{}, op_status::MISSING_PATH}; }
 
-  // Derive field's value length from its header
   auto const value     = val.subspan(values_base + match_start);
   auto const value_len = variant_value_length(value);
-  if (!value_len.has_value()) { return {}; }
+  if (!value_len.has_value()) { return {{}, op_status::MALFORMED_VARIANT}; }
   auto const match_end = match_start + value_len.value();
-  if (match_end > values_extent) { return {}; }
-  return val.subspan(values_base + match_start, value_len.value());
+  if (match_end > static_cast<uint64_t>(values_region)) {
+    return {{}, op_status::MALFORMED_VARIANT};
+  }
+  return {val.subspan(values_base + match_start, value_len.value()), op_status::SUCCESS};
+}
+
+// Parse an array value header and return the sub-span of the element at `index` (0-based) within
+// `val`. Returns an empty span if `val` is not an array (`basic_type != array`), if `index` is out
+// of bounds, or if the encoded data is truncated.
+//
+// Array layout per the Variant spec:
+//   byte 0: header (basic_type=array in low 2 bits; value_header in high 6 bits)
+//     value_header bits: (offset_size - 1) in bits 0-1, is_large in bit 2, bits 3-5 unused
+//   num_elements: 1 byte if !is_large else 4 bytes (little-endian)
+//   offsets:      (num_elements + 1) entries, each `offset_size` bytes, relative to the end of
+//                 offsets
+//   values:       concatenated element blobs
+//
+// Array element offsets are monotonically increasing, so the element length is taken directly from
+// the offset delta (o1 - o0) rather than from the element's own header.
+__device__ cuda::std::pair<device_span<uint8_t const>, op_status> locate_array_element(
+  device_span<uint8_t const> value, size_type index)
+{
+  if (index < 0) { return {{}, op_status::MISSING_PATH}; }
+
+  auto const value_size = static_cast<size_type>(value.size());
+  if (value_size < 1) { return {{}, op_status::MALFORMED_VARIANT}; }
+  uint8_t const value_metadata = value[0];
+  if (decode_basic_type(value_metadata) != basic_type::ARRAY) {
+    return {{}, op_status::MISSING_PATH};
+  }
+
+  int const value_header = variant_value_header(value_metadata);
+  [[maybe_unused]] auto const [offset_size, _, num_elements_size] =
+    decode_object_array_header(value_header, false);
+
+  size_type position            = 1;
+  auto const num_elements_value = narrow_cast(read_uint64(value, position, num_elements_size));
+  if (!num_elements_value.has_value()) { return {{}, op_status::MALFORMED_VARIANT}; }
+  auto const num_elements = num_elements_value.value();
+  if (index >= num_elements) { return {{}, op_status::MISSING_PATH}; }
+  position += num_elements_size;
+
+  size_type const offsets_start = position;
+
+  // Computed in 64-bit because (num_elements + 1) * offset_size can exceed the signed `size_type`
+  // range (which would be UB); the check below then rejects any array that overruns the value blob.
+  auto const offsets_bytes = (static_cast<uint64_t>(num_elements) + 1) * offset_size;
+  if (cuda::std::cmp_greater(offsets_bytes, value_size - offsets_start)) {
+    return {{}, op_status::MALFORMED_VARIANT};
+  }
+  size_type const values_base = offsets_start + static_cast<size_type>(offsets_bytes);
+  auto const values_extent    = value_size - values_base;
+  // Read the terminal offset offsets[num_elements]; it is the spec-declared bound on the
+  // values region and must be used instead of the physical extent so that an element whose
+  // offset escapes the declared boundary is caught as malformed even when physical bytes
+  // are present beyond it.
+  auto const terminal_off_pos = offsets_start + static_cast<uint64_t>(num_elements) * offset_size;
+  auto const terminal_off     = read_uint64(value, terminal_off_pos, offset_size);
+  if (!terminal_off.has_value() || cuda::std::cmp_greater(*terminal_off, values_extent)) {
+    return {{}, op_status::MALFORMED_VARIANT};
+  }
+  // The spec requires offsets[0] == 0; a nonzero first offset silently skips leading
+  // value bytes and can return a plausible result from a malformed array.
+  auto const first_off = read_uint64(value, offsets_start, offset_size);
+  if (!first_off.has_value() || *first_off != 0) { return {{}, op_status::MALFORMED_VARIANT}; }
+
+  auto const start_offset_pos = offsets_start + static_cast<uint64_t>(index) * offset_size;
+  auto const end_offset_pos   = offsets_start + (static_cast<uint64_t>(index) + 1) * offset_size;
+  if (cuda::std::cmp_greater(end_offset_pos + offset_size, value_size)) {
+    return {{}, op_status::MALFORMED_VARIANT};
+  }
+  auto const start_offset = read_uint64(value, start_offset_pos, offset_size);
+  auto const end_offset   = read_uint64(value, end_offset_pos, offset_size);
+  if (!start_offset.has_value() || !end_offset.has_value()) {
+    return {{}, op_status::MALFORMED_VARIANT};
+  }
+  auto const element_start = *start_offset;
+  auto const element_end   = *end_offset;
+  if (element_end < element_start || cuda::std::cmp_greater(element_end, *terminal_off)) {
+    return {{}, op_status::MALFORMED_VARIANT};
+  }
+  return {value.subspan(values_base + element_start, element_end - element_start),
+          op_status::SUCCESS};
+}
+
+__device__ bool is_variant_null(device_span<uint8_t const> enc)
+{
+  if (enc.empty()) { return false; }
+  auto const vm = enc[0];
+  return decode_basic_type(vm) == basic_type::PRIMITIVE &&
+         variant_value_header(vm) == static_cast<uint8_t>(primitive_type::NULLVAL);
 }
 
 // The fixed-width signed integers a VARIANT value can be cast to: INT{8,16,32,64}.  Matches the
 // exact width types (not e.g. __int128) since those are the only variant primitive int headers.
 template <typename T>
 constexpr bool is_variant_int =
-  cuda::std::is_same_v<T, int8_t> || cuda::std::is_same_v<T, int16_t> ||
-  cuda::std::is_same_v<T, int32_t> || cuda::std::is_same_v<T, int64_t>;
+  cudf::is_integral_not_bool<T>() && cudf::is_signed<T>() && !cuda::std::is_same_v<T, __int128_t>;
 
-// The output types a VARIANT value can be cast to: the fixed-width signed integers plus strings.
+// The fixed-width primitive types (signed integers and floats) a VARIANT value can be decoded into.
 template <typename T>
-constexpr bool is_variant_castable =
-  is_variant_int<T> || cuda::std::is_same_v<T, cudf::string_view>;
+constexpr bool is_variant_numerical = is_variant_int<T> || cudf::is_floating_point<T>();
 
-// Variant primitive ints: basic_type == primitive, value_header maps INT{8,16,32,64}.
+// The output types a VARIANT value can be cast to: the fixed-width signed integers, floats, bool,
+// and strings.
 template <typename T>
-__device__ inline cuda::std::optional<T> decode_int(device_span<uint8_t const> enc)
+constexpr bool is_variant_castable = is_variant_numerical<T> || cuda::std::is_same_v<T, bool> ||
+                                     cuda::std::is_same_v<T, cudf::string_view>;
+
+// Maps a fixed-width output type to the VARIANT primitive type header id that encodes it.
+template <typename T>
+  requires(is_variant_numerical<T>)
+__device__ constexpr primitive_type primitive_type_for()
 {
-  static_assert(is_variant_int<T>, "decode_int: T must be int8_t, int16_t, int32_t, or int64_t");
+  if constexpr (cuda::std::is_same_v<T, int8_t>) {
+    return primitive_type::INT8;
+  } else if constexpr (cuda::std::is_same_v<T, int16_t>) {
+    return primitive_type::INT16;
+  } else if constexpr (cuda::std::is_same_v<T, int32_t>) {
+    return primitive_type::INT32;
+  } else if constexpr (cuda::std::is_same_v<T, int64_t>) {
+    return primitive_type::INT64;
+  } else if constexpr (cuda::std::is_same_v<T, float>) {
+    return primitive_type::FLOAT32;
+  } else if constexpr (cuda::std::is_same_v<T, double>) {
+    return primitive_type::FLOAT64;
+  } else {
+    CUDF_UNREACHABLE("primitive_type_for: T is not a supported variant primitive type");
+    return primitive_type::NULLVAL;
+  }
+}
 
+/**
+ * @brief Decode a single VARIANT value blob into a fixed-width primitive of type `T`.
+ *
+ * Requires `basic_type == primitive` and a value header whose physical type id matches `T` exactly.
+ */
+template <typename T>
+__device__ inline cuda::std::optional<T> decode_primitive(device_span<uint8_t const> enc)
+{
   if (cuda::std::cmp_less(enc.size(), 1 + sizeof(T))) { return cuda::std::nullopt; }
 
-  constexpr primitive_type expected = cuda::std::is_same_v<T, int8_t>    ? primitive_type::int8
-                                      : cuda::std::is_same_v<T, int16_t> ? primitive_type::int16
-                                      : cuda::std::is_same_v<T, int32_t> ? primitive_type::int32
-                                                                         : primitive_type::int64;
-  uint8_t const value_metadata      = enc[0];
-  if (variant_basic_type(value_metadata) != basic_type::primitive ||
-      variant_value_header(value_metadata) != static_cast<uint8_t>(expected)) {
+  uint8_t const value_metadata = enc[0];
+  if (decode_basic_type(value_metadata) != basic_type::PRIMITIVE ||
+      variant_value_header(value_metadata) != static_cast<uint8_t>(primitive_type_for<T>())) {
     return cuda::std::nullopt;
   }
   return cudf::io::unaligned_load<T>(enc.data() + 1);
 }
 
-__device__ device_span<uint8_t const> resolve_path(device_span<uint8_t const> meta,
-                                                   device_span<uint8_t const> val,
-                                                   column_device_view path)
+/**
+ * @brief Decode a single VARIANT value blob into a bool.
+ *
+ * Boolean values carry no payload: the distinction between true and false is encoded entirely in
+ * the primitive type header (`boolean_true` vs `boolean_false`).
+ */
+__device__ inline cuda::std::optional<bool> decode_bool(device_span<uint8_t const> enc)
+{
+  if (enc.empty()) { return cuda::std::nullopt; }
+  uint8_t const value_metadata = enc[0];
+  if (decode_basic_type(value_metadata) != basic_type::PRIMITIVE) { return cuda::std::nullopt; }
+  auto const value_header = variant_value_header(value_metadata);
+  if (value_header == static_cast<uint8_t>(primitive_type::BOOLEAN_TRUE)) { return true; }
+  if (value_header == static_cast<uint8_t>(primitive_type::BOOLEAN_FALSE)) { return false; }
+  return cuda::std::nullopt;
+}
+
+// Parse an array-index step token of the form "[<N>]" into its zero-based index. Returns nullopt
+// for any malformed token or an index that does not fit in `size_type` (such an index is out of
+// range for any array, so the caller treats it as a missing element).
+__device__ cuda::std::optional<size_type> parse_index_step(cudf::string_view step)
+{
+  auto const step_size  = step.size_bytes();
+  auto const* step_data = step.data();
+  if (step_size < 3 || step_data[0] != '[' || step_data[step_size - 1] != ']') {
+    return cuda::std::nullopt;
+  }
+
+  // Accumulate directly in `size_type`; the checked-arithmetic helpers reject the token if the
+  // running value overflows, which means the index is out of range for any array and the caller
+  // treats it as a missing element.
+  size_type index = 0;
+  for (size_type k = 1; k < step_size - 1; ++k) {
+    char const c = step_data[k];
+    if (c < '0' || c > '9') { return cuda::std::nullopt; }
+    if (cuda::mul_overflow(index, index, size_type{10}) ||
+        cuda::add_overflow(index, index, static_cast<size_type>(c - '0'))) {
+      return cuda::std::nullopt;
+    }
+  }
+  return index;
+}
+
+// Walk a path of object-key or array-index steps level by level starting at `val` and return
+// the span of the final value (subspan of `val`). Returns an empty span on failure.
+//
+// Each path step is encoded in the `path` strings column as either:
+//   - "<name>"  -> descend into an object by dictionary key, or
+//   - "[<N>]"   -> descend into an array by zero-based integer index.
+// The step kind is inferred from the first byte (`'['` means index).
+__device__ cuda::std::pair<device_span<uint8_t const>, op_status> resolve_path(
+  device_span<uint8_t const> meta, device_span<uint8_t const> val, column_device_view path)
 {
   device_span<uint8_t const> sub_val = val;
+  // The metadata dictionary is a per-row property shared by every object-key step of the path, so
+  // it is parsed and validated at most once per row (lazily, on the first object-key step) rather
+  // than being re-parsed on each step -- a path with only array-index steps never touches it.
+  cuda::std::optional<metadata_dictionary> dict;
   for (size_type i = 0; i < path.size(); ++i) {
-    auto const name = path.element<cudf::string_view>(i);
+    auto const step = path.element<cudf::string_view>(i);
+    if (step.size_bytes() >= 1 && step.data()[0] == '[') {
+      auto const index = parse_index_step(step);
+      if (!index.has_value()) { return {{}, op_status::MISSING_PATH}; }
+      auto const [span, st] = locate_array_element(sub_val, index.value());
+      if (st != op_status::SUCCESS) { return {{}, st}; }
+      sub_val = span;
+    } else {
+      if (!dict.has_value()) {
+        auto [parsed, st] = parse_metadata_dictionary(meta);
+        if (st != op_status::SUCCESS) { return {{}, st}; }
+        dict = parsed;
+      }
+      auto const [span, st] = locate_object_field(*dict, meta, sub_val, step);
+      if (st != op_status::SUCCESS) { return {{}, st}; }
+      sub_val = span;
+    }
 
-    auto const field_id = find_key_in_metadata(meta, name);
-    if (!field_id.has_value()) { return {}; }
-
-    sub_val = locate_object_field(sub_val, field_id.value());
-    if (sub_val.empty()) { return {}; }
+    // VARIANT null before the end of the path is missing_path per spec.
+    if (i + 1 < path.size() && is_variant_null(sub_val)) { return {{}, op_status::MISSING_PATH}; }
+    // A zero-length resolved value is not decodable; the value-only path drops the row.
+    if (sub_val.empty()) { return {{}, op_status::MALFORMED_VARIANT}; }
   }
-  return sub_val;
+
+  // Terminal VARIANT null: return the bytes with variant_null status.
+  if (is_variant_null(sub_val)) { return {sub_val, op_status::VARIANT_NULL}; }
+  return {sub_val, op_status::SUCCESS};
 }
 
 __device__ cuda::std::optional<device_span<uint8_t const>> decode_string(
@@ -424,17 +666,17 @@ __device__ cuda::std::optional<device_span<uint8_t const>> decode_string(
   auto const len = enc.size();
   if (len < 1) { return cuda::std::nullopt; }
   uint8_t const value_metadata = enc[0];
-  auto const btype             = variant_basic_type(value_metadata);
+  auto const btype             = decode_basic_type(value_metadata);
   auto const value_header      = variant_value_header(value_metadata);
 
-  if (btype == basic_type::short_string) {
+  if (btype == basic_type::SHORT_STRING) {
     // Short string: value_header = length
     std::size_t const str_len = value_header;
     if (1 + str_len > len) { return cuda::std::nullopt; }
     return enc.subspan(1, str_len);
   }
-  if (btype == basic_type::primitive &&
-      value_header == static_cast<uint8_t>(primitive_type::long_string)) {
+  if (btype == basic_type::PRIMITIVE &&
+      value_header == static_cast<uint8_t>(primitive_type::LONG_STRING)) {
     // Long string: 1-byte header + 4-byte LE length + char bytes
     constexpr std::size_t long_string_prefix_bytes = 1 + sizeof(uint32_t);
     if (len < long_string_prefix_bytes) { return cuda::std::nullopt; }
@@ -446,20 +688,20 @@ __device__ cuda::std::optional<device_span<uint8_t const>> decode_string(
   return cuda::std::nullopt;
 }
 
-// Returns the metadata and value list bytes for a given row from device views
+__device__ device_span<uint8_t const> list_row_span(cudf::lists_column_device_view const& col,
+                                                    size_type row)
+{
+  auto const begin = col.offset_at(row);
+  auto const end   = col.offset_at(row + 1);
+  return {col.child().data<uint8_t>() + begin, static_cast<std::size_t>(end - begin)};
+}
+
 __device__ cuda::std::pair<device_span<uint8_t const>, device_span<uint8_t const>>
 metadata_and_value_at(cudf::lists_column_device_view const& metadata,
                       cudf::lists_column_device_view const& values,
                       size_type row)
 {
-  auto const meta_begin = metadata.offset_at(row);
-  auto const meta_end   = metadata.offset_at(row + 1);
-  auto const val_begin  = values.offset_at(row);
-  auto const val_end    = values.offset_at(row + 1);
-  return {
-    {metadata.child().data<uint8_t>() + meta_begin,
-     static_cast<std::size_t>(meta_end - meta_begin)},
-    {values.child().data<uint8_t>() + val_begin, static_cast<std::size_t>(val_end - val_begin)}};
+  return {list_row_span(metadata, row), list_row_span(values, row)};
 }
 
 constexpr int block_size = 256;
@@ -477,7 +719,8 @@ CUDF_KERNEL __launch_bounds__(block_size) void locate_variant_fields_kernel(
   column_device_view path,
   device_span<size_type> d_sizes,
   device_span<size_type> d_src_offsets,
-  bitmask_type* d_null_mask)
+  bitmask_type* d_null_mask,
+  device_span<op_status> d_status)  // empty when no status was requested
 {
   auto const num_rows = static_cast<size_type>(d_sizes.size());
   auto const tid      = cudf::detail::grid_1d::global_thread_id<block_size>();
@@ -487,60 +730,162 @@ CUDF_KERNEL __launch_bounds__(block_size) void locate_variant_fields_kernel(
     if (!cudf::bit_is_set(d_null_mask, row)) {
       d_sizes[row]       = 0;
       d_src_offsets[row] = 0;
+      if (!d_status.empty()) { d_status[row] = op_status::ROW_NULL; }
       continue;
     }
 
     auto const [meta, val] = metadata_and_value_at(metadata, values, row);
+    auto const [field, st] = resolve_path(meta, val, path);
 
-    auto const field = resolve_path(meta, val, path);
+    if (!d_status.empty()) { d_status[row] = st; }
+
     if (field.empty()) {
       d_sizes[row]       = 0;
       d_src_offsets[row] = 0;
       cudf::clear_bit(d_null_mask, row);
-      continue;
+    } else {
+      d_sizes[row]       = static_cast<size_type>(field.size());
+      d_src_offsets[row] = static_cast<size_type>(field.data() - val.data());
     }
+  }
+}
 
-    d_sizes[row]       = static_cast<size_type>(field.size());
-    d_src_offsets[row] = static_cast<size_type>(field.data() - val.data());
+// Returns true for every primitive_type ID that variant_value_length maps to a known payload
+// size in its `basic_type::PRIMITIVE` switch, i.e. every ID other than its `default` case.
+__device__ bool is_recognized_primitive_type(primitive_type ptype)
+{
+  switch (ptype) {
+    case primitive_type::NULLVAL:
+    case primitive_type::BOOLEAN_TRUE:
+    case primitive_type::BOOLEAN_FALSE:
+    case primitive_type::INT8:
+    case primitive_type::INT16:
+    case primitive_type::INT32:
+    case primitive_type::INT64:
+    case primitive_type::FLOAT64:
+    case primitive_type::DECIMAL4:
+    case primitive_type::DECIMAL8:
+    case primitive_type::DECIMAL16:
+    case primitive_type::DATE:
+    case primitive_type::TIMESTAMP_MICROS:
+    case primitive_type::TIMESTAMP_NTZ_MICROS:
+    case primitive_type::FLOAT32:
+    case primitive_type::BINARY:
+    case primitive_type::LONG_STRING:
+    case primitive_type::TIME_NTZ_MICROS:
+    case primitive_type::TIMESTAMP_NANOS:
+    case primitive_type::TIMESTAMP_NTZ_NANOS:
+    case primitive_type::UUID: return true;
+    default: return false;
   }
 }
 
 /**
- * @brief Per-row kernel: decode each VARIANT value blob into an integer of type `T`.
- *
- * Writes the decoded value to `d_output[row]` for non-null rows whose blob is a variant primitive
- * int whose physical type id matches `T` exactly (e.g. an int16 value does not decode into an
- * int32 output; there is no widening). Rows that are null, or whose value is not an exact-width
- * match for `T`, are marked null in `d_null_mask` with an output of 0.
+ * @brief Status helper for fixed-width primitive targets: classifies why `decode_primitive<T>`
+ * failed to decode `val`, per `variant_operation_status` semantics.
  */
 template <typename T>
-CUDF_KERNEL __launch_bounds__(block_size) void cast_variant_int_kernel(
-  cudf::lists_column_device_view values, device_span<T> d_output, bitmask_type* d_null_mask)
+  requires(is_variant_numerical<T>)
+__device__ op_status cast_status_for_primitive(device_span<uint8_t const> val)
+{
+  if (val.empty()) { return op_status::MALFORMED_VARIANT; }
+  if (is_variant_null(val)) { return op_status::VARIANT_NULL; }
+  if (decode_primitive<T>(val).has_value()) { return op_status::SUCCESS; }
+  if (decode_basic_type(val[0]) != basic_type::PRIMITIVE) { return op_status::TYPE_MISMATCH; }
+  auto const ptype = static_cast<primitive_type>(variant_value_header(val[0]));
+  if (ptype == primitive_type_for<T>()) { return op_status::MALFORMED_VARIANT; }
+  return is_recognized_primitive_type(ptype) ? op_status::TYPE_MISMATCH
+                                             : op_status::MALFORMED_VARIANT;
+}
+
+/**
+ * @brief Per-row kernel: decode each VARIANT value blob into a fixed-width primitive of type `T`.
+ *
+ * Writes the decoded value to `d_output[row]` for non-null rows whose blob is a variant primitive
+ * whose physical type id matches `T` exactly (e.g. an int16 value does not decode into an int32
+ * output, and a float32 value does not decode into a float64 output; there is no widening). Rows
+ * that are null, or whose value is not an exact-width match for `T`, are marked null in
+ * `d_null_mask` with an output of 0.
+ */
+// `d_status`, when present, is an in-out buffer: it is read as incoming status from a prior
+// `get_variant_field` call (rows already marked non-success are propagated without decoding), then
+// overwritten in place with the final per-row status. Callers with no real incoming status must
+// pre-fill every row with `op_status::SUCCESS` before calling.
+template <typename T>
+CUDF_KERNEL __launch_bounds__(block_size) void cast_variant_primitive_kernel(
+  cudf::lists_column_device_view values,
+  device_span<T> d_output,
+  bitmask_type* d_null_mask,
+  op_status* d_status)  // nullptr when no status was requested
 {
   auto const num_rows = static_cast<size_type>(d_output.size());
   auto const tid      = cudf::detail::grid_1d::global_thread_id<block_size>();
   auto const stride   = cudf::detail::grid_1d::grid_stride<block_size>();
 
   for (auto row = tid; row < num_rows; row += stride) {
-    if (!cudf::bit_is_set(d_null_mask, row)) {
-      d_output[row] = 0;
-      continue;
+    if (d_status != nullptr) {
+      // Status column is always non-nullable; row_null replaces the null bit.
+      auto const s = d_status[row];
+      if (s != op_status::SUCCESS) {
+        d_output[row] = T{};
+        if (cudf::bit_is_set(d_null_mask, row)) { cudf::clear_bit(d_null_mask, row); }
+        continue;
+      }
+      if (!cudf::bit_is_set(d_null_mask, row)) {
+        d_output[row] = T{};
+        d_status[row] = op_status::ROW_NULL;
+        continue;
+      }
+    } else {
+      if (!cudf::bit_is_set(d_null_mask, row)) {
+        d_output[row] = T{};
+        continue;
+      }
     }
 
-    auto const val_begin = values.offset_at(row);
-    auto const val_end   = values.offset_at(row + 1);
-    auto const val_child = values.child();
-    device_span<uint8_t const> const val{val_child.data<uint8_t>() + val_begin,
-                                         static_cast<std::size_t>(val_end - val_begin)};
-
-    auto const decoded = decode_int<T>(val);
+    auto const val     = list_row_span(values, row);
+    auto const decoded = decode_primitive<T>(val);
     if (decoded.has_value()) {
       d_output[row] = *decoded;
+      if (d_status != nullptr) { d_status[row] = op_status::SUCCESS; }
     } else {
-      d_output[row] = 0;
+      d_output[row] = T{};
       cudf::clear_bit(d_null_mask, row);
+      if (d_status != nullptr) { d_status[row] = cast_status_for_primitive<T>(val); }
     }
   }
+}
+
+__device__ op_status cast_status_for_bool(device_span<uint8_t const> val)
+{
+  if (val.empty()) { return op_status::MALFORMED_VARIANT; }
+  if (is_variant_null(val)) { return op_status::VARIANT_NULL; }
+  if (decode_bool(val).has_value()) { return op_status::SUCCESS; }
+  if (decode_basic_type(val[0]) != basic_type::PRIMITIVE) { return op_status::TYPE_MISMATCH; }
+  // Boolean values carry no payload, so a BOOLEAN_TRUE/FALSE header can never be truncated;
+  // decode_bool would have succeeded above.  Any remaining primitive ID is a type mismatch when
+  // recognised, or malformed when not.
+  auto const ptype = static_cast<primitive_type>(variant_value_header(val[0]));
+  return is_recognized_primitive_type(ptype) ? op_status::TYPE_MISMATCH
+                                             : op_status::MALFORMED_VARIANT;
+}
+
+__device__ op_status cast_status_for_string(device_span<uint8_t const> val)
+{
+  if (val.empty()) { return op_status::MALFORMED_VARIANT; }
+  if (is_variant_null(val)) { return op_status::VARIANT_NULL; }
+  if (decode_string(val).has_value()) { return op_status::SUCCESS; }
+  auto const btype = decode_basic_type(val[0]);
+  if (btype == basic_type::SHORT_STRING) { return op_status::MALFORMED_VARIANT; }
+  if (btype == basic_type::PRIMITIVE) {
+    auto const ptype = static_cast<primitive_type>(variant_value_header(val[0]));
+    // LONG_STRING is a recognized string type whose payload was truncated.
+    if (ptype == primitive_type::LONG_STRING) { return op_status::MALFORMED_VARIANT; }
+    return is_recognized_primitive_type(ptype) ? op_status::TYPE_MISMATCH
+                                               : op_status::MALFORMED_VARIANT;
+  }
+  // OBJECT, ARRAY, or other non-primitive basic types: well-formed, just not a string.
+  return op_status::TYPE_MISMATCH;
 }
 
 /**
@@ -557,32 +902,56 @@ struct cast_variant_string_fn {
   size_type* d_sizes;
   char* d_chars;
   cudf::detail::input_offsetalator d_offsets;
+  // In-out status tracking (optional: d_status non-null to enable; status is always non-nullable).
+  // Read as incoming status from a prior `get_variant_field` call, then overwritten in place with
+  // the final status on the sizing pass.
+  op_status* d_status{nullptr};
 
   __device__ void operator()(size_type row)
   {
-    if (!cudf::bit_is_set(d_null_mask, row)) {
-      if (!d_chars) { d_sizes[row] = 0; }
-      return;
+    // Status is only written on the sizing pass (d_chars == nullptr). On the writing pass the
+    // null mask may already be cleared from the sizing pass, so we must not re-inspect it to
+    // write status (that would misidentify a decode-failed row as a SQL-null row).
+    bool const is_sizing_pass = (d_chars == nullptr);
+
+    if (d_status) {
+      // Status column is always non-nullable; row_null replaces the null bit.
+      auto const s = d_status[row];
+      if (s != op_status::SUCCESS) {
+        if (is_sizing_pass) { d_sizes[row] = 0; }
+        if (cudf::bit_is_set(d_null_mask, row)) { cudf::clear_bit(d_null_mask, row); }
+        return;
+      }
+      if (!cudf::bit_is_set(d_null_mask, row)) {
+        if (is_sizing_pass) {
+          d_sizes[row]  = 0;
+          d_status[row] = op_status::ROW_NULL;
+        }
+        return;
+      }
+    } else {
+      if (!cudf::bit_is_set(d_null_mask, row)) {
+        if (is_sizing_pass) { d_sizes[row] = 0; }
+        return;
+      }
     }
 
-    auto const val_begin = d_values.offset_at(row);
-    auto const val_end   = d_values.offset_at(row + 1);
-    auto const val_child = d_values.child();
-    device_span<uint8_t const> const val{val_child.data<uint8_t>() + val_begin,
-                                         static_cast<std::size_t>(val_end - val_begin)};
+    auto const val = list_row_span(d_values, row);
 
     auto const str = decode_string(val);
     if (!str) {
-      if (!d_chars) { d_sizes[row] = 0; }
+      if (is_sizing_pass) { d_sizes[row] = 0; }
       cudf::clear_bit(d_null_mask, row);
+      if (is_sizing_pass && d_status) { d_status[row] = cast_status_for_string(val); }
       return;
     }
 
-    if (!d_chars) {
+    if (is_sizing_pass) {
       d_sizes[row] = str->size();
     } else {
       cuda::std::memcpy(d_chars + d_offsets[row], str->data(), str->size());
     }
+    if (is_sizing_pass && d_status) { d_status[row] = op_status::SUCCESS; }
   }
 };
 
@@ -602,19 +971,61 @@ struct cast_variant_fn {
   data_type desired_type;
   bitmask_type* d_null_mask;
   rmm::device_buffer null_mask;
-  rmm::cuda_stream_view stream;
+  cuda::stream_ref stream;
   rmm::device_async_resource_ref mr;
+  // In-out status tracking; null when no status was requested.
+  op_status* d_status{nullptr};
 
   template <typename T>
   std::unique_ptr<column> operator()()
-    requires(is_variant_int<T>)
+    requires(is_variant_numerical<T>)
   {
     rmm::device_buffer data{num_rows * sizeof(T), stream, mr};
-
-    auto grid = cudf::detail::grid_1d{num_rows, block_size};
-    cast_variant_int_kernel<T><<<grid.num_blocks, block_size, 0, stream.value()>>>(
-      values, {static_cast<T*>(data.data()), static_cast<std::size_t>(num_rows)}, d_null_mask);
+    auto const grid = cudf::detail::grid_1d{num_rows, block_size};
+    auto const d_out =
+      device_span<T>{static_cast<T*>(data.data()), static_cast<std::size_t>(num_rows)};
+    cast_variant_primitive_kernel<T>
+      <<<grid.num_blocks, block_size, 0, stream.get()>>>(values, d_out, d_null_mask, d_status);
     CUDF_CUDA_TRY(cudaGetLastError());
+
+    auto const null_count =
+      num_rows - cudf::detail::count_set_bits(d_null_mask, 0, num_rows, stream);
+    return std::make_unique<column>(desired_type,
+                                    num_rows,
+                                    std::move(data),
+                                    null_count > 0 ? std::move(null_mask) : rmm::device_buffer{},
+                                    null_count);
+  }
+
+  template <typename T>
+  std::unique_ptr<column> operator()()
+    requires(cuda::std::is_same_v<T, bool>)
+  {
+    rmm::device_buffer data{num_rows * sizeof(bool), stream, mr};
+
+    auto* dp_s = d_status;
+
+    thrust::for_each(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+                     cuda::counting_iterator<size_type>(0),
+                     cuda::counting_iterator<size_type>(num_rows),
+                     [vals  = this->values,
+                      d_out = static_cast<bool*>(data.data()),
+                      dnm   = this->d_null_mask,
+                      dp_s] __device__(size_type row) {
+                       auto const fail = [&](op_status s) {
+                         d_out[row] = false;
+                         if (cudf::bit_is_set(dnm, row)) { cudf::clear_bit(dnm, row); }
+                         if (dp_s) { dp_s[row] = s; }
+                       };
+                       if (dp_s and dp_s[row] != op_status::SUCCESS) { return fail(dp_s[row]); }
+                       // Status column is always non-nullable; ROW_NULL replaces the null bit.
+                       if (!cudf::bit_is_set(dnm, row)) { return fail(op_status::ROW_NULL); }
+                       auto const val     = list_row_span(vals, row);
+                       auto const decoded = decode_bool(val);
+                       if (!decoded) { return fail(cast_status_for_bool(val)); }
+                       d_out[row] = *decoded;
+                       if (dp_s) { dp_s[row] = op_status::SUCCESS; }
+                     });
 
     auto const null_count =
       num_rows - cudf::detail::count_set_bits(d_null_mask, 0, num_rows, stream);
@@ -629,7 +1040,7 @@ struct cast_variant_fn {
   std::unique_ptr<column> operator()()
     requires(cuda::std::is_same_v<T, cudf::string_view>)
   {
-    cast_variant_string_fn fn{values, d_null_mask, nullptr, nullptr, {}};
+    cast_variant_string_fn fn{values, d_null_mask, nullptr, nullptr, {}, d_status};
     auto [offsets_column, chars] =
       cudf::strings::detail::make_strings_children(fn, num_rows, stream, mr);
 
@@ -650,8 +1061,49 @@ struct cast_variant_fn {
   }
 };
 
+/**
+ * @brief Classifies only the first (value_metadata) byte of enc; does not validate the remaining
+ * payload. A recognized header returns its logical type even when the payload is truncated. Returns
+ * nullopt for an empty blob or an unrecognized primitive type ID.
+ */
+__device__ cuda::std::optional<variant_logical_type> logical_type_of(device_span<uint8_t const> enc)
+{
+  if (enc.empty()) { return cuda::std::nullopt; }
+  auto const value_metadata = enc[0];
+  auto const btype          = decode_basic_type(value_metadata);
+
+  if (btype == basic_type::SHORT_STRING) { return variant_logical_type::STRING; }
+  if (btype == basic_type::OBJECT) { return variant_logical_type::OBJECT; }
+  if (btype == basic_type::ARRAY) { return variant_logical_type::ARRAY; }
+
+  switch (static_cast<primitive_type>(variant_value_header(value_metadata))) {
+    case primitive_type::NULLVAL: return variant_logical_type::NULL_VALUE;
+    case primitive_type::BOOLEAN_TRUE:
+    case primitive_type::BOOLEAN_FALSE: return variant_logical_type::BOOLEAN;
+    case primitive_type::INT8:
+    case primitive_type::INT16:
+    case primitive_type::INT32:
+    case primitive_type::INT64: return variant_logical_type::LONG_VALUE;
+    case primitive_type::FLOAT64: return variant_logical_type::DOUBLE_VALUE;
+    case primitive_type::DECIMAL4:
+    case primitive_type::DECIMAL8:
+    case primitive_type::DECIMAL16: return variant_logical_type::DECIMAL;
+    case primitive_type::DATE: return variant_logical_type::DATE;
+    case primitive_type::TIMESTAMP_MICROS:
+    case primitive_type::TIMESTAMP_NANOS: return variant_logical_type::TIMESTAMP;
+    case primitive_type::TIMESTAMP_NTZ_MICROS:
+    case primitive_type::TIMESTAMP_NTZ_NANOS: return variant_logical_type::TIMESTAMP_NTZ;
+    case primitive_type::FLOAT32: return variant_logical_type::FLOAT_VALUE;
+    case primitive_type::BINARY: return variant_logical_type::BINARY;
+    case primitive_type::LONG_STRING: return variant_logical_type::STRING;
+    case primitive_type::TIME_NTZ_MICROS: return variant_logical_type::TIME_NTZ;
+    case primitive_type::UUID: return variant_logical_type::UUID;
+    default: return cuda::std::nullopt;
+  }
+}
+
 std::unique_ptr<column> build_path_column(cudf::host_span<std::string const> steps,
-                                          rmm::cuda_stream_view stream,
+                                          cuda::stream_ref stream,
                                           rmm::device_async_resource_ref mr)
 {
   auto const depth = steps.size();
@@ -683,10 +1135,10 @@ namespace detail {
 
 std::unique_ptr<column> get_variant_field(column_view const& variant_column,
                                           std::string_view path,
-                                          rmm::cuda_stream_view stream,
+                                          std::optional<mutable_column_view> status,
+                                          cuda::stream_ref stream,
                                           rmm::device_async_resource_ref mr)
 {
-  // Validate the variant column
   CUDF_EXPECTS(variant_column.type().id() == type_id::STRUCT,
                "VARIANT column must be struct type",
                std::invalid_argument);
@@ -700,6 +1152,18 @@ std::unique_ptr<column> get_variant_field(column_view const& variant_column,
   auto const steps = parse_variant_path(path);
 
   auto const num_rows = variant_column.size();
+
+  if (status.has_value()) {
+    CUDF_EXPECTS(!status->nullable(),
+                 "status column must not be nullable; use row_null for SQL-null rows",
+                 std::invalid_argument);
+    CUDF_EXPECTS(
+      status->type().id() == type_id::UINT8, "status column must be UINT8", std::invalid_argument);
+    CUDF_EXPECTS(status->size() == num_rows,
+                 "status column must have the same number of rows as variant_column",
+                 std::invalid_argument);
+  }
+
   if (num_rows == 0) {
     return cudf::make_lists_column(
       0, make_empty_column(type_id::INT32), make_empty_column(type_id::UINT8), 0, {});
@@ -729,27 +1193,31 @@ std::unique_ptr<column> get_variant_field(column_view const& variant_column,
       : cudf::create_null_mask(variant_column.size(), mask_state::ALL_VALID, stream, mr);
   auto* d_null_mask = static_cast<bitmask_type*>(null_mask.data());
 
-  // Parse the path per row and compute the output sizes
   auto grid = cudf::detail::grid_1d{num_rows, block_size};
-  locate_variant_fields_kernel<<<grid.num_blocks, block_size, 0, stream.value()>>>(
+
+  auto const d_status =
+    status.has_value()
+      ? device_span<op_status>{reinterpret_cast<op_status*>(status->data<uint8_t>()),
+                               static_cast<std::size_t>(num_rows)}
+      : device_span<op_status>{};
+  locate_variant_fields_kernel<<<grid.num_blocks, block_size, 0, stream.get()>>>(
     meta_lists_device_view,
     val_lists_device_view,
     *path_device_view,
     d_sizes,
     d_src_offsets,
-    d_null_mask);
+    d_null_mask,
+    d_status);
   CUDF_CUDA_TRY(cudaGetLastError());
 
-  // Convert sizes to offsets
   auto [offsets_column, total_bytes] =
-    cudf::strings::detail::make_offsets_child_column(d_sizes.begin(), d_sizes.end(), stream, mr);
+    cudf::strings::detail::make_offsets_child_column(d_sizes, stream, mr);
   CUDF_EXPECTS(total_bytes <= std::numeric_limits<size_type>::max(),
                "VARIANT extracted bytes exceed cudf size_type limit",
                std::overflow_error);
   device_span<size_type const> d_offsets{offsets_column->view().data<size_type>(),
                                          static_cast<std::size_t>(num_rows + 1)};
 
-  // Copy values into the output buffer
   auto val_child = make_numeric_column(
     data_type{type_id::UINT8}, total_bytes, mask_state::UNALLOCATED, stream, mr);
   if (total_bytes > 0) {
@@ -780,62 +1248,150 @@ std::unique_ptr<column> get_variant_field(column_view const& variant_column,
 
 std::unique_ptr<column> cast_variant(column_view const& values,
                                      data_type desired_type,
-                                     rmm::cuda_stream_view stream,
+                                     std::optional<mutable_column_view> status,
+                                     cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr)
 {
   validate_variant_child(values);
+
+  switch (desired_type.id()) {
+    case type_id::INT8:
+    case type_id::INT16:
+    case type_id::INT32:
+    case type_id::INT64:
+    case type_id::FLOAT32:
+    case type_id::FLOAT64:
+    case type_id::BOOL8:
+    case type_id::STRING: break;
+    default: CUDF_FAIL("unsupported type for variant cast", std::invalid_argument);
+  }
+
   size_type const num_rows = values.size();
+
+  // Validate status before the empty-values fast path so callers always get
+  // std::invalid_argument for a malformed status column, even when values is empty.
+  if (status.has_value()) {
+    CUDF_EXPECTS(!status->nullable(),
+                 "status column must not be nullable; use row_null for SQL-null rows",
+                 std::invalid_argument);
+    CUDF_EXPECTS(
+      status->type().id() == type_id::UINT8, "status column must be UINT8", std::invalid_argument);
+    CUDF_EXPECTS(status->size() == num_rows,
+                 "status column must have the same number of rows as the values column",
+                 std::invalid_argument);
+  }
+
   if (num_rows == 0) { return make_empty_column(desired_type); }
 
   auto val_device_view = column_device_view::create(values, stream);
   cudf::lists_column_device_view val_lists_device_view(*val_device_view);
 
-  // Initialize the null mask from the values column (or all-valid)
   auto null_mask    = values.nullable()
                         ? cudf::detail::copy_bitmask(values, stream, mr)
                         : cudf::create_null_mask(num_rows, mask_state::ALL_VALID, stream, mr);
   auto* d_null_mask = static_cast<bitmask_type*>(null_mask.data());
 
-  return cudf::type_dispatcher(desired_type,
-                               cast_variant_fn{val_lists_device_view,
-                                               num_rows,
-                                               desired_type,
-                                               d_null_mask,
-                                               std::move(null_mask),
-                                               stream,
-                                               mr});
+  return cudf::type_dispatcher(
+    desired_type,
+    cast_variant_fn{
+      val_lists_device_view,
+      num_rows,
+      desired_type,
+      d_null_mask,
+      std::move(null_mask),
+      stream,
+      mr,
+      status.has_value() ? reinterpret_cast<op_status*>(status->data<uint8_t>()) : nullptr});
+}
+
+std::unique_ptr<column> get_variant_type_id(column_view const& values,
+                                            cuda::stream_ref stream,
+                                            rmm::device_async_resource_ref mr)
+{
+  validate_variant_child(values);
+  size_type const num_rows = values.size();
+  if (num_rows == 0) { return make_empty_column(data_type{type_id::UINT8}); }
+
+  auto val_device_view = column_device_view::create(values, stream);
+  cudf::lists_column_device_view val_lists_device_view(*val_device_view);
+
+  auto null_mask    = values.nullable()
+                        ? cudf::detail::copy_bitmask(values, stream, mr)
+                        : cudf::create_null_mask(num_rows, mask_state::ALL_VALID, stream, mr);
+  auto* d_null_mask = static_cast<bitmask_type*>(null_mask.data());
+
+  rmm::device_buffer data{static_cast<std::size_t>(num_rows) * sizeof(uint8_t), stream, mr};
+
+  thrust::transform(
+    rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    cuda::counting_iterator<size_type>(0),
+    cuda::counting_iterator<size_type>(num_rows),
+    static_cast<uint8_t*>(data.data()),
+    [values = val_lists_device_view, d_null_mask] __device__(size_type row) -> uint8_t {
+      if (!cudf::bit_is_set(d_null_mask, row)) { return 0; }
+      auto const ltype = logical_type_of(list_row_span(values, row));
+      if (ltype.has_value()) { return static_cast<uint8_t>(ltype.value()); }
+      cudf::clear_bit(d_null_mask, row);
+      return 0;
+    });
+
+  auto const null_count = num_rows - cudf::detail::count_set_bits(d_null_mask, 0, num_rows, stream);
+  return std::make_unique<column>(data_type{type_id::UINT8},
+                                  num_rows,
+                                  std::move(data),
+                                  null_count > 0 ? std::move(null_mask) : rmm::device_buffer{},
+                                  null_count);
 }
 
 }  // namespace detail
 
 std::unique_ptr<column> get_variant_field(column_view const& variant_column,
                                           std::string_view path,
-                                          rmm::cuda_stream_view stream,
+                                          std::optional<mutable_column_view> status,
+                                          cuda::stream_ref stream,
                                           rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
-  return detail::get_variant_field(variant_column, path, stream, mr);
+  return detail::get_variant_field(variant_column, path, status, stream, mr);
 }
 
 std::unique_ptr<column> cast_variant(column_view const& values,
                                      data_type desired_type,
-                                     rmm::cuda_stream_view stream,
+                                     std::optional<mutable_column_view> status,
+                                     cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
-  return detail::cast_variant(values, desired_type, stream, mr);
+  return detail::cast_variant(values, desired_type, status, stream, mr);
+}
+
+std::unique_ptr<column> get_variant_type_id(column_view const& values,
+                                            cuda::stream_ref stream,
+                                            rmm::device_async_resource_ref mr)
+{
+  CUDF_FUNC_RANGE();
+  return detail::get_variant_type_id(values, stream, mr);
 }
 
 std::unique_ptr<column> extract_variant_field(column_view const& variant_column,
                                               std::string_view path,
                                               data_type desired_type,
-                                              rmm::cuda_stream_view stream,
+                                              std::optional<mutable_column_view> status,
+                                              cuda::stream_ref stream,
                                               rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
-  auto value = detail::get_variant_field(
-    variant_column, path, stream, cudf::get_current_device_resource_ref());
-  return detail::cast_variant(value->view(), desired_type, stream, mr);
+  auto const temp_mr = cudf::get_current_device_resource_ref();
+
+  if (status.has_value()) {
+    // `status` is filled by `get_variant_field`, then read back by `cast_variant` as incoming
+    // status and overwritten in place with the final per-row status.
+    auto value = detail::get_variant_field(variant_column, path, status, stream, temp_mr);
+    return detail::cast_variant(value->view(), desired_type, status, stream, mr);
+  }
+
+  auto value = detail::get_variant_field(variant_column, path, std::nullopt, stream, temp_mr);
+  return detail::cast_variant(value->view(), desired_type, std::nullopt, stream, mr);
 }
 
 }  // namespace io::parquet::experimental

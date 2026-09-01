@@ -229,7 +229,7 @@ def test_column_series_cuda_array_dtype(data, float_types_as_str):
 
 
 def test_column_zero_length_slice():
-    # see https://github.com/rapidsai/cudf/pull/4777
+    # see https://github.com/NVIDIA/cudf/pull/4777
     x = cudf.DataFrame({"a": [1]})
     the_column = x[1:]["a"]._column
 
@@ -323,6 +323,13 @@ def test_can_cast_safely_same_kind():
     )._column
     to_dtype = np.dtype("float32")
     assert not data.can_cast_safely(to_dtype)
+
+
+def test_can_cast_safely_empty():
+    # An empty column can be cast to any numeric dtype losslessly.
+    data = cudf.Series([], dtype="float64")._column
+    for to_dtype in ["int8", "int64", "uint32", "float32", "bool"]:
+        assert data.can_cast_safely(np.dtype(to_dtype))
 
 
 def test_can_cast_safely_mixed_kind():

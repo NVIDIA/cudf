@@ -6,7 +6,7 @@ Peak memory usage is a common concern in GPU programming because GPU memory is t
 
 ## Enabling Memory Profiling
 
-First, enable memory profiling in RMM by calling {py:func}`rmm.statistics.enable_statistics()`. This adds a statistics resource adaptor to the current RMM memory resource, which enables cuDF to access memory profiling information. See the [RMM documentation](https://docs.rapids.ai/api/rmm/stable/guide/#memory-statistics-and-profiling) for more details.
+First, enable memory profiling in RMM by calling {py:func}`rmm.statistics.enable_statistics()`. This adds a statistics resource adaptor to the current RMM memory resource, which enables cuDF to access memory profiling information. See the [RMM documentation](https://docs.rapids.ai/api/rmm/stable/user_guide/guide/#memory-statistics-and-profiling) for more details.
 
 Second, enable memory profiling in cuDF by setting the `memory_profiling` option to `True`. Use {py:func}`cudf.set_option` or set the environment variable ``CUDF_MEMORY_PROFILING=1`` prior to the launch of the Python interpreter.
 

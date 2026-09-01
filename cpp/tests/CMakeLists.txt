@@ -88,8 +88,6 @@ endfunction()
 set(CUDF_INSTALL_LIBRARY_DEPS OFF)
 set(CUDF_EXCLUDE_DEPS_FROM_ALL ON)
 set(CUDF_EXCLUDE_DEPS_FROM_ALL_FLAG EXCLUDE_FROM_ALL)
-set(CUDF_ENABLE_ARROW_COMPUTE ON)
-include(../cmake/thirdparty/get_arrow.cmake)
 
 # ##################################################################################################
 # test sources ##################################################################################
@@ -176,8 +174,10 @@ ConfigureTest(
   join/cross_join_tests.cpp
   join/semi_anti_join_tests.cpp
   join/mixed_join_tests.cu
+  join/direct_join_tests.cpp
   join/distinct_join_tests.cpp
   join/key_remapping_tests.cpp
+  join/streaming_hash_join_tests.cpp
   GPUS 1
   PERCENT 100
 )
@@ -225,7 +225,7 @@ ConfigureTest(
   QUANTILES_TEST quantiles/percentile_approx_test.cpp quantiles/quantile_test.cpp
   quantiles/quantiles_test.cpp
   GPUS 1
-  PERCENT 70 EXTRA_LIBS ${ARROW_LIBRARIES}
+  PERCENT 70
 )
 
 # ##################################################################################################
@@ -306,17 +306,15 @@ ConfigureTest(FILTER_TEST filter/filter_test.cpp)
 ConfigureTest(
   INTEROP_TEST
   interop/arrow_data_structures_test.cpp
+  interop/nanoarrow_utils.cpp
   interop/to_arrow_device_test.cpp
-  interop/to_arrow_test.cpp
   interop/to_arrow_host_test.cpp
-  interop/from_arrow_test.cpp
   interop/from_arrow_device_test.cpp
   interop/from_arrow_host_test.cpp
   interop/from_arrow_stream_test.cpp
   interop/dlpack_test.cpp
   EXTRA_LIBS
   nanoarrow::nanoarrow
-  ${ARROW_LIBRARIES}
 )
 
 # ##################################################################################################
@@ -328,7 +326,7 @@ ConfigureTest(FILEPATH_SOURCE_TEST io/filepath_source_test.cpp)
 ConfigureTest(
   CSV_TEST io/csv_test.cpp
   GPUS 1
-  PERCENT 30 EXTRA_LIBS ${ARROW_LIBRARIES}
+  PERCENT 30
 )
 ConfigureTest(
   ORC_TEST io/orc_chunked_reader_test.cu io/orc_test.cpp
@@ -342,6 +340,7 @@ ConfigureTest(
   io/parquet_chunked_writer_test.cpp
   io/parquet_common.cpp
   io/parquet_misc_test.cpp
+  io/parquet_reader_dict_test.cpp
   io/parquet_reader_test.cpp
   io/parquet_test.cpp
   io/parquet_v2_test.cpp
@@ -379,7 +378,7 @@ ConfigureTest(
   JSON_TEST io/json/json_chunked_reader.cpp io/json/json_test.cpp io/json/json_type_cast_test.cpp
   io/json/json_utils.cu
   GPUS 1
-  PERCENT 30 EXTRA_LIBS ${ARROW_LIBRARIES}
+  PERCENT 30
 )
 ConfigureTest(JSON_WRITER_TEST io/json/json_writer.cpp)
 ConfigureTest(NESTED_JSON_TEST io/json/nested_json_test.cpp io/json/json_tree.cpp)
@@ -453,6 +452,7 @@ ConfigureTest(
   utilities_tests/lists_column_wrapper_tests.cpp
   utilities_tests/memory_resource_tests.cpp
   utilities_tests/pinned_memory_tests.cpp
+  utilities_tests/stream_pool_tests.cpp
   utilities_tests/type_check_tests.cpp
   utilities_tests/type_list_tests.cpp
 )
@@ -518,7 +518,7 @@ ConfigureTest(
 # * stream compaction tests -----------------------------------------------------------------------
 ConfigureTest(
   STREAM_COMPACTION_TEST
-  stream_compaction/apply_boolean_mask_tests.cpp
+  stream_compaction/apply_mask_tests.cpp
   stream_compaction/distinct_tests.cpp
   stream_compaction/drop_nans_tests.cpp
   stream_compaction/drop_nulls_tests.cpp
@@ -659,6 +659,7 @@ ConfigureTest(
   text/stemmer_tests.cpp
   text/subword_tests.cpp
   text/tokenize_tests.cpp
+  text/unicode_normalize_tests.cpp
 )
 
 # ##################################################################################################
@@ -743,7 +744,7 @@ ConfigureTest(
   lists/set_operations/intersect_distinct_tests.cpp
   lists/set_operations/union_distinct_tests.cpp
   lists/sort_lists_tests.cpp
-  lists/stream_compaction/apply_boolean_mask_tests.cpp
+  lists/stream_compaction/apply_mask_tests.cpp
   lists/stream_compaction/distinct_tests.cpp
   GPUS 1
   PERCENT 70
@@ -844,6 +845,7 @@ ConfigureTest(
   streams/text/replace_test.cpp
   streams/text/stemmer_test.cpp
   streams/text/tokenize_test.cpp
+  streams/text/unicode_normalize_test.cpp
   STREAM_MODE
   testing
 )

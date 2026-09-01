@@ -99,18 +99,22 @@ hash_join<Hasher>::join_retrieve(cudf::table_view const& left,
   CUDF_EXPECTS(join_size == static_cast<std::size_t>(actual_size),
                "The provided join output size is incorrect");
 
-  // `finalize_full_join` resizes to `join_size + _right.num_rows()` unconditionally, so reserve
-  // that same upper bound up front and it grows into retained capacity instead of reallocating and
-  // copying both vectors.  Reserving only the unmatched tail would fall short whenever any right
-  // row matched, which is the common case.  Shrinking below the capacity only lowers the logical
-  // size, so retrieval still sees `join_size`.
-  auto const allocation_size = [&]() -> std::size_t {
+  // A full join appends one entry per unmatched right row.  The count pass already tallied the
+  // matched build rows, so the exact output size is known here and both the allocation below and
+  // `finalize_full_join` can use it: no worst-case reservation and no grow-then-shrink.
+  auto const unmatched_right_rows = [&]() -> std::optional<size_type> {
     if constexpr (Join == join_kind::FULL_JOIN) {
-      return join_size + static_cast<std::size_t>(_right.num_rows());
+      // Every build row is tallied at most once, so the count never exceeds the row count and
+      // narrowing to `size_type` here is safe.
+      auto const matched = matched_build_rows.value(stream);
+      return static_cast<size_type>(static_cast<cuda::std::uint64_t>(_right.num_rows()) - matched);
     } else {
-      return join_size;
+      return std::nullopt;
     }
   }();
+
+  auto const allocation_size =
+    join_size + static_cast<std::size_t>(unmatched_right_rows.value_or(size_type{0}));
 
   auto left_indices = std::make_unique<rmm::device_uvector<size_type>>(allocation_size, stream, mr);
   auto right_indices =
@@ -135,8 +139,13 @@ hash_join<Hasher>::join_retrieve(cudf::table_view const& left,
   if constexpr (Join == join_kind::FULL_JOIN) {
     // The HashCSR retrieve kernels do not mark matched right rows, so let `finalize_full_join`
     // derive the match flags from the emitted right indices.
-    return detail::finalize_full_join(
-      std::move(join_indices), left.num_rows(), _right.num_rows(), std::nullopt, stream, mr);
+    return detail::finalize_full_join(std::move(join_indices),
+                                      left.num_rows(),
+                                      _right.num_rows(),
+                                      std::nullopt,
+                                      stream,
+                                      mr,
+                                      unmatched_right_rows);
   } else {
     return join_indices;
   }

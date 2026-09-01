@@ -1081,6 +1081,35 @@ def test_mixed_decimal_typecast(dtype_l, dtype_r):
         gdf_l.merge(gdf_r, on="join_col", how="inner")
 
 
+@pytest.mark.parametrize("empty_side", ["left", "right"])
+def test_mixed_decimal_typecast_empty_side_still_raises(empty_side):
+    # https://github.com/rapidsai/cudf/issues/9981
+    # An empty join key with no rows carries no data, but its declared
+    # dtype must still be respected: mismatched decimal precision/scale
+    # should keep raising even when one side is empty, exactly as it does
+    # when both sides have rows.
+    join_data = cudf.Series(["95.05", "34.6", "74.22", "14.94"]).astype(
+        Decimal64Dtype(9, 5)
+    )
+    gdf_data = cudf.DataFrame({"join_col": join_data})
+    gdf_empty = cudf.DataFrame(
+        {"join_col": cudf.Series([], dtype="str")}
+    ).astype({"join_col": Decimal64Dtype(8, 3)})
+
+    lhs, rhs = (
+        (gdf_empty, gdf_data)
+        if empty_side == "left"
+        else (gdf_data, gdf_empty)
+    )
+
+    with pytest.raises(
+        TypeError,
+        match="Decimal columns can only be merged with decimal columns "
+        "of the same precision and scale",
+    ):
+        lhs.merge(rhs, on="join_col", how="outer")
+
+
 @pytest.fixture
 def datetime_types_as_str2(datetime_types_as_str):
     return datetime_types_as_str

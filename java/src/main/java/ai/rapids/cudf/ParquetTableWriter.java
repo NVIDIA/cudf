@@ -88,6 +88,7 @@ public final class ParquetTableWriter extends TableWriter {
    * magic. The caller must close the returned buffer.
    *
    * @return an owned host buffer containing the Parquet footer metadata
+   * @throws CudfException if finalizing the Parquet writer fails
    * @throws IllegalStateException if the writer was already closed
    */
   public HostMemoryBuffer closeAndGetFooter() throws CudfException {

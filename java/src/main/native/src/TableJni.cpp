@@ -2472,8 +2472,8 @@ JNIEXPORT jobject JNICALL Java_ai_rapids_cudf_Table_writeParquetEndAndGetFooter(
     auto result = cudf::jni::allocate_host_buffer(
       env, static_cast<jlong>(footer->size()), host_memory_allocator);
     auto const result_size = cudf::jni::get_host_buffer_length(env, result);
-    CUDF_EXPECTS(result_size >= static_cast<jlong>(footer->size()),
-                 "Allocated host buffer is too small for the Parquet footer");
+    CUDF_EXPECTS(result_size == static_cast<jlong>(footer->size()),
+                 "Allocated host buffer size does not match the Parquet footer");
     std::memcpy(reinterpret_cast<void*>(cudf::jni::get_host_buffer_address(env, result)),
                 footer->data(),
                 footer->size());

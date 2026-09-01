@@ -242,8 +242,10 @@ CUDF_KERNEL void compute_row_partition_numbers(row_hasher_t the_hasher,
   while (partition_number < num_partitions) {
     size_type const block_partition_size = shared_partition_sizes[partition_number];
 
-    // Record the size of this partition in this block
-    size_type const write_location        = partition_number * gridDim.x + blockIdx.x;
+    // Record the size of this partition in this block.  The flat index is
+    // `num_partitions * grid_size`, which exceeds `size_type` for large partition counts, so it
+    // must be computed in a wider type to match the buffer's `std::size_t` allocation.
+    auto const write_location = static_cast<std::size_t>(partition_number) * gridDim.x + blockIdx.x;
     block_partition_sizes[write_location] = block_partition_size;
     partition_number += blockDim.x;
   }
@@ -956,7 +958,8 @@ std::pair<std::unique_ptr<table>, std::vector<size_type>> partition_global_scatt
   cudf::memory_resources mr)
 {
   CUDF_EXPECTS(num_partitions < std::numeric_limits<size_type>::max(),
-               "num_partitions exceeds cudf's supported limit");
+               "num_partitions exceeds cudf's supported limit",
+               std::invalid_argument);
 
   auto row_partition_numbers =
     rmm::device_uvector<size_type>(num_rows, stream, mr.get_temporary_mr());

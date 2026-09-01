@@ -25,9 +25,9 @@ namespace cudf_streaming {
  * @brief Filter ast expression with lifetime/stream management.
  */
 struct filter {
-  cuda::stream_ref stream{cudaStream_t{nullptr}};  ///< Stream the filter's scalars are valid on.
-  cudf::ast::expression& filter;                   ///< Filter expression.
-  rapidsmpf::OwningWrapper owner{};                ///< Owner of all objects in the filter.
+  cuda::stream_ref stream{cudaStreamLegacy};  ///< Stream the filter's scalars are valid on.
+  cudf::ast::expression& filter;              ///< Filter expression.
+  rapidsmpf::OwningWrapper owner{};           ///< Owner of all objects in the filter.
 };
 
 namespace actor {

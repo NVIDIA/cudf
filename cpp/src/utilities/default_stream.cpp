@@ -14,7 +14,7 @@ namespace detail {
 #if defined(CUDF_USE_PER_THREAD_DEFAULT_STREAM)
 cuda::stream_ref const default_stream_value{cuda::stream_ref{cudaStreamPerThread}};
 #else
-cuda::stream_ref const default_stream_value{cudaStream_t{nullptr}};
+cuda::stream_ref const default_stream_value{cudaStreamLegacy};
 #endif
 
 }  // namespace detail

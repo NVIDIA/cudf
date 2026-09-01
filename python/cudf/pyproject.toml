@@ -20,7 +20,7 @@ license = "Apache-2.0"
 requires-python = ">=3.11"
 dependencies = [
     "cachetools",
-    "cuda-bindings>=13.0.1,<14.0",
+    "cuda-bindings>=13.0.2,<14.0",
     "cupy-cuda13x[ctk]>=14.0.1,!=14.1.0",
     "fsspec>=0.6.0",
     "libcudf==26.10.*,>=0.0.0a0",

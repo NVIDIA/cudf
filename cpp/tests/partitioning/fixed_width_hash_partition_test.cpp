@@ -16,7 +16,6 @@
 #include <cudf/table/table.hpp>
 
 #include <cuda/iterator>
-#include <thrust/iterator/transform_iterator.h>
 
 #include <src/partitioning/fixed_width.cuh>
 
@@ -125,7 +124,7 @@ TEST_F(FixedWidthHashPartitionTest, MixedWidthsNullableCompositeKeys)
 {
   constexpr cudf::size_type owner_rows = 2055;
   auto const values                    = cuda::counting_iterator<int32_t>{0};
-  auto const valid = thrust::make_transform_iterator(values, [](auto row) { return row % 7 != 0; });
+  auto const valid = cuda::make_transform_iterator(values, [](auto row) { return row % 7 != 0; });
 
   fixed_width_column_wrapper<int8_t, int32_t> bytes(values, values + owner_rows);
   fixed_width_column_wrapper<int16_t, int32_t> shorts(values, values + owner_rows, valid);
@@ -183,7 +182,7 @@ TEST_F(FixedWidthHashPartitionTest, FixedAndVariableWidthPayloads)
 {
   constexpr cudf::size_type num_rows = 4099;
   auto const values                  = cuda::counting_iterator<int32_t>{0};
-  auto const strings                 = thrust::make_transform_iterator(
+  auto const strings                 = cuda::make_transform_iterator(
     values, [](auto value) { return std::string{"value_"} + std::to_string(value); });
 
   fixed_width_column_wrapper<int32_t> keys(values, values + num_rows);
@@ -229,7 +228,7 @@ TEST_F(FixedWidthHashPartitionTest, PartitionOffsetsAcrossBlocksAndEmptyPartitio
 {
   constexpr cudf::size_type num_rows = 10'000;
   auto const rows                    = cuda::counting_iterator<cudf::size_type>{0};
-  auto const keys = thrust::make_transform_iterator(rows, [](auto row) { return row % 4; });
+  auto const keys = cuda::make_transform_iterator(rows, [](auto row) { return row % 4; });
 
   fixed_width_column_wrapper<cudf::size_type> input(keys, keys + num_rows);
   for (auto const num_partitions : {cudf::size_type{17}, cudf::size_type{1025}}) {

@@ -479,17 +479,15 @@ class UnaryFunction(Expr):
     def _horizontal_broadcast_columns(
         self, df: DataFrame, *, context: ExecutionContext
     ) -> list[plc.Column]:
+        columns = [
+            child.evaluate(df, context=context).astype(self.dtype, stream=df.stream)
+            for child in self.children
+        ]
+        target_length = None if all(col.is_scalar for col in columns) else df.num_rows
         return [
             col.obj
             for col in broadcast(
-                *(
-                    child.evaluate(df, context=context).astype(
-                        self.dtype, stream=df.stream
-                    )
-                    for child in self.children
-                ),
-                target_length=df.num_rows,
-                stream=df.stream,
+                *columns, target_length=target_length, stream=df.stream
             )
         ]
 
@@ -1465,23 +1463,25 @@ class UnaryFunction(Expr):
             )
         elif self.name == "coalesce":
             first_child, *other_children = self.children
-            first_col = first_child.evaluate(df, context=context).astype(
-                self.dtype, stream=df.stream
+            result = (
+                first_child.evaluate(df, context=context)
+                .astype(self.dtype, stream=df.stream)
+                .obj
             )
-            if first_col.is_scalar:
-                result = plc.filling.repeat(
-                    plc.Table([first_col.obj]),
-                    df.num_rows,
-                    stream=df.stream,
-                ).columns()[0]
-            else:
-                result = first_col.obj
             for child in other_children:
-                if result.null_count() == 0:
+                if result.size() != 1 and result.null_count() == 0:
                     break
                 cast_candidate = child.evaluate(df, context=context).astype(
                     self.dtype, stream=df.stream
                 )
+                if result.size() == 1 and not cast_candidate.is_scalar:
+                    result = plc.filling.repeat(
+                        plc.Table([result]),
+                        cast_candidate.size,
+                        stream=df.stream,
+                    ).columns()[0]
+                if result.null_count() == 0:
+                    continue
                 fill = (
                     cast_candidate.obj_scalar(stream=df.stream)
                     if cast_candidate.is_scalar

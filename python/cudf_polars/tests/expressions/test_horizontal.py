@@ -141,3 +141,44 @@ def test_sum_horizontal_string_unsupported(engine: pl.GPUEngine) -> None:
     df = pl.LazyFrame({"a": ["x", None], "b": ["y", "z"]})
     q = df.select(pl.sum_horizontal("a", "b"))
     assert_ir_translation_raises(q, engine, NotImplementedError)
+
+
+@pytest.fixture(
+    params=[
+        pl.max_horizontal,
+        pl.mean_horizontal,
+        pl.min_horizontal,
+        pl.sum_horizontal,
+    ],
+    ids=["max", "mean", "min", "sum"],
+)
+def horizontal(request: pytest.FixtureRequest):
+    return request.param
+
+
+def test_horizontal_all_literals(
+    df: pl.LazyFrame, engine: pl.GPUEngine, horizontal
+) -> None:
+    q = df.select(horizontal(pl.lit(1), pl.lit(2)))
+    assert_gpu_result_equal(q, engine=engine, check_exact=False)
+
+
+def test_horizontal_all_aggregations(
+    df: pl.LazyFrame, engine: pl.GPUEngine, horizontal
+) -> None:
+    q = df.select(horizontal(pl.col("a").sum(), pl.col("b").sum()))
+    assert_gpu_result_equal(q, engine=engine, check_exact=False)
+
+
+def test_horizontal_literal_and_column(
+    df: pl.LazyFrame, engine: pl.GPUEngine, horizontal
+) -> None:
+    q = df.select(horizontal(pl.lit(1), pl.col("b")))
+    assert_gpu_result_equal(q, engine=engine, check_exact=False)
+
+
+def test_horizontal_all_literals_with_columns(
+    df: pl.LazyFrame, engine: pl.GPUEngine, horizontal
+) -> None:
+    q = df.with_columns(horizontal(pl.lit(1), pl.lit(2)).alias("d"))
+    assert_gpu_result_equal(q, engine=engine, check_exact=False)

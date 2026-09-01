@@ -101,6 +101,9 @@ struct bounded_open {
  * have the same type as the orderby column (or, when the orderby column is a TIMESTAMP, the
  * matching DURATION type). Per-row delta values must be finite, otherwise behaviour is undefined.
  *
+ * Fixed-point (decimal) orderby columns are not supported, unlike the scalar `bounded_closed` /
+ * `bounded_open` endpoints.
+ *
  * The endpoints of this window are included.
  */
 struct bounded_closed_column {

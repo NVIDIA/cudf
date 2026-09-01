@@ -2422,14 +2422,13 @@ class IndexedFrame(Frame):
         slicer = [slice(None, None)] * self.ndim
         slicer[axis] = slice(before, after)
         return self.loc[tuple(slicer)].copy()
-        
+
     @_performance_tracking
     def between_time(
         self,
         start_time,
         end_time,
-        include_start: bool = True,
-        include_end: bool = True,
+        inclusive: str = "both",
     ) -> Self:
         """
         Select values between particular times of the day (e.g., 9:00-9:30 AM).
@@ -2443,10 +2442,8 @@ class IndexedFrame(Frame):
             Initial time as a time filter limit.
         end_time : datetime.time or str
             End time as a time filter limit.
-        include_start : bool, default True
-            Whether the start time needs to be included in the result.
-        include_end : bool, default True
-            Whether the end time needs to be included in the result.
+        inclusive : {"both", "neither", "left", "right"}, default "both"
+            Include boundaries; whether to set each bound as closed or open.
 
         Returns
         -------
@@ -2479,6 +2476,14 @@ class IndexedFrame(Frame):
 
         if not isinstance(self.index, cudf.DatetimeIndex):
             raise TypeError("Index must be DatetimeIndex")
+
+        if inclusive not in {"both", "neither", "left", "right"}:
+            raise ValueError(
+                "Inclusive has to be either 'both', 'neither', "
+                "'left' or 'right'"
+            )
+        include_start = inclusive in {"both", "left"}
+        include_end = inclusive in {"both", "right"}
 
         start_time = to_time(start_time)
         end_time = to_time(end_time)

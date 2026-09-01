@@ -2510,6 +2510,57 @@ class IndexedFrame(Frame):
             )
 
         return self[mask]
+
+    
+    @_performance_tracking
+    def at_time(self, time, axis: int = 0) -> Self:
+        """
+        Select values at particular time of day (e.g., 9:30AM).
+
+        Parameters
+        ----------
+        time : datetime.time or str
+        axis : {0 or 'index', 1 or 'columns'}, default 0
+
+        Returns
+        -------
+        Series or DataFrame
+
+        Raises
+        ------
+        TypeError
+            If the index is not a :class:`~cudf.DatetimeIndex`.
+
+        Examples
+        --------
+        >>> import cudf
+        >>> i = cudf.date_range('2018-04-09', periods=4, freq='12h')
+        >>> ts = cudf.DataFrame({'A': [1, 2, 3, 4]}, index=i)
+        >>> ts
+                             A
+        2018-04-09 00:00:00  1
+        2018-04-09 12:00:00  2
+        2018-04-10 00:00:00  3
+        2018-04-10 12:00:00  4
+        >>> ts.at_time('12:00')
+                             A
+        2018-04-09 12:00:00  2
+        2018-04-10 12:00:00  4
+        """
+        from pandas.core.tools.times import to_time
+
+        if not isinstance(self.index, cudf.DatetimeIndex):
+            raise TypeError("Index must be DatetimeIndex")
+        if self._get_axis_from_axis_arg(axis) != 0:
+            raise NotImplementedError("Only axis=0 is supported.")
+
+        time = to_time(time)
+        target_secs = time.hour * 3600 + time.minute * 60 + time.second
+
+        idx = self.index
+        row_secs = idx.hour * 3600 + idx.minute * 60 + idx.second
+
+        return self[row_secs == target_secs]
     
 
     @property

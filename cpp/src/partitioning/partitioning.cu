@@ -35,6 +35,7 @@
 #include <cub/thread/thread_load.cuh>
 #include <cuda/atomic>
 #include <cuda/iterator>
+#include <cuda/std/cstdint>
 #include <cuda/std/type_traits>
 #include <cuda/stream>
 #include <thrust/scan.h>
@@ -576,7 +577,7 @@ struct staged_scatter_smem {
                                                  size_type rows_per_thread,
                                                  size_type element_width)
   {
-    auto const rows_per_block = static_cast<std::size_t>(BlockSize) * rows_per_thread;
+    auto const rows_per_block = static_cast<cuda::std::size_t>(BlockSize) * rows_per_thread;
     // The slot region is followed by `size_type` arrays, so round its end up to that alignment
     // rather than relying on `element_width` and the block size to happen to leave it aligned.
     local_slots_offset =
@@ -584,15 +585,17 @@ struct staged_scatter_smem {
     local_partition_offsets_offset = local_slots_offset + rows_per_block * sizeof(size_type);
     global_partition_offsets_offset =
       local_partition_offsets_offset +
-      (static_cast<std::size_t>(num_partitions) + 1) * sizeof(size_type);
+      (static_cast<cuda::std::size_t>(num_partitions) + 1) * sizeof(size_type);
     bytes = global_partition_offsets_offset +
-            static_cast<std::size_t>(num_partitions) * sizeof(size_type);
+            static_cast<cuda::std::size_t>(num_partitions) * sizeof(size_type);
   }
 
-  std::size_t local_slots_offset;               ///< Byte offset of the CTA-local row slots
-  std::size_t local_partition_offsets_offset;   ///< Byte offset of the CTA-local partition offsets
-  std::size_t global_partition_offsets_offset;  ///< Byte offset of the global partition offsets
-  std::size_t bytes;                            ///< Total dynamic shared-memory size in bytes
+  cuda::std::size_t local_slots_offset;  ///< Byte offset of the CTA-local row slots
+  cuda::std::size_t
+    local_partition_offsets_offset;  ///< Byte offset of the CTA-local partition offsets
+  cuda::std::size_t
+    global_partition_offsets_offset;  ///< Byte offset of the global partition offsets
+  cuda::std::size_t bytes;            ///< Total dynamic shared-memory size in bytes
 };
 
 /**
@@ -627,7 +630,7 @@ CUDF_KERNEL void copy_fixed_width_columns(fixed_width_column_descriptor const* c
                                           size_type const* scanned_block_partition_sizes)
 {
   extern __shared__ __align__(16)
-    std::uint8_t shared_memory[];  // align to the maximum supported element width
+    cuda::std::uint8_t shared_memory[];  // align to the maximum supported element width
   auto const smem =
     staged_scatter_smem<BlockSize>{num_partitions, rows_per_thread, max_element_width};
   auto* payload     = shared_memory;
@@ -668,10 +671,10 @@ CUDF_KERNEL void copy_fixed_width_columns(fixed_width_column_descriptor const* c
     };
 
     switch (descriptor.element_width) {
-      case 1: copy_column.template operator()<std::uint8_t>(); break;
-      case 2: copy_column.template operator()<std::uint16_t>(); break;
-      case 4: copy_column.template operator()<std::uint32_t>(); break;
-      case 8: copy_column.template operator()<std::uint64_t>(); break;
+      case 1: copy_column.template operator()<cuda::std::uint8_t>(); break;
+      case 2: copy_column.template operator()<cuda::std::uint16_t>(); break;
+      case 4: copy_column.template operator()<cuda::std::uint32_t>(); break;
+      case 8: copy_column.template operator()<cuda::std::uint64_t>(); break;
       case 16: copy_column.template operator()<uint4>(); break;
       default: CUDF_UNREACHABLE("Unsupported element width in fixed-width partition copy");
     }
@@ -701,7 +704,7 @@ CUDF_KERNEL void compute_gather_map(size_type num_rows,
                                     size_type const* scanned_block_partition_sizes,
                                     size_type* gather_map)
 {
-  extern __shared__ __align__(16) std::uint8_t shared_memory[];
+  extern __shared__ __align__(16) cuda::std::uint8_t shared_memory[];
   auto const smem =
     staged_scatter_smem<BlockSize>{num_partitions, rows_per_thread, sizeof(size_type)};
   auto* payload     = reinterpret_cast<size_type*>(shared_memory);

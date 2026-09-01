@@ -11,6 +11,7 @@
 #include <cudf/utilities/traits.hpp>
 
 #include <cuda/std/bit>
+#include <cuda/std/cstdint>
 
 #include <algorithm>
 #include <cstdint>
@@ -31,7 +32,7 @@ enum class layout {
  * @param value Value whose ceiling base-2 logarithm is requested
  * @return `ceil(log2(value))`, or zero when `value` is zero or one
  */
-constexpr std::int32_t ceil_log2(std::uint64_t value) noexcept
+constexpr cuda::std::int32_t ceil_log2(cuda::std::uint64_t value) noexcept
 {
   return value < 2 ? 0 : cuda::std::bit_width(value - 1);
 }
@@ -46,8 +47,8 @@ constexpr std::int32_t ceil_log2(std::uint64_t value) noexcept
  */
 constexpr layout pick_layout(size_type num_partitions, size_type rows_per_block) noexcept
 {
-  auto const partition_bits = ceil_log2(static_cast<std::uint64_t>(num_partitions));
-  auto const offset_bits    = ceil_log2(static_cast<std::uint64_t>(rows_per_block));
+  auto const partition_bits = ceil_log2(static_cast<cuda::std::uint64_t>(num_partitions));
+  auto const offset_bits    = ceil_log2(static_cast<cuda::std::uint64_t>(rows_per_block));
   auto const total_bits     = partition_bits + offset_bits;
   return total_bits <= 32 ? layout::PACKED32 : layout::DEFAULT;
 }
@@ -59,9 +60,9 @@ constexpr layout pick_layout(size_type num_partitions, size_type rows_per_block)
  * CTA-local partition offset in its remaining high-order bits.
  */
 struct packed_view {
-  device_span<std::uint32_t> values;  ///< Packed metadata values, one for each input row
-  std::int32_t partition_bits;        ///< Number of low-order bits reserved for the partition
-                                      ///< identifier
+  device_span<cuda::std::uint32_t> values;  ///< Packed metadata values, one for each input row
+  cuda::std::int32_t partition_bits;        ///< Number of low-order bits reserved for the partition
+                                            ///< identifier
 
   /**
    * @brief Returns the number of rows represented by this view.
@@ -84,8 +85,8 @@ struct packed_view {
                                         size_type partition,
                                         size_type offset) const
   {
-    values[row_index] = (static_cast<std::uint32_t>(offset) << partition_bits) |
-                        static_cast<std::uint32_t>(partition);
+    values[row_index] = (static_cast<cuda::std::uint32_t>(offset) << partition_bits) |
+                        static_cast<cuda::std::uint32_t>(partition);
   }
 
   /**
@@ -121,10 +122,11 @@ struct packed_view {
    *
    * @return Partition-identifier bit mask
    */
-  [[nodiscard]] CUDF_HOST_DEVICE constexpr std::uint32_t partition_mask() const
+  [[nodiscard]] CUDF_HOST_DEVICE constexpr cuda::std::uint32_t partition_mask() const
   {
-    return partition_bits == 0 ? std::uint32_t{0}
-                               : (std::uint32_t{1} << partition_bits) - std::uint32_t{1};
+    return partition_bits == 0
+             ? cuda::std::uint32_t{0}
+             : (cuda::std::uint32_t{1} << partition_bits) - cuda::std::uint32_t{1};
   }
 };
 

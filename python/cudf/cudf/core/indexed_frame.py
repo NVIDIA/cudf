@@ -6,7 +6,6 @@ from __future__ import annotations
 
 import copy
 import itertools
-import operator
 import textwrap
 import warnings
 from collections import Counter

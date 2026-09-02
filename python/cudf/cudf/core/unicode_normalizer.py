@@ -5,15 +5,13 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+import unicodedata as ud
 
 import pylibcudf as plc
 
 from cudf.core.column.column import ColumnBase
+from cudf.core.dataframe import DataFrame
 from cudf.core.series import Series
-
-if TYPE_CHECKING:
-    from cudf.core.dataframe import DataFrame
 
 
 class UnicodeNormalizer:
@@ -82,7 +80,7 @@ class UnicodeNormalizer:
                 f"Invalid normalization form {form!r}. "
                 f"Expected one of: {list(self._FORM_MAP)}"
             )
-        tbl = plc.Table.from_arrow(unicode_data.to_arrow())
+        tbl, _ = unicode_data.to_pylibcudf()
         self._normalizer = plc.nvtext.unicode_normalize.UnicodeNormalizer(
             tbl, self._FORM_MAP[form]
         )
@@ -133,10 +131,6 @@ class UnicodeNormalizer:
                 f"Expected one of: {list(cls._FORM_MAP)}"
             )
 
-        import unicodedata as ud
-
-        import cudf
-
         cp_list: list[str] = []
         ccc_list: list[int] = []
         decomp_list: list[str] = []
@@ -149,11 +143,11 @@ class UnicodeNormalizer:
                 ccc_list.append(ccc)
                 decomp_list.append(decomp)
 
-        unicode_data = cudf.DataFrame(
+        unicode_data = DataFrame(
             {
-                "cp": cudf.Series(cp_list),
-                "ccc": cudf.Series(ccc_list, dtype="int32"),
-                "decomp": cudf.Series(decomp_list),
+                "cp": Series(cp_list),
+                "ccc": Series(ccc_list, dtype="int32"),
+                "decomp": Series(decomp_list),
             }
         )
         return cls(unicode_data, form=form)

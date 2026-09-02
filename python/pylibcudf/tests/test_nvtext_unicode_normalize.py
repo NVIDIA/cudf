@@ -195,21 +195,23 @@ def bmp_nfkd_normalizer():
     )
 
 
-# Test strings exercising a range of normalization scenarios
-_COMPARISON_STRINGS = [
-    "hello world",  # pure ASCII
-    "café",  # precomposed é
-    "café",  # decomposed e + combining acute
-    "élève",  # é, è precomposed
-    "ẛ̣",  # ẛ + combining dot below (reordering needed)
-    "ﬁ ﬂ",  # ﬁ ﬂ ligatures (compat)
-    "Ω",  # Ω (ohm sign, compat with U+03A9)
-    "½",  # ½ vulgar fraction (compat)
-    "　",  # ideographic space (compat)
-    "가",  # 가 Hangul syllable (algorithmic)
-    "힣",  # 힣 last Hangul syllable
-    "",  # empty string
-]
+@pytest.fixture(scope="module")
+def comparison_strings():
+    """Strings exercising a range of normalization scenarios."""
+    return [
+        "hello world",  # pure ASCII
+        "café",  # precomposed é
+        "café",  # decomposed e + combining acute
+        "élève",  # é, è precomposed
+        "ẛ̣",  # ẛ + combining dot below (reordering needed)
+        "ﬁ ﬂ",  # ﬁ ﬂ ligatures (compat)
+        "Ω",  # Ω (ohm sign, compat with U+03A9)
+        "½",  # ½ vulgar fraction (compat)
+        "　",  # ideographic space (compat)
+        "가",  # 가 Hangul syllable (algorithmic)
+        "힣",  # 힣 last Hangul syllable
+        "",  # empty string
+    ]
 
 
 @pytest.mark.parametrize(
@@ -221,14 +223,16 @@ _COMPARISON_STRINGS = [
         ("NFKD", "bmp_nfkd_normalizer"),
     ],
 )
-def test_compare_with_python_unicodedata(form, fixture_name, request):
+def test_compare_with_python_unicodedata(
+    form, fixture_name, comparison_strings, request
+):
     """GPU normalization must match Python's unicodedata.normalize reference."""
     normalizer = request.getfixturevalue(fixture_name)
-    input_arr = pa.array(_COMPARISON_STRINGS, type=pa.string())
+    input_arr = pa.array(comparison_strings, type=pa.string())
     gpu_result = normalize_unicode(
         plc.Column.from_arrow(input_arr), normalizer
     )
     expected = pa.array(
-        [ud.normalize(form, s) for s in _COMPARISON_STRINGS], type=pa.string()
+        [ud.normalize(form, s) for s in comparison_strings], type=pa.string()
     )
     assert_column_eq(expected, gpu_result)

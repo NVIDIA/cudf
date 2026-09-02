@@ -2502,6 +2502,7 @@ class IndexedFrame(Frame):
             + idx.minute.astype("int64") * 60
             + idx.second.astype("int64")
         ) * 1_000_000 + idx.microsecond.astype("int64")
+        row_secs = row_secs.fillna(-1)
 
         left_op = operator.ge if include_start else operator.gt
         right_op = operator.le if include_end else operator.lt

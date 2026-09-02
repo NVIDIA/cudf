@@ -2562,14 +2562,8 @@ class IndexedFrame(Frame):
 
         idx = self.index
         row_secs = (
-<<<<<<< HEAD
-            idx.hour.astype("int32") * 3600
-            + idx.minute.astype("int32") * 60
-            + idx.second.astype("int32")
-=======
             (idx.hour.astype('int64') * 3600 + idx.minute.astype('int64') * 60 + idx.second.astype('int64')) * 1_000_000
             + idx.microsecond.astype('int64')
->>>>>>> 059fe66b31 (Fix fractional-second precision in between_time/at_time; add axis=1 guard in at_time)
         )
 
         return self[row_secs == target_secs]

@@ -31,15 +31,17 @@ from enum import IntEnum, IntFlag
 from typing import Any
 
 import cudf
-from docutils.nodes import Text
+from docutils import nodes
+from docutils.nodes import Node, Text
 from packaging.version import Version
 from pygments.lexer import RegexLexer
 from pygments.token import Text as PText
 from sphinx.addnodes import pending_xref
+from sphinx.application import Sphinx
 from sphinx.ext import intersphinx
 from sphinx.ext.autodoc import ClassDocumenter
 from sphinx.highlighting import lexers
-from sphinx.util.nodes import make_refnode
+from sphinx.util.nodes import clean_astext, make_refnode
 
 
 class PseudoLexer(RegexLexer):
@@ -72,7 +74,6 @@ extensions = [
     "breathe",
     "sphinx.ext.intersphinx",
     "sphinx.ext.autodoc",
-    "sphinx.ext.autosectionlabel",
     "sphinx.ext.autosummary",
     "sphinx_copybutton",
     "sphinx_remove_toctrees",
@@ -83,9 +84,6 @@ extensions = [
     "PandasCompat",
     "myst_nb",
 ]
-
-# Disambiguate section anchors across documents
-autosectionlabel_prefix_document = True
 
 remove_from_toctrees = ["cudf/api_docs/api/*"]
 
@@ -836,8 +834,35 @@ class PLCIntEnumDocumenter(ClassDocumenter):
             self.add_line("", source_name)
 
 
+def register_sections_as_label(app: Sphinx, document: Node) -> None:
+    """
+    Turn all sections in documents into labels for intersphinx.
+
+    Unlike the autosectionlabel extension this uses the perfectly good,
+    document-unique, section label name. So repeated sections with the same
+    name do not produce duplicate label warnings.
+    """
+    domain = app.env.domains.standard_domain
+    docname = app.env.docname
+
+    for node in document.findall(nodes.section):
+        labelid = node["ids"][0]
+        name = nodes.fully_normalize_name(f"{docname}:{labelid}")
+        title = clean_astext(node[0])
+
+        domain.anonlabels[name] = docname, labelid
+        domain.labels[name] = docname, labelid, title
+
+
+def use_slugged_duplicate_ids(app):
+    # Use default docutils deduplication scheme for duplicate node ids.
+    app.env.settings["auto_id_prefix"] = "%"
+
+
 def setup(app):
+    app.connect("builder-inited", use_slugged_duplicate_ids)
     app.connect("doctree-read", resolve_aliases)
+    app.connect("doctree-read", register_sections_as_label)
     app.connect("missing-reference", on_missing_reference)
     app.setup_extension("sphinx.ext.autodoc")
     app.add_autodocumenter(PLCIntEnumDocumenter)

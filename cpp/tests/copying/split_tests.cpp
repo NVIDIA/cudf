@@ -2722,6 +2722,44 @@ TEST_F(ContiguousSplitNestedTypesTest, ListOfStructChunked)
     /*split*/ false);
 }
 
+// common functions for testing dictionary columns through contiguous_split.
+//
+// every partition holds all of the keys, so those are compared against the source directly and
+// the rows through the decoded values
+void verify_dictionaries(cudf::table_view const& expected, cudf::table_view const& result)
+{
+  for (auto i = 0; i < expected.num_columns(); ++i) {
+    cudf::dictionary_column_view const dict(result.column(i));
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(cudf::dictionary_column_view(expected.column(i)).keys(),
+                                   dict.keys());
+    // decode does not accept a zero row dictionary
+    if (dict.size() == 0) { continue; }
+    CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(
+      *cudf::dictionary::decode(cudf::dictionary_column_view(expected.column(i))),
+      *cudf::dictionary::decode(dict));
+  }
+}
+
+// `Project` picks the dictionary columns out of a partition
+template <typename ProjectFunc>
+void split_and_verify_dictionaries(cudf::table_view const& input,
+                                   std::vector<cudf::size_type> const& splits,
+                                   ProjectFunc Project)
+{
+  auto const expected = cudf::split(input, splits);
+  auto const result   = cudf::contiguous_split(input, splits);
+  ASSERT_EQ(expected.size(), result.size());
+  for (std::size_t i = 0; i < result.size(); ++i) {
+    verify_dictionaries(Project(expected[i]), Project(result[i].table));
+  }
+}
+
+void split_and_verify_dictionaries(cudf::table_view const& input,
+                                   std::vector<cudf::size_type> const& splits)
+{
+  split_and_verify_dictionaries(input, splits, [](cudf::table_view const& t) { return t; });
+}
+
 TEST_F(ContiguousSplitNestedTypesTest, Dictionaries)
 {
   cudf::test::dictionary_column_wrapper<std::string> strs{
@@ -2729,57 +2767,34 @@ TEST_F(ContiguousSplitNestedTypesTest, Dictionaries)
   cudf::test::dictionary_column_wrapper<int32_t> nums{{7, 6, 5, 4, 3, 2, 1, 0}};
   cudf::table_view src({strs, nums});
 
-  // every partition holds all of the keys, so compare those against the input directly and the
-  // rows through the decoded values
-  auto const verify = [](cudf::table_view const& expected, cudf::table_view const& result) {
-    for (auto i = 0; i < expected.num_columns(); ++i) {
-      cudf::dictionary_column_view const dict(result.column(i));
-      CUDF_TEST_EXPECT_COLUMNS_EQUAL(cudf::dictionary_column_view(expected.column(i)).keys(),
-                                     dict.keys());
-      // decode does not accept a zero row dictionary
-      if (dict.size() == 0) { continue; }
-      CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(
-        *cudf::dictionary::decode(cudf::dictionary_column_view(expected.column(i))),
-        *cudf::dictionary::decode(dict));
-    }
-  };
+  split_and_verify_dictionaries(src, {0, 3, 6, 8});
 
-  // `project` picks the dictionary columns out of a partition
-  auto const split_and_verify = [&verify](cudf::table_view const& input,
-                                          std::vector<cudf::size_type> const& splits,
-                                          auto project) {
-    auto const expected = cudf::split(input, splits);
-    auto const result   = cudf::contiguous_split(input, splits);
-    ASSERT_EQ(expected.size(), result.size());
-    for (std::size_t i = 0; i < result.size(); ++i) {
-      verify(project(expected[i]), project(result[i].table));
-    }
-  };
-  auto const as_is = [](cudf::table_view const& t) { return t; };
+  auto const packed = cudf::pack(src);
+  verify_dictionaries(src, cudf::unpack(packed));
+}
 
-  split_and_verify(src, {0, 3, 6, 8}, as_is);
+TEST_F(ContiguousSplitNestedTypesTest, DictionariesNarrowIndices)
+{
+  // split at a row that is not a multiple of the validity or index size
+  cudf::test::fixed_width_column_wrapper<int32_t> plain{{5, 4, 3, 2, 1, 0, 5, 4, 3}};
+  auto const dict = cudf::dictionary::encode(plain, cudf::data_type{cudf::type_id::INT8});
+  split_and_verify_dictionaries(cudf::table_view({*dict}), {3, 5});
+}
 
-  {
-    auto const packed = cudf::pack(src);
-    verify(src, cudf::unpack(packed));
-  }
-
+TEST_F(ContiguousSplitNestedTypesTest, DictionariesChunked)
+{
   // pre-sliced input, packed in one piece
   {
-    auto const sliced = cudf::slice(src, {2, 7})[0];
+    cudf::test::dictionary_column_wrapper<std::string> strs{
+      {"aa", "bb", "cc", "dd", "aa", "bb", "cc", "dd"}, {1, 1, 0, 1, 1, 1, 1, 1}};
+    cudf::test::dictionary_column_wrapper<int32_t> nums{{7, 6, 5, 4, 3, 2, 1, 0}};
+    auto const sliced = cudf::slice(cudf::table_view({strs, nums}), {2, 7})[0];
     auto const result = do_chunked_pack(sliced);
     ASSERT_EQ(1, result.size());
-    verify(sliced, result[0].table);
+    verify_dictionaries(sliced, result[0].table);
   }
 
-  // narrow indices split at a row that is not a multiple of the validity or index size
-  {
-    cudf::test::fixed_width_column_wrapper<int32_t> plain{{5, 4, 3, 2, 1, 0, 5, 4, 3}};
-    auto const dict = cudf::dictionary::encode(plain, cudf::data_type{cudf::type_id::INT8});
-    split_and_verify(cudf::table_view({*dict}), {3, 5}, as_is);
-  }
-
-  // a chunked pack that spans more than one chunk
+  // large enough to span more than one chunk
   {
     auto const iter = cudf::detail::make_counting_transform_iterator(0, [](auto i) { return i; });
     cudf::test::fixed_width_column_wrapper<int32_t> plain(iter, iter + 400000);
@@ -2787,34 +2802,35 @@ TEST_F(ContiguousSplitNestedTypesTest, Dictionaries)
     auto const input  = cudf::table_view({*dict});
     auto const result = do_chunked_pack(input);
     ASSERT_EQ(1, result.size());
-    verify(input, result[0].table);
+    verify_dictionaries(input, result[0].table);
   }
+}
 
-  // dictionaries that are not root columns: the indices follow the parent's row range while the
-  // keys do not
-  {
-    cudf::test::dictionary_column_wrapper<std::string> keys{
-      {"aa", "bb", "cc", "dd", "aa", "bb", "cc", "dd"}, {1, 1, 0, 1, 1, 1, 1, 1}};
-    cudf::test::fixed_width_column_wrapper<int32_t> ints{{0, 1, 2, 3, 4, 5, 6, 7}};
-    cudf::test::structs_column_wrapper st({keys, ints});
-    split_and_verify(cudf::table_view({st}), {3}, [](cudf::table_view const& t) {
-      return cudf::table_view(
-        {cudf::structs_column_view(t.column(0)).get_sliced_child(0, cudf::get_default_stream())});
-    });
-  }
+TEST_F(ContiguousSplitNestedTypesTest, StructOfDictionary)
+{
+  // the indices follow the parent's row range while the keys do not
+  cudf::test::dictionary_column_wrapper<std::string> keys{
+    {"aa", "bb", "cc", "dd", "aa", "bb", "cc", "dd"}, {1, 1, 0, 1, 1, 1, 1, 1}};
+  cudf::test::fixed_width_column_wrapper<int32_t> ints{{0, 1, 2, 3, 4, 5, 6, 7}};
+  cudf::test::structs_column_wrapper st({keys, ints});
+  split_and_verify_dictionaries(cudf::table_view({st}), {3}, [](cudf::table_view const& t) {
+    return cudf::table_view(
+      {cudf::structs_column_view(t.column(0)).get_sliced_child(0, cudf::get_default_stream())});
+  });
+}
 
-  // under a list, the keys still root their own row range while sitting at a nonzero offset depth
-  {
-    cudf::test::dictionary_column_wrapper<std::string> keys{
-      {"aa", "bb", "cc", "dd", "aa", "bb", "cc", "dd", "aa"}, {1, 1, 0, 1, 1, 1, 1, 1, 1}};
-    cudf::test::fixed_width_column_wrapper<cudf::size_type> offsets{0, 2, 2, 5, 9};
-    auto const list =
-      cudf::make_lists_column(4, offsets.release(), keys.release(), 0, rmm::device_buffer{});
-    split_and_verify(cudf::table_view({*list}), {2}, [](cudf::table_view const& t) {
-      return cudf::table_view(
-        {cudf::lists_column_view(t.column(0)).get_sliced_child(cudf::get_default_stream())});
-    });
-  }
+TEST_F(ContiguousSplitNestedTypesTest, ListOfDictionary)
+{
+  // the keys still root their own row range while sitting at a nonzero offset depth
+  cudf::test::dictionary_column_wrapper<std::string> keys{
+    {"aa", "bb", "cc", "dd", "aa", "bb", "cc", "dd", "aa"}, {1, 1, 0, 1, 1, 1, 1, 1, 1}};
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> offsets{0, 2, 2, 5, 9};
+  auto const list =
+    cudf::make_lists_column(4, offsets.release(), keys.release(), 0, rmm::device_buffer{});
+  split_and_verify_dictionaries(cudf::table_view({*list}), {2}, [](cudf::table_view const& t) {
+    return cudf::table_view(
+      {cudf::lists_column_view(t.column(0)).get_sliced_child(cudf::get_default_stream())});
+  });
 }
 
 struct ContiguousSplitLongStrings : public cudf::test::BaseFixture {};

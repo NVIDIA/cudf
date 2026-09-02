@@ -2489,16 +2489,19 @@ class IndexedFrame(Frame):
         end_time = to_time(end_time)
 
         def _time_to_seconds(t):
-            return (t.hour * 3600 + t.minute * 60 + t.second) * 1_000_000 + t.microsecond
+            return (
+                t.hour * 3600 + t.minute * 60 + t.second
+            ) * 1_000_000 + t.microsecond
 
         start_secs = _time_to_seconds(start_time)
         end_secs = _time_to_seconds(end_time)
 
         idx = self.index
         row_secs = (
-            (idx.hour.astype('int64') * 3600 + idx.minute.astype('int64') * 60 + idx.second.astype('int64')) * 1_000_000
-            + idx.microsecond.astype('int64')
-        )
+            idx.hour.astype("int64") * 3600
+            + idx.minute.astype("int64") * 60
+            + idx.second.astype("int64")
+        ) * 1_000_000 + idx.microsecond.astype("int64")
 
         left_op = operator.ge if include_start else operator.gt
         right_op = operator.le if include_end else operator.lt
@@ -2554,7 +2557,6 @@ class IndexedFrame(Frame):
         if self._get_axis_from_axis_arg(axis) != 0:
             raise NotImplementedError("Only axis=0 is supported.")
 
-        
         time = to_time(time)
         target_secs = (
             time.hour * 3600 + time.minute * 60 + time.second
@@ -2562,9 +2564,10 @@ class IndexedFrame(Frame):
 
         idx = self.index
         row_secs = (
-            (idx.hour.astype('int64') * 3600 + idx.minute.astype('int64') * 60 + idx.second.astype('int64')) * 1_000_000
-            + idx.microsecond.astype('int64')
-        )
+            idx.hour.astype("int64") * 3600
+            + idx.minute.astype("int64") * 60
+            + idx.second.astype("int64")
+        ) * 1_000_000 + idx.microsecond.astype("int64")
 
         return self[row_secs == target_secs]
 

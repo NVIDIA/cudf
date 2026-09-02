@@ -104,6 +104,7 @@ exclude_also = [
 # See https://github.com/NVIDIA/cudf/issues/22568.
 omit = [
   "cudf_polars/testing/inject_gpu_engine.py",
+  "cudf_polars/testing/narwhals_test_plugin.py",
   "cudf_polars/streaming/**",
   "cudf_polars/engine/**",
 ]

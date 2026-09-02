@@ -49,9 +49,12 @@ Currently 3 variations of Narwhals unit tests are run:
 
 Each of these variations has an accompanying pytest plugin to mark tests to skip or as expected to fail before the tests are run.
 
-1. The cudf test run uses `ci/narwhals_cudf_test_plugin.py` via `-p narwhals_cudf_test_plugin`
-2. The cudf.polars test run uses `ci/narwhals_cudf_polars_test_plugin.py` via `-p narwhals_cudf_polars_test_plugin`
+1. The cudf test run uses `python/cudf/cudf/testing/narwhals_test_plugin.py` via `-p cudf.testing.narwhals_test_plugin`
+2. The cudf.polars test run uses `python/cudf_polars/cudf_polars/testing/narwhals_test_plugin.py` via `-p cudf_polars.testing.narwhals_test_plugin`
 3. The cudf.pandas test run uses `ci/narwhals_cudf_pandas_test_plugin.py` via `-p narwhals_cudf_pandas_test_plugin`
+
+The cudf and cudf-polars plugins live inside their respective packages so that they are owned by the
+cudf-python and cudf-polars code owners. They are only ever loaded when passed explicitly with `-p`.
 
 The `TESTS_TO_SKIP` and `EXPECTED_FAILURES` dictionaries in each file contain keys that are valid pytest test identifiers and values that are the reasons for skipping or failure of the test respectively.
 
@@ -59,7 +62,7 @@ Before running Narwhals unit tests, review each `TESTS_TO_SKIP` and `EXPECTED_FA
 
 Next, for each variation of Narwhals unit tests:
 
-1. Run the exact `pytest` command found in `ci/test_narwhals.sh` for the test variation and pipe the output to a file. Run it from within the cloned Narwhals repository (the CI script does `pushd narwhals` first) and set `PYTHONPATH` to the `ci/` directory so the `-p narwhals_*_test_plugin` plugins can be imported, e.g. `PYTHONPATH="<repo>/ci" ...`. Node ids in this working directory are of the form `tests/...py::<test>[...]`, which is exactly the dictionary key format.
+1. Run the exact `pytest` command found in `ci/test_narwhals.sh` for the test variation and pipe the output to a file. Run it from within the cloned Narwhals repository (the CI script does `pushd narwhals` first). The cudf and cudf-polars plugins are importable from the installed packages, but the cudf.pandas run still needs `PYTHONPATH` set to the `ci/` directory so `-p narwhals_cudf_pandas_test_plugin` can be imported, e.g. `PYTHONPATH="<repo>/ci" ...`. Node ids in this working directory are of the form `tests/...py::<test>[...]`, which is exactly the dictionary key format.
 2. Review the test output file and collect the failing tests.
 3. For each failing test:
     * If a test is failing because it exercises behavior that cannot be supported in cudf or cudf-polars, add a key, value pair to the `TESTS_TO_SKIP` dictionary where the key is in the format `<path>::<pytest_node_id>` and the value is a short reason for skipping.

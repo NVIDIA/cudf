@@ -152,15 +152,19 @@ def check_quent_events(engine: StreamingEngine, quent_context: QuentContext) -> 
     assert len(query_events) == 4
 
     query_init, query_planning, query_executing, query_exit = query_events
-    assert query_init["id"] == str(quent_context.query.id)
+    # Each ``.collect()`` derives a fresh per-collect query id, so the emitted
+    # id must be unique to this collect rather than the engine-scoped template
+    # ``quent_context.query`` id.
+    query_id = query_init["id"]
+    assert query_id != str(quent_context.query.id)
     assert (
         query_init["data"]["Query"]["state"]["Init"]["query_group_id"]
         == query_group_declaration["id"]
     )
     assert query_init["data"]["Query"]["seq"] == 0
-    assert query_planning["id"] == str(quent_context.query.id)
+    assert query_planning["id"] == query_id
     assert query_planning["data"]["Query"]["seq"] == 1
-    assert query_executing["id"] == str(quent_context.query.id)
+    assert query_executing["id"] == query_id
     assert query_executing["data"]["Query"]["seq"] == 2
-    assert query_exit["id"] == str(quent_context.query.id)
+    assert query_exit["id"] == query_id
     assert query_exit["data"]["Query"]["seq"] == 3

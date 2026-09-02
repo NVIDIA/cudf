@@ -85,6 +85,7 @@ if TYPE_CHECKING:
 
     from cudf_polars.containers.dataframe import NamedColumn
     from cudf_polars.dsl.utils.io import CachedParquetInfo
+    from cudf_polars.streaming.io import SplitScan
     from cudf_polars.streaming.rank_aware_source import RankAwareSource
     from cudf_polars.typing import CSECache, ClosedInterval, Schema, Slice as Zlice
     from cudf_polars.utils.config import ParquetOptions
@@ -135,15 +136,45 @@ class IRExecutionContext:
     py_executor
        Thread pool for thread offload in async execution, only used by
        streaming engine.
+    prefetch_executor
+       Thread pool for offloading hybrid scan prefetch housekeeping, only
+       used by streaming engine. Kept separate from ``py_executor`` so
+       short prefetch calls don't queue behind long-running decode work.
     get_cuda_stream
         A zero-argument callable that returns a CUDA stream.
     query_id
         Identifier for the query being executed.
+    pending_prefetch_plans
+        Row-group pruning submitted for hybrid scan splits before the actor
+        graph starts (see ``submit_prefetch_plans_for_ir``), keyed by
+        split. Empty when the batch prefetch pipeline isn't in use.
     """
 
     py_executor: concurrent.futures.ThreadPoolExecutor | None = field(default=None)
+    prefetch_executor: concurrent.futures.ThreadPoolExecutor | None = field(
+        default=None
+    )
     get_cuda_stream: Callable[[], Stream] = field(default=get_cuda_stream)
     query_id: uuid.UUID = field(default_factory=uuid.uuid4)
+    pending_prefetch_plans: dict[SplitScan, concurrent.futures.Future[Any]] = field(
+        default_factory=dict, compare=False, repr=False
+    )
+
+    async def _run_in_executor(
+        self,
+        executor: concurrent.futures.ThreadPoolExecutor | None,
+        func: Callable[P, T],
+        /,
+        *args: P.args,
+        **kwargs: P.kwargs,
+    ) -> T:
+        assert executor is not None, (
+            "Execution context must have a thread pool for offload"
+        )
+        loop = asyncio.get_running_loop()
+        ctx = contextvars.copy_context()
+        func_call = functools.partial(ctx.run, func, *args, **kwargs)
+        return await loop.run_in_executor(executor, func_call)
 
     async def to_thread(
         self, func: Callable[P, T], /, *args: P.args, **kwargs: P.kwargs
@@ -169,13 +200,36 @@ class IRExecutionContext:
         This offloads the function to run in the thread pool attached to
         this execution context.
         """
-        assert self.py_executor is not None, (
-            "Execution context must have a thread pool for offload"
+        return await self._run_in_executor(self.py_executor, func, *args, **kwargs)
+
+    async def to_prefetch_thread(
+        self, func: Callable[P, T], /, *args: P.args, **kwargs: P.kwargs
+    ) -> T:
+        """
+        Run a function asynchronously in the prefetch housekeeping thread pool.
+
+        Parameters
+        ----------
+        func
+            The function to run.
+        args
+            Arguments.
+        kwargs
+            Keyword arguments.
+
+        Returns
+        -------
+        Awaitable to obtain the result of calling ``func``.
+
+        Notes
+        -----
+        Like :meth:`to_thread`, but offloads to ``prefetch_executor``
+        instead of ``py_executor``, so hybrid scan prefetch housekeeping
+        never queues behind long-running decode work on the main pool.
+        """
+        return await self._run_in_executor(
+            self.prefetch_executor, func, *args, **kwargs
         )
-        loop = asyncio.get_running_loop()
-        ctx = contextvars.copy_context()
-        func_call = functools.partial(ctx.run, func, *args, **kwargs)
-        return await loop.run_in_executor(self.py_executor, func_call)
 
     @contextlib.contextmanager
     def stream_ordered_after(self, *dfs: DataFrame) -> Generator[Stream, None, None]:

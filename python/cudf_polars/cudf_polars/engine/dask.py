@@ -137,6 +137,7 @@ class _WorkerContext:
     comm: Communicator | None
     ctx: Context | None
     py_executor: ThreadPoolExecutor | None
+    prefetch_executor: ThreadPoolExecutor | None
     base_mr: rmm.mr.DeviceMemoryResource | None
     quent_logger: cudf_polars.quent._logging.QuentLogger | None
     quent_worker: cudf_polars.quent._types.Worker
@@ -175,7 +176,12 @@ def _worker_evaluate_persisted(
     """
     assert dask_worker is not None
     mp_ctx: _WorkerContext = getattr(dask_worker, f"_cudf_polars_mp_context_{uid}")
-    if mp_ctx.ctx is None or mp_ctx.comm is None or mp_ctx.py_executor is None:
+    if (
+        mp_ctx.ctx is None
+        or mp_ctx.comm is None
+        or mp_ctx.py_executor is None
+        or mp_ctx.prefetch_executor is None
+    ):
         raise RuntimeError(
             "_setup_worker must be called before _worker_evaluate_persisted"
         )
@@ -184,6 +190,7 @@ def _worker_evaluate_persisted(
         mp_ctx.ctx,
         mp_ctx.comm,
         mp_ctx.py_executor,
+        mp_ctx.prefetch_executor,
         ir,
         config_options,
         query_id,
@@ -318,6 +325,7 @@ def _setup_root(
             comm=comm,
             ctx=None,
             py_executor=None,
+            prefetch_executor=None,
             base_mr=base_mr,
             quent_worker=quent_worker,
             quent_logger=quent_logger,
@@ -338,6 +346,7 @@ def _setup_worker(
     worker_ids: list[uuid.UUID],
     engine_id: uuid.UUID,
     num_py_executors: int,
+    num_prefetch_executors: int,
     kvikio_nthreads: int,
     kvikio_statistics: bool,
     quent_context: cudf_polars.quent.QuentContext | None,
@@ -375,6 +384,9 @@ def _setup_worker(
         Injected by ``distributed`` when called via :meth:`distributed.Client.run`.
     num_py_executors
         Number of Python executors to use for this worker.
+    num_prefetch_executors
+        Number of hybrid scan prefetch housekeeping executors to use for
+        this worker, separate from ``num_py_executors``.
     kvikio_nthreads
         Number of kvikio threads to configure on this worker process.
     kvikio_statistics
@@ -430,6 +442,10 @@ def _setup_worker(
         max_workers=num_py_executors,
         thread_name_prefix="dask-executor",
     )
+    prefetch_executor = ThreadPoolExecutor(
+        max_workers=num_prefetch_executors,
+        thread_name_prefix="dask-prefetch-executor",
+    )
 
     if quent_context is not None:
         quent_logger: cudf_polars.quent._logging.QuentLogger | None = (
@@ -442,6 +458,7 @@ def _setup_worker(
         comm=comm,
         ctx=ctx,
         py_executor=py_executor,
+        prefetch_executor=prefetch_executor,
         base_mr=base_mr,
         mr=mr,
         quent_worker=quent_worker,
@@ -489,6 +506,8 @@ def _teardown_worker(
         rank_local_store.close_store(uid)
         if mp_ctx.py_executor is not None:
             mp_ctx.py_executor.shutdown(wait=True, cancel_futures=True)
+        if mp_ctx.prefetch_executor is not None:
+            mp_ctx.prefetch_executor.shutdown(wait=True, cancel_futures=True)
         # Shut down the Context explicitly on the same thread that
         # constructed it.
         try:
@@ -729,7 +748,12 @@ def _worker_evaluate(
     """
     assert dask_worker is not None
     mp_ctx: _WorkerContext = getattr(dask_worker, f"_cudf_polars_mp_context_{uid}")
-    if mp_ctx.ctx is None or mp_ctx.comm is None or mp_ctx.py_executor is None:
+    if (
+        mp_ctx.ctx is None
+        or mp_ctx.comm is None
+        or mp_ctx.py_executor is None
+        or mp_ctx.prefetch_executor is None
+    ):
         raise RuntimeError("_setup_worker must be called before _worker_evaluate")
     local_quent_context: LocalQuentContext | None = None
     if quent_context is not None:
@@ -751,6 +775,7 @@ def _worker_evaluate(
         mp_ctx.ctx,
         mp_ctx.comm,
         mp_ctx.py_executor,
+        mp_ctx.prefetch_executor,
         ir,
         config_options,
         local_quent_context=local_quent_context,
@@ -1072,6 +1097,7 @@ class DaskEngine(StreamingEngine):
             rapidsmpf_options_as_bytes,
             quent_context=quent_context,
             num_py_executors=executor_options.get("num_py_executors", 8),
+            num_prefetch_executors=executor_options.get("num_prefetch_executors", 8),
             kvikio_nthreads=executor_options["kvikio_nthreads"],
             kvikio_statistics=executor_options["kvikio_statistics"],
         )

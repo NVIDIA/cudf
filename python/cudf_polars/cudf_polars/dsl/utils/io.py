@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import concurrent.futures
 import contextlib
-from dataclasses import dataclass, field
+from dataclasses import InitVar, dataclass, field
 from typing import TYPE_CHECKING
 
 import kvikio
@@ -52,20 +52,39 @@ class CachedParquetInfo:
     size: int | None
     file_metadata: plc.io.parquet_metadata.FileMetaData
     parse_hybrid_metadata: bool = field(default=False, compare=False, repr=False)
+    # A handle already opened while sizing this file during footer prefetch
+    # (see `_prefetch_parquet_footers_for_paths`), reused here instead of
+    # paying for a second HTTP HEAD request via `remote_handle()`. Only an
+    # __init__-time argument, not a stored field.
+    preopened_remote_handle: InitVar[kvikio.RemoteFile | kvikio.CuFile | None] = None
     # For splits of the same file, the metadata is parsed once and shared.
     _hybrid_scan_metadata: plc.io.experimental.HybridScanMetadata | None = field(
         default=None, init=False, compare=False, repr=False
     )
+    # For splits of the same file, the handle is opened once and shared.
+    _remote_handle: kvikio.RemoteFile | kvikio.CuFile | None = field(
+        default=None, init=False, compare=False, repr=False
+    )
 
-    def __post_init__(self) -> None:  # noqa: D105
+    def __post_init__(
+        self, preopened_remote_handle: kvikio.RemoteFile | kvikio.CuFile | None
+    ) -> None:
+        """Adopt a preopened remote handle and eagerly parse hybrid scan metadata."""
+        if preopened_remote_handle is not None:
+            object.__setattr__(self, "_remote_handle", preopened_remote_handle)
         if self.parse_hybrid_metadata:
-            object.__setattr__(
-                self,
-                "_hybrid_scan_metadata",
-                plc.io.experimental.HybridScanMetadata.from_parquet_metadata(
-                    self.file_metadata, self.default_reader_options()
-                ),
-            )
+            with nvtx_annotate_cudf_polars(message="parse_hybrid_scan_metadata"):
+                object.__setattr__(
+                    self,
+                    "_hybrid_scan_metadata",
+                    plc.io.experimental.HybridScanMetadata.from_parquet_metadata(
+                        self.file_metadata, self.default_reader_options()
+                    ),
+                )
+            # Opened eagerly so splits of the same file sharing this handle from
+            # prefetch worker threads never race to open their own. A no-op when
+            # `preopened_remote_handle` was provided.
+            self.remote_handle()
 
     def hybrid_scan_reader(
         self,
@@ -79,6 +98,19 @@ class CachedParquetInfo:
             )
             object.__setattr__(self, "_hybrid_scan_metadata", metadata)
         return plc.io.experimental.HybridScanReader.from_metadata(metadata)
+
+    def remote_handle(self) -> kvikio.RemoteFile | kvikio.CuFile:
+        """Return the kvikio handle for this file, opened once and shared."""
+        handle = self._remote_handle
+        if handle is None:
+            with nvtx_annotate_cudf_polars(message="open_remote_handle"):
+                handle = (
+                    kvikio.RemoteFile.open(self.path, nbytes=self.size)
+                    if plc.io.SourceInfo._is_remote_uri(self.path)
+                    else kvikio.CuFile(self.path)
+                )
+            object.__setattr__(self, "_remote_handle", handle)
+        return handle
 
     def default_reader_options(self) -> plc.io.parquet.ParquetReaderOptions:
         """Return baseline ``ParquetReaderOptions`` for this cached parquet file."""
@@ -118,6 +150,10 @@ def _prefetch_parquet_footers_for_paths(
     # TODO: https://github.com/NVIDIA/cudf/issues/22734, use object metadata from polars
     # For now, we'll just use kvikio to explicitly get the size.
     sizes: list[int | None] = []
+    # Remote handles opened here (to get the size) are handed to the
+    # resulting `CachedParquetInfo` and reused, rather than closed and
+    # reopened later, which would cost a second HTTP HEAD request per file.
+    handles: list[kvikio.RemoteFile | None] = []
 
     for path in paths:
         if paths and plc.io.SourceInfo._is_remote_uri(path):
@@ -125,25 +161,39 @@ def _prefetch_parquet_footers_for_paths(
             # request for S3/HTTP endpoints, but that's the entire reason we're running
             # this code. So long as it makes just *one* HTTP request, there's no advantage
             # to inferring the endpoint type.
-            with kvikio.RemoteFile.open(path) as remote_file:  # pragma: no cover
-                sizes.append(remote_file.nbytes())
+            with nvtx_annotate_cudf_polars(message="open_remote_handle_for_sizing"):
+                remote_file = kvikio.RemoteFile.open(path)  # pragma: no cover
+                sizes.append(remote_file.nbytes())  # pragma: no cover
+            if parse_hybrid_metadata:
+                handles.append(remote_file)  # pragma: no cover
+            else:
+                remote_file.close()  # pragma: no cover
+                handles.append(None)  # pragma: no cover
         else:
             sizes.append(None)
+            handles.append(None)
 
-    metadata = plc.io.parquet_metadata.read_parquet_footers(
-        plc.io.types.SourceInfo(
-            [
-                plc.io.types.FilepathSource(path, size)
-                for path, size in zip(paths, sizes, strict=True)
-            ]
+    with nvtx_annotate_cudf_polars(message="read_parquet_footers"):
+        metadata = plc.io.parquet_metadata.read_parquet_footers(
+            plc.io.types.SourceInfo(
+                [
+                    plc.io.types.FilepathSource(path, size)
+                    for path, size in zip(paths, sizes, strict=True)
+                ]
+            )
         )
-    )
 
     return [
         CachedParquetInfo(
-            path, size, file_metadata, parse_hybrid_metadata=parse_hybrid_metadata
+            path,
+            size,
+            file_metadata,
+            parse_hybrid_metadata=parse_hybrid_metadata,
+            preopened_remote_handle=handle,
         )
-        for path, size, file_metadata in zip(paths, sizes, metadata, strict=True)
+        for path, size, file_metadata, handle in zip(
+            paths, sizes, metadata, handles, strict=True
+        )
     ]
 
 

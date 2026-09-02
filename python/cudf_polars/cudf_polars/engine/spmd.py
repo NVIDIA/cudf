@@ -131,6 +131,7 @@ def evaluate_pipeline_spmd_mode(
     comm = config_options.executor.spmd_context.comm
     context = config_options.executor.spmd_context.context
     py_executor = config_options.executor.spmd_context.py_executor
+    prefetch_executor = config_options.executor.spmd_context.prefetch_executor
 
     quent_context = config_options.executor.quent_context
     local_quent_context: LocalQuentContext | None = None
@@ -155,6 +156,7 @@ def evaluate_pipeline_spmd_mode(
         context,
         comm,
         py_executor,
+        prefetch_executor,
         ir,
         config_options,
         local_quent_context=local_quent_context,
@@ -474,6 +476,7 @@ class SPMDEngine(StreamingEngine):
         self._comm: Communicator | None = comm
         self._ctx: Context | None = None
         self._py_executor: ThreadPoolExecutor | None = None
+        self._prefetch_executor: ThreadPoolExecutor | None = None
         self._store_uid = uuid.uuid4().hex
         exit_stack = contextlib.ExitStack()
         self._kvikio_monitor = make_kvikio_monitor(
@@ -523,6 +526,15 @@ class SPMDEngine(StreamingEngine):
             exit_stack.callback(
                 self._py_executor.shutdown, wait=True, cancel_futures=True
             )
+            self._prefetch_executor = ThreadPoolExecutor(
+                max_workers=cast(
+                    "int", executor_options.get("num_prefetch_executors", 8)
+                ),
+                thread_name_prefix="spmd-prefetch-executor",
+            )
+            exit_stack.callback(
+                self._prefetch_executor.shutdown, wait=True, cancel_futures=True
+            )
 
             super().__init__(
                 nranks=comm.nranks,
@@ -536,6 +548,7 @@ class SPMDEngine(StreamingEngine):
                         quent_logger=self._quent_logger,
                         context=self._ctx,
                         py_executor=self._py_executor,
+                        prefetch_executor=self._prefetch_executor,
                     ),
                 },
                 engine_options={
@@ -698,6 +711,7 @@ class SPMDEngine(StreamingEngine):
                     comm=self._comm,
                     context=self._ctx,
                     py_executor=self.py_executor,
+                    prefetch_executor=self.prefetch_executor,
                     engine_id=engine_id,
                     worker_id=self._quent_worker.id,
                     quent_logger=self._quent_logger,
@@ -779,6 +793,24 @@ class SPMDEngine(StreamingEngine):
         if self._py_executor is None:
             raise RuntimeError("py_executor is not available after shutdown")
         return self._py_executor
+
+    @property
+    def prefetch_executor(self) -> ThreadPoolExecutor:
+        """
+        The thread-pool executor used to offload hybrid scan prefetch housekeeping.
+
+        Returns
+        -------
+        Active Python thread-pool executor.
+
+        Raises
+        ------
+        RuntimeError
+            If called after :meth:`shutdown`.
+        """
+        if self._prefetch_executor is None:
+            raise RuntimeError("prefetch_executor is not available after shutdown")
+        return self._prefetch_executor
 
     def gather_cluster_info(self) -> list[ClusterInfo]:
         """
@@ -885,6 +917,7 @@ class SPMDEngine(StreamingEngine):
             self._quent_events_raw.extend(self._quent_logger.drain())
         self._quent_events_raw.sort(key=lambda x: x["timestamp"])
         self._py_executor = None
+        self._prefetch_executor = None
 
     def _run(self, func: Callable[..., T], *args: Any, **kwargs: Any) -> list[T]:
         data = json.dumps(func(*args, **kwargs)).encode()
@@ -925,7 +958,11 @@ class SPMDEngine(StreamingEngine):
         ...     df = result.lazy().filter(pl.col("x") > 0).collect(engine=engine)
         """
         backend = SpmdPersistedBackend(
-            self._store_uid, self.context, self.comm, self.py_executor
+            self._store_uid,
+            self.context,
+            self.comm,
+            self.py_executor,
+            self.prefetch_executor,
         )
         return execute_persisted_query(self, lf, backend, self._store_uid)
 
@@ -939,11 +976,13 @@ class SpmdPersistedBackend(PersistedBackend):
         ctx: Context,
         comm: Communicator,
         py_executor: ThreadPoolExecutor,
+        prefetch_executor: ThreadPoolExecutor,
     ) -> None:
         self._uid = uid
         self._ctx = ctx
         self._comm = comm
         self._py_executor = py_executor
+        self._prefetch_executor = prefetch_executor
 
     def execute_persisted(
         self,
@@ -957,6 +996,7 @@ class SpmdPersistedBackend(PersistedBackend):
             self._ctx,
             self._comm,
             self._py_executor,
+            self._prefetch_executor,
             ir,
             config_options,
             query_id,

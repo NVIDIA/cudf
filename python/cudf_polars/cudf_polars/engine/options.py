@@ -202,6 +202,12 @@ class StreamingOptions:
         Env: ``CUDF_POLARS__EXECUTOR__NUM_PY_EXECUTORS``.
         Default: ``8``.
         Category: executor.
+    num_prefetch_executors
+        Workers for the internal Python ``ThreadPoolExecutor`` used to
+        offload hybrid scan prefetch housekeeping.
+        Env: ``CUDF_POLARS__EXECUTOR__NUM_PREFETCH_EXECUTORS``.
+        Default: ``8``.
+        Category: executor.
     kvikio_statistics
         Collect KvikIO I/O statistics, reachable through
         :meth:`~cudf_polars.engine.core.StreamingEngine.gather_io_summary`.
@@ -335,6 +341,9 @@ class StreamingOptions:
     # ---- Executor ----
     num_py_executors: int | Unspecified = _opt(
         "executor", "CUDF_POLARS__EXECUTOR__NUM_PY_EXECUTORS", int
+    )
+    num_prefetch_executors: int | Unspecified = _opt(
+        "executor", "CUDF_POLARS__EXECUTOR__NUM_PREFETCH_EXECUTORS", int
     )
     kvikio_nthreads: int | Unspecified = _opt(
         "executor", "CUDF_POLARS__EXECUTOR__KVIKIO_NTHREADS", int
@@ -709,6 +718,17 @@ class StreamingOptions:
             help=textwrap.dedent("""\
                 Max workers for the Python ThreadPoolExecutor inside RapidsMPF.
                 Env: CUDF_POLARS__EXECUTOR__NUM_PY_EXECUTORS.
+                Built-in default: 8."""),
+        )
+        g.add_argument(
+            "--num-prefetch-executors",
+            dest="num_prefetch_executors",
+            default=None,
+            type=int,
+            help=textwrap.dedent("""\
+                Max workers for the Python ThreadPoolExecutor used to offload
+                hybrid scan prefetch housekeeping.
+                Env: CUDF_POLARS__EXECUTOR__NUM_PREFETCH_EXECUTORS.
                 Built-in default: 8."""),
         )
         g.add_argument(

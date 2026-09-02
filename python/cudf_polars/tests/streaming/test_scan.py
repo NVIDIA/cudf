@@ -10,6 +10,10 @@ import pytest
 
 import polars as pl
 
+from rapidsmpf.memory.pinned_memory_resource import (
+    is_pinned_memory_resources_supported,
+)
+
 from cudf_polars import Translator
 from cudf_polars.containers import DataType
 from cudf_polars.dsl.ir import (
@@ -538,6 +542,49 @@ def test_split_scan_hybrid(
     q = pl.scan_parquet(tmp_path)
     if predicate is not None:
         q = q.filter(predicate)
+    if use_columns is not None:
+        q = q.select(use_columns)
+    assert_gpu_result_equal(q, engine=streaming_engine)
+
+
+@pytest.mark.parametrize(
+    "predicate,use_columns",
+    [
+        # row-group selective: TWO_PASS
+        (pl.col("x") < 1_000, None),
+        # not row-group selective: SINGLE_PASS
+        (pl.col("y").str.contains("cat"), ["x", "z"]),
+    ],
+)
+@pytest.mark.parametrize("prefetch_pipeline", ["modular", "queue", "batch"])
+@pytest.mark.skipif(
+    not is_pinned_memory_resources_supported(),
+    reason="Pinned memory requires CUDA 12.6+ driver and runtime",
+)
+def test_split_scan_hybrid_prefetch(
+    tmp_path: Path,
+    df: pl.DataFrame,
+    predicate: pl.Expr,
+    use_columns: list[str] | None,
+    prefetch_pipeline: str,
+    streaming_engine_factory: Callable[..., StreamingEngine],
+) -> None:
+    """Prefetched splits must match the same query with prefetching disabled."""
+    streaming_engine = streaming_engine_factory(
+        StreamingOptions(
+            target_partition_size=1_000,
+            pinned_memory=True,
+            pinned_initial_pool_size=4 * 1024 * 1024,
+            parquet_options={
+                "use_hybrid_scan": True,
+                "prefetch_file_metadata": True,
+                "prefetch_byte_ranges": True,
+                "prefetch_pipeline": prefetch_pipeline,
+            },
+        ),
+    )
+    make_partitioned_source(df, tmp_path, "parquet", n_files=1, row_group_size=100)
+    q = pl.scan_parquet(tmp_path).filter(predicate)
     if use_columns is not None:
         q = q.select(use_columns)
     assert_gpu_result_equal(q, engine=streaming_engine)

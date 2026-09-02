@@ -76,6 +76,7 @@ def evaluate_and_persist(
     ctx: Context,
     comm: Communicator,
     py_executor: ThreadPoolExecutor,
+    prefetch_executor: ThreadPoolExecutor,
     ir: IR,
     config_options: ConfigOptions[StreamingExecutor],
     query_id: uuid.UUID,
@@ -100,6 +101,9 @@ def evaluate_and_persist(
         This process's rapidsmpf communicator.
     py_executor
         Thread pool used to drive the streaming evaluation.
+    prefetch_executor
+        Thread pool used to offload hybrid scan prefetch housekeeping,
+        separate from ``py_executor``.
     ir
         Pre-lowered root IR node to evaluate on this rank.
     config_options
@@ -115,7 +119,13 @@ def evaluate_and_persist(
     This rank's index within the cluster (``comm.rank``).
     """
     gpu_df, metadata = evaluate_on_rank(
-        ctx, comm, py_executor, ir, config_options, query_id=query_id
+        ctx,
+        comm,
+        py_executor,
+        prefetch_executor,
+        ir,
+        config_options,
+        query_id=query_id,
     )
     if deduplicate_replicated:
         gpu_df = drop_if_replicated(gpu_df, comm.rank, metadata)

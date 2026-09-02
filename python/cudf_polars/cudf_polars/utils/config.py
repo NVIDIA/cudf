@@ -59,6 +59,9 @@ __all__ = [
     "ConfigOptions",
     "DaskContext",
     "DynamicPlanningOptions",
+    "HybridScanPassMode",
+    "HybridScanPrefetchOrderingMode",
+    "HybridScanPrefetchPipeline",
     "InMemoryExecutor",
     "JoinFilterPushdownOptions",
     "MaxConcurrentIOTasks",
@@ -213,6 +216,77 @@ class StreamingFallbackMode(enum.StrEnum):
     SILENT = "silent"
 
 
+class HybridScanPassMode(enum.StrEnum):
+    """
+    How a hybrid scan read fetches and materializes its columns.
+
+    * ``HybridScanPassMode.SINGLE_PASS`` : Fetch and materialize all columns
+      in one pass, via ``HybridScanReader.materialize_all_columns``.
+    * ``HybridScanPassMode.TWO_PASS`` : Fetch and materialize filter columns,
+      then payload columns, via ``materialize_filter_columns`` and
+      ``materialize_payload_columns``.
+    """
+
+    SINGLE_PASS = "single_pass"
+    TWO_PASS = "two_pass"
+
+
+class HybridScanPrefetchOrderingMode(enum.StrEnum):
+    """
+    How concurrent hybrid scan prefetch tasks claim shared, limited resources.
+
+    * ``HybridScanPrefetchOrderingMode.ORDERED`` : Within a producer, claim
+      pinned memory and issue reads in split order, so a split due for
+      consumption soon can't lose its reservation to one that isn't.
+    * ``HybridScanPrefetchOrderingMode.RACE`` : No ordering, whichever
+      split's prefetch task finishes its prep work first claims resources
+      first.
+    """
+
+    ORDERED = "ordered"
+    RACE = "race"
+
+
+class HybridScanPrefetchPipeline(enum.StrEnum):
+    """
+    Which prefetch pipeline implementation issues hybrid scan reads.
+
+    * ``HybridScanPrefetchPipeline.MODULAR`` : Each split's prune, reserve,
+      and read steps run as separate, independently-offloaded coroutine
+      steps on the shared actor-graph event loop. Concurrency and ordering
+      are controlled by ``num_prefetch_executors`` and
+      ``prefetch_ordering_mode``.
+    * ``HybridScanPrefetchPipeline.QUEUE`` : A small, fixed-size pool of
+      worker threads (``num_prefetch_queue_workers``) pulls splits off a
+      FIFO queue; each worker prunes, reserves, and issues every read for
+      one split synchronously before moving to the next. No ordering chain,
+      no per-split coroutine scheduling on the shared event loop.
+    * ``HybridScanPrefetchPipeline.BATCH`` : Row-group pruning for every
+      eligible split across the whole query is submitted before the actor
+      graph starts. Reads are issued in shared, byte-budget-bounded
+      batches that can span multiple splits, rather than one reservation
+      per split.
+    * ``HybridScanPrefetchPipeline.PACED`` : Like ``BATCH``, pruning for
+      every eligible split is submitted before the actor graph starts.
+      Unlike ``BATCH``, each split still gets its own independent
+      reservation and buffer (no split ever waits on another's I/O).
+      How much pinned memory can be claimed at once is bounded by
+      ``max_outstanding_prefetch_bytes`` instead of a producer/thread
+      count. *Claiming* a share is ordered FIFO within each of
+      ``max_concurrent_prefetch_acquisitions`` chains (splits are
+      round-robin assigned to chains), so a split due for consumption
+      soon can't lose its share to a later one in the *same* chain; more
+      chains reduce head-of-line blocking between splits assigned to
+      different chains, at the cost of a weaker cross-chain ordering
+      guarantee.
+    """
+
+    MODULAR = "modular"
+    QUEUE = "queue"
+    BATCH = "batch"
+    PACED = "paced"
+
+
 class Cluster(enum.StrEnum):
     """
     The cluster configuration for the streaming executor.
@@ -357,6 +431,54 @@ class ParquetOptions:
         Whether to use the two-pass ``HybridScanReader`` for ``SplitScan``
         tasks when a predicate can be pushed down to a parquet filter.
         Default is False.
+    prefetch_byte_ranges
+        Whether hybrid scan splits prefetch their byte ranges ahead of when a
+        producer needs them, via ``prefetch_pipeline``. Not implied by
+        ``use_hybrid_scan`` or by pinned memory being configured -- both are
+        still required, but this must also be explicitly enabled. When
+        False, hybrid scan reads still work, just without prefetch: each
+        split fetches its own byte ranges synchronously when a producer asks
+        for it. Default is False.
+    pass_mode
+        How a hybrid scan read fetches and materializes its columns.
+        See :class:`HybridScanPassMode`. Ignored when ``use_hybrid_scan`` is
+        False. When unspecified, chosen per split: ``TWO_PASS`` if stats/bloom
+        pruning eliminates any row groups, otherwise ``SINGLE_PASS``. Force
+        ``TWO_PASS`` if a predicate is expected to be selective at any level,
+        row group or page, since the automatic choice only has visibility
+        into row-group elimination.
+    prefetch_ordering_mode
+        How concurrent hybrid scan prefetch tasks claim shared, limited
+        resources. See :class:`HybridScanPrefetchOrderingMode`. Default is
+        ``ORDERED``. Ignored under ``prefetch_pipeline=QUEUE``, which has no
+        ordering chain.
+    prefetch_pipeline
+        Which prefetch pipeline implementation issues hybrid scan reads. See
+        :class:`HybridScanPrefetchPipeline`. Default is ``MODULAR``.
+    num_prefetch_queue_workers
+        Number of worker threads in the prefetch pipeline's queue, when
+        ``prefetch_pipeline=QUEUE``. Ignored under ``MODULAR``. Default is 2.
+    prefetch_batch_bytes
+        Target maximum combined size of one batch, when
+        ``prefetch_pipeline=BATCH``. Ignored under ``MODULAR``/``QUEUE``.
+        Default is 64 MiB.
+    max_concurrent_prefetch_batches
+        How many batches can concurrently be reserving pinned memory and
+        fetching at once, when ``prefetch_pipeline=BATCH``. Ignored under
+        ``MODULAR``/``QUEUE``. Default is 8.
+    max_outstanding_prefetch_bytes
+        Maximum combined size of every split's pinned reservation
+        outstanding at once, when ``prefetch_pipeline=PACED``. Ignored
+        under ``MODULAR``/``QUEUE``/``BATCH``. Default is 64 MiB.
+    max_concurrent_prefetch_acquisitions
+        How many independent FIFO chains splits are round-robin assigned
+        to when claiming a share of ``max_outstanding_prefetch_bytes``,
+        when ``prefetch_pipeline=PACED``. Ignored under
+        ``MODULAR``/``QUEUE``/``BATCH``. 1 means a single strict global
+        order (the safest against starvation, but the most prone to
+        head-of-line blocking); higher values let more splits attempt to
+        claim budget concurrently, at the cost of a weaker ordering
+        guarantee across chains. Default is 1.
     """
 
     _env_prefix = "CUDF_POLARS__PARQUET_OPTIONS"
@@ -405,6 +527,61 @@ class ParquetOptions:
             default=False,
         )
     )
+    prefetch_byte_ranges: bool = dataclasses.field(
+        default_factory=_make_default_factory(
+            f"{_env_prefix}__PREFETCH_BYTE_RANGES",
+            _bool_converter,
+            default=False,
+        )
+    )
+    pass_mode: HybridScanPassMode | Unspecified = dataclasses.field(
+        default_factory=_make_default_factory(
+            f"{_env_prefix}__PASS_MODE",
+            HybridScanPassMode.__call__,
+            default=UNSPECIFIED,
+        )
+    )
+    prefetch_ordering_mode: HybridScanPrefetchOrderingMode = dataclasses.field(
+        default_factory=_make_default_factory(
+            f"{_env_prefix}__PREFETCH_ORDERING_MODE",
+            HybridScanPrefetchOrderingMode.__call__,
+            default=HybridScanPrefetchOrderingMode.ORDERED,
+        )
+    )
+    prefetch_pipeline: HybridScanPrefetchPipeline = dataclasses.field(
+        default_factory=_make_default_factory(
+            f"{_env_prefix}__PREFETCH_PIPELINE",
+            HybridScanPrefetchPipeline.__call__,
+            default=HybridScanPrefetchPipeline.MODULAR,
+        )
+    )
+    num_prefetch_queue_workers: int = dataclasses.field(
+        default_factory=_make_default_factory(
+            f"{_env_prefix}__NUM_PREFETCH_QUEUE_WORKERS", int, default=2
+        )
+    )
+    prefetch_batch_bytes: int = dataclasses.field(
+        default_factory=_make_default_factory(
+            f"{_env_prefix}__PREFETCH_BATCH_BYTES", int, default=64 * 1024 * 1024
+        )
+    )
+    max_concurrent_prefetch_batches: int = dataclasses.field(
+        default_factory=_make_default_factory(
+            f"{_env_prefix}__MAX_CONCURRENT_PREFETCH_BATCHES", int, default=8
+        )
+    )
+    max_outstanding_prefetch_bytes: int = dataclasses.field(
+        default_factory=_make_default_factory(
+            f"{_env_prefix}__MAX_OUTSTANDING_PREFETCH_BYTES",
+            int,
+            default=64 * 1024 * 1024,
+        )
+    )
+    max_concurrent_prefetch_acquisitions: int = dataclasses.field(
+        default_factory=_make_default_factory(
+            f"{_env_prefix}__MAX_CONCURRENT_PREFETCH_ACQUISITIONS", int, default=1
+        )
+    )
     # Internal benchmarking flag. When False, skips stats and bloom-filter pruning
     # before the first pass of a hybrid scan so you can measure two-pass read
     # overhead in isolation. No reason to set this to False in production.
@@ -446,6 +623,60 @@ class ParquetOptions:
             raise ValueError(
                 "use_hybrid_scan requires prefetch_file_metadata to be enabled"
             )
+        if not isinstance(self.prefetch_byte_ranges, bool):
+            raise TypeError("prefetch_byte_ranges must be a bool")
+        # `ParquetOptions(**{"pass_mode": "single_pass", ...})`-style construction
+        # (e.g. from a plain ``parquet_options`` dict passed to ``GPUEngine``)
+        # bypasses the env-var string-to-enum converters above, so a plain
+        # string value needs coercing here too, not just validating.
+        if isinstance(self.pass_mode, str) and not isinstance(
+            self.pass_mode, HybridScanPassMode
+        ):
+            object.__setattr__(self, "pass_mode", HybridScanPassMode(self.pass_mode))
+        if not isinstance(self.pass_mode, (HybridScanPassMode, Unspecified)):
+            raise TypeError("pass_mode must be a HybridScanPassMode when specified")
+        if isinstance(self.prefetch_ordering_mode, str) and not isinstance(
+            self.prefetch_ordering_mode, HybridScanPrefetchOrderingMode
+        ):
+            object.__setattr__(
+                self,
+                "prefetch_ordering_mode",
+                HybridScanPrefetchOrderingMode(self.prefetch_ordering_mode),
+            )
+        if not isinstance(self.prefetch_ordering_mode, HybridScanPrefetchOrderingMode):
+            raise TypeError(
+                "prefetch_ordering_mode must be a HybridScanPrefetchOrderingMode"
+            )
+        if isinstance(self.prefetch_pipeline, str) and not isinstance(
+            self.prefetch_pipeline, HybridScanPrefetchPipeline
+        ):
+            object.__setattr__(
+                self,
+                "prefetch_pipeline",
+                HybridScanPrefetchPipeline(self.prefetch_pipeline),
+            )
+        if not isinstance(self.prefetch_pipeline, HybridScanPrefetchPipeline):
+            raise TypeError("prefetch_pipeline must be a HybridScanPrefetchPipeline")
+        if not isinstance(self.num_prefetch_queue_workers, int):
+            raise TypeError("num_prefetch_queue_workers must be an int")
+        if self.num_prefetch_queue_workers <= 0:
+            raise ValueError("num_prefetch_queue_workers must be positive")
+        if not isinstance(self.prefetch_batch_bytes, int):
+            raise TypeError("prefetch_batch_bytes must be an int")
+        if self.prefetch_batch_bytes <= 0:
+            raise ValueError("prefetch_batch_bytes must be positive")
+        if not isinstance(self.max_concurrent_prefetch_batches, int):
+            raise TypeError("max_concurrent_prefetch_batches must be an int")
+        if self.max_concurrent_prefetch_batches <= 0:
+            raise ValueError("max_concurrent_prefetch_batches must be positive")
+        if not isinstance(self.max_outstanding_prefetch_bytes, int):
+            raise TypeError("max_outstanding_prefetch_bytes must be an int")
+        if self.max_outstanding_prefetch_bytes <= 0:
+            raise ValueError("max_outstanding_prefetch_bytes must be positive")
+        if not isinstance(self.max_concurrent_prefetch_acquisitions, int):
+            raise TypeError("max_concurrent_prefetch_acquisitions must be an int")
+        if self.max_concurrent_prefetch_acquisitions <= 0:
+            raise ValueError("max_concurrent_prefetch_acquisitions must be positive")
         if not isinstance(self.use_jit_filter, bool):
             raise TypeError("use_jit_filter must be a bool")
 
@@ -701,11 +932,16 @@ class SPMDContext:
         The active RapidsMPF context.
     py_executor
         Thread-pool executor used to drive the actor network on each rank.
+    prefetch_executor
+        Thread-pool executor used to offload hybrid scan prefetch
+        housekeeping on each rank, separate from ``py_executor`` so it
+        doesn't queue behind decode work.
     """
 
     comm: Communicator
     context: Context
     py_executor: ThreadPoolExecutor
+    prefetch_executor: ThreadPoolExecutor
     engine_id: uuid.UUID
     worker_id: uuid.UUID
     quent_logger: QuentLogger | None
@@ -845,6 +1081,13 @@ class StreamingExecutor:
     num_py_executors
         Maximum number of workers for the Python ThreadPoolExecutor.
         Default is 8.
+    num_prefetch_executors
+        Maximum number of workers for the Python ThreadPoolExecutor used to
+        offload hybrid scan prefetch housekeeping (row-group pruning,
+        byte-range computation, pinned-memory allocation, and issuing
+        reads). Kept separate from ``num_py_executors`` so short prefetch
+        calls don't queue behind long-running decode work on the same
+        pool. Default is 8.
     kvikio_nthreads
         Number of threads in the kvikio ``EASY_THREADPOOL`` thread pool.
         Defaults to 256, which is tuned for cloud object-store IO. This can be
@@ -942,6 +1185,11 @@ class StreamingExecutor:
             f"{_env_prefix}__NUM_PY_EXECUTORS", int, default=8
         )
     )
+    num_prefetch_executors: int = dataclasses.field(
+        default_factory=_make_default_factory(
+            f"{_env_prefix}__NUM_PREFETCH_EXECUTORS", int, default=8
+        )
+    )
     kvikio_nthreads: int = dataclasses.field(
         default_factory=lambda: resolve_kvikio_nthreads({})
     )
@@ -1031,6 +1279,8 @@ class StreamingExecutor:
             raise TypeError("client_device_threshold must be a float")
         if not isinstance(self.num_py_executors, int):
             raise TypeError("num_py_executors must be an int")
+        if not isinstance(self.num_prefetch_executors, int):
+            raise TypeError("num_prefetch_executors must be an int")
         if not isinstance(self.kvikio_nthreads, int):
             raise TypeError("kvikio_nthreads must be an int")
         if self.kvikio_nthreads <= 0:

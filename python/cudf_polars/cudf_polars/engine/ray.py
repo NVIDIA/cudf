@@ -234,6 +234,10 @@ class RankActor:
     num_py_executors
         Maximum number of threads for the actor's Python thread-pool executor.
         ``None`` lets :class:`~concurrent.futures.ThreadPoolExecutor` choose.
+    num_prefetch_executors
+        Maximum number of threads for the actor's hybrid scan prefetch
+        housekeeping thread-pool executor, separate from
+        ``num_py_executors``.
     hardware_binding
         Policy controlling topology-aware hardware binding.
     memory_resource_config
@@ -253,6 +257,7 @@ class RankActor:
         nranks: int,
         rapidsmpf_options_as_bytes: bytes,
         num_py_executors: int,
+        num_prefetch_executors: int,
         kvikio_nthreads: int,
         kvikio_statistics: bool,
         hardware_binding: HardwareBindingPolicy,
@@ -281,6 +286,10 @@ class RankActor:
         self._py_executor = ThreadPoolExecutor(
             max_workers=num_py_executors,
             thread_name_prefix="ray-executor",
+        )
+        self._prefetch_executor = ThreadPoolExecutor(
+            max_workers=num_prefetch_executors,
+            thread_name_prefix="ray-prefetch-executor",
         )
         self._comm: Communicator | None = None
         self._ctx: Context | None = None
@@ -434,6 +443,7 @@ class RankActor:
             self._kvikio_monitor.stop()
             self._kvikio_monitor = None
         self._py_executor.shutdown(wait=True, cancel_futures=True)
+        self._prefetch_executor.shutdown(wait=True, cancel_futures=True)
         # Release resources in dependency order before exit_actor() terminates
         # the process. Shut down the Context explicitly on the same thread
         # that constructed it.
@@ -579,6 +589,7 @@ class RankActor:
             self._ctx,
             self._comm,
             self._py_executor,
+            self._prefetch_executor,
             ir,
             config_options,
             local_quent_context=local_quent_context,
@@ -629,6 +640,7 @@ class RankActor:
             self._ctx,
             self._comm,
             self._py_executor,
+            self._prefetch_executor,
             ir,
             config_options,
             query_id,
@@ -872,6 +884,10 @@ class RayEngine(StreamingEngine):
                     num_py_executors=cast(
                         "int",
                         executor_options.get("num_py_executors", 8),
+                    ),
+                    num_prefetch_executors=cast(
+                        "int",
+                        executor_options.get("num_prefetch_executors", 8),
                     ),
                     kvikio_nthreads=executor_options["kvikio_nthreads"],
                     kvikio_statistics=executor_options["kvikio_statistics"],

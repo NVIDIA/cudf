@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -44,7 +44,7 @@ void nvbench_distinct(nvbench::state& state, nvbench::type_list<Type>)
   auto input_column = source_column->view();
   auto input_table  = cudf::table_view({input_column, input_column, input_column, input_column});
 
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().value()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().get()));
   auto const mem_stats_logger = cudf::memory_stats_logger();
 
   state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
@@ -90,7 +90,7 @@ void nvbench_distinct_list(nvbench::state& state, nvbench::type_list<Type>)
   auto const table = create_random_table(
     {dtype}, table_size_bytes{static_cast<size_t>(size)}, data_profile{builder}, 0);
 
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().value()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().get()));
   auto const mem_stats_logger = cudf::memory_stats_logger();
 
   state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {

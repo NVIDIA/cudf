@@ -408,7 +408,7 @@ int32_t main(int argc, char const** argv)
       [&] {
         std::ignore = read_parquet_multithreaded<read_mode::NO_CONCATENATE>(
           input_sources, thread_count, stream_pool);
-        default_stream.synchronize();
+        default_stream.sync();
       },
       num_reads);
 
@@ -420,7 +420,7 @@ int32_t main(int argc, char const** argv)
     // read_mode::CONCATENATE_THREADS returns a vector of `thread_count` tables
     auto const tables = read_parquet_multithreaded<read_mode::CONCATENATE_THREAD>(
       input_sources, thread_count, stream_pool);
-    default_stream.synchronize();
+    default_stream.sync();
 
     // Construct a vector of table views for write_parquet_multithreaded
     auto const table_views = [&tables]() {
@@ -444,7 +444,7 @@ int32_t main(int argc, char const** argv)
     benchmark(
       [&] {
         write_parquet_multithreaded(output_path, table_views, thread_count, stream_pool);
-        default_stream.synchronize();
+        default_stream.sync();
       },
       1);
 
@@ -462,7 +462,7 @@ int32_t main(int argc, char const** argv)
     auto const transcoded_table = std::move(read_parquet_multithreaded<read_mode::CONCATENATE_ALL>(
                                               written_pq_sources, thread_count, stream_pool)
                                               .back());
-    default_stream.synchronize();
+    default_stream.sync();
 
     // Check if the tables are identical
     check_tables_equal(input_table->view(), transcoded_table->view(), default_stream);

@@ -229,7 +229,7 @@ void pad_to_equal_size(std::vector<uint8_t>& hit_val, std::vector<uint8_t>& miss
 // Build a VARIANT struct column (STRUCT<list<uint8>, list<uint8>>) from per-row byte spans.
 std::unique_ptr<cudf::column> build_variant_column(std::span<std::span<uint8_t const>> meta_rows,
                                                    std::span<std::span<uint8_t const>> val_rows,
-                                                   rmm::cuda_stream_view stream,
+                                                   cuda::stream_ref stream,
                                                    rmm::device_async_resource_ref mr)
 {
   auto const n = static_cast<cudf::size_type>(meta_rows.size());
@@ -413,14 +413,14 @@ static void bench_variant_cast(nvbench::state& state)
   std::vector<std::span<uint8_t const>> meta_spans(num_rows, std::span<uint8_t const>{meta_blob});
   auto val_spans = fill_val_rows(num_rows, hit_val, miss_val, hit_rate);
   auto col       = build_variant_column(meta_spans, val_spans, stream, mr);
-  CUDF_CUDA_TRY(cudaStreamSynchronize(stream.value()));
+  CUDF_CUDA_TRY(cudaStreamSynchronize(stream.get()));
 
   auto const target_type = get_target_type(type);
   auto const data_size   = static_cast<std::size_t>(num_rows) * (meta_blob.size() + hit_val.size());
 
   auto mem_stats_logger = cudf::memory_stats_logger();
   mr                    = cudf::get_current_device_resource_ref();
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.value()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.get()));
   state.exec(nvbench::exec_tag::sync, [&](nvbench::launch&) {
     std::ignore = cudf::io::parquet::experimental::cast_variant(
       col->view().child(1), target_type, std::nullopt, stream, mr);
@@ -460,14 +460,14 @@ static void bench_variant_extract_nesting(nvbench::state& state)
   std::vector<std::span<uint8_t const>> meta_spans(num_rows, std::span<uint8_t const>{meta_blob});
   auto val_spans = fill_val_rows(num_rows, hit_val, miss_val, hit_rate);
   auto col       = build_variant_column(meta_spans, val_spans, stream, mr);
-  CUDF_CUDA_TRY(cudaStreamSynchronize(stream.value()));
+  CUDF_CUDA_TRY(cudaStreamSynchronize(stream.get()));
 
   auto const path      = get_path(nesting, is_array);
   auto const data_size = static_cast<std::size_t>(num_rows) * (meta_blob.size() + hit_val.size());
 
   auto mem_stats_logger = cudf::memory_stats_logger();
   mr                    = cudf::get_current_device_resource_ref();
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.value()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.get()));
   state.exec(nvbench::exec_tag::sync, [&](nvbench::launch&) {
     std::ignore = cudf::io::parquet::experimental::get_variant_field(
       col->view(), path, std::nullopt, stream, mr);
@@ -549,7 +549,7 @@ static void bench_variant_extract_fields(nvbench::state& state)
                                                       : std::span<uint8_t const>{miss_val});
     }
     col = build_variant_column(meta_spans, val_spans, stream, mr);
-    CUDF_CUDA_TRY(cudaStreamSynchronize(stream.value()));
+    CUDF_CUDA_TRY(cudaStreamSynchronize(stream.get()));
 
     path      = "n_target";
     meta_size = meta_blobs.front().size();
@@ -566,7 +566,7 @@ static void bench_variant_extract_fields(nvbench::state& state)
     std::vector<std::span<uint8_t const>> meta_spans(num_rows, std::span<uint8_t const>{meta_blob});
     auto val_spans = fill_val_rows(num_rows, hit_val, miss_val, hit_rate);
     col            = build_variant_column(meta_spans, val_spans, stream, mr);
-    CUDF_CUDA_TRY(cudaStreamSynchronize(stream.value()));
+    CUDF_CUDA_TRY(cudaStreamSynchronize(stream.get()));
 
     path      = "f" + std::string(target_fid < 10 ? "0" : "") + std::to_string(target_fid);
     meta_size = meta_blob.size();
@@ -577,7 +577,7 @@ static void bench_variant_extract_fields(nvbench::state& state)
 
   auto mem_stats_logger = cudf::memory_stats_logger();
   mr                    = cudf::get_current_device_resource_ref();
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.value()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.get()));
   state.exec(nvbench::exec_tag::sync, [&](nvbench::launch&) {
     std::ignore = cudf::io::parquet::experimental::get_variant_field(
       col->view(), path, std::nullopt, stream, mr);

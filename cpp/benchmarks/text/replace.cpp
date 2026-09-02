@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -41,7 +41,7 @@ static void bench_replace(nvbench::state& state)
   cudf::test::strings_column_wrapper targets({"one", "two", "sevén", "zero"});
   cudf::test::strings_column_wrapper replacements({"1", "2", "7", "0"});
 
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().value()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().get()));
 
   auto chars_size = view.chars_size(cudf::get_default_stream());
   state.add_global_memory_reads<nvbench::int8_t>(chars_size);

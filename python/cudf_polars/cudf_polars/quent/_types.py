@@ -87,13 +87,12 @@ class Operator:
 
     Examples
     --------
-    {"id":"019dd571-1062-77c2-9803-62c7c1941381","timestamp":1777402450018384340,"data":{"Operator":{"Declaration":{"plan_id":"019dd571-1062-77c2-9803-642b6c301d29","parent_operator_ids":[],"instance_name":"Scan-NodeIndex(0)","type_name":"Scan","custom_attributes":[]}}}}
+    {"id":"019dd571-1062-77c2-9803-62c7c1941381","timestamp":1777402450018384340,"data":{"Operator":{"Declaration":{"plan_id":"019dd571-1062-77c2-9803-642b6c301d29","parent_operator_ids":[],"instance_name":"Scan-019dd571","type_name":"Scan","custom_attributes":[]}}}}
     """
 
     id: uuid.UUID
     plan: Plan
     parent_operators: list[Operator]
-    instance_name: str
     type_name: str
     custom_attributes: list[Attribute] = dataclasses.field(default_factory=list)
 
@@ -110,7 +109,7 @@ class Operator:
             "parent_operator_ids": [
                 str(operator.id) for operator in self.parent_operators
             ],
-            "instance_name": self.instance_name,
+            "instance_name": f"{self.type_name}-{self.id.hex[:8]}",
             "type_name": self.type_name,
             "custom_attributes": [attr.serialize() for attr in self.custom_attributes],
         }

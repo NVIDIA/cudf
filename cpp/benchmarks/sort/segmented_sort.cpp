@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -32,7 +32,7 @@ void nvbench_segmented_sort(nvbench::state& state)
                                        cudf::numeric_scalar<int32_t>(0),
                                        cudf::numeric_scalar<int32_t>(row_width));
 
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().value()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().get()));
   state.add_element_count(size_bytes, "bytes");
   state.add_global_memory_reads<nvbench::int32_t>(rows * row_width);
   state.add_global_memory_writes<nvbench::int32_t>(rows);

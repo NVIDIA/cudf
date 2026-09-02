@@ -153,7 +153,7 @@ void BM_NESTED_JSON(nvbench::state& state)
 
   // Run algorithm
   auto const mem_stats_logger = cudf::memory_stats_logger();
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().value()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().get()));
   state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
     // Allocate device-side temporary storage & run algorithm
     cudf::io::json::detail::device_parse_nested_json(
@@ -187,7 +187,7 @@ void BM_NESTED_JSON_DEPTH(nvbench::state& state)
 
   // Run algorithm
   auto const mem_stats_logger = cudf::memory_stats_logger();
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().value()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().get()));
   state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
     // Allocate device-side temporary storage & run algorithm
     cudf::io::json::detail::device_parse_nested_json(

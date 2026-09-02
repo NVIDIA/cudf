@@ -42,8 +42,8 @@ TEST(BloomFilterPolicyTest, UsesBlocksBeyondFormerArrowLimit)
   auto const stream               = cudf::get_default_stream();
   cudf::detail::device_scalar<std::uint32_t> index{0, stream};
 
-  block_index_kernel<<<1, 1, 0, stream.value()>>>(upper_hash, num_blocks, index.data());
-  CUDF_CHECK_CUDA(stream.value());
+  block_index_kernel<<<1, 1, 0, stream.get()>>>(upper_hash, num_blocks, index.data());
+  CUDF_CHECK_CUDA(stream.get());
 
   EXPECT_EQ(index.value(stream), arrow_max_blocks);
 }

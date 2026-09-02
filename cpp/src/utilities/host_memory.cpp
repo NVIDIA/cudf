@@ -125,14 +125,14 @@ class pinned_pool_with_fallback_memory_resource {
 
   void* allocate_sync(std::size_t bytes, std::size_t alignment = rmm::CUDA_ALLOCATION_ALIGNMENT)
   {
-    return allocate(cuda::stream_ref{cudaStream_t{nullptr}}, bytes, alignment);
+    return allocate(cuda::stream_ref{cudaStream_t{cudaStreamDefault}}, bytes, alignment);
   }
 
   void deallocate_sync(void* ptr,
                        std::size_t bytes,
                        std::size_t alignment = rmm::CUDA_ALLOCATION_ALIGNMENT) noexcept
   {
-    deallocate(cuda::stream_ref{cudaStream_t{nullptr}}, ptr, bytes, alignment);
+    deallocate(cuda::stream_ref{cudaStream_t{cudaStreamDefault}}, ptr, bytes, alignment);
   }
 
   void* allocate(cuda::stream_ref stream,

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -52,7 +52,7 @@ static void bench_groupby_min_struct(nvbench::state& state)
   state.add_global_memory_reads<nvbench::int8_t>(values->alloc_size());
   state.add_global_memory_writes<nvbench::int8_t>(values->alloc_size());
 
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().value()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().get()));
   auto const mem_stats_logger = cudf::memory_stats_logger();
   state.exec(nvbench::exec_tag::sync,
              [&](nvbench::launch& launch) { auto result = gb_obj.aggregate(requests); });
@@ -82,7 +82,7 @@ static void bench_groupby_min_struct_scan(nvbench::state& state)
   state.add_global_memory_reads<nvbench::int8_t>(values->alloc_size());
   state.add_global_memory_writes<nvbench::int8_t>(values->alloc_size());
 
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().value()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().get()));
   auto const mem_stats_logger = cudf::memory_stats_logger();
   state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
     auto gb_obj = cudf::groupby::groupby(cudf::table_view({keys_view}));

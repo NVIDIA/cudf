@@ -250,7 +250,7 @@ async def extract_orderscheme_partitioning(
         )
         allgather = AllGatherManager(context, comm, collective_id)
         with allgather.inserting() as inserter:
-            inserter.insert(comm.rank, local_chunk)
+            await inserter.insert(comm.rank, local_chunk)
         endpoint_table = await allgather.extract_concatenated(
             stream, ordered=True, ir_context=ir_context
         )
@@ -334,7 +334,7 @@ async def _simple_top_or_bottom_k(
     if comm.nranks > 1 and not metadata_in.duplicated:
         allgather = AllGatherManager(context, comm, collective_ids.pop())
         with allgather.inserting() as inserter:
-            inserter.insert(comm.rank, chunk)
+            await inserter.insert(comm.rank, chunk)
 
         stream = ir_context.get_cuda_stream()
         chunk = await evaluate_chunk(
@@ -415,7 +415,7 @@ async def _compute_sort_boundaries(
         )
         allgather = AllGatherManager(context, comm, allgather_id)
         with allgather.inserting() as inserter:
-            inserter.insert(comm.rank, chunk)
+            await inserter.insert(comm.rank, chunk)
         concat_table = await allgather.extract_concatenated(
             stream, ordered=True, ir_context=ir_context
         )
@@ -583,9 +583,14 @@ async def _insert_chunks_into_shuffle(
             if skip_insert:
                 continue
             seq_num = msg.sequence_number
-            available_chunk = TableChunk.from_message(
-                msg, br=context.br()
-            ).make_available_and_spill(context.br(), allow_overbooking=True)
+            # The chunk's data moves into shuffler-owned packed buffers,
+            # nothing lasting is added.
+            available_chunk, _ = await make_table_chunks_available_or_wait(
+                context,
+                TableChunk.from_message(msg, br=context.br()),
+                reserve_extra=0,
+                net_memory_delta=0,
+            )
             tbl = available_chunk.table_view()
             sort_cols_tbl = plc.Table([tbl.columns()[i] for i in by_indices])
 
@@ -605,7 +610,7 @@ async def _insert_chunks_into_shuffle(
                 stream=stream,
                 chunk_relative=True,
             )
-            inserter.insert_split(available_chunk, splits)
+            await inserter.insert_split(available_chunk, splits)
 
     post_sort_ir = ir
     if ir.stable:
@@ -641,7 +646,7 @@ async def _extract_partitions_and_send(
     ncols_out = len(output_schema)
     for partition_id in shuffle.local_partitions():
         stream = ir_context.get_cuda_stream()
-        table = shuffle.extract_chunk(partition_id, stream)
+        table = await shuffle.extract_chunk(partition_id, stream)
         if table.num_rows() > 0:
             table = post_sort_ir.do_evaluate(
                 *post_sort_ir._non_child_args,

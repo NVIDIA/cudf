@@ -18,6 +18,7 @@
 #include <cudf/join/hash_join.hpp>
 #include <cudf/join/join.hpp>
 #include <cudf/join/sort_merge_join.hpp>
+#include <cudf/join/streaming_hash_join.hpp>
 #include <cudf/sorting.hpp>
 #include <cudf/table/table.hpp>
 #include <cudf/table/table_view.hpp>
@@ -49,7 +50,7 @@ using strcol_wrapper                = cudf::test::strings_column_wrapper;
 using CVector                       = std::vector<std::unique_ptr<cudf::column>>;
 using Table                         = cudf::table;
 constexpr cudf::size_type NoneValue = cudf::JoinNoMatch;
-enum class algorithm { HASH, HASH_PARTITIONED, SORT_MERGE, MERGE };
+enum class algorithm { HASH, HASH_PARTITIONED, STREAMING_HASH, SORT_MERGE, MERGE };
 
 void expect_match_counts_equal(rmm::device_uvector<cudf::size_type> const& actual_counts,
                                std::vector<cudf::size_type> const& expected_counts,
@@ -151,6 +152,40 @@ std::unique_ptr<cudf::table> inner_join(
         auto part_ctx  = cudf::join_partition_context{
           std::make_unique<cudf::join_match_context>(std::move(match_ctx)), 0, left.num_rows()};
         return hash_joiner.partitioned_inner_join(part_ctx, stream, mr);
+      },
+      left_input,
+      right_input,
+      left_on,
+      right_on,
+      compare_nulls);
+  } else if (algo == algorithm::STREAMING_HASH) {
+    return join_and_gather(
+      [](cudf::table_view const& left,
+         cudf::table_view const& right,
+         cudf::null_equality compare_nulls,
+         cuda::stream_ref stream,
+         rmm::device_async_resource_ref mr) {
+        std::vector<cudf::size_type> right_key_indices(right.num_columns());
+        std::iota(right_key_indices.begin(), right_key_indices.end(), 0);
+
+        cudf::streaming_hash_join joiner{right,
+                                         right_key_indices,
+                                         right.num_rows(),
+                                         /*max_num_batches=*/1,
+                                         cudf::nullable_join::YES,
+                                         compare_nulls,
+                                         /*load_factor=*/0.5,
+                                         stream};
+        joiner.insert(right, stream);
+        auto [left_indices, right_indices] = joiner.inner_join(left, {}, stream, mr);
+        auto& [batch_indices, row_indices] = right_indices;
+
+        auto const host_batch_indices = cudf::detail::make_host_vector(*batch_indices, stream);
+        EXPECT_TRUE(std::all_of(host_batch_indices.begin(),
+                                host_batch_indices.end(),
+                                [](cudf::size_type batch_index) { return batch_index == 0; }));
+
+        return JoinResult{std::move(left_indices), std::move(row_indices)};
       },
       left_input,
       right_input,
@@ -367,14 +402,23 @@ TEST_F(JoinTest, InvalidLoadFactor)
 }
 
 struct JoinParameterizedTest : public JoinTest, public testing::WithParamInterface<algorithm> {};
+struct InnerJoinParameterizedTest : public JoinTest,
+                                    public testing::WithParamInterface<algorithm> {};
 struct JoinParameterizedTestSortedInput : public JoinTest,
                                           public testing::WithParamInterface<algorithm> {};
 
 // Parametrize qualifying join tests for supported algorithms
-INSTANTIATE_TEST_CASE_P(InnerJoinParameterizedTest,
+INSTANTIATE_TEST_CASE_P(JoinParameterizedTest,
                         JoinParameterizedTest,
                         ::testing::Values(algorithm::HASH,
                                           algorithm::HASH_PARTITIONED,
+                                          algorithm::SORT_MERGE));
+
+INSTANTIATE_TEST_CASE_P(InnerJoinParameterizedTest,
+                        InnerJoinParameterizedTest,
+                        ::testing::Values(algorithm::HASH,
+                                          algorithm::HASH_PARTITIONED,
+                                          algorithm::STREAMING_HASH,
                                           algorithm::SORT_MERGE));
 
 INSTANTIATE_TEST_CASE_P(InnerJoinParameterizedTestSortedInput,
@@ -429,7 +473,7 @@ TEST_P(JoinParameterizedTestSortedInput, SortedKeys)
   CUDF_TEST_EXPECT_TABLES_EQUIVALENT(*sorted_gold, *sorted_result);
 }
 
-TEST_P(JoinParameterizedTest, InvalidInput)
+TEST_P(InnerJoinParameterizedTest, InvalidInput)
 {
   auto algo                  = GetParam();
   auto const left_first_col  = cudf::test::fixed_width_column_wrapper<int32_t>{1197};
@@ -449,7 +493,7 @@ TEST_P(JoinParameterizedTest, InvalidInput)
                std::invalid_argument);
 }
 
-TEST_P(JoinParameterizedTest, EmptySentinelRepro)
+TEST_P(InnerJoinParameterizedTest, EmptySentinelRepro)
 {
   auto algo = GetParam();
   // This test reproduced an implementation specific behavior where the combination of these
@@ -1222,7 +1266,7 @@ TEST_F(JoinTest, LeftJoinPreservesNestedNullRowOrderUnequal)
             std::vector<cudf::size_type>({0, cudf::JoinNoMatch, 1, cudf::JoinNoMatch, 2}));
 }
 
-TEST_P(JoinParameterizedTest, InnerJoinNoNulls)
+TEST_P(InnerJoinParameterizedTest, InnerJoinNoNulls)
 {
   auto algo = GetParam();
   column_wrapper<int32_t> col0_0{{3, 1, 2, 0, 2}};
@@ -1298,7 +1342,7 @@ TEST_P(JoinParameterizedTest, InnerJoinNoNulls)
   }
 }
 
-TEST_P(JoinParameterizedTest, InnerJoinWithNulls)
+TEST_P(InnerJoinParameterizedTest, InnerJoinWithNulls)
 {
   auto algo = GetParam();
   column_wrapper<int32_t> col0_0{{3, 1, 2, 0, 2}};
@@ -1345,7 +1389,7 @@ TEST_P(JoinParameterizedTest, InnerJoinWithNulls)
 }
 
 // TODO: add unequal nulls case here
-TEST_P(JoinParameterizedTest, InnerJoinWithStructsAndNulls)
+TEST_P(InnerJoinParameterizedTest, InnerJoinWithStructsAndNulls)
 {
   auto algo = GetParam();
   column_wrapper<int32_t> col0_0{{3, 1, 2, 0, 2}};
@@ -1480,7 +1524,7 @@ TEST_P(JoinParameterizedTest, InnerJoinWithStructsAndNulls)
 }
 
 // // Test to check join behavior when join keys are null.
-TEST_P(JoinParameterizedTest, InnerJoinOnNulls)
+TEST_P(InnerJoinParameterizedTest, InnerJoinOnNulls)
 {
   auto algo = GetParam();
   // clang-format off
@@ -1563,7 +1607,7 @@ TEST_P(JoinParameterizedTest, InnerJoinOnNulls)
   CUDF_TEST_EXPECT_TABLES_EQUIVALENT(*sorted_gold, *sorted_result);
 }
 
-TEST_P(JoinParameterizedTest, InnerJoinStructs)
+TEST_P(InnerJoinParameterizedTest, InnerJoinStructs)
 {
   auto algo = GetParam();
 
@@ -1694,7 +1738,7 @@ TEST_P(JoinParameterizedTest, InnerJoinStructs)
 }
 
 // Empty Left Table
-TEST_P(JoinParameterizedTest, EmptyLeftTableInnerJoin)
+TEST_P(InnerJoinParameterizedTest, EmptyLeftTableInnerJoin)
 {
   auto algo = GetParam();
   column_wrapper<int32_t> col0_0;
@@ -1796,7 +1840,7 @@ TEST_F(JoinTest, EmptyLeftTableFullJoin)
 }
 
 // Empty Right Table
-TEST_P(JoinParameterizedTest, EmptyRightTableInnerJoin)
+TEST_P(InnerJoinParameterizedTest, EmptyRightTableInnerJoin)
 {
   auto algo = GetParam();
   column_wrapper<int32_t> col0_0{{2, 2, 0, 4, 3}};
@@ -1916,7 +1960,7 @@ TEST_F(JoinTest, EmptyRightTableFullJoin)
 }
 
 // Both tables empty
-TEST_P(JoinParameterizedTest, BothEmptyInnerJoin)
+TEST_P(InnerJoinParameterizedTest, BothEmptyInnerJoin)
 {
   auto algo = GetParam();
   column_wrapper<int32_t> col0_0;
@@ -1983,7 +2027,7 @@ TEST_F(JoinTest, BothEmptyFullJoin)
 
 // // EqualValues X Inner,Left,Full
 
-TEST_P(JoinParameterizedTest, EqualValuesInnerJoin)
+TEST_P(InnerJoinParameterizedTest, EqualValuesInnerJoin)
 {
   auto algo = GetParam();
   column_wrapper<int32_t> col0_0{{0, 0}};
@@ -2088,7 +2132,7 @@ TEST_F(JoinTest, EqualValuesFullJoin)
   CUDF_TEST_EXPECT_TABLES_EQUIVALENT(gold, *result);
 }
 
-TEST_P(JoinParameterizedTest, InnerJoinCornerCase)
+TEST_P(InnerJoinParameterizedTest, InnerJoinCornerCase)
 {
   auto algo = GetParam();
   column_wrapper<int64_t> col0_0{{4, 1, 3, 2, 2, 2, 2}};
@@ -2381,8 +2425,7 @@ TEST_F(JoinTest, HashJoinLargeOutputSize)
   // self-join a table of zeroes to generate an output row count that would overflow int32_t
   std::size_t col_size = 65567;
   rmm::device_buffer zeroes(col_size * sizeof(int32_t), cudf::get_default_stream());
-  CUDF_CUDA_TRY(
-    cudaMemsetAsync(zeroes.data(), 0, zeroes.size(), cudf::get_default_stream().value()));
+  CUDF_CUDA_TRY(cudaMemsetAsync(zeroes.data(), 0, zeroes.size(), cudf::get_default_stream().get()));
   cudf::column_view col_zeros(
     cudf::data_type{cudf::type_id::INT32}, col_size, zeroes.data(), nullptr, 0);
   cudf::table_view tview{{col_zeros}};
@@ -2726,7 +2769,7 @@ TEST_F(JoinDictionaryTest, LeftJoinWithNulls)
   CUDF_TEST_EXPECT_TABLES_EQUIVALENT(*sorted_gold, *sorted_result);
 }
 
-TEST_P(JoinParameterizedTest, DictionaryInnerJoinNoNulls)
+TEST_P(InnerJoinParameterizedTest, DictionaryInnerJoinNoNulls)
 {
   auto algo = GetParam();
   column_wrapper<int32_t> col0_0{{3, 1, 2, 0, 2}};
@@ -2764,7 +2807,7 @@ TEST_P(JoinParameterizedTest, DictionaryInnerJoinNoNulls)
   CUDF_TEST_EXPECT_TABLES_EQUIVALENT(*sorted_gold, *sorted_result);
 }
 
-TEST_P(JoinParameterizedTest, DictionaryInnerJoinWithNulls)
+TEST_P(InnerJoinParameterizedTest, DictionaryInnerJoinWithNulls)
 {
   auto algo = GetParam();
   column_wrapper<int32_t> col0_0{{3, 1, 2, 0, 2}};

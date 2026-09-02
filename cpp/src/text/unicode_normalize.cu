@@ -27,7 +27,6 @@
 
 #include <nvtext/unicode_normalize.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
@@ -35,6 +34,7 @@
 #include <cuda/iterator>
 #include <cuda/std/algorithm>
 #include <cuda/std/span>
+#include <cuda/stream>
 #include <thrust/execution_policy.h>
 #include <thrust/fill.h>
 #include <thrust/remove.h>

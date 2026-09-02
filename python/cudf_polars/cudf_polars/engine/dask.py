@@ -703,7 +703,7 @@ def _worker_evaluate(
     uid: str,
     collect_metadata: bool = False,
     query_id: uuid.UUID,
-    quent_context: QuentContext | None = None,
+    quent_context: cudf_polars.quent.QuentContext | None = None,
     dask_worker: distributed.Worker | None = None,
 ) -> tuple[int, pl.DataFrame, list[ChannelMetadata] | None]:
     """
@@ -976,7 +976,9 @@ class DaskEngine(StreamingEngine):
         )
         engine_options = engine_options or {}
 
-        quent_context: QuentContext | None = executor_options.get("quent_context")
+        quent_context: cudf_polars.quent.QuentContext | None = executor_options.get(
+            "quent_context"
+        )
         if quent_context is not None:
             self._quent_logger = cudf_polars.quent._logging.QuentLogger()
         else:
@@ -1284,9 +1286,9 @@ class DaskEngine(StreamingEngine):
         ctx = self._dask_context
         self._dask_context = None
         exceptions: list[Exception] = []
-        quent_context: QuentContext | None = self.config["executor_options"].get(
-            "quent_context"
-        )
+        quent_context: cudf_polars.quent.QuentContext | None = self.config[
+            "executor_options"
+        ].get("quent_context")
         try:
             # Teardown emits Worker.exit, then we drain all buffered events
             # (including the exit event) from workers.

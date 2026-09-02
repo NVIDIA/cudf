@@ -77,7 +77,6 @@ if TYPE_CHECKING:
     from cudf_polars.engine.core import T
     from cudf_polars.engine.options import StreamingOptions
     from cudf_polars.engine.persisted_result import PersistedQueryResult
-    from cudf_polars.quent._context import QuentContext
     from cudf_polars.streaming.parallel import ConfigOptions
     from cudf_polars.utils.config import StreamingExecutor
 
@@ -533,7 +532,7 @@ class RankActor:
         config_options: ConfigOptions[StreamingExecutor],
         *,
         collect_metadata: bool,
-        quent_context: QuentContext | None,
+        quent_context: cudf_polars.quent.QuentContext | None,
         query_id: uuid.UUID,
     ) -> tuple[int, pl.DataFrame, list[ChannelMetadata] | None]:
         """
@@ -829,7 +828,9 @@ class RayEngine(StreamingEngine):
 
         check_reserved_keys(executor_options, engine_options)
 
-        quent_context: QuentContext | None = executor_options.get("quent_context")
+        quent_context: cudf_polars.quent.QuentContext | None = executor_options.get(
+            "quent_context"
+        )
         if quent_context is not None:
             self._quent_logger = cudf_polars.quent._logging.QuentLogger()
             executor_options.setdefault("quent_context", quent_context)
@@ -1132,9 +1133,9 @@ class RayEngine(StreamingEngine):
         if self._rank_actors is None:
             return  # already shut down; idempotent
         exceptions: list[Exception] = []
-        quent_context: QuentContext | None = self.config["executor_options"].get(
-            "quent_context"
-        )
+        quent_context: cudf_polars.quent.QuentContext | None = self.config[
+            "executor_options"
+        ].get("quent_context")
         try:
             # If Ray is no longer initialized (for example, if ``ray.shutdown()`` was
             # called before ``RayEngine.shutdown()``), the actors are gone as well.

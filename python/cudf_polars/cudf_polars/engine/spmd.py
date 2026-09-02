@@ -57,7 +57,6 @@ from cudf_polars.engine.persisted_result import (
 )
 from cudf_polars.quent._context import (
     LocalQuentContext,
-    QuentContext,
     WorkerResources,
 )
 from cudf_polars.quent._types import Worker
@@ -253,7 +252,7 @@ def synchronize_quent_context(
     *,
     comm: Communicator,
     context: Context,
-) -> QuentContext:
+) -> cudf_polars.quent.QuentContext:
     """
     Ensure all ranks use the same Quent engine ID.
 
@@ -261,19 +260,19 @@ def synchronize_quent_context(
     ranks participate in an AllGather so every process converges on that value.
     """
     if comm.rank == 0:
-        quent_context = QuentContext()
+        quent_context = cudf_polars.quent.QuentContext()
         data = quent_context.serialize()
     else:
         data = b""
 
     if comm.nranks == 1:
         # skip the collective
-        return QuentContext()
+        return cudf_polars.quent.QuentContext()
 
     with reserve_op_id() as op_id:
         all_data = all_gather_host_data(comm, context.br(), op_id, data)
 
-    return QuentContext.deserialize(all_data[0])
+    return cudf_polars.quent.QuentContext.deserialize(all_data[0])
 
 
 class SPMDEngine(StreamingEngine):
@@ -439,7 +438,9 @@ class SPMDEngine(StreamingEngine):
         )
         engine_options = engine_options or {}
 
-        quent_context: QuentContext | None = executor_options.get("quent_context")
+        quent_context: cudf_polars.quent.QuentContext | None = executor_options.get(
+            "quent_context"
+        )
         if quent_context is not None:
             self._quent_logger = cudf_polars.quent._logging.QuentLogger()
         else:
@@ -483,7 +484,6 @@ class SPMDEngine(StreamingEngine):
         self._comm: Communicator | None = comm
         self._ctx: Context | None = None
         self._py_executor: ThreadPoolExecutor | None = None
-
         self._store_uid = uuid.uuid4().hex
         exit_stack = contextlib.ExitStack()
         self._kvikio_monitor = make_kvikio_monitor(
@@ -663,7 +663,9 @@ class SPMDEngine(StreamingEngine):
             "kvikio_statistics", resolve_kvikio_statistics(executor_options)
         )
         engine_options = engine_options or {}
-        quent_context: QuentContext | None = executor_options.get("quent_context")
+        quent_context: cudf_polars.quent.QuentContext | None = executor_options.get(
+            "quent_context"
+        )
         rapidsmpf_options = resolve_rapidsmpf_options(rapidsmpf_options)
         self.rapidsmpf_options = rapidsmpf_options
 
@@ -895,10 +897,9 @@ class SPMDEngine(StreamingEngine):
                 self._worker_resources.finalize(self._quent_logger)
             self._quent_logger.emit(self._quent_worker._exit())
 
-        quent_context: QuentContext | None = self.config["executor_options"].get(
-            "quent_context"
-        )
-
+        quent_context: cudf_polars.quent.QuentContext | None = self.config[
+            "executor_options"
+        ].get("quent_context")
         if quent_context is not None:
             assert self._quent_logger is not None
             quent_context._emit_engine_exit_events(self._quent_logger)

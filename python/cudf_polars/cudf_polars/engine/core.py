@@ -897,7 +897,6 @@ def evaluate_on_rank(
     ir = lowering.lowered
     partition_info = lowering.partition_info
     # TODO: figure out if we emit anything about optimized.
-
     if config_options.executor.quent_context is not None:
         assert local_quent_context is not None
         plan, ops, ports, logical_op_by_id = build_plan(

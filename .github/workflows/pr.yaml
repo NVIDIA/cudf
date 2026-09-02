@@ -24,7 +24,6 @@ jobs:
       - conda-python-build-noarch
       - conda-python-cudf-tests
       - conda-python-other-tests
-      - conda-java-tests
       - java-build-matrix
       - java-build
       - java-tests
@@ -167,6 +166,10 @@ jobs:
           - '!java/**'
           - '!notebooks/**'
           - '!python/**'
+        cpp_files:
+          - 'cpp/**'
+          - 'ci/test_cmake.sh'
+          - 'ci/cpp_linters.sh'
         unit_tests_cudf_pandas:
           - 'python/cudf/cudf/pandas/**'
         test_java:
@@ -208,37 +211,10 @@ jobs:
           - '!notebooks/**'
           - '!python/**'
         test_notebooks:
-          - '**'
-          - '!**/REVIEW_GUIDELINES.md'
-          - '!.coderabbit.yaml'
-          - '!.clang-format'
-          - '!.devcontainer/**'
-          - '!.github/CODEOWNERS'
-          - '!.github/ISSUE_TEMPLATE/**'
-          - '!.github/PULL_REQUEST_TEMPLATE.md'
-          - '!.github/copy-pr-bot.yaml'
-          - '!.github/labeler.yml'
-          - '!.github/ops-bot.yaml'
-          - '!.github/release.yml'
-          - '!.github/workflows/auto-assign.yml'
-          - '!.github/workflows/build.yaml'
-          - '!.github/workflows/issue-release-scheduled.yml'
-          - '!.github/workflows/labeler.yml'
-          - '!.github/workflows/pr_issue_status_automation.yml'
-          - '!.github/workflows/test.yaml'
-          - '!.github/workflows/trigger-breaking-change-alert.yaml'
-          - '!.pre-commit-config.yaml'
-          - '!.yamllint.yaml'
-          - '!CONTRIBUTING.md'
-          - '!README.md'
-          - '!SECURITY.md'
-          - '!ci/build_wheel*.sh'
-          - '!ci/cudf_pandas_scripts/**'
-          - '!ci/release/update-version.sh'
-          - '!ci/test_wheel*.sh'
-          - '!ci/validate_wheel.sh'
-          - '!codecov.yml'
-          - '!java/**'
+          - 'python/cudf/**'
+          - '!python/cudf/cudf/pandas/**'
+          - 'python/dask_cudf/**'
+          - 'notebooks/**'
         test_python_conda:
           - '**'
           - '!**/REVIEW_GUIDELINES.md'
@@ -269,7 +245,6 @@ jobs:
           - '!ci/check_style.sh'
           - '!ci/cudf_pandas_scripts/**'
           - '!ci/release/update-version.sh'
-          - '!ci/test_java.sh'
           - '!ci/test_wheel*.sh'
           - '!ci/validate_wheel.sh'
           - '!docs/**'
@@ -311,7 +286,6 @@ jobs:
           - '!ci/test_cpp.sh'
           - '!ci/test_cpp_common.sh'
           - '!ci/test_cpp_memcheck.sh'
-          - '!ci/test_java.sh'
           - '!ci/test_notebooks.sh'
           - '!ci/test_python_common.sh'
           - '!ci/test_python_cudf.sh'
@@ -322,6 +296,10 @@ jobs:
           - '!img/**'
           - '!java/**'
           - '!notebooks/**'
+        test_wheel_dask_cudf:
+          - 'python/cudf/**'
+          - '!python/cudf/cudf/pandas/**'
+          - 'python/dask_cudf/**'
         not_cudf_polars:
           - '**'
           - '!python/cudf_polars/**'
@@ -362,7 +340,7 @@ jobs:
       node_type: cpu16
       script: ci/build_cpp.sh
   cmake-tests:
-    needs: checks
+    needs: [checks, changed-files]
     permissions:
       actions: read
       contents: read
@@ -371,6 +349,7 @@ jobs:
       pull-requests: read
     secrets: inherit # zizmor: ignore[secrets-inherit]
     uses: rapidsai/shared-workflows/.github/workflows/custom-job.yaml@main
+    if: fromJSON(needs.changed-files.outputs.changed_file_groups).cpp_files
     with:
       build_type: pull-request
       node_type: cpu16
@@ -385,8 +364,9 @@ jobs:
       packages: read
       pull-requests: read
     secrets: inherit # zizmor: ignore[secrets-inherit]
-    needs: checks
+    needs: [checks, changed-files]
     uses: rapidsai/shared-workflows/.github/workflows/custom-job.yaml@main
+    if: fromJSON(needs.changed-files.outputs.changed_file_groups).cpp_files
     with:
       build_type: pull-request
       script: "ci/cpp_linters.sh"
@@ -484,23 +464,6 @@ jobs:
       script: "ci/test_python_other.sh"
       # https://github.com/NVIDIA/cudf/issues/23498
       matrix_filter: map(select(.GPU != "gb300" and .GPU != "gh200"))
-  conda-java-tests:
-    needs: [conda-cpp-build, changed-files]
-    permissions:
-      actions: read
-      contents: read
-      id-token: write
-      packages: read
-      pull-requests: read
-    secrets: inherit # zizmor: ignore[secrets-inherit]
-    uses: rapidsai/shared-workflows/.github/workflows/custom-job.yaml@main
-    if: fromJSON(needs.changed-files.outputs.changed_file_groups).test_java
-    with:
-      build_type: pull-request
-      node_type: "gpu-rtxpro6000-latest-1"
-      arch: "amd64"
-      container_image: "rapidsai/ci-conda:26.10-latest"
-      script: "ci/test_java.sh"
   # Build and test the cuDF Java JAR for every Maven classifier.
   java-build-matrix:
     needs: [checks]
@@ -818,7 +781,7 @@ jobs:
       pull-requests: read
     secrets: inherit # zizmor: ignore[secrets-inherit]
     uses: rapidsai/shared-workflows/.github/workflows/wheels-test.yaml@main
-    if: fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_wheels && fromJSON(needs.changed-files.outputs.changed_file_groups).not_cudf_polars
+    if: fromJSON(needs.changed-files.outputs.changed_file_groups).test_wheel_dask_cudf
     with:
       # This selects "ARCH=amd64 + the latest supported Python + CUDA".
       matrix_filter: map(select(.ARCH == "amd64")) | group_by(.CUDA_VER|split(".")|map(tonumber)|.[0]) | map(max_by([(.PY_VER|split(".")|map(tonumber)), (.CUDA_VER|split(".")|map(tonumber))]))

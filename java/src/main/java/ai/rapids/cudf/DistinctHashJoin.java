@@ -42,7 +42,7 @@ public class DistinctHashJoin implements AutoCloseable {
           buildKeys = null;
         }
         if (logErrorIfNotClean) {
-          log.error("A DISTINCT HASH TABLE WAS LEAKED (ID: {}) 0x{}", id,
+          log.error("A DISTINCT HASH TABLE WAS LEAKED (ID: {} {})", id,
               Long.toHexString(origAddress));
         }
       }

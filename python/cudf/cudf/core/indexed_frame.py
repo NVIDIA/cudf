@@ -2495,7 +2495,7 @@ class IndexedFrame(Frame):
         end_secs = _time_to_seconds(end_time)
 
         idx = self.index
-        row_secs = idx.hour * 3600 + idx.minute * 60 + idx.second
+        row_secs = idx.hour.astype('int32') * 3600 + idx.minute.astype('int32') * 60 + idx.second.astype('int32')
 
         left_op = operator.ge if include_start else operator.gt
         right_op = operator.le if include_end else operator.lt
@@ -2553,7 +2553,7 @@ class IndexedFrame(Frame):
         target_secs = time.hour * 3600 + time.minute * 60 + time.second
 
         idx = self.index
-        row_secs = idx.hour * 3600 + idx.minute * 60 + idx.second
+        row_secs = idx.hour.astype('int32') * 3600 + idx.minute.astype('int32') * 60 + idx.second.astype('int32')
 
         return self[row_secs == target_secs]
 

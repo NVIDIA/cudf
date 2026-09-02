@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -51,7 +51,6 @@ void BM_csv_read_varying_options(
       .compression(cudf::io::compression_type::NONE)
       .use_cols_indexes(cols_to_read)
       .thousands('\'')
-      .windowslinetermination(true)
       .comment('#')
       .prefix("BM_");
 
@@ -59,7 +58,7 @@ void BM_csv_read_varying_options(
   auto const chunk_row_cnt =
     cudf::util::div_rounding_up_safe(view.num_rows(), static_cast<cudf::size_type>(num_chunks));
   auto const mem_stats_logger = cudf::memory_stats_logger();
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().value()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().get()));
   state.exec(nvbench::exec_tag::sync | nvbench::exec_tag::timer,
              [&](nvbench::launch& launch, auto& timer) {
                drop_page_cache_if_enabled(read_options.get_source().filepaths());

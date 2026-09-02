@@ -35,7 +35,9 @@ cpdef Column scan(
     DeviceMemoryResource mr = *,
 )
 
-cpdef tuple minmax(Column col, object stream = *, DeviceMemoryResource mr = *)
+cpdef tuple[Scalar, Scalar] minmax(
+    Column col, object stream = *, DeviceMemoryResource mr = *
+)
 
 cpdef bool is_valid_reduce_aggregation(DataType source, Aggregation agg)
 

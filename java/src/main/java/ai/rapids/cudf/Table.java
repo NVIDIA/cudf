@@ -327,106 +327,6 @@ public final class Table implements AutoCloseable {
                                                       long dataSourceHandle) throws CudfException;
 
   /**
-   * Setup everything to write parquet formatted data to a file.
-   * @param columnNames       names that correspond to the table columns
-   * @param numChildren       Children of the top level
-   * @param flatNumChildren   flattened list of children per column
-   * @param nullable          true if the column can have nulls else false
-   * @param metadataKeys      Metadata key names to place in the Parquet file
-   * @param metadataValues    Metadata values corresponding to metadataKeys
-   * @param compression       native compression codec ID
-   * @param rowGroupSizeRows  max #rows in a row group
-   * @param rowGroupSizeBytes max #bytes in a row group
-   * @param maxDictionarySize maximum dictionary size in bytes (cuDF default 1 MiB)
-   * @param dictionaryPolicy  native dictionary policy ID
-   * @param statsFreq         native statistics frequency ID
-   * @param isInt96           true if timestamp type is int96
-   * @param precisions        precision list containing all the precisions of the decimal types in
-   *                          the columns
-   * @param isMapValues       true if a column is a map
-   * @param isBinaryValues    true if a column is a binary
-   * @param filename          local output path
-   * @return a handle that is used in later calls to writeParquetChunk and writeParquetEnd.
-   */
-  private static native long writeParquetFileBegin(String[] columnNames,
-                                                   int numChildren,
-                                                   int[] flatNumChildren,
-                                                   boolean[] nullable,
-                                                   String[] metadataKeys,
-                                                   String[] metadataValues,
-                                                   int compression,
-                                                   int rowGroupSizeRows,
-                                                   long rowGroupSizeBytes,
-                                                   long maxDictionarySize,
-                                                   int dictionaryPolicy,
-                                                   int statsFreq,
-                                                   boolean[] isInt96,
-                                                   int[] precisions,
-                                                   boolean[] isMapValues,
-                                                   boolean[] isBinaryValues,
-                                                   boolean[] hasParquetFieldIds,
-                                                   int[] parquetFieldIds,
-                                                   String filename) throws CudfException;
-
-  /**
-   * Setup everything to write parquet formatted data to a buffer.
-   * @param columnNames       names that correspond to the table columns
-   * @param numChildren       Children of the top level
-   * @param flatNumChildren   flattened list of children per column
-   * @param nullable          true if the column can have nulls else false
-   * @param metadataKeys      Metadata key names to place in the Parquet file
-   * @param metadataValues    Metadata values corresponding to metadataKeys
-   * @param compression       native compression codec ID
-   * @param rowGroupSizeRows  max #rows in a row group
-   * @param rowGroupSizeBytes max #bytes in a row group
-   * @param maxDictionarySize maximum dictionary size in bytes (cuDF default 1 MiB)
-   * @param dictionaryPolicy  native dictionary policy ID
-   * @param statsFreq         native statistics frequency ID
-   * @param isInt96           true if timestamp type is int96
-   * @param precisions        precision list containing all the precisions of the decimal types in
-   *                          the columns
-   * @param isMapValues       true if a column is a map
-   * @param isBinaryValues    true if a column is a binary
-   * @param consumer          consumer of host buffers produced.
-   * @return a handle that is used in later calls to writeParquetChunk and writeParquetEnd.
-   */
-  private static native long writeParquetBufferBegin(String[] columnNames,
-                                                     int numChildren,
-                                                     int[] flatNumChildren,
-                                                     boolean[] nullable,
-                                                     String[] metadataKeys,
-                                                     String[] metadataValues,
-                                                     int compression,
-                                                     int rowGroupSizeRows,
-                                                     long rowGroupSizeBytes,
-                                                     long maxDictionarySize,
-                                                     int dictionaryPolicy,
-                                                     int statsFreq,
-                                                     boolean[] isInt96,
-                                                     int[] precisions,
-                                                     boolean[] isMapValues,
-                                                     boolean[] isBinaryValues,
-                                                     boolean[] hasParquetFieldIds,
-                                                     int[] parquetFieldIds,
-                                                     HostBufferConsumer consumer,
-                                                     HostMemoryAllocator hostMemoryAllocator
-                                                     ) throws CudfException;
-
-  /**
-   * Write out a table to an open handle.
-   * @param handle the handle to the writer.
-   * @param table the table to write out.
-   * @param tableMemSize the size of the table in bytes to help with memory allocation.
-   */
-  private static native void writeParquetChunk(long handle, long table, long tableMemSize);
-
-  /**
-   * Finish writing out parquet.
-   * @param handle the handle.  Do not use again once this returns.
-   */
-  private static native void writeParquetEnd(long handle);
-
-  /**
    * Read in ORC formatted data.
    * @param filterColumnNames name of the columns to read, or an empty array if we want to read
    *                          all of them
@@ -667,6 +567,9 @@ public final class Table implements AutoCloseable {
   private static native long[] leftDistinctJoinGatherMap(long leftKeys, long rightKeys,
                                                          boolean compareNullsEqual) throws CudfException;
 
+  private static native long[] leftDistinctHashJoinGatherMap(long leftTable,
+                                                             long rightDistinctHashJoin) throws CudfException;
+
   private static native long leftJoinRowCount(long leftTable, long rightHashJoin) throws CudfException;
 
   private static native long[] leftHashJoinGatherMaps(long leftTable, long rightHashJoin) throws CudfException;
@@ -679,6 +582,9 @@ public final class Table implements AutoCloseable {
 
   private static native long[] innerDistinctJoinGatherMaps(long leftKeys, long rightKeys,
                                                            boolean compareNullsEqual) throws CudfException;
+
+  private static native long[] innerDistinctHashJoinGatherMaps(long table,
+                                                               long distinctHashJoin) throws CudfException;
 
   private static native long innerJoinRowCount(long table, long hashJoin) throws CudfException;
 
@@ -1678,84 +1584,14 @@ public final class Table implements AutoCloseable {
     }
   }
 
-  private static class ParquetTableWriter extends TableWriter {
-    HostBufferConsumer consumer;
-
-    private ParquetTableWriter(ParquetWriterOptions options, File outputFile) {
-      super(writeParquetFileBegin(options.getFlatColumnNames(),
-          options.getTopLevelChildren(),
-          options.getFlatNumChildren(),
-          options.getFlatIsNullable(),
-          options.getMetadataKeys(),
-          options.getMetadataValues(),
-          options.getCompressionType().nativeId,
-          options.getRowGroupSizeRows(),
-          options.getRowGroupSizeBytes(),
-          options.getMaxDictionarySize(),
-          options.getDictionaryPolicy().nativeId,
-          options.getStatisticsFrequency().nativeId,
-          options.getFlatIsTimeTypeInt96(),
-          options.getFlatPrecision(),
-          options.getFlatIsMap(),
-          options.getFlatIsBinary(),
-          options.getFlatHasParquetFieldId(),
-          options.getFlatParquetFieldId(),
-          outputFile.getAbsolutePath()));
-      this.consumer = null;
-    }
-
-    private ParquetTableWriter(ParquetWriterOptions options, HostBufferConsumer consumer,
-        HostMemoryAllocator hostMemoryAllocator) {
-      super(writeParquetBufferBegin(options.getFlatColumnNames(),
-          options.getTopLevelChildren(),
-          options.getFlatNumChildren(),
-          options.getFlatIsNullable(),
-          options.getMetadataKeys(),
-          options.getMetadataValues(),
-          options.getCompressionType().nativeId,
-          options.getRowGroupSizeRows(),
-          options.getRowGroupSizeBytes(),
-          options.getMaxDictionarySize(),
-          options.getDictionaryPolicy().nativeId,
-          options.getStatisticsFrequency().nativeId,
-          options.getFlatIsTimeTypeInt96(),
-          options.getFlatPrecision(),
-          options.getFlatIsMap(),
-          options.getFlatIsBinary(),
-          options.getFlatHasParquetFieldId(),
-          options.getFlatParquetFieldId(),
-          consumer, hostMemoryAllocator));
-      this.consumer = consumer;
-    }
-
-    @Override
-    public void write(Table table) {
-      if (writerHandle == 0) {
-        throw new IllegalStateException("Writer was already closed");
-      }
-      writeParquetChunk(writerHandle, table.nativeHandle, table.getDeviceMemorySize());
-    }
-
-    @Override
-    public void close() throws CudfException {
-      if (writerHandle != 0) {
-        writeParquetEnd(writerHandle);
-      }
-      writerHandle = 0;
-      if (consumer != null) {
-        consumer.done();
-        consumer = null;
-      }
-    }
-  }
-
   /**
    * Get a table writer to write parquet data to a file.
    * @param options the parquet writer options.
    * @param outputFile where to write the file.
-   * @return a table writer to use for writing out multiple tables.
+   * @return a Parquet table writer to use for writing out multiple tables.
    */
-  public static TableWriter writeParquetChunked(ParquetWriterOptions options, File outputFile) {
+  public static ParquetTableWriter writeParquetChunked(ParquetWriterOptions options,
+                                                       File outputFile) {
     return new ParquetTableWriter(options, outputFile);
   }
 
@@ -1765,16 +1601,16 @@ public final class Table implements AutoCloseable {
    * @param consumer a class that will be called when host buffers are ready with parquet
    *                 formatted data in them.
    * @param hostMemoryAllocator allocator for host memory buffers
-   * @return a table writer to use for writing out multiple tables.
+   * @return a Parquet table writer to use for writing out multiple tables.
    */
-  public static TableWriter writeParquetChunked(ParquetWriterOptions options,
-                                                HostBufferConsumer consumer,
-                                                HostMemoryAllocator hostMemoryAllocator) {
+  public static ParquetTableWriter writeParquetChunked(ParquetWriterOptions options,
+                                                       HostBufferConsumer consumer,
+                                                       HostMemoryAllocator hostMemoryAllocator) {
     return new ParquetTableWriter(options, consumer, hostMemoryAllocator);
   }
 
-  public static TableWriter writeParquetChunked(ParquetWriterOptions options,
-                                                HostBufferConsumer consumer) {
+  public static ParquetTableWriter writeParquetChunked(ParquetWriterOptions options,
+                                                       HostBufferConsumer consumer) {
     return writeParquetChunked(options, consumer, DefaultHostMemoryAllocator.get());
   }
 
@@ -1815,7 +1651,7 @@ public final class Table implements AutoCloseable {
         for (ColumnView cv : columnViews) {
           total += cv.getDeviceMemorySize();
         }
-        writeParquetChunk(writer.writerHandle, nativeHandle, total);
+        writer.write(nativeHandle, total);
       }
     } finally {
       deleteCudfTable(nativeHandle);
@@ -2982,6 +2818,33 @@ public final class Table implements AutoCloseable {
   }
 
   /**
+   * Computes a gather map that can be used to manifest the result of a left equi-join between
+   * two tables where the right table is guaranteed not to contain any duplicated join keys.
+   * The left table can be used as-is to produce the left table columns resulting from the join,
+   * i.e.: left table ordering is preserved in the join result, so no gather map is required for
+   * the left table. The resulting gather map can be applied to the right table to produce the
+   * right table columns resulting from the join. It is assumed this table instance holds the
+   * key columns from the left table, and the {@link DistinctHashJoin} argument has been
+   * constructed from the key columns from the right table. A {@link GatherMap} instance will be
+   * returned that can be used to gather the right table and that result combined with the left
+   * table to produce a left outer join result.
+   *
+   * It is the responsibility of the caller to close the resulting gather map instance.
+   *
+   * @param rightHash hash table built from distinct join key columns from the right table
+   * @return right table gather map
+   */
+  public GatherMap leftDistinctJoinGatherMap(DistinctHashJoin rightHash) {
+    if (getNumberOfColumns() != rightHash.getNumberOfColumns()) {
+      throw new IllegalArgumentException("Column count mismatch, this: " + getNumberOfColumns() +
+          "rightKeys: " + rightHash.getNumberOfColumns());
+    }
+    long[] gatherMapData =
+        leftDistinctHashJoinGatherMap(getNativeView(), rightHash.getNativeView());
+    return buildSingleJoinGatherMap(gatherMapData);
+  }
+
+  /**
    * Computes the number of rows resulting from a left equi-join between two tables.
    * It is assumed this table instance holds the key columns from the left table, and the
    * {@link HashJoin} argument has been constructed from the key columns from the right table.
@@ -3246,6 +3109,29 @@ public final class Table implements AutoCloseable {
     }
     long[] gatherMapData =
         innerDistinctJoinGatherMaps(getNativeView(), rightKeys.getNativeView(), compareNullsEqual);
+    return buildJoinGatherMaps(gatherMapData);
+  }
+
+  /**
+   * Computes the gather maps that can be used to manifest the result of an inner equi-join between
+   * two tables where the right table is guaranteed not to contain any duplicated join keys. It is
+   * assumed this table instance holds the key columns from the left table, and the
+   * {@link DistinctHashJoin} argument has been constructed from the key columns from the right
+   * table. Two {@link GatherMap} instances will be returned that can be used to gather the left
+   * and right tables, respectively, to produce the result of the inner join.
+   *
+   * It is the responsibility of the caller to close the resulting gather map instances.
+   *
+   * @param rightHash hash table built from distinct join key columns from the right table
+   * @return left and right table gather maps
+   */
+  public GatherMap[] innerDistinctJoinGatherMaps(DistinctHashJoin rightHash) {
+    if (getNumberOfColumns() != rightHash.getNumberOfColumns()) {
+      throw new IllegalArgumentException("Column count mismatch, this: " + getNumberOfColumns() +
+          "rightKeys: " + rightHash.getNumberOfColumns());
+    }
+    long[] gatherMapData =
+        innerDistinctHashJoinGatherMaps(getNativeView(), rightHash.getNativeView());
     return buildJoinGatherMaps(gatherMapData);
   }
 

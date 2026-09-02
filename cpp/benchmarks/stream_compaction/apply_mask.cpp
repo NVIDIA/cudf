@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -63,14 +63,14 @@ void apply_mask_benchmark(nvbench::state& state, nvbench::type_list<DataType>)
   auto mask = create_random_column(cudf::type_id::BOOL8, row_count{n_rows}, profile);
 
   auto stream = cudf::get_default_stream();
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.value()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.get()));
   calculate_bandwidth<DataType>(state);
   auto const mem_stats_logger = cudf::memory_stats_logger();
 
   state.exec(nvbench::exec_tag::sync,
              [&source_table, &mask, is_retention](nvbench::launch& launch) {
                if (is_retention) {
-                 cudf::apply_boolean_mask(*source_table, mask->view());
+                 cudf::apply_retention_mask(*source_table, mask->view());
                } else {
                  cudf::apply_deletion_mask(*source_table, mask->view());
                }

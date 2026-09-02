@@ -2053,12 +2053,70 @@ def test_to_csv_encoding_error():
         df.to_csv("test.csv", encoding=encoding)
 
 
-def test_to_csv_compression_error():
+@pytest.mark.parametrize("compression", ["snappy", "gzip", "bz2", "xz"])
+def test_to_csv_unsupported_compression_error(compression):
     df = cudf.DataFrame({"a": ["test"]})
-    compression = "snappy"
-    error_message = "Writing compressed csv is not currently supported in cudf"
+    error_message = f"Compression {compression} is not supported"
     with pytest.raises(NotImplementedError, match=re.escape(error_message)):
         df.to_csv("test.csv", compression=compression)
+
+
+def test_to_csv_compression_no_path_error():
+    df = cudf.DataFrame({"a": ["test"]})
+    with pytest.raises(
+        ValueError, match="returning the CSV output as a string"
+    ):
+        df.to_csv(compression="zstd")
+
+
+def test_to_csv_compression_text_sink_error():
+    # a StringIO sink decodes what the writer hands it as UTF-8, which
+    # compressed output is not
+    df = cudf.DataFrame({"a": ["test"]})
+    with pytest.raises(ValueError, match="text-mode"):
+        df.to_csv(StringIO(), compression="zstd")
+
+
+@pytest.mark.parametrize("chunksize", [None, 8])
+def test_to_csv_zstd_compression(tmp_path, chunksize):
+    df = cudf.DataFrame(
+        {"int_col": list(range(100)), "str_col": ["x" * 100] * 100}
+    )
+    fname = tmp_path / "test_zstd.csv.zst"
+    df.to_csv(fname, index=False, compression="zstd", chunksize=chunksize)
+
+    assert_eq(df, pd.read_csv(fname))
+
+
+@pytest.mark.parametrize("mode", ["w", "wb"])
+def test_to_csv_zstd_compression_file_object(tmp_path, mode):
+    # a text file object wraps a binary buffer, so it must not be rejected
+    df = cudf.DataFrame({"a": [1, 2, 3], "b": ["x", "y", "z"]})
+    fname = tmp_path / "test_zstd.csv.zst"
+    with open(fname, mode) as f:
+        df.to_csv(f, index=False, compression="zstd")
+
+    assert_eq(df, pd.read_csv(fname))
+
+
+def test_to_csv_zstd_compression_remote_path():
+    # fsspec opens remote paths in text mode, wrapping a binary buffer
+    fsspec = pytest.importorskip("fsspec")
+    df = cudf.DataFrame({"a": [1, 2, 3], "b": ["x", "y", "z"]})
+    df.to_csv("memory://test_zstd.csv.zst", index=False, compression="zstd")
+
+    written = fsspec.filesystem("memory").cat("/test_zstd.csv.zst")
+    assert_eq(df, pd.read_csv(BytesIO(written), compression="zstd"))
+
+
+@pytest.mark.parametrize("compression", ["zstd", "infer"])
+@pytest.mark.parametrize("ext", [".zst", ".zstd"])
+def test_read_csv_zstd_extension(tmp_path, ext, compression):
+    df = cudf.DataFrame({"a": [1, 2, 3], "b": ["x", "y", "z"]})
+    fname = tmp_path / f"test_zstd.csv{ext}"
+    df.to_csv(fname, index=False, compression="zstd")
+
+    assert_eq(df, cudf.read_csv(fname, compression=compression))
 
 
 def test_empty_df_no_index():
@@ -2225,6 +2283,65 @@ def test_empty_file_pandas_compat_raises(tmp_path):
             cudf.read_csv(empty_file)
         with pytest.raises(pd.errors.EmptyDataError):
             cudf.read_csv(str(empty_file))
+
+
+@pytest.mark.parametrize(
+    "buffer,kwargs",
+    [
+        ("a,b\n", {}),
+        ("", {"names": ["a", "b"]}),
+    ],
+)
+def test_empty_csv_with_columns_pandas_compat(buffer, kwargs):
+    with cudf.option_context("mode.pandas_compatible", True):
+        got = cudf.read_csv(StringIO(buffer), **kwargs)
+
+    expect = pd.read_csv(StringIO(buffer), **kwargs)
+    # With no rows to infer from, pandas falls back to ``object`` for these
+    # columns while cudf types them as strings. cudf has no object dtype
+    # (``object`` maps to DEFAULT_STRING_DTYPE), so the dtypes can never
+    # match here; what this test is about is that the columns survive at all.
+    assert_eq(expect, got, check_dtype=False)
+
+
+@pytest.mark.parametrize(
+    "name,fmt",
+    [
+        ("archive.tar", "tar"),
+        ("archive.tgz", "tar"),
+        ("archive.tar.gz", "tar"),
+        ("archive.tar.bz2", "tar"),
+        ("archive.tar.xz", "tar"),
+        ("archive.tar.zst", "tar"),
+        ("data.xz", "xz"),
+    ],
+)
+def test_read_csv_unreadable_compression_raises(tmp_path, name, fmt):
+    # libcudf cannot decompress these, and left alone it parses the container's
+    # bytes as CSV instead of failing -- an empty tar comes back as a (0, 1)
+    # frame whose column name is a run of NULs. Raising keeps cudf.pandas
+    # falling back to pandas, which reads them correctly.
+    path = tmp_path / name
+    path.write_bytes(b"\0" * 10240)
+    with pytest.raises(NotImplementedError, match=fmt):
+        cudf.read_csv(str(path))
+
+
+def test_read_csv_explicit_unsupported_compression_raises(tmp_path):
+    path = tmp_path / "does_not_exist.csv"
+    with pytest.raises(NotImplementedError, match="tar"):
+        cudf.read_csv(str(path), compression="tar")
+
+
+def test_read_csv_empty_tar_matches_pandas(tmp_path):
+    # Regression guard: pandas raises for a zero-file archive, so cudf must not
+    # quietly return a frame built from the tar's padding.
+    path = tmp_path / "empty.tar"
+    path.write_bytes(b"\0" * 10240)
+    with pytest.raises(ValueError):
+        pd.read_csv(path)
+    with pytest.raises(NotImplementedError):
+        cudf.read_csv(str(path))
 
 
 def test_read_csv_gcs(monkeypatch):

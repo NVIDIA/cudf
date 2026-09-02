@@ -147,8 +147,8 @@ void run_test(std::string const& input, bool enable_lines = true)
                                   gpu_tree.node_categories.data(),
                                   sizeof(cuio_json::node_t) * size_to_copy,
                                   cudaMemcpyDefault,
-                                  stream.value()));
-    stream.synchronize();
+                                  stream.get()));
+    stream.sync();
     if (options.is_enabled_lines()) return h_node_categories[0] == cuio_json::NC_LIST;
     return h_node_categories[0] == cuio_json::NC_LIST and
            h_node_categories[1] == cuio_json::NC_LIST;
@@ -186,8 +186,8 @@ void run_test(std::string const& input, bool enable_lines = true)
                                   gpu_col_id.data() + list_node_index,
                                   sizeof(cudf::size_type),
                                   cudaMemcpyDefault,
-                                  stream.value()));
-    stream.synchronize();
+                                  stream.get()));
+    stream.sync();
     return value;
   }();
 
@@ -362,5 +362,13 @@ TEST_F(JsonColumnTreeTests, JSONL_CornerCase_ListofLists)
 TEST_F(JsonColumnTreeTests, JSONL_CornerCase_EmptyListOfLists)
 {
   std::string json_string = R"([[]])";
+  run_test(json_string, true);
+}
+
+TEST_F(JsonColumnTreeTests, JSONL_CornerCase_SingleColumn)
+{
+  std::string json_string = R"({}
+{}
+{})";
   run_test(json_string, true);
 }

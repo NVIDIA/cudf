@@ -148,7 +148,7 @@ async def concatenate_node(
             allgather = AllGatherManager(context, comm, collective_id)
             with allgather.inserting() as inserter:
                 while (msg := await ch_in.recv(context)) is not None:
-                    inserter.insert(
+                    await inserter.insert(
                         seq_num, TableChunk.from_message(msg, br=context.br())
                     )
                     seq_num += 1

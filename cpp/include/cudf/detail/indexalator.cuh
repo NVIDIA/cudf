@@ -11,11 +11,11 @@
 #include <cudf/scalar/scalar.hpp>
 #include <cudf/utilities/traits.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
-
 #include <cuda/iterator>
 #include <cuda/std/optional>
 #include <cuda/std/utility>
+#include <cuda/stream>
+#include <thrust/iterator/transform_iterator.h>
 
 namespace cudf {
 namespace detail {
@@ -318,7 +318,7 @@ struct indexalator_factory {
     /**
      * @brief Create an accessor from a scalar.
      */
-    scalar_optional_index_accessor(scalar const& input, rmm::cuda_stream_view stream)
+    scalar_optional_index_accessor(scalar const& input, cuda::stream_ref stream)
       : is_null{!input.is_valid(stream)}
     {
       iter = indexalator_factory::make_input_iterator(input);
@@ -341,7 +341,7 @@ struct indexalator_factory {
   /**
    * @brief Create an index iterator with an optional index accessor for a scalar.
    */
-  static auto make_input_optional_iterator(scalar const& input, rmm::cuda_stream_view stream)
+  static auto make_input_optional_iterator(scalar const& input, cuda::stream_ref stream)
   {
     return cuda::transform_iterator(cuda::make_constant_iterator<size_type>(0),
                                     scalar_optional_index_accessor{input, stream});

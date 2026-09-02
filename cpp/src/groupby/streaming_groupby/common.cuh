@@ -239,7 +239,7 @@ auto build_cross_comparators(
     h_eqs.push_back(adapter.comparator);
   }
 
-  return cudf::detail::make_device_uvector_async(h_eqs, stream, temp_mr);
+  return cudf::detail::make_device_uvector(h_eqs, stream, temp_mr);
 }
 
 /// The impl struct for streaming_groupby. Defined in impl.cu.
@@ -296,7 +296,7 @@ struct streaming_groupby::impl {
    */
   std::unique_ptr<mutable_table_device_view, void (*)(mutable_table_device_view*)> _d_agg_results;
   std::vector<size_type> _value_col_indices;
-  rmm::device_uvector<aggregation::Kind> _d_agg_kinds;
+  std::unique_ptr<rmm::device_uvector<aggregation::Kind>> _d_agg_kinds;
 
   std::unique_ptr<streaming_set_t> _key_set;
 

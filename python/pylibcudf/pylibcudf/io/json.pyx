@@ -162,7 +162,7 @@ cdef class JsonReaderOptions:
     For details, see `:cpp:class:`cudf::io::json_reader_options`
     """
     @staticmethod
-    def builder(SourceInfo source):
+    def builder(SourceInfo source) -> JsonReaderOptionsBuilder:
         """
         Create a JsonReaderOptionsBuilder object
 
@@ -362,6 +362,8 @@ cdef class JsonReaderOptions:
 
 
 cdef class JsonReaderOptionsBuilder:
+    """Builder to build options for ``read_json``."""
+
     cpdef JsonReaderOptionsBuilder byte_range_offset(self, size_t byte_range_offset):
         """
         Set number of bytes to skip from source start.
@@ -373,7 +375,7 @@ cdef class JsonReaderOptionsBuilder:
 
         Returns
         -------
-        Self
+        JsonReaderOptionsBuilder
         """
         self.c_obj.byte_range_offset(byte_range_offset)
         return self
@@ -389,12 +391,14 @@ cdef class JsonReaderOptionsBuilder:
 
         Returns
         -------
-        Self
+        JsonReaderOptionsBuilder
         """
         self.c_obj.byte_range_size(byte_range_size)
         return self
 
-    cpdef JsonReaderOptionsBuilder compression(self, compression_type compression):
+    cpdef JsonReaderOptionsBuilder compression(
+        self, compression_type compression
+    ):
         """
         Sets compression type.
 
@@ -405,7 +409,7 @@ cdef class JsonReaderOptionsBuilder:
 
         Returns
         -------
-        Self
+        JsonReaderOptionsBuilder
         """
         self.c_obj.compression(compression)
         return self
@@ -422,7 +426,7 @@ cdef class JsonReaderOptionsBuilder:
 
         Returns
         -------
-        Self
+        JsonReaderOptionsBuilder
         """
         self.c_obj.dayfirst(val)
         return self
@@ -438,7 +442,7 @@ cdef class JsonReaderOptionsBuilder:
 
         Returns
         -------
-        Self
+        JsonReaderOptionsBuilder
         """
         self.c_obj.delimiter(delimiter)
         return self
@@ -456,7 +460,7 @@ cdef class JsonReaderOptionsBuilder:
 
         Returns
         -------
-        Self
+        JsonReaderOptionsBuilder
         """
         cdef vector[data_type] types_vec
         if isinstance(types[0], tuple):
@@ -482,7 +486,7 @@ cdef class JsonReaderOptionsBuilder:
 
         Returns
         -------
-        Self
+        JsonReaderOptionsBuilder
         """
         self.c_obj.experimental(val)
         return self
@@ -499,7 +503,7 @@ cdef class JsonReaderOptionsBuilder:
 
         Returns
         -------
-        Self
+        JsonReaderOptionsBuilder
         """
         self.c_obj.keep_quotes(val)
         return self
@@ -516,7 +520,7 @@ cdef class JsonReaderOptionsBuilder:
 
         Returns
         -------
-        Self
+        JsonReaderOptionsBuilder
         """
         self.c_obj.lines(val)
         return self
@@ -533,7 +537,7 @@ cdef class JsonReaderOptionsBuilder:
 
         Returns
         -------
-        Self
+        JsonReaderOptionsBuilder
         """
         self.c_obj.mixed_types_as_string(val)
         return self
@@ -549,7 +553,7 @@ cdef class JsonReaderOptionsBuilder:
 
         Returns
         -------
-        Self
+        JsonReaderOptionsBuilder
         """
         cdef vector[string] vec
         for val in vals:
@@ -571,7 +575,7 @@ cdef class JsonReaderOptionsBuilder:
 
         Returns
         -------
-        Self
+        JsonReaderOptionsBuilder
         """
         self.c_obj.nonnumeric_numbers(val)
         return self
@@ -588,7 +592,7 @@ cdef class JsonReaderOptionsBuilder:
 
         Returns
         -------
-        Self
+        JsonReaderOptionsBuilder
         """
         self.c_obj.normalize_single_quotes(val)
         return self
@@ -605,7 +609,7 @@ cdef class JsonReaderOptionsBuilder:
 
         Returns
         -------
-        Self
+        JsonReaderOptionsBuilder
         """
         self.c_obj.normalize_whitespace(val)
         return self
@@ -623,7 +627,7 @@ cdef class JsonReaderOptionsBuilder:
 
         Returns
         -------
-        Self
+        JsonReaderOptionsBuilder
         """
         self.c_obj.numeric_leading_zeros(val)
         return self
@@ -642,7 +646,7 @@ cdef class JsonReaderOptionsBuilder:
 
         Returns
         -------
-        Self
+        JsonReaderOptionsBuilder
         """
         self.c_obj.prune_columns(val)
         return self
@@ -662,7 +666,7 @@ cdef class JsonReaderOptionsBuilder:
 
         Returns
         -------
-        Self
+        JsonReaderOptionsBuilder
         """
         self.c_obj.recovery_mode(recovery_mode)
         return self
@@ -678,7 +682,7 @@ cdef class JsonReaderOptionsBuilder:
 
         Returns
         -------
-        Self
+        JsonReaderOptionsBuilder
         """
         self.c_obj.strict_validation(val)
         return self
@@ -696,12 +700,12 @@ cdef class JsonReaderOptionsBuilder:
 
         Returns
         -------
-        Self
+        JsonReaderOptionsBuilder
         """
         self.c_obj.unquoted_control_chars(val)
         return self
 
-    cpdef build(self):
+    cpdef JsonReaderOptions build(self):
         """Create a JsonReaderOptions object"""
         cdef JsonReaderOptions json_options = JsonReaderOptions.__new__(
             JsonReaderOptions
@@ -711,7 +715,7 @@ cdef class JsonReaderOptionsBuilder:
         return json_options
 
 
-cpdef tuple chunked_read_json(
+cpdef tuple[list[Column], list[str], dict] chunked_read_json(
     JsonReaderOptions options,
     int chunk_size=100_000_000,
     object stream: CudaStreamLike | None = None,
@@ -911,7 +915,7 @@ cdef class JsonWriterOptions:
     For details, see :cpp:class:`cudf::io::json_writer_options`
     """
     @staticmethod
-    def builder(SinkInfo sink, Table table):
+    def builder(SinkInfo sink, Table table) -> JsonWriterOptionsBuilder:
         """
         Create a JsonWriterOptionsBuilder object
 
@@ -996,6 +1000,8 @@ cdef class JsonWriterOptions:
         self.c_obj.set_compression(comptype)
 
 cdef class JsonWriterOptionsBuilder:
+    """Builder to build options for ``write_json``."""
+
     cpdef JsonWriterOptionsBuilder metadata(self, TableWithMetadata tbl_w_meta):
         """
         Sets optional metadata (with column names).
@@ -1007,7 +1013,7 @@ cdef class JsonWriterOptionsBuilder:
 
         Returns
         -------
-        Self
+        JsonWriterOptionsBuilder
         """
         self.c_obj.metadata(tbl_w_meta.metadata)
         return self
@@ -1023,7 +1029,7 @@ cdef class JsonWriterOptionsBuilder:
 
         Returns
         -------
-        Self
+        JsonWriterOptionsBuilder
         """
         self.c_obj.na_rep(val.encode())
         return self
@@ -1039,7 +1045,7 @@ cdef class JsonWriterOptionsBuilder:
 
         Returns
         -------
-        Self
+        JsonWriterOptionsBuilder
         """
         self.c_obj.include_nulls(val)
         return self
@@ -1055,7 +1061,7 @@ cdef class JsonWriterOptionsBuilder:
 
         Returns
         -------
-        Self
+        JsonWriterOptionsBuilder
         """
         self.c_obj.lines(val)
         return self
@@ -1071,7 +1077,7 @@ cdef class JsonWriterOptionsBuilder:
 
         Returns
         -------
-        Self
+        JsonWriterOptionsBuilder
         """
         self.c_obj.compression(comptype)
         return self
@@ -1088,7 +1094,7 @@ cdef class JsonWriterOptionsBuilder:
 
         Returns
         -------
-        Self
+        JsonWriterOptionsBuilder
         """
         self.c_obj.utf8_escaped(val)
         return self

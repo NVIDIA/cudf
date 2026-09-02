@@ -6,8 +6,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from cudf_streaming.partition_utils import unpack_and_concat
+from cudf_streaming.partition_utils import unpack_and_concat, unpack_and_concat_cost
+from cudf_streaming.table_chunk import make_table_chunks_available_or_wait
 from rapidsmpf.streaming.coll.allgather import AllGather
+from rapidsmpf.streaming.core.memory_reserve_or_wait import reserve_memory
 
 if TYPE_CHECKING:
     import pylibcudf as plc
@@ -49,7 +51,7 @@ class AllGatherManager:
         def __init__(self, manager: AllGatherManager):
             self._manager = manager
 
-        def insert(self, sequence_number: int, chunk: TableChunk) -> None:
+        async def insert(self, sequence_number: int, chunk: TableChunk) -> None:
             """
             Insert a chunk into the AllGather.
 
@@ -61,8 +63,13 @@ class AllGatherManager:
                 The table chunk to insert. Need not be GPU-resident; if spilled,
                 it will be made available internally.
             """
-            chunk = chunk.make_available_and_spill(
-                self._manager.context.br(), allow_overbooking=True
+            # The chunk's data moves into AllGather-owned packed buffers,
+            # nothing lasting is added.
+            chunk, _ = await make_table_chunks_available_or_wait(
+                self._manager.context,
+                chunk,
+                reserve_extra=0,
+                net_memory_delta=0,
             )
             self._manager.allgather.insert(
                 sequence_number,
@@ -105,9 +112,20 @@ class AllGatherManager:
         -------
         The concatenated AllGather result.
         """
+        partitions = await self.allgather.extract_all(self.context, ordered=ordered)
+        # The cost covers the concatenated output plus moving any
+        # host-resident partitions to device. The packed inputs stay live
+        # until the concat finishes and are released after, so the net
+        # change is about zero.
+        reservation = await reserve_memory(
+            self.context,
+            unpack_and_concat_cost(partitions),
+            net_memory_delta=0,
+        )
         return await ir_context.to_thread(
             unpack_and_concat,
-            partitions=await self.allgather.extract_all(self.context, ordered=ordered),
+            partitions=partitions,
             stream=stream,
             br=self.context.br(),
+            reservation=reservation,
         )

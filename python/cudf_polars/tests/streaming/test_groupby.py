@@ -13,9 +13,12 @@ import pytest
 
 import polars as pl
 
+import pylibcudf as plc
 from cudf_streaming.table_chunk import TableChunk
 
-from cudf_polars.containers import DataFrame
+from cudf_polars.containers import DataFrame, DataType
+from cudf_polars.dsl import expr
+from cudf_polars.dsl.ir import Distinct, Empty, GroupBy
 from cudf_polars.engine.options import StreamingOptions
 from cudf_polars.streaming.actor_graph import groupby as groupby_actor_graph
 from cudf_polars.streaming.actor_graph.collectives.shuffle import ShuffleManager
@@ -83,6 +86,52 @@ def test_dynamic_groupby_strategy_avoids_row_limit_allgather(
     assert tracer.decision == "shuffle"
 
 
+@pytest.mark.parametrize(
+    "nranks,npartitions,expected",
+    [
+        (2, 5, [3, 2]),
+        (3, 5, [2, 2, 1]),
+        (4, 10, [3, 2, 3, 2]),
+    ],
+)
+def test_partition_count_for_rank_uses_contiguous_ownership(
+    nranks, npartitions, expected
+):
+    """GroupBy metadata uses the same uneven partition ownership as adjust_ordering."""
+    counts = [
+        groupby_actor_graph._partition_count_for_rank(rank, nranks, npartitions)
+        for rank in range(nranks)
+    ]
+    assert counts == expected
+
+
+def test_order_sensitive_execution_does_not_imply_output_order() -> None:
+    schema = {"key": DataType(pl.Int64()), "value": DataType(pl.Int64())}
+    key = expr.NamedExpr("key", expr.Col(schema["key"], "key"))
+    groupby = GroupBy(
+        schema,
+        (key,),
+        (),
+        False,  # noqa: FBT003
+        None,
+        Empty(schema),
+    )
+    distinct = Distinct(
+        schema,
+        plc.stream_compaction.DuplicateKeepOption.KEEP_FIRST,
+        None,
+        None,
+        False,  # noqa: FBT003
+        Empty(schema),
+    )
+
+    with patch.object(groupby_actor_graph, "_has_stable_sorted_agg", return_value=True):
+        assert groupby_actor_graph._maintain_order(groupby)
+    assert not groupby.preserves_output_order
+    assert groupby_actor_graph._maintain_order(distinct)
+    assert not distinct.preserves_output_order
+
+
 @pytest.mark.parametrize("keys", [("key",), ("key", "key2")])
 @pytest.mark.parametrize("agg", ["sum", "mean", "len", "min", "max"])
 def test_dynamic_groupby_basic(df, streaming_engine, keys, agg):
@@ -109,6 +158,27 @@ def test_dynamic_groupby_shuffle_strategy(streaming_engine_factory):
     df = pl.LazyFrame({"key": range(1000), "value": range(1000)})
     q = df.group_by("key").agg(pl.col("value").sum())
     assert_gpu_result_equal(q, engine=streaming_engine, check_row_order=False)
+
+
+@pytest.mark.parametrize("group_keys", [("key", "subkey"), ("key",)])
+def test_dynamic_groupby_after_sort_on_group_keys(spmd_engine_factory, group_keys):
+    """Group sorted data by the full sort key set or a sorted-key prefix."""
+    streaming_engine = spmd_engine_factory(
+        StreamingOptions(target_partition_size=128),
+    )
+    df = pl.LazyFrame(
+        {
+            "key": [0] * 16 + [1] * 16 + [2] * 16 + [3] * 16,
+            "subkey": ([0] * 8 + [1] * 8) * 4,
+            "value": range(64),
+        }
+    )
+    q = (
+        df.sort("key", "subkey")
+        .group_by(*group_keys, maintain_order=True)
+        .agg(pl.col("value").sum())
+    )
+    assert_gpu_result_equal(q, engine=streaming_engine)
 
 
 def test_dynamic_groupby_single_group(streaming_engine):

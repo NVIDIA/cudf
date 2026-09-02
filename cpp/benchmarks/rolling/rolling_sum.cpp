@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -37,7 +37,7 @@ void bench_row_fixed_rolling_sum(nvbench::state& state, nvbench::type_list<Type>
   auto req = cudf::make_sum_aggregation<cudf::rolling_aggregation>();
 
   auto const mem_stats_logger = cudf::memory_stats_logger();
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().value()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().get()));
   state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
     auto const result =
       cudf::rolling_window(vals->view(), preceding_size, following_size, min_periods, *req);
@@ -69,7 +69,7 @@ void bench_row_variable_rolling_sum(nvbench::state& state, nvbench::type_list<Ty
     });
     auto buf = rmm::device_buffer(
       data.data(), num_rows * sizeof(cudf::size_type), cudf::get_default_stream());
-    cudf::get_default_stream().synchronize();
+    cudf::get_default_stream().sync();
     return std::make_unique<cudf::column>(cudf::data_type(cudf::type_to_id<cudf::size_type>()),
                                           num_rows,
                                           std::move(buf),
@@ -85,7 +85,7 @@ void bench_row_variable_rolling_sum(nvbench::state& state, nvbench::type_list<Ty
     });
     auto buf = rmm::device_buffer(
       data.data(), num_rows * sizeof(cudf::size_type), cudf::get_default_stream());
-    cudf::get_default_stream().synchronize();
+    cudf::get_default_stream().sync();
     return std::make_unique<cudf::column>(cudf::data_type(cudf::type_to_id<cudf::size_type>()),
                                           num_rows,
                                           std::move(buf),
@@ -96,7 +96,7 @@ void bench_row_variable_rolling_sum(nvbench::state& state, nvbench::type_list<Ty
   auto req = cudf::make_sum_aggregation<cudf::rolling_aggregation>();
 
   auto const mem_stats_logger = cudf::memory_stats_logger();
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().value()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().get()));
   state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
     auto const result =
       cudf::rolling_window(vals->view(), preceding->view(), following->view(), 1, *req);

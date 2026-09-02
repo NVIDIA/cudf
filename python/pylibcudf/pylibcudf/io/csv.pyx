@@ -53,7 +53,7 @@ cdef class CsvReaderOptions:
     For details, see :cpp:class:`cudf::io::csv_reader_options`
     """
     @staticmethod
-    def builder(SourceInfo source):
+    def builder(SourceInfo source) -> CsvReaderOptionsBuilder:
         """
         Create a CsvWriterOptionsBuilder object
 
@@ -715,7 +715,7 @@ cdef class CsvWriterOptions:
     For details, see :cpp:class:`cudf::io::csv_writer_options`
     """
     @staticmethod
-    def builder(SinkInfo sink, Table table):
+    def builder(SinkInfo sink, Table table) -> CsvWriterOptionsBuilder:
         """Create a CsvWriterOptionsBuilder object
 
         For details, see :cpp:func:`cudf::io::csv_writer_options::builder`
@@ -891,6 +891,46 @@ cdef class CsvWriterOptionsBuilder:
             Builder to build CsvWriterOptions
         """
         self.c_obj.quoting(style)
+        return self
+
+    cpdef CsvWriterOptionsBuilder compression(self, compression_type comp):
+        """Sets the compression type for the output
+
+        Parameters
+        ----------
+        comp : CompressionType
+            Compression type. Only NONE and ZSTD are supported for CSV writer.
+            ZSTD is used because it supports concatenated frames, enabling
+            progressive chunk-based compression compatible with standard
+            decompression tools.
+
+        Returns
+        -------
+        CsvWriterOptionsBuilder
+            Builder to build CsvWriterOptions
+        """
+        self.c_obj.compression(comp)
+        return self
+
+    cpdef CsvWriterOptionsBuilder compression_block_size(self, size_t size):
+        """Sets the size of the blocks that the output is compressed in
+
+        The output is split into blocks of this size, each compressed into its
+        own frame, so that the codec can compress them in parallel. The block
+        size is independent of ``rows_per_chunk``, and is capped at the maximum
+        input size the codec supports.
+
+        Parameters
+        ----------
+        size : int
+            Compression block size, in bytes. Must be greater than zero.
+
+        Returns
+        -------
+        CsvWriterOptionsBuilder
+            Builder to build CsvWriterOptions
+        """
+        self.c_obj.compression_block_size(size)
         return self
 
     cpdef CsvWriterOptions build(self):

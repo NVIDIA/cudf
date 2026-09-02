@@ -202,6 +202,7 @@ multisource_device_data fetch_multisource_device_data(
   auto [buffers, per_source_spans, tasks] = cudf::io::parquet::fetch_byte_ranges_to_device_async(
     inputs.datasource_refs,
     cudf::host_span<std::vector<cudf::io::text::byte_range_info> const>{byte_ranges_per_source},
+    cudf::io::parquet::io_submission_policy::SERIALIZE,
     stream,
     mr);
   tasks.get();
@@ -252,7 +253,11 @@ auto filter_row_groups_with_dictionaries_impl(InputType& inputs,
       group_byte_ranges_by_source(dict_pages, inputs.datasources.size());
     [[maybe_unused]] auto [dict_page_buffers, dict_page_data_per_source, task] =
       cudf::io::parquet::fetch_byte_ranges_to_device_async(
-        inputs.datasource_refs, dict_page_ranges_per_source, stream, mr);
+        inputs.datasource_refs,
+        dict_page_ranges_per_source,
+        cudf::io::parquet::io_submission_policy::SERIALIZE,
+        stream,
+        mr);
     task.get();
 
     std::vector<cudf::device_span<uint8_t const>> dict_page_data;
@@ -265,12 +270,16 @@ auto filter_row_groups_with_dictionaries_impl(InputType& inputs,
       dict_page_data, row_group_indices, options, stream);
   } else {
     auto const dict_page_byte_ranges =
-      reader.secondary_filters_byte_ranges(row_group_indices, options).second;
+      reader.dictionary_pages_byte_ranges(row_group_indices, options);
     CUDF_EXPECTS(dict_page_byte_ranges.size() > 0, "No dictionary page byte ranges found");
 
     [[maybe_unused]] auto [dict_page_buffers, dict_page_data, dict_page_tasks] =
       cudf::io::parquet::fetch_byte_ranges_to_device_async(
-        inputs, dict_page_byte_ranges, stream, mr);
+        inputs,
+        dict_page_byte_ranges,
+        cudf::io::parquet::io_submission_policy::SERIALIZE,
+        stream,
+        mr);
     dict_page_tasks.get();
 
     return reader.filter_row_groups_with_dictionary_pages(
@@ -347,6 +356,7 @@ std::pair<std::unique_ptr<cudf::table>, std::vector<char>> create_parquet_with_s
       auto [null_mask, null_count] = cudf::test::detail::make_null_mask_vector(begin, end);
       auto d_mask                  = rmm::device_buffer{
         null_mask.data(), cudf::bitmask_allocation_size_bytes(cudf::distance(begin, end)), stream};
+      stream.sync();
       return std::pair{std::move(d_mask), null_count};
     };
 
@@ -419,6 +429,7 @@ std::pair<std::unique_ptr<cudf::table>, std::vector<char>> create_parquet_with_s
   INSTANTIATE_CREATE_PARQUET_WITH_STATS(T, 1, true, true)
 
 INSTANTIATE_CREATE_PARQUET_WITH_STATS(uint32_t, 4, true, false);
+INSTANTIATE_CREATE_PARQUET_WITH_STATS(int32_t, 2, true, false);
 INSTANTIATE_CREATE_PARQUET_WITH_STATS(cudf::timestamp_ms, 2, true, false);
 INSTANTIATE_CREATE_PARQUET_WITH_STATS(cudf::duration_ms, 2, true, false);
 

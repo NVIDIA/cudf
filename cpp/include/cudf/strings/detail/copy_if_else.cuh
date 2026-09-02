@@ -78,7 +78,7 @@ std::unique_ptr<cudf::column> copy_if_else(StringIterLeft lhs_begin,
                     });
 
   // convert vector into strings column
-  auto result = make_strings_column(indices.begin(), indices.end(), stream, mr);
+  auto result = cudf::make_strings_column(indices, stream, mr);
   result->set_null_mask(std::move(null_mask), null_count);
   return result;
 }

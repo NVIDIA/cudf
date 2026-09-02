@@ -2423,106 +2423,90 @@ class IndexedFrame(Frame):
         slicer[axis] = slice(before, after)
         return self.loc[tuple(slicer)].copy()
 
-    @_performance_tracking
-    def between_time(
-        self,
-        start_time,
-        end_time,
-        inclusive: str = "both",
-    ) -> Self:
-        """
-        Select values between particular times of the day (e.g., 9:00-9:30 AM).
+        @_performance_tracking
+        def between_time(
+            self,
+            start_time,
+            end_time,
+            inclusive: str = "both",
+            axis: Axis | None = None,
+        ) -> Self:
+            """
+            Select values between particular times of the day (e.g., 9:00-9:30 AM).
 
-        By setting ``start_time`` to be later than ``end_time``, you can get
-        the times that are *not* between the two times.
+            By setting ``start_time`` to be later than ``end_time``, you can get
+            the times that are *not* between the two times.
 
-        Parameters
-        ----------
-        start_time : datetime.time or str
-            Initial time as a time filter limit.
-        end_time : datetime.time or str
-            End time as a time filter limit.
-        inclusive : {"both", "neither", "left", "right"}, default "both"
-            Include boundaries; whether to set each bound as closed or open.
+            Parameters
+            ----------
+            start_time : datetime.time or str
+                Initial time as a time filter limit.
+            end_time : datetime.time or str
+                End time as a time filter limit.
+            inclusive : {"both", "neither", "left", "right"}, default "both"
+                Include boundaries; whether to set each bound as closed or open.
+            axis : {0 or 'index'}, None, default None
+                Axis on which to select. Only axis=0/'index' (rows) is supported.
 
-        Returns
-        -------
-        Series or DataFrame
-            Data from the original object filtered to the specified
-            time range.
+            Returns
+            -------
+            Series or DataFrame
+                Data from the original object filtered to the specified
+                time range.
 
-        Raises
-        ------
-        TypeError
-            If the index is not a :class:`~cudf.DatetimeIndex`.
+            Raises
+            ------
+            TypeError
+                If the index is not a :class:`~cudf.DatetimeIndex`.
 
-        Examples
-        --------
-        >>> import cudf
-        >>> i = cudf.date_range('2018-04-09', periods=4, freq='1D20min')
-        >>> ts = cudf.DataFrame({'A': [1, 2, 3, 4]}, index=i)
-        >>> ts
-                             A
-        2018-04-09 00:00:00  1
-        2018-04-10 00:20:00  2
-        2018-04-11 00:40:00  3
-        2018-04-12 01:00:00  4
-        >>> ts.between_time('0:15', '0:45')
-                             A
-        2018-04-10 00:20:00  2
-        2018-04-11 00:40:00  3
-        """
-        from pandas.core.tools.times import to_time
+            Examples
+            --------
+            >>> import cudf
+            >>> i = cudf.date_range('2018-04-09', periods=4, freq='1D20min')
+            >>> ts = cudf.DataFrame({'A': [1, 2, 3, 4]}, index=i)
+            >>> ts
+                                A
+            2018-04-09 00:00:00  1
+            2018-04-10 00:20:00  2
+            2018-04-11 00:40:00  3
+            2018-04-12 01:00:00  4
+            >>> ts.between_time('0:15', '0:45')
+                                A
+            2018-04-10 00:20:00  2
+            2018-04-11 00:40:00  3
+            """
+            if axis is not None and axis not in (0, "index"):
+                raise NotImplementedError("Only axis=0 is supported.")
 
-        if not isinstance(self.index, cudf.DatetimeIndex):
-            raise TypeError("Index must be DatetimeIndex")
+            if not isinstance(self.index, cudf.DatetimeIndex):
+                raise TypeError("Index must be DatetimeIndex")
 
-        if inclusive not in {"both", "neither", "left", "right"}:
-            raise ValueError(
-                "Inclusive has to be either 'both', 'neither', "
-                "'left' or 'right'"
+            if inclusive not in {"both", "neither", "left", "right"}:
+                raise ValueError(
+                    "Inclusive has to be either 'both', 'neither', "
+                    "'left' or 'right'"
+                )
+            include_start = inclusive in {"both", "left"}
+            include_end = inclusive in {"both", "right"}
+
+            indexer = self.index.indexer_between_time(
+                start_time,
+                end_time,
+                include_start=include_start,
+                include_end=include_end,
             )
-        include_start = inclusive in {"both", "left"}
-        include_end = inclusive in {"both", "right"}
-
-        start_time = to_time(start_time)
-        end_time = to_time(end_time)
-
-        def _time_to_seconds(t):
-            return (
-                t.hour * 3600 + t.minute * 60 + t.second
-            ) * 1_000_000 + t.microsecond
-
-        start_secs = _time_to_seconds(start_time)
-        end_secs = _time_to_seconds(end_time)
-
-        idx = self.index
-        row_secs = (
-            idx.hour.astype("int64") * 3600
-            + idx.minute.astype("int64") * 60
-            + idx.second.astype("int64")
-        ) * 1_000_000 + idx.microsecond.astype("int64")
-        row_secs = row_secs.fillna(-1)
-
-        left_op = operator.ge if include_start else operator.gt
-        right_op = operator.le if include_end else operator.lt
-
-        if start_secs <= end_secs:
-            mask = left_op(row_secs, start_secs) & right_op(row_secs, end_secs)
-        else:
-            mask = left_op(row_secs, start_secs) | right_op(row_secs, end_secs)
-
-        return self[mask]
+            return self.iloc[indexer]
 
     @_performance_tracking
-    def at_time(self, time, axis: int = 0) -> Self:
+    def at_time(self, time, axis: Axis | None = None) -> Self:
         """
         Select values at particular time of day (e.g., 9:30AM).
 
         Parameters
         ----------
         time : datetime.time or str
-        axis : {0 or 'index', 1 or 'columns'}, default 0
+        axis : {0 or 'index'}, None, default None
+            Axis on which to select. Only axis=0/'index' (rows) is supported.
 
         Returns
         -------
@@ -2549,28 +2533,16 @@ class IndexedFrame(Frame):
         2018-04-09 12:00:00  2
         2018-04-10 12:00:00  4
         """
-        from pandas.core.tools.times import to_time
+        if axis is not None and axis not in (0, "index"):
+            raise NotImplementedError("Only axis=0 is supported.")
 
         if not isinstance(self.index, cudf.DatetimeIndex):
             raise TypeError("Index must be DatetimeIndex")
-        if axis in (1, "columns"):
-            raise NotImplementedError("Only axis=0 is supported.")
-        if self._get_axis_from_axis_arg(axis) != 0:
-            raise NotImplementedError("Only axis=0 is supported.")
 
-        time = to_time(time)
-        target_secs = (
-            time.hour * 3600 + time.minute * 60 + time.second
-        ) * 1_000_000 + time.microsecond
-
-        idx = self.index
-        row_secs = (
-            idx.hour.astype("int64") * 3600
-            + idx.minute.astype("int64") * 60
-            + idx.second.astype("int64")
-        ) * 1_000_000 + idx.microsecond.astype("int64")
-
-        return self[row_secs == target_secs]
+        indexer = self.index.indexer_between_time(
+            time, time, include_start=True, include_end=True
+        )
+        return self.iloc[indexer]
 
     @property
     def loc(self):

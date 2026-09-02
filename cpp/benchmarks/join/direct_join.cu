@@ -63,7 +63,7 @@ void nvbench_direct_inner_join(nvbench::state& state)
   auto const right_keys = cudf::table_view{{right_view}};
 
   auto const input_bytes = estimate_size(left_keys) + estimate_size(right_keys);
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().value()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().get()));
   state.add_element_count(input_bytes, "input_bytes");
   state.add_global_memory_reads<nvbench::int8_t>(input_bytes);
 

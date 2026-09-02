@@ -538,7 +538,7 @@ std::unique_ptr<cudf::jni::ast::compiled_expr> compile_serialized_ast(jni_serial
   if (!jni_ast.at_eof()) { throw std::invalid_argument("Extra bytes at end of serialized AST"); }
 
   // The expression may be handed to a thread with a different default stream.
-  if (jni_expr_ptr->has_literals()) { cudf::get_default_stream().synchronize(); }
+  if (jni_expr_ptr->has_literals()) { cudf::get_default_stream().sync(); }
 
   return jni_expr_ptr;
 }

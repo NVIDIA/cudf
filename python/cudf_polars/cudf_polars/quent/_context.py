@@ -66,7 +66,7 @@ class QuentContext:
     def __post_init__(self) -> None:
         object.__setattr__(self, "_query_group_cache_", set())
 
-    def serialize(self) -> bytes:
+    def _serialize(self) -> bytes:
         """
         Serialize identity fields for transmission between ranks.
 
@@ -76,7 +76,7 @@ class QuentContext:
 
         See Also
         --------
-        QuentContext.deserialize
+        QuentContext._deserialize
         """
         payload = {
             "engine": {
@@ -98,13 +98,13 @@ class QuentContext:
         return json.dumps(payload).encode()
 
     @classmethod
-    def deserialize(cls, data: bytes) -> Self:
+    def _deserialize(cls, data: bytes) -> Self:
         """
-        Reconstruct a QuentContext from :meth:`serialize` bytes.
+        Reconstruct a QuentContext from serialized bytes.
 
         See Also
         --------
-        QuentContext.serialize
+        QuentContext._serialize
         """
         payload = json.loads(data)
         return cls(

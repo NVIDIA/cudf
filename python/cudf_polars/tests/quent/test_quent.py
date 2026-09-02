@@ -501,9 +501,9 @@ def test_quent_context_serialization() -> None:
         query_group=cudf_polars.quent.QueryGroup(instance_name="test_query_group"),
         query=cudf_polars.quent.Query(instance_name="test_query"),
     )
-    data = quent_context.serialize()
+    data = quent_context._serialize()
 
-    new = cudf_polars.quent.QuentContext.deserialize(data)
+    new = cudf_polars.quent.QuentContext._deserialize(data)
     assert new == quent_context
 
 
@@ -524,7 +524,7 @@ def test_quent_context_serialization_drops_custom_attributes() -> None:
         query=cudf_polars.quent.Query(instance_name="test_query"),
     )
 
-    new = cudf_polars.quent.QuentContext.deserialize(quent_context.serialize())
+    new = cudf_polars.quent.QuentContext._deserialize(quent_context._serialize())
 
     assert new.engine.id == quent_context.engine.id
     assert new.engine.implementation.name == "test-impl"

@@ -2489,16 +2489,15 @@ class IndexedFrame(Frame):
         end_time = to_time(end_time)
 
         def _time_to_seconds(t):
-            return t.hour * 3600 + t.minute * 60 + t.second
+            return (t.hour * 3600 + t.minute * 60 + t.second) * 1_000_000 + t.microsecond
 
         start_secs = _time_to_seconds(start_time)
         end_secs = _time_to_seconds(end_time)
 
         idx = self.index
         row_secs = (
-            idx.hour.astype("int32") * 3600
-            + idx.minute.astype("int32") * 60
-            + idx.second.astype("int32")
+            (idx.hour.astype('int64') * 3600 + idx.minute.astype('int64') * 60 + idx.second.astype('int64')) * 1_000_000
+            + idx.microsecond.astype('int64')
         )
 
         left_op = operator.ge if include_start else operator.gt
@@ -2550,17 +2549,27 @@ class IndexedFrame(Frame):
 
         if not isinstance(self.index, cudf.DatetimeIndex):
             raise TypeError("Index must be DatetimeIndex")
+        if axis in (1, "columns"):
+            raise NotImplementedError("Only axis=0 is supported.")
         if self._get_axis_from_axis_arg(axis) != 0:
             raise NotImplementedError("Only axis=0 is supported.")
 
+        
         time = to_time(time)
-        target_secs = time.hour * 3600 + time.minute * 60 + time.second
+        target_secs = (
+            time.hour * 3600 + time.minute * 60 + time.second
+        ) * 1_000_000 + time.microsecond
 
         idx = self.index
         row_secs = (
+<<<<<<< HEAD
             idx.hour.astype("int32") * 3600
             + idx.minute.astype("int32") * 60
             + idx.second.astype("int32")
+=======
+            (idx.hour.astype('int64') * 3600 + idx.minute.astype('int64') * 60 + idx.second.astype('int64')) * 1_000_000
+            + idx.microsecond.astype('int64')
+>>>>>>> 059fe66b31 (Fix fractional-second precision in between_time/at_time; add axis=1 guard in at_time)
         )
 
         return self[row_secs == target_secs]

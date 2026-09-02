@@ -13,7 +13,7 @@ public final class ParquetTableWriter extends TableWriter {
     NativeDepsLoader.loadNativeDeps();
   }
 
-  private HostBufferConsumer consumer;
+  private final HostBufferConsumer consumer;
   private final HostMemoryAllocator hostMemoryAllocator;
 
   ParquetTableWriter(ParquetWriterOptions options, File outputFile) {
@@ -70,6 +70,7 @@ public final class ParquetTableWriter extends TableWriter {
     write(table.getNativeView(), table.getDeviceMemorySize());
   }
 
+  // Used by Table.writeColumnViewsToParquet, which only has a native table-view handle.
   void write(long tableHandle, long tableMemSize) {
     if (writerHandle == 0) {
       throw new IllegalStateException("Writer was already closed");
@@ -111,8 +112,6 @@ public final class ParquetTableWriter extends TableWriter {
   private HostMemoryBuffer finish(boolean returnFooter) {
     long handle = writerHandle;
     writerHandle = 0;
-    HostBufferConsumer currentConsumer = consumer;
-    consumer = null;
     HostMemoryBuffer footer = null;
     try {
       if (returnFooter) {
@@ -121,9 +120,9 @@ public final class ParquetTableWriter extends TableWriter {
         writeParquetEnd(handle);
       }
     } catch (RuntimeException | Error e) {
-      if (currentConsumer != null) {
+      if (consumer != null) {
         try {
-          currentConsumer.done();
+          consumer.done();
         } catch (RuntimeException | Error doneError) {
           e.addSuppressed(doneError);
         }
@@ -132,8 +131,8 @@ public final class ParquetTableWriter extends TableWriter {
     }
 
     try {
-      if (currentConsumer != null) {
-        currentConsumer.done();
+      if (consumer != null) {
+        consumer.done();
       }
     } catch (RuntimeException | Error e) {
       CleanupHelpers.closeAndSuppress(footer, e);

@@ -312,6 +312,20 @@ def test_unicode_normalize():
         UnicodeNormalizer(unicode_data, form="XYZ")
 
 
+def test_unicode_normalize_from_python_unicodedata():
+    import unicodedata as ud
+
+    strings = ["café", "ﬁ", "½", "가", "", None]
+    series = cudf.Series(strings)
+    for form in ("NFC", "NFD", "NFKC", "NFKD"):
+        normalizer = UnicodeNormalizer.from_python_unicodedata(form=form)
+        result = normalizer.normalize(series)
+        expected = cudf.Series(
+            [ud.normalize(form, s) if s is not None else None for s in strings]
+        )
+        assert_eq(result, expected)
+
+
 @pytest.mark.parametrize(
     "n, separator, expected_values",
     [

@@ -87,6 +87,71 @@ class UnicodeNormalizer:
             tbl, self._FORM_MAP[form]
         )
 
+    @classmethod
+    def from_python_unicodedata(cls, form: str = "NFC") -> UnicodeNormalizer:
+        """
+        Construct a :class:`UnicodeNormalizer` from Python's built-in
+        ``unicodedata`` module, without requiring a ``UnicodeData.txt`` file.
+
+        This is equivalent to downloading ``UnicodeData.txt``, loading it with
+        :func:`cudf.read_csv`, and passing the result to
+        :class:`UnicodeNormalizer`, but derives the same three columns directly
+        from :mod:`unicodedata`:
+
+        .. code-block:: python
+
+            import unicodedata as ud
+
+            cp_list, ccc_list, decomp_list = [], [], []
+            for cp in range(0x0080, 0x110000):
+                c = chr(cp)
+                ccc = ud.combining(c)
+                decomp = ud.decomposition(c)
+                if ccc != 0 or decomp:
+                    cp_list.append(f"{cp:04X}")
+                    ccc_list.append(ccc)
+                    decomp_list.append(decomp)
+
+        The Unicode version used is whichever version is bundled with the
+        running Python interpreter (see ``unicodedata.unidata_version``), which
+        may differ from a specific ``UnicodeData.txt`` download.
+
+        Parameters
+        ----------
+        form : str
+            Normalization form: one of ``"NFD"``, ``"NFC"``, ``"NFKD"``,
+            or ``"NFKC"``.
+
+        Returns
+        -------
+        UnicodeNormalizer
+            Ready-to-use normalizer for the requested form.
+        """
+        import unicodedata as ud
+
+        import cudf
+
+        cp_list: list[str] = []
+        ccc_list: list[int] = []
+        decomp_list: list[str] = []
+        for cp in range(0x0080, 0x110000):
+            c = chr(cp)
+            ccc = ud.combining(c)
+            decomp = ud.decomposition(c)
+            if ccc != 0 or decomp:
+                cp_list.append(f"{cp:04X}")
+                ccc_list.append(ccc)
+                decomp_list.append(decomp)
+
+        unicode_data = cudf.DataFrame(
+            {
+                "cp": cudf.Series(cp_list),
+                "ccc": cudf.Series(ccc_list, dtype="int32"),
+                "decomp": cudf.Series(decomp_list),
+            }
+        )
+        return cls(unicode_data, form=form)
+
     def normalize(self, text: Series) -> Series:
         """
         Normalize a strings Series using Unicode TR15 normalization.

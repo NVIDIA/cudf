@@ -220,8 +220,8 @@ fetch_bloom_filters_to_device(
  * @ingroup io_utils
  *
  * @deprecated Use the overload that takes `io_submission_policy`.
- * 
- * @note The `io_submission_policy::SERIALIZE` policy is equivalent to the 
+ *
+ * @note The `io_submission_policy::SERIALIZE` policy is equivalent to the
  * behavior of this deprecated function.
  *
  * @param datasource Input datasource
@@ -248,8 +248,8 @@ fetch_byte_ranges_to_device_async(
  * @ingroup io_utils
  *
  * @deprecated Use the overload that takes `io_submission_policy`.
- * 
- * @note The `io_submission_policy::SERIALIZE` policy is equivalent to the 
+ *
+ * @note The `io_submission_policy::SERIALIZE` policy is equivalent to the
  * behavior of this deprecated function.
  *
  * @param datasources Input datasources
@@ -276,8 +276,8 @@ fetch_byte_ranges_to_device_async(
  * @ingroup io_utils
  *
  * @deprecated Use the overload that takes `io_submission_policy`.
- * 
- * @note The `io_submission_policy::SERIALIZE` policy is equivalent to the 
+ *
+ * @note The `io_submission_policy::SERIALIZE` policy is equivalent to the
  * behavior of this deprecated function.
  *
  * @param datasource Input datasource
@@ -302,8 +302,8 @@ fetch_bloom_filters_to_device(cudf::io::datasource& datasource,
  * @ingroup io_utils
  *
  * @deprecated Use the overload that takes `io_submission_policy`.
- * 
- * @note The `io_submission_policy::SERIALIZE` policy is equivalent to the 
+ *
+ * @note The `io_submission_policy::SERIALIZE` policy is equivalent to the
  * behavior of this deprecated function.
  *
  * @param datasources Input datasources

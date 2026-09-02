@@ -150,43 +150,13 @@ jobs:
         unit_tests_cudf_pandas:
           - 'python/cudf/cudf/pandas/**'
         test_java:
-          - '**'
-          - '!**/REVIEW_GUIDELINES.md'
-          - '!.coderabbit.yaml'
-          - '!.clang-format'
-          - '!.devcontainer/**'
-          - '!.github/CODEOWNERS'
-          - '!.github/ISSUE_TEMPLATE/**'
-          - '!.github/PULL_REQUEST_TEMPLATE.md'
-          - '!.github/copy-pr-bot.yaml'
-          - '!.github/labeler.yml'
-          - '!.github/ops-bot.yaml'
-          - '!.github/release.yml'
-          - '!.github/workflows/auto-assign.yml'
-          - '!.github/workflows/build.yaml'
-          - '!.github/workflows/issue-release-scheduled.yml'
-          - '!.github/workflows/labeler.yml'
-          - '!.github/workflows/pr_issue_status_automation.yml'
-          - '!.github/workflows/test.yaml'
-          - '!.github/workflows/trigger-breaking-change-alert.yaml'
-          - '!.pre-commit-config.yaml'
-          - '!.yamllint.yaml'
-          - '!CONTRIBUTING.md'
-          - '!README.md'
-          - '!SECURITY.md'
-          - '!ci/build_docs.sh'
-          - '!ci/build_wheel*.sh'
-          - '!ci/check_style.sh'
-          - '!ci/cudf_pandas_scripts/**'
-          - '!ci/release/update-version.sh'
-          - '!ci/test_wheel*.sh'
-          - '!ci/validate_wheel.sh'
-          - '!ci/release/update-version.sh'
-          - '!codecov.yml'
-          - '!docs/**'
-          - '!img/**'
-          - '!notebooks/**'
-          - '!python/**'
+          - 'java/**'
+          - 'RAPIDS_BRANCH'
+          - 'dependencies.yaml'
+          - 'ci/build_java.sh'
+          - 'ci/test_packaged_java.sh'
+          - '.github/workflows/pr.yaml'
+          - '.github/workflows/cudf-spark-jni.yaml'
         test_notebooks:
           - 'python/cudf/**'
           - '!python/cudf/cudf/pandas/**'
@@ -465,7 +435,7 @@ jobs:
       pull-requests: read
     secrets: inherit # zizmor: ignore[secrets-inherit]
     uses: rapidsai/shared-workflows/.github/workflows/custom-job.yaml@main
-    if: fromJSON(needs.changed-files.outputs.changed_file_groups).test_java
+    if: fromJSON(needs.changed-files.outputs.changed_file_groups).cpp_files || fromJSON(needs.changed-files.outputs.changed_file_groups).test_java
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.java-build-matrix.outputs.matrix) }}
@@ -945,7 +915,7 @@ jobs:
       packages: read
       pull-requests: read
     uses: ./.github/workflows/cudf-spark-jni.yaml
-    if: fromJSON(needs.changed-files.outputs.changed_file_groups).test_java
+    if: fromJSON(needs.changed-files.outputs.changed_file_groups).cpp_files || fromJSON(needs.changed-files.outputs.changed_file_groups).test_java
     with:
       cudf_commit: ${{ github.sha }}
   telemetry-summarize:

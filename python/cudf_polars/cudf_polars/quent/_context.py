@@ -186,6 +186,22 @@ class QuentContext:
             ),
         )
 
+    def query_for(self, query_id: uuid.UUID) -> Query:
+        """
+        Build a per-collect Quent Query with a unique id.
+
+        Parameters
+        ----------
+        query_id: uuid.UUID
+            The unique ID for the query.
+
+        Returns
+        -------
+        A new Quent Query with the given ID and the same instance name as the
+        engine-scoped query.
+        """
+        return Query(id=query_id, instance_name=self.query.instance_name)
+
     @property
     def _query_group_cache(self) -> set[uuid.UUID]:
         return self._query_group_cache_  # type: ignore[attr-defined]
@@ -209,22 +225,6 @@ class QuentContext:
             return
         self._query_group_cache.add(self.query_group.id)
         logger.emit(self.query_group._declare(engine=self.engine))
-
-    def query_for(self, query_id: uuid.UUID) -> Query:
-        """
-        Build a per-collect Quent Query with a unique id.
-
-        Parameters
-        ----------
-        query_id: uuid.UUID
-            The unique ID for the query.
-
-        Returns
-        -------
-        A new Quent Query with the given ID and the same instance name as the
-        engine-scoped query.
-        """
-        return Query(id=query_id, instance_name=self.query.instance_name)
 
     def _emit_query_events(self, logger: QuentLogger, query: Query) -> None:
         """
@@ -469,7 +469,7 @@ class QuentContext:
             return
 
         if result is not None:
-            output_capacity_bytes = result._size_bytes()
+            output_capacity_bytes = result._size_bytes
         else:  # pragma: no cover;
             output_capacity_bytes = 0
         if ir_type.is_io_node:

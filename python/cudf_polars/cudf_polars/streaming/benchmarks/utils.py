@@ -73,6 +73,7 @@ try:
     from cudf_polars.dsl.tracing import Scope
     from cudf_polars.dsl.translate import Translator
     from cudf_polars.engine.core import StreamingEngine
+    from cudf_polars.quent._export import write_quent_export
     from cudf_polars.streaming.benchmarks.asserts import (
         ValidationError,
         assert_tpch_result_equal,
@@ -1500,13 +1501,16 @@ def run_polars_spmd(
             run_config, engine=engine, gather_client_logs=False
         )
         # We need to create this before StreamingEngine.shutdown(), which clears engine.config
-        quent_archive = Path("logs") / f"{run_config.run_id}.zip"
+        if run_config.collect_traces:
+            quent_archive = Path("logs") / f"{run_config.run_id}.zip"
+        else:
+            quent_archive = None
         serializable_engine_config = run_config.serialize(
             engine=engine, quent_archive=quent_archive
         )
         shutdown_time_begin = time.monotonic()
 
-    if is_rank_0:
+    if is_rank_0 and quent_archive is not None:
         _write_quent_traces(
             engine=engine,
             run_id=run_config.run_id,
@@ -1570,18 +1574,23 @@ def run_polars_ray(
         run_config = dataclasses.replace(run_config, records=dict(records), plans=plans)
         run_config = _consolidate_logs(run_config, engine=engine)
         # We need to create this before StreamingEngine.shutdown(), which clears engine.config
-        quent_archive = Path("logs") / f"{run_config.run_id}.zip"
+        if run_config.collect_traces:
+            quent_archive = Path("logs") / f"{run_config.run_id}.zip"
+        else:
+            quent_archive = None
+
         serializable_engine_config = run_config.serialize(
             engine=engine, quent_archive=quent_archive
         )
         shutdown_time_begin = time.monotonic()
 
-    _write_quent_traces(
-        engine=engine,
-        run_id=run_config.run_id,
-        collect_traces=run_config.collect_traces,
-        quent_archive=quent_archive,
-    )
+    if quent_archive is not None:
+        _write_quent_traces(
+            engine=engine,
+            run_id=run_config.run_id,
+            collect_traces=run_config.collect_traces,
+            quent_archive=quent_archive,
+        )
     shutdown_duration_ms = _elapsed_ms(shutdown_time_begin)
     _finalize_benchmark_run(
         args,
@@ -1646,18 +1655,22 @@ def run_polars_dask(
             )
             run_config = _consolidate_logs(run_config, engine)
             # We need to create this before StreamingEngine.shutdown(), which clears engine.config
-            quent_archive = Path("logs") / f"{run_config.run_id}.zip"
+            if run_config.collect_traces:
+                quent_archive = Path("logs") / f"{run_config.run_id}.zip"
+            else:
+                quent_archive = None
             serializable_engine_config = run_config.serialize(
                 engine=engine, quent_archive=quent_archive
             )
             shutdown_time_begin = time.monotonic()
 
-        _write_quent_traces(
-            engine=engine,
-            run_id=run_config.run_id,
-            collect_traces=run_config.collect_traces,
-            quent_archive=quent_archive,
-        )
+        if quent_archive is not None:
+            _write_quent_traces(
+                engine=engine,
+                run_id=run_config.run_id,
+                collect_traces=run_config.collect_traces,
+                quent_archive=quent_archive,
+            )
     finally:
         if dask_client is not None:
             dask_client.close()
@@ -1756,8 +1769,6 @@ def _write_quent_traces(
     """Write collected Quent events to a ``logs/<run_id>.zip`` archive."""
     if not (_HAS_STRUCTLOG or collect_traces):
         return None
-
-    from cudf_polars.quent._export import write_quent_export
 
     quent_logs = list(engine._quent_events)
 

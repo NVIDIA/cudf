@@ -1383,7 +1383,7 @@ std::vector<cudf::packed_table> do_chunked_pack(cudf::table_view const& input)
                     bounce_buff.data(),
                     bytes_copied,
                     cudaMemcpyDefault,
-                    cudf::get_default_stream());
+                    cudf::get_default_stream().get());
     final_buff_offset += bytes_copied;
   }
 

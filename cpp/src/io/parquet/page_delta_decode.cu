@@ -117,10 +117,15 @@ struct delta_byte_array_decoder {
 
     // now fill in blockers until done
     for (uint32_t i = 1; i < warp_size && i + start_idx < end_idx; i++) {
-      if (prefix_len != 0 && prefix_lens[blocker] == 0 && lane_out != nullptr) {
+      // record whether this lane's blocker is complete before any lane writes below
+      // prevents race condition accessing prefix_lens
+      bool const completed = prefix_len != 0 && prefix_lens[blocker] == 0 && lane_out != nullptr;
+      __syncwarp();
+      if (completed) {
         memcpy(lane_out, offsets[blocker], prefix_len);
         prefix_lens[lane_id] = prefix_len = 0;
       }
+      __syncwarp();
 
       // check for finished
       if (__all_sync(0xffff'ffff, prefix_len == 0)) { return; }
@@ -214,8 +219,13 @@ struct delta_byte_array_decoder {
     // the next batch overwrites the temp scratch from its start, so if the last decoded string
     // lives there, preserve it in the reserved seed slot ahead of the scratch
     if (end_idx <= start_val && last_string != prefix_seed) {
+      // snapshot before lane 0 overwrites last_string below; without this sync, other lanes'
+      // (unused but still issued) reads of last_string can race with lane 0's write of it.
+      uint8_t const* const last_string_snapshot = last_string;
+      uint32_t const last_string_len_snapshot   = last_string_len;
+      __syncwarp();
       if (lane_id == 0) {
-        memcpy(prefix_seed, last_string, last_string_len);
+        memcpy(prefix_seed, last_string_snapshot, last_string_len_snapshot);
         last_string = prefix_seed;
       }
       __syncwarp();
@@ -279,8 +289,13 @@ struct delta_byte_array_decoder {
     // the next batch overwrites the temp scratch from its start, so if the last decoded string
     // lives there, preserve it in the reserved seed slot ahead of the scratch
     if (end_idx <= start_val && last_string != prefix_seed) {
+      // snapshot before lane 0 overwrites last_string below; without this sync, other lanes'
+      // (unused but still issued) reads of last_string can race with lane 0's write of it.
+      uint8_t const* const last_string_snapshot = last_string;
+      uint32_t const last_string_len_snapshot   = last_string_len;
+      __syncwarp();
       if (lane_id == 0) {
-        memcpy(prefix_seed, last_string, last_string_len);
+        memcpy(prefix_seed, last_string_snapshot, last_string_len_snapshot);
         last_string = prefix_seed;
       }
       __syncwarp();

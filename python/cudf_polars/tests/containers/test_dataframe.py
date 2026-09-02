@@ -234,4 +234,4 @@ def test_size_bytes():
         }
     )
     df = DataFrame.from_polars(df, stream=stream)
-    assert df._size_bytes() == 24
+    assert df._size_bytes == 24

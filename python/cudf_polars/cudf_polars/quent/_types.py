@@ -143,7 +143,7 @@ class Operator:
 
     Examples
     --------
-    {"id":"019dd571-1062-77c2-9803-62c7c1941381","timestamp":1777402450018384340,"data":{"Operator":{"Declaration":{"plan_id":"019dd571-1062-77c2-9803-642b6c301d29","parent_operator_ids":[],"instance_name":"Scan-NodeIndex(0)","type_name":"Scan","custom_attributes":[]}}}}
+    {"id":"019dd571-1062-77c2-9803-62c7c1941381","timestamp":1777402450018384340,"data":{"Operator":{"Declaration":{"plan_id":"019dd571-1062-77c2-9803-642b6c301d29","parent_operator_ids":[],"instance_name":"Scan-019dd571","type_name":"Scan","custom_attributes":[]}}}}
     """
 
     id: uuid.UUID

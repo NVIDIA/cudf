@@ -72,6 +72,7 @@ extensions = [
     "breathe",
     "sphinx.ext.intersphinx",
     "sphinx.ext.autodoc",
+    "sphinx.ext.autosectionlabel",
     "sphinx.ext.autosummary",
     "sphinx_copybutton",
     "sphinx_remove_toctrees",
@@ -82,6 +83,9 @@ extensions = [
     "PandasCompat",
     "myst_nb",
 ]
+
+# Disambiguate section anchors across documents
+autosectionlabel_prefix_document = True
 
 remove_from_toctrees = ["cudf/api_docs/api/*"]
 

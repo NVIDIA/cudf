@@ -165,6 +165,11 @@ class DataFrame:
         """Number of rows."""
         return self.table.num_rows()
 
+    @cached_property
+    def _size_bytes(self) -> int:
+        """Return the size of the dataframe in bytes."""
+        return sum(c.device_buffer_size() for c in self.table.columns())
+
     @classmethod
     def from_polars(cls, df: pl.DataFrame, stream: Stream) -> Self:
         """

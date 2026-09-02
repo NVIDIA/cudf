@@ -128,8 +128,6 @@ jobs:
           - '!codecov.yml'
           - '!SECURITY.md'
         test_cpp:
-          - 'cpp/**'
-          - 'cmake/**'
           - 'conda/recipes/libcudf/**'
           - 'RAPIDS_BRANCH'
           - 'build.sh'
@@ -144,7 +142,10 @@ jobs:
           - '.github/workflows/pr.yaml'
         cpp_files:
           - 'cpp/**'
+          - 'cmake/**'
+        test_cmake:
           - 'ci/test_cmake.sh'
+        cpp_linters:
           - 'ci/cpp_linters.sh'
         unit_tests_cudf_pandas:
           - 'python/cudf/cudf/pandas/**'
@@ -329,7 +330,7 @@ jobs:
       pull-requests: read
     secrets: inherit # zizmor: ignore[secrets-inherit]
     uses: rapidsai/shared-workflows/.github/workflows/custom-job.yaml@main
-    if: fromJSON(needs.changed-files.outputs.changed_file_groups).cpp_files
+    if: fromJSON(needs.changed-files.outputs.changed_file_groups).cpp_files || fromJSON(needs.changed-files.outputs.changed_file_groups).test_cmake
     with:
       build_type: pull-request
       node_type: cpu16
@@ -346,7 +347,7 @@ jobs:
     secrets: inherit # zizmor: ignore[secrets-inherit]
     needs: [checks, changed-files]
     uses: rapidsai/shared-workflows/.github/workflows/custom-job.yaml@main
-    if: fromJSON(needs.changed-files.outputs.changed_file_groups).cpp_files
+    if: fromJSON(needs.changed-files.outputs.changed_file_groups).cpp_files || fromJSON(needs.changed-files.outputs.changed_file_groups).cpp_linters
     with:
       build_type: pull-request
       script: "ci/cpp_linters.sh"
@@ -372,7 +373,7 @@ jobs:
       pull-requests: read
     secrets: inherit # zizmor: ignore[secrets-inherit]
     uses: rapidsai/shared-workflows/.github/workflows/conda-cpp-tests.yaml@main
-    if: fromJSON(needs.changed-files.outputs.changed_file_groups).test_cpp
+    if: fromJSON(needs.changed-files.outputs.changed_file_groups).cpp_files || fromJSON(needs.changed-files.outputs.changed_file_groups).test_cpp
     with:
       build_type: pull-request
       script: ci/test_cpp.sh

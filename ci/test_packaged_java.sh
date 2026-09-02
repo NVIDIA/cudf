@@ -14,7 +14,7 @@
 #   JAVA_JAR                       Optional. Absolute path to the classifier JAR.
 #                                  If unset, the JAR is downloaded from the
 #                                  matching java-build artifact.
-#   LIBCUDF_LARGE_STRINGS_ENABLED  Optional; defaults to 0 (same as ci/test_java.sh).
+#   LIBCUDF_LARGE_STRINGS_ENABLED  Optional; defaults to 0.
 
 set -euo pipefail
 
@@ -57,7 +57,7 @@ if ! command -v mvn >/dev/null 2>&1 || ! command -v java >/dev/null 2>&1; then
   . "${REPO_ROOT}/java/ci/setup_java_env.sh"
 fi
 
-# Match the existing conda Java test entrypoint in ci/test_java.sh.
+# Disable large strings for the Java test suite.
 export LIBCUDF_LARGE_STRINGS_ENABLED="${LIBCUDF_LARGE_STRINGS_ENABLED:-0}"
 
 PRODUCT_JAR="$(cd "$(dirname "${JAVA_JAR}")" && pwd)/$(basename "${JAVA_JAR}")"

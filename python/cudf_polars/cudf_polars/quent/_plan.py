@@ -94,7 +94,6 @@ def build_plan(
             id=operator_id,
             plan=plan,
             parent_operators=parent_ops.get(node_id, []),
-            instance_name=serializable_node.type,
             type_name=serializable_node.type,
             custom_attributes=custom_attributes,
         )

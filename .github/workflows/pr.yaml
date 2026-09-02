@@ -166,6 +166,10 @@ jobs:
           - '!java/**'
           - '!notebooks/**'
           - '!python/**'
+        cpp_files:
+          - 'cpp/**'
+          - 'ci/test_cmake.sh'
+          - 'ci/cpp_linters.sh'
         unit_tests_cudf_pandas:
           - 'python/cudf/cudf/pandas/**'
         test_java:
@@ -336,7 +340,7 @@ jobs:
       node_type: cpu16
       script: ci/build_cpp.sh
   cmake-tests:
-    needs: checks
+    needs: [checks, changed-files]
     permissions:
       actions: read
       contents: read
@@ -345,6 +349,7 @@ jobs:
       pull-requests: read
     secrets: inherit # zizmor: ignore[secrets-inherit]
     uses: rapidsai/shared-workflows/.github/workflows/custom-job.yaml@main
+    if: fromJSON(needs.changed-files.outputs.changed_file_groups).cpp_files
     with:
       build_type: pull-request
       node_type: cpu16
@@ -359,8 +364,9 @@ jobs:
       packages: read
       pull-requests: read
     secrets: inherit # zizmor: ignore[secrets-inherit]
-    needs: checks
+    needs: [checks, changed-files]
     uses: rapidsai/shared-workflows/.github/workflows/custom-job.yaml@main
+    if: fromJSON(needs.changed-files.outputs.changed_file_groups).cpp_files
     with:
       build_type: pull-request
       script: "ci/cpp_linters.sh"

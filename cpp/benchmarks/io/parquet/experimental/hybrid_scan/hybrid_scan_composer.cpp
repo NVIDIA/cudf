@@ -128,7 +128,11 @@ std::unique_ptr<cudf::table> single_step_materialize(
     reader.all_column_chunks_byte_ranges(current_row_group_indices, options);
   auto [all_column_chunk_buffers, all_column_chunk_data, all_column_chunk_read_tasks] =
     cudf::io::parquet::fetch_byte_ranges_to_device_async(
-      datasource, all_column_chunk_byte_ranges, stream, mr);
+      datasource,
+      all_column_chunk_byte_ranges,
+      cudf::io::parquet::io_submission_policy::SERIALIZE,
+      stream,
+      mr);
   all_column_chunk_read_tasks.get();
 
   return reader

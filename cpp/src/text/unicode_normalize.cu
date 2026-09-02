@@ -384,7 +384,7 @@ unicode_normalizer::unicode_normalizer(cudf::table_view const& unicode_data,
   // its start offset in the flat decomp_table.  The extra sentinel slot at
   // MAX_CODEPOINT+1 accumulates the total via the scan.
   auto const total_decomp_size = cudf::detail::sizes_to_offsets(
-    decomp_offsets.begin(), decomp_offsets.end(), decomp_offsets.begin(), 0, stream);
+    decomp_offsets.begin(), decomp_offsets.end(), decomp_offsets.begin(), 0, stream, temp_mr);
 
   // Fill decomp_table
   auto decomp_table    = rmm::device_uvector<uint32_t>(total_decomp_size, stream, mr);
@@ -818,7 +818,7 @@ std::unique_ptr<cudf::column> normalize_unicode(cudf::strings_column_view const&
   // sizes_to_offsets diverts the last scan value to a device scalar (requiring a sync to
   // read); write it back to out_positions[chars_size] for the per-string boundary lookup.
   auto const total_cps = cudf::detail::sizes_to_offsets(
-    out_positions.begin(), out_positions.end(), out_positions.begin(), int64_t{0}, stream);
+    out_positions.begin(), out_positions.end(), out_positions.begin(), int64_t{0}, stream, temp_mr);
   thrust::fill_n(policy, out_positions.begin() + chars_size, 1, total_cps);
 
   // Fill packed (cp|ccc) slots at pre-scanned positions

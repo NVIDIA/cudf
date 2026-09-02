@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -35,18 +35,17 @@ public class HashJoin implements AutoCloseable {
 
     @Override
     protected synchronized boolean cleanImpl(boolean logErrorIfNotClean) {
-      long origAddress = nativeHandle;
       boolean neededCleanup = nativeHandle != 0;
       if (neededCleanup) {
-        try {
+        long origAddress = nativeHandle;
+        try (Table toClose = buildKeys) {
           destroy(nativeHandle);
-          buildKeys.close();
-          buildKeys = null;
         } finally {
           nativeHandle = 0;
+          buildKeys = null;
         }
         if (logErrorIfNotClean) {
-          log.error("A HASH TABLE WAS LEAKED (ID: " + id + " " + Long.toHexString(origAddress));
+          log.error("A HASH TABLE WAS LEAKED (ID: {} {})", id, Long.toHexString(origAddress));
         }
       }
       return neededCleanup;
@@ -59,21 +58,22 @@ public class HashJoin implements AutoCloseable {
   }
 
   private final HashJoinCleaner cleaner;
-  private final boolean compareNulls;
+  private final boolean compareNullsEqual;
   private boolean isClosed = false;
 
   /**
    * Construct a hash table for a join from a table representing the join key columns from the
    * right-side table in the join. The resulting instance must be closed to release the
    * GPU resources associated with the instance.
+   *
    * @param buildKeys table view containing the join keys for the right-side join table
-   * @param compareNulls true if null key values should match otherwise false
+   * @param compareNullsEqual true if null key values should match otherwise false
    */
-  public HashJoin(Table buildKeys, boolean compareNulls) {
-    this.compareNulls = compareNulls;
+  public HashJoin(Table buildKeys, boolean compareNullsEqual) {
+    this.compareNullsEqual = compareNullsEqual;
     Table buildTable = new Table(buildKeys.getColumns());
     try {
-      long handle = create(buildTable.getNativeView(), compareNulls);
+      long handle = create(buildTable.getNativeView(), compareNullsEqual);
       this.cleaner = new HashJoinCleaner(buildTable, handle);
       MemoryCleaner.register(this, cleaner);
     } catch (Throwable t) {
@@ -97,20 +97,30 @@ public class HashJoin implements AutoCloseable {
     isClosed = true;
   }
 
-  long getNativeView() {
-    return cleaner.nativeHandle;
-  }
-
-  /** Get the number of join key columns for the table that was used to generate the has table. */
+  /** Get the number of join key columns for the table used to generate the hash table. */
   public long getNumberOfColumns() {
     return cleaner.buildKeys.getNumberOfColumns();
   }
 
   /** Returns true if the hash table was built to match on nulls otherwise false. */
-  public boolean getCompareNulls() {
-    return compareNulls;
+  public boolean getCompareNullsEqual() {
+    return compareNullsEqual;
   }
 
-  private static native long create(long tableView, boolean nullEqual);
+  /**
+   * Returns true if the hash table was built to match on nulls otherwise false.
+   *
+   * @deprecated Use {@link #getCompareNullsEqual()} instead.
+   */
+  @Deprecated
+  public boolean getCompareNulls() {
+    return getCompareNullsEqual();
+  }
+
+  long getNativeView() {
+    return cleaner.nativeHandle;
+  }
+
+  private static native long create(long tableView, boolean compareNullsEqual);
   private static native void destroy(long handle);
 }

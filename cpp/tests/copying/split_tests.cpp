@@ -2753,12 +2753,6 @@ void split_and_verify_dictionaries(cudf::table_view const& input,
   }
 }
 
-void split_and_verify_dictionaries(cudf::table_view const& input,
-                                   std::vector<cudf::size_type> const& splits)
-{
-  split_and_verify_dictionaries(input, splits, [](cudf::table_view const& t) { return t; });
-}
-
 }  // namespace
 
 TEST_F(ContiguousSplitNestedTypesTest, Dictionaries)
@@ -2771,7 +2765,7 @@ TEST_F(ContiguousSplitNestedTypesTest, Dictionaries)
   cudf::table_view src({strs, nums, *narrow});
 
   // the splits are not multiples of the validity or index size
-  split_and_verify_dictionaries(src, {0, 3, 6, 8});
+  split_and_verify_dictionaries(src, {0, 3, 6, 8}, [](cudf::table_view const& t) { return t; });
 
   auto const packed = cudf::pack(src);
   verify_dictionaries(src, cudf::unpack(packed));

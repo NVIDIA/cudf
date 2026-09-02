@@ -89,9 +89,9 @@ bool stream_is_invalid(cudaStream_t stream)
   return (stream != cudf::test::get_default_stream().get());
 #else
   // We explicitly list the possibilities rather than using
-  // `cudf::get_default_stream().value()` because there is no guarantee that
+  // `cudf::get_default_stream().get()` because there is no guarantee that
   // `thrust::device` and the default value of
-  // `cudf::get_default_stream().value()` are actually the same. At present, the
+  // `cudf::get_default_stream().get()` are actually the same. At present, the
   // former is `cudaStreamLegacy` while the latter is 0.
   return (stream == cudaStreamDefault) || (stream == cudaStreamLegacy) ||
          (stream == cudaStreamPerThread);

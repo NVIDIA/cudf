@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -46,7 +46,7 @@ void BM_json_read_options(nvbench::state& state, nvbench::type_list<nvbench::enu
     cudf::io::json_reader_options::builder(source_sink.make_source_info()).lines(json_lines_bool);
 
   auto mem_stats_logger = cudf::memory_stats_logger();
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().value()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().get()));
   state.exec(
     nvbench::exec_tag::sync | nvbench::exec_tag::timer, [&](nvbench::launch& launch, auto& timer) {
       drop_page_cache_if_enabled(read_options.get_source().filepaths());
@@ -122,7 +122,7 @@ void BM_jsonlines_read_options(nvbench::state& state,
 
   size_t const chunk_size = cudf::util::div_rounding_up_safe(source_sink.size(), num_chunks);
   auto mem_stats_logger   = cudf::memory_stats_logger();
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().value()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().get()));
   state.exec(
     nvbench::exec_tag::sync | nvbench::exec_tag::timer, [&](nvbench::launch& launch, auto& timer) {
       drop_page_cache_if_enabled(read_options.get_source().filepaths());

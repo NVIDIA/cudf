@@ -63,6 +63,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -10014,6 +10015,7 @@ public class TableTest extends CudfTestBase {
   private final class MyBufferConsumer implements HostBufferConsumer, AutoCloseable {
     public final HostMemoryBuffer buffer;
     long offset = 0;
+    int doneCount = 0;
 
     public MyBufferConsumer() {
       buffer = hostMemoryAllocator.allocate(10 * 1024 * 1024);
@@ -10027,6 +10029,11 @@ public class TableTest extends CudfTestBase {
       } finally {
         src.close();
       }
+    }
+
+    @Override
+    public void done() {
+      doneCount++;
     }
 
     @Override
@@ -10145,6 +10152,109 @@ public class TableTest extends CudfTestBase {
            Table concat = Table.concatenate(table0, table0, table0)) {
         assertTablesAreEqual(concat, table1);
       }
+    }
+  }
+
+  @Test
+  void testParquetWriterCloseAndGetFooterToFile() throws IOException {
+    ParquetWriterOptions options = ParquetWriterOptions.builder()
+        .withColumns(true, "id", "value")
+        .build();
+    try (TempFile tempFile = TempFile.create("returned-footer", ".parquet");
+         Table table = new Table.TestBuilder()
+             .column(1, 2, 3)
+             .column("a", "b", "c")
+             .build();
+         ParquetTableWriter writer =
+             Table.writeParquetChunked(options, tempFile.getFile())) {
+      writer.write(table);
+      writer.write(table);
+      try (HostMemoryBuffer footer = writer.closeAndGetFooter()) {
+        assertReturnedFooterMatches(Files.readAllBytes(tempFile.getFile().toPath()), footer);
+        assertThrows(IllegalStateException.class, writer::closeAndGetFooter);
+        assertDoesNotThrow(writer::close);
+      }
+
+      try (Table result = Table.readParquet(tempFile.getFile());
+           Table expected = Table.concatenate(table, table)) {
+        assertTablesAreEqual(expected, result);
+      }
+    }
+  }
+
+  @Test
+  void testParquetWriterCloseAndGetFooterToBuffer() {
+    ParquetWriterOptions options = ParquetWriterOptions.builder()
+        .withColumns(true, "id", "value")
+        .build();
+    TrackingHostMemoryAllocator allocator = new TrackingHostMemoryAllocator();
+    try (Table table = new Table.TestBuilder()
+             .column(1, 2, 3)
+             .column("a", "b", "c")
+             .build();
+         MyBufferConsumer consumer = new MyBufferConsumer();
+         ParquetTableWriter writer =
+             Table.writeParquetChunked(options, consumer, allocator)) {
+      writer.write(table);
+      try (HostMemoryBuffer footer = writer.closeAndGetFooter()) {
+        byte[] parquetData = new byte[(int) consumer.offset];
+        consumer.buffer.getBytes(parquetData, 0, 0, consumer.offset);
+        assertReturnedFooterMatches(parquetData, footer);
+        assertSame(allocator.lastAllocated, footer);
+        assertEquals(1, consumer.doneCount);
+        assertDoesNotThrow(writer::close);
+        assertEquals(1, consumer.doneCount);
+      }
+    }
+  }
+
+  @Test
+  void testParquetWriterCloseAndGetFooterAfterClose() throws IOException {
+    ParquetWriterOptions options = ParquetWriterOptions.builder()
+        .withColumns(true, "id")
+        .build();
+    try (TempFile tempFile = TempFile.create("discarded-footer", ".parquet");
+         Table table = new Table.TestBuilder().column(1, 2, 3).build()) {
+      ParquetTableWriter writer = Table.writeParquetChunked(options, tempFile.getFile());
+      writer.write(table);
+      writer.close();
+      assertThrows(IllegalStateException.class, writer::closeAndGetFooter);
+      assertDoesNotThrow(writer::close);
+    }
+  }
+
+  private static void assertReturnedFooterMatches(byte[] parquetData,
+                                                  HostMemoryBuffer returnedFooter) {
+    int fileLength = parquetData.length;
+    int metadataLength = (parquetData[fileLength - 8] & 0xff)
+        | ((parquetData[fileLength - 7] & 0xff) << 8)
+        | ((parquetData[fileLength - 6] & 0xff) << 16)
+        | ((parquetData[fileLength - 5] & 0xff) << 24);
+    int footerAndTrailerLength = metadataLength + 8;
+    byte[] expected = new byte[4 + footerAndTrailerLength];
+    System.arraycopy(parquetData, 0, expected, 0, 4);
+    System.arraycopy(parquetData, fileLength - footerAndTrailerLength,
+        expected, 4, footerAndTrailerLength);
+
+    assertEquals(expected.length, returnedFooter.getLength());
+    byte[] actual = new byte[expected.length];
+    returnedFooter.getBytes(actual, 0, 0, actual.length);
+    assertArrayEquals(expected, actual);
+  }
+
+  private static final class TrackingHostMemoryAllocator implements HostMemoryAllocator {
+    private HostMemoryBuffer lastAllocated;
+
+    @Override
+    public HostMemoryBuffer allocate(long bytes, boolean preferPinned) {
+      lastAllocated = DefaultHostMemoryAllocator.get().allocate(bytes, preferPinned);
+      return lastAllocated;
+    }
+
+    @Override
+    public HostMemoryBuffer allocate(long bytes) {
+      lastAllocated = DefaultHostMemoryAllocator.get().allocate(bytes);
+      return lastAllocated;
     }
   }
 

@@ -76,7 +76,7 @@ static void BM_make_strings_column_batch(nvbench::state& state)
     input.emplace_back(input_data.back());
   }
 
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.value()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.get()));
   state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
     [[maybe_unused]] auto const output = make_strings_columns<true>(input, stream);
   });

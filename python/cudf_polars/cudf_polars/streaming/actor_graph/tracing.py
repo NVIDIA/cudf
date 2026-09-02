@@ -21,6 +21,7 @@ if TYPE_CHECKING:
     from cudf_polars.utils.config import ConfigOptions
 
 
+@dataclasses.dataclass(slots=True)
 class ActorTracer:
     """
     Tracer for a single streaming actor (IR node).
@@ -46,24 +47,13 @@ class ActorTracer:
         (e.g., after an allgather). Affects how rows are merged.
     """
 
-    __slots__ = (
-        "chunk_count",
-        "decision",
-        "duplicated",
-        "extra",
-        "ir_id",
-        "ir_type",
-        "row_count",
-    )
-
-    def __init__(self, ir_id: int | None = None, ir_type: str | None = None) -> None:
-        self.ir_id = ir_id
-        self.ir_type = ir_type
-        self.row_count: int | None = None
-        self.chunk_count: int = 0
-        self.decision: str | None = None
-        self.duplicated: bool = False
-        self.extra: dict[str, Any] = {}
+    ir_id: int | None = None
+    ir_type: str | None = None
+    row_count: int | None = None
+    chunk_count: int = 0
+    decision: str | None = None
+    duplicated: bool = False
+    extra: dict[str, Any] = dataclasses.field(default_factory=dict)
 
     def add_chunk(self, *, chunk: TableChunk | None = None) -> None:
         """

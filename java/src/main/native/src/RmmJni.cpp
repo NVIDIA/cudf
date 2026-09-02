@@ -120,14 +120,14 @@ class tracking_resource_adaptor_impl {
 
   void* allocate_sync(std::size_t bytes, std::size_t alignment = rmm::CUDA_ALLOCATION_ALIGNMENT)
   {
-    return allocate(cuda::stream_ref{cudaStream_t{nullptr}}, bytes, alignment);
+    return allocate(cuda::stream_ref{cudaStream_t{cudaStreamDefault}}, bytes, alignment);
   }
 
   void deallocate_sync(void* ptr,
                        std::size_t bytes,
                        std::size_t alignment = rmm::CUDA_ALLOCATION_ALIGNMENT) noexcept
   {
-    deallocate(cuda::stream_ref{cudaStream_t{nullptr}}, ptr, bytes, alignment);
+    deallocate(cuda::stream_ref{cudaStream_t{cudaStreamDefault}}, ptr, bytes, alignment);
   }
 
   bool operator==(tracking_resource_adaptor_impl const& other) const noexcept
@@ -506,14 +506,14 @@ class java_event_handler_memory_resource {
 
   void* allocate_sync(std::size_t bytes, std::size_t alignment = rmm::CUDA_ALLOCATION_ALIGNMENT)
   {
-    return allocate(cuda::stream_ref{cudaStream_t{nullptr}}, bytes, alignment);
+    return allocate(cuda::stream_ref{cudaStream_t{cudaStreamDefault}}, bytes, alignment);
   }
 
   void deallocate_sync(void* ptr,
                        std::size_t bytes,
                        std::size_t alignment = rmm::CUDA_ALLOCATION_ALIGNMENT) noexcept
   {
-    deallocate(cuda::stream_ref{cudaStream_t{nullptr}}, ptr, bytes, alignment);
+    deallocate(cuda::stream_ref{cudaStream_t{cudaStreamDefault}}, ptr, bytes, alignment);
   }
 
   bool operator==(java_event_handler_memory_resource const& other) const noexcept
@@ -857,14 +857,14 @@ class pinned_fallback_host_memory_resource {
 
   void* allocate_sync(std::size_t bytes, std::size_t alignment = rmm::CUDA_ALLOCATION_ALIGNMENT)
   {
-    return allocate(cuda::stream_ref{cudaStream_t{nullptr}}, bytes, alignment);
+    return allocate(cuda::stream_ref{cudaStream_t{cudaStreamDefault}}, bytes, alignment);
   }
 
   void deallocate_sync(void* ptr,
                        std::size_t bytes,
                        std::size_t alignment = rmm::CUDA_ALLOCATION_ALIGNMENT) noexcept
   {
-    deallocate(cuda::stream_ref{cudaStream_t{nullptr}}, ptr, bytes, alignment);
+    deallocate(cuda::stream_ref{cudaStream_t{cudaStreamDefault}}, ptr, bytes, alignment);
   }
 
   bool operator==(pinned_fallback_host_memory_resource const& other) const noexcept

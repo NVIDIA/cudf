@@ -30,13 +30,14 @@ rapids-logger "Check narwhals versions"
 python -c "import narwhals; print(narwhals.show_versions())"
 
 rapids-logger "Run narwhals tests for cuDF"
+PYTHONPATH="${CI_DIR}${PYTHONPATH:+:${PYTHONPATH}}" \
 PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 \
     timeout 15m \
     python -m pytest \
     --cache-clear \
     -p xdist \
     -p env \
-    -p cudf.testing.narwhals_test_plugin \
+    -p narwhals_cudf_test_plugin \
     --numprocesses=8 \
     --dist=worksteal \
     --constructors=cudf
@@ -44,6 +45,7 @@ PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 \
 rapids-logger "Run narwhals tests for cuDF Polars"
 CUDF_POLARS__EXECUTOR__TARGET_PARTITION_SIZE=805306368 \
 CUDF_POLARS__EXECUTOR__FALLBACK_MODE=silent \
+PYTHONPATH="${CI_DIR}${PYTHONPATH:+:${PYTHONPATH}}" \
 PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 \
 NARWHALS_POLARS_GPU=1 \
     timeout 15m \
@@ -52,7 +54,7 @@ NARWHALS_POLARS_GPU=1 \
     --junitxml="${RAPIDS_TESTS_DIR}/junit-cudf-polars-narwhals.xml" \
     -p xdist \
     -p env \
-    -p cudf_polars.testing.narwhals_test_plugin \
+    -p narwhals_cudf_polars_test_plugin \
     --numprocesses=8 \
     --dist=worksteal \
     --constructors=polars[lazy]

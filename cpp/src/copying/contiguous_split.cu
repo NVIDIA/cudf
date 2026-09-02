@@ -70,16 +70,14 @@ struct src_buf_info {
                int _offset_stack_pos,
                int _parent_offsets_index,
                bool _is_validity,
-               size_type _column_offset,
-               size_type _full_copy_row_count)
+               size_type _column_offset)
     : type(_type),
       offsets(detail::offsetalator_factory::make_input_iterator(offsets)),
       is_offsets{!offsets.is_empty()},
       offset_stack_pos(_offset_stack_pos),
       parent_offsets_index(_parent_offsets_index),
       is_validity(_is_validity),
-      column_offset(_column_offset),
-      full_copy_row_count(_full_copy_row_count)
+      column_offset(_column_offset)
   {
   }
 
@@ -87,27 +85,23 @@ struct src_buf_info {
                int _offset_stack_pos,
                int _parent_offsets_index,
                bool _is_validity,
-               size_type _column_offset,
-               size_type _full_copy_row_count)
+               size_type _column_offset)
     : type(_type),
       offset_stack_pos(_offset_stack_pos),
       parent_offsets_index(_parent_offsets_index),
       is_validity(_is_validity),
-      column_offset(_column_offset),
-      full_copy_row_count(_full_copy_row_count)
+      column_offset(_column_offset)
   {
   }
 
   cudf::type_id type;
   detail::input_offsetalator offsets{};
-  bool is_offsets{false};    // offsets if I am an offset buffer
-  int offset_stack_pos;      // position in the offset stack buffer
-  int parent_offsets_index;  // immediate parent that has offsets, or -1 if none
-  bool is_validity;          // if I am a validity buffer
-  size_type column_offset;   // offset in the case of a sliced column
-  // number of rows to copy in full for every partition, or -1 if my row range comes from the
-  // split indices
-  size_type full_copy_row_count;
+  bool is_offsets{false};             // offsets if I am an offset buffer
+  int offset_stack_pos;               // position in the offset stack buffer
+  int parent_offsets_index;           // immediate parent that has offsets, or -1 if none
+  bool is_validity;                   // if I am a validity buffer
+  size_type column_offset;            // offset in the case of a sliced column
+  size_type full_copy_row_count{-1};  // rows I copy in full, or -1 if I follow the splits
 };
 
 /**
@@ -471,8 +465,6 @@ size_type count_src_bufs(InputIter begin, InputIter end)
  * @param parent_offset_index Index into src_buf_info output array indicating our nearest
  * containing list parent. -1 if we have no list parent
  * @param offset_depth Current offset nesting depth (how many list levels deep we are)
- * @param full_copy_row_count Number of rows every partition copies in full, or -1 if the row
- * range comes from the split indices
  *
  * @returns next src_buf_output after processing this range of input columns
  */
@@ -483,10 +475,9 @@ std::pair<src_buf_info*, size_type> setup_source_buf_info(InputIter begin,
                                                           src_buf_info* head,
                                                           src_buf_info* current,
                                                           cuda::stream_ref stream,
-                                                          int offset_stack_pos          = 0,
-                                                          int parent_offset_index       = -1,
-                                                          int offset_depth              = 0,
-                                                          size_type full_copy_row_count = -1);
+                                                          int offset_stack_pos    = 0,
+                                                          int parent_offset_index = -1,
+                                                          int offset_depth        = 0);
 
 /**
  * @brief Functor that builds source buffer information based on input columns.
@@ -496,8 +487,6 @@ std::pair<src_buf_info*, size_type> setup_source_buf_info(InputIter begin,
  */
 struct buf_info_functor {
   src_buf_info* head;
-  // number of rows the subtree we are inside of copies in full, or -1
-  size_type full_copy_row_count{-1};
 
   template <typename T>
   std::pair<src_buf_info*, size_type> operator()(column_view const& col,
@@ -513,12 +502,8 @@ struct buf_info_functor {
     }
 
     // info for the data buffer
-    *current = src_buf_info(col.type().id(),
-                            offset_stack_pos,
-                            parent_offset_index,
-                            false,
-                            col.offset(),
-                            full_copy_row_count);
+    *current =
+      src_buf_info(col.type().id(), offset_stack_pos, parent_offset_index, false, col.offset());
 
     return {current + 1, offset_stack_pos + offset_depth};
   }
@@ -531,12 +516,8 @@ struct buf_info_functor {
                                                       int offset_depth)
   {
     // info for the validity buffer
-    *current = src_buf_info(type_id::INT32,
-                            offset_stack_pos,
-                            parent_offset_index,
-                            true,
-                            col.offset(),
-                            full_copy_row_count);
+    *current =
+      src_buf_info(type_id::INT32, offset_stack_pos, parent_offset_index, true, col.offset());
 
     return {current + 1, offset_stack_pos + offset_depth};
   }
@@ -568,8 +549,7 @@ std::pair<src_buf_info*, size_type> buf_info_functor::operator()<cudf::string_vi
                           // if I have an offsets child, it's index will be my parent_offset_index
                           has_offsets_child ? ((current + 1) - head) : parent_offset_index,
                           false,
-                          col.offset(),
-                          full_copy_row_count);
+                          col.offset());
 
   // if I have offsets, I need to include that in the stack size
   offset_stack_pos += has_offsets_child ? offset_depth + 1 : offset_depth;
@@ -589,8 +569,7 @@ std::pair<src_buf_info*, size_type> buf_info_functor::operator()<cudf::string_vi
                             offset_stack_pos,
                             parent_offset_index,
                             false,
-                            col.offset(),
-                            full_copy_row_count);
+                            col.offset());
 
     current++;
     offset_stack_pos += offset_depth;
@@ -621,8 +600,8 @@ std::pair<src_buf_info*, size_type> buf_info_functor::operator()<cudf::list_view
 
   // list columns hold no actual data, but we need to keep a record
   // of it so we know it's size when we are constructing the output columns
-  *current = src_buf_info(
-    type_id::LIST, offset_stack_pos, parent_offset_index, false, col.offset(), full_copy_row_count);
+  *current =
+    src_buf_info(type_id::LIST, offset_stack_pos, parent_offset_index, false, col.offset());
   current++;
   offset_stack_pos += offset_depth;
 
@@ -637,8 +616,7 @@ std::pair<src_buf_info*, size_type> buf_info_functor::operator()<cudf::list_view
                           offset_stack_pos,
                           parent_offset_index,
                           false,
-                          col.offset(),
-                          full_copy_row_count);
+                          col.offset());
   current++;
   offset_stack_pos += offset_depth;
 
@@ -653,8 +631,7 @@ std::pair<src_buf_info*, size_type> buf_info_functor::operator()<cudf::list_view
                                stream,
                                offset_stack_pos,
                                parent_offset_index,
-                               offset_depth,
-                               full_copy_row_count);
+                               offset_depth);
 }
 
 template <>
@@ -673,12 +650,8 @@ std::pair<src_buf_info*, size_type> buf_info_functor::operator()<cudf::struct_vi
 
   // struct columns hold no actual data, but we need to keep a record
   // of it so we know it's size when we are constructing the output columns
-  *current = src_buf_info(type_id::STRUCT,
-                          offset_stack_pos,
-                          parent_offset_index,
-                          false,
-                          col.offset(),
-                          full_copy_row_count);
+  *current =
+    src_buf_info(type_id::STRUCT, offset_stack_pos, parent_offset_index, false, col.offset());
   current++;
   offset_stack_pos += offset_depth;
 
@@ -698,8 +671,7 @@ std::pair<src_buf_info*, size_type> buf_info_functor::operator()<cudf::struct_vi
                                stream,
                                offset_stack_pos,
                                parent_offset_index,
-                               offset_depth,
-                               full_copy_row_count);
+                               offset_depth);
 }
 
 template <>
@@ -717,12 +689,8 @@ std::pair<src_buf_info*, size_type> buf_info_functor::operator()<cudf::dictionar
   }
 
   // like structs, dictionary columns hold no data of their own
-  *current = src_buf_info(type_id::DICTIONARY32,
-                          offset_stack_pos,
-                          parent_offset_index,
-                          false,
-                          col.offset(),
-                          full_copy_row_count);
+  *current =
+    src_buf_info(type_id::DICTIONARY32, offset_stack_pos, parent_offset_index, false, col.offset());
   current++;
   offset_stack_pos += offset_depth;
 
@@ -745,21 +713,21 @@ std::pair<src_buf_info*, size_type> buf_info_functor::operator()<cudf::dictionar
                                                               stream,
                                                               offset_stack_pos,
                                                               parent_offset_index,
-                                                              offset_depth,
-                                                              full_copy_row_count);
+                                                              offset_depth);
 
   // the keys child is not indexed by the split's row range: every partition gets all of the keys,
   // so it becomes the root of its own row range
   std::vector<column_view> const keys{dcv.keys()};
-  return setup_source_buf_info(keys.begin(),
-                               keys.end(),
-                               head,
-                               current,
-                               stream,
-                               offset_stack_pos,
-                               -1,
-                               offset_depth,
-                               keys.front().size());
+  auto const keys_begin               = current;
+  std::tie(current, offset_stack_pos) = setup_source_buf_info(
+    keys.begin(), keys.end(), head, current, stream, offset_stack_pos, -1, offset_depth);
+
+  // mark the whole keys subtree, including any offsets or chars buffers under it
+  std::for_each(keys_begin, current, [row_count = keys.front().size()](src_buf_info& info) {
+    info.full_copy_row_count = row_count;
+  });
+
+  return {current, offset_stack_pos};
 }
 
 template <typename InputIter>
@@ -770,19 +738,17 @@ std::pair<src_buf_info*, size_type> setup_source_buf_info(InputIter begin,
                                                           cuda::stream_ref stream,
                                                           int offset_stack_pos,
                                                           int parent_offset_index,
-                                                          int offset_depth,
-                                                          size_type full_copy_row_count)
+                                                          int offset_depth)
 {
   std::for_each(begin, end, [&](column_view const& col) {
-    std::tie(current, offset_stack_pos) =
-      cudf::type_dispatcher(col.type(),
-                            buf_info_functor{head, full_copy_row_count},
-                            col,
-                            current,
-                            offset_stack_pos,
-                            parent_offset_index,
-                            offset_depth,
-                            stream);
+    std::tie(current, offset_stack_pos) = cudf::type_dispatcher(col.type(),
+                                                                buf_info_functor{head},
+                                                                col,
+                                                                current,
+                                                                offset_stack_pos,
+                                                                parent_offset_index,
+                                                                offset_depth,
+                                                                stream);
   });
   return {current, offset_stack_pos};
 }

@@ -127,6 +127,12 @@ class UnicodeNormalizer:
         UnicodeNormalizer
             Ready-to-use normalizer for the requested form.
         """
+        if form not in cls._FORM_MAP:
+            raise ValueError(
+                f"Invalid normalization form {form!r}. "
+                f"Expected one of: {list(cls._FORM_MAP)}"
+            )
+
         import unicodedata as ud
 
         import cudf
@@ -170,5 +176,7 @@ class UnicodeNormalizer:
             text._column.plc_column, self._normalizer
         )
         return Series._from_column(
-            ColumnBase.create(plc_column, text._column.dtype)
+            ColumnBase.create(plc_column, text._column.dtype),
+            name=text.name,
+            index=text.index,
         )

@@ -307,6 +307,13 @@ def test_unicode_normalize():
         cudf.Series(["fi", "café"]),
     )
 
+    # result preserves index and name from input
+    nfc = UnicodeNormalizer(unicode_data, form="NFC")
+    s = cudf.Series(["é"], index=[42], name="my_col")
+    result = nfc.normalize(s)
+    assert result.name == "my_col"
+    assert result.index.to_arrow().to_pylist() == [42]
+
     # invalid form raises ValueError
     with pytest.raises(ValueError, match="Invalid normalization form"):
         UnicodeNormalizer(unicode_data, form="XYZ")
@@ -317,6 +324,7 @@ def test_unicode_normalize_from_python_unicodedata():
 
     strings = ["café", "ﬁ", "½", "가", "", None]
     series = cudf.Series(strings)
+    all_null = cudf.Series([None, None, None], dtype="object")
     for form in ("NFC", "NFD", "NFKC", "NFKD"):
         normalizer = UnicodeNormalizer.from_python_unicodedata(form=form)
         result = normalizer.normalize(series)
@@ -324,6 +332,13 @@ def test_unicode_normalize_from_python_unicodedata():
             [ud.normalize(form, s) if s is not None else None for s in strings]
         )
         assert_eq(result, expected)
+        null_result = normalizer.normalize(all_null)
+        assert_eq(null_result, all_null)
+        assert null_result.dtype == all_null.dtype
+
+    # invalid form must raise before any codepoint scanning occurs
+    with pytest.raises(ValueError, match="Invalid normalization form"):
+        UnicodeNormalizer.from_python_unicodedata(form="XYZ")
 
 
 @pytest.mark.parametrize(

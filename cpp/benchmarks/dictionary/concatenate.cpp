@@ -113,7 +113,7 @@ static void bench_dictionary_concatenate_indices(nvbench::state& state)
   keys_summary.set_string("description", "Number of keys in the concatenated dictionary");
   keys_summary.set_int64("value", cudf::dictionary_column_view(result->view()).keys_size());
 
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.value()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.get()));
   auto const mem_stats_logger = cudf::memory_stats_logger();
 
   state.exec(nvbench::exec_tag::sync, [&](nvbench::launch&) { cudf::concatenate(views, stream); });

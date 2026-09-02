@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import pytest
@@ -36,9 +36,7 @@ def test_between_time_wraparound():
 
 
 def test_between_time_fractional_seconds():
-    dates = cudf.date_range(
-        "2021-01-01 00:00:00", periods=5, freq="500ms"
-    )
+    dates = cudf.date_range("2021-01-01 00:00:00", periods=5, freq="500ms")
     gdf = cudf.DataFrame({"A": range(5)}, index=dates)
     pdf = gdf.to_pandas()
 
@@ -70,9 +68,7 @@ def test_at_time_basic():
 
 
 def test_at_time_fractional_seconds():
-    dates = cudf.date_range(
-        "2021-01-01 00:00:00", periods=5, freq="500ms"
-    )
+    dates = cudf.date_range("2021-01-01 00:00:00", periods=5, freq="500ms")
     gdf = cudf.DataFrame({"A": range(5)}, index=dates)
     pdf = gdf.to_pandas()
 

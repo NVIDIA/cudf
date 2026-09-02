@@ -316,6 +316,10 @@ jobs:
           - '!cpp/**'
           - '!python/cudf_polars/**'
           - '!python/dask_cudf/**'
+        neither_cpp_nor_dask_cudf:
+          - '**'
+          - '!cpp/**'
+          - '!python/dask_cudf/**'
   checks:
     permissions:
       contents: read
@@ -323,7 +327,7 @@ jobs:
     uses: rapidsai/shared-workflows/.github/workflows/checks.yaml@main
     with:
       enable_check_generated_files: false
-      ignored_pr_jobs: "telemetry-summarize spark-rapids-jni cuml-compat-tests"
+      ignored_pr_jobs: "telemetry-summarize cudf-spark-jni cuml-compat-tests"
   conda-cpp-build:
     needs: [build-details, checks]
     permissions:
@@ -946,7 +950,7 @@ jobs:
       pull-requests: read
     secrets: inherit # zizmor: ignore[secrets-inherit]
     uses: rapidsai/shared-workflows/.github/workflows/custom-job.yaml@main
-    if: fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_conda && fromJSON(needs.changed-files.outputs.changed_file_groups).neither_cpp_nor_cudf_polars_nor_dask_cudf
+    if: fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_conda && fromJSON(needs.changed-files.outputs.changed_file_groups).neither_cpp_nor_dask_cudf
     with:
       build_type: pull-request
       branch: ${{ inputs.branch }}
@@ -955,7 +959,7 @@ jobs:
       node_type: "gpu-rtxpro6000-latest-1"
       container_image: "rapidsai/ci-conda:26.10-latest"
       script: ci/test_narwhals.sh
-  spark-rapids-jni:
+  cudf-spark-jni:
     needs: changed-files
     permissions:
       actions: read
@@ -963,8 +967,10 @@ jobs:
       id-token: write
       packages: read
       pull-requests: read
-    uses: ./.github/workflows/spark-rapids-jni.yaml
+    uses: ./.github/workflows/cudf-spark-jni.yaml
     if: fromJSON(needs.changed-files.outputs.changed_file_groups).test_java
+    with:
+      cudf_commit: ${{ github.sha }}
   telemetry-summarize:
     # This job must use a self-hosted runner to record telemetry traces.
     runs-on: linux-amd64-cpu4

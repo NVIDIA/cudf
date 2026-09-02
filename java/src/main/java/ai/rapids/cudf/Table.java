@@ -2989,20 +2989,22 @@ public final class Table implements AutoCloseable {
 
   /**
    * Computes a gather map that can be used to manifest the result of a left equi-join between
-   * two tables where the right table is guaranteed to not contain any duplicated join keys.
+   * two tables where the right table is guaranteed not to contain any duplicated join keys.
    * The left table can be used as-is to produce the left table columns resulting from the join,
    * i.e.: left table ordering is preserved in the join result, so no gather map is required for
    * the left table. The resulting gather map can be applied to the right table to produce the
    * right table columns resulting from the join. It is assumed this table instance holds the
    * key columns from the left table, and the {@link DistinctHashJoin} argument has been
-   * constructed from the key columns from the right table.
+   * constructed from the key columns from the right table. A {@link GatherMap} instance will be
+   * returned that can be used to gather the right table and that result combined with the left
+   * table to produce a left outer join result.
    *
    * It is the responsibility of the caller to close the resulting gather map instance.
    *
    * @param rightHash hash table built from distinct join key columns from the right table
    * @return right table gather map
    */
-  public GatherMap leftJoinGatherMap(DistinctHashJoin rightHash) {
+  public GatherMap leftDistinctJoinGatherMap(DistinctHashJoin rightHash) {
     if (getNumberOfColumns() != rightHash.getNumberOfColumns()) {
       throw new IllegalArgumentException("Column count mismatch, this: " + getNumberOfColumns() +
           "rightKeys: " + rightHash.getNumberOfColumns());
@@ -3282,7 +3284,7 @@ public final class Table implements AutoCloseable {
 
   /**
    * Computes the gather maps that can be used to manifest the result of an inner equi-join between
-   * two tables where the right table is guaranteed to not contain any duplicated join keys. It is
+   * two tables where the right table is guaranteed not to contain any duplicated join keys. It is
    * assumed this table instance holds the key columns from the left table, and the
    * {@link DistinctHashJoin} argument has been constructed from the key columns from the right
    * table. Two {@link GatherMap} instances will be returned that can be used to gather the left
@@ -3293,7 +3295,7 @@ public final class Table implements AutoCloseable {
    * @param rightHash hash table built from distinct join key columns from the right table
    * @return left and right table gather maps
    */
-  public GatherMap[] innerJoinGatherMaps(DistinctHashJoin rightHash) {
+  public GatherMap[] innerDistinctJoinGatherMaps(DistinctHashJoin rightHash) {
     if (getNumberOfColumns() != rightHash.getNumberOfColumns()) {
       throw new IllegalArgumentException("Column count mismatch, this: " + getNumberOfColumns() +
           "rightKeys: " + rightHash.getNumberOfColumns());

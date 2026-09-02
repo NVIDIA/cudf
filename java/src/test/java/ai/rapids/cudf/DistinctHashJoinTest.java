@@ -26,13 +26,13 @@ public class DistinctHashJoinTest {
   }
 
   @Test
-  void testGetCompareNulls() {
+  void testGetCompareNullsEqual() {
     try (Table buildTable = new Table.TestBuilder().column(1, 2, 3, 4).build()) {
       try (DistinctHashJoin hashJoin = new DistinctHashJoin(buildTable, false)) {
-        assertFalse(hashJoin.getCompareNulls());
+        assertFalse(hashJoin.getCompareNullsEqual());
       }
       try (DistinctHashJoin hashJoin = new DistinctHashJoin(buildTable, true)) {
-        assertTrue(hashJoin.getCompareNulls());
+        assertTrue(hashJoin.getCompareNullsEqual());
       }
     }
   }
@@ -49,8 +49,8 @@ public class DistinctHashJoinTest {
          Table probe2Table = new Table(probe2Keys);
          ColumnVector expected1 = ColumnVector.fromInts(1, 2, inv);
          ColumnVector expected2 = ColumnVector.fromInts(3, 0, inv)) {
-      assertGatherMapEquals(expected1, probe1Table.leftJoinGatherMap(hashJoin));
-      assertGatherMapEquals(expected2, probe2Table.leftJoinGatherMap(hashJoin));
+      assertGatherMapEquals(expected1, probe1Table.leftDistinctJoinGatherMap(hashJoin));
+      assertGatherMapEquals(expected2, probe2Table.leftDistinctJoinGatherMap(hashJoin));
     }
   }
 

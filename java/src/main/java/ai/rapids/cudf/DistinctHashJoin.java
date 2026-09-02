@@ -32,18 +32,17 @@ public class DistinctHashJoin implements AutoCloseable {
 
     @Override
     protected synchronized boolean cleanImpl(boolean logErrorIfNotClean) {
-      long origAddress = nativeHandle;
       boolean neededCleanup = nativeHandle != 0;
       if (neededCleanup) {
-        try {
+        long origAddress = nativeHandle;
+        try (Table toClose = buildKeys) {
           destroy(nativeHandle);
-          buildKeys.close();
-          buildKeys = null;
         } finally {
           nativeHandle = 0;
+          buildKeys = null;
         }
         if (logErrorIfNotClean) {
-          log.error("A DISTINCT HASH TABLE WAS LEAKED (ID: " + id + " " +
+          log.error("A DISTINCT HASH TABLE WAS LEAKED (ID: {}) 0x{}", id,
               Long.toHexString(origAddress));
         }
       }
@@ -57,21 +56,23 @@ public class DistinctHashJoin implements AutoCloseable {
   }
 
   private final DistinctHashJoinCleaner cleaner;
-  private final boolean compareNulls;
+  private final boolean compareNullsEqual;
   private boolean isClosed = false;
 
   /**
    * Construct a reusable distinct hash table from the join key columns from the right-side table.
-   * The build key rows must be distinct.
+   * Behavior is undefined if the build key rows contain duplicates. All NaN values are considered
+   * equal. The resulting instance must be closed to release the GPU resources associated with the
+   * instance.
    *
    * @param buildKeys table view containing the join keys for the right-side join table
-   * @param compareNulls true if null key values should match otherwise false
+   * @param compareNullsEqual true if null key values should match otherwise false
    */
-  public DistinctHashJoin(Table buildKeys, boolean compareNulls) {
-    this.compareNulls = compareNulls;
+  public DistinctHashJoin(Table buildKeys, boolean compareNullsEqual) {
+    this.compareNullsEqual = compareNullsEqual;
     Table buildTable = new Table(buildKeys.getColumns());
     try {
-      long handle = create(buildTable.getNativeView(), compareNulls);
+      long handle = create(buildTable.getNativeView(), compareNullsEqual);
       this.cleaner = new DistinctHashJoinCleaner(buildTable, handle);
       MemoryCleaner.register(this, cleaner);
     } catch (Throwable t) {
@@ -101,14 +102,14 @@ public class DistinctHashJoin implements AutoCloseable {
   }
 
   /** Returns true if the hash table was built to match on nulls otherwise false. */
-  public boolean getCompareNulls() {
-    return compareNulls;
+  public boolean getCompareNullsEqual() {
+    return compareNullsEqual;
   }
 
   long getNativeView() {
     return cleaner.nativeHandle;
   }
 
-  private static native long create(long tableView, boolean nullEqual);
+  private static native long create(long tableView, boolean compareNullsEqual);
   private static native void destroy(long handle);
 }

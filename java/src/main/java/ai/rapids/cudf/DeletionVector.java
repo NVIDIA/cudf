@@ -95,6 +95,37 @@ public class DeletionVector {
   }
 
   /**
+   * Computes the number of rows deleted by a serialized deletion vector on the GPU.
+   *
+   * @param deletionVectorInfo deletion vector and row-group metadata
+   * @param maxChunkRows maximum number of row indexes to process at once
+   * @return number of deleted rows in the specified row groups
+   * @throws NullPointerException if {@code deletionVectorInfo} is null
+   * @throws IllegalArgumentException if row-group metadata is missing or empty, or if
+   *     {@code maxChunkRows} is not positive
+   */
+  public static long computeNumDeletedRows(
+      DeletionVectorInfo deletionVectorInfo, int maxChunkRows) {
+    if (deletionVectorInfo == null) {
+      throw new NullPointerException("deletionVectorInfo");
+    }
+    if (maxChunkRows <= 0) {
+      throw new IllegalArgumentException("maxChunkRows must be positive");
+    }
+    if (deletionVectorInfo.rowGroupOffsets == null ||
+        deletionVectorInfo.rowGroupOffsets.length == 0) {
+      throw new IllegalArgumentException("row-group metadata must be non-empty");
+    }
+    return computeNumDeletedRows(
+        getAddrsAndSizes(deletionVectorInfo.serializedBitmap),
+        new int[] {deletionVectorInfo.totalNumRows},
+        deletionVectorInfo.rowGroupOffsets,
+        deletionVectorInfo.rowGroupNumRows,
+        deletionVectorInfo.isRetention,
+        maxChunkRows);
+  }
+
+  /**
    * Reads a Parquet file with deletion vector support.
    *
    * Reads a Parquet file, prepends an index column to the table, and applies the deletion vector
@@ -437,6 +468,14 @@ public class DeletionVector {
   }
 
   // Native methods
+
+  private static native long computeNumDeletedRows(
+      long[] serializedRoaring64,
+      int[] deletionVectorRowCounts,
+      long[] rowGroupOffsets,
+      int[] rowGroupNumRows,
+      boolean areRetentionVectors,
+      int maxChunkRows) throws CudfException;
 
   private static native long[] readParquet(String[] filterColumnNames,
                                                 boolean[] binaryToString,

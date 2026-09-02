@@ -164,6 +164,45 @@ class DeletionVectorTableTest extends CudfTestBase {
     }
   }
 
+  @ParameterizedTest(name = "isRetention={0}")
+  @CsvSource({"false", "true"})
+  void testComputeNumDeletedRows(boolean isRetention) throws IOException {
+    byte[] bitmapData = TableTestUtils.arrayFrom(DELETED_ROWS_FILE2);
+    long[] rowGroupOffsets = new long[] {10000L, 30000L};
+    int[] rowGroupNumRows = new int[] {10000, 10000};
+    try (HostMemoryBufferArray bitmapArray =
+             TableTestUtils.buffersFrom(new byte[][] {bitmapData})) {
+      DeletionVectorInfo dvInfo = new DeletionVectorInfo(
+          bitmapArray.buffers[0], isRetention, rowGroupOffsets, rowGroupNumRows);
+      long expectedRowsDeleted = isRetention
+          ? 20000 - DELETED_ROWS_COUNT2_RGS_1_AND_3
+          : DELETED_ROWS_COUNT2_RGS_1_AND_3;
+      assertEquals(expectedRowsDeleted, DeletionVector.computeNumDeletedRows(dvInfo, 5000));
+    }
+  }
+
+  @Test
+  void testComputeNumDeletedRowsInvalidArguments() throws IOException {
+    byte[] bitmapData = TableTestUtils.arrayFrom(DELETED_ROWS_FILE1);
+    try (HostMemoryBufferArray bitmapArray =
+             TableTestUtils.buffersFrom(new byte[][] {bitmapData})) {
+      DeletionVectorInfo dvInfo = new DeletionVectorInfo(
+          bitmapArray.buffers[0], false, new long[] {0}, new int[] {1000});
+      DeletionVectorInfo missingMetadata = new DeletionVectorInfo(
+          bitmapArray.buffers[0], false, null, null);
+      DeletionVectorInfo emptyMetadata = new DeletionVectorInfo(
+          bitmapArray.buffers[0], false, new long[0], new int[0]);
+      assertThrows(NullPointerException.class,
+          () -> DeletionVector.computeNumDeletedRows(null, 1000));
+      assertThrows(IllegalArgumentException.class,
+          () -> DeletionVector.computeNumDeletedRows(dvInfo, 0));
+      assertThrows(IllegalArgumentException.class,
+          () -> DeletionVector.computeNumDeletedRows(missingMetadata, 1000));
+      assertThrows(IllegalArgumentException.class,
+          () -> DeletionVector.computeNumDeletedRows(emptyMetadata, 1000));
+    }
+  }
+
   @Test
   void testMixedDeletionAndRetentionVectorsRejected() throws IOException {
     byte[][] data = TableTestUtils.sliceBytes(TableTestUtils.arrayFrom(TEST_FILE1), 10);

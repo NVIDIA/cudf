@@ -17,6 +17,7 @@ I/O Functions
 
     avro
     csv
+    hybrid_scan
     experimental
     json
     orc

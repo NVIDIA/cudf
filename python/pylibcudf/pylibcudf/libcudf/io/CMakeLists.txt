@@ -1,11 +1,11 @@
 # =============================================================================
 # cmake-format: off
-# SPDX-FileCopyrightText: Copyright (c) 2024-2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
 # SPDX-License-Identifier: Apache-2.0
 # cmake-format: on
 # =============================================================================
 
-set(cython_sources hybrid_scan.pyx json.pyx types.pyx)
+set(cython_sources hybrid_scan.pyx hybrid_scan_multifile.pyx json.pyx types.pyx)
 
 set(linked_libraries cudf::cudf)
 

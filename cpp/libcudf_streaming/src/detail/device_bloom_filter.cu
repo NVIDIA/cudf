@@ -35,11 +35,11 @@
 #include <cudf_streaming/detail/device_bloom_filter.hpp>
 
 #include <rmm/aligned.hpp>
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/resource_ref.hpp>
 
 #include <cub/device/device_transform.cuh>
 #include <cuda/std/tuple>
+#include <cuda/stream>
 
 #include <rapidsmpf/cuda_stream.hpp>
 #include <rapidsmpf/error.hpp>
@@ -95,7 +95,7 @@ device_bloom_filter const device_bloom_filter::view(std::size_t filter_size,
 }
 
 std::unique_ptr<rmm::device_buffer> device_bloom_filter::storage(std::size_t filter_size,
-                                                                 rmm::cuda_stream_view stream,
+                                                                 cuda::stream_ref stream,
                                                                  rmm::device_async_resource_ref mr)
 {
   return std::make_unique<rmm::device_buffer>(
@@ -103,7 +103,7 @@ std::unique_ptr<rmm::device_buffer> device_bloom_filter::storage(std::size_t fil
 }
 
 void device_bloom_filter::add(cudf::table_view const& values_to_hash,
-                              rmm::cuda_stream_view stream,
+                              cuda::stream_ref stream,
                               rmm::device_async_resource_ref mr)
 {
   RAPIDSMPF_NVTX_FUNC_RANGE();
@@ -116,7 +116,7 @@ void device_bloom_filter::add(cudf::table_view const& values_to_hash,
   filter_ref.add_async(hash_view.begin<key_type>(), hash_view.end<key_type>(), stream);
 }
 
-void device_bloom_filter::merge(device_bloom_filter const& other, rmm::cuda_stream_view stream)
+void device_bloom_filter::merge(device_bloom_filter const& other, cuda::stream_ref stream)
 {
   RAPIDSMPF_NVTX_FUNC_RANGE();
   RAPIDSMPF_EXPECTS(num_blocks_ == other.num_blocks_, "Mismatching number of blocks in filters");
@@ -128,7 +128,7 @@ void device_bloom_filter::merge(device_bloom_filter const& other, rmm::cuda_stre
 }
 
 rmm::device_uvector<bool> device_bloom_filter::contains(cudf::table_view const& values,
-                                                        rmm::cuda_stream_view stream,
+                                                        cuda::stream_ref stream,
                                                         rmm::device_async_resource_ref mr) const
 {
   RAPIDSMPF_NVTX_FUNC_RANGE();

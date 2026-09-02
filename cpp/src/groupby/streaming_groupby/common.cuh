@@ -296,7 +296,7 @@ struct streaming_groupby::impl {
    */
   std::unique_ptr<mutable_table_device_view, void (*)(mutable_table_device_view*)> _d_agg_results;
   std::vector<size_type> _value_col_indices;
-  rmm::device_uvector<aggregation::Kind> _d_agg_kinds;
+  std::unique_ptr<rmm::device_uvector<aggregation::Kind>> _d_agg_kinds;
 
   std::unique_ptr<streaming_set_t> _key_set;
 

@@ -353,7 +353,7 @@ TEST_F(HybridScanTest, FilterDataPagesOnlyAndScanAllColumns)
     auto predicate = cudf::compute_column(written_table->view(), filter_expression);
     EXPECT_EQ(predicate->view().type().id(), cudf::type_id::BOOL8)
       << "Predicate filter should return a boolean";
-    auto expected = cudf::apply_boolean_mask(written_table->view(), *predicate);
+    auto expected = cudf::apply_retention_mask(written_table->view(), *predicate);
 
     CUDF_TEST_EXPECT_TABLES_EQUIVALENT(expected->view(), read_table->view());
   }
@@ -838,7 +838,7 @@ TEST_F(HybridScanTest, ExtendedFilterExpressions)
       datasource_ref, filter, std::nullopt, case_sensitive_names, stream, mr);
 
     auto predicate = cudf::compute_column(written_table->view(), filter);
-    auto expected  = cudf::apply_boolean_mask(written_table->view(), *predicate);
+    auto expected  = cudf::apply_retention_mask(written_table->view(), *predicate);
 
     CUDF_TEST_EXPECT_TABLES_EQUIVALENT(expected->view(), read_single_step->view());
     CUDF_TEST_EXPECT_TABLES_EQUIVALENT(expected->select({1, 0}), filter_table->view());
@@ -872,7 +872,7 @@ TEST_F(HybridScanTest, ExtendedFilterExpressions)
       datasource_ref, filter, std::nullopt, case_sensitive_names, stream, mr);
 
     auto predicate = cudf::compute_column(written_table->view(), filter);
-    auto expected  = cudf::apply_boolean_mask(written_table->view(), *predicate);
+    auto expected  = cudf::apply_retention_mask(written_table->view(), *predicate);
 
     CUDF_TEST_EXPECT_TABLES_EQUIVALENT(expected->view(), read_single_step->view());
     CUDF_TEST_EXPECT_TABLES_EQUIVALENT(expected->select({1, 0}), filter_table->view());
@@ -1358,7 +1358,7 @@ TEST_F(HybridScanTest, RowGroupPassesMatchesChunkedReader)
       writer.write(chunk_table);
     }
     writer.close();
-    stream.synchronize();
+    stream.sync();
   }
 
   // Pick a pass_read_limit that forces multiple passes but groups some row groups together

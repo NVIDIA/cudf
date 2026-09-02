@@ -7,7 +7,10 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from cudf_streaming.channel_metadata import ChannelMetadata
-from cudf_streaming.table_chunk import TableChunk
+from cudf_streaming.table_chunk import (
+    TableChunk,
+    make_table_chunks_available_or_wait,
+)
 from rapidsmpf.streaming.core.message import Message
 
 from cudf_polars.dsl.ir import Union
@@ -94,9 +97,14 @@ async def union_node(
                     stream = ir_context.get_cuda_stream()
                     out_chunk = empty_table_chunk(ir, context, stream)
                 else:
-                    out_chunk = TableChunk.from_message(
-                        msg, br=context.br()
-                    ).make_available_and_spill(context.br(), allow_overbooking=True)
+                    # Relay: the unspilled chunk is forwarded as-is, nothing
+                    # is duplicated or freed.
+                    out_chunk, _ = await make_table_chunks_available_or_wait(
+                        context,
+                        TableChunk.from_message(msg, br=context.br()),
+                        reserve_extra=0,
+                        net_memory_delta=0,
+                    )
                 await ch_out.send(
                     context,
                     Message(

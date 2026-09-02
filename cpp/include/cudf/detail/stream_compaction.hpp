@@ -46,9 +46,17 @@ enum class mask_type : bool {
 };
 
 /**
- * @copydoc cudf::apply_boolean_mask
+ * @brief Filters @p input using @p boolean_mask.
  *
+ * @note An empty mask returns an empty table for @p mask_kind `RETENTION` and a copy of @p input
+ * for @p mask_kind `DELETION`.
+ *
+ * @param input The input table to filter
+ * @param boolean_mask A nullable BOOL8 column used to filter @p input
  * @param mask_kind Specifies how the boolean mask is treated (retentions or deletions)
+ * @param stream CUDA stream used for device memory operations and kernel launches
+ * @param mr Device memory resource used to allocate the returned table's device memory
+ * @return A table containing the rows of @p input selected by @p boolean_mask and @p mask_kind
  */
 std::unique_ptr<table> apply_mask(table_view const& input,
                                   column_view const& boolean_mask,

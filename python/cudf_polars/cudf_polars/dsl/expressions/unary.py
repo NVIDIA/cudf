@@ -128,6 +128,8 @@ class UnaryFunction(Expr):
             "hist",
             "index_of",
             "mask_nans",
+            "max_by",
+            "min_by",
             "mode",
             "null_count",
             "pct_change",
@@ -378,7 +380,7 @@ class UnaryFunction(Expr):
             )
         result = column.obj
         if old.obj.null_count() != old.size:
-            nonnull_old, nonnull_new = plc.stream_compaction.apply_boolean_mask(
+            nonnull_old, nonnull_new = plc.stream_compaction.apply_retention_mask(
                 plc.Table([old.obj, new.obj]),
                 plc.unary.is_valid(old.obj, stream=df.stream),
                 stream=df.stream,
@@ -386,7 +388,7 @@ class UnaryFunction(Expr):
             result = plc.replace.find_and_replace_all(
                 result, nonnull_old, nonnull_new, stream=df.stream
             )
-        null_new = plc.stream_compaction.apply_boolean_mask(
+        null_new = plc.stream_compaction.apply_retention_mask(
             plc.Table([new.obj]),
             plc.unary.is_null(old.obj, stream=df.stream),
             stream=df.stream,
@@ -543,7 +545,7 @@ class UnaryFunction(Expr):
                 stream=df.stream,
             )
             return Column(
-                plc.stream_compaction.apply_boolean_mask(
+                plc.stream_compaction.apply_retention_mask(
                     plc.Table([indices]), column.obj, stream=df.stream
                 ).columns()[0],
                 dtype=self.dtype,
@@ -782,7 +784,7 @@ class UnaryFunction(Expr):
                 plc.DataType(plc.TypeId.BOOL8),
                 stream=df.stream,
             )
-            modes = plc.stream_compaction.apply_boolean_mask(
+            modes = plc.stream_compaction.apply_retention_mask(
                 keys_table, mask, stream=df.stream
             )
             return Column(
@@ -790,6 +792,54 @@ class UnaryFunction(Expr):
                     modes,
                     [plc.types.Order.ASCENDING],
                     [plc.types.NullOrder.BEFORE],
+                    stream=df.stream,
+                ).columns()[0],
+                dtype=self.dtype,
+            )
+        if self.name in ("max_by", "min_by"):
+            val, by = (child.evaluate(df, context=context) for child in self.children)
+            if val.size != by.size:
+                raise pl.exceptions.ShapeError(
+                    f"'by' column in {self.name} expression has incorrect length: "
+                    f"expected {val.size}, got {by.size}"
+                )
+            unmasked = by
+            by = by.mask_nans(stream=df.stream)
+            agg = (
+                plc.aggregation.argmax()
+                if self.name == "max_by"
+                else plc.aggregation.argmin()
+            )
+            index = plc.reduce.reduce(
+                by.obj, agg, plc.types.SIZE_TYPE, stream=df.stream
+            )
+            if not index.is_valid(stream=df.stream):
+                if unmasked.null_count != unmasked.size:
+                    valid = plc.unary.is_valid(unmasked.obj, stream=df.stream)
+                    filtered = plc.stream_compaction.apply_retention_mask(
+                        plc.Table([val.obj]), valid, stream=df.stream
+                    )
+                    return Column(
+                        plc.copying.slice(
+                            filtered.columns()[0], [0, 1], stream=df.stream
+                        )[0],
+                        dtype=self.dtype,
+                    )
+                return Column(
+                    plc.Column.from_scalar(
+                        plc.Scalar.from_py(None, self.dtype.plc_type, stream=df.stream),
+                        1,
+                        stream=df.stream,
+                    ),
+                    dtype=self.dtype,
+                )
+            if val.is_scalar:
+                return val
+            return Column(
+                plc.copying.gather(
+                    plc.Table([val.obj]),
+                    plc.Column.from_scalar(index, 1, stream=df.stream),
+                    plc.copying.OutOfBoundsPolicy.NULLIFY,
                     stream=df.stream,
                 ).columns()[0],
                 dtype=self.dtype,
@@ -1196,7 +1246,7 @@ class UnaryFunction(Expr):
                 plc.Scalar.from_py(1, self.dtype.plc_type, stream=df.stream),
                 stream=df.stream,
             )
-            matched = plc.stream_compaction.apply_boolean_mask(
+            matched = plc.stream_compaction.apply_retention_mask(
                 plc.Table([indices]), mask, stream=df.stream
             ).columns()[0]
             if matched.size() == 0:
@@ -1351,18 +1401,22 @@ class UnaryFunction(Expr):
                 dtype=self.dtype,
             )
         elif self.name == "as_struct":
-            children = [
-                child.evaluate(df, context=context).obj for child in self.children
-            ]
+            children = [child.evaluate(df, context=context) for child in self.children]
+            non_unit_sizes = [c.size for c in children if c.size != 1]
+            broadcasted = broadcast(
+                *children,
+                target_length=max(non_unit_sizes) if non_unit_sizes else None,
+                stream=df.stream,
+            )
             return Column(
                 plc.Column(
                     data_type=self.dtype.plc_type,
-                    size=children[0].size(),
+                    size=broadcasted[0].size,
                     data=None,
                     mask=None,
                     null_count=0,
                     offset=0,
-                    children=children,
+                    children=[c.obj for c in broadcasted],
                 ),
                 dtype=self.dtype,
             )

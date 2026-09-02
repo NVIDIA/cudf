@@ -696,7 +696,7 @@ void reader_impl::generate_list_column_row_counts(is_estimate_row_counts is_esti
       key_input,
       key_input + pass.pages.size(),
       page_input,
-      chunk_row_output_iter{pass.pages.device_ptr()});
+      cuda::make_tabulate_output_iterator(set_chunk_row_fn{pass.pages.device_ptr()}));
 
     // To compensate for the list row size estimates, force the row count on the last page for each
     // column chunk (each rowgroup) such that it ends on the real known row count. this is so that
@@ -810,7 +810,19 @@ void reader_impl::preprocess_subpass_pages(read_mode mode, size_t chunk_read_lim
     key_input,
     key_input + pass.pages.size(),
     page_input,
-    chunk_row_output_iter{pass.pages.device_ptr()});
+    cuda::make_tabulate_output_iterator(set_chunk_row_fn{pass.pages.device_ptr()}));
+
+  // Decoding a subpass gives real row counts for the pages it read, overwriting the estimates they
+  // held, and the scan above recomputes chunk_row from them. The count forced onto the last page of
+  // each chunk came from those estimates, so it has to be recomputed too, or it drifts until the
+  // page looks like it starts past the end of the pass and is never read at all. This condition is
+  // where setup_next_pass forced it: generate_list_column_row_counts(is_estimate_row_counts::YES).
+  if (pass.has_compressed_data and _input_pass_read_limit != 0 and not _has_offset_index) {
+    thrust::for_each(rmm::exec_policy_nosync(_stream, cudf::get_current_device_resource_ref()),
+                     iter,
+                     iter + pass.pages.size(),
+                     set_final_row_count{pass.pages, pass.chunks});
+  }
 
   // copy chunk_row into the subpass pages
   // only need to do this if we are not processing the whole pass in one subpass
@@ -879,8 +891,11 @@ void reader_impl::preprocess_subpass_pages(read_mode mode, size_t chunk_read_lim
   // rows as the smallest batch (by column) we have decompressed.
   size_t first_page_index = 0;
   size_t max_row          = std::numeric_limits<size_t>::max();
-  auto const last_pass_row =
-    _file_itm_data.input_pass_start_row_count[_file_itm_data._current_input_pass + 1];
+  auto const pass_end     = pass.skip_rows + pass.num_rows;
+  // The row groups of this pass can hold more rows than the pass reads, in which case a page whose
+  // rows were capped at the end of the pass still is the last page of it.
+  auto const last_pass_row = std::min<size_t>(
+    _file_itm_data.input_pass_start_row_count[_file_itm_data._current_input_pass + 1], pass_end);
   // for each column
   for (size_t idx = 0; idx < subpass.column_page_count.size(); idx++) {
     // compute max row for this column in the subpass
@@ -914,9 +929,8 @@ void reader_impl::preprocess_subpass_pages(read_mode mode, size_t chunk_read_lim
 
     first_page_index += subpass.column_page_count[idx];
   }
-  subpass.skip_rows   = pass.skip_rows + pass.processed_rows;
-  auto const pass_end = pass.skip_rows + pass.num_rows;
-  max_row             = std::min<size_t>(max_row, pass_end);
+  subpass.skip_rows = pass.skip_rows + pass.processed_rows;
+  max_row           = std::min<size_t>(max_row, pass_end);
   CUDF_EXPECTS(max_row > subpass.skip_rows, "Unexpected short subpass", std::underflow_error);
   // Limit the number of rows to read in this subpass to the cudf's column size limit - 1 (for
   // lists). Only apply this limit when chunking is enabled.
@@ -948,13 +962,32 @@ void reader_impl::allocate_columns(read_mode mode, size_t skip_rows, size_t num_
   // Validity Buffer is a uint32_t pointer
   std::vector<cudf::device_span<cudf::bitmask_type>> nullmask_bufs;
 
+  // An optional ancestor leaves unwritten output slots until the next repeated level. So, for a
+  // non-nullable STRING (FIELD) with a nullable ancestor, the column is nullable and not all rows
+  // will be decoded. The decoder may not detect this because it may not have a validity map from
+  // the ancestor. To avoid this, zero-fill such STRING buffers here as their uninitialized lengths
+  // are converted to offsets. No handling needed here for nullable strings (zero-filled by decoder
+  // using their own validity bitmap), fixed-width (masked), LIST offsets (never have gaps), and
+  // dictionary indices (have no ancestors).
+  auto const compute_has_unwritten_slots = [](auto const& out_buf, bool has_nullable_ancestor) {
+    return has_nullable_ancestor and out_buf.type.id() == type_id::STRING and
+           not out_buf.is_nullable;
+  };
+  auto unwritten_bufs = cudf::detail::make_empty_pinned_vector<cudf::device_span<cuda::std::byte>>(
+    _input_columns.size(), _stream);
+
   for (auto const& input_col : _input_columns) {
     size_t const max_depth = input_col.nesting_depth();
 
-    auto* cols = &_output_buffers;
+    auto* cols                 = &_output_buffers;
+    bool has_nullable_ancestor = false;
     for (size_t l_idx = 0; l_idx < max_depth; l_idx++) {
       auto& out_buf = (*cols)[input_col.nesting[l_idx]];
       cols          = &out_buf.children;
+
+      auto const has_unwritten_slots = compute_has_unwritten_slots(out_buf, has_nullable_ancestor);
+      has_nullable_ancestor =
+        out_buf.type.id() == type_id::LIST ? false : (has_nullable_ancestor or out_buf.is_nullable);
 
       // if this has a list parent, we have to get column sizes from the
       // data computed during compute_page_sizes
@@ -976,6 +1009,10 @@ void reader_impl::allocate_columns(read_mode mode, size_t skip_rows, size_t num_
           out_buf.null_mask(),
           cudf::util::round_up_safe(out_buf.null_mask_size(), sizeof(cudf::bitmask_type)) /
             sizeof(cudf::bitmask_type));
+        if (has_unwritten_slots and out_buf.data() != nullptr) {
+          unwritten_bufs.push_back(
+            {static_cast<cuda::std::byte*>(out_buf.data()), out_buf.data_size()});
+        }
       }
     }
   }
@@ -1068,10 +1105,19 @@ void reader_impl::allocate_columns(read_mode mode, size_t skip_rows, size_t num_
     for (size_type idx = 0; idx < static_cast<size_type>(_input_columns.size()); idx++) {
       auto const& input_col = _input_columns[idx];
       auto* cols            = &_output_buffers;
+      // See the identically named variable in the non-list allocation loop above
+      bool has_nullable_ancestor = false;
       for (size_type l_idx = 0; l_idx < static_cast<size_type>(input_col.nesting_depth());
            l_idx++) {
         auto& out_buf = (*cols)[input_col.nesting[l_idx]];
         cols          = &out_buf.children;
+
+        auto const has_unwritten_slots =
+          compute_has_unwritten_slots(out_buf, has_nullable_ancestor);
+        has_nullable_ancestor = out_buf.type.id() == type_id::LIST
+                                  ? false
+                                  : (has_nullable_ancestor or out_buf.is_nullable);
+
         // if this buffer is part of a list hierarchy, we need to determine it's
         // final size and allocate it here.
         //
@@ -1095,6 +1141,10 @@ void reader_impl::allocate_columns(read_mode mode, size_t skip_rows, size_t num_
             out_buf.null_mask(),
             cudf::util::round_up_safe(out_buf.null_mask_size(), sizeof(cudf::bitmask_type)) /
               sizeof(cudf::bitmask_type));
+          if (has_unwritten_slots and out_buf.data() != nullptr) {
+            unwritten_bufs.push_back(
+              {static_cast<cuda::std::byte*>(out_buf.data()), out_buf.data_size()});
+          }
         }
       }
     }
@@ -1105,6 +1155,14 @@ void reader_impl::allocate_columns(read_mode mode, size_t skip_rows, size_t num_
     cudf::host_span<cudf::device_span<cudf::bitmask_type> const>{nullmask_bufs}, _stream);
   cudf::detail::batched_memset<cudf::bitmask_type>(
     pinned_nullmask_bufs, std::numeric_limits<cudf::bitmask_type>::max(), _stream);
+
+  // Need to zero non-nullable string lengths with nullable ancestors
+  if (not unwritten_bufs.empty()) {
+    cudf::detail::batched_memset<cuda::std::byte>(
+      cudf::host_span<cudf::device_span<cuda::std::byte> const>{unwritten_bufs},
+      static_cast<cuda::std::byte>(0),
+      _stream);
+  }
 }
 
 void reader_impl::fill_pruned_offsets(size_t skip_rows,
@@ -1149,7 +1207,7 @@ cudf::detail::host_vector<size_t> reader_impl::calculate_page_string_offsets()
     page_keys,
     page_keys + subpass.pages.size(),
     val_iter,
-    page_offset_output_iter{subpass.pages.device_ptr()});
+    cuda::make_tabulate_output_iterator(set_str_offset_fn{subpass.pages.device_ptr()}));
 
   // now sum up page sizes
   rmm::device_uvector<int> reduce_keys(d_col_sizes.size(), _stream);

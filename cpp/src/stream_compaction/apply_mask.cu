@@ -67,7 +67,11 @@ std::unique_ptr<table> apply_mask(table_view const& input,
                                   cuda::stream_ref stream,
                                   rmm::device_async_resource_ref mr)
 {
-  if (boolean_mask.is_empty()) { return empty_like(input); }
+  auto const is_retention = (mask_kind == mask_type::RETENTION);
+
+  if (boolean_mask.is_empty()) {
+    return is_retention ? empty_like(input) : std::make_unique<table>(input, stream, mr);
+  }
 
   CUDF_EXPECTS(boolean_mask.type().id() == type_id::BOOL8, "Mask must be Boolean type");
   CUDF_EXPECTS(input.num_rows() == 0 || input.num_rows() == boolean_mask.size(),
@@ -75,7 +79,6 @@ std::unique_ptr<table> apply_mask(table_view const& input,
 
   auto device_boolean_mask = cudf::column_device_view::create(boolean_mask, stream);
 
-  auto const is_retention = (mask_kind == mask_type::RETENTION);
   if (boolean_mask.has_nulls()) {
     if (is_retention) {
       return detail::copy_if(input, retention_mask_filter<true>{*device_boolean_mask}, stream, mr);
@@ -96,6 +99,15 @@ std::unique_ptr<table> apply_mask(table_view const& input,
 /*
  * Filters a table_view using a column_view of boolean values as a mask.
  */
+std::unique_ptr<table> apply_retention_mask(table_view const& input,
+                                            column_view const& retention_mask,
+                                            cuda::stream_ref stream,
+                                            rmm::device_async_resource_ref mr)
+{
+  CUDF_FUNC_RANGE();
+  return detail::apply_mask(input, retention_mask, detail::mask_type::RETENTION, stream, mr);
+}
+
 std::unique_ptr<table> apply_boolean_mask(table_view const& input,
                                           column_view const& boolean_mask,
                                           cuda::stream_ref stream,

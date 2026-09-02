@@ -138,6 +138,12 @@ struct row_group_stats_caster : public stats_caster_base {
                 } else {
                   CUDF_FAIL("Invalid null count");
                 }
+              } else {
+                // Statistics without a null count say nothing about this chunk's nullability. The
+                // value array is allocated uninitialized and the null mask starts out all valid, so
+                // this entry has to be marked null; leaving it alone would let an uninitialized
+                // byte be read as an answer.
+                is_null->set_index(stats_idx, std::nullopt, {});
               }
             }
           } else {

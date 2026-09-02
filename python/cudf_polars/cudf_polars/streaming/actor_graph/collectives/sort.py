@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import math
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import polars as pl
@@ -17,7 +18,10 @@ from cudf_streaming.channel_metadata import (
     Ordering,
     Partitioning,
 )
-from cudf_streaming.table_chunk import TableChunk
+from cudf_streaming.table_chunk import (
+    TableChunk,
+    make_table_chunks_available_or_wait,
+)
 from rapidsmpf.shuffler import PartitionAssignment
 from rapidsmpf.streaming.core.actor import define_actor
 from rapidsmpf.streaming.core.message import Message
@@ -59,18 +63,233 @@ from cudf_polars.streaming.sort import (
     _select_local_split_candidates,
     find_sort_splits,
 )
-from cudf_polars.utils.cuda_stream import get_joined_cuda_stream
+from cudf_polars.utils.cuda_stream import get_joined_cuda_stream, stream_ordered_after
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from rapidsmpf.communicator.communicator import Communicator
     from rapidsmpf.streaming.core.channel import Channel
     from rapidsmpf.streaming.core.context import Context
+    from rmm.pylibrmm.stream import Stream
 
-    from cudf_polars.dsl.ir import IRExecutionContext
+    from cudf_polars.dsl.ir import IR, IRExecutionContext
     from cudf_polars.streaming.actor_graph.dispatch import SubNetGenerator
     from cudf_polars.streaming.actor_graph.tracing import ActorTracer
     from cudf_polars.typing import Schema
     from cudf_polars.utils.config import StreamingExecutor
+
+
+@dataclass(frozen=True)
+class OrderSchemePartitioningResult:
+    """OrderScheme partitioning and buffered chunks consumed to derive it."""
+
+    partitioning: Partitioning | None
+    """The extracted partitioning, or ``None`` if extraction was not possible."""
+    chunks: ChunkStore
+    """The consumed chunks, stored in replay order."""
+
+
+def _extract_boundaries_from_endpoint_rows(
+    endpoint_key_rows: plc.Table,
+    num_partitions: int,
+    stream: Stream,
+) -> tuple[plc.Table, bool]:
+    """
+    Extract boundaries from alternating partition endpoint rows.
+
+    Parameters
+    ----------
+    endpoint_key_rows
+        The table containing key-column rows ordered as
+        ``[start0, end0, start1, end1, ...]``.
+    num_partitions
+        The number of partitions.
+    stream
+        The CUDA stream to use for the operation.
+
+    Returns
+    -------
+    The boundaries table and whether they are strict.
+    """
+    # Boundaries are the first endpoint of all partitions except the first.
+    # Strictness compares each partition end with the following partition start.
+    previous_partition_ends = plc.concatenate.concatenate(
+        plc.copying.slice(
+            endpoint_key_rows, list(range(1, 2 * num_partitions - 1)), stream=stream
+        ),
+        stream=stream,
+    )
+    next_partition_starts = plc.concatenate.concatenate(
+        plc.copying.slice(
+            endpoint_key_rows, list(range(2, 2 * num_partitions)), stream=stream
+        ),
+        stream=stream,
+    )
+
+    # Single-kernel row-equality check across all key columns using AST
+    num_cols = previous_partition_ends.num_columns()
+    combined = plc.Table(
+        list(previous_partition_ends.columns()) + list(next_partition_starts.columns())
+    )
+    eq_exprs = [
+        plc.expressions.Operation(
+            plc.expressions.ASTOperator.NULL_EQUAL,
+            plc.expressions.ColumnReference(j),
+            plc.expressions.ColumnReference(num_cols + j),
+        )
+        for j in range(num_cols)
+    ]
+    row_eq_expr = eq_exprs[0]
+    for expr in eq_exprs[1:]:
+        row_eq_expr = plc.expressions.Operation(
+            plc.expressions.ASTOperator.NULL_LOGICAL_AND,
+            row_eq_expr,
+            expr,
+        )
+    row_eq_col = plc.transform.compute_column(combined, row_eq_expr, stream=stream)
+    strict = not plc.reduce.reduce(
+        row_eq_col,
+        plc.aggregation.any(),
+        plc.DataType(plc.TypeId.BOOL8),
+        stream=stream,
+    ).to_py(stream=stream)
+    return next_partition_starts, strict
+
+
+async def extract_orderscheme_partitioning(
+    context: Context,
+    comm: Communicator,
+    schema_ir: IR,
+    ir_context: IRExecutionContext,
+    ch_in: Channel[TableChunk],
+    order_keys: Sequence[OrderKey],
+    collective_id: int,
+) -> OrderSchemePartitioningResult:
+    """
+    Extract the partitioning metadata for a sorted channel.
+
+    Parameters
+    ----------
+    context
+        The RapidsMPF context.
+    comm
+        The RapidsMPF communicator.
+    schema_ir
+        The IR reference to use for the boundary table schema.
+    ir_context
+        The IR execution context.
+    ch_in
+        The channel to collect boundaries from.
+    order_keys
+        The order keys associated with the boundaries.
+    collective_id
+        The collective ID for the allgather.
+
+    Returns
+    -------
+    A result containing a ``Partitioning`` whose ``inter_rank`` is an
+    ``OrderScheme`` built from the observed boundaries and ``local`` is
+    ``"inherit"``, or ``None`` if the channel contains insufficient data
+    or the data is not globally sorted. The result also contains the
+    consumed chunks in replay order.
+
+    Notes
+    -----
+    This utility does not collect channel metadata, nor does
+    it push any messages into an output channel. All data
+    messages from the input channel are consumed.
+
+    Boundaries are not collected for empty chunks.
+    """
+    # Collect the first and last row from each non-empty sorted chunk.
+    endpoint_rows: list[plc.Table] = []
+    chunks = ChunkStore(context)
+    stream = ir_context.get_cuda_stream()
+    row_indices = plc.Column.from_iterable_of_py(
+        [0, -1],
+        plc.DataType(plc.TypeId.INT32),
+        stream=stream,
+    )
+    while (msg := await ch_in.recv(context)) is not None:
+        chunk, _ = await make_table_chunks_available_or_wait(
+            context,
+            TableChunk.from_message(msg, br=context.br()),
+            reserve_extra=0,
+            net_memory_delta=0,
+        )
+        tbl = chunk.table_view()
+        if tbl.num_rows() == 0:
+            chunks.insert(Message(msg.sequence_number, chunk))
+            continue
+        with stream_ordered_after(lambda: stream, upstreams=(chunk.stream,)):
+            endpoint_rows.append(
+                plc.copying.gather(
+                    tbl,
+                    row_indices,
+                    plc.copying.OutOfBoundsPolicy.DONT_CHECK,
+                    stream=stream,
+                )
+            )
+        chunks.insert(Message(msg.sequence_number, chunk))
+    endpoint_table: plc.Table | None = (
+        plc.concatenate.concatenate(endpoint_rows, stream=stream)
+        if endpoint_rows
+        else None
+    )
+    del endpoint_rows
+
+    # Allgather endpoint rows across all ranks.
+    if comm.nranks > 1:
+        local_chunk = (
+            TableChunk.from_pylibcudf_table(
+                endpoint_table, stream, exclusive_view=True, br=context.br()
+            )
+            if endpoint_table is not None
+            else empty_table_chunk(schema_ir, context, stream)
+        )
+        allgather = AllGatherManager(context, comm, collective_id)
+        with allgather.inserting() as inserter:
+            await inserter.insert(comm.rank, local_chunk)
+        endpoint_table = await allgather.extract_concatenated(
+            stream, ordered=True, ir_context=ir_context
+        )
+
+    # Return None if there are insufficient endpoints to process.
+    if endpoint_table is None or (num_partitions := endpoint_table.num_rows() // 2) < 2:
+        return OrderSchemePartitioningResult(None, chunks)
+
+    key_indices = [key.column_index for key in order_keys]
+    endpoint_key_rows = plc.Table(
+        [endpoint_table.columns()[index] for index in key_indices]
+    )
+    del endpoint_table
+
+    # Return None if chunk endpoints are not globally sorted.
+    column_order = [key.order for key in order_keys]
+    null_order = [key.null_order for key in order_keys]
+    if not plc.sorting.is_sorted(
+        endpoint_key_rows, column_order, null_order, stream=stream
+    ):
+        return OrderSchemePartitioningResult(None, chunks)
+
+    # Extract boundaries and construct the Partitioning
+    boundaries, strict = _extract_boundaries_from_endpoint_rows(
+        endpoint_key_rows, num_partitions, stream
+    )
+    del endpoint_key_rows
+    boundaries_chunk = TableChunk.from_pylibcudf_table(
+        boundaries, stream, exclusive_view=True, br=context.br()
+    )
+    return OrderSchemePartitioningResult(
+        Partitioning(
+            inter_rank=OrderScheme(
+                [Ordering(order_keys, boundaries_chunk, strict_boundaries=strict)]
+            ),
+            local="inherit",
+        ),
+        chunks,
+    )
 
 
 async def _simple_top_or_bottom_k(
@@ -115,7 +334,7 @@ async def _simple_top_or_bottom_k(
     if comm.nranks > 1 and not metadata_in.duplicated:
         allgather = AllGatherManager(context, comm, collective_ids.pop())
         with allgather.inserting() as inserter:
-            inserter.insert(comm.rank, chunk)
+            await inserter.insert(comm.rank, chunk)
 
         stream = ir_context.get_cuda_stream()
         chunk = await evaluate_chunk(
@@ -196,7 +415,7 @@ async def _compute_sort_boundaries(
         )
         allgather = AllGatherManager(context, comm, allgather_id)
         with allgather.inserting() as inserter:
-            inserter.insert(comm.rank, chunk)
+            await inserter.insert(comm.rank, chunk)
         concat_table = await allgather.extract_concatenated(
             stream, ordered=True, ir_context=ir_context
         )
@@ -364,9 +583,14 @@ async def _insert_chunks_into_shuffle(
             if skip_insert:
                 continue
             seq_num = msg.sequence_number
-            available_chunk = TableChunk.from_message(
-                msg, br=context.br()
-            ).make_available_and_spill(context.br(), allow_overbooking=True)
+            # The chunk's data moves into shuffler-owned packed buffers,
+            # nothing lasting is added.
+            available_chunk, _ = await make_table_chunks_available_or_wait(
+                context,
+                TableChunk.from_message(msg, br=context.br()),
+                reserve_extra=0,
+                net_memory_delta=0,
+            )
             tbl = available_chunk.table_view()
             sort_cols_tbl = plc.Table([tbl.columns()[i] for i in by_indices])
 
@@ -386,7 +610,7 @@ async def _insert_chunks_into_shuffle(
                 stream=stream,
                 chunk_relative=True,
             )
-            inserter.insert_split(available_chunk, splits)
+            await inserter.insert_split(available_chunk, splits)
 
     post_sort_ir = ir
     if ir.stable:
@@ -422,7 +646,7 @@ async def _extract_partitions_and_send(
     ncols_out = len(output_schema)
     for partition_id in shuffle.local_partitions():
         stream = ir_context.get_cuda_stream()
-        table = shuffle.extract_chunk(partition_id, stream)
+        table = await shuffle.extract_chunk(partition_id, stream)
         if table.num_rows() > 0:
             table = post_sort_ir.do_evaluate(
                 *post_sort_ir._non_child_args,

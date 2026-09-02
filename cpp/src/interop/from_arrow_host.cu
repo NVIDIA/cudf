@@ -298,7 +298,7 @@ std::unique_ptr<column> dispatch_copy_from_arrow_host::operator()<cudf::struct_v
 std::tuple<std::unique_ptr<column>, int64_t, int64_t> get_fixed_size_list_offsets(
   ArrowSchemaView const* schema,
   ArrowArray const* input,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr)
 {
   auto const layout = get_fixed_size_list_layout(schema, input);
@@ -435,7 +435,7 @@ std::tuple<std::unique_ptr<column>, int64_t, int64_t> copy_offsets_column(
 
 std::unique_ptr<column> make_fixed_size_list_offsets(size_type num_offsets,
                                                      int32_t width,
-                                                     rmm::cuda_stream_view stream,
+                                                     cuda::stream_ref stream,
                                                      rmm::device_async_resource_ref mr)
 {
   auto offsets = make_numeric_column(

@@ -4,7 +4,6 @@
 from libc.stdint cimport uint8_t
 from libcpp cimport bool
 from libcpp.memory cimport unique_ptr
-from libcpp.pair cimport pair
 from libcpp.span cimport span as std_span
 from libcpp.vector cimport vector
 from pylibcudf.exception_handler cimport libcudf_exception_handler
@@ -80,9 +79,12 @@ cdef extern from "cudf/io/experimental/hybrid_scan.hpp" \
             cudaStream_t stream
         ) except +libcudf_exception_handler
 
-        pair[
-            vector[byte_range_info], vector[byte_range_info]
-        ] secondary_filters_byte_ranges(
+        vector[byte_range_info] bloom_filters_byte_ranges(
+            std_span[const_size_type] row_group_indices,
+            const parquet_reader_options& options
+        ) except +libcudf_exception_handler
+
+        vector[byte_range_info] dictionary_pages_byte_ranges(
             std_span[const_size_type] row_group_indices,
             const parquet_reader_options& options
         ) except +libcudf_exception_handler

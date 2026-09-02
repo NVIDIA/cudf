@@ -66,7 +66,7 @@ std::tuple<std::unique_ptr<column>, int64_t, int64_t> get_offsets_column(
  */
 std::unique_ptr<column> make_fixed_size_list_offsets(size_type num_offsets,
                                                      int32_t width,
-                                                     rmm::cuda_stream_view stream,
+                                                     cuda::stream_ref stream,
                                                      rmm::device_async_resource_ref mr);
 
 }  // namespace detail

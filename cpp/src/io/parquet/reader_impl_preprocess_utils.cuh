@@ -282,10 +282,15 @@ struct set_final_row_count {
     if (i < pages.size() - 1 && (pages[i + 1].chunk_idx == page.chunk_idx)) { return; }
     size_t const page_start_row = chunk.start_row + page.chunk_row;
     size_t const chunk_last_row = chunk.start_row + chunk.num_rows;
+    // Row estimates that overshoot can push this page's start past the end of the chunk, in which
+    // case it holds no rows at all. Subtracting unguarded would wrap around instead.
+    auto const rows_left = static_cast<int32_t>(
+      (chunk_last_row > page_start_row) ? (chunk_last_row - page_start_row) : 0);
     // Mark `is_num_rows_adjusted` to signal string decoders that the `num_rows` of this page has
-    // been adjusted.
-    page.is_num_rows_adjusted = page.num_rows != (chunk_last_row - page_start_row);
-    page.num_rows             = chunk_last_row - page_start_row;
+    // been adjusted. Adjusting an already adjusted count to the same value does not undo it, so
+    // this never clears: a later call sees the count it forced earlier and would compare equal.
+    page.is_num_rows_adjusted = page.is_num_rows_adjusted or (page.num_rows != rows_left);
+    page.num_rows             = rows_left;
   }
 };
 
@@ -387,24 +392,12 @@ struct get_reduction_key {
 /**
  * @brief Writes to the chunk_row field of the PageInfo struct
  */
-struct chunk_row_output_iter {
+struct set_chunk_row_fn {
   PageInfo* p;
-  using value_type        = size_type;
-  using difference_type   = size_type;
-  using pointer           = size_type*;
-  using reference         = size_type&;
-  using iterator_category = thrust::output_device_iterator_tag;
-
-  CUDF_HOST_DEVICE constexpr inline chunk_row_output_iter operator+(int i) const { return {p + i}; }
-
-  CUDF_HOST_DEVICE constexpr inline chunk_row_output_iter& operator++()
+  __device__ constexpr void operator()(size_type i, size_type value) const
   {
-    p++;
-    return *this;
+    p[i].chunk_row = value;
   }
-
-  __device__ constexpr inline reference operator[](int i) { return p[i].chunk_row; }
-  __device__ constexpr inline reference operator*() { return p->chunk_row; }
 };
 
 /**
@@ -479,30 +472,11 @@ struct page_to_string_size {
 };
 
 /**
- * @brief Functor to access and update the str_offset field of the PageInfo struct
+ * @brief Writes to the str_offset field of the PageInfo struct
  */
-struct page_offset_output_iter {
+struct set_str_offset_fn {
   PageInfo* p;
-
-  using value_type        = size_t;
-  using difference_type   = size_t;
-  using pointer           = size_t*;
-  using reference         = size_t&;
-  using iterator_category = thrust::output_device_iterator_tag;
-
-  CUDF_HOST_DEVICE constexpr inline page_offset_output_iter operator+(int i) const
-  {
-    return {p + i};
-  }
-
-  CUDF_HOST_DEVICE constexpr inline page_offset_output_iter& operator++()
-  {
-    p++;
-    return *this;
-  }
-
-  __device__ constexpr inline reference operator[](int i) { return p[i].str_offset; }
-  __device__ constexpr inline reference operator*() { return p->str_offset; }
+  __device__ constexpr void operator()(size_type i, size_t value) const { p[i].str_offset = value; }
 };
 
 /**

@@ -736,6 +736,7 @@ def _worker_evaluate(
         assert mp_ctx.quent_logger is not None
         local_quent_context = LocalQuentContext(
             context=quent_context,
+            query=quent_context.query_for(query_id),
             worker=mp_ctx.quent_worker,
             logger=mp_ctx.quent_logger,
         )
@@ -822,8 +823,9 @@ def evaluate_pipeline_dask_mode(
     if quent_context is not None:
         quent_logger = dask_context.quent_logger
         assert quent_logger is not None
+        query = quent_context.query_for(query_id)
         quent_context._emit_query_group_events(quent_logger)
-        quent_context._emit_query_events(quent_logger)
+        quent_context._emit_query_events(quent_logger, query)
 
     worker_config = config_options.drop_unserializable()
     result_map = dask_context.client.run(
@@ -845,7 +847,7 @@ def evaluate_pipeline_dask_mode(
     if quent_context is not None:
         quent_logger = dask_context.quent_logger
         assert quent_logger is not None
-        quent_context._emit_query_exit_events(quent_logger)
+        quent_context._emit_query_exit_events(quent_logger, query)
 
     ranked.sort(key=lambda p: p[0])
     dfs = [df for _, df in ranked]

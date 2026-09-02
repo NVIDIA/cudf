@@ -133,6 +133,22 @@ class QuentContext:
             ),
         )
 
+    def query_for(self, query_id: uuid.UUID) -> Query:
+        """
+        Build a per-collect Quent Query with a unique id.
+
+        Parameters
+        ----------
+        query_id: uuid.UUID
+            The unique ID for the query.
+
+        Returns
+        -------
+        A new Quent Query with the given ID and the same instance name as the
+        engine-scoped query.
+        """
+        return Query(id=query_id, instance_name=self.query.instance_name)
+
     @property
     def _query_group_cache(self) -> set[uuid.UUID]:
         return self._query_group_cache_  # type: ignore[attr-defined]
@@ -157,19 +173,19 @@ class QuentContext:
         self._query_group_cache.add(self.query_group.id)
         logger.emit(self.query_group._declare(engine=self.engine))
 
-    def _emit_query_events(self, logger: QuentLogger) -> None:
+    def _emit_query_events(self, logger: QuentLogger, query: Query) -> None:
         """
         Emit Quent Query events.
 
         This includes events for 'Declare', 'Init', and 'Planning'.
         """
-        logger.emit(self.query._init(query_group=self.query_group))
-        logger.emit(self.query._planning())
-        logger.emit(self.query._executing())
+        logger.emit(query._init(query_group=self.query_group))
+        logger.emit(query._planning())
+        logger.emit(query._executing())
 
-    def _emit_query_exit_events(self, logger: QuentLogger) -> None:
+    def _emit_query_exit_events(self, logger: QuentLogger, query: Query) -> None:
         """Emit a Quent Query exit event."""
-        logger.emit(self.query._exit())
+        logger.emit(query._exit())
 
     def _emit_plan_declarations(
         self,
@@ -312,8 +328,14 @@ class LocalQuentContext:
 
     This can contain non-serializable objects (like a ``QuentLogger``)
     and entities that are only valid on the local rank.
+
+    The ``query`` is per-collect: each ``.collect()`` derives a fresh
+    :class:`Query` from its unique ``query_id`` (see
+    :meth:`QuentContext.query_for`), rather than reusing the shared
+    ``context.query``.
     """
 
     context: QuentContext
+    query: Query
     worker: Worker
     logger: QuentLogger

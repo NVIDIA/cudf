@@ -312,7 +312,7 @@ class table_chunk {
   std::array<std::size_t, rapidsmpf::MEMORY_TYPES.size()> data_alloc_size_ = {};
   std::size_t make_available_cost_;  // For now, only device memory cost is tracked.
 
-  cuda::stream_ref stream_;
+  cuda::stream_ref stream_{cudaStream_t{cudaStreamDefault}};
   bool is_spillable_;
 };
 

@@ -143,12 +143,12 @@ cpdef Table apply_retention_mask(
     source_table : Table
         The input table to filter.
     retention_mask : Column
-        The boolean mask whose true values retain input rows.
+        A boolean column used as a retention mask.
 
     Returns
     -------
     Table
-        A new table with rows removed based on the boolean mask.
+        A new table with rows kept where retention mask is valid and true.
     """
     cdef unique_ptr[table] c_result
 
@@ -200,7 +200,7 @@ cpdef Table apply_deletion_mask(
     Returns
     -------
     Table
-        Table with rows removed where deletion_mask is true.
+        Table with rows removed where deletion mask is valid and true.
     """
     cdef unique_ptr[table] c_result
 

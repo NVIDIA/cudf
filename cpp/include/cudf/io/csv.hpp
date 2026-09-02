@@ -1382,6 +1382,11 @@ table_with_metadata read_csv(
 class csv_writer_options_builder;
 
 /**
+ * @brief Default size of the blocks that compressed CSV output is split into.
+ */
+size_t constexpr default_csv_compression_block_size = 1024 * 1024;
+
+/**
  * @brief Settings to use for `write_csv()`.
  */
 class csv_writer_options {
@@ -1407,6 +1412,10 @@ class csv_writer_options {
   std::vector<std::string> _names;
   // Quote style. Currently only MINIMAL and NONE are supported.
   quote_style _quoting = quote_style::MINIMAL;
+  // Compression type for output (default: NONE)
+  compression_type _compression = compression_type::NONE;
+  // Size of the blocks the output is compressed in, independent of `_rows_per_chunk`
+  size_t _compression_block_size = default_csv_compression_block_size;
 
   /**
    * @brief Constructor from sink and table.
@@ -1521,6 +1530,20 @@ class csv_writer_options {
    */
   [[nodiscard]] quote_style get_quoting() const { return _quoting; }
 
+  /**
+   * @brief Returns the compression type for the output.
+   *
+   * @return The compression type for the output
+   */
+  [[nodiscard]] compression_type get_compression() const { return _compression; }
+
+  /**
+   * @brief Returns the size of the blocks that the output is compressed in.
+   *
+   * @return The compression block size, in bytes
+   */
+  [[nodiscard]] size_t get_compression_block_size() const { return _compression_block_size; }
+
   // Setter
   /**
    * @brief Sets optional associated column names.
@@ -1600,6 +1623,37 @@ class csv_writer_options {
     CUDF_EXPECTS(quoting == quote_style::MINIMAL || quoting == quote_style::NONE,
                  "Only MINIMAL and NONE are supported for quoting.");
     _quoting = quoting;
+  }
+
+  /**
+   * @brief Sets the compression type for the output.
+   *
+   * Only ZSTD is supported: concatenated frames let the chunks be compressed as they are written
+   * while keeping the output readable by standard tools.
+   *
+   * @param comp The compression type (NONE or ZSTD only)
+   * @throw cudf::logic_error if compression type is not NONE or ZSTD
+   */
+  void set_compression(compression_type comp)
+  {
+    CUDF_EXPECTS(comp == compression_type::NONE || comp == compression_type::ZSTD,
+                 "Only NONE and ZSTD compression are supported for CSV writer");
+    _compression = comp;
+  }
+
+  /**
+   * @brief Sets the size of the blocks that the output is compressed in.
+   *
+   * Each block becomes its own frame, so the codec can compress them in parallel. Independent of
+   * `rows_per_chunk`, and capped at the codec's maximum input size.
+   *
+   * @param size The compression block size, in bytes
+   * @throw cudf::logic_error if the block size is zero
+   */
+  void set_compression_block_size(size_t size)
+  {
+    CUDF_EXPECTS(size > 0, "Compression block size must be greater than zero");
+    _compression_block_size = size;
   }
 };
 
@@ -1735,6 +1789,36 @@ class csv_writer_options_builder {
   csv_writer_options_builder& quoting(quote_style quoting)
   {
     options.set_quoting(quoting);
+    return *this;
+  }
+
+  /**
+   * @brief Sets the compression type for the output.
+   *
+   * Only NONE and ZSTD are supported.
+   *
+   * @param comp The compression type (NONE or ZSTD only)
+   * @return this for chaining
+   * @throw cudf::logic_error if compression type is not NONE or ZSTD
+   */
+  csv_writer_options_builder& compression(compression_type comp)
+  {
+    options.set_compression(comp);
+    return *this;
+  }
+
+  /**
+   * @brief Sets the size of the blocks that the output is compressed in.
+   *
+   * Independent of `rows_per_chunk`, and capped at the codec's maximum input size.
+   *
+   * @param size The compression block size, in bytes
+   * @return this for chaining
+   * @throw cudf::logic_error if the block size is zero
+   */
+  csv_writer_options_builder& compression_block_size(size_t size)
+  {
+    options.set_compression_block_size(size);
     return *this;
   }
 

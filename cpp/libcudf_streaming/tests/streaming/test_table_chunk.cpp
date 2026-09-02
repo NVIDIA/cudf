@@ -20,6 +20,7 @@
 
 #include <cuda/stream>
 
+#include <rapidsmpf/memory/buffer_resource.hpp>
 #include <rapidsmpf/owning_wrapper.hpp>
 #include <rapidsmpf/streaming/core/channel.hpp>
 
@@ -55,7 +56,7 @@ class StreamingTableChunk : public BaseStreamingFixture,
       options, GlobalEnvironment->comm_->logger(), br);
   }
 
-  cuda::stream_ref stream;
+  cuda::stream_ref stream{cudaStream_t{cudaStreamDefault}};
   rmm::mr::cuda_memory_resource mr_cuda;
   std::shared_ptr<rapidsmpf::BufferResource> br;
   std::shared_ptr<rapidsmpf::streaming::Context> ctx;

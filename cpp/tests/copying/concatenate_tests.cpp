@@ -16,6 +16,7 @@
 #include <cudf/concatenate.hpp>
 #include <cudf/copying.hpp>
 #include <cudf/detail/iterator.cuh>
+#include <cudf/dictionary/dictionary_column_view.hpp>
 #include <cudf/dictionary/encode.hpp>
 #include <cudf/filling.hpp>
 #include <cudf/null_mask.hpp>
@@ -360,7 +361,7 @@ TEST_F(OverflowTest, OverflowTest)
     cudf::table_view tbl_last({*many_chars_last});
     std::vector<cudf::table_view> table_views_to_concat({tbl, tbl, tbl, tbl, tbl, tbl_last});
     std::unique_ptr<cudf::table> concatenated_tables = cudf::concatenate(table_views_to_concat);
-    EXPECT_NO_THROW(cudf::get_default_stream().synchronize());
+    EXPECT_NO_THROW(cudf::get_default_stream().sync());
     ASSERT_EQ(concatenated_tables->num_rows(), std::numeric_limits<cudf::size_type>::max());
   }
 
@@ -1649,6 +1650,87 @@ TYPED_TEST(DictionaryConcatTestFW, FixedWidthKeys)
   auto result  = cudf::concatenate(views);
   auto decoded = cudf::dictionary::decode(result->view());
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*decoded, original);
+}
+
+// INT8/INT16 indices survive slice + concatenate and decode back to the original
+TEST_F(DictionaryConcatTest, NarrowIndices)
+{
+  cudf::test::fixed_width_column_wrapper<int32_t> original({20, 10, 0, 5, 15, 15, 10, 5, 20},
+                                                           {1, 1, 0, 1, 1, 1, 1, 1, 1});
+  for (auto const indices_type : {cudf::type_id::INT8, cudf::type_id::INT16}) {
+    auto dictionary = cudf::dictionary::encode(original, cudf::data_type{indices_type});
+    std::vector<cudf::size_type> splits{0, 3, 3, 5, 5, 9};
+    std::vector<cudf::column_view> views = cudf::slice(dictionary->view(), splits);
+    auto result                          = cudf::concatenate(views);
+    // the indices keep their width when the keys still fit
+    EXPECT_EQ(cudf::dictionary_column_view(result->view()).indices().type().id(), indices_type);
+    auto decoded = cudf::dictionary::decode(result->view());
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(*decoded, original);
+  }
+}
+
+// inputs with different indices types concatenate to the widest of them
+TEST_F(DictionaryConcatTest, MixedIndicesTypes)
+{
+  cudf::test::fixed_width_column_wrapper<int32_t> first({1, 2, 3, 2});
+  cudf::test::fixed_width_column_wrapper<int32_t> second({4, 5, 6, 1});
+  auto dictionary1 = cudf::dictionary::encode(first, cudf::data_type{cudf::type_id::INT8});
+  auto dictionary2 = cudf::dictionary::encode(second, cudf::data_type{cudf::type_id::INT16});
+  auto result      = cudf::concatenate(std::vector<cudf::column_view>{*dictionary1, *dictionary2});
+  // widest input indices type wins
+  EXPECT_EQ(cudf::dictionary_column_view(result->view()).indices().type().id(),
+            cudf::type_id::INT16);
+  auto decoded = cudf::dictionary::decode(result->view());
+  cudf::test::fixed_width_column_wrapper<int32_t> expected({1, 2, 3, 2, 4, 5, 6, 1});
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(*decoded, expected);
+}
+
+// the indices are widened when the concatenated keys no longer fit the input indices type
+TEST_F(DictionaryConcatTest, WidenIndicesWhenKeysOverflow)
+{
+  // two INT8 dictionaries with 100 distinct keys each and no overlap: 200 keys need INT16
+  auto first_begin  = cuda::counting_iterator<int32_t>{0};
+  auto second_begin = cuda::counting_iterator<int32_t>{100};
+  cudf::test::fixed_width_column_wrapper<int32_t> first(first_begin, first_begin + 100);
+  cudf::test::fixed_width_column_wrapper<int32_t> second(second_begin, second_begin + 100);
+  auto dictionary1 = cudf::dictionary::encode(first, cudf::data_type{cudf::type_id::INT8});
+  auto dictionary2 = cudf::dictionary::encode(second, cudf::data_type{cudf::type_id::INT8});
+  auto result      = cudf::concatenate(std::vector<cudf::column_view>{*dictionary1, *dictionary2});
+  EXPECT_EQ(cudf::dictionary_column_view(result->view()).keys_size(), 200);
+  EXPECT_EQ(cudf::dictionary_column_view(result->view()).indices().type().id(),
+            cudf::type_id::INT16);
+  auto decoded = cudf::dictionary::decode(result->view());
+  cudf::test::fixed_width_column_wrapper<int32_t> expected(first_begin, first_begin + 200);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(*decoded, expected);
+}
+
+// an empty (sliced) input still contributes its indices type to the output selection
+TEST_F(DictionaryConcatTest, EmptyViewKeepsIndicesType)
+{
+  cudf::test::fixed_width_column_wrapper<int32_t> narrow({1, 2, 3, 2});
+  auto dictionary1 = cudf::dictionary::encode(narrow, cudf::data_type{cudf::type_id::INT8});
+  cudf::test::fixed_width_column_wrapper<int32_t> wide({4, 5, 6});
+  auto dictionary2 = cudf::dictionary::encode(wide, cudf::data_type{cudf::type_id::INT16});
+  auto empty_wide  = cudf::slice(dictionary2->view(), {0, 0}).front();
+  auto result      = cudf::concatenate(std::vector<cudf::column_view>{*dictionary1, empty_wide});
+  EXPECT_EQ(cudf::dictionary_column_view(result->view()).indices().type().id(),
+            cudf::type_id::INT16);
+  auto decoded = cudf::dictionary::decode(result->view());
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(*decoded, narrow);
+}
+
+TEST_F(DictionaryConcatTest, AllEmptyViews)
+{
+  cudf::test::fixed_width_column_wrapper<int32_t> first({1, 2, 3});
+  auto dictionary1 = cudf::dictionary::encode(first, cudf::data_type{cudf::type_id::INT8});
+  cudf::test::fixed_width_column_wrapper<int32_t> second({4, 5});
+  auto dictionary2 = cudf::dictionary::encode(second, cudf::data_type{cudf::type_id::INT16});
+  auto empty1      = cudf::slice(dictionary1->view(), {0, 0}).front();
+  auto empty2      = cudf::slice(dictionary2->view(), {1, 1}).front();
+  auto result      = cudf::concatenate(std::vector<cudf::column_view>{empty1, empty2});
+  // all-empty inputs short-circuit to an empty (childless) dictionary column
+  EXPECT_EQ(result->size(), 0);
+  EXPECT_EQ(result->type().id(), cudf::type_id::DICTIONARY32);
 }
 
 TEST_F(DictionaryConcatTest, ErrorsTest)

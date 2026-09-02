@@ -20,8 +20,12 @@ cdef extern from * nogil:
         cudf::host_span<cudaStream_t const> streams,
         cudaStream_t stream
     ) {
-        std::vector<cuda::stream_ref> stream_refs(streams.begin(), streams.end());
-        cudf::detail::join_streams(stream_refs, stream);
+        std::vector<cuda::stream_ref> stream_refs;
+        stream_refs.reserve(streams.size());
+        for (auto const s : streams) {
+            stream_refs.emplace_back(s);
+        }
+        cudf::detail::join_streams(stream_refs, cuda::stream_ref{stream});
     }
     }
     """

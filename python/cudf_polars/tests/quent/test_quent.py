@@ -551,6 +551,10 @@ def test_serialize_list() -> None:
         "key": "counts",
         "value": {"List": {"U16": [1, 2, 300]}},
     }
+    assert Attribute("value", [1.5]).serialize() == {
+        "key": "value",
+        "value": {"List": {"F64": [1.5]}},
+    }
     assert Attribute("flags", [True, False]).serialize() == {
         "key": "flags",
         "value": {"List": {"U8": [1, 0]}},

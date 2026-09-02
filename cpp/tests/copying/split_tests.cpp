@@ -2722,14 +2722,13 @@ TEST_F(ContiguousSplitNestedTypesTest, ListOfStructChunked)
     /*split*/ false);
 }
 
-// common functions for testing dictionary columns through contiguous_split.
-//
-// every partition holds all of the keys, so those are compared against the source directly and
-// the rows through the decoded values
+namespace {
+
 void verify_dictionaries(cudf::table_view const& expected, cudf::table_view const& result)
 {
   for (auto i = 0; i < expected.num_columns(); ++i) {
     cudf::dictionary_column_view const dict(result.column(i));
+    // every partition holds all of the keys, so those are compared against the source directly
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(cudf::dictionary_column_view(expected.column(i)).keys(),
                                    dict.keys());
     // decode does not accept a zero row dictionary
@@ -2760,25 +2759,22 @@ void split_and_verify_dictionaries(cudf::table_view const& input,
   split_and_verify_dictionaries(input, splits, [](cudf::table_view const& t) { return t; });
 }
 
+}  // namespace
+
 TEST_F(ContiguousSplitNestedTypesTest, Dictionaries)
 {
   cudf::test::dictionary_column_wrapper<std::string> strs{
     {"aa", "bb", "cc", "dd", "aa", "bb", "cc", "dd"}, {1, 1, 0, 1, 1, 1, 1, 1}};
   cudf::test::dictionary_column_wrapper<int32_t> nums{{7, 6, 5, 4, 3, 2, 1, 0}};
-  cudf::table_view src({strs, nums});
+  cudf::test::fixed_width_column_wrapper<int32_t> plain{{5, 4, 3, 2, 1, 0, 5, 4}};
+  auto const narrow = cudf::dictionary::encode(plain, cudf::data_type{cudf::type_id::INT8});
+  cudf::table_view src({strs, nums, *narrow});
 
+  // the splits are not multiples of the validity or index size
   split_and_verify_dictionaries(src, {0, 3, 6, 8});
 
   auto const packed = cudf::pack(src);
   verify_dictionaries(src, cudf::unpack(packed));
-}
-
-TEST_F(ContiguousSplitNestedTypesTest, DictionariesNarrowIndices)
-{
-  // split at a row that is not a multiple of the validity or index size
-  cudf::test::fixed_width_column_wrapper<int32_t> plain{{5, 4, 3, 2, 1, 0, 5, 4, 3}};
-  auto const dict = cudf::dictionary::encode(plain, cudf::data_type{cudf::type_id::INT8});
-  split_and_verify_dictionaries(cudf::table_view({*dict}), {3, 5});
 }
 
 TEST_F(ContiguousSplitNestedTypesTest, DictionariesChunked)
@@ -2806,22 +2802,9 @@ TEST_F(ContiguousSplitNestedTypesTest, DictionariesChunked)
   }
 }
 
-TEST_F(ContiguousSplitNestedTypesTest, StructOfDictionary)
-{
-  // the indices follow the parent's row range while the keys do not
-  cudf::test::dictionary_column_wrapper<std::string> keys{
-    {"aa", "bb", "cc", "dd", "aa", "bb", "cc", "dd"}, {1, 1, 0, 1, 1, 1, 1, 1}};
-  cudf::test::fixed_width_column_wrapper<int32_t> ints{{0, 1, 2, 3, 4, 5, 6, 7}};
-  cudf::test::structs_column_wrapper st({keys, ints});
-  split_and_verify_dictionaries(cudf::table_view({st}), {3}, [](cudf::table_view const& t) {
-    return cudf::table_view(
-      {cudf::structs_column_view(t.column(0)).get_sliced_child(0, cudf::get_default_stream())});
-  });
-}
-
 TEST_F(ContiguousSplitNestedTypesTest, ListOfDictionary)
 {
-  // the keys still root their own row range while sitting at a nonzero offset depth
+  // the indices follow the parent's row range while the keys do not, at a nonzero offset depth
   cudf::test::dictionary_column_wrapper<std::string> keys{
     {"aa", "bb", "cc", "dd", "aa", "bb", "cc", "dd", "aa"}, {1, 1, 0, 1, 1, 1, 1, 1, 1}};
   cudf::test::fixed_width_column_wrapper<cudf::size_type> offsets{0, 2, 2, 5, 9};

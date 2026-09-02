@@ -180,7 +180,7 @@ static void bench_unicode_normalize(nvbench::state& state)
   auto const normalizer =
     is_mixed ? make_normalizer_mixed(form) : make_normalizer_precomposed(form);
 
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().value()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().get()));
   state.add_global_memory_reads<nvbench::int8_t>(input_col->alloc_size());
   state.add_global_memory_writes<nvbench::int8_t>(input_col->alloc_size());
 

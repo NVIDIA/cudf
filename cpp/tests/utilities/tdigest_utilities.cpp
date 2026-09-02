@@ -94,14 +94,12 @@ std::unique_ptr<column> make_expected_tdigest_column(std::vector<expected_tdiges
     auto tdigests = cudf::make_structs_column(
       tdigest.mean.size(), std::move(inner_children), 0, {}, stream, temporary_mr);
 
-    auto offsets = fixed_width_column_wrapper<int32_t>(
-      {0, tdigest.mean.size()}, rmm::cuda_stream_view{stream}, temporary_resources);
+    auto offsets =
+      fixed_width_column_wrapper<int32_t>({0, tdigest.mean.size()}, stream, temporary_resources);
     auto list = cudf::make_lists_column(1, offsets.release(), std::move(tdigests), 0, {});
 
-    auto min_col = fixed_width_column_wrapper<double>(
-      {tdigest.min}, rmm::cuda_stream_view{stream}, temporary_resources);
-    auto max_col = fixed_width_column_wrapper<double>(
-      {tdigest.max}, rmm::cuda_stream_view{stream}, temporary_resources);
+    auto min_col = fixed_width_column_wrapper<double>({tdigest.min}, stream, temporary_resources);
+    auto max_col = fixed_width_column_wrapper<double>({tdigest.max}, stream, temporary_resources);
 
     std::vector<std::unique_ptr<column>> children;
     children.push_back(std::move(list));

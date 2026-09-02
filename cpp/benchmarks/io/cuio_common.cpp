@@ -111,7 +111,7 @@ cudf::io::source_info cuio_source_sink_pair::make_source_info()
       auto const stream = cudf::get_default_stream();
       d_buffer.resize(h_buffer.size(), stream);
       CUDF_CUDA_TRY(cudaMemcpyAsync(
-        d_buffer.data(), h_buffer.data(), h_buffer.size(), cudaMemcpyDefault, stream.value()));
+        d_buffer.data(), h_buffer.data(), h_buffer.size(), cudaMemcpyDefault, stream.get()));
 
       return cudf::io::source_info(d_buffer);
     }

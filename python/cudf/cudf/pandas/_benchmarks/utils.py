@@ -623,8 +623,32 @@ class RunConfig:
 
     def serialize(self) -> dict:
         """Serialize the run config to a dictionary."""
-        result = dataclasses.asdict(self)
-        result["run_id"] = str(self.run_id)
+        result: dict[str, Any] = {
+            "engine_name": self.engine_name,
+            "queries": self.queries,
+            "query_set": self.query_set,
+            "dataset_path": str(self.dataset_path),
+            "scale_factor": self.scale_factor,
+            "suffix": self.suffix,
+            "frontend": self.frontend,
+            "iterations": self.iterations,
+            "io_mode": self.io_mode,
+            "n_workers": self.n_workers,
+            "extra_info": dict(self.extra_info),
+            "run_id": str(self.run_id),
+            "timestamp": self.timestamp,
+            "command_line": self.command_line,
+            "records": {
+                k: [dataclasses.asdict(r) for r in v]
+                for k, v in self.records.items()
+            },
+            "versions": dataclasses.asdict(self.versions),
+            "hardware": dataclasses.asdict(self.hardware),
+            "validation_method": dataclasses.asdict(self.validation_method)
+            if self.validation_method
+            else None,
+            "roles": [dataclasses.asdict(r) for r in self.roles],
+        }
         return result
 
     def summarize(self) -> None:

@@ -722,6 +722,24 @@ def execute_duckdb_query(
             return conn.execute(query).df()
 
 
+def drop_file_page_cache_recursively(path: os.PathLike | str) -> None:
+    """Drop the Linux page cache for all files under `path`."""
+    try:
+        import kvikio
+    except ImportError as err:
+        raise RuntimeError(
+            "kvikio is required for cold-run page cache dropping. "
+            "Install it or switch to --io-mode lukewarm."
+        ) from err
+    p = Path(path).expanduser()
+    if p.is_file():
+        kvikio.drop_file_page_cache(p)
+        return
+    for f in p.rglob("*"):
+        if f.is_file():
+            kvikio.drop_file_page_cache(f)
+
+
 def execute_query(
     q_id: int,
     i: int,
@@ -850,6 +868,25 @@ def parse_args(
         help="Number of times to run the same query.",
     )
     parser.add_argument(
+        "--sleep-between-iterations",
+        default=0,
+        type=float,
+        dest="sleep_between_iterations",
+        metavar="SECONDS",
+        help="Sleep this many seconds between iterations (default: 0).",
+    )
+    parser.add_argument(
+        "--io-mode",
+        dest="io_mode",
+        default="lukewarm",
+        choices=["cold", "lukewarm", "hot"],
+        help=textwrap.dedent("""\
+            Cache state control for each timed iteration:
+                - cold     : Drop Linux page cache before each iteration (requires kvikio)
+                - lukewarm : No cache manipulation; OS cache state unchanged (default)
+                - hot      : One untimed warmup iteration to populate cache before measured runs"""),
+    )
+    parser.add_argument(
         "-o",
         "--output",
         type=argparse.FileType("at"),
@@ -892,10 +929,28 @@ def parse_args(
         ),
     )
     parser.add_argument(
+        "--results-directory",
+        type=Path,
+        default=None,
+        help="Optional directory to write query results as parquet files.",
+    )
+    parser.add_argument(
+        "--output-expected-directory",
+        type=Path,
+        default=None,
+        help="Optional directory to write expected results as parquet files.",
+    )
+    parser.add_argument(
         "--validation-abs-tol",
         type=float,
-        default=0.02,
-        help="Absolute tolerance for assert_frame_equal validation. Default: 0.02",
+        default=0.01,
+        help="Absolute tolerance for assert_frame_equal validation. Default: 0.01",
+    )
+    parser.add_argument(
+        "--extra-info",
+        type=json.loads,
+        default={},
+        help="Extra information to add to the output file (must be JSON-serializable).",
     )
     parser.add_argument(
         "--duckdb-threads",
@@ -914,6 +969,12 @@ def parse_args(
         type=str,
         default=None,
         help="Directory for DuckDB to spill temporary data to disk.",
+    )
+    parser.add_argument(
+        "--capture-env-vars",
+        type=str,
+        default="CUDF_PANDAS_FAIL_ON_FALLBACK,CUDF_PANDAS_FALLBACK_MODE,CUDF_PANDAS_RMM_MODE,CUDF_SPILL,CUDF_SPILL_DEVICE_LIMIT,KVIKIO_COMPAT_MODE,KVIKIO_NTHREADS,LIBCUDF_HOST_DECOMPRESSION,LIBCUDF_NUM_HOST_WORKERS,OMP_NUM_THREADS",
+        help="Comma-separated list of environment variables to capture. Written to ``extra_info.environment``.",
     )
     parser.add_argument(
         "--role-nightly",
@@ -988,6 +1049,12 @@ def run_pandas_query_iteration(
     if args.print_results:
         print(result)  # noqa: T201
 
+    if args.results_directory is not None and iteration == 0:
+        results_dir = Path(args.results_directory)
+        results_dir.mkdir(parents=True, exist_ok=True)
+        output_path = results_dir / f"q_{q_id:02d}.parquet"
+        result.to_parquet(output_path)
+
     return SuccessRecord(
         query=q_id,
         iteration=iteration,
@@ -1056,12 +1123,28 @@ def run_pandas_query(
             )
         result_casts = casts or None
 
+    if args.output_expected_directory is not None:
+        assert expected is not None, (
+            "Expected result must be computed before writing to disk."
+        )
+        expected_dir = Path(args.output_expected_directory)
+        expected_dir.mkdir(parents=True, exist_ok=True)
+        expected.to_parquet(expected_dir / f"q_{q_id:02d}.parquet")
+
     query_records: list[SuccessRecord | FailedRecord] = []
     iteration_failures: list[tuple[int, int]] = []
     validation_failed = False
     record: SuccessRecord | FailedRecord
 
     for i in range(args.iterations):
+        if i > 0 and args.sleep_between_iterations > 0:
+            print(  # noqa: T201
+                f"==> Sleeping {args.sleep_between_iterations} seconds "
+                "between iterations",
+                flush=True,
+            )
+            time.sleep(args.sleep_between_iterations)
+
         try:
             record = run_pandas_query_iteration(
                 q_id, i, q, run_config, args, expected, result_casts

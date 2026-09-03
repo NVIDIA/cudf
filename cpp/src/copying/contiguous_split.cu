@@ -894,6 +894,11 @@ struct split_key_functor {
   int operator() __device__(int buf_index) const { return buf_index / num_src_bufs; }
 };
 
+struct wide_split_key_functor {
+  int const num_src_bufs;
+  int operator() __device__(std::ptrdiff_t buf_index) const { return buf_index / num_src_bufs; }
+};
+
 /**
  * @brief Writes values to the dst_offset field of the dst_buf_info struct
  */
@@ -1314,8 +1319,12 @@ std::unique_ptr<packed_partition_buf_size_and_dst_buf_info> compute_splits(
 
   // compute start offset for each output buffer for each split
   {
-    auto const keys = cudf::detail::make_counting_transform_iterator(
-      0, split_key_functor{static_cast<int>(num_src_bufs)});
+    // Work around a CUDA 12.9 ptxas scan-by-key miscompilation on SM120. Both the counting iterator
+    // and the functor argument must use ptrdiff_t.
+    // https://github.com/NVIDIA/cccl/issues/11167
+    auto const keys = cuda::transform_iterator(
+      cuda::counting_iterator<std::ptrdiff_t>{0},
+      wide_split_key_functor{static_cast<int>(num_src_bufs)});
     auto values =
       cudf::detail::make_counting_transform_iterator(0, buf_size_functor{d_dst_buf_info});
 

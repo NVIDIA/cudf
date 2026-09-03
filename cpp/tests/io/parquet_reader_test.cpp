@@ -39,10 +39,44 @@
 #include <memory>
 #include <optional>
 #include <stdexcept>
+#include <string>
 #include <string_view>
 #include <utility>
 
 using ParquetDecompressionTest = DecompressionTest<ParquetReaderTest>;
+
+TEST_F(ParquetReaderTest, ManyTinyStringPages)
+{
+  // This creates enough pages to cross the scan-by-key tile boundary implicated in
+  // https://github.com/NVIDIA/cccl/issues/11167.
+  constexpr cudf::size_type num_rows    = 1000;
+  constexpr cudf::size_type num_columns = 4;
+
+  std::vector<std::string> values;
+  values.reserve(num_rows);
+  for (cudf::size_type i = 0; i < num_rows; ++i) {
+    values.push_back(std::to_string(i) + std::string(static_cast<std::size_t>(i % 12), 'a'));
+  }
+  cudf::test::strings_column_wrapper strings(values.begin(), values.end());
+  cudf::table_view const input{std::vector<cudf::column_view>(num_columns, strings)};
+
+  auto const filepath = temp_env->get_temp_filepath("ManyTinyStringPages.parquet");
+  auto const write_options =
+    cudf::io::parquet_writer_options::builder(cudf::io::sink_info{filepath}, input)
+      .compression(cudf::io::compression_type::NONE)
+      .dictionary_policy(cudf::io::dictionary_policy::NEVER)
+      .row_group_size_rows(num_rows)
+      .max_page_size_rows(1)
+      .max_page_fragment_size(1)
+      .build();
+  cudf::io::write_parquet(write_options);
+
+  auto const read_options =
+    cudf::io::parquet_reader_options::builder(cudf::io::source_info{filepath}).build();
+  auto const result = cudf::io::read_parquet(read_options);
+
+  CUDF_TEST_EXPECT_TABLES_EQUAL(input, result.tbl->view());
+}
 
 TEST_F(ParquetReaderTest, UserBounds)
 {

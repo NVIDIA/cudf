@@ -1732,6 +1732,40 @@ TEST_F(ContiguousSplitUntypedTest, ValidityEdgeCase)
   }
 }
 
+TEST_F(ContiguousSplitUntypedTest, ManyBuffersPreserveValidity)
+{
+  // 172 nullable columns plus one non-nullable column produce 345 source buffers. Ten output
+  // partitions therefore produce a 3450-item scan that crosses the tile boundary implicated in
+  // https://github.com/NVIDIA/cccl/issues/11167. The value column is positioned after that boundary
+  // in the final partition so that corrupted offsets change its final validity bit.
+  constexpr cudf::size_type column_count = 173;
+  constexpr cudf::size_type value_column = 25;
+
+  std::vector<std::unique_ptr<cudf::column>> columns;
+  columns.reserve(column_count);
+  columns.push_back(cudf::test::fixed_width_column_wrapper<int64_t>(
+                      {0, 0, 0, 0}, {true, true, true, false})
+                      .release());
+  columns.push_back(cudf::test::fixed_width_column_wrapper<int32_t>{0, 0, 0, 0}.release());
+  for (cudf::size_type column_index = 2; column_index < column_count; ++column_index) {
+    if (column_index == value_column) {
+      columns.push_back(cudf::test::fixed_width_column_wrapper<int64_t>(
+                          {0, 0, 0, -1}, {false, false, false, true})
+                          .release());
+    } else {
+      columns.push_back(cudf::test::fixed_width_column_wrapper<int64_t>(
+                          {0, 0, 0, 0}, {false, false, false, false})
+                          .release());
+    }
+  }
+
+  cudf::table const input{std::move(columns)};
+  auto const result = cudf::contiguous_split(input, std::vector<cudf::size_type>(9, 0));
+
+  ASSERT_EQ(result.size(), 10);
+  CUDF_TEST_EXPECT_TABLES_EQUAL(input, result.back().table);
+}
+
 // This test requires about 25GB of device memory when used with the arena allocator
 TEST_F(ContiguousSplitUntypedTest, DISABLED_VeryLargeColumnTest)
 {

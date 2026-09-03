@@ -95,8 +95,8 @@ hash_join<Hasher>::partitioned_join_retrieve(join_kind join,
                                stream));
   auto offsets = cudf::detail::make_zeroed_device_uvector_async<cuda::std::int64_t>(
     static_cast<std::size_t>(partition_size) + 1, stream, temp_mr);
-  auto const output_size =
-    cudf::detail::sizes_to_offsets(counts.begin(), counts.end(), offsets.begin(), 0, stream);
+  auto const output_size = cudf::detail::sizes_to_offsets(
+    counts.begin(), counts.end(), offsets.begin(), 0, stream, temp_mr);
   CUDF_EXPECTS(output_size >= 0, "Join output size overflowed", std::overflow_error);
 
   rmm::device_uvector<size_type> probe_slots(partition_size, stream, temp_mr);

@@ -91,7 +91,7 @@ hash_join<Hasher>::join_retrieve(cudf::table_view const& left,
   auto offsets = cudf::detail::make_zeroed_device_uvector_async<cuda::std::int64_t>(
     static_cast<std::size_t>(left.num_rows()) + 1, stream, temp_mr);
   auto const actual_size = cudf::detail::sizes_to_offsets(
-    match_counts.begin(), match_counts.end(), offsets.begin(), 0, stream);
+    match_counts.begin(), match_counts.end(), offsets.begin(), 0, stream, temp_mr);
   CUDF_EXPECTS(actual_size >= 0, "Join output size overflowed", std::overflow_error);
   auto const join_size = Join != join_kind::FULL_JOIN && output_size.has_value()
                            ? *output_size

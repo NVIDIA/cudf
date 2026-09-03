@@ -168,9 +168,24 @@ class SuccessRecord:
     """Results for a single run of a single PDS-H query."""
 
     query: int
+    iteration: int
     duration: float
     validation_result: ValidationResult | None = None
     status: Literal["success"] = "success"
+
+    @classmethod
+    def new(
+        cls,
+        query: int,
+        iteration: int,
+        duration: float,
+    ) -> SuccessRecord:
+        """Create a Record from plain data."""
+        return cls(
+            query=query,
+            iteration=iteration,
+            duration=duration,
+        )
 
 
 @dataclasses.dataclass
@@ -301,6 +316,46 @@ def _infer_scale_factor(
 
     else:
         raise ValueError(f"Invalid benchmark script name: '{name}'.")
+
+
+def record_from_dict(data: dict[str, Any]) -> SuccessRecord | FailedRecord:
+    """
+    Read one iteration record back from its serialized form.
+
+    Parameters
+    ----------
+    data
+        One entry of a run's ``records``.
+
+    Returns
+    -------
+    The record, typed by its ``status``.
+
+    Raises
+    ------
+    ValueError
+        If the status is unrecognized.
+    """
+    status = data["status"]
+    if status == "success":
+        validation = data.get("validation_result")
+        return SuccessRecord(
+            query=data["query"],
+            iteration=data["iteration"],
+            duration=data["duration"],
+            validation_result=(
+                ValidationResult(**validation)
+                if validation is not None
+                else None
+            ),
+        )
+    if status == "error":
+        return FailedRecord(
+            query=data["query"],
+            iteration=data["iteration"],
+            traceback=data["traceback"],
+        )
+    raise ValueError(f"Unrecognized iteration status: {status!r}")
 
 
 @dataclasses.dataclass(kw_only=True)
@@ -806,7 +861,10 @@ def run_pandas_query_iteration(
         print(result)  # noqa: T201
 
     return SuccessRecord(
-        query=q_id, duration=duration, validation_result=validation_result
+        query=q_id,
+        iteration=iteration,
+        duration=duration,
+        validation_result=validation_result,
     )
 
 

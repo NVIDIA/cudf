@@ -447,10 +447,25 @@ class Attribute:
 
 
 def _integer_variant(value: int) -> str:
-    """Return the narrowest Quent integer variant that can hold ``value``."""
-    for variant, lo, hi in _INT_VARIANTS:
-        if lo <= value <= hi:
-            return variant
+    # Handle the special case of exactly 0
+    if value == 0:
+        return "U8"
+
+    is_signed = value < 0
+    # For negative numbers, calculate bits required for 2's complement
+    bits = (value + 1).bit_length() + 1 if is_signed else value.bit_length()
+
+    prefix = "I" if is_signed else "U"
+
+    if bits <= 8:
+        return f"{prefix}8"
+    if bits <= 16:
+        return f"{prefix}16"
+    if bits <= 32:
+        return f"{prefix}32"
+    if bits <= 64:
+        return f"{prefix}64"
+
     raise ValueError(f"Integer value {value} does not fit any Quent integer type.")
 
 

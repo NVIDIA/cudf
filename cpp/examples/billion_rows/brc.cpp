@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #include "common.hpp"
@@ -71,7 +71,7 @@ int main(int argc, char const** argv)
   //
   // result      = cudf::sort_by_key(result->view(), result->view().select({0}), {}, {}, stream);
 
-  stream.synchronize();
+  stream.sync();
 
   elapsed = std::chrono::steady_clock::now() - start;
   std::cout << "Number of keys: " << result->num_rows() << std::endl;

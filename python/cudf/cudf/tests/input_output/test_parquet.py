@@ -2182,6 +2182,54 @@ def test_parquet_writer_chunked_max_file_size(
         )
 
 
+def test_parquet_writer_chunked_max_file_size_list(tmp_path):
+    rows = 128
+    embedding_dim = 128
+    centroids = 8
+
+    # Build a list column with fixed-size embeddings for each row.
+    values = np.random.default_rng(0).standard_normal(
+        rows * embedding_dim, dtype=np.float32
+    )
+    offsets = pa.array(
+        np.arange(
+            0,
+            (rows + 1) * embedding_dim,
+            embedding_dim,
+            dtype=np.int32,
+        )
+    )
+    df = cudf.DataFrame(
+        {
+            "embedding": pa.ListArray.from_arrays(offsets, pa.array(values)),
+            "row": np.arange(rows),
+            "centroid": np.arange(rows) % centroids,
+        }
+    )
+
+    path = tmp_path / "dataset"
+    with ParquetDatasetWriter(
+        str(path),
+        partition_cols=["centroid"],
+        index=False,
+        max_file_size="50 KB",
+        file_name_prefix="part",
+    ) as writer:
+        writer.write_table(df)
+        writer.write_table(df)
+
+    # Each partition should produce one file below the configured size limit.
+    files = list(path.rglob("*.parquet"))
+    assert_eq(len(files), centroids)
+    assert_eq(all(file.stat().st_size <= 50_000 for file in files), True)
+
+    # Verify that the partitioned list data round-trips without loss.
+    expect = cudf.concat([df, df]).sort_values("row").reset_index(drop=True)
+    got = cudf.read_parquet(path).sort_values("row").reset_index(drop=True)
+    got["centroid"] = got["centroid"].astype(df["centroid"].dtype)
+    assert_eq(expect, got)
+
+
 def test_parquet_writer_chunked_max_file_size_error():
     with pytest.raises(
         ValueError,

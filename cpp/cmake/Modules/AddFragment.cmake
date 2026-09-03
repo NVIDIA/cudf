@@ -80,6 +80,14 @@ macro(add_fragment)
                          "$<BUILD_INTERFACE:${CUDF_SOURCE_DIR}/src>"
   )
   target_compile_options(${OBJECT_ID} PRIVATE "$<$<COMPILE_LANGUAGE:CUDA>:${CUDF_CUDA_FLAGS}>")
+  if(CMAKE_CUDA_COMPILER_VERSION VERSION_LESS 13.0.0)
+    # CUDF_LTO_ARCHITECTURE defaults to 70 (Volta) prior to CUDA 13 so that LTO fragments still link
+    # on GPUs cudf supports under CUDA 12. nvcc 12.x warns that offline compilation for
+    # architectures prior to 75 is deprecated.
+    target_compile_options(
+      ${OBJECT_ID} PRIVATE "$<$<COMPILE_LANGUAGE:CUDA>:-Wno-deprecated-gpu-targets>"
+    )
+  endif()
 
   rtcx_embed_blob(
     ${TARGET} FILE $<TARGET_OBJECTS:${OBJECT_ID}> DEST fragments/${ARG_FRAGMENT}.fatbin ID

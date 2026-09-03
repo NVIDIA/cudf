@@ -173,8 +173,9 @@ def evaluate_pipeline_ray_mode(
     if quent_context is not None:
         quent_logger = config_options.executor.ray_context.quent_logger
         assert quent_logger is not None
+        query = quent_context.query_for(query_id)
         quent_context._emit_query_group_events(quent_logger)
-        quent_context._emit_query_events(quent_logger)
+        quent_context._emit_query_events(quent_logger, query)
 
     # Serialize the IR into the Ray object store so actors fetch by reference
     # instead of receiving N copies.
@@ -205,7 +206,7 @@ def evaluate_pipeline_ray_mode(
     if quent_context is not None:
         quent_logger = config_options.executor.ray_context.quent_logger
         assert quent_logger is not None
-        quent_context._emit_query_exit_events(quent_logger)
+        quent_context._emit_query_exit_events(quent_logger, query)
     return pl.concat(dfs), metadata_collector or None
 
 
@@ -562,6 +563,7 @@ class RankActor:
             assert self._quent_logger is not None
             local_quent_context = LocalQuentContext(
                 context=quent_context,
+                query=quent_context.query_for(query_id),
                 worker=self._quent_worker,
                 logger=self._quent_logger,
             )

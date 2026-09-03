@@ -163,7 +163,7 @@ std::unique_ptr<cudf::table> inner_join(
       [](cudf::table_view const& left,
          cudf::table_view const& right,
          cudf::null_equality compare_nulls,
-         rmm::cuda_stream_view stream,
+         cuda::stream_ref stream,
          rmm::device_async_resource_ref mr) {
         std::vector<cudf::size_type> right_key_indices(right.num_columns());
         std::iota(right_key_indices.begin(), right_key_indices.end(), 0);
@@ -2425,8 +2425,7 @@ TEST_F(JoinTest, HashJoinLargeOutputSize)
   // self-join a table of zeroes to generate an output row count that would overflow int32_t
   std::size_t col_size = 65567;
   rmm::device_buffer zeroes(col_size * sizeof(int32_t), cudf::get_default_stream());
-  CUDF_CUDA_TRY(
-    cudaMemsetAsync(zeroes.data(), 0, zeroes.size(), cudf::get_default_stream().value()));
+  CUDF_CUDA_TRY(cudaMemsetAsync(zeroes.data(), 0, zeroes.size(), cudf::get_default_stream().get()));
   cudf::column_view col_zeros(
     cudf::data_type{cudf::type_id::INT32}, col_size, zeroes.data(), nullptr, 0);
   cudf::table_view tview{{col_zeros}};

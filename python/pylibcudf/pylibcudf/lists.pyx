@@ -860,14 +860,14 @@ cpdef Column apply_retention_mask(
     input : Column
         The input column.
     retention_mask : Column
-        The boolean mask whose true values retain input elements.
+        A lists-of-bools column used as a retention mask.
     stream : Stream | None
         CUDA stream on which to perform the operation.
 
     Returns
     -------
     Column
-        A Column of filtered elements based upon the retention mask.
+        Lists column with elements kept where retention mask is valid and true.
     """
     cdef unique_ptr[column] c_result
     cdef ListsColumnView list_view = input.list_view()
@@ -924,7 +924,7 @@ cpdef Column apply_deletion_mask(
     Returns
     -------
     Column
-        Lists column with elements removed where deletion_mask is true.
+        Lists column with elements removed where deletion mask is valid and true.
     """
     cdef unique_ptr[column] c_result
     cdef ListsColumnView list_view = input.list_view()

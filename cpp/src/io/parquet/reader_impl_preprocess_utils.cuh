@@ -282,10 +282,15 @@ struct set_final_row_count {
     if (i < pages.size() - 1 && (pages[i + 1].chunk_idx == page.chunk_idx)) { return; }
     size_t const page_start_row = chunk.start_row + page.chunk_row;
     size_t const chunk_last_row = chunk.start_row + chunk.num_rows;
+    // Row estimates that overshoot can push this page's start past the end of the chunk, in which
+    // case it holds no rows at all. Subtracting unguarded would wrap around instead.
+    auto const rows_left = static_cast<int32_t>(
+      (chunk_last_row > page_start_row) ? (chunk_last_row - page_start_row) : 0);
     // Mark `is_num_rows_adjusted` to signal string decoders that the `num_rows` of this page has
-    // been adjusted.
-    page.is_num_rows_adjusted = page.num_rows != (chunk_last_row - page_start_row);
-    page.num_rows             = chunk_last_row - page_start_row;
+    // been adjusted. Adjusting an already adjusted count to the same value does not undo it, so
+    // this never clears: a later call sees the count it forced earlier and would compare equal.
+    page.is_num_rows_adjusted = page.is_num_rows_adjusted or (page.num_rows != rows_left);
+    page.num_rows             = rows_left;
   }
 };
 

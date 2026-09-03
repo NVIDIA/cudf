@@ -143,14 +143,6 @@ files:
       - cuda_static
       - cuda_version
       - build_java
-  test_java:
-    output: none
-    includes:
-      - build_all
-      - cuda
-      - cuda_version
-      - depends_on_libcudf
-      - test_java
   test_notebooks:
     output: none
     includes:
@@ -1150,15 +1142,6 @@ dependencies:
           - libcudf_kafka==26.10.*,>=0.0.0a0
           - libcudf-tests==26.10.*,>=0.0.0a0
           - libcudf-streaming-tests==26.10.*,>=0.0.0a0
-  test_java:
-    common:
-      - output_types: conda
-        packages:
-          - *cmake_ver
-          - ninja
-          - maven
-          - openjdk=8.*
-          - boost
   test_python_common:
     common:
       - output_types: [conda, requirements, constraints, pyproject]

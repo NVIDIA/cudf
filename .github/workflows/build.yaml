@@ -453,13 +453,6 @@ jobs:
       package-name: cudf_polars
       package-type: python
       publish-wheel-search-key: cudf_wheel_python_cudf-polars
-  velox-cudf:
-    permissions:
-      contents: read
-      id-token: write
-    uses: ./.github/workflows/velox-cudf.yaml
-    with:
-      cudf_commit: ${{ inputs.sha }}
   trigger-pandas-tests:
     if: inputs.build_type == 'nightly'
     needs: wheel-build-cudf

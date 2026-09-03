@@ -77,7 +77,7 @@ generate_list_offsets_and_validities(table_view const& input,
 
   // Compute offsets from sizes.
   auto total_size = cudf::detail::sizes_to_offsets(
-    d_offsets, d_offsets + num_output_lists + 1, d_offsets, 0, stream);
+    d_offsets, d_offsets + num_output_lists + 1, d_offsets, 0, stream, mr);
   CUDF_EXPECTS(total_size <= static_cast<decltype(total_size)>(std::numeric_limits<int32_t>::max()),
                "Size of offsets exceeds maximum int32 limit",
                std::overflow_error);

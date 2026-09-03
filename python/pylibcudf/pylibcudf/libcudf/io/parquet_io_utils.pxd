@@ -18,6 +18,13 @@ from pylibcudf.libcudf.utilities.span cimport device_span, host_span
 ctypedef const uint8_t const_uint8_t
 ctypedef const byte_range_info const_byte_range_info
 
+cdef extern from "cudf/io/parquet_io_utils.hpp" \
+        namespace "cudf::io::parquet" nogil:
+
+    cpdef enum class io_submission_policy:
+        SERIALIZE
+        INTERLEAVE
+
 cdef extern from * nogil:
     """
     #include <future>
@@ -29,12 +36,17 @@ cdef extern from * nogil:
     cpp_fetch_byte_ranges_to_device(
         cudf::io::datasource& datasource,
         cudf::host_span<cudf::io::text::byte_range_info const> byte_ranges,
+        cudf::io::parquet::io_submission_policy policy,
         cudaStream_t stream,
         rmm::device_async_resource_ref mr)
     {
         auto [buffers, spans, fut] =
             cudf::io::parquet::fetch_byte_ranges_to_device_async(
-                datasource, byte_ranges, cuda::stream_ref{stream}, mr);
+                datasource,
+                byte_ranges,
+                policy,
+                cuda::stream_ref{stream},
+                mr);
         // Block until the async fetch completes so the returned buffers/spans
         // are fully populated. This also avoids exposing std::future to Cython.
         fut.get();
@@ -45,6 +57,7 @@ cdef extern from * nogil:
         cpp_fetch_byte_ranges_to_device(
             datasource& source,
             host_span[const_byte_range_info] byte_ranges,
+            io_submission_policy policy,
             cudaStream_t stream,
             device_async_resource_ref mr,
         ) except +libcudf_exception_handler

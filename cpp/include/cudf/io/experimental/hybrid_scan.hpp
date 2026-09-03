@@ -227,7 +227,11 @@ class hybrid_scan_metadata {
  * if (dict_page_byte_ranges.size()) {
  *   // Fetch dictionary page byte ranges into device buffers and create spans
  *   auto [dict_page_buffers, dict_page_data, dict_page_tasks] =
- *     parquet::fetch_byte_ranges_to_device_async(datasource, dict_page_byte_ranges, stream, mr);
+ *     parquet::fetch_byte_ranges_to_device_async(datasource,
+ *                                                dict_page_byte_ranges,
+ *                                                parquet::io_submission_policy::SERIALIZE,
+ *                                                stream,
+ *                                                mr);
  *   dict_page_tasks.get();
  *
  *   // Prune row groups using dictionaries
@@ -250,8 +254,11 @@ class hybrid_scan_metadata {
  *   auto constexpr bloom_filter_alignment = rmm::CUDA_ALLOCATION_ALIGNMENT;
  *   auto aligned_mr = rmm::mr::aligned_resource_adaptor(mr, bloom_filter_alignment);
  *   auto [bloom_filter_buffers, bloom_filter_data, bloom_filter_tasks] =
- *     parquet::fetch_byte_ranges_to_device_async(
- *       datasource, bloom_filter_byte_ranges, stream, aligned_mr);
+ *     parquet::fetch_byte_ranges_to_device_async(datasource,
+ *                                                bloom_filter_byte_ranges,
+ *                                                parquet::io_submission_policy::SERIALIZE,
+ *                                                stream,
+ *                                                aligned_mr);
  *   bloom_filter_tasks.get();
  *
  *   // Prune row groups using bloom filters
@@ -308,7 +315,11 @@ class hybrid_scan_metadata {
  *
  * // Fetch column chunk data into device buffers and create spans
  * auto [filter_col_buffers, filter_col_data, filter_col_tasks] =
- *   parquet::fetch_byte_ranges_to_device_async(datasource, filter_col_byte_ranges, stream, mr);
+ *   parquet::fetch_byte_ranges_to_device_async(datasource,
+ *                                              filter_col_byte_ranges,
+ *                                              parquet::io_submission_policy::SERIALIZE,
+ *                                              stream,
+ *                                              mr);
  * filter_col_tasks.get();
  *
  * // Materialize the table with only the filter columns
@@ -335,7 +346,11 @@ class hybrid_scan_metadata {
  *
  * // Fetch column chunk data into device buffers and create spans
  * auto [payload_col_buffers, payload_col_data, payload_col_tasks] =
- *   parquet::fetch_byte_ranges_to_device_async(datasource, payload_col_byte_ranges, stream, mr);
+ *   parquet::fetch_byte_ranges_to_device_async(datasource,
+ *                                               payload_col_byte_ranges,
+ *                                               parquet::io_submission_policy::SERIALIZE,
+ *                                               stream,
+ *                                               mr);
  * payload_col_tasks.get();
  *
  * // Materialize the table with only the payload columns

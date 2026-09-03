@@ -1322,9 +1322,9 @@ std::unique_ptr<packed_partition_buf_size_and_dst_buf_info> compute_splits(
     // Work around a CUDA 12.9 ptxas scan-by-key miscompilation on SM120. Both the counting iterator
     // and the functor argument must use ptrdiff_t.
     // https://github.com/NVIDIA/cccl/issues/11167
-    auto const keys = cuda::transform_iterator(
-      cuda::counting_iterator<std::ptrdiff_t>{0},
-      wide_split_key_functor{static_cast<int>(num_src_bufs)});
+    auto const keys =
+      cuda::transform_iterator(cuda::counting_iterator<std::ptrdiff_t>{0},
+                               wide_split_key_functor{static_cast<int>(num_src_bufs)});
     auto values =
       cudf::detail::make_counting_transform_iterator(0, buf_size_functor{d_dst_buf_info});
 

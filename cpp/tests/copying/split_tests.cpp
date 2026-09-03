@@ -1743,19 +1743,19 @@ TEST_F(ContiguousSplitUntypedTest, ManyBuffersPreserveValidity)
 
   std::vector<std::unique_ptr<cudf::column>> columns;
   columns.reserve(column_count);
-  columns.push_back(cudf::test::fixed_width_column_wrapper<int64_t>(
-                      {0, 0, 0, 0}, {true, true, true, false})
-                      .release());
+  columns.push_back(
+    cudf::test::fixed_width_column_wrapper<int64_t>({0, 0, 0, 0}, {true, true, true, false})
+      .release());
   columns.push_back(cudf::test::fixed_width_column_wrapper<int32_t>{0, 0, 0, 0}.release());
   for (cudf::size_type column_index = 2; column_index < column_count; ++column_index) {
     if (column_index == value_column) {
-      columns.push_back(cudf::test::fixed_width_column_wrapper<int64_t>(
-                          {0, 0, 0, -1}, {false, false, false, true})
-                          .release());
+      columns.push_back(
+        cudf::test::fixed_width_column_wrapper<int64_t>({0, 0, 0, -1}, {false, false, false, true})
+          .release());
     } else {
-      columns.push_back(cudf::test::fixed_width_column_wrapper<int64_t>(
-                          {0, 0, 0, 0}, {false, false, false, false})
-                          .release());
+      columns.push_back(
+        cudf::test::fixed_width_column_wrapper<int64_t>({0, 0, 0, 0}, {false, false, false, false})
+          .release());
     }
   }
 

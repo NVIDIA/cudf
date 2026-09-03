@@ -166,6 +166,9 @@ nb_execution_timeout = 300
 copybutton_prompt_text = ">>> "
 autosummary_generate = True
 
+toc_object_entries_show_parents = "hide"
+maximum_signature_line_length = 70
+
 # Enable automatic generation of systematic, namespaced labels for sections
 myst_heading_anchors = 2
 
@@ -325,21 +328,20 @@ texinfo_documents = [
 ]
 
 
-# Example configuration for intersphinx: refer to the Python standard library.
 intersphinx_mapping = {
     "cupy": ("https://docs.cupy.dev/en/stable/", None),
+    "dask-cuda": (f"https://docs.nvidia.com/dask-cuda/{version}/", None),
+    "dask-cudf": (f"https://docs.nvidia.com/dask-cudf/{version}/", None),
     "dlpack": ("https://dmlc.github.io/dlpack/latest/", None),
+    "kvikio": (f"https://docs.nvidia.com/kvikio/{version}/", None),
     "nanoarrow": ("https://arrow.apache.org/nanoarrow/latest/", None),
     "numpy": ("https://numpy.org/doc/stable/", None),
-    # Temporarily disable nitpick warnings for pandas: https://github.com/pandas-dev/pandas/issues/64584
-    # "pandas": (
-    #     "https://pandas.pydata.org/pandas-docs/stable/",
-    #     None,
-    # ),
+    "pandas": ("https://pandas.pydata.org/pandas-docs/stable/", None),
     "polars": ("https://docs.pola.rs/api/python/stable/", None),
     "pyarrow": ("https://arrow.apache.org/docs/", None),
     "python": ("https://docs.python.org/3/", None),
-    "rmm": ("https://docs.rapids.ai/api/rmm/nightly/", None),
+    "rmm": (f"https://docs.nvidia.com/rmm/{version}/", None),
+    "rapidsmpf": (f"https://docs.nvidia.com/rapidsmpf/{version}/", None),
     "typing_extensions": (
         "https://typing-extensions.readthedocs.io/en/stable/",
         None,
@@ -694,11 +696,8 @@ nitpick_ignore = [
     ("py:class", "SupportsCudaArrayInterface"),
     ("py:class", "T"),
 ]
-# Temporarily disable nitpick warnings for pandas: https://github.com/pandas-dev/pandas/issues/64584
+
 nitpick_ignore_regex = [
-    ("py:.*", "pandas.*"),
-    ("py:.*", "pd.*"),
-    ("ref.*", ".*pandas.*"),
     # External libs without configured intersphinx inventories.
     ("py:.*", r"rapidsmpf(\..*)?"),
     ("py:.*", r"kvikio(\..*)?"),

@@ -9,7 +9,7 @@ The steps below reproduce the PDS-H benchmark results using the Polars GPU engin
 ### Setup
 
 Install `cudf-polars` following the
-[RAPIDS installation guide](https://docs.rapids.ai/install/). For nightly wheels, install with
+[NVIDIA CUDA-X installation guide](https://developer.nvidia.com/topics/ai/data-science/cuda-x-for-data-science##section-install-and-deploy-in-your-environment). For nightly wheels, install with
 the `ray` extra (required for multi-GPU benchmarking):
 
 ```bash

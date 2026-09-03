@@ -161,6 +161,7 @@ jobs:
           - 'ci/run_custreamz_pytests.sh'
           - 'ci/run_dask_cudf_pytests.sh'
           - 'ci/run_pylibcudf_pytests.sh'
+          - 'ci/cudf_pandas_scripts/third-party-integration/test.sh'
         test_python_wheels:
           - 'ci/build_wheel*.sh'
           - 'ci/test_wheel*.sh'
@@ -168,6 +169,7 @@ jobs:
           - 'ci/test_cudf_polars_polars_tests.sh'
           - 'ci/run_cudf_polars_polars_tests.sh'
           - 'ci/utils/get_matrix_values.py'
+          - 'ci/cudf_pandas_scripts/pandas-tests/run.sh'
         test_python_shared_runners:
           - 'ci/run_cudf_polars_pytests.sh'
         test_wheel_dask_cudf:

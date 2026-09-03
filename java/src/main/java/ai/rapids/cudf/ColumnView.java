@@ -910,6 +910,8 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
 
     long mergeOutput = bitwiseMergeAndSetValidity(getNativeView(), columnViews, mergeOp.nativeId);
     if (mergeOutput == 0) {  // no-op, the current column is unchanged
+      // For a ColumnVector, copyToColumnVector() is simply an incRefCount(), making this
+      // zero-copy. Otherwise for a ColumnView, we must materialize an owning column.
       return copyToColumnVector();
     }
     return new ColumnVector(mergeOutput);

@@ -53,9 +53,12 @@ except ImportError as e:
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
+    import pyarrow as pa
+
 __all__: list[str] = [
     "RunConfig",
     "build_parser",
+    "cast_dataset_for_pandas",
     "get_data",
     "parse_args",
     "run_pandas",
@@ -706,6 +709,117 @@ def get_data(
     return pd.read_parquet(f"{path}/{table_name}{suffix}", columns=columns)
 
 
+def _pandas_cast_schema(schema: pa.Schema) -> pa.Schema:
+    import pyarrow as pa
+
+    fields: list[pa.Field] = []
+    for field in schema:
+        if pa.types.is_decimal(field.type):
+            fields.append(
+                pa.field(field.name, pa.float64(), nullable=field.nullable)
+            )
+        elif pa.types.is_date(field.type):
+            fields.append(
+                pa.field(
+                    field.name, pa.timestamp("ms"), nullable=field.nullable
+                )
+            )
+        else:
+            fields.append(field)
+    return pa.schema(fields)
+
+
+def _dataset_tables(dataset_path: Path, suffix: str) -> list[Path]:
+    if suffix:
+        return sorted(dataset_path.glob(f"*{suffix}"))
+    return sorted(
+        path
+        for path in dataset_path.iterdir()
+        if not path.name.startswith(".")
+    )
+
+
+def cast_dataset_for_pandas(
+    dataset_path: Path,
+    destination: Path,
+    suffix: str = ".parquet",
+) -> Path:
+    """Copy a dataset, casting decimal columns to float64 and dates to timestamps.
+
+    pandas reads Arrow decimal and date columns as object dtype columns of
+    `decimal.Decimal` and `datetime.date` values, which pandas cannot compute
+    on efficiently. Tables already present in `destination` are left alone, so
+    repeated runs reuse the copy.
+
+    Parameters
+    ----------
+    dataset_path
+        Directory holding the input tables.
+    destination
+        Directory to write the cast tables to.
+    suffix
+        File suffix of the input tables.
+
+    Returns
+    -------
+    `destination`, holding one cast table per input table.
+    """
+    import pyarrow.dataset as pa_dataset
+    import pyarrow.parquet as pq
+
+    destination.mkdir(parents=True, exist_ok=True)
+    for source in _dataset_tables(dataset_path, suffix):
+        target = destination / source.name
+        if target.exists():
+            continue
+        table = pa_dataset.dataset(source)
+        schema = _pandas_cast_schema(table.schema)
+        partial = target.with_name(f"{target.name}.partial")
+        with pq.ParquetWriter(partial, schema) as writer:
+            for batch in table.to_batches():
+                writer.write_batch(batch.cast(schema))
+        partial.replace(target)
+    return destination
+
+
+def prepare_pandas_cpu_dataset(
+    run_config: RunConfig, destination: Path | None = None
+) -> RunConfig:
+    """Point a pandas-cpu run at a dataset copy with pandas-friendly dtypes.
+
+    Parameters
+    ----------
+    run_config
+        Configuration of the run, read for its dataset path and suffix.
+    destination
+        Directory to write the cast tables to. Defaults to a sibling of the
+        input dataset.
+
+    Returns
+    -------
+    `run_config`, unchanged when no column needs casting, otherwise pointed at
+    the cast copy.
+    """
+    import pyarrow.dataset as pa_dataset
+
+    dataset_path = Path(run_config.dataset_path)
+    tables = _dataset_tables(dataset_path, run_config.suffix)
+    if not tables:
+        raise ValueError(
+            f"No tables with suffix '{run_config.suffix}' found in {dataset_path}"
+        )
+    schema = pa_dataset.dataset(tables[0]).schema
+    if schema == _pandas_cast_schema(schema):
+        return run_config
+    if destination is None:
+        destination = dataset_path.parent / f"{dataset_path.name}-pandas-cast"
+    print(  # noqa: T201
+        f"Casting decimal and date columns of {dataset_path} into {destination}"
+    )
+    cast_dataset_for_pandas(dataset_path, destination, run_config.suffix)
+    return dataclasses.replace(run_config, dataset_path=destination)
+
+
 def check_input_numeric_type(
     run_config: RunConfig,
 ) -> Literal["decimal", "float"]:
@@ -928,6 +1042,17 @@ def build_parser(num_queries: int = 22) -> argparse.ArgumentParser:
         help=textwrap.dedent("""\
             File suffix for input table files.
             Default: .parquet"""),
+    )
+    parser.add_argument(
+        "--cast-dataset-directory",
+        default=None,
+        type=Path,
+        dest="cast_dataset_directory",
+        metavar="PATH",
+        help=textwrap.dedent("""\
+            Directory for the dtype-cast dataset copy written for
+            --frontend pandas-cpu.
+            Default: a '-pandas-cast' sibling of --path"""),
     )
     parser.add_argument(
         "--frontend",
@@ -1285,6 +1410,10 @@ def run_pandas(benchmark: Any, args: argparse.Namespace) -> None:
     """Run the queries using the given benchmark and frontend."""
     vars(args).update({"query_set": benchmark.name})
     run_config = RunConfig.from_args(args)
+    if run_config.frontend == "pandas-cpu":
+        run_config = prepare_pandas_cpu_dataset(
+            run_config, args.cast_dataset_directory
+        )
     validation_failures: list[int] = []
     query_failures: list[tuple[int, int]] = []
 

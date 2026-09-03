@@ -495,6 +495,7 @@ struct buf_info_functor {
                                                  int parent_offset_index,
                                                  int offset_depth,
                                                  cuda::stream_ref)
+    requires(cudf::is_fixed_width<T>())
   {
     if (col.nullable()) {
       std::tie(current, offset_stack_pos) =
@@ -506,6 +507,15 @@ struct buf_info_functor {
       src_buf_info(col.type().id(), offset_stack_pos, parent_offset_index, false, col.offset());
 
     return {current + 1, offset_stack_pos + offset_depth};
+  }
+
+  // loud fail on unsupported types
+  template <typename T>
+  std::pair<src_buf_info*, size_type> operator()(
+    column_view const&, src_buf_info*, int, int, int, cuda::stream_ref)
+    requires(not cudf::is_fixed_width<T>())
+  {
+    CUDF_FAIL("Unsupported type");
   }
 
  private:

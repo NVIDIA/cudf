@@ -117,10 +117,15 @@ struct delta_byte_array_decoder {
 
     // now fill in blockers until done
     for (uint32_t i = 1; i < warp_size && i + start_idx < end_idx; i++) {
-      if (prefix_len != 0 && prefix_lens[blocker] == 0 && lane_out != nullptr) {
+      // record whether this lane's blocker is complete before any lane writes below
+      // prevents race condition accessing prefix_lens
+      bool const completed = prefix_len != 0 && prefix_lens[blocker] == 0 && lane_out != nullptr;
+      __syncwarp();
+      if (completed) {
         memcpy(lane_out, offsets[blocker], prefix_len);
         prefix_lens[lane_id] = prefix_len = 0;
       }
+      __syncwarp();
 
       // check for finished
       if (__all_sync(0xffff'ffff, prefix_len == 0)) { return; }
@@ -214,8 +219,13 @@ struct delta_byte_array_decoder {
     // the next batch overwrites the temp scratch from its start, so if the last decoded string
     // lives there, preserve it in the reserved seed slot ahead of the scratch
     if (end_idx <= start_val && last_string != prefix_seed) {
+      // snapshot before lane 0 overwrites last_string below; without this sync, other lanes'
+      // (unused but still issued) reads of last_string can race with lane 0's write of it.
+      uint8_t const* const last_string_snapshot = last_string;
+      uint32_t const last_string_len_snapshot   = last_string_len;
+      __syncwarp();
       if (lane_id == 0) {
-        memcpy(prefix_seed, last_string, last_string_len);
+        memcpy(prefix_seed, last_string_snapshot, last_string_len_snapshot);
         last_string = prefix_seed;
       }
       __syncwarp();
@@ -279,8 +289,13 @@ struct delta_byte_array_decoder {
     // the next batch overwrites the temp scratch from its start, so if the last decoded string
     // lives there, preserve it in the reserved seed slot ahead of the scratch
     if (end_idx <= start_val && last_string != prefix_seed) {
+      // snapshot before lane 0 overwrites last_string below; without this sync, other lanes'
+      // (unused but still issued) reads of last_string can race with lane 0's write of it.
+      uint8_t const* const last_string_snapshot = last_string;
+      uint32_t const last_string_len_snapshot   = last_string_len;
+      __syncwarp();
       if (lane_id == 0) {
-        memcpy(prefix_seed, last_string, last_string_len);
+        memcpy(prefix_seed, last_string_snapshot, last_string_len_snapshot);
         last_string = prefix_seed;
       }
       __syncwarp();
@@ -304,9 +319,16 @@ struct delta_byte_array_decoder {
     while (skip_pos < start_val) {
       // warp 0 decodes a pass of prefixes and warp 1 a pass of suffixes. this will potentially
       // decode past start_val, and those values stay resident in the rolling buffers for the
-      // decode loop that follows.
-      auto* const db = warp.meta_group_rank() == 0 ? &prefixes : &suffixes;
-      if (warp.meta_group_rank() < 2) { db->decode_next_pass(warp); }
+      // decode loop that follows. dispatch on a compile-time-constant decoder per warp (as the
+      // main decode loop does) rather than a runtime-selected `db` pointer: selecting the object
+      // at runtime makes the compiler speculatively load both prefixes and suffixes on every
+      // `db->` access, so the suffix warp reads prefix state (and vice versa) while the other
+      // warp writes it, which compute-sanitizer racecheck reports as a cross-warp hazard.
+      if (warp.meta_group_rank() == 0) {
+        prefixes.decode_next_pass(warp);
+      } else if (warp.meta_group_rank() == 1) {
+        suffixes.decode_next_pass(warp);
+      }
       block.sync();
 
       // warp 0 reconstructs this round's skipped strings into the temp scratch (the helpers
@@ -483,11 +505,12 @@ CUDF_KERNEL void __launch_bounds__(decode_delta_binary_block_size)
     auto const& ni = s->nesting.nesting_info[s->setup.col.max_nesting_depth - 1];
     if (ni.valid_map != nullptr) {
       int const num_values = ni.valid_map_offset - init_valid_map_offset;
-      zero_fill_null_positions_shared<decode_block_size>(s,
-                                                         s->output_cvt.dtype_len,
-                                                         init_valid_map_offset,
-                                                         num_values,
-                                                         static_cast<int>(block.thread_rank()));
+      zero_fill_null_positions_shared<decode_delta_binary_block_size>(
+        s,
+        s->output_cvt.dtype_len,
+        init_valid_map_offset,
+        num_values,
+        static_cast<int>(block.thread_rank()));
     }
   }
 

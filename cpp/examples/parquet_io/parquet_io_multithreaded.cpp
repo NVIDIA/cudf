@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -17,6 +17,7 @@
 
 #include <cuda/iterator>
 
+#include <exception>
 #include <filesystem>
 #include <stdexcept>
 #include <string>
@@ -59,7 +60,7 @@ struct read_fn {
   std::vector<table_t>& tables;
   int const thread_id;
   int const thread_count;
-  rmm::cuda_stream_view stream;
+  cuda::stream_ref stream;
 
   void operator()()
   {
@@ -82,11 +83,11 @@ struct read_fn {
     // Concatenate the tables read by this thread if not NO_CONCATENATE read_mode.
     if constexpr (read_mode != read_mode::NO_CONCATENATE) {
       auto table = concatenate_tables(std::move(tables_this_thread), stream);
-      stream.synchronize_no_throw();
+      stream.sync();
       tables[thread_id] = std::move(table);
     } else {
       // Just synchronize this stream and exit
-      stream.synchronize_no_throw();
+      stream.sync();
     }
   }
 };
@@ -123,13 +124,23 @@ std::vector<table_t> read_parquet_multithreaded(std::vector<io_source> const& in
     });
 
   // Create threads with tasks
+  std::vector<std::exception_ptr> exceptions(read_tasks.size());
   std::vector<std::thread> threads;
   threads.reserve(thread_count);
-  for (auto& c : read_tasks) {
-    threads.emplace_back(c);
+  for (std::size_t i = 0; i < read_tasks.size(); ++i) {
+    threads.emplace_back([task = read_tasks[i], &exception = exceptions[i]]() mutable {
+      try {
+        task();
+      } catch (...) {
+        exception = std::current_exception();
+      }
+    });
   }
   for (auto& t : threads) {
     t.join();
+  }
+  for (auto const& exception : exceptions) {
+    if (exception) { std::rethrow_exception(exception); }
   }
 
   // If CONCATENATE_ALL mode, then concatenate to a vector of one final table.
@@ -151,7 +162,7 @@ struct write_fn {
   std::string const& output_path;
   std::vector<cudf::table_view> const& table_views;
   int const thread_id;
-  rmm::cuda_stream_view stream;
+  cuda::stream_ref stream;
 
   void operator()()
   {
@@ -170,7 +181,7 @@ struct write_fn {
     cudf::io::write_parquet(options, stream);
 
     // Done with this stream
-    stream.synchronize_no_throw();
+    stream.sync();
   }
 };
 
@@ -197,13 +208,23 @@ void write_parquet_multithreaded(std::string const& output_path,
     });
 
   // Writer threads
+  std::vector<std::exception_ptr> exceptions(write_tasks.size());
   std::vector<std::thread> threads;
   threads.reserve(thread_count);
-  for (auto& c : write_tasks) {
-    threads.emplace_back(c);
+  for (std::size_t i = 0; i < write_tasks.size(); ++i) {
+    threads.emplace_back([task = write_tasks[i], &exception = exceptions[i]]() mutable {
+      try {
+        task();
+      } catch (...) {
+        exception = std::current_exception();
+      }
+    });
   }
   for (auto& t : threads) {
     t.join();
+  }
+  for (auto const& exception : exceptions) {
+    if (exception) { std::rethrow_exception(exception); }
   }
 }
 
@@ -246,7 +267,7 @@ std::vector<io_source> extract_input_sources(std::string const& paths,
                                              int32_t input_multiplier,
                                              int32_t thread_count,
                                              io_source_type io_source_type,
-                                             rmm::cuda_stream_view stream)
+                                             cuda::stream_ref stream)
 {
   // Get the delimited paths to directory and/or files.
   std::vector<std::string> const delimited_paths = [&]() {
@@ -316,7 +337,7 @@ std::vector<io_source> extract_input_sources(std::string const& paths,
     parquet_files.end(),
     std::back_inserter(input_sources),
     [&](auto const& file_name) { return io_source{file_name, io_source_type, stream}; });
-  stream.synchronize();
+  stream.sync();
   return input_sources;
 }
 
@@ -387,7 +408,7 @@ int32_t main(int argc, char const** argv)
       [&] {
         std::ignore = read_parquet_multithreaded<read_mode::NO_CONCATENATE>(
           input_sources, thread_count, stream_pool);
-        default_stream.synchronize();
+        default_stream.sync();
       },
       num_reads);
 
@@ -399,7 +420,7 @@ int32_t main(int argc, char const** argv)
     // read_mode::CONCATENATE_THREADS returns a vector of `thread_count` tables
     auto const tables = read_parquet_multithreaded<read_mode::CONCATENATE_THREAD>(
       input_sources, thread_count, stream_pool);
-    default_stream.synchronize();
+    default_stream.sync();
 
     // Construct a vector of table views for write_parquet_multithreaded
     auto const table_views = [&tables]() {
@@ -423,7 +444,7 @@ int32_t main(int argc, char const** argv)
     benchmark(
       [&] {
         write_parquet_multithreaded(output_path, table_views, thread_count, stream_pool);
-        default_stream.synchronize();
+        default_stream.sync();
       },
       1);
 
@@ -441,7 +462,7 @@ int32_t main(int argc, char const** argv)
     auto const transcoded_table = std::move(read_parquet_multithreaded<read_mode::CONCATENATE_ALL>(
                                               written_pq_sources, thread_count, stream_pool)
                                               .back());
-    default_stream.synchronize();
+    default_stream.sync();
 
     // Check if the tables are identical
     check_tables_equal(input_table->view(), transcoded_table->view(), default_stream);

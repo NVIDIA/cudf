@@ -17,7 +17,7 @@ from cudf_polars.engine.options import (
     Unspecified,
     _parse_memory_resource_config,
 )
-from cudf_polars.utils.config import MemoryResourceConfig
+from cudf_polars.utils.config import DynamicPlanningOptions, MemoryResourceConfig
 
 # ---------------------------------------------------------------------------
 # Sentinel
@@ -44,20 +44,18 @@ def test_all_fields_unspecified_by_default(monkeypatch: pytest.MonkeyPatch) -> N
             monkeypatch.delenv(key, raising=False)
     opts = StreamingOptions()
     # Fields with no env var are always UNSPECIFIED.
+    assert isinstance(opts.max_concurrent_io_tasks, Unspecified)
     assert isinstance(opts.raise_on_fail, Unspecified)
     assert isinstance(opts.parquet_options, Unspecified)
     # Fields whose env vars were cleared are also UNSPECIFIED.
     assert isinstance(opts.fallback_mode, Unspecified)
     assert isinstance(opts.log, Unspecified)
+    assert opts.to_executor_options() == {}
 
 
 # ---------------------------------------------------------------------------
 # to_executor_options
 # ---------------------------------------------------------------------------
-
-
-def test_executor_options_empty_when_all_unspecified() -> None:
-    assert StreamingOptions().to_executor_options() == {}
 
 
 def test_executor_options_includes_set_fields() -> None:
@@ -73,9 +71,41 @@ def test_executor_options_num_py_executors() -> None:
     assert result["num_py_executors"] == 4
 
 
-def test_executor_options_max_concurrent_io_tasks() -> None:
-    result = StreamingOptions(max_concurrent_io_tasks=6).to_executor_options()
-    assert result["max_concurrent_io_tasks"] == 6
+@pytest.mark.parametrize(
+    "value",
+    [6, {"local": 3, "remote": 7}, {"remote": 7}, None],
+)
+def test_executor_options_max_concurrent_io_tasks(
+    value: int | dict[str, int] | None,
+) -> None:
+    result = StreamingOptions(max_concurrent_io_tasks=value).to_executor_options()
+    assert result["max_concurrent_io_tasks"] == value
+
+
+@pytest.mark.parametrize(
+    "env, expected",
+    [
+        ('{"local": 2, "remote": 7}', {"local": 2, "remote": 7}),
+        ('{"remote": 7}', {"remote": 7}),
+    ],
+)
+def test_executor_options_max_concurrent_io_tasks_env(
+    monkeypatch: pytest.MonkeyPatch,
+    env: str,
+    expected: dict[str, int],
+) -> None:
+    monkeypatch.setenv("CUDF_POLARS__EXECUTOR__MAX_CONCURRENT_IO_TASKS", env)
+    opts = StreamingOptions()
+    assert opts.max_concurrent_io_tasks == expected
+    assert opts.to_executor_options()["max_concurrent_io_tasks"] == expected
+
+
+def test_executor_options_max_concurrent_io_tasks_env_rejects_auto(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("CUDF_POLARS__EXECUTOR__MAX_CONCURRENT_IO_TASKS", "auto")
+    with pytest.raises(json.JSONDecodeError):
+        StreamingOptions()
 
 
 def test_executor_options_kvikio_nthreads() -> None:
@@ -262,8 +292,11 @@ def test_from_dict_maps_known_fields() -> None:
 
 
 def test_from_dict_none_value_is_unspecified() -> None:
-    opts = StreamingOptions.from_dict({"fallback_mode": None})
+    opts = StreamingOptions.from_dict(
+        {"fallback_mode": None, "max_concurrent_io_tasks": None}
+    )
     assert isinstance(opts.fallback_mode, Unspecified)
+    assert isinstance(opts.max_concurrent_io_tasks, Unspecified)
 
 
 def test_from_dict_unknown_key_raises() -> None:
@@ -312,9 +345,15 @@ def test_from_argparse_renames() -> None:
 def test_from_argparse_dynamic_planning() -> None:
     assert isinstance(
         StreamingOptions._from_argparse(
-            argparse.Namespace(dynamic_planning=True)
+            argparse.Namespace(dynamic_planning=None)
         ).dynamic_planning,
         Unspecified,
+    )
+    assert (
+        StreamingOptions._from_argparse(
+            argparse.Namespace(dynamic_planning=True)
+        ).dynamic_planning
+        == DynamicPlanningOptions()
     )
     assert (
         StreamingOptions._from_argparse(
@@ -358,6 +397,22 @@ def test_add_cli_args_then_from_argparse_roundtrip() -> None:
     assert isinstance(opts.fallback_mode, Unspecified)
 
 
+def test_from_argparse_omitted_flag_still_picks_up_env_var(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("CUDF_POLARS__EXECUTOR__NUM_PY_EXECUTORS", "16")
+    monkeypatch.setenv("RAPIDSMPF_NUM_STREAMING_THREADS", "16")
+
+    parser = argparse.ArgumentParser()
+    StreamingOptions._add_cli_args(parser)
+    args = parser.parse_args([])
+    opts = StreamingOptions._from_argparse(args)
+
+    assert opts.num_py_executors == 16
+    assert opts.to_executor_options()["num_py_executors"] == 16
+    assert opts.num_streaming_threads == 16
+
+
 # ---------------------------------------------------------------------------
 # to_dict / roundtrip
 # ---------------------------------------------------------------------------
@@ -368,9 +423,16 @@ def test_to_dict_empty_when_all_unspecified() -> None:
 
 
 def test_to_dict_contains_only_set_fields() -> None:
-    opts = StreamingOptions(fallback_mode="silent", num_streaming_threads=4)
-    d = opts.to_dict()
-    assert d == {"fallback_mode": "silent", "num_streaming_threads": 4}
+    opts = StreamingOptions(
+        fallback_mode="silent",
+        num_streaming_threads=4,
+        max_concurrent_io_tasks=6,
+    )
+    assert opts.to_dict() == {
+        "fallback_mode": "silent",
+        "num_streaming_threads": 4,
+        "max_concurrent_io_tasks": 6,
+    }
 
 
 def test_to_dict_roundtrip() -> None:

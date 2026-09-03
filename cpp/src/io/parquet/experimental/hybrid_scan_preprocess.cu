@@ -269,7 +269,7 @@ hybrid_scan_reader_impl::prepare_dictionaries(
                                           {},
                                           {},
                                           {},
-                                          _stream));
+                                          stream));
 
   CUDF_EXPECTS(
     row_groups_info.size() * dictionary_col_schemas.size() == dictionary_page_data.size(),
@@ -366,7 +366,7 @@ namespace {
 
 /**
  * @brief Computes the updated row mask value such that out_row_mask[i] = true, iff in_row_mask[i]
- * is valid and true. This is inline with the masking behavior of cudf::apply_boolean_mask.
+ * is valid and true. This is inline with the masking behavior of cudf::apply_retention_mask.
  */
 struct row_mask_update_fn {
   bool is_nullable;

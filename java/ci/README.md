@@ -40,11 +40,15 @@ so plain `rm -rf` works.
   --cuda-version 12.9
 ```
 
-This compiles the JNI layer against the static libcudf from Step 1 and emits a
-single classifier JAR (e.g. `cudf-26.10.0-SNAPSHOT-cuda12.jar`) plus its POM
-into a classifier-named subdirectory under `--output-dir`:
+Optional `GITHUB_REF` selects release tag vs SNAPSHOT versioning. Unset means
+SNAPSHOT. See the versioning section below.
 
-```
+This compiles the JNI layer against the static libcudf from Step 1 and emits
+the classifier JAR (e.g. `cudf-26.10.0-SNAPSHOT-cuda12.jar`), a
+classifier-independent sources jar and javadoc jar, and the POM into a
+classifier-named subdirectory under `--output-dir`:
+
+```text
 /tmp/jars/cuda12/
     cudf-26.10.0-SNAPSHOT-cuda12.jar
     cudf-26.10.0-SNAPSHOT.pom
@@ -55,9 +59,10 @@ The classifier is derived from `--cuda-version` (major) + host arch (`uname
 `aarch64`. Producing the ARM classifiers requires a real `aarch64` host.
 Repeat Step 2 for each classifier, pointing `--libcudf-dir` at the matching
 static libcudf tree and using the same `--output-dir` (each classifier lands
-in its own subdirectory). Concurrent invocations for different classifiers
-are safe because each nests its own bind-mount over `/repo/java/target`
-inside the container.
+in its own subdirectory). Concurrent SNAPSHOT invocations for different
+classifiers are safe because each nests its own bind-mount over
+`/repo/java/target` inside the container. Release builds rewrite the shared
+`java/pom.xml` and must not overlap.
 
 ### Step 3 - Assemble the Maven repository layout
 
@@ -68,21 +73,45 @@ inside the container.
 ```
 
 This walks every subdirectory of `--jars-dir` (each subdir name IS the
-classifier), gathers the per-classifier JAR and shared POM, derives the
-artifact version from the JAR filenames (requiring a single unique version
-across subdirs), and lays them out as:
+classifier), gathers the per-classifier JAR, one shared sources jar, one
+shared javadoc jar, the shared POM, and seeds an unclassified primary JAR
+as a copy of the `cuda12` classifier. Derives the artifact version from
+the JAR filenames (requiring a single unique version across subdirs) and
+lays them out as:
 
-```
-/tmp/maven-repo/ai/rapids/cudf/26.10.0-SNAPSHOT/
-    cudf-26.10.0-SNAPSHOT-cuda12.jar
-    cudf-26.10.0-SNAPSHOT-cuda13.jar
-    cudf-26.10.0-SNAPSHOT.pom
+```text
+/tmp/maven-repo/ai/rapids/cudf/<CUDF_VERSION>-SNAPSHOT/
+    cudf-<CUDF_VERSION>-SNAPSHOT.jar
+    cudf-<CUDF_VERSION>-SNAPSHOT-cuda12.jar
+    cudf-<CUDF_VERSION>-SNAPSHOT-cuda13.jar
+    cudf-<CUDF_VERSION>-SNAPSHOT-sources.jar
+    cudf-<CUDF_VERSION>-SNAPSHOT-javadoc.jar
+    cudf-<CUDF_VERSION>-SNAPSHOT.pom
 ```
 
 The set of classifiers is whatever subdirectories are present under
 `--jars-dir`. For a local `x86_64`-only run, populate `/tmp/jars/cuda12/`
 and `/tmp/jars/cuda13/`. For the full four-way release build, add
-`/tmp/jars/cuda12-arm64/` and `/tmp/jars/cuda13-arm64/`.
+`/tmp/jars/cuda12-arm64/` and `/tmp/jars/cuda13-arm64/`. The `cuda12`
+subdirectory is required because the unclassified primary JAR is copied from
+it, so an `aarch64`-only set of subdirectories is not a valid gather input.
+
+### Release Tag vs SNAPSHOT Versioning
+
+Release tag CI runs (`GITHUB_REF=refs/tags/vYY.MM.PP`) produce release-versioned
+JARs (`cudf-<CUDF_VERSION>-*.jar`). All other runs produce `-SNAPSHOT`. Gated by
+[`rapids-is-release-build`](https://github.com/rapidsai/gha-tools/blob/main/tools/rapids-is-release-build).
+`GITHUB_REF` is optional. Unset or non-tag values stay SNAPSHOT.
+
+To rehearse the release path locally:
+
+```bash
+GITHUB_REF=refs/tags/vYY.MM.PP ./java/ci/test_java_build_local.sh
+```
+
+Rewrites `java/pom.xml` in place for packaging, then restores it on exit.
+
+### GitHub Actions
 
 In GitHub Actions (`.github/workflows/build.yaml`), the `java-build` matrix job
 runs Steps 1-2 per (CUDA x arch) entry and uploads each classifier subdir as a

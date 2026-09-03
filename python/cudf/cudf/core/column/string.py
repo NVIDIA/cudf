@@ -329,7 +329,9 @@ class StringColumn(ColumnBase, Scannable):
                     "cuDF does not yet support timezone-aware datetimes"
                 )
             is_nat = self == "NaT"
-            without_nat = self.apply_boolean_mask(is_nat.unary_operator("not"))
+            without_nat = self.apply_retention_mask(
+                is_nat.unary_operator("not")
+            )
             char_counts = without_nat.count_characters()  # type: ignore[attr-defined]
             if char_counts.distinct_count(dropna=True) != 1:
                 # Unfortunately disables OK cases like:
@@ -393,7 +395,7 @@ class StringColumn(ColumnBase, Scannable):
         return result_col
 
     def as_datetime_column(self, dtype: np.dtype) -> DatetimeColumn:
-        not_null = self.apply_boolean_mask(self.notnull())
+        not_null = self.apply_retention_mask(self.notnull())
         if len(not_null) == 0:
             # We should hit the self.null_count == len(self) condition
             # so format doesn't matter

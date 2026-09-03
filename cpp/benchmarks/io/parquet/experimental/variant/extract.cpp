@@ -23,7 +23,6 @@
 #include <cstring>
 #include <memory>
 #include <numeric>
-#include <optional>
 #include <random>
 #include <span>
 #include <string>
@@ -36,7 +35,16 @@ using cudf::io::parquet::experimental::variant_basic_type;
 using cudf::io::parquet::experimental::variant_primitive_type;
 
 // The leaf value type exercised by the benchmark (nvbench "type" string axis).
-enum class bench_variant_type : uint8_t { INT32, FLOAT, BOOL, STRING, ARRAY };
+enum class bench_variant_type : uint8_t {
+  INT32,
+  FLOAT,
+  BOOL,
+  STRING,
+  ARRAY,
+  DECIMAL32,
+  DECIMAL64,
+  DECIMAL128
+};
 
 bench_variant_type parse_bench_variant_type(std::string const& type_str)
 {
@@ -45,8 +53,14 @@ bench_variant_type parse_bench_variant_type(std::string const& type_str)
   if (type_str == "bool") { return bench_variant_type::BOOL; }
   if (type_str == "string") { return bench_variant_type::STRING; }
   if (type_str == "array") { return bench_variant_type::ARRAY; }
+  if (type_str == "decimal32") { return bench_variant_type::DECIMAL32; }
+  if (type_str == "decimal64") { return bench_variant_type::DECIMAL64; }
+  if (type_str == "decimal128") { return bench_variant_type::DECIMAL128; }
   CUDF_FAIL("Unrecognized benchmark type: " + type_str);
 }
+
+// Shared by the encoded leaf values and the target column, so the cast measures decoding only.
+constexpr uint8_t bench_decimal_scale = 2;
 
 // Compose a value-metadata header byte from a basic type and its 6-bit value_header.
 // See cpp/tests/io/experimental/variant_extract_test.cpp for the header byte layout.
@@ -87,11 +101,13 @@ void append_le(std::vector<uint8_t>& out, uint64_t bits, int width)
   }
 }
 
-// Build a V1 VARIANT metadata blob for a sorted key dictionary. Callers must pass `keys` in
-// ascending sorted order; the sorted-strings header bit is always set to reflect that.
+// Build a V1 VARIANT metadata blob for a key dictionary. When `sorted` is true, callers must pass
+// `keys` in ascending sorted order and the sorted-strings header bit is set to reflect that,
+// letting field lookups take the binary-search path; when false, the sorted-strings bit is left
+// unset so lookups fall back to a linear scan regardless of `keys`' actual order.
 // Uses 2-byte offsets when the total string length exceeds 255 bytes; 1-byte otherwise.
 // Header bits [7:6] = offset_size_minus_one; bit [4] = sorted_strings; bits [3:0] = version (1).
-std::vector<uint8_t> build_metadata(std::vector<std::string> const& keys)
+std::vector<uint8_t> build_metadata(std::vector<std::string> const& keys, bool sorted = true)
 {
   constexpr uint8_t kVariantMetadataVersion  = 0x01;
   constexpr uint8_t kVariantMetadataSorted   = 0x10;
@@ -104,7 +120,8 @@ std::vector<uint8_t> build_metadata(std::vector<std::string> const& keys)
   }
 
   int const offset_size = (total_key_bytes > kMaxSingleByteOffsetSum) ? 2 : 1;
-  std::vector<uint8_t> out{static_cast<uint8_t>(kVariantMetadataVersion | kVariantMetadataSorted |
+  std::vector<uint8_t> out{static_cast<uint8_t>(kVariantMetadataVersion |
+                                                (sorted ? kVariantMetadataSorted : 0) |
                                                 ((offset_size - 1) << kMetadataOffsetSizeShift))};
   out.reserve(out.size() + static_cast<std::size_t>(offset_size) * (keys.size() + 2) +
               total_key_bytes);
@@ -164,6 +181,27 @@ std::vector<uint8_t> build_leaf_value(bench_variant_type type)
       auto const s = std::string{"hello"};
       std::vector<uint8_t> out{make_variant_short_string_header(s.size())};
       out.insert(out.end(), s.begin(), s.end());
+      return out;
+    }
+    case bench_variant_type::DECIMAL32: {
+      std::vector<uint8_t> out{make_variant_primitive_header(variant_primitive_type::DECIMAL4),
+                               bench_decimal_scale};
+      append_le(out, 1234u, 4);
+      return out;
+    }
+    case bench_variant_type::DECIMAL64: {
+      std::vector<uint8_t> out{make_variant_primitive_header(variant_primitive_type::DECIMAL8),
+                               bench_decimal_scale};
+      append_le(out, (static_cast<uint64_t>(1234u) << 32) | 5678u, 8);
+      return out;
+    }
+    case bench_variant_type::DECIMAL128: {
+      // The value needs more than 64 bits, so the decode is not measured on an all-zero high half.
+      std::vector<uint8_t> out{make_variant_primitive_header(variant_primitive_type::DECIMAL16),
+                               bench_decimal_scale};
+      auto const unscaled = (static_cast<__uint128_t>(1234u) << 64) | 5678u;
+      append_le(out, static_cast<uint64_t>(unscaled), 8);
+      append_le(out, static_cast<uint64_t>(unscaled >> 64), 8);
       return out;
     }
     case bench_variant_type::ARRAY: {
@@ -227,7 +265,7 @@ void pad_to_equal_size(std::vector<uint8_t>& hit_val, std::vector<uint8_t>& miss
 // Build a VARIANT struct column (STRUCT<list<uint8>, list<uint8>>) from per-row byte spans.
 std::unique_ptr<cudf::column> build_variant_column(std::span<std::span<uint8_t const>> meta_rows,
                                                    std::span<std::span<uint8_t const>> val_rows,
-                                                   rmm::cuda_stream_view stream,
+                                                   cuda::stream_ref stream,
                                                    rmm::device_async_resource_ref mr)
 {
   auto const n = static_cast<cudf::size_type>(meta_rows.size());
@@ -293,6 +331,30 @@ std::vector<std::string> get_dict_keys_for_fields(int num_fields)
   return keys;
 }
 
+// Dictionary for the "random" field_position benchmark. The queried key's text stays constant
+// ("n_target") across every row, but its dictionary rank varies: `rank` filler keys prefixed 'a'
+// (which sorts before 'n') precede it and `num_fields - 1 - rank` filler keys prefixed 'z' (which
+// sorts after 'n') follow it, so "n_target" always lands at dictionary index `rank`. A trailing
+// "~miss" key (prefixed '~', sorting after 'z') always lands at index num_fields, for miss rows.
+std::vector<std::string> get_dict_keys_at_rank(int num_fields, int rank)
+{
+  auto const pad6 = [](int i) {
+    auto s = std::to_string(i);
+    return std::string(6 - s.size(), '0') + s;
+  };
+  std::vector<std::string> keys;
+  keys.reserve(num_fields + 1);
+  for (int i = 0; i < rank; ++i) {
+    keys.emplace_back("a_" + pad6(i));
+  }
+  keys.emplace_back("n_target");
+  for (int i = 0; i < num_fields - 1 - rank; ++i) {
+    keys.emplace_back("z_" + pad6(i));
+  }
+  keys.emplace_back("~miss");
+  return keys;
+}
+
 // Build a flat object with `num_fields` fields using 1-byte field IDs and 1-byte offsets.
 // Field `target_fid` holds `inner`; all other fields hold a dummy BOOLEAN_TRUE.
 std::vector<uint8_t> build_flat_object(int num_fields,
@@ -342,6 +404,12 @@ cudf::data_type get_target_type(bench_variant_type type)
     case bench_variant_type::FLOAT: return cudf::data_type{cudf::type_id::FLOAT32};
     case bench_variant_type::BOOL: return cudf::data_type{cudf::type_id::BOOL8};
     case bench_variant_type::STRING: return cudf::data_type{cudf::type_id::STRING};
+    case bench_variant_type::DECIMAL32:
+      return cudf::data_type{cudf::type_id::DECIMAL32, -bench_decimal_scale};
+    case bench_variant_type::DECIMAL64:
+      return cudf::data_type{cudf::type_id::DECIMAL64, -bench_decimal_scale};
+    case bench_variant_type::DECIMAL128:
+      return cudf::data_type{cudf::type_id::DECIMAL128, -bench_decimal_scale};
     // "array": element access yields INT32.
     case bench_variant_type::INT32:
     case bench_variant_type::ARRAY: return cudf::data_type{cudf::type_id::INT32};
@@ -387,14 +455,14 @@ static void bench_variant_cast(nvbench::state& state)
   std::vector<std::span<uint8_t const>> meta_spans(num_rows, std::span<uint8_t const>{meta_blob});
   auto val_spans = fill_val_rows(num_rows, hit_val, miss_val, hit_rate);
   auto col       = build_variant_column(meta_spans, val_spans, stream, mr);
-  CUDF_CUDA_TRY(cudaStreamSynchronize(stream.value()));
+  CUDF_CUDA_TRY(cudaStreamSynchronize(stream.get()));
 
   auto const target_type = get_target_type(type);
   auto const data_size   = static_cast<std::size_t>(num_rows) * (meta_blob.size() + hit_val.size());
 
   auto mem_stats_logger = cudf::memory_stats_logger();
   mr                    = cudf::get_current_device_resource_ref();
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.value()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.get()));
   state.exec(nvbench::exec_tag::sync, [&](nvbench::launch&) {
     std::ignore = cudf::io::parquet::experimental::cast_variant(
       col->view().child(1), target_type, std::nullopt, stream, mr);
@@ -409,7 +477,8 @@ static void bench_variant_cast(nvbench::state& state)
 NVBENCH_BENCH(bench_variant_cast)
   .set_name("bench_variant_cast")
   .add_int64_axis("num_rows", {32768, 262144, 2097152})
-  .add_string_axis("type", {"string", "float", "bool", "int32_t"})
+  .add_string_axis("type",
+                   {"string", "float", "bool", "int32_t", "decimal32", "decimal64", "decimal128"})
   .add_int64_axis("hit_rate", {20, 80});
 
 // Benchmarks get_variant_field with varying path depth (nesting >= 1). Casting is exercised
@@ -434,14 +503,14 @@ static void bench_variant_extract_nesting(nvbench::state& state)
   std::vector<std::span<uint8_t const>> meta_spans(num_rows, std::span<uint8_t const>{meta_blob});
   auto val_spans = fill_val_rows(num_rows, hit_val, miss_val, hit_rate);
   auto col       = build_variant_column(meta_spans, val_spans, stream, mr);
-  CUDF_CUDA_TRY(cudaStreamSynchronize(stream.value()));
+  CUDF_CUDA_TRY(cudaStreamSynchronize(stream.get()));
 
   auto const path      = get_path(nesting, is_array);
   auto const data_size = static_cast<std::size_t>(num_rows) * (meta_blob.size() + hit_val.size());
 
   auto mem_stats_logger = cudf::memory_stats_logger();
   mr                    = cudf::get_current_device_resource_ref();
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.value()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.get()));
   state.exec(nvbench::exec_tag::sync, [&](nvbench::launch&) {
     std::ignore = cudf::io::parquet::experimental::get_variant_field(
       col->view(), path, std::nullopt, stream, mr);
@@ -461,8 +530,14 @@ NVBENCH_BENCH(bench_variant_extract_nesting)
   .add_int64_axis("hit_rate", {20, 80});
 
 // Benchmarks get_variant_field on a flat object, varying the total number of fields and whether
-// the target field is first or last (probes binary search cost). Type is fixed to int32_t to
-// isolate field-lookup overhead; casting is exercised separately by bench_variant_cast.
+// the target field is first, last, or random (probes binary- vs linear-search cost). Type is
+// fixed to int32_t to isolate field-lookup overhead; casting is exercised separately by
+// bench_variant_cast. The "sorted" axis toggles the metadata's sorted-strings bit: when false,
+// find_key_in_metadata always falls back to a linear scan regardless of field count.
+// Seed for the "random" field_position axis, kept fixed so the per-row ranks it draws (and thus
+// the benchmark's runtime characteristics) stay deterministic across runs.
+static constexpr auto bench_variant_extract_fields_seed = 564;
+
 static void bench_variant_extract_fields(nvbench::state& state)
 {
   auto stream = cudf::get_default_stream();
@@ -472,28 +547,80 @@ static void bench_variant_extract_fields(nvbench::state& state)
   auto const num_fields    = static_cast<int>(state.get_int64("num_fields"));
   auto const field_pos_str = state.get_string("field_position");
   auto const hit_rate      = static_cast<int>(state.get_int64("hit_rate"));
+  auto const sorted        = state.get_string("sorted") == "true";
 
-  int const target_fid = (field_pos_str == "last") ? (num_fields - 1) : 0;
+  auto const leaf = build_leaf_value(bench_variant_type::INT32);
 
-  auto const meta_blob = build_metadata(get_dict_keys_for_fields(num_fields));
-  auto const leaf      = build_leaf_value(bench_variant_type::INT32);
-  auto hit_val         = build_flat_object(num_fields, target_fid, leaf);
-  // Miss: object keyed on "z" (field ID = num_fields), so the lookup fails.
-  auto miss_val = wrap_in_object(static_cast<uint8_t>(num_fields), leaf);
-  pad_to_equal_size(hit_val, miss_val);
+  std::unique_ptr<cudf::column> col;
+  std::string path;
+  std::size_t meta_size;
+  std::size_t hit_size;
 
-  std::vector<std::span<uint8_t const>> meta_spans(num_rows, std::span<uint8_t const>{meta_blob});
-  auto val_spans = fill_val_rows(num_rows, hit_val, miss_val, hit_rate);
-  auto col       = build_variant_column(meta_spans, val_spans, stream, mr);
-  CUDF_CUDA_TRY(cudaStreamSynchronize(stream.value()));
+  if (field_pos_str == "random") {
+    // Draw a rank per row rather than a single fixed target field for the whole benchmark, so
+    // every row's dictionary places the queried key ("n_target") at a different index. This
+    // measures the average-case lookup cost instead of repeatedly re-measuring one fixed
+    // position, and it makes threads within a warp diverge the way real-world unsorted-position
+    // data would (a single shared blob across all rows can't).
+    std::vector<std::vector<uint8_t>> meta_blobs(num_fields);
+    std::vector<std::vector<uint8_t>> hit_vals(num_fields);
+    for (int rank = 0; rank < num_fields; ++rank) {
+      meta_blobs[rank] = build_metadata(get_dict_keys_at_rank(num_fields, rank), sorted);
+      hit_vals[rank]   = build_flat_object(num_fields, rank, leaf);
+    }
+    // Miss: object keyed on "~miss" (field ID = num_fields for every rank), so the lookup fails
+    // no matter which row's dictionary/rank it is paired with.
+    auto miss_val          = wrap_in_object(static_cast<uint8_t>(num_fields), leaf);
+    auto const target_size = std::max(hit_vals.front().size(), miss_val.size());
+    for (auto& hit_val : hit_vals) {
+      hit_val.resize(target_size, uint8_t{0});
+    }
+    miss_val.resize(target_size, uint8_t{0});
 
-  std::string const path =
-    "f" + std::string(target_fid < 10 ? "0" : "") + std::to_string(target_fid);
-  auto const data_size = static_cast<std::size_t>(num_rows) * (meta_blob.size() + hit_val.size());
+    std::mt19937 rng{bench_variant_extract_fields_seed};
+    std::uniform_int_distribution<int> rank_dist{0, num_fields - 1};
+    std::uniform_int_distribution<int> hit_dist{0, 99};
+
+    std::vector<std::span<uint8_t const>> meta_spans;
+    std::vector<std::span<uint8_t const>> val_spans;
+    meta_spans.reserve(num_rows);
+    val_spans.reserve(num_rows);
+    for (cudf::size_type i = 0; i < num_rows; ++i) {
+      auto const rank = rank_dist(rng);
+      meta_spans.emplace_back(meta_blobs[rank]);
+      val_spans.emplace_back(hit_dist(rng) < hit_rate ? std::span<uint8_t const>{hit_vals[rank]}
+                                                      : std::span<uint8_t const>{miss_val});
+    }
+    col = build_variant_column(meta_spans, val_spans, stream, mr);
+    CUDF_CUDA_TRY(cudaStreamSynchronize(stream.get()));
+
+    path      = "n_target";
+    meta_size = meta_blobs.front().size();
+    hit_size  = hit_vals.front().size();
+  } else {
+    int const target_fid = (field_pos_str == "last") ? num_fields - 1 : 0;
+
+    auto const meta_blob = build_metadata(get_dict_keys_for_fields(num_fields), sorted);
+    auto hit_val         = build_flat_object(num_fields, target_fid, leaf);
+    // Miss: object keyed on "z" (field ID = num_fields), so the lookup fails.
+    auto miss_val = wrap_in_object(static_cast<uint8_t>(num_fields), leaf);
+    pad_to_equal_size(hit_val, miss_val);
+
+    std::vector<std::span<uint8_t const>> meta_spans(num_rows, std::span<uint8_t const>{meta_blob});
+    auto val_spans = fill_val_rows(num_rows, hit_val, miss_val, hit_rate);
+    col            = build_variant_column(meta_spans, val_spans, stream, mr);
+    CUDF_CUDA_TRY(cudaStreamSynchronize(stream.get()));
+
+    path      = "f" + std::string(target_fid < 10 ? "0" : "") + std::to_string(target_fid);
+    meta_size = meta_blob.size();
+    hit_size  = hit_val.size();
+  }
+
+  auto const data_size = static_cast<std::size_t>(num_rows) * (meta_size + hit_size);
 
   auto mem_stats_logger = cudf::memory_stats_logger();
   mr                    = cudf::get_current_device_resource_ref();
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.value()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.get()));
   state.exec(nvbench::exec_tag::sync, [&](nvbench::launch&) {
     std::ignore = cudf::io::parquet::experimental::get_variant_field(
       col->view(), path, std::nullopt, stream, mr);
@@ -509,5 +636,6 @@ NVBENCH_BENCH(bench_variant_extract_fields)
   .set_name("bench_variant_extract_fields")
   .add_int64_axis("num_rows", {32768, 262144, 2097152})
   .add_int64_axis("num_fields", {1, 10, 100})
-  .add_string_axis("field_position", {"first", "last"})
-  .add_int64_axis("hit_rate", {20, 80});
+  .add_string_axis("field_position", {"first", "last", "random"})
+  .add_int64_axis("hit_rate", {20, 80})
+  .add_string_axis("sorted", {"true", "false"});

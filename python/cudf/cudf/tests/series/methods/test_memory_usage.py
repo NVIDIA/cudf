@@ -8,8 +8,10 @@ from cudf.testing import assert_eq
 def test_memory_usage_list():
     s1 = cudf.Series([[1, 2], [3, 4]])
     assert s1.memory_usage() == 44
+    assert s1[1:].memory_usage() == 24
     s2 = cudf.Series([[[[1, 2]]], [[[3, 4]]]])
     assert s2.memory_usage() == 68
+    assert s2[1:].memory_usage() == 40
     s3 = cudf.Series([[{"b": 1, "a": 10}, {"b": 2, "a": 100}]])
     assert s3.memory_usage() == 40
 
@@ -59,3 +61,4 @@ def test_struct_memory_usage():
     df = s.struct.explode()
 
     assert_eq(s.memory_usage(), df.memory_usage().sum())
+    assert s[1:].memory_usage() == 32

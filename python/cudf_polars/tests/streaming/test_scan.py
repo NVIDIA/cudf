@@ -19,9 +19,11 @@ from cudf_polars.dsl.ir import (
 )
 from cudf_polars.dsl.utils.io import (
     CachedParquetInfo,
+    _prefetch_parquet_footers_for_paths,
     prefetch_parquet_file_metadata_for_ir,
 )
 from cudf_polars.engine.options import StreamingOptions
+from cudf_polars.streaming.actor_graph.io import resolve_max_concurrent_io_tasks
 from cudf_polars.streaming.base import (
     DataSourceInfo,
     IOPartitionFlavor,
@@ -40,7 +42,11 @@ from cudf_polars.streaming.statistics import collect_statistics
 from cudf_polars.testing.asserts import assert_gpu_result_equal
 from cudf_polars.testing.engine_utils import SMALL_MAX_ROWS_PER_PARTITION
 from cudf_polars.testing.io import make_partitioned_source
-from cudf_polars.utils.config import ConfigOptions, ParquetOptions
+from cudf_polars.utils.config import (
+    ConfigOptions,
+    MaxConcurrentIOTasks,
+    ParquetOptions,
+)
 
 if TYPE_CHECKING:
     import concurrent.futures
@@ -126,6 +132,63 @@ def test_prefetch_parquet_file_metadata_no_parquet_scans() -> None:
     assert result == {}
 
 
+def test_prefetch_skips_paths_cached_by_stats_collection(
+    tmp_path,
+    df: pl.DataFrame,
+    monkeypatch: pytest.MonkeyPatch,
+    parquet_stats_executor,
+) -> None:
+    import cudf_polars.dsl.utils.io as io_module
+    from cudf_polars.streaming.io import _clear_source_info_cache
+
+    _clear_source_info_cache()
+    n_files = 5
+    max_footer_samples = 2
+    make_partitioned_source(df, tmp_path, "parquet", n_files=n_files)
+    paths = sorted(str(p) for p in tmp_path.glob("*.parquet"))
+
+    engine = pl.GPUEngine(
+        raise_on_fail=True,
+        executor="streaming",
+        parquet_options={"max_footer_samples": max_footer_samples},
+    )
+    q = pl.scan_parquet(tmp_path)
+    from cudf_polars import Translator
+
+    ir = Translator(q._ldf.visit(), engine).translate_ir()
+    config = ConfigOptions.from_polars_engine(engine)
+    stats = collect_statistics(ir, config, parquet_stats_executor)
+
+    source = stats.scan_stats[ir]
+    assert source.cached_parquet_info is not None
+    sampled_paths = {info.path for info in source.cached_parquet_info}
+    assert len(sampled_paths) == max_footer_samples
+
+    fetched_paths: list[str] = []
+    real_prefetch = io_module._prefetch_parquet_footers_for_paths
+
+    def recording_prefetch(
+        paths_arg: list[str], *, parse_hybrid_metadata: bool = False
+    ) -> list:
+        fetched_paths.extend(paths_arg)
+        return real_prefetch(paths_arg, parse_hybrid_metadata=parse_hybrid_metadata)
+
+    monkeypatch.setattr(
+        io_module, "_prefetch_parquet_footers_for_paths", recording_prefetch
+    )
+
+    scan = _make_parquet_scan(paths)
+    fused = FusedScan(scan.schema, scan, paths, scan.parquet_options, None)
+    streaming_scan = StreamingScan([fused], scan, "fused")
+
+    result = prefetch_parquet_file_metadata_for_ir(
+        streaming_scan, py_executor=None, stats=stats
+    )
+
+    assert set(result) == set(paths)
+    assert set(fetched_paths) == set(paths) - sampled_paths
+
+
 def test_prefetch_parquet_file_metadata_remote_only(tmp_path, df) -> None:
     make_partitioned_source(df, tmp_path, "parquet", n_files=1)
     local_path = str(next(tmp_path.glob("*.parquet")))
@@ -147,13 +210,85 @@ def test_prefetch_parquet_file_metadata_remote_only(tmp_path, df) -> None:
     assert set(result) == {local_path}
 
 
+def test_cached_parquet_info_hybrid_scan_reader_lazy(tmp_path, df) -> None:
+    make_partitioned_source(df, tmp_path, "parquet", n_files=1)
+    local_path = str(next(tmp_path.glob("*.parquet")))
+
+    [info] = _prefetch_parquet_footers_for_paths([local_path])
+    assert info._hybrid_scan_metadata is None
+
+    info.hybrid_scan_reader(info.default_reader_options())
+    assert info._hybrid_scan_metadata is not None
+
+
+@pytest.mark.parametrize(
+    "paths,expected",
+    [
+        ([], 2),
+        (["file.parquet"], 2),
+        (["file.parquet", "s3://bucket/file.parquet"], 8),
+        (["s3://bucket/file.parquet"], 8),
+    ],
+)
+def test_resolve_max_concurrent_io_tasks_default(
+    paths: list[str], expected: int
+) -> None:
+    assert resolve_max_concurrent_io_tasks(MaxConcurrentIOTasks(), paths) == expected
+
+
+def test_resolve_max_concurrent_io_tasks_explicit() -> None:
+    assert (
+        resolve_max_concurrent_io_tasks(
+            MaxConcurrentIOTasks(local=6, remote=6), ["s3://bucket/file.parquet"]
+        )
+        == 6
+    )
+
+
+@pytest.mark.parametrize(
+    "paths,expected",
+    [
+        (["file.parquet"], 3),
+        (["s3://bucket/file.parquet"], 7),
+    ],
+)
+def test_resolve_max_concurrent_io_tasks_local_remote_policy(
+    paths: list[str], expected: int
+) -> None:
+    assert (
+        resolve_max_concurrent_io_tasks(MaxConcurrentIOTasks(local=3, remote=7), paths)
+        == expected
+    )
+
+
+def test_resolve_max_concurrent_io_tasks_partial_override() -> None:
+    max_concurrent_io_tasks = MaxConcurrentIOTasks(remote=7)
+    assert (
+        resolve_max_concurrent_io_tasks(max_concurrent_io_tasks, ["file.parquet"]) == 2
+    )
+    assert (
+        resolve_max_concurrent_io_tasks(
+            max_concurrent_io_tasks, ["s3://bucket/file.parquet"]
+        )
+        == 7
+    )
+
+
+@pytest.mark.parametrize("use_hybrid_scan", [True, False])
 def test_prefetch_file_metadata_select_fast_count(
     df: pl.DataFrame,
     streaming_engine_factory: Callable[..., StreamingEngine],
     tmp_path: Path,
+    *,
+    use_hybrid_scan: bool,
 ) -> None:
     streaming_engine = streaming_engine_factory(
-        StreamingOptions(parquet_options={"prefetch_file_metadata": True}),
+        StreamingOptions(
+            parquet_options={
+                "prefetch_file_metadata": True,
+                "use_hybrid_scan": use_hybrid_scan,
+            }
+        ),
     )
     source = tmp_path / "data.parquet"
     df.write_parquet(source)
@@ -368,6 +503,44 @@ def test_streaming_scan_raises() -> None:
     ctx = IRExecutionContext()
     with pytest.raises(NotImplementedError, match=r"StreamingScan.do_evaluate"):
         StreamingScan.do_evaluate([fused], scan, context=ctx)
+
+
+@pytest.mark.parametrize(
+    "predicate,use_columns",
+    [
+        # uses hybrid scan reader
+        (pl.col("x") < 1_000, None),
+        (pl.col("x") < 1_000, ["x", "z"]),
+        (pl.col("x") < 1_000, ["z"]),
+        (pl.col("x") < 1_000, ["x"]),
+        # falls back to default parquet reader
+        (pl.col("y").str.contains("cat"), None),
+        (None, None),
+    ],
+)
+def test_split_scan_hybrid(
+    tmp_path: Path,
+    df: pl.DataFrame,
+    predicate: pl.Expr | None,
+    use_columns: list[str] | None,
+    streaming_engine_factory: Callable[..., StreamingEngine],
+) -> None:
+    streaming_engine = streaming_engine_factory(
+        StreamingOptions(
+            target_partition_size=1_000,
+            parquet_options={
+                "use_hybrid_scan": True,
+                "prefetch_file_metadata": True,
+            },
+        ),
+    )
+    make_partitioned_source(df, tmp_path, "parquet", n_files=1, row_group_size=100)
+    q = pl.scan_parquet(tmp_path)
+    if predicate is not None:
+        q = q.filter(predicate)
+    if use_columns is not None:
+        q = q.select(use_columns)
+    assert_gpu_result_equal(q, engine=streaming_engine)
 
 
 def test_scan_path_mismatch_raises() -> None:

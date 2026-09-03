@@ -15,6 +15,7 @@ import weakref
 from typing import TYPE_CHECKING, Any, ClassVar, Self, TypeVar
 
 import cuda.core
+import kvikio
 
 import polars as pl
 
@@ -94,6 +95,106 @@ def reset_statistics_from_options(
     else:
         statistics.disable()
     return statistics
+
+
+def make_kvikio_monitor(*, enabled: bool) -> kvikio.SummaryMonitor | None:
+    """
+    Create a kvikio I/O monitor if ``enabled``.
+
+    Parameters
+    ----------
+    enabled
+        Whether to count, from the ``kvikio_statistics`` executor option.
+
+    Returns
+    -------
+    kvikio.SummaryMonitor
+        A monitor, already counting, if statistics are enabled.
+    None
+        If they are not.
+
+    Notes
+    -----
+    kvikio has no enable/disable: the existence of a monitor is what turns
+    counting on for the process, so "disabled" means "no monitor".
+
+    With :class:`~cudf_polars.engine.spmd.SPMDEngine` the monitor counts every
+    thread's kvikio I/O in the script's process, so user code performing kvikio
+    reads is counted too. It cannot attribute I/O to a particular query.
+    """
+    if not enabled:
+        return None
+    return kvikio.SummaryMonitor()
+
+
+def reset_kvikio_monitor(
+    monitor: kvikio.SummaryMonitor | None, *, enabled: bool
+) -> kvikio.SummaryMonitor | None:
+    """
+    Bring a kvikio I/O monitor into line with a new ``enabled`` setting.
+
+    Parameters
+    ----------
+    monitor
+        The rank's existing monitor, if it has one.
+    enabled
+        Whether to count, from the ``kvikio_statistics`` executor option.
+
+    Returns
+    -------
+    kvikio.SummaryMonitor
+        The reset or newly created monitor, if statistics are enabled.
+    None
+        If they are not, in which case any existing monitor has been stopped.
+    """
+    if not enabled:
+        if monitor is not None:
+            monitor.stop()
+        return None
+    if monitor is None:
+        return kvikio.SummaryMonitor()
+    monitor.reset()
+    return monitor
+
+
+def take_io_summary(
+    monitor: kvikio.SummaryMonitor | None, *, clear: bool
+) -> kvikio.Summary | None:
+    """
+    Read a rank's I/O totals, optionally restarting the measured span.
+
+    Parameters
+    ----------
+    monitor
+        The rank's monitor, or ``None`` if it is not counting.
+    clear
+        If ``True``, reset the monitor after reading, so the returned summary
+        is the last word on the span that just ended.
+
+    Returns
+    -------
+    kvikio.Summary
+        The totals so far.
+    None
+        If ``monitor`` is ``None``.
+
+    Notes
+    -----
+    ``None`` means "this rank was not counting", which is not the same as a
+    zeroed summary meaning "this rank did no I/O".
+
+    ``get()`` and ``reset()`` are two separate calls, so an operation
+    completing between them is counted in the returned summary but dropped
+    from the next one. Use ``kvikio.Summary.since(previous)`` if you need
+    gapless differencing.
+    """
+    if monitor is None:
+        return None
+    # Read before the reset, so the returned summary still carries the span.
+    summary = monitor.get()
+    if clear:
+        monitor.reset()
+    return summary
 
 
 def resolve_rapidsmpf_options(rapidsmpf_options: Options | None) -> Options:
@@ -185,12 +286,12 @@ class StreamingEngine(pl.GPUEngine):
     destruction and context manager exit must occur on the thread that created
     the instance.
 
-    Creating an engine configures the process-wide kvikio thread pool (default
-    256 threads). Because kvikio's pool is a global singleton, this blocks
-    any concurrent kvikio IO in the process until in-flight IO completes and overrides any prior
-    ``kvikio.defaults.set("num_threads", ...)`` call. Use the
-    ``kvikio_nthreads`` executor option or the ``KVIKIO_NTHREADS`` environment
-    variable to control the thread count.
+    Creating an engine sets the kvikio remote I/O backend to ``EASY_THREADPOOL``
+    and configures its thread pool (default 256 threads). Because kvikio's pool
+    is a global singleton, this blocks any concurrent kvikio IO in the process
+    until in-flight IO completes and overrides any prior ``kvikio.defaults.set(...)``
+    calls. Use the ``kvikio_nthreads`` executor option or the ``KVIKIO_NTHREADS``
+    environment variable to control the thread count.
 
     Parameters
     ----------
@@ -315,6 +416,30 @@ class StreamingEngine(pl.GPUEngine):
         -------
         List of :class:`~rapidsmpf.statistics.Statistics`, one per rank,
         ordered by rank index.
+        """
+        raise NotImplementedError
+
+    def gather_io_summary(self, *, clear: bool = False) -> dict[int, kvikio.Summary]:
+        """
+        Collect kvikio I/O statistics from every rank.
+
+        Parameters
+        ----------
+        clear
+            If ``True``, restart each rank's measured span after reading, so
+            the next call describes only what followed this one.
+
+        Returns
+        -------
+        A :class:`kvikio.Summary` per rank, keyed by rank index and in rank
+        order. A rank that is not counting is absent, so the result is empty
+        unless the ``statistics`` option is enabled.
+
+        Examples
+        --------
+        >>> for rank, summary in engine.gather_io_summary().items():  # doctest: +SKIP
+        ...     print(f"--- rank {rank} ---")
+        ...     print(summary)
         """
         raise NotImplementedError
 
@@ -740,6 +865,16 @@ def evaluate_on_rank(
         Collected channel metadata.
     """
     stats = allgather_stats(comm, ctx.br(), ir, config_options, py_executor)
+    # ``get_stable_plan_id`` is a deterministic function of the IR
+    # structure, so every rank derives the same logical plan ID for a
+    # given query (only rank 0 emits the declaration, but physical plans
+    # on every rank reference it as their parent). It is *not* unique
+    # across collects, though: re-running an identical query would reuse
+    # the same plan ID under a different parent query. Namespacing by the
+    # per-collect ``query_id`` (which is identical across ranks but unique
+    # per collect) keeps the cross-rank agreement while making the plan ID
+    # unique per collect.
+    logical_plan_id = uuid.uuid5(query_id, str(ir.get_stable_plan_id()))
 
     lowering, node_map = lower_ir_graph_with_node_map(
         ir, config_options, stats, rank=comm.rank, nranks=comm.nranks
@@ -747,13 +882,13 @@ def evaluate_on_rank(
     optimized = lowering.optimized
     ir = lowering.lowered
     partition_info = lowering.partition_info
+    # TODO: figure out if we emit anything about optimized.
     if config_options.executor.quent_context is not None:
         assert local_quent_context is not None
-        logical_plan_id = optimized.get_stable_plan_id()
         plan, ops, ports, logical_op_by_id = build_plan(
             optimized,
             config_options,
-            query=local_quent_context.context.query,
+            query=local_quent_context.query,
             plan_id=logical_plan_id,
             worker=local_quent_context.worker,
             instance_name="logical",
@@ -792,6 +927,7 @@ def evaluate_on_rank(
             ir_context.py_executor,
             stats=stats,
             remote_only=isinstance(prefetch_file_metadata, Unspecified),
+            parse_hybrid_metadata=config_options.parquet_options.use_hybrid_scan,
         )
         attach_cached_parquet_metadata(ir, cached_parquet_info_map)
 

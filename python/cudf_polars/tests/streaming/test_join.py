@@ -11,11 +11,20 @@ import pytest
 
 import polars as pl
 
+import pylibcudf as plc
+from cudf_streaming.channel_metadata import OrderKey, OrderScheme, Ordering
+from cudf_streaming.table_chunk import TableChunk
+
 from cudf_polars import Translator
+from cudf_polars.containers import DataFrame
 from cudf_polars.dsl.ir import Cache, Join
 from cudf_polars.dsl.traversal import traversal
 from cudf_polars.engine.options import StreamingOptions
-from cudf_polars.streaming.actor_graph.join import _use_pwise_join
+from cudf_polars.streaming.actor_graph.join import (
+    _make_ordered_strategy,
+    _use_pwise_join,
+)
+from cudf_polars.streaming.actor_graph.utils import NormalizedPartitioning
 from cudf_polars.streaming.base import PartitionInfo
 from cudf_polars.streaming.parallel import lower_ir_graph
 from cudf_polars.streaming.shuffle import Shuffle
@@ -92,6 +101,109 @@ def test_join_then_shuffle(left, right, streaming_engine_factory):
         (pl.col("y") * pl.col("y")).n_unique().alias("y2"),
     )
     assert_gpu_result_equal(q, engine=streaming_engine, check_row_order=False)
+
+
+def test_dynamic_join_after_sort_on_join_keys(tmp_path, streaming_engine_factory):
+    streaming_engine = streaming_engine_factory(
+        StreamingOptions(
+            max_rows_per_partition=3,
+            target_partition_size=32,
+            broadcast_limit=1,
+            raise_on_fail=True,
+        ),
+    )
+    left = pl.DataFrame(
+        {
+            "k": [3, 1, 2, 1, 4, 2],
+            "x": [30, 10, 20, 11, 40, 21],
+        }
+    )
+    right = pl.DataFrame(
+        {
+            "k": [2, 4, 1, 3, 1],
+            "y": [200, 400, 100, 300, 101],
+        }
+    )
+    left.write_parquet(tmp_path / "left.parquet")
+    right.write_parquet(tmp_path / "right.parquet")
+    left = pl.scan_parquet(tmp_path / "left.parquet")
+    right = pl.scan_parquet(tmp_path / "right.parquet")
+    q = left.sort("k").join(right.sort("k"), on="k", how="inner")
+    assert_gpu_result_equal(q, engine=streaming_engine, check_row_order=False)
+
+
+def _join_ir(q: pl.LazyFrame) -> Join:
+    engine = pl.GPUEngine(raise_on_fail=True, executor="streaming")
+    ir = Translator(q._ldf.visit(), engine).translate_ir()
+    return next(node for node in traversal([ir]) if isinstance(node, Join))
+
+
+def _order_partitioning(
+    spmd_engine,
+    key_indices: tuple[int, ...],
+    *,
+    order: plc.types.Order = plc.types.Order.ASCENDING,
+    null_order: plc.types.NullOrder = plc.types.NullOrder.BEFORE,
+) -> NormalizedPartitioning:
+    stream = spmd_engine.context.br().stream_pool.get_stream()
+    table = DataFrame.from_polars(
+        pl.DataFrame({f"k{i}": [1, 2] for i in key_indices}),
+        stream,
+    ).table
+    chunk = TableChunk.from_pylibcudf_table(
+        table,
+        stream,
+        exclusive_view=False,
+        br=spmd_engine.context.br(),
+    )
+    return NormalizedPartitioning(
+        OrderScheme(
+            [
+                Ordering(
+                    [OrderKey(index, order, null_order) for index in key_indices],
+                    chunk,
+                    strict_boundaries=True,
+                )
+            ]
+        ),
+        "inherit",
+    )
+
+
+def test_ordered_join_strategy_matches_exact_ordering_width(spmd_engine):
+    left = pl.LazyFrame({"k0": [1], "k1": [2], "x": [3]})
+    right = pl.LazyFrame({"k0": [1], "k1": [2], "y": [4]})
+    join_ir = _join_ir(left.join(right, on="k0", how="inner"))
+    partitioning = _order_partitioning(spmd_engine, (0, 1))
+
+    assert _make_ordered_strategy(join_ir, partitioning, partitioning) is None
+
+
+def test_ordered_join_strategy_checks_order_key_semantics(spmd_engine):
+    left = pl.LazyFrame({"k0": [1], "x": [2]})
+    right = pl.LazyFrame({"k0": [1], "y": [3]})
+    join_ir = _join_ir(left.join(right, on="k0", how="inner"))
+    left_partitioning = _order_partitioning(spmd_engine, (0,))
+    right_partitioning = _order_partitioning(spmd_engine, (0,))
+    mismatched_right = _order_partitioning(
+        spmd_engine, (0,), order=plc.types.Order.DESCENDING
+    )
+
+    assert (
+        _make_ordered_strategy(join_ir, left_partitioning, right_partitioning)
+        is not None
+    )
+    assert _make_ordered_strategy(join_ir, left_partitioning, mismatched_right) is None
+
+
+@pytest.mark.parametrize("how", ["right", "full"])
+def test_ordered_join_strategy_rejects_ambiguous_output_key_metadata(spmd_engine, how):
+    left = pl.LazyFrame({"k0": [1], "x": [2]})
+    right = pl.LazyFrame({"k0": [1], "y": [3]})
+    join_ir = _join_ir(left.join(right, on="k0", how=how, coalesce=False))
+    partitioning = _order_partitioning(spmd_engine, (0,))
+
+    assert _make_ordered_strategy(join_ir, partitioning, partitioning) is None
 
 
 @pytest.mark.parametrize("reverse", [True, False])

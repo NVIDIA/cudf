@@ -59,6 +59,13 @@ class hybrid_scan_reader_impl : public parquet::detail::reader_impl {
                                    parquet_reader_options const& options);
 
   /**
+   * @brief Constructor that takes shared ownership of pre-parsed Parquet metadata
+   *
+   * @param metadata Shared, pre-parsed Parquet file metadata. Must not be null.
+   */
+  explicit hybrid_scan_reader_impl(std::shared_ptr<aggregate_reader_metadata> metadata);
+
+  /**
    * @copydoc cudf::io::parquet::experimental::hybrid_scan_multifile::parquet_metadatas
    */
   [[nodiscard]] std::vector<FileMetaData> parquet_metadatas() const;
@@ -106,13 +113,6 @@ class hybrid_scan_reader_impl : public parquet::detail::reader_impl {
     std::span<std::vector<size_type> const> row_group_indices,
     parquet_reader_options const& options,
     cuda::stream_ref stream);
-
-  /**
-   * @copydoc cudf::io::parquet::experimental::hybrid_scan_reader::secondary_filters_byte_ranges
-   */
-  [[nodiscard]] std::pair<std::vector<byte_range_info>, std::vector<byte_range_info>>
-  secondary_filters_byte_ranges(std::span<std::vector<size_type> const> row_group_indices,
-                                parquet_reader_options const& options);
 
   /**
    * @copydoc cudf::io::parquet::experimental::hybrid_scan_multifile::bloom_filters_byte_ranges
@@ -364,13 +364,13 @@ class hybrid_scan_reader_impl : public parquet::detail::reader_impl {
                           rmm::device_async_resource_ref mr);
 
   /**
-   * @brief Convert the input filter expression such that all column name references are replaced
-   * with corresponding column references
+   * @brief Normalize input filter such that all column names are converted to index references and
+   * logical negations are pushed down to the leaves.
    *
    * @param options Reader options
-   * @return Converted expression
+   * @return Filter expression normalizer
    */
-  [[nodiscard]] named_to_reference_converter build_converted_expression(
+  [[nodiscard]] parquet_filter_normalizer build_normalized_expression(
     parquet_reader_options const& options);
 
   /**
@@ -386,6 +386,16 @@ class hybrid_scan_reader_impl : public parquet::detail::reader_impl {
    * @param page_data Span of device spans of sparse page data
    */
   void set_sparse_pass_page_mask(std::span<cudf::device_span<uint8_t const> const> page_data);
+
+  /**
+   * @brief Mark output buffers nullable when page pruning synthesizes null rows
+   */
+  void mark_buffers_nullable_for_pruned_pages();
+
+  /**
+   * @brief Initialize the mutable output-buffer template for this materialization
+   */
+  void reset_output_buffers_template();
 
   /**
    * @brief Select the columns to be read based on the read mode
@@ -406,12 +416,12 @@ class hybrid_scan_reader_impl : public parquet::detail::reader_impl {
     std::span<std::vector<size_type> const> row_group_indices) const;
 
   /**
-   * @brief Helper to prepare converted filter expression and output column data types
+   * @brief Helper to prepare a normalized filter expression and output column data types
    *
    * @param options Parquet reader options
-   * @return A pair of a converted filter expression and a vector of output column data types
+   * @return A pair of filter expression normalizer and output column data types
    */
-  std::pair<named_to_reference_converter, std::vector<cudf::data_type>>
+  std::pair<parquet_filter_normalizer, std::vector<cudf::data_type>>
   prepare_filter_and_output_types(parquet_reader_options const& options);
 
   /**
@@ -583,7 +593,7 @@ class hybrid_scan_reader_impl : public parquet::detail::reader_impl {
    * and only if in_row_mask[i] is valid and true
    *
    * Updates the output row mask to reflect the final valid and surviving rows from the input row
-   * mask. This is inline with the masking behavior of cudf::detail::apply_boolean_mask
+   * mask. This is inline with the masking behavior of cudf::apply_retention_mask.
    *
    * @param in_row_mask Input row mask column
    * @param out_row_mask Output row mask column
@@ -608,6 +618,8 @@ class hybrid_scan_reader_impl : public parquet::detail::reader_impl {
   aggregate_reader_metadata* _extended_metadata;
 
   std::optional<std::vector<std::string>> _filter_columns_names;
+
+  std::vector<cudf::io::detail::inline_column_buffer> _original_output_buffers_template;
 
   cudf::size_type _row_mask_offset{0};
   bool _output_chunk_produced{false};

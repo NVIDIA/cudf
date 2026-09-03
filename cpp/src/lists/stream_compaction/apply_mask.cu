@@ -103,6 +103,15 @@ std::unique_ptr<column> apply_mask(lists_column_view const& input,
 }
 }  // namespace detail
 
+std::unique_ptr<column> apply_retention_mask(lists_column_view const& input,
+                                             lists_column_view const& retention_mask,
+                                             cuda::stream_ref stream,
+                                             rmm::device_async_resource_ref mr)
+{
+  CUDF_FUNC_RANGE();
+  return detail::apply_mask(input, retention_mask, cudf::detail::mask_type::RETENTION, stream, mr);
+}
+
 std::unique_ptr<column> apply_boolean_mask(lists_column_view const& input,
                                            lists_column_view const& boolean_mask,
                                            cuda::stream_ref stream,

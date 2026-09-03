@@ -67,7 +67,7 @@ compression_type infer_compression_type(compression_type compression, source_inf
   if (ext == "gz") { return compression_type::GZIP; }
   if (ext == "zip") { return compression_type::ZIP; }
   if (ext == "bz2") { return compression_type::BZIP2; }
-  if (ext == "zstd") { return compression_type::ZSTD; }
+  if (ext == "zst" or ext == "zstd") { return compression_type::ZSTD; }
   if (ext == "sz") { return compression_type::SNAPPY; }
   if (ext == "xz") { return compression_type::XZ; }
 
@@ -681,6 +681,23 @@ std::vector<parquet::FileMetaData> read_parquet_footers(
 {
   CUDF_FUNC_RANGE();
   return detail_parquet::read_parquet_footers(sources);
+}
+
+std::unique_ptr<table> read_parquet_column_chunk_bounds(
+  std::span<parquet::FileMetaData const> parquet_metadatas,
+  std::span<std::string const> column_names,
+  cuda::stream_ref stream,
+  cudf::memory_resources mr)
+{
+  CUDF_FUNC_RANGE();
+
+  auto metadata = detail_parquet::aggregate_reader_metadata{
+    std::vector<parquet::FileMetaData>{parquet_metadatas.begin(), parquet_metadatas.end()},
+    false,  // use_arrow_schema
+    false   // has_cols_from_mismatched_srcs
+  };
+
+  return metadata.read_column_chunk_bounds(column_names, stream, mr.get_output_mr());
 }
 
 /**

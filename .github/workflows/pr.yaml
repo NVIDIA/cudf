@@ -202,11 +202,19 @@ jobs:
           - 'ci/test_narwhals.sh'
         test_python_wheels:
           - 'ci/build_wheel*.sh'
-          - 'ci/test_wheel*.sh'
           - 'ci/validate_wheel.sh'
+          - 'ci/utils/get_matrix_values.py'
+        test_python_wheel_cudf:
+          - 'ci/test_wheel_cudf.sh'
+        test_python_wheel_cudf_streaming:
+          - 'ci/test_wheel_cudf_streaming.sh'
+        test_python_wheel_cudf_polars:
+          - 'ci/test_wheel_cudf_polars.sh'
+        test_python_wheel_dask_cudf:
+          - 'ci/test_wheel_dask_cudf.sh'
+        test_python_cudf_polars_polars:
           - 'ci/test_cudf_polars_polars_tests.sh'
           - 'ci/run_cudf_polars_polars_tests.sh'
-          - 'ci/utils/get_matrix_values.py'
         test_python_cudf_polars_runner:
           - 'ci/run_cudf_polars_pytests.sh'
         test_cudf_pandas_third_party_integration:
@@ -553,7 +561,7 @@ jobs:
       pull-requests: read
     secrets: inherit # zizmor: ignore[secrets-inherit]
     uses: rapidsai/shared-workflows/.github/workflows/wheels-test.yaml@main
-    if: fromJSON(needs.changed-files.outputs.changed_file_groups).cpp_build_inputs || fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_all || fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_cudf_streaming || fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_wheels
+    if: fromJSON(needs.changed-files.outputs.changed_file_groups).cpp_build_inputs || fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_all || fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_cudf_streaming || fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_wheels || fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_wheel_cudf_streaming
     with:
       build_type: pull-request
       script: ci/test_wheel_cudf_streaming.sh
@@ -607,7 +615,7 @@ jobs:
       pull-requests: read
     secrets: inherit # zizmor: ignore[secrets-inherit]
     uses: rapidsai/shared-workflows/.github/workflows/wheels-test.yaml@main
-    if: (fromJSON(needs.changed-files.outputs.changed_file_groups).cpp_build_inputs || fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_all || fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_cudf || fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_wheels) && fromJSON(needs.changed-files.outputs.changed_file_groups).neither_cudf_polars_nor_dask_cudf
+    if: (fromJSON(needs.changed-files.outputs.changed_file_groups).cpp_build_inputs || fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_all || fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_cudf || fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_wheels || fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_wheel_cudf) && fromJSON(needs.changed-files.outputs.changed_file_groups).neither_cudf_polars_nor_dask_cudf
     with:
       build_type: pull-request
       script: ci/test_wheel_cudf.sh
@@ -643,7 +651,7 @@ jobs:
       pull-requests: read
     secrets: inherit # zizmor: ignore[secrets-inherit]
     uses: rapidsai/shared-workflows/.github/workflows/wheels-test.yaml@main
-    if: (fromJSON(needs.changed-files.outputs.changed_file_groups).cpp_build_inputs || fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_all || fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_cudf_polars || fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_wheels || fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_cudf_polars_runner) && fromJSON(needs.changed-files.outputs.changed_file_groups).neither_cudf_nor_dask_cudf
+    if: (fromJSON(needs.changed-files.outputs.changed_file_groups).cpp_build_inputs || fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_all || fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_cudf_polars || fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_wheels || fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_wheel_cudf_polars || fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_cudf_polars_runner) && fromJSON(needs.changed-files.outputs.changed_file_groups).neither_cudf_nor_dask_cudf
     with:
       # This selects "ARCH=amd64 + the latest supported Python + CUDA".
       matrix_filter: map(select(.ARCH == "amd64")) | group_by(.CUDA_VER|split(".")|map(tonumber)|.[0]) | map(max_by([(.PY_VER|split(".")|map(tonumber)), (.CUDA_VER|split(".")|map(tonumber))]))
@@ -660,7 +668,7 @@ jobs:
       pull-requests: read
     secrets: inherit # zizmor: ignore[secrets-inherit]
     uses: rapidsai/shared-workflows/.github/workflows/wheels-test.yaml@main
-    if: (fromJSON(needs.changed-files.outputs.changed_file_groups).cpp_build_inputs || fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_all || fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_cudf_polars || fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_wheels) && fromJSON(needs.changed-files.outputs.changed_file_groups).neither_cudf_nor_dask_cudf
+    if: (fromJSON(needs.changed-files.outputs.changed_file_groups).cpp_build_inputs || fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_all || fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_cudf_polars || fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_wheels || fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_cudf_polars_polars) && fromJSON(needs.changed-files.outputs.changed_file_groups).neither_cudf_nor_dask_cudf
     with:
       # This selects "ARCH=amd64 + the latest supported Python + CUDA".
       matrix_filter: map(select(.ARCH == "amd64")) | group_by(.CUDA_VER|split(".")|map(tonumber)|.[0]) | map(max_by([(.PY_VER|split(".")|map(tonumber)), (.CUDA_VER|split(".")|map(tonumber))]))
@@ -696,7 +704,7 @@ jobs:
       pull-requests: read
     secrets: inherit # zizmor: ignore[secrets-inherit]
     uses: rapidsai/shared-workflows/.github/workflows/wheels-test.yaml@main
-    if: fromJSON(needs.changed-files.outputs.changed_file_groups).test_wheel_dask_cudf
+    if: fromJSON(needs.changed-files.outputs.changed_file_groups).test_wheel_dask_cudf || fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_wheel_dask_cudf
     with:
       # This selects "ARCH=amd64 + the latest supported Python + CUDA".
       matrix_filter: map(select(.ARCH == "amd64")) | group_by(.CUDA_VER|split(".")|map(tonumber)|.[0]) | map(max_by([(.PY_VER|split(".")|map(tonumber)), (.CUDA_VER|split(".")|map(tonumber))]))

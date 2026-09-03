@@ -11,6 +11,7 @@ import importlib
 import json
 import os
 import pprint
+import shlex
 import statistics
 import sys
 import textwrap
@@ -481,6 +482,11 @@ class RunConfig:
     dataset_path: Path
     scale_factor: int | float
     iterations: int
+    io_mode: Literal["cold", "lukewarm", "hot"] = "lukewarm"
+    n_workers: int = 1
+    extra_info: dict[str, Any] = dataclasses.field(default_factory=dict)
+    command_line: str
+    capture_env_vars: str
     timestamp: str = dataclasses.field(
         default_factory=lambda: datetime.now(timezone.utc).isoformat()
     )
@@ -494,6 +500,19 @@ class RunConfig:
     duckdb_memory_limit: str | None = None
     duckdb_temp_dir: str | None = None
     roles: list[Role] = dataclasses.field(default_factory=list)
+
+    def __post_init__(self) -> None:
+        if self.io_mode == "hot" and self.iterations < 2:
+            raise ValueError(
+                "--io-mode hot requires at least 2 iterations: "
+                "iteration 0 warms the cache, iterations 1+ are the hot measurements."
+            )
+
+        # Update `extra_info.environment` with the captured environment variables.
+        self.extra_info.setdefault("environment", {})
+        for var in self.capture_env_vars.split(","):
+            var_ = var.strip()
+            self.extra_info["environment"][var_] = os.environ.get(var_)
 
     @classmethod
     def from_args(cls, args: argparse.Namespace) -> RunConfig:
@@ -530,7 +549,15 @@ class RunConfig:
             if scale_factor_int == scale_factor:
                 scale_factor = scale_factor_int
 
-        if "pdsh" in name and args.scale is not None:
+        skip_scale_factor_inference = (
+            "LIBCUDF_IO_REROUTE_LOCAL_DIR_PATTERN" in os.environ
+        ) and ("LIBCUDF_IO_REROUTE_REMOTE_DIR_PATTERN" in os.environ)
+
+        if (
+            "pdsh" in name
+            and args.scale is not None
+            and skip_scale_factor_inference is False
+        ):
             # Validate the user-supplied scale factor
             sf_inf = _infer_scale_factor(name, path, args.suffix)
             rel_error = abs((scale_factor - sf_inf) / sf_inf)
@@ -570,12 +597,19 @@ class RunConfig:
             dataset_path=path,
             scale_factor=scale_factor,
             iterations=args.iterations,
+            io_mode=args.io_mode,
             suffix=args.suffix,
             query_set=args.query_set,
             validation_method=validation_method,
+            extra_info=args.extra_info,
             duckdb_threads=args.duckdb_threads,
             duckdb_memory_limit=args.duckdb_memory_limit,
             duckdb_temp_dir=args.duckdb_temp_dir,
+            command_line=shlex.join(sys.argv),
+            capture_env_vars=args.capture_env_vars,
+            hardware=HardwareInfo.collect(
+                collect_gpus=frontend not in _CPU_ENGINES
+            ),
             roles=roles,
         )
 
@@ -747,6 +781,9 @@ def execute_query(
     run_config: RunConfig,
 ) -> tuple[pd.DataFrame, float]:
     """Execute a query with NVTX annotation."""
+    if run_config.io_mode == "cold":
+        drop_file_page_cache_recursively(run_config.dataset_path)
+
     with nvtx.annotate(
         message=f"Query {q_id} - Iteration {i}",
         domain="cudf.pandas",

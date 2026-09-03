@@ -832,10 +832,8 @@ def list_validation_files(
     return validation_files
 
 
-def parse_args(
-    args: Sequence[str] | None = None, num_queries: int = 22
-) -> argparse.Namespace:
-    """Parse command line arguments."""
+def build_parser(num_queries: int = 22) -> argparse.ArgumentParser:
+    """Build the argument parser for PDS-H benchmarks."""
     parser = argparse.ArgumentParser(
         prog="cudf.pandas PDS-H Benchmarks",
         description=textwrap.dedent(f"""\
@@ -1025,7 +1023,27 @@ def parse_args(
         default=False,
         help="Add the 'nsys' role to the benchmark run output.",
     )
+
+    return parser
+
+
+def parse_args(
+    args: Sequence[str] | None = None,
+    num_queries: int = 22,
+    parser: argparse.ArgumentParser | None = None,
+) -> argparse.Namespace:
+    """Parse command line arguments."""
+    if parser is None:
+        parser = build_parser(num_queries)
     parsed_args = parser.parse_args(args)
+
+    if (
+        parsed_args.suffix
+        and not parsed_args.suffix.startswith(".")
+        and not parsed_args.suffix.startswith("/")
+    ):
+        parsed_args.suffix = f".{parsed_args.suffix}"
+
     if (
         parsed_args.validate_directory is not None
         and not parsed_args.validate_directory.exists()
@@ -1220,13 +1238,8 @@ def run_pandas_query(
     )
 
 
-def run_pandas(
-    benchmark: Any,
-    options: Sequence[str] | None = None,
-    num_queries: int = 22,
-) -> None:
+def run_pandas(benchmark: Any, args: argparse.Namespace) -> None:
     """Run the queries using the given benchmark and frontend."""
-    args = parse_args(options, num_queries=num_queries)
     vars(args).update({"query_set": benchmark.name})
     run_config = RunConfig.from_args(args)
     validation_failures: list[int] = []

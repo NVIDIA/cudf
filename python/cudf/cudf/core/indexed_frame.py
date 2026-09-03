@@ -2422,79 +2422,79 @@ class IndexedFrame(Frame):
         slicer[axis] = slice(before, after)
         return self.loc[tuple(slicer)].copy()
 
-        @_performance_tracking
-        def between_time(
-            self,
+    @_performance_tracking
+    def between_time(
+        self,
+        start_time,
+        end_time,
+        inclusive: str = "both",
+        axis: Axis | None = None,
+    ) -> Self:
+        """
+        Select values between particular times of the day (e.g., 9:00-9:30 AM).
+
+        By setting ``start_time`` to be later than ``end_time``, you can get
+        the times that are *not* between the two times.
+
+        Parameters
+        ----------
+        start_time : datetime.time or str
+            Initial time as a time filter limit.
+        end_time : datetime.time or str
+            End time as a time filter limit.
+        inclusive : {"both", "neither", "left", "right"}, default "both"
+            Include boundaries; whether to set each bound as closed or open.
+        axis : {0 or 'index'}, None, default None
+            Axis on which to select. Only axis=0/'index' (rows) is supported.
+
+        Returns
+        -------
+        Series or DataFrame
+            Data from the original object filtered to the specified
+            time range.
+
+        Raises
+        ------
+        TypeError
+            If the index is not a :class:`~cudf.DatetimeIndex`.
+
+        Examples
+        --------
+        >>> import cudf
+        >>> i = cudf.date_range('2018-04-09', periods=4, freq='1D20min')
+        >>> ts = cudf.DataFrame({'A': [1, 2, 3, 4]}, index=i)
+        >>> ts
+                            A
+        2018-04-09 00:00:00  1
+        2018-04-10 00:20:00  2
+        2018-04-11 00:40:00  3
+        2018-04-12 01:00:00  4
+        >>> ts.between_time('0:15', '0:45')
+                            A
+        2018-04-10 00:20:00  2
+        2018-04-11 00:40:00  3
+        """
+        if axis is not None and axis not in (0, "index"):
+            raise NotImplementedError("Only axis=0 is supported.")
+
+        if not isinstance(self.index, cudf.DatetimeIndex):
+            raise TypeError("Index must be DatetimeIndex")
+
+        if inclusive not in {"both", "neither", "left", "right"}:
+            raise ValueError(
+                "Inclusive has to be either 'both', 'neither', "
+                "'left' or 'right'"
+            )
+        include_start = inclusive in {"both", "left"}
+        include_end = inclusive in {"both", "right"}
+
+        indexer = self.index.indexer_between_time(
             start_time,
             end_time,
-            inclusive: str = "both",
-            axis: Axis | None = None,
-        ) -> Self:
-            """
-            Select values between particular times of the day (e.g., 9:00-9:30 AM).
-
-            By setting ``start_time`` to be later than ``end_time``, you can get
-            the times that are *not* between the two times.
-
-            Parameters
-            ----------
-            start_time : datetime.time or str
-                Initial time as a time filter limit.
-            end_time : datetime.time or str
-                End time as a time filter limit.
-            inclusive : {"both", "neither", "left", "right"}, default "both"
-                Include boundaries; whether to set each bound as closed or open.
-            axis : {0 or 'index'}, None, default None
-                Axis on which to select. Only axis=0/'index' (rows) is supported.
-
-            Returns
-            -------
-            Series or DataFrame
-                Data from the original object filtered to the specified
-                time range.
-
-            Raises
-            ------
-            TypeError
-                If the index is not a :class:`~cudf.DatetimeIndex`.
-
-            Examples
-            --------
-            >>> import cudf
-            >>> i = cudf.date_range('2018-04-09', periods=4, freq='1D20min')
-            >>> ts = cudf.DataFrame({'A': [1, 2, 3, 4]}, index=i)
-            >>> ts
-                                A
-            2018-04-09 00:00:00  1
-            2018-04-10 00:20:00  2
-            2018-04-11 00:40:00  3
-            2018-04-12 01:00:00  4
-            >>> ts.between_time('0:15', '0:45')
-                                A
-            2018-04-10 00:20:00  2
-            2018-04-11 00:40:00  3
-            """
-            if axis is not None and axis not in (0, "index"):
-                raise NotImplementedError("Only axis=0 is supported.")
-
-            if not isinstance(self.index, cudf.DatetimeIndex):
-                raise TypeError("Index must be DatetimeIndex")
-
-            if inclusive not in {"both", "neither", "left", "right"}:
-                raise ValueError(
-                    "Inclusive has to be either 'both', 'neither', "
-                    "'left' or 'right'"
-                )
-            include_start = inclusive in {"both", "left"}
-            include_end = inclusive in {"both", "right"}
-
-            indexer = self.index.indexer_between_time(
-                start_time,
-                end_time,
-                include_start=include_start,
-                include_end=include_end,
-            )
-            return self.iloc[indexer]
+            include_start=include_start,
+            include_end=include_end,
+        )
+        return self.iloc[indexer]
 
     @_performance_tracking
     def at_time(self, time, axis: Axis | None = None) -> Self:

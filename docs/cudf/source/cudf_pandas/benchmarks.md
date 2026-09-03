@@ -175,19 +175,19 @@ for table in tables:
 
 ### Run
 
-**CPU** (`--executor cpu`, pandas):
+**CPU** (`--frontend pandas-cpu`, pandas):
 
 ```bash
 python -m cudf.pandas._benchmarks.pdsh all \
-    --executor cpu \
+    --frontend pandas-cpu \
     --path "${DATA_PATH}"
 ```
 
-**GPU** (`--executor in-memory`, cudf.pandas):
+**GPU** (`--frontend in-memory`, cudf.pandas):
 
 ```bash
 python -m cudf.pandas._benchmarks.pdsh all \
-    --executor in-memory \
+    --frontend in-memory \
     --path "${DATA_PATH}"
 ```
 
@@ -199,8 +199,9 @@ per-iteration timings:
 
 ```json
 {
+  "engine_name": "cudf-pandas",
   "query_set": "pdsh",
-  "executor": "in-memory",
+  "frontend": "in-memory",
   "dataset_path": "data/tables/scale-50.0",
   "scale_factor": 50,
   "records": {
@@ -212,5 +213,5 @@ per-iteration timings:
 }
 ```
 
-`duration` is in seconds. Running multiple executors with the same `-o` file appends each as a
+`duration` is in seconds. Running multiple frontends with the same `-o` file appends each as a
 separate line, making it easy to compare CPU and GPU results in one file.

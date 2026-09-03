@@ -52,7 +52,9 @@ except ImportError as e:
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
-ExecutorType = Literal["in-memory", "cpu"]
+FrontendType = Literal["in-memory", "pandas-cpu"]
+
+_CPU_ENGINES = frozenset({"pandas-cpu"})
 
 PANDAS_VALIDATION_OPTIONS: dict[str, Any] = {
     "check_dtype": False,
@@ -446,9 +448,10 @@ def record_from_dict(data: dict[str, Any]) -> SuccessRecord | FailedRecord:
 class RunConfig:
     """Results for a PDS-H or PDS-DS query run."""
 
+    engine_name: Literal["cudf-pandas", "pandas"]
     queries: list[int]
     suffix: str
-    executor: ExecutorType
+    frontend: FrontendType
     versions: PackageVersions = dataclasses.field(
         default_factory=PackageVersions.collect
     )
@@ -474,7 +477,10 @@ class RunConfig:
     @classmethod
     def from_args(cls, args: argparse.Namespace) -> RunConfig:
         """Create a RunConfig from command line arguments."""
-        executor: ExecutorType = args.executor
+        frontend: FrontendType = args.frontend
+        engine_name: Literal["cudf-pandas", "pandas"] = (
+            "pandas" if frontend == "pandas-cpu" else "cudf-pandas"
+        )
 
         path = args.path
         name = args.query_set
@@ -531,8 +537,9 @@ class RunConfig:
             validation_method = None
 
         return cls(
+            engine_name=engine_name,
             queries=args.query,
-            executor=executor,
+            frontend=frontend,
             dataset_path=path,
             scale_factor=scale_factor,
             iterations=args.iterations,
@@ -560,7 +567,7 @@ class RunConfig:
             print(f"query: {query}")  # noqa: T201
             print(f"path: {self.dataset_path}")  # noqa: T201
             print(f"scale_factor: {self.scale_factor}")  # noqa: T201
-            print(f"executor: {self.executor}")  # noqa: T201
+            print(f"frontend: {self.frontend}")  # noqa: T201
             valid_durations = [
                 record.duration
                 for record in records
@@ -699,7 +706,7 @@ def execute_query(
         domain="cudf.pandas",
         color="green",
     ):
-        if run_config.executor == "cpu":
+        if run_config.frontend == "pandas-cpu":
             with disable_module_accelerator():
                 start_time = time.monotonic()
                 result = q(run_config)
@@ -799,15 +806,14 @@ def parse_args(
             Default: .parquet"""),
     )
     parser.add_argument(
-        "-e",
-        "--executor",
+        "--frontend",
         default="in-memory",
         type=str,
-        choices=["in-memory", "cpu"],
+        choices=["in-memory", "pandas-cpu"],
         help=textwrap.dedent("""\
-            Query executor backend:
-                - in-memory : Use cudf.pandas
-                - cpu       : Use pandas"""),
+            Execution frontend:
+                - in-memory : Single-process GPU evaluation via cudf.pandas
+                - pandas-cpu : pandas CPU execution (no GPU)"""),
     )
     parser.add_argument(
         "--iterations",
@@ -970,7 +976,7 @@ def run_pandas_query(
         match validation_method.expected_source:
             case "pandas":
                 cpu_run_config = dataclasses.replace(
-                    run_config, executor="cpu"
+                    run_config, frontend="pandas-cpu"
                 )
                 expected, _ = execute_query(q_id, 0, q, cpu_run_config)
             case "duckdb":
@@ -1059,7 +1065,7 @@ def run_pandas(
     options: Sequence[str] | None = None,
     num_queries: int = 22,
 ) -> None:
-    """Run the queries using the given benchmark and executor options."""
+    """Run the queries using the given benchmark and frontend."""
     args = parse_args(options, num_queries=num_queries)
     vars(args).update({"query_set": benchmark.name})
     run_config = RunConfig.from_args(args)
@@ -1105,7 +1111,7 @@ def run_pandas(
 
     if (
         run_config.validation_method is not None
-        and run_config.executor != "cpu"
+        and run_config.frontend not in _CPU_ENGINES
     ):
         print("\nValidation Summary")  # noqa: T201
         print("==================")  # noqa: T201

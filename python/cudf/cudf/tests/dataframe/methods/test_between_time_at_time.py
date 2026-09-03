@@ -7,29 +7,30 @@ import cudf
 from cudf.testing import assert_eq
 
 
-def _make_frame():
+@pytest.fixture
+def gdf_pdf():
     dates = cudf.date_range("2018-04-09", periods=4, freq="1D20min")
     df = cudf.DataFrame({"A": [1, 2, 3, 4]}, index=dates)
     return df, df.to_pandas()
 
 
-def test_between_time_basic():
-    gdf, pdf = _make_frame()
+def test_between_time_basic(gdf_pdf):
+    gdf, pdf = gdf_pdf
     expected = pdf.between_time("0:15", "0:45")
     actual = gdf.between_time("0:15", "0:45")
     assert_eq(actual, expected)
 
 
 @pytest.mark.parametrize("inclusive", ["both", "neither", "left", "right"])
-def test_between_time_inclusive_modes(inclusive):
-    gdf, pdf = _make_frame()
-    expected = pdf.between_time("0:15", "0:45", inclusive=inclusive)
-    actual = gdf.between_time("0:15", "0:45", inclusive=inclusive)
+def test_between_time_inclusive_modes(gdf_pdf, inclusive):
+    gdf, pdf = gdf_pdf
+    expected = pdf.between_time("0:20", "0:40", inclusive=inclusive)
+    actual = gdf.between_time("0:20", "0:40", inclusive=inclusive)
     assert_eq(actual, expected)
 
 
-def test_between_time_wraparound():
-    gdf, pdf = _make_frame()
+def test_between_time_wraparound(gdf_pdf):
+    gdf, pdf = gdf_pdf
     expected = pdf.between_time("0:45", "0:15")
     actual = gdf.between_time("0:45", "0:15")
     assert_eq(actual, expected)
@@ -51,8 +52,8 @@ def test_between_time_invalid_index():
         gdf.between_time("0:15", "0:45")
 
 
-def test_between_time_invalid_inclusive():
-    gdf, _ = _make_frame()
+def test_between_time_invalid_inclusive(gdf_pdf):
+    gdf, _ = gdf_pdf
     with pytest.raises(ValueError):
         gdf.between_time("0:15", "0:45", inclusive="oops")
 
@@ -72,8 +73,8 @@ def test_at_time_fractional_seconds():
     gdf = cudf.DataFrame({"A": range(5)}, index=dates)
     pdf = gdf.to_pandas()
 
-    expected = pdf.at_time("00:00:01")
-    actual = gdf.at_time("00:00:01")
+    expected = pdf.at_time("00:00:01.500")
+    actual = gdf.at_time("00:00:01.500")
     assert_eq(actual, expected)
 
 

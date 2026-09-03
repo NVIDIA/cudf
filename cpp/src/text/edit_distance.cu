@@ -261,7 +261,7 @@ std::unique_ptr<cudf::column> edit_distance(cudf::strings_column_view const& inp
   // get the total size of the temporary compute buffer
   // and convert sizes to offsets in-place
   auto const compute_size =
-    cudf::detail::sizes_to_offsets(offsets.begin(), offsets.end(), offsets.begin(), 0, stream);
+    cudf::detail::sizes_to_offsets(offsets.begin(), offsets.end(), offsets.begin(), 0, stream, mr);
   rmm::device_uvector<cudf::size_type> compute_buffer(compute_size, stream);
   auto d_buffer = compute_buffer.data();
 

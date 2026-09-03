@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 """Utility functions/classes for running the PDS-H and PDS-DS benchmarks."""
@@ -36,10 +36,42 @@ try:
 except ImportError:
     pynvml = None
 
+try:
+    import duckdb
+
+    duckdb_err = None
+except ImportError as e:
+    duckdb = None
+    duckdb_err = e
+
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
 ExecutorType = Literal["in-memory", "cpu"]
+
+PANDAS_VALIDATION_OPTIONS: dict[str, Any] = {
+    "check_dtype": False,
+    "atol": 0.02,
+}
+
+PDSH_TABLE_NAMES: list[str] = [
+    "customer",
+    "lineitem",
+    "nation",
+    "orders",
+    "part",
+    "partsupp",
+    "region",
+    "supplier",
+]
+
+
+def get_validation_options(args: Any) -> dict[str, Any]:
+    """Get validation options dict from parsed arguments."""
+    return {
+        **PANDAS_VALIDATION_OPTIONS,
+        "atol": args.validation_abs_tol,
+    }
 
 
 @dataclasses.dataclass
@@ -91,7 +123,8 @@ class ValidationMethod:
         A name indicating the source of the expected results.
 
         - 'pandas': Run pandas against the same data
-        - 'duckdb': Compare against pre-computed DuckDB results
+        - 'duckdb': Run duckdb against the same data
+        - 'duckdb-disk': Compare to duckdb pregenerated results on disk
 
     comparison_method
         How the comparison was performed. Currently, only
@@ -101,11 +134,23 @@ class ValidationMethod:
     comparison_options
         Additional options passed to the comparison method, controlling
         things like the tolerance for floating point comparisons.
+
+    expected_location
+        Optional path to disk-based expected results, must be provided if
+        source is "duckdb-disk".
     """
 
-    expected_source: Literal["duckdb", "pandas"]
+    expected_source: Literal["pandas", "duckdb", "duckdb-disk"]
     comparison_method: Literal["pandas"]
     comparison_options: dict[str, Any]
+    expected_location: str | None
+
+    def expected_file(self, q_id: int) -> str:
+        """Return path to disk-based result for the given query."""
+        if self.expected_location is None:
+            raise RuntimeError("No expected location given")
+
+        return self.expected_location.rstrip("/") + f"/q*{q_id:02d}.parquet"
 
 
 @dataclasses.dataclass(kw_only=True)
@@ -207,7 +252,7 @@ class GPUInfo:
         except pynvml.NVMLError_NotSupported:
             # Happens on systems without traditional GPU memory (e.g., Grace Hopper),
             # where nvmlDeviceGetMemoryInfo is not supported.
-            # See: https://github.com/rapidsai/cudf/issues/19427
+            # See: https://github.com/NVIDIA/cudf/issues/19427
             return cls(
                 name=pynvml.nvmlDeviceGetName(handle),
                 index=index,
@@ -283,6 +328,9 @@ class RunConfig:
     run_id: uuid.UUID = dataclasses.field(default_factory=uuid.uuid4)
     query_set: str
     validation_method: ValidationMethod | None = None
+    duckdb_threads: int | None = None
+    duckdb_memory_limit: str | None = None
+    duckdb_temp_dir: str | None = None
 
     @classmethod
     def from_args(cls, args: argparse.Namespace) -> RunConfig:
@@ -326,17 +374,19 @@ class RunConfig:
                     f"but the inferred scale factor is {sf_inf}."
                 )
 
-        if args.validate_directory:
+        if args.validate_directory is not None:
             validation_method = ValidationMethod(
-                expected_source="duckdb",
+                expected_source="duckdb-disk",
                 comparison_method="pandas",
-                comparison_options={},
+                comparison_options=get_validation_options(args),
+                expected_location=str(args.validate_directory),
             )
-        elif args.validate:
+        elif args.validate_against is not None:
             validation_method = ValidationMethod(
-                expected_source="pandas",
+                expected_source=args.validate_against,
                 comparison_method="pandas",
-                comparison_options={},
+                comparison_options=get_validation_options(args),
+                expected_location=None,
             )
         else:
             validation_method = None
@@ -350,6 +400,9 @@ class RunConfig:
             suffix=args.suffix,
             query_set=args.query_set,
             validation_method=validation_method,
+            duckdb_threads=args.duckdb_threads,
+            duckdb_memory_limit=args.duckdb_memory_limit,
+            duckdb_temp_dir=args.duckdb_temp_dir,
         )
 
     def serialize(self) -> dict:
@@ -376,15 +429,18 @@ class RunConfig:
                 ]
                 print(f"iterations: {self.iterations}")  # noqa: T201
                 print("---------------------------------------")  # noqa: T201
-                print(  # noqa: T201
-                    f"min time : {min(valid_durations):0.4f}"
-                )
-                print(  # noqa: T201
-                    f"max time : {max(valid_durations):0.4f}"
-                )
-                print(  # noqa: T201
-                    f"mean time: {statistics.mean(valid_durations):0.4f}"
-                )
+                if valid_durations:
+                    print(  # noqa: T201
+                        f"min time : {min(valid_durations):0.4f}"
+                    )
+                    print(  # noqa: T201
+                        f"max time : {max(valid_durations):0.4f}"
+                    )
+                    print(  # noqa: T201
+                        f"mean time: {statistics.mean(valid_durations):0.4f}"
+                    )
+                else:
+                    print("no successful iterations")  # noqa: T201
                 print("=======================================")  # noqa: T201
         total_mean_time = sum(
             statistics.mean(
@@ -393,7 +449,7 @@ class RunConfig:
                 if record.status == "success"
             )
             for records in self.records.values()
-            if records
+            if any(r.status == "success" for r in records)
         )
         print(  # noqa: T201
             f"Total mean time across all queries: {total_mean_time:.4f} seconds"
@@ -408,6 +464,99 @@ def get_data(
 ) -> pd.DataFrame:
     """Get table from dataset."""
     return pd.read_parquet(f"{path}/{table_name}{suffix}", columns=columns)
+
+
+def check_input_numeric_type(
+    run_config: RunConfig,
+) -> Literal["decimal", "float"]:
+    """Return whether PDS-H money columns are decimal or float."""
+    import decimal
+
+    sample = get_data(
+        run_config.dataset_path,
+        "customer",
+        run_config.suffix,
+        ["c_acctbal"],
+    )
+    col = sample["c_acctbal"]
+    dtype = col.dtype
+    if getattr(dtype, "kind", None) == "f":
+        return "float"
+    name = str(getattr(dtype, "name", dtype)).lower()
+    if "decimal" in name:
+        return "decimal"
+    try:
+        import pyarrow as pa
+
+        pa_dtype = getattr(dtype, "pyarrow_dtype", None)
+        if pa_dtype is not None and pa.types.is_decimal(pa_dtype):
+            return "decimal"
+    except Exception:
+        pass
+    if getattr(dtype, "kind", None) == "O" or name == "object":
+        for val in col.head(16):
+            if isinstance(val, decimal.Decimal):
+                return "decimal"
+    return "float"
+
+
+def apply_validation_casts(
+    frame: pd.DataFrame,
+    q_id: int,
+    benchmark: Any,
+    numeric_type: Literal["decimal", "float"],
+) -> pd.DataFrame:
+    """Apply per-query dtype casts before assert_frame_equal."""
+    casts: dict[str, str] = {}
+    expected_casts = getattr(benchmark, "EXPECTED_CASTS", None) or {}
+    casts.update(expected_casts.get(q_id, {}))
+    if numeric_type == "decimal":
+        decimal_casts = (
+            getattr(benchmark, "EXPECTED_CASTS_DECIMAL", None) or {}
+        )
+        casts.update(decimal_casts.get(q_id, {}))
+    if not casts:
+        return frame
+    out = frame.copy()
+    for col, dtype in casts.items():
+        if col in out.columns:
+            out[col] = out[col].astype(dtype)
+    return out
+
+
+def _make_duckdb_config(run_config: RunConfig | None) -> dict[str, Any]:
+    """Build a DuckDB connection config dict from a RunConfig."""
+    config: dict[str, Any] = {
+        "threads": run_config.duckdb_threads
+        if (run_config and run_config.duckdb_threads is not None)
+        else os.cpu_count(),
+    }
+    if run_config and run_config.duckdb_memory_limit is not None:
+        config["memory_limit"] = run_config.duckdb_memory_limit
+    if run_config and run_config.duckdb_temp_dir is not None:
+        config["temp_directory"] = run_config.duckdb_temp_dir
+    return config
+
+
+def execute_duckdb_query(
+    query: str,
+    dataset_path: Path,
+    *,
+    suffix: str = ".parquet",
+    run_config: RunConfig | None = None,
+) -> pd.DataFrame:
+    """Execute a query with DuckDB and return a pandas DataFrame."""
+    if duckdb is None:
+        raise ImportError(duckdb_err)
+    with disable_module_accelerator():
+        with duckdb.connect(config=_make_duckdb_config(run_config)) as conn:
+            for name in PDSH_TABLE_NAMES:
+                pattern = (Path(dataset_path) / name).as_posix() + suffix
+                conn.execute(
+                    f"CREATE OR REPLACE VIEW {name} AS "
+                    f"SELECT * FROM parquet_scan('{pattern}');"
+                )
+            return conn.execute(query).df()
 
 
 def execute_query(
@@ -548,7 +697,20 @@ def parse_args(
         help="Print the query results",
         default=True,
     )
-    parser.add_argument(
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument(
+        "--validate-against",
+        choices=["duckdb", "pandas"],
+        default=None,
+        help=(
+            "Validate the result against CPU execution. This will "
+            "run the query with both GPU and baseline engine (pandas or DuckDB), collect the "
+            "results in memory, and compare them using pandas'. "
+            "At larger scale factors, computing the expected result can be slow so "
+            "--validate-directory should be used instead."
+        ),
+    )
+    group.add_argument(
         "--validate-directory",
         type=Path,
         default=None,
@@ -559,22 +721,30 @@ def parse_args(
         ),
     )
     parser.add_argument(
-        "--validate",
-        action=argparse.BooleanOptionalAction,
-        default=False,
-        help=(
-            "Validate the result against CPU execution. This will "
-            "run the query with both GPU and baseline engine (pandas), collect the "
-            "results in memory, and compare them using pandas'. "
-            "At larger scale factors, computing the expected result can be slow so "
-            "--validate-directory should be used instead."
-        ),
+        "--validation-abs-tol",
+        type=float,
+        default=0.02,
+        help="Absolute tolerance for assert_frame_equal validation. Default: 0.02",
+    )
+    parser.add_argument(
+        "--duckdb-threads",
+        type=int,
+        default=None,
+        help="Number of threads for DuckDB to use. Defaults to os.cpu_count().",
+    )
+    parser.add_argument(
+        "--duckdb-memory-limit",
+        type=str,
+        default=None,
+        help="DuckDB memory limit (e.g. '500GB'). If unset, DuckDB uses its default.",
+    )
+    parser.add_argument(
+        "--duckdb-temp-dir",
+        type=str,
+        default=None,
+        help="Directory for DuckDB to spill temporary data to disk.",
     )
     parsed_args = parser.parse_args(args)
-    if parsed_args.validate_directory and parsed_args.validate:
-        raise ValueError(
-            "Specify either --validate-directory or --validate, not both."
-        )
     if (
         parsed_args.validate_directory is not None
         and not parsed_args.validate_directory.exists()
@@ -605,14 +775,25 @@ def run_pandas_query_iteration(
     run_config: RunConfig,
     args: argparse.Namespace,
     expected: pd.DataFrame | None,
+    result_casts: dict[str, str] | None = None,
 ) -> SuccessRecord:
     """Run a single query iteration. Caller must wrap in try/except."""
     result, duration = execute_query(q_id, iteration, q, run_config)
 
     if expected is not None:
+        if result_casts:
+            for col, dtype in result_casts.items():
+                result[col] = result[col].astype(dtype)
+        result_for_validation = getattr(result, "_fsproxy_slow", result)
+        comparison_options = (
+            run_config.validation_method.comparison_options
+            if run_config.validation_method is not None
+            else PANDAS_VALIDATION_OPTIONS
+        )
         try:
-            pd.testing.assert_frame_equal(
-                result, expected, check_dtype=False, atol=0.02
+            native_pd = getattr(pd, "_fsproxy_slow", pd)
+            native_pd.testing.assert_frame_equal(
+                result_for_validation, expected, **comparison_options
             )
         except Exception as e:
             validation_result = ValidationResult.from_error(e)
@@ -634,7 +815,6 @@ def run_pandas_query(
     benchmark: Any,
     run_config: RunConfig,
     args: argparse.Namespace,
-    validation_files: dict[int, Path] | None,
 ) -> QueryRunResult:
     """Run all iterations for a single query. Caller must wrap in try/except."""
     try:
@@ -643,13 +823,52 @@ def run_pandas_query(
         raise NotImplementedError(f"Query {q_id} not implemented.") from err
 
     expected: pd.DataFrame | None = None
-    if args.validate:
-        cpu_run_config = dataclasses.replace(run_config, executor="cpu")
-        expected, _ = execute_query(q_id, 0, q, cpu_run_config)
-    elif validation_files is not None:
-        expected = pd._fsproxy_slow.read_parquet(validation_files[q_id])
-    else:
-        expected = None
+    result_casts: dict[str, str] | None = None
+    validation_method = run_config.validation_method
+    if validation_method is not None:
+        numeric_type = check_input_numeric_type(run_config)
+        match validation_method.expected_source:
+            case "pandas":
+                cpu_run_config = dataclasses.replace(
+                    run_config, executor="cpu"
+                )
+                expected, _ = execute_query(q_id, 0, q, cpu_run_config)
+            case "duckdb":
+                duckdb_queries_cls = benchmark().duckdb_queries
+                get_ddb = getattr(duckdb_queries_cls, f"q{q_id}")
+                base_sql = get_ddb(run_config)
+                expected = execute_duckdb_query(
+                    base_sql,
+                    run_config.dataset_path,
+                    suffix=run_config.suffix,
+                    run_config=run_config,
+                )
+            case "duckdb-disk":
+                if validation_method.expected_location is None:
+                    raise RuntimeError("No expected location given")
+                expected_dir = Path(validation_method.expected_location)
+                matches = list(expected_dir.glob(f"q*{q_id:02d}.parquet"))
+                if not matches:
+                    matches = list(expected_dir.glob(f"q*{q_id}.parquet"))
+                if not matches:
+                    raise FileNotFoundError(
+                        f"No expected file for query {q_id} in "
+                        f"{validation_method.expected_location}"
+                    )
+                expected = pd._fsproxy_slow.read_parquet(matches[0])
+            case baseline:
+                raise ValueError(f"Invalid baseline: {baseline}")
+
+        expected = apply_validation_casts(
+            expected, q_id, benchmark, numeric_type
+        )
+        casts: dict[str, str] = {}
+        casts.update(getattr(benchmark, "EXPECTED_CASTS", {}).get(q_id, {}))
+        if numeric_type == "decimal":
+            casts.update(
+                getattr(benchmark, "EXPECTED_CASTS_DECIMAL", {}).get(q_id, {})
+            )
+        result_casts = casts or None
 
     query_records: list[SuccessRecord | FailedRecord] = []
     iteration_failures: list[tuple[int, int]] = []
@@ -659,7 +878,7 @@ def run_pandas_query(
     for i in range(args.iterations):
         try:
             record = run_pandas_query_iteration(
-                q_id, i, q, run_config, args, expected
+                q_id, i, q, run_config, args, expected, result_casts
             )
         except Exception:
             print(f"❌ query={q_id} iteration={i} failed!")  # noqa: T201
@@ -710,11 +929,6 @@ def run_pandas(
         defaultdict(list)
     )
 
-    if args.validate_directory is not None:
-        validation_files = list_validation_files(args.validate_directory)
-    else:
-        validation_files = None
-
     for q_id in run_config.queries:
         try:
             result = run_pandas_query(
@@ -722,7 +936,6 @@ def run_pandas(
                 benchmark=benchmark,
                 run_config=run_config,
                 args=args,
-                validation_files=validation_files,
             )
         except Exception:
             print(f"❌ query={q_id} failed (setup or execution)!")  # noqa: T201
@@ -749,14 +962,22 @@ def run_pandas(
     if args.summarize:
         run_config.summarize()
 
-    if args.validate and run_config.executor != "cpu":
+    if (
+        run_config.validation_method is not None
+        and run_config.executor != "cpu"
+    ):
         print("\nValidation Summary")  # noqa: T201
         print("==================")  # noqa: T201
         if validation_failures:
             print(  # noqa: T201
                 f"{len(validation_failures)} queries failed validation: {sorted(set(validation_failures))}"
             )
-        else:
+        if query_failures:
+            print(  # noqa: T201
+                "Validation was skipped for queries that failed to run: "
+                f"{sorted({q_id for q_id, _ in query_failures})}"
+            )
+        if not validation_failures and not query_failures:
             print("All validated queries passed.")  # noqa: T201
 
     args.output.write(json.dumps(run_config.serialize()))

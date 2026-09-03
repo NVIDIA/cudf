@@ -342,9 +342,9 @@ std::unique_ptr<column> replace_character_parallel(strings_column_view const& in
   auto targets_indices   = rmm::device_uvector<size_type>(target_count, stream);
 
   // cudf::detail::make_counting_transform_iterator hardcodes size_type
-  auto const copy_itr = thrust::make_transform_iterator(cuda::counting_iterator<int64_t>{0},
-                                                        pair_generator{fn, chars_bytes});
-  auto const out_itr  = cuda::make_zip_iterator(
+  auto const copy_itr =
+    cuda::transform_iterator(cuda::counting_iterator<int64_t>{0}, pair_generator{fn, chars_bytes});
+  auto const out_itr = cuda::make_zip_iterator(
     cuda::std::make_tuple(targets_positions.begin(), targets_indices.begin()));
   auto const copy_end =
     cudf::detail::copy_if(copy_itr, copy_itr + chars_bytes, out_itr, copy_if_fn{}, stream);
@@ -401,12 +401,11 @@ std::unique_ptr<column> replace_character_parallel(strings_column_view const& in
     });
 
   // use this utility to gather the string parts into a contiguous chars column
-  auto chars      = make_strings_column(indices.begin(), indices.end(), stream, mr);
+  auto chars      = cudf::make_strings_column(indices, stream, mr);
   auto chars_data = chars->release().data;
 
   // create offsets from the sizes
-  offsets = std::get<0>(
-    cudf::strings::detail::make_offsets_child_column(counts.begin(), counts.end(), stream, mr));
+  offsets = std::get<0>(cudf::strings::detail::make_offsets_child_column(counts, stream, mr));
 
   // build the strings columns from the chars and offsets
   return make_strings_column(strings_count,

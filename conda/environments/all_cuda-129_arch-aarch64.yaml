@@ -43,6 +43,7 @@ dependencies:
 - ipykernel
 - ipython
 - jupyter_client
+- kvikio==26.10.*,>=0.0.0a0
 - libcufile-dev
 - libcurand-dev
 - libkvikio==26.10.*,>=0.0.0a0
@@ -80,7 +81,7 @@ dependencies:
 - polars>=1.35,<1.43
 - pre-commit
 - psutil
-- pyarrow>=19.0.0,<24
+- pyarrow>=19.0.0
 - pytables
 - pytest-benchmark
 - pytest-cases>=3.8.2

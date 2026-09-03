@@ -2,10 +2,6 @@
 # SPDX-License-Identifier: Apache-2.0
 from __future__ import annotations
 
-import pytest
-
-pytest.importorskip("numba_cuda_mlir")
-
 from numba_cuda_mlir import types
 
 from cudf.core.udf.mlir_backend.masked_typing import (

@@ -15,8 +15,8 @@
 #include <cudf/utilities/memory_resource.hpp>
 
 #include <cuda/functional>
+#include <cuda/iterator>
 #include <cuda/stream>
-#include <thrust/iterator/transform_iterator.h>
 
 #include <stdexcept>
 
@@ -28,7 +28,7 @@ std::unique_ptr<table> gather(table_view const& source_table,
                               out_of_bounds_policy bounds_policy,
                               negative_index_policy neg_indices,
                               cuda::stream_ref stream,
-                              rmm::device_async_resource_ref mr)
+                              cudf::memory_resources mr)
 {
   CUDF_EXPECTS(not gather_map.has_nulls(), "gather_map contains nulls", std::invalid_argument);
 
@@ -41,8 +41,8 @@ std::unique_ptr<table> gather(table_view const& source_table,
     auto idx_converter     = cuda::proclaim_return_type<size_type>(
       [n_rows] __device__(size_type in) { return in < 0 ? in + n_rows : in; });
     return gather(source_table,
-                  thrust::make_transform_iterator(map_begin, idx_converter),
-                  thrust::make_transform_iterator(map_end, idx_converter),
+                  cuda::transform_iterator(map_begin, idx_converter),
+                  cuda::transform_iterator(map_end, idx_converter),
                   bounds_policy,
                   stream,
                   mr);
@@ -55,7 +55,7 @@ std::unique_ptr<table> gather(table_view const& source_table,
                               out_of_bounds_policy bounds_policy,
                               negative_index_policy neg_indices,
                               cuda::stream_ref stream,
-                              rmm::device_async_resource_ref mr)
+                              cudf::memory_resources mr)
 {
   CUDF_EXPECTS(gather_map.size() <= static_cast<size_t>(std::numeric_limits<size_type>::max()),
                "gather map size exceeds the column size limit",
@@ -74,7 +74,7 @@ std::unique_ptr<table> gather(table_view const& source_table,
                               column_view const& gather_map,
                               out_of_bounds_policy bounds_policy,
                               cuda::stream_ref stream,
-                              rmm::device_async_resource_ref mr)
+                              cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
 
@@ -89,7 +89,7 @@ std::unique_ptr<table> gather(table_view const& source_table,
                               out_of_bounds_policy bounds_policy,
                               negative_index_policy neg_indices,
                               cuda::stream_ref stream,
-                              rmm::device_async_resource_ref mr)
+                              cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::gather(source_table, gather_map, bounds_policy, neg_indices, stream, mr);

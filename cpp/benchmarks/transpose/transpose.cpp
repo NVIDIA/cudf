@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -12,7 +12,6 @@
 #include <cudf/utilities/default_stream.hpp>
 
 #include <cuda/iterator>
-#include <thrust/iterator/transform_iterator.h>
 
 #include <nvbench/nvbench.cuh>
 
@@ -22,7 +21,7 @@ void bench_transpose(nvbench::state& state)
   constexpr auto column_type_id = cudf::type_id::INT32;
 
   auto int_column_generator =
-    thrust::make_transform_iterator(cuda::counting_iterator<std::size_t>{0}, [count](int i) {
+    cuda::transform_iterator(cuda::counting_iterator<std::size_t>{0}, [count](int i) {
       return cudf::make_numeric_column(
         cudf::data_type{column_type_id}, count, cudf::mask_state::ALL_VALID);
     });
@@ -31,7 +30,7 @@ void bench_transpose(nvbench::state& state)
   auto input       = input_table.view();
 
   auto stream = cudf::get_default_stream();
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.value()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.get()));
 
   // Collect memory statistics.
   auto const bytes_read = static_cast<uint64_t>(input.num_columns()) * input.num_rows() *

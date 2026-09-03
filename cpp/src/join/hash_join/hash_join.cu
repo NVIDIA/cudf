@@ -44,20 +44,6 @@ bool is_trivial_join(table_view const& left, table_view const& right, join_kind 
   return false;
 }
 
-void validate_hash_join_probe(table_view const& right, table_view const& left, bool has_nulls)
-{
-  CUDF_EXPECTS(0 != left.num_columns(), "Hash join left table is empty", std::invalid_argument);
-  CUDF_EXPECTS(right.num_columns() == left.num_columns(),
-               "Mismatch in number of columns to be joined on",
-               std::invalid_argument);
-  CUDF_EXPECTS(has_nulls || !cudf::has_nested_nulls(left),
-               "Left table has nulls while right table was not hashed with null check.",
-               std::invalid_argument);
-  CUDF_EXPECTS(cudf::have_same_types(right, left),
-               "Mismatch in joining column data types",
-               cudf::data_type_error);
-}
-
 namespace {
 void build_hash_join(
   cudf::table_view const& right,
@@ -130,7 +116,8 @@ hash_join<Hasher>::hash_join(cudf::table_view const& right,
       rmm::mr::polymorphic_allocator<char>{std::move(mr)},
       stream.get()}})},
     _right{right},
-    _preprocessed_right{cudf::detail::row::equality::preprocessed_table::create(_right, stream)}
+    _preprocessed_right{cudf::detail::row::equality::preprocessed_table::create(
+      _right, stream, cudf::get_current_device_resource_ref())}
 {
   CUDF_FUNC_RANGE();
   CUDF_EXPECTS(0 != right.num_columns(), "Hash join right table is empty", std::invalid_argument);

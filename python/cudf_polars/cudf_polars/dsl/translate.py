@@ -22,6 +22,7 @@ from polars import polars as plrs  # type: ignore[attr-defined]
 import pylibcudf as plc
 
 from cudf_polars.containers import DataType
+from cudf_polars.containers.datatype import _contains_array
 from cudf_polars.dsl import expr, ir
 from cudf_polars.dsl.expressions.base import ExecutionContext
 from cudf_polars.dsl.to_ast import insert_colrefs
@@ -51,6 +52,8 @@ if TYPE_CHECKING:
 
 _HAS_ROLLING_FUNCTION = hasattr(plrs._expr_nodes, "RollingFunction")
 
+_ARRAY_PASSTHROUGH_ERROR = "Only pass-through of Array columns is supported"
+
 __all__ = ["Translator", "translate_named_expr"]
 
 
@@ -75,6 +78,13 @@ def _align_decimal_float_for_comparison(
             for op in operands
         )
     return operands
+
+
+def _contains_array_input(expression: expr.Expr) -> bool:
+    """Return whether an expression consumes an Array-typed input."""
+    return any(
+        _contains_array(node.dtype.polars_type) for node in traversal([expression])
+    )
 
 
 def _strip_file_uri(path: str) -> str:
@@ -247,7 +257,7 @@ class Translator:
             return None
         unique_errors = sorted({str(e): e for e in self.errors}.values(), key=str)
         # TODO: Display these errors in user-friendly way, tracked in
-        # https://github.com/rapidsai/cudf/issues/17051
+        # https://github.com/NVIDIA/cudf/issues/17051
         formatted_errors = "\n".join(
             f"- {e.__class__.__name__}: {e}" for e in unique_errors
         )
@@ -257,7 +267,9 @@ class Translator:
         )
         return NotImplementedError(message, unique_errors)
 
-    def translate_expr(self, *, n: int, schema: Schema) -> expr.Expr:
+    def translate_expr(
+        self, *, n: int, schema: Schema, allow_array_passthrough: bool = False
+    ) -> expr.Expr:
         """
         Translate a polars-internal expression IR into our representation.
 
@@ -267,6 +279,8 @@ class Translator:
             Node to translate, an integer referencing a polars internal node.
         schema
             Schema of the IR node this expression uses as evaluation context.
+        allow_array_passthrough
+            Whether a direct Array column may be returned unchanged.
 
         Returns
         -------
@@ -281,11 +295,25 @@ class Translator:
         """
         node = self.visitor.view_expression(n)
         dtype = DataType(self.visitor.get_dtype(n))
+        is_array_passthrough = (
+            allow_array_passthrough
+            and isinstance(dtype.polars_type, pl.Array)
+            and isinstance(node, plrs._expr_nodes.Column)
+        )
+        if isinstance(dtype.polars_type, pl.Array) and not is_array_passthrough:
+            error = NotImplementedError(_ARRAY_PASSTHROUGH_ERROR)
+            self.errors.append(error)
+            return expr.ErrorExpr(dtype, str(error))
         try:
-            return _translate_expr(node, self, dtype, schema)
+            translated = _translate_expr(node, self, dtype, schema)
         except Exception as e:
             self.errors.append(e)
             return expr.ErrorExpr(dtype, str(e))
+        if not is_array_passthrough and _contains_array_input(translated):
+            error = NotImplementedError(_ARRAY_PASSTHROUGH_ERROR)
+            self.errors.append(error)
+            return expr.ErrorExpr(dtype, str(error))
+        return translated
 
 
 class set_node(AbstractContextManager[None]):
@@ -426,7 +454,7 @@ def _(node: plrs._ir_nodes.PythonScan, translator: Translator, schema: Schema) -
         )
     if nrows is not None:
         # A global row limit cannot be enforced independently per rank; tracked
-        # in https://github.com/rapidsai/cudf/issues/22918.
+        # in https://github.com/NVIDIA/cudf/issues/22918.
         raise NotImplementedError(
             "A row limit (head/limit) on a PythonScan source is not supported."
         )
@@ -557,7 +585,12 @@ def _(node: plrs._ir_nodes.Select, translator: Translator, schema: Schema) -> ir
         inp = translator.translate_ir(n=None)
         with set_internal_name_gen(translator, inp.schema):
             exprs = [
-                translate_named_expr(translator, n=e, schema=inp.schema)
+                translate_named_expr(
+                    translator,
+                    n=e,
+                    schema=inp.schema,
+                    allow_array_passthrough=True,
+                )
                 for e in node.expr
             ]
     return ir.Select(schema, exprs, node.should_broadcast, inp)
@@ -678,7 +711,12 @@ def _(node: plrs._ir_nodes.HStack, translator: Translator, schema: Schema) -> ir
         inp = translator.translate_ir(n=None)
         with set_internal_name_gen(translator, inp.schema):
             exprs = [
-                translate_named_expr(translator, n=e, schema=inp.schema)
+                translate_named_expr(
+                    translator,
+                    n=e,
+                    schema=inp.schema,
+                    allow_array_passthrough=True,
+                )
                 for e in node.exprs
             ]
     return ir.HStack(schema, exprs, node.should_broadcast, inp)
@@ -701,13 +739,17 @@ def _(node: plrs._ir_nodes.Distinct, translator: Translator, schema: Schema) -> 
     (keep, subset, maintain_order, zlice) = node.options
     keep = ir.Distinct._KEEP_MAP[keep]
     subset = frozenset(subset) if subset is not None else None
+    inp = translator.translate_ir(n=node.input)
+    keys = inp.schema if subset is None else subset
+    if any(_contains_array(inp.schema[name].polars_type) for name in keys):
+        raise NotImplementedError(_ARRAY_PASSTHROUGH_ERROR)
     return ir.Distinct(
         schema,
         keep,
         subset,
         zlice,
         maintain_order,
-        translator.translate_ir(n=node.input),
+        inp,
     )
 
 
@@ -864,6 +906,10 @@ def _(node: plrs._ir_nodes.Sink, translator: Translator, schema: Schema) -> ir.I
     else:
         path = file["target"]["inner"]
 
+    df = translator.translate_ir(n=node.input)
+    if any(_contains_array(dtype.polars_type) for dtype in df.schema.values()):
+        raise NotImplementedError(_ARRAY_PASSTHROUGH_ERROR)
+
     return ir.Sink(
         schema=schema,
         kind=sink_kind,
@@ -871,12 +917,16 @@ def _(node: plrs._ir_nodes.Sink, translator: Translator, schema: Schema) -> ir.I
         parquet_options=translator.config_options.parquet_options,
         options=options,
         cloud_options=cloud_options,
-        df=translator.translate_ir(n=node.input),
+        df=df,
     )
 
 
 def translate_named_expr(
-    translator: Translator, *, n: plrs._expr_nodes.PyExprIR, schema: Schema
+    translator: Translator,
+    *,
+    n: plrs._expr_nodes.PyExprIR,
+    schema: Schema,
+    allow_array_passthrough: bool = False,
 ) -> expr.NamedExpr:
     """
     Translate a polars-internal named expression IR object into our representation.
@@ -889,6 +939,8 @@ def translate_named_expr(
         Node to translate, a named expression node.
     schema
         Schema of the IR node this expression uses as evaluation context.
+    allow_array_passthrough
+        Whether a direct Array column may be returned unchanged.
 
     Returns
     -------
@@ -907,7 +959,12 @@ def translate_named_expr(
         If any translation fails due to unsupported functionality.
     """
     return expr.NamedExpr(
-        n.output_name, translator.translate_expr(n=n.node, schema=schema)
+        n.output_name,
+        translator.translate_expr(
+            n=n.node,
+            schema=schema,
+            allow_array_passthrough=allow_array_passthrough,
+        ),
     )
 
 
@@ -1063,12 +1120,12 @@ def _(
             # cudf-polars has no concept of chunking, so we can just
             # drop it.
             # Note: This could be a plan hook for explicit repartition for streaming engines
-            # https://github.com/rapidsai/cudf/pull/23192#discussion_r3553113408
+            # https://github.com/NVIDIA/cudf/pull/23192#discussion_r3553113408
             (child,) = children
             return child
         if name == "fused":
             # TODO: fuse into a single kernel via JIT transform, see
-            # https://github.com/rapidsai/cudf/issues/21456. We don't use
+            # https://github.com/NVIDIA/cudf/issues/21456. We don't use
             # libcudf AST here because it widens the dtype for integer types
             # narrower than int32 (e.g. int8*int8 to int32), then fails
             # with a type mismatch when doing the add/sub with the third operand.
@@ -1112,6 +1169,12 @@ def _(
             return expr.Agg(
                 dtype, "quantile", interp, translator._expr_context, *children
             )
+        if name == "skew":
+            (bias,) = options
+            return expr.Skew(dtype, bias, *children)
+        if name == "kurtosis":
+            fisher, bias = options
+            return expr.Kurtosis(dtype, fisher, bias, *children)
         if name == "arg_max" and len(options) == 2:
             # IRFunctionExpr::ArgSort is exposed as ("arg_max", descending, nulls_last)
             name = "arg_sort"
@@ -1206,6 +1269,10 @@ def _(
         named_aggs = [agg for agg, _ in aggs]
 
         for named_agg in named_aggs:
+            if has_order_by and isinstance(named_agg.value, expr.RollingWindow):
+                raise NotImplementedError(
+                    "rolling(...).over(..., order_by=...) is not supported"
+                )
             if _unsupported_fill_over_window(named_agg.value):
                 raise NotImplementedError(
                     "fill_null with strategy over a window is only supported when "
@@ -1216,30 +1283,32 @@ def _(
             translator.translate_expr(n=n, schema=schema) for n in node.partition_by
         ]
 
-        child_deps = [
-            v.children[0].children[0]
+        child_deps: list[expr.Expr] = []
+        for ne in named_aggs:
+            v = ne.value
             if (
                 isinstance(v, expr.UnaryFunction)
                 and v.name == "fill_null_with_strategy"
                 and isinstance(v.children[0], expr.UnaryFunction)
                 and v.children[0].name == "cum_sum"
-            )
-            else v.children[0]
-            for ne in named_aggs
-            for v in (ne.value,)
-            if isinstance(v, expr.Agg)
-            or (
+            ):
+                child_deps.append(v.children[0].children[0])
+            elif isinstance(v, expr.RollingWindow):
+                child_deps.append(v.children[0])
+                child_deps.append(expr.Col(schema[v.orderby], v.orderby))
+            elif isinstance(v, (expr.FixedSizeRollingWindow, expr.Agg)) or (
                 isinstance(v, expr.UnaryFunction)
                 and v.name
                 in {
                     "rank",
                     "fill_null_with_strategy",
                     "cum_sum",
+                    "diff",
                     "shift",
                     "shift_and_fill",
                 }
-            )
-        ]
+            ):
+                child_deps.append(v.children[0])
         children = (*by_exprs, *((order_by_expr,) if has_order_by else ()), *child_deps)
         return expr.GroupedWindow(
             dtype,
@@ -1410,6 +1479,9 @@ def _(
     strict = node.options != 1
     inner = translator.translate_expr(n=node.expr, schema=schema)
 
+    if isinstance(inner.dtype.polars_type, pl.Array):
+        raise NotImplementedError("Casting from Array is not supported")
+
     if plc.traits.is_floating_point(inner.dtype.plc_type) and plc.traits.is_fixed_point(
         dtype.plc_type
     ):
@@ -1503,6 +1575,10 @@ def _(
 ) -> expr.Expr:
     left = translator.translate_expr(n=node.left, schema=schema)
     right = translator.translate_expr(n=node.right, schema=schema)
+    if isinstance(left.dtype.polars_type, pl.Array) or isinstance(
+        right.dtype.polars_type, pl.Array
+    ):
+        raise NotImplementedError("Binary operations on Array are not supported")
     if node.op == plrs._expr_nodes.Operator.TrueDivide and (
         plc.traits.is_fixed_point(left.dtype.plc_type)
         or plc.traits.is_fixed_point(right.dtype.plc_type)

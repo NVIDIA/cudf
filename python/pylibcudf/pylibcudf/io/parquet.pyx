@@ -119,7 +119,7 @@ cdef class ParquetReaderOptions:
     For details, see :cpp:class:`cudf::io::parquet_reader_options`
     """
     @staticmethod
-    def builder(SourceInfo source):
+    def builder(SourceInfo source) -> ParquetReaderOptionsBuilder:
         """
         Create a ParquetReaderOptionsBuilder object
 
@@ -343,7 +343,39 @@ cdef class ParquetReaderOptions:
         """
         return self.c_obj.is_enabled_case_sensitive_names()
 
+    cpdef void enable_prepend_source_index_column(self, bool val):
+        """
+        Sets whether to prepend a source file index column to the output.
+
+        The prepended ``source_index`` column contains, for each output row, the
+        index of the source the row was read from. It is synthesized before any
+        filter is applied, so it remains valid for filtered reads.
+
+        Parameters
+        ----------
+        val : bool
+            Enables prepending the source index column
+
+        Returns
+        -------
+        None
+        """
+        self.c_obj.enable_prepend_source_index_column(val)
+
+    cpdef bool is_enabled_prepend_source_index_column(self):
+        """
+        Returns whether a source file index column is prepended to the output.
+
+        Returns
+        -------
+        bool
+            Whether the source index column is prepended
+        """
+        return self.c_obj.is_enabled_prepend_source_index_column()
+
 cdef class ParquetReaderOptionsBuilder:
+    """Builder to build options for ``read_parquet``."""
+
     cpdef ParquetReaderOptionsBuilder convert_strings_to_categories(self, bool val):
         """
         Sets enable/disable conversion of strings to categories.
@@ -550,6 +582,27 @@ cdef class ParquetReaderOptionsBuilder:
         self.c_obj.case_sensitive_names(val)
         return self
 
+    cpdef ParquetReaderOptionsBuilder prepend_source_index_column(self, bool val):
+        """
+        Sets whether to prepend a source file index column to the output.
+
+        The prepended ``source_index`` column contains, for each output row, the
+        index of the source the row was read from. It is synthesized before any
+        filter is applied, so it remains valid for filtered reads.
+
+        Parameters
+        ----------
+        val : bool
+            ``True`` to prepend a source index column, ``False`` otherwise
+            (default).
+
+        Returns
+        -------
+        ParquetReaderOptionsBuilder
+        """
+        self.c_obj.prepend_source_index_column(val)
+        return self
+
     cpdef ParquetReaderOptionsBuilder decimal_width(self, type_id width):
         """
         Sets the decimal width used to cast all decimal columns.
@@ -567,7 +620,7 @@ cdef class ParquetReaderOptionsBuilder:
         self.c_obj.decimal_width(width)
         return self
 
-    cpdef build(self):
+    cpdef ParquetReaderOptions build(self):
         """Create a ParquetReaderOptions object"""
         cdef ParquetReaderOptions parquet_options = ParquetReaderOptions.__new__(
             ParquetReaderOptions
@@ -834,8 +887,10 @@ cdef class ChunkedParquetWriter:
 
 
 cdef class ChunkedParquetWriterOptions:
+    """The settings to use for chunked Parquet writing."""
+
     @staticmethod
-    def builder(SinkInfo sink):
+    def builder(SinkInfo sink) -> ChunkedParquetWriterOptionsBuilder:
         """
         Create builder to create ChunkedParquetWriterOptions.
 
@@ -874,6 +929,8 @@ cdef class ChunkedParquetWriterOptions:
 
 
 cdef class ChunkedParquetWriterOptionsBuilder:
+    """Builder to build options for chunked Parquet writing."""
+
     cpdef ChunkedParquetWriterOptionsBuilder metadata(
         self,
         TableInputMetadata metadata
@@ -894,7 +951,7 @@ cdef class ChunkedParquetWriterOptionsBuilder:
 
         Returns
         -------
-        Self
+        ChunkedParquetWriterOptionsBuilder
         """
         self.c_obj.key_value_metadata(
             [
@@ -918,7 +975,7 @@ cdef class ChunkedParquetWriterOptionsBuilder:
 
         Returns
         -------
-        Self
+        ChunkedParquetWriterOptionsBuilder
         """
         self.c_obj.compression(compression)
         return self
@@ -934,7 +991,7 @@ cdef class ChunkedParquetWriterOptionsBuilder:
 
         Returns
         -------
-        Self
+        ChunkedParquetWriterOptionsBuilder
         """
         self.c_obj.stats_level(sf)
         return self
@@ -950,7 +1007,7 @@ cdef class ChunkedParquetWriterOptionsBuilder:
 
         Returns
         -------
-        Self
+        ChunkedParquetWriterOptionsBuilder
         """
         self.c_obj.row_group_size_bytes(val)
         return self
@@ -966,7 +1023,7 @@ cdef class ChunkedParquetWriterOptionsBuilder:
 
         Returns
         -------
-        Self
+        ChunkedParquetWriterOptionsBuilder
         """
         self.c_obj.row_group_size_rows(val)
         return self
@@ -982,7 +1039,7 @@ cdef class ChunkedParquetWriterOptionsBuilder:
 
         Returns
         -------
-        Self
+        ChunkedParquetWriterOptionsBuilder
         """
         self.c_obj.max_page_size_bytes(val)
         return self
@@ -998,7 +1055,7 @@ cdef class ChunkedParquetWriterOptionsBuilder:
 
         Returns
         -------
-        Self
+        ChunkedParquetWriterOptionsBuilder
         """
         self.c_obj.max_page_size_rows(val)
         return self
@@ -1014,7 +1071,7 @@ cdef class ChunkedParquetWriterOptionsBuilder:
 
         Returns
         -------
-        Self
+        ChunkedParquetWriterOptionsBuilder
         """
         self.c_obj.max_dictionary_size(val)
         return self
@@ -1030,7 +1087,7 @@ cdef class ChunkedParquetWriterOptionsBuilder:
 
         Returns
         -------
-        Self
+        ChunkedParquetWriterOptionsBuilder
         """
         self.c_obj.write_arrow_schema(enabled)
         return self
@@ -1046,9 +1103,10 @@ cdef class ChunkedParquetWriterOptionsBuilder:
 
 
 cdef class ParquetWriterOptions:
+    """The settings to use for ``write_parquet``."""
 
     @staticmethod
-    def builder(SinkInfo sink, Table table):
+    def builder(SinkInfo sink, Table table) -> ParquetWriterOptionsBuilder:
         """
         Create builder to create ParquetWriterOptionsBuilder.
 
@@ -1186,6 +1244,7 @@ cdef class ParquetWriterOptions:
 
 
 cdef class ParquetWriterOptionsBuilder:
+    """Builder to build options for ``write_parquet``."""
 
     cpdef ParquetWriterOptionsBuilder metadata(self, TableInputMetadata metadata):
         """
@@ -1198,7 +1257,7 @@ cdef class ParquetWriterOptionsBuilder:
 
         Returns
         -------
-        Self
+        ParquetWriterOptionsBuilder
         """
         self.c_obj.metadata(metadata.c_obj)
         return self
@@ -1216,7 +1275,7 @@ cdef class ParquetWriterOptionsBuilder:
 
         Returns
         -------
-        Self
+        ParquetWriterOptionsBuilder
         """
         self.c_obj.key_value_metadata(
             [
@@ -1237,7 +1296,7 @@ cdef class ParquetWriterOptionsBuilder:
 
         Returns
         -------
-        Self
+        ParquetWriterOptionsBuilder
         """
         self.c_obj.compression(compression)
         return self
@@ -1253,7 +1312,7 @@ cdef class ParquetWriterOptionsBuilder:
 
         Returns
         -------
-        Self
+        ParquetWriterOptionsBuilder
         """
         self.c_obj.stats_level(sf)
         return self
@@ -1269,7 +1328,7 @@ cdef class ParquetWriterOptionsBuilder:
 
         Returns
         -------
-        Self
+        ParquetWriterOptionsBuilder
         """
         self.c_obj.int96_timestamps(enabled)
         return self
@@ -1285,7 +1344,7 @@ cdef class ParquetWriterOptionsBuilder:
 
         Returns
         -------
-        Self
+        ParquetWriterOptionsBuilder
         """
         self.c_obj.write_v2_headers(enabled)
         return self
@@ -1305,7 +1364,7 @@ cdef class ParquetWriterOptionsBuilder:
 
         Returns
         -------
-        Self
+        ParquetWriterOptionsBuilder
         """
         self.c_obj.page_level_compression(enabled)
         return self
@@ -1321,7 +1380,7 @@ cdef class ParquetWriterOptionsBuilder:
 
         Returns
         -------
-        Self
+        ParquetWriterOptionsBuilder
         """
         self.c_obj.dictionary_policy(val)
         return self
@@ -1337,7 +1396,7 @@ cdef class ParquetWriterOptionsBuilder:
 
         Returns
         -------
-        Self
+        ParquetWriterOptionsBuilder
         """
         self.c_obj.utc_timestamps(enabled)
         return self
@@ -1353,7 +1412,7 @@ cdef class ParquetWriterOptionsBuilder:
 
         Returns
         -------
-        Self
+        ParquetWriterOptionsBuilder
         """
         self.c_obj.write_arrow_schema(enabled)
         return self
@@ -1369,7 +1428,7 @@ cdef class ParquetWriterOptionsBuilder:
 
         Returns
         -------
-        Self
+        ParquetWriterOptionsBuilder
         """
         self.c_obj.row_group_size_rows(val)
         return self
@@ -1385,7 +1444,7 @@ cdef class ParquetWriterOptionsBuilder:
 
         Returns
         -------
-        Self
+        ParquetWriterOptionsBuilder
         """
         self.c_obj.max_page_size_bytes(val)
         return self

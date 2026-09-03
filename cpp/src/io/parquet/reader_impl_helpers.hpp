@@ -15,6 +15,7 @@
 
 #include <cstddef>
 #include <functional>
+#include <memory>
 #include <optional>
 #include <span>
 #include <string>
@@ -357,7 +358,7 @@ class aggregate_reader_metadata {
    * Returns true iff at least one column chunk referenced by `filter_column_schemas` in the first
    * selected row group of any source carries any of `min` / `max` / `min_value` / `max_value` /
    * `null_count`. Inspecting one row group per source is sufficient; see
-   * https://github.com/rapidsai/cudf/pull/22664#issuecomment-4557500237.
+   * https://github.com/NVIDIA/cudf/pull/22664#issuecomment-4557500237.
    *
    * @param input_row_group_indices Selected row group indices, one vector per source
    * @param filter_column_schemas Zeroth-source schema indices of the columns referenced by the
@@ -515,6 +516,19 @@ class aggregate_reader_metadata {
    */
   [[nodiscard]] std::unordered_map<std::string, std::vector<int64_t>> get_column_chunk_metadata()
     const;
+
+  /**
+   * @brief Decodes min/max statistics for selected column chunks.
+   *
+   * @param column_names Dotted leaf-column paths to decode statistics for
+   * @param stream CUDA stream used for device memory operations
+   * @param mr Device memory resource to use for device memory allocation
+   * @return Table of row-group identifiers and decoded min/max bounds
+   */
+  [[nodiscard]] std::unique_ptr<table> read_column_chunk_bounds(
+    std::span<std::string const> column_names,
+    cuda::stream_ref stream,
+    rmm::device_async_resource_ref mr) const;
 
   /**
    * @brief Get total number of rows across all files

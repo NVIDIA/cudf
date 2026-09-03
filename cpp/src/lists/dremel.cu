@@ -268,8 +268,10 @@ dremel_data get_encoding(column_view h_col,
   rmm::device_uvector<uint8_t> rep_level(max_vals_size, stream);
   rmm::device_uvector<uint8_t> def_level(max_vals_size, stream);
 
-  rmm::device_uvector<uint8_t> temp_rep_vals(max_vals_size, stream);
-  rmm::device_uvector<uint8_t> temp_def_vals(max_vals_size, stream);
+  // Use max_vals_size only for nested lists; otherwise no temporary values are needed.
+  auto const temp_vals_size = nesting_levels.size() > 2 ? max_vals_size : size_t{0};
+  rmm::device_uvector<uint8_t> temp_rep_vals(temp_vals_size, stream);
+  rmm::device_uvector<uint8_t> temp_def_vals(temp_vals_size, stream);
   rmm::device_uvector<size_type> new_offsets(0, stream);
   size_type curr_rep_values_size = 0;
   {
@@ -291,23 +293,22 @@ dremel_data get_encoding(column_view h_col,
     // Merge empty at deepest parent level with the rep, def level vals at leaf level
 
     auto input_parent_rep_it = cuda::make_constant_iterator(level);
-    auto input_parent_def_it =
-      thrust::make_transform_iterator(empties_idx.begin(),
-                                      def_level_fn{d_nesting_levels + level,
-                                                   d_nullability.data(),
-                                                   start_at_sub_level[level],
-                                                   def_at_level[level],
-                                                   always_nullable});
+    auto input_parent_def_it = cuda::transform_iterator(empties_idx.begin(),
+                                                        def_level_fn{d_nesting_levels + level,
+                                                                     d_nullability.data(),
+                                                                     start_at_sub_level[level],
+                                                                     def_at_level[level],
+                                                                     always_nullable});
 
     // `nesting_levels.size()` == no of list levels + leaf. Max repetition level = no of list levels
     auto input_child_rep_it = cuda::make_constant_iterator(nesting_levels.size() - 1);
     auto input_child_def_it =
-      thrust::make_transform_iterator(cuda::counting_iterator{column_offsets[level + 1]},
-                                      def_level_fn{d_nesting_levels + level + 1,
-                                                   d_nullability.data(),
-                                                   start_at_sub_level[level + 1],
-                                                   def_at_level[level + 1],
-                                                   always_nullable});
+      cuda::transform_iterator(cuda::counting_iterator{column_offsets[level + 1]},
+                               def_level_fn{d_nesting_levels + level + 1,
+                                            d_nullability.data(),
+                                            start_at_sub_level[level + 1],
+                                            def_at_level[level + 1],
+                                            always_nullable});
 
     // Zip the input and output value iterators so that merge operation is done only once
     auto input_parent_zip_it =
@@ -388,16 +389,15 @@ dremel_data get_encoding(column_view h_col,
     std::swap(temp_def_vals, def_level);
 
     // Merge empty at parent level with the rep, def level vals at current level
-    auto transformed_empties = thrust::make_transform_iterator(empties.begin(), offset_transformer);
+    auto transformed_empties = cuda::transform_iterator(empties.begin(), offset_transformer);
 
     auto input_parent_rep_it = cuda::make_constant_iterator(level);
-    auto input_parent_def_it =
-      thrust::make_transform_iterator(empties_idx.begin(),
-                                      def_level_fn{d_nesting_levels + level,
-                                                   d_nullability.data(),
-                                                   start_at_sub_level[level],
-                                                   def_at_level[level],
-                                                   always_nullable});
+    auto input_parent_def_it = cuda::transform_iterator(empties_idx.begin(),
+                                                        def_level_fn{d_nesting_levels + level,
+                                                                     d_nullability.data(),
+                                                                     start_at_sub_level[level],
+                                                                     def_at_level[level],
+                                                                     always_nullable});
 
     // Zip the input and output value iterators so that merge operation is done only once
     auto input_parent_zip_it =

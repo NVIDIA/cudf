@@ -42,7 +42,7 @@ def _create_polars_column_metadata(
             _create_polars_column_metadata(field.name, field.dtype)
             for field in dtype.fields
         ]
-    elif isinstance(dtype, pl.List):
+    elif isinstance(dtype, (pl.List, pl.Array)):
         children_meta = [
             plc.interop.ColumnMetadata(name="offsets"),
             _create_polars_column_metadata("element", dtype.inner),
@@ -137,8 +137,16 @@ class DataFrame:
         table_with_metadata = _ObjectWithArrowMetadata(
             self.table, metadata, self.stream
         )
-        df = pl.DataFrame(table_with_metadata)
-        return df.rename(name_map).with_columns(
+        df = pl.DataFrame(table_with_metadata).rename(name_map)
+        array_dtypes: dict[str, PolarsDataType] = {
+            column.name: column.dtype.polars_type
+            for column in self.columns
+            if isinstance(column.dtype.polars_type, pl.Array)
+        }
+        if array_dtypes:
+            # TODO: Remove this cast when libcudf can export Arrow fixed-size lists.
+            df = df.cast(pl.Schema(array_dtypes), strict=True)
+        return df.with_columns(
             pl.col(c.name).set_sorted(descending=c.order == plc.types.Order.DESCENDING)
             if c.is_sorted
             else pl.col(c.name)
@@ -164,6 +172,11 @@ class DataFrame:
     def num_rows(self) -> int:
         """Number of rows."""
         return self.table.num_rows()
+
+    @cached_property
+    def _size_bytes(self) -> int:
+        """Return the size of the dataframe in bytes."""
+        return sum(c.device_buffer_size() for c in self.table.columns())
 
     @classmethod
     def from_polars(cls, df: pl.DataFrame, stream: Stream) -> Self:
@@ -450,7 +463,7 @@ class DataFrame:
         -------
         Filtered dataframe
         """
-        table = plc.stream_compaction.apply_boolean_mask(
+        table = plc.stream_compaction.apply_retention_mask(
             self.table, mask.obj, stream=self.stream
         )
         return (

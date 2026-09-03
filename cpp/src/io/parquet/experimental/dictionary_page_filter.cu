@@ -198,7 +198,7 @@ __device__ __forceinline__ bool is_error_set(kernel_error::pointer error)
 __device__ __forceinline__ int32_t get_int32_type_len(LogicalType const& logical_type)
 {
   // Note: This function has been extracted from the snippet at:
-  // https://github.com/rapidsai/cudf/blob/c89c83c00c729a86c56570693b627f31408bc2c9/cpp/src/io/parquet/page_decode.cuh#L1278-L1287
+  // https://github.com/NVIDIA/cudf/blob/c89c83c00c729a86c56570693b627f31408bc2c9/cpp/src/io/parquet/page_decode.cuh#L1278-L1287
 
   // Check for smaller bitwidths
   if (logical_type.type == LogicalType::INTEGER) {
@@ -223,7 +223,7 @@ __device__ __forceinline__ void decode_int96timestamp(uint8_t const* int96_ptr,
                                                       int64_t* timestamp64)
 {
   // Note: This function has been modified from the original at
-  // https://github.com/rapidsai/cudf/blob/c89c83c00c729a86c56570693b627f31408bc2c9/cpp/src/io/parquet/page_data.cuh#L133-L198
+  // https://github.com/NVIDIA/cudf/blob/c89c83c00c729a86c56570693b627f31408bc2c9/cpp/src/io/parquet/page_data.cuh#L133-L198
 
   int64_t nanos = cudf::io::unaligned_load<uint64_t>(int96_ptr);
   int64_t days  = cudf::io::unaligned_load<uint32_t>(int96_ptr + sizeof(int64_t));
@@ -293,8 +293,14 @@ CUDF_KERNEL void query_dictionaries(cudf::device_span<T> decoded_data,
 
   // Evaluate the scalar against all cuco hash sets of this column
   for (auto set_idx = group.thread_rank(); set_idx < total_row_groups; set_idx += group.size()) {
-    // If the set is empty (no dictionary page data), then skip the dictionary page filter
-    if (set_offsets[set_idx + 1] - set_offsets[set_idx] == 0) {
+    // Number of values in this hash set
+    auto const num_set_values = value_offsets[set_idx + 1] - value_offsets[set_idx];
+
+    // Skip the dictionary page filter for a column chunk with no dictionary page. Emptiness must be
+    // read from the value count and not from the number of slots, because cuco rounds every
+    // capacity up to at least one bucket, so an empty dictionary still has slots. Its set was never
+    // built, so probing it would report the literal as absent and prune the row group.
+    if (num_set_values == 0) {
       result[set_idx] = operators[scalar_idx] == ast::ast_operator::EQUAL;
       continue;
     }
@@ -311,8 +317,6 @@ CUDF_KERNEL void query_dictionaries(cudf::device_span<T> decoded_data,
                                              storage_ref};
     auto set_find_ref = hash_set_ref.rebind_operators(cuco::contains);
 
-    // Number of values in this hash set
-    auto const num_set_values = value_offsets[set_idx + 1] - value_offsets[set_idx];
     // Literal value to find in this hash set
     auto const literal_value = scalar.value<T>();
 
@@ -447,7 +451,7 @@ __device__ T decode_fixed_width_value(PageInfo const& page,
       // Handle durations
       else if constexpr (cudf::is_duration<T>()) {
         // Note: This function has been extracted from the snippet at:
-        // https://github.com/rapidsai/cudf/blob/594d26768ce86b9c2f389e851ae1afb77032c879/cpp/src/io/parquet/decode_fixed.cu#L159-L163
+        // https://github.com/NVIDIA/cudf/blob/594d26768ce86b9c2f389e851ae1afb77032c879/cpp/src/io/parquet/decode_fixed.cu#L159-L163
 
         // Reading INT32 TIME_MILLIS into 64-bit DURATION_MILLISECONDS
         // TIME_MILLIS is the only duration type stored as int32:
@@ -901,6 +905,8 @@ CUDF_KERNEL void __launch_bounds__(DECODE_BLOCK_SIZE)
     results[i][row_group_idx] = false;
   }
 
+  group.sync();
+
   // Decode values from the current dictionary page with the current thread block
   for (auto value_idx = group.thread_rank(); value_idx < page.num_input_values;
        value_idx += group.num_threads()) {
@@ -1162,6 +1168,7 @@ struct dictionary_caster {
                                                                   physical_type);
     CUDF_CUDA_TRY(cudaGetLastError());
 
+    stream.sync();
     // Build the BOOL8 columns from the results buffers
     return build_columns(results_buffers, stream, mr);
   }
@@ -1360,13 +1367,11 @@ class dictionary_expression_converter : public equality_literals_collector {
     auto const input_op       = expr.get_operator();
     auto const operator_arity = cudf::ast::detail::ast_operator_arity(input_op);
 
-    // Unary operation
+    // Membership filters cannot evaluate unary operations. Visit operands and push always true
     if (operator_arity == 1) {
-      auto visit_operands_fn = [this](auto const& operands) {
-        return this->visit_operands(operands);
-      };
-      return parquet::detail::apply_unary_membership_transform(
-        expr, _dictionary_expr, *_always_true, *this, visit_operands_fn);
+      std::ignore = this->visit_operands(expr.get_operands());
+      _dictionary_expr.push(ast::operation{ast_operator::IDENTITY, *_always_true});
+      return *_always_true;
     }
 
     // Binary operation

@@ -857,9 +857,8 @@ static std::unique_ptr<column> parse_string(string_view_pair_it str_tuples,
     CUDF_CUDA_TRY(cudaGetLastError());
   }
 
-  auto [offsets, bytes] =
-    cudf::strings::detail::make_offsets_child_column(sizes.begin(), sizes.end(), stream, mr);
-  auto d_offsets = cudf::detail::offsetalator_factory::make_input_iterator(offsets->view());
+  auto [offsets, bytes] = cudf::strings::detail::make_offsets_child_column(sizes, stream, mr);
+  auto d_offsets        = cudf::detail::offsetalator_factory::make_input_iterator(offsets->view());
 
   // CHARS column
   rmm::device_uvector<char> chars(bytes, stream, mr);
@@ -935,7 +934,7 @@ std::unique_ptr<column> parse_data(
   }
 
   // Prepare iterator that returns (string_ptr, string_length)-pairs needed by type conversion
-  auto str_tuples = thrust::make_transform_iterator(offset_length_begin, to_string_view_pair{data});
+  auto str_tuples = cuda::transform_iterator(offset_length_begin, to_string_view_pair{data});
 
   if (col_type == cudf::data_type{cudf::type_id::STRING}) {
     return parse_string(

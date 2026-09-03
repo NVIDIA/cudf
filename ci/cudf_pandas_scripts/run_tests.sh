@@ -22,7 +22,7 @@ PYLIBCUDF_WHEELHOUSE=$(rapids-download-from-github "$(rapids-artifact-name wheel
 CUDF_WHEELHOUSE=$(rapids-download-from-github "$(rapids-artifact-name wheel_python cudf cudf --stable --cuda "$RAPIDS_CUDA_VERSION")")
 
 # generate constraints (possibly pinning to oldest support versions of dependencies)
-rapids-generate-pip-constraints test_python_cudf_pandas ./constraints.txt
+rapids-generate-pip-constraints test_python_cudf_pandas ./constraints.txt constraints
 
 # notes:
 #
@@ -73,7 +73,7 @@ python -m pytest -p cudf.pandas \
 # even with pytest.mark.no_cover. This likely stems from specialized logic in
 # coveragepy and pytest-cov for distributed testing (pytest-dev/pytest-cov#246).
 # As a workaround, we run profiler tests separately without parallelism or `--cov`.
-# More details: https://github.com/rapidsai/cudf/pull/16930#issuecomment-2707873968
+# More details: https://github.com/NVIDIA/cudf/pull/16930#issuecomment-2707873968
 python -m pytest -p cudf.pandas \
     --ignore=./python/cudf/cudf_pandas_tests/third_party_integration_tests/ \
     --config-file=./python/cudf/pyproject.toml \

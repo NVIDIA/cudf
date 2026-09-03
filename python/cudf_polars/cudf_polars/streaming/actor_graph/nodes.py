@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 import asyncio
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 from cudf_streaming.channel_metadata import ChannelMetadata
 from cudf_streaming.table_chunk import (
@@ -18,17 +18,20 @@ from rapidsmpf.streaming.core.actor import define_actor
 from rapidsmpf.streaming.core.message import Message
 from rapidsmpf.streaming.core.spillable_messages import SpillableMessages
 
-from cudf_polars.containers import DataFrame
-from cudf_polars.dsl.ir import IR, Empty
+from cudf_polars.dsl.ir import IR, Empty, Join
 from cudf_polars.streaming.actor_graph.dispatch import (
     generate_ir_sub_network,
 )
 from cudf_polars.streaming.actor_graph.tracing import send_chunk
 from cudf_polars.streaming.actor_graph.utils import (
     ChannelManager,
+    _leading_order_keys,
+    chunk_to_frame,
     chunkwise_evaluate,
+    clear_local_ordering,
     empty_table_chunk,
     gather_in_task_group,
+    join_preserves_side_order,
     make_spill_function,
     maybe_remap_partitioning,
     process_children,
@@ -42,8 +45,20 @@ if TYPE_CHECKING:
     from rapidsmpf.streaming.core.channel import Channel
     from rapidsmpf.streaming.core.context import Context
 
+    from cudf_polars.containers import DataFrame
     from cudf_polars.dsl.ir import IRExecutionContext
     from cudf_polars.streaming.actor_graph.dispatch import SubNetGenerator
+
+
+def _preserves_local_order(ir: IR, partitioning_index: int | None = None) -> bool:
+    """Return True when this IR node preserves advertised local row order."""
+    if isinstance(ir, Join) and partitioning_index is not None:
+        # partitioning_index is the child whose partitioning we forwarded
+        # (0 = left, 1 = right). Local row order holds only when join
+        # maintain_order covers that side.
+        side: Literal["left", "right"] = "left" if partitioning_index == 0 else "right"
+        return join_preserves_side_order(ir.options[5], side)
+    return ir.preserves_output_order
 
 
 @define_actor()
@@ -79,11 +94,14 @@ async def default_node_single(
     ) as tracer:
         # Recv metadata and prepare output metadata
         metadata_in = await recv_metadata(ch_in, context)
+        partitioning = maybe_remap_partitioning(
+            ir, metadata_in.partitioning, context=context
+        )
+        if not _preserves_local_order(ir):
+            partitioning = clear_local_ordering(partitioning)
         metadata_out = ChannelMetadata(
             local_count=metadata_in.local_count,
-            partitioning=maybe_remap_partitioning(
-                ir, metadata_in.partitioning, context=context
-            ),
+            partitioning=partitioning,
             duplicated=metadata_in.duplicated,
         )
 
@@ -95,6 +113,7 @@ async def default_node_single(
             ch_out,
             ch_in,
             metadata_out,
+            input_metadata=metadata_in,
             handle_empty_input=True,
             tracer=tracer,
         )
@@ -136,9 +155,13 @@ async def default_node_multi(
         local_count = 1
         duplicated = True
         partitioning = None
-        for idx, md_child in enumerate(
-            await gather_in_task_group(*(recv_metadata(ch, context) for ch in chs_in))
-        ):
+        child_metadatas = await gather_in_task_group(
+            *(recv_metadata(ch, context) for ch in chs_in)
+        )
+        child_ordering_metadatas = [
+            _leading_order_keys(md_child) for md_child in child_metadatas
+        ]
+        for idx, md_child in enumerate(child_metadatas):
             # Use simple "max" rule to determine counts.
             local_count = max(md_child.local_count, local_count)
             # Set "duplicated" to False as soon as we
@@ -152,6 +175,8 @@ async def default_node_multi(
                     child_ir=ir.children[idx],
                     context=context,
                 )
+                if not _preserves_local_order(ir, partitioning_index):
+                    partitioning = clear_local_ordering(partitioning)
         metadata = ChannelMetadata(
             local_count=local_count,
             partitioning=partitioning,
@@ -209,13 +234,17 @@ async def default_node_multi(
                 net_memory_delta=0,
             )
             dfs = [
-                DataFrame.from_table(
-                    chunk.table_view(),  # type: ignore[union-attr]
-                    list(child.schema.keys()),
-                    list(child.schema.values()),
-                    chunk.stream,  # type: ignore[union-attr]
+                chunk_to_frame(
+                    cast("TableChunk", chunk),
+                    child,
+                    ordering_metadata=child_ordering_metadata,
                 )
-                for chunk, child in zip(ready_chunks, ir.children, strict=True)
+                for chunk, child, child_ordering_metadata in zip(
+                    ready_chunks,
+                    ir.children,
+                    child_ordering_metadatas,
+                    strict=True,
+                )
             ]
             with opaque_memory_usage(extra):
                 df = await ir_context.to_thread(
@@ -280,9 +309,14 @@ async def fanout_node_bounded(
         )
 
         while (msg := await ch_in.recv(context)) is not None:
-            table_chunk = TableChunk.from_message(
-                msg, br=context.br()
-            ).make_available_and_spill(context.br(), allow_overbooking=True)
+            # Pass-through: every output wraps the same device buffer
+            # (exclusive_view=False), so nothing is duplicated.
+            table_chunk, _ = await make_table_chunks_available_or_wait(
+                context,
+                TableChunk.from_message(msg, br=context.br()),
+                reserve_extra=0,
+                net_memory_delta=0,
+            )
             seq_num = msg.sequence_number
             del msg
             for ch_out in chs_out:
@@ -451,30 +485,33 @@ async def fanout_node_unbounded(
                             # We need (num_outputs - 1) copies since last one reuses original
                             num_copies = num_outputs - 1
                             total_copy_cost = msg.copy_cost() * num_copies
-                            available_device_mem = context.br().memory_available(
-                                MemoryType.DEVICE
-                            )
 
-                            # Decide target memory:
-                            # Use device ONLY if message is in device AND we have sufficient headroom.
-                            if (
-                                device_size > 0
-                                and available_device_mem >= total_copy_cost
-                            ):
-                                # Use reserve_device_memory_and_spill to automatically trigger spilling
-                                # if needed to make room for the copy
-                                memory_reservation = (
-                                    context.br().reserve_device_memory_and_spill(
-                                        total_copy_cost,
-                                        allow_overbooking=True,
-                                    )
-                                )
-                            else:
-                                # Use host memory for buffering - much safer
-                                # Downstream consumers will make_available() when they need device memory
+                            # Decide target memory. Keep the copies on device when
+                            # the message is already there and device has room,
+                            # otherwise buffer on host. Downstream consumers call
+                            # make_available() when they need device memory.
+                            # `reserve_or_fail` takes the first type that fits
+                            # without spilling, so it neither blocks the event loop
+                            # nor races a separate memory_available() check.
+                            mem_types = (
+                                [
+                                    MemoryType.DEVICE,
+                                    MemoryType.PINNED_HOST,
+                                    MemoryType.HOST,
+                                ]
+                                if device_size > 0
+                                else [MemoryType.PINNED_HOST, MemoryType.HOST]
+                            )
+                            try:
                                 memory_reservation = context.br().reserve_or_fail(
+                                    total_copy_cost, mem_types
+                                )
+                            except RuntimeError:
+                                # Nothing fit. Overbook on host rather than fail the query.
+                                memory_reservation, _ = context.br().reserve(
+                                    MemoryType.HOST,
                                     total_copy_cost,
-                                    [MemoryType.PINNED_HOST, MemoryType.HOST],
+                                    allow_overbooking=True,
                                 )
 
                             # Copy message for each output buffer

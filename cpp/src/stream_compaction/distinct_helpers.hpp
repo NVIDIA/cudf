@@ -14,7 +14,6 @@
 #include <cudf/utilities/export.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_uvector.hpp>
 #include <rmm/mr/polymorphic_allocator.hpp>
 #include <rmm/resource_ref.hpp>
@@ -24,6 +23,7 @@
 #include <cuco/static_set.cuh>
 #include <cuco/storage.cuh>
 #include <cuda/atomic>
+#include <cuda/stream>
 
 #include <cstdint>
 #include <limits>
@@ -49,13 +49,13 @@ auto constexpr reduction_init_value(duplicate_keep_option keep)
 CUDF_HIDDEN void initialize_reduction_results(size_type* results,
                                               size_type num_rows,
                                               duplicate_keep_option keep,
-                                              rmm::cuda_stream_view stream);
+                                              cuda::stream_ref stream);
 
 CUDF_HIDDEN size_type copy_reduction_results(size_type const* results,
                                              size_type num_rows,
                                              size_type* output,
                                              duplicate_keep_option keep,
-                                             rmm::cuda_stream_view stream);
+                                             cuda::stream_ref stream);
 
 struct distinct_precomputed_hash {
   CUDF_HOST_DEVICE constexpr distinct_precomputed_hash(hash_value_type const* hashes)
@@ -96,7 +96,7 @@ using distinct_set_t = cuco::static_set<size_type,
 template <typename Set>
 rmm::device_uvector<size_type> reduce_by_row_keep_any(Set& set,
                                                       size_type num_rows,
-                                                      rmm::cuda_stream_view stream,
+                                                      cuda::stream_ref stream,
                                                       rmm::device_async_resource_ref mr);
 
 /**
@@ -118,7 +118,7 @@ rmm::device_uvector<size_type> reduce_by_row_keep_first_last_none(
   Set& set,
   size_type num_rows,
   duplicate_keep_option keep,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr);
 
 /**
@@ -136,7 +136,7 @@ template <typename Set>
 rmm::device_uvector<size_type> reduce_by_row(Set& set,
                                              size_type num_rows,
                                              duplicate_keep_option keep,
-                                             rmm::cuda_stream_view stream,
+                                             cuda::stream_ref stream,
                                              rmm::device_async_resource_ref mr)
 {
   if (keep == duplicate_keep_option::KEEP_ANY) {

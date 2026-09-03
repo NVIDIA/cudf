@@ -112,6 +112,7 @@ _DECIMAL_AGGS = {
     "COLLECT",
     "COUNT",
     "MAX",
+    "MEAN",
     "MIN",
     "NTH",
     "NUNIQUE",
@@ -1329,7 +1330,7 @@ class GroupBy(Serializable, Reducible, Scannable):
                 result_col = ColumnBase.create(plc_result, create_dtype)
                 if agg == "cumcount":
                     # pandas 0-indexes cumulative count, see
-                    # https://github.com/rapidsai/cudf/issues/10237
+                    # https://github.com/NVIDIA/cudf/issues/10237
                     result_col = result_col - 1
                 if cast_dtype is not None:
                     result_col = result_col.astype(cast_dtype)
@@ -2303,7 +2304,7 @@ class GroupBy(Serializable, Reducible, Scannable):
         """
         aggs_per_column: Iterable[AggType | Iterable[AggType]]
         # TODO: Remove isinstance condition when the legacy dask_cudf API is removed.
-        # See https://github.com/rapidsai/cudf/pull/16528#discussion_r1715482302 for information.
+        # See https://github.com/NVIDIA/cudf/pull/16528#discussion_r1715482302 for information.
         if aggs or isinstance(aggs, dict):
             if isinstance(aggs, dict):
                 if any(

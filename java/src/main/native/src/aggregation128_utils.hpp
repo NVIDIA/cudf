@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -9,7 +9,7 @@
 #include <cudf/table/table.hpp>
 #include <cudf/utilities/default_stream.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
+#include <cuda/stream_ref>
 
 #include <memory>
 
@@ -31,11 +31,10 @@ namespace cudf::jni {
  * @param stream    CUDA stream to use
  * @return          A column containing the extracted 32-bit integer values
  */
-std::unique_ptr<cudf::column> extract_chunk32(
-  cudf::column_view const& col,
-  cudf::data_type dtype,
-  int chunk_idx,
-  rmm::cuda_stream_view stream = cudf::get_default_stream());
+std::unique_ptr<cudf::column> extract_chunk32(cudf::column_view const& col,
+                                              cudf::data_type dtype,
+                                              int chunk_idx,
+                                              cuda::stream_ref stream = cudf::get_default_stream());
 
 /**
  * @brief Reassemble a 128-bit column from four 64-bit integer columns with overflow detection.
@@ -60,6 +59,6 @@ std::unique_ptr<cudf::column> extract_chunk32(
 std::unique_ptr<cudf::table> assemble128_from_sum(
   cudf::table_view const& chunks_table,
   cudf::data_type output_type,
-  rmm::cuda_stream_view stream = cudf::get_default_stream());
+  cuda::stream_ref stream = cudf::get_default_stream());
 
 }  // namespace cudf::jni

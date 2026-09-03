@@ -10,6 +10,7 @@
 #include <cudf/detail/gather.cuh>
 #include <cudf/detail/iterator.cuh>
 #include <cudf/detail/nvtx/ranges.hpp>
+#include <cudf/detail/sizes_to_offsets_iterator.cuh>
 #include <cudf/lists/combine.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/error.hpp>
@@ -21,7 +22,6 @@
 #include <cuda/functional>
 #include <cuda/iterator>
 #include <cuda/stream>
-#include <thrust/iterator/transform_iterator.h>
 #include <thrust/scan.h>
 
 namespace cudf {
@@ -72,13 +72,13 @@ generate_regrouped_offsets_and_null_mask(table_device_view const& input,
     data_type{type_id::INT32}, input.num_rows() + 1, mask_state::UNALLOCATED, stream, mr);
 
   auto keys =
-    thrust::make_transform_iterator(cuda::counting_iterator<std::size_t>{0},
-                                    cuda::proclaim_return_type<size_type>(
-                                      [num_columns = input.num_columns()] __device__(
-                                        std::size_t i) -> size_type { return i / num_columns; }));
+    cuda::transform_iterator(cuda::counting_iterator<std::size_t>{0},
+                             cuda::proclaim_return_type<size_type>(
+                               [num_columns = input.num_columns()] __device__(
+                                 std::size_t i) -> size_type { return i / num_columns; }));
 
   // generate sizes for the regrouped rows
-  auto values = thrust::make_transform_iterator(
+  auto values = cuda::transform_iterator(
     cuda::counting_iterator<std::size_t>{0},
     cuda::proclaim_return_type<size_type>([input,
                                            row_null_counts = row_null_counts.data(),
@@ -110,11 +110,16 @@ generate_regrouped_offsets_and_null_mask(table_device_view const& input,
                                     stream);
 
   // convert to offsets
-  thrust::exclusive_scan(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-                         offsets->view().begin<int32_t>(),
-                         offsets->view().begin<int32_t>() + input.num_rows() + 1,
-                         offsets->mutable_view().begin<int32_t>(),
-                         0);
+  auto total_size =
+    cudf::detail::sizes_to_offsets(offsets->view().begin<size_type>(),
+                                   offsets->view().begin<size_type>() + input.num_rows() + 1,
+                                   offsets->mutable_view().begin<size_type>(),
+                                   0,
+                                   stream,
+                                   mr);
+  CUDF_EXPECTS(total_size <= static_cast<decltype(total_size)>(std::numeric_limits<int32_t>::max()),
+               "Size of offsets exceeds maximum int32 limit",
+               std::overflow_error);
 
   // generate appropriate null mask
   auto [null_mask, null_count] = [&]() {
@@ -153,12 +158,12 @@ rmm::device_uvector<size_type> generate_null_counts(table_device_view const& inp
   rmm::device_uvector<size_type> null_counts(input.num_rows(), stream);
 
   auto keys =
-    thrust::make_transform_iterator(cuda::counting_iterator<std::size_t>{0},
-                                    cuda::proclaim_return_type<size_type>(
-                                      [num_columns = input.num_columns()] __device__(
-                                        std::size_t i) -> size_type { return i / num_columns; }));
+    cuda::transform_iterator(cuda::counting_iterator<std::size_t>{0},
+                             cuda::proclaim_return_type<size_type>(
+                               [num_columns = input.num_columns()] __device__(
+                                 std::size_t i) -> size_type { return i / num_columns; }));
 
-  auto null_values = thrust::make_transform_iterator(
+  auto null_values = cuda::transform_iterator(
     cuda::counting_iterator<std::size_t>{0},
     cuda::proclaim_return_type<size_type>([input] __device__(std::size_t i) -> size_type {
       auto const col_index = i % input.num_columns();
@@ -265,7 +270,7 @@ std::unique_ptr<column> concatenate_rows(table_view const& input,
   // what we want. the data of the children will be exactly what we want, but will be grouped as if
   // we had concatenated all the rows together instead of concatenating within the rows.  To fix
   // this we can simply swap in a new set of offsets that re-groups them.  bmo
-  auto iter = thrust::make_transform_iterator(
+  auto iter = cuda::transform_iterator(
     cuda::counting_iterator<std::size_t>{0},
     cuda::proclaim_return_type<size_type>(
       [num_columns = input.num_columns(),

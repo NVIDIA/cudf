@@ -393,6 +393,7 @@ std::tuple<rmm::device_uvector<page_span>, size_t, size_t> compute_next_subpass(
                     page_bounds.begin(),
                     get_page_span{page_offsets,
                                   chunks,
+                                  pages,
                                   page_row_index,
                                   start_row,
                                   end_row,

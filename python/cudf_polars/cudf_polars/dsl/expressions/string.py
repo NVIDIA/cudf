@@ -1086,7 +1086,7 @@ class StringFunction(Expr):
                 # Polars begins inference with the first non null value
                 if plc_col.null_mask() is not None:
                     boolmask = plc.unary.is_valid(plc_col, stream=df.stream)
-                    table = plc.stream_compaction.apply_boolean_mask(
+                    table = plc.stream_compaction.apply_retention_mask(
                         plc.Table([plc_col]), boolmask, stream=df.stream
                     )
                     filtered = table.columns()[0]
@@ -1098,7 +1098,7 @@ class StringFunction(Expr):
                         plc_col, 0, stream=df.stream
                     ).to_py(stream=df.stream)
 
-                # See https://github.com/rapidsai/cudf/issues/20202 for we type ignore
+                # See https://github.com/NVIDIA/cudf/issues/20202 for we type ignore
                 format = _infer_datetime_format(first_valid_data)  # type: ignore[arg-type]
                 if not format:
                     raise InvalidOperationError(
@@ -1157,7 +1157,7 @@ class StringFunction(Expr):
             (char,) = self.options
             # TODO: Maybe accept a string scalar in
             # cudf::strings::pad to avoid DtoH transfer
-            # See https://github.com/rapidsai/cudf/issues/20202
+            # See https://github.com/NVIDIA/cudf/issues/20202
             width_py = width_col.obj.to_scalar(stream=df.stream).to_py(stream=df.stream)
             assert width_py is not None
             pad_width = int(width_py)

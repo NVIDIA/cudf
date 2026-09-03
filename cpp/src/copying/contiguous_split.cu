@@ -13,6 +13,7 @@
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/offsets_iterator_factory.cuh>
 #include <cudf/detail/utilities/cuda.cuh>
+#include <cudf/detail/utilities/cuda.hpp>
 #include <cudf/detail/utilities/integer_utils.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/lists/lists_column_view.hpp>
@@ -32,7 +33,6 @@
 #include <thrust/execution_policy.h>
 #include <thrust/for_each.h>
 #include <thrust/iterator/iterator_categories.h>
-#include <thrust/iterator/transform_iterator.h>
 #include <thrust/reduce.h>
 #include <thrust/scan.h>
 #include <thrust/transform.h>
@@ -437,7 +437,7 @@ OutputIter setup_src_buf_data(InputIter begin, InputIter end, OutputIter out_buf
 template <typename InputIter>
 size_type count_src_bufs(InputIter begin, InputIter end)
 {
-  auto buf_iter = thrust::make_transform_iterator(begin, [](column_view const& col) {
+  auto buf_iter = cuda::transform_iterator(begin, [](column_view const& col) {
     auto const children_counts = count_src_bufs(col.child_begin(), col.child_end());
     return 1 + (col.nullable() ? 1 : 0) + children_counts;
   });
@@ -895,57 +895,19 @@ struct split_key_functor {
 };
 
 /**
- * @brief Output iterator for writing values to the dst_offset field of the
- * dst_buf_info struct
+ * @brief Writes values to the dst_offset field of the dst_buf_info struct
  */
-struct dst_offset_output_iterator {
+struct set_dst_offset_fn {
   dst_buf_info* c;
-  using value_type        = std::size_t;
-  using difference_type   = std::size_t;
-  using pointer           = std::size_t*;
-  using reference         = std::size_t&;
-  using iterator_category = thrust::output_device_iterator_tag;
-
-  dst_offset_output_iterator operator+ __host__ __device__(int i) { return {c + i}; }
-
-  dst_offset_output_iterator& operator++ __host__ __device__()
-  {
-    c++;
-    return *this;
-  }
-
-  reference operator[] __device__(int i) { return dereference(c + i); }
-  reference operator* __device__() { return dereference(c); }
-
- private:
-  reference __device__ dereference(dst_buf_info* c) { return c->dst_offset; }
+  __device__ void operator()(size_type i, std::size_t value) const { c[i].dst_offset = value; }
 };
 
 /**
- * @brief Output iterator for writing values to the valid_count field of the
- * dst_buf_info struct
+ * @brief Writes values to the valid_count field of the dst_buf_info struct
  */
-struct dst_valid_count_output_iterator {
+struct set_valid_count_fn {
   dst_buf_info* c;
-  using value_type        = size_type;
-  using difference_type   = size_type;
-  using pointer           = size_type*;
-  using reference         = size_type&;
-  using iterator_category = thrust::output_device_iterator_tag;
-
-  dst_valid_count_output_iterator operator+ __host__ __device__(int i) { return {c + i}; }
-
-  dst_valid_count_output_iterator& operator++ __host__ __device__()
-  {
-    c++;
-    return *this;
-  }
-
-  reference operator[] __device__(int i) { return dereference(c + i); }
-  reference operator* __device__() { return dereference(c); }
-
- private:
-  reference __device__ dereference(dst_buf_info* c) { return c->valid_count; }
+  __device__ void operator()(size_type i, size_type value) const { c[i].valid_count = value; }
 };
 
 /**
@@ -1357,17 +1319,18 @@ std::unique_ptr<packed_partition_buf_size_and_dst_buf_info> compute_splits(
     auto values =
       cudf::detail::make_counting_transform_iterator(0, buf_size_functor{d_dst_buf_info});
 
-    thrust::exclusive_scan_by_key(rmm::exec_policy_nosync(stream, temp_mr),
-                                  keys,
-                                  keys + num_bufs,
-                                  values,
-                                  dst_offset_output_iterator{d_dst_buf_info},
-                                  std::size_t{0});
+    thrust::exclusive_scan_by_key(
+      rmm::exec_policy_nosync(stream, temp_mr),
+      keys,
+      keys + num_bufs,
+      values,
+      cuda::make_tabulate_output_iterator(set_dst_offset_fn{d_dst_buf_info}),
+      std::size_t{0});
   }
 
   partition_buf_size_and_dst_buf_info->copy_to_host();
 
-  stream.sync();
+  cudf::detail::sync_stream(stream);
 
   return partition_buf_size_and_dst_buf_info;
 }
@@ -1658,6 +1621,7 @@ std::unique_ptr<chunk_iteration_state> chunk_iteration_state::create(
           d_batched_dst_buf_info[i].dst_offset -= *prior_iteration_size;
         });
     }
+    cudf::detail::sync_stream(stream);
     return std::make_unique<chunk_iteration_state>(std::move(d_batched_dst_buf_info),
                                                    std::move(d_batch_offsets),
                                                    std::move(num_batches_per_iteration),
@@ -1876,17 +1840,18 @@ struct contiguous_split_state {
     auto const keys = cudf::detail::make_counting_transform_iterator(
       0, out_to_in_index_function{chunk_iter_state->d_batch_offsets.begin(), (int)num_bufs});
 
-    auto values = thrust::make_transform_iterator(
+    auto values = cuda::transform_iterator(
       chunk_iter_state->d_batched_dst_buf_info.begin(),
       cuda::proclaim_return_type<size_type>(
         [] __device__(dst_buf_info const& info) { return info.valid_count; }));
 
-    thrust::reduce_by_key(rmm::exec_policy_nosync(stream, temp_mr),
-                          keys,
-                          keys + num_batches_total,
-                          values,
-                          cuda::make_discard_iterator(),
-                          dst_valid_count_output_iterator{d_orig_dst_buf_info.data()});
+    thrust::reduce_by_key(
+      rmm::exec_policy_nosync(stream, temp_mr),
+      keys,
+      keys + num_batches_total,
+      values,
+      cuda::make_discard_iterator(),
+      cuda::make_tabulate_output_iterator(set_valid_count_fn{d_orig_dst_buf_info.data()}));
 
     detail::cuda_memcpy<dst_buf_info>(h_orig_dst_buf_info, d_orig_dst_buf_info, stream);
 

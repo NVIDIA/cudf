@@ -10,6 +10,7 @@
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#project-information
 
 import datetime
+import os
 
 import dask_cudf
 from packaging.version import Version
@@ -31,12 +32,16 @@ language = "en"
 extensions = [
     "sphinx.ext.intersphinx",
     "sphinx.ext.autodoc",
+    "sphinx.ext.autosectionlabel",
     "sphinx_copybutton",
     "numpydoc",
     "IPython.sphinxext.ipython_console_highlighting",
     "IPython.sphinxext.ipython_directive",
     "myst_nb",
 ]
+
+# Disambiguate section anchors across documents
+autosectionlabel_prefix_document = True
 
 templates_path = ["_templates"]
 exclude_patterns = []
@@ -59,12 +64,17 @@ html_static_path = ["_static"]
 pygments_style = "sphinx"
 
 html_theme_options = {
+    "public_docs_features": os.environ.get("CI") == "true",
     "external_links": [],
-    "github_url": "https://github.com/rapidsai/cudf",
+    "github_url": "https://github.com/NVIDIA/cudf",
     "show_toc_level": 1,
     "navbar_align": "right",
     "navbar_center": "navbar-nav, version-switcher, navbar-external-links",
     "navigation_with_keys": True,
+    "switcher": {
+        "json_url": "https://docs.nvidia.com/dask-cudf/versions.json",
+        "version_match": version,
+    },
 }
 include_pandas_compat = True
 

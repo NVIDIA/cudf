@@ -1,6 +1,5 @@
-
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -52,7 +51,7 @@ std::vector<cudf::size_type> apply_row_group_filters(
   cudf::host_span<cudf::size_type> input_row_group_indices,
   std::unordered_set<hybrid_scan_filter_type> const& filters,
   cudf::io::parquet_reader_options const& options,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr)
 {
   // Span to track current row group indices
@@ -68,54 +67,57 @@ std::vector<cudf::size_type> apply_row_group_filters(
     current_row_group_indices = stats_filtered_row_groups;
   }
 
-  // Get bloom filter and dictionary page byte ranges from the reader
-  auto bloom_filter_byte_ranges = std::vector<cudf::io::text::byte_range_info>{};
-  auto dict_page_byte_ranges    = std::vector<cudf::io::text::byte_range_info>{};
-
-  if (filters.contains(hybrid_scan_filter_type::ROW_GROUPS_WITH_DICT_PAGES) or
-      filters.contains(hybrid_scan_filter_type::ROW_GROUPS_WITH_BLOOM_FILTERS)) {
-    std::tie(bloom_filter_byte_ranges, dict_page_byte_ranges) =
-      reader.secondary_filters_byte_ranges(current_row_group_indices, options);
-  } else {
-    return std::vector<cudf::size_type>(current_row_group_indices.begin(),
-                                        current_row_group_indices.end());
-  }
-
   // Filter row groups with dictionary pages
   auto dict_page_filtered_row_groups = std::vector<cudf::size_type>{};
   dict_page_filtered_row_groups.reserve(current_row_group_indices.size());
 
-  if (filters.contains(hybrid_scan_filter_type::ROW_GROUPS_WITH_DICT_PAGES) and
-      dict_page_byte_ranges.size()) {
-    auto [dictionary_page_buffers, dictionary_page_data, dict_read_tasks] =
-      cudf::io::parquet::fetch_byte_ranges_to_device_async(
-        datasource, dict_page_byte_ranges, stream, mr);
-    dict_read_tasks.get();
+  if (filters.contains(hybrid_scan_filter_type::ROW_GROUPS_WITH_DICT_PAGES)) {
+    auto const dict_page_byte_ranges =
+      reader.dictionary_pages_byte_ranges(current_row_group_indices, options);
 
-    dict_page_filtered_row_groups = reader.filter_row_groups_with_dictionary_pages(
-      dictionary_page_data, current_row_group_indices, options, stream);
+    if (not dict_page_byte_ranges.empty()) {
+      auto [dictionary_page_buffers, dictionary_page_data, dict_read_tasks] =
+        cudf::io::parquet::fetch_byte_ranges_to_device_async(
+          datasource,
+          dict_page_byte_ranges,
+          cudf::io::parquet::io_submission_policy::SERIALIZE,
+          stream,
+          mr);
+      dict_read_tasks.get();
 
-    current_row_group_indices = dict_page_filtered_row_groups;
+      dict_page_filtered_row_groups = reader.filter_row_groups_with_dictionary_pages(
+        dictionary_page_data, current_row_group_indices, options, stream);
+
+      current_row_group_indices = dict_page_filtered_row_groups;
+    }
   }
 
   // Filter row groups with bloom filters
   auto bloom_filtered_row_groups = std::vector<cudf::size_type>{};
   bloom_filtered_row_groups.reserve(current_row_group_indices.size());
 
-  if (filters.contains(hybrid_scan_filter_type::ROW_GROUPS_WITH_BLOOM_FILTERS) and
-      bloom_filter_byte_ranges.size()) {
-    // Fetch 32-byte aligned bloom filter data buffers from the input file buffer
-    auto constexpr bloom_filter_alignment = rmm::CUDA_ALLOCATION_ALIGNMENT;
-    auto aligned_mr = rmm::mr::aligned_resource_adaptor(mr, bloom_filter_alignment);
-    auto [bloom_filter_buffers, bloom_filter_data, bloom_read_tasks] =
-      cudf::io::parquet::fetch_byte_ranges_to_device_async(
-        datasource, bloom_filter_byte_ranges, stream, aligned_mr);
-    bloom_read_tasks.get();
+  if (filters.contains(hybrid_scan_filter_type::ROW_GROUPS_WITH_BLOOM_FILTERS)) {
+    auto const bloom_filter_byte_ranges =
+      reader.bloom_filters_byte_ranges(current_row_group_indices, options);
 
-    bloom_filtered_row_groups = reader.filter_row_groups_with_bloom_filters(
-      bloom_filter_data, current_row_group_indices, options, stream);
+    if (not bloom_filter_byte_ranges.empty()) {
+      // Fetch 32-byte aligned bloom filter data buffers from the input file buffer
+      auto constexpr bloom_filter_alignment = rmm::CUDA_ALLOCATION_ALIGNMENT;
+      auto aligned_mr = rmm::mr::aligned_resource_adaptor(mr, bloom_filter_alignment);
+      auto [bloom_filter_buffers, bloom_filter_data, bloom_read_tasks] =
+        cudf::io::parquet::fetch_byte_ranges_to_device_async(
+          datasource,
+          bloom_filter_byte_ranges,
+          cudf::io::parquet::io_submission_policy::SERIALIZE,
+          stream,
+          aligned_mr);
+      bloom_read_tasks.get();
 
-    current_row_group_indices = bloom_filtered_row_groups;
+      bloom_filtered_row_groups = reader.filter_row_groups_with_bloom_filters(
+        bloom_filter_data, current_row_group_indices, options, stream);
+
+      current_row_group_indices = bloom_filtered_row_groups;
+    }
   }
 
   return std::vector<cudf::size_type>(current_row_group_indices.begin(),
@@ -127,14 +129,18 @@ std::unique_ptr<cudf::table> single_step_materialize(
   hybrid_scan_reader const& reader,
   cudf::host_span<cudf::size_type> current_row_group_indices,
   cudf::io::parquet_reader_options const& options,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr)
 {
   auto const all_column_chunk_byte_ranges =
     reader.all_column_chunks_byte_ranges(current_row_group_indices, options);
   auto [all_column_chunk_buffers, all_column_chunk_data, all_column_chunk_read_tasks] =
     cudf::io::parquet::fetch_byte_ranges_to_device_async(
-      datasource, all_column_chunk_byte_ranges, stream, mr);
+      datasource,
+      all_column_chunk_byte_ranges,
+      cudf::io::parquet::io_submission_policy::SERIALIZE,
+      stream,
+      mr);
   all_column_chunk_read_tasks.get();
 
   return reader
@@ -146,7 +152,7 @@ std::unique_ptr<cudf::table> single_step_materialize(
 
 std::unique_ptr<cudf::table> hybrid_scan(cudf::io::parquet_reader_options const& options,
                                          std::unordered_set<hybrid_scan_filter_type> const& filters,
-                                         rmm::cuda_stream_view stream,
+                                         cuda::stream_ref stream,
                                          rmm::device_async_resource_ref mr)
 {
   // Input file buffer span

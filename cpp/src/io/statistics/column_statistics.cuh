@@ -88,7 +88,7 @@ struct calculate_group_statistics_functor {
              (IO != detail::io_file_format::PARQUET or !std::is_same_v<T, list_view>))
   {
     // Temporarily disable stats writing for int96 timestamps
-    // TODO: https://github.com/rapidsai/cudf/issues/10438
+    // TODO: https://github.com/NVIDIA/cudf/issues/10438
     if constexpr (cudf::is_timestamp<T>() and IO == detail::io_file_format::PARQUET and
                   INT96 == detail::is_int96_timestamp::YES) {
       return;
@@ -302,7 +302,7 @@ CUDF_KERNEL void __launch_bounds__(block_size, 1)
         threadIdx.x);
     }
     // Temporarily disable stats writing for int96 timestamps
-    // TODO: https://github.com/rapidsai/cudf/issues/10438
+    // TODO: https://github.com/NVIDIA/cudf/issues/10438
     else {
       type_dispatcher(
         state.col.leaf_column->type(),

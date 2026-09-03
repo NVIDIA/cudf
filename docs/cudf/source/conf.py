@@ -31,14 +31,17 @@ from enum import IntEnum, IntFlag
 from typing import Any
 
 import cudf
-from docutils.nodes import Text
+from docutils import nodes
+from docutils.nodes import Node, Text
 from packaging.version import Version
 from pygments.lexer import RegexLexer
 from pygments.token import Text as PText
 from sphinx.addnodes import pending_xref
+from sphinx.application import Sphinx
 from sphinx.ext import intersphinx
 from sphinx.ext.autodoc import ClassDocumenter
 from sphinx.highlighting import lexers
+from sphinx.util.nodes import clean_astext, make_refnode
 
 
 class PseudoLexer(RegexLexer):
@@ -225,9 +228,10 @@ exclude_patterns = [
 pygments_style = "sphinx"
 
 html_theme_options = {
+    "public_docs_features": os.environ.get("CI") == "true",
     "external_links": [],
     "icon_links": [],
-    "github_url": "https://github.com/rapidsai/cudf",
+    "github_url": "https://github.com/NVIDIA/cudf",
     "show_toc_level": 1,
     "navbar_align": "content",
     "navbar_center": "navbar-nav, version-switcher, navbar-external-links",
@@ -500,6 +504,27 @@ def _cached_intersphinx_lookup(env, node, contnode):
     return ref
 
 
+def _resolve_cpp_xref(app, env, node, contnode, name):
+    docname, objtype, anchor = _domain_objects[name]
+    fromdocname = node.get("refdoc", env.docname)
+    for reftype in (node["reftype"], objtype):
+        if (
+            ref := env.domains["cpp"].resolve_xref(
+                env,
+                fromdocname,
+                app.builder,
+                reftype,
+                name,
+                node,
+                contnode,
+            )
+        ) is not None:
+            return ref
+    return make_refnode(
+        app.builder, fromdocname, docname, anchor, contnode, name
+    )
+
+
 def on_missing_reference(app, env, node, contnode):
     # These variables are defined outside the function to speed up the build.
     global \
@@ -515,8 +540,10 @@ def on_missing_reference(app, env, node, contnode):
     if _domain_objects is None:
         _domain_objects = {}
         _prefixed_domain_objects = {}
-        for name, _, _, docname, _, _ in env.domains["cpp"].get_objects():
-            _domain_objects[name] = docname
+        for name, _, objtype, docname, anchor, _ in env.domains[
+            "cpp"
+        ].get_objects():
+            _domain_objects[name] = (docname, objtype, anchor)
             for prefix in _all_namespaces:
                 _prefixed_domain_objects[f"{prefix}{name}"] = name
 
@@ -565,6 +592,15 @@ def on_missing_reference(app, env, node, contnode):
         if match := re.search("(.*)<.*>", reftarget):
             reftarget = match.group(1)
 
+        # Breathe sometimes emits bare C++ targets that are already registered
+        # in the C++ domain, for example enum types in parameter lists.
+        if (
+            reftarget in _domain_objects
+            and (ref := _resolve_cpp_xref(app, env, node, contnode, reftarget))
+            is not None
+        ):
+            return ref
+
         # Try to find the target prefixed with e.g. namespaces in case that's
         # all that's missing.
         # We need to do this search because the call sites may not have used
@@ -579,15 +615,7 @@ def on_missing_reference(app, env, node, contnode):
                     name = f"{prefix}{reftarget}"
                     break
         if name is not None:
-            return env.domains["cpp"].resolve_xref(
-                env,
-                _domain_objects[name],
-                app.builder,
-                node["reftype"],
-                name,
-                node,
-                contnode,
-            )
+            return _resolve_cpp_xref(app, env, node, contnode, name)
 
         # Final possibility is an intersphinx lookup to see if the symbol
         # exists in one of the other inventories. First we check the symbol
@@ -659,9 +687,12 @@ nitpick_ignore = [
     ("py:class", "ColumnNameSpec"),
     ("py:class", "CudaStreamLike"),
     ("py:class", "Datasource"),
+    ("py:class", "Kind"),
+    ("py:class", "PyarrowDataType"),
     ("py:class", "Span"),
     ("py:class", "SupportsArrayInterface"),
     ("py:class", "SupportsCudaArrayInterface"),
+    ("py:class", "T"),
 ]
 # Temporarily disable nitpick warnings for pandas: https://github.com/pandas-dev/pandas/issues/64584
 nitpick_ignore_regex = [
@@ -670,6 +701,7 @@ nitpick_ignore_regex = [
     ("ref.*", ".*pandas.*"),
     # External libs without configured intersphinx inventories.
     ("py:.*", r"rapidsmpf(\..*)?"),
+    ("py:.*", r"kvikio(\..*)?"),
     ("py:.*", r"ray(\..*)?"),
     ("py:.*", r"distributed(\..*)?"),
     ("py:.*", r"dask_cuda(\..*)?"),
@@ -749,7 +781,7 @@ def linkcode_resolve(domain, info) -> str | None:
 
     fn = os.path.relpath(fn, start=os.path.dirname(pkg_file))
     return (
-        f"https://github.com/rapidsai/cudf/blob/"
+        f"https://github.com/NVIDIA/cudf/blob/"
         f"{RAPIDS_BRANCH}/{source_path}/{fn}{linespec}"
     )
 
@@ -802,8 +834,35 @@ class PLCIntEnumDocumenter(ClassDocumenter):
             self.add_line("", source_name)
 
 
+def register_sections_as_label(app: Sphinx, document: Node) -> None:
+    """
+    Turn all sections in documents into labels for intersphinx.
+
+    Unlike the autosectionlabel extension this uses the perfectly good,
+    document-unique, section label name. So repeated sections with the same
+    name do not produce duplicate label warnings.
+    """
+    domain = app.env.domains.standard_domain
+    docname = app.env.docname
+
+    for node in document.findall(nodes.section):
+        labelid = node["ids"][0]
+        name = nodes.fully_normalize_name(f"{docname}:{labelid}")
+        title = clean_astext(node[0])
+
+        domain.anonlabels[name] = docname, labelid
+        domain.labels[name] = docname, labelid, title
+
+
+def use_slugged_duplicate_ids(app):
+    # Use default docutils deduplication scheme for duplicate node ids.
+    app.env.settings["auto_id_prefix"] = "%"
+
+
 def setup(app):
+    app.connect("builder-inited", use_slugged_duplicate_ids)
     app.connect("doctree-read", resolve_aliases)
+    app.connect("doctree-read", register_sections_as_label)
     app.connect("missing-reference", on_missing_reference)
     app.setup_extension("sphinx.ext.autodoc")
     app.add_autodocumenter(PLCIntEnumDocumenter)

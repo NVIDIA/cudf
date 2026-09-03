@@ -237,9 +237,15 @@ std::pair<rmm::device_buffer, size_type> bitmask_and(
  *
  * The function assumes all the input columns passed are nullable.
  *
+ * A segment may be empty, i.e. `segment_offsets[i] == segment_offsets[i + 1]`. Reducing no bitmasks
+ * yields the identity of bitwise AND, so such a segment's result marks every row valid and its
+ * count of unset bits is zero.
+ *
  * @param colviews A span containing column views whose bitmasks will be ANDed within their
  * respective segments
- * @param segment_offsets A span containing the starting positions of each segment
+ * @param segment_offsets A span containing the starting positions of each segment, plus the
+ * one-past-the-end position of the last segment; behavior is undefined unless the offsets are
+ * non-decreasing and each lies in `[0, colviews.size()]`
  * @param stream CUDA stream used for device memory operations and kernel launches
  * @param mr Device memory resource used to allocate the returned device_buffer
  * @return A pair of vectors containing resulting bitmask and count of unset bits for each segment
@@ -260,9 +266,15 @@ segmented_bitmask_and(host_span<column_view const> colviews,
  * device buffers, with each buffer containing the resulting bitmask for a segment, and (ii) a
  * vector of integers representing the count of null (unset) bits for each segment
  *
+ * A segment may be empty, i.e. `segment_offsets[i] == segment_offsets[i + 1]`. Reducing no bitmasks
+ * yields the identity of bitwise AND, so such a segment's result marks every row valid and its
+ * count of unset bits is zero.
+ *
  * @param masks A span containing bitmasks that will be ANDed within their
  * respective segments
- * @param segment_offsets A span containing the starting positions of each segment
+ * @param segment_offsets A span containing the starting positions of each segment, plus the
+ * one-past-the-end position of the last segment; behavior is undefined unless the offsets are
+ * non-decreasing and each lies in `[0, masks.size()]`
  * @param mask_size_bits Number of bits in each mask
  * @param stream CUDA stream used for device memory operations and kernel launches
  * @param mr Device memory resource used to allocate the returned device_buffer

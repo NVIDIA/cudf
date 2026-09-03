@@ -629,7 +629,7 @@ TEST_F(OrcWriterTest, negTimestampsNano)
   // This is a separate test because ORC format has a bug where writing a timestamp between -1 and 0
   // seconds from UNIX epoch is read as that timestamp + 1 second. We mimic that behavior and so
   // this test has to hardcode test values which are < -1 second.
-  // Details: https://github.com/rapidsai/cudf/pull/5529#issuecomment-648768925
+  // Details: https://github.com/NVIDIA/cudf/pull/5529#issuecomment-648768925
   auto timestamps_ns =
     cudf::test::fixed_width_column_wrapper<cudf::timestamp_ns, cudf::timestamp_ns::rep>{
       -131968727238000000,
@@ -1260,7 +1260,7 @@ TEST_F(OrcWriterTest, SlicedValidMask)
 TEST_F(OrcReaderTest, ZeroColumnsPreservesRowCount)
 {
   GTEST_SKIP() << "Zero-column / N-row ORC reads are not yet supported. See "
-                  "https://github.com/rapidsai/cudf/issues/22935).";
+                  "https://github.com/NVIDIA/cudf/issues/22935).";
 
   constexpr cudf::size_type num_rows = 8;
   cudf::test::fixed_width_column_wrapper<int32_t> col{0, 1, 2, 3, 4, 5, 6, 7};

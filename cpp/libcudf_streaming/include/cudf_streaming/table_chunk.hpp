@@ -9,7 +9,7 @@
 #include <cudf/table/table.hpp>
 #include <cudf/table/table_view.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
+#include <cuda/stream>
 
 #include <coro/task.hpp>
 #include <rapidsmpf/memory/content_description.hpp>
@@ -62,7 +62,7 @@ class table_chunk {
    * @param table Device-resident table.
    * @param stream The CUDA stream on which the table was created.
    */
-  table_chunk(std::unique_ptr<cudf::table> table, rmm::cuda_stream_view stream);
+  table_chunk(std::unique_ptr<cudf::table> table, cuda::stream_ref stream);
 
   /**
    * @brief Construct a table_chunk from a device table view.
@@ -91,7 +91,7 @@ class table_chunk {
    *     is therefore not spillable.
    */
   table_chunk(cudf::table_view table_view,
-              rmm::cuda_stream_view stream,
+              cuda::stream_ref stream,
               rapidsmpf::OwningWrapper&& owner,
               exclusive_view exclusive_view);
 
@@ -130,7 +130,7 @@ class table_chunk {
    *
    * @return The CUDA stream view.
    */
-  [[nodiscard]] rmm::cuda_stream_view stream() const noexcept;
+  [[nodiscard]] cuda::stream_ref stream() const noexcept;
 
   /**
    * @brief Number of bytes allocated for the data in the specified memory type.
@@ -312,7 +312,7 @@ class table_chunk {
   std::array<std::size_t, rapidsmpf::MEMORY_TYPES.size()> data_alloc_size_ = {};
   std::size_t make_available_cost_;  // For now, only device memory cost is tracked.
 
-  rmm::cuda_stream_view stream_;
+  cuda::stream_ref stream_{cudaStream_t{cudaStreamDefault}};
   bool is_spillable_;
 };
 

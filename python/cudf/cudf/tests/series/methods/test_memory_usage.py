@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import cudf
@@ -8,8 +8,10 @@ from cudf.testing import assert_eq
 def test_memory_usage_list():
     s1 = cudf.Series([[1, 2], [3, 4]])
     assert s1.memory_usage() == 44
+    assert s1[1:].memory_usage() == 24
     s2 = cudf.Series([[[[1, 2]]], [[[3, 4]]]])
     assert s2.memory_usage() == 68
+    assert s2[1:].memory_usage() == 40
     s3 = cudf.Series([[{"b": 1, "a": 10}, {"b": 2, "a": 100}]])
     assert s3.memory_usage() == 40
 
@@ -19,7 +21,7 @@ def test_empty_nested_list_uninitialized_offsets_memory_usage():
         [[[1, 2], [3]], []], dtype=cudf.ListDtype(cudf.ListDtype("int64"))
     )
     # Unlike in Arrow a 0-size list column produced by libcudf could have no offsets
-    # allocated and thus be truly empty (https://github.com/rapidsai/cudf/issues/16164)
+    # allocated and thus be truly empty (https://github.com/NVIDIA/cudf/issues/16164)
     assert ser.iloc[:0].memory_usage() == 0
 
 
@@ -59,3 +61,4 @@ def test_struct_memory_usage():
     df = s.struct.explode()
 
     assert_eq(s.memory_usage(), df.memory_usage().sum())
+    assert s[1:].memory_usage() == 32

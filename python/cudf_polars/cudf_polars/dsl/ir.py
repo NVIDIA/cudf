@@ -250,8 +250,21 @@ class IR(Node["IR"]):
     _non_child_args: tuple[Any, ...]
     # The number of non-child arguments to pass to do_evaluate.
     _n_non_child_args: ClassVar[int]
+    # Class-level opt-in for :attr:`preserves_output_order`.
+    _preserves_output_order: ClassVar[bool] = False
     schema: Schema
     """Mapping from column names to their data types."""
+
+    @property
+    def preserves_output_order(self) -> bool:
+        """
+        Whether output rows appear in the same relative order as this node's input.
+
+        Only meaningful for nodes with a single input. Multi-input nodes
+        (``Join``, ``Union``) need per-child reasoning and are handled by
+        their streaming actors.
+        """
+        return self._preserves_output_order
 
     def get_hashable(self) -> Hashable:
         """
@@ -447,7 +460,7 @@ class PythonScan(IR):
         # We pass predicate=None and apply any pushed predicate on the
         # GPU in process_chunk.
         # TODO: forward the pushed predicate to a RankAwareSource so a GPU-aware source
-        # can apply it at read time. See https://github.com/rapidsai/cudf/issues/22917.
+        # can apply it at read time. See https://github.com/NVIDIA/cudf/issues/22917.
         if rank_aware_source is not None:
             source_chunks = rank_aware_source(
                 with_columns, None, None, None, rank=rank, nranks=nranks
@@ -519,7 +532,7 @@ class PythonScan(IR):
         # Validate against the declared (output) schema. Polars performs this
         # check for register_io_source(..., validate_schema=True), but the flag is
         # not exposed to the GPU plan, so we always validate.
-        # See https://github.com/rapidsai/cudf/issues/23043
+        # See https://github.com/NVIDIA/cudf/issues/23043
         declared = pl.Schema(
             {name: dtype.polars_type for name, dtype in schema.items()}
         )
@@ -582,7 +595,7 @@ def _parquet_physical_types(
     paths: list[str], columns: list[str] | None
 ) -> dict[str, plc.DataType]:
     # TODO: Use prefetched metadata
-    # https://github.com/rapidsai/cudf/issues/22940
+    # https://github.com/NVIDIA/cudf/issues/22940
     metadata = plc.io.parquet_metadata.read_parquet_metadata(plc.io.SourceInfo(paths))
     column_types = metadata.schema().column_types()
 
@@ -910,7 +923,7 @@ class Scan(IR):
         cached_parquet_info: list[CachedParquetInfo] | None,
     ) -> int:
         # Zero-width parquet files lose their row count when read through
-        # pylibcudf. See https://github.com/rapidsai/cudf/issues/21428
+        # pylibcudf. See https://github.com/NVIDIA/cudf/issues/21428
         if cached_parquet_info is not None:
             Scan._validate_cached_parquet_info(paths, cached_parquet_info)
             parquet_metadatas = [
@@ -965,6 +978,7 @@ class Scan(IR):
     ) -> DataFrame:
         """Evaluate and return a dataframe."""
         stream = context.get_cuda_stream()
+        effective_predicate = predicate
         if typ == "csv":
 
             def read_csv_header(
@@ -1092,12 +1106,18 @@ class Scan(IR):
             filters = None
             if predicate is not None and row_index is None:
                 # Can't apply filters during read if we have a row index.
-                filters = to_parquet_filter(
+                filters, residual_expr = to_parquet_filter(
                     _prepare_parquet_predicate(
                         predicate.value, paths, schema, with_columns
                     ),
                     stream=stream,
                 )
+                if filters is not None:
+                    effective_predicate = (
+                        expr.NamedExpr(predicate.name, residual_expr)
+                        if residual_expr is not None
+                        else None
+                    )
             builder = plc.io.parquet.ParquetReaderOptions.builder(source_info)
             if filters is not None and parquet_options.use_jit_filter:
                 builder.use_jit_filter(use_jit_filter=True)
@@ -1189,8 +1209,7 @@ class Scan(IR):
                     df = Scan.add_file_paths(
                         include_file_paths, paths, tbl_w_meta.num_rows_per_source, df
                     )
-            if filters is not None:
-                # Mask must have been applied.
+            if filters is not None and effective_predicate is None:
                 return df
         elif typ == "ndjson":
             json_schema: list[plc.io.json.NameAndType] = [
@@ -1241,7 +1260,7 @@ class Scan(IR):
         assert all(
             c.obj.type() == schema[name].plc_type for name, c in df.column_map.items()
         )
-        return apply_predicate(df, predicate)
+        return apply_predicate(df, effective_predicate)
 
 
 class Sink(IR):
@@ -1554,6 +1573,7 @@ class Cache(IR):
     Used for CSE at the plan level.
     """
 
+    _preserves_output_order: ClassVar[bool] = True
     __slots__ = ("key", "refcount")
     _non_child = ("schema", "key", "refcount")
     _n_non_child_args = 2
@@ -1736,7 +1756,7 @@ class DataFrameScan(IR):
             df = df.select(projection)
 
         # Zero-width dataframes lose their row count when converted through
-        # pylibcudf. See https://github.com/rapidsai/cudf/issues/21428
+        # pylibcudf. See https://github.com/NVIDIA/cudf/issues/21428
         if len(schema) == 0:
             return DataFrame([], stream=context.get_cuda_stream(), num_rows=height)
 
@@ -1777,6 +1797,11 @@ class Select(IR):
             and df.typ != "parquet"
         ):  # pragma: no cover
             raise NotImplementedError(f"Unsupported scan type: {df.typ}")
+
+    @property
+    def preserves_output_order(self) -> bool:
+        """Whether the selected expressions keep input appearance order."""
+        return all(e.all_pointwise() for e in self.exprs)
 
     @staticmethod
     def _is_len_expr(exprs: tuple[expr.NamedExpr, ...]) -> bool:  # pragma: no cover
@@ -1907,6 +1932,7 @@ class Reduce(IR):
 class Rolling(IR):
     """Perform a (possibly grouped) rolling aggregation."""
 
+    _preserves_output_order: ClassVar[bool] = True
     __slots__ = (
         "agg_requests",
         "closed_window",
@@ -2154,6 +2180,11 @@ class GroupBy(IR):
             maintain_order,
             self.zlice,
         )
+
+    @property
+    def preserves_output_order(self) -> bool:
+        """Whether grouped rows keep input appearance order."""
+        return self.maintain_order
 
     @classmethod
     @log_do_evaluate
@@ -2518,7 +2549,7 @@ def _add_cast(
     side: expr.ColRef,
     left_casts: dict[str, DataType],
     right_casts: dict[str, DataType],
-) -> None:  # pragma: no cover
+) -> None:
     (col,) = side.children
     assert isinstance(col, expr.Col)
     casts = (
@@ -2534,32 +2565,23 @@ def _align_decimal_binop_types(
     right_casts: dict[str, DataType],
 ) -> None:
     left_type, right_type = left_expr.dtype, right_expr.dtype
-
-    if plc.traits.is_fixed_point(left_type.plc_type) and plc.traits.is_fixed_point(
-        right_type.plc_type
-    ):
-        target = DataType.common_decimal_dtype(left_type, right_type)
-
-        if (
-            left_type.id() != target.id() or left_type.scale() != target.scale()
-        ):  # pragma: no cover
-            _add_cast(target, left_expr, left_casts, right_casts)
-
-        if right_type.id() != target.id() or right_type.scale() != target.scale():
-            _add_cast(target, right_expr, left_casts, right_casts)
-
-    elif (
-        plc.traits.is_fixed_point(left_type.plc_type)
-        and plc.traits.is_floating_point(right_type.plc_type)
-    ) or (
-        plc.traits.is_fixed_point(right_type.plc_type)
-        and plc.traits.is_floating_point(left_type.plc_type)
-    ):  # pragma: no cover
-        is_decimal_left = plc.traits.is_fixed_point(left_type.plc_type)
-        decimal_expr, float_expr = (
-            (left_expr, right_expr) if is_decimal_left else (right_expr, left_expr)
+    if not (
+        (
+            plc.traits.is_fixed_point(left_type.plc_type)
+            and plc.traits.is_floating_point(right_type.plc_type)
         )
-        _add_cast(decimal_expr.dtype, float_expr, left_casts, right_casts)
+        or (
+            plc.traits.is_fixed_point(right_type.plc_type)
+            and plc.traits.is_floating_point(left_type.plc_type)
+        )
+    ):
+        return
+
+    is_decimal_left = plc.traits.is_fixed_point(left_type.plc_type)
+    decimal_expr, float_expr = (
+        (left_expr, right_expr) if is_decimal_left else (right_expr, left_expr)
+    )
+    _add_cast(decimal_expr.dtype, float_expr, left_casts, right_casts)
 
 
 def _collect_decimal_binop_casts(
@@ -2584,9 +2606,7 @@ def _collect_decimal_binop_casts(
     return left_casts, right_casts
 
 
-def _apply_casts(
-    df: DataFrame, casts: dict[str, DataType]
-) -> DataFrame:  # pragma: no cover
+def _apply_casts(df: DataFrame, casts: dict[str, DataType]) -> DataFrame:
     if not casts:
         return df
 
@@ -3163,6 +3183,11 @@ class HStack(IR):
         self._non_child_args = (self.columns, self.should_broadcast)
         self.children = (df,)
 
+    @property
+    def preserves_output_order(self) -> bool:
+        """Whether the stacked expressions keep input appearance order."""
+        return all(e.all_pointwise() for e in self.columns)
+
     @classmethod
     @log_do_evaluate
     @nvtx_annotate_cudf_polars(message="HStack")
@@ -3226,6 +3251,11 @@ class Distinct(IR):
         self.stable = stable
         self._non_child_args = (keep, subset, zlice, stable)
         self.children = (df,)
+
+    @property
+    def preserves_output_order(self) -> bool:
+        """Whether distinct rows keep input appearance order."""
+        return self.stable
 
     _KEEP_MAP: ClassVar[dict[str, plc.stream_compaction.DuplicateKeepOption]] = {
         "first": plc.stream_compaction.DuplicateKeepOption.KEEP_FIRST,
@@ -3375,6 +3405,7 @@ class Sort(IR):
 class Slice(IR):
     """Slice a dataframe."""
 
+    _preserves_output_order: ClassVar[bool] = True
     __slots__ = ("length", "offset")
     _non_child = ("schema", "offset", "length")
     _n_non_child_args = 2
@@ -3403,6 +3434,7 @@ class Slice(IR):
 class Filter(IR):
     """Filter a dataframe with a boolean mask."""
 
+    _preserves_output_order: ClassVar[bool] = True
     __slots__ = ("mask",)
     _non_child = ("schema", "mask")
     _n_non_child_args = 1
@@ -3428,6 +3460,7 @@ class Filter(IR):
 class Projection(IR):
     """Select a subset of columns from a dataframe."""
 
+    _preserves_output_order: ClassVar[bool] = True
     __slots__ = ()
     _non_child = ("schema",)
     _n_non_child_args = 1
@@ -3556,6 +3589,10 @@ class MapFunction(IR):
                 # polars requires that all to-explode columns have the
                 # same sub-shapes
                 raise NotImplementedError("Explode with more than one column")
+            if any(
+                isinstance(df.schema[name].polars_type, pl.Array) for name in to_explode
+            ):
+                raise NotImplementedError("Explode on Array is not supported")
             self.options = (tuple(to_explode),)
         elif self.name == "unpivot":
             indices, pivotees, variable_name, value_name = self.options
@@ -3615,6 +3652,11 @@ class MapFunction(IR):
                     tuple(nulls_last),
                 )
         self._non_child_args = (schema, name, self.options)
+
+    @property
+    def preserves_output_order(self) -> bool:
+        """Whether this map keeps input appearance order."""
+        return self.name in {"rechunk", "rename", "row_index", "hint_sorted"}
 
     def get_hashable(self) -> Hashable:
         """

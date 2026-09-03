@@ -1890,7 +1890,7 @@ def test_parquet_writer_bytes_io(simple_gdf, store_schema):
 )
 def test_parquet_writer_row_group_size(tmp_path, row_group_size_kwargs):
     # Check that row_group_size options are exposed in Python
-    # See https://github.com/rapidsai/cudf/issues/10978
+    # See https://github.com/NVIDIA/cudf/issues/10978
 
     size = 20000
     gdf = cudf.DataFrame({"a": range(size), "b": [1] * size})
@@ -2180,6 +2180,54 @@ def test_parquet_writer_chunked_max_file_size(
         assert os.path.getsize(each_file) <= (max_file_size_in_bytes), (
             "File exceeded max_file_size"
         )
+
+
+def test_parquet_writer_chunked_max_file_size_list(tmp_path):
+    rows = 128
+    embedding_dim = 128
+    centroids = 8
+
+    # Build a list column with fixed-size embeddings for each row.
+    values = np.random.default_rng(0).standard_normal(
+        rows * embedding_dim, dtype=np.float32
+    )
+    offsets = pa.array(
+        np.arange(
+            0,
+            (rows + 1) * embedding_dim,
+            embedding_dim,
+            dtype=np.int32,
+        )
+    )
+    df = cudf.DataFrame(
+        {
+            "embedding": pa.ListArray.from_arrays(offsets, pa.array(values)),
+            "row": np.arange(rows),
+            "centroid": np.arange(rows) % centroids,
+        }
+    )
+
+    path = tmp_path / "dataset"
+    with ParquetDatasetWriter(
+        str(path),
+        partition_cols=["centroid"],
+        index=False,
+        max_file_size="50 KB",
+        file_name_prefix="part",
+    ) as writer:
+        writer.write_table(df)
+        writer.write_table(df)
+
+    # Each partition should produce one file below the configured size limit.
+    files = list(path.rglob("*.parquet"))
+    assert_eq(len(files), centroids)
+    assert_eq(all(file.stat().st_size <= 50_000 for file in files), True)
+
+    # Verify that the partitioned list data round-trips without loss.
+    expect = cudf.concat([df, df]).sort_values("row").reset_index(drop=True)
+    got = cudf.read_parquet(path).sort_values("row").reset_index(drop=True)
+    got["centroid"] = got["centroid"].astype(df["centroid"].dtype)
+    assert_eq(expect, got)
 
 
 def test_parquet_writer_chunked_max_file_size_error():
@@ -3422,6 +3470,42 @@ def test_parquet_writer_zstd():
         assert_eq(expected, got)
 
 
+def test_parquet_writer_gzip():
+    size = 12345
+    # Both columns have to be compressible
+    expected = cudf.DataFrame(
+        {
+            "a": np.arange(0, stop=size, dtype="float64"),
+            "b": [f"row-{i}-value" for i in range(size)],
+        }
+    )
+
+    buff = BytesIO()
+    expected.to_parquet(buff, compression="GZIP")
+
+    got = pq.read_table(buff)
+    assert_eq(expected, got.to_pandas())
+
+    row_group = pq.ParquetFile(buff).metadata.row_group(0)
+    for i in range(row_group.num_columns):
+        assert row_group.column(i).compression == "GZIP"
+
+
+@pytest.mark.parametrize(
+    "compression", ["GZIP", "ZSTD", "LZ4", "snappy", None]
+)
+def test_parquet_writer_pyarrow_engine_compression(tmp_path, compression):
+    df = cudf.DataFrame({"a": [f"row-{i}-value" for i in range(1000)]})
+
+    df.to_parquet(tmp_path, engine="pyarrow", compression=compression)
+
+    row_group = pq.ParquetFile(
+        next(tmp_path.glob("*.parquet"))
+    ).metadata.row_group(0)
+    expected = "UNCOMPRESSED" if compression is None else compression.upper()
+    assert row_group.column(0).compression == expected
+
+
 @pytest.mark.parametrize("store_schema", [True, False])
 def test_parquet_writer_time_delta_physical_type(store_schema):
     df = cudf.DataFrame(
@@ -3607,7 +3691,7 @@ def test_parquet_write_lz4():
 def test_parquet_reader_zstd_huff_tables(datadir):
     # Ensure that this zstd-compressed file does not overrun buffers. The
     # problem was fixed in nvcomp 3.0.6.
-    # See https://github.com/rapidsai/cudf/issues/15096
+    # See https://github.com/NVIDIA/cudf/issues/15096
     fname = datadir / "zstd_huff_tables_bug.parquet"
 
     expected = pa.parquet.read_table(fname).to_pandas()
@@ -4685,9 +4769,91 @@ def test_parquet_reader_mismatched_nullability_structs(tmp_path):
     )
 
 
+def test_parquet_not_equal_with_nan_stats(tmp_path):
+    """`col != v` must not prune matching `NaN` rows."""
+    import pylibcudf as plc
+    from pylibcudf.expressions import (
+        ASTOperator,
+        ColumnNameReference,
+        Literal,
+        Operation,
+    )
+
+    path = tmp_path / "nan_not_equal.parquet"
+    pq.write_table(
+        pa.table({"x": [float("nan"), 5.0, 7.0, 8.0]}), path, row_group_size=2
+    )
+
+    # Sanity check the fixture: NaN is excluded, so row group 0 looks constant
+    stats = pq.ParquetFile(path).metadata.row_group(0).column(0).statistics
+    assert_eq(stats.min, 5.0)
+    assert_eq(stats.max, 5.0)
+
+    scalar = plc.Scalar.from_arrow(pa.scalar(5.0))
+    filter_expr = Operation(
+        ASTOperator.NOT_EQUAL, ColumnNameReference("x"), Literal(scalar)
+    )
+
+    source = plc.io.SourceInfo([str(path)])
+    options = plc.io.parquet.ParquetReaderOptions.builder(source).build()
+    options.set_filter(filter_expr)
+    result = plc.io.parquet.read_parquet(options)
+
+    # Neither row group may be pruned: rg0 holds a NaN, rg1 holds 7.0 and 8.0
+    assert_eq(result.num_row_groups_after_stats_filter, 2)
+    got = result.tbl.to_arrow().column(0).to_pylist()
+    assert_eq(len(got), 3)
+    assert_eq(math.isnan(got[0]), True)
+    assert_eq(got[1:], [7.0, 8.0])
+
+
+def test_parquet_negated_ordering_with_nan_stats(tmp_path):
+    """`NOT(col < v)` must not prune matching `NaN` rows."""
+    import pylibcudf as plc
+    from pylibcudf.expressions import (
+        ASTOperator,
+        ColumnNameReference,
+        Literal,
+        Operation,
+    )
+
+    # One row group per 3 rows. The first holds NaN alongside small values, so its
+    # statistics are min=1.0/max=2.0 and `vmax >= 50` is false for it.
+    values = [float("nan"), 1.0, 2.0, 100.0, 200.0, 300.0]
+    path = tmp_path / "nan_ordering.parquet"
+    pq.write_table(pa.table({"x": values}), path, row_group_size=3)
+
+    # Sanity check the fixture actually reproduces the Arrow statistics behaviour
+    stats = pq.ParquetFile(path).metadata.row_group(0).column(0).statistics
+    assert_eq(stats.has_min_max, True)
+    assert_eq(stats.min, 1.0)
+    assert_eq(stats.max, 2.0)
+
+    col = ColumnNameReference("x")
+    lit = Literal(plc.Scalar.from_arrow(pa.scalar(50.0)))
+    filter_expr = Operation(
+        ASTOperator.NOT, Operation(ASTOperator.LESS, col, lit)
+    )
+
+    source = plc.io.SourceInfo([str(path)])
+    options = plc.io.parquet.ParquetReaderOptions.builder(source).build()
+    options.set_filter(filter_expr)
+    got = (
+        plc.io.parquet.read_parquet(options)
+        .tbl.to_arrow()
+        .column(0)
+        .to_pylist()
+    )
+
+    # NOT(x < 50) is true for NaN and for 100/200/300, and false for 1.0/2.0
+    assert_eq(len(got), 4)
+    assert_eq(math.isnan(got[0]), True)
+    assert_eq(got[1:], [100.0, 200.0, 300.0])
+
+
 @pytest.mark.skipif(
     pa.__version__ == "19.0.0",
-    reason="https://github.com/apache/arrow/issues/45283, https://github.com/rapidsai/cudf/issues/17806",
+    reason="https://github.com/apache/arrow/issues/45283, https://github.com/NVIDIA/cudf/issues/17806",
 )
 @pytest.mark.parametrize(
     "stats_fname,bloom_filter_fname",
@@ -4706,6 +4872,7 @@ def test_parquet_reader_mismatched_nullability_structs(tmp_path):
     "predicate,expected_len",
     [
         ([[("str", "==", "FINDME")], [("fp64", "==", float(500))]], 2),
+        ([("str", "!=", "FINDME")], 998),
         ([("fixed_pt", "==", decimal.Decimal(float(500)))], 2),
         ([[("ui32", "==", np.uint32(500)), ("str", "==", "FINDME")]], 2),
         ([[("str", "==", "FINDME")], [("ui32", ">=", np.uint32(0))]], 1000),
@@ -4780,6 +4947,48 @@ def test_parquet_bloom_filters_alignment(datadir, columns, memory_resource):
     read = cudf.read_parquet(
         fname, columns=columns, filters=filters
     ).to_arrow()
+
+    assert_eq(expected, read)
+
+
+@pytest.mark.parametrize(
+    "filename",
+    [
+        "data_index_bloom_encoding_stats.parquet",
+        "data_index_bloom_encoding_with_length.parquet",
+    ],
+    ids=["length-absent", "length-present"],
+)
+@pytest.mark.parametrize("value", ["Hello", "not-in-this-file"])
+def test_parquet_bloom_filters_length(datadir, filename, value):
+    # Header may omit the bloom filter length.
+    # Source: apache/parquet-testing (Apache-2.0)
+    fname = datadir / filename
+    filters = [("String", "==", value)]
+
+    expected = pq.read_table(fname, filters=filters)
+    read = cudf.read_parquet(fname, filters=filters).to_arrow()
+
+    assert_eq(expected, read)
+
+
+@pytest.mark.parametrize(
+    "predicate",
+    [
+        [("r_reason_id", "==", "AAAAAAAABAAAAAAA")],  # no bloom filter
+        [
+            ("r_reason_desc", "==", "Did not like the color"),
+            ("r_reason_id", "==", "AAAAAAAAIAAAAAAA"),
+        ],  # with and without a bloom filter
+    ],
+)
+def test_parquet_bloom_filters_mixed_presence(datadir, predicate):
+    # Source: same data as in bloom_filter_alignment.parquet,
+    # written with only r_reason_desc having a bloom filter
+    fname = datadir / "bloom_filter_alignment_desc_only.parquet"
+
+    expected = pq.read_table(fname, filters=predicate)
+    read = cudf.read_parquet(fname, filters=predicate).to_arrow()
 
     assert_eq(expected, read)
 

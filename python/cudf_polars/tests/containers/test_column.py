@@ -193,8 +193,12 @@ def test_deserialize_ctor_kwargs_invalid_dtype_and_kind():
         Column.deserialize_ctor_kwargs(column_kwargs)
 
 
-def test_deserialize_ctor_kwargs_list_dtype():
-    pl_type = pl.List(pl.Int64())
+@pytest.mark.parametrize(
+    "pl_type",
+    [pl.List(pl.Int64()), pl.Array(pl.Int64(), 2)],
+    ids=repr,
+)
+def test_deserialize_ctor_kwargs_nested_dtype(pl_type):
     column_kwargs = {
         "is_sorted": plc.types.Sorted.NO,
         "order": plc.types.Order.ASCENDING,
@@ -228,7 +232,7 @@ def test_serialize_cache_miss():
     assert frames[0].nbytes > 0
     assert frames[1].nbytes > 0
 
-    # https://github.com/rapidsai/cudf/pull/18953
+    # https://github.com/NVIDIA/cudf/pull/18953
     # In a multi-GPU setup, we might attempt to deserialize a column
     # whose type we haven't seen before. polars lets you use either the
     # class (`pl.Int8`) or an instance (`pl.Int8()`) in most places
@@ -284,10 +288,7 @@ def test_serialize_cache_miss():
             pl.Enum(["a", "b"]),
             marks=pytest.mark.xfail(reason="Enum is not supported", strict=True),
         ),
-        pytest.param(
-            pl.Array(pl.Int8, shape=(1,)),
-            marks=pytest.mark.xfail(reason="Array[Int8] is not supported", strict=True),
-        ),
+        pl.Array(pl.Int8, shape=(1,)),
     ],
 )
 def test_dtype_header_roundtrip(dtype: pl.DataType):

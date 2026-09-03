@@ -222,14 +222,15 @@ void approx_distinct_count<Hasher>::add(table_view const& input, cuda::stream_re
   typename approx_distinct_count<Hasher>::hll_ref_type ref{sketch(), cuda::std::identity{}};
 
   auto const has_nulls = nullate::DYNAMIC{cudf::has_nested_nulls(input)};
+  auto const temp_mr   = cudf::get_current_device_resource_ref();
   auto const preprocessed_input =
-    cudf::detail::row::hash::preprocessed_table::create(input, stream);
+    cudf::detail::row::hash::preprocessed_table::create(input, stream, temp_mr);
   auto const row_hasher = cudf::detail::row::hash::row_hasher(preprocessed_input);
   auto const hash_key   = row_hasher.device_hasher<Hasher>(has_nulls);
 
   if (_null_handling == null_policy::INCLUDE) {
     if (_nan_handling == nan_policy::NAN_IS_NULL) {
-      auto const d_table    = table_device_view::create(input, stream);
+      auto const d_table    = table_device_view::create(input, stream, temp_mr);
       auto const nan_hasher = nan_to_null_hasher{hash_key, *d_table};
       auto const hash_iter  = cudf::detail::make_counting_transform_iterator(0, nan_hasher);
       ref.add_async(hash_iter, hash_iter + num_rows, stream);
@@ -245,19 +246,17 @@ void approx_distinct_count<Hasher>::add(table_view const& input, cuda::stream_re
       if (!has_nulls) {
         ref.add_async(hash_iter, hash_iter + num_rows, stream);
       } else {
-        auto const row_bitmask =
-          cudf::detail::bitmask_and(input, stream, cudf::get_current_device_resource_ref()).first;
-        auto const pred = row_is_valid{static_cast<bitmask_type const*>(row_bitmask.data())};
+        auto const row_bitmask = cudf::detail::bitmask_and(input, stream, temp_mr).first;
+        auto const pred        = row_is_valid{static_cast<bitmask_type const*>(row_bitmask.data())};
         ref.add_if_async(hash_iter, hash_iter + num_rows, stencil, pred, stream);
       }
     } else {
-      auto const d_table = table_device_view::create(input, stream);
+      auto const d_table = table_device_view::create(input, stream, temp_mr);
       if (!has_nulls) {
         auto const pred = check_nans_predicate{*d_table, nullptr};
         ref.add_if_async(hash_iter, hash_iter + num_rows, stencil, pred, stream);
       } else {
-        auto const row_bitmask =
-          cudf::detail::bitmask_and(input, stream, cudf::get_current_device_resource_ref()).first;
+        auto const row_bitmask = cudf::detail::bitmask_and(input, stream, temp_mr).first;
         auto const bitmask_ptr = static_cast<bitmask_type const*>(row_bitmask.data());
         auto const pred        = check_nans_predicate{*d_table, bitmask_ptr};
         ref.add_if_async(hash_iter, hash_iter + num_rows, stencil, pred, stream);

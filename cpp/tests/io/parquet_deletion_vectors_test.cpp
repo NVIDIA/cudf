@@ -76,7 +76,7 @@ auto build_column_from_host_data(cudf::host_span<T const> host_data,
 
   auto const num_rows = host_data.size();
   rmm::device_buffer buffer{num_rows * sizeof(T), stream, mr};
-  cudf::detail::cuda_memcpy_async<T>(
+  cudf::detail::cuda_memcpy<T>(
     cudf::device_span<T>{static_cast<T*>(buffer.data()), num_rows}, host_data, stream);
   return std::make_unique<cudf::column>(
     cudf::data_type{data_type}, num_rows, std::move(buffer), rmm::device_buffer{}, 0);
@@ -216,7 +216,8 @@ std::unique_ptr<cudf::table> build_expected_table(
                  cuda::counting_iterator(input_table_view.num_columns()),
                  std::back_inserter(index_and_columns),
                  [&](auto col_idx) { return input_table_view.column(col_idx); });
-  return cudf::apply_boolean_mask(cudf::table_view{index_and_columns}, row_mask_column, stream, mr);
+  return cudf::apply_retention_mask(
+    cudf::table_view{index_and_columns}, row_mask_column, stream, mr);
 }
 
 /**

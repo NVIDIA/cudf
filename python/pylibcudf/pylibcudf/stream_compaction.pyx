@@ -26,6 +26,8 @@ from .column cimport Column
 from .expressions cimport Expression
 from .table cimport Table
 from .utils cimport _get_stream, _get_memory_resource
+
+import warnings
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -36,6 +38,7 @@ __all__ = [
     "DuplicateKeepOption",
     "apply_boolean_mask",
     "apply_deletion_mask",
+    "apply_retention_mask",
     "distinct",
     "distinct_indices",
     "drop_nans",
@@ -125,27 +128,27 @@ cpdef Table drop_nans(
     return Table.from_libcudf(move(c_result), _stream, mr)
 
 
-cpdef Table apply_boolean_mask(
+cpdef Table apply_retention_mask(
     Table source_table,
-    Column boolean_mask,
+    Column retention_mask,
     object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
-    """Filters out rows from the input table based on a boolean mask.
+    """Filters rows of the input table using a retention mask.
 
-    For details, see :cpp:func:`apply_boolean_mask`.
+    For details, see :cpp:func:`apply_retention_mask`.
 
     Parameters
     ----------
     source_table : Table
         The input table to filter.
-    boolean_mask : Column
-        The boolean mask to apply to the input table.
+    retention_mask : Column
+        A boolean column used as a retention mask.
 
     Returns
     -------
     Table
-        A new table with rows removed based on the boolean mask.
+        A new table with rows kept where retention mask is valid and true.
     """
     cdef unique_ptr[table] c_result
 
@@ -154,12 +157,27 @@ cpdef Table apply_boolean_mask(
     mr = _get_memory_resource(mr)
 
     cdef table_view c_source_table = source_table.view()
-    cdef column_view c_boolean_mask = boolean_mask.view()
+    cdef column_view c_retention_mask = retention_mask.view()
     with nogil:
-        c_result = cpp_stream_compaction.apply_boolean_mask(
-            c_source_table, c_boolean_mask, _cs, mr.get_mr()
+        c_result = cpp_stream_compaction.apply_retention_mask(
+            c_source_table, c_retention_mask, _cs, mr.get_mr()
         )
     return Table.from_libcudf(move(c_result), _stream, mr)
+
+
+cpdef Table apply_boolean_mask(
+    Table source_table,
+    Column boolean_mask,
+    object stream: CudaStreamLike | None = None,
+    DeviceMemoryResource mr=None,
+):
+    """Deprecated alias for :func:`apply_retention_mask`."""
+    warnings.warn(
+        "apply_boolean_mask is deprecated; use apply_retention_mask instead",
+        FutureWarning,
+        stacklevel=2,
+    )
+    return apply_retention_mask(source_table, boolean_mask, stream, mr)
 
 
 cpdef Table apply_deletion_mask(
@@ -182,7 +200,7 @@ cpdef Table apply_deletion_mask(
     Returns
     -------
     Table
-        Table with rows removed where deletion_mask is true.
+        Table with rows removed where deletion mask is valid and true.
     """
     cdef unique_ptr[table] c_result
 

@@ -7,8 +7,9 @@
 
 #include <cudf/types.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/resource_ref.hpp>
+
+#include <cuda/stream>
 
 #include <cstdint>
 #include <memory>
@@ -26,7 +27,7 @@ std::unique_ptr<column> murmurhash3_x86_32(
   std::shared_ptr<cudf::detail::row::equality::preprocessed_table> const& input,
   size_type num_rows,
   uint32_t seed,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr);
 
 }  // namespace hashing::detail

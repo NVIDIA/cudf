@@ -33,7 +33,7 @@
 namespace cudf {
 namespace strings {
 namespace detail {
-// Benchmark data, shared at https://github.com/rapidsai/cudf/pull/4703, shows
+// Benchmark data, shared at https://github.com/NVIDIA/cudf/pull/4703, shows
 // that the single kernel optimization generally performs better, but when the
 // number of chars/col is beyond a certain threshold memcpy performs better.
 // This heuristic estimates which strategy will give better performance by

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -19,6 +19,7 @@
 #include <rmm/device_vector.hpp>
 
 #include <cuda/std/span>
+#include <cuda/stream>
 #include <thrust/device_vector.h>
 #include <thrust/host_vector.h>
 
@@ -237,7 +238,7 @@ TEST(SpanTest, CanUseDeviceSpan)
 
   auto d_span = device_span<bool>(d_message.data(), d_message.size());
 
-  simple_device_kernel<<<1, 1, 0, cudf::get_default_stream().value()>>>(d_span);
+  simple_device_kernel<<<1, 1, 0, cudf::get_default_stream().get()>>>(d_span);
 
   ASSERT_TRUE(d_message.element(0, cudf::get_default_stream()));
 }
@@ -283,8 +284,8 @@ TEST(MdSpanTest, DeviceReadWrite)
 {
   auto vector = hostdevice_2dvector<int>(11, 23, cudf::get_default_stream());
 
-  readwrite_kernel<<<1, 1, 0, cudf::get_default_stream().value()>>>(vector);
-  readwrite_kernel<<<1, 1, 0, cudf::get_default_stream().value()>>>(vector);
+  readwrite_kernel<<<1, 1, 0, cudf::get_default_stream().get()>>>(vector);
+  readwrite_kernel<<<1, 1, 0, cudf::get_default_stream().get()>>>(vector);
   vector.device_to_host(cudf::get_default_stream());
   EXPECT_EQ(vector[5][6], 30);
 }
@@ -407,8 +408,8 @@ TEST(HostDeviceSpanTest, CanCopySpan)
 
 TEST(HostDeviceSpanTest, CanSendToDevice)
 {
-  auto original_message = get_test_hostdevice_vector();
-  auto stream           = cudf::get_default_stream();
+  auto original_message   = get_test_hostdevice_vector();
+  cuda::stream_ref stream = cudf::get_default_stream();
 
   original_message.host_to_device_async(stream);
 
@@ -417,8 +418,8 @@ TEST(HostDeviceSpanTest, CanSendToDevice)
                   original_message.device_ptr(),
                   original_message.size(),
                   cudaMemcpyDefault,
-                  stream.value());
-  stream.synchronize();
+                  stream.get());
+  stream.sync();
 
   EXPECT_EQ(got_message, hello_world_message);
 }
@@ -435,7 +436,7 @@ TEST(HostDeviceSpanTest, CanGetFromDevice)
 {
   auto message = get_test_hostdevice_vector();
   message.host_to_device_async(cudf::get_default_stream());
-  simple_device_char_kernel<<<1, 1, 0, cudf::get_default_stream()>>>(message);
+  simple_device_char_kernel<<<1, 1, 0, cudf::get_default_stream().get()>>>(message);
 
   message.device_to_host(cudf::get_default_stream());
   expect_match("world hello", cudf::detail::hostdevice_span<char>(message));

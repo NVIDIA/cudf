@@ -543,6 +543,13 @@ def _common_integer_variant(values: list[int]) -> str:
     raise ValueError("Integer list values do not fit any Quent integer type.")
 
 
+def _serialize_struct(value: StructValue) -> list[dict[str, Any]]:
+    """Serialize a dict as a Quent ``Struct`` (list of attributes)."""
+    return [
+        {"key": key, "value": _serialize_value(item)} for key, item in value.items()
+    ]
+
+
 def _serialize_list(values: HomogeneousListValue) -> dict[str, Any]:
     """
     Serialize a homogeneous list as a Quent ``List`` payload.
@@ -582,13 +589,6 @@ def _serialize_list(values: HomogeneousListValue) -> dict[str, Any]:
             raise TypeError(
                 f"Unsupported Quent list element type: {type(values[0]).__name__}"
             )
-
-
-def _serialize_struct(value: StructValue) -> list[dict[str, Any]]:
-    """Serialize a dict as a Quent ``Struct`` (list of attributes)."""
-    return [
-        {"key": key, "value": _serialize_value(item)} for key, item in value.items()
-    ]
 
 
 def _serialize_value(value: Value | None) -> dict[str, Any] | None:

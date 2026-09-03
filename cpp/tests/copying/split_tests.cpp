@@ -18,6 +18,7 @@
 #include <cudf/copying.hpp>
 #include <cudf/detail/iterator.cuh>
 #include <cudf/dictionary/dictionary_column_view.hpp>
+#include <cudf/dictionary/dictionary_factories.hpp>
 #include <cudf/dictionary/encode.hpp>
 #include <cudf/filling.hpp>
 #include <cudf/utilities/memory_resource.hpp>
@@ -2808,6 +2809,22 @@ TEST_F(ContiguousSplitNestedTypesTest, ListOfDictionary)
     return cudf::table_view(
       {cudf::lists_column_view(t.column(0)).get_sliced_child(cudf::get_default_stream())});
   });
+}
+
+TEST_F(ContiguousSplitNestedTypesTest, DictionaryOfDictionary)
+{
+  cudf::test::fixed_width_column_wrapper<int32_t> plain{{10, 20, 30, 10, 20, 30}};
+  auto const inner = cudf::dictionary::encode(plain);
+  cudf::test::fixed_width_column_wrapper<int32_t> indices{{0, 1, 2, 3, 4, 5, 0, 1}};
+  auto const outer = cudf::make_dictionary_column(*inner, indices);
+
+  auto const inner_keys = [](cudf::column_view const& dict) {
+    return cudf::dictionary_column_view(cudf::dictionary_column_view(dict).keys()).keys();
+  };
+
+  for (auto const& result : cudf::contiguous_split(cudf::table_view({*outer}), {3})) {
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(inner_keys(*outer), inner_keys(result.table.column(0)));
+  }
 }
 
 struct ContiguousSplitLongStrings : public cudf::test::BaseFixture {};

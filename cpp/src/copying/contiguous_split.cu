@@ -705,7 +705,7 @@ std::pair<src_buf_info*, size_type> buf_info_functor::operator()<cudf::dictionar
   offset_stack_pos += offset_depth;
 
   // an empty dictionary column may have no children at all
-  if (col.num_children() == 0) { return {current, offset_stack_pos}; }
+  if (col.is_empty() && col.num_children() == 0) { return {current, offset_stack_pos}; }
   CUDF_EXPECTS(col.num_children() == 2, "Encountered malformed dictionary column");
 
   // the indices child carries the parent's row range, but not its validity
@@ -734,7 +734,8 @@ std::pair<src_buf_info*, size_type> buf_info_functor::operator()<cudf::dictionar
 
   // mark the whole keys subtree, including any offsets or chars buffers under it
   std::for_each(keys_begin, current, [row_count = keys.front().size()](src_buf_info& info) {
-    info.full_copy_row_count = row_count;
+    // only unmarked buffers belong to this level; a nested dictionary marked its own keys
+    if (info.full_copy_row_count < 0) { info.full_copy_row_count = row_count; }
   });
 
   return {current, offset_stack_pos};

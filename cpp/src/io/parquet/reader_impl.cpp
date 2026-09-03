@@ -28,12 +28,33 @@
 #include <cuda/std/tuple>
 
 #include <bitset>
+#include <cerrno>
+#include <cstdlib>
 #include <limits>
 #include <numeric>
 #include <stdexcept>
 #include <utility>
 
 namespace cudf::io::parquet::detail {
+
+uint32_t level_prepass_mode_from_environment()
+{
+  constexpr char const* name = "LIBCUDF_PARQUET_LEVEL_PREPASS";
+  auto const* value          = std::getenv(name);
+  // Keep an explicit zero as the temporary rollback mode, but use the
+  // validated page-global prepass for normal reads.
+  if (value == nullptr || *value == '\0') { return level_prepass_all; }
+
+  errno           = 0;
+  char* end       = nullptr;
+  auto const base = value[0] == '0' && (value[1] == 'x' || value[1] == 'X') ? 16 : 10;
+  auto parsed     = std::strtoul(value, &end, base);
+  if (errno != 0 || end == value || *end != '\0' || parsed > level_prepass_all) {
+    CUDF_LOG_WARN("Ignoring invalid %s=%s; using legacy Parquet level decode", name, value);
+    return 0;
+  }
+  return static_cast<uint32_t>(parsed);
+}
 
 void reader_impl::decode_page_data(read_mode mode, size_t skip_rows, size_t num_rows)
 {
@@ -200,6 +221,50 @@ void reader_impl::decode_page_data(read_mode mode, size_t skip_rows, size_t num_
   // create this before we fork streams
   kernel_error error_code(_stream);
 
+  auto const has_selected_flat_prepass =
+    std::any_of(subpass.pages.host_begin(), subpass.pages.host_end(), [](PageInfo const& page) {
+      return page.flat_prepass_enabled || page.legacy_flat_prepass_enabled ||
+             page.delta_flat_prepass_enabled;
+    });
+  auto const has_selected_nested_prepass =
+    std::any_of(subpass.pages.host_begin(), subpass.pages.host_end(), [](PageInfo const& page) {
+      return page.nested_prepass_enabled || page.legacy_nested_prepass_enabled ||
+             page.delta_nested_prepass_enabled;
+    });
+  auto const has_selected_list_prepass =
+    std::any_of(subpass.pages.host_begin(), subpass.pages.host_end(), [](PageInfo const& page) {
+      return page.generic_list_prepass_enabled || page.legacy_list_prepass_enabled ||
+             page.delta_list_prepass_enabled;
+    });
+
+  if (has_selected_flat_prepass) {
+    precompute_flat_level_state(subpass.pages,
+                                pass.chunks,
+                                subpass_page_mask_span(),
+                                skip_rows,
+                                num_rows,
+                                level_type_size,
+                                _stream);
+  }
+  if (has_selected_nested_prepass) {
+    precompute_nested_level_state(subpass.pages,
+                                  pass.chunks,
+                                  subpass_page_mask_span(),
+                                  skip_rows,
+                                  num_rows,
+                                  level_type_size,
+                                  _stream);
+  }
+  if (has_selected_list_prepass) {
+    precompute_list_level_state(subpass.pages,
+                                pass.chunks,
+                                subpass_page_mask_span(),
+                                skip_rows,
+                                num_rows,
+                                level_type_size,
+                                _stream);
+  }
+
   // get the number of streams we need from the pool and tell them to wait on the H2D copies
   int const nkernels = std::bitset<32>(kernel_mask).count();
   auto streams       = cudf::detail::fork_streams(_stream, nkernels);
@@ -207,6 +272,36 @@ void reader_impl::decode_page_data(read_mode mode, size_t skip_rows, size_t num_
   int s_idx = 0;
 
   auto decode_data = [&](decode_kernel_mask decoder_mask) {
+    bool const flat_generic_mask =
+      decoder_mask == decode_kernel_mask::FIXED_WIDTH_NO_DICT ||
+      decoder_mask == decode_kernel_mask::FIXED_WIDTH_DICT ||
+      decoder_mask == decode_kernel_mask::BYTE_STREAM_SPLIT_FIXED_WIDTH_FLAT ||
+      decoder_mask == decode_kernel_mask::BOOLEAN || decoder_mask == decode_kernel_mask::STRING ||
+      decoder_mask == decode_kernel_mask::STRING_DICT ||
+      decoder_mask == decode_kernel_mask::STRING_STREAM_SPLIT ||
+      decoder_mask == decode_kernel_mask::DICT_INT32;
+    bool const use_flat_prepass =
+      flat_generic_mask && (_level_prepass_mode & level_prepass_generic_flat) != 0;
+    bool const nested_generic_mask =
+      decoder_mask == decode_kernel_mask::FIXED_WIDTH_NO_DICT_NESTED ||
+      decoder_mask == decode_kernel_mask::FIXED_WIDTH_DICT_NESTED ||
+      decoder_mask == decode_kernel_mask::BYTE_STREAM_SPLIT_FIXED_WIDTH_NESTED ||
+      decoder_mask == decode_kernel_mask::BOOLEAN_NESTED ||
+      decoder_mask == decode_kernel_mask::STRING_NESTED ||
+      decoder_mask == decode_kernel_mask::STRING_DICT_NESTED ||
+      decoder_mask == decode_kernel_mask::STRING_STREAM_SPLIT_NESTED;
+    bool const use_nested_prepass =
+      nested_generic_mask && (_level_prepass_mode & level_prepass_generic_nested) != 0;
+    bool const list_generic_mask =
+      decoder_mask == decode_kernel_mask::FIXED_WIDTH_NO_DICT_LIST ||
+      decoder_mask == decode_kernel_mask::FIXED_WIDTH_DICT_LIST ||
+      decoder_mask == decode_kernel_mask::BYTE_STREAM_SPLIT_FIXED_WIDTH_LIST ||
+      decoder_mask == decode_kernel_mask::BOOLEAN_LIST ||
+      decoder_mask == decode_kernel_mask::STRING_LIST ||
+      decoder_mask == decode_kernel_mask::STRING_DICT_LIST ||
+      decoder_mask == decode_kernel_mask::STRING_STREAM_SPLIT_LIST;
+    bool const use_list_prepass =
+      list_generic_mask && (_level_prepass_mode & level_prepass_generic_list) != 0;
     detail::decode_page_data(subpass.pages,
                              pass.chunks,
                              num_rows,
@@ -217,7 +312,10 @@ void reader_impl::decode_page_data(read_mode mode, size_t skip_rows, size_t num_
                              initial_str_offsets,
                              subpass.page_string_offset_indices,
                              error_code.data(),
-                             streams[s_idx++]);
+                             streams[s_idx++],
+                             use_flat_prepass,
+                             use_nested_prepass,
+                             use_list_prepass);
   };
 
   // launch string decoder for plain encoded flat columns
@@ -280,7 +378,10 @@ void reader_impl::decode_page_data(read_mode mode, size_t skip_rows, size_t num_
                             subpass_page_mask_span(),
                             initial_str_offsets,
                             error_code.data(),
-                            streams[s_idx++]);
+                            streams[s_idx++],
+                            (_level_prepass_mode & level_prepass_delta_flat) != 0,
+                            (_level_prepass_mode & level_prepass_delta_nested) != 0,
+                            (_level_prepass_mode & level_prepass_delta_list) != 0);
   }
 
   // launch delta length byte array decoder
@@ -293,7 +394,10 @@ void reader_impl::decode_page_data(read_mode mode, size_t skip_rows, size_t num_
                                    subpass_page_mask_span(),
                                    initial_str_offsets,
                                    error_code.data(),
-                                   streams[s_idx++]);
+                                   streams[s_idx++],
+                                   (_level_prepass_mode & level_prepass_delta_flat) != 0,
+                                   (_level_prepass_mode & level_prepass_delta_nested) != 0,
+                                   (_level_prepass_mode & level_prepass_delta_list) != 0);
   }
 
   // launch delta binary decoder
@@ -305,7 +409,10 @@ void reader_impl::decode_page_data(read_mode mode, size_t skip_rows, size_t num_
                         level_type_size,
                         subpass_page_mask_span(),
                         error_code.data(),
-                        streams[s_idx++]);
+                        streams[s_idx++],
+                        (_level_prepass_mode & level_prepass_delta_flat) != 0,
+                        (_level_prepass_mode & level_prepass_delta_nested) != 0,
+                        (_level_prepass_mode & level_prepass_delta_list) != 0);
   }
 
   // launch byte stream split decoder
@@ -332,7 +439,10 @@ void reader_impl::decode_page_data(read_mode mode, size_t skip_rows, size_t num_
                            level_type_size,
                            subpass_page_mask_span(),
                            error_code.data(),
-                           streams[s_idx++]);
+                           streams[s_idx++],
+                           (_level_prepass_mode & level_prepass_legacy_flat) != 0,
+                           (_level_prepass_mode & level_prepass_legacy_nested) != 0,
+                           (_level_prepass_mode & level_prepass_legacy_list) != 0);
   }
 
   // launch fixed width type decoder
@@ -389,7 +499,10 @@ void reader_impl::decode_page_data(read_mode mode, size_t skip_rows, size_t num_
                              level_type_size,
                              subpass_page_mask_span(),
                              error_code.data(),
-                             streams[s_idx++]);
+                             streams[s_idx++],
+                             (_level_prepass_mode & level_prepass_legacy_flat) != 0,
+                             (_level_prepass_mode & level_prepass_legacy_nested) != 0,
+                             (_level_prepass_mode & level_prepass_legacy_list) != 0);
   }
 
   // synchronize the streams
@@ -538,6 +651,14 @@ reader_impl::reader_impl(std::size_t chunk_read_limit,
     _output_chunk_read_limit{chunk_read_limit},
     _input_pass_read_limit{pass_read_limit}
 {
+  _level_prepass_mode = level_prepass_mode_from_environment();
+  if (_level_prepass_mode != 0) {
+    CUDF_LOG_INFO(
+      "LIBCUDF_PARQUET_LEVEL_PREPASS resolved to 0x%x; no prepass consumer family "
+      "is enabled in this build",
+      _level_prepass_mode);
+  }
+
   // The direct parquet-dict → DICTIONARY32 transcode fast path only supports single-pass,
   // non-chunked reads.
   if (_options.output_dict_columns and (chunk_read_limit != 0 or pass_read_limit != 0)) {

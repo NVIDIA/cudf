@@ -17,6 +17,7 @@
 #include <cudf/io/detail/codec.hpp>
 #include <cudf/io/parquet_schema.hpp>
 #include <cudf/types.hpp>
+#include <cudf/utilities/export.hpp>
 #include <cudf/utilities/span.hpp>
 
 #include <rmm/device_uvector.hpp>
@@ -260,6 +261,39 @@ enum class decode_kernel_mask {
   DICT_INT32               = (1 << 26),  // Run decode kernel for dict string → INT32 indices
 };
 
+/** @brief Mutually exclusive consumer families used by the temporary prepass selector. */
+enum class level_prepass_family : uint16_t {
+  NONE,
+  GENERIC_FLAT,
+  LEGACY_FLAT,
+  DELTA_FLAT,
+  GENERIC_NESTED,
+  LEGACY_NESTED,
+  DELTA_NESTED,
+  GENERIC_LIST,
+  LEGACY_LIST,
+  DELTA_LIST,
+};
+
+constexpr uint32_t level_prepass_generic_flat   = 0x001;
+constexpr uint32_t level_prepass_legacy_flat    = 0x002;
+constexpr uint32_t level_prepass_delta_flat     = 0x004;
+constexpr uint32_t level_prepass_generic_nested = 0x008;
+constexpr uint32_t level_prepass_legacy_nested  = 0x010;
+constexpr uint32_t level_prepass_delta_nested   = 0x020;
+constexpr uint32_t level_prepass_generic_list   = 0x040;
+constexpr uint32_t level_prepass_legacy_list    = 0x080;
+constexpr uint32_t level_prepass_delta_list     = 0x100;
+constexpr uint32_t level_prepass_all            = 0x1ff;
+
+/**
+ * @brief Read the temporary Parquet level-prepass selector from the environment.
+ *
+ * This is an internal rollout control. Until a family is migrated, its bit is
+ * intentionally inert and the legacy decoder remains selected.
+ */
+CUDF_EXPORT [[nodiscard]] uint32_t level_prepass_mode_from_environment();
+
 constexpr uint32_t STRINGS_MASK_NON_DELTA = BitOr(decode_kernel_mask::STRING,
                                                   decode_kernel_mask::STRING_NESTED,
                                                   decode_kernel_mask::STRING_LIST,
@@ -274,6 +308,42 @@ constexpr uint32_t STRINGS_MASK_NON_DELTA = BitOr(decode_kernel_mask::STRING,
 constexpr uint32_t STRINGS_MASK = BitOr(decode_kernel_mask::DELTA_BYTE_ARRAY,
                                         decode_kernel_mask::DELTA_LENGTH_BA,
                                         STRINGS_MASK_NON_DELTA);
+
+/** @brief Generic non-list nested decoder masks covered by the nested prepass. */
+constexpr uint32_t NESTED_GENERIC_LEVEL_PREPASS_MASK =
+  BitOr(decode_kernel_mask::FIXED_WIDTH_NO_DICT_NESTED,
+        decode_kernel_mask::FIXED_WIDTH_DICT_NESTED,
+        decode_kernel_mask::BYTE_STREAM_SPLIT_FIXED_WIDTH_NESTED,
+        decode_kernel_mask::BOOLEAN_NESTED,
+        decode_kernel_mask::STRING_NESTED,
+        decode_kernel_mask::STRING_DICT_NESTED,
+        decode_kernel_mask::STRING_STREAM_SPLIT_NESTED);
+
+/** @brief Legacy page-data decoder masks covered by the nested prepass. */
+constexpr uint32_t NESTED_LEGACY_LEVEL_PREPASS_MASK =
+  BitOr(decode_kernel_mask::GENERAL, decode_kernel_mask::BYTE_STREAM_SPLIT);
+
+/** @brief Generic list decoder masks covered by the opt-in list prepass. */
+constexpr uint32_t GENERIC_LIST_LEVEL_PREPASS_MASK =
+  BitOr(decode_kernel_mask::FIXED_WIDTH_NO_DICT_LIST,
+        decode_kernel_mask::FIXED_WIDTH_DICT_LIST,
+        decode_kernel_mask::BYTE_STREAM_SPLIT_FIXED_WIDTH_LIST,
+        decode_kernel_mask::BOOLEAN_LIST,
+        decode_kernel_mask::STRING_LIST,
+        decode_kernel_mask::STRING_DICT_LIST,
+        decode_kernel_mask::STRING_STREAM_SPLIT_LIST);
+
+/** @brief GENERAL and BYTE_STREAM_SPLIT list pages covered by the list prepass. */
+constexpr uint32_t LEGACY_LIST_LEVEL_PREPASS_MASK =
+  BitOr(decode_kernel_mask::GENERAL, decode_kernel_mask::BYTE_STREAM_SPLIT);
+
+/** @brief Delta list decoder masks covered by the opt-in list prepass. */
+constexpr uint32_t DELTA_LIST_LEVEL_PREPASS_MASK = BitOr(decode_kernel_mask::DELTA_BINARY,
+                                                         decode_kernel_mask::DELTA_BYTE_ARRAY,
+                                                         decode_kernel_mask::DELTA_LENGTH_BA);
+
+constexpr uint32_t LIST_LEVEL_PREPASS_MASK =
+  BitOr(GENERIC_LIST_LEVEL_PREPASS_MASK, LEGACY_LIST_LEVEL_PREPASS_MASK);
 
 /**
  * @brief Nesting information specifically needed by the decode and preprocessing
@@ -303,6 +373,20 @@ struct PageNestingDecodeInfo {
   uint8_t* data_out;
   uint8_t* string_out;
   bitmask_type* valid_map;
+};
+
+/**
+ * @brief Decode-local nesting counters published by the nested level prepass.
+ *
+ * The prepass does not own setup pointers or schema metadata.  A selected
+ * value decoder still obtains those from `setup_local_page_info`; it restores
+ * only these counters before consuming the page-global valid-rank map.
+ */
+struct PageNestingPrepassState {
+  int32_t null_count;
+  int32_t valid_map_offset;
+  int32_t valid_count;
+  int32_t value_count;
 };
 
 // Use up to 512 bytes of shared memory as a cache for nesting information.
@@ -400,6 +484,43 @@ struct PageInfo {
   // while doing chunked reads, persist the value from the page index here.
   int32_t str_bytes_from_index;
   decode_kernel_mask kernel_mask;
+  level_prepass_family prepass_family{level_prepass_family::NONE};
+
+  // Temporary page-global state for the opt-in generic flat level prepass.
+  // A null map denotes either legacy dispatch or the required-column identity path.
+  uint32_t* flat_prepass_nz_idx{};
+  int32_t flat_prepass_nz_count{-1};
+  int32_t flat_prepass_prefix_valid_count{-1};
+  int32_t flat_prepass_null_count{};
+  bool flat_prepass_enabled{};
+  // True when the GENERAL/BYTE_STREAM_SPLIT flat consumer is selected by the
+  // temporary dual-path level-prepass selector.
+  bool legacy_flat_prepass_enabled{};
+  bool delta_flat_prepass_enabled{};
+  bool delta_nested_prepass_enabled{};
+  bool delta_list_prepass_enabled{};
+
+  // Temporary page-global state for the opt-in generic non-list nested
+  // prepass. A null nesting pointer denotes legacy nested dispatch.
+  uint32_t* nested_prepass_nz_idx{};
+  PageNestingPrepassState* nested_prepass_nesting{};
+  int32_t nested_prepass_prefix_valid_count{-1};
+  int32_t nested_prepass_nz_count{-1};
+  int32_t nested_prepass_input_value_count{};
+  int32_t nested_prepass_input_row_count{};
+  bool nested_prepass_enabled{};
+  bool legacy_nested_prepass_enabled{};
+
+  // Temporary page-global state for the opt-in generic list prepass.
+  // The map preserves the legacy valid-rank-to-output-position contract,
+  // including rows suppressed by a nullable ancestor of a required leaf.
+  uint32_t* list_prepass_nz_idx{};
+  PageNestingPrepassState* list_prepass_nesting{};
+  int32_t list_prepass_nz_count{-1};
+  int32_t list_prepass_input_value_count{};
+  int32_t list_prepass_input_row_count{};
+  bool generic_list_prepass_enabled{};
+  bool legacy_list_prepass_enabled{};
 
   bool is_num_rows_adjusted;  // Flag to indicate if the number of rows of this page have been
                               // adjusted to compensate for the list row size estimates.
@@ -970,7 +1091,10 @@ void decode_page_data(cudf::detail::hostdevice_span<PageInfo> pages,
                       int level_type_size,
                       cudf::device_span<bool const> page_mask,
                       kernel_error::pointer error_code,
-                      cuda::stream_ref stream);
+                      cuda::stream_ref stream,
+                      bool use_flat_prepass   = false,
+                      bool use_nested_prepass = false,
+                      bool use_list_prepass   = false);
 
 /**
  * @brief Launches kernel for reading the BYTE_STREAM_SPLIT column data stored in the pages
@@ -994,7 +1118,10 @@ void decode_split_page_data(cudf::detail::hostdevice_span<PageInfo> pages,
                             int level_type_size,
                             cudf::device_span<bool const> page_mask,
                             kernel_error::pointer error_code,
-                            cuda::stream_ref stream);
+                            cuda::stream_ref stream,
+                            bool use_flat_prepass   = false,
+                            bool use_nested_prepass = false,
+                            bool use_list_prepass   = false);
 
 /**
  * @brief Writes the final offsets to the corresponding list and string buffer end addresses in a
@@ -1030,7 +1157,10 @@ void decode_delta_binary(cudf::detail::hostdevice_span<PageInfo> pages,
                          int level_type_size,
                          cudf::device_span<bool const> page_mask,
                          kernel_error::pointer error_code,
-                         cuda::stream_ref stream);
+                         cuda::stream_ref stream,
+                         bool use_flat_prepass   = false,
+                         bool use_nested_prepass = false,
+                         bool use_list_prepass   = false);
 
 /**
  * @brief Launches kernel for reading the DELTA_BYTE_ARRAY column data stored in the pages
@@ -1056,7 +1186,10 @@ void decode_delta_byte_array(cudf::detail::hostdevice_span<PageInfo> pages,
                              cudf::device_span<bool const> page_mask,
                              cudf::device_span<size_t> initial_str_offsets,
                              kernel_error::pointer error_code,
-                             cuda::stream_ref stream);
+                             cuda::stream_ref stream,
+                             bool use_flat_prepass   = false,
+                             bool use_nested_prepass = false,
+                             bool use_list_prepass   = false);
 
 /**
  * @brief Launches kernel for reading the DELTA_LENGTH_BYTE_ARRAY column data stored in the pages
@@ -1082,7 +1215,10 @@ void decode_delta_length_byte_array(cudf::detail::hostdevice_span<PageInfo> page
                                     cudf::device_span<bool const> page_mask,
                                     cudf::device_span<size_t> initial_str_offsets,
                                     kernel_error::pointer error_code,
-                                    cuda::stream_ref stream);
+                                    cuda::stream_ref stream,
+                                    bool use_flat_prepass   = false,
+                                    bool use_nested_prepass = false,
+                                    bool use_list_prepass   = false);
 
 /**
  * @brief Launches pre-processing kernel to fill string offsets for non-dictionary columns
@@ -1131,6 +1267,33 @@ void preprocess_levels(cudf::detail::hostdevice_span<PageInfo> pages,
                        int level_type_size,
                        cuda::stream_ref stream);
 
+/** @brief Publish opt-in generic-flat validity and rank state from decoded levels. */
+void precompute_flat_level_state(cudf::detail::hostdevice_span<PageInfo> pages,
+                                 cudf::detail::hostdevice_span<ColumnChunkDesc const> chunks,
+                                 cudf::device_span<bool const> page_mask,
+                                 size_t min_row,
+                                 size_t num_rows,
+                                 int level_type_size,
+                                 cuda::stream_ref stream);
+
+/** @brief Publish opt-in generic non-list nested level state. */
+void precompute_nested_level_state(cudf::detail::hostdevice_span<PageInfo> pages,
+                                   cudf::detail::hostdevice_span<ColumnChunkDesc const> chunks,
+                                   cudf::device_span<bool const> page_mask,
+                                   size_t min_row,
+                                   size_t num_rows,
+                                   int level_type_size,
+                                   cuda::stream_ref stream);
+
+/** @brief Publish opt-in generic list level state. */
+void precompute_list_level_state(cudf::detail::hostdevice_span<PageInfo> pages,
+                                 cudf::detail::hostdevice_span<ColumnChunkDesc const> chunks,
+                                 cudf::device_span<bool const> page_mask,
+                                 size_t min_row,
+                                 size_t num_rows,
+                                 int level_type_size,
+                                 cuda::stream_ref stream);
+
 /**
  * @brief Fills output offset entries for pruned string and list pages
  *
@@ -1178,7 +1341,10 @@ void decode_page_data(cudf::detail::hostdevice_span<PageInfo> pages,
                       cudf::device_span<size_t> initial_str_offsets,
                       cudf::device_span<size_t const> page_string_offset_indices,
                       kernel_error::pointer error_code,
-                      cuda::stream_ref stream);
+                      cuda::stream_ref stream,
+                      bool use_flat_prepass   = false,
+                      bool use_nested_prepass = false,
+                      bool use_list_prepass   = false);
 
 /**
  * @brief Launches kernel for initializing encoder row group fragments

@@ -34,11 +34,44 @@
 
 #include <algorithm>
 #include <limits>
+#include <new>
 #include <numeric>
 #include <utility>
 #include <vector>
 
 namespace cudf::io::parquet::detail {
+
+namespace {
+
+[[nodiscard]] level_prepass_family classify_prepass_family(PageInfo const& page,
+                                                           ColumnChunkDesc const& chunk)
+{
+  bool const is_list   = chunk.max_level[level_type::REPETITION] > 0;
+  bool const is_nested = !is_list && chunk.max_nesting_depth > 1;
+  bool const is_delta  = BitAnd(page.kernel_mask,
+                               BitOr(decode_kernel_mask::DELTA_BINARY,
+                                     decode_kernel_mask::DELTA_BYTE_ARRAY,
+                                     decode_kernel_mask::DELTA_LENGTH_BA)) != 0;
+  bool const is_legacy =
+    BitAnd(page.kernel_mask,
+           BitOr(decode_kernel_mask::GENERAL, decode_kernel_mask::BYTE_STREAM_SPLIT)) != 0;
+
+  if (is_list) {
+    return is_delta    ? level_prepass_family::DELTA_LIST
+           : is_legacy ? level_prepass_family::LEGACY_LIST
+                       : level_prepass_family::GENERIC_LIST;
+  }
+  if (is_nested) {
+    return is_delta    ? level_prepass_family::DELTA_NESTED
+           : is_legacy ? level_prepass_family::LEGACY_NESTED
+                       : level_prepass_family::GENERIC_NESTED;
+  }
+  return is_delta    ? level_prepass_family::DELTA_FLAT
+         : is_legacy ? level_prepass_family::LEGACY_FLAT
+                     : level_prepass_family::GENERIC_FLAT;
+}
+
+}  // namespace
 
 namespace {
 // Tests the passed in logical type for a FIXED_LENGTH_BYTE_ARRAY column to see if it should
@@ -299,6 +332,10 @@ void reader_impl::allocate_level_decode_space()
   // Loop over pages to compute sizes
   size_t total_memory_size = 0;
   for (size_t idx = 0; idx < num_pages; idx++) {
+    auto& p           = pages[idx];
+    auto const& chunk = pass.chunks[p.chunk_idx];
+    p.prepass_family  = classify_prepass_family(p, chunk);
+
     // Skip pages that are masked out - no need to allocate level decode space for them
     auto const page_mask = subpass_page_mask_span();
     if (!page_mask.is_empty() && !page_mask[idx]) {
@@ -306,9 +343,6 @@ void reader_impl::allocate_level_decode_space()
       rep_level_sizes[idx] = 0;
       continue;
     }
-
-    auto const& p     = pages[idx];
-    auto const& chunk = pass.chunks[p.chunk_idx];
 
     compute_page_level_decode_sizes(p,
                                     chunk,
@@ -350,6 +384,189 @@ void reader_impl::allocate_level_decode_space()
                  "Repetition level size is not a multiple of the level type size");
     pages[idx].num_decoded_level_values =
       std::max(def_level_sizes[idx], rep_level_sizes[idx]) / pass.level_type_size;
+  }
+
+  // Required pages publish an identity contract and therefore need no map
+  // allocation.
+  size_t flat_prepass_size = 0;
+  for (size_t idx = 0; idx < num_pages; ++idx) {
+    auto& page                 = pages[idx];
+    auto const& chunk          = pass.chunks[page.chunk_idx];
+    bool const generic_enabled = (_level_prepass_mode & level_prepass_generic_flat) != 0;
+    bool const legacy_enabled  = (_level_prepass_mode & level_prepass_legacy_flat) != 0;
+    bool const delta_enabled   = (_level_prepass_mode & level_prepass_delta_flat) != 0;
+    bool const optional        = chunk.max_level[level_type::DEFINITION] != 0;
+    bool const selected_generic_flat =
+      generic_enabled && page.prepass_family == level_prepass_family::GENERIC_FLAT;
+    bool const selected_legacy_flat =
+      legacy_enabled && page.prepass_family == level_prepass_family::LEGACY_FLAT;
+    bool const selected_delta_flat =
+      delta_enabled && page.prepass_family == level_prepass_family::DELTA_FLAT;
+    bool const selected_flat = selected_generic_flat || selected_legacy_flat || selected_delta_flat;
+    page.flat_prepass_nz_idx = nullptr;
+    page.flat_prepass_nz_count           = selected_flat ? -2 : -1;
+    page.flat_prepass_prefix_valid_count = -1;
+    page.flat_prepass_null_count         = 0;
+    page.flat_prepass_enabled            = selected_generic_flat;
+    page.legacy_flat_prepass_enabled     = selected_legacy_flat;
+    page.delta_flat_prepass_enabled      = selected_delta_flat;
+    if (selected_flat && optional) {
+      flat_prepass_size += static_cast<size_t>(page.num_input_values) * sizeof(uint32_t);
+    }
+  }
+  subpass.flat_prepass_data =
+    rmm::device_buffer(flat_prepass_size, _stream, cudf::get_current_device_resource_ref());
+  auto* flat_prepass_ptr = static_cast<uint32_t*>(subpass.flat_prepass_data.data());
+  for (size_t idx = 0; idx < num_pages; ++idx) {
+    auto& page               = pages[idx];
+    auto const& chunk        = pass.chunks[page.chunk_idx];
+    bool const selected_flat = (((_level_prepass_mode & level_prepass_generic_flat) != 0 &&
+                                 page.prepass_family == level_prepass_family::GENERIC_FLAT) ||
+                                ((_level_prepass_mode & level_prepass_legacy_flat) != 0 &&
+                                 page.prepass_family == level_prepass_family::LEGACY_FLAT) ||
+                                ((_level_prepass_mode & level_prepass_delta_flat) != 0 &&
+                                 page.prepass_family == level_prepass_family::DELTA_FLAT));
+    if (selected_flat && chunk.max_level[level_type::DEFINITION] != 0) {
+      page.flat_prepass_nz_idx = flat_prepass_ptr;
+      flat_prepass_ptr += page.num_input_values;
+    }
+  }
+
+  // Non-list generic nested pages publish their per-depth decode counters and
+  // a dense valid-rank-to-output-position map.  Keep this allocation wholly
+  // separate from flat staging: the selected nested consumer needs the map
+  // through value decoding, while unselected pages retain untouched legacy
+  // nesting state.
+  size_t nested_prepass_map_size     = 0;
+  size_t nested_prepass_nesting_size = 0;
+  for (size_t idx = 0; idx < num_pages; ++idx) {
+    auto& page        = pages[idx];
+    auto const& chunk = pass.chunks[page.chunk_idx];
+    bool const selected_generic_nested =
+      (_level_prepass_mode & level_prepass_generic_nested) != 0 &&
+      page.prepass_family == level_prepass_family::GENERIC_NESTED;
+    bool const selected_legacy_nested = (_level_prepass_mode & level_prepass_legacy_nested) != 0 &&
+                                        page.prepass_family == level_prepass_family::LEGACY_NESTED;
+    bool const selected_delta_nested = (_level_prepass_mode & level_prepass_delta_nested) != 0 &&
+                                       page.prepass_family == level_prepass_family::DELTA_NESTED;
+    bool const selected_nested =
+      selected_generic_nested || selected_legacy_nested || selected_delta_nested;
+    page.nested_prepass_nz_idx             = nullptr;
+    page.nested_prepass_nesting            = nullptr;
+    page.nested_prepass_prefix_valid_count = -1;
+    page.nested_prepass_nz_count           = -1;
+    page.nested_prepass_input_value_count  = 0;
+    page.nested_prepass_input_row_count    = 0;
+    page.nested_prepass_enabled            = selected_generic_nested;
+    page.legacy_nested_prepass_enabled     = selected_legacy_nested;
+    page.delta_nested_prepass_enabled      = selected_delta_nested;
+    if (selected_nested) {
+      // Required nested leaves have an identity valid-rank mapping. They
+      // still publish per-depth state, but do not retain a redundant map.
+      if (chunk.max_level[level_type::DEFINITION] != 0) {
+        nested_prepass_map_size += static_cast<size_t>(page.num_input_values) * sizeof(uint32_t);
+      }
+      nested_prepass_nesting_size +=
+        static_cast<size_t>(page.nesting_info_size) * sizeof(PageNestingPrepassState);
+    }
+  }
+  auto const nested_prepass_size = nested_prepass_map_size + nested_prepass_nesting_size;
+  subpass.nested_prepass_data =
+    rmm::device_buffer(nested_prepass_size, _stream, cudf::get_current_device_resource_ref());
+  auto* nested_prepass_ptr = static_cast<uint8_t*>(subpass.nested_prepass_data.data());
+  auto* nested_map_ptr     = reinterpret_cast<uint32_t*>(nested_prepass_ptr);
+  auto* nested_nesting_ptr = reinterpret_cast<PageNestingPrepassState*>(
+    nested_prepass_ptr == nullptr ? nullptr : nested_prepass_ptr + nested_prepass_map_size);
+  for (size_t idx = 0; idx < num_pages; ++idx) {
+    auto& page = pages[idx];
+    if (page.nested_prepass_enabled || page.legacy_nested_prepass_enabled ||
+        page.delta_nested_prepass_enabled) {
+      auto const& chunk = pass.chunks[page.chunk_idx];
+      if (chunk.max_level[level_type::DEFINITION] != 0) {
+        page.nested_prepass_nz_idx = nested_map_ptr;
+        nested_map_ptr += page.num_input_values;
+      }
+      page.nested_prepass_nesting = nested_nesting_ptr;
+      nested_nesting_ptr += page.nesting_info_size;
+    }
+  }
+
+  // The generic-list prepass owns per-depth counters, offsets, and the
+  // legacy valid-rank-to-output map. The latter is required even for a
+  // required leaf when an optional ancestor suppresses leaf values.
+  // Leave every unselected list page on the legacy level walker.
+  size_t list_prepass_map_size     = 0;
+  size_t list_prepass_nesting_size = 0;
+  for (size_t idx = 0; idx < num_pages; ++idx) {
+    auto& page                  = pages[idx];
+    auto const& chunk           = pass.chunks[page.chunk_idx];
+    bool const selected_generic = (_level_prepass_mode & level_prepass_generic_list) != 0 &&
+                                  page.prepass_family == level_prepass_family::GENERIC_LIST;
+    bool const selected_legacy = (_level_prepass_mode & level_prepass_legacy_list) != 0 &&
+                                 page.prepass_family == level_prepass_family::LEGACY_LIST;
+    bool const selected_delta = (_level_prepass_mode & level_prepass_delta_list) != 0 &&
+                                page.prepass_family == level_prepass_family::DELTA_LIST;
+    bool const selected = (selected_generic || selected_legacy || selected_delta) &&
+                          chunk.max_level[level_type::REPETITION] > 0;
+    page.list_prepass_nz_idx            = nullptr;
+    page.list_prepass_nesting           = nullptr;
+    page.list_prepass_nz_count          = -1;
+    page.list_prepass_input_value_count = 0;
+    page.list_prepass_input_row_count   = 0;
+    page.generic_list_prepass_enabled   = selected_generic;
+    page.legacy_list_prepass_enabled    = selected_legacy;
+    page.delta_list_prepass_enabled     = selected_delta;
+    if (selected) {
+      list_prepass_map_size += static_cast<size_t>(page.num_input_values) * sizeof(uint32_t);
+      list_prepass_nesting_size +=
+        static_cast<size_t>(page.nesting_info_size) * sizeof(PageNestingPrepassState);
+    }
+  }
+  auto disable_generic_list_prepass = [&] {
+    list_prepass_map_size     = 0;
+    list_prepass_nesting_size = 0;
+    for (size_t idx = 0; idx < num_pages; ++idx) {
+      pages[idx].generic_list_prepass_enabled = false;
+      pages[idx].legacy_list_prepass_enabled  = false;
+      pages[idx].delta_list_prepass_enabled   = false;
+    }
+  };
+
+  // The dense compatibility map must stay live alongside the output chunk.
+  // Bound its per-subpass footprint so a selected experimental path cannot
+  // crowd out a large, otherwise valid list output allocation.
+  constexpr size_t max_list_prepass_map_bytes{size_t{1} << 30};
+  if (list_prepass_map_size > max_list_prepass_map_bytes) { disable_generic_list_prepass(); }
+
+  auto const list_prepass_size = list_prepass_map_size + list_prepass_nesting_size;
+  try {
+    subpass.list_prepass_data =
+      rmm::device_buffer(list_prepass_size, _stream, cudf::get_current_device_resource_ref());
+  } catch (std::bad_alloc const&) {
+    // A list map is deliberately dense so that it preserves the legacy
+    // valid-rank-to-output-position contract for required leaves below an
+    // optional ancestor.  It can therefore be much larger than the output
+    // itself for a single exceptionally large page.  The selector is an
+    // opt-in compatibility path: leave this subpass on the existing list
+    // walker if its temporary map cannot be accommodated, rather than making
+    // a selected read fail solely because of prepass scratch space.
+    disable_generic_list_prepass();
+    subpass.list_prepass_data =
+      rmm::device_buffer(0, _stream, cudf::get_current_device_resource_ref());
+  }
+  auto* list_prepass_bytes = static_cast<uint8_t*>(subpass.list_prepass_data.data());
+  auto* list_map_ptr       = reinterpret_cast<uint32_t*>(list_prepass_bytes);
+  auto* list_prepass_ptr   = reinterpret_cast<PageNestingPrepassState*>(
+    list_prepass_bytes == nullptr ? nullptr : list_prepass_bytes + list_prepass_map_size);
+  for (size_t idx = 0; idx < num_pages; ++idx) {
+    auto& page = pages[idx];
+    if (page.generic_list_prepass_enabled || page.legacy_list_prepass_enabled ||
+        page.delta_list_prepass_enabled) {
+      page.list_prepass_nz_idx = list_map_ptr;
+      list_map_ptr += page.num_input_values;
+      page.list_prepass_nesting = list_prepass_ptr;
+      list_prepass_ptr += page.nesting_info_size;
+    }
   }
 }
 

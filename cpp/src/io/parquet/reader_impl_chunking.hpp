@@ -81,6 +81,9 @@ struct subpass_intermediate_data {
   subpass_intermediate_data(cuda::stream_ref stream)
     : decomp_page_data(0, stream),
       level_decode_data(0, stream),
+      flat_prepass_data(0, stream),
+      nested_prepass_data(0, stream),
+      list_prepass_data(0, stream),
       page_buf(0, stream),
       page_src_index{0, stream},
       page_string_offset_indices(0, stream),
@@ -94,6 +97,9 @@ struct subpass_intermediate_data {
   rmm::device_buffer decomp_page_data;
 
   rmm::device_buffer level_decode_data;
+  rmm::device_buffer flat_prepass_data;
+  rmm::device_buffer nested_prepass_data;
+  rmm::device_buffer list_prepass_data;
   cudf::detail::hostdevice_span<PageInfo> pages{};
 
   cudf::detail::hostdevice_vector<PageInfo> page_buf;

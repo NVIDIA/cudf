@@ -11,6 +11,7 @@
 
 #include <cudf/detail/utilities/cuda.cuh>
 
+#include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <thrust/transform_scan.h>
@@ -29,6 +30,24 @@ constexpr int decode_delta_binary_block_size = 96;
 // its target by up to a warp of values, so this needs to exceed 3 * delta_max_batch_size +
 // warp_size; anything smaller lets the level decoder wrap onto entries the consumer is reading.
 constexpr int delta_nz_buf_size = 4 * delta_max_batch_size;
+
+// The flat prepass publishes a sorted valid-rank-to-input-row map.  A sliced
+// page still needs the number of valid values preceding first_row to report
+// its null count to the legacy output-state plumbing.
+__device__ int flat_prepass_valid_count_before(uint32_t const* nz_idx, int count, int input_row)
+{
+  int first = 0;
+  int last  = count;
+  while (first < last) {
+    int const mid = first + (last - first) / 2;
+    if (nz_idx[mid] < input_row) {
+      first = mid + 1;
+    } else {
+      last = mid;
+    }
+  }
+  return first;
+}
 
 // DELTA_BYTE_ARRAY encoding (incremental encoding or front compression), is used for BYTE_ARRAY
 // columns. For each element in a sequence of strings, a prefix length from the preceding string
@@ -353,12 +372,12 @@ struct delta_byte_array_decoder {
 // this kernel only needs 96 threads (3 warps)(for now).
 template <typename level_t>
 CUDF_KERNEL void __launch_bounds__(decode_delta_binary_block_size)
-  decode_delta_binary_kernel(PageInfo* pages,
-                             device_span<ColumnChunkDesc const> chunks,
-                             size_t min_row,
-                             size_t num_rows,
-                             cudf::device_span<bool const> page_mask,
-                             kernel_error::pointer error_code)
+  decode_delta_binary_kernel_legacy(PageInfo* pages,
+                                    device_span<ColumnChunkDesc const> chunks,
+                                    size_t min_row,
+                                    size_t num_rows,
+                                    cudf::device_span<bool const> page_mask,
+                                    kernel_error::pointer error_code)
 {
   __shared__ __align__(16) delta_binary_decoder db_state;
   __shared__ __align__(16) full_page_decode_state state_g;
@@ -517,6 +536,172 @@ CUDF_KERNEL void __launch_bounds__(decode_delta_binary_block_size)
   if (block.thread_rank() == 0 and s->setup.error != 0) { set_error(s->setup.error, error_code); }
 }
 
+// Flat DELTA_BINARY_PACKED consumer for the opt-in page-global level prepass.
+// Keep decode_delta_binary_kernel_legacy above independent and byte-for-byte
+// stable: the dual-path rollout must leave the rollback kernel untouched.
+template <typename level_t, bool use_nested_prepass_t, bool use_list_prepass_t = false>
+CUDF_KERNEL void __launch_bounds__(decode_delta_binary_block_size)
+  decode_delta_binary_kernel_prepass(PageInfo* pages,
+                                     device_span<ColumnChunkDesc const> chunks,
+                                     size_t min_row,
+                                     size_t num_rows,
+                                     cudf::device_span<bool const> page_mask,
+                                     kernel_error::pointer error_code)
+{
+  __shared__ __align__(16) delta_binary_decoder db_state;
+  __shared__ __align__(16) full_page_decode_state state_g;
+
+  auto* const s      = &state_g;
+  int const page_idx = cg::this_grid().block_rank();
+  auto const block   = cg::this_thread_block();
+  auto const warp    = cg::tiled_partition<cudf::detail::warp_size>(block);
+  auto* const db     = &db_state;
+
+  if (page_mask.size() > 0 and not page_mask[page_idx]) { return; }
+  if constexpr (use_nested_prepass_t) {
+    if (!pages[page_idx].delta_nested_prepass_enabled) { return; }
+  } else if constexpr (use_list_prepass_t) {
+    if (!pages[page_idx].delta_list_prepass_enabled) { return; }
+  } else {
+    if (!pages[page_idx].delta_flat_prepass_enabled) { return; }
+  }
+
+  [[maybe_unused]] null_count_back_copier _{s, static_cast<int>(block.thread_rank())};
+  if (!setup_local_page_info(s,
+                             &pages[page_idx],
+                             chunks,
+                             min_row,
+                             num_rows,
+                             mask_filter{decode_kernel_mask::DELTA_BINARY},
+                             page_processing_stage::DECODE)) {
+    return;
+  }
+
+  bool const has_repetition = s->setup.col.max_level[level_type::REPETITION] > 0;
+  if ((!use_list_prepass_t && has_repetition) ||
+      (use_nested_prepass_t && s->setup.col.max_nesting_depth <= 1)) {
+    return;
+  }
+  bool const process_nulls         = should_process_nulls(s);
+  auto* const pp                   = &pages[page_idx];
+  auto const* const prepass_nz_idx = use_nested_prepass_t ? pp->nested_prepass_nz_idx
+                                     : use_list_prepass_t ? pp->list_prepass_nz_idx
+                                                          : pp->flat_prepass_nz_idx;
+  int const prepass_nz_count       = use_nested_prepass_t ? pp->nested_prepass_nz_count
+                                     : use_list_prepass_t ? pp->list_prepass_nz_count
+                                                          : pp->flat_prepass_nz_count;
+  if (prepass_nz_count < 0 || (process_nulls && prepass_nz_idx == nullptr)) { return; }
+
+  auto& ni = s->nesting.nesting_info[s->setup.col.max_nesting_depth - 1];
+  if (block.thread_rank() == 0) {
+    if constexpr (!use_list_prepass_t) {
+      auto const prefix_valid_count =
+        process_nulls
+          ? flat_prepass_valid_count_before(prepass_nz_idx, prepass_nz_count, s->setup.first_row)
+          : static_cast<int>(s->setup.first_row);
+      ni.null_count =
+        process_nulls ? s->setup.num_rows - (prepass_nz_count - prefix_valid_count) : 0;
+    }
+    s->progress.input_value_count = s->setup.num_input_values;
+    s->progress.nz_count          = prepass_nz_count;
+  }
+  block.sync();
+
+  if (block.thread_rank() == 0) { db->init_binary_block(s->stream.data_start, s->stream.data_end); }
+  block.sync();
+  if (db->error) {
+    if (block.thread_rank() == 0) {
+      set_error(static_cast<kernel_error::value_type>(decode_error::DELTA_PARAMS_UNSUPPORTED),
+                error_code);
+    }
+    return;
+  }
+
+  uint32_t const skipped_leaf_values = s->setup.page.skipped_leaf_values;
+  bool const is_skip_resume          = skipped_leaf_values > 0;
+  uint32_t const batch_size =
+    is_skip_resume ? cudf::detail::warp_size
+                   : min(db->values_per_mb, static_cast<uint32_t>(delta_max_batch_size));
+  uint32_t const passes_per_batch = batch_size / cudf::detail::warp_size;
+  if (is_skip_resume) { db->skip_values(skipped_leaf_values, block, warp); }
+
+  // Warp 0 intentionally has no level-decode work in this variant.  Warp 1
+  // remains the delta producer and warp 2 remains the value consumer; only
+  // their producer input changes from the rolling level state to the map.
+  while (s->setup.error == 0 && s->progress.src_pos < s->progress.nz_count) {
+    uint32_t const src_pos    = s->progress.src_pos;
+    uint32_t const target_pos = min(s->progress.nz_count, src_pos + batch_size);
+    block.sync();
+
+    if (warp.meta_group_rank() == 1) {
+      for (uint32_t i = 0; i < passes_per_batch; ++i) {
+        if (i > 0) { warp.sync(); }
+        db->decode_next_pass(warp);
+      }
+    }
+    // Preserve the legacy block handoff between the delta producer and writer.
+    block.sync();
+
+    if (warp.meta_group_rank() == 2 && src_pos < target_pos) {
+      for (uint32_t sp = src_pos + warp.thread_rank(); sp < target_pos; sp += warp.size()) {
+        int32_t dst_pos =
+          process_nulls ? static_cast<int32_t>(prepass_nz_idx[sp]) : static_cast<int32_t>(sp);
+        if (!has_repetition) { dst_pos -= s->setup.first_row; }
+        if (dst_pos >= 0) {
+          void* const dst = ni.data_out + dst_pos * s->output_cvt.dtype_len;
+          auto const val  = db->value_at(sp + skipped_leaf_values);
+          switch (s->output_cvt.dtype_len) {
+            case 1: *static_cast<int8_t*>(dst) = val; break;
+            case 2: *static_cast<int16_t*>(dst) = val; break;
+            case 4: *static_cast<int32_t*>(dst) = val; break;
+            case 8: *static_cast<int64_t*>(dst) = val; break;
+          }
+        }
+      }
+      if (warp.thread_rank() == 0) { s->progress.src_pos = target_pos; }
+    }
+    block.sync();
+  }
+
+  if constexpr (use_nested_prepass_t || use_list_prepass_t) {
+    if (block.thread_rank() == 0) {
+      for (int depth = 0; depth < s->setup.page.nesting_info_size; ++depth) {
+        auto const& source = use_nested_prepass_t ? pp->nested_prepass_nesting[depth]
+                                                  : pp->list_prepass_nesting[depth];
+        s->nesting.nesting_info[depth].null_count       = source.null_count;
+        s->nesting.nesting_info[depth].valid_map_offset = source.valid_map_offset;
+        s->nesting.nesting_info[depth].valid_count      = source.valid_count;
+        s->nesting.nesting_info[depth].value_count      = source.value_count;
+      }
+      s->progress.nz_count =
+        use_nested_prepass_t ? pp->nested_prepass_nz_count : pp->list_prepass_nz_count;
+      s->progress.input_value_count = use_nested_prepass_t ? pp->nested_prepass_input_value_count
+                                                           : pp->list_prepass_input_value_count;
+      s->progress.input_row_count   = use_nested_prepass_t ? pp->nested_prepass_input_row_count
+                                                           : pp->list_prepass_input_row_count;
+    }
+    block.sync();
+  }
+
+  if (block.thread_rank() == 0 and s->setup.error != 0) { set_error(s->setup.error, error_code); }
+}
+
+// Build a launch mask for the unchanged legacy binary-delta kernel.  Keeping
+// this filtering outside that kernel is what makes legacy mode a true rollback
+// path: its device body and symbol remain independent of the selector.
+CUDF_KERNEL void filter_delta_legacy_pages(PageInfo const* pages,
+                                           cudf::device_span<bool const> page_mask,
+                                           bool* legacy_page_mask,
+                                           size_t num_pages)
+{
+  auto const page_idx = static_cast<size_t>(blockIdx.x * blockDim.x + threadIdx.x);
+  if (page_idx < num_pages) {
+    legacy_page_mask[page_idx] =
+      (page_mask.empty() || page_mask[page_idx]) && !pages[page_idx].delta_flat_prepass_enabled &&
+      !pages[page_idx].delta_nested_prepass_enabled && !pages[page_idx].delta_list_prepass_enabled;
+  }
+}
+
 // Decode page data that is DELTA_BYTE_ARRAY packed. This encoding consists of a DELTA_BINARY_PACKED
 // array of prefix lengths, followed by a DELTA_BINARY_PACKED array of suffix lengths, followed by
 // the suffixes (technically the suffixes are DELTA_LENGTH_BYTE_ARRAY encoded). The latter two can
@@ -526,13 +711,13 @@ CUDF_KERNEL void __launch_bounds__(decode_delta_binary_block_size)
 // to find the start/end of each structure.
 template <typename level_t>
 CUDF_KERNEL void __launch_bounds__(decode_block_size)
-  decode_delta_byte_array_kernel(PageInfo* pages,
-                                 device_span<ColumnChunkDesc const> chunks,
-                                 size_t min_row,
-                                 size_t num_rows,
-                                 cudf::device_span<bool const> page_mask,
-                                 cudf::device_span<size_t> initial_str_offsets,
-                                 kernel_error::pointer error_code)
+  decode_delta_byte_array_kernel_legacy(PageInfo* pages,
+                                        device_span<ColumnChunkDesc const> chunks,
+                                        size_t min_row,
+                                        size_t num_rows,
+                                        cudf::device_span<bool const> page_mask,
+                                        cudf::device_span<size_t> initial_str_offsets,
+                                        kernel_error::pointer error_code)
 {
   __shared__ __align__(16) delta_byte_array_decoder db_state;
   __shared__ __align__(16) full_page_decode_state state_g;
@@ -748,13 +933,13 @@ CUDF_KERNEL void __launch_bounds__(decode_block_size)
 // DELTA_BINARY_PACKED array of string lengths, followed by the string data.
 template <typename level_t>
 CUDF_KERNEL void __launch_bounds__(decode_block_size)
-  decode_delta_length_byte_array_kernel(PageInfo* pages,
-                                        device_span<ColumnChunkDesc const> chunks,
-                                        size_t min_row,
-                                        size_t num_rows,
-                                        cudf::device_span<bool const> page_mask,
-                                        cudf::device_span<size_t> initial_str_offsets,
-                                        kernel_error::pointer error_code)
+  decode_delta_length_byte_array_kernel_legacy(PageInfo* pages,
+                                               device_span<ColumnChunkDesc const> chunks,
+                                               size_t min_row,
+                                               size_t num_rows,
+                                               cudf::device_span<bool const> page_mask,
+                                               cudf::device_span<size_t> initial_str_offsets,
+                                               kernel_error::pointer error_code)
 {
   __shared__ __align__(16) delta_binary_decoder db_state;
   __shared__ __align__(16) full_page_decode_state state_g;
@@ -967,6 +1152,441 @@ CUDF_KERNEL void __launch_bounds__(decode_block_size)
   if (block.thread_rank() == 0 and s->setup.error != 0) { set_error(s->setup.error, error_code); }
 }
 
+// Flat DELTA_BYTE_ARRAY prepass consumer.  This is intentionally a distinct
+// kernel from the legacy decoder: the latter must remain byte-for-byte
+// independent while the runtime selector is in place.  The page-global map
+// replaces only warp 0's level producer; the prefix, suffix, and writer warp
+// roles retain their legacy arrangement.
+template <bool use_nested_prepass_t, bool use_list_prepass_t = false>
+CUDF_KERNEL void __launch_bounds__(decode_block_size)
+  decode_delta_byte_array_kernel_flat_prepass(PageInfo* pages,
+                                              device_span<ColumnChunkDesc const> chunks,
+                                              size_t min_row,
+                                              size_t num_rows,
+                                              cudf::device_span<bool const> page_mask,
+                                              cudf::device_span<size_t> initial_str_offsets,
+                                              kernel_error::pointer error_code)
+{
+  __shared__ __align__(16) delta_byte_array_decoder db_state;
+  __shared__ __align__(16) full_page_decode_state state_g;
+
+  auto* const s         = &state_g;
+  int const page_idx    = cg::this_grid().block_rank();
+  auto const block      = cg::this_thread_block();
+  auto const warp       = cg::tiled_partition<cudf::detail::warp_size>(block);
+  auto* const prefix_db = &db_state.prefixes;
+  auto* const suffix_db = &db_state.suffixes;
+  auto* const dba       = &db_state;
+  if (page_mask.size() > 0 and not page_mask[page_idx]) { return; }
+  if constexpr (use_nested_prepass_t) {
+    if (!pages[page_idx].delta_nested_prepass_enabled) { return; }
+  } else if constexpr (use_list_prepass_t) {
+    if (!pages[page_idx].delta_list_prepass_enabled) { return; }
+  } else {
+    if (!pages[page_idx].delta_flat_prepass_enabled) { return; }
+  }
+
+  [[maybe_unused]] null_count_back_copier _{s, static_cast<int>(block.thread_rank())};
+
+  if (!setup_local_page_info(s,
+                             &pages[page_idx],
+                             chunks,
+                             min_row,
+                             num_rows,
+                             mask_filter{decode_kernel_mask::DELTA_BYTE_ARRAY},
+                             page_processing_stage::DECODE)) {
+    return;
+  }
+  PageInfo* const pp = &pages[page_idx];
+
+  if (s->setup.col.logical_type.has_value() &&
+      s->setup.col.logical_type->type == LogicalType::DECIMAL) {
+    if (block.thread_rank() == 0) {
+      set_error(static_cast<kernel_error::value_type>(decode_error::INVALID_DATA_TYPE), error_code);
+    }
+    return;
+  }
+
+  bool const has_repetition        = s->setup.col.max_level[level_type::REPETITION] > 0;
+  bool const process_nulls         = should_process_nulls(s);
+  auto const* const prepass_nz_idx = use_nested_prepass_t ? pp->nested_prepass_nz_idx
+                                     : use_list_prepass_t ? pp->list_prepass_nz_idx
+                                                          : pp->flat_prepass_nz_idx;
+  int const prepass_nz_count       = use_nested_prepass_t ? pp->nested_prepass_nz_count
+                                     : use_list_prepass_t ? pp->list_prepass_nz_count
+                                                          : pp->flat_prepass_nz_count;
+  if ((!use_list_prepass_t && has_repetition) ||
+      (use_nested_prepass_t && s->setup.col.max_nesting_depth <= 1) || prepass_nz_count < 0 ||
+      (process_nulls && prepass_nz_idx == nullptr)) {
+    return;
+  }
+
+  int const leaf_level_index      = s->setup.col.max_nesting_depth - 1;
+  int const init_valid_map_offset = s->nesting.nesting_info[leaf_level_index].valid_map_offset;
+  PageNestingDecodeInfo const* nesting_info_base = s->nesting.nesting_info;
+  // A bounds page in a non-repeated nested hierarchy can resume after leaf
+  // values that precede the selected rows.  The delta streams retain those
+  // values in their decode position, so retain the legacy adjustment when
+  // looking up the unpacked prefix and suffix lengths.
+  uint32_t const skipped_leaf_values = s->setup.page.skipped_leaf_values;
+  auto const use_char_ll =
+    s->setup.page.num_valids > 0 &&
+    (s->setup.page.str_bytes / s->setup.page.num_valids) > cudf::detail::warp_size;
+
+  if (block.thread_rank() == 0) {
+    if constexpr (!use_list_prepass_t) {
+      auto& ni = s->nesting.nesting_info[leaf_level_index];
+      auto const prefix_valid =
+        process_nulls
+          ? flat_prepass_valid_count_before(prepass_nz_idx, prepass_nz_count, s->setup.first_row)
+          : static_cast<int>(s->setup.first_row);
+      ni.null_count = process_nulls ? s->setup.num_rows - (prepass_nz_count - prefix_valid) : 0;
+    }
+    s->progress.input_value_count = s->setup.num_input_values;
+    s->progress.nz_count          = prepass_nz_count;
+    dba->init(s->stream.data_start,
+              s->stream.data_end,
+              s->setup.page.start_val,
+              s->setup.page.temp_string_buf,
+              s->setup.page.temp_string_size);
+  }
+  block.sync();
+
+  if (prefix_db->error or suffix_db->error) {
+    if (block.thread_rank() == 0) {
+      set_error(static_cast<kernel_error::value_type>(decode_error::DELTA_PARAMS_UNSUPPORTED),
+                error_code);
+    }
+    return;
+  }
+  if (prefix_db->values_per_mb != suffix_db->values_per_mb ||
+      prefix_db->block_size != suffix_db->block_size ||
+      prefix_db->value_count != suffix_db->value_count) {
+    if (block.thread_rank() == 0) {
+      set_error(static_cast<kernel_error::value_type>(decode_error::DELTA_PARAM_MISMATCH),
+                error_code);
+    }
+    return;
+  }
+
+  auto strings_data = nesting_info_base[leaf_level_index].string_out;
+  int string_pos    = has_repetition ? s->setup.page.start_val : 0;
+  auto const is_bounds_pg =
+    is_bounds_page(s->setup.page, s->setup.col.start_row, min_row, num_rows, has_repetition);
+  bool const is_skip_resume = is_bounds_pg && string_pos > 0;
+  uint32_t const batch_size =
+    is_skip_resume ? cudf::detail::warp_size
+                   : min(prefix_db->values_per_mb, static_cast<uint32_t>(delta_max_batch_size));
+  uint32_t const passes_per_batch = batch_size / cudf::detail::warp_size;
+
+  if (is_skip_resume) { dba->skip(use_char_ll, block, warp); }
+
+  while (!s->setup.error && s->progress.src_pos < s->progress.nz_count) {
+    uint32_t const src_pos    = s->progress.src_pos;
+    uint32_t const target_pos = min(s->progress.nz_count, src_pos + batch_size);
+    block.sync();
+
+    // Warp 0 intentionally has no work: the prepass owns level decoding.
+    if (warp.meta_group_rank() == 1) {
+      for (uint32_t i = 0; i < passes_per_batch; ++i) {
+        if (i > 0) { warp.sync(); }
+        prefix_db->decode_next_pass(warp);
+      }
+    } else if (warp.meta_group_rank() == 2) {
+      for (uint32_t i = 0; i < passes_per_batch; ++i) {
+        if (i > 0) { warp.sync(); }
+        suffix_db->decode_next_pass(warp);
+      }
+    }
+    // The legacy schedule got a producer lead from warp 0. The independent
+    // map has no such lead, so publish both delta streams before the writer.
+    block.sync();
+
+    if (warp.meta_group_rank() == 3 && src_pos < target_pos) {
+      int const nproc =
+        min(static_cast<int>(target_pos - src_pos), s->setup.page.end_val - string_pos);
+      strings_data +=
+        use_char_ll
+          ? dba->calculate_string_values_cp(strings_data, string_pos, nproc, warp.thread_rank())
+          : dba->calculate_string_values(strings_data, string_pos, nproc, warp.thread_rank());
+      string_pos += nproc;
+
+      for (uint32_t sp = src_pos + warp.thread_rank(); sp < src_pos + batch_size;
+           sp += warp.size()) {
+        if (sp < target_pos) {
+          int dst_pos = process_nulls ? static_cast<int>(prepass_nz_idx[sp]) : static_cast<int>(sp);
+          if (!has_repetition) { dst_pos -= s->setup.first_row; }
+          if (dst_pos >= 0) {
+            auto const offptr =
+              reinterpret_cast<size_type*>(nesting_info_base[leaf_level_index].data_out) + dst_pos;
+            auto const src_idx = sp + skipped_leaf_values;
+            *offptr            = prefix_db->value_at(src_idx) + suffix_db->value_at(src_idx);
+          }
+        }
+        warp.sync();
+      }
+      if (warp.thread_rank() == 0) { s->progress.src_pos = target_pos; }
+    }
+    block.sync();
+  }
+
+  if constexpr (use_nested_prepass_t || use_list_prepass_t) {
+    if (block.thread_rank() == 0) {
+      for (int depth = 0; depth < s->setup.page.nesting_info_size; ++depth) {
+        auto const& source = use_nested_prepass_t ? pp->nested_prepass_nesting[depth]
+                                                  : pp->list_prepass_nesting[depth];
+        s->nesting.nesting_info[depth].null_count       = source.null_count;
+        s->nesting.nesting_info[depth].valid_map_offset = source.valid_map_offset;
+        s->nesting.nesting_info[depth].valid_count      = source.valid_count;
+        s->nesting.nesting_info[depth].value_count      = source.value_count;
+      }
+      s->progress.nz_count =
+        use_nested_prepass_t ? pp->nested_prepass_nz_count : pp->list_prepass_nz_count;
+      s->progress.input_value_count = use_nested_prepass_t ? pp->nested_prepass_input_value_count
+                                                           : pp->list_prepass_input_value_count;
+      s->progress.input_row_count   = use_nested_prepass_t ? pp->nested_prepass_input_row_count
+                                                           : pp->list_prepass_input_row_count;
+    }
+    block.sync();
+  } else if (block.thread_rank() == 0) {
+    auto& ni = s->nesting.nesting_info[leaf_level_index];
+    auto const page_rows =
+      min(s->setup.page.num_input_values, s->setup.first_row + s->setup.num_rows);
+    ni.valid_count                = pp->flat_prepass_nz_count;
+    ni.value_count                = page_rows;
+    s->progress.input_value_count = page_rows;
+    s->progress.input_row_count   = page_rows;
+  }
+  block.sync();
+
+  auto const& ni = s->nesting.nesting_info[leaf_level_index];
+  if (ni.valid_map != nullptr) {
+    int const num_values = (use_nested_prepass_t || use_list_prepass_t)
+                             ? ni.valid_map_offset - init_valid_map_offset
+                             : s->setup.num_rows;
+    zero_fill_null_positions_shared<decode_block_size>(s,
+                                                       sizeof(size_type),
+                                                       init_valid_map_offset,
+                                                       num_values,
+                                                       static_cast<int>(block.thread_rank()));
+  }
+  if (s->setup.col.is_large_string_col) {
+    auto const chunks_per_rowgroup = initial_str_offsets.size();
+    auto const input_col_idx       = pages[page_idx].chunk_idx % chunks_per_rowgroup;
+    compute_initial_large_strings_offset<use_list_prepass_t>(s, initial_str_offsets[input_col_idx]);
+  } else {
+    convert_small_string_lengths_to_offsets<decode_block_size, use_list_prepass_t>(s);
+  }
+  if (block.thread_rank() == 0 and s->setup.error != 0) { set_error(s->setup.error, error_code); }
+}
+
+// Flat DELTA_LENGTH_BYTE_ARRAY prepass consumer. See the DELTA_BYTE_ARRAY
+// counterpart above for why this remains distinct from the legacy kernel.
+template <bool use_nested_prepass_t, bool use_list_prepass_t = false>
+CUDF_KERNEL void __launch_bounds__(decode_block_size)
+  decode_delta_length_byte_array_kernel_flat_prepass(PageInfo* pages,
+                                                     device_span<ColumnChunkDesc const> chunks,
+                                                     size_t min_row,
+                                                     size_t num_rows,
+                                                     cudf::device_span<bool const> page_mask,
+                                                     cudf::device_span<size_t> initial_str_offsets,
+                                                     kernel_error::pointer error_code)
+{
+  __shared__ __align__(16) delta_binary_decoder db_state;
+  __shared__ __align__(16) full_page_decode_state state_g;
+  __shared__ __align__(8) uint8_t const* page_string_data;
+  __shared__ size_t string_offset;
+
+  auto* const s      = &state_g;
+  int const page_idx = cg::this_grid().block_rank();
+  auto const block   = cg::this_thread_block();
+  auto const warp    = cg::tiled_partition<cudf::detail::warp_size>(block);
+  auto* const db     = &db_state;
+  if (page_mask.size() > 0 and not page_mask[page_idx]) { return; }
+  if constexpr (use_nested_prepass_t) {
+    if (!pages[page_idx].delta_nested_prepass_enabled) { return; }
+  } else if constexpr (use_list_prepass_t) {
+    if (!pages[page_idx].delta_list_prepass_enabled) { return; }
+  } else {
+    if (!pages[page_idx].delta_flat_prepass_enabled) { return; }
+  }
+
+  [[maybe_unused]] null_count_back_copier _{s, static_cast<int>(block.thread_rank())};
+
+  if (!setup_local_page_info(s,
+                             &pages[page_idx],
+                             chunks,
+                             min_row,
+                             num_rows,
+                             mask_filter{decode_kernel_mask::DELTA_LENGTH_BA},
+                             page_processing_stage::DECODE)) {
+    return;
+  }
+  PageInfo* const pp = &pages[page_idx];
+
+  if (s->setup.col.logical_type.has_value() &&
+      s->setup.col.logical_type->type == LogicalType::DECIMAL) {
+    if (block.thread_rank() == 0) {
+      set_error(static_cast<kernel_error::value_type>(decode_error::INVALID_DATA_TYPE), error_code);
+    }
+    return;
+  }
+
+  bool const has_repetition        = s->setup.col.max_level[level_type::REPETITION] > 0;
+  bool const process_nulls         = should_process_nulls(s);
+  auto const* const prepass_nz_idx = use_nested_prepass_t ? pp->nested_prepass_nz_idx
+                                     : use_list_prepass_t ? pp->list_prepass_nz_idx
+                                                          : pp->flat_prepass_nz_idx;
+  int const prepass_nz_count       = use_nested_prepass_t ? pp->nested_prepass_nz_count
+                                     : use_list_prepass_t ? pp->list_prepass_nz_count
+                                                          : pp->flat_prepass_nz_count;
+  if ((!use_list_prepass_t && has_repetition) ||
+      (use_nested_prepass_t && s->setup.col.max_nesting_depth <= 1) || prepass_nz_count < 0 ||
+      (process_nulls && prepass_nz_idx == nullptr)) {
+    return;
+  }
+
+  int const leaf_level_index      = s->setup.col.max_nesting_depth - 1;
+  int const init_valid_map_offset = s->nesting.nesting_info[leaf_level_index].valid_map_offset;
+  PageNestingDecodeInfo const* nesting_info_base = s->nesting.nesting_info;
+  uint32_t const skipped_leaf_values             = s->setup.page.skipped_leaf_values;
+
+  if (block.thread_rank() == 0) {
+    if constexpr (!use_list_prepass_t) {
+      auto& ni = s->nesting.nesting_info[leaf_level_index];
+      auto const prefix_valid =
+        process_nulls
+          ? flat_prepass_valid_count_before(prepass_nz_idx, prepass_nz_count, s->setup.first_row)
+          : static_cast<int>(s->setup.first_row);
+      ni.null_count = process_nulls ? s->setup.num_rows - (prepass_nz_count - prefix_valid) : 0;
+    }
+    s->progress.input_value_count = s->setup.num_input_values;
+    s->progress.nz_count          = prepass_nz_count;
+    string_offset                 = 0;
+    page_string_data              = db->find_end_of_block(s->stream.data_start, s->stream.data_end);
+  }
+  block.sync();
+
+  if (db->error) {
+    if (block.thread_rank() == 0) {
+      set_error(static_cast<kernel_error::value_type>(decode_error::DELTA_PARAMS_UNSUPPORTED),
+                error_code);
+    }
+    return;
+  }
+
+  auto const is_bounds_pg =
+    is_bounds_page(s->setup.page, s->setup.col.start_row, min_row, num_rows, has_repetition);
+  bool const is_skip_resume   = is_bounds_pg && s->setup.page.start_val > 0;
+  bool const resumes_mid_page = is_skip_resume && has_repetition;
+  uint32_t const batch_size =
+    resumes_mid_page ? cudf::detail::warp_size
+                     : min(db->values_per_mb, static_cast<uint32_t>(delta_max_batch_size));
+  uint32_t const passes_per_batch = batch_size / cudf::detail::warp_size;
+  if (is_skip_resume) {
+    if (warp.meta_group_rank() == 0) {
+      auto const string_off = db->skip_values_and_sum(s->setup.page.start_val, warp);
+      warp.sync();
+      if (warp.thread_rank() == 0) {
+        string_offset = string_off;
+        // Flat pages still decode the whole page after deriving the byte offset,
+        // whereas repetition-level pages resume the length stream at start_val.
+        // Reinitializing the latter makes the first selected list element consume
+        // the first page length, truncating every selected string after a slice.
+        if (!has_repetition) { db->init_binary_block(s->stream.data_start, s->stream.data_end); }
+      }
+    }
+    block.sync();
+  }
+
+  int string_pos = has_repetition ? s->setup.page.start_val : 0;
+  while (!s->setup.error && s->progress.src_pos < s->progress.nz_count) {
+    uint32_t const src_pos    = s->progress.src_pos;
+    uint32_t const target_pos = min(s->progress.nz_count, src_pos + batch_size);
+    block.sync();
+
+    // Warp 0 is intentionally idle; warp 1 remains the delta producer.
+    if (warp.meta_group_rank() == 1) {
+      for (uint32_t i = 0; i < passes_per_batch; ++i) {
+        if (i > 0) { warp.sync(); }
+        db->decode_next_pass(warp);
+      }
+    }
+    block.sync();
+
+    if (warp.meta_group_rank() == 2 && src_pos < target_pos) {
+      string_pos += min(static_cast<int>(target_pos - src_pos), s->setup.page.end_val - string_pos);
+      for (uint32_t sp = src_pos + warp.thread_rank(); sp < src_pos + batch_size;
+           sp += warp.size()) {
+        if (sp < target_pos) {
+          int dst_pos = process_nulls ? static_cast<int>(prepass_nz_idx[sp]) : static_cast<int>(sp);
+          if (!has_repetition) { dst_pos -= s->setup.first_row; }
+          if (dst_pos >= 0) {
+            auto const offptr =
+              reinterpret_cast<size_type*>(nesting_info_base[leaf_level_index].data_out) + dst_pos;
+            *offptr = db->value_at(sp + skipped_leaf_values);
+          }
+        }
+        warp.sync();
+      }
+      if (warp.thread_rank() == 0) { s->progress.src_pos = target_pos; }
+    }
+    block.sync();
+  }
+
+  if constexpr (use_nested_prepass_t || use_list_prepass_t) {
+    if (block.thread_rank() == 0) {
+      for (int depth = 0; depth < s->setup.page.nesting_info_size; ++depth) {
+        auto const& source = use_nested_prepass_t ? pp->nested_prepass_nesting[depth]
+                                                  : pp->list_prepass_nesting[depth];
+        s->nesting.nesting_info[depth].null_count       = source.null_count;
+        s->nesting.nesting_info[depth].valid_map_offset = source.valid_map_offset;
+        s->nesting.nesting_info[depth].valid_count      = source.valid_count;
+        s->nesting.nesting_info[depth].value_count      = source.value_count;
+      }
+      s->progress.nz_count =
+        use_nested_prepass_t ? pp->nested_prepass_nz_count : pp->list_prepass_nz_count;
+      s->progress.input_value_count = use_nested_prepass_t ? pp->nested_prepass_input_value_count
+                                                           : pp->list_prepass_input_value_count;
+      s->progress.input_row_count   = use_nested_prepass_t ? pp->nested_prepass_input_row_count
+                                                           : pp->list_prepass_input_row_count;
+    }
+    block.sync();
+  } else if (block.thread_rank() == 0) {
+    auto& ni = s->nesting.nesting_info[leaf_level_index];
+    auto const page_rows =
+      min(s->setup.page.num_input_values, s->setup.first_row + s->setup.num_rows);
+    ni.valid_count                = pp->flat_prepass_nz_count;
+    ni.value_count                = page_rows;
+    s->progress.input_value_count = page_rows;
+    s->progress.input_row_count   = page_rows;
+  }
+  block.sync();
+
+  auto const& ni = nesting_info_base[leaf_level_index];
+  if (ni.valid_map != nullptr) {
+    int const num_values = (use_nested_prepass_t || use_list_prepass_t)
+                             ? ni.valid_map_offset - init_valid_map_offset
+                             : s->setup.num_rows;
+    zero_fill_null_positions_shared<decode_block_size>(s,
+                                                       sizeof(size_type),
+                                                       init_valid_map_offset,
+                                                       num_values,
+                                                       static_cast<int>(block.thread_rank()));
+  }
+  if (s->setup.col.is_large_string_col) {
+    auto const chunks_per_rowgroup = initial_str_offsets.size();
+    auto const input_col_idx       = pages[page_idx].chunk_idx % chunks_per_rowgroup;
+    compute_initial_large_strings_offset<use_list_prepass_t>(s, initial_str_offsets[input_col_idx]);
+  } else {
+    convert_small_string_lengths_to_offsets<decode_block_size, use_list_prepass_t>(s);
+  }
+  auto const dst = nesting_info_base[leaf_level_index].string_out;
+  auto const src = page_string_data + string_offset;
+  memcpy_block<decode_block_size, true>(dst, src, s->setup.page.str_bytes, block);
+  if (block.thread_rank() == 0 and s->setup.error != 0) { set_error(s->setup.error, error_code); }
+}
+
 }  // anonymous namespace
 
 /**
@@ -979,19 +1599,64 @@ void decode_delta_binary(cudf::detail::hostdevice_span<PageInfo> pages,
                          int level_type_size,
                          cudf::device_span<bool const> page_mask,
                          kernel_error::pointer error_code,
-                         cuda::stream_ref stream)
+                         cuda::stream_ref stream,
+                         bool use_flat_prepass,
+                         bool use_nested_prepass,
+                         bool use_list_prepass)
 {
   CUDF_EXPECTS(pages.size() > 0, "There is no page to decode");
 
   dim3 dim_block(decode_delta_binary_block_size, 1);
   dim3 dim_grid(pages.size(), 1);  // 1 threadblock per page
 
+  if (use_flat_prepass) {
+    if (level_type_size == 1) {
+      decode_delta_binary_kernel_prepass<uint8_t, false><<<dim_grid, dim_block, 0, stream.get()>>>(
+        pages.device_ptr(), chunks, min_row, num_rows, page_mask, error_code);
+    } else {
+      decode_delta_binary_kernel_prepass<uint16_t, false><<<dim_grid, dim_block, 0, stream.get()>>>(
+        pages.device_ptr(), chunks, min_row, num_rows, page_mask, error_code);
+    }
+    CUDF_CUDA_TRY(cudaGetLastError());
+  }
+  if (use_nested_prepass) {
+    if (level_type_size == 1) {
+      decode_delta_binary_kernel_prepass<uint8_t, true><<<dim_grid, dim_block, 0, stream.get()>>>(
+        pages.device_ptr(), chunks, min_row, num_rows, page_mask, error_code);
+    } else {
+      decode_delta_binary_kernel_prepass<uint16_t, true><<<dim_grid, dim_block, 0, stream.get()>>>(
+        pages.device_ptr(), chunks, min_row, num_rows, page_mask, error_code);
+    }
+    CUDF_CUDA_TRY(cudaGetLastError());
+  }
+  if (use_list_prepass) {
+    if (level_type_size == 1) {
+      decode_delta_binary_kernel_prepass<uint8_t, false, true>
+        <<<dim_grid, dim_block, 0, stream.get()>>>(
+          pages.device_ptr(), chunks, min_row, num_rows, page_mask, error_code);
+    } else {
+      decode_delta_binary_kernel_prepass<uint16_t, false, true>
+        <<<dim_grid, dim_block, 0, stream.get()>>>(
+          pages.device_ptr(), chunks, min_row, num_rows, page_mask, error_code);
+    }
+    CUDF_CUDA_TRY(cudaGetLastError());
+  }
+
+  if (use_flat_prepass || use_nested_prepass || use_list_prepass) {
+    rmm::device_uvector<bool> legacy_page_mask(pages.size(), stream);
+    constexpr int filter_block_size = 256;
+    auto const filter_grid          = (pages.size() + filter_block_size - 1) / filter_block_size;
+    filter_delta_legacy_pages<<<filter_grid, filter_block_size, 0, stream.get()>>>(
+      pages.device_ptr(), page_mask, legacy_page_mask.data(), pages.size());
+    CUDF_CUDA_TRY(cudaGetLastError());
+    page_mask = cudf::device_span<bool const>{legacy_page_mask.data(), legacy_page_mask.size()};
+  }
   if (level_type_size == 1) {
-    decode_delta_binary_kernel<uint8_t><<<dim_grid, dim_block, 0, stream.get()>>>(
+    decode_delta_binary_kernel_legacy<uint8_t><<<dim_grid, dim_block, 0, stream.get()>>>(
       pages.device_ptr(), chunks, min_row, num_rows, page_mask, error_code);
     CUDF_CUDA_TRY(cudaGetLastError());
   } else {
-    decode_delta_binary_kernel<uint16_t><<<dim_grid, dim_block, 0, stream.get()>>>(
+    decode_delta_binary_kernel_legacy<uint16_t><<<dim_grid, dim_block, 0, stream.get()>>>(
       pages.device_ptr(), chunks, min_row, num_rows, page_mask, error_code);
     CUDF_CUDA_TRY(cudaGetLastError());
   }
@@ -1008,19 +1673,49 @@ void decode_delta_byte_array(cudf::detail::hostdevice_span<PageInfo> pages,
                              cudf::device_span<bool const> page_mask,
                              cudf::device_span<size_t> initial_str_offsets,
                              kernel_error::pointer error_code,
-                             cuda::stream_ref stream)
+                             cuda::stream_ref stream,
+                             bool use_flat_prepass,
+                             bool use_nested_prepass,
+                             bool use_list_prepass)
 {
   CUDF_EXPECTS(pages.size() > 0, "There is no page to decode");
 
   dim3 const dim_block(decode_block_size, 1);
   dim3 const dim_grid(pages.size(), 1);  // 1 threadblock per page
 
+  if (use_flat_prepass) {
+    decode_delta_byte_array_kernel_flat_prepass<false><<<dim_grid, dim_block, 0, stream.get()>>>(
+      pages.device_ptr(), chunks, min_row, num_rows, page_mask, initial_str_offsets, error_code);
+    CUDF_CUDA_TRY(cudaGetLastError());
+  }
+  if (use_nested_prepass) {
+    decode_delta_byte_array_kernel_flat_prepass<true><<<dim_grid, dim_block, 0, stream.get()>>>(
+      pages.device_ptr(), chunks, min_row, num_rows, page_mask, initial_str_offsets, error_code);
+    CUDF_CUDA_TRY(cudaGetLastError());
+  }
+  if (use_list_prepass) {
+    decode_delta_byte_array_kernel_flat_prepass<false, true>
+      <<<dim_grid, dim_block, 0, stream.get()>>>(
+        pages.device_ptr(), chunks, min_row, num_rows, page_mask, initial_str_offsets, error_code);
+    CUDF_CUDA_TRY(cudaGetLastError());
+  }
+  if (use_flat_prepass || use_nested_prepass || use_list_prepass) {
+    rmm::device_uvector<bool> legacy_page_mask(pages.size(), stream);
+    constexpr int filter_block_size = 256;
+    auto const filter_grid =
+      cudf::util::div_rounding_up_safe<size_t>(pages.size(), filter_block_size);
+    filter_delta_legacy_pages<<<filter_grid, filter_block_size, 0, stream.get()>>>(
+      pages.device_ptr(), page_mask, legacy_page_mask.data(), pages.size());
+    CUDF_CUDA_TRY(cudaGetLastError());
+    page_mask = cudf::device_span<bool const>{legacy_page_mask.data(), legacy_page_mask.size()};
+  }
+
   if (level_type_size == 1) {
-    decode_delta_byte_array_kernel<uint8_t><<<dim_grid, dim_block, 0, stream.get()>>>(
+    decode_delta_byte_array_kernel_legacy<uint8_t><<<dim_grid, dim_block, 0, stream.get()>>>(
       pages.device_ptr(), chunks, min_row, num_rows, page_mask, initial_str_offsets, error_code);
     CUDF_CUDA_TRY(cudaGetLastError());
   } else {
-    decode_delta_byte_array_kernel<uint16_t><<<dim_grid, dim_block, 0, stream.get()>>>(
+    decode_delta_byte_array_kernel_legacy<uint16_t><<<dim_grid, dim_block, 0, stream.get()>>>(
       pages.device_ptr(), chunks, min_row, num_rows, page_mask, initial_str_offsets, error_code);
     CUDF_CUDA_TRY(cudaGetLastError());
   }
@@ -1037,20 +1732,53 @@ void decode_delta_length_byte_array(cudf::detail::hostdevice_span<PageInfo> page
                                     cudf::device_span<bool const> page_mask,
                                     cudf::device_span<size_t> initial_str_offsets,
                                     kernel_error::pointer error_code,
-                                    cuda::stream_ref stream)
+                                    cuda::stream_ref stream,
+                                    bool use_flat_prepass,
+                                    bool use_nested_prepass,
+                                    bool use_list_prepass)
 {
   CUDF_EXPECTS(pages.size() > 0, "There is no page to decode");
 
   dim3 const dim_block(decode_block_size, 1);
   dim3 const dim_grid(pages.size(), 1);  // 1 threadblock per page
 
+  if (use_flat_prepass) {
+    decode_delta_length_byte_array_kernel_flat_prepass<false>
+      <<<dim_grid, dim_block, 0, stream.get()>>>(
+        pages.device_ptr(), chunks, min_row, num_rows, page_mask, initial_str_offsets, error_code);
+    CUDF_CUDA_TRY(cudaGetLastError());
+  }
+  if (use_nested_prepass) {
+    decode_delta_length_byte_array_kernel_flat_prepass<true>
+      <<<dim_grid, dim_block, 0, stream.get()>>>(
+        pages.device_ptr(), chunks, min_row, num_rows, page_mask, initial_str_offsets, error_code);
+    CUDF_CUDA_TRY(cudaGetLastError());
+  }
+  if (use_list_prepass) {
+    decode_delta_length_byte_array_kernel_flat_prepass<false, true>
+      <<<dim_grid, dim_block, 0, stream.get()>>>(
+        pages.device_ptr(), chunks, min_row, num_rows, page_mask, initial_str_offsets, error_code);
+    CUDF_CUDA_TRY(cudaGetLastError());
+  }
+  if (use_flat_prepass || use_nested_prepass || use_list_prepass) {
+    rmm::device_uvector<bool> legacy_page_mask(pages.size(), stream);
+    constexpr int filter_block_size = 256;
+    auto const filter_grid =
+      cudf::util::div_rounding_up_safe<size_t>(pages.size(), filter_block_size);
+    filter_delta_legacy_pages<<<filter_grid, filter_block_size, 0, stream.get()>>>(
+      pages.device_ptr(), page_mask, legacy_page_mask.data(), pages.size());
+    CUDF_CUDA_TRY(cudaGetLastError());
+    page_mask = cudf::device_span<bool const>{legacy_page_mask.data(), legacy_page_mask.size()};
+  }
+
   if (level_type_size == 1) {
-    decode_delta_length_byte_array_kernel<uint8_t><<<dim_grid, dim_block, 0, stream.get()>>>(
+    decode_delta_length_byte_array_kernel_legacy<uint8_t><<<dim_grid, dim_block, 0, stream.get()>>>(
       pages.device_ptr(), chunks, min_row, num_rows, page_mask, initial_str_offsets, error_code);
     CUDF_CUDA_TRY(cudaGetLastError());
   } else {
-    decode_delta_length_byte_array_kernel<uint16_t><<<dim_grid, dim_block, 0, stream.get()>>>(
-      pages.device_ptr(), chunks, min_row, num_rows, page_mask, initial_str_offsets, error_code);
+    decode_delta_length_byte_array_kernel_legacy<uint16_t>
+      <<<dim_grid, dim_block, 0, stream.get()>>>(
+        pages.device_ptr(), chunks, min_row, num_rows, page_mask, initial_str_offsets, error_code);
     CUDF_CUDA_TRY(cudaGetLastError());
   }
 }

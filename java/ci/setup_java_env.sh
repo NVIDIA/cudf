@@ -110,6 +110,23 @@ export CC="${CC:-${GCC_TOOLSET_ROOT}/usr/bin/gcc}"
 export CXX="${CXX:-${GCC_TOOLSET_ROOT}/usr/bin/g++}"
 export CMAKE_CUDA_HOST_COMPILER="${CMAKE_CUDA_HOST_COMPILER:-${CC}}"
 
+# Scope the Java build's object and preprocessor caches by host architecture
+# and CUDA major version. RAPIDS_CUDA_VERSION is optional for callers that
+# source this script only to provision the Java toolchain.
+if [[ -n ${RAPIDS_CUDA_VERSION:-} ]]; then
+  case "$(uname -m)" in
+    x86_64) SCCACHE_ARCH=amd64 ;;
+    aarch64|arm64) SCCACHE_ARCH=arm64 ;;
+    *)
+      echo "Error: unsupported host architecture '$(uname -m)'" >&2
+      exit 1
+      ;;
+  esac
+  export SCCACHE_S3_KEY_PREFIX="cudf-java-${SCCACHE_ARCH}-cuda${RAPIDS_CUDA_VERSION%%.*}-object-cache"
+  export SCCACHE_S3_PREPROCESSOR_CACHE_KEY_PREFIX="cudf-java-${SCCACHE_ARCH}-cuda${RAPIDS_CUDA_VERSION%%.*}-preprocessor-cache"
+  export SCCACHE_S3_USE_PREPROCESSOR_CACHE_MODE=true
+fi
+
 if command -v rapids-configure-sccache >/dev/null 2>&1; then
   # shellcheck disable=SC1091
   source rapids-configure-sccache || true

@@ -471,44 +471,33 @@ class RunConfig:
         print("Iteration Summary")  # noqa: T201
         print("=======================================")  # noqa: T201
 
+        total_mean_time = 0.0
         for query, records in self.records.items():
             print(f"query: {query}")  # noqa: T201
             print(f"path: {self.dataset_path}")  # noqa: T201
             print(f"scale_factor: {self.scale_factor}")  # noqa: T201
             print(f"executor: {self.executor}")  # noqa: T201
-            if len(records) > 0:
-                valid_durations = [
-                    record.duration
-                    for record in records
-                    if record.status == "success"
-                ]
-                print(f"iterations: {self.iterations}")  # noqa: T201
-                print("---------------------------------------")  # noqa: T201
-                if valid_durations:
-                    print(  # noqa: T201
-                        f"min time : {min(valid_durations):0.4f}"
-                    )
-                    print(  # noqa: T201
-                        f"max time : {max(valid_durations):0.4f}"
-                    )
-                    print(  # noqa: T201
-                        f"mean time: {statistics.mean(valid_durations):0.4f}"
-                    )
-                else:
-                    print("no successful iterations")  # noqa: T201
-                print("=======================================")  # noqa: T201
-        total_mean_time = sum(
-            statistics.mean(
+            valid_durations = [
                 record.duration
                 for record in records
                 if record.status == "success"
+            ]
+            if len(valid_durations) > 0:
+                mean_time = statistics.mean(valid_durations)
+                total_mean_time += mean_time
+                print(f"iterations: {self.iterations}")  # noqa: T201
+                print("---------------------------------------")  # noqa: T201
+                print(f"min time : {min(valid_durations):0.4f}")  # noqa: T201
+                print(f"max time : {max(valid_durations):0.4f}")  # noqa: T201
+                print(f"mean time: {mean_time:0.4f}")  # noqa: T201
+                print("=======================================")  # noqa: T201
+
+        if total_mean_time > 0:
+            print(  # noqa: T201
+                f"Total mean time across all queries: {total_mean_time:.4f} seconds"
             )
-            for records in self.records.values()
-            if any(r.status == "success" for r in records)
-        )
-        print(  # noqa: T201
-            f"Total mean time across all queries: {total_mean_time:.4f} seconds"
-        )
+        else:
+            print("No successful queries")  # noqa: T201
 
 
 def get_data(
@@ -958,11 +947,12 @@ def run_pandas_query(
                 )
                 if record.validation_result.details:
                     pprint.pprint(record.validation_result.details)  # noqa: T203
-                else:
-                    print(  # noqa: T201
-                        f"Query {q_id} - Iteration {i} finished in {record.duration:0.4f}s",
-                        flush=True,
-                    )
+            else:
+                prefix = "✅ " if record.validation_result else ""
+                print(  # noqa: T201
+                    f"{prefix}Query {q_id} - Iteration {i} finished in {record.duration:0.4f}s",
+                    flush=True,
+                )
         query_records.append(record)
     return QueryRunResult(
         query_records=query_records,

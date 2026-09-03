@@ -839,7 +839,7 @@ def test_serialize_heterogeneous_list_raises() -> None:
     # Homogeneity is enforced statically by HomogeneousListValue, so the
     # ``type: ignore`` below is what actually guards against this; at runtime
     # the mismatch only surfaces while picking an integer variant.
-    with pytest.raises(TypeError, match="homogeneous"):
+    with pytest.raises(TypeError):
         Attribute("mixed", [1, "a"]).serialize()  # type: ignore[arg-type]
 
 

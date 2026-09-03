@@ -26,7 +26,6 @@ from cudf_polars.quent._types import (
     Port,
     Query,
     Worker,
-    _deserialize_value,
 )
 from cudf_polars.utils.config import ConfigOptions
 
@@ -94,22 +93,6 @@ def test_attribute_serialization_uses_quent_value_envelope() -> None:
         "key": "enabled",
         "value": {"U8": 1},
     }
-
-
-def test_deserialize_value_requires_single_variant() -> None:
-    with pytest.raises(
-        ValueError,
-        match=r"Expected Quent attribute value envelope with exactly one variant, got '2' instead.",
-    ):
-        _deserialize_value({"U8": 1, "I8": -1})
-
-
-def test_deserialize_value_raises_on_unknown_variant() -> None:
-    with pytest.raises(
-        ValueError,
-        match="Unsupported Quent custom attribute variant: 'UnsupportedVariant'",
-    ):
-        _deserialize_value({"UnsupportedVariant": "x"})
 
 
 @pytest.fixture
@@ -518,22 +501,20 @@ def test_quent_context_serialization() -> None:
         query_group=cudf_polars.quent.QueryGroup(instance_name="test_query_group"),
         query=cudf_polars.quent.Query(instance_name="test_query"),
     )
-    data = quent_context.serialize()
+    data = quent_context._serialize()
 
-    new = cudf_polars.quent.QuentContext.deserialize(data)
+    new = cudf_polars.quent.QuentContext._deserialize(data)
     assert new == quent_context
 
 
-def test_quent_context_serialization_with_custom_attributes() -> None:
+def test_quent_context_serialization_drops_custom_attributes() -> None:
     engine = Engine(
         implementation=Implementation(
             name="test-impl",
             version="1.2.3",
             custom_attributes=[
                 Attribute("count", 3),
-                Attribute("ratio", 1.5),
                 Attribute("name", "demo"),
-                Attribute("optional", None),
             ],
         )
     )
@@ -543,10 +524,14 @@ def test_quent_context_serialization_with_custom_attributes() -> None:
         query=cudf_polars.quent.Query(instance_name="test_query"),
     )
 
-    data = quent_context.serialize()
-    new = cudf_polars.quent.QuentContext.deserialize(data)
+    new = cudf_polars.quent.QuentContext._deserialize(quent_context._serialize())
 
-    assert new == quent_context
+    assert new.engine.id == quent_context.engine.id
+    assert new.engine.implementation.name == "test-impl"
+    assert new.engine.implementation.version == "1.2.3"
+    assert new.engine.implementation.custom_attributes == []
+    assert new.query_group == quent_context.query_group
+    assert new.query == quent_context.query
 
 
 def test_emit_query_group_events_idempotent(quent_context: QuentContext):
@@ -557,18 +542,116 @@ def test_emit_query_group_events_idempotent(quent_context: QuentContext):
     assert len(logger._buffer) == 1
 
 
-def test_serialize_list_raises():
-    with pytest.raises(NotImplementedError, match="not supported yet"):
-        Attribute("list", [1, 2]).serialize()
+def test_serialize_list() -> None:
+    assert Attribute("keys", ["a", "b"]).serialize() == {
+        "key": "keys",
+        "value": {"List": {"String": ["a", "b"]}},
+    }
+    assert Attribute("counts", [1, 2, 300]).serialize() == {
+        "key": "counts",
+        "value": {"List": {"U16": [1, 2, 300]}},
+    }
+    assert Attribute("value", [1.5]).serialize() == {
+        "key": "value",
+        "value": {"List": {"F64": [1.5]}},
+    }
+    assert Attribute("flags", [True, False]).serialize() == {
+        "key": "flags",
+        "value": {"List": {"U8": [1, 0]}},
+    }
+    assert Attribute("empty", []).serialize() == {
+        "key": "empty",
+        "value": {"List": {"String": []}},
+    }
+    assert Attribute(
+        "events",
+        [{"bytes": 1024, "kind": "disk"}],  # type: ignore[arg-type]
+    ).serialize() == {
+        "key": "events",
+        "value": {
+            "List": {
+                "Struct": [
+                    [
+                        {"key": "bytes", "value": {"U16": 1024}},
+                        {"key": "kind", "value": {"String": "disk"}},
+                    ]
+                ]
+            }
+        },
+    }
 
 
-def test_serialize_dict_raises():
-    with pytest.raises(NotImplementedError, match="not supported yet"):
-        Attribute("dict", {"a": 1, "b": 2}).serialize()
+def test_serialize_nested_list_raises() -> None:
+    with pytest.raises(NotImplementedError, match="Nested list"):
+        Attribute("nested", [[1, 2], [3, 4]]).serialize()  # type: ignore[arg-type]
+
+
+def test_serialize_list_integer_overflow_raises() -> None:
+    with pytest.raises(
+        ValueError,
+        match="Integer list values",
+    ):
+        Attribute("x", [2**64]).serialize()
+
+
+def test_serialize_heterogeneous_list_raises() -> None:
+    # Homogeneity is enforced statically by HomogeneousListValue, so the
+    # ``type: ignore`` below is what actually guards against this; at runtime
+    # the mismatch only surfaces while picking an integer variant.
+    with pytest.raises(TypeError):
+        Attribute("mixed", [1, "a"]).serialize()  # type: ignore[arg-type]
+
+
+def test_serialize_dict() -> None:
+    assert Attribute("expr", {"type": "Col", "name": "x"}).serialize() == {
+        "key": "expr",
+        "value": {
+            "Struct": [
+                {"key": "type", "value": {"String": "Col"}},
+                {"key": "name", "value": {"String": "x"}},
+            ]
+        },
+    }
+    assert Attribute("nullable", {"predicate": None}).serialize() == {
+        "key": "nullable",
+        "value": {"Struct": [{"key": "predicate", "value": None}]},
+    }
 
 
 def test_quent_serialize_none():
     assert Attribute("none", None).serialize() == {
         "key": "none",
         "value": None,
+    }
+
+
+def test_build_plan_includes_node_properties(
+    ir_and_config: tuple[IR, ConfigOptions[StreamingExecutor]],
+) -> None:
+    ir, config_options = ir_and_config
+    _, operators, _, _ = build_plan(
+        ir, config_options, Query(), uuid.uuid4(), _make_worker()
+    )
+    filter_op = next(op for op in operators if op.type_name == "Filter")
+    attrs = {attr.name: attr.value for attr in filter_op.custom_attributes}
+
+    assert "node_id" in attrs
+    # Filter properties come from _serialize_properties / _serialize_expr.
+    assert attrs["op"] == "GREATER"
+    assert attrs["left"] == {"type": "Col", "name": "x"}
+    assert attrs["right"] == {
+        "type": "Literal",
+        "value": {"type": "int", "value": 1},
+    }
+    assert attrs["predicate"] == "x"
+
+    # Ensure the nested properties serialize into Quent's List/Struct envelopes.
+    serialized = {
+        attr.name: attr.serialize()["value"] for attr in filter_op.custom_attributes
+    }
+    assert serialized["left"] == {
+        "Struct": [
+            {"key": "type", "value": {"String": "Col"}},
+            {"key": "name", "value": {"String": "x"}},
+        ]
     }

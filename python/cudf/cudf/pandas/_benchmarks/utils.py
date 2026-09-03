@@ -53,6 +53,14 @@ except ImportError as e:
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
+__all__: list[str] = [
+    "RunConfig",
+    "build_parser",
+    "get_data",
+    "parse_args",
+    "run_pandas",
+]
+
 FrontendType = Literal["in-memory", "pandas-cpu"]
 
 _CPU_ENGINES = frozenset({"pandas-cpu"})

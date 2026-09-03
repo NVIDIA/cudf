@@ -70,6 +70,38 @@ PDSH_TABLE_NAMES: list[str] = [
     "supplier",
 ]
 
+EXIT_SUCCESS = 0
+EXIT_QUERY_FAILURE = 3
+EXIT_VALIDATION_FAILURE = 4
+
+
+def benchmark_exit_code(
+    query_failures: list[tuple[int, int]],
+    validation_failures: list[int],
+) -> int:
+    """
+    Map a run's failures to the process exit code.
+
+    Parameters
+    ----------
+    query_failures
+        ``(query, iteration)`` pairs for queries that raised while running.
+    validation_failures
+        Queries whose results did not match the expected answer.
+
+    Returns
+    -------
+    int
+        0: Success
+        3: Query failure
+        4: Validation failure
+    """
+    if query_failures:
+        return EXIT_QUERY_FAILURE
+    if validation_failures:
+        return EXIT_VALIDATION_FAILURE
+    return EXIT_SUCCESS
+
 
 def get_validation_options(args: Any) -> dict[str, Any]:
     """Get validation options dict from parsed arguments."""
@@ -716,7 +748,16 @@ def parse_args(
     """Parse command line arguments."""
     parser = argparse.ArgumentParser(
         prog="cudf.pandas PDS-H Benchmarks",
-        description="cudf.pandas benchmark runner.",
+        description=textwrap.dedent(f"""\
+            cudf.pandas benchmark runner.
+
+            Exit code description:
+            - {EXIT_SUCCESS} : Success
+            - 1 : Unhandled exception during query run
+            - 2 : Invalid command line arguments
+            - {EXIT_QUERY_FAILURE} : Query failure (setup or execution)
+            - {EXIT_VALIDATION_FAILURE} : Validation failure
+            """),
         formatter_class=argparse.RawTextHelpFormatter,
     )
     parser.add_argument(
@@ -1083,5 +1124,4 @@ def run_pandas(
     args.output.write(json.dumps(run_config.serialize()))
     args.output.write("\n")
 
-    exit_code = 1 if (query_failures or validation_failures) else 0
-    sys.exit(exit_code)
+    sys.exit(benchmark_exit_code(query_failures, validation_failures))

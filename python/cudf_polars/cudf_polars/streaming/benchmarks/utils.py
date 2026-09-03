@@ -128,6 +128,38 @@ else:
 _STREAMING_FRONTENDS = frozenset({"dask", "ray", "spmd"})
 _CPU_ENGINES = frozenset({"polars-cpu", "duckdb"})
 
+EXIT_SUCCESS = 0
+EXIT_QUERY_FAILURE = 3
+EXIT_VALIDATION_FAILURE = 4
+
+
+def benchmark_exit_code(
+    query_failures: list[tuple[int, int]],
+    validation_failures: list[int],
+) -> int:
+    """
+    Map a run's failures to the process exit code.
+
+    Parameters
+    ----------
+    query_failures
+        ``(query, iteration)`` pairs for queries that raised while running.
+    validation_failures
+        Queries whose results did not match the expected answer.
+
+    Returns
+    -------
+    int
+        0: Success
+        3: Query failure
+        4: Validation failure
+    """
+    if query_failures:
+        return EXIT_QUERY_FAILURE
+    if validation_failures:
+        return EXIT_VALIDATION_FAILURE
+    return EXIT_SUCCESS
+
 
 @dataclasses.dataclass
 class NightlyRole:
@@ -1367,7 +1399,7 @@ def _finalize_benchmark_run(
 
     args.output.write(json.dumps(serializable_engine_config))
     args.output.write("\n")
-    sys.exit(1 if (query_failures or validation_failures) else 0)
+    sys.exit(benchmark_exit_code(query_failures, validation_failures))
 
 
 def run_polars_cpu(
@@ -1495,7 +1527,7 @@ def run_polars_spmd(
             prepare_validation_result=_allgather_result,
         )
         if engine.rank > 0:
-            sys.exit(1 if (query_failures or validation_failures) else 0)
+            sys.exit(benchmark_exit_code(query_failures, validation_failures))
         run_config = dataclasses.replace(run_config, records=dict(records), plans=plans)
         run_config = _consolidate_logs(
             run_config, engine=engine, gather_client_logs=False
@@ -2117,6 +2149,14 @@ def build_parser(num_queries: int = 22) -> argparse.ArgumentParser:
 
     parser = argparse.ArgumentParser(
         prog="Cudf-Polars PDS-H/PDS-DS Benchmarks",
+        description=textwrap.dedent(f"""\
+            Exit code description:
+            - {EXIT_SUCCESS} : Success
+            - 1 : Unhandled exception during query run
+            - 2 : Invalid command line arguments
+            - {EXIT_QUERY_FAILURE} : Query failure (setup or execution)
+            - {EXIT_VALIDATION_FAILURE} : Validation failure
+            """),
         formatter_class=argparse.RawTextHelpFormatter,
     )
     parser.add_argument(

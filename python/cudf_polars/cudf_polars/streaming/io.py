@@ -262,7 +262,10 @@ def _read_with_hybrid_scan(
                 )
                 if bloom_ranges:
                     bloom_chunks = plc.io.parquet_io_utils.fetch_byte_ranges_to_device(
-                        source_info, bloom_ranges, stream=stream
+                        source_info,
+                        bloom_ranges,
+                        plc.io.parquet_io_utils.IOSubmissionPolicy.SERIALIZE,
+                        stream=stream,
                     )
                     row_group_indices = reader.filter_row_groups_with_bloom_filters(
                         bloom_chunks, row_group_indices, options, stream=stream
@@ -293,6 +296,7 @@ def _read_with_hybrid_scan(
         filter_chunks = plc.io.parquet_io_utils.fetch_byte_ranges_to_device(
             source_info,
             reader.filter_column_chunks_byte_ranges(row_group_indices, options),
+            plc.io.parquet_io_utils.IOSubmissionPolicy.SERIALIZE,
             stream=stream,
         )
         filter_tbl_w_meta = reader.materialize_filter_columns(
@@ -318,6 +322,7 @@ def _read_with_hybrid_scan(
             payload_chunks = plc.io.parquet_io_utils.fetch_byte_ranges_to_device(
                 source_info,
                 reader.payload_column_chunks_byte_ranges(row_group_indices, options),
+                plc.io.parquet_io_utils.IOSubmissionPolicy.SERIALIZE,
                 stream=stream,
             )
             payload_tbl_w_meta = reader.materialize_payload_columns(

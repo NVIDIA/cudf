@@ -55,7 +55,7 @@ struct encode_fn {
 std::unique_ptr<column> encode(column_view const& input,
                                data_type indices_type,
                                cuda::stream_ref stream,
-                               rmm::device_async_resource_ref mr)
+                               memory_resources mr)
 {
   CUDF_EXPECTS(is_signed(indices_type) && is_index_type(indices_type),
                "indices must be type signed integer",
@@ -67,8 +67,11 @@ std::unique_ptr<column> encode(column_view const& input,
                "encoding nested types not supported",
                std::invalid_argument);
 
+  auto const output_mr = mr.get_output_mr();
+  auto const temp_mr   = mr.get_temporary_mr();
+
   auto indices_column = cudf::make_numeric_column(
-    indices_type, input.size(), cudf::mask_state::UNALLOCATED, stream, mr);
+    indices_type, input.size(), cudf::mask_state::UNALLOCATED, stream, output_mr);
   if (input.is_empty()) {
     return make_dictionary_column(
       make_empty_column(input.type()), std::move(indices_column), rmm::device_buffer{}, 0);
@@ -81,7 +84,6 @@ std::unique_ptr<column> encode(column_view const& input,
 
   auto const has_nulls  = nullate::DYNAMIC{input.has_nulls()};
   auto const tv         = cudf::table_view({input});
-  auto const temp_mr    = cudf::get_current_device_resource_ref();
   auto const row_hash   = cudf::detail::row::hash::row_hasher(tv, stream, temp_mr);
   auto const row_equal  = cudf::detail::row::equality::self_comparator(tv, stream, temp_mr);
   auto const comparator = cudf::detail::row::equality::nan_equal_physical_equality_comparator{};
@@ -132,7 +134,7 @@ std::unique_ptr<column> encode(column_view const& input,
   // create column with keys_column and indices_column
   return make_dictionary_column(std::move(keys_column),
                                 std::move(indices_column),
-                                cudf::detail::copy_bitmask(input, stream, mr),
+                                cudf::detail::copy_bitmask(input, stream, output_mr),
                                 input.null_count());
 }
 
@@ -153,7 +155,7 @@ data_type get_indices_type_for_size(size_type keys_size)
 std::unique_ptr<column> encode(column_view const& input_column,
                                data_type indices_type,
                                cuda::stream_ref stream,
-                               rmm::device_async_resource_ref mr)
+                               memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::encode(input_column, indices_type, stream, mr);

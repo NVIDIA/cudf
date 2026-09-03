@@ -92,7 +92,11 @@ void BM_filter_string_row_groups_with_dicts_common(nvbench::state& state,
       // Fetch dictionary page data
       auto [dictionary_page_buffers, dictionary_page_data, read_task] =
         cudf::io::parquet::fetch_byte_ranges_to_device_async(
-          datasource_ref, dict_page_byte_ranges, stream, cudf::get_current_device_resource_ref());
+          datasource_ref,
+          dict_page_byte_ranges,
+          cudf::io::parquet::io_submission_policy::SERIALIZE,
+          stream,
+          cudf::get_current_device_resource_ref());
       read_task.get();
 
       // Filter row groups with dictionary pages

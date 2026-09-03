@@ -166,8 +166,17 @@ class UnaryFunction(Expr):
     )
     _horizontal_fold_ops: ClassVar[dict[str, plc.binaryop.BinaryOperator]] = {
         "max_horizontal": plc.binaryop.BinaryOperator.NULL_MAX,
+        "min_horizontal": plc.binaryop.BinaryOperator.NULL_MIN,
     }
-    _supported_horizontal_fns = frozenset({"coalesce", "max_horizontal"})
+    _supported_horizontal_fns = frozenset(
+        {
+            "coalesce",
+            "max_horizontal",
+            "mean_horizontal",
+            "min_horizontal",
+            "sum_horizontal",
+        }
+    )
     _supported_math_fns = frozenset(
         {
             "cot",
@@ -236,7 +245,7 @@ class UnaryFunction(Expr):
                 raise pl.exceptions.InvalidOperationError(
                     "'hist' is only supported for numeric data"
                 )
-        if self.name == "max_horizontal":
+        if self.name in UnaryFunction._horizontal_fold_ops:
             op = UnaryFunction._horizontal_fold_ops[self.name]
             if not plc.binaryop.is_supported_operation(
                 self.dtype.plc_type,
@@ -247,6 +256,23 @@ class UnaryFunction(Expr):
                 raise NotImplementedError(
                     f"{self.name} is not supported for dtype {self.dtype.id().name}"
                 )
+        if self.name == "sum_horizontal" and not plc.binaryop.is_supported_operation(
+            self.dtype.plc_type,
+            self.dtype.plc_type,
+            self.dtype.plc_type,
+            plc.binaryop.BinaryOperator.ADD,
+        ):
+            raise NotImplementedError(
+                f"{self.name} is not supported for dtype {self.dtype.id().name}"
+            )
+        if self.name == "mean_horizontal":
+            for child in children:
+                typ = child.dtype.polars_type
+                if not (typ.is_numeric() or typ == pl.Boolean):
+                    raise pl.exceptions.InvalidOperationError(
+                        f"'horizontal_mean' expects numeric expressions, found "
+                        f"(dtype={typ})"
+                    )
         if self.name == "mode" and not POLARS_VERSION_LT_136:
             (maintain_order,) = self.options
             if maintain_order:
@@ -449,6 +475,21 @@ class UnaryFunction(Expr):
             ).columns()[0],
             dtype=self.dtype,
         )
+
+    def _horizontal_broadcast_columns(
+        self, df: DataFrame, *, context: ExecutionContext
+    ) -> list[plc.Column]:
+        columns = [
+            child.evaluate(df, context=context).astype(self.dtype, stream=df.stream)
+            for child in self.children
+        ]
+        target_length = None if all(col.is_scalar for col in columns) else df.num_rows
+        return [
+            col.obj
+            for col in broadcast(
+                *columns, target_length=target_length, stream=df.stream
+            )
+        ]
 
     def do_evaluate(
         self, df: DataFrame, *, context: ExecutionContext = ExecutionContext.FRAME
@@ -1422,23 +1463,25 @@ class UnaryFunction(Expr):
             )
         elif self.name == "coalesce":
             first_child, *other_children = self.children
-            first_col = first_child.evaluate(df, context=context).astype(
-                self.dtype, stream=df.stream
+            result = (
+                first_child.evaluate(df, context=context)
+                .astype(self.dtype, stream=df.stream)
+                .obj
             )
-            if first_col.is_scalar:
-                result = plc.filling.repeat(
-                    plc.Table([first_col.obj]),
-                    df.num_rows,
-                    stream=df.stream,
-                ).columns()[0]
-            else:
-                result = first_col.obj
             for child in other_children:
-                if result.null_count() == 0:
+                if result.size() != 1 and result.null_count() == 0:
                     break
                 cast_candidate = child.evaluate(df, context=context).astype(
                     self.dtype, stream=df.stream
                 )
+                if result.size() == 1 and not cast_candidate.is_scalar:
+                    result = plc.filling.repeat(
+                        plc.Table([result]),
+                        cast_candidate.size,
+                        stream=df.stream,
+                    ).columns()[0]
+                if result.null_count() == 0:
+                    continue
                 fill = (
                     cast_candidate.obj_scalar(stream=df.stream)
                     if cast_candidate.is_scalar
@@ -1732,25 +1775,98 @@ class UnaryFunction(Expr):
                     stream=df.stream,
                 )
             return Column(clamped, dtype=self.dtype)
-        elif self.name == "max_horizontal":
+        elif self.name in UnaryFunction._horizontal_fold_ops:
             op = UnaryFunction._horizontal_fold_ops[self.name]
-            columns = [
-                col.obj
-                for col in broadcast(
-                    *(
-                        child.evaluate(df, context=context).astype(
-                            self.dtype, stream=df.stream
-                        )
-                        for child in self.children
-                    ),
-                    target_length=df.num_rows,
-                    stream=df.stream,
-                )
-            ]
+            columns = self._horizontal_broadcast_columns(df, context=context)
             result = columns[0]
             for other in columns[1:]:
                 result = plc.binaryop.binary_operation(
                     result, other, op, self.dtype.plc_type, stream=df.stream
+                )
+            return Column(result, dtype=self.dtype)
+        elif self.name == "mean_horizontal":
+            (ignore_nulls,) = self.options
+            add = plc.binaryop.BinaryOperator.ADD
+            denominator: plc.Column | plc.Scalar
+            columns = self._horizontal_broadcast_columns(df, context=context)
+            if ignore_nulls:
+                zero = plc.Scalar.from_py(0, self.dtype.plc_type, stream=df.stream)
+                filled = [
+                    plc.replace.replace_nulls(col, zero, stream=df.stream)
+                    for col in columns
+                ]
+                numerator = filled[0]
+                for col in filled[1:]:
+                    numerator = plc.binaryop.binary_operation(
+                        numerator, col, add, self.dtype.plc_type, stream=df.stream
+                    )
+                valid_counts = [
+                    plc.unary.cast(
+                        plc.unary.is_valid(col, stream=df.stream),
+                        self.dtype.plc_type,
+                        stream=df.stream,
+                    )
+                    for col in columns
+                ]
+                denominator = valid_counts[0]
+                for col in valid_counts[1:]:
+                    denominator = plc.binaryop.binary_operation(
+                        denominator, col, add, self.dtype.plc_type, stream=df.stream
+                    )
+                # Rows where every value was null have a zero non-null count and
+                # must produce null (matching Polars) rather than 0 / 0 == NaN.
+                denominator = plc.replace.find_and_replace_all(
+                    denominator,
+                    plc.Column.from_scalar(
+                        plc.Scalar.from_py(0, self.dtype.plc_type, stream=df.stream),
+                        1,
+                        stream=df.stream,
+                    ),
+                    plc.Column.from_scalar(
+                        plc.Scalar.from_py(None, self.dtype.plc_type, stream=df.stream),
+                        1,
+                        stream=df.stream,
+                    ),
+                    stream=df.stream,
+                )
+            else:
+                numerator = columns[0]
+                for col in columns[1:]:
+                    numerator = plc.binaryop.binary_operation(
+                        numerator, col, add, self.dtype.plc_type, stream=df.stream
+                    )
+                denominator = plc.Scalar.from_py(
+                    float(len(columns)), self.dtype.plc_type, stream=df.stream
+                )
+            return Column(
+                plc.binaryop.binary_operation(
+                    numerator,
+                    denominator,
+                    plc.binaryop.BinaryOperator.DIV,
+                    self.dtype.plc_type,
+                    stream=df.stream,
+                ),
+                dtype=self.dtype,
+            )
+        elif self.name == "sum_horizontal":
+            (ignore_nulls,) = self.options
+            columns = self._horizontal_broadcast_columns(df, context=context)
+            if ignore_nulls:
+                # Treat nulls as the additive identity so that a row is only
+                # null when Polars would produce null (never, for sum).
+                zero = plc.Scalar.from_py(0, self.dtype.plc_type, stream=df.stream)
+                columns = [
+                    plc.replace.replace_nulls(col, zero, stream=df.stream)
+                    for col in columns
+                ]
+            result = columns[0]
+            for other in columns[1:]:
+                result = plc.binaryop.binary_operation(
+                    result,
+                    other,
+                    plc.binaryop.BinaryOperator.ADD,
+                    self.dtype.plc_type,
+                    stream=df.stream,
                 )
             return Column(result, dtype=self.dtype)
         elif self.name == "extend_constant":

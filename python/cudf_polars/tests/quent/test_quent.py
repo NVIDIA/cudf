@@ -40,7 +40,6 @@ from cudf_polars.quent._types import (
     Statistics,
     Task,
     Worker,
-    _deserialize_value,
 )
 from cudf_polars.utils.config import ConfigOptions
 from cudf_polars.utils.cuda_stream import get_cuda_stream
@@ -163,30 +162,6 @@ def test_attribute_serialization_uses_quent_value_envelope() -> None:
         "key": "enabled",
         "value": {"U8": 1},
     }
-
-
-def test_deserialize_value_requires_single_variant() -> None:
-    with pytest.raises(
-        ValueError,
-        match=r"Expected Quent attribute value envelope with exactly one variant, got '2' instead.",
-    ):
-        _deserialize_value({"U8": 1, "I8": -1})
-
-
-def test_deserialize_value_requires_dict_envelope() -> None:
-    with pytest.raises(
-        TypeError,
-        match=r"Expected Quent attribute value envelope as a single-variant object, got list\.",
-    ):
-        _deserialize_value([{"U8": 1}])
-
-
-def test_deserialize_value_raises_on_unknown_variant() -> None:
-    with pytest.raises(
-        ValueError,
-        match="Unsupported Quent custom attribute variant: 'UnsupportedVariant'",
-    ):
-        _deserialize_value({"UnsupportedVariant": "x"})
 
 
 @pytest.fixture
@@ -641,22 +616,20 @@ def test_quent_context_serialization() -> None:
         query_group=cudf_polars.quent.QueryGroup(instance_name="test_query_group"),
         query=cudf_polars.quent.Query(instance_name="test_query"),
     )
-    data = quent_context.serialize()
+    data = quent_context._serialize()
 
-    new = QuentContext.deserialize(data)
+    new = cudf_polars.quent.QuentContext._deserialize(data)
     assert new == quent_context
 
 
-def test_quent_context_serialization_with_custom_attributes() -> None:
+def test_quent_context_serialization_drops_custom_attributes() -> None:
     engine = Engine(
         implementation=Implementation(
             name="test-impl",
             version="1.2.3",
             custom_attributes=[
                 Attribute("count", 3),
-                Attribute("ratio", 1.5),
                 Attribute("name", "demo"),
-                Attribute("optional", None),
             ],
         )
     )
@@ -666,10 +639,14 @@ def test_quent_context_serialization_with_custom_attributes() -> None:
         query=cudf_polars.quent.Query(instance_name="test_query"),
     )
 
-    data = quent_context.serialize()
-    new = QuentContext.deserialize(data)
+    new = cudf_polars.quent.QuentContext._deserialize(quent_context._serialize())
 
-    assert new == quent_context
+    assert new.engine.id == quent_context.engine.id
+    assert new.engine.implementation.name == "test-impl"
+    assert new.engine.implementation.version == "1.2.3"
+    assert new.engine.implementation.custom_attributes == []
+    assert new.query_group == quent_context.query_group
+    assert new.query == quent_context.query
 
 
 def test_emit_query_group_events_idempotent(quent_context: QuentContext):
@@ -815,6 +792,10 @@ def test_serialize_list() -> None:
         "key": "counts",
         "value": {"List": {"U16": [1, 2, 300]}},
     }
+    assert Attribute("value", [1.5]).serialize() == {
+        "key": "value",
+        "value": {"List": {"F64": [1.5]}},
+    }
     assert Attribute("flags", [True, False]).serialize() == {
         "key": "flags",
         "value": {"List": {"U8": [1, 0]}},
@@ -859,25 +840,6 @@ def test_serialize_heterogeneous_list_raises() -> None:
         Attribute("mixed", [1, "a"]).serialize()  # type: ignore[arg-type]
 
 
-def test_deserialize_invalid_heterogeneous_list_raises() -> None:
-    with pytest.raises(
-        ValueError,
-        match="Expected Quent List envelope with exactly one variant, got '2' instead",
-    ):
-        Attribute.deserialize(
-            {"key": "mixed", "value": {"List": {"String": ["a", "b"], "U8": [1, 2]}}}
-        )
-
-
-def test_deserialize_unsupported_attribute_type_raises() -> None:
-    with pytest.raises(
-        ValueError, match="Unsupported Quent List variant: 'Unsupported'"
-    ):
-        Attribute.deserialize(
-            {"key": "unsupported", "value": {"List": {"Unsupported": ["a", "b"]}}}
-        )
-
-
 def test_serialize_dict() -> None:
     assert Attribute("expr", {"type": "Col", "name": "x"}).serialize() == {
         "key": "expr",
@@ -892,19 +854,6 @@ def test_serialize_dict() -> None:
         "key": "nullable",
         "value": {"Struct": [{"key": "predicate", "value": None}]},
     }
-
-
-def test_attribute_list_and_dict_roundtrip() -> None:
-    cases = [
-        Attribute("keys", ["a", "b"]),
-        Attribute("counts", [1, 40000]),
-        Attribute("ratios", [1.5, 2.5]),
-        Attribute("expr", {"type": "Col", "name": "x", "child": None}),
-        Attribute("events", [{"bytes": 1024, "kind": "disk"}]),  # type: ignore[arg-type]
-        Attribute("empty", []),
-    ]
-    for attr in cases:
-        assert Attribute.deserialize(attr.serialize()) == attr
 
 
 def test_quent_serialize_none():

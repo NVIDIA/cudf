@@ -13,7 +13,7 @@ import itertools
 import sys
 import time
 import uuid
-from typing import TYPE_CHECKING, Any, Literal, Self, TypeAlias
+from typing import TYPE_CHECKING, Any, Literal, Self, TypeAlias, cast
 
 from cudf_polars import __version__
 
@@ -497,7 +497,6 @@ _INT_VARIANTS: tuple[tuple[str, int, int], ...] = (
     ("I32", -(2**31), 2**31 - 1),
     ("I64", -(2**63), 2**63 - 1),
 )
-_INT_VARIANT_NAMES = frozenset(name for name, _, _ in _INT_VARIANTS)
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -510,25 +509,79 @@ class Attribute:
     def serialize(self) -> dict[str, Any]:
         return {"key": self.name, "value": _serialize_value(self.value)}
 
-    @classmethod
-    def deserialize(cls, payload: dict[str, Any]) -> Attribute:
-        return cls(name=payload["key"], value=_deserialize_value(payload["value"]))
-
 
 def _integer_variant(value: int) -> str:
-    """Return the narrowest Quent integer variant that can hold ``value``."""
-    for variant, lo, hi in _INT_VARIANTS:
-        if lo <= value <= hi:
-            return variant
+    # Handle the special case of exactly 0
+    if value == 0:
+        return "U8"
+
+    is_signed = value < 0
+    # For negative numbers, calculate bits required for 2's complement
+    bits = (value + 1).bit_length() + 1 if is_signed else value.bit_length()
+
+    prefix = "I" if is_signed else "U"
+
+    if bits <= 8:
+        return f"{prefix}8"
+    if bits <= 16:
+        return f"{prefix}16"
+    if bits <= 32:
+        return f"{prefix}32"
+    if bits <= 64:
+        return f"{prefix}64"
+
     raise ValueError(f"Integer value {value} does not fit any Quent integer type.")
 
 
 def _common_integer_variant(values: list[int]) -> str:
     """Return the narrowest Quent integer variant that can hold all ``values``."""
+    smallest = min(values)
+    largest = max(values)
     for variant, lo, hi in _INT_VARIANTS:
-        if all(lo <= value <= hi for value in values):
+        if lo <= smallest and largest <= hi:
             return variant
     raise ValueError("Integer list values do not fit any Quent integer type.")
+
+
+def _serialize_list(values: HomogeneousListValue) -> dict[str, Any]:
+    """
+    Serialize a homogeneous list as a Quent ``List`` payload.
+
+    :data:`HomogeneousListValue` admits only same-typed elements, so the
+    variant is chosen from the first element rather than by inspecting every
+    element. Empty lists default to ``String`` because the element type cannot
+    be inferred. Nested lists are not supported by Quent
+    (see https://github.com/rapidsai/quent/issues/79).
+    """
+    if not values:
+        return {"String": []}
+    match values[0]:
+        # bool is a subclass of int; check it before int.
+        case bool():
+            return {"U8": [int(item) for item in cast("list[bool]", values)]}
+        case int():
+            return {_common_integer_variant(cast("list[int]", values)): values}
+        case float():
+            return {"F64": values}
+        case str():
+            return {"String": values}
+        case dict():
+            return {
+                "Struct": [
+                    _serialize_struct(item)
+                    for item in cast("list[StructValue]", values)
+                ]
+            }
+        case list():
+            # Unreachable through ``Value``-typed callers, but plan properties
+            # reach this function through a cast.
+            raise NotImplementedError(
+                "Nested list attributes are not supported by Quent."
+            )
+        case _:  # pragma: no cover; should be exhaustive
+            raise TypeError(
+                f"Unsupported Quent list element type: {type(values[0]).__name__}"
+            )
 
 
 def _serialize_struct(value: StructValue) -> list[dict[str, Any]]:
@@ -536,35 +589,6 @@ def _serialize_struct(value: StructValue) -> list[dict[str, Any]]:
     return [
         {"key": key, "value": _serialize_value(item)} for key, item in value.items()
     ]
-
-
-def _serialize_list(values: list[Any]) -> dict[str, Any]:
-    """
-    Serialize a homogeneous list as a Quent ``List`` payload.
-
-    Empty lists default to ``String`` because the element type cannot be
-    inferred. Nested lists are not supported by Quent
-    (see https://github.com/rapidsai/quent/issues/79).
-    """
-    if not values:
-        return {"String": []}
-    # bool is a subclass of int; check it before int.
-    if all(isinstance(item, bool) for item in values):
-        return {"U8": [int(item) for item in values]}
-    if all(isinstance(item, int) for item in values):
-        return {_common_integer_variant(values): values}
-    if all(isinstance(item, float) for item in values):
-        return {"F64": values}
-    if all(isinstance(item, str) for item in values):
-        return {"String": values}
-    if all(isinstance(item, dict) for item in values):
-        return {"Struct": [_serialize_struct(item) for item in values]}
-    if any(isinstance(item, list) for item in values):
-        raise NotImplementedError("Nested list attributes are not supported by Quent.")
-    raise TypeError(
-        "Quent list attributes must be homogeneous "
-        f"(int, float, str, bool, or dict); got {[type(v).__name__ for v in values]}"
-    )
 
 
 def _serialize_value(value: Value | None) -> dict[str, Any] | None:
@@ -586,56 +610,6 @@ def _serialize_value(value: Value | None) -> dict[str, Any] | None:
             return {"Struct": _serialize_struct(value)}
         case _:  # pragma: no cover; should be exhaustive
             raise TypeError(f"Unsupported Quent custom attribute type: {type(value)}")
-
-
-def _deserialize_struct(payload: list[dict[str, Any]]) -> StructValue:
-    return {item["key"]: _deserialize_value(item["value"]) for item in payload}
-
-
-def _deserialize_list(payload: dict[str, Any]) -> HomogeneousListValue:
-    n = len(payload)
-    if n != 1:
-        raise ValueError(
-            f"Expected Quent List envelope with exactly one variant, got '{n}' instead."
-        )
-    variant, deserialized = next(iter(payload.items()))
-    if variant in _INT_VARIANT_NAMES:
-        return [int(item) for item in deserialized]
-    if variant == "F64":
-        return [float(item) for item in deserialized]
-    if variant == "String":
-        return [str(item) for item in deserialized]
-    if variant == "Struct":
-        return [_deserialize_struct(item) for item in deserialized]
-    raise ValueError(f"Unsupported Quent List variant: '{variant}'")
-
-
-def _deserialize_value(value: dict[str, Any] | list[Any] | None) -> Value | None:
-    if value is None:
-        return None
-    if not isinstance(value, dict):
-        raise TypeError(
-            "Expected Quent attribute value envelope as a single-variant object, "
-            f"got {type(value).__name__}."
-        )
-    n = len(value)
-    if n != 1:
-        raise ValueError(
-            f"Expected Quent attribute value envelope with exactly one variant, got '{n}' instead."
-        )
-
-    variant, deserialized = next(iter(value.items()))
-    if variant in _INT_VARIANT_NAMES:
-        return int(deserialized)
-    if variant == "F64":
-        return float(deserialized)
-    if variant == "String":
-        return str(deserialized)
-    if variant == "Struct":
-        return _deserialize_struct(deserialized)
-    if variant == "List":
-        return _deserialize_list(deserialized)
-    raise ValueError(f"Unsupported Quent custom attribute variant: '{variant}'")
 
 
 # Resource capacity helpers

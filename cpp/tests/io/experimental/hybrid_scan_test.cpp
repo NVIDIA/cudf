@@ -908,10 +908,10 @@ TEST_F(HybridScanTest, DecimalTypeOption)
     auto reader = std::make_unique<cudf::io::parquet::experimental::hybrid_scan_reader>(
       *footer_buffer, options);
 
-    auto const row_groups   = reader->all_row_groups(options);
-    auto const chunk_ranges = reader->all_column_chunks_byte_ranges(row_groups, options);
-    auto [buffers, col_data, tasks] =
-      cudf::io::parquet::fetch_byte_ranges_to_device_async(*datasource, chunk_ranges, stream, mr);
+    auto const row_groups           = reader->all_row_groups(options);
+    auto const chunk_ranges         = reader->all_column_chunks_byte_ranges(row_groups, options);
+    auto [buffers, col_data, tasks] = cudf::io::parquet::fetch_byte_ranges_to_device_async(
+      *datasource, chunk_ranges, cudf::io::parquet::io_submission_policy::SERIALIZE, stream, mr);
     tasks.get();
 
     return reader->materialize_all_columns(row_groups, col_data, options, stream, mr);
@@ -974,7 +974,11 @@ TEST_F(HybridScanTest, StructChildFilterColumn)
   auto const filter_byte_ranges = reader->filter_column_chunks_byte_ranges(row_groups, options);
   auto [filter_bufs, filter_data, filter_tasks] =
     cudf::io::parquet::fetch_byte_ranges_to_device_async(
-      *datasource, filter_byte_ranges, stream, mr);
+      *datasource,
+      filter_byte_ranges,
+      cudf::io::parquet::io_submission_policy::SERIALIZE,
+      stream,
+      mr);
   filter_tasks.get();
 
   using cudf::io::parquet::experimental::use_data_page_mask;
@@ -1007,10 +1011,10 @@ TEST_F(HybridScanTest, SharedMetadataReaderMatchesReadParquet)
   auto const read_all_columns = [&] {
     auto const reader =
       std::make_unique<cudf::io::parquet::experimental::hybrid_scan_reader>(metadata);
-    auto const row_groups   = reader->all_row_groups(options);
-    auto const chunk_ranges = reader->all_column_chunks_byte_ranges(row_groups, options);
-    auto [buffers, data, tasks] =
-      cudf::io::parquet::fetch_byte_ranges_to_device_async(*datasource, chunk_ranges, stream, mr);
+    auto const row_groups       = reader->all_row_groups(options);
+    auto const chunk_ranges     = reader->all_column_chunks_byte_ranges(row_groups, options);
+    auto [buffers, data, tasks] = cudf::io::parquet::fetch_byte_ranges_to_device_async(
+      *datasource, chunk_ranges, cudf::io::parquet::io_submission_policy::SERIALIZE, stream, mr);
     tasks.get();
     return reader->materialize_all_columns(row_groups, data, options, stream, mr).tbl;
   };
@@ -1057,10 +1061,10 @@ TEST_F(HybridScanTest, SharedMetadataFromFileMetaDataMatchesReadParquet)
   auto const read_all_columns = [&] {
     auto const reader =
       std::make_unique<cudf::io::parquet::experimental::hybrid_scan_reader>(metadata);
-    auto const row_groups   = reader->all_row_groups(options);
-    auto const chunk_ranges = reader->all_column_chunks_byte_ranges(row_groups, options);
-    auto [buffers, data, tasks] =
-      cudf::io::parquet::fetch_byte_ranges_to_device_async(*datasource, chunk_ranges, stream, mr);
+    auto const row_groups       = reader->all_row_groups(options);
+    auto const chunk_ranges     = reader->all_column_chunks_byte_ranges(row_groups, options);
+    auto [buffers, data, tasks] = cudf::io::parquet::fetch_byte_ranges_to_device_async(
+      *datasource, chunk_ranges, cudf::io::parquet::io_submission_policy::SERIALIZE, stream, mr);
     tasks.get();
     return reader->materialize_all_columns(row_groups, data, options, stream, mr).tbl;
   };
@@ -1131,9 +1135,9 @@ TEST_F(HybridScanTest, SharedMetadataConcurrentReadersMatchReadParquet)
     std::vector<cudf::size_type>(all_row_groups.begin() + split, all_row_groups.end());
 
   auto const materialize = [&](auto const& reader, auto const& row_group_indices) {
-    auto const chunk_ranges = reader->all_column_chunks_byte_ranges(row_group_indices, options);
-    auto [buffers, data, tasks] =
-      cudf::io::parquet::fetch_byte_ranges_to_device_async(*datasource, chunk_ranges, stream, mr);
+    auto const chunk_ranges     = reader->all_column_chunks_byte_ranges(row_group_indices, options);
+    auto [buffers, data, tasks] = cudf::io::parquet::fetch_byte_ranges_to_device_async(
+      *datasource, chunk_ranges, cudf::io::parquet::io_submission_policy::SERIALIZE, stream, mr);
     tasks.get();
     return reader->materialize_all_columns(row_group_indices, data, options, stream, mr).tbl;
   };
@@ -1201,7 +1205,11 @@ TEST_F(HybridScanTest, AllRowsPrunedReportsInputRowGroups)
   auto const filter_byte_ranges = reader->filter_column_chunks_byte_ranges(row_groups, options);
   auto [filter_buffers, filter_data, filter_tasks] =
     cudf::io::parquet::fetch_byte_ranges_to_device_async(
-      *datasource, filter_byte_ranges, stream, mr);
+      *datasource,
+      filter_byte_ranges,
+      cudf::io::parquet::io_submission_policy::SERIALIZE,
+      stream,
+      mr);
   filter_tasks.get();
 
   auto const filter_result = reader->materialize_filter_columns(
@@ -1214,7 +1222,11 @@ TEST_F(HybridScanTest, AllRowsPrunedReportsInputRowGroups)
   auto const payload_byte_ranges = reader->payload_column_chunks_byte_ranges(row_groups, options);
   auto [payload_buffers, payload_data, payload_tasks] =
     cudf::io::parquet::fetch_byte_ranges_to_device_async(
-      *datasource, payload_byte_ranges, stream, mr);
+      *datasource,
+      payload_byte_ranges,
+      cudf::io::parquet::io_submission_policy::SERIALIZE,
+      stream,
+      mr);
   payload_tasks.get();
 
   auto const payload_result = reader->materialize_payload_columns(
@@ -1274,7 +1286,11 @@ TEST_F(HybridScanTest, ChunkedReadRowMaskPerPass)
       reader->filter_column_chunks_byte_ranges(row_group_indices, options);
     auto [filter_buffers, filter_data, filter_tasks] =
       cudf::io::parquet::fetch_byte_ranges_to_device_async(
-        *datasource, filter_byte_ranges, stream, mr);
+        *datasource,
+        filter_byte_ranges,
+        cudf::io::parquet::io_submission_policy::SERIALIZE,
+        stream,
+        mr);
     filter_tasks.get();
 
     filter_tables.push_back(
@@ -1293,7 +1309,11 @@ TEST_F(HybridScanTest, ChunkedReadRowMaskPerPass)
       reader->payload_column_chunks_byte_ranges(row_group_indices, options);
     auto [payload_buffers, payload_data, payload_tasks] =
       cudf::io::parquet::fetch_byte_ranges_to_device_async(
-        *datasource, payload_byte_ranges, stream, mr);
+        *datasource,
+        payload_byte_ranges,
+        cudf::io::parquet::io_submission_policy::SERIALIZE,
+        stream,
+        mr);
     payload_tasks.get();
 
     payload_tables.push_back(
@@ -1381,7 +1401,11 @@ TEST_F(HybridScanTest, RowGroupPassesMatchesChunkedReader)
       auto const chunk_byte_ranges =
         reader->all_column_chunks_byte_ranges(pass_row_groups, options);
       auto [buffers, col_data, tasks] = cudf::io::parquet::fetch_byte_ranges_to_device_async(
-        *datasource, chunk_byte_ranges, stream, mr);
+        *datasource,
+        chunk_byte_ranges,
+        cudf::io::parquet::io_submission_policy::SERIALIZE,
+        stream,
+        mr);
       tasks.get();
 
       reader->setup_chunking_for_all_columns(

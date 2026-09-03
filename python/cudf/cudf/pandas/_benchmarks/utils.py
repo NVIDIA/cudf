@@ -114,6 +114,26 @@ def get_validation_options(args: Any) -> dict[str, Any]:
 
 
 @dataclasses.dataclass
+class NightlyRole:
+    """Role indicating a nightly benchmark run."""
+
+    type: Literal["nightly"] = dataclasses.field(default="nightly", init=False)
+    date: str = dataclasses.field(
+        default_factory=lambda: datetime.now(timezone.utc).date().isoformat()
+    )
+
+
+@dataclasses.dataclass
+class NsysRole:
+    """Role indicating a benchmark run with nsys profiling enabled."""
+
+    type: Literal["nsys"] = dataclasses.field(default="nsys", init=False)
+
+
+Role = NightlyRole | NsysRole
+
+
+@dataclasses.dataclass
 class ValidationResult:
     """
     Result of a validation run.
@@ -473,6 +493,7 @@ class RunConfig:
     duckdb_threads: int | None = None
     duckdb_memory_limit: str | None = None
     duckdb_temp_dir: str | None = None
+    roles: list[Role] = dataclasses.field(default_factory=list)
 
     @classmethod
     def from_args(cls, args: argparse.Namespace) -> RunConfig:
@@ -536,6 +557,12 @@ class RunConfig:
         else:
             validation_method = None
 
+        roles: list[Role] = []
+        if args.role_nightly:
+            roles.append(NightlyRole())
+        if args.role_nsys:
+            roles.append(NsysRole())
+
         return cls(
             engine_name=engine_name,
             queries=args.query,
@@ -549,6 +576,7 @@ class RunConfig:
             duckdb_threads=args.duckdb_threads,
             duckdb_memory_limit=args.duckdb_memory_limit,
             duckdb_temp_dir=args.duckdb_temp_dir,
+            roles=roles,
         )
 
     def serialize(self) -> dict:
@@ -886,6 +914,18 @@ def parse_args(
         type=str,
         default=None,
         help="Directory for DuckDB to spill temporary data to disk.",
+    )
+    parser.add_argument(
+        "--role-nightly",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Add the 'nightly' role to the benchmark run output.",
+    )
+    parser.add_argument(
+        "--role-nsys",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Add the 'nsys' role to the benchmark run output.",
     )
     parsed_args = parser.parse_args(args)
     if (

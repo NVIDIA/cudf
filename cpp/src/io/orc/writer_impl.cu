@@ -1513,7 +1513,7 @@ encoded_footer_statistics finish_statistic_blobs(Footer const& footer,
       file_blobs[i].assign(stat_begin, stat_end);
     }
 
-    stream.sync();
+    stream.sync();  // h_stat_chunks goes out of scope
     return {{}, std::move(file_blobs)};
   }
 
@@ -1596,7 +1596,7 @@ encoded_footer_statistics finish_statistic_blobs(Footer const& footer,
     file_blobs[i].assign(stat_begin, stat_end);
   }
 
-  stream.sync();
+  stream.sync();  // h_srcs, h_dsts, h_lens go out of scope
   return {std::move(stripe_blobs), std::move(file_blobs)};
 }
 
@@ -2042,7 +2042,7 @@ orc_table_view make_orc_table_view(table_view const& table,
     },
     stream);
 
-  stream.sync();
+  stream.sync();  // type_kinds goes out of scope
   return {std::move(orc_columns),
           std::move(d_orc_columns),
           str_col_indexes,

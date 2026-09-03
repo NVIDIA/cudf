@@ -850,6 +850,7 @@ class strings_column_wrapper : public detail::column_wrapper {
       cudf::detail::make_device_uvector(offsets, stream, mr.get_output_mr()),
       rmm::device_buffer{},
       0);
+    cudf::test::get_default_stream().sync();
     wrapped =
       cudf::make_strings_column(num_strings, std::move(d_offsets), d_chars.release(), 0, {});
   }
@@ -1890,6 +1891,7 @@ class lists_column_wrapper : public detail::column_wrapper {
     // construct the list column
     wrapped = make_lists_column(
       cols.size(), std::move(offsets), std::move(data), null_count, std::move(null_mask));
+    cudf::test::get_default_stream().sync();
   }
 
   /**

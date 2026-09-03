@@ -789,7 +789,7 @@ def cast_dataset_for_pandas(
 def prepare_pandas_cpu_dataset(
     run_config: RunConfig,
 ) -> RunConfig:
-    """Point a pandas-cpu run at a dataset copy with pandas-friendly dtypes.
+    """Point a pandas-cpu run at a dataset copy with pandas-compatible dtypes.
 
     Parameters
     ----------
@@ -813,9 +813,6 @@ def prepare_pandas_cpu_dataset(
     if schema == _pandas_cast_schema(schema):
         return run_config
     destination = dataset_path.parent / f"{dataset_path.name}-pandas-cast"
-    print(  # noqa: T201
-        f"Casting decimal and date columns of {dataset_path} into {destination}"
-    )
     cast_dataset_for_pandas(dataset_path, destination, run_config.suffix)
     return dataclasses.replace(run_config, dataset_path=destination)
 

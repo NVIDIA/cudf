@@ -478,35 +478,46 @@ class RunConfig:
     """Results for a PDS-H or PDS-DS query run."""
 
     engine_name: Literal["cudf-pandas", "pandas"]
+    # Query selection & dataset
     queries: list[int]
+    query_set: str
+    dataset_path: Path
+    scale_factor: int | float
     suffix: str
+
+    # Execution mode
     frontend: FrontendType
+
+    # Run parameters
+    iterations: int
+    io_mode: Literal["cold", "lukewarm", "hot"] = "lukewarm"
+
+    # Validation
+    validation_method: ValidationMethod | None = None
+
+    # DuckDB configuration
+    duckdb_threads: int | None = None
+    duckdb_memory_limit: str | None = None
+    duckdb_temp_dir: str | None = None
+
+    # Metadata / output (populated at runtime)
+    n_workers: int = 1
+    extra_info: dict[str, Any] = dataclasses.field(default_factory=dict)
     versions: PackageVersions = dataclasses.field(
         default_factory=PackageVersions.collect
     )
     records: dict[int, list[SuccessRecord | FailedRecord]] = dataclasses.field(
         default_factory=dict
     )
-    dataset_path: Path
-    scale_factor: int | float
-    iterations: int
-    io_mode: Literal["cold", "lukewarm", "hot"] = "lukewarm"
-    n_workers: int = 1
-    extra_info: dict[str, Any] = dataclasses.field(default_factory=dict)
-    command_line: str
-    capture_env_vars: str
-    timestamp: str = dataclasses.field(
-        default_factory=lambda: datetime.now(timezone.utc).isoformat()
-    )
     hardware: HardwareInfo = dataclasses.field(
         default_factory=HardwareInfo.collect
     )
     run_id: uuid.UUID = dataclasses.field(default_factory=uuid.uuid4)
-    query_set: str
-    validation_method: ValidationMethod | None = None
-    duckdb_threads: int | None = None
-    duckdb_memory_limit: str | None = None
-    duckdb_temp_dir: str | None = None
+    timestamp: str = dataclasses.field(
+        default_factory=lambda: datetime.now(timezone.utc).isoformat()
+    )
+    command_line: str
+    capture_env_vars: str
     roles: list[Role] = dataclasses.field(default_factory=list)
 
     def __post_init__(self) -> None:

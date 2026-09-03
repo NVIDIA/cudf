@@ -600,9 +600,12 @@ def test_masked_abs(x, valid):
 @pytest.mark.parametrize(
     "value,valid,expected",
     [
-        (5, True, True),  # valid & truthy
+        (5, True, True),  # valid & odd truthy
+        (2, True, True),  # even; trunc->i1 would drop low bit
+        (-2, True, True),  # valid & negative even truthy
         (0, True, False),  # valid & falsy
         (5, False, False),  # invalid -> False regardless of payload
+        (2, False, False),
         (0, False, False),
     ],
 )
@@ -614,6 +617,49 @@ def test_masked_bool_truth(value, valid, expected):
     )
     def k(out, a, av):
         out[0] = bool(Masked(a[0], av[0]))
+
+    out = cp.zeros(1, dtype=np.bool_)
+    _launch(
+        k,
+        out,
+        cp.array([value], dtype=np.int64),
+        cp.array([valid], dtype=np.bool_),
+    )
+    assert bool(out.get()[0]) is expected
+
+
+@pytest.mark.parametrize("use_operator", [False, True])
+@pytest.mark.parametrize(
+    "value,valid,expected",
+    [
+        (5, True, False),  # valid & truthy -> not True
+        (0, True, True),  # valid & falsy -> not False
+        (5, False, True),  # invalid is falsy -> not False
+        (0, False, True),
+    ],
+)
+def test_masked_not(value, valid, expected, use_operator):
+    """``not m`` / ``operator.not_`` -> plain bool; invalid Masked is falsy."""
+
+    if use_operator:
+
+        @cuda.jit(
+            types.void(
+                types.boolean[::1], types.int64[::1], types.boolean[::1]
+            )
+        )
+        def k(out, a, av):
+            out[0] = operator.not_(Masked(a[0], av[0]))
+
+    else:
+
+        @cuda.jit(
+            types.void(
+                types.boolean[::1], types.int64[::1], types.boolean[::1]
+            )
+        )
+        def k(out, a, av):
+            out[0] = not Masked(a[0], av[0])
 
     out = cp.zeros(1, dtype=np.bool_)
     _launch(

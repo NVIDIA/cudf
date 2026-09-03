@@ -235,10 +235,12 @@ class MaskedScalarUnaryOp(AbstractTemplate):
 
 
 class MaskedScalarTruth(AbstractTemplate):
-    """``bool(m)`` / ``operator.truth(m)`` -> boolean.
+    """Masked -> plain boolean for the truth-testing unary ops.
 
-    The runtime result is ``m.valid and bool(m.value)``; the *type* is a
-    plain boolean (used directly in ``if`` conditions).
+    Covers ``bool(m)`` / ``operator.truth(m)`` and ``not m`` /
+    ``operator.not_(m)``. The *type* is always a plain boolean (used directly
+    in ``if`` conditions); the runtime result differs per op and is handled in
+    lowering.
     """
 
     def generic(
@@ -300,9 +302,13 @@ def _register() -> None:
         typing_registry.register_global(binary_op)(MaskedScalarScalarOp)
 
     for unary_op in unary_ops:
+        # not_ is logical negation: it returns a plain boolean, not a Masked.
+        if unary_op is operator.not_:
+            continue
         typing_registry.register_global(unary_op)(MaskedScalarUnaryOp)
     typing_registry.register_global(operator.truth)(MaskedScalarTruth)
     typing_registry.register_global(bool)(MaskedScalarTruth)
+    typing_registry.register_global(operator.not_)(MaskedScalarTruth)
     typing_registry.register_global(float)(MaskedScalarFloatCast)
     typing_registry.register_global(int)(MaskedScalarIntCast)
     typing_registry.register_global(abs)(MaskedScalarAbsoluteValue)

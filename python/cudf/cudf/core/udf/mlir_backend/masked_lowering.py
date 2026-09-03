@@ -12,10 +12,10 @@ from numba_cuda_mlir._mlir import ir as mlir_ir
 from numba_cuda_mlir._mlir.dialects import arith, llvm
 from numba_cuda_mlir.extending import lower_cast, lowering_registry
 from numba_cuda_mlir.lowering_utilities import (
-    bool_of,
     coerce_numpy_scalars_for_binary_op,
     convert,
     false,
+    true,
 )
 from numba_cuda_mlir.models import PrimitiveModel, register_model
 from numba_cuda_mlir.numba_cuda.core import ir as numba_ir
@@ -412,29 +412,50 @@ def _lower_masked_invert(
     builder.store_var(target, packed)
 
 
-def _lower_masked_truth(
-    builder: MLIRLower, target: Var, args: list[Var], kwargs: list
-) -> None:
-    """``bool(m)`` / ``operator.truth(m)``: ``m.valid and bool(m.value)``.
+def _masked_truth_value(builder: MLIRLower, arg: Var) -> mlir_ir.Value:
+    """Return the ``i1`` truth value of a Masked: ``m.valid and bool(m.value)``.
 
-    Float payloads take a dedicated path: ``convert(float -> i1)`` lowers via
-    ``arith.fptoui`` to a 1-bit integer, which truncates rather than testing
-    truthiness (e.g. ``bool(1.0)`` would come out ``False``). Compute
-    ``payload != 0`` directly instead; the unordered ``UNE`` predicate also
-    gives the Python-correct ``bool(nan) is True``.
+    The payload truthiness cannot go through ``convert(payload -> i1)`` because
+    that narrows numerically rather than testing truth:
+
+    * ``convert(int -> i1)`` is ``arith.trunci``, keeping only the low bit, so
+      ``bool(Masked(2))`` would come out ``False``.
+    * ``convert(float -> i1)`` is ``arith.fptoui``, which truncates similarly,
+      so ``bool(Masked(1.0))`` would come out ``False``.
+
+    Compare against zero directly instead. For floats the unordered ``UNE``
+    predicate also gives the Python-correct ``bool(nan) is True``.
     """
-    m = builder.load_var(args[0])
+    m = builder.load_var(arg)
     st = llvm.StructType(m.type)
     m_val, m_valid = _extract_masked_value_valid(m, st.body[0], st.body[1])
-    inner_ty = builder.get_numba_type(args[0].name).value_type
+    inner_ty = builder.get_numba_type(arg.name).value_type
     if isinstance(inner_ty, types.Float):
         zero = arith.constant(m_val.type, 0.0)
         payload_as_bool = arith.cmpf(arith.CmpFPredicate.UNE, m_val, zero)
     else:
-        bool_mlir_ty = builder.get_mlir_type(types.boolean)
-        payload_as_bool = bool_of(convert(m_val, bool_mlir_ty))
-    result = arith.select(m_valid, payload_as_bool, false())
-    builder.store_var(target, result)
+        zero = arith.constant(m_val.type, 0)
+        payload_as_bool = arith.cmpi(arith.CmpIPredicate.ne, m_val, zero)
+    return arith.select(m_valid, payload_as_bool, false())
+
+
+def _lower_masked_truth(
+    builder: MLIRLower, target: Var, args: list[Var], kwargs: list
+) -> None:
+    """``bool(m)`` / ``operator.truth(m)``: ``m.valid and bool(m.value)``."""
+    builder.store_var(target, _masked_truth_value(builder, args[0]))
+
+
+def _lower_masked_not(
+    builder: MLIRLower, target: Var, args: list[Var], kwargs: list
+) -> None:
+    """``not m`` / ``operator.not_(m)``: ``not (m.valid and bool(m.value))``.
+
+    The result is a plain boolean, not a Masked: an invalid operand is falsy,
+    so ``not`` of it is ``True`` rather than an invalid masked value.
+    """
+    truth = _masked_truth_value(builder, args[0])
+    builder.store_var(target, arith.xori(truth, true()))
 
 
 def _make_lower_masked_numeric_cast() -> Callable:
@@ -507,7 +528,9 @@ def _register() -> None:
         lower(binary_op, NAType, MaskedType)(_lower_masked_binary_null)
 
     for unary_op in unary_ops:
-        if unary_op is operator.invert:
+        # invert has no scalar lowering to delegate to (handled below), and
+        # not_ is logical negation returning a plain bool rather than a Masked.
+        if unary_op in (operator.invert, operator.not_):
             continue
         lower(unary_op, MaskedType)(_make_lower_masked_unary(unary_op))
     lower(abs, MaskedType)(_make_lower_masked_unary(abs))
@@ -515,6 +538,7 @@ def _register() -> None:
 
     lower(operator.truth, MaskedType)(_lower_masked_truth)
     lower(bool, MaskedType)(_lower_masked_truth)
+    lower(operator.not_, MaskedType)(_lower_masked_not)
 
     lower(float, MaskedType)(_make_lower_masked_numeric_cast())
     lower(int, MaskedType)(_make_lower_masked_numeric_cast())

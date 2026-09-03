@@ -22,7 +22,7 @@ public class HashJoinTest {
 
   @Test
   void testGetCompareNullsEqual() {
-    try (Table t = new Table.TestBuilder().column(1, 2, 3, 4).column(5, 6, 7, 8).build()) {
+    try (Table t = new Table.TestBuilder().column(1, 2, 3, 4).build()) {
       try (HashJoin hashJoin = new HashJoin(t, false)) {
         assertFalse(hashJoin.getCompareNullsEqual());
       }

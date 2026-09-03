@@ -152,9 +152,10 @@ jobs:
           - 'RAPIDS_BRANCH'
           - 'dependencies.yaml'
           - 'ci/build_java.sh'
-          - 'ci/test_packaged_java.sh'
           - '.github/workflows/pr.yaml'
           - '.github/workflows/cudf-spark-jni.yaml'
+        test_java_packaged:
+          - 'ci/test_packaged_java.sh'
         test_notebooks:
           - 'python/cudf/**'
           - '!python/cudf/cudf/pandas/**'
@@ -413,7 +414,7 @@ jobs:
       pull-requests: read
     secrets: inherit # zizmor: ignore[secrets-inherit]
     uses: rapidsai/shared-workflows/.github/workflows/custom-job.yaml@main
-    if: fromJSON(needs.changed-files.outputs.changed_file_groups).cpp_build_inputs || fromJSON(needs.changed-files.outputs.changed_file_groups).test_java
+    if: fromJSON(needs.changed-files.outputs.changed_file_groups).cpp_build_inputs || fromJSON(needs.changed-files.outputs.changed_file_groups).test_java || fromJSON(needs.changed-files.outputs.changed_file_groups).test_java_packaged
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.java-build-matrix.outputs.matrix) }}

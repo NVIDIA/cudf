@@ -147,6 +147,8 @@ jobs:
           - 'ci/cpp_linters.sh'
         unit_tests_cudf_pandas:
           - 'python/cudf/cudf/pandas/**'
+          - 'ci/cudf_pandas_scripts/run_tests.sh'
+          - 'ci/utils/get_matrix_values.py'
         test_java:
           - 'java/**'
           - 'RAPIDS_BRANCH'
@@ -161,6 +163,9 @@ jobs:
           - '!python/cudf/cudf/pandas/**'
           - 'python/dask_cudf/**'
           - 'notebooks/**'
+          - 'dependencies.yaml'
+          - 'ci/test_notebooks.sh'
+          - 'ci/utils/nbtest.sh'
         test_python_all:
           - 'python/libcudf/**'
           - 'python/pylibcudf/**'
@@ -225,9 +230,9 @@ jobs:
         test_python_cudf_polars_runner:
           - 'ci/run_cudf_polars_pytests.sh'
         test_cudf_pandas_third_party_integration:
-          - 'ci/cudf_pandas_scripts/third-party-integration/test.sh'
+          - 'ci/cudf_pandas_scripts/third-party-integration/**'
         test_cudf_pandas_pandas_tests:
-          - 'ci/cudf_pandas_scripts/pandas-tests/run.sh'
+          - 'ci/cudf_pandas_scripts/pandas-tests/**'
         test_wheel_dask_cudf:
           - 'python/cudf/**'
           - '!python/cudf/cudf/pandas/**'

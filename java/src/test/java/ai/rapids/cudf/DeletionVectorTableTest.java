@@ -192,6 +192,10 @@ class DeletionVectorTableTest extends CudfTestBase {
           bitmapArray.buffers[0], false, null, null);
       DeletionVectorInfo emptyMetadata = new DeletionVectorInfo(
           bitmapArray.buffers[0], false, new long[0], new int[0]);
+      DeletionVectorInfo negativeOffset = new DeletionVectorInfo(
+          bitmapArray.buffers[0], false, new long[] {-1}, new int[] {1000});
+      DeletionVectorInfo negativeRowCount = new DeletionVectorInfo(
+          bitmapArray.buffers[0], false, new long[] {0}, new int[] {-1});
       assertThrows(NullPointerException.class,
           () -> DeletionVector.computeNumDeletedRows(null, 1000));
       assertThrows(IllegalArgumentException.class,
@@ -200,6 +204,10 @@ class DeletionVectorTableTest extends CudfTestBase {
           () -> DeletionVector.computeNumDeletedRows(missingMetadata, 1000));
       assertThrows(IllegalArgumentException.class,
           () -> DeletionVector.computeNumDeletedRows(emptyMetadata, 1000));
+      assertThrows(IllegalArgumentException.class,
+          () -> DeletionVector.computeNumDeletedRows(negativeOffset, 1000));
+      assertThrows(IllegalArgumentException.class,
+          () -> DeletionVector.computeNumDeletedRows(negativeRowCount, 1000));
     }
   }
 

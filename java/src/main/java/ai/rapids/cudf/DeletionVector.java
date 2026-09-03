@@ -101,8 +101,8 @@ public class DeletionVector {
    * @param maxChunkRows maximum number of row indexes to process at once
    * @return number of deleted rows in the specified row groups
    * @throws NullPointerException if {@code deletionVectorInfo} is null
-   * @throws IllegalArgumentException if row-group metadata is missing or empty, or if
-   *     {@code maxChunkRows} is not positive
+   * @throws IllegalArgumentException if row-group metadata is missing, empty, or contains a
+   *     negative value, or if {@code maxChunkRows} is not positive
    */
   public static long computeNumDeletedRows(
       DeletionVectorInfo deletionVectorInfo, int maxChunkRows) {
@@ -115,6 +115,10 @@ public class DeletionVector {
     if (deletionVectorInfo.rowGroupOffsets == null ||
         deletionVectorInfo.rowGroupOffsets.length == 0) {
       throw new IllegalArgumentException("row-group metadata must be non-empty");
+    }
+    if (Arrays.stream(deletionVectorInfo.rowGroupOffsets).anyMatch(value -> value < 0) ||
+        Arrays.stream(deletionVectorInfo.rowGroupNumRows).anyMatch(value -> value < 0)) {
+      throw new IllegalArgumentException("row-group metadata values must be non-negative");
     }
     return computeNumDeletedRows(
         getAddrsAndSizes(deletionVectorInfo.serializedBitmap),

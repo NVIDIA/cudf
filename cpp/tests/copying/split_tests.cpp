@@ -2818,12 +2818,26 @@ TEST_F(ContiguousSplitNestedTypesTest, DictionaryOfDictionary)
   cudf::test::fixed_width_column_wrapper<int32_t> indices{{0, 1, 2, 3, 4, 5, 0, 1}};
   auto const outer = cudf::make_dictionary_column(*inner, indices);
 
-  auto const inner_keys = [](cudf::column_view const& dict) {
-    return cudf::dictionary_column_view(cudf::dictionary_column_view(dict).keys()).keys();
+  // the comparators do not handle dictionary columns, so walk both levels by hand
+  auto const verify = [](cudf::column_view const& expected, cudf::column_view const& result) {
+    cudf::dictionary_column_view const expected_dict(expected);
+    cudf::dictionary_column_view const result_dict(result);
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_dict.get_indices_annotated(),
+                                   result_dict.get_indices_annotated());
+
+    cudf::dictionary_column_view const expected_keys(expected_dict.keys());
+    cudf::dictionary_column_view const result_keys(result_dict.keys());
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_keys.get_indices_annotated(),
+                                   result_keys.get_indices_annotated());
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_keys.keys(), result_keys.keys());
   };
 
-  for (auto const& result : cudf::contiguous_split(cudf::table_view({*outer}), {3})) {
-    CUDF_TEST_EXPECT_COLUMNS_EQUAL(inner_keys(*outer), inner_keys(result.table.column(0)));
+  cudf::table_view const src({*outer});
+  auto const expected = cudf::split(src, {3});
+  auto const result   = cudf::contiguous_split(src, {3});
+  ASSERT_EQ(expected.size(), result.size());
+  for (std::size_t i = 0; i < result.size(); ++i) {
+    verify(expected[i].column(0), result[i].table.column(0));
   }
 }
 

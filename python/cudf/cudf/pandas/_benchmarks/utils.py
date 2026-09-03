@@ -485,6 +485,7 @@ class RunConfig:
     queries: list[int]
     query_set: str
     dataset_path: Path
+    original_dataset_path: Path | None = None
     scale_factor: int | float
     suffix: str
 
@@ -524,6 +525,9 @@ class RunConfig:
     roles: list[Role] = dataclasses.field(default_factory=list)
 
     def __post_init__(self) -> None:
+        if self.original_dataset_path is None:
+            self.original_dataset_path = self.dataset_path
+
         if self.io_mode == "hot" and self.iterations < 2:
             raise ValueError(
                 "--io-mode hot requires at least 2 iterations: "
@@ -641,7 +645,7 @@ class RunConfig:
             "engine_name": self.engine_name,
             "queries": self.queries,
             "query_set": self.query_set,
-            "dataset_path": str(self.dataset_path),
+            "dataset_path": str(self.original_dataset_path),
             "scale_factor": self.scale_factor,
             "suffix": self.suffix,
             "frontend": self.frontend,
@@ -673,7 +677,7 @@ class RunConfig:
         total_mean_time = 0.0
         for query, records in self.records.items():
             print(f"query: {query}")  # noqa: T201
-            print(f"path: {self.dataset_path}")  # noqa: T201
+            print(f"path: {self.original_dataset_path}")  # noqa: T201
             print(f"scale_factor: {self.scale_factor}")  # noqa: T201
             print(f"frontend: {self.frontend}")  # noqa: T201
             valid_durations = [
@@ -783,7 +787,7 @@ def cast_dataset_for_pandas(
 
 
 def prepare_pandas_cpu_dataset(
-    run_config: RunConfig, destination: Path | None = None
+    run_config: RunConfig,
 ) -> RunConfig:
     """Point a pandas-cpu run at a dataset copy with pandas-friendly dtypes.
 
@@ -791,14 +795,11 @@ def prepare_pandas_cpu_dataset(
     ----------
     run_config
         Configuration of the run, read for its dataset path and suffix.
-    destination
-        Directory to write the cast tables to. Defaults to a sibling of the
-        input dataset.
 
     Returns
     -------
     `run_config`, unchanged when no column needs casting, otherwise pointed at
-    the cast copy.
+    a `-pandas-cast` sibling of the input dataset holding the cast copy.
     """
     import pyarrow.dataset as pa_dataset
 
@@ -811,8 +812,7 @@ def prepare_pandas_cpu_dataset(
     schema = pa_dataset.dataset(tables[0]).schema
     if schema == _pandas_cast_schema(schema):
         return run_config
-    if destination is None:
-        destination = dataset_path.parent / f"{dataset_path.name}-pandas-cast"
+    destination = dataset_path.parent / f"{dataset_path.name}-pandas-cast"
     print(  # noqa: T201
         f"Casting decimal and date columns of {dataset_path} into {destination}"
     )
@@ -1042,17 +1042,6 @@ def build_parser(num_queries: int = 22) -> argparse.ArgumentParser:
         help=textwrap.dedent("""\
             File suffix for input table files.
             Default: .parquet"""),
-    )
-    parser.add_argument(
-        "--cast-dataset-directory",
-        default=None,
-        type=Path,
-        dest="cast_dataset_directory",
-        metavar="PATH",
-        help=textwrap.dedent("""\
-            Directory for the dtype-cast dataset copy written for
-            --frontend pandas-cpu.
-            Default: a '-pandas-cast' sibling of --path"""),
     )
     parser.add_argument(
         "--frontend",
@@ -1411,9 +1400,7 @@ def run_pandas(benchmark: Any, args: argparse.Namespace) -> None:
     vars(args).update({"query_set": benchmark.name})
     run_config = RunConfig.from_args(args)
     if run_config.frontend == "pandas-cpu":
-        run_config = prepare_pandas_cpu_dataset(
-            run_config, args.cast_dataset_directory
-        )
+        run_config = prepare_pandas_cpu_dataset(run_config)
     validation_failures: list[int] = []
     query_failures: list[tuple[int, int]] = []
 

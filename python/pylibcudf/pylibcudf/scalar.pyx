@@ -61,7 +61,7 @@ from rmm.pylibrmm.stream cimport Stream
 from cuda.bindings.cyruntime cimport cudaStream_t
 
 from .column cimport Column
-from .traits cimport is_floating_point
+from .traits cimport is_fixed_point, is_floating_point
 from .types cimport DataType
 from .utils cimport _get_memory_resource, _get_stream
 from functools import singledispatch
@@ -466,6 +466,17 @@ def _(
         c_dtype = dtype = DataType(type_id.INT64)
     elif is_floating_point(dtype):
         return _from_py(float(py_val), dtype, _stream, mr)
+    elif is_fixed_point(dtype):
+        scale = (<DataType>dtype).scale()
+        if scale > 0:
+            unscaled = abs(py_val) // 10 ** scale
+            unscaled = -unscaled if py_val < 0 else unscaled
+        else:
+            unscaled = py_val * 10 ** -scale
+        # 38 for the max precision of DECIMAL128
+        with decimal.localcontext(prec=38):
+            py_dec = decimal.Decimal(unscaled).scaleb(scale)
+        return _from_py(py_dec, dtype, _stream, mr)
     else:
         c_dtype = <DataType>dtype
     cdef type_id tid = c_dtype.id()
@@ -827,7 +838,9 @@ def _(
     cdef Stream _stream = stream
     cdef cudaStream_t _cs = _stream.view().value()
     scale = py_val.as_tuple().exponent
-    as_int = int(py_val.scaleb(-scale))
+    # 38 for the max precision of DECIMAL128
+    with decimal.localcontext(prec=38):
+        as_int = int(py_val.scaleb(-scale))
 
     cdef int128_t val = <int128_t>as_int
 

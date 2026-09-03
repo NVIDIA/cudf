@@ -6,7 +6,7 @@
 from __future__ import annotations
 
 import functools
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from cudf_polars.quent._types import (
     Attribute,
@@ -22,7 +22,7 @@ if TYPE_CHECKING:
     import uuid
 
     from cudf_polars.dsl.ir import IR
-    from cudf_polars.quent._types import Query, Worker
+    from cudf_polars.quent._types import Query, Value, Worker
     from cudf_polars.utils.config import ConfigOptions, StreamingExecutor
 
 _JOIN_TYPES = frozenset({"Join", "ConditionalJoin"})
@@ -85,10 +85,14 @@ def build_plan(
         serializable_node = serializable_plan.nodes[node_id]
 
         operator_id = new_quent_id()
-        # TODO: Include serializable_node.properties as custom attributes
-        # We need to handle serialization of lists and dicts properly.
         custom_attributes = [
             Attribute(name="node_id", value=node_id),
+            *(
+                # SerializablePlan properties are JSON-shaped values that map
+                # onto Quent Attribute Value (scalars, homogeneous lists, structs).
+                Attribute(name=key, value=cast("Value | None", value))
+                for key, value in serializable_node.properties.items()
+            ),
         ]
         operator = Operator(
             id=operator_id,

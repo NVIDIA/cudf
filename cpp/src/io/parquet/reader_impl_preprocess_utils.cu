@@ -199,6 +199,7 @@ void generate_depth_remappings(
   auto [buffers, data_per_source, read_task] = cudf::io::parquet::fetch_byte_ranges_to_device_async(
     {datasource_refs.data(), datasource_refs.size()},
     {source_byte_ranges.data(), source_byte_ranges.size()},
+    cudf::io::parquet::io_submission_policy::INTERLEAVE,
     stream,
     mr);
 

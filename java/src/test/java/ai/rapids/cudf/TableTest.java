@@ -2046,12 +2046,18 @@ public class TableTest extends CudfTestBase {
 
   private void checkLeftDistinctJoin(Table leftKeys, Table rightKeys, ColumnView expected,
                                      boolean compareNullsEqual) {
-    try (GatherMap map = leftKeys.leftDistinctJoinGatherMap(rightKeys, compareNullsEqual)) {
-      int numRows = (int) expected.getRowCount();
-      assertEquals(numRows, map.getRowCount());
-      try (ColumnView view = map.toColumnView(0, numRows)) {
-        assertColumnsAreEqual(expected, view);
-      }
+    checkLeftDistinctJoinGatherMap(
+        leftKeys.leftDistinctJoinGatherMap(rightKeys, compareNullsEqual), expected);
+    try (DistinctHashJoin rightHash = new DistinctHashJoin(rightKeys, compareNullsEqual)) {
+      checkLeftDistinctJoinGatherMap(leftKeys.leftDistinctJoinGatherMap(rightHash), expected);
+    }
+  }
+
+  private void checkLeftDistinctJoinGatherMap(GatherMap gatherMap, ColumnView expected) {
+    try (GatherMap map = gatherMap;
+         ColumnView view = map.toColumnView(0, (int) map.getRowCount())) {
+      assertEquals(expected.getRowCount(), map.getRowCount());
+      assertColumnsAreEqual(expected, view);
     }
   }
 
@@ -2535,7 +2541,14 @@ public class TableTest extends CudfTestBase {
 
   private void checkInnerDistinctJoin(Table leftKeys, Table rightKeys, Table expected,
                                       boolean compareNullsEqual) {
-    GatherMap[] maps = leftKeys.innerDistinctJoinGatherMaps(rightKeys, compareNullsEqual);
+    checkInnerDistinctJoinGatherMaps(
+        leftKeys.innerDistinctJoinGatherMaps(rightKeys, compareNullsEqual), expected);
+    try (DistinctHashJoin rightHash = new DistinctHashJoin(rightKeys, compareNullsEqual)) {
+      checkInnerDistinctJoinGatherMaps(leftKeys.innerDistinctJoinGatherMaps(rightHash), expected);
+    }
+  }
+
+  private void checkInnerDistinctJoinGatherMaps(GatherMap[] maps, Table expected) {
     try {
       verifyJoinGatherMaps(maps, expected);
     } finally {

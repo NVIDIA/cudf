@@ -251,7 +251,7 @@ def synchronize_quent_context(
     """
     if comm.rank == 0:
         quent_context = cudf_polars.quent.QuentContext()
-        data = quent_context.serialize()
+        data = quent_context._serialize()
     else:
         data = b""
 
@@ -262,7 +262,7 @@ def synchronize_quent_context(
     with reserve_op_id() as op_id:
         all_data = all_gather_host_data(comm, context.br(), op_id, data)
 
-    return cudf_polars.quent.QuentContext.deserialize(all_data[0])
+    return cudf_polars.quent.QuentContext._deserialize(all_data[0])
 
 
 class SPMDEngine(StreamingEngine):

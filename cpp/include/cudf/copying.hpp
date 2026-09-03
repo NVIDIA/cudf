@@ -75,15 +75,14 @@ enum class negative_index_policy : bool {
  * better performance. If `policy` is set to `DONT_CHECK` and there are out-of-bounds indices
  * in the gather map, the behavior is undefined. Defaults to `DONT_CHECK`.
  * @param stream CUDA stream used for device memory operations and kernel launches
- * @param mr Device memory resource used to allocate the returned table's device memory
+ * @param mr Memory resources used for temporary allocations and the returned table
  * @return Result of the gather
  */
-std::unique_ptr<table> gather(
-  table_view const& source_table,
-  column_view const& gather_map,
-  out_of_bounds_policy bounds_policy = out_of_bounds_policy::DONT_CHECK,
-  cuda::stream_ref stream            = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr  = cudf::get_current_device_resource_ref());
+std::unique_ptr<table> gather(table_view const& source_table,
+                              column_view const& gather_map,
+                              out_of_bounds_policy bounds_policy = out_of_bounds_policy::DONT_CHECK,
+                              cuda::stream_ref stream            = cudf::get_default_stream(),
+                              cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Gathers the specified rows of a set of columns according to a gather map.
@@ -112,16 +111,15 @@ std::unique_ptr<table> gather(
  * @param bounds_policy Interpretation of out-of-bounds indices
  * @param neg_indices Interpretation of a negative index `i` in the `gather_map`
  * @param stream CUDA stream used for device memory operations and kernel launches.
- * @param mr Device memory resource used to allocate the returned table's device memory
+ * @param mr Memory resources used for temporary allocations and the returned table
  * @return Result of the gather
  */
-std::unique_ptr<table> gather(
-  table_view const& source_table,
-  column_view const& gather_map,
-  out_of_bounds_policy bounds_policy,
-  negative_index_policy neg_indices,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+std::unique_ptr<table> gather(table_view const& source_table,
+                              column_view const& gather_map,
+                              out_of_bounds_policy bounds_policy,
+                              negative_index_policy neg_indices,
+                              cuda::stream_ref stream   = cudf::get_default_stream(),
+                              cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Reverses the rows within a table.

@@ -90,7 +90,11 @@ auto apply_hybrid_scan_filters(cudf::io::datasource& datasource,
     // Fetch dictionary page buffers from the input file buffer
     auto [dict_page_buffers, dict_page_data, dict_read_tasks] =
       cudf::io::parquet::fetch_byte_ranges_to_device_async(
-        datasource, dict_page_byte_ranges, stream, mr);
+        datasource,
+        dict_page_byte_ranges,
+        cudf::io::parquet::io_submission_policy::SERIALIZE,
+        stream,
+        mr);
     dict_read_tasks.get();
 
     // Filter row groups with dictionary pages
@@ -115,7 +119,11 @@ auto apply_hybrid_scan_filters(cudf::io::datasource& datasource,
 
     auto [bloom_filter_buffers, bloom_filter_data, bloom_read_tasks] =
       cudf::io::parquet::fetch_byte_ranges_to_device_async(
-        datasource, bloom_filter_byte_ranges, stream, aligned_mr);
+        datasource,
+        bloom_filter_byte_ranges,
+        cudf::io::parquet::io_submission_policy::SERIALIZE,
+        stream,
+        aligned_mr);
     bloom_read_tasks.get();
 
     // Filter row groups with bloom filters
@@ -171,7 +179,11 @@ std::tuple<std::unique_ptr<cudf::table>, std::unique_ptr<cudf::table>> hybrid_sc
   // Fetch column chunk device buffers and spans from the input buffer
   auto [filter_col_buffers, filter_col_data, filter_col_tasks] =
     cudf::io::parquet::fetch_byte_ranges_to_device_async(
-      datasource, filter_column_chunk_byte_ranges, stream, mr);
+      datasource,
+      filter_column_chunk_byte_ranges,
+      cudf::io::parquet::io_submission_policy::SERIALIZE,
+      stream,
+      mr);
   filter_col_tasks.get();
 
   // Materialize the table with only the filter columns
@@ -192,7 +204,11 @@ std::tuple<std::unique_ptr<cudf::table>, std::unique_ptr<cudf::table>> hybrid_sc
   // Fetch column chunk device buffers and spans from the input buffer
   auto [payload_col_buffers, payload_col_data, payload_col_tasks] =
     cudf::io::parquet::fetch_byte_ranges_to_device_async(
-      datasource, payload_column_chunk_byte_ranges, stream, mr);
+      datasource,
+      payload_column_chunk_byte_ranges,
+      cudf::io::parquet::io_submission_policy::SERIALIZE,
+      stream,
+      mr);
   payload_col_tasks.get();
 
   // Materialize the table with only the payload columns
@@ -263,7 +279,11 @@ std::tuple<std::unique_ptr<cudf::table>, std::unique_ptr<cudf::table>> chunked_h
       reader->filter_column_chunks_byte_ranges(row_group_indices, options);
     auto [filter_buffers, filter_data, filter_tasks] =
       cudf::io::parquet::fetch_byte_ranges_to_device_async(
-        datasource, filter_byte_ranges, stream, mr);
+        datasource,
+        filter_byte_ranges,
+        cudf::io::parquet::io_submission_policy::SERIALIZE,
+        stream,
+        mr);
     filter_tasks.get();
 
     reader->setup_chunking_for_filter_columns(
@@ -286,7 +306,11 @@ std::tuple<std::unique_ptr<cudf::table>, std::unique_ptr<cudf::table>> chunked_h
       reader->payload_column_chunks_byte_ranges(row_group_indices, options);
     auto [payload_buffers, payload_data, payload_tasks] =
       cudf::io::parquet::fetch_byte_ranges_to_device_async(
-        datasource, payload_byte_ranges, stream, mr);
+        datasource,
+        payload_byte_ranges,
+        cudf::io::parquet::io_submission_policy::SERIALIZE,
+        stream,
+        mr);
     payload_tasks.get();
 
     reader->setup_chunking_for_payload_columns(
@@ -355,7 +379,11 @@ std::unique_ptr<cudf::table> hybrid_scan_single_step(
   // Fetch column chunk device buffers and spans from the input buffer
   auto [all_col_buffers, all_col_data, all_col_tasks] =
     cudf::io::parquet::fetch_byte_ranges_to_device_async(
-      datasource, all_column_chunk_byte_ranges, stream, mr);
+      datasource,
+      all_column_chunk_byte_ranges,
+      cudf::io::parquet::io_submission_policy::SERIALIZE,
+      stream,
+      mr);
   all_col_tasks.get();
 
   // Materialize the table with all columns
@@ -398,7 +426,11 @@ std::unique_ptr<cudf::table> chunked_hybrid_scan_single_step(
         reader->all_column_chunks_byte_ranges(row_group_indices, options);
       auto [all_column_chunk_buffers, all_column_chunk_data, all_column_chunk_tasks] =
         cudf::io::parquet::fetch_byte_ranges_to_device_async(
-          datasource, all_column_chunk_byte_ranges, stream, mr);
+          datasource,
+          all_column_chunk_byte_ranges,
+          cudf::io::parquet::io_submission_policy::SERIALIZE,
+          stream,
+          mr);
       all_column_chunk_tasks.get();
 
       // Setup chunking for all columns and materialize the columns

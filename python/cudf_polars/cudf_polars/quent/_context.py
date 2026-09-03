@@ -15,7 +15,6 @@ from cudf_polars.quent._plan import (
     build_plan,
 )
 from cudf_polars.quent._types import (
-    Attribute,
     Engine,
     Implementation,
     Query,
@@ -67,25 +66,24 @@ class QuentContext:
     def __post_init__(self) -> None:
         object.__setattr__(self, "_query_group_cache_", set())
 
-    def serialize(self) -> bytes:
+    def _serialize(self) -> bytes:
         """
-        Serialize a QuentContext, for transmission between ranks.
+        Serialize identity fields for transmission between ranks.
+
+        Only the engine, query group, and query identifiers (plus
+        implementation name/version) are included. Custom attributes are
+        event-only and are not round-tripped.
 
         See Also
         --------
-        QuentContext.deserialize
+        QuentContext._deserialize
         """
-        # This might be serialized between ranks.
         payload = {
             "engine": {
                 "id": int(self.engine.id),
                 "implementation": {
                     "name": self.engine.implementation.name,
                     "version": self.engine.implementation.version,
-                    "custom_attributes": [
-                        attribute.serialize()
-                        for attribute in self.engine.implementation.custom_attributes
-                    ],
                 },
             },
             "query_group": {
@@ -100,13 +98,13 @@ class QuentContext:
         return json.dumps(payload).encode()
 
     @classmethod
-    def deserialize(cls, data: bytes) -> Self:
+    def _deserialize(cls, data: bytes) -> Self:
         """
-        Deserialize a QuentContext from bytes.
+        Reconstruct a QuentContext from serialized bytes.
 
         See Also
         --------
-        QuentContext.serialize
+        QuentContext._serialize
         """
         payload = json.loads(data)
         return cls(
@@ -115,12 +113,6 @@ class QuentContext:
                 implementation=Implementation(
                     name=payload["engine"]["implementation"]["name"],
                     version=payload["engine"]["implementation"]["version"],
-                    custom_attributes=[
-                        Attribute.deserialize(attribute)
-                        for attribute in payload["engine"]["implementation"][
-                            "custom_attributes"
-                        ]
-                    ],
                 ),
             ),
             query_group=QueryGroup(

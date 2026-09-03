@@ -335,3 +335,10 @@ jobs:
     uses: ./.github/workflows/cudf-spark-jni.yaml
     with:
       cudf_commit: ${{ inputs.sha }}
+  velox-cudf:
+    permissions:
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/velox-cudf.yaml
+    with:
+      cudf_commit: ${{ inputs.sha }}

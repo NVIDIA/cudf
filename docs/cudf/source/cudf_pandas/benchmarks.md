@@ -144,35 +144,6 @@ export DATA_PATH="data/tables/scale-${SCALE_FACTOR}"
 tpchgen-cli parquet -o "${DATA_PATH}" -s ${SCALE_FACTOR}
 ```
 
-`tpchgen-cli` generates Decimal and `datetime.date` columns. pandas cannot use these types
-in arithmetic, so convert them to float64 and timestamp before running the benchmark. This
-conversion step may not be needed in the future (see [#21204](https://github.com/NVIDIA/cudf/issues/21204)).
-
-```python
-from pathlib import Path
-import pyarrow as pa
-import pyarrow.parquet as pq
-import os
-
-data_path = Path(os.environ["DATA_PATH"])
-tables = ["lineitem", "orders", "customer", "supplier", "part", "partsupp", "nation", "region"]
-
-def cast_schema(schema):
-    return pa.schema(
-        f.with_type(pa.float64()) if pa.types.is_decimal(f.type)
-        else f.with_type(pa.timestamp("ms")) if pa.types.is_date(f.type)
-        else f
-        for f in schema
-    )
-
-for table in tables:
-    table_path = data_path / f"{table}.parquet"
-    parts = [table_path] if table_path.is_file() else sorted(table_path.glob("*.parquet"))
-    for part in parts:
-        tbl = pq.read_table(part, schema=cast_schema(pq.read_schema(part)))
-        pq.write_table(tbl, part)
-```
-
 ### Run
 
 **CPU** (`--frontend pandas-cpu`, pandas):

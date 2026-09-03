@@ -605,14 +605,14 @@ def test_query_lifecycle() -> None:
 
 @pytest.fixture
 def quent_context() -> QuentContext:
-    return QuentContext(
+    return cudf_polars.quent.QuentContext(
         query_group=cudf_polars.quent.QueryGroup(instance_name="test_query_group"),
         query=cudf_polars.quent.Query(instance_name="test_query"),
     )
 
 
 def test_quent_context_serialization() -> None:
-    quent_context = QuentContext(
+    quent_context = cudf_polars.quent.QuentContext(
         query_group=cudf_polars.quent.QueryGroup(instance_name="test_query_group"),
         query=cudf_polars.quent.Query(instance_name="test_query"),
     )
@@ -633,7 +633,7 @@ def test_quent_context_serialization_drops_custom_attributes() -> None:
             ],
         )
     )
-    quent_context = QuentContext(
+    quent_context = cudf_polars.quent.QuentContext(
         engine=engine,
         query_group=cudf_polars.quent.QueryGroup(instance_name="test_query_group"),
         query=cudf_polars.quent.Query(instance_name="test_query"),
@@ -836,6 +836,9 @@ def test_serialize_list_integer_overflow_raises() -> None:
 
 
 def test_serialize_heterogeneous_list_raises() -> None:
+    # Homogeneity is enforced statically by HomogeneousListValue, so the
+    # ``type: ignore`` below is what actually guards against this; at runtime
+    # the mismatch only surfaces while picking an integer variant.
     with pytest.raises(TypeError, match="homogeneous"):
         Attribute("mixed", [1, "a"]).serialize()  # type: ignore[arg-type]
 

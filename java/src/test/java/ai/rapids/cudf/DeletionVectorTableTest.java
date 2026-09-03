@@ -196,18 +196,22 @@ class DeletionVectorTableTest extends CudfTestBase {
           bitmapArray.buffers[0], false, new long[] {-1}, new int[] {1000});
       DeletionVectorInfo negativeRowCount = new DeletionVectorInfo(
           bitmapArray.buffers[0], false, new long[] {0}, new int[] {-1});
-      assertThrows(NullPointerException.class,
-          () -> DeletionVector.computeNumDeletedRows(null, 1000));
-      assertThrows(IllegalArgumentException.class,
-          () -> DeletionVector.computeNumDeletedRows(dvInfo, 0));
-      assertThrows(IllegalArgumentException.class,
-          () -> DeletionVector.computeNumDeletedRows(missingMetadata, 1000));
-      assertThrows(IllegalArgumentException.class,
-          () -> DeletionVector.computeNumDeletedRows(emptyMetadata, 1000));
-      assertThrows(IllegalArgumentException.class,
-          () -> DeletionVector.computeNumDeletedRows(negativeOffset, 1000));
-      assertThrows(IllegalArgumentException.class,
-          () -> DeletionVector.computeNumDeletedRows(negativeRowCount, 1000));
+      assertEquals("deletionVectorInfo", assertThrows(NullPointerException.class,
+          () -> DeletionVector.computeNumDeletedRows(null, 1000)).getMessage());
+      assertEquals("maxChunkRows must be positive", assertThrows(IllegalArgumentException.class,
+          () -> DeletionVector.computeNumDeletedRows(dvInfo, 0)).getMessage());
+      assertEquals("row-group metadata must be non-empty",
+          assertThrows(IllegalArgumentException.class,
+              () -> DeletionVector.computeNumDeletedRows(missingMetadata, 1000)).getMessage());
+      assertEquals("row-group metadata must be non-empty",
+          assertThrows(IllegalArgumentException.class,
+              () -> DeletionVector.computeNumDeletedRows(emptyMetadata, 1000)).getMessage());
+      assertEquals("row-group metadata values must be non-negative",
+          assertThrows(IllegalArgumentException.class,
+              () -> DeletionVector.computeNumDeletedRows(negativeOffset, 1000)).getMessage());
+      assertEquals("row-group metadata values must be non-negative",
+          assertThrows(IllegalArgumentException.class,
+              () -> DeletionVector.computeNumDeletedRows(negativeRowCount, 1000)).getMessage());
     }
   }
 

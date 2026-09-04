@@ -345,6 +345,7 @@ ConfigureTest(
   GPUS 1
   PERCENT 100
 )
+ConfigureTest(COMPACT_PROTOCOL_READER_TEST io/compact_protocol_reader_test.cpp)
 ConfigureTest(
   HYBRID_SCAN_TEST
   io/experimental/hybrid_scan_common.cpp

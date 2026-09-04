@@ -18,6 +18,7 @@
 #include <cudf/json/json.hpp>
 #include <cudf/null_mask.hpp>
 #include <cudf/scalar/scalar.hpp>
+#include <cudf/strings/detail/convert/string_to_float.cuh>
 #include <cudf/strings/string_view.cuh>
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/span.hpp>
@@ -44,6 +45,7 @@
 #include <span>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -113,67 +115,6 @@ __device__ cuda::std::optional<int64_t> try_parse_int64(cudf::string_view s)
   return result;
 }
 
-__device__ double parse_float64(cudf::string_view s)
-{
-  auto const* data = s.data();
-  auto const n     = s.size_bytes();
-
-  size_type i   = 0;
-  bool negative = false;
-  if (i < n && data[i] == '-') {
-    negative = true;
-    ++i;
-  }
-
-  double result = 0.0;
-  while (i < n && data[i] >= '0' && data[i] <= '9') {
-    result = result * 10.0 + (data[i] - '0');
-    ++i;
-  }
-
-  if (i < n && data[i] == '.') {
-    ++i;
-    double factor = 0.1;
-    while (i < n && data[i] >= '0' && data[i] <= '9') {
-      result += (data[i] - '0') * factor;
-      factor *= 0.1;
-      ++i;
-    }
-  }
-
-  if (i < n && (data[i] == 'e' || data[i] == 'E')) {
-    ++i;
-    bool exp_neg = false;
-    if (i < n && data[i] == '-') {
-      exp_neg = true;
-      ++i;
-    } else if (i < n && data[i] == '+') {
-      ++i;
-    }
-    int exp = 0;
-    while (i < n && data[i] >= '0' && data[i] <= '9') {
-      if (exp < 1000) { exp = exp * 10 + (data[i] - '0'); }
-      ++i;
-    }
-    // Anything beyond the double range saturates.
-    if (exp > 400) {
-      return (exp_neg ? 0.0 : cuda::std::numeric_limits<double>::infinity()) *
-             (negative ? -1.0 : 1.0);
-    }
-    double factor = 1.0;
-    for (int j = 0; j < exp; ++j) {
-      factor *= 10.0;
-    }
-    if (exp_neg) {
-      result /= factor;
-    } else {
-      result *= factor;
-    }
-  }
-
-  return negative ? -result : result;
-}
-
 // Returns true if s contains a float-indicating character ('.', 'e', 'E').
 __device__ bool is_float_number(cudf::string_view s)
 {
@@ -186,7 +127,7 @@ __device__ bool is_float_number(cudf::string_view s)
 
 // Validates `s` against the strict JSON number grammar (no leading zeros, digit required
 // before/after '.', digit required after 'e'/'E', etc). Anything that fails this check is not
-// a legal JSON number and must not be silently coerced into 0.0 by parse_float64.
+// a legal JSON number and must not be passed to the permissive string-to-double converter.
 __device__ bool is_valid_json_number(cudf::string_view s)
 {
   auto const* data = s.data();
@@ -498,7 +439,7 @@ __device__ uint8_t* write_field_value(uint8_t* out, cudf::string_view raw)
     }
     case scalar_kind::FLOAT: {
       *out++     = make_prim_header(primitive_type::FLOAT64);
-      double val = parse_float64(raw);
+      double val = cudf::strings::detail::stod(raw);
       cuda::std::memcpy(out, &val, sizeof(double));
       return out + sizeof(double);
     }
@@ -512,7 +453,7 @@ __device__ uint8_t* write_field_value(uint8_t* out, cudf::string_view raw)
       }
       // Failed to parse as INT64 (out-of-range): fall back to FLOAT64.
       *out++     = make_prim_header(primitive_type::FLOAT64);
-      double val = parse_float64(raw);
+      double val = cudf::strings::detail::stod(raw);
       cuda::std::memcpy(out, &val, sizeof(double));
       return out + sizeof(double);
     }
@@ -631,7 +572,35 @@ CUDF_KERNEL __launch_bounds__(block_size_encode) void write_values_kernel(
   }
 }
 
-// ─── host helpers ─────────────────────────────────────────────────────────────
+/**
+ * @brief Build a bracket-quoted JSONPath for a field name.
+ *
+ * Single quotes and control bytes are emitted as JSON escapes so they cannot terminate the quoted
+ * path component. Backslashes are escaped so an input name is compared by its decoded value.
+ */
+std::string make_json_path(std::string_view name)
+{
+  static constexpr char hex[] = "0123456789abcdef";
+
+  std::string path{"$['"};
+  path.reserve(name.size() + 5);
+  for (auto const byte : name) {
+    auto const c = static_cast<unsigned char>(byte);
+    if (c == '\'') {
+      path += R"(\u0027)";
+    } else if (c == '\\') {
+      path += R"(\\)";
+    } else if (c < 0x20) {
+      path += R"(\u00)";
+      path.push_back(hex[c >> 4]);
+      path.push_back(hex[c & 0x0F]);
+    } else {
+      path.push_back(byte);
+    }
+  }
+  path += "']";
+  return path;
+}
 
 /**
  * @brief Build the fixed VARIANT metadata blob for a sorted list of key names.
@@ -714,8 +683,9 @@ std::unique_ptr<column> make_constant_metadata_column(
     size_type{0},
     cuda::proclaim_return_type<size_type>(
       [input_null_mask, blob_size, num_rows] __device__(size_type row) -> size_type {
-    if (row == num_rows) { return 0; }
-    return input_null_mask.empty() or cudf::bit_is_set(input_null_mask.data(), row) ? blob_size : 0;
+        if (row == num_rows) { return 0; }
+        return input_null_mask.empty() or cudf::bit_is_set(input_null_mask.data(), row) ? blob_size
+                                                                                        : 0;
       }));
   thrust::exclusive_scan(rmm::exec_policy_nosync(stream, temp_mr),
                          row_sizes,
@@ -733,8 +703,8 @@ std::unique_ptr<column> make_constant_metadata_column(
     auto d_blob = cudf::detail::make_device_uvector_async(
       host_span<uint8_t const>{blob.data(), blob.size(), true}, stream, temp_mr);
     auto const dst_base = static_cast<uint8_t*>(child_data.data());
-    auto src_iter = cuda::make_constant_iterator(static_cast<uint8_t const*>(d_blob.data()));
-    auto dst_iter = cudf::detail::make_counting_transform_iterator(
+    auto src_iter       = cuda::make_constant_iterator(static_cast<uint8_t const*>(d_blob.data()));
+    auto dst_iter       = cudf::detail::make_counting_transform_iterator(
       size_type{0},
       cuda::proclaim_return_type<uint8_t*>(
         [dst_base, offsets = offsets.data()] __device__(size_type row) -> uint8_t* {
@@ -784,8 +754,10 @@ std::unique_ptr<column> encode_strings_to_variant(cudf::strings_column_view cons
   CUDF_EXPECTS(
     std::all_of(column_names.begin(),
                 column_names.end(),
-                [](auto const& name) { return name.find_first_of(".[") == std::string::npos; }),
-    "encode_strings_to_variant does not support field names containing '.' or '['",
+                [](auto const& name) {
+                  return !name.empty() and name.find_first_of(".[") == std::string::npos;
+                }),
+    "encode_strings_to_variant does not support empty field names or names containing '.' or '['",
     std::invalid_argument);
 
   // Field names remain on the host because they are also used to construct JSON paths and metadata.
@@ -830,7 +802,7 @@ std::unique_ptr<column> encode_strings_to_variant(cudf::strings_column_view cons
   std::vector<std::unique_ptr<column>> extracted_cols;
   extracted_cols.reserve(num_fields);
   for (auto const& column_name : column_names) {
-    std::string path = "$." + column_name;
+    auto const path = make_json_path(column_name);
     cudf::string_scalar path_scalar(path, true, stream, temp_mr);
     extracted_cols.push_back(cudf::get_json_object(input, path_scalar, opts, stream, temp_mr));
   }
@@ -841,7 +813,7 @@ std::unique_ptr<column> encode_strings_to_variant(cudf::strings_column_view cons
   dv_holders.reserve(num_fields);
   auto h_views = cudf::detail::make_empty_pinned_vector<column_device_view>(num_fields, stream);
   for (auto const& col : extracted_cols) {
-    dv_holders.push_back(column_device_view::create(col->view(), stream));
+    dv_holders.push_back(column_device_view::create(col->view(), stream, temp_mr));
     h_views.push_back(*dv_holders.back());
   }
   auto d_views = cudf::detail::make_device_uvector_async(h_views, stream, temp_mr);

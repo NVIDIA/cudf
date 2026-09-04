@@ -213,6 +213,166 @@ struct json_output {
 enum json_element_type { NONE, OBJECT, ARRAY, VALUE };
 
 /**
+ * @brief Decodes a hexadecimal digit.
+ *
+ * @param c The hexadecimal digit to decode.
+ * @return The decoded digit
+ */
+__device__ int constexpr decode_hex_digit(char c)
+{
+  if (c >= '0' and c <= '9') { return c - '0'; }
+  if (c >= 'a' and c <= 'f') { return c - 'a' + 10; }
+  if (c >= 'A' and c <= 'F') { return c - 'A' + 10; }
+  return -1;
+}
+
+/**
+ * @brief Iterates over the decoded UTF-8 bytes of JSON string content
+ */
+class decoded_json_string_iterator {
+ public:
+  __device__ explicit decoded_json_string_iterator(cudf::string_view input)
+    : _current{input.data()}, _end{input.data() + input.size_bytes()}
+  {
+  }
+
+  /**
+   * @brief Gets the next decoded byte of the JSON string
+   *
+   * @param result The decoded byte
+   * @return Boolean indicating if a byte was decoded
+   */
+  __device__ bool next(char& result)
+  {
+    if (_pending_index < _pending_size) {
+      result = _pending[_pending_index++];
+      return true;
+    }
+    if (!_valid || _current == _end) { return false; }
+
+    auto const c = *_current++;
+    if (c != '\\') {
+      result = c;
+      return true;
+    }
+    if (_current == _end) {
+      _valid = false;
+      return false;
+    }
+
+    auto const escaped = *_current++;
+    switch (escaped) {
+      case '"': result = '"'; return true;
+      case '\\': result = '\\'; return true;
+      case '/': result = '/'; return true;
+      case 'b': result = '\b'; return true;
+      case 'f': result = '\f'; return true;
+      case 'n': result = '\n'; return true;
+      case 'r': result = '\r'; return true;
+      case 't': result = '\t'; return true;
+      case 'u': break;
+      default: _valid = false; return false;
+    }
+
+    auto codepoint = read_codepoint();
+    if (!_valid) { return false; }
+    if (codepoint >= 0xD800 && codepoint <= 0xDBFF) {
+      if (_end - _current < 6 || _current[0] != '\\' || _current[1] != 'u') {
+        _valid = false;
+        return false;
+      }
+      _current += 2;
+      auto const low = read_codepoint();
+      if (!_valid || low < 0xDC00 || low > 0xDFFF) {
+        _valid = false;
+        return false;
+      }
+      codepoint = 0x10000 + ((codepoint - 0xD800) << 10) + (low - 0xDC00);
+    } else if (codepoint >= 0xDC00 && codepoint <= 0xDFFF) {
+      _valid = false;
+      return false;
+    }
+
+    if (codepoint <= 0x7F) {
+      _pending[0]   = static_cast<char>(codepoint);
+      _pending_size = 1;
+    } else if (codepoint <= 0x7FF) {
+      _pending[0]   = static_cast<char>(0xC0 | (codepoint >> 6));
+      _pending[1]   = static_cast<char>(0x80 | (codepoint & 0x3F));
+      _pending_size = 2;
+    } else if (codepoint <= 0xFFFF) {
+      _pending[0]   = static_cast<char>(0xE0 | (codepoint >> 12));
+      _pending[1]   = static_cast<char>(0x80 | ((codepoint >> 6) & 0x3F));
+      _pending[2]   = static_cast<char>(0x80 | (codepoint & 0x3F));
+      _pending_size = 3;
+    } else {
+      _pending[0]   = static_cast<char>(0xF0 | (codepoint >> 18));
+      _pending[1]   = static_cast<char>(0x80 | ((codepoint >> 12) & 0x3F));
+      _pending[2]   = static_cast<char>(0x80 | ((codepoint >> 6) & 0x3F));
+      _pending[3]   = static_cast<char>(0x80 | (codepoint & 0x3F));
+      _pending_size = 4;
+    }
+    _pending_index = 1;
+    result         = _pending[0];
+    return true;
+  }
+
+  /**
+   * @brief Checks if the iterator is valid.
+   */
+  [[nodiscard]] __device__ bool valid() const { return _valid; }
+
+ private:
+  /**
+   * @brief Reads a codepoint from the JSON string
+   */
+  __device__ int read_codepoint()
+  {
+    if (_end - _current < 4) {
+      _valid = false;
+      return 0;
+    }
+    int codepoint = 0;
+    for (int i = 0; i < 4; ++i) {
+      auto const digit = decode_hex_digit(_current[i]);
+      if (digit < 0) {
+        _valid = false;
+        return 0;
+      }
+      codepoint = (codepoint << 4) | digit;
+    }
+    _current += 4;
+    return codepoint;
+  }
+
+  char const* _current;
+  char const* _end;
+  char _pending[4]{};
+  int _pending_index{0};
+  int _pending_size{0};
+  bool _valid{true};
+};
+
+/**
+ * @brief Compare JSON string contents by decoded value.
+ */
+__device__ bool decoded_json_strings_equal(cudf::string_view lhs, cudf::string_view rhs)
+{
+  decoded_json_string_iterator lhs_iter{lhs};
+  decoded_json_string_iterator rhs_iter{rhs};
+  while (true) {
+    char lhs_byte{};
+    char rhs_byte{};
+    auto const has_lhs = lhs_iter.next(lhs_byte);
+    auto const has_rhs = rhs_iter.next(rhs_byte);
+    if (!lhs_iter.valid() || !rhs_iter.valid()) { return false; }
+    if (has_lhs != has_rhs) { return false; }
+    if (!has_lhs) { return true; }
+    if (lhs_byte != rhs_byte) { return false; }
+  }
+}
+
+/**
  * @brief Parsing class that holds the current state of the json to be parse and provides
  * functions for navigating through it.
  */
@@ -313,7 +473,9 @@ class json_state : private parser {
   }
 
   // return the next element that matches the specified name.
-  __device__ parse_result next_matching_element(string_view const& name, bool inclusive)
+  __device__ parse_result next_matching_element(string_view const& name,
+                                                bool inclusive,
+                                                bool match_any = false)
   {
     // if we're not including the current element, skip it
     if (!inclusive) {
@@ -322,9 +484,9 @@ class json_state : private parser {
     }
     // loop until we find a match or there's nothing left
     do {
-      if (name.size_bytes() == 1 && name.data()[0] == '*') {
+      if (match_any) {
         return parse_result::SUCCESS;
-      } else if (cur_el_name == name) {
+      } else if (decoded_json_strings_equal(cur_el_name, name)) {
         return parse_result::SUCCESS;
       }
       // next
@@ -567,7 +729,7 @@ class path_state : private parser {
         bool const is_string = *pos == '\'';
         if (parse_path_name(op.name, term, bracket_state::INSIDE)) {
           pos++;
-          if (op.name.size_bytes() == 1 && op.name.data()[0] == '*') {
+          if (!is_string and op.name.size_bytes() == 1 && op.name.data()[0] == '*') {
             op.type          = path_operator_type::CHILD_WILDCARD;
             op.expected_type = NONE;
           } else {
@@ -646,10 +808,11 @@ class path_state : private parser {
  *
  * @param json_path The incoming json path
  * @param stream Cuda stream to perform any gpu actions on
+ * @param mr Memory resources used to allocate output and temporary storage
  * @returns A pair containing the command buffer, and maximum stack depth required.
  */
 std::pair<cuda::std::optional<rmm::device_uvector<path_operator>>, int> build_command_buffer(
-  cudf::string_scalar const& json_path, cuda::stream_ref stream)
+  cudf::string_scalar const& json_path, cuda::stream_ref stream, cudf::memory_resources mr)
 {
   std::string h_json_path = json_path.to_string(stream);
   path_state p_state(h_json_path.data(), static_cast<size_type>(h_json_path.size()));
@@ -684,7 +847,7 @@ std::pair<cuda::std::optional<rmm::device_uvector<path_operator>>, int> build_co
   auto const is_empty = h_operators.size() == 1 && h_operators[0].type == path_operator_type::END;
   return is_empty ? std::pair(cuda::std::nullopt, 0)
                   : std::pair(cuda::std::make_optional(cudf::detail::make_device_uvector(
-                                h_operators, stream, cudf::get_current_device_resource_ref())),
+                                h_operators, stream, mr.get_output_mr())),
                               max_stack_depth);
 }
 
@@ -786,7 +949,7 @@ __device__ parse_result parse_json_path(json_state& j_state,
           }
 
           // first element
-          PARSE_TRY(ctx.j_state.next_matching_element({"*", 1}, true));
+          PARSE_TRY(ctx.j_state.next_matching_element({"*", 1}, true, true));
           if (last_result == parse_result::EMPTY) {
             if (!ctx.list_element) {
               output.add_output({"]" DEBUG_NEWLINE, 1 + DEBUG_NEWLINE_LEN});
@@ -801,7 +964,7 @@ __device__ parse_result parse_json_path(json_state& j_state,
           push_context(ctx.j_state, ctx.commands + 1, true);
         } else {
           // next element
-          PARSE_TRY(ctx.j_state.next_matching_element({"*", 1}, false));
+          PARSE_TRY(ctx.j_state.next_matching_element({"*", 1}, false, true));
           if (last_result == parse_result::EMPTY) {
             if (!ctx.list_element) {
               output.add_output({"]" DEBUG_NEWLINE, 1 + DEBUG_NEWLINE_LEN});
@@ -825,11 +988,11 @@ __device__ parse_result parse_json_path(json_state& j_state,
         PARSE_TRY(ctx.j_state.child_element(op.expected_type));
         if (last_result == parse_result::SUCCESS) {
           string_view const any{"*", 1};
-          PARSE_TRY(ctx.j_state.next_matching_element(any, true));
+          PARSE_TRY(ctx.j_state.next_matching_element(any, true, true));
           if (last_result == parse_result::SUCCESS) {
             int idx;
             for (idx = 1; idx <= op.index; idx++) {
-              PARSE_TRY(ctx.j_state.next_matching_element(any, false));
+              PARSE_TRY(ctx.j_state.next_matching_element(any, false, true));
               if (last_result == parse_result::EMPTY) { break; }
             }
             // if we didn't end up at the index we requested, this is an invalid index
@@ -972,8 +1135,12 @@ std::unique_ptr<cudf::column> get_json_object(cudf::strings_column_view const& c
                                               cuda::stream_ref stream,
                                               rmm::device_async_resource_ref mr)
 {
+  auto const output_mr = mr;
+  auto const temp_mr   = cudf::get_current_device_resource_ref();
+
   // preprocess the json_path into a command buffer
-  auto preprocess = build_command_buffer(json_path, stream);
+  auto preprocess =
+    build_command_buffer(json_path, stream, cudf::memory_resources{temp_mr, temp_mr});
   CUDF_EXPECTS(std::get<1>(preprocess) <= max_command_stack_depth,
                "Encountered JSONPath string that is too complex");
 
@@ -983,27 +1150,23 @@ std::unique_ptr<cudf::column> get_json_object(cudf::strings_column_view const& c
   if (!std::get<0>(preprocess).has_value()) {
     // Create a proper all-null strings column with valid structure (offsets + chars children)
     auto offsets = cudf::make_column_from_scalar(
-      cudf::numeric_scalar<int32_t>(0, true, stream, cudf::get_current_device_resource_ref()),
-      col.size() + 1,
-      stream,
-      mr);
+      cudf::numeric_scalar<int32_t>(0, true, stream, temp_mr), col.size() + 1, stream, output_mr);
 
     return make_strings_column(
       col.size(),
       std::move(offsets),
-      rmm::device_buffer{0, stream, mr},  // empty chars
-      col.size(),                         // null_count
-      cudf::detail::create_null_mask(col.size(), mask_state::ALL_NULL, stream, mr));
+      rmm::device_buffer{0, stream, output_mr},  // empty chars
+      col.size(),                                // null_count
+      cudf::detail::create_null_mask(col.size(), mask_state::ALL_NULL, stream, output_mr));
   }
 
   // compute output sizes
-  auto sizes =
-    rmm::device_uvector<size_type>(col.size(), stream, cudf::get_current_device_resource_ref());
+  auto sizes     = rmm::device_uvector<size_type>(col.size(), stream, temp_mr);
   auto d_offsets = cudf::detail::offsetalator_factory::make_input_iterator(col.offsets());
 
   constexpr int block_size = 512;
   cudf::detail::grid_1d const grid{col.size(), block_size};
-  auto cdv = column_device_view::create(col.parent(), stream);
+  auto cdv = column_device_view::create(col.parent(), stream, temp_mr);
   // preprocess sizes (returned in the offsets buffer)
   get_json_object_kernel<block_size>
     <<<grid.num_blocks, grid.num_threads_per_block, 0, stream.get()>>>(
@@ -1018,20 +1181,20 @@ std::unique_ptr<cudf::column> get_json_object(cudf::strings_column_view const& c
   CUDF_CUDA_TRY(cudaGetLastError());
 
   // convert sizes to offsets
-  auto [offsets, output_size] = cudf::strings::detail::make_offsets_child_column(sizes, stream, mr);
+  auto [offsets, output_size] =
+    cudf::strings::detail::make_offsets_child_column(sizes.begin(), sizes.end(), stream, output_mr);
   d_offsets = cudf::detail::offsetalator_factory::make_input_iterator(offsets->view());
 
   // allocate output string column
-  rmm::device_uvector<char> chars(output_size, stream, mr);
+  rmm::device_uvector<char> chars(output_size, stream, output_mr);
 
   // potential optimization : if we know that all outputs are valid, we could skip creating
   // the validity mask altogether
   rmm::device_buffer validity =
-    cudf::detail::create_null_mask(col.size(), mask_state::UNINITIALIZED, stream, mr);
+    cudf::detail::create_null_mask(col.size(), mask_state::UNINITIALIZED, stream, output_mr);
 
   // compute results
-  cudf::detail::device_scalar<size_type> d_valid_count{
-    0, stream, cudf::get_current_device_resource_ref()};
+  cudf::detail::device_scalar<size_type> d_valid_count{0, stream, temp_mr};
 
   get_json_object_kernel<block_size>
     <<<grid.num_blocks, grid.num_threads_per_block, 0, stream.get()>>>(
@@ -1052,7 +1215,7 @@ std::unique_ptr<cudf::column> get_json_object(cudf::strings_column_view const& c
                                     std::move(validity));
   // unmatched array query may result in unsanitized '[' value in the result
   if (cudf::detail::has_nonempty_nulls(result->view(), stream)) {
-    result = cudf::detail::purge_nonempty_nulls(result->view(), stream, mr);
+    result = cudf::detail::purge_nonempty_nulls(result->view(), stream, output_mr);
   }
   return result;
 }

@@ -16,6 +16,7 @@
 #include <cudf/strings/strings_column_view.hpp>
 #include <cudf/structs/structs_column_view.hpp>
 
+#include <cmath>
 #include <cstdint>
 #include <initializer_list>
 #include <memory>
@@ -156,6 +157,28 @@ TEST_F(EncodeStringsToVariantSingleFieldTest, SingleRowFloatExponent)
   auto floats = extract<cudf::type_id::FLOAT64>(variant->view(), "$.f");
   cudf::test::fixed_width_column_wrapper<double> expected{150.0};
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*floats, expected);
+}
+
+TEST_F(EncodeStringsToVariantSingleFieldTest, ExtremeFloatExponents)
+{
+  auto variant = encode({R"({"f":0e401})",
+                         R"({"f":0e309})",
+                         R"({"f":1e-309})",
+                         R"({"f":123456789012345678901234567890e-29})"},
+                        {"f"});
+
+  auto floats       = extract<cudf::type_id::FLOAT64>(variant->view(), "$.f");
+  auto const values = cudf::test::to_host<double>(floats->view()).first;
+  ASSERT_EQ(values.size(), 4);
+  EXPECT_EQ(values[0], 0.0);
+  EXPECT_TRUE(std::isfinite(values[0]));
+  EXPECT_EQ(values[1], 0.0);
+  EXPECT_TRUE(std::isfinite(values[1]));
+  EXPECT_EQ(values[2], 1e-309);
+  EXPECT_GT(values[2], 0.0);
+  EXPECT_TRUE(std::isfinite(values[2]));
+  EXPECT_DOUBLE_EQ(values[3], 1.23456789012345678901234567890);
+  EXPECT_TRUE(std::isfinite(values[3]));
 }
 
 TEST_F(EncodeStringsToVariantSingleFieldTest, SingleRowBoolTrue)
@@ -405,6 +428,33 @@ TEST_F(EncodeStringsToVariantTest, ExtraColumnsInNameList)
   EXPECT_EQ(x_vals->null_count(), 1);
 }
 
+TEST_F(EncodeStringsToVariantTest, LiteralWildcardFieldName)
+{
+  auto variant = encode({R"({"*":42,"other":1})"}, {"*"});
+
+  auto values = extract<cudf::type_id::INT64>(variant->view(), "$.*");
+  cudf::test::fixed_width_column_wrapper<int64_t> expected{42};
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(*values, expected);
+}
+
+TEST_F(EncodeStringsToVariantTest, EscapedJsonFieldName)
+{
+  auto variant = encode({R"({"\u0061":7})"}, {"a"});
+
+  auto values = extract<cudf::type_id::INT64>(variant->view(), "$.a");
+  cudf::test::fixed_width_column_wrapper<int64_t> expected{7};
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(*values, expected);
+}
+
+TEST_F(EncodeStringsToVariantTest, ApostropheInFieldName)
+{
+  auto variant = encode({R"({"a'b":9})"}, {"a'b"});
+
+  auto values = extract<cudf::type_id::INT64>(variant->view(), "$.a'b");
+  cudf::test::fixed_width_column_wrapper<int64_t> expected{9};
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(*values, expected);
+}
+
 TEST_F(EncodeStringsToVariantTest, MultipleRows)
 {
   auto variant =
@@ -519,6 +569,7 @@ TEST_F(EncodeStringsToVariantTest, NoColumnNames)
 TEST_F(EncodeStringsToVariantTest, EmptyInputStillValidatesColumnNames)
 {
   EXPECT_THROW(encode({}, {"a", "a"}), std::invalid_argument);
+  EXPECT_THROW(encode({}, {""}), std::invalid_argument);
   EXPECT_THROW(encode({}, {"a.b"}), std::invalid_argument);
   EXPECT_THROW(encode({}, {"a[0]"}), std::invalid_argument);
 }

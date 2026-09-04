@@ -15,7 +15,6 @@ from cudf_polars.quent._plan import (
     build_plan,
 )
 from cudf_polars.quent._types import (
-    Attribute,
     Engine,
     Implementation,
     Query,
@@ -67,25 +66,24 @@ class QuentContext:
     def __post_init__(self) -> None:
         object.__setattr__(self, "_query_group_cache_", set())
 
-    def serialize(self) -> bytes:
+    def _serialize(self) -> bytes:
         """
-        Serialize a QuentContext, for transmission between ranks.
+        Serialize identity fields for transmission between ranks.
+
+        Only the engine, query group, and query identifiers (plus
+        implementation name/version) are included. Custom attributes are
+        event-only and are not round-tripped.
 
         See Also
         --------
-        QuentContext.deserialize
+        QuentContext._deserialize
         """
-        # This might be serialized between ranks.
         payload = {
             "engine": {
                 "id": int(self.engine.id),
                 "implementation": {
                     "name": self.engine.implementation.name,
                     "version": self.engine.implementation.version,
-                    "custom_attributes": [
-                        attribute.serialize()
-                        for attribute in self.engine.implementation.custom_attributes
-                    ],
                 },
             },
             "query_group": {
@@ -100,13 +98,13 @@ class QuentContext:
         return json.dumps(payload).encode()
 
     @classmethod
-    def deserialize(cls, data: bytes) -> Self:
+    def _deserialize(cls, data: bytes) -> Self:
         """
-        Deserialize a QuentContext from bytes.
+        Reconstruct a QuentContext from serialized bytes.
 
         See Also
         --------
-        QuentContext.serialize
+        QuentContext._serialize
         """
         payload = json.loads(data)
         return cls(
@@ -115,12 +113,6 @@ class QuentContext:
                 implementation=Implementation(
                     name=payload["engine"]["implementation"]["name"],
                     version=payload["engine"]["implementation"]["version"],
-                    custom_attributes=[
-                        Attribute.deserialize(attribute)
-                        for attribute in payload["engine"]["implementation"][
-                            "custom_attributes"
-                        ]
-                    ],
                 ),
             ),
             query_group=QueryGroup(
@@ -132,6 +124,22 @@ class QuentContext:
                 instance_name=payload["query"]["instance_name"],
             ),
         )
+
+    def query_for(self, query_id: uuid.UUID) -> Query:
+        """
+        Build a per-collect Quent Query with a unique id.
+
+        Parameters
+        ----------
+        query_id: uuid.UUID
+            The unique ID for the query.
+
+        Returns
+        -------
+        A new Quent Query with the given ID and the same instance name as the
+        engine-scoped query.
+        """
+        return Query(id=query_id, instance_name=self.query.instance_name)
 
     @property
     def _query_group_cache(self) -> set[uuid.UUID]:
@@ -157,19 +165,19 @@ class QuentContext:
         self._query_group_cache.add(self.query_group.id)
         logger.emit(self.query_group._declare(engine=self.engine))
 
-    def _emit_query_events(self, logger: QuentLogger) -> None:
+    def _emit_query_events(self, logger: QuentLogger, query: Query) -> None:
         """
         Emit Quent Query events.
 
         This includes events for 'Declare', 'Init', and 'Planning'.
         """
-        logger.emit(self.query._init(query_group=self.query_group))
-        logger.emit(self.query._planning())
-        logger.emit(self.query._executing())
+        logger.emit(query._init(query_group=self.query_group))
+        logger.emit(query._planning())
+        logger.emit(query._executing())
 
-    def _emit_query_exit_events(self, logger: QuentLogger) -> None:
+    def _emit_query_exit_events(self, logger: QuentLogger, query: Query) -> None:
         """Emit a Quent Query exit event."""
-        logger.emit(self.query._exit())
+        logger.emit(query._exit())
 
     def _emit_plan_declarations(
         self,
@@ -312,8 +320,14 @@ class LocalQuentContext:
 
     This can contain non-serializable objects (like a ``QuentLogger``)
     and entities that are only valid on the local rank.
+
+    The ``query`` is per-collect: each ``.collect()`` derives a fresh
+    :class:`Query` from its unique ``query_id`` (see
+    :meth:`QuentContext.query_for`), rather than reusing the shared
+    ``context.query``.
     """
 
     context: QuentContext
+    query: Query
     worker: Worker
     logger: QuentLogger

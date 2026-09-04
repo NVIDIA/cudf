@@ -567,6 +567,9 @@ public final class Table implements AutoCloseable {
   private static native long[] leftDistinctJoinGatherMap(long leftKeys, long rightKeys,
                                                          boolean compareNullsEqual) throws CudfException;
 
+  private static native long[] leftDistinctHashJoinGatherMap(long leftTable,
+                                                             long rightDistinctHashJoin) throws CudfException;
+
   private static native long leftJoinRowCount(long leftTable, long rightHashJoin) throws CudfException;
 
   private static native long[] leftHashJoinGatherMaps(long leftTable, long rightHashJoin) throws CudfException;
@@ -579,6 +582,9 @@ public final class Table implements AutoCloseable {
 
   private static native long[] innerDistinctJoinGatherMaps(long leftKeys, long rightKeys,
                                                            boolean compareNullsEqual) throws CudfException;
+
+  private static native long[] innerDistinctHashJoinGatherMaps(long table,
+                                                               long distinctHashJoin) throws CudfException;
 
   private static native long innerJoinRowCount(long table, long hashJoin) throws CudfException;
 
@@ -2812,6 +2818,33 @@ public final class Table implements AutoCloseable {
   }
 
   /**
+   * Computes a gather map that can be used to manifest the result of a left equi-join between
+   * two tables where the right table is guaranteed not to contain any duplicated join keys.
+   * The left table can be used as-is to produce the left table columns resulting from the join,
+   * i.e.: left table ordering is preserved in the join result, so no gather map is required for
+   * the left table. The resulting gather map can be applied to the right table to produce the
+   * right table columns resulting from the join. It is assumed this table instance holds the
+   * key columns from the left table, and the {@link DistinctHashJoin} argument has been
+   * constructed from the key columns from the right table. A {@link GatherMap} instance will be
+   * returned that can be used to gather the right table and that result combined with the left
+   * table to produce a left outer join result.
+   *
+   * It is the responsibility of the caller to close the resulting gather map instance.
+   *
+   * @param rightHash hash table built from distinct join key columns from the right table
+   * @return right table gather map
+   */
+  public GatherMap leftDistinctJoinGatherMap(DistinctHashJoin rightHash) {
+    if (getNumberOfColumns() != rightHash.getNumberOfColumns()) {
+      throw new IllegalArgumentException("Column count mismatch, this: " + getNumberOfColumns() +
+          "rightKeys: " + rightHash.getNumberOfColumns());
+    }
+    long[] gatherMapData =
+        leftDistinctHashJoinGatherMap(getNativeView(), rightHash.getNativeView());
+    return buildSingleJoinGatherMap(gatherMapData);
+  }
+
+  /**
    * Computes the number of rows resulting from a left equi-join between two tables.
    * It is assumed this table instance holds the key columns from the left table, and the
    * {@link HashJoin} argument has been constructed from the key columns from the right table.
@@ -3076,6 +3109,29 @@ public final class Table implements AutoCloseable {
     }
     long[] gatherMapData =
         innerDistinctJoinGatherMaps(getNativeView(), rightKeys.getNativeView(), compareNullsEqual);
+    return buildJoinGatherMaps(gatherMapData);
+  }
+
+  /**
+   * Computes the gather maps that can be used to manifest the result of an inner equi-join between
+   * two tables where the right table is guaranteed not to contain any duplicated join keys. It is
+   * assumed this table instance holds the key columns from the left table, and the
+   * {@link DistinctHashJoin} argument has been constructed from the key columns from the right
+   * table. Two {@link GatherMap} instances will be returned that can be used to gather the left
+   * and right tables, respectively, to produce the result of the inner join.
+   *
+   * It is the responsibility of the caller to close the resulting gather map instances.
+   *
+   * @param rightHash hash table built from distinct join key columns from the right table
+   * @return left and right table gather maps
+   */
+  public GatherMap[] innerDistinctJoinGatherMaps(DistinctHashJoin rightHash) {
+    if (getNumberOfColumns() != rightHash.getNumberOfColumns()) {
+      throw new IllegalArgumentException("Column count mismatch, this: " + getNumberOfColumns() +
+          "rightKeys: " + rightHash.getNumberOfColumns());
+    }
+    long[] gatherMapData =
+        innerDistinctHashJoinGatherMaps(getNativeView(), rightHash.getNativeView());
     return buildJoinGatherMaps(gatherMapData);
   }
 

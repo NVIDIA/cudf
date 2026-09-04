@@ -137,10 +137,12 @@ def evaluate_pipeline_spmd_mode(
     if quent_context is not None:
         quent_logger = config_options.executor.spmd_context.quent_logger
         assert quent_logger is not None
+        query = quent_context.query_for(query_id)
         quent_context._emit_query_group_events(quent_logger)
-        quent_context._emit_query_events(quent_logger)
+        quent_context._emit_query_events(quent_logger, query)
         local_quent_context = LocalQuentContext(
             context=quent_context,
+            query=query,
             worker=Worker(
                 id=config_options.executor.spmd_context.worker_id,
                 engine=quent_context.engine,
@@ -160,8 +162,10 @@ def evaluate_pipeline_spmd_mode(
     )
     if quent_context is not None:
         assert config_options.executor.spmd_context.quent_logger is not None
+        assert local_quent_context is not None
         quent_context._emit_query_exit_events(
-            config_options.executor.spmd_context.quent_logger
+            config_options.executor.spmd_context.quent_logger,
+            local_quent_context.query,
         )
     return df, metadata if collect_metadata else None
 
@@ -247,7 +251,7 @@ def synchronize_quent_context(
     """
     if comm.rank == 0:
         quent_context = cudf_polars.quent.QuentContext()
-        data = quent_context.serialize()
+        data = quent_context._serialize()
     else:
         data = b""
 
@@ -258,7 +262,7 @@ def synchronize_quent_context(
     with reserve_op_id() as op_id:
         all_data = all_gather_host_data(comm, context.br(), op_id, data)
 
-    return cudf_polars.quent.QuentContext.deserialize(all_data[0])
+    return cudf_polars.quent.QuentContext._deserialize(all_data[0])
 
 
 class SPMDEngine(StreamingEngine):

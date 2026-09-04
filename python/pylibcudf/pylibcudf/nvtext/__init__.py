@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from . import (
@@ -13,6 +13,7 @@ from . import (
     replace,
     stemmer,
     tokenize,
+    unicode_normalize,
     wordpiece_tokenize,
 )
 
@@ -28,5 +29,6 @@ __all__ = [
     "replace",
     "stemmer",
     "tokenize",
+    "unicode_normalize",
     "wordpiece_tokenize",
 ]

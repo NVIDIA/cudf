@@ -42,12 +42,17 @@ sccache --stop-server 2>/dev/null || true
 
 rapids-logger "Building '${package_name}' wheel"
 
+build_env_dir="/tmp/${package_name}-wheel-build-env"
+# `build` preserves this environment after a failed build for debugging. CI
+# retries must start with an empty directory, as required by `--env-dir`.
+rm -rf "${build_env_dir}"
+
 RAPIDS_BUILD_ARGS=(
   --wheel
   --outdir dist
   --verbose
   # A fixed location keeps isolated-build include paths stable for sccache.
-  --env-dir "/tmp/${package_name}-wheel-build-env"
+  --env-dir "${build_env_dir}"
   --dependency-constraints-txt "${PIP_CONSTRAINT}"
 )
 

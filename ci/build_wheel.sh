@@ -31,7 +31,7 @@ source rapids-init-pip
 # outer CI environment so that the build dependencies remain isolated.
 rapids-pip-retry install \
   --disable-pip-version-check \
-  'build>=1.5'
+  'build>=1.5.1'
 
 export SCCACHE_S3_PREPROCESSOR_CACHE_KEY_PREFIX="${package_name}-${RAPIDS_CONDA_ARCH}-cuda${RAPIDS_CUDA_VERSION%%.*}-wheel-preprocessor-cache"
 export SCCACHE_S3_USE_PREPROCESSOR_CACHE_MODE=true

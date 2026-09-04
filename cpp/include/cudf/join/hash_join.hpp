@@ -117,11 +117,12 @@ class hash_join {
 
   /**
    * Returns the row indices that can be used to construct the result of performing
-   * an inner join between two tables. @see cudf::inner_join(). Behavior is undefined if the
-   * provided `output_size` is smaller than the actual output size.
+   * an inner join between two tables. @see cudf::inner_join().
    *
    * @throw std::invalid_argument If the input left table has nulls while this hash_join object was
    * not constructed with null check.
+   * @throw cudf::logic_error If `output_size` is provided and does not equal the actual output
+   * size.
    *
    * @param left The left table, from which the tuples are probed
    * @param output_size Optional value which allows users to specify the exact output size.
@@ -145,11 +146,12 @@ class hash_join {
 
   /**
    * Returns the row indices that can be used to construct the result of performing
-   * a left join between two tables. @see cudf::left_join(). Behavior is undefined if the
-   * provided `output_size` is smaller than the actual output size.
+   * a left join between two tables. @see cudf::left_join().
    *
    * @throw std::invalid_argument If the input left table has nulls while this hash_join object was
    * not constructed with null check.
+   * @throw cudf::logic_error If `output_size` is provided and does not equal the actual output
+   * size.
    *
    * @param left The left table, from which the tuples are probed
    * @param output_size Optional value which allows users to specify the exact output size.
@@ -173,11 +175,12 @@ class hash_join {
 
   /**
    * Returns the row indices that can be used to construct the result of performing
-   * a full join between two tables. @see cudf::full_join(). Behavior is undefined if the
-   * provided `output_size` is smaller than the actual output size.
+   * a full join between two tables. @see cudf::full_join().
    *
    * @throw std::invalid_argument If the input left table has nulls while this hash_join object was
    * not constructed with null check.
+   * @throw cudf::logic_error If `output_size` is provided and does not equal the actual output
+   * size.
    *
    * @param left The left table, from which the tuples are probed
    * @param output_size Optional value which allows users to specify the exact output size.

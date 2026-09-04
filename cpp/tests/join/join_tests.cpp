@@ -1959,6 +1959,74 @@ TEST_F(JoinTest, EmptyRightTableFullJoin)
   }
 }
 
+// A caller-supplied output size is validated on every path, including the trivial ones.
+TEST_F(JoinTest, HashJoinIncorrectOutputSize)
+{
+  column_wrapper<int32_t> col0_0{{3, 1, 2, 0, 3}};
+  column_wrapper<int32_t> col1_0{{2, 2, 0, 4, 3}};
+  column_wrapper<int32_t> col_empty;
+
+  CVector cols0, cols1, cols_empty;
+  cols0.push_back(col0_0.release());
+  cols1.push_back(col1_0.release());
+  cols_empty.push_back(col_empty.release());
+
+  Table t0(std::move(cols0));
+  Table t1(std::move(cols1));
+  Table empty(std::move(cols_empty));
+
+  // Non-trivial: a correct size passes, a wrong size throws for every join kind.
+  {
+    cudf::hash_join hash_join(t1, cudf::null_equality::EQUAL);
+
+    auto const inner_size = hash_join.inner_join_size(t0);
+    auto const left_size  = hash_join.left_join_size(t0);
+    auto const full_size  = hash_join.full_join_size(t0);
+    EXPECT_EQ(inner_size, std::size_t{5});
+    EXPECT_EQ(left_size, std::size_t{6});
+    EXPECT_EQ(full_size, std::size_t{7});
+
+    EXPECT_NO_THROW((void)hash_join.inner_join(t0, inner_size));
+    EXPECT_NO_THROW((void)hash_join.left_join(t0, left_size));
+    EXPECT_NO_THROW((void)hash_join.full_join(t0, full_size));
+
+    EXPECT_THROW((void)hash_join.inner_join(t0, inner_size + 1), cudf::logic_error);
+    EXPECT_THROW((void)hash_join.left_join(t0, left_size + 1), cudf::logic_error);
+    // The full-join size includes the unmatched right rows; a left-join-sized value must fail.
+    EXPECT_THROW((void)hash_join.full_join(t0, left_size), cudf::logic_error);
+    EXPECT_THROW((void)hash_join.full_join(t0, full_size + 1), cudf::logic_error);
+  }
+
+  // Trivial, empty right table: left and full joins emit one row per left row, inner emits none.
+  {
+    cudf::hash_join hash_join(empty, cudf::null_equality::EQUAL);
+    auto const num_left = static_cast<std::size_t>(t0.num_rows());
+
+    EXPECT_NO_THROW((void)hash_join.inner_join(t0, std::size_t{0}));
+    EXPECT_NO_THROW((void)hash_join.left_join(t0, num_left));
+    EXPECT_NO_THROW((void)hash_join.full_join(t0, num_left));
+
+    EXPECT_THROW((void)hash_join.inner_join(t0, std::size_t{1}), cudf::logic_error);
+    EXPECT_THROW((void)hash_join.left_join(t0, num_left + 1), cudf::logic_error);
+    EXPECT_THROW((void)hash_join.full_join(t0, std::size_t{0}), cudf::logic_error);
+  }
+
+  // Empty left table: inner and left joins emit nothing, a full join emits every right row.
+  {
+    cudf::hash_join hash_join(t1, cudf::null_equality::EQUAL);
+    auto const full_size = hash_join.full_join_size(empty);
+    EXPECT_EQ(full_size, static_cast<std::size_t>(t1.num_rows()));
+
+    EXPECT_NO_THROW((void)hash_join.inner_join(empty, std::size_t{0}));
+    EXPECT_NO_THROW((void)hash_join.left_join(empty, std::size_t{0}));
+    EXPECT_NO_THROW((void)hash_join.full_join(empty, full_size));
+
+    EXPECT_THROW((void)hash_join.inner_join(empty, std::size_t{1}), cudf::logic_error);
+    EXPECT_THROW((void)hash_join.left_join(empty, std::size_t{1}), cudf::logic_error);
+    EXPECT_THROW((void)hash_join.full_join(empty, std::size_t{0}), cudf::logic_error);
+  }
+}
+
 // Both tables empty
 TEST_P(InnerJoinParameterizedTest, BothEmptyInnerJoin)
 {

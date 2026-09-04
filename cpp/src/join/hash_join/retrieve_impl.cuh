@@ -38,15 +38,27 @@ hash_join<Hasher>::join_retrieve(cudf::table_view const& left,
 
   validate_hash_join_probe(_right, left, _has_nulls);
 
+  // The output size is always computed internally; a caller-supplied size is only checked
+  // against it, on every path including the trivial ones.
+  auto const validate_output_size = [&](std::size_t actual) {
+    CUDF_EXPECTS(!output_size.has_value() || *output_size == actual,
+                 "The provided join output size is incorrect");
+  };
+
   if constexpr (Join == join_kind::INNER_JOIN) {
     if (is_trivial_join(left, _right, Join)) {
+      validate_output_size(0);
       return std::pair(std::make_unique<rmm::device_uvector<size_type>>(0, stream, mr),
                        std::make_unique<rmm::device_uvector<size_type>>(0, stream, mr));
     }
   } else {
-    if (_is_empty) { return get_trivial_left_join_indices(left, 0, stream, mr); }
+    if (_is_empty) {
+      validate_output_size(static_cast<std::size_t>(left.num_rows()));
+      return get_trivial_left_join_indices(left, 0, stream, mr);
+    }
 
     if (is_trivial_join(left, _right, Join)) {
+      validate_output_size(0);
       return std::pair(std::make_unique<rmm::device_uvector<size_type>>(0, stream, mr),
                        std::make_unique<rmm::device_uvector<size_type>>(0, stream, mr));
     }
@@ -93,11 +105,7 @@ hash_join<Hasher>::join_retrieve(cudf::table_view const& left,
   auto const actual_size = cudf::detail::sizes_to_offsets(
     match_counts.begin(), match_counts.end(), offsets.begin(), 0, stream, temp_mr);
   CUDF_EXPECTS(actual_size >= 0, "Join output size overflowed", std::overflow_error);
-  auto const join_size = Join != join_kind::FULL_JOIN && output_size.has_value()
-                           ? *output_size
-                           : static_cast<std::size_t>(actual_size);
-  CUDF_EXPECTS(join_size == static_cast<std::size_t>(actual_size),
-               "The provided join output size is incorrect");
+  auto const join_size = static_cast<std::size_t>(actual_size);
 
   // A full join appends one entry per unmatched right row.  The count pass already tallied the
   // matched build rows, so the exact output size is known here and both the allocation below and
@@ -115,6 +123,8 @@ hash_join<Hasher>::join_retrieve(cudf::table_view const& left,
 
   auto const allocation_size =
     join_size + static_cast<std::size_t>(unmatched_right_rows.value_or(size_type{0}));
+  // For a full join the final size includes the unmatched right rows, so validate only now.
+  validate_output_size(allocation_size);
 
   auto left_indices = std::make_unique<rmm::device_uvector<size_type>>(allocation_size, stream, mr);
   auto right_indices =

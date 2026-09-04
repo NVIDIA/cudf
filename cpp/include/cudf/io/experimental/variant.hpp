@@ -181,9 +181,8 @@ namespace io::parquet::experimental {
  * @param mr Device memory resources used to allocate the result and temporary storage
  * @return struct<list<uint8> metadata, list<uint8> value> VARIANT column
  *
- * @throws std::invalid_argument if column_names contains more than 255 names
- * @throws std::invalid_argument if column_names contains duplicate entries
- * @throws std::invalid_argument if any name in column_names is empty or contains '.' or '['
+ * @throws std::invalid_argument if column_names contains more than 255 names, duplicate entries,
+ * or a name that is empty or contains '.' or '['
  */
 [[nodiscard]] std::unique_ptr<column> encode_strings_to_variant(
   cudf::strings_column_view const& input,

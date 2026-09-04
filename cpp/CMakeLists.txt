@@ -480,11 +480,6 @@ rtcx_embed_includes(
 )
 
 rtcx_embed_includes(
-  cudf_cuda_embed SOURCE_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/src/rolling DEST_DIRECTORY
-  cudf/cpp/src/rolling INCLUDE_DIRECTORIES cudf/cpp/src
-)
-
-rtcx_embed_includes(
   cudf_cuda_embed SOURCE_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/src/transform/jit DEST_DIRECTORY
   cudf/cpp/src/transform/jit INCLUDE_DIRECTORIES cudf/cpp/src
 )
@@ -876,7 +871,6 @@ add_library(
   src/join/hash_join/full_join_match_context.cpp
   src/join/hash_join/full_join_retrieve.cu
   src/join/hash_join/full_join_size.cu
-  src/join/hash_join/full_join_size_impl.cu
   src/join/hash_join/hash_join.cu
   src/join/hash_join/inner_join_match_context.cpp
   src/join/hash_join/inner_join_retrieve.cu
@@ -885,14 +879,10 @@ add_library(
   src/join/hash_join/left_join_retrieve.cu
   src/join/hash_join/left_join_size.cu
   src/join/hash_join/match_context.cu
-  src/join/hash_join/partitioned_count.cu
-  src/join/hash_join/partitioned_count_outer.cu
   src/join/hash_join/partitioned_full_join.cu
   src/join/hash_join/partitioned_inner_join.cu
   src/join/hash_join/partitioned_join_retrieve.cu
   src/join/hash_join/partitioned_left_join.cu
-  src/join/hash_join/partitioned_retrieve.cu
-  src/join/hash_join/partitioned_retrieve_outer.cu
   src/join/join.cu
   src/join/join_utils.cu
   src/join/key_remapping.cu

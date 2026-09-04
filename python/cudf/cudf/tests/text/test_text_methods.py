@@ -10,6 +10,7 @@ import pytest
 import cudf
 from cudf.core.character_normalizer import CharacterNormalizer
 from cudf.core.tokenize_vocabulary import TokenizeVocabulary
+from cudf.core.unicode_normalizer import UnicodeNormalizer
 from cudf.testing import assert_eq
 
 
@@ -272,6 +273,72 @@ def test_normalize_characters():
     actual = normalizer.normalize(strings.str)
     assert type(expected) is type(actual)
     assert_eq(expected, actual)
+
+
+def test_unicode_normalize():
+    # Minimal unicode_data DataFrame: é (U+00E9) and combining acute (U+0301),
+    # plus ﬁ ligature (U+FB01) with compatibility-only decomposition.
+    unicode_data = cudf.DataFrame(
+        {
+            "cp": cudf.Series(["00E9", "0301", "FB01"]),
+            "ccc": cudf.Series([0, 230, 0], dtype="int32"),
+            "decomp": cudf.Series(["0065 0301", "", "<compat> 0066 0069"]),
+        }
+    )
+
+    # NFC: decomposed e + combining acute → precomposed é; ﬁ unchanged
+    nfc = UnicodeNormalizer(unicode_data, form="NFC")
+    assert_eq(
+        nfc.normalize(cudf.Series(["é", "café", "ﬁ", None])),
+        cudf.Series(["é", "café", "ﬁ", None]),
+    )
+
+    # NFD: precomposed é (U+00E9) → e (U+0065) + combining acute (U+0301)
+    nfd = UnicodeNormalizer(unicode_data, form="NFD")
+    assert_eq(
+        nfd.normalize(cudf.Series(["é"])),
+        cudf.Series(["é"]),
+    )
+
+    # NFKC: ﬁ ligature expands to "fi"
+    nfkc = UnicodeNormalizer(unicode_data, form="NFKC")
+    assert_eq(
+        nfkc.normalize(cudf.Series(["ﬁ", "café"])),
+        cudf.Series(["fi", "café"]),
+    )
+
+    # result preserves index and name from input
+    nfc = UnicodeNormalizer(unicode_data, form="NFC")
+    s = cudf.Series(["é"], index=[42], name="my_col")
+    result = nfc.normalize(s)
+    assert result.name == "my_col"
+    assert result.index.to_arrow().to_pylist() == [42]
+
+    # invalid form raises ValueError
+    with pytest.raises(ValueError, match="Invalid normalization form"):
+        UnicodeNormalizer(unicode_data, form="XYZ")
+
+
+def test_unicode_normalize_from_python_unicodedata():
+    import unicodedata as ud
+
+    strings = ["café", "ﬁ", "½", "가", "", None]
+    series = cudf.Series(strings)
+    all_null = cudf.Series([None, None, None], dtype="object")
+    for form in ("NFC", "NFD", "NFKC", "NFKD"):
+        normalizer = UnicodeNormalizer.from_python_unicodedata(form=form)
+        result = normalizer.normalize(series)
+        expected = cudf.Series(
+            [ud.normalize(form, s) if s is not None else None for s in strings]
+        )
+        assert_eq(result, expected)
+        null_result = normalizer.normalize(all_null)
+        assert_eq(null_result, all_null)
+        assert null_result.dtype == all_null.dtype
+
+    # invalid form must raise before any codepoint scanning occurs
+    with pytest.raises(ValueError, match="Invalid normalization form"):
+        UnicodeNormalizer.from_python_unicodedata(form="XYZ")
 
 
 @pytest.mark.parametrize(

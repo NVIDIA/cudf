@@ -1982,10 +1982,13 @@ public class TableTest extends CudfTestBase {
     int numRows = (int) expected.getRowCount();
     assertEquals(numRows, maps[0].getRowCount());
     assertEquals(numRows, maps[1].getRowCount());
+    // Sort on both maps: join output order is unspecified, so when one left row has several
+    // right matches their relative order is free.  Ordering by the left map alone leaves that
+    // free choice in the comparison.
     try (ColumnVector leftMap = maps[0].toColumnView(0, numRows).copyToColumnVector();
          ColumnVector rightMap = maps[1].toColumnView(0, numRows).copyToColumnVector();
          Table result = new Table(leftMap, rightMap);
-         Table orderedResult = result.orderBy(OrderByArg.asc(0, true))) {
+         Table orderedResult = result.orderBy(OrderByArg.asc(0, true), OrderByArg.asc(1, true))) {
       assertTablesAreEqual(expected, orderedResult);
     }
   }

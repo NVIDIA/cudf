@@ -176,7 +176,7 @@ class hash_join {
                         rmm::device_async_resource_ref mr) const;
 
  private:
-  bool const _is_empty;   ///< true if `_hash_table` is empty
+  bool const _is_empty;   ///< true if the build-side (right) table is empty
   bool const _has_nulls;  ///< true if nulls are present in either right table or any left table
   cudf::null_equality const _nulls_equal;  ///< whether to consider nulls as equal
   cudf::table_view _right;                 ///< input table to build the hash map
@@ -209,9 +209,11 @@ class hash_join {
   [[nodiscard]] std::size_t join_size(cudf::table_view const& left, cuda::stream_ref stream) const;
 
   template <join_kind Join>
+  /// The resource is accepted for signature parity with the other size APIs; every allocation
+  /// here is temporary and comes from the current device resource.
   [[nodiscard]] std::size_t join_size(cudf::table_view const& left,
                                       cuda::stream_ref stream,
-                                      rmm::device_async_resource_ref mr) const;
+                                      [[maybe_unused]] rmm::device_async_resource_ref mr) const;
 };
 
 }  // namespace detail

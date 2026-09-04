@@ -53,12 +53,14 @@ using VectorPair = std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
  * `JoinNoMatch`, i.e. `cuda::std::numeric_limits<size_type>::min()`.
  *
  * @param left Table of left columns to join
+ * @param left_offset Index of the first left row, used when `left` is a partition of a larger table
  * @param stream CUDA stream used for device memory operations and kernel launches
  * @param mr Device memory resource used to allocate the result
  *
  * @return Join output indices vector pair
  */
 VectorPair get_trivial_left_join_indices(table_view const& left,
+                                         size_type left_offset,
                                          cuda::stream_ref stream,
                                          rmm::device_async_resource_ref mr);
 
@@ -80,6 +82,9 @@ VectorPair get_trivial_left_join_indices(table_view const& left,
  *                      the flags are derived from `indices.second`.
  * @param stream CUDA stream used for device memory operations and kernel launches.
  * @param mr Device memory resource used to allocate working storage.
+ * @param unmatched_right_count Exact number of unmatched right rows, when the caller already knows
+ * it. Supplying it sizes the output directly instead of growing to the worst case and shrinking
+ * back after the complement is emitted.
  *
  * @return `[left_indices, right_indices]` of the complete full-join output.
  */
@@ -88,7 +93,8 @@ VectorPair finalize_full_join(VectorPair&& indices,
                               size_type right_table_num_rows,
                               std::optional<cudf::device_span<size_type const>> right_matches,
                               cuda::stream_ref stream,
-                              rmm::device_async_resource_ref mr);
+                              rmm::device_async_resource_ref mr,
+                              std::optional<size_type> unmatched_right_count = std::nullopt);
 
 /**
  * @brief Finalize a full-join result from per-partition index spans.

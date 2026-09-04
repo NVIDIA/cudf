@@ -49,20 +49,18 @@ abstract class Aggregation {
         MERGE_SETS(21),
         LEAD(22),
         LAG(23),
-        PTX(24),
-        CUDA(25),
-        HOST_UDF(26),
-        M2(27),
-        MERGE_M2(28),
-        RANK(29),
-        DENSE_RANK(30),
-        PERCENT_RANK(31),
-        TDIGEST(32), // This can take a delta argument for accuracy level
-        MERGE_TDIGEST(33), // This can take a delta argument for accuracy level
-        HISTOGRAM(34),
-        MERGE_HISTOGRAM(35),
-        BITWISE_AGG(36),
-        SUM_OVERFLOW(37);
+        HOST_UDF(24),
+        M2(25),
+        MERGE_M2(26),
+        RANK(27),
+        DENSE_RANK(28),
+        PERCENT_RANK(29),
+        TDIGEST(30), // This can take a delta argument for accuracy level
+        MERGE_TDIGEST(31), // This can take a delta argument for accuracy level
+        HISTOGRAM(32),
+        MERGE_HISTOGRAM(33),
+        BITWISE_AGG(34),
+        SUM_OVERFLOW(35);
 
         final int nativeId;
 

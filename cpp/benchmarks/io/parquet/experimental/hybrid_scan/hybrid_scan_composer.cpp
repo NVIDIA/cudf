@@ -78,7 +78,11 @@ std::vector<cudf::size_type> apply_row_group_filters(
     if (not dict_page_byte_ranges.empty()) {
       auto [dictionary_page_buffers, dictionary_page_data, dict_read_tasks] =
         cudf::io::parquet::fetch_byte_ranges_to_device_async(
-          datasource, dict_page_byte_ranges, stream, mr);
+          datasource,
+          dict_page_byte_ranges,
+          cudf::io::parquet::io_submission_policy::SERIALIZE,
+          stream,
+          mr);
       dict_read_tasks.get();
 
       dict_page_filtered_row_groups = reader.filter_row_groups_with_dictionary_pages(
@@ -102,7 +106,11 @@ std::vector<cudf::size_type> apply_row_group_filters(
       auto aligned_mr = rmm::mr::aligned_resource_adaptor(mr, bloom_filter_alignment);
       auto [bloom_filter_buffers, bloom_filter_data, bloom_read_tasks] =
         cudf::io::parquet::fetch_byte_ranges_to_device_async(
-          datasource, bloom_filter_byte_ranges, stream, aligned_mr);
+          datasource,
+          bloom_filter_byte_ranges,
+          cudf::io::parquet::io_submission_policy::SERIALIZE,
+          stream,
+          aligned_mr);
       bloom_read_tasks.get();
 
       bloom_filtered_row_groups = reader.filter_row_groups_with_bloom_filters(

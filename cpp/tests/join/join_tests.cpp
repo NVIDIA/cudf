@@ -1959,6 +1959,74 @@ TEST_F(JoinTest, EmptyRightTableFullJoin)
   }
 }
 
+// A caller-supplied output size is validated on every path, including the trivial ones.
+TEST_F(JoinTest, HashJoinIncorrectOutputSize)
+{
+  column_wrapper<int32_t> col0_0{{3, 1, 2, 0, 3}};
+  column_wrapper<int32_t> col1_0{{2, 2, 0, 4, 3}};
+  column_wrapper<int32_t> col_empty;
+
+  CVector cols0, cols1, cols_empty;
+  cols0.push_back(col0_0.release());
+  cols1.push_back(col1_0.release());
+  cols_empty.push_back(col_empty.release());
+
+  Table t0(std::move(cols0));
+  Table t1(std::move(cols1));
+  Table empty(std::move(cols_empty));
+
+  // Non-trivial: a correct size passes, a wrong size throws for every join kind.
+  {
+    cudf::hash_join hash_join(t1, cudf::null_equality::EQUAL);
+
+    auto const inner_size = hash_join.inner_join_size(t0);
+    auto const left_size  = hash_join.left_join_size(t0);
+    auto const full_size  = hash_join.full_join_size(t0);
+    EXPECT_EQ(inner_size, std::size_t{5});
+    EXPECT_EQ(left_size, std::size_t{6});
+    EXPECT_EQ(full_size, std::size_t{7});
+
+    EXPECT_NO_THROW((void)hash_join.inner_join(t0, inner_size));
+    EXPECT_NO_THROW((void)hash_join.left_join(t0, left_size));
+    EXPECT_NO_THROW((void)hash_join.full_join(t0, full_size));
+
+    EXPECT_THROW((void)hash_join.inner_join(t0, inner_size + 1), cudf::logic_error);
+    EXPECT_THROW((void)hash_join.left_join(t0, left_size + 1), cudf::logic_error);
+    // The full-join size includes the unmatched right rows; a left-join-sized value must fail.
+    EXPECT_THROW((void)hash_join.full_join(t0, left_size), cudf::logic_error);
+    EXPECT_THROW((void)hash_join.full_join(t0, full_size + 1), cudf::logic_error);
+  }
+
+  // Trivial, empty right table: left and full joins emit one row per left row, inner emits none.
+  {
+    cudf::hash_join hash_join(empty, cudf::null_equality::EQUAL);
+    auto const num_left = static_cast<std::size_t>(t0.num_rows());
+
+    EXPECT_NO_THROW((void)hash_join.inner_join(t0, std::size_t{0}));
+    EXPECT_NO_THROW((void)hash_join.left_join(t0, num_left));
+    EXPECT_NO_THROW((void)hash_join.full_join(t0, num_left));
+
+    EXPECT_THROW((void)hash_join.inner_join(t0, std::size_t{1}), cudf::logic_error);
+    EXPECT_THROW((void)hash_join.left_join(t0, num_left + 1), cudf::logic_error);
+    EXPECT_THROW((void)hash_join.full_join(t0, std::size_t{0}), cudf::logic_error);
+  }
+
+  // Empty left table: inner and left joins emit nothing, a full join emits every right row.
+  {
+    cudf::hash_join hash_join(t1, cudf::null_equality::EQUAL);
+    auto const full_size = hash_join.full_join_size(empty);
+    EXPECT_EQ(full_size, static_cast<std::size_t>(t1.num_rows()));
+
+    EXPECT_NO_THROW((void)hash_join.inner_join(empty, std::size_t{0}));
+    EXPECT_NO_THROW((void)hash_join.left_join(empty, std::size_t{0}));
+    EXPECT_NO_THROW((void)hash_join.full_join(empty, full_size));
+
+    EXPECT_THROW((void)hash_join.inner_join(empty, std::size_t{1}), cudf::logic_error);
+    EXPECT_THROW((void)hash_join.left_join(empty, std::size_t{1}), cudf::logic_error);
+    EXPECT_THROW((void)hash_join.full_join(empty, std::size_t{0}), cudf::logic_error);
+  }
+}
+
 // Both tables empty
 TEST_P(InnerJoinParameterizedTest, BothEmptyInnerJoin)
 {
@@ -3676,6 +3744,50 @@ TEST_F(JoinTest, HashJoinPartitionedWholeTable)
 
 // Exercises both a sliced (non-zero offset) left view and a partition size large enough
 // to span multiple kernel blocks.
+// An empty build table sends the partitioned join down the trivial path, which must still emit
+// left indices in the coordinate space of the whole left table rather than of the partition.
+TEST_F(JoinTest, HashJoinPartitionedEmptyBuildTableUsesGlobalLeftIndices)
+{
+  auto constexpr left_rows  = 10;
+  auto constexpr part_start = 4;
+  auto constexpr part_end   = 9;
+
+  column_wrapper<int32_t> left_col{{0, 1, 2, 3, 4, 5, 6, 7, 8, 9}};
+  CVector left_cols;
+  left_cols.push_back(left_col.release());
+  Table left(std::move(left_cols));
+  EXPECT_EQ(left.num_rows(), left_rows);
+
+  // Build side is empty, so every left row is unmatched.
+  column_wrapper<int32_t> empty_col{};
+  CVector empty_cols;
+  empty_cols.push_back(empty_col.release());
+  Table empty_right(std::move(empty_cols));
+
+  auto const stream = cudf::get_default_stream();
+  auto const mr     = cudf::get_current_device_resource_ref();
+
+  cudf::hash_join hash_joiner(empty_right.view(), cudf::null_equality::EQUAL, stream);
+  auto match_ctx = hash_joiner.left_join_match_context(left.view(), stream, mr);
+  auto part_ctx  = cudf::join_partition_context{
+    std::make_unique<cudf::join_match_context>(std::move(match_ctx)), part_start, part_end};
+
+  auto const [left_idx, right_idx] = hash_joiner.partitioned_left_join(part_ctx, stream, mr);
+
+  // Left indices must be the global rows [part_start, part_end), not [0, part_end - part_start).
+  column_wrapper<cudf::size_type> expected_left{{4, 5, 6, 7, 8}};
+  column_wrapper<cudf::size_type> expected_right{{cudf::JoinNoMatch,
+                                                  cudf::JoinNoMatch,
+                                                  cudf::JoinNoMatch,
+                                                  cudf::JoinNoMatch,
+                                                  cudf::JoinNoMatch}};
+
+  auto const left_view  = cudf::column_view{cudf::device_span<cudf::size_type const>{*left_idx}};
+  auto const right_view = cudf::column_view{cudf::device_span<cudf::size_type const>{*right_idx}};
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_left, left_view);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_right, right_view);
+}
+
 TEST_F(JoinTest, HashJoinPartitionedSlicedMultiBlock)
 {
   auto constexpr left_full_rows = 4000;

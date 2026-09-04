@@ -35,7 +35,16 @@ using cudf::io::parquet::experimental::variant_basic_type;
 using cudf::io::parquet::experimental::variant_primitive_type;
 
 // The leaf value type exercised by the benchmark (nvbench "type" string axis).
-enum class bench_variant_type : uint8_t { INT32, FLOAT, BOOL, STRING, ARRAY };
+enum class bench_variant_type : uint8_t {
+  INT32,
+  FLOAT,
+  BOOL,
+  STRING,
+  ARRAY,
+  DECIMAL32,
+  DECIMAL64,
+  DECIMAL128
+};
 
 bench_variant_type parse_bench_variant_type(std::string const& type_str)
 {
@@ -44,8 +53,14 @@ bench_variant_type parse_bench_variant_type(std::string const& type_str)
   if (type_str == "bool") { return bench_variant_type::BOOL; }
   if (type_str == "string") { return bench_variant_type::STRING; }
   if (type_str == "array") { return bench_variant_type::ARRAY; }
+  if (type_str == "decimal32") { return bench_variant_type::DECIMAL32; }
+  if (type_str == "decimal64") { return bench_variant_type::DECIMAL64; }
+  if (type_str == "decimal128") { return bench_variant_type::DECIMAL128; }
   CUDF_FAIL("Unrecognized benchmark type: " + type_str);
 }
+
+// Shared by the encoded leaf values and the target column, so the cast measures decoding only.
+constexpr uint8_t bench_decimal_scale = 2;
 
 // Compose a value-metadata header byte from a basic type and its 6-bit value_header.
 // See cpp/tests/io/experimental/variant_extract_test.cpp for the header byte layout.
@@ -166,6 +181,27 @@ std::vector<uint8_t> build_leaf_value(bench_variant_type type)
       auto const s = std::string{"hello"};
       std::vector<uint8_t> out{make_variant_short_string_header(s.size())};
       out.insert(out.end(), s.begin(), s.end());
+      return out;
+    }
+    case bench_variant_type::DECIMAL32: {
+      std::vector<uint8_t> out{make_variant_primitive_header(variant_primitive_type::DECIMAL4),
+                               bench_decimal_scale};
+      append_le(out, 1234u, 4);
+      return out;
+    }
+    case bench_variant_type::DECIMAL64: {
+      std::vector<uint8_t> out{make_variant_primitive_header(variant_primitive_type::DECIMAL8),
+                               bench_decimal_scale};
+      append_le(out, (static_cast<uint64_t>(1234u) << 32) | 5678u, 8);
+      return out;
+    }
+    case bench_variant_type::DECIMAL128: {
+      // The value needs more than 64 bits, so the decode is not measured on an all-zero high half.
+      std::vector<uint8_t> out{make_variant_primitive_header(variant_primitive_type::DECIMAL16),
+                               bench_decimal_scale};
+      auto const unscaled = (static_cast<__uint128_t>(1234u) << 64) | 5678u;
+      append_le(out, static_cast<uint64_t>(unscaled), 8);
+      append_le(out, static_cast<uint64_t>(unscaled >> 64), 8);
       return out;
     }
     case bench_variant_type::ARRAY: {
@@ -368,6 +404,12 @@ cudf::data_type get_target_type(bench_variant_type type)
     case bench_variant_type::FLOAT: return cudf::data_type{cudf::type_id::FLOAT32};
     case bench_variant_type::BOOL: return cudf::data_type{cudf::type_id::BOOL8};
     case bench_variant_type::STRING: return cudf::data_type{cudf::type_id::STRING};
+    case bench_variant_type::DECIMAL32:
+      return cudf::data_type{cudf::type_id::DECIMAL32, -bench_decimal_scale};
+    case bench_variant_type::DECIMAL64:
+      return cudf::data_type{cudf::type_id::DECIMAL64, -bench_decimal_scale};
+    case bench_variant_type::DECIMAL128:
+      return cudf::data_type{cudf::type_id::DECIMAL128, -bench_decimal_scale};
     // "array": element access yields INT32.
     case bench_variant_type::INT32:
     case bench_variant_type::ARRAY: return cudf::data_type{cudf::type_id::INT32};
@@ -435,7 +477,8 @@ static void bench_variant_cast(nvbench::state& state)
 NVBENCH_BENCH(bench_variant_cast)
   .set_name("bench_variant_cast")
   .add_int64_axis("num_rows", {32768, 262144, 2097152})
-  .add_string_axis("type", {"string", "float", "bool", "int32_t"})
+  .add_string_axis("type",
+                   {"string", "float", "bool", "int32_t", "decimal32", "decimal64", "decimal128"})
   .add_int64_axis("hit_rate", {20, 80});
 
 // Benchmarks get_variant_field with varying path depth (nesting >= 1). Casting is exercised

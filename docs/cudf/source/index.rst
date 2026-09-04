@@ -22,9 +22,41 @@ libraries and is composed of multiple sub-projects:
    * - `pylibcudf <pylibcudf/index.html>`_
      - A Python library providing `Cython <https://cython.org/>`_ bindings for libcudf.
 
+Accelerated Data Engines and Tools
+----------------------------------
+
+The following data engines and tools integrate with cuDF:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 20 45 35
+
+   * - Data engine or tool
+     - cuDF integration
+     - Technical documentation
+   * - Apache Spark
+     - cuDF plugin for Apache Spark
+     - `cuDF for Apache Spark user guide <https://docs.nvidia.com/spark-rapids/user-guide/latest/overview.html>`_
+   * - DuckDB
+     - Sirius
+     - `Sirius documentation <https://github.com/sirius-db/sirius>`_
+   * - pandas
+     - cudf.pandas
+     - `cudf.pandas documentation <https://docs.rapids.ai/api/cudf/stable/cudf_pandas/>`_
+   * - Polars
+     - Polars GPU engine
+     - `Polars GPU engine documentation <https://docs.rapids.ai/api/cudf/stable/cudf_polars/>`_
+   * - Presto
+     - Presto-GPU
+     - `Presto on GPU tutorial <https://github.com/prestodb/prestorials/tree/main/docker-compose-native/gpu>`_
+   * - Velox
+     - Velox on GPU (experimental)
+     - `Velox-cuDF documentation <https://github.com/facebookincubator/velox/blob/main/velox/experimental/cudf/README.md>`_
+
 .. toctree::
    :maxdepth: 1
    :caption: Libraries
+   :hidden:
 
    cudf/index
    cudf_pandas/index

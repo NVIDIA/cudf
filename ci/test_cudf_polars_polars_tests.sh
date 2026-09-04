@@ -68,7 +68,7 @@ trap set_exitcode ERR
 set +e
 
 rapids-logger "Run polars tests"
-./ci/run_cudf_polars_polars_tests.sh
+./ci/run_cudf_polars_polars_tests.sh "$@"
 
 trap ERR
 set -e

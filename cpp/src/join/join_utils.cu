@@ -58,6 +58,7 @@ void validate_hash_join_probe(table_view const& right, table_view const& left, b
 }
 
 VectorPair get_trivial_left_join_indices(table_view const& left,
+                                         size_type left_offset,
                                          cuda::stream_ref stream,
                                          rmm::device_async_resource_ref mr)
 {
@@ -65,7 +66,7 @@ VectorPair get_trivial_left_join_indices(table_view const& left,
   thrust::sequence(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                    left_indices->begin(),
                    left_indices->end(),
-                   0);
+                   left_offset);
   auto right_indices =
     std::make_unique<rmm::device_uvector<size_type>>(left.num_rows(), stream, mr);
   thrust::uninitialized_fill(
@@ -103,7 +104,8 @@ VectorPair finalize_full_join(VectorPair&& indices,
                               size_type right_table_num_rows,
                               std::optional<cudf::device_span<size_type const>> right_matches,
                               cuda::stream_ref stream,
-                              rmm::device_async_resource_ref mr)
+                              rmm::device_async_resource_ref mr,
+                              std::optional<size_type> unmatched_right_count)
 {
   auto [left_out, right_out] = std::move(indices);
   CUDF_EXPECTS(left_out->size() == right_out->size(),
@@ -130,10 +132,12 @@ VectorPair finalize_full_join(VectorPair&& indices,
 
   if (right_table_num_rows == 0) { return std::pair(std::move(left_out), std::move(right_out)); }
 
-  // Grow to the upper bound (match_total + right_table_num_rows); the complement is appended
-  // into the tail. If the caller pre-reserved this capacity (see the span overload below),
-  // these resizes don't reallocate.
-  auto const upper = match_total + static_cast<std::size_t>(right_table_num_rows);
+  // Size the tail for the complement. A caller that already counted the unmatched right rows
+  // gives the exact size; otherwise grow to the upper bound and shrink once `copy_if` reports
+  // how many were emitted. If the caller pre-reserved this capacity (see the span overload
+  // below), these resizes don't reallocate.
+  auto const upper =
+    match_total + static_cast<std::size_t>(unmatched_right_count.value_or(right_table_num_rows));
   left_out->resize(upper, stream);
   right_out->resize(upper, stream);
 

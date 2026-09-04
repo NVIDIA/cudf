@@ -6,40 +6,45 @@
 #include <cudf/column/column_device_view.cuh>
 #include <cudf/column/column_factories.hpp>
 #include <cudf/detail/device_scalar.hpp>
+#include <cudf/detail/iterator.cuh>
 #include <cudf/detail/null_mask.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
-#include <cudf/detail/utilities/cuda_memcpy.hpp>
+#include <cudf/detail/utilities/batched_memcpy.hpp>
+#include <cudf/detail/utilities/cuda.hpp>
 #include <cudf/detail/utilities/grid_1d.cuh>
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/io/experimental/variant.hpp>
 #include <cudf/io/experimental/variant_spec.hpp>
 #include <cudf/json/json.hpp>
-#include <cudf/lists/lists_column_view.hpp>
 #include <cudf/null_mask.hpp>
 #include <cudf/scalar/scalar.hpp>
-#include <cudf/strings/detail/strings_children.cuh>
 #include <cudf/strings/string_view.cuh>
-#include <cudf/structs/structs_column_view.hpp>
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/span.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_buffer.hpp>
 #include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/functional>
+#include <cuda/iterator>
 #include <cuda/std/cstring>
+#include <cuda/std/limits>
 #include <cuda/std/optional>
-#include <thrust/iterator/counting_iterator.h>
 #include <thrust/scan.h>
 #include <thrust/transform.h>
 
 #include <algorithm>
 #include <cstdint>
+#include <functional>
+#include <iterator>
 #include <limits>
+#include <memory>
 #include <numeric>
+#include <span>
+#include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace cudf {
@@ -49,6 +54,7 @@ namespace {
 using basic_type     = variant_basic_type;
 using primitive_type = variant_primitive_type;
 
+// Block size for encoding, one thread per row
 constexpr int block_size_encode = 256;
 
 // Sizes of the fixed-width fields in the encoded object value blob.
@@ -66,12 +72,13 @@ constexpr uint8_t OBJECT_VALUE_METADATA =
 
 // ─── device helpers ───────────────────────────────────────────────────────────
 
-__device__ void write_le(uint8_t*& out, uint64_t val, int bytes)
+CUDF_HOST_DEVICE uint8_t* write_le(uint8_t* out, uint64_t val, int bytes)
 {
   for (int i = 0; i < bytes; ++i) {
     *out++ = static_cast<uint8_t>(val & 0xFFu);
     val >>= 8u;
   }
+  return out;
 }
 
 __device__ cuda::std::optional<int64_t> try_parse_int64(cudf::string_view s)
@@ -596,13 +603,13 @@ CUDF_KERNEL __launch_bounds__(block_size_encode) void write_values_kernel(
     }
 
     // num_elements
-    write_le(out, static_cast<uint64_t>(n_present), NUM_ELEMENTS_SIZE);
+    out = write_le(out, static_cast<uint64_t>(n_present), NUM_ELEMENTS_SIZE);
 
     // field_ids (sorted dict index for each present field)
     for (size_type si = 0; si < num_fields; ++si) {
       auto const orig = sorted_to_original[si];
       if (extracted[orig].is_null(row)) { continue; }
-      write_le(out, static_cast<uint64_t>(si), FIELD_ID_SIZE);
+      out = write_le(out, static_cast<uint64_t>(si), FIELD_ID_SIZE);
     }
 
     // field_offsets: cumulative offsets within the values region + sentinel
@@ -610,10 +617,10 @@ CUDF_KERNEL __launch_bounds__(block_size_encode) void write_values_kernel(
     for (size_type si = 0; si < num_fields; ++si) {
       auto const orig = sorted_to_original[si];
       if (extracted[orig].is_null(row)) { continue; }
-      write_le(out, static_cast<uint64_t>(cur_offset), FIELD_OFFSET_SIZE);
+      out = write_le(out, static_cast<uint64_t>(cur_offset), FIELD_OFFSET_SIZE);
       cur_offset += encoded_field_size(extracted[orig].element<cudf::string_view>(row));
     }
-    write_le(out, static_cast<uint64_t>(cur_offset), FIELD_OFFSET_SIZE);  // sentinel
+    out = write_le(out, static_cast<uint64_t>(cur_offset), FIELD_OFFSET_SIZE);  // sentinel
 
     // field values in sorted order
     for (size_type si = 0; si < num_fields; ++si) {
@@ -626,122 +633,132 @@ CUDF_KERNEL __launch_bounds__(block_size_encode) void write_values_kernel(
 
 // ─── host helpers ─────────────────────────────────────────────────────────────
 
-// Build the fixed VARIANT metadata blob for a sorted list of key names.
-// Layout: header(1) | dict_size(offset_size) | offsets[(N+1)*offset_size] | key_bytes
-std::vector<uint8_t> build_metadata_blob(std::vector<std::string> const& sorted_names)
+/**
+ * @brief Build the fixed VARIANT metadata blob for a sorted list of key names.
+ *
+ * The returned pinned host buffer has layout:
+ * header | dictionary size | offsets | key bytes.
+ *
+ * @param sorted_names Field names in lexicographic order
+ * @param stream Stream used to allocate pinned host memory
+ * @return Pinned host buffer containing the encoded metadata
+ */
+cudf::detail::host_vector<uint8_t> build_metadata_blob(std::span<std::string const> sorted_names,
+                                                       cuda::stream_ref stream)
 {
-  size_t const N         = sorted_names.size();
-  size_t total_key_bytes = 0;
-  for (auto const& name : sorted_names) {
-    total_key_bytes += name.size();
-  }
+  auto const num_names       = sorted_names.size();
+  auto const total_key_bytes = std::accumulate(
+    sorted_names.begin(), sorted_names.end(), size_t{0}, [](size_t total, auto const& name) {
+      return total + name.size();
+    });
 
   int offset_size = 1;
-  if (total_key_bytes > 255 || N > 255) { offset_size = 2; }
-  if (total_key_bytes > 65535 || N > 65535) { offset_size = 4; }
+  if (total_key_bytes > 255 || num_names > 255) { offset_size = 2; }
+  if (total_key_bytes > 65535 || num_names > 65535) { offset_size = 4; }
 
-  auto write_le_host = [](std::vector<uint8_t>& buf, size_t val, int bytes) {
-    for (int i = 0; i < bytes; ++i) {
-      buf.push_back(static_cast<uint8_t>(val & 0xFFu));
-      val >>= 8u;
-    }
-  };
+  auto const blob_size = size_t{1} + offset_size + (num_names + 1) * offset_size + total_key_bytes;
+  auto blob            = cudf::detail::make_pinned_vector<uint8_t>(blob_size, stream);
+  auto out             = blob.data();
 
-  std::vector<uint8_t> blob;
   // header: version=1 | sorted=1 | unused=0 | offset_size-1
-  blob.push_back(static_cast<uint8_t>(0x01u | (1u << 4u) | (uint8_t(offset_size - 1) << 6u)));
+  *out++ = static_cast<uint8_t>(0x01u | (1u << 4u) | (uint8_t(offset_size - 1) << 6u));
+  out    = write_le(out, num_names, offset_size);
 
-  write_le_host(blob, N, offset_size);  // dictionary_size
-
-  // offsets[0..N] relative to start of string_data
-  size_t cur = 0;
+  size_t current_offset = 0;
   for (auto const& name : sorted_names) {
-    write_le_host(blob, cur, offset_size);
-    cur += name.size();
+    out = write_le(out, current_offset, offset_size);
+    current_offset += name.size();
   }
-  write_le_host(blob, cur, offset_size);  // sentinel
+  out = write_le(out, current_offset, offset_size);
 
   for (auto const& name : sorted_names) {
-    for (char c : name) {
-      blob.push_back(static_cast<uint8_t>(c));
-    }
+    out = std::copy(name.begin(), name.end(), out);
   }
-
   return blob;
 }
 
-// Build a list<uint8> column where every row contains the same `blob` bytes.
-// Null rows (from input_null_mask) get 0-length list entries.
-std::unique_ptr<column> make_constant_metadata_column(std::vector<uint8_t> const& blob,
-                                                      size_type num_rows,
-                                                      bitmask_type const* input_null_mask,
-                                                      size_type null_count,
-                                                      rmm::cuda_stream_view stream,
-                                                      rmm::device_async_resource_ref mr)
+/**
+ * @brief Build a list<uint8> column where every valid row contains the same metadata blob.
+ *
+ * Null rows have zero-length list entries.
+ *
+ * @param blob Metadata bytes in pinned host memory
+ * @param num_rows Number of output rows
+ * @param input_null_mask Offset-free input validity mask, or an empty span
+ * @param null_count Number of null input rows
+ * @param stream CUDA stream
+ * @param mr Device memory resources
+ * @return LIST column containing one metadata blob per valid row
+ */
+std::unique_ptr<column> make_constant_metadata_column(
+  std::span<uint8_t const> blob,
+  size_type num_rows,
+  device_span<bitmask_type const> input_null_mask,
+  size_type null_count,
+  cuda::stream_ref stream,
+  cudf::memory_resources mr)
 {
-  size_type const m = static_cast<size_type>(blob.size());
+  CUDF_EXPECTS(std::cmp_less_equal(blob.size(), std::numeric_limits<size_type>::max()),
+               "encode_strings_to_variant metadata blob exceeds the LIST child size limit",
+               std::overflow_error);
+  CUDF_EXPECTS(std::cmp_less_equal(blob.size() * (num_rows - null_count),
+                                   std::numeric_limits<size_type>::max()),
+               "encode_strings_to_variant metadata column exceeds the LIST child size limit",
+               std::overflow_error);
+  auto const output_mr = mr.get_output_mr();
+  auto const temp_mr   = mr.get_temporary_mr();
+  auto const blob_size = static_cast<size_type>(blob.size());
 
-  // Copy null mask to host so we can check validity per row while building offsets.
-  std::vector<bitmask_type> h_null_mask;
-  if (null_count > 0 && input_null_mask != nullptr) {
-    size_t const mask_bytes = cudf::bitmask_allocation_size_bytes(num_rows);
-    h_null_mask.resize(mask_bytes / sizeof(bitmask_type));
-    cudf::detail::cuda_memcpy(host_span<bitmask_type>{h_null_mask},
-                              device_span<bitmask_type const>{input_null_mask, h_null_mask.size()},
-                              stream);
-  }
+  rmm::device_uvector<size_type> offsets(num_rows + 1, stream, output_mr);
+  auto row_sizes = cudf::detail::make_counting_transform_iterator(
+    size_type{0},
+    cuda::proclaim_return_type<size_type>(
+      [input_null_mask, blob_size, num_rows] __device__(size_type row) -> size_type {
+    if (row == num_rows) { return 0; }
+    return input_null_mask.empty() or cudf::bit_is_set(input_null_mask.data(), row) ? blob_size : 0;
+      }));
+  thrust::exclusive_scan(rmm::exec_policy_nosync(stream, temp_mr),
+                         row_sizes,
+                         row_sizes + num_rows + 1,
+                         offsets.begin(),
+                         size_type{0});
 
-  auto row_is_null = [&](size_type i) -> bool {
-    if (h_null_mask.empty()) { return false; }
-    return !cudf::bit_is_set(h_null_mask.data(), i);
-  };
+  auto total_bytes_host = cudf::detail::make_pinned_vector(
+    device_span<size_type const>{offsets.data() + num_rows, 1}, stream);
+  auto const total_bytes = total_bytes_host.front();
 
-  // Build host offsets: each non-null row occupies m bytes
-  std::vector<size_type> h_offsets(num_rows + 1);
-  size_type running = 0;
-  for (size_type i = 0; i < num_rows; ++i) {
-    h_offsets[i] = running;
-    if (!row_is_null(i)) { running += m; }
-  }
-  h_offsets[num_rows] = running;
-
-  // Allocate child data: replicated blob for each non-null row
-  size_type const total_bytes = running;
-  rmm::device_buffer child_data(total_bytes, stream, mr);
+  rmm::device_buffer child_data(total_bytes, stream, output_mr);
   if (total_bytes > 0) {
-    auto* dst = static_cast<uint8_t*>(child_data.data());
-    // Copy host blob to device once, then tile it for each non-null row
-    rmm::device_uvector<uint8_t> d_blob(
-      blob.size(), stream, cudf::get_current_device_resource_ref());
-    cudf::detail::cuda_memcpy_async(device_span<uint8_t>{d_blob.data(), d_blob.size()},
-                                    host_span<uint8_t const>{blob.data(), blob.size()},
-                                    stream);
-
-    // Tile: for each non-null row, copy m bytes
-    size_type write_pos = 0;
-    for (size_type i = 0; i < num_rows; ++i) {
-      if (!row_is_null(i)) {
-        CUDF_CUDA_TRY(cudf::detail::memcpy_async(dst + write_pos, d_blob.data(), m, stream));
-        write_pos += m;
-      }
-    }
+    // This helper is private and is called with build_metadata_blob's pinned result.
+    auto d_blob = cudf::detail::make_device_uvector_async(
+      host_span<uint8_t const>{blob.data(), blob.size(), true}, stream, temp_mr);
+    auto const dst_base = static_cast<uint8_t*>(child_data.data());
+    auto src_iter = cuda::make_constant_iterator(static_cast<uint8_t const*>(d_blob.data()));
+    auto dst_iter = cudf::detail::make_counting_transform_iterator(
+      size_type{0},
+      cuda::proclaim_return_type<uint8_t*>(
+        [dst_base, offsets = offsets.data()] __device__(size_type row) -> uint8_t* {
+          return dst_base + offsets[row];
+        }));
+    auto size_iter = cudf::detail::make_counting_transform_iterator(
+      size_type{0},
+      cuda::proclaim_return_type<size_t>(
+        [offsets = offsets.data()] __device__(size_type row) -> size_t {
+          return static_cast<size_t>(offsets[row + 1] - offsets[row]);
+        }));
+    cudf::detail::batched_memcpy_async(
+      src_iter, dst_iter, size_iter, static_cast<size_t>(num_rows), stream);
   }
 
-  auto d_offsets   = cudf::detail::make_device_uvector_async(h_offsets, stream, mr);
-  auto offsets_col = std::make_unique<column>(data_type{type_id::INT32},
-                                              static_cast<size_type>(h_offsets.size()),
-                                              d_offsets.release(),
-                                              rmm::device_buffer{},
-                                              0);
-
+  auto offsets_col = std::make_unique<column>(
+    data_type{type_id::INT32}, num_rows + 1, offsets.release(), rmm::device_buffer{}, 0);
   auto child_col = std::make_unique<column>(
     data_type{type_id::UINT8}, total_bytes, std::move(child_data), rmm::device_buffer{}, 0);
 
-  // Null mask for the list column comes from the input
-  rmm::device_buffer list_null_mask{};
-  if (null_count > 0 && input_null_mask != nullptr) {
-    list_null_mask = cudf::detail::copy_bitmask(input_null_mask, 0, num_rows, stream, mr);
-  }
+  auto list_null_mask =
+    input_null_mask.empty()
+      ? rmm::device_buffer{}
+      : cudf::detail::copy_bitmask(input_null_mask.data(), 0, num_rows, stream, output_mr);
 
   return make_lists_column(
     num_rows, std::move(offsets_col), std::move(child_col), null_count, std::move(list_null_mask));
@@ -752,115 +769,107 @@ std::unique_ptr<column> make_constant_metadata_column(std::vector<uint8_t> const
 namespace detail {
 
 std::unique_ptr<column> encode_strings_to_variant(cudf::strings_column_view const& input,
-                                                  cudf::host_span<std::string const> column_names,
-                                                  rmm::cuda_stream_view stream,
-                                                  rmm::device_async_resource_ref mr)
+                                                  std::span<std::string const> column_names,
+                                                  cuda::stream_ref stream,
+                                                  cudf::memory_resources mr)
 {
-  size_type const num_rows   = input.size();
-  size_type const num_fields = static_cast<size_type>(column_names.size());
+  auto const output_mr  = mr.get_output_mr();
+  auto const temp_mr    = mr.get_temporary_mr();
+  auto const num_rows   = input.size();
+  auto const num_fields = static_cast<size_type>(column_names.size());
 
   CUDF_EXPECTS(num_fields <= 255,
                "encode_strings_to_variant supports at most 255 fields",
                std::invalid_argument);
+  CUDF_EXPECTS(
+    std::all_of(column_names.begin(),
+                column_names.end(),
+                [](auto const& name) { return name.find_first_of(".[") == std::string::npos; }),
+    "encode_strings_to_variant does not support field names containing '.' or '['",
+    std::invalid_argument);
 
-  // Empty output
-  if (num_rows == 0) {
-    auto empty_meta = cudf::make_lists_column(
-      0, make_empty_column(type_id::INT32), make_empty_column(type_id::UINT8), 0, {});
-    auto empty_val = cudf::make_lists_column(
-      0, make_empty_column(type_id::INT32), make_empty_column(type_id::UINT8), 0, {});
-    std::vector<std::unique_ptr<column>> empty_children;
-    empty_children.push_back(std::move(empty_meta));
-    empty_children.push_back(std::move(empty_val));
-    return cudf::make_structs_column(0, std::move(empty_children), 0, {}, stream, mr);
-  }
-
-  // ── Sort field names ──────────────────────────────────────────────────────
+  // Field names remain on the host because they are also used to construct JSON paths and metadata.
   std::vector<size_t> sort_indices(num_fields);
   std::iota(sort_indices.begin(), sort_indices.end(), size_t{0});
-  std::sort(sort_indices.begin(), sort_indices.end(), [&](size_t a, size_t b) {
-    return column_names[a] < column_names[b];
+  std::sort(sort_indices.begin(), sort_indices.end(), [&](size_t lhs, size_t rhs) {
+    return column_names[lhs] < column_names[rhs];
   });
   CUDF_EXPECTS(std::adjacent_find(sort_indices.begin(),
                                   sort_indices.end(),
-                                  [&](size_t a, size_t b) {
-                                    return column_names[a] == column_names[b];
+                                  [&](size_t lhs, size_t rhs) {
+                                    return column_names[lhs] == column_names[rhs];
                                   }) == sort_indices.end(),
                "encode_strings_to_variant does not accept duplicate field names",
                std::invalid_argument);
-  // sorted_to_original[i] = original column index of the i-th sorted key
-  std::vector<int32_t> h_sorted_to_original(num_fields);
-  std::vector<std::string> sorted_names(num_fields);
-  for (size_type i = 0; i < num_fields; ++i) {
-    h_sorted_to_original[i] = static_cast<int32_t>(sort_indices[i]);
-    sorted_names[i]         = std::string(column_names[sort_indices[i]]);
+
+  if (num_rows == 0) {
+    std::vector<std::unique_ptr<column>> empty_children;
+    empty_children.push_back(cudf::make_empty_lists_column(data_type{type_id::UINT8}));
+    empty_children.push_back(cudf::make_empty_lists_column(data_type{type_id::UINT8}));
+    return cudf::make_structs_column(
+      0, std::move(empty_children), 0, rmm::device_buffer{}, stream, output_mr);
   }
 
-  auto d_sorted_to_original = cudf::detail::make_device_uvector(
-    h_sorted_to_original, stream, cudf::get_current_device_resource_ref());
+  auto h_sorted_to_original = cudf::detail::make_empty_pinned_vector<int32_t>(num_fields, stream);
+  std::transform(sort_indices.begin(),
+                 sort_indices.end(),
+                 std::back_inserter(h_sorted_to_original),
+                 [](size_t index) { return static_cast<int32_t>(index); });
+  std::vector<std::string> sorted_names(num_fields);
+  std::transform(sort_indices.begin(), sort_indices.end(), sorted_names.begin(), [&](size_t index) {
+    return column_names[index];
+  });
 
-  // ── Extract field values with get_json_object ─────────────────────────────
+  auto d_sorted_to_original =
+    cudf::detail::make_device_uvector_async(h_sorted_to_original, stream, temp_mr);
+
   cudf::get_json_object_options opts;
   opts.set_strip_quotes_from_single_strings(false);
   opts.set_missing_fields_as_nulls(true);
 
   std::vector<std::unique_ptr<column>> extracted_cols;
   extracted_cols.reserve(num_fields);
-  for (size_type i = 0; i < num_fields; ++i) {
-    CUDF_EXPECTS(column_names[i].find_first_of(".[") == std::string::npos,
-                 "encode_strings_to_variant does not support field names containing '.' or '['",
-                 std::invalid_argument);
-    std::string path = "$." + std::string(column_names[i]);
-    cudf::string_scalar path_scalar(path, true, stream, cudf::get_current_device_resource_ref());
-    extracted_cols.push_back(cudf::get_json_object(
-      input, path_scalar, opts, stream, cudf::get_current_device_resource_ref()));
+  for (auto const& column_name : column_names) {
+    std::string path = "$." + column_name;
+    cudf::string_scalar path_scalar(path, true, stream, temp_mr);
+    extracted_cols.push_back(cudf::get_json_object(input, path_scalar, opts, stream, temp_mr));
   }
 
-  // ── Build device array of column_device_views ─────────────────────────────
-  // column_device_view::create returns unique_ptr with a custom deleter; collect them to extend
-  // lifetime, then copy the views themselves (which hold device pointers) to device.
+  // The holders keep each device view's nested allocations alive through both encoding kernels.
   using cdv_ptr = std::unique_ptr<column_device_view, std::function<void(column_device_view*)>>;
   std::vector<cdv_ptr> dv_holders;
   dv_holders.reserve(num_fields);
-  std::vector<column_device_view> h_views;
-  h_views.reserve(num_fields);
+  auto h_views = cudf::detail::make_empty_pinned_vector<column_device_view>(num_fields, stream);
   for (auto const& col : extracted_cols) {
     dv_holders.push_back(column_device_view::create(col->view(), stream));
     h_views.push_back(*dv_holders.back());
   }
-  auto d_views =
-    cudf::detail::make_device_uvector(h_views, stream, cudf::get_current_device_resource_ref());
+  auto d_views = cudf::detail::make_device_uvector_async(h_views, stream, temp_mr);
 
-  // ── Input null mask ───────────────────────────────────────────────────────
-  size_type const null_count = input.null_count();
-  // copy_bitmask handles input.offset() and yields an offset-free mask. This is an internal
-  // scratch buffer (never adopted into the returned column), so it is allocated against the
-  // current device resource rather than the caller-supplied `mr`.
-  rmm::device_buffer owned_null_mask =
-    (null_count > 0) ? cudf::detail::copy_bitmask(input.null_mask(),
-                                                  input.offset(),
-                                                  input.offset() + num_rows,
-                                                  stream,
-                                                  cudf::get_current_device_resource_ref())
-                     : rmm::device_buffer{};
-  bitmask_type const* input_null_mask =
-    (null_count > 0) ? static_cast<bitmask_type const*>(owned_null_mask.data()) : nullptr;
+  auto const null_count = input.null_count();
+  auto owned_null_mask =
+    null_count > 0
+      ? cudf::detail::copy_bitmask(
+          input.null_mask(), input.offset(), input.offset() + num_rows, stream, temp_mr)
+      : rmm::device_buffer{};
+  auto const input_null_mask =
+    null_count > 0
+      ? device_span<bitmask_type const>{static_cast<bitmask_type const*>(owned_null_mask.data()),
+                                        static_cast<size_t>(cudf::num_bitmask_words(num_rows))}
+      : device_span<bitmask_type const>{};
 
-  // ── Compute per-row value blob sizes ─────────────────────────────────────
-  // Accumulated as int64_t: the sum of per-row blob sizes across the whole column can exceed
-  // the int32 size_type range even though the final list-column offsets must be int32.
-  rmm::device_uvector<int64_t> value_sizes(
-    num_rows, stream, cudf::get_current_device_resource_ref());
+  // Store per-row sizes and then scan them in place, retaining 64-bit overflow detection without a
+  // second 64-bit offsets allocation.
+  rmm::device_uvector<int64_t> value_sizes(num_rows, stream, temp_mr);
   {
-    cudf::detail::device_scalar<int32_t> error_flag(
-      0, stream, cudf::get_current_device_resource_ref());
+    cudf::detail::device_scalar<int32_t> error_flag(0, stream, temp_mr);
     auto grid = cudf::detail::grid_1d{num_rows, block_size_encode};
-    compute_value_sizes_kernel<<<grid.num_blocks, block_size_encode, 0, stream.value()>>>(
+    compute_value_sizes_kernel<<<grid.num_blocks, block_size_encode, 0, stream.get()>>>(
       d_views,
       d_sorted_to_original,
       num_rows,
       num_fields,
-      input_null_mask,
+      input_null_mask.data(),
       value_sizes,
       error_flag.data());
     CUDF_CUDA_TRY(cudaGetLastError());
@@ -871,54 +880,43 @@ std::unique_ptr<column> encode_strings_to_variant(cudf::strings_column_view cons
                  std::invalid_argument);
   }
 
-  // ── Prefix-sum to get per-row value offsets ───────────────────────────────
-  // Scanned in int64_t first so overflow can be detected before truncating into the int32
-  // offsets that the VARIANT value list<uint8> column requires.
-  rmm::device_uvector<int64_t> value_offsets_wide(
-    num_rows + 1, stream, cudf::get_current_device_resource_ref());
-  {
-    CUDF_CUDA_TRY(cudaMemsetAsync(value_offsets_wide.data(), 0, sizeof(int64_t), stream.value()));
-    thrust::inclusive_scan(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-                           value_sizes.begin(),
-                           value_sizes.end(),
-                           value_offsets_wide.begin() + 1);
-  }
+  thrust::inclusive_scan(rmm::exec_policy_nosync(stream, temp_mr),
+                         value_sizes.begin(),
+                         value_sizes.end(),
+                         value_sizes.begin());
 
-  int64_t total_value_bytes_wide{};
-  cudf::detail::cuda_memcpy(host_span<int64_t>{&total_value_bytes_wide, 1},
-                            device_span<int64_t const>{value_offsets_wide.data() + num_rows, 1},
-                            stream);
+  auto total_value_bytes_host = cudf::detail::make_pinned_vector(
+    device_span<int64_t const>{value_sizes.data() + num_rows - 1, 1}, stream);
+  auto const total_value_bytes_wide = total_value_bytes_host.front();
   CUDF_EXPECTS(total_value_bytes_wide <= std::numeric_limits<size_type>::max(),
                "encode_strings_to_variant output exceeds the VARIANT value list<uint8> column "
                "size limit (a LIST column's offsets are always 32-bit)",
                std::overflow_error);
-  size_type const total_value_bytes = static_cast<size_type>(total_value_bytes_wide);
+  auto const total_value_bytes = static_cast<size_type>(total_value_bytes_wide);
 
-  // Narrow the validated wide offsets down to the int32 offsets the list column needs.
-  rmm::device_uvector<size_type> value_offsets(num_rows + 1, stream, mr);
-  thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-                    value_offsets_wide.begin(),
-                    value_offsets_wide.end(),
-                    value_offsets.begin(),
+  rmm::device_uvector<size_type> value_offsets(num_rows + 1, stream, output_mr);
+  CUDF_CUDA_TRY(cudaMemsetAsync(value_offsets.data(), 0, sizeof(size_type), stream.get()));
+  thrust::transform(rmm::exec_policy_nosync(stream, temp_mr),
+                    value_sizes.begin(),
+                    value_sizes.end(),
+                    value_offsets.begin() + 1,
                     cuda::proclaim_return_type<size_type>(
-                      [] __device__(int64_t v) { return static_cast<size_type>(v); }));
+                      [] __device__(int64_t value) { return static_cast<size_type>(value); }));
 
-  // ── Allocate and write value blobs ────────────────────────────────────────
-  auto value_child_data = rmm::device_buffer(static_cast<size_t>(total_value_bytes), stream, mr);
+  rmm::device_buffer value_child_data(total_value_bytes, stream, output_mr);
   if (total_value_bytes > 0) {
     auto grid = cudf::detail::grid_1d{num_rows, block_size_encode};
-    write_values_kernel<<<grid.num_blocks, block_size_encode, 0, stream.value()>>>(
+    write_values_kernel<<<grid.num_blocks, block_size_encode, 0, stream.get()>>>(
       d_views,
       d_sorted_to_original,
       num_rows,
       num_fields,
-      input_null_mask,
-      device_span<size_type const>{value_offsets.data(), static_cast<size_t>(num_rows + 1)},
+      input_null_mask.data(),
+      value_offsets,
       static_cast<uint8_t*>(value_child_data.data()));
     CUDF_CUDA_TRY(cudaGetLastError());
   }
 
-  // Build value list<uint8> column
   auto value_offsets_col = std::make_unique<column>(
     data_type{type_id::INT32}, num_rows + 1, value_offsets.release(), rmm::device_buffer{}, 0);
   auto value_child_col = std::make_unique<column>(data_type{type_id::UINT8},
@@ -926,40 +924,37 @@ std::unique_ptr<column> encode_strings_to_variant(cudf::strings_column_view cons
                                                   std::move(value_child_data),
                                                   rmm::device_buffer{},
                                                   0);
-
-  rmm::device_buffer value_null_mask{};
-  if (null_count > 0 && input_null_mask != nullptr) {
-    value_null_mask = cudf::detail::copy_bitmask(input_null_mask, 0, num_rows, stream, mr);
-  }
+  auto value_null_mask =
+    input_null_mask.empty()
+      ? rmm::device_buffer{}
+      : cudf::detail::copy_bitmask(input_null_mask.data(), 0, num_rows, stream, output_mr);
   auto value_col = make_lists_column(num_rows,
                                      std::move(value_offsets_col),
                                      std::move(value_child_col),
                                      null_count,
                                      std::move(value_null_mask));
 
-  // ── Build metadata list<uint8> column ────────────────────────────────────
-  auto metadata_blob = build_metadata_blob(sorted_names);
+  auto metadata_blob = build_metadata_blob(sorted_names, stream);
   auto metadata_col =
     make_constant_metadata_column(metadata_blob, num_rows, input_null_mask, null_count, stream, mr);
 
-  // ── Assemble struct<metadata, value> ─────────────────────────────────────
-  rmm::device_buffer struct_null_mask{};
-  if (null_count > 0 && input_null_mask != nullptr) {
-    struct_null_mask = cudf::detail::copy_bitmask(input_null_mask, 0, num_rows, stream, mr);
-  }
+  auto struct_null_mask =
+    input_null_mask.empty()
+      ? rmm::device_buffer{}
+      : cudf::detail::copy_bitmask(input_null_mask.data(), 0, num_rows, stream, output_mr);
   std::vector<std::unique_ptr<column>> children;
   children.push_back(std::move(metadata_col));
   children.push_back(std::move(value_col));
   return make_structs_column(
-    num_rows, std::move(children), null_count, std::move(struct_null_mask), stream, mr);
+    num_rows, std::move(children), null_count, std::move(struct_null_mask), stream, output_mr);
 }
 
 }  // namespace detail
 
 std::unique_ptr<column> encode_strings_to_variant(cudf::strings_column_view const& input,
-                                                  cudf::host_span<std::string const> column_names,
-                                                  rmm::cuda_stream_view stream,
-                                                  rmm::device_async_resource_ref mr)
+                                                  std::span<std::string const> column_names,
+                                                  cuda::stream_ref stream,
+                                                  cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::encode_strings_to_variant(input, column_names, stream, mr);

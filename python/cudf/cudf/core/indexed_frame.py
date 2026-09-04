@@ -2494,7 +2494,10 @@ class IndexedFrame(Frame):
             include_start=include_start,
             include_end=include_end,
         )
-        return self.iloc[indexer]
+        result = self.iloc[indexer]
+        if isinstance(result.index, cudf.DatetimeIndex):
+            result.index._freq = None
+        return result
 
     @_performance_tracking
     def at_time(self, time, axis: Axis | None = None) -> Self:
@@ -2541,7 +2544,10 @@ class IndexedFrame(Frame):
         indexer = self.index.indexer_between_time(
             time, time, include_start=True, include_end=True
         )
-        return self.iloc[indexer]
+        result = self.iloc[indexer]
+        if isinstance(result.index, cudf.DatetimeIndex):
+            result.index._freq = None
+        return result
 
     @property
     def loc(self):

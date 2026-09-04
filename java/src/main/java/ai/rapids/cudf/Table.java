@@ -2890,10 +2890,11 @@ public final class Table implements AutoCloseable {
    * It is the responsibility of the caller to close the resulting gather map instances.
    *
    * This interface allows passing an output row count that was previously computed from
-   * {@link #leftJoinRowCount(HashJoin)}.
+   * {@link #leftJoinRowCount(HashJoin)}. Doing so no longer avoids any work: the output size is
+   * always computed internally and the supplied count is only validated against it. Prefer
+   * {@link #leftJoinGatherMaps(HashJoin)}; this overload will be deprecated in a future release.
    *
-   * WARNING: Passing a row count that is smaller than the actual row count will result
-   * in undefined behavior.
+   * @throws CudfException if outputRowCount does not equal the actual output row count
    *
    * @param rightHash hash table built from join key columns from the right table
    * @param outputRowCount number of output rows in the join result
@@ -3179,10 +3180,11 @@ public final class Table implements AutoCloseable {
    * It is the responsibility of the caller to close the resulting gather map instances.
    *
    * This interface allows passing an output row count that was previously computed from
-   * {@link #innerJoinRowCount(HashJoin)}.
+   * {@link #innerJoinRowCount(HashJoin)}. Doing so no longer avoids any work: the output size is
+   * always computed internally and the supplied count is only validated against it. Prefer
+   * {@link #innerJoinGatherMaps(HashJoin)}; this overload will be deprecated in a future release.
    *
-   * WARNING: Passing a row count that is smaller than the actual row count will result
-   * in undefined behavior.
+   * @throws CudfException if outputRowCount does not equal the actual output row count
    *
    * @param rightHash hash table built from join key columns from the right table
    * @param outputRowCount number of output rows in the join result
@@ -3382,9 +3384,9 @@ public final class Table implements AutoCloseable {
    * Computes the number of rows resulting from a full equi-join between two tables.
    * It is assumed this table instance holds the key columns from the left table, and the
    * {@link HashJoin} argument has been constructed from the key columns from the right table.
-   * Note that unlike {@link #leftJoinRowCount(HashJoin)} and {@link #innerJoinRowCount(HashJoin),
-   * this will perform some redundant calculations compared to
-   * {@link #fullJoinGatherMaps(HashJoin, long)}.
+   * Like {@link #leftJoinRowCount(HashJoin)} and {@link #innerJoinRowCount(HashJoin)}, this
+   * repeats work that {@link #fullJoinGatherMaps(HashJoin)} performs anyway, so only call it when
+   * the row count is needed before manifesting the gather maps.
    * @param rightHash hash table built from join key columns from the right table
    * @return row count of the join result
    */
@@ -3427,9 +3429,11 @@ public final class Table implements AutoCloseable {
    * It is the responsibility of the caller to close the resulting gather map instances.
    *
    * This interface allows passing an output row count that was previously computed from
-   * {@link #fullJoinRowCount(HashJoin)}.
-   * WARNING: Passing a row count that is smaller than the actual row count will result
-   * in undefined behavior.
+   * {@link #fullJoinRowCount(HashJoin)}. Doing so no longer avoids any work: the output size is
+   * always computed internally and the supplied count is only validated against it. Prefer
+   * {@link #fullJoinGatherMaps(HashJoin)}; this overload will be deprecated in a future release.
+   *
+   * @throws CudfException if outputRowCount does not equal the actual output row count
    * @param rightHash hash table built from join key columns from the right table
    * @param outputRowCount number of output rows in the join result
    * @return left and right table gather maps

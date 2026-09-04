@@ -241,10 +241,6 @@ EXPECTED_FAILURES: dict[str, str] = {
     "tests/unit/operations/test_group_by.py::test_group_by_series_lit_22103[False]": "Incorrect broadcasting of literals in groupby-agg",
     "tests/unit/operations/test_group_by.py::test_group_by_series_lit_22103[True]": "Incorrect broadcasting of literals in groupby-agg",
     "tests/unit/operations/test_join.py::test_cross_join_slice_pushdown": "Need to implement slice pushdown for cross joins",
-    # We match the behavior of the polars[cpu] streaming engine (it makes doesn't make any ordering guarantees either when maintain_order is none).
-    # But this test does because the test is run with the polars[cpu] in-memory engine, which still preserves the order of the left dataframe
-    # when maintain order is none.
-    "tests/unit/operations/test_join.py::test_join_preserve_order_left": "polars[gpu] makes no ordering guarantees when maintain_order is none",
     # TODO: As of polars 1.34, the column names for left and right came in unaligned, which causes the dtypes to mismatch when calling plc.replace.replace_nulls
     # Need to investigate what changed in polars
     "tests/unit/operations/test_join.py::test_join_coalesce_column_order_23177": "Misaligned left/right column names left and right tables in join op",
@@ -302,6 +298,11 @@ TESTS_TO_SKIP: dict[str, str] = {
     # XPASS/FAIL (these pass on some runs and fail on others).
     "tests/unit/lazyframe/test_cse.py::test_cse_as_struct_value_counts_20927": "non-deterministic value_counts ordering",
     "tests/unit/lazyframe/test_cse.py::test_eager_cse_during_struct_expansion_18411": "non-deterministic struct-expansion ordering",
+    # polars[gpu] makes no ordering guarantees when maintain_order is none, so
+    # whether the GPU result matches the left dataframe order is an artifact of
+    # the current join algorithm and may change. Skip rather than xfail to avoid
+    # a flaky XPASS/FAIL.
+    "tests/unit/operations/test_join.py::test_join_preserve_order_left": "join makes no ordering guarantees when maintain_order is none",
     # On Ubuntu 20.04, the tzdata package contains a bunch of symlinks
     # for obsolete timezone names. However, the chrono_tz package that
     # polars uses doesn't read /usr/share/zoneinfo, instead packaging

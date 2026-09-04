@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -207,6 +207,8 @@ std::optional<data_type> get_common_type(data_type out, data_type lhs, data_type
 
 bool is_supported_operation(data_type out, data_type lhs, data_type rhs, binary_operator op)
 {
+  // dictionary operands would resolve to their indices instead of their keys
+  if (is_dictionary(out) or is_dictionary(lhs) or is_dictionary(rhs)) { return false; }
   return double_type_dispatcher(lhs, rhs, is_supported_operation_functor{}, out, op);
 }
 }  // namespace cudf::binops::compiled

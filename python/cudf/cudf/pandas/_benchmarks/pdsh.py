@@ -24,7 +24,9 @@ cudf.pandas.install()
 import pandas as pd  # noqa: E402
 
 from cudf.pandas._benchmarks.utils import (  # noqa: E402
+    build_parser,
     get_data,
+    parse_args,
     run_pandas,
 )
 
@@ -2235,4 +2237,6 @@ class PDSHDuckDBQueries:
 
 
 if __name__ == "__main__":
-    run_pandas(PDSHQueries)
+    parser = build_parser(num_queries=22)
+    args = parse_args(parser=parser)
+    run_pandas(PDSHQueries, args)

@@ -67,7 +67,7 @@ std::unique_ptr<rmm::device_uvector<size_type>> mixed_join_semi(
       // Anti and semi return all the row indices from left
       // with a corresponding NULL from the right.
       case join_kind::LEFT_ANTI_JOIN:
-        return get_trivial_left_join_indices(left_conditional, stream, mr).first;
+        return get_trivial_left_join_indices(left_conditional, 0, stream, mr).first;
       // Inner and left semi joins return empty output because no matches can exist.
       case join_kind::LEFT_SEMI_JOIN:
         return std::make_unique<rmm::device_uvector<size_type>>(0, stream, mr);

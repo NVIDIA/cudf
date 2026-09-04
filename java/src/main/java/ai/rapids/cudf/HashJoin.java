@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -12,9 +12,11 @@ import org.slf4j.LoggerFactory;
  * This class represents a hash table built from the join keys of the right-side table for a
  * join operation. This hash table can then be reused across a series of left probe tables
  * to compute gather maps for joins more efficiently when the right-side table is not changing.
- * It can also be used to query the output row count of a join and then pass that result to the
- * operation that generates the join gather maps to avoid redundant computation when the output
- * row count must be checked before manifesting the join gather maps.
+ * It can also be used to query the output row count of a join before manifesting the join gather
+ * maps. Passing that row count to the gather-map operation no longer avoids any work: the output
+ * size is always computed internally and a supplied count is only validated against it, so an
+ * incorrect count fails with a {@link CudfException}. Prefer the overloads without a row count;
+ * the row-count overloads will be deprecated in a future release.
  */
 public class HashJoin implements AutoCloseable {
   static {

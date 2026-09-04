@@ -196,7 +196,7 @@ class DeletionVectorTableTest extends CudfTestBase {
           bitmapArray.buffers[0], false, new long[] {-1}, new int[] {1000});
       DeletionVectorInfo negativeRowCount = new DeletionVectorInfo(
           bitmapArray.buffers[0], false, new long[] {0}, new int[] {-1});
-      assertEquals("deletionVectorInfo", assertThrows(NullPointerException.class,
+      assertEquals("Expected non-null deletionVectorInfo", assertThrows(NullPointerException.class,
           () -> DeletionVector.computeNumDeletedRows(null, 1000)).getMessage());
       assertEquals("maxChunkRows must be positive", assertThrows(IllegalArgumentException.class,
           () -> DeletionVector.computeNumDeletedRows(dvInfo, 0)).getMessage());

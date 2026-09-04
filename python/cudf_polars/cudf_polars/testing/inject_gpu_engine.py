@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import sqlite3
 from functools import partialmethod
 from typing import TYPE_CHECKING
@@ -19,6 +20,14 @@ from cudf_polars.utils.config import StreamingFallbackMode
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
+
+
+def nonnegative_int(value: str) -> int:
+    """Parse a non-negative integer pytest option."""
+    integer = int(value)
+    if integer < 0:
+        raise ValueError(f"Argument {value} must be non-negative")
+    return integer
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:
@@ -51,6 +60,66 @@ def pytest_addoption(parser: pytest.Parser) -> None:
             "plugin's xfail markers (tests will surface real failures)."
         ),
     )
+    group.addoption(
+        "--cudf-polars-shard-id",
+        dest="cudf_polars_shard_id",
+        type=nonnegative_int,
+        default=0,
+        help="Zero-based index of this cudf-polars test shard.",
+    )
+    group.addoption(
+        "--cudf-polars-num-shards",
+        dest="cudf_polars_num_shards",
+        type=nonnegative_int,
+        default=1,
+        help="Total number of cudf-polars test shards.",
+    )
+
+
+def _sha256_hash(value: str) -> int:
+    """Return a stable integer hash for a pytest node ID."""
+    return int.from_bytes(hashlib.sha256(value.encode()).digest(), "little")
+
+
+def partition_items_by_shard(
+    items: list[pytest.Item], shard_id: int, num_shards: int
+) -> tuple[list[pytest.Item], list[pytest.Item]]:
+    """Split items into this shard and items assigned to other shards."""
+    selected: list[pytest.Item] = []
+    deselected: list[pytest.Item] = []
+    for item in items:
+        target = (
+            selected
+            if _sha256_hash(item.nodeid) % num_shards == shard_id
+            else deselected
+        )
+        target.append(item)
+    return selected, deselected
+
+
+def validate_shard_options(shard_id: int, num_shards: int) -> None:
+    """Validate cudf-polars test sharding options."""
+    if num_shards < 1:
+        raise pytest.UsageError(
+            f"--cudf-polars-num-shards ({num_shards}) must be at least 1"
+        )
+    if not 0 <= shard_id < num_shards:
+        raise pytest.UsageError(
+            "--cudf-polars-shard-id "
+            f"({shard_id}) must be in "
+            f"[0, --cudf-polars-num-shards ({num_shards}))"
+        )
+
+
+def pytest_report_collectionfinish(
+    config: pytest.Config, items: list[pytest.Item]
+) -> str | None:
+    """Report the number of tests assigned to a non-default shard."""
+    num_shards = config.getoption("cudf_polars_num_shards")
+    if num_shards > 1:
+        shard_id = config.getoption("cudf_polars_shard_id")
+        return f"Running {len(items)} items in shard {shard_id}/{num_shards}"
+    return None
 
 
 def pytest_configure(config: pytest.Config) -> None:
@@ -58,6 +127,10 @@ def pytest_configure(config: pytest.Config) -> None:
     variant = config.getoption("--inject-gpu-engine")
     blocksize = config.getoption("--inject-gpu-engine-blocksize")
     raise_on_fail = config.getoption("--inject-gpu-engine-raise-on-fail")
+    validate_shard_options(
+        config.getoption("cudf_polars_shard_id"),
+        config.getoption("cudf_polars_num_shards"),
+    )
 
     if variant == "in-memory":
         engine = polars.GPUEngine(executor="in-memory", raise_on_fail=raise_on_fail)
@@ -486,10 +559,17 @@ STREAMING_ENGINE_EXPECTED_FAILURES: Mapping[str, str] = {
 }
 
 
+@pytest.hookimpl(trylast=True)
 def pytest_collection_modifyitems(
     session: pytest.Session, config: pytest.Config, items: list[pytest.Item]
 ) -> None:
     """Mark known failing tests."""
+    num_shards = config.getoption("cudf_polars_num_shards")
+    if num_shards > 1:
+        shard_id = config.getoption("cudf_polars_shard_id")
+        items[:], deselected = partition_items_by_shard(items, shard_id, num_shards)
+        if deselected:
+            config.hook.pytest_deselected(items=deselected)
     if config.getoption("--inject-gpu-engine-raise-on-fail"):
         # Don't xfail tests if running without fallback
         return

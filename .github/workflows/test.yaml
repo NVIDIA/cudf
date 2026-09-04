@@ -295,6 +295,22 @@ jobs:
       # https://github.com/NVIDIA/cudf/issues/23498
       matrix_filter: map(select(.GPU != "gb300" and .GPU != "gh200"))
   cudf-polars-polars-tests:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - engine: in-memory
+            shard_id: 0
+            num_shards: 1
+          - engine: spmd
+            shard_id: 0
+            num_shards: 3
+          - engine: spmd
+            shard_id: 1
+            num_shards: 3
+          - engine: spmd
+            shard_id: 2
+            num_shards: 3
     permissions:
       actions: read
       contents: read
@@ -308,7 +324,10 @@ jobs:
       branch: ${{ inputs.branch }}
       date: ${{ inputs.date }}
       sha: ${{ inputs.sha }}
-      script: "ci/test_cudf_polars_polars_tests.sh"
+      script: >-
+        ci/test_cudf_polars_polars_tests.sh --engine ${{ matrix.engine }}
+        --cudf-polars-shard-id ${{ matrix.shard_id }}
+        --cudf-polars-num-shards ${{ matrix.num_shards }}
       # https://github.com/NVIDIA/cudf/issues/23498
       matrix_filter: map(select(.GPU != "gb300" and .GPU != "gh200"))
   narwhals-tests:

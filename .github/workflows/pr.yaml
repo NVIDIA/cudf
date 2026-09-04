@@ -658,6 +658,22 @@ jobs:
       script: "env POLARS_VERSIONS=endpoints ci/test_wheel_cudf_polars.sh"
   cudf-polars-polars-tests:
     needs: [wheel-build-cudf-polars, wheel-build-cudf-streaming, changed-files]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - engine: in-memory
+            shard_id: 0
+            num_shards: 1
+          - engine: spmd
+            shard_id: 0
+            num_shards: 3
+          - engine: spmd
+            shard_id: 1
+            num_shards: 3
+          - engine: spmd
+            shard_id: 2
+            num_shards: 3
     permissions:
       actions: read
       contents: read
@@ -671,7 +687,10 @@ jobs:
       # This selects "ARCH=amd64 + the latest supported Python + CUDA".
       matrix_filter: map(select(.ARCH == "amd64")) | group_by(.CUDA_VER|split(".")|map(tonumber)|.[0]) | map(max_by([(.PY_VER|split(".")|map(tonumber)), (.CUDA_VER|split(".")|map(tonumber))]))
       build_type: pull-request
-      script: "ci/test_cudf_polars_polars_tests.sh"
+      script: >-
+        ci/test_cudf_polars_polars_tests.sh --engine ${{ matrix.engine }}
+        --cudf-polars-shard-id ${{ matrix.shard_id }}
+        --cudf-polars-num-shards ${{ matrix.num_shards }}
   wheel-build-dask-cudf:
     needs: [build-details, wheel-build-cudf]
     permissions:

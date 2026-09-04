@@ -8,6 +8,7 @@
 #include <cudf/ast/expressions.hpp>
 #include <cudf/table/table_view.hpp>
 #include <cudf/types.hpp>
+#include <cudf/udf.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/export.hpp>
 #include <cudf/utilities/memory_resource.hpp>
@@ -21,6 +22,7 @@
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <string_view>
 #include <utility>
 
 /**
@@ -466,15 +468,19 @@ filter_join_indices_output_size(
  *
  * @throw std::invalid_argument if join_kind is not INNER_JOIN, LEFT_JOIN, or FULL_JOIN.
  * @throw std::invalid_argument if left_indices and right_indices have different sizes.
- * @throw cudf::jit_compilation_error if predicate_code fails to compile.
+ * @throw cudf::jit_compilation_error if the predicate UDF fails to compile or link.
  *
  * @param left The left table for predicate evaluation (conditional columns only).
  * @param right The right table for predicate evaluation (conditional columns only).
  * @param left_indices Device span of row indices in the left table from hash join.
  * @param right_indices Device span of row indices in the right table from hash join.
- * @param predicate_code String containing CUDA device code for predicate function.
+ * @param user_data Optional pointer to user-defined data that can be accessed in the predicate UDF.
+ * @param is_null_aware Indicates whether the join should be null-aware.
+ * @param predicate_udf The CUDA or LTO predicate UDF.
  * @param join_kind The type of join operation. Must be INNER_JOIN, LEFT_JOIN, or FULL_JOIN.
- * @param is_ptx Whether predicate_code contains PTX assembly instead of CUDA C++.
+ * @param output_size Optional precomputed number of output rows. When provided, skips the internal
+ *        size-counting pass. Behavior is undefined if it differs from the size the function would
+ *        otherwise produce for the same inputs.
  * @param stream CUDA stream used for kernel launches and memory operations.
  * @param mr Device memory resource used to allocate output indices.
  *
@@ -488,11 +494,13 @@ filter_join_indices_jit(
   cudf::table_view const& right,
   cudf::device_span<size_type const> left_indices,
   cudf::device_span<size_type const> right_indices,
-  std::string const& predicate_code,
+  std::optional<void*> user_data,
+  udf const& predicate_udf,
+  null_aware is_null_aware,
   cudf::join_kind join_kind,
-  bool is_ptx                       = false,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  std::optional<std::size_t> output_size = std::nullopt,
+  cuda::stream_ref stream                = cudf::get_default_stream(),
+  rmm::device_async_resource_ref mr      = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Filters join indices using a JIT-compiled predicate from an AST expression.
@@ -500,12 +508,19 @@ filter_join_indices_jit(
  * This overload converts an AST expression referencing columns from both left and right
  * tables into JIT-compiled CUDA code and uses it to filter the join index pairs.
  *
+ * @throw std::invalid_argument if join_kind is not INNER_JOIN, LEFT_JOIN, or FULL_JOIN.
+ * @throw std::invalid_argument if left_indices and right_indices have different sizes.
+ * @throw cudf::jit_compilation_error if the predicate UDF fails to compile or link.
+ *
  * @param left The left table for predicate evaluation
  * @param right The right table for predicate evaluation
  * @param left_indices Device span of row indices in left table from join
  * @param right_indices Device span of row indices in right table from join
  * @param predicate An AST expression that returns a boolean for each pair of rows
  * @param join_kind The type of join operation (INNER_JOIN, LEFT_JOIN, or FULL_JOIN)
+ * @param output_size Optional precomputed number of output rows. When provided, skips the internal
+ *        size-counting pass. Behavior is undefined if it differs from the size the function would
+ *        otherwise produce for the same inputs.
  * @param stream CUDA stream for operations
  * @param mr Device memory resource
  * @return A pair of device vectors [filtered_left_indices, filtered_right_indices]
@@ -519,8 +534,9 @@ filter_join_indices_jit(
   cudf::device_span<size_type const> right_indices,
   cudf::ast::expression const& predicate,
   cudf::join_kind join_kind,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  std::optional<std::size_t> output_size = std::nullopt,
+  cuda::stream_ref stream                = cudf::get_default_stream(),
+  rmm::device_async_resource_ref mr      = cudf::get_current_device_resource_ref());
 
 /** @} */  // end of group
 

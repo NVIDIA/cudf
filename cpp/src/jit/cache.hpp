@@ -10,6 +10,8 @@
 
 #include <rtcx/rtcx.hpp>
 
+#include <span>
+
 namespace CUDF_EXPORT cudf {
 
 struct [[nodiscard]] jit_bundle_t {
@@ -105,6 +107,24 @@ rtcx::blob get_kernel_fragment(std::string const& name,
                                std::span<char const* const> header_include_names,
                                std::span<char const* const> headers,
                                std::string const& kernel_instance);
+
+/**
+ * @brief Gets a kernel fragment from an embedded NVVM IR source file
+ * @param name Debug name for the kernel fragment (used for caching and logging)
+ * @param ir NVVM IR source code to compile
+ */
+rtcx::blob get_nvvm_fragment(std::string const& name, std::span<char const> ir);
+
+/**
+ * @brief Gets a UDF LTO dispatcher fragment
+ *
+ * @param symbol UDF symbol used to identify the cached fragment
+ * @param return_type NVVM UDF return type
+ * @param argument_types NVVM UDF argument types
+ */
+rtcx::blob get_udf_dispatcher_fragment(std::string const& symbol,
+                                       std::string const& return_type,
+                                       std::span<std::string const> argument_types);
 
 /**
  * @brief Gets a kernel by linking together embedded binary fragments

@@ -10,6 +10,7 @@
 
 #include <cudf_cuda_embed.hpp>
 #include <jit/cache.hpp>
+#include <jit/nvvm.hpp>
 #include <rtcx/rtcx.hpp>
 #include <runtime/context.hpp>
 
@@ -369,6 +370,55 @@ rtcx::blob compile_fragment(char const* name,
   return std::make_shared<rtcx::blob_t>(rtcx::blob_t::from_buffer(std::move(cubin)));
 }
 
+void check_nvvm_result(char const* name, nvvmProgram program, nvvmResult result)
+{
+  auto const& nvvm = cudf::get_context().nvvm();
+  if (result != NVVM_SUCCESS) {
+    std::string log;
+    size_t log_size = 0;
+    if (program != nullptr && nvvm.GetProgramLogSize(program, &log_size) == NVVM_SUCCESS &&
+        log_size > 0) {
+      log.resize(log_size);
+      (void)nvvm.GetProgramLog(program, log.data());
+    }
+    CUDF_FAIL(std::format("libNVVM compilation of `{}` failed with error ({}): {}\n{}",
+                          name,
+                          static_cast<int64_t>(result),
+                          nvvm.GetErrorString(result),
+                          log),
+              std::runtime_error);
+  }
+}
+
+rtcx::blob compile_nvvm_fragment(char const* name, std::span<char const> nvvm_ir)
+{
+  CUDF_FUNC_RANGE();
+
+  auto& ctx               = cudf::get_context();
+  auto& device_properties = ctx.get_device_properties();
+  auto sm                 = device_properties.compute_capability;
+  auto arch               = std::format("-arch=compute_{}", sm);
+  char const* options[]   = {"-gen-lto", arch.c_str()};  // NOLINT
+
+  auto const& nvvm = ctx.nvvm();
+  nvvmProgram program{};
+
+  check_nvvm_result(name, program, nvvm.CreateProgram(&program));
+  RTCX_DEFER([&] { check_nvvm_result(name, program, nvvm.DestroyProgram(&program)); });
+
+  check_nvvm_result(
+    name, program, nvvm.AddModuleToProgram(program, nvvm_ir.data(), nvvm_ir.size(), name));
+  check_nvvm_result(
+    name, program, nvvm.CompileProgram(program, std::size(options), std::data(options)));
+  size_t result_size = 0;
+  check_nvvm_result(name, program, nvvm.GetCompiledResultSize(program, &result_size));
+  auto result = rtcx::byte_buffer::make(result_size);
+  check_nvvm_result(
+    name, program, nvvm.GetCompiledResult(program, reinterpret_cast<char*>(result.data())));
+
+  return std::make_shared<rtcx::blob_t>(rtcx::blob_t::from_buffer(std::move(result)));
+}
+
 }  // namespace
 
 kernel get_kernel(std::string const& name,
@@ -430,6 +480,93 @@ kernel_instance={}
 
   auto lib = fut.get();
   return kernel{lib, lib->get_kernel("cudf_kernel_entry")};
+}
+
+rtcx::blob get_nvvm_fragment(std::string const& name, std::span<char const> ir)
+{
+  auto& ctx               = cudf::get_context();
+  auto& cache             = ctx.rtcx_cache();
+  auto& device_properties = ctx.get_device_properties();
+  auto runtime            = device_properties.runtime_version;
+  auto driver             = device_properties.driver_version;
+  auto sm                 = device_properties.compute_capability;
+  auto& bundle            = ctx.jit_bundle();
+  auto bundle_hash        = bundle.get_hash();
+  auto spec               = std::format(
+    R"***(nvvmFragment
+name={}
+binary_type=LTO_IR
+cuda_runtime={}
+cuda_driver={}
+arch={}
+bundle={}
+)***",
+    name,
+    runtime,
+    driver,
+    sm,
+    bundle_hash);
+
+  XXH3_state_t state;
+  XXH3_INITSTATE(&state);
+  XXH3_128bits_reset(&state);
+  hash(&state, spec);
+  hash(&state, "nvvm_ir: ");
+  hash(&state, ir);
+  auto digest = XXH3_128bits_digest(&state);
+  auto key    = rtcx::hash128{digest.high64, digest.low64};
+
+  auto compile = [&] { return compile_nvvm_fragment(name.c_str(), ir); };
+
+  auto fut = cache.get_or_add_blob(key, rtcx::blob_compile_func::from_functor(compile));
+
+  return fut.get();
+};
+
+rtcx::blob get_udf_dispatcher_fragment(std::string const& symbol,
+                                       std::string const& return_type,
+                                       std::span<std::string const> argument_types)
+{
+  CUDF_FUNC_RANGE();
+
+  auto join = [](auto const& values) {
+    std::string result;
+    for (auto const& value : values) {
+      if (!result.empty()) { result += ", "; }
+      result += value;
+    }
+    return result;
+  };
+
+  std::vector<std::string> arguments;
+  arguments.reserve(argument_types.size());
+  for (size_t i = 0; i < argument_types.size(); ++i) {
+    arguments.push_back(std::format("{} %arg{}", argument_types[i], i));
+  }
+
+  int const ir_major = 2;
+  int const ir_minor = 0;
+  // This NVVM IR defines `cudf_udf_entry` as a typed forwarding function to the UDF symbol.
+  auto ir = std::format(
+    R"***(target datalayout = "e-p:64:64:64-i1:8:8-i8:8:8-i16:16:16-i32:32:32-i64:64:64-i128:128:128-f32:32:32-f64:64:64-v16:16:16-v32:32:32-v64:64:64-v128:128:128-n16:32:64"
+target triple = "nvptx64-nvidia-cuda"
+declare {0} @{1}({2})
+define {0} @cudf_udf_entry({3}) {{
+entry:
+  %result = call {0} @{1}({3})
+  ret {0} %result
+}}
+!nvvmir.version = !{{!0}}
+!0 = !{{i32 {4}, i32 {5}}}
+)***",
+    return_type,
+    symbol,
+    join(argument_types),
+    join(arguments),
+    ir_major,
+    ir_minor);
+
+  return get_nvvm_fragment(std::format("udf_dispatcher_{}", symbol), ir);
 }
 
 rtcx::blob get_kernel_fragment(std::string const& name,

@@ -23,6 +23,10 @@ using column_wrapper = cudf::test::fixed_width_column_wrapper<T>;
 template <typename T>
 using decimal_wrapper = cudf::test::fixed_point_column_wrapper<typename T::rep>;
 
+auto const operators_range = cudf_test_fragments::file_ranges[cudf_test_fragments::operators];
+auto const operators_fragment =
+  cudf_test_fragments::files.subspan(operators_range[0], operators_range[1]);
+
 TEST_F(TransformLTOTest, InvSqrt)
 {
   column_wrapper<float> input{{1.0f, 4.0f, 9.0f, 16.0f}};
@@ -31,18 +35,14 @@ TEST_F(TransformLTOTest, InvSqrt)
   cudf::transform_output outputs[] = {
     {cudf::data_type{cudf::type_id::FLOAT32}, cudf::output_nullability::ALL_VALID}};
 
-  auto const range = cudf_test_fragments::file_ranges[cudf_test_fragments::invsqrt];
-  std::span<uint8_t const> udf{cudf_test_fragments::files.subspan(range[0], range[1])};
-
-  auto result = cudf::transform_lto(udf,
-                                    cudf::lto_binary_type::FATBIN,
-                                    cudf::null_aware::NO,
-                                    std::nullopt,
-                                    inputs,
-                                    outputs,
-                                    {},
-                                    std::nullopt,
-                                    cudf::test::get_default_stream());
+  auto result = cudf::transform(cudf::lto_udf::fatbin(operators_fragment, "invsqrt"),
+                                cudf::null_aware::NO,
+                                std::nullopt,
+                                inputs,
+                                outputs,
+                                {},
+                                std::nullopt,
+                                cudf::test::get_default_stream());
 
   column_wrapper<float> expected{{1.0f, 0.5f, 0.33333334f, 0.25f}};
 
@@ -60,18 +60,14 @@ TEST_F(TransformLTOTest, Distance)
   cudf::transform_output outputs[] = {
     {cudf::data_type{cudf::type_id::FLOAT32}, cudf::output_nullability::ALL_VALID}};
 
-  auto const range = cudf_test_fragments::file_ranges[cudf_test_fragments::distance];
-  std::span<uint8_t const> udf{cudf_test_fragments::files.subspan(range[0], range[1])};
-
-  auto result = cudf::transform_lto(udf,
-                                    cudf::lto_binary_type::FATBIN,
-                                    cudf::null_aware::NO,
-                                    std::nullopt,
-                                    inputs,
-                                    outputs,
-                                    {},
-                                    std::nullopt,
-                                    cudf::test::get_default_stream());
+  auto result = cudf::transform(cudf::lto_udf::fatbin(operators_fragment, "distance"),
+                                cudf::null_aware::NO,
+                                std::nullopt,
+                                inputs,
+                                outputs,
+                                {},
+                                std::nullopt,
+                                cudf::test::get_default_stream());
 
   auto distance = [](float x1, float y1, float x2, float y2) {
     return std::sqrt((x2 - x1) * (x2 - x1) + (y2 - y1) * (y2 - y1));
@@ -95,18 +91,14 @@ TEST_F(TransformLTOTest, ToUpper)
   cudf::transform_output outputs[] = {
     {cudf::data_type{cudf::type_id::UINT8}, cudf::output_nullability::ALL_VALID}};
 
-  auto const range = cudf_test_fragments::file_ranges[cudf_test_fragments::to_upper];
-  std::span<uint8_t const> udf{cudf_test_fragments::files.subspan(range[0], range[1])};
-
-  auto result = cudf::transform_lto(udf,
-                                    cudf::lto_binary_type::FATBIN,
-                                    cudf::null_aware::NO,
-                                    std::nullopt,
-                                    inputs,
-                                    outputs,
-                                    {},
-                                    std::nullopt,
-                                    cudf::test::get_default_stream());
+  auto result = cudf::transform(cudf::lto_udf::fatbin(operators_fragment, "to_upper"),
+                                cudf::null_aware::NO,
+                                std::nullopt,
+                                inputs,
+                                outputs,
+                                {},
+                                std::nullopt,
+                                cudf::test::get_default_stream());
 
   column_wrapper<uint8_t> expected{{65, 66, 65, 66, 48, 49, 32, 33, 127, 255}};
 
@@ -122,18 +114,14 @@ TEST_F(TransformLTOTest, SumOfSquares)
   cudf::transform_output outputs[] = {
     {cudf::data_type{cudf::type_id::FLOAT32}, cudf::output_nullability::ALL_VALID}};
 
-  auto const range = cudf_test_fragments::file_ranges[cudf_test_fragments::sum_of_squares];
-  std::span<uint8_t const> udf{cudf_test_fragments::files.subspan(range[0], range[1])};
-
-  auto result = cudf::transform_lto(udf,
-                                    cudf::lto_binary_type::FATBIN,
-                                    cudf::null_aware::NO,
-                                    std::nullopt,
-                                    inputs,
-                                    outputs,
-                                    {},
-                                    std::nullopt,
-                                    cudf::test::get_default_stream());
+  auto result = cudf::transform(cudf::lto_udf::fatbin(operators_fragment, "sum_of_squares"),
+                                cudf::null_aware::NO,
+                                std::nullopt,
+                                inputs,
+                                outputs,
+                                {},
+                                std::nullopt,
+                                cudf::test::get_default_stream());
 
   column_wrapper<float> expected{{2.0f, 20.0f, 85.0f, 356.0f}};
 
@@ -152,20 +140,16 @@ TEST_F(TransformLTOTest, FallibleIntegerLehmerMean)
   cudf::transform_output outputs[] = {
     {cudf::data_type{cudf::type_id::INT32}, cudf::output_nullability::ALL_VALID}};
 
-  auto const range = cudf_test_fragments::file_ranges[cudf_test_fragments::lehmer_mean];
-  std::span<uint8_t const> udf{cudf_test_fragments::files.subspan(range[0], range[1])};
-
   cudf::transform_input inputs[] = {a, b};
 
-  auto result      = cudf::transform_lto(udf,
-                                    cudf::lto_binary_type::FATBIN,
-                                    cudf::null_aware::NO,
-                                    std::nullopt,
-                                    inputs,
-                                    outputs,
-                                         {},
-                                    std::nullopt,
-                                    cudf::test::get_default_stream());
+  auto result      = cudf::transform(cudf::lto_udf::fatbin(operators_fragment, "lehmer_mean"),
+                                cudf::null_aware::NO,
+                                std::nullopt,
+                                inputs,
+                                outputs,
+                                     {},
+                                std::nullopt,
+                                cudf::test::get_default_stream());
   auto lehmer_mean = [](int32_t a, int32_t b) { return (a * a + b * b) / (a + b); };
 
   column_wrapper<int32_t> expected{{lehmer_mean(2, 1),
@@ -178,15 +162,14 @@ TEST_F(TransformLTOTest, FallibleIntegerLehmerMean)
 
   cudf::transform_input inputs_fail[] = {a_fail, b};
 
-  EXPECT_THROW(cudf::transform_lto(udf,
-                                   cudf::lto_binary_type::FATBIN,
-                                   cudf::null_aware::NO,
-                                   std::nullopt,
-                                   inputs_fail,
-                                   outputs,
-                                   {},
-                                   std::nullopt,
-                                   cudf::test::get_default_stream()),
+  EXPECT_THROW(cudf::transform(cudf::lto_udf::fatbin(operators_fragment, "lehmer_mean"),
+                               cudf::null_aware::NO,
+                               std::nullopt,
+                               inputs_fail,
+                               outputs,
+                               {},
+                               std::nullopt,
+                               cudf::test::get_default_stream()),
                cudf::evaluation_error);
 }
 
@@ -200,21 +183,17 @@ TEST_F(TransformLTOTest, BankersRounding)
   cudf::transform_output output{cudf::data_type{cudf::type_to_id<T>(), numeric::scale_type{0}},
                                 cudf::output_nullability::ALL_VALID};
 
-  auto const range = cudf_test_fragments::file_ranges[cudf_test_fragments::bankers_rounding];
-  std::span<uint8_t const> udf{cudf_test_fragments::files.subspan(range[0], range[1])};
-
   cudf::transform_input inputs[]   = {input};
   cudf::transform_output outputs[] = {output};
 
-  auto result = cudf::transform_lto(udf,
-                                    cudf::lto_binary_type::FATBIN,
-                                    cudf::null_aware::NO,
-                                    std::nullopt,
-                                    inputs,
-                                    outputs,
-                                    {},
-                                    std::nullopt,
-                                    cudf::test::get_default_stream());
+  auto result = cudf::transform(cudf::lto_udf::fatbin(operators_fragment, "bankers_round"),
+                                cudf::null_aware::NO,
+                                std::nullopt,
+                                inputs,
+                                outputs,
+                                {},
+                                std::nullopt,
+                                cudf::test::get_default_stream());
 
   decimal_wrapper<T> expected{{124, 126, 126, 128, -124, -126, -126, -128}, numeric::scale_type{0}};
 

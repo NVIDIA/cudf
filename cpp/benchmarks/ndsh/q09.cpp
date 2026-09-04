@@ -144,7 +144,7 @@ struct q9_data {
 {
   CUDF_BENCHMARK_RANGE();
 
-  std::string udf =
+  char const* udf =
     R"***(
   void calculate_price(double * amount, double discount, double extended_price, double supply_cost, double quantity){
     *amount = extended_price * (1 - discount) - supply_cost * quantity;
@@ -154,8 +154,7 @@ struct q9_data {
   cudf::transform_input transform_inputs[] = {discount, extendedprice, supplycost, quantity};
 
   return std::move(
-    cudf::transform(udf,
-                    cudf::udf_source_type::CUDA,
+    cudf::transform(cudf::cuda_udf{udf, "calculate_price"},
                     cudf::null_aware::NO,
                     std::nullopt,
                     transform_inputs,

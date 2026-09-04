@@ -2,7 +2,7 @@
  * SPDX-FileCopyrightText: Copyright 2018-2019 BlazingDB, Inc.
  * SPDX-FileCopyrightText: Copyright 2018 Christian Noboa Mardini <christian@blazingdb.com>
  * SPDX-FileCopyrightText: Copyright 2018 Rommel Quintanilla <rommel@blazingdb.com>
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 /*
@@ -36,10 +36,7 @@
                     // it. Each UDF will have a different operation_udf.cuh generated for it, so we
                     // need to put this pragma before including it to avoid PCH mismatch.
 
-// clang-format off
-#include <cudf/detail/kernel_instance.cuh>
-#include <cudf/detail/operation_udf.cuh>
-// clang-format on
+#include <cudf/detail/kernel_dispatch.cuh>
 
 namespace cudf {
 namespace binops {
@@ -51,7 +48,7 @@ struct UserDefinedOp {
   {
     TypeOut output;
     using TypeCommon = typename cuda::std::common_type<TypeOut, TypeLhs, TypeRhs>::type;
-    GENERIC_BINARY_OP(&output, static_cast<TypeCommon>(x), static_cast<TypeCommon>(y));
+    CUDF_DISPATCH_UDF(&output, static_cast<TypeCommon>(x), static_cast<TypeCommon>(y));
     return output;
   }
 };
@@ -78,7 +75,7 @@ __device__ void binary_op_kernel(cudf::size_type size,
 }  // namespace binops
 }  // namespace cudf
 
-extern "C" __global__ void cudf_kernel_entry(cudf::size_type size,
+extern "C" __global__ void CUDF_KERNEL_ENTRY(cudf::size_type size,
                                              void* out_data,
                                              void* lhs_data,
                                              void* rhs_data)

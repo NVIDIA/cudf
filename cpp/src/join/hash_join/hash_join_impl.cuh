@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -11,6 +11,8 @@
 
 #include <cuco/static_multiset.cuh>
 #include <cuda/std/functional>
+
+#include <join/join_common_utils.hpp>
 
 namespace cudf::detail {
 

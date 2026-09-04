@@ -91,8 +91,7 @@ static void BM_transform(nvbench::state& state)
   auto const mem_stats_logger = cudf::memory_stats_logger();
 
   state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
-    cudf::transform(code,
-                    cudf::udf_source_type::CUDA,
+    cudf::transform(cudf::cuda_udf{code.c_str(), "transform"},
                     cudf::null_aware::NO,
                     std::nullopt,
                     inputs,

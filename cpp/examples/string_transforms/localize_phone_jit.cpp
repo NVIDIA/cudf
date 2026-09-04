@@ -146,8 +146,7 @@ __device__ void format_phone(void* scratch,
     country_code, area_code, phone_number, cudf::scalar_column_view(*size)};
 
   auto result = std::move(
-    cudf::transform(udf,
-                    cudf::udf_source_type::CUDA,
+    cudf::transform(cudf::cuda_udf{udf, "format_phone"},
                     cudf::null_aware::NO,
                     scratch.data(),
                     inputs,

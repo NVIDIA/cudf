@@ -57,8 +57,7 @@ __device__ void email_provider(cudf::string_view* out,
   cudf::transform_input inputs[] = {emails, cudf::scalar_column_view(*alt)};
 
   auto providers = std::move(
-    cudf::transform(udf,
-                    cudf::udf_source_type::CUDA,
+    cudf::transform(cudf::cuda_udf{udf, "email_provider"},
                     cudf::null_aware::NO,
                     std::nullopt,
                     inputs,

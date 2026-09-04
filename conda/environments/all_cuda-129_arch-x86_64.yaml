@@ -23,6 +23,9 @@ dependencies:
 - cuda-nvcc
 - cuda-nvrtc-dev
 - cuda-nvtx-dev
+- cuda-nvvm
+- cuda-nvvm-impl
+- cuda-nvvm-tools
 - cuda-profiler-api
 - cuda-sanitizer-api
 - cuda-version=12.9

@@ -13,6 +13,8 @@
 #include <cooperative_groups/reduce.h>
 #include <cuda/stream>
 
+#include <join/join_common_utils.hpp>
+
 namespace cudf::detail {
 
 /**

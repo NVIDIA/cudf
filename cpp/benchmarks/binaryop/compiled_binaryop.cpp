@@ -132,17 +132,17 @@ __device__ void transform(float* out, float a, float b) {
   auto lhs = cudf::column_view(source_table->get_column(0));
   auto rhs = cudf::column_view(source_table->get_column(1));
 
-  size_t fragment_id = 0;
   char const* cuda   = nullptr;
+  char const* symbol = nullptr;
 
   switch (binop) {
     case cudf::binary_operator::ADD: {
-      fragment_id = cudf_benchmark_fragments::add_f32;
-      cuda        = jit_add_cuda;
+      symbol = "add_f32";
+      cuda   = jit_add_cuda;
     } break;
     case cudf::binary_operator::MUL: {
-      fragment_id = cudf_benchmark_fragments::mul_f32;
-      cuda        = jit_mul_cuda;
+      symbol = "mul_f32";
+      cuda   = jit_mul_cuda;
     } break;
     default: throw std::runtime_error("Unsupported binary operator for JIT benchmark");
   }
@@ -152,19 +152,17 @@ __device__ void transform(float* out, float a, float b) {
   cudf::transform_output outputs[] = {
     {cudf::data_type{cudf::type_to_id<TypeOut>()}, cudf::output_nullability::ALL_VALID}};
 
-  auto const range = cudf_benchmark_fragments::file_ranges[fragment_id];
+  auto const range = cudf_benchmark_fragments::file_ranges[cudf_benchmark_fragments::operators];
   std::span<uint8_t const> udf{cudf_benchmark_fragments::files.subspan(range[0], range[1])};
 
-  auto result = use_lto ? cudf::transform_lto(udf,
-                                              cudf::lto_binary_type::FATBIN,
-                                              cudf::null_aware::NO,
-                                              std::nullopt,
-                                              inputs,
-                                              outputs,
-                                              {},
-                                              std::nullopt)
-                        : cudf::transform(cuda,
-                                          cudf::udf_source_type::CUDA,
+  auto result = use_lto ? cudf::transform(cudf::lto_udf::fatbin(udf, symbol),
+                                          cudf::null_aware::NO,
+                                          std::nullopt,
+                                          inputs,
+                                          outputs,
+                                          {},
+                                          std::nullopt)
+                        : cudf::transform(cudf::cuda_udf{cuda, "transform"},
                                           cudf::null_aware::NO,
                                           std::nullopt,
                                           inputs,
@@ -178,16 +176,14 @@ __device__ void transform(float* out, float a, float b) {
   state.add_global_memory_writes<TypeOut>(num_rows);
 
   state.exec(nvbench::exec_tag::sync, [&](nvbench::launch&) {
-    [[maybe_unused]] auto result = use_lto ? cudf::transform_lto(udf,
-                                                                 cudf::lto_binary_type::FATBIN,
-                                                                 cudf::null_aware::NO,
-                                                                 std::nullopt,
-                                                                 inputs,
-                                                                 outputs,
-                                                                 {},
-                                                                 std::nullopt)
-                                           : cudf::transform(cuda,
-                                                             cudf::udf_source_type::CUDA,
+    [[maybe_unused]] auto result = use_lto ? cudf::transform(cudf::lto_udf::fatbin(udf, symbol),
+                                                             cudf::null_aware::NO,
+                                                             std::nullopt,
+                                                             inputs,
+                                                             outputs,
+                                                             {},
+                                                             std::nullopt)
+                                           : cudf::transform(cudf::cuda_udf{cuda, "transform"},
                                                              cudf::null_aware::NO,
                                                              std::nullopt,
                                                              inputs,

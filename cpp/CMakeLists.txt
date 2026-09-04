@@ -73,6 +73,10 @@ if(CUDF_BUILD_STATIC_DEPS STREQUAL "FORCE")
       ON
       CACHE BOOL "Use static linking for NVRTC" FORCE
   )
+  set(CUDF_STATIC_LINK_NVVM
+      ON
+      CACHE BOOL "Use direct linking for libNVVM" FORCE
+  )
   set(RTCX_STATIC_LINK_NVJITLINK
       ON
       CACHE BOOL "Use static linking for nvJitLink" FORCE
@@ -81,6 +85,10 @@ else()
   set(RTCX_STATIC_LINK_NVRTC
       OFF
       CACHE BOOL "Use static linking for NVRTC" FORCE
+  )
+  set(CUDF_STATIC_LINK_NVVM
+      OFF
+      CACHE BOOL "Use direct linking for libNVVM" FORCE
   )
   set(RTCX_STATIC_LINK_NVJITLINK
       OFF
@@ -510,6 +518,8 @@ list(APPEND CUDF_PRECOMPILE_PHYSICAL_TYPES uint8_t uint16_t uint32_t uint64_t nu
      numeric::decimal64 numeric::decimal128
 )
 
+# TODO: consider merging instances into a single FATBIN to take advantage of CUDA source code
+# compression
 foreach(TYPE IN ITEMS ${CUDF_PRECOMPILE_PHYSICAL_TYPES})
   set(FRAGMENT_NAME transform_kernel)
   get_property(
@@ -525,7 +535,7 @@ foreach(TYPE IN ITEMS ${CUDF_PRECOMPILE_PHYSICAL_TYPES})
     cudf_fragments
     FRAGMENT
     ${VARIANT_NAME}
-    SOURCE
+    SOURCES
     src/transform/jit/kernel.cu
     KERNEL_INSTANCE
     ${INSTANCE}
@@ -558,7 +568,7 @@ foreach(TYPE IN ITEMS ${CUDF_PRECOMPILE_PHYSICAL_TYPES})
       cudf_fragments
       FRAGMENT
       ${VARIANT_NAME}
-      SOURCE
+      SOURCES
       src/transform/jit/kernel.cu
       KERNEL_INSTANCE
       ${INSTANCE}
@@ -850,6 +860,7 @@ add_library(
   src/io/utilities/trie.cu
   src/jit/cache.cpp
   src/jit/helpers.cpp
+  src/jit/nvvm.cpp
   src/jit/parser.cpp
   src/jit/row_ir.cpp
   src/jit/util.cpp
@@ -858,7 +869,6 @@ add_library(
   src/join/direct_join.cu
   src/join/distinct_hash_join.cu
   src/join/filter_join_indices/filter_join_indices.cu
-  src/join/filter_join_indices/filter_join_indices_jit.cu
   src/join/filter_join_indices/filter_join_indices_kernel_complex.cu
   src/join/filter_join_indices/filter_join_indices_kernel_null_complex.cu
   src/join/filter_join_indices/filter_join_indices_kernel_null_primitive.cu
@@ -1034,7 +1044,6 @@ add_library(
   src/stream_compaction/distinct_helpers_nested_nan_unequal_ordered.cu
   src/stream_compaction/drop_nans.cu
   src/stream_compaction/drop_nulls.cu
-  src/stream_compaction/filter/filter.cu
   src/stream_compaction/stable_distinct.cu
   src/stream_compaction/unique.cu
   src/strings/attributes.cu
@@ -1277,6 +1286,27 @@ target_compile_definitions(cudf PRIVATE $<$<BOOL:${CUDF_KVIKIO_REMOTE_IO}>:CUDF_
 # https://github.com/NVIDIA/cccl/pull/2844
 target_compile_definitions(cudf PRIVATE THRUST_FORCE_32_BIT_OFFSET_TYPE=1 CCCL_AVOID_SORT_UNROLL=1)
 
+# libNVVM is required for NVVM JIT compilation.
+find_library(
+  libnvvm
+  NAMES nvvm
+  HINTS "${CUDAToolkit_LIBRARY_ROOT}/nvvm/lib64" "${CUDAToolkit_LIBRARY_ROOT}/nvvm/lib"
+        "${CUDAToolkit_LIBRARY_ROOT}/nvvm/lib/x64" REQUIRED
+)
+cmake_path(GET libnvvm PARENT_PATH libnvvm_dir)
+set_property(
+  TARGET cudf
+  APPEND
+  PROPERTY BUILD_RPATH "${libnvvm_dir}"
+)
+set_property(
+  TARGET cudf
+  APPEND
+  PROPERTY INSTALL_RPATH "\$ORIGIN/../nvvm/lib64"
+)
+target_include_directories(cudf PRIVATE "${CUDAToolkit_LIBRARY_ROOT}/nvvm/include")
+target_compile_definitions(cudf PRIVATE CUDF_STATIC_LINK_LIBNVVM=$<BOOL:${CUDF_STATIC_LINK_NVVM}>)
+
 # When rmm is a static library being absorbed via whole-archive, strip nvtx3 from its public
 # interface. We bundle nvtx3 headers directly into cudf's install tree, so consumers get them from
 # cudf's include path without needing the nvtx3 target or find_dependency(nvtx3).
@@ -1398,8 +1428,15 @@ endif()
 target_link_libraries(
   cudf
   PUBLIC CCCL::CCCL $<BUILD_LOCAL_INTERFACE:BS::thread_pool>
-  PRIVATE $<BUILD_LOCAL_INTERFACE:nvtx3::nvtx3-cpp> $<BUILD_LOCAL_INTERFACE:cuco::cuco> ZLIB::ZLIB
-          kvikio::kvikio ${CUDF_nanoarrow_TARGET} zstd $<BUILD_LOCAL_INTERFACE:xxhash> rtcx::rtcx
+  PRIVATE $<BUILD_LOCAL_INTERFACE:nvtx3::nvtx3-cpp>
+          $<BUILD_LOCAL_INTERFACE:cuco::cuco>
+          ZLIB::ZLIB
+          kvikio::kvikio
+          ${CUDF_nanoarrow_TARGET}
+          zstd
+          $<BUILD_LOCAL_INTERFACE:xxhash>
+          rtcx::rtcx
+          ${libnvvm}
 )
 
 if(NOT _absorbed_nvcomp)

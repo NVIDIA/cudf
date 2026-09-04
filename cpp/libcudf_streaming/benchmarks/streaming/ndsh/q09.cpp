@@ -206,7 +206,7 @@ rapidsmpf::streaming::Actor select_columns(std::shared_ptr<rapidsmpf::streaming:
     auto extendedprice = table.column(3);
     auto supplycost    = table.column(1);
     auto quantity      = table.column(4);
-    std::string udf =
+    char const* udf =
       R"***(
 static __device__ void calculate_amount(double *amount, double discount, double extprice, double supplycost, double quantity) {
     *amount = extprice * (1 - discount) - supplycost * quantity;
@@ -214,8 +214,7 @@ static __device__ void calculate_amount(double *amount, double discount, double 
            )***";
     result.push_back(
       std::move(cudf::transform(
-                  udf,
-                  cudf::udf_source_type::CUDA,
+                  cudf::cuda_udf{udf, "calculate_amount"},
                   cudf::null_aware::NO,
                   std::nullopt,
                   std::vector<cudf::transform_input>{discount, extendedprice, supplycost, quantity},

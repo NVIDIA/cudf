@@ -13,20 +13,20 @@ include_guard(GLOBAL)
 # final library with metadata that allows it to be looked up at runtime.
 macro(add_fragment)
   set(TARGET ${ARGV0})
-  set(ONE_VALUE_ARGS FRAGMENT SOURCE KERNEL_ONLY KERNEL_INSTANCE UDF_TYPE)
-  set(MULTI_VALUE_ARGS DEFINITIONS ARRAY_IDS ARRAY_VALUES)
+  set(ONE_VALUE_ARGS FRAGMENT KERNEL_ONLY KERNEL_INSTANCE UDF_TYPE)
+  set(MULTI_VALUE_ARGS DEFINITIONS ARRAY_IDS ARRAY_VALUES SOURCES)
   cmake_parse_arguments(ARG "${OPTIONS}" "${ONE_VALUE_ARGS}" "${MULTI_VALUE_ARGS}" ${ARGN})
 
   if(NOT ARG_FRAGMENT)
     message(FATAL_ERROR "add_fragment requires FRAGMENT argument")
   endif()
 
-  if(NOT ARG_SOURCE)
-    message(FATAL_ERROR "add_fragment requires SOURCE argument")
+  if(NOT ARG_SOURCES)
+    message(FATAL_ERROR "add_fragment requires SOURCES argument")
   endif()
 
   set(OBJECT_ID ${TARGET}_${ARG_FRAGMENT})
-  add_library(${OBJECT_ID} OBJECT ${ARG_SOURCE})
+  add_library(${OBJECT_ID} OBJECT ${ARG_SOURCES})
   target_compile_options(${OBJECT_ID} PRIVATE --compress-mode=size)
 
   if(DEFINED ARG_KERNEL_ONLY AND ARG_KERNEL_ONLY)

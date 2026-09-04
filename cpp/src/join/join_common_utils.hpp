@@ -20,7 +20,8 @@
 
 namespace cudf::detail {
 
-constexpr int DEFAULT_JOIN_BLOCK_SIZE = 128;
+inline constexpr int DEFAULT_JOIN_BLOCK_SIZE = 128;
+inline constexpr int DEFAULT_JOIN_CG_SIZE    = 2;
 
 /**
  * @brief Validates and returns a hash-table load factor.

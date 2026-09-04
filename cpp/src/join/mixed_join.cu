@@ -6,7 +6,6 @@
 #include "join_common_utils.hpp"
 
 #include <cudf/ast/expressions.hpp>
-#include <cudf/detail/join/join.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/join/hash_join.hpp>
 #include <cudf/join/join.hpp>
@@ -118,15 +117,15 @@ mixed_join(table_view const& left_equality,
                              ? std::optional<std::size_t>{output_size_data->first}
                              : std::nullopt;
 
-  return detail::filter_join_indices(left_conditional,
-                                     right_conditional,
-                                     *left_indices,
-                                     *right_indices,
-                                     binary_predicate,
-                                     join_type,
-                                     output_size,
-                                     stream,
-                                     mr);
+  return cudf::filter_join_indices(left_conditional,
+                                   right_conditional,
+                                   *left_indices,
+                                   *right_indices,
+                                   binary_predicate,
+                                   join_type,
+                                   output_size,
+                                   stream,
+                                   mr);
 }
 
 std::pair<std::size_t, std::unique_ptr<rmm::device_uvector<size_type>>>

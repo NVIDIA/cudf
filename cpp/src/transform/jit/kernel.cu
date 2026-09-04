@@ -27,33 +27,10 @@
                     // it. Each UDF will have a different operation_udf.cuh generated for it, so we
                     // need to put this pragma before including it to avoid PCH mismatch.
 
-// clang-format off
-// This header is an inlined header that defines the GENERIC_TRANSFORM_OP function. It is placed here
-// so the symbols in the headers above can be used by it.
-#include <cudf/detail/kernel_instance.cuh>
-#include <cudf/detail/operation_udf.cuh>
-// clang-format on
-
-#ifndef CUDF_LTO_MODE
-#define CUDF_UDF_TYPE int()
-#endif
-
-// Use LTO-dispatch for transform operators if we're in LTO mode. This allows the operator to be
-// defined in a separate translation unit and compiled with LTO, which can result in better
-// performance due to more optimization opportunities
-#ifdef CUDF_LTO_MODE
-#define GENERIC_TRANSFORM_OP(...) ::cudf::jit::lto::transform(__VA_ARGS__)
-#endif
+#include <cudf/detail/kernel_dispatch.cuh>
 
 namespace cudf {
 namespace jit {
-namespace lto {
-
-using transform_type = CUDF_UDF_TYPE;
-
-extern "C" __device__ transform_type transform;
-
-}  // namespace lto
 
 /// @brief The generic transform kernel. Supports all types and nullability combinations.
 template <bool is_null_aware, bool has_user_data, typename InputAccessors, typename OutputAccessors>
@@ -72,10 +49,10 @@ __device__ void transform_kernel(size_type row_size,
     auto operation = [&]<typename Args>(Args args) {
       // TODO: static assert invocable
       auto func = [&](auto... a) {
-        if constexpr (!cuda::std::is_void_v<decltype(GENERIC_TRANSFORM_OP(a...))>) {
-          return static_cast<cudf::errc>(GENERIC_TRANSFORM_OP(a...));
+        if constexpr (!cuda::std::is_void_v<decltype(CUDF_DISPATCH_UDF(a...))>) {
+          return static_cast<cudf::errc>(CUDF_DISPATCH_UDF(a...));
         } else {
-          (void)GENERIC_TRANSFORM_OP(a...);
+          (void)CUDF_DISPATCH_UDF(a...);
           return errc::SUCCESS;
         }
       };
@@ -151,7 +128,7 @@ __device__ void transform_kernel(size_type row_size,
 // after compilation. By using a fixed C-ABI symbol name for the kernel entry point, we can avoid
 // these issues and ensure that we can always retrieve the correct `CuFunction` for the kernel
 // regardless of the context in which it was compiled or used.
-extern "C" __global__ void cudf_kernel_entry(
+extern "C" __global__ void CUDF_KERNEL_ENTRY(
   cudf::size_type row_size,
   cudf::bitmask_type const* __restrict__ stencil,
   void* __restrict__ user_data,

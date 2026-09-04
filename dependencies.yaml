@@ -938,6 +938,9 @@ dependencies:
           - cuda-cupti-dev
           - cuda-profiler-api
           - cuda-nvrtc-dev
+          - cuda-nvvm
+          - cuda-nvvm-impl
+          - cuda-nvvm-tools
           - cuda-nvtx-dev
           - cuda-sanitizer-api
           - libcufile-dev

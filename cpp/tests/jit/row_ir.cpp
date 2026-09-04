@@ -358,7 +358,7 @@ TEST_F(RowIRCudaCodeGenTest, AstConversionBasic)
 
   ASSERT_EQ(transform_args.scalar_columns.size(), 1);
   ASSERT_EQ(transform_args.scalar_columns[0]->view().size(), 1);
-  EXPECT_EQ(transform_args.source_type, cudf::udf_source_type::CUDA);
+  EXPECT_EQ(transform_args.udf_expression, "expression");
   EXPECT_EQ(transform_args.is_null_aware, cudf::null_aware::NO);
   EXPECT_EQ(transform_args.outputs.size(), 1);
   EXPECT_EQ(transform_args.outputs[0].nullability, cudf::output_nullability::ALL_VALID);
@@ -391,14 +391,14 @@ return cudf::errc::SUCCESS;
 
   EXPECT_EQ(transform_args.udf, expected_udf);
 
-  auto result = cudf::transform(transform_args.udf,
-                                transform_args.source_type,
-                                transform_args.is_null_aware,
-                                transform_args.user_data,
-                                transform_args.inputs,
-                                transform_args.outputs,
-                                std::move(transform_args.string_offsets),
-                                transform_args.row_size);
+  auto result =
+    cudf::transform(cudf::cuda_udf{transform_args.udf.c_str(), transform_args.udf_expression},
+                    transform_args.is_null_aware,
+                    transform_args.user_data,
+                    transform_args.inputs,
+                    transform_args.outputs,
+                    std::move(transform_args.string_offsets),
+                    transform_args.row_size);
 
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, result->get_column(0).view());
 }

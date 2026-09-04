@@ -125,8 +125,7 @@ __device__ void e164_format(void* scratch,
                                     cudf::scalar_column_view(*size)};
 
   auto formatted = std::move(
-    cudf::transform(udf,
-                    cudf::udf_source_type::CUDA,
+    cudf::transform(cudf::cuda_udf{udf, "e164_format"},
                     cudf::null_aware::NO,
                     scratch.data(),
                     inputs,

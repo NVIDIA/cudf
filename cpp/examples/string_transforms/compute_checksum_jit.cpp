@@ -43,8 +43,7 @@ std::tuple<std::unique_ptr<cudf::column>, std::vector<int32_t>> transform(
   cudf::transform_input inputs[] = {name, email};
 
   auto result = std::move(
-    cudf::transform(udf,
-                    cudf::udf_source_type::CUDA,
+    cudf::transform(cudf::cuda_udf{udf, "checksum"},
                     cudf::null_aware::NO,
                     std::nullopt,
                     inputs,

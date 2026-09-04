@@ -5,6 +5,8 @@
 
 #pragma once
 
+#include "jit/nvvm.hpp"
+
 #include <cudf/context.hpp>
 #include <cudf/utilities/export.hpp>
 
@@ -19,7 +21,7 @@ namespace cudf {
 
 namespace jit {
 class program_cache;
-}
+}  // namespace jit
 
 struct jit_bundle_t;
 
@@ -77,6 +79,8 @@ class context {
   rtcx::cache_t& rtcx_cache();
 
   jit_bundle_t& jit_bundle();
+
+  jit::nvvm_api const& nvvm();
 
   [[nodiscard]] bool dump_codegen() const;
 

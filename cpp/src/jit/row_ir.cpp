@@ -1044,7 +1044,7 @@ transform_args ast_converter::compute_table(
                                  .input_table_sources  = std::move(table_sources),
                                  .input_column_indices = std::move(column_indices),
                                  .udf                  = std::move(code),
-                                 .source_type          = cudf::udf_source_type::CUDA,
+                                 .udf_expression       = std::string(function_name),
                                  .is_null_aware        = is_null_aware,
                                  .user_data            = std::nullopt,
                                  .inputs               = inputs,

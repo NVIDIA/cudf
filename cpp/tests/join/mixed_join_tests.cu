@@ -3,6 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+#include "cudf/utilities/error.hpp"
+
 #include <cudf_test/base_fixture.hpp>
 #include <cudf_test/column_wrapper.hpp>
 #include <cudf_test/debug_utilities.hpp>
@@ -451,8 +453,11 @@ struct MixedInnerJoinTest : public MixedJoinPairReturnTest<T> {
           right_conditional,
           cudf::device_span<cudf::size_type const>(*hash_join_result.first),
           cudf::device_span<cudf::size_type const>(*hash_join_result.second),
-          jit_predicate,
-          cudf::join_kind::INNER_JOIN);
+          std::nullopt,
+          cudf::cuda_udf{jit_predicate.c_str(), "predicate"},
+          cudf::null_aware::NO,
+          cudf::join_kind::INNER_JOIN,
+          std::nullopt);
         this->compare_join_results(mixed_result, jit_filter_result);
       }
 
@@ -928,8 +933,11 @@ TEST_F(MixedInnerJoinTest2, InvalidJoinKind)
                                              right_table,
                                              left_span,
                                              right_span,
-                                             predicate_code,
-                                             cudf::join_kind::LEFT_SEMI_JOIN),
+                                             std::nullopt,
+                                             cudf::cuda_udf{predicate_code.c_str(), "predicate"},
+                                             cudf::null_aware::NO,
+                                             cudf::join_kind::LEFT_SEMI_JOIN,
+                                             std::nullopt),
                std::invalid_argument);
 }
 
@@ -957,24 +965,40 @@ TEST_F(MixedInnerJoinTest2, UnsupportedColumnType)
   )";
 
   // JIT filter (string predicate) — struct in left table
-  EXPECT_THROW(cudf::filter_join_indices_jit(
-                 struct_table, valid_table, span, span, jit_pred, cudf::join_kind::INNER_JOIN),
+  EXPECT_THROW(cudf::filter_join_indices_jit(struct_table,
+                                             valid_table,
+                                             span,
+                                             span,
+                                             std::nullopt,
+                                             cudf::cuda_udf{jit_pred.c_str(), "predicate"},
+                                             cudf::null_aware::NO,
+                                             cudf::join_kind::INNER_JOIN,
+                                             std::nullopt),
                std::invalid_argument);
 
   // JIT filter (string predicate) — struct in right table
-  EXPECT_THROW(cudf::filter_join_indices_jit(
-                 valid_table, struct_table, span, span, jit_pred, cudf::join_kind::INNER_JOIN),
+  EXPECT_THROW(cudf::filter_join_indices_jit(valid_table,
+                                             struct_table,
+                                             span,
+                                             span,
+                                             std::nullopt,
+                                             cudf::cuda_udf{jit_pred.c_str(), "predicate"},
+                                             cudf::null_aware::NO,
+                                             cudf::join_kind::INNER_JOIN,
+                                             std::nullopt),
                std::invalid_argument);
 
   // JIT filter (AST predicate) — struct in left table
-  EXPECT_THROW(cudf::filter_join_indices_jit(
-                 struct_table, valid_table, span, span, pred, cudf::join_kind::INNER_JOIN),
-               std::invalid_argument);
+  EXPECT_THROW(
+    cudf::filter_join_indices_jit(
+      struct_table, valid_table, span, span, pred, cudf::join_kind::INNER_JOIN, std::nullopt),
+    std::invalid_argument);
 
   // JIT filter (AST predicate) — struct in right table
-  EXPECT_THROW(cudf::filter_join_indices_jit(
-                 valid_table, struct_table, span, span, pred, cudf::join_kind::INNER_JOIN),
-               std::invalid_argument);
+  EXPECT_THROW(
+    cudf::filter_join_indices_jit(
+      valid_table, struct_table, span, span, pred, cudf::join_kind::INNER_JOIN, std::nullopt),
+    std::invalid_argument);
 }
 
 TEST_F(MixedInnerJoinTest2, JitOnlyPredicate)
@@ -1005,8 +1029,11 @@ TEST_F(MixedInnerJoinTest2, JitOnlyPredicate)
                                   right_conditional,
                                   cudf::device_span<cudf::size_type const>(*hash_result.first),
                                   cudf::device_span<cudf::size_type const>(*hash_result.second),
-                                  jit_pred,
-                                  cudf::join_kind::INNER_JOIN);
+                                  std::nullopt,
+                                  cudf::cuda_udf{jit_pred.c_str(), "predicate"},
+                                  cudf::null_aware::NO,
+                                  cudf::join_kind::INNER_JOIN,
+                                  std::nullopt);
 
   // XOR popcount per equality-matched pair:
   //   (0,0): 0b0001^0b0000 = popcount 1 → PASS
@@ -1119,8 +1146,11 @@ struct MixedLeftJoinTest : public MixedJoinPairReturnTest<T> {
           right_conditional,
           cudf::device_span<cudf::size_type const>(*hash_join_result.first),
           cudf::device_span<cudf::size_type const>(*hash_join_result.second),
-          jit_predicate,
-          cudf::join_kind::LEFT_JOIN);
+          std::nullopt,
+          cudf::cuda_udf{jit_predicate.c_str(), "predicate"},
+          cudf::null_aware::NO,
+          cudf::join_kind::LEFT_JOIN,
+          std::nullopt);
         this->compare_join_results(mixed_result, jit_filter_result);
       }
 
@@ -1131,7 +1161,8 @@ struct MixedLeftJoinTest : public MixedJoinPairReturnTest<T> {
         cudf::device_span<cudf::size_type const>(*hash_join_result.first),
         cudf::device_span<cudf::size_type const>(*hash_join_result.second),
         predicate,
-        cudf::join_kind::LEFT_JOIN);
+        cudf::join_kind::LEFT_JOIN,
+        std::nullopt);
       this->compare_join_results(mixed_result, jit_ast_filter_result);
     }
 

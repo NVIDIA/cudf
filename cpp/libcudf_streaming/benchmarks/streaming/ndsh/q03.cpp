@@ -190,7 +190,7 @@ rapidsmpf::streaming::Actor select_columns_for_groupby(
       std::make_unique<cudf::column>(table.column(2), chunk_stream, ctx->br()->device_mr()));
     auto extendedprice = table.column(3);
     auto discount      = table.column(4);
-    std::string udf =
+    char const* udf =
       R"***(
 static __device__ void calculate_revenue(double *revenue, double extprice, double discount) {
     *revenue = extprice * (1 - discount);
@@ -199,8 +199,7 @@ static __device__ void calculate_revenue(double *revenue, double extprice, doubl
 
     // revenue
     result.push_back(std::move(
-      cudf::transform(udf,
-                      cudf::udf_source_type::CUDA,
+      cudf::transform(cudf::cuda_udf{udf, "calculate_revenue"},
                       cudf::null_aware::NO,
                       std::nullopt,
                       std::vector<cudf::transform_input>{extendedprice, discount},

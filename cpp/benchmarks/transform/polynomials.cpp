@@ -83,8 +83,7 @@ static void BM_transform_polynomials(nvbench::state& state)
 
     // clang-format on
 
-    cudf::transform(udf,
-                    cudf::udf_source_type::CUDA,
+    cudf::transform(cudf::cuda_udf{udf.c_str(), "compute_polynomial"},
                     cudf::null_aware::NO,
                     std::nullopt,
                     inputs,

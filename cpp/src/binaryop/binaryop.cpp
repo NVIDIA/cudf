@@ -159,9 +159,13 @@ void binary_operation(mutable_column_view& out,
                                                          cudf::type_to_name(rhs.type()),
                                                          "cudf::binops::jit::UserDefinedOp");
 
-  auto kernel = cudf::jit::get_udf_kernel(
-    "cudf/cpp/src/binaryop/jit/kernel.cu", kernel_reflection, cuda_source);
-  auto cfg = kernel.max_occupancy_config(0, 0);
+  auto kernel = cudf::jit::get_udf_kernel("cudf/cpp/src/binaryop/jit/kernel.cu",
+                                          kernel_reflection,
+                                          cuda_source,
+                                          "GENERIC_BINARY_OP",
+                                          {},
+                                          {});
+  auto cfg    = kernel.max_occupancy_config(0, 0);
 
   kernel.launch_with({cfg.min_grid_size},
                      {cfg.block_size},

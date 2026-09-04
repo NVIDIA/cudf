@@ -5,7 +5,6 @@
 #pragma once
 
 #include <cudf/column/column.hpp>
-#include <cudf/detail/join/join.hpp>
 #include <cudf/hashing.hpp>
 #include <cudf/join/join.hpp>
 #include <cudf/table/table_view.hpp>

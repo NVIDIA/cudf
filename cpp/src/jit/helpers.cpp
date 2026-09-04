@@ -85,7 +85,10 @@ std::map<uint32_t, std::string> build_ptx_params(std::span<std::string const> ou
 
 kernel get_udf_kernel(std::string const& source_file,
                       std::string const& kernel_name,
-                      std::string const& cuda_source)
+                      std::string const& cuda_source,
+                      std::string const& udf_expression,
+                      std::span<char const*> extra_include_names,
+                      std::span<char const*> extra_includes)
 {
   CUDF_FUNC_RANGE();
 
@@ -93,10 +96,17 @@ kernel get_udf_kernel(std::string const& source_file,
  #define CUDF_KERNEL_INSTANCE {}
  )***",
                                             kernel_name);
-  char const* include_names[] =  // NOLINT(modernize-avoid-c-arrays)
-    {"cudf/detail/operation_udf.cuh", "cudf/detail/kernel_instance.cuh"};
-  char const* include_headers[] =  // NOLINT(modernize-avoid-c-arrays)
-    {cuda_source.c_str(), kernel_instance_source.c_str()};
+  auto udf_expr_source        = std::format(R"***(
+#define CUDF_UDF_EXPRESSION {}
+)***",
+                                     udf_expression);
+  std::vector<char const*> include_names{"cudf/detail/operation_udf.cuh",
+                                         "cudf/detail/kernel_instance.cuh",
+                                         "cudf/detail/udf_expression.cuh"};
+  std::vector<char const*> include_headers{
+    cuda_source.c_str(), kernel_instance_source.c_str(), udf_expr_source.c_str()};
+  include_names.insert(include_names.end(), extra_include_names.begin(), extra_include_names.end());
+  include_headers.insert(include_headers.end(), extra_includes.begin(), extra_includes.end());
 
   return get_kernel(source_file, source_file, include_names, include_headers, kernel_name);
 }

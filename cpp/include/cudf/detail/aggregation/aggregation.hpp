@@ -592,8 +592,7 @@ class udf_aggregation final : public clonable<udf_aggregation>::derived_from<rol
                   data_type output_type)
     : aggregation{type},
       _source{std::move(user_defined_aggregator)},
-      _operator_name{(type == aggregation::PTX) ? "rolling_udf_ptx" : "rolling_udf_cuda"},
-      _function_name{"GENERIC_ROLLING_OP"},
+      _source_type{type == aggregation::PTX ? udf_source_type::PTX : udf_source_type::CUDA},
       _output_type{output_type}
   {
     CUDF_EXPECTS(type == aggregation::PTX or type == aggregation::CUDA,
@@ -604,8 +603,8 @@ class udf_aggregation final : public clonable<udf_aggregation>::derived_from<rol
   {
     if (!this->aggregation::is_equal(_other)) { return false; }
     auto const& other = dynamic_cast<udf_aggregation const&>(_other);
-    return (_source == other._source and _operator_name == other._operator_name and
-            _function_name == other._function_name and _output_type == other._output_type);
+    return (_source == other._source and _source_type == other._source_type and
+            _output_type == other._output_type);
   }
 
   [[nodiscard]] size_t do_hash() const override
@@ -614,15 +613,13 @@ class udf_aggregation final : public clonable<udf_aggregation>::derived_from<rol
   }
 
   std::string const _source;
-  std::string const _operator_name;
-  std::string const _function_name;
+  udf_source_type const _source_type;
   data_type _output_type;
 
  protected:
   [[nodiscard]] size_t hash_impl() const
   {
-    return std::hash<std::string>{}(_source) ^ std::hash<std::string>{}(_operator_name) ^
-           std::hash<std::string>{}(_function_name) ^
+    return std::hash<std::string>{}(_source) ^ std::hash<int>{}(static_cast<int>(_source_type)) ^
            std::hash<int>{}(static_cast<int32_t>(_output_type.id()));
   }
 };

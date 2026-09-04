@@ -74,7 +74,10 @@ column_views_to_device(std::span<ColumnView const> views,
 
 kernel get_udf_kernel(std::string const& source_file,
                       std::string const& kernel_name,
-                      std::string const& cuda_source);
+                      std::string const& cuda_source,
+                      std::string const& udf_expression,
+                      std::span<char const*> include_names,
+                      std::span<char const*> includes);
 
 rtcx::blob get_udf_kernel_fragment(std::string const& source_file,
                                    std::string const& kernel_name,

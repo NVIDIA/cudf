@@ -7,6 +7,7 @@
 
 #include "io/comp/nvcomp_adapter.hpp"
 #include "jit/cache.hpp"
+#include "jit/nvvm.hpp"
 
 #include <cudf/context.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
@@ -78,6 +79,7 @@ void context::initialize_jit()
   std::filesystem::create_directories(_config.jit_bundle_dir);
   std::filesystem::create_directories(_config.jit_pch_dir);
   std::filesystem::create_directories(_config.jit_tmp_dir);
+    jit::initialize_nvvm();
 
   _nvrtc_version     = rtcx::nvrtc_version();
   _nvjitlink_version = rtcx::nvjitlink_version();
@@ -104,12 +106,16 @@ context::~context()
 {
   _jit_bundle.reset();
   _rtcx_cache.reset();
+  jit::teardown_nvvm();
   rtcx::teardown();
 }
 
 rtcx::cache_t& context::rtcx_cache() { return *_rtcx_cache; }
+rtcx::cache_t& context::rtcx_cache() { return *_rtcx_cache; }
 
 jit_bundle_t& context::jit_bundle() { return *_jit_bundle; }
+
+jit::nvvm_api const& context::nvvm() { return jit::get_nvvm(); }
 
 bool context::dump_codegen() const { return _config.dump_codegen; }
 

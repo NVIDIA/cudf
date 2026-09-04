@@ -8,6 +8,7 @@
 #include <cudf/ast/expressions.hpp>
 #include <cudf/column/scalar_column_view.hpp>
 #include <cudf/types.hpp>
+#include <cudf/udf.hpp>
 #include <cudf/utilities/export.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
@@ -265,10 +266,7 @@ struct transform_program {
  * `row_size` is not provided. This is because the row size cannot be inferred from the inputs in
  * this case.
  * @throws std::invalid_argument if any of the output or input types are not supported.
- * CUDA-supported input types are fixed-width, string, and their dictionary types. PTX-supported
- * input types are integrals, floats, and their dictionary types. CUDA-supported output types are
- * fixed-width, string, and their dictionary types. PTX-supported output types are integrals,
- * floats, and their dictionary types.
+ * Supported input and output types are fixed-width, string, and their dictionary types.
  * @throws std::invalid_argument if string offsets are provided for non-string output columns, or
  * if the number of string offsets does not match the number of output columns.
  * @throws cudf::evaluation_error if the UDF produces an error during execution.
@@ -276,8 +274,7 @@ struct transform_program {
  * The size of the resulting column is the `row_size` if provided, otherwise it is inferred from
  * the input and pre-allocated output columns.
  *
- * @param udf The PTX/CUDA string of the transform function to apply
- * @param source_type   The source type of the UDF (CUDA or PTX)
+ * @param udf           The CUDA or LTO UDF to apply.
  * @param is_null_aware Signifies the UDF will receive row inputs as optional values
  * @param user_data     User-defined device data to pass to the UDF.
  * @param inputs        Immutable views of the inputs to transform (columns and scalar columns)
@@ -293,96 +290,7 @@ struct transform_program {
  *
  */
 std::unique_ptr<table> transform(
-  std::string const& udf,
-  udf_source_type source_type,
-  null_aware is_null_aware,
-  std::optional<void*> user_data,
-  std::span<transform_input const> inputs,
-  std::span<transform_output const> outputs,
-  std::vector<std::unique_ptr<column>>&& string_offsets,
-  std::optional<size_type> row_size,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
-
-/**
- * @brief Creates a new table by applying a transform function against every element of the input
- * columns.
- *
- * @deprecated in release 26.10. Use `transform` instead.
- *
- * @param udf The PTX/CUDA string of the transform function to apply
- * @param source_type The source type of the UDF (CUDA or PTX)
- * @param is_null_aware Signifies the UDF will receive row inputs as optional values
- * @param user_data User-defined device data to pass to the UDF
- * @param inputs Immutable views of the inputs to transform (columns and scalar columns)
- * @param outputs Specification of the output columns to be created
- * @param string_offsets Pre-allocated offsets for string output columns
- * @param row_size The row size of the transform operation
- * @param stream CUDA stream used for device memory operations and kernel launches
- * @param mr Device memory resource used to allocate the returned column's device memory
- * @return A table containing the transformed output columns
- */
-[[deprecated("Use transform instead")]] std::unique_ptr<table> multi_transform(
-  std::string const& udf,
-  udf_source_type source_type,
-  null_aware is_null_aware,
-  std::optional<void*> user_data,
-  std::span<transform_input const> inputs,
-  std::span<transform_output const> outputs,
-  std::vector<std::unique_ptr<column>>&& string_offsets,
-  std::optional<size_type> row_size,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
-
-/**
- * @brief The type of LTO Binary
- */
-enum class lto_binary_type : uint8_t {
-  LTO_IR,  //< LTO-IR binary
-  FATBIN   //< FATBIN binary
-};
-
-/**
- * @brief Creates a new table by applying a transform function against every
- * element of the input columns.
- *
- * Computes:
- * `(outputs[i]...) =  UDF(inputs[i]...)`.
- *
- *
- * @throws std::invalid_argument if any of the input columns have different sizes (except scalars)
- * @throws std::invalid_argument if `output_type` or any of the inputs are not fixed-width or string
- * types
- * @throws std::invalid_argument if the inputs only have a scalar with no column inputs and
- * `row_size` is not provided. This is because the row size cannot be inferred from the inputs in
- * this case
- * @throws std::invalid_argument if string offsets are provided for non-string output columns, or
- * if the number of string offsets does not match the number of output columns
- * @throws cudf::evaluation_error if the UDF produces an error during execution
- *
- * The size of the resulting column is the `row_size` if provided, otherwise it is inferred from
- * the input and pre-allocated output columns.
- *
- * @param udf           The LTO-IR fragment containing the transform function to apply. The UDF must
- * be named `transform` and follow the CUDF UDF ABI
- * @param binary_type   The type of the LTO binary provided in `udf`
- * @param is_null_aware Signifies the UDF will receive row inputs as optional values
- * @param user_data     User-defined device data to pass to the UDF
- * @param inputs        Immutable views of the inputs to transform
- * @param outputs       Specification of the output columns to be created
- * @param string_offsets For string output columns, the offsets can be pre-allocated and passed in
- * to prevent overhead of compacting string views into run-end strings column.
- * @param row_size The row size of the transform operation. If not provided, it is inferred from the
- * input columns
- * @param stream        CUDA stream used for device memory operations and kernel launches
- * @param mr            Device memory resource used to allocate the returned column's device memory
- * @return              A table containing the columns resulting from applying the transform
- * function to every element of the input according to the output specifications
- *
- */
-std::unique_ptr<table> transform_lto(
-  std::span<uint8_t const> udf,
-  lto_binary_type binary_type,
+  udf const& udf,
   null_aware is_null_aware,
   std::optional<void*> user_data,
   std::span<transform_input const> inputs,

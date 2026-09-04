@@ -87,8 +87,7 @@ static void BM_transform_polynomials_concurrent(nvbench::state& state)
                         "}";
 
       cudf::transform(
-        udf,
-        cudf::udf_source_type::CUDA,
+        cudf::cuda_udf{udf.c_str(), "compute_polynomial"},
         cudf::null_aware::NO,
         std::nullopt,
         inputs,

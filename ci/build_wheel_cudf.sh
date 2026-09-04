@@ -16,7 +16,8 @@ LIBCUDF_WHEELHOUSE=$(rapids-download-from-github "$(rapids-artifact-name wheel_c
 PYLIBCUDF_WHEELHOUSE=$(rapids-download-from-github "$(rapids-artifact-name wheel_python pylibcudf cudf --stable --cuda "$RAPIDS_CUDA_VERSION")")
 
 # env variable 'PIP_CONSTRAINT' is set up by rapids-init-pip. It constrains all subsequent
-# 'pip install', 'pip download', etc. calls (except those used in 'pip wheel', handled separately in build scripts)
+# 'pip install', 'pip download', etc. calls (except the isolated wheel build,
+# which is handled separately by ci/build_wheel.sh)
 echo "libcudf-${RAPIDS_PY_CUDA_SUFFIX} @ file://$(echo "${LIBCUDF_WHEELHOUSE}"/libcudf_*.whl)" >> "${PIP_CONSTRAINT}"
 echo "pylibcudf-${RAPIDS_PY_CUDA_SUFFIX} @ file://$(echo "${PYLIBCUDF_WHEELHOUSE}"/pylibcudf_*.whl)" >> "${PIP_CONSTRAINT}"
 

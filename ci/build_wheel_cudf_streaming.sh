@@ -41,6 +41,7 @@ rapids-pip-retry install \
 RAPIDS_PY_API="cp${RAPIDS_PY_VERSION//./}"
 export RAPIDS_PY_API
 
+# The shared helper performs the isolated wheel build and configures sccache.
 ./ci/build_wheel.sh "${package_name}" "${package_dir}" --stable 2>&1 | tee cudf-streaming-wheel-build-output.log
 
 rapids-logger "Checking for Cython performance warnings"

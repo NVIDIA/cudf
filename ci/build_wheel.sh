@@ -27,6 +27,12 @@ source rapids-configure-sccache
 source rapids-datetime-string
 source rapids-init-pip
 
+# `build` is the frontend that creates the isolated environment. Keep it in the
+# outer CI environment so that the build dependencies remain isolated.
+rapids-pip-retry install \
+  --disable-pip-version-check \
+  'build>=1.5'
+
 export SCCACHE_S3_PREPROCESSOR_CACHE_KEY_PREFIX="${package_name}-${RAPIDS_CONDA_ARCH}-cuda${RAPIDS_CUDA_VERSION%%.*}-wheel-preprocessor-cache"
 export SCCACHE_S3_USE_PREPROCESSOR_CACHE_MODE=true
 
@@ -42,33 +48,25 @@ sccache --stop-server 2>/dev/null || true
 
 rapids-logger "Building '${package_name}' wheel"
 
-RAPIDS_PIP_WHEEL_ARGS=(
-  -w dist
-  -v
-  --no-deps
-  --disable-pip-version-check
+RAPIDS_BUILD_ARGS=(
+  --wheel
+  --outdir dist
+  --verbose
+  --env-dir "/tmp/${package_name}-wheel-build-env"
+  --dependency-constraints-txt "${PIP_CONSTRAINT}"
 )
 
 # Add py-api setting for stable ABI builds
 if [[ "${stable_abi}" == "true" ]] && [[ -n "${RAPIDS_PY_API:-}" ]]; then
-  RAPIDS_PIP_WHEEL_ARGS+=(--config-settings="skbuild.wheel.py-api=${RAPIDS_PY_API}")
+  RAPIDS_BUILD_ARGS+=(--config-setting="skbuild.wheel.py-api=${RAPIDS_PY_API}")
 fi
 
-# Only use --build-constraint when build isolation is enabled.
-#
-# Passing '--build-constraint' and '--no-build-isolation` together results in an error from 'pip',
-# but we want to keep environment variable PIP_CONSTRAINT set unconditionally.
-# PIP_NO_BUILD_ISOLATION=0 means "add --no-build-isolation" (ref: https://github.com/pypa/pip/issues/5735)
-if [[ "${PIP_NO_BUILD_ISOLATION:-}" != "0" ]]; then
-    RAPIDS_PIP_WHEEL_ARGS+=(--build-constraint="${PIP_CONSTRAINT}")
-fi
-
-# unset PIP_CONSTRAINT (set by rapids-init-pip)... it doesn't affect builds as of pip 25.3, and
-# results in an error from 'pip wheel' when set and --build-constraint is also passed
+# `build` receives the same generated constraints explicitly. Unset the
+# environment variable so it does not constrain the frontend installation.
 unset PIP_CONSTRAINT
 
-rapids-telemetry-record build-${package_name}.log rapids-pip-retry wheel \
-    "${RAPIDS_PIP_WHEEL_ARGS[@]}" \
+rapids-telemetry-record build-${package_name}.log python -m build \
+    "${RAPIDS_BUILD_ARGS[@]}" \
     .
 
 rapids-telemetry-record sccache-stats-${package_name}.txt sccache --show-adv-stats

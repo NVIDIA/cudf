@@ -36,10 +36,6 @@ rapids-pip-retry install \
     --prefer-binary \
     -r /tmp/requirements-build.txt
 
-# build with '--no-build-isolation', for better sccache hit rate
-# 0 really means "add --no-build-isolation" (ref: https://github.com/pypa/pip/issues/5735)
-export PIP_NO_BUILD_ISOLATION=0
-
 # TODO: move this variable into `ci-wheel`
 # Format Python limited API version string
 RAPIDS_PY_API="cp${RAPIDS_PY_VERSION//./}"

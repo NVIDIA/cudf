@@ -95,7 +95,7 @@ public class DeletionVector {
   }
 
   /**
-   * Computes the number of rows deleted by a serialized deletion vector on the GPU.
+   * Computes (on the GPU) the number of rows deleted by a serialized deletion vector.
    *
    * @param deletionVectorInfo deletion vector and row-group metadata
    * @param maxChunkRows maximum number of row indexes to process at once
@@ -107,7 +107,7 @@ public class DeletionVector {
   public static long computeNumDeletedRows(
       DeletionVectorInfo deletionVectorInfo, int maxChunkRows) {
     if (deletionVectorInfo == null) {
-      throw new NullPointerException("deletionVectorInfo");
+      throw new NullPointerException("Expected non-null deletionVectorInfo");
     }
     if (maxChunkRows <= 0) {
       throw new IllegalArgumentException("maxChunkRows must be positive");

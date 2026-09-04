@@ -24,25 +24,44 @@ def make_items(num_items: int) -> list[pytest.Item]:
 
 def test_partition_items_by_shard_is_exhaustive_and_disjoint() -> None:
     items = make_items(100)
+    item_nodeids = {item.nodeid for item in items}
 
-    shard_nodeids = [
+    partitions = [partition_items_by_shard(items, shard_id, 3) for shard_id in range(3)]
+    shard_nodeids = [{item.nodeid for item in selected} for selected, _ in partitions]
+
+    assert set().union(*shard_nodeids) == item_nodeids
+    assert not (shard_nodeids[0] & shard_nodeids[1])
+    assert not (shard_nodeids[0] & shard_nodeids[2])
+    assert not (shard_nodeids[1] & shard_nodeids[2])
+    for selected, deselected in partitions:
+        selected_nodeids = {item.nodeid for item in selected}
+        deselected_nodeids = {item.nodeid for item in deselected}
+
+        assert selected_nodeids.isdisjoint(deselected_nodeids)
+        assert selected_nodeids | deselected_nodeids == item_nodeids
+
+
+def test_partition_items_by_shard_is_deterministic() -> None:
+    items = cast(
+        "list[pytest.Item]",
+        [
+            SimpleNamespace(nodeid="test_alpha"),
+            SimpleNamespace(nodeid="test_beta"),
+            SimpleNamespace(nodeid="test_1"),
+        ],
+    )
+
+    expected_nodeids = [
+        {"test_beta"},
+        {"test_1"},
+        {"test_alpha"},
+    ]
+    actual_nodeids = [
         {item.nodeid for item in partition_items_by_shard(items, shard_id, 3)[0]}
         for shard_id in range(3)
     ]
 
-    assert set().union(*shard_nodeids) == {item.nodeid for item in items}
-    assert not (shard_nodeids[0] & shard_nodeids[1])
-    assert not (shard_nodeids[0] & shard_nodeids[2])
-    assert not (shard_nodeids[1] & shard_nodeids[2])
-
-
-def test_partition_items_by_shard_is_deterministic() -> None:
-    items = make_items(100)
-
-    first, _ = partition_items_by_shard(items, 1, 3)
-    second, _ = partition_items_by_shard(items, 1, 3)
-
-    assert first == second
+    assert actual_nodeids == expected_nodeids
 
 
 def test_partition_items_by_shard_defaults_to_the_full_suite() -> None:

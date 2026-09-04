@@ -2294,6 +2294,8 @@ stripe_dictionaries build_dictionaries(orc_table_view& orc_table,
   auto map_storage = std::make_unique<storage_type>(
     total_map_storage_size, rmm::mr::polymorphic_allocator<char>{}, stream.get());
 
+  // Largest stripe row count, used to size the grids of the dictionary kernels
+  size_type max_dict_rows = 0;
   // Initialize stripe dictionaries
   for (auto col_idx : orc_table.string_column_indices) {
     auto& str_column       = orc_table.column(col_idx);
@@ -2315,12 +2317,14 @@ stripe_dictionaries build_dictionaries(orc_table_view& orc_table,
 
       sd.entry_count = 0;
       sd.char_count  = 0;
+
+      max_dict_rows = std::max(max_dict_rows, sd.num_rows);
     }
   }
   stripe_dicts.host_to_device_async(stream);
 
   map_storage->initialize_async({KEY_SENTINEL, VALUE_SENTINEL}, {stream.get()});
-  populate_dictionary_hash_maps(stripe_dicts, orc_table.d_columns, stream);
+  populate_dictionary_hash_maps(stripe_dicts, orc_table.d_columns, max_dict_rows, stream);
   // Copy the entry counts and char counts from the device to the host
   stripe_dicts.device_to_host(stream);
 
@@ -2367,7 +2371,7 @@ stripe_dictionaries build_dictionaries(orc_table_view& orc_table,
   stripe_dicts.host_to_device_async(stream);
 
   collect_map_entries(stripe_dicts, stream);
-  get_dictionary_indices(stripe_dicts, orc_table.d_columns, stream);
+  get_dictionary_indices(stripe_dicts, orc_table.d_columns, max_dict_rows, stream);
 
   // synchronize to ensure the copy is complete before we clear `map_slots`
   stream.sync();

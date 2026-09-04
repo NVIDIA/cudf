@@ -2160,6 +2160,38 @@ TEST_F(OrcWriterTest, UnorderedDictionary)
   CUDF_TEST_EXPECT_TABLES_EQUAL(*from_sorted, *from_unsorted);
 }
 
+// The dictionary index lookup gives each stripe dictionary one block per 1024 rows, so a stripe
+// needs more rows than that before more than one block participates. The row count here spans
+// several blocks and deliberately does not land on a block boundary, so the last block gets a
+// partial range.
+TEST_F(OrcWriterTest, DictionaryMultipleBlocksPerStripe)
+{
+  constexpr cudf::size_type num_rows = 5000;
+
+  // Few distinct values, so dictionary encoding is cheaper than direct encoding and gets enabled
+  std::vector<std::string> const values{
+    "alpha", "beta", "gamma", "delta", "epsilon", "zeta", "eta"};
+  auto const keys = cudf::detail::make_counting_transform_iterator(
+    0, [&](auto i) { return values[i % values.size()]; });
+  auto const validity =
+    cudf::detail::make_counting_transform_iterator(0, [](auto i) { return i % 11 != 0; });
+  str_col col(keys, keys + num_rows, validity);
+
+  table_view expected({col});
+
+  std::vector<char> out_buffer;
+  cudf::io::orc_writer_options out_opts =
+    cudf::io::orc_writer_options::builder(cudf::io::sink_info{&out_buffer}, expected);
+  cudf::io::write_orc(out_opts);
+
+  cudf::io::orc_reader_options in_opts =
+    cudf::io::orc_reader_options::builder(cudf::io::source_info{cudf::host_span<std::byte const>{
+      reinterpret_cast<std::byte const*>(out_buffer.data()), out_buffer.size()}});
+  auto const result = cudf::io::read_orc(in_opts);
+
+  CUDF_TEST_EXPECT_TABLES_EQUAL(expected, result.tbl->view());
+}
+
 TEST_F(OrcStatisticsTest, Empty)
 {
   int32_col col0{};

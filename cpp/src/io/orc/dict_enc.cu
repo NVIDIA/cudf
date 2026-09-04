@@ -7,11 +7,14 @@
 
 #include <cudf/detail/offsets_iterator.cuh>
 #include <cudf/detail/row_operator/equality.cuh>
+#include <cudf/detail/utilities/cuda.hpp>
 #include <cudf/detail/utilities/integer_utils.hpp>
 #include <cudf/hashing/detail/murmurhash3_x86_32.cuh>
 #include <cudf/io/orc_types.hpp>
 
 #include <cuda/stream>
+
+#include <algorithm>
 
 namespace cudf::io::orc::detail {
 
@@ -88,16 +91,57 @@ struct hash_functor {
 // Probing scheme to use for the hash map
 using probing_scheme_type = cuco::linear_probing<map_cg_size, hash_functor>;
 
-template <int block_size>
+/**
+ * @brief Number of blocks to assign to each stripe dictionary.
+ *
+ * Splitting a dictionary across blocks stops a single block from having to work through a whole
+ * stripe, which can be a million rows. It only pays off while there are idle SMs though: extra
+ * blocks sharing one hash map cost either locality or atomic contention, so the budget collapses to
+ * one block per dictionary once the dictionaries alone fill the device.
+ *
+ * @param kernel Kernel to be launched, used to query its occupancy
+ * @param block_size Threads per block the kernel will be launched with
+ * @param target_waves How many times over to fill the device before splitting any further
+ * @param num_dictionaries Number of dictionaries the grid has to cover
+ * @param max_dict_rows Largest row count of any dictionary
+ */
+template <typename Kernel>
+int blocks_per_dictionary(Kernel kernel,
+                          int block_size,
+                          int target_waves,
+                          std::size_t num_dictionaries,
+                          size_type max_dict_rows)
+{
+  int blocks_per_sm = 0;
+  CUDF_CUDA_TRY(
+    cudaOccupancyMaxActiveBlocksPerMultiprocessor(&blocks_per_sm, kernel, block_size, 0));
+  auto const budget =
+    target_waves * blocks_per_sm * cudf::detail::num_multiprocessors() / num_dictionaries;
+  auto const blocks_to_cover = cudf::util::div_rounding_up_safe(max_dict_rows, block_size);
+  return std::clamp<int>(budget, 1, std::max(blocks_to_cover, size_type{1}));
+}
+
+/**
+ * @brief Builds the hash map of unique values for every stripe dictionary.
+ *
+ * `blockIdx.x` selects the dictionary and `blockIdx.y` splits its rows across blocks. Splitting
+ * requires `Scope` to be `cuda::thread_scope_device` so that concurrent inserts from different
+ * blocks stay atomic; with a y extent of one, `cuda::thread_scope_block` is both correct and
+ * cheaper. The launcher picks accordingly.
+ *
+ * Which of several equal strings wins a slot depends on block order, but a slot is chosen by string
+ * content, so the dictionary holds the same strings either way and the encoded output is
+ * unaffected.
+ */
+template <int block_size, cuda::thread_scope Scope>
 CUDF_KERNEL void __launch_bounds__(block_size)
   populate_dictionary_hash_maps_kernel(device_2dspan<stripe_dictionary> dictionaries,
                                        device_span<orc_column_device_view const> columns)
 {
-  auto const col_idx    = blockIdx.x / dictionaries.size().second;
-  auto const stripe_idx = blockIdx.x % dictionaries.size().second;
-  auto const t          = threadIdx.x;
-  auto& dict            = dictionaries[col_idx][stripe_idx];
-  auto const& col       = columns[dict.column_idx];
+  auto const num_stripes = dictionaries.size().second;
+  auto const t           = threadIdx.x;
+  auto& dict             = dictionaries[blockIdx.x / num_stripes][blockIdx.x % num_stripes];
+  auto const& col        = columns[dict.column_idx];
 
   // Make a view of the hash map
   auto const hash_fn     = hash_functor{col};
@@ -109,20 +153,22 @@ CUDF_KERNEL void __launch_bounds__(block_size)
                                            cuco::empty_value{VALUE_SENTINEL},
                                            equality_fn,
                                            probing_scheme_type{hash_fn},
-                                           cuco::thread_scope_block,
+                                           cuco::cuda_thread_scope<Scope>{},
                                            storage_ref};
 
   // Create a map ref with `cuco::insert` operator
   auto has_map_insert_ref = hash_map_ref.rebind_operators(cuco::insert);
 
-  auto const start_row = dict.start_row;
-  auto const end_row   = dict.start_row + dict.num_rows;
+  auto const end_row = dict.start_row + dict.num_rows;
+  auto const first_row =
+    dict.start_row + static_cast<thread_index_type>(blockIdx.y) * block_size + t;
+  auto const row_stride = static_cast<thread_index_type>(block_size) * gridDim.y;
 
   size_type entry_count{0};
   size_type char_count{0};
 
   // all threads should loop the same number of times
-  for (thread_index_type cur_row = start_row + t; cur_row - t < end_row; cur_row += block_size) {
+  for (thread_index_type cur_row = first_row; cur_row - t < end_row; cur_row += row_stride) {
     auto const is_valid = cur_row < end_row and col.is_valid(cur_row);
 
     if (is_valid) {
@@ -146,8 +192,10 @@ CUDF_KERNEL void __launch_bounds__(block_size)
   auto const block_char_count = block_reduce(reduce_storage).Sum(char_count);
 
   if (t == 0) {
-    dict.entry_count = block_entry_count;
-    dict.char_count  = block_char_count;
+    // Accumulated rather than assigned, since several blocks may share a dictionary. The counts are
+    // zeroed on the host before the launch.
+    atomicAdd(&dict.entry_count, block_entry_count);
+    atomicAdd(&dict.char_count, block_char_count);
   }
 }
 
@@ -181,18 +229,29 @@ CUDF_KERNEL void __launch_bounds__(block_size)
   }
 }
 
+/**
+ * @brief Looks up the dictionary index of every row of every stripe dictionary.
+ *
+ * `blockIdx.x` selects the dictionary and `blockIdx.y` splits its rows across blocks, so one stripe
+ * can be worked on by several blocks instead of just one. The y extent need not cover all of the
+ * rows; blocks stride until they run out. Each row is handled independently, so no combining step
+ * is needed.
+ *
+ * The hash maps are only read here; they are fully built by the preceding
+ * `populate_dictionary_hash_maps` and `collect_map_entries` launches. `cuco::thread_scope_block`
+ * therefore does not prevent spreading one dictionary over several blocks: the scope only governs
+ * the atomicity of modifications, and there are none.
+ */
 template <int block_size>
 CUDF_KERNEL void __launch_bounds__(block_size)
   get_dictionary_indices_kernel(device_2dspan<stripe_dictionary> dictionaries,
                                 device_span<orc_column_device_view const> columns)
 {
-  auto const col_idx    = blockIdx.x / dictionaries.size().second;
-  auto const stripe_idx = blockIdx.x % dictionaries.size().second;
-  auto const t          = threadIdx.x;
-  auto const& dict      = dictionaries[col_idx][stripe_idx];
-  auto const& col       = columns[dict.column_idx];
-
+  auto const num_stripes = dictionaries.size().second;
+  auto const& dict       = dictionaries[blockIdx.x / num_stripes][blockIdx.x % num_stripes];
   if (not dict.is_enabled) { return; }
+
+  auto const& col = columns[dict.column_idx];
 
   // Make a view of the hash map
   auto const hash_fn     = hash_functor{col};
@@ -207,13 +266,15 @@ CUDF_KERNEL void __launch_bounds__(block_size)
                                            cuco::thread_scope_block,
                                            storage_ref};
 
-  // Create a map ref with `cuco::insert` operator
+  // Create a map ref with `cuco::find` operator
   auto has_map_find_ref = hash_map_ref.rebind_operators(cuco::find);
 
-  auto const start_row = dict.start_row;
-  auto const end_row   = dict.start_row + dict.num_rows;
+  auto const end_row = dict.start_row + dict.num_rows;
+  auto const first_row =
+    dict.start_row + static_cast<thread_index_type>(blockIdx.y) * block_size + threadIdx.x;
+  auto const row_stride = static_cast<thread_index_type>(block_size) * gridDim.y;
 
-  for (thread_index_type cur_row = start_row + t; cur_row < end_row; cur_row += block_size) {
+  for (thread_index_type cur_row = first_row; cur_row < end_row; cur_row += row_stride) {
     if (col.is_valid(cur_row)) {
       auto const found_slot = has_map_find_ref.find(cur_row);
       // Fail if we didn't find the previously inserted key.
@@ -226,12 +287,32 @@ CUDF_KERNEL void __launch_bounds__(block_size)
 
 void populate_dictionary_hash_maps(device_2dspan<stripe_dictionary> dictionaries,
                                    device_span<orc_column_device_view const> columns,
+                                   size_type max_dict_rows,
                                    cuda::stream_ref stream)
 {
   if (dictionaries.count() == 0) { return; }
-  constexpr int block_size = 256;
-  populate_dictionary_hash_maps_kernel<block_size>
-    <<<dictionaries.count(), block_size, 0, stream.get()>>>(dictionaries, columns);
+  constexpr int block_size   = 256;
+  constexpr int target_waves = 4;
+
+  auto const blocks_per_dict = blocks_per_dictionary(
+    populate_dictionary_hash_maps_kernel<block_size, cuda::thread_scope_device>,
+    block_size,
+    target_waves,
+    dictionaries.count(),
+    max_dict_rows);
+
+  dim3 const grid{static_cast<unsigned int>(dictionaries.count()),
+                  static_cast<unsigned int>(blocks_per_dict)};
+
+  // Device-scoped inserts are only needed when a dictionary is shared by several blocks, and they
+  // are more expensive, so keep the cheaper block scope whenever one block covers a dictionary.
+  if (blocks_per_dict == 1) {
+    populate_dictionary_hash_maps_kernel<block_size, cuda::thread_scope_block>
+      <<<grid, block_size, 0, stream.get()>>>(dictionaries, columns);
+  } else {
+    populate_dictionary_hash_maps_kernel<block_size, cuda::thread_scope_device>
+      <<<grid, block_size, 0, stream.get()>>>(dictionaries, columns);
+  }
   CUDF_CUDA_TRY(cudaGetLastError());
 }
 
@@ -246,12 +327,24 @@ void collect_map_entries(device_2dspan<stripe_dictionary> dictionaries, cuda::st
 
 void get_dictionary_indices(device_2dspan<stripe_dictionary> dictionaries,
                             device_span<orc_column_device_view const> columns,
+                            size_type max_dict_rows,
                             cuda::stream_ref stream)
 {
   if (dictionaries.count() == 0) { return; }
   constexpr int block_size = 1024;
+  // Chosen empirically to speed up narrow tables without slowing down wide ones.
+  constexpr int target_waves = 4;
+
+  auto const blocks_per_dict = blocks_per_dictionary(get_dictionary_indices_kernel<block_size>,
+                                                     block_size,
+                                                     target_waves,
+                                                     dictionaries.count(),
+                                                     max_dict_rows);
+
+  dim3 const grid{static_cast<unsigned int>(dictionaries.count()),
+                  static_cast<unsigned int>(blocks_per_dict)};
   get_dictionary_indices_kernel<block_size>
-    <<<dictionaries.count(), block_size, 0, stream.get()>>>(dictionaries, columns);
+    <<<grid, block_size, 0, stream.get()>>>(dictionaries, columns);
   CUDF_CUDA_TRY(cudaGetLastError());
 }
 

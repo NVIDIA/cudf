@@ -76,6 +76,49 @@ void BM_orc_write_encode(nvbench::state& state, nvbench::type_list<nvbench::enum
   state.add_buffer_size(encoded_file_size, "encoded_file_size", "encoded_file_size");
 }
 
+// Number of rows in the narrow benchmarks below. One million rows is a single stripe at the default
+// stripe size, and comfortably more than the row counts at which the per-stripe work is spread over
+// several thread blocks.
+constexpr cudf::size_type narrow_num_rows = 1'000'000;
+
+// Tall, narrow tables are the shape that exposes encoding kernels whose grid is sized by a
+// structural count such as the number of columns or stripes rather than by the number of rows: with
+// a single column those kernels get a handful of blocks no matter how tall the table is. The wide
+// benchmarks above hide that, because 64 columns supply enough blocks on their own.
+template <data_type DataType>
+void BM_orc_write_narrow(nvbench::state& state, nvbench::type_list<nvbench::enum_type<DataType>>)
+{
+  auto const d_type                 = get_type_or_group(static_cast<int32_t>(DataType));
+  cudf::size_type const cardinality = state.get_int64("cardinality");
+
+  auto const tbl  = create_random_table(cycle_dtypes(d_type, 1),
+                                       row_count{narrow_num_rows},
+                                       data_profile_builder().cardinality(cardinality));
+  auto const view = tbl->view();
+
+  std::size_t encoded_file_size = 0;
+
+  auto mem_stats_logger = cudf::memory_stats_logger();
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().value()));
+  state.exec(
+    nvbench::exec_tag::timer | nvbench::exec_tag::sync, [&](nvbench::launch&, auto& timer) {
+      cuio_source_sink_pair source_sink(io_type::VOID);
+
+      timer.start();
+      cudf::io::write_orc(cudf::io::orc_writer_options::builder(source_sink.make_sink_info(), view)
+                            .compression(cudf::io::compression_type::SNAPPY)
+                            .build());
+      timer.stop();
+
+      encoded_file_size = source_sink.size();
+    });
+
+  state.add_element_count(view.num_rows(), "rows");
+  state.add_buffer_size(
+    mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
+  state.add_buffer_size(encoded_file_size, "encoded_file_size", "encoded_file_size");
+}
+
 void BM_orc_write_io_compression(nvbench::state& state)
 {
   auto const d_type = get_type_or_group({static_cast<int32_t>(data_type::INTEGRAL_SIGNED),
@@ -181,6 +224,14 @@ using d_type_list = nvbench::enum_type_list<data_type::INTEGRAL_SIGNED,
                                             data_type::LIST,
                                             data_type::STRUCT>;
 
+// Only flat types are narrow: a nested column expands into several internal columns, which is the
+// very thing the narrow benchmarks are meant to do without.
+using narrow_d_type_list = nvbench::enum_type_list<data_type::INTEGRAL_SIGNED,
+                                                   data_type::FLOAT,
+                                                   data_type::DECIMAL,
+                                                   data_type::TIMESTAMP,
+                                                   data_type::STRING>;
+
 using stats_list = nvbench::enum_type_list<cudf::io::STATISTICS_NONE,
                                            cudf::io::ORC_STATISTICS_STRIPE,
                                            cudf::io::ORC_STATISTICS_ROW_GROUP>;
@@ -193,6 +244,12 @@ NVBENCH_BENCH_TYPES(BM_orc_write_encode, NVBENCH_TYPE_AXES(d_type_list))
   .add_int64_axis("run_length", {1, 32})
   .add_int64_axis("stripe_size_bytes", {0})
   .add_int64_axis("stripe_size_rows", {0});
+
+NVBENCH_BENCH_TYPES(BM_orc_write_narrow, NVBENCH_TYPE_AXES(narrow_d_type_list))
+  .set_name("orc_write_narrow")
+  .set_type_axes_names({"data_type"})
+  .set_min_samples(4)
+  .add_int64_axis("cardinality", {0, 1000});
 
 NVBENCH_BENCH(BM_orc_write_io_compression)
   .set_name("orc_write_io_compression")

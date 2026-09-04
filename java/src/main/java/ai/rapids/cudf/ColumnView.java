@@ -630,6 +630,24 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
     return new ColumnVector(result);
   }
 
+  /**
+   * Returns a copy of this column with each row set to null wherever the corresponding row
+   * in booleanMask is false or null, leaving the other rows as they already are (including
+   * any that were already null).
+   * <p>
+   * This is a convenience over {@code ifElse}, which otherwise needs a null scalar of this
+   * column's type constructed just to null out the false rows.
+   * @param booleanMask a BOOL8 column with the same row count as this column
+   * @return a new column with this column's values, nulled out where booleanMask is not true
+   */
+  public final ColumnVector applyNullMask(ColumnView booleanMask) {
+    if (!booleanMask.getType().equals(DType.BOOL8)) {
+      throw new IllegalArgumentException("Mask column must be of type BOOL8, found " +
+          booleanMask.getType());
+    }
+    return new ColumnVector(applyNullMask(getNativeView(), booleanMask.getNativeView()));
+  }
+
   /////////////////////////////////////////////////////////////////////////////
   // Slice/Split and Concatenate
   /////////////////////////////////////////////////////////////////////////////
@@ -5127,6 +5145,8 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
   private static native long ifElseSV(long predVec, long trueScalar, long falseVec) throws CudfException;
 
   private static native long ifElseSS(long predVec, long trueScalar, long falseScalar) throws CudfException;
+
+  private static native long applyNullMask(long baseHandle, long boolMaskHandle) throws CudfException;
 
   private static native long reduce(long viewHandle, long aggregation, int dtype, int scale) throws CudfException;
 

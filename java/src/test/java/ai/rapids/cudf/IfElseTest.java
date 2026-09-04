@@ -1,6 +1,6 @@
 /*
  *
- *  SPDX-FileCopyrightText: Copyright (c) 2020, NVIDIA CORPORATION.
+ *  SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  *  SPDX-License-Identifier: Apache-2.0
  *
  */
@@ -1165,6 +1165,33 @@ public class IfElseTest extends CudfTestBase {
          Scalar trueScalar = Scalar.fromByte((byte) 1);
          Scalar falseScalar = Scalar.fromString("hey")) {
       assertThrows(CudfException.class, () -> pred.ifElse(trueScalar, falseScalar));
+    }
+  }
+
+  @Test
+  void testApplyNullMask() {
+    try (ColumnVector input = ColumnVector.fromBoxedInts(0, 100, 1, 2, Integer.MIN_VALUE, null);
+         ColumnVector mask = ColumnVector.fromBoxedBooleans(true, false, true, null, false, true);
+         ColumnVector result = input.applyNullMask(mask);
+         ColumnVector expected = ColumnVector.fromBoxedInts(0, null, 1, null, null, null)) {
+      assertColumnsAreEqual(expected, result);
+    }
+  }
+
+  @Test
+  void testApplyNullMaskAllTrueIsValuePreserving() {
+    try (ColumnVector input = ColumnVector.fromBoxedInts(0, 100, null, 2);
+         ColumnVector mask = ColumnVector.fromBoxedBooleans(true, true, true, true);
+         ColumnVector result = input.applyNullMask(mask)) {
+      assertColumnsAreEqual(input, result);
+    }
+  }
+
+  @Test
+  void testApplyNullMaskRejectsNonBooleanMask() {
+    try (ColumnVector input = ColumnVector.fromBoxedInts(0, 100, 1, 2);
+         ColumnVector mask = ColumnVector.fromBoxedInts(1, 0, 1, 0)) {
+      assertThrows(IllegalArgumentException.class, () -> input.applyNullMask(mask));
     }
   }
 }

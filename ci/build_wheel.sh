@@ -52,6 +52,7 @@ RAPIDS_BUILD_ARGS=(
   --wheel
   --outdir dist
   --verbose
+  # A fixed location keeps isolated-build include paths stable for sccache.
   --env-dir "/tmp/${package_name}-wheel-build-env"
   --dependency-constraints-txt "${PIP_CONSTRAINT}"
 )

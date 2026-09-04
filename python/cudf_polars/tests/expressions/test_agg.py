@@ -357,7 +357,8 @@ def test_groupby_max_min_by_literal_column_value_unsupported(
 
 
 @pytest.mark.skipif(
-    POLARS_VERSION_LT_138, reason="polars 1.38.0 introduced max_by and min_by"
+    POLARS_VERSION_LT_139,
+    reason="polars 1.38.0 introduced max_by and min_by, but has a bug with literals (fixed in 1.39)",
 )
 @pytest.mark.parametrize("agg", ["max_by", "min_by"])
 def test_groupby_max_min_by_scalar_value(engine: pl.GPUEngine, agg: str) -> None:

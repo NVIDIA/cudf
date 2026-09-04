@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import math
 import operator
 
 import cupy as cp
@@ -461,3 +462,326 @@ def test_masked_binary_with_na_is_invalid(na_first):
         cp.array([True], dtype=np.bool_),  # valid operand; NA still poisons
     )
     assert bool(out_valid.get()[0]) is False
+
+
+@pytest.mark.parametrize("valid", [True, False])
+@pytest.mark.parametrize("op", [operator.neg, operator.pos])
+def test_masked_unary_sign(op, valid):
+    """Sign unary ops on a Masked carry the operand's validity."""
+
+    @cuda.jit(
+        types.void(
+            types.int64[::1],
+            types.boolean[::1],
+            types.int64[::1],
+            types.boolean[::1],
+        )
+    )
+    def k(out_v, out_valid, a, av):
+        m = op(Masked(a[0], av[0]))
+        out_v[0] = m.value
+        out_valid[0] = m.valid
+
+    out_v = cp.zeros(1, dtype=np.int64)
+    out_valid = cp.zeros(1, dtype=np.bool_)
+    _launch(
+        k,
+        out_v,
+        out_valid,
+        cp.array([7], dtype=np.int64),
+        cp.array([valid], dtype=np.bool_),
+    )
+    assert int(out_v.get()[0]) == op(7)
+    # validity carried from the operand
+    assert bool(out_valid.get()[0]) is valid
+
+
+@pytest.mark.parametrize("valid", [True, False])
+@pytest.mark.parametrize("x", [5, 0, -6, 255])
+def test_masked_invert(x, valid):
+    """``~m`` on a Masked integer inverts the payload bits."""
+
+    @cuda.jit(
+        types.void(
+            types.int64[::1],
+            types.boolean[::1],
+            types.int64[::1],
+            types.boolean[::1],
+        )
+    )
+    def k(out_v, out_valid, a, av):
+        m = ~Masked(a[0], av[0])
+        out_v[0] = m.value
+        out_valid[0] = m.valid
+
+    out_v = cp.zeros(1, dtype=np.int64)
+    out_valid = cp.zeros(1, dtype=np.bool_)
+    _launch(
+        k,
+        out_v,
+        out_valid,
+        cp.array([x], dtype=np.int64),
+        cp.array([valid], dtype=np.bool_),
+    )
+    assert int(out_v.get()[0]) == ~x
+    assert bool(out_valid.get()[0]) is valid
+
+
+@pytest.mark.parametrize("valid", [True, False])
+@pytest.mark.parametrize(
+    "fn",
+    [
+        math.sin,
+        math.cos,
+        math.sqrt,
+        math.exp,
+    ],
+)
+def test_masked_unary_math(fn, valid):
+    """math.* unary functions lower on a Masked's payload."""
+
+    @cuda.jit(
+        types.void(
+            types.float64[::1],
+            types.boolean[::1],
+            types.float64[::1],
+            types.boolean[::1],
+        )
+    )
+    def k(out_v, out_valid, a, av):
+        m = fn(Masked(a[0], av[0]))
+        out_v[0] = m.value
+        out_valid[0] = m.valid
+
+    out_v = cp.zeros(1, dtype=np.float64)
+    out_valid = cp.zeros(1, dtype=np.bool_)
+    _launch(
+        k,
+        out_v,
+        out_valid,
+        cp.array([1.5], dtype=np.float64),
+        cp.array([valid], dtype=np.bool_),
+    )
+    np.testing.assert_allclose(float(out_v.get()[0]), fn(1.5), rtol=1e-12)
+    assert bool(out_valid.get()[0]) is valid
+
+
+@pytest.mark.parametrize("valid", [True, False])
+@pytest.mark.parametrize("x", [-9, 0, 12])
+def test_masked_abs(x, valid):
+    """``abs(m)`` returns a Masked with the absolute value of the payload."""
+
+    @cuda.jit(
+        types.void(
+            types.int64[::1],
+            types.boolean[::1],
+            types.int64[::1],
+            types.boolean[::1],
+        )
+    )
+    def k(out_v, out_valid, a, av):
+        m = abs(Masked(a[0], av[0]))
+        out_v[0] = m.value
+        out_valid[0] = m.valid
+
+    out_v = cp.zeros(1, dtype=np.int64)
+    out_valid = cp.zeros(1, dtype=np.bool_)
+    _launch(
+        k,
+        out_v,
+        out_valid,
+        cp.array([x], dtype=np.int64),
+        cp.array([valid], dtype=np.bool_),
+    )
+    assert int(out_v.get()[0]) == abs(x)
+    assert bool(out_valid.get()[0]) is valid
+
+
+@pytest.mark.parametrize(
+    "value,valid,expected",
+    [
+        (5, True, True),  # valid & odd truthy
+        (2, True, True),  # even; trunc->i1 would drop low bit
+        (-2, True, True),  # valid & negative even truthy
+        (0, True, False),  # valid & falsy
+        (5, False, False),  # invalid -> False regardless of payload
+        (2, False, False),
+        (0, False, False),
+    ],
+)
+def test_masked_bool_truth(value, valid, expected):
+    """``bool(m)`` is ``m.valid and bool(m.value)``."""
+
+    @cuda.jit(
+        types.void(types.boolean[::1], types.int64[::1], types.boolean[::1])
+    )
+    def k(out, a, av):
+        out[0] = bool(Masked(a[0], av[0]))
+
+    out = cp.zeros(1, dtype=np.bool_)
+    _launch(
+        k,
+        out,
+        cp.array([value], dtype=np.int64),
+        cp.array([valid], dtype=np.bool_),
+    )
+    assert bool(out.get()[0]) is expected
+
+
+@pytest.mark.parametrize("use_operator", [False, True])
+@pytest.mark.parametrize(
+    "value,valid,expected",
+    [
+        (5, True, False),  # valid & truthy -> not True
+        (0, True, True),  # valid & falsy -> not False
+        (5, False, True),  # invalid is falsy -> not False
+        (0, False, True),
+    ],
+)
+def test_masked_not(value, valid, expected, use_operator):
+    """``not m`` / ``operator.not_`` -> plain bool; invalid Masked is falsy."""
+
+    if use_operator:
+
+        @cuda.jit(
+            types.void(
+                types.boolean[::1], types.int64[::1], types.boolean[::1]
+            )
+        )
+        def k(out, a, av):
+            out[0] = operator.not_(Masked(a[0], av[0]))
+
+    else:
+
+        @cuda.jit(
+            types.void(
+                types.boolean[::1], types.int64[::1], types.boolean[::1]
+            )
+        )
+        def k(out, a, av):
+            out[0] = not Masked(a[0], av[0])
+
+    out = cp.zeros(1, dtype=np.bool_)
+    _launch(
+        k,
+        out,
+        cp.array([value], dtype=np.int64),
+        cp.array([valid], dtype=np.bool_),
+    )
+    assert bool(out.get()[0]) is expected
+
+
+@pytest.mark.parametrize(
+    "value,valid,expected",
+    [
+        (1.0, True, True),  # valid & truthy
+        (-2.5, True, True),  # valid & truthy (negative)
+        (0.0, True, False),  # valid & falsy
+        (float("nan"), True, True),  # nan is truthy, like Python
+        (1.0, False, False),  # invalid -> False regardless of payload
+    ],
+)
+def test_masked_bool_truth_float(value, valid, expected):
+    """``bool(m)`` on a float payload tests ``payload != 0`` (not fptoui)."""
+
+    @cuda.jit(
+        types.void(types.boolean[::1], types.float64[::1], types.boolean[::1])
+    )
+    def k(out, a, av):
+        out[0] = bool(Masked(a[0], av[0]))
+
+    out = cp.zeros(1, dtype=np.bool_)
+    _launch(
+        k,
+        out,
+        cp.array([value], dtype=np.float64),
+        cp.array([valid], dtype=np.bool_),
+    )
+    assert bool(out.get()[0]) is expected
+
+
+def test_masked_bool_in_if_condition():
+    """A Masked used directly in an ``if`` uses its truth value."""
+
+    @cuda.jit(
+        types.void(types.int64[::1], types.int64[::1], types.boolean[::1])
+    )
+    def k(out, a, av):
+        m = Masked(a[0], av[0])
+        if m:
+            out[0] = 1
+        else:
+            out[0] = 0
+
+    out = cp.zeros(1, dtype=np.int64)
+    _launch(
+        k, out, cp.array([5], dtype=np.int64), cp.array([True], dtype=np.bool_)
+    )
+    assert int(out.get()[0]) == 1
+    _launch(
+        k,
+        out,
+        cp.array([5], dtype=np.int64),
+        cp.array([False], dtype=np.bool_),
+    )
+    assert int(out.get()[0]) == 0
+
+
+@pytest.mark.parametrize("valid", [True, False])
+def test_masked_float_cast(valid):
+    """``float(m)`` casts the payload to float64, preserving validity."""
+
+    @cuda.jit(
+        types.void(
+            types.float64[::1],
+            types.boolean[::1],
+            types.int64[::1],
+            types.boolean[::1],
+        )
+    )
+    def k(out_v, out_valid, a, av):
+        m = float(Masked(a[0], av[0]))
+        out_v[0] = m.value
+        out_valid[0] = m.valid
+
+    out_v = cp.zeros(1, dtype=np.float64)
+    out_valid = cp.zeros(1, dtype=np.bool_)
+    _launch(
+        k,
+        out_v,
+        out_valid,
+        cp.array([3], dtype=np.int64),
+        cp.array([valid], dtype=np.bool_),
+    )
+    assert float(out_v.get()[0]) == 3.0
+    assert bool(out_valid.get()[0]) is valid
+
+
+@pytest.mark.parametrize("valid", [True, False])
+def test_masked_int_cast(valid):
+    """``int(m)`` casts the payload to int64, preserving validity."""
+
+    @cuda.jit(
+        types.void(
+            types.int64[::1],
+            types.boolean[::1],
+            types.float64[::1],
+            types.boolean[::1],
+        )
+    )
+    def k(out_v, out_valid, a, av):
+        m = int(Masked(a[0], av[0]))
+        out_v[0] = m.value
+        out_valid[0] = m.valid
+
+    out_v = cp.zeros(1, dtype=np.int64)
+    out_valid = cp.zeros(1, dtype=np.bool_)
+    _launch(
+        k,
+        out_v,
+        out_valid,
+        cp.array([3.9], dtype=np.float64),
+        cp.array([valid], dtype=np.bool_),
+    )
+    assert int(out_v.get()[0]) == 3
+    assert bool(out_valid.get()[0]) is valid

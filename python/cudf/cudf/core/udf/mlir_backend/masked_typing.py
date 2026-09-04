@@ -19,7 +19,12 @@ from numba_cuda_mlir.numba_cuda.typing.templates import (
 from numba_cuda_mlir.typing import signature as nb_signature
 
 from cudf.core.missing import NA
-from cudf.core.udf._ops import arith_ops, bitwise_ops, comparison_ops
+from cudf.core.udf._ops import (
+    arith_ops,
+    bitwise_ops,
+    comparison_ops,
+    unary_ops,
+)
 from cudf.core.udf.api import Masked
 
 _SUPPORTED_MASKED_VALUE_TYPE_CLASSES = (
@@ -213,6 +218,75 @@ class MaskedScalarNullOp(AbstractTemplate):
         return None
 
 
+class MaskedScalarUnaryOp(AbstractTemplate):
+    """``<op>(Masked)``: resolve the underlying scalar op on the value type
+    and wrap the result back in a ``MaskedType``.
+    """
+
+    def generic(
+        self, args: tuple[types.Type, ...], kws: dict
+    ) -> Signature | None:
+        if len(args) == 1 and isinstance(args[0], MaskedType):
+            return_type = self.context.resolve_function_type(
+                self.key, (args[0].value_type,), kws
+            ).return_type
+            return nb_signature(MaskedType(return_type), args[0])
+        return None
+
+
+class MaskedScalarTruth(AbstractTemplate):
+    """Masked -> plain boolean for the truth-testing unary ops.
+
+    Covers ``bool(m)`` / ``operator.truth(m)`` and ``not m`` /
+    ``operator.not_(m)``. The *type* is always a plain boolean (used directly
+    in ``if`` conditions); the runtime result differs per op and is handled in
+    lowering.
+    """
+
+    def generic(
+        self, args: tuple[types.Type, ...], kws: dict
+    ) -> Signature | None:
+        if len(args) == 1 and isinstance(args[0], MaskedType):
+            return nb_signature(types.boolean, args[0])
+        return None
+
+
+class MaskedScalarFloatCast(AbstractTemplate):
+    """``float(m)`` -> ``Masked(float64)``."""
+
+    def generic(
+        self, args: tuple[types.Type, ...], kws: dict
+    ) -> Signature | None:
+        if len(args) == 1 and isinstance(args[0], MaskedType):
+            return nb_signature(MaskedType(types.float64), args[0])
+        return None
+
+
+class MaskedScalarIntCast(AbstractTemplate):
+    """``int(m)`` -> ``Masked(int64)``."""
+
+    def generic(
+        self, args: tuple[types.Type, ...], kws: dict
+    ) -> Signature | None:
+        if len(args) == 1 and isinstance(args[0], MaskedType):
+            return nb_signature(MaskedType(types.int64), args[0])
+        return None
+
+
+class MaskedScalarAbsoluteValue(AbstractTemplate):
+    """``abs(m)`` -> ``Masked(result)``."""
+
+    def generic(
+        self, args: tuple[types.Type, ...], kws: dict
+    ) -> Signature | None:
+        if len(args) == 1 and isinstance(args[0], MaskedType):
+            return_type = self.context.resolve_function_type(
+                self.key, (args[0].value_type,), kws
+            ).return_type
+            return nb_signature(MaskedType(return_type), args[0])
+        return None
+
+
 def _register() -> None:
     """Register typing for ``Masked`` and ``MaskedType`` attributes with
     ``numba_cuda_mlir``. Called once at module import.
@@ -226,6 +300,18 @@ def _register() -> None:
         typing_registry.register_global(binary_op)(MaskedScalarArithOp)
         typing_registry.register_global(binary_op)(MaskedScalarNullOp)
         typing_registry.register_global(binary_op)(MaskedScalarScalarOp)
+
+    for unary_op in unary_ops:
+        # not_ is logical negation: it returns a plain boolean, not a Masked.
+        if unary_op is operator.not_:
+            continue
+        typing_registry.register_global(unary_op)(MaskedScalarUnaryOp)
+    typing_registry.register_global(operator.truth)(MaskedScalarTruth)
+    typing_registry.register_global(bool)(MaskedScalarTruth)
+    typing_registry.register_global(operator.not_)(MaskedScalarTruth)
+    typing_registry.register_global(float)(MaskedScalarFloatCast)
+    typing_registry.register_global(int)(MaskedScalarIntCast)
+    typing_registry.register_global(abs)(MaskedScalarAbsoluteValue)
 
 
 _register()

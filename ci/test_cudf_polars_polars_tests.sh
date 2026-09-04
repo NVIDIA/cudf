@@ -68,6 +68,7 @@ trap set_exitcode ERR
 set +e
 
 rapids-logger "Run polars tests"
+# Temporary CI trigger for cudf-polars test-sharding validation.
 ./ci/run_cudf_polars_polars_tests.sh "$@"
 
 trap ERR

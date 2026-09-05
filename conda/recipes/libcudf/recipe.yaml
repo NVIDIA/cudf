@@ -319,6 +319,8 @@ outputs:
         - cuda-version =${{ cuda_version }}
         - cuda-nvtx-dev
         - cuda-cudart-dev
+        - cuda-nvrtc-dev
+        - libnvjitlink-dev
       run:
         - ${{ pin_subpackage("libcudf", exact=True) }}
         - ${{ pin_compatible("cuda-version", upper_bound="x", lower_bound="x") }}

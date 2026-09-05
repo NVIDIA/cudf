@@ -3,9 +3,12 @@
 
 from __future__ import annotations
 
+import contextlib
 import dataclasses
 from typing import cast
 
+import kvikio
+import kvikio.defaults
 import pytest
 
 import polars as pl
@@ -28,6 +31,8 @@ from cudf_polars.testing.asserts import (
     assert_ir_translation_raises,
 )
 from cudf_polars.utils.config import (
+    KVIKIO_CONFIGURABLE_PROPERTIES,
+    KVIKIO_REACTOR_POOL_PROPERTIES,
     Cluster,
     ConfigOptions,
     DynamicPlanningOptions,
@@ -39,6 +44,8 @@ from cudf_polars.utils.config import (
     StreamingExecutor,
     Unspecified,
     configure_kvikio,
+    resolve_kvikio_bounce_buffer_bytes,
+    resolve_kvikio_task_size,
 )
 from cudf_polars.utils.cuda_stream import get_cuda_stream
 
@@ -1010,6 +1017,30 @@ def test_kvikio_nthreads_default(monkeypatch: pytest.MonkeyPatch) -> None:
         m.delenv("CUDF_POLARS__EXECUTOR__KVIKIO_NTHREADS", raising=False)
         m.delenv("KVIKIO_NTHREADS", raising=False)
         config = ConfigOptions.from_polars_engine(pl.GPUEngine(executor="streaming"))
+        assert config.executor.kvikio_nthreads is None
+
+    with monkeypatch.context() as m:
+        m.delenv("CUDF_POLARS__EXECUTOR__KVIKIO_NTHREADS", raising=False)
+        m.delenv("KVIKIO_NTHREADS", raising=False)
+        m.setenv("KVIKIO_REMOTE_IO_BACKEND", "EASY_THREADPOOL")
+        config = ConfigOptions.from_polars_engine(pl.GPUEngine(executor="streaming"))
+        assert config.executor.kvikio_nthreads == 256
+
+
+def test_kvikio_nthreads_default_easy_threadpool(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with monkeypatch.context() as m:
+        m.delenv("CUDF_POLARS__EXECUTOR__KVIKIO_NTHREADS", raising=False)
+        m.delenv("KVIKIO_NTHREADS", raising=False)
+        config = ConfigOptions.from_polars_engine(
+            pl.GPUEngine(
+                executor="streaming",
+                executor_options={
+                    "kvikio_remote_io_backend": kvikio.RemoteIOBackend.EASY_THREADPOOL
+                },
+            )
+        )
         assert config.executor.kvikio_nthreads == 256
 
 
@@ -1035,10 +1066,22 @@ def test_kvikio_nthreads_from_env(
 def test_kvikio_nthreads_from_kvikio_env(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    # Under MULTI_POLL, KVIKIO_NTHREADS is still honored, but via kvikio's own
+    # deferred default rather than cudf-polars resolving it to a concrete int.
     with monkeypatch.context() as m:
         m.delenv("CUDF_POLARS__EXECUTOR__KVIKIO_NTHREADS", raising=False)
         m.setenv("KVIKIO_NTHREADS", "32")
         config = ConfigOptions.from_polars_engine(pl.GPUEngine(executor="streaming"))
+        assert config.executor.kvikio_nthreads is None
+
+        config = ConfigOptions.from_polars_engine(
+            pl.GPUEngine(
+                executor="streaming",
+                executor_options={
+                    "kvikio_remote_io_backend": kvikio.RemoteIOBackend.EASY_THREADPOOL
+                },
+            )
+        )
         assert config.executor.kvikio_nthreads == 32
 
 
@@ -1052,19 +1095,136 @@ def test_kvikio_nthreads_cudf_polars_env_takes_precedence(
         assert config.executor.kvikio_nthreads == 64
 
 
+@pytest.fixture
+def kvikio_defaults_guard():
+    """Snapshot and restore kvikio.defaults around a test.
+
+    ``configure_kvikio`` mutates process-global kvikio defaults via
+    ``kvikio.defaults.set``. Without restoring them, a test that calls
+    ``configure_kvikio`` can leak settings into later tests. The properties
+    to snapshot come from ``KVIKIO_CONFIGURABLE_PROPERTIES``, the list
+    ``configure_kvikio`` itself draws from, so this fixture stays in sync
+    with configure_kvikio without duplicating its property names.
+
+    ``KVIKIO_REACTOR_POOL_PROPERTIES`` are restored separately and best-effort:
+    kvikio permanently fixes them once the MULTI_POLL reactor pool has
+    started (e.g. via another test's real remote I/O), and raises if asked to
+    set them afterward even to their current value, so there is nothing to
+    revert in that case.
+    """
+    original = {key: kvikio.defaults.get(key) for key in KVIKIO_CONFIGURABLE_PROPERTIES}
+    yield
+    kvikio.defaults.set(
+        {
+            key: value
+            for key, value in original.items()
+            if key not in KVIKIO_REACTOR_POOL_PROPERTIES
+        }
+    )
+    # If another test already started the MULTI_POLL reactor pool, kvikio pins
+    # these properties for good and this reset is a no-op that raises.
+    with contextlib.suppress(RuntimeError):
+        kvikio.defaults.set(
+            {key: original[key] for key in KVIKIO_REACTOR_POOL_PROPERTIES}
+        )
+
+
 def test_configure_kvikio_sets_backend_and_threads(
     monkeypatch: pytest.MonkeyPatch,
+    kvikio_defaults_guard: None,
 ) -> None:
-    import kvikio
-    import kvikio.defaults
-
     monkeypatch.delenv("KVIKIO_NTHREADS", raising=False)
-    configure_kvikio(42)
+    configure_kvikio(42, remote_io_backend=kvikio.RemoteIOBackend.EASY_THREADPOOL)
     assert kvikio.defaults.get("num_threads") == 42
     assert (
         kvikio.defaults.get("remote_io_backend")
         == kvikio.RemoteIOBackend.EASY_THREADPOOL
     )
+
+
+def test_configure_kvikio_multi_poll_defaults(
+    monkeypatch: pytest.MonkeyPatch,
+    kvikio_defaults_guard: None,
+) -> None:
+    monkeypatch.delenv("KVIKIO_NTHREADS", raising=False)
+    configure_kvikio(42)
+    assert kvikio.defaults.get("remote_io_backend") == kvikio.RemoteIOBackend.MULTI_POLL
+    assert kvikio.defaults.get("remote_io_num_reactors") == 24
+    assert (
+        kvikio.defaults.get("remote_io_reactor_dispatch")
+        == kvikio.RemoteReactorDispatch.PER_CHUNK
+    )
+    assert kvikio.defaults.get("remote_io_max_concurrent_requests") == 256
+    assert kvikio.defaults.get("bounce_buffer_size") == 16 * 1024 * 1024
+    assert kvikio.defaults.get("task_size") == 16 * 1024 * 1024
+
+
+def test_configure_kvikio_easy_threadpool_task_size_default(
+    monkeypatch: pytest.MonkeyPatch,
+    kvikio_defaults_guard: None,
+) -> None:
+    monkeypatch.delenv("KVIKIO_NTHREADS", raising=False)
+    monkeypatch.delenv("KVIKIO_TASK_SIZE", raising=False)
+    configure_kvikio(42, remote_io_backend=kvikio.RemoteIOBackend.EASY_THREADPOOL)
+    assert kvikio.defaults.get("task_size") == 64 * 1024 * 1024
+    assert kvikio.defaults.get("num_threads") == 42
+
+
+def test_resolve_kvikio_bounce_buffer_bytes_backend_independent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("KVIKIO_BOUNCE_BUFFER_SIZE", raising=False)
+    monkeypatch.delenv(
+        "CUDF_POLARS__EXECUTOR__KVIKIO_BOUNCE_BUFFER_BYTES", raising=False
+    )
+
+    # Not backend-specific: the default is the same regardless of backend.
+    assert resolve_kvikio_bounce_buffer_bytes({}) == 16 * 1024 * 1024
+    assert (
+        resolve_kvikio_bounce_buffer_bytes({"kvikio_bounce_buffer_bytes": 123}) == 123
+    )
+
+
+def test_resolve_kvikio_task_size_defaults_by_backend(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("KVIKIO_TASK_SIZE", raising=False)
+    monkeypatch.delenv("CUDF_POLARS__EXECUTOR__KVIKIO_TASK_SIZE", raising=False)
+
+    assert (
+        resolve_kvikio_task_size(
+            {}, remote_io_backend=kvikio.RemoteIOBackend.MULTI_POLL
+        )
+        == 16 * 1024 * 1024
+    )
+    assert (
+        resolve_kvikio_task_size(
+            {}, remote_io_backend=kvikio.RemoteIOBackend.EASY_THREADPOOL
+        )
+        == 64 * 1024 * 1024
+    )
+    # An explicit executor_options override wins regardless of backend.
+    assert (
+        resolve_kvikio_task_size(
+            {"kvikio_task_size": 123},
+            remote_io_backend=kvikio.RemoteIOBackend.EASY_THREADPOOL,
+        )
+        == 123
+    )
+
+
+def test_streaming_executor_kvikio_task_size_follows_explicit_backend() -> None:
+    easy = StreamingExecutor(
+        cluster=Cluster.DEFAULT_SINGLETON,
+        kvikio_remote_io_backend=kvikio.RemoteIOBackend.EASY_THREADPOOL,
+    )
+    assert easy.kvikio_task_size == 64 * 1024 * 1024
+
+    multi = StreamingExecutor(
+        cluster=Cluster.DEFAULT_SINGLETON,
+        kvikio_remote_io_backend=kvikio.RemoteIOBackend.MULTI_POLL,
+    )
+    assert multi.kvikio_task_size == 16 * 1024 * 1024
 
 
 def test_dask_sink_to_directory_false_raises() -> None:

@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any
 
 import distributed
 import distributed.system
+import kvikio
 import pynvml
 import ucxx._lib.libucxx as ucx_api
 
@@ -58,8 +59,7 @@ from cudf_polars.utils.config import (
     DaskContext,
     MemoryResourceConfig,
     configure_kvikio,
-    resolve_kvikio_nthreads,
-    resolve_kvikio_statistics,
+    resolve_kvikio_executor_options,
 )
 
 if TYPE_CHECKING:
@@ -338,8 +338,14 @@ def _setup_worker(
     worker_ids: list[uuid.UUID],
     engine_id: uuid.UUID,
     num_py_executors: int,
-    kvikio_nthreads: int,
+    kvikio_nthreads: int | None,
     kvikio_statistics: bool,
+    kvikio_remote_io_backend: kvikio.RemoteIOBackend,
+    kvikio_task_size: int,
+    kvikio_bounce_buffer_bytes: int,
+    kvikio_reactor_count: int,
+    kvikio_reactor_dispatch: kvikio.RemoteReactorDispatch,
+    kvikio_request_ceiling: int,
     quent_context: cudf_polars.quent.QuentContext | None,
     dask_worker: distributed.Worker | None = None,
 ) -> None:
@@ -376,9 +382,22 @@ def _setup_worker(
     num_py_executors
         Number of Python executors to use for this worker.
     kvikio_nthreads
-        Number of kvikio threads to configure on this worker process.
+        Number of kvikio threads to configure on this worker process. ``None``
+        defers to kvikio's own built-in default.
     kvikio_statistics
         Whether to collect KvikIO I/O statistics on this worker.
+    kvikio_remote_io_backend
+        The kvikio remote I/O backend to configure on this worker process.
+    kvikio_task_size
+        Size, in bytes, of the kvikio task size to configure on this worker process.
+    kvikio_bounce_buffer_bytes
+        Size, in bytes, of the kvikio bounce buffer to configure on this worker process.
+    kvikio_reactor_count
+        Number of ``MULTI_POLL`` reactor threads to configure on this worker process.
+    kvikio_reactor_dispatch
+        ``MULTI_POLL`` reactor dispatch policy to configure on this worker process.
+    kvikio_request_ceiling
+        ``MULTI_POLL`` concurrent-request ceiling to configure on this worker process.
     quent_context
         Quent context to use for this worker, if quent is enabled.
 
@@ -391,7 +410,15 @@ def _setup_worker(
     if mp_ctx is None:
         # Non-root worker: create communicator now.
         bind_to_gpu(hardware_binding)
-        configure_kvikio(kvikio_nthreads)
+        configure_kvikio(
+            kvikio_nthreads,
+            remote_io_backend=kvikio_remote_io_backend,
+            task_size=kvikio_task_size,
+            bounce_buffer_bytes=kvikio_bounce_buffer_bytes,
+            reactor_count=kvikio_reactor_count,
+            reactor_dispatch=kvikio_reactor_dispatch,
+            request_ceiling=kvikio_request_ceiling,
+        )
         memory_resource_config = (
             memory_resource_config or MemoryResourceConfig.default()
         )
@@ -412,7 +439,15 @@ def _setup_worker(
         base_mr = mp_ctx.base_mr
         comm = mp_ctx.comm
         statistics = mp_ctx.statistics
-        configure_kvikio(kvikio_nthreads)
+        configure_kvikio(
+            kvikio_nthreads,
+            remote_io_backend=kvikio_remote_io_backend,
+            task_size=kvikio_task_size,
+            bounce_buffer_bytes=kvikio_bounce_buffer_bytes,
+            reactor_count=kvikio_reactor_count,
+            reactor_dispatch=kvikio_reactor_dispatch,
+            request_ceiling=kvikio_request_ceiling,
+        )
 
     barrier(comm)
     worker_id = worker_ids[comm.rank]
@@ -508,8 +543,14 @@ def _reset_worker(
     rapidsmpf_options_as_bytes: bytes,
     *,
     uid: str,
-    kvikio_nthreads: int,
+    kvikio_nthreads: int | None,
     kvikio_statistics: bool,
+    kvikio_remote_io_backend: kvikio.RemoteIOBackend,
+    kvikio_task_size: int,
+    kvikio_bounce_buffer_bytes: int,
+    kvikio_reactor_count: int,
+    kvikio_reactor_dispatch: kvikio.RemoteReactorDispatch,
+    kvikio_request_ceiling: int,
     dask_worker: distributed.Worker | None = None,
 ) -> None:
     """
@@ -525,14 +566,35 @@ def _reset_worker(
     uid
         Cluster instance identifier used to look up the per-worker context.
     kvikio_nthreads
-        Number of kvikio threads to configure on this worker process.
+        Number of kvikio threads to configure on this worker process. ``None``
+        defers to kvikio's own built-in default.
     kvikio_statistics
         Whether to collect KvikIO I/O statistics on this worker.
+    kvikio_remote_io_backend
+        The kvikio remote I/O backend to configure on this worker process.
+    kvikio_task_size
+        Size, in bytes, of the kvikio task size to configure on this worker process.
+    kvikio_bounce_buffer_bytes
+        Size, in bytes, of the kvikio bounce buffer to configure on this worker process.
+    kvikio_reactor_count
+        Number of ``MULTI_POLL`` reactor threads to configure on this worker process.
+    kvikio_reactor_dispatch
+        ``MULTI_POLL`` reactor dispatch policy to configure on this worker process.
+    kvikio_request_ceiling
+        ``MULTI_POLL`` concurrent-request ceiling to configure on this worker process.
     dask_worker
         Injected by ``distributed`` when called via :meth:`distributed.Client.run`.
     """
     assert dask_worker is not None
-    configure_kvikio(kvikio_nthreads)
+    configure_kvikio(
+        kvikio_nthreads,
+        remote_io_backend=kvikio_remote_io_backend,
+        task_size=kvikio_task_size,
+        bounce_buffer_bytes=kvikio_bounce_buffer_bytes,
+        reactor_count=kvikio_reactor_count,
+        reactor_dispatch=kvikio_reactor_dispatch,
+        request_ceiling=kvikio_request_ceiling,
+    )
     attr = f"_cudf_polars_mp_context_{uid}"
     mp_ctx: _WorkerContext | None = getattr(dask_worker, attr, None)
     if mp_ctx is None:
@@ -951,13 +1013,7 @@ class DaskEngine(StreamingEngine):
         executor_options: dict[str, Any] | None = None,
         engine_options: dict[str, Any] | None = None,
     ) -> None:
-        executor_options = executor_options or {}
-        executor_options.setdefault(
-            "kvikio_nthreads", resolve_kvikio_nthreads(executor_options)
-        )
-        executor_options.setdefault(
-            "kvikio_statistics", resolve_kvikio_statistics(executor_options)
-        )
+        executor_options = resolve_kvikio_executor_options(executor_options or {})
         engine_options = engine_options or {}
 
         quent_context: cudf_polars.quent.QuentContext | None = executor_options.get(
@@ -1074,6 +1130,12 @@ class DaskEngine(StreamingEngine):
             num_py_executors=executor_options.get("num_py_executors", 8),
             kvikio_nthreads=executor_options["kvikio_nthreads"],
             kvikio_statistics=executor_options["kvikio_statistics"],
+            kvikio_remote_io_backend=executor_options["kvikio_remote_io_backend"],
+            kvikio_task_size=executor_options["kvikio_task_size"],
+            kvikio_bounce_buffer_bytes=executor_options["kvikio_bounce_buffer_bytes"],
+            kvikio_reactor_count=executor_options["kvikio_reactor_count"],
+            kvikio_reactor_dispatch=executor_options["kvikio_reactor_dispatch"],
+            kvikio_request_ceiling=executor_options["kvikio_request_ceiling"],
         )
 
         dask_ctx = DaskContext(
@@ -1111,16 +1173,16 @@ class DaskEngine(StreamingEngine):
         )
         executor_options = executor_options or {}
         existing_executor_options = self.config.get("executor_options", {})
-        if isinstance(existing_executor_options, dict):
-            existing_quent_context = existing_executor_options.get("quent_context")
-            if existing_quent_context is not None:
-                executor_options.setdefault("quent_context", existing_quent_context)
-            existing_kvikio_nthreads = existing_executor_options.get("kvikio_nthreads")
-            if existing_kvikio_nthreads is not None:
-                executor_options.setdefault("kvikio_nthreads", existing_kvikio_nthreads)
-        executor_options.setdefault(
-            "kvikio_statistics", resolve_kvikio_statistics(executor_options)
-        )
+        if not isinstance(existing_executor_options, dict):
+            existing_executor_options = {}
+        existing_quent_context = existing_executor_options.get("quent_context")
+        if existing_quent_context is not None:
+            executor_options.setdefault("quent_context", existing_quent_context)
+        if "kvikio_nthreads" in existing_executor_options:
+            executor_options.setdefault(
+                "kvikio_nthreads", existing_executor_options["kvikio_nthreads"]
+            )
+        executor_options = resolve_kvikio_executor_options(executor_options)
         engine_options = engine_options or {}
 
         self.rapidsmpf_options = resolve_rapidsmpf_options(rapidsmpf_options)
@@ -1137,6 +1199,14 @@ class DaskEngine(StreamingEngine):
                 uid=ctx.rapidsmpf_id,
                 kvikio_nthreads=executor_options["kvikio_nthreads"],
                 kvikio_statistics=executor_options["kvikio_statistics"],
+                kvikio_remote_io_backend=executor_options["kvikio_remote_io_backend"],
+                kvikio_task_size=executor_options["kvikio_task_size"],
+                kvikio_bounce_buffer_bytes=executor_options[
+                    "kvikio_bounce_buffer_bytes"
+                ],
+                kvikio_reactor_count=executor_options["kvikio_reactor_count"],
+                kvikio_reactor_dispatch=executor_options["kvikio_reactor_dispatch"],
+                kvikio_request_ceiling=executor_options["kvikio_request_ceiling"],
             ),
             rapidsmpf_options_as_bytes,
         )

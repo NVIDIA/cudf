@@ -255,33 +255,272 @@ def resolve_kvikio_statistics(executor_options: dict[str, Any]) -> bool:
     return value if isinstance(value, bool) else _bool_converter(value)
 
 
-def resolve_kvikio_nthreads(executor_options: dict[str, Any]) -> int:
-    """Resolve kvikio thread count from executor options with env var fallback."""
+def resolve_kvikio_nthreads(
+    executor_options: dict[str, Any],
+    *,
+    remote_io_backend: kvikio.RemoteIOBackend | None = None,
+) -> int | None:
+    """
+    Resolve kvikio thread count from executor options with env var fallback.
+
+    Defaults to 256 for the ``EASY_THREADPOOL`` backend (tuned for cloud
+    object-store IO). Under ``MULTI_POLL``, this pool is only used for local
+    (non-remote) I/O, so unless explicitly overridden, resolution returns
+    ``None`` to defer to kvikio's own built-in default (the ``KVIKIO_NTHREADS``
+    environment variable, else 4). ``remote_io_backend`` should be the
+    already-resolved backend (e.g. via :func:`resolve_kvikio_remote_io_backend`);
+    if omitted, it is resolved from ``executor_options`` with the same env var
+    fallback.
+    """
+    value = executor_options.get(
+        "kvikio_nthreads", os.environ.get("CUDF_POLARS__EXECUTOR__KVIKIO_NTHREADS")
+    )
+    if value is not None:
+        return int(value)
+    if remote_io_backend is None:
+        remote_io_backend = resolve_kvikio_remote_io_backend(executor_options)
+    if remote_io_backend == kvikio.RemoteIOBackend.MULTI_POLL:
+        return None
+    return int(os.environ.get("KVIKIO_NTHREADS", "256"))
+
+
+def resolve_kvikio_remote_io_backend(
+    executor_options: dict[str, Any],
+) -> kvikio.RemoteIOBackend:
+    """Resolve the kvikio remote I/O backend from executor options with env var fallback."""
+    value = executor_options.get(
+        "kvikio_remote_io_backend",
+        os.environ.get(
+            "CUDF_POLARS__EXECUTOR__KVIKIO_REMOTE_IO_BACKEND",
+            os.environ.get("KVIKIO_REMOTE_IO_BACKEND", "MULTI_POLL"),
+        ),
+    )
+    if isinstance(value, kvikio.RemoteIOBackend):
+        return value
+    return kvikio.RemoteIOBackend[str(value).upper()]
+
+
+def resolve_kvikio_bounce_buffer_bytes(executor_options: dict[str, Any]) -> int:
+    """
+    Resolve the kvikio bounce buffer size, in bytes, with env var fallback.
+
+    Unlike ``kvikio_task_size``, this setting is not specific to the
+    ``MULTI_POLL`` backend: it sizes the host-memory staging buffer used for
+    any device-memory transfer (local file I/O, mmap I/O, and remote reads
+    under both ``MULTI_POLL`` and ``EASY_THREADPOOL``), so it applies
+    regardless of the active remote I/O backend.
+    """
     return int(
         executor_options.get(
-            "kvikio_nthreads",
+            "kvikio_bounce_buffer_bytes",
             os.environ.get(
-                "CUDF_POLARS__EXECUTOR__KVIKIO_NTHREADS",
-                os.environ.get("KVIKIO_NTHREADS", "256"),
+                "CUDF_POLARS__EXECUTOR__KVIKIO_BOUNCE_BUFFER_BYTES",
+                os.environ.get("KVIKIO_BOUNCE_BUFFER_SIZE", str(16 * 1024 * 1024)),
             ),
         )
     )
 
 
-def configure_kvikio(nthreads: int) -> None:
-    """Set the remote I/O backend to ``EASY_THREADPOOL`` with ``nthreads`` threads."""
+def resolve_kvikio_task_size(
+    executor_options: dict[str, Any],
+    *,
+    remote_io_backend: kvikio.RemoteIOBackend | None = None,
+) -> int:
+    """
+    Resolve the kvikio task size, in bytes, with env var fallback.
+
+    Defaults to 16 MiB for the ``MULTI_POLL`` remote I/O backend and 64 MiB for
+    ``EASY_THREADPOOL``, unless overridden via ``executor_options`` or an
+    environment variable. ``remote_io_backend`` should be the already-resolved
+    backend (e.g. via :func:`resolve_kvikio_remote_io_backend`); if omitted, it
+    is resolved from ``executor_options`` with the same env var fallback.
+    """
+    if remote_io_backend is None:
+        remote_io_backend = resolve_kvikio_remote_io_backend(executor_options)
+    default = (
+        16 * 1024 * 1024
+        if remote_io_backend == kvikio.RemoteIOBackend.MULTI_POLL
+        else 64 * 1024 * 1024
+    )
+    return int(
+        executor_options.get(
+            "kvikio_task_size",
+            os.environ.get(
+                "CUDF_POLARS__EXECUTOR__KVIKIO_TASK_SIZE",
+                os.environ.get("KVIKIO_TASK_SIZE", str(default)),
+            ),
+        )
+    )
+
+
+def resolve_kvikio_reactor_count(executor_options: dict[str, Any]) -> int:
+    """Resolve the number of MULTI_POLL reactor threads, with env var fallback."""
+    return int(
+        executor_options.get(
+            "kvikio_reactor_count",
+            os.environ.get(
+                "CUDF_POLARS__EXECUTOR__KVIKIO_REACTOR_COUNT",
+                os.environ.get("KVIKIO_REMOTE_IO_NUM_REACTORS", "24"),
+            ),
+        )
+    )
+
+
+def resolve_kvikio_reactor_dispatch(
+    executor_options: dict[str, Any],
+) -> kvikio.RemoteReactorDispatch:
+    """Resolve the MULTI_POLL reactor dispatch policy, with env var fallback."""
+    value = executor_options.get(
+        "kvikio_reactor_dispatch",
+        os.environ.get(
+            "CUDF_POLARS__EXECUTOR__KVIKIO_REACTOR_DISPATCH",
+            os.environ.get("KVIKIO_REMOTE_IO_REACTOR_DISPATCH", "PER_CHUNK"),
+        ),
+    )
+    if isinstance(value, kvikio.RemoteReactorDispatch):
+        return value
+    return kvikio.RemoteReactorDispatch[str(value).upper()]
+
+
+def resolve_kvikio_request_ceiling(executor_options: dict[str, Any]) -> int:
+    """Resolve the MULTI_POLL concurrent-request ceiling, with env var fallback."""
+    return int(
+        executor_options.get(
+            "kvikio_request_ceiling",
+            os.environ.get(
+                "CUDF_POLARS__EXECUTOR__KVIKIO_REQUEST_CEILING",
+                os.environ.get("KVIKIO_REMOTE_IO_MAX_CONCURRENT_REQUESTS", "256"),
+            ),
+        )
+    )
+
+
+def resolve_kvikio_executor_options(executor_options: dict[str, Any]) -> dict[str, Any]:
+    """
+    Resolve every ``kvikio_*`` executor option in place, via ``setdefault``.
+
+    Existing keys (already resolved, e.g. carried over across a ``_reset``) are
+    left untouched. ``kvikio_remote_io_backend`` is resolved first since
+    ``kvikio_nthreads`` and ``kvikio_task_size`` default differently depending
+    on it; the shared, single source of truth for that ordering lives here so
+    the dask/ray/spmd engines don't each re-implement it.
+    """
+    executor_options.setdefault(
+        "kvikio_statistics", resolve_kvikio_statistics(executor_options)
+    )
+    executor_options.setdefault(
+        "kvikio_remote_io_backend",
+        resolve_kvikio_remote_io_backend(executor_options),
+    )
+    executor_options.setdefault(
+        "kvikio_nthreads",
+        resolve_kvikio_nthreads(
+            executor_options,
+            remote_io_backend=executor_options["kvikio_remote_io_backend"],
+        ),
+    )
+    executor_options.setdefault(
+        "kvikio_task_size",
+        resolve_kvikio_task_size(
+            executor_options,
+            remote_io_backend=executor_options["kvikio_remote_io_backend"],
+        ),
+    )
+    executor_options.setdefault(
+        "kvikio_bounce_buffer_bytes",
+        resolve_kvikio_bounce_buffer_bytes(executor_options),
+    )
+    executor_options.setdefault(
+        "kvikio_reactor_count", resolve_kvikio_reactor_count(executor_options)
+    )
+    executor_options.setdefault(
+        "kvikio_reactor_dispatch",
+        resolve_kvikio_reactor_dispatch(executor_options),
+    )
+    executor_options.setdefault(
+        "kvikio_request_ceiling",
+        resolve_kvikio_request_ceiling(executor_options),
+    )
+    return executor_options
+
+
+# kvikio.defaults property names that configure_kvikio may pass to
+# kvikio.defaults.set (checked at the end of configure_kvikio). Also used by
+# callers (e.g. tests that need to snapshot/restore kvikio's process-global
+# defaults) so they don't have to duplicate this list by hand.
+KVIKIO_CONFIGURABLE_PROPERTIES = (
+    "remote_io_backend",
+    "task_size",
+    "bounce_buffer_size",
+    "remote_io_num_reactors",
+    "remote_io_reactor_dispatch",
+    "remote_io_max_concurrent_requests",
+    "num_threads",
+)
+
+# Subset of KVIKIO_CONFIGURABLE_PROPERTIES that governs kvikio's MULTI_POLL
+# reactor pool. kvikio fixes these for the rest of the process once that pool
+# has started (i.e. after the first MULTI_POLL remote I/O), and
+# kvikio.defaults.set() raises for them from that point on, even to reassign
+# the value they already hold.
+KVIKIO_REACTOR_POOL_PROPERTIES = frozenset(
+    {
+        "remote_io_num_reactors",
+        "remote_io_reactor_dispatch",
+        "remote_io_max_concurrent_requests",
+    }
+)
+
+
+def configure_kvikio(
+    nthreads: int | None,
+    *,
+    remote_io_backend: kvikio.RemoteIOBackend = kvikio.RemoteIOBackend.MULTI_POLL,
+    task_size: int | None = None,
+    bounce_buffer_bytes: int = 16 * 1024 * 1024,
+    reactor_count: int = 24,
+    reactor_dispatch: kvikio.RemoteReactorDispatch = kvikio.RemoteReactorDispatch.PER_CHUNK,
+    request_ceiling: int = 256,
+) -> None:
+    """
+    Configure kvikio for cudf-polars I/O.
+
+    ``nthreads=None`` defers the size of kvikio's local-I/O thread pool to its
+    own built-in default (the ``KVIKIO_NTHREADS`` environment variable, else 4).
+    This is the typical case under the ``MULTI_POLL`` remote I/O backend, whose
+    remote I/O does not use this pool at all.
+    """
     # HACK: libcudf calls set_up_kvikio() on the first IO op and that resets the thread
     # pool (default is 4 if KVIKIO_NTHREADS is unset), undoing anything we set via
     # kvikio.defaults. We call it here with our nthreads so later when it's called in
     # libcudf it's a no-op. The explicit kvikio.defaults.set below handles subsequent
     # calls to configure_kvikio (call_once only fires once).
     pylibcudf.utils._set_up_kvikio(nthreads)
-    kvikio.defaults.set(
-        {
-            "num_threads": nthreads,
-            "remote_io_backend": kvikio.RemoteIOBackend.EASY_THREADPOOL,
-        }
-    )
+    if task_size is None:
+        task_size = resolve_kvikio_task_size({}, remote_io_backend=remote_io_backend)
+    settings: dict[str, Any] = {
+        "remote_io_backend": remote_io_backend,
+        "task_size": task_size,
+        # Sizes the host staging buffer for device-memory transfers. This applies
+        # to local and remote I/O under both backends, so it is always set.
+        "bounce_buffer_size": bounce_buffer_bytes,
+    }
+    if remote_io_backend == kvikio.RemoteIOBackend.MULTI_POLL:
+        # The MULTI_POLL backend ignores kvikio's EASY_THREADPOOL thread pool for
+        # remote I/O, so num_threads is not configured here. Local I/O still uses
+        # the thread pool created by `_set_up_kvikio` above. The reactor settings
+        # below are ignored by kvikio when EASY_THREADPOOL is active, so they are
+        # left unset in that case.
+        settings["remote_io_num_reactors"] = reactor_count
+        settings["remote_io_reactor_dispatch"] = reactor_dispatch
+        settings["remote_io_max_concurrent_requests"] = request_ceiling
+    else:
+        if nthreads is None:
+            nthreads = resolve_kvikio_nthreads({}, remote_io_backend=remote_io_backend)
+            assert nthreads is not None  # EASY_THREADPOOL always resolves to an int
+        settings["num_threads"] = nthreads
+    assert set(settings) <= set(KVIKIO_CONFIGURABLE_PROPERTIES)
+    kvikio.defaults.set(settings)
 
 
 def _bool_converter(v: str) -> bool:
@@ -846,9 +1085,16 @@ class StreamingExecutor:
         Maximum number of workers for the Python ThreadPoolExecutor.
         Default is 8.
     kvikio_nthreads
-        Number of threads in the kvikio ``EASY_THREADPOOL`` thread pool.
-        Defaults to 256, which is tuned for cloud object-store IO. This can be
-        set via
+        Number of threads in kvikio's local-I/O thread pool (used for local
+        file I/O under both backends, and for remote I/O under
+        ``EASY_THREADPOOL``; ``MULTI_POLL`` remote I/O uses the reactor threads
+        instead, controlled separately by ``kvikio_reactor_count``). Defaults
+        to 256 (tuned for cloud object-store IO) when
+        ``kvikio_remote_io_backend`` is ``EASY_THREADPOOL``. Under
+        ``MULTI_POLL``, defaults to ``None``, which defers to kvikio's own
+        built-in default (the ``KVIKIO_NTHREADS`` environment variable, else 4)
+        rather than spinning up a 256-thread pool that backend would rarely
+        use. This can be set via
 
         - ``executor_options`` passed to ``polars.GPUEngine``
         - the ``CUDF_POLARS__EXECUTOR__KVIKIO_NTHREADS`` environment variable
@@ -858,8 +1104,9 @@ class StreamingExecutor:
 
             kvikio uses a single process-wide thread pool. When a streaming
             engine is created, it configures that pool to ``kvikio_nthreads``
-            threads. This operation blocks until all in-flight kvikio IO in the
-            process completes and then rebuilds the pool. As a result:
+            threads (skipped when ``kvikio_nthreads`` is ``None``). This
+            operation blocks until all in-flight kvikio IO in the process
+            completes and then rebuilds the pool. As a result:
 
             - Any code in the same process that is using kvikio concurrently at
               engine creation time will be disrupted.
@@ -867,6 +1114,59 @@ class StreamingExecutor:
               engine creation will be overridden. Use the ``kvikio_nthreads``
               executor option or ``KVIKIO_NTHREADS`` environment variable
               instead.
+    kvikio_remote_io_backend
+        The kvikio remote I/O backend. ``kvikio.RemoteIOBackend.MULTI_POLL`` by
+        default. This can be set via
+
+        - ``executor_options`` passed to ``polars.GPUEngine``
+        - the ``CUDF_POLARS__EXECUTOR__KVIKIO_REMOTE_IO_BACKEND`` environment variable
+        - the ``KVIKIO_REMOTE_IO_BACKEND`` environment variable (lower precedence)
+    kvikio_task_size
+        Size, in bytes, of the chunks kvikio splits reads into for parallel
+        dispatch. Defaults to 16 MiB for the ``MULTI_POLL`` backend and 64 MiB
+        for ``EASY_THREADPOOL``. Applies to local and remote I/O under both
+        backends. This can be set via
+
+        - ``executor_options`` passed to ``polars.GPUEngine``
+        - the ``CUDF_POLARS__EXECUTOR__KVIKIO_TASK_SIZE`` environment variable
+        - the ``KVIKIO_TASK_SIZE`` environment variable (lower precedence)
+    kvikio_bounce_buffer_bytes
+        Size, in bytes, of the kvikio bounce buffer used to stage host memory
+        for device-memory transfers. Defaults to 16 MiB. Applies to local and
+        remote I/O under both backends (not specific to ``MULTI_POLL``), and
+        under ``MULTI_POLL`` must be at least ``kvikio_task_size`` for
+        device-buffer reads. This can be set via
+
+        - ``executor_options`` passed to ``polars.GPUEngine``
+        - the ``CUDF_POLARS__EXECUTOR__KVIKIO_BOUNCE_BUFFER_BYTES`` environment variable
+        - the ``KVIKIO_BOUNCE_BUFFER_SIZE`` environment variable (lower precedence)
+    kvikio_reactor_count
+        Number of reactor threads used by the ``MULTI_POLL`` remote I/O backend.
+        Ignored when ``kvikio_remote_io_backend`` is not ``MULTI_POLL``. Defaults
+        to 24. This can be set via
+
+        - ``executor_options`` passed to ``polars.GPUEngine``
+        - the ``CUDF_POLARS__EXECUTOR__KVIKIO_REACTOR_COUNT`` environment variable
+        - the ``KVIKIO_REMOTE_IO_NUM_REACTORS`` environment variable (lower precedence)
+    kvikio_reactor_dispatch
+        How sub-ranges of one read are distributed across reactor threads under
+        the ``MULTI_POLL`` remote I/O backend. Ignored when
+        ``kvikio_remote_io_backend`` is not ``MULTI_POLL``. Defaults to
+        ``kvikio.RemoteReactorDispatch.PER_CHUNK``. This can be set via
+
+        - ``executor_options`` passed to ``polars.GPUEngine``
+        - the ``CUDF_POLARS__EXECUTOR__KVIKIO_REACTOR_DISPATCH`` environment variable
+        - the ``KVIKIO_REMOTE_IO_REACTOR_DISPATCH`` environment variable (lower precedence)
+    kvikio_request_ceiling
+        Maximum number of concurrent in-flight requests across all reactor
+        threads under the ``MULTI_POLL`` remote I/O backend. 0 means unlimited.
+        Ignored when ``kvikio_remote_io_backend`` is not ``MULTI_POLL``. Defaults
+        to 256. This can be set via
+
+        - ``executor_options`` passed to ``polars.GPUEngine``
+        - the ``CUDF_POLARS__EXECUTOR__KVIKIO_REQUEST_CEILING`` environment variable
+        - the ``KVIKIO_REMOTE_IO_MAX_CONCURRENT_REQUESTS`` environment variable
+          (lower precedence)
     quent_context
         Quent tracing context. When ``None`` (default), Quent tracing is disabled.
         Pass a :class:`~cudf_polars.quent.QuentContext` instance to enable tracing.
@@ -942,13 +1242,34 @@ class StreamingExecutor:
             f"{_env_prefix}__NUM_PY_EXECUTORS", int, default=8
         )
     )
-    kvikio_nthreads: int = dataclasses.field(
-        default_factory=lambda: resolve_kvikio_nthreads({})
-    )
+    # `None` is resolved in `__post_init__`, once `kvikio_remote_io_backend` (an
+    # explicit constructor argument, if any) is known, since the default value
+    # depends on the backend. The resolved value may itself remain `None`
+    # (deferring to kvikio's own built-in default) under `MULTI_POLL`.
+    kvikio_nthreads: int | None = None
     kvikio_statistics: bool = dataclasses.field(
         default_factory=_make_default_factory(
             f"{_env_prefix}__KVIKIO_STATISTICS", _bool_converter, default=False
         )
+    )
+    kvikio_remote_io_backend: kvikio.RemoteIOBackend = dataclasses.field(
+        default_factory=lambda: resolve_kvikio_remote_io_backend({})
+    )
+    # `None` is resolved in `__post_init__`, once `kvikio_remote_io_backend` (an
+    # explicit constructor argument, if any) is known, since the default value
+    # depends on the backend.
+    kvikio_task_size: int | None = None
+    kvikio_bounce_buffer_bytes: int = dataclasses.field(
+        default_factory=lambda: resolve_kvikio_bounce_buffer_bytes({})
+    )
+    kvikio_reactor_count: int = dataclasses.field(
+        default_factory=lambda: resolve_kvikio_reactor_count({})
+    )
+    kvikio_reactor_dispatch: kvikio.RemoteReactorDispatch = dataclasses.field(
+        default_factory=lambda: resolve_kvikio_reactor_dispatch({})
+    )
+    kvikio_request_ceiling: int = dataclasses.field(
+        default_factory=lambda: resolve_kvikio_request_ceiling({})
     )
 
     min_device_size: int | None = None
@@ -1031,10 +1352,65 @@ class StreamingExecutor:
             raise TypeError("client_device_threshold must be a float")
         if not isinstance(self.num_py_executors, int):
             raise TypeError("num_py_executors must be an int")
-        if not isinstance(self.kvikio_nthreads, int):
-            raise TypeError("kvikio_nthreads must be an int")
-        if self.kvikio_nthreads <= 0:
-            raise ValueError("kvikio_nthreads must be positive")
+        if not isinstance(self.kvikio_remote_io_backend, kvikio.RemoteIOBackend):
+            object.__setattr__(
+                self,
+                "kvikio_remote_io_backend",
+                kvikio.RemoteIOBackend[str(self.kvikio_remote_io_backend).upper()],
+            )
+        if self.kvikio_nthreads is None:
+            # May remain `None` here, deferring to kvikio's own built-in
+            # default; see `resolve_kvikio_nthreads`.
+            object.__setattr__(
+                self,
+                "kvikio_nthreads",
+                resolve_kvikio_nthreads(
+                    {}, remote_io_backend=self.kvikio_remote_io_backend
+                ),
+            )
+        if self.kvikio_nthreads is not None:
+            if not isinstance(self.kvikio_nthreads, int):
+                raise TypeError("kvikio_nthreads must be an int or None")
+            if self.kvikio_nthreads <= 0:
+                raise ValueError("kvikio_nthreads must be positive")
+        if self.kvikio_task_size is None:
+            object.__setattr__(
+                self,
+                "kvikio_task_size",
+                resolve_kvikio_task_size(
+                    {}, remote_io_backend=self.kvikio_remote_io_backend
+                ),
+            )
+        if not isinstance(self.kvikio_task_size, int):
+            raise TypeError("kvikio_task_size must be an int")
+        if self.kvikio_task_size <= 0:
+            raise ValueError("kvikio_task_size must be positive")
+        if not isinstance(self.kvikio_bounce_buffer_bytes, int):
+            raise TypeError("kvikio_bounce_buffer_bytes must be an int")
+        if self.kvikio_bounce_buffer_bytes <= 0:
+            raise ValueError("kvikio_bounce_buffer_bytes must be positive")
+        if (
+            self.kvikio_remote_io_backend == kvikio.RemoteIOBackend.MULTI_POLL
+            and self.kvikio_bounce_buffer_bytes < self.kvikio_task_size
+        ):
+            raise ValueError(
+                "kvikio_bounce_buffer_bytes must be at least kvikio_task_size "
+                "for the MULTI_POLL backend"
+            )
+        if not isinstance(self.kvikio_reactor_count, int):
+            raise TypeError("kvikio_reactor_count must be an int")
+        if self.kvikio_reactor_count <= 0:
+            raise ValueError("kvikio_reactor_count must be positive")
+        if not isinstance(self.kvikio_reactor_dispatch, kvikio.RemoteReactorDispatch):
+            object.__setattr__(
+                self,
+                "kvikio_reactor_dispatch",
+                kvikio.RemoteReactorDispatch[str(self.kvikio_reactor_dispatch).upper()],
+            )
+        if not isinstance(self.kvikio_request_ceiling, int):
+            raise TypeError("kvikio_request_ceiling must be an int")
+        if self.kvikio_request_ceiling < 0:
+            raise ValueError("kvikio_request_ceiling must be non-negative")
 
     def __hash__(self) -> int:  # noqa: D105
         # dynamic_planning factory, a dataclass, isn't natively hashable. We'll dump it

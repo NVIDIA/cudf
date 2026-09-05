@@ -55,8 +55,7 @@ from cudf_polars.utils.config import (
     MemoryResourceConfig,
     RayContext,
     configure_kvikio,
-    resolve_kvikio_nthreads,
-    resolve_kvikio_statistics,
+    resolve_kvikio_executor_options,
 )
 
 if TYPE_CHECKING:
@@ -253,8 +252,14 @@ class RankActor:
         nranks: int,
         rapidsmpf_options_as_bytes: bytes,
         num_py_executors: int,
-        kvikio_nthreads: int,
+        kvikio_nthreads: int | None,
         kvikio_statistics: bool,
+        kvikio_remote_io_backend: kvikio.RemoteIOBackend,
+        kvikio_task_size: int,
+        kvikio_bounce_buffer_bytes: int,
+        kvikio_reactor_count: int,
+        kvikio_reactor_dispatch: kvikio.RemoteReactorDispatch,
+        kvikio_request_ceiling: int,
         hardware_binding: HardwareBindingPolicy,
         memory_resource_config: MemoryResourceConfig | None,
         worker_id: uuid.UUID,
@@ -262,7 +267,15 @@ class RankActor:
         quent_enabled: bool,
     ) -> None:
         bind_to_gpu(hardware_binding)
-        configure_kvikio(kvikio_nthreads)
+        configure_kvikio(
+            kvikio_nthreads,
+            remote_io_backend=kvikio_remote_io_backend,
+            task_size=kvikio_task_size,
+            bounce_buffer_bytes=kvikio_bounce_buffer_bytes,
+            reactor_count=kvikio_reactor_count,
+            reactor_dispatch=kvikio_reactor_dispatch,
+            request_ceiling=kvikio_request_ceiling,
+        )
         memory_resource_config = (
             memory_resource_config or MemoryResourceConfig.default()
         )
@@ -364,8 +377,14 @@ class RankActor:
         self,
         *,
         rapidsmpf_options_as_bytes: bytes,
-        kvikio_nthreads: int,
+        kvikio_nthreads: int | None,
         kvikio_statistics: bool,
+        kvikio_remote_io_backend: kvikio.RemoteIOBackend,
+        kvikio_task_size: int,
+        kvikio_bounce_buffer_bytes: int,
+        kvikio_reactor_count: int,
+        kvikio_reactor_dispatch: kvikio.RemoteReactorDispatch,
+        kvikio_request_ceiling: int,
     ) -> None:
         """
         Rebuild the streaming Context with new options.
@@ -379,12 +398,33 @@ class RankActor:
             Serialized :class:`Options` to install.
         kvikio_nthreads
             Number of kvikio threads to configure on this worker process.
+            ``None`` defers to kvikio's own built-in default.
         kvikio_statistics
             Whether to collect KvikIO I/O statistics on this rank.
+        kvikio_remote_io_backend
+            The kvikio remote I/O backend to configure on this worker process.
+        kvikio_task_size
+            Size, in bytes, of the kvikio task size to configure on this worker process.
+        kvikio_bounce_buffer_bytes
+            Size, in bytes, of the kvikio bounce buffer to configure on this worker process.
+        kvikio_reactor_count
+            Number of ``MULTI_POLL`` reactor threads to configure on this worker process.
+        kvikio_reactor_dispatch
+            ``MULTI_POLL`` reactor dispatch policy to configure on this worker process.
+        kvikio_request_ceiling
+            ``MULTI_POLL`` concurrent-request ceiling to configure on this worker process.
         """
         if self._ctx is None:
             raise RuntimeError("reset() requires setup_worker() to have run")
-        configure_kvikio(kvikio_nthreads)
+        configure_kvikio(
+            kvikio_nthreads,
+            remote_io_backend=kvikio_remote_io_backend,
+            task_size=kvikio_task_size,
+            bounce_buffer_bytes=kvikio_bounce_buffer_bytes,
+            reactor_count=kvikio_reactor_count,
+            reactor_dispatch=kvikio_reactor_dispatch,
+            request_ceiling=kvikio_request_ceiling,
+        )
         assert self._comm is not None
         # Collective: all ranks idle before any rank tears down its Context.
         if self._comm.nranks > 1:
@@ -787,13 +827,7 @@ class RayEngine(StreamingEngine):
         ray_init_options: dict[str, Any] | None = None,
         num_ranks: int | None = None,
     ) -> None:
-        executor_options = executor_options or {}
-        executor_options.setdefault(
-            "kvikio_nthreads", resolve_kvikio_nthreads(executor_options)
-        )
-        executor_options.setdefault(
-            "kvikio_statistics", resolve_kvikio_statistics(executor_options)
-        )
+        executor_options = resolve_kvikio_executor_options(executor_options or {})
         engine_options = engine_options or {}
         ray_init_options = ray_init_options or {}
 
@@ -875,6 +909,16 @@ class RayEngine(StreamingEngine):
                     ),
                     kvikio_nthreads=executor_options["kvikio_nthreads"],
                     kvikio_statistics=executor_options["kvikio_statistics"],
+                    kvikio_remote_io_backend=executor_options[
+                        "kvikio_remote_io_backend"
+                    ],
+                    kvikio_task_size=executor_options["kvikio_task_size"],
+                    kvikio_bounce_buffer_bytes=executor_options[
+                        "kvikio_bounce_buffer_bytes"
+                    ],
+                    kvikio_reactor_count=executor_options["kvikio_reactor_count"],
+                    kvikio_reactor_dispatch=executor_options["kvikio_reactor_dispatch"],
+                    kvikio_request_ceiling=executor_options["kvikio_request_ceiling"],
                     hardware_binding=hw_binding,
                     memory_resource_config=mr_config,
                     worker_id=worker_id,
@@ -927,16 +971,16 @@ class RayEngine(StreamingEngine):
         )
         executor_options = executor_options or {}
         existing_executor_options = self.config.get("executor_options", {})
-        if isinstance(existing_executor_options, dict):
-            existing_quent_context = existing_executor_options.get("quent_context")
-            if existing_quent_context is not None:
-                executor_options.setdefault("quent_context", existing_quent_context)
-            existing_kvikio_nthreads = existing_executor_options.get("kvikio_nthreads")
-            if existing_kvikio_nthreads is not None:
-                executor_options.setdefault("kvikio_nthreads", existing_kvikio_nthreads)
-        executor_options.setdefault(
-            "kvikio_statistics", resolve_kvikio_statistics(executor_options)
-        )
+        if not isinstance(existing_executor_options, dict):
+            existing_executor_options = {}
+        existing_quent_context = existing_executor_options.get("quent_context")
+        if existing_quent_context is not None:
+            executor_options.setdefault("quent_context", existing_quent_context)
+        if "kvikio_nthreads" in existing_executor_options:
+            executor_options.setdefault(
+                "kvikio_nthreads", existing_executor_options["kvikio_nthreads"]
+            )
+        executor_options = resolve_kvikio_executor_options(executor_options)
         engine_options = engine_options or {}
         self.rapidsmpf_options = resolve_rapidsmpf_options(rapidsmpf_options)
         rapidsmpf_options_as_bytes = self.rapidsmpf_options.serialize()
@@ -950,6 +994,16 @@ class RayEngine(StreamingEngine):
                     rapidsmpf_options_as_bytes=rapidsmpf_options_as_bytes,
                     kvikio_nthreads=executor_options["kvikio_nthreads"],
                     kvikio_statistics=executor_options["kvikio_statistics"],
+                    kvikio_remote_io_backend=executor_options[
+                        "kvikio_remote_io_backend"
+                    ],
+                    kvikio_task_size=executor_options["kvikio_task_size"],
+                    kvikio_bounce_buffer_bytes=executor_options[
+                        "kvikio_bounce_buffer_bytes"
+                    ],
+                    kvikio_reactor_count=executor_options["kvikio_reactor_count"],
+                    kvikio_reactor_dispatch=executor_options["kvikio_reactor_dispatch"],
+                    kvikio_request_ceiling=executor_options["kvikio_request_ceiling"],
                 )
                 for rank in self._rank_actors
             ]

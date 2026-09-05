@@ -12,6 +12,8 @@ import os
 import textwrap
 from typing import TYPE_CHECKING, Any, Literal
 
+import kvikio
+
 from rapidsmpf.config import Options
 from rapidsmpf.utils.string import parse_boolean
 
@@ -40,6 +42,14 @@ __all__: list[str] = [
     "StreamingOptions",
     "Unspecified",
 ]
+
+
+def _parse_remote_io_backend(value: str) -> kvikio.RemoteIOBackend:
+    return kvikio.RemoteIOBackend[value.upper()]
+
+
+def _parse_reactor_dispatch(value: str) -> kvikio.RemoteReactorDispatch:
+    return kvikio.RemoteReactorDispatch[value.upper()]
 
 
 def _opt(
@@ -208,6 +218,42 @@ class StreamingOptions:
         Env: ``CUDF_POLARS__EXECUTOR__KVIKIO_STATISTICS``.
         Default: ``False``.
         Category: executor.
+    kvikio_remote_io_backend
+        The kvikio remote I/O backend.
+        Env: ``CUDF_POLARS__EXECUTOR__KVIKIO_REMOTE_IO_BACKEND``.
+        Default: ``kvikio.RemoteIOBackend.MULTI_POLL``.
+        Category: executor.
+    kvikio_task_size
+        Size, in bytes, of the chunks kvikio splits reads into for parallel
+        dispatch. Applies to local and remote I/O under both backends.
+        Env: ``CUDF_POLARS__EXECUTOR__KVIKIO_TASK_SIZE``.
+        Default: ``16777216`` (16 MiB) for the ``MULTI_POLL`` backend,
+        ``67108864`` (64 MiB) for ``EASY_THREADPOOL``.
+        Category: executor.
+    kvikio_bounce_buffer_bytes
+        Size, in bytes, of the kvikio bounce buffer used to stage host memory
+        for device-memory transfers. Applies to local and remote I/O under
+        both backends (not specific to ``MULTI_POLL``).
+        Env: ``CUDF_POLARS__EXECUTOR__KVIKIO_BOUNCE_BUFFER_BYTES``.
+        Default: ``16777216`` (16 MiB).
+        Category: executor.
+    kvikio_reactor_count
+        Number of reactor threads used by the ``MULTI_POLL`` remote I/O backend.
+        Env: ``CUDF_POLARS__EXECUTOR__KVIKIO_REACTOR_COUNT``.
+        Default: ``24``.
+        Category: executor.
+    kvikio_reactor_dispatch
+        How sub-ranges of one read are distributed across reactor threads under
+        the ``MULTI_POLL`` remote I/O backend.
+        Env: ``CUDF_POLARS__EXECUTOR__KVIKIO_REACTOR_DISPATCH``.
+        Default: ``kvikio.RemoteReactorDispatch.PER_CHUNK``.
+        Category: executor.
+    kvikio_request_ceiling
+        Maximum number of concurrent in-flight requests across all reactor
+        threads under the ``MULTI_POLL`` remote I/O backend. 0 means unlimited.
+        Env: ``CUDF_POLARS__EXECUTOR__KVIKIO_REQUEST_CEILING``.
+        Default: ``256``.
+        Category: executor.
     max_concurrent_io_tasks
         Maximum concurrent IO tasks for each scan node.
         Env: ``CUDF_POLARS__EXECUTOR__MAX_CONCURRENT_IO_TASKS``.
@@ -341,6 +387,28 @@ class StreamingOptions:
     )
     kvikio_statistics: bool | Unspecified = _opt(
         "executor", "CUDF_POLARS__EXECUTOR__KVIKIO_STATISTICS", parse_boolean
+    )
+    kvikio_remote_io_backend: kvikio.RemoteIOBackend | Unspecified = _opt(
+        "executor",
+        "CUDF_POLARS__EXECUTOR__KVIKIO_REMOTE_IO_BACKEND",
+        _parse_remote_io_backend,
+    )
+    kvikio_task_size: int | Unspecified = _opt(
+        "executor", "CUDF_POLARS__EXECUTOR__KVIKIO_TASK_SIZE", int
+    )
+    kvikio_bounce_buffer_bytes: int | Unspecified = _opt(
+        "executor", "CUDF_POLARS__EXECUTOR__KVIKIO_BOUNCE_BUFFER_BYTES", int
+    )
+    kvikio_reactor_count: int | Unspecified = _opt(
+        "executor", "CUDF_POLARS__EXECUTOR__KVIKIO_REACTOR_COUNT", int
+    )
+    kvikio_reactor_dispatch: kvikio.RemoteReactorDispatch | Unspecified = _opt(
+        "executor",
+        "CUDF_POLARS__EXECUTOR__KVIKIO_REACTOR_DISPATCH",
+        _parse_reactor_dispatch,
+    )
+    kvikio_request_ceiling: int | Unspecified = _opt(
+        "executor", "CUDF_POLARS__EXECUTOR__KVIKIO_REQUEST_CEILING", int
     )
     max_concurrent_io_tasks: int | dict[str, int] | Unspecified | None = _opt(
         "executor",

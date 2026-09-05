@@ -65,8 +65,7 @@ from cudf_polars.utils.config import (
     SPMDContext,
     StreamingExecutor,
     configure_kvikio,
-    resolve_kvikio_nthreads,
-    resolve_kvikio_statistics,
+    resolve_kvikio_executor_options,
 )
 
 if TYPE_CHECKING:
@@ -419,13 +418,7 @@ class SPMDEngine(StreamingEngine):
         executor_options: dict[str, Any] | None = None,
         engine_options: dict[str, Any] | None = None,
     ) -> None:
-        executor_options = executor_options or {}
-        executor_options.setdefault(
-            "kvikio_nthreads", resolve_kvikio_nthreads(executor_options)
-        )
-        executor_options.setdefault(
-            "kvikio_statistics", resolve_kvikio_statistics(executor_options)
-        )
+        executor_options = resolve_kvikio_executor_options(executor_options or {})
         engine_options = engine_options or {}
 
         quent_context: cudf_polars.quent.QuentContext | None = executor_options.get(
@@ -443,7 +436,15 @@ class SPMDEngine(StreamingEngine):
         )
         bind_to_gpu(hw_binding)
 
-        configure_kvikio(executor_options["kvikio_nthreads"])
+        configure_kvikio(
+            executor_options["kvikio_nthreads"],
+            remote_io_backend=executor_options["kvikio_remote_io_backend"],
+            task_size=executor_options["kvikio_task_size"],
+            bounce_buffer_bytes=executor_options["kvikio_bounce_buffer_bytes"],
+            reactor_count=executor_options["kvikio_reactor_count"],
+            reactor_dispatch=executor_options["kvikio_reactor_dispatch"],
+            request_ceiling=executor_options["kvikio_request_ceiling"],
+        )
 
         self.rapidsmpf_options = resolve_rapidsmpf_options(rapidsmpf_options)
         mr_config: MemoryResourceConfig = engine_options.get(
@@ -627,16 +628,24 @@ class SPMDEngine(StreamingEngine):
         )
         executor_options = executor_options or {}
         existing_executor_options = self.config.get("executor_options", {})
-        if isinstance(existing_executor_options, dict):
-            existing_quent_context = existing_executor_options.get("quent_context")
-            if existing_quent_context is not None:
-                executor_options.setdefault("quent_context", existing_quent_context)
-            existing_kvikio_nthreads = existing_executor_options.get("kvikio_nthreads")
-            if existing_kvikio_nthreads is not None:
-                executor_options.setdefault("kvikio_nthreads", existing_kvikio_nthreads)
-        configure_kvikio(executor_options["kvikio_nthreads"])
-        executor_options.setdefault(
-            "kvikio_statistics", resolve_kvikio_statistics(executor_options)
+        if not isinstance(existing_executor_options, dict):
+            existing_executor_options = {}
+        existing_quent_context = existing_executor_options.get("quent_context")
+        if existing_quent_context is not None:
+            executor_options.setdefault("quent_context", existing_quent_context)
+        if "kvikio_nthreads" in existing_executor_options:
+            executor_options.setdefault(
+                "kvikio_nthreads", existing_executor_options["kvikio_nthreads"]
+            )
+        executor_options = resolve_kvikio_executor_options(executor_options)
+        configure_kvikio(
+            executor_options["kvikio_nthreads"],
+            remote_io_backend=executor_options["kvikio_remote_io_backend"],
+            task_size=executor_options["kvikio_task_size"],
+            bounce_buffer_bytes=executor_options["kvikio_bounce_buffer_bytes"],
+            reactor_count=executor_options["kvikio_reactor_count"],
+            reactor_dispatch=executor_options["kvikio_reactor_dispatch"],
+            request_ceiling=executor_options["kvikio_request_ceiling"],
         )
         engine_options = engine_options or {}
         quent_context: cudf_polars.quent.QuentContext | None = executor_options.get(

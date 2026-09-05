@@ -212,12 +212,14 @@ def pytest_report_header(config: pytest.Config) -> str:
 
 EXPECTED_FAILURES: dict[str, str] = {
     "tests/unit/io/test_csv.py::test_read_csv_only_loads_selected_columns": "Memory usage won't be correct due to GPU",
-    "tests/unit/io/test_delta.py::test_scan_delta_version": "Need to expose hive partitioning",
-    "tests/unit/io/test_delta.py::test_scan_delta_relative": "Need to expose hive partitioning",
-    "tests/unit/io/test_delta.py::test_read_delta_version": "Need to expose hive partitioning",
-    "tests/unit/io/test_delta.py::test_scan_delta_schema_evolution_nested_struct_field_19915": "Need to expose hive partitioning",
+    "tests/unit/io/test_delta.py::test_scan_delta_version": "Delta schema evolution not yet implemented in cudf-polars: the table's files have differing column counts",
+    "tests/unit/io/test_delta.py::test_scan_delta_relative": "Delta schema evolution not yet implemented in cudf-polars: the table's files have differing column counts",
+    "tests/unit/io/test_delta.py::test_read_delta_version": "Delta schema evolution not yet implemented in cudf-polars: the table's files have differing column counts",
+    "tests/unit/io/test_delta.py::test_scan_delta_schema_evolution_nested_struct_field_19915": "Delta schema evolution not yet implemented in cudf-polars: the table's files have differing column counts",
     "tests/unit/io/test_delta.py::test_scan_delta_nanosecond_timestamp": "polars generates the wrong schema: https://github.com/pola-rs/polars/issues/23949",
     "tests/unit/io/test_delta.py::test_scan_delta_nanosecond_timestamp_nested": "polars generates the wrong schema: https://github.com/pola-rs/polars/issues/23949",
+    "tests/unit/io/test_delta.py::test_sink_delta": "Delta schema evolution not yet implemented in cudf-polars: 'All sources must have the same schema'",
+    "tests/unit/io/test_delta.py::test_write_delta": "Delta schema evolution not yet implemented in cudf-polars: 'All sources must have the same schema'",
     "tests/unit/io/test_iceberg.py::test_scan_iceberg_row_index_renamed": "Iceberg support not yet implemented in cudf-polars",
     "tests/unit/io/test_iceberg.py::test_scan_iceberg_extra_columns": "Iceberg support not yet implemented in cudf-polars",
     "tests/unit/io/test_iceberg.py::test_scan_iceberg_extra_struct_fields": "Iceberg support not yet implemented in cudf-polars",

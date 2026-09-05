@@ -30,6 +30,7 @@ from cudf_polars.dsl.traversal import traversal
 from cudf_polars.dsl.utils.aggregations import decompose_single_agg
 from cudf_polars.dsl.utils.groupby import rewrite_groupby
 from cudf_polars.dsl.utils.naming import unique_names
+from cudf_polars.dsl.utils.per_path import PerPathValues
 from cudf_polars.dsl.utils.replace import replace
 from cudf_polars.dsl.utils.rolling import rewrite_rolling
 from cudf_polars.typing import Schema
@@ -501,8 +502,11 @@ def _(node: plrs._ir_nodes.Scan, translator: Translator, schema: Schema) -> ir.I
         raise NotImplementedError(
             "Iceberg format is not supported in cudf-polars. Furthermore, row-level deletions are not supported."
         )  # pragma: no cover
-    if not POLARS_VERSION_LT_142 and node.hive_parts is not None:
-        raise NotImplementedError("Hive-partitioned scans are not supported")
+    hive_parts = (
+        None
+        if POLARS_VERSION_LT_142 or node.hive_parts is None
+        else PerPathValues.from_polars(pl.DataFrame._from_pydf(node.hive_parts))
+    )
     config_options = translator.config_options
     parquet_options = config_options.parquet_options
 
@@ -550,6 +554,7 @@ def _(node: plrs._ir_nodes.Scan, translator: Translator, schema: Schema) -> ir.I
             )
         ),
         parquet_options,
+        hive_parts=hive_parts,
         cached_parquet_info=None,
     )
 

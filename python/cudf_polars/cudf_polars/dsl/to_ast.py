@@ -15,7 +15,7 @@ from pylibcudf import expressions as plc_expr
 
 from cudf_polars.containers import DataType
 from cudf_polars.dsl import expr
-from cudf_polars.dsl.traversal import CachingVisitor, reuse_if_unchanged
+from cudf_polars.dsl.traversal import CachingVisitor, reuse_if_unchanged, traversal
 from cudf_polars.typing import GenericTransformer
 
 if TYPE_CHECKING:
@@ -277,8 +277,13 @@ def _extract_conjuncts(node: expr.Expr) -> list[expr.Expr]:
 
 
 def _to_parquet_filter(
-    node: expr.Expr, mapper: Transformer
+    node: expr.Expr, mapper: Transformer, unreadable_columns: frozenset[str]
 ) -> plc_expr.Expression | None:
+    if unreadable_columns and any(
+        isinstance(child, expr.Col) and child.name in unreadable_columns
+        for child in traversal([node])
+    ):
+        return None
     # Converts a boolean column reference (e.g., filter(pl.col("foo")))
     # to an explicit comparison for parquet filters (e.g., filter(pl.col("foo") == True)).
     # TODO: Have polars pass us the comparison instead
@@ -296,7 +301,9 @@ def _to_parquet_filter(
 
 
 def to_parquet_filter(
-    node: expr.Expr, stream: Stream
+    node: expr.Expr,
+    stream: Stream,
+    unreadable_columns: frozenset[str] = frozenset(),
 ) -> tuple[plc_expr.Expression | None, expr.Expr | None]:
     """
     Convert an expression to libcudf AST nodes suitable for parquet filtering.
@@ -307,6 +314,11 @@ def to_parquet_filter(
         Expression to convert.
     stream
         CUDA stream used for device memory operations and kernel launches.
+    unreadable_columns
+        Names of columns that are part of the scan's schema but are not stored
+        in the files, such as hive partition keys. Conjuncts referencing them
+        are left to the residual so they can be applied once those columns have
+        been materialized.
 
     Returns
     -------
@@ -321,13 +333,13 @@ def to_parquet_filter(
     mapper: Transformer = CachingVisitor(
         _to_ast, state={"for_parquet": True, "stream": stream}
     )
-    whole = _to_parquet_filter(node, mapper)
+    whole = _to_parquet_filter(node, mapper, unreadable_columns)
     if whole is not None:
         return whole, None
     can_handle_filters = []
     cant_handle_exprs = []
     for conjunct in _extract_conjuncts(node):
-        f = _to_parquet_filter(conjunct, mapper)
+        f = _to_parquet_filter(conjunct, mapper, unreadable_columns)
         if f is not None:
             can_handle_filters.append(f)
         else:

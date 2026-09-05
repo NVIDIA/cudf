@@ -8,6 +8,7 @@
 #include <cudf/column/column.hpp>
 #include <cudf/column/column_view.hpp>
 #include <cudf/io/experimental/variant_spec.hpp>
+#include <cudf/strings/strings_column_view.hpp>
 #include <cudf/types.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
@@ -16,6 +17,8 @@
 
 #include <memory>
 #include <optional>
+#include <span>
+#include <string>
 #include <string_view>
 
 /**
@@ -154,6 +157,38 @@ namespace io::parquet::experimental {
   column_view const& values,
   cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+
+/**
+ * @brief Encode a strings column of flat JSON objects as Parquet VARIANT.
+ *
+ * Each row of @p input must be a non-nested JSON object string (e.g. {"a":1,"b":"hi"}).
+ * The function extracts the scalar fields named in @p column_names and encodes the result
+ * as a Parquet VARIANT column: a struct of metadata and value list<uint8> children.
+ *
+ * Supported JSON value types per field:
+ *   - null: VARIANT null primitive
+ *   - true / false: VARIANT boolean primitive
+ *   - Integer literals: VARIANT INT64 primitive
+ *   - Floating-point: VARIANT FLOAT64 primitive
+ *   - Quoted strings: VARIANT short-string or long-string
+ *
+ * Fields absent from a row (or whose input row is null) are omitted from that row's
+ * VARIANT object; they do not appear in the value blob.
+ *
+ * @param input Strings column where each non-null row is a flat JSON object
+ * @param column_names Field names to encode; ordering need not be sorted. At most 255 names
+ * @param stream CUDA stream
+ * @param mr Device memory resources used to allocate the result and temporary storage
+ * @return struct<list<uint8> metadata, list<uint8> value> VARIANT column
+ *
+ * @throws std::invalid_argument if column_names contains more than 255 names, duplicate entries,
+ * or a name that is empty or contains '.' or '['
+ */
+[[nodiscard]] std::unique_ptr<column> encode_strings_to_variant(
+  cudf::strings_column_view const& input,
+  std::span<std::string const> column_names,
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /** @} */
 }  // namespace io::parquet::experimental

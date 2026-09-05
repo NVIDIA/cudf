@@ -418,10 +418,6 @@ def test_from_argparse_omitted_flag_still_picks_up_env_var(
 # ---------------------------------------------------------------------------
 
 
-def test_to_dict_empty_when_all_unspecified() -> None:
-    assert StreamingOptions().to_dict() == {}
-
-
 def test_to_dict_contains_only_set_fields() -> None:
     opts = StreamingOptions(
         fallback_mode="silent",

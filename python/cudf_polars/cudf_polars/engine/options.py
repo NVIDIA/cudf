@@ -46,6 +46,7 @@ def _opt(
     category: str,
     env_var: str | None = None,
     coerce: Callable[[str], Any] = str,
+    default: Any = UNSPECIFIED,
 ) -> Any:
     """
     Factory for ``StreamingOptions`` fields with category and env-var metadata.
@@ -60,10 +61,14 @@ def _opt(
         :class:`StreamingOptions` is instantiated without an explicit value for
         this field, the factory reads the environment variable (if set) on the constructing
         process.  ``None`` means no environment variable; the field defaults to
-        :data:`UNSPECIFIED`.
+        *default*.
     coerce
         Callable used to convert the raw env-var string to the field's type.
         Defaults to ``str`` (no conversion).
+    default
+        Value used when neither an explicit value nor the environment variable
+        is set. Defaults to :data:`UNSPECIFIED`, which defers to rapidsmpf's
+        built-in default.
     """
 
     def _default() -> Any:
@@ -71,7 +76,7 @@ def _opt(
             raw = os.environ.get(env_var)
             if raw is not None:
                 return coerce(raw)
-        return UNSPECIFIED
+        return default
 
     return dataclasses.field(
         default_factory=_default,
@@ -161,7 +166,7 @@ class StreamingOptions:
     pinned_memory
         Enable pinned host memory.
         Env: ``RAPIDSMPF_PINNED_MEMORY``.
-        Default: ``False``.
+        Default: ``True``.
         Category: rapidsmpf.
     pinned_initial_pool_size
         Initial pinned memory pool size (bytes).
@@ -433,8 +438,8 @@ class StreamingOptions:
 
         Examples
         --------
-        >>> StreamingOptions(fallback_mode="silent").to_dict()
-        {'fallback_mode': 'silent'}
+        >>> StreamingOptions(fallback_mode="silent").to_dict()  # doctest: +ELLIPSIS
+        {..., 'fallback_mode': 'silent'}
         >>> StreamingOptions.from_dict(
         ...     StreamingOptions(fallback_mode="silent").to_dict()
         ... )  # doctest: +ELLIPSIS
@@ -639,7 +644,7 @@ class StreamingOptions:
             action=argparse.BooleanOptionalAction,
             help=textwrap.dedent("""\
                 Enable pinned host memory if available on the system.
-                Env: RAPIDSMPF_PINNED_MEMORY. Built-in default: false."""),
+                Env: RAPIDSMPF_PINNED_MEMORY. Default: true."""),
         )
         g.add_argument(
             "--pinned-initial-pool-size",
@@ -648,7 +653,7 @@ class StreamingOptions:
             type=int,
             help=textwrap.dedent("""\
                 Starting allocation for the pinned memory pool in bytes.
-                Env: RAPIDSMPF_PINNED_INITIAL_POOL_SIZE. Built-in default: 0."""),
+                Env: RAPIDSMPF_PINNED_INITIAL_POOL_SIZE. Default: 0."""),
         )
         g.add_argument(
             "--pinned-max-pool-size",

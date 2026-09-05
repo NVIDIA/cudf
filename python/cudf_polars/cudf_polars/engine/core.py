@@ -211,6 +211,8 @@ def resolve_rapidsmpf_options(rapidsmpf_options: Options | None) -> Options:
 
     - ``num_streaming_threads=4``: moderate worker count for the rapidsmpf
       streaming runtime, shared across frontends.
+    - ``pinned_memory=true``, ``pinned_initial_pool_size=0``: pinned host
+      memory enabled by default.
 
     Parameters
     ----------
@@ -226,7 +228,13 @@ def resolve_rapidsmpf_options(rapidsmpf_options: Options | None) -> Options:
     if rapidsmpf_options is None:
         rapidsmpf_options = Options(get_environment_variables())
 
-    rapidsmpf_options.insert_if_absent({"num_streaming_threads": "4"})
+    rapidsmpf_options.insert_if_absent(
+        {
+            "num_streaming_threads": "4",
+            "pinned_memory": "true",
+            "pinned_initial_pool_size": "0",
+        }
+    )
     return rapidsmpf_options
 
 

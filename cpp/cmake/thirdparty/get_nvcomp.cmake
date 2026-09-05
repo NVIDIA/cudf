@@ -14,20 +14,36 @@
 # This function finds nvcomp and sets any additional necessary environment variables.
 function(find_and_configure_nvcomp)
   set(options DOWNLOAD_ONLY INSTALL_LIBRARY)
-  set(one_value VERSION)
+  set(one_value VERSION MAX_VERSION)
   cmake_parse_arguments(_NVCOMP "${options}" "${one_value}" "" ${ARGN})
 
   # If DOWNLOAD_ONLY is not set, try searching for an existing installation first
   if(NOT _NVCOMP_DOWNLOAD_ONLY)
     include("${rapids-cmake-dir}/find/package.cmake")
+    # nvcomp's package version file only accepts requests whose major version matches, so search
+    # without a version constraint and compare the result against the supported range ourselves.
     rapids_find_package(
-      nvcomp ${_NVCOMP_VERSION}
+      nvcomp
       GLOBAL_TARGETS nvcomp::nvcomp nvcomp::nvcomp_static
       FIND_ARGS QUIET
     )
     if(nvcomp_FOUND)
-      message(STATUS "Found nvcomp: ${nvcomp_DIR} (found version ${nvcomp_VERSION})")
-      return()
+      if(nvcomp_VERSION VERSION_GREATER_EQUAL _NVCOMP_VERSION AND nvcomp_VERSION VERSION_LESS
+                                                                  _NVCOMP_MAX_VERSION
+      )
+        message(STATUS "Found nvcomp: ${nvcomp_DIR} (found version ${nvcomp_VERSION})")
+        return()
+      endif()
+      message(
+        STATUS
+          "Ignoring nvcomp ${nvcomp_VERSION} in ${nvcomp_DIR}; libcudf requires a version in [${_NVCOMP_VERSION}, ${_NVCOMP_MAX_VERSION})"
+      )
+      # Clear the variables the rejected installation set, so that they don't leak into the
+      # find_package call for the downloaded binary below
+      foreach(_var IN ITEMS nvcomp_DIR nvcomp_INCLUDE_DIR nvcomp_LIBRARY_DIR)
+        unset(${_var} CACHE)
+        unset(${_var})
+      endforeach()
     endif()
   endif()
 
@@ -127,7 +143,7 @@ function(find_and_configure_nvcomp)
   endif()
 endfunction()
 
-set(_nvcomp_args VERSION 5.3.0.16)
+set(_nvcomp_args VERSION 5.3.0.16 MAX_VERSION 6.1.0)
 if(CUDF_BUILD_STATIC_DEPS STREQUAL "FORCE")
   list(APPEND _nvcomp_args DOWNLOAD_ONLY)
 endif()

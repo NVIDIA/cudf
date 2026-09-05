@@ -1007,7 +1007,6 @@ add_library(
   src/sort/sort_column.cu
   src/sort/sort_radix.cu
   src/sort/sorted_order_radix.cu
-  src/sort/stable_segmented_sort.cu
   src/sort/stable_sort_column.cu
   src/sort/stable_sort.cu
   src/sort/top_k.cu

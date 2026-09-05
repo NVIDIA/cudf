@@ -22,6 +22,7 @@ from cudf_polars.streaming.actor_graph.nodes import (
     generate_ir_sub_network_wrapper,
     metadata_drain_node,
 )
+from cudf_polars.streaming.filter_hint import PushdownFilterHint
 from cudf_polars.streaming.over import Over
 from cudf_polars.utils.config import SPMDContext
 
@@ -176,11 +177,12 @@ def determine_fanout_nodes(
     for node in traversal([ir]):
         if node in unbounded:
             _mark_children_unbounded(node)
-        elif isinstance(node, (Union, Join, Over)):
+        elif isinstance(node, (Union, Join, Over, PushdownFilterHint)):
             # Union processes children sequentially; Join may broadcast one
             # side; Over buffers (or samples-then-replays) its input before
-            # producing output. In every case the input source needs
-            # unbounded fanout so other consumers don't block it.
+            # producing output; PushdownFilterHint similarly might buffer
+            # then replay. In every case the input source needs unbounded
+            # fanout so other consumers don't block it.
             _mark_children_unbounded(node)
         elif len(node.children) > 1:
             # Check if this node is doing any broadcasting.

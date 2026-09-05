@@ -248,7 +248,7 @@ class StreamingOptions:
         disables the rewrite.
         Env: ``CUDF_POLARS__EXECUTOR__JOIN_FILTER_PUSHDOWN`` and
         ``CUDF_POLARS__EXECUTOR__JOIN_FILTER_PUSHDOWN__*``.
-        Default: enabled.
+        Default: disabled.
         Category: executor.
     sink_to_directory
         Whether multi-partition sink operations should write to a directory

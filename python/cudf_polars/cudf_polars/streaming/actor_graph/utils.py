@@ -7,6 +7,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import itertools
+import math
 import operator
 import struct
 import time
@@ -175,7 +176,7 @@ def _keys_match(
 
 
 class ChunkStore:
-    """Ordered spillable buffer for TableChunk messages."""
+    """Ordered spillable buffer for Messages."""
 
     def __init__(self, ctx: Context) -> None:
         self._mids: deque[int] = deque()
@@ -184,6 +185,12 @@ class ChunkStore:
     def __len__(self) -> int:
         """Return the number of messages in the store."""
         return len(self._mids)
+
+    def clear(self) -> None:
+        """Discard all messages in the store."""
+        for mid in self._mids:
+            self._store.extract(mid=mid)
+        self._mids.clear()
 
     def insert(self, msg: Message) -> None:
         """Insert a message into the store."""
@@ -324,6 +331,7 @@ async def shutdown_on_error(
                     record["row_count"] = tracer.row_count
                 if tracer.decision is not None:
                     record["decision"] = tracer.decision
+                record.update(tracer.extra)
             cudf_polars.dsl.tracing.log(
                 "Streaming Actor", start=start, stop=stop, **record
             )
@@ -1098,6 +1106,57 @@ class TableSizeStats:
     cardinality: CardinalityEstimate | None = None
     """Global cardinality statistics for the sampled rows, when requested."""
 
+    def distinct_count(self) -> int | None:
+        """Extrapolate sampled distinct count to the estimated full row count."""
+        if self.total_rows == 0:
+            return 0
+        if self.cardinality is None or self.cardinality.row_count == 0:
+            return None
+        return min(
+            self.total_rows,
+            math.ceil(
+                self.cardinality.distinct_count
+                * self.total_rows
+                / self.cardinality.row_count
+            ),
+        )
+
+
+async def aggregate_table_size_stats(
+    context: Context,
+    comm: Communicator,
+    samples: tuple[TableSizeStats, ...],
+    collective_id: int,
+) -> tuple[TableSizeStats, ...]:
+    """Aggregate table-size and row estimates across ranks."""
+    totals = await allgather_reduce(
+        context,
+        comm,
+        collective_id,
+        *(
+            value
+            for sample in samples
+            for value in (
+                sample.total_size,
+                sample.total_rows,
+                sample.total_chunks,
+                int(sample.is_complete),
+            )
+        ),
+    )
+    totals_iter = iter(totals)
+    return tuple(
+        TableSizeStats(
+            chunks=sample.chunks,
+            total_size=next(totals_iter),
+            total_rows=next(totals_iter),
+            total_chunks=next(totals_iter),
+            is_complete=next(totals_iter) == comm.nranks,
+            cardinality=sample.cardinality,
+        )
+        for sample in samples
+    )
+
 
 @dataclass(frozen=True)
 class ChunkSampler:
@@ -1227,6 +1286,26 @@ class ChunkSampler:
         )
 
 
+async def sample_inputs(
+    context: Context,
+    comm: Communicator,
+    samplers: Sequence[ChunkSampler],
+    collective_id: int,
+) -> tuple[TableSizeStats, ...]:
+    """Sample input channels concurrently and aggregate their statistics."""
+    if not samplers:
+        return ()
+    local_samples = await gather_in_task_group(
+        *(sampler.sample() for sampler in samplers)
+    )
+    return await aggregate_table_size_stats(
+        context,
+        comm,
+        tuple(local_samples),
+        collective_id,
+    )
+
+
 async def _sample_chunks(
     context: Context,
     ch: Channel[TableChunk],
@@ -1295,19 +1374,23 @@ async def replay_buffered_channel(
     ch_in
         The buffered input channel.
     buffered_chunks
-        The buffered chunks to yield first.
+        The buffered chunks to yield first. The store is empty when this
+        coroutine exits, including on cancellation or error.
     metadata
         The metadata to send to the output channel.
     trace_ir
         The IR node to trace. Passed through to shutdown_on_error.
     """
-    async with shutdown_on_error(context, ch_out, ch_in, trace_ir=trace_ir):
-        await send_metadata(ch_out, context, metadata)
-        for msg in buffered_chunks:
-            await ch_out.send(context, msg)
-        while (msg := await ch_in.recv(context)) is not None:
-            await ch_out.send(context, msg)
-        await ch_out.drain(context)
+    try:
+        async with shutdown_on_error(context, ch_out, ch_in, trace_ir=trace_ir):
+            await send_metadata(ch_out, context, metadata)
+            for msg in buffered_chunks:
+                await ch_out.send(context, msg)
+            while (msg := await ch_in.recv(context)) is not None:
+                await ch_out.send(context, msg)
+            await ch_out.drain(context)
+    finally:
+        buffered_chunks.clear()
 
 
 @dataclass(frozen=True)

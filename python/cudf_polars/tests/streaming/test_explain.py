@@ -137,6 +137,54 @@ def test_explain_logical_plan_with_join(tmp_path, df):
     assert "JOIN Inner ('x',) ('x',)" in plan
 
 
+def test_explain_pushdown_filter_hint_in_dynamic_physical_plan():
+    domain = (
+        pl.LazyFrame({"key": [1, 99], "active": [True, False]})
+        .filter("active")
+        .select("key")
+    )
+    target = pl.LazyFrame({"key": [i % 10 for i in range(20)]})
+    query = domain.join(target, on="key")
+    engine = pl.GPUEngine(
+        executor="streaming",
+        raise_on_fail=True,
+        executor_options={"join_filter_pushdown": {"threshold": 0.5}},
+    )
+
+    logical = explain_query(query, engine, physical=False)
+    physical = explain_query(query, engine, physical=True)
+    logical_serialized = serialize_query(query, engine, physical=False)
+    physical_serialized = serialize_query(query, engine, physical=True)
+
+    assert "PUSHDOWN FILTER HINT ('key',) ('key',)" in logical
+    assert "prefilters=('JoinInputDomain',)" in physical
+    expected_properties = {
+        "target_on": ["key"],
+        "domain_on": ["key"],
+        "nulls_equal": False,
+        "placement": "join_input",
+    }
+    assert any(
+        node.type == "PushdownFilterHint" and node.properties == expected_properties
+        for node in logical_serialized.nodes.values()
+    )
+    assert any(
+        node.type == "JoinWithPrefilter"
+        and node.properties["prefilters"]
+        == [
+            {
+                "type": "Prefilter",
+                "target_side": "right",
+                "target_on": ["key"],
+                "domain_on": ["key"],
+                "nulls_equal": False,
+                "domain": {"type": "JoinInputDomain", "side": "left"},
+            }
+        ]
+        for node in physical_serialized.nodes.values()
+    )
+
+
 def test_explain_logical_plan_with_sort(tmp_path, df):
     make_partitioned_source(df, tmp_path, fmt="parquet", n_files=2)
 

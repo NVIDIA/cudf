@@ -1194,4 +1194,12 @@ public class IfElseTest extends CudfTestBase {
       assertThrows(IllegalArgumentException.class, () -> input.applyNullMask(mask));
     }
   }
+
+  @Test
+  void testApplyNullMaskRejectsRowCountMismatch() {
+    try (ColumnVector input = ColumnVector.fromBoxedInts(0, 100, 1, 2);
+         ColumnVector mask = ColumnVector.fromBoxedBooleans(true, false, true)) {
+      assertThrows(IllegalArgumentException.class, () -> input.applyNullMask(mask));
+    }
+  }
 }

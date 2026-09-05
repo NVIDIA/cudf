@@ -645,6 +645,10 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
       throw new IllegalArgumentException("Mask column must be of type BOOL8, found " +
           booleanMask.getType());
     }
+    if (booleanMask.getRowCount() != getRowCount()) {
+      throw new IllegalArgumentException("Mask column row count (" + booleanMask.getRowCount() +
+          ") does not match this column's row count (" + getRowCount() + ")");
+    }
     return new ColumnVector(applyNullMask(getNativeView(), booleanMask.getNativeView()));
   }
 

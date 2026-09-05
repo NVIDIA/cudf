@@ -3,5 +3,6 @@
 
 from pylibcudf.io.experimental.hybrid_scan cimport (
     FileMetaData,
+    HybridScanMultiFile,
     HybridScanReader,
 )

@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from pylibcudf.io.experimental.hybrid_scan import (
+    HybridScanMultiFile,
     HybridScanMetadata,
     HybridScanReader,
     UseDataPageMask,
@@ -10,6 +11,7 @@ from pylibcudf.io.parquet_metadata import FileMetaData
 
 __all__ = [
     "FileMetaData",  # backwards compatibility
+    "HybridScanMultiFile",
     "HybridScanMetadata",
     "HybridScanReader",
     "UseDataPageMask",

@@ -36,15 +36,12 @@ rapids-pip-retry install \
     --prefer-binary \
     -r /tmp/requirements-build.txt
 
-# build with '--no-build-isolation', for better sccache hit rate
-# 0 really means "add --no-build-isolation" (ref: https://github.com/pypa/pip/issues/5735)
-export PIP_NO_BUILD_ISOLATION=0
-
 # TODO: move this variable into `ci-wheel`
 # Format Python limited API version string
 RAPIDS_PY_API="cp${RAPIDS_PY_VERSION//./}"
 export RAPIDS_PY_API
 
+# The shared helper performs the isolated wheel build and configures sccache.
 ./ci/build_wheel.sh "${package_name}" "${package_dir}" --stable 2>&1 | tee cudf-streaming-wheel-build-output.log
 
 rapids-logger "Checking for Cython performance warnings"

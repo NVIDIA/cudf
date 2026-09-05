@@ -714,7 +714,7 @@ files:
   test_cudf_polars_compat:
     output: none
     matrix:
-      polars_compat_version: ["1.35", "1.36", "1.37", "1.38", "1.39", "1.40", "1.41", "1.42"]
+      polars_compat_version: ["1.35", "1.36", "1.37", "1.38", "1.39", "1.40", "1.41", "1.42", "1.43", "1.44"]
     includes:
       - test_cudf_polars_compat
 channels:
@@ -1098,7 +1098,7 @@ dependencies:
           # 'nvidia-ml-py' provides the 'pynvml' module
           - &nvidia_ml_py nvidia-ml-py>=12
           - packaging
-          - polars>=1.35,<1.43
+          - polars>=1.35,<1.45
           - typing_extensions>=4.0.0
   run_cudf_polars_dask:
     common:
@@ -1939,5 +1939,13 @@ dependencies:
               polars_compat_version: "1.42"
             packages:
               - polars==1.42.*
+          - matrix:
+              polars_compat_version: "1.43"
+            packages:
+              - polars==1.43.*
+          - matrix:
+              polars_compat_version: "1.44"
+            packages:
+              - polars==1.44.*
           - matrix:
             packages:

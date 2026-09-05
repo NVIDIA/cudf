@@ -26,7 +26,7 @@ dependencies = [
     "kvikio==26.10.*,>=0.0.0a0",
     "nvidia-ml-py>=12",
     "packaging",
-    "polars>=1.35,<1.43",
+    "polars>=1.35,<1.45",
     "pylibcudf==26.10.*,>=0.0.0a0",
     "rapidsmpf==26.10.*,>=0.0.0a0",
     "typing_extensions>=4.0.0",

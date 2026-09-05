@@ -452,6 +452,10 @@ cudf::ast::operation const& compile_binary_expression(cudf::jni::ast::compiled_e
 cudf::ast::expression const& compile_jit_expression(cudf::jni::ast::compiled_expr& compiled_expr,
                                                     jni_serialized_ast& jni_ast)
 {
+  if (!compiled_expr.is_jit()) {
+    throw std::invalid_argument("JIT operations require an expression compiled for JIT");
+  }
+
   auto const jni_op_value     = jni_ast.read_byte();
   auto const op_info          = jni_to_jit_operator(jni_op_value);
   auto const jni_policy_value = jni_ast.read_byte();
@@ -530,30 +534,50 @@ cudf::ast::expression const& compile_expression(cudf::jni::ast::compiled_expr& c
 }
 
 /** Decode a serialized AST into a native libcudf AST and associated resources */
-std::unique_ptr<cudf::jni::ast::compiled_expr> compile_serialized_ast(jni_serialized_ast& jni_ast)
+std::unique_ptr<cudf::jni::ast::compiled_expr> compile_serialized_ast(
+  jni_serialized_ast& jni_ast, cudf::jni::ast::compilation_mode mode)
 {
-  auto jni_expr_ptr = std::make_unique<cudf::jni::ast::compiled_expr>();
+  auto jni_expr_ptr = std::make_unique<cudf::jni::ast::compiled_expr>(mode);
   (void)compile_expression(*jni_expr_ptr, jni_ast);
 
   if (!jni_ast.at_eof()) { throw std::invalid_argument("Extra bytes at end of serialized AST"); }
 
   // The expression may be handed to a thread with a different default stream.
-  if (jni_expr_ptr->has_literals()) { cudf::get_default_stream().sync(); }
+  if (jni_expr_ptr->has_literals()) {
+    cudf::get_default_stream().sync();
+    // JIT literals retain only the copied one-row columns after construction completes.
+    jni_expr_ptr->release_jit_staging_scalars();
+  }
 
   return jni_expr_ptr;
 }
 
-enum class execution_backend { DEFAULT, JIT };
-
-jlong execute_compiled_expression(jlong j_ast, jlong j_table, execution_backend backend)
+jlong execute_compiled_expression(jlong j_ast, jlong j_table)
 {
   auto compiled_expr_ptr = reinterpret_cast<cudf::jni::ast::compiled_expr const*>(j_ast);
   auto tview_ptr         = reinterpret_cast<cudf::table_view const*>(j_table);
-  auto const& expression = compiled_expr_ptr->get_top_expression();
-  std::unique_ptr<cudf::column> result = backend == execution_backend::JIT
-                                           ? cudf::compute_column_jit(*tview_ptr, expression)
-                                           : cudf::compute_column(*tview_ptr, expression);
+  std::unique_ptr<cudf::column> result =
+    compiled_expr_ptr->is_jit()
+      ? cudf::compute_column_jit(*tview_ptr, compiled_expr_ptr->get_jit_top_expression())
+      : cudf::compute_column(*tview_ptr, compiled_expr_ptr->get_top_expression());
   return reinterpret_cast<jlong>(result.release());
+}
+
+jlong compile_serialized_expression(JNIEnv* env,
+                                    jbyteArray jni_data,
+                                    cudf::jni::ast::compilation_mode mode)
+{
+  JNI_NULL_CHECK(env, jni_data, "Serialized AST data is null", 0);
+  JNI_TRY
+  {
+    cudf::jni::auto_set_device(env);
+    cudf::jni::native_jbyteArray jbytes(env, jni_data);
+    jni_serialized_ast jni_ast(jbytes);
+    auto compiled_expr_ptr = compile_serialized_ast(jni_ast, mode);
+    jbytes.cancel();
+    return reinterpret_cast<jlong>(compiled_expr_ptr.release());
+  }
+  JNI_CATCH(env, 0);
 }
 
 }  // anonymous namespace
@@ -564,17 +588,14 @@ JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_ast_CompiledExpression_compile(JNIEn
                                                                            jclass,
                                                                            jbyteArray jni_data)
 {
-  JNI_NULL_CHECK(env, jni_data, "Serialized AST data is null", 0);
-  JNI_TRY
-  {
-    cudf::jni::auto_set_device(env);
-    cudf::jni::native_jbyteArray jbytes(env, jni_data);
-    jni_serialized_ast jni_ast(jbytes);
-    auto compiled_expr_ptr = compile_serialized_ast(jni_ast);
-    jbytes.cancel();
-    return reinterpret_cast<jlong>(compiled_expr_ptr.release());
-  }
-  JNI_CATCH(env, 0);
+  return compile_serialized_expression(env, jni_data, cudf::jni::ast::compilation_mode::DEFAULT);
+}
+
+JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_ast_CompiledExpression_compileJit(JNIEnv* env,
+                                                                              jclass,
+                                                                              jbyteArray jni_data)
+{
+  return compile_serialized_expression(env, jni_data, cudf::jni::ast::compilation_mode::JIT);
 }
 
 JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_ast_CompiledExpression_computeColumn(JNIEnv* env,
@@ -587,24 +608,37 @@ JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_ast_CompiledExpression_computeColumn
   JNI_TRY
   {
     cudf::jni::auto_set_device(env);
-    return execute_compiled_expression(j_ast, j_table, execution_backend::DEFAULT);
+    return execute_compiled_expression(j_ast, j_table);
   }
   JNI_CATCH(env, 0);
 }
 
-JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_ast_CompiledExpression_computeColumnJit(JNIEnv* env,
-                                                                                    jclass,
-                                                                                    jlong j_ast,
-                                                                                    jlong j_table)
+JNIEXPORT jlongArray JNICALL Java_ai_rapids_cudf_ast_CompiledExpression_computeTableJitNative(
+  JNIEnv* env, jclass, jlongArray j_asts, jlong j_table)
 {
-  JNI_NULL_CHECK(env, j_ast, "Compiled AST pointer is null", 0);
-  JNI_NULL_CHECK(env, j_table, "Table view pointer is null", 0);
+  JNI_NULL_CHECK(env, j_asts, "Compiled AST pointer array is null", nullptr);
+  JNI_NULL_CHECK(env, j_table, "Table view pointer is null", nullptr);
   JNI_TRY
   {
     cudf::jni::auto_set_device(env);
-    return execute_compiled_expression(j_ast, j_table, execution_backend::JIT);
+    cudf::jni::native_jlongArray ast_handles(env, j_asts);
+    if (ast_handles.size() == 0) { throw std::invalid_argument("At least one AST is required"); }
+
+    std::vector<std::reference_wrapper<cudf::ast::expression const>> expressions;
+    expressions.reserve(ast_handles.size());
+    for (auto const handle : ast_handles) {
+      if (handle == 0) { throw std::invalid_argument("Compiled AST pointer is null"); }
+      auto const* compiled_expr_ptr =
+        reinterpret_cast<cudf::jni::ast::compiled_expr const*>(handle);
+      expressions.emplace_back(compiled_expr_ptr->get_jit_top_expression());
+    }
+    ast_handles.cancel();
+
+    auto const* tview_ptr = reinterpret_cast<cudf::table_view const*>(j_table);
+    return cudf::jni::convert_table_for_return(env,
+                                               cudf::compute_table_jit(*tview_ptr, expressions));
   }
-  JNI_CATCH(env, 0);
+  JNI_CATCH(env, nullptr);
 }
 
 JNIEXPORT void JNICALL Java_ai_rapids_cudf_ast_CompiledExpression_destroy(JNIEnv* env,

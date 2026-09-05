@@ -7,6 +7,7 @@
 
 package ai.rapids.cudf;
 
+import ai.rapids.cudf.ast.AstJitProgram;
 import ai.rapids.cudf.ast.CompiledExpression;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -367,7 +368,13 @@ public final class MemoryCleaner {
   }
 
   public static void register(CompiledExpression expr, Cleaner cleaner) {
-    all.put(cleaner.id, new CleanerWeakReference(expr, cleaner, collected, false));
+    // JIT expressions can own one-row literal columns.
+    all.put(cleaner.id, new CleanerWeakReference(expr, cleaner, collected, true));
+  }
+
+  public static void register(AstJitProgram program, Cleaner cleaner) {
+    // AST programs retain copied literal columns across evaluations.
+    all.put(cleaner.id, new CleanerWeakReference(program, cleaner, collected, true));
   }
 
   static void register(HybridScanReader reader, Cleaner cleaner) {

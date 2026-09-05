@@ -41,12 +41,31 @@ public abstract class AstExpression {
     }
   }
 
+  /**
+   * Compile this expression for execution with the process-level backend selection.
+   *
+   * @return expression compatible with default AST consumers
+   */
   public CompiledExpression compile() {
+    return compile(CompiledExpression.CompilationMode.DEFAULT);
+  }
+
+  /**
+   * Compile this expression for explicit execution with the libcudf JIT backend.
+   * The returned expression cannot be used as a join or scan predicate.
+   *
+   * @return expression specialized for JIT execution
+   */
+  public CompiledExpression compileJit() {
+    return compile(CompiledExpression.CompilationMode.JIT);
+  }
+
+  private CompiledExpression compile(CompiledExpression.CompilationMode mode) {
     int size = getSerializedSize();
     ByteBuffer bb = ByteBuffer.allocate(size);
     bb.order(ByteOrder.nativeOrder());
     serialize(bb);
-    return new CompiledExpression(bb.array());
+    return new CompiledExpression(bb.array(), mode);
   }
 
   /** Get the size in bytes of the serialized form of this node and all child nodes */

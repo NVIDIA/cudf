@@ -1521,8 +1521,12 @@ transform_program::transform_program(
     impl_->ast_input_types_.push_back(std::visit([](auto& view) { return view.type(); }, input));
     impl_->ast_input_nullable_.push_back(
       std::visit([](auto& view) { return view.nullable(); }, input));
+    if (auto const* scalar = std::get_if<scalar_column_view>(&input)) {
+      // The program must outlive non-owning scalar-column literals in the source AST.
+      impl_->ast_scalar_columns_.push_back(
+        std::make_unique<column>(scalar->as_column_view(), stream, mr));
+    }
   }
-  impl_->ast_scalar_columns_       = std::move(args.scalar_columns);
   impl_->ast_input_column_indices_ = std::move(args.input_column_indices);
   impl_->ast_outputs_              = std::move(args.outputs);
 }

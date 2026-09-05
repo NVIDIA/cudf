@@ -6,9 +6,13 @@
 #pragma once
 
 #include <cudf/ast/expressions.hpp>
+#include <cudf/column/column.hpp>
+#include <cudf/column/column_factories.hpp>
+#include <cudf/column/scalar_column_view.hpp>
 #include <cudf/scalar/scalar.hpp>
 
 #include <memory>
+#include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
@@ -17,19 +21,37 @@ namespace cudf {
 namespace jni {
 namespace ast {
 
+enum class compilation_mode { DEFAULT, JIT };
+
 /** A class to capture all resources associated with a compiled AST expression. */
 class compiled_expr {
+  compilation_mode const mode;
+
+  // Keep literal owners before the tree so its non-owning nodes are destroyed first.
   /** GPU scalar instances that correspond to literal nodes */
   std::vector<std::unique_ptr<cudf::scalar>> scalars;
+
+  /** One-row columns backing literals in a JIT expression tree */
+  std::vector<std::unique_ptr<cudf::column>> scalar_columns;
 
   /** All expression nodes within the expression tree */
   cudf::ast::tree expressions;
 
  public:
+  explicit compiled_expr(compilation_mode mode) : mode{mode} {}
+
   template <typename ScalarType>
   cudf::ast::literal const& add_literal(ScalarType& scalar,
                                         std::unique_ptr<cudf::scalar> scalar_ptr)
   {
+    if (is_jit()) {
+      auto scalar_column = cudf::make_column_from_scalar(scalar, 1);
+      scalars.push_back(std::move(scalar_ptr));
+      scalar_columns.push_back(std::move(scalar_column));
+      return expressions.emplace<cudf::ast::literal>(
+        cudf::scalar_column_view{scalar_columns.back()->view()});
+    }
+
     scalars.push_back(std::move(scalar_ptr));
     return expressions.emplace<cudf::ast::literal>(scalar);
   }
@@ -61,13 +83,38 @@ class compiled_expr {
   template <typename F>
   cudf::ast::expression const& add_jit_expression(F&& factory)
   {
+    if (!is_jit()) {
+      throw std::invalid_argument("JIT operations require an expression compiled for JIT");
+    }
     return factory(expressions);
   }
 
   [[nodiscard]] bool has_literals() const { return !scalars.empty(); }
 
-  /** Return the expression node at the top of the tree */
-  cudf::ast::expression const& get_top_expression() const { return expressions.back(); }
+  [[nodiscard]] bool has_jit_literals() const { return !scalar_columns.empty(); }
+
+  [[nodiscard]] bool is_jit() const { return mode == compilation_mode::JIT; }
+
+  void release_jit_staging_scalars()
+  {
+    if (is_jit()) { scalars.clear(); }
+  }
+
+  /** Return the expression node at the top of a default-compatible tree */
+  cudf::ast::expression const& get_top_expression() const
+  {
+    if (is_jit()) {
+      throw std::logic_error("JIT-compiled expressions cannot be used by a default AST consumer");
+    }
+    return expressions.back();
+  }
+
+  /** Return the expression node at the top of the JIT tree */
+  cudf::ast::expression const& get_jit_top_expression() const
+  {
+    if (!is_jit()) { throw std::logic_error("Expression was not compiled for JIT"); }
+    return expressions.back();
+  }
 };
 
 }  // namespace ast

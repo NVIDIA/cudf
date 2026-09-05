@@ -12,7 +12,7 @@ import struct
 import time
 from collections import defaultdict, deque
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from functools import reduce
 from typing import TYPE_CHECKING, Any, Literal, TypeAlias, cast
 
@@ -37,9 +37,17 @@ from rapidsmpf.streaming.coll.allgather import AllGather
 from rapidsmpf.streaming.core.message import Message
 
 import cudf_polars.dsl.tracing
+import cudf_polars.quent._types
 from cudf_polars.containers import DataFrame
 from cudf_polars.dsl.expr import Cast, Col, NamedExpr, TemporalFunction
-from cudf_polars.dsl.ir import Filter, GroupBy, HStack, Join, Projection, Select
+from cudf_polars.dsl.ir import (
+    Filter,
+    GroupBy,
+    HStack,
+    Join,
+    Projection,
+    Select,
+)
 from cudf_polars.dsl.tracing import Scope
 from cudf_polars.dsl.utils.column_domain import column_domain_bindings
 from cudf_polars.dsl.utils.naming import names_to_indices
@@ -300,6 +308,7 @@ async def shutdown_on_error(
 
     if ir_context is not None:
         contextvars["cudf_polars_query_id"] = str(ir_context.query_id)
+        ir_context = replace(ir_context, tracer=tracer)
 
     with cudf_polars.dsl.tracing.bound_contextvars(**contextvars):
         start = time.monotonic_ns()
@@ -327,6 +336,54 @@ async def shutdown_on_error(
             cudf_polars.dsl.tracing.log(
                 "Streaming Actor", start=start, stop=stop, **record
             )
+
+            if (
+                ir_context is not None
+                and (
+                    quent_ir_execution_context := ir_context.quent_ir_execution_context
+                )
+                is not None
+            ):
+                custom_attributes = []
+                if tracer is not None and tracer.chunk_count is not None:
+                    custom_attributes.append(
+                        cudf_polars.quent._types.StatisticsAttribute(
+                            key="chunk_count",
+                            value_type="U64",
+                            value=tracer.chunk_count,
+                        )
+                    )
+                if tracer is not None and tracer.duplicated is not None:
+                    custom_attributes.append(
+                        cudf_polars.quent._types.StatisticsAttribute(
+                            key="duplicated",
+                            value_type="U64",
+                            value=1 if tracer.duplicated else 0,
+                        )
+                    )
+                if tracer is not None and tracer.decision is not None:
+                    custom_attributes.append(
+                        cudf_polars.quent._types.StatisticsAttribute(
+                            key="decision",
+                            value_type="String",
+                            value=tracer.decision,
+                        )
+                    )
+                if tracer is None or tracer.row_count is None:
+                    # TODO: See if `output_rows` is nullable.
+                    output_rows = 0
+                else:
+                    output_rows = tracer.row_count
+                stats = quent_ir_execution_context.quent_operator.statistics(
+                    statistics=cudf_polars.quent._types.Statistics(
+                        output_rows=output_rows,
+                        input_bytes=tracer.input_bytes,
+                        output_bytes=tracer.output_bytes,
+                        custom_attributes=custom_attributes,
+                    )
+                )
+
+                quent_ir_execution_context.logger.emit(stats)
 
 
 def _update_ordering_indices(

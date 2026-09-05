@@ -32,7 +32,10 @@ from cudf_polars.dsl.ir import Empty, Sort
 from cudf_polars.dsl.utils.naming import names_to_indices, unique_names
 from cudf_polars.streaming.actor_graph.collectives.allgather import AllGatherManager
 from cudf_polars.streaming.actor_graph.collectives.shuffle import ShuffleManager
-from cudf_polars.streaming.actor_graph.dispatch import generate_ir_sub_network
+from cudf_polars.streaming.actor_graph.dispatch import (
+    generate_ir_sub_network,
+    ir_context_for_node,
+)
 from cudf_polars.streaming.actor_graph.nodes import (
     default_node_single,
     shutdown_on_error,
@@ -912,6 +915,7 @@ def _sort_rapidsmpf_network(ir: Sort, rec: SubNetGenerator) -> tuple[dict, dict]
     executor = rec.state["config_options"].executor
     partition_info = rec.state["partition_info"]
     dynamic = executor.dynamic_planning is not None
+    ir_context = ir_context_for_node(rec, ir)
 
     if partition_info[ir].count == 1 and (
         not dynamic or isinstance(ir.children[0], Repartition)
@@ -922,7 +926,7 @@ def _sort_rapidsmpf_network(ir: Sort, rec: SubNetGenerator) -> tuple[dict, dict]
             default_node_single(
                 rec.state["context"],
                 ir,
-                rec.state["ir_context"],
+                ir_context,
                 channels[ir].reserve_input_slot(),
                 channels[ir.children[0]].reserve_output_slot(),
             )
@@ -945,7 +949,7 @@ def _sort_rapidsmpf_network(ir: Sort, rec: SubNetGenerator) -> tuple[dict, dict]
             rec.state["context"],
             rec.state["comm"],
             ir,
-            rec.state["ir_context"],
+            ir_context,
             ch_in=channels[child].reserve_output_slot(),
             ch_out=channels[ir].reserve_input_slot(),
             by=by,

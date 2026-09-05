@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import functools
 import io
 import math
@@ -26,7 +27,10 @@ from rapidsmpf.streaming.core.message import Message
 from cudf_polars.containers import DataFrame
 from cudf_polars.dsl.ir import IR, DataFrameScan, PythonScan, Sink
 from cudf_polars.dsl.tracing import Scope, log
-from cudf_polars.streaming.actor_graph.dispatch import generate_ir_sub_network
+from cudf_polars.streaming.actor_graph.dispatch import (
+    generate_ir_sub_network,
+    ir_context_for_node,
+)
 from cudf_polars.streaming.actor_graph.nodes import define_actor, shutdown_on_error
 from cudf_polars.streaming.actor_graph.tracing import send_chunk
 from cudf_polars.streaming.actor_graph.utils import (
@@ -278,7 +282,9 @@ async def dataframescan_node(
             await ch_out.drain(context)
 
         async with (
-            shutdown_on_error(context, *lineariser.input_channels, trace_ir=ir),
+            shutdown_on_error(
+                context, *lineariser.input_channels, trace_ir=ir, ir_context=ir_context
+            ),
         ):
             await gather_in_task_group(
                 lineariser.drain(),
@@ -302,7 +308,7 @@ def _(
     estimated_chunk_bytes = config_options.executor.target_partition_size
 
     context = rec.state["context"]
-    ir_context = rec.state["ir_context"]
+    ir_context = ir_context_for_node(rec, ir)
     channels: dict[IR, ChannelManager] = {ir: ChannelManager(rec.state["context"])}
     nodes: dict[IR, list[Any]] = {
         ir: [
@@ -498,7 +504,7 @@ def _(
     ir: PythonScan, rec: SubNetGenerator
 ) -> tuple[dict[IR, list[Any]], dict[IR, ChannelManager]]:
     context = rec.state["context"]
-    ir_context = rec.state["ir_context"]
+    ir_context = ir_context_for_node(rec, ir)
     channels: dict[IR, ChannelManager] = {ir: ChannelManager(context)}
     nodes: dict[IR, list[Any]] = {
         ir: [
@@ -619,6 +625,7 @@ async def scan_node(
         context, ch_out, trace_ir=ir, ir_context=ir_context
     ) as tracer:
         # Send basic metadata
+        ir_context = dataclasses.replace(ir_context, tracer=tracer)
         await send_metadata(
             ch_out,
             context,
@@ -673,7 +680,9 @@ async def scan_node(
             await ch_out.drain(context)
 
         async with (
-            shutdown_on_error(context, *lineariser.input_channels, trace_ir=ir),
+            shutdown_on_error(
+                context, *lineariser.input_channels, trace_ir=ir, ir_context=ir_context
+            ),
         ):
             await gather_in_task_group(
                 lineariser.drain(),
@@ -691,6 +700,7 @@ def _(
     config_options = rec.state["config_options"]
     executor = config_options.executor
     partition_info = rec.state["partition_info"][ir]
+    ir_context = ir_context_for_node(rec, ir)
     num_producers = resolve_max_concurrent_io_tasks(
         rec.state["max_concurrent_io_tasks"],
         ir.base_scan.paths,
@@ -707,7 +717,7 @@ def _(
         scan_node(
             rec.state["context"],
             ir,
-            rec.state["ir_context"],
+            ir_context,
             ch_out,
             num_producers=num_producers,
             estimated_chunk_bytes=(
@@ -851,12 +861,13 @@ def _(
     """Generate network for StreamingSink node."""
     nodes, channels = process_children(ir, rec)
     channels[ir] = ChannelManager(rec.state["context"])
+    ir_context = ir_context_for_node(rec, ir)
     nodes[ir] = [
         sink_node(
             rec.state["context"],
             rec.state["comm"],
             ir,
-            rec.state["ir_context"],
+            ir_context,
             channels[ir.children[0]].reserve_output_slot(),
             channels[ir].reserve_input_slot(),
             rec.state["partition_info"][ir],

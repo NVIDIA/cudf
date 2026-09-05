@@ -47,6 +47,11 @@ ENTITY_DIRECTORIES: dict[str, str] = {
     EventName.OPERATOR.value: "operator",
     EventName.PORT.value: "port",
     EventName.TASK.value: "task",
+    EventName.MEMORY.value: "memory",
+    EventName.CHANNEL.value: "channel",
+    EventName.THREAD_POOL.value: "thread_pool",
+    EventName.PROCESSOR.value: "processor",
+    EventName.NETWORK.value: "network",
 }
 
 

@@ -49,7 +49,7 @@ if TYPE_CHECKING:
     from rapidsmpf.streaming.core.context import Context
 
     from cudf_polars.engine.ray import RankActor
-    from cudf_polars.quent._context import QuentContext
+    from cudf_polars.quent._context import QuentContext, WorkerResources
     from cudf_polars.quent._logging import QuentLogger
 
 
@@ -701,6 +701,10 @@ class SPMDContext:
         The active RapidsMPF context.
     py_executor
         Thread-pool executor used to drive the actor network on each rank.
+    worker_resources
+        Engine/worker-scoped Quent resources (device memory, channels, thread
+        pool, processor registry, network topology). ``None`` when Quent is
+        disabled.
     """
 
     comm: Communicator
@@ -709,6 +713,7 @@ class SPMDContext:
     engine_id: uuid.UUID
     worker_id: uuid.UUID
     quent_logger: QuentLogger | None
+    worker_resources: WorkerResources | None = None
 
 
 @dataclasses.dataclass(frozen=True)

@@ -20,7 +20,7 @@ from cudf_polars.quent._export import (
     unwrap_event_data,
     write_quent_export,
 )
-from cudf_polars.quent._types import Engine, Query, QueryGroup
+from cudf_polars.quent._types import Engine, Network, Query, QueryGroup
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -36,10 +36,12 @@ def _buffered_events() -> list[dict[str, Any]]:
         id=uuid.UUID("019dd571-1062-77c2-9803-62bd37658144"),
         instance_name="test-query",
     )
+    network = Network(engine_id=engine.id)
     return [
         engine._init().to_dict(),
         query_group._declare(engine).to_dict(),
         query._init(query_group).to_dict(),
+        network.declare().to_dict(),
         engine._exit().to_dict(),
     ]
 
@@ -97,7 +99,7 @@ def test_write_quent_export_creates_archive(tmp_path: Path) -> None:
             json.loads(archive.read(f"{context_dir}/{SIDECAR_FILE_NAME}")) == MODEL_QMI
         )
 
-        expected_dirs = {"engine", "query_group", "query"}
+        expected_dirs = {"engine", "query_group", "query", "network"}
         names = archive.namelist()
         for entity_dir in expected_dirs:
             stream_files = [
@@ -143,6 +145,19 @@ def test_write_quent_export_unwraps_buffered_envelopes(tmp_path: Path) -> None:
             }
         }
         assert engine_lines[1]["data"] == {"Exit": None}
+
+        network_stream = next(
+            name
+            for name in archive.namelist()
+            if name.startswith(f"{context_dir}/network/")
+        )
+        network_lines = _read_ndjson_lines(archive, network_stream)
+        assert network_lines[0]["data"] == {
+            "Declaration": {
+                "instance_name": "Network",
+                "parent_group_id": str(context_id),
+            }
+        }
 
 
 def test_write_quent_export_rejects_malformed_event(tmp_path: Path) -> None:

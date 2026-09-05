@@ -40,6 +40,7 @@ from cudf_polars.dsl.expr import Col
 from cudf_polars.dsl.traversal import traversal
 from cudf_polars.streaming.actor_graph.dispatch import (
     generate_ir_sub_network,
+    ir_context_for_node,
 )
 from cudf_polars.streaming.actor_graph.nodes import shutdown_on_error
 from cudf_polars.streaming.actor_graph.utils import (
@@ -656,6 +657,7 @@ def _(
 
     # Create output ChannelManager
     channels[ir] = ChannelManager(rec.state["context"])
+    ir_context = ir_context_for_node(rec, ir)
 
     # Complete shuffle node
     nodes[ir] = [
@@ -663,7 +665,7 @@ def _(
             context,
             rec.state["comm"],
             ir,
-            rec.state["ir_context"],
+            ir_context,
             ch_in=channels[child].reserve_output_slot(),
             ch_out=channels[ir].reserve_input_slot(),
             keys_to_hash=ir.keys,

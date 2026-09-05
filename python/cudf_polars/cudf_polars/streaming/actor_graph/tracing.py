@@ -51,6 +51,8 @@ class ActorTracer:
     ir_type: str | None = None
     row_count: int | None = None
     chunk_count: int = 0
+    input_bytes: int = 0
+    output_bytes: int = 0
     decision: str | None = None
     duplicated: bool = False
     extra: dict[str, Any] = dataclasses.field(default_factory=dict)

@@ -8,6 +8,7 @@ from __future__ import annotations
 import functools
 from typing import TYPE_CHECKING, cast
 
+from cudf_polars.dsl.traversal import traversal
 from cudf_polars.quent._types import (
     Attribute,
     Edge,
@@ -180,3 +181,16 @@ def build_parent_operators_map(
         ]
         for physical_sid, logical_sids in node_map.items()
     }
+
+
+def build_quent_operator_map(
+    ir: IR,
+    physical_op_by_id: dict[str, Operator],
+) -> dict[IR, Operator]:
+    """Build a map from IR nodes to their physical-plan Quent operators."""
+    result: dict[IR, Operator] = {}
+    for node in traversal([ir]):
+        stable_id = str(node.get_stable_id())
+        if stable_id in physical_op_by_id:
+            result[node] = physical_op_by_id[stable_id]
+    return result

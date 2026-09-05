@@ -1286,7 +1286,9 @@ def _run_query_loop(
 
     for q_id in run_config.queries:
         if engine is not None:
-            quent_context = engine.config["executor_options"].get("quent_context")
+            quent_context = engine.config.get("executor_options", {}).get(
+                "quent_context"
+            )
             if quent_context is not None:
                 engine.config["executor_options"]["quent_context"] = (
                     dataclasses.replace(
@@ -2462,6 +2464,11 @@ def run_polars(benchmark: Any, args: argparse.Namespace) -> None:
             f"--collect-traces is not supported with --frontend {run_config.frontend}; "
             "cudf-polars tracing only applies to GPU frontends "
             "(in-memory, dask, ray, spmd)."
+        )
+
+    if run_config.collect_traces and not cudf_polars.dsl.tracing.LOG_TRACES:
+        raise ValueError(
+            "--collect-traces is not supported when CUDF_POLARS_LOG_TRACES is not enabled. Set CUDF_POLARS_LOG_TRACES=1 and rerun."
         )
 
     if run_config.validation_method is not None:

@@ -52,7 +52,10 @@ from cudf_polars.engine.persisted_result import (
     PersistedBackend,
     execute_persisted_query,
 )
-from cudf_polars.quent._context import LocalQuentContext
+from cudf_polars.quent._context import (
+    LocalQuentContext,
+    WorkerResources,
+)
 from cudf_polars.unstable import unstable
 from cudf_polars.utils.config import (
     DaskContext,
@@ -75,6 +78,7 @@ if TYPE_CHECKING:
     from cudf_polars.engine.core import T
     from cudf_polars.engine.options import StreamingOptions
     from cudf_polars.engine.persisted_result import PersistedQueryResult
+    from cudf_polars.quent._context import QuentContext
     from cudf_polars.streaming.parallel import ConfigOptions
     from cudf_polars.utils.config import StreamingExecutor
 
@@ -143,6 +147,7 @@ class _WorkerContext:
     statistics: Statistics
     mr: RmmResourceAdaptor | None = None  # set after `Context` is built (below).
     kvikio_monitor: kvikio.SummaryMonitor | None = None
+    worker_resources: WorkerResources | None = None
 
 
 def _worker_evaluate_persisted(
@@ -248,7 +253,7 @@ def _setup_root(
     dask_worker: distributed.Worker | None = None,
     engine_id: uuid.UUID,
     worker_id: uuid.UUID,
-    quent_context: cudf_polars.quent.QuentContext | None,
+    quent_context: QuentContext | None,
 ) -> bytes:
     """
     Initialize the root rank on one Dask worker.
@@ -340,7 +345,7 @@ def _setup_worker(
     num_py_executors: int,
     kvikio_nthreads: int,
     kvikio_statistics: bool,
-    quent_context: cudf_polars.quent.QuentContext | None,
+    quent_context: QuentContext | None,
     dask_worker: distributed.Worker | None = None,
 ) -> None:
     """
@@ -432,11 +437,19 @@ def _setup_worker(
     )
 
     if quent_context is not None:
-        quent_logger: cudf_polars.quent._logging.QuentLogger | None = (
-            cudf_polars.quent._logging.QuentLogger()
+        quent_logger = cudf_polars.quent._logging.QuentLogger()
+        worker_resources = WorkerResources.build(
+            instance_suffix=f"rank-{comm.rank}",
+            engine_id=engine_id,
+            worker_id=worker_id,
+            rank=comm.rank,
+            nranks=comm.nranks,
         )
+        quent_logger.emit(quent_worker._init())
+        worker_resources.declare(quent_logger)
     else:
         quent_logger = None
+        worker_resources = None
 
     mp_ctx = _WorkerContext(
         comm=comm,
@@ -446,12 +459,11 @@ def _setup_worker(
         mr=mr,
         quent_worker=quent_worker,
         quent_logger=quent_logger,
+        worker_resources=worker_resources,
         statistics=statistics,
         kvikio_monitor=make_kvikio_monitor(enabled=kvikio_statistics),
     )
     setattr(dask_worker, attr, mp_ctx)
-    if mp_ctx.quent_logger is not None:
-        mp_ctx.quent_logger.emit(quent_worker._init())
 
 
 def _teardown_worker(
@@ -480,7 +492,9 @@ def _teardown_worker(
         if mp_ctx.kvikio_monitor is not None:
             mp_ctx.kvikio_monitor.stop()
             mp_ctx.kvikio_monitor = None
-        if mp_ctx.quent_worker is not None and mp_ctx.quent_logger is not None:
+        if mp_ctx.quent_logger is not None:
+            if mp_ctx.worker_resources is not None:
+                mp_ctx.worker_resources.finalize(mp_ctx.quent_logger)
             mp_ctx.quent_logger.emit(mp_ctx.quent_worker._exit())
             traces = mp_ctx.quent_logger.drain()
 
@@ -733,12 +747,14 @@ def _worker_evaluate(
         raise RuntimeError("_setup_worker must be called before _worker_evaluate")
     local_quent_context: LocalQuentContext | None = None
     if quent_context is not None:
+        assert mp_ctx.worker_resources is not None
         assert mp_ctx.quent_logger is not None
         local_quent_context = LocalQuentContext(
             context=quent_context,
             query=quent_context.query_for(query_id),
             worker=mp_ctx.quent_worker,
             logger=mp_ctx.quent_logger,
+            worker_resources=mp_ctx.worker_resources,
         )
     # evaluate_on_rank always collects metadata internally so we can read
     # metadata[-1].duplicated to decide whether to suppress this rank's output.

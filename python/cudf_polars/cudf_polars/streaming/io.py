@@ -355,6 +355,8 @@ class SplitScan(IR):
     (skip_rows and n_rows) is calculated at IO time.
     """
 
+    is_io_node: bool = True
+
     __slots__ = (
         "base_scan",
         "cached_parquet_info",
@@ -580,6 +582,8 @@ class FusedScan(IR):
     SINGLE_FILE (N = 1).
     """
 
+    is_io_node: bool = True
+
     __slots__ = (
         "base_scan",
         "cached_parquet_info",
@@ -745,6 +749,8 @@ def _(
 
 class StreamingScan(IR):
     """A streaming scan node."""
+
+    is_io_node: bool = True
 
     __slots__ = (
         "base_scan",

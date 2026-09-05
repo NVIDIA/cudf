@@ -693,6 +693,7 @@ nitpick_ignore = [
     ("py:class", "SupportsArrayInterface"),
     ("py:class", "SupportsCudaArrayInterface"),
     ("py:class", "T"),
+    ("py:class", "Buffer"),
 ]
 # Temporarily disable nitpick warnings for pandas: https://github.com/pandas-dev/pandas/issues/64584
 nitpick_ignore_regex = [

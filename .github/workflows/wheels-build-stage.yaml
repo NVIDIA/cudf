@@ -1,4 +1,4 @@
-name: Build staged RAPIDS wheels
+name: Build staged wheels
 
 on:
   workflow_call:

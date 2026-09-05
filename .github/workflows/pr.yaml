@@ -208,6 +208,7 @@ jobs:
           - 'ci/build_wheel_python.sh'
           - 'ci/build_wheel_python_noarch.sh'
           - 'ci/build_wheel_common.sh'
+          - 'ci/validate_wheel.sh'
           - '.github/workflows/build.yaml'
           - '.github/workflows/wheels-build-stage.yaml'
         test_python_wheel_cudf:

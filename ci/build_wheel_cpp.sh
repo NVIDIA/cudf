@@ -38,8 +38,7 @@ finalize_package_wheel \
   "${libcudf_max_wheel_size}" \
   "$(rapids-artifact-name wheel_cpp libcudf cudf --cuda "${RAPIDS_CUDA_VERSION}")"
 
-# libcudf-streaming. Its distinct scikit-build project consumes the freshly built
-# libcudf wheel from this stage rather than downloading it as a CI artifact.
+# libcudf-streaming uses the libcudf wheel built above.
 LIBCUDF_WHEELHOUSE="${RAPIDS_WHEEL_BLD_OUTPUT_DIR}"
 
 RAPIDS_PY_CUDA_SUFFIX="$(rapids-wheel-ctk-name-gen "${RAPIDS_CUDA_VERSION}")"

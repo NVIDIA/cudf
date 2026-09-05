@@ -5277,3 +5277,30 @@ def test_read_parquet_snappy_malformed_copy_elem(
 )
 def test_parquet_reader_one_null_row(datadir, filename):
     cudf.read_parquet(datadir / filename)
+
+
+def test_parquet_dataset_writer_explicit_filesystem(tmp_path):
+    """Chunked output must land on the configured filesystem, not local disk."""
+    import fsspec
+
+    fs = fsspec.filesystem("memory")
+    root = f"/{tmp_path.name}/pdw"
+    df1 = cudf.DataFrame({"a": [1, 1, 2], "b": [9, 8, 7]})
+    df2 = cudf.DataFrame({"a": [2, 3, 3], "b": [6, 5, 4]})
+
+    with ParquetDatasetWriter(
+        root, partition_cols=["a"], index=False, filesystem=fs
+    ) as cw:
+        cw.write_table(df1)
+        cw.write_table(df2)
+
+    written = sorted(fs.find(root))
+    assert written, "no files written to the configured filesystem"
+    # Nothing should have leaked onto the local filesystem
+    assert not os.path.exists(root)
+
+    got = cudf.concat(
+        [cudf.read_parquet(f, filesystem=fs) for f in written]
+    ).astype("int64")
+    expect = cudf.concat([df1, df2])["b"].sort_values().reset_index(drop=True)
+    assert_eq(got["b"].sort_values().reset_index(drop=True), expect)

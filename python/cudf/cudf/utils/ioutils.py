@@ -64,6 +64,9 @@ storage_options : dict, optional, default None
     For other URLs (e.g. starting with "s3://", and "gcs://") the key-value
     pairs are forwarded to ``fsspec.open``. Please see ``fsspec`` and
     ``urllib`` for more details.
+filesystem : fsspec.AbstractFileSystem, default None
+    Filesystem object to use when reading the data. This argument
+    should not be used at the same time as ``storage_options``.
 
 Returns
 -------
@@ -153,8 +156,8 @@ storage_options : dict, optional, default None
     pairs are forwarded to ``fsspec.open``. Please see ``fsspec`` and
     ``urllib`` for more details.
 filesystem : fsspec.AbstractFileSystem, default None
-    Filesystem object to use when reading the parquet data. This argument
-    should not be used at the same time as `storage_options`.
+    Filesystem object to use when reading the data. This argument
+    should not be used at the same time as ``storage_options``.
 filters : list of tuple, list of lists of tuples, default None
     If not None, specifies a filter predicate used to filter out row groups
     using statistics stored for each row group as Parquet metadata. Row groups
@@ -321,6 +324,9 @@ storage_options : dict, optional, default None
     For other URLs (e.g. starting with "s3://", and "gcs://") the key-value
     pairs are forwarded to ``fsspec.open``. Please see ``fsspec`` and
     ``urllib`` for more details.
+filesystem : fsspec.AbstractFileSystem, default None
+    Filesystem object to use when writing the data. This argument
+    should not be used at the same time as ``storage_options``.
 return_metadata : bool, default False
     Return parquet metadata for written data. Returned metadata will
     include the file path metadata (relative to `root_path`).
@@ -502,6 +508,9 @@ storage_options : dict, optional, default None
     For other URLs (e.g. starting with "s3://", and "gcs://") the key-value
     pairs are forwarded to ``fsspec.open``. Please see ``fsspec`` and
     ``urllib`` for more details.
+filesystem : fsspec.AbstractFileSystem, default None
+    Filesystem object to use when reading the data. This argument
+    should not be used at the same time as ``storage_options``.
 bytes_per_thread : int, default None
     Determines the number of bytes to be allocated per thread to read the
     files in parallel. When there is a file of large size, we get slightly
@@ -570,6 +579,9 @@ storage_options : dict, optional, default None
     For other URLs (e.g. starting with "s3://", and "gcs://") the key-value
     pairs are forwarded to ``fsspec.open``. Please see ``fsspec`` and
     ``urllib`` for more details.
+filesystem : fsspec.AbstractFileSystem, default None
+    Filesystem object to use when writing the data. This argument
+    should not be used at the same time as ``storage_options``.
 index : bool, default None
     If ``True``, include the dataframe's index(es) in the file output.
     If ``False``, they will not be written to the file.
@@ -760,6 +772,9 @@ storage_options : dict, optional, default None
     For other URLs (e.g. starting with "s3://", and "gcs://") the key-value
     pairs are forwarded to ``fsspec.open``. Please see ``fsspec`` and
     ``urllib`` for more details.
+filesystem : fsspec.AbstractFileSystem, default None
+    Filesystem object to use when reading the data. This argument
+    should not be used at the same time as ``storage_options``.
 mixed_types_as_string : bool, default False
 
     .. admonition:: GPU-accelerated feature
@@ -928,6 +943,17 @@ index : bool, default True
     Whether to include the index values in the JSON string. Not
     including the index (``index=False``) is only supported when
     orient is 'split' or 'table'.
+storage_options : dict, optional, default None
+    Extra options that make sense for a particular storage connection,
+    e.g. host, port, username, password, etc. For HTTP(S) URLs the key-value
+    pairs are forwarded to ``urllib.request.Request`` as header options.
+    For other URLs (e.g. starting with "s3://", and "gcs://") the key-value
+    pairs are forwarded to ``fsspec.open``. Please see ``fsspec`` and
+    ``urllib`` for more details.
+filesystem : fsspec.AbstractFileSystem, default None
+    Filesystem object to use when writing the data. This argument
+    should not be used at the same time as ``storage_options``.
+    Only supported with ``engine='cudf'``.
 
 See Also
 --------
@@ -1228,6 +1254,9 @@ storage_options : dict, optional, default None
     For other URLs (e.g. starting with "s3://", and "gcs://") the key-value
     pairs are forwarded to ``fsspec.open``. Please see ``fsspec`` and
     ``urllib`` for more details.
+filesystem : fsspec.AbstractFileSystem, default None
+    Filesystem object to use when reading the data. This argument
+    should not be used at the same time as ``storage_options``.
 bytes_per_thread : int, default None
     Determines the number of bytes to be allocated per thread to read the
     files in parallel. When there is a file of large size, we get slightly
@@ -1330,6 +1359,9 @@ storage_options : dict, optional, default None
     For other URLs (e.g. starting with "s3://", and "gcs://") the key-value
     pairs are forwarded to ``fsspec.open``. Please see ``fsspec`` and
     ``urllib`` for more details.
+filesystem : fsspec.AbstractFileSystem, default None
+    Filesystem object to use when writing the data. This argument
+    should not be used at the same time as ``storage_options``.
 
 Returns
 -------
@@ -1438,6 +1470,9 @@ storage_options : dict, optional, default None
     For other URLs (e.g. starting with "s3://", and "gcs://") the key-value
     pairs are forwarded to ``fsspec.open``. Please see ``fsspec`` and
     ``urllib`` for more details.
+filesystem : fsspec.AbstractFileSystem, default None
+    Filesystem object to use when reading the data. This argument
+    should not be used at the same time as ``storage_options``.
 
 Returns
 -------
@@ -1683,6 +1718,26 @@ def _is_local_filesystem(fs):
     return isinstance(fs, LocalFileSystem)
 
 
+def _validate_filesystem(filesystem, storage_options=None):
+    """Validate a user-provided ``filesystem`` object.
+
+    ``filesystem`` must be an ``fsspec.AbstractFileSystem``, and cannot be
+    combined with a non-empty ``storage_options``.
+    """
+    import fsspec
+
+    if not isinstance(filesystem, fsspec.AbstractFileSystem):
+        raise ValueError(
+            f"Expected fsspec.AbstractFileSystem. Got {filesystem}"
+        )
+
+    if storage_options:
+        raise ValueError(
+            f"Cannot specify storage_options when an explicit "
+            f"filesystem object is specified. Got: {storage_options}"
+        )
+
+
 def _select_single_source(sources: list, caller: str):
     """Select the first element from a list of sources.
     Raise an error if sources contains multiple elements
@@ -1694,22 +1749,26 @@ def _select_single_source(sources: list, caller: str):
     return sources[0]
 
 
-def is_directory(path_or_data, storage_options=None):
+def is_directory(path_or_data, storage_options=None, filesystem=None):
     """Returns True if the provided filepath is a directory"""
     path_or_data = stringify_pathlike(path_or_data)
     if isinstance(path_or_data, str):
         import fsspec
 
         path_or_data = os.path.expanduser(path_or_data)
-        try:
-            fs = fsspec.core.get_fs_token_paths(
-                path_or_data, mode="rb", storage_options=storage_options
-            )[0]
-        except ValueError as e:
-            if str(e).startswith("Protocol not known"):
-                return False
-            else:
-                raise e
+        if filesystem is not None:
+            _validate_filesystem(filesystem, storage_options)
+            fs = filesystem
+        else:
+            try:
+                fs = fsspec.core.get_fs_token_paths(
+                    path_or_data, mode="rb", storage_options=storage_options
+                )[0]
+            except ValueError as e:
+                if str(e).startswith("Protocol not known"):
+                    return False
+                else:
+                    raise e
 
         return fs.isdir(path_or_data)
 
@@ -1758,16 +1817,7 @@ def _get_filesystem_and_paths(
                 else:
                     raise e
         else:
-            if not isinstance(filesystem, fsspec.AbstractFileSystem):
-                raise ValueError(
-                    f"Expected fsspec.AbstractFileSystem. Got {filesystem}"
-                )
-
-            if storage_options:
-                raise ValueError(
-                    f"Cannot specify storage_options when an explicit "
-                    f"filesystem object is specified. Got: {storage_options}"
-                )
+            _validate_filesystem(filesystem, storage_options)
 
             fs = filesystem
             return_paths = [
@@ -1813,6 +1863,7 @@ def get_reader_filepath_or_buffer(
     *,
     mode="rb",
     fs=None,
+    filesystem=None,
     iotypes=(BytesIO,),
     storage_options=None,
     bytes_per_thread=_BYTES_PER_THREAD_DEFAULT,
@@ -1821,6 +1872,10 @@ def get_reader_filepath_or_buffer(
     prefetch_options=None,
 ):
     """{docstring}"""
+
+    # Validate up front so file-like inputs are checked too, not just paths.
+    if filesystem is not None:
+        _validate_filesystem(filesystem, storage_options)
 
     # Convert path_or_data to a list of input data sources
     input_sources = [
@@ -1845,7 +1900,9 @@ def get_reader_filepath_or_buffer(
         paths = input_sources
         raw_text_input = False
         if fs is None:
-            fs, paths = _get_filesystem_and_paths(paths, storage_options)
+            fs, paths = _get_filesystem_and_paths(
+                paths, storage_options, filesystem=filesystem
+            )
 
         # Expand directories (if necessary)
         paths = _maybe_expand_directories(paths, expand_dir_pattern, fs)
@@ -1903,7 +1960,9 @@ def get_reader_filepath_or_buffer(
     return filepaths_or_buffers
 
 
-def get_writer_filepath_or_buffer(path_or_data, mode, storage_options=None):
+def get_writer_filepath_or_buffer(
+    path_or_data, mode, storage_options=None, filesystem=None
+):
     """
     Return either a filepath string to data,
     or a open file object to the output filesystem
@@ -1921,12 +1980,18 @@ def get_writer_filepath_or_buffer(path_or_data, mode, storage_options=None):
         header options. For other URLs (e.g. starting with "s3://", and
         "gcs://") the key-value pairs are forwarded to ``fsspec.open``.
         Please see ``fsspec`` and ``urllib`` for more details.
+    filesystem : fsspec.AbstractFileSystem, optional, default None
+        Filesystem object to write the data with. This argument should not
+        be used at the same time as ``storage_options``.
 
     Returns
     -------
     filepath_or_buffer : str,
         Filepath string or buffer of data
     """
+    if filesystem is not None:
+        _validate_filesystem(filesystem, storage_options)
+
     if storage_options is None:
         storage_options = {}
 
@@ -1934,15 +1999,19 @@ def get_writer_filepath_or_buffer(path_or_data, mode, storage_options=None):
         import fsspec
 
         path_or_data = os.path.expanduser(path_or_data)
-        fs = fsspec.core.get_fs_token_paths(
-            path_or_data, mode=mode or "w", storage_options=storage_options
-        )[0]
+        if filesystem is None:
+            fs = fsspec.core.get_fs_token_paths(
+                path_or_data, mode=mode or "w", storage_options=storage_options
+            )[0]
+        else:
+            fs = filesystem
 
         if not _is_local_filesystem(fs):
-            filepath_or_buffer = fsspec.open(
-                path_or_data, mode=mode or "w", **(storage_options)
+            # Not `get_fs_token_paths`' paths: in write mode it expands
+            # them into numbered `.part` names. Strip the original instead.
+            return fsspec.core.OpenFile(
+                fs, fs._strip_protocol(path_or_data), mode=mode or "w"
             )
-            return filepath_or_buffer
 
     return path_or_data
 
@@ -2137,6 +2206,9 @@ def _ensure_filesystem(passed_filesystem, path, storage_options):
             path[0] if isinstance(path, list) else path,
             storage_options={} if storage_options is None else storage_options,
         )[0]
+    # No `storage_options` conflict check: internal callers (dask-cudf's
+    # `write_partition`) pass both. That check lives at the public boundary.
+    _validate_filesystem(passed_filesystem)
     return passed_filesystem
 
 

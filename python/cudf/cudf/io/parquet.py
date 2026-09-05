@@ -285,6 +285,7 @@ def _write_parquet(
     output_as_binary: set[Hashable] | None = None,
     write_arrow_schema: bool = True,
     page_level_compression: bool = False,
+    filesystem=None,
 ) -> np.ndarray | None:
     if is_list_like(paths) and len(paths) > 1:
         if partitions_info is None:
@@ -303,7 +304,10 @@ def _write_parquet(
 
     paths_or_bufs = [
         ioutils.get_writer_filepath_or_buffer(
-            path_or_data=path, mode="wb", storage_options=storage_options
+            path_or_data=path,
+            mode="wb",
+            storage_options=storage_options,
+            filesystem=filesystem,
         )
         for path in paths
     ]
@@ -386,6 +390,7 @@ def write_to_dataset(
     output_as_binary: set[Hashable] | None = None,
     store_schema=False,
     page_level_compression: bool = False,
+    filesystem=None,
 ):
     """Wraps `to_parquet` to write partitioned Parquet datasets.
     For each combination of partition group and value,
@@ -484,6 +489,9 @@ def write_to_dataset(
         be written uncompressed.
     """
 
+    if filesystem is not None:
+        ioutils._validate_filesystem(filesystem, storage_options)
+        fs = fs if fs is not None else filesystem
     fs = ioutils._ensure_filesystem(fs, root_path, storage_options)
     fs.mkdirs(root_path, exist_ok=True)
 
@@ -511,6 +519,7 @@ def write_to_dataset(
             index=preserve_index,
             partition_offsets=part_offsets,
             storage_options=storage_options,
+            filesystem=filesystem,
             metadata_file_path=metadata_file_path,
             statistics=statistics,
             int96_timestamps=int96_timestamps,
@@ -540,6 +549,7 @@ def write_to_dataset(
             compression=compression,
             index=preserve_index,
             storage_options=storage_options,
+            filesystem=filesystem,
             metadata_file_path=metadata_file_path,
             statistics=statistics,
             int96_timestamps=int96_timestamps,
@@ -786,7 +796,7 @@ def _process_dataset(
 
     # Deal with case that the user passed in a directory name
     file_list = paths
-    if len(paths) == 1 and ioutils.is_directory(paths[0]):
+    if len(paths) == 1 and ioutils.is_directory(paths[0], filesystem=fs):
         paths = ioutils.stringify_pathlike(paths[0])
     elif (
         filters is None
@@ -1557,6 +1567,7 @@ def to_parquet(
     store_schema=False,
     page_level_compression: bool = False,
     *args,
+    filesystem=None,
     **kwargs,
 ):
     """{docstring}"""
@@ -1604,6 +1615,7 @@ def to_parquet(
                 max_page_size_rows=max_page_size_rows,
                 return_metadata=return_metadata,
                 storage_options=storage_options,
+                filesystem=filesystem,
                 force_nullable_schema=force_nullable_schema,
                 header_version=header_version,
                 use_dictionary=use_dictionary,
@@ -1635,6 +1647,7 @@ def to_parquet(
             max_dictionary_size=max_dictionary_size,
             partitions_info=partition_info,
             storage_options=storage_options,
+            filesystem=filesystem,
             force_nullable_schema=force_nullable_schema,
             header_version=header_version,
             use_dictionary=use_dictionary,
@@ -1670,6 +1683,9 @@ def to_parquet(
             )
         # Type ignore: mypy complains about potential duplicate arguments from *args
         # but our API design allows passing additional args/kwargs to pyarrow
+        if filesystem is not None:
+            ioutils._validate_filesystem(filesystem, storage_options)
+            kwargs["filesystem"] = filesystem
         return pq.write_to_dataset(  # type: ignore[misc]
             pa_table,
             root_path=path,
@@ -2106,9 +2122,21 @@ class ParquetDatasetWriter:
         max_file_size=None,
         file_name_prefix=None,
         storage_options=None,
+        filesystem=None,
     ) -> None:
-        if isinstance(path, str) and path.startswith("s3://"):
-            self.fs_meta = {"is_s3": True, "actual_path": path}
+        if filesystem is not None:
+            ioutils._validate_filesystem(filesystem, storage_options)
+        self.filesystem = filesystem
+
+        # libcudf's chunked sinks only take local paths, so remote output is
+        # staged in a temp dir and uploaded in `close()`.
+        is_remote = (
+            filesystem is not None
+            and not ioutils._is_local_filesystem(filesystem)
+        ) or (isinstance(path, str) and path.startswith("s3://"))
+
+        if is_remote:
+            self.fs_meta = {"is_remote": True, "actual_path": path}
             self.dir_: tempfile.TemporaryDirectory | None = (
                 tempfile.TemporaryDirectory()
             )
@@ -2153,7 +2181,13 @@ class ParquetDatasetWriter:
             partition_cols=self.partition_cols,
             preserve_index=self.common_args["index"],
         )
-        fs = ioutils._ensure_filesystem(None, self.path, None)
+        if self.fs_meta.get("is_remote", False):
+            # `self.path` is the local staging dir (see `__init__`)
+            fs = ioutils._ensure_filesystem(None, self.path, None)
+        else:
+            fs = ioutils._ensure_filesystem(
+                self.filesystem, self.path, self.storage_options
+            )
         fs.mkdirs(self.path, exist_ok=True)
 
         full_paths = []
@@ -2289,13 +2323,13 @@ class ParquetDatasetWriter:
             for cw, _, meta_path in self._chunked_writers
         ]
 
-        if self.fs_meta.get("is_s3", False):
+        if self.fs_meta.get("is_remote", False):
             local_path = self.path
-            s3_path = self.fs_meta["actual_path"]
-            s3_file, _ = ioutils._get_filesystem_and_paths(
-                s3_path, storage_options=self.storage_options
+            remote_path = self.fs_meta["actual_path"]
+            fs = ioutils._ensure_filesystem(
+                self.filesystem, remote_path, self.storage_options
             )
-            s3_file.put(local_path, s3_path, recursive=True)
+            fs.put(local_path, remote_path, recursive=True)
             shutil.rmtree(self.path)
 
         if self.dir_ is not None:

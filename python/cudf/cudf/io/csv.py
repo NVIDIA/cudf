@@ -124,6 +124,7 @@ def read_csv(
     byte_range: list[int] | tuple[int, int] | None = None,
     storage_options=None,
     bytes_per_thread: int | None = None,
+    filesystem=None,
 ) -> DataFrame:
     """{docstring}"""
 
@@ -148,6 +149,7 @@ def read_csv(
         path_or_data=filepath_or_buffer,
         iotypes=(BytesIO, StringIO),
         storage_options=storage_options,
+        filesystem=filesystem,
         bytes_per_thread=bytes_per_thread,
     )
     filepath_or_buffer = ioutils._select_single_source(
@@ -406,6 +408,7 @@ def to_csv(
     lineterminator: str = "\n",
     chunksize: int | None = None,
     storage_options=None,
+    filesystem=None,
 ):
     """{docstring}"""
 
@@ -468,7 +471,10 @@ def to_csv(
         )
 
     path_or_buf = ioutils.get_writer_filepath_or_buffer(
-        path_or_data=path_or_buf, mode="w", storage_options=storage_options
+        path_or_data=path_or_buf,
+        mode="w",
+        storage_options=storage_options,
+        filesystem=filesystem,
     )
 
     if columns is not None:

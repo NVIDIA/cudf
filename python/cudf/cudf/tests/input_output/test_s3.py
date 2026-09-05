@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import subprocess
@@ -53,6 +53,17 @@ def s3so(moto_server):
     Returns s3 storage options to pass to fsspec
     """
     return {"client_kwargs": {"endpoint_url": moto_server}}
+
+
+@pytest.fixture(params=["storage_options", "filesystem"])
+def fs_kwargs(request, s3so):
+    """
+    Yield the two equivalent ways of pointing an I/O call at the mock S3:
+    ``storage_options=<dict>`` and ``filesystem=<fsspec object>``.
+    """
+    if request.param == "storage_options":
+        return {"storage_options": s3so}
+    return {"filesystem": get_fs_token_paths("s3://", storage_options=s3so)[0]}
 
 
 @pytest.fixture
@@ -113,7 +124,7 @@ def pdf_ext():
 
 
 @pytest.mark.parametrize("bytes_per_thread", [32, 1024])
-def test_read_csv(s3_bucket_public, s3so, pdf, bytes_per_thread):
+def test_read_csv(s3_bucket_public, fs_kwargs, pdf, bytes_per_thread):
     # Write to buffer
     fname = "test_csv_reader.csv"
     buffer = pdf.to_csv(index=False)
@@ -122,8 +133,8 @@ def test_read_csv(s3_bucket_public, s3so, pdf, bytes_per_thread):
     # Use fsspec file object
     got = cudf.read_csv(
         f"s3://{s3_bucket_public.name}/{fname}",
-        storage_options=s3so,
         bytes_per_thread=bytes_per_thread,
+        **fs_kwargs,
     )
     assert_eq(pdf, got)
 
@@ -149,7 +160,7 @@ def test_read_csv_byte_range(s3_bucket_public, s3so, pdf, bytes_per_thread):
 
 
 @pytest.mark.parametrize("chunksize", [None, 3])
-def test_write_csv(s3_bucket_public, s3so, pdf, chunksize):
+def test_write_csv(s3_bucket_public, s3so, fs_kwargs, pdf, chunksize):
     # Write to buffer
     fname = "test_csv_writer.csv"
     gdf = cudf.from_pandas(pdf)
@@ -157,7 +168,7 @@ def test_write_csv(s3_bucket_public, s3so, pdf, chunksize):
         f"s3://{s3_bucket_public.name}/{fname}",
         index=False,
         chunksize=chunksize,
-        storage_options=s3so,
+        **fs_kwargs,
     )
     got = pd.read_csv(
         f"s3://{s3_bucket_public.name}/{fname}", storage_options=s3so
@@ -171,6 +182,7 @@ def test_write_csv(s3_bucket_public, s3so, pdf, chunksize):
 def test_read_parquet(
     s3_bucket_public,
     s3so,
+    fs_kwargs,
     kvikio_remote_io,
     pdf,
     bytes_per_thread,
@@ -185,9 +197,9 @@ def test_read_parquet(
     s3_bucket_public.put_object(Key=fname, Body=buffer)
     got1 = cudf.read_parquet(
         f"s3://{s3_bucket_public.name}/{fname}",
-        storage_options=s3so,
         bytes_per_thread=bytes_per_thread,
         columns=columns,
+        **fs_kwargs,
     )
     expect = pdf[columns] if columns else pdf
     assert_eq(expect, got1)
@@ -341,7 +353,7 @@ def test_read_parquet_filters(s3_bucket_public, s3so, pdf_ext):
 
 
 @pytest.mark.parametrize("partition_cols", [None, ["String"]])
-def test_write_parquet(s3_bucket_public, s3so, pdf, partition_cols):
+def test_write_parquet(s3_bucket_public, s3so, fs_kwargs, pdf, partition_cols):
     fname_cudf = "test_parquet_writer_cudf"
     fname_pandas = "test_parquet_writer_pandas"
     gdf = cudf.from_pandas(pdf)
@@ -349,7 +361,7 @@ def test_write_parquet(s3_bucket_public, s3so, pdf, partition_cols):
     gdf.to_parquet(
         f"s3://{s3_bucket_public.name}/{fname_cudf}",
         partition_cols=partition_cols,
-        storage_options=s3so,
+        **fs_kwargs,
     )
     pdf.to_parquet(
         f"s3://{s3_bucket_public.name}/{fname_pandas}",
@@ -367,7 +379,7 @@ def test_write_parquet(s3_bucket_public, s3so, pdf, partition_cols):
     assert_eq(expect, got)
 
 
-def test_read_json(s3_bucket_public, s3so):
+def test_read_json(s3_bucket_public, fs_kwargs):
     fname = "test_json_reader.json"
     buffer = (
         '{"amount": 100, "name": "Alice"}\n'
@@ -382,7 +394,7 @@ def test_read_json(s3_bucket_public, s3so):
         engine="cudf",
         orient="records",
         lines=True,
-        storage_options=s3so,
+        **fs_kwargs,
     )
 
     expect = pd.read_json(StringIO(buffer), lines=True)
@@ -421,7 +433,7 @@ def test_read_jsonl_files_kvikio_remote(s3_bucket_public, s3so, monkeypatch):
 
 
 @pytest.mark.parametrize("columns", [None, ["string1"]])
-def test_read_orc(s3_bucket_public, s3so, datadir, columns):
+def test_read_orc(s3_bucket_public, fs_kwargs, datadir, columns):
     source_file = str(datadir / "orc" / "TestOrcFile.testSnappy.orc")
     fname = "test_orc_reader.orc"
     expect = pd.read_orc(source_file)
@@ -433,7 +445,7 @@ def test_read_orc(s3_bucket_public, s3so, datadir, columns):
     got = cudf.read_orc(
         f"s3://{s3_bucket_public.name}/{fname}",
         columns=columns,
-        storage_options=s3so,
+        **fs_kwargs,
     )
 
     if columns:
@@ -441,24 +453,24 @@ def test_read_orc(s3_bucket_public, s3so, datadir, columns):
     assert_eq(expect, got)
 
 
-def test_write_orc(s3_bucket_public, s3so, pdf):
+def test_write_orc(s3_bucket_public, fs_kwargs, pdf):
     fname = "test_orc_writer.orc"
     gdf = cudf.from_pandas(pdf)
-    gdf.to_orc(f"s3://{s3_bucket_public.name}/{fname}", storage_options=s3so)
+    gdf.to_orc(f"s3://{s3_bucket_public.name}/{fname}", **fs_kwargs)
 
     got = pd.read_orc(f"s3://{s3_bucket_public.name}/{fname}")
 
     assert_eq(pdf, got)
 
 
-def test_write_chunked_parquet(s3_bucket_public, s3so):
+def test_write_chunked_parquet(s3_bucket_public, s3so, fs_kwargs):
     df1 = cudf.DataFrame({"b": [10, 11, 12], "a": [1, 2, 3]})
     df2 = cudf.DataFrame({"b": [20, 30, 50], "a": [3, 2, 1]})
     dirname = "chunked_writer_directory"
     with ParquetDatasetWriter(
         f"s3://{s3_bucket_public.name}/{dirname}",
         partition_cols=["a"],
-        storage_options=s3so,
+        **fs_kwargs,
     ) as cw:
         cw.write_table(df1)
         cw.write_table(df2)
@@ -481,6 +493,20 @@ def test_write_chunked_parquet(s3_bucket_public, s3so):
         actual.sort_values(["b"]).reset_index(drop=True),
         cudf.concat([df1, df2]).sort_values(["b"]).reset_index(drop=True),
     )
+
+
+def test_filesystem_and_storage_options_are_exclusive(
+    s3_bucket_public, s3so, pdf
+):
+    fs = get_fs_token_paths("s3://", storage_options=s3so)[0]
+    path = f"s3://{s3_bucket_public.name}/exclusive.csv"
+    match = "Cannot specify storage_options"
+
+    with pytest.raises(ValueError, match=match):
+        cudf.read_csv(path, filesystem=fs, storage_options=s3so)
+
+    with pytest.raises(ValueError, match=match):
+        cudf.from_pandas(pdf).to_csv(path, filesystem=fs, storage_options=s3so)
 
 
 def test_no_s3fs_on_cudf_import():

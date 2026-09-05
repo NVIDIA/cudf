@@ -1,6 +1,6 @@
 # =============================================================================
 # cmake-format: off
-# SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 # cmake-format: on
 # =============================================================================
@@ -35,5 +35,10 @@ include(../../cpp/cmake/thirdparty/get_dlpack.cmake)
 include(rapids-cython-core)
 
 rapids_cython_init()
+
+# Enable Cython's translation cache when CI supplies a persistent cache directory.
+if(DEFINED ENV{CYTHON_CACHE_DIR})
+  list(PREPEND CYTHON_FLAGS "--cache")
+endif()
 
 add_subdirectory(pylibcudf)

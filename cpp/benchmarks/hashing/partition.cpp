@@ -17,8 +17,10 @@
 
 #include <nvbench/nvbench.cuh>
 
+#include <algorithm>
 #include <array>
 #include <cstdint>
+#include <iterator>
 #include <limits>
 #include <memory>
 #include <numeric>
@@ -42,22 +44,12 @@ namespace {
  * @param profile Random data configuration
  * @param seed Seed for the next column
  */
-void append_random_columns(std::vector<std::unique_ptr<cudf::column>>& columns,
-                           std::span<cudf::type_id const> types,
-                           cudf::size_type num_rows,
-                           data_profile const& profile,
-                           std::uint32_t& seed)
-{
-  for (auto const type : types) {
-    columns.push_back(create_random_column(type, row_count{num_rows}, profile, seed++));
-  }
-}
-
 /**
  * @brief Create a table with key columns followed by payload columns.
  *
- * Key cardinality is capped at the row count. Payload values use the full distribution for their
- * type. Every column consumes the next deterministic seed.
+ * Requesting a cardinality equal to the row count makes every key distinct, so the keys are a
+ * shuffled `[0, num_rows)`. Payload values use the full distribution for their type. Keys and
+ * payload are generated separately so each can carry its own null probability.
  *
  * @param key_types Key column types
  * @param payload_types Payload column types
@@ -76,17 +68,24 @@ std::unique_ptr<cudf::table> make_input_table(
   std::optional<double> payload_null_probability = std::nullopt)
 {
   data_profile const key_profile =
-    data_profile_builder().cardinality(num_rows).avg_run_length(1).null_probability(
-      key_null_probability);
+    data_profile_builder().cardinality(num_rows).null_probability(key_null_probability);
   data_profile const payload_profile =
-    data_profile_builder().cardinality(0).avg_run_length(1).null_probability(
-      payload_null_probability);
-  auto columns = std::vector<std::unique_ptr<cudf::column>>{};
-  columns.reserve(key_types.size() + payload_types.size());
+    data_profile_builder().cardinality(0).null_probability(payload_null_probability);
 
-  auto seed = std::uint32_t{1234};
-  append_random_columns(columns, key_types, num_rows, key_profile, seed);
-  append_random_columns(columns, payload_types, num_rows, payload_profile, seed);
+  auto keys = create_random_table(std::vector<cudf::type_id>(key_types.begin(), key_types.end()),
+                                  row_count{num_rows},
+                                  key_profile,
+                                  1234);
+  auto payload =
+    create_random_table(std::vector<cudf::type_id>(payload_types.begin(), payload_types.end()),
+                        row_count{num_rows},
+                        payload_profile,
+                        5678);
+
+  auto columns         = keys->release();
+  auto payload_columns = payload->release();
+  columns.reserve(columns.size() + payload_columns.size());
+  std::move(payload_columns.begin(), payload_columns.end(), std::back_inserter(columns));
   return std::make_unique<cudf::table>(std::move(columns));
 }
 
@@ -285,10 +284,14 @@ void bench_hash_partition_key_skew(nvbench::state& state)
     return;
   }
 
-  data_profile const payload_profile =
-    data_profile_builder().cardinality(0).avg_run_length(1).no_validity();
-  append_random_columns(
-    columns, std::vector<cudf::type_id>(8, cudf::type_id::INT64), num_rows, payload_profile, seed);
+  data_profile const payload_profile = data_profile_builder().cardinality(0).no_validity();
+  auto payload         = create_random_table(std::vector<cudf::type_id>(8, cudf::type_id::INT64),
+                                     row_count{num_rows},
+                                     payload_profile,
+                                     seed);
+  auto payload_columns = payload->release();
+  columns.reserve(columns.size() + payload_columns.size());
+  std::move(payload_columns.begin(), payload_columns.end(), std::back_inserter(columns));
   auto input = std::make_unique<cudf::table>(std::move(columns));
   run_hash_partition(state, *input, 1, num_partitions);
 }

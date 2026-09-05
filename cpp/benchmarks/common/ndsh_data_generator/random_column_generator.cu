@@ -17,8 +17,8 @@
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/iterator>
+#include <cuda/std/random>
 #include <cuda/std/tuple>
-#include <thrust/random.h>
 #include <thrust/transform.h>
 
 #include <string>
@@ -30,8 +30,8 @@ namespace {
 // Functor for generating random strings
 struct random_string_generator {
   char* chars;
-  thrust::default_random_engine engine;
-  thrust::uniform_int_distribution<unsigned char> char_dist;
+  cuda::std::philox4x32 engine;
+  cuda::std::uniform_int_distribution<unsigned char> char_dist;
 
   CUDF_HOST_DEVICE random_string_generator(char* c) : chars(c), char_dist(44, 122) {}
 
@@ -61,13 +61,13 @@ struct random_number_generator {
   __device__ T operator()(int64_t const idx) const
   {
     if constexpr (cudf::is_integral<T>()) {
-      thrust::default_random_engine engine;
-      thrust::uniform_int_distribution<T> dist(lower, upper);
+      cuda::std::philox4x32 engine;
+      cuda::std::uniform_int_distribution<T> dist(lower, upper);
       engine.discard(idx);
       return dist(engine);
     } else {
-      thrust::default_random_engine engine;
-      thrust::uniform_real_distribution<T> dist(lower, upper);
+      cuda::std::philox4x32 engine;
+      cuda::std::uniform_real_distribution<T> dist(lower, upper);
       engine.discard(idx);
       return dist(engine);
     }

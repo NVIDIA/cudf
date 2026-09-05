@@ -2038,6 +2038,45 @@ TEST_F(OrcWriterTest, EmptyRowGroup)
   CUDF_TEST_EXPECT_TABLES_EQUAL(expected, result.tbl->view());
 }
 
+TEST_F(OrcReaderTest, NullDecodeSpanningRowGroups)
+{
+  // The reader only decodes nulls one row group per block when the row index is in use, which needs
+  // more rows than the 10000-row index stride. Reading the same file with the index disabled forces
+  // the whole-stripe decode instead, giving a direct comparison between the two paths.
+  constexpr cudf::size_type num_rows = 75'000;
+
+  // Mix long runs with scattered nulls so both RLE run kinds appear in the PRESENT stream and row
+  // group boundaries land inside runs rather than neatly on them.
+  auto const valids = cudf::detail::make_counting_transform_iterator(0, [](auto i) {
+    if (i < 12'345) { return true; }
+    if (i < 12'400) { return false; }
+    return (i % 7) != 0;
+  });
+
+  auto const ints = cudf::detail::make_counting_transform_iterator(0, [](auto i) { return i; });
+  int32_col int_column{ints, ints + num_rows, valids};
+
+  std::vector<std::string> strings(num_rows);
+  std::generate(strings.begin(), strings.end(), [i = 0]() mutable {
+    return "value_" + std::to_string(i++ % 1000);
+  });
+  str_col string_column{strings.begin(), strings.end(), valids};
+
+  table_view expected({int_column, string_column});
+
+  auto filepath = temp_env->get_temp_filepath("OrcNullDecodeRowGroups.orc");
+  cudf::io::write_orc(
+    cudf::io::orc_writer_options::builder(cudf::io::sink_info{filepath}, expected).build());
+
+  auto const indexed =
+    cudf::io::read_orc(cudf::io::orc_reader_options::builder(cudf::io::source_info{filepath}));
+  auto const unindexed = cudf::io::read_orc(
+    cudf::io::orc_reader_options::builder(cudf::io::source_info{filepath}).use_index(false));
+
+  CUDF_TEST_EXPECT_TABLES_EQUAL(expected, indexed.tbl->view());
+  CUDF_TEST_EXPECT_TABLES_EQUAL(indexed.tbl->view(), unindexed.tbl->view());
+}
+
 TEST_F(OrcWriterTest, NoNullsAsNonNullable)
 {
   auto valids = cudf::test::iterators::no_nulls();

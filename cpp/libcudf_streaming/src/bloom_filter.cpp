@@ -118,7 +118,7 @@ rapidsmpf::streaming::Actor bloom_filter::apply(
   auto storage = (co_await bloom_filter->receive()).release<rmm::device_buffer>();
   RAPIDSMPF_EXPECTS((co_await bloom_filter->receive()).empty(),
                     "Bloom filter channel contained more than one message");
-  auto stream = cuda::stream_ref{storage.stream().value()};
+  auto stream = storage.stream();
   rapidsmpf::CudaEvent event;
   auto filter = cudf_streaming::detail::device_bloom_filter(filter_size_, seed_, storage.data());
   auto meta   = co_await ch_in->receive_metadata();

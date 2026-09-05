@@ -70,7 +70,7 @@ cpdef tuple[Table, list] hash_partition(
     cdef int c_num_partitions = num_partitions
     cdef vector[libcudf_types.size_type] columns_to_hash
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
     cdef table_view c_input = input.view()
     cdef table_view c_keys
@@ -137,7 +137,7 @@ cpdef tuple[Table, list] partition(
     cdef int c_num_partitions = num_partitions
 
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
 
     cdef table_view c_input = t.view()
@@ -190,7 +190,7 @@ cpdef tuple[Table, list] round_robin_partition(
     cdef int c_start_partition = start_partition
 
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
 
     cdef table_view c_input = input.view()

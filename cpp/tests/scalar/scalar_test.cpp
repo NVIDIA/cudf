@@ -138,7 +138,7 @@ TEST_F(ScalarTest, AsyncStringConstructionOwnsHostSource)
       auto* ptr = upstream.allocate(stream, bytes, cuda::mr::default_cuda_malloc_alignment);
       if (allocations++ == 1) {
         CUDF_CUDA_TRY(cudaLaunchHostFunc(
-          stream.value(), [](void* data) { static_cast<host_func_gate*>(data)->wait(); }, &gate));
+          stream.get(), [](void* data) { static_cast<host_func_gate*>(data)->wait(); }, &gate));
       }
       return ptr;
     },

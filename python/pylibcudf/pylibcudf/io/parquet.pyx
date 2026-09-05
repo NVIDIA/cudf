@@ -668,7 +668,7 @@ cdef class ChunkedParquetReader:
         cdef vector[unique_ptr[datasource]] sources
         cdef vector[cpp_FileMetaData] c_metadatas
         cdef vector[cpp_FileMetaData*] metadata_ptrs
-        cdef cudaStream_t stream_view = self._stream.view().value()
+        cdef cudaStream_t stream_view = self._stream.view().get()
         cdef size_t i
         if parquet_metadatas is None:
             with nogil:
@@ -771,7 +771,7 @@ cpdef TableWithMetadata read_parquet(
         provided, footers are read from the sources internally.
     """
     cdef Stream s = _get_stream(stream)
-    cdef cudaStream_t _cs = s.view().value()
+    cdef cudaStream_t _cs = s.view().get()
     cdef vector[unique_ptr[datasource]] sources
     cdef vector[cpp_FileMetaData] c_metadatas
     cdef vector[cpp_FileMetaData*] metadata_ptrs
@@ -879,7 +879,7 @@ cdef class ChunkedParquetWriter:
             ChunkedParquetWriter
         )
         cdef Stream s = _get_stream(stream)
-        cdef cudaStream_t _cs = s.view().value()
+        cdef cudaStream_t _cs = s.view().get()
         parquet_writer.c_obj.reset(
             new cpp_chunked_parquet_writer(options.c_obj, _cs)
         )
@@ -1486,7 +1486,7 @@ cpdef memoryview write_parquet(ParquetWriterOptions options, object stream: Cuda
     """
     cdef unique_ptr[vector[uint8_t]] c_result
     cdef Stream s = _get_stream(stream)
-    cdef cudaStream_t _cs = s.view().value()
+    cdef cudaStream_t _cs = s.view().get()
     with nogil:
         c_result = cpp_write_parquet(move(options.c_obj), _cs)
 

@@ -749,7 +749,7 @@ cpdef tuple[list[Column], list[str], dict] chunked_read_json(
     child_names = None
     i = 0
     cdef Stream s = _get_stream(stream)
-    cdef cudaStream_t _cs = s.view().value()
+    cdef cudaStream_t _cs = s.view().get()
     mr = _get_memory_resource(mr)
     while True:
         options.enable_lines(True)
@@ -812,7 +812,7 @@ cpdef TableWithMetadata read_json(
     """
     cdef table_with_metadata c_result
     cdef Stream s = _get_stream(stream)
-    cdef cudaStream_t _cs = s.view().value()
+    cdef cudaStream_t _cs = s.view().get()
     mr = _get_memory_resource(mr)
     with nogil:
         c_result = move(cpp_read_json(options.c_obj, _cs, mr.get_mr()))
@@ -869,7 +869,7 @@ cpdef TableWithMetadata read_json_from_string_column(
     cdef column_contents c_contents
     cdef table_with_metadata c_result
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
 
     # Join the string column into a single string
@@ -1126,7 +1126,7 @@ cpdef void write_json(JsonWriterOptions options, object stream: CudaStreamLike |
     None
     """
     cdef Stream s = _get_stream(stream)
-    cdef cudaStream_t _cs = s.view().value()
+    cdef cudaStream_t _cs = s.view().get()
     with nogil:
         cpp_write_json(options.c_obj, _cs)
 

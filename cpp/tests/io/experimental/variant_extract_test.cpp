@@ -1324,6 +1324,226 @@ TEST_F(GetVariantFieldTest, EmptyInput)
   EXPECT_EQ(cudf::lists_column_view{got->view()}.child().type().id(), cudf::type_id::UINT8);
 }
 
+namespace {
+
+// One status buffer per path, kept alongside the views handed to the batched APIs.
+struct status_buffers {
+  std::vector<std::unique_ptr<cudf::column>> columns;
+  std::vector<cudf::mutable_column_view> views;
+
+  status_buffers(std::size_t num_paths, cudf::size_type num_rows)
+  {
+    columns.reserve(num_paths);
+    views.reserve(num_paths);
+    for (std::size_t p = 0; p < num_paths; ++p) {
+      columns.push_back(make_status_buffer(num_rows));
+      views.push_back(columns.back()->mutable_view());
+    }
+  }
+};
+
+// The batched APIs must agree with the single-path API applied to each path in turn, which is what
+// most of the tests below check: the single-path behavior is the specification. Both the values and
+// the per-row statuses are compared, since the batched walk derives a status for a whole subtree
+// from its prefix rather than resolving each path on its own.
+void expect_matches_looped_get(cudf::column_view const& variant,
+                               std::vector<std::string> const& paths)
+{
+  auto const stream = cudf::test::get_default_stream();
+  std::vector<std::string_view> const path_views(paths.begin(), paths.end());
+
+  status_buffers status{paths.size(), variant.size()};
+  auto const got =
+    cudf::io::parquet::experimental::get_variant_fields(variant, path_views, status.views, stream);
+  ASSERT_EQ(got->num_columns(), static_cast<cudf::size_type>(paths.size()));
+
+  for (std::size_t p = 0; p < paths.size(); ++p) {
+    SCOPED_TRACE(std::string{"path: "} + paths[p]);
+    auto const expected_status = make_status_buffer(variant.size());
+    auto const expected        = cudf::io::parquet::experimental::get_variant_field(
+      variant, paths[p], expected_status->mutable_view(), stream);
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(got->get_column(static_cast<cudf::size_type>(p)), *expected);
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(*status.columns[p], *expected_status);
+  }
+}
+
+}  // namespace
+
+struct GetVariantFieldsTest : public cudf::test::BaseFixture {};
+
+TEST_F(GetVariantFieldsTest, MultiRowMatchesLoopedSingleField)
+{
+  auto const col = make_xyz_three_row_variant();
+  expect_matches_looped_get(col, {"x", "y", "z", "no_such_field"});
+}
+
+TEST_F(GetVariantFieldsTest, SharedPrefixes)
+{
+  auto const col = make_apache_variant(avf::object_nested);
+  expect_matches_looped_get(col,
+                            {"$.observation.location",
+                             "$.observation.time",
+                             "$.observation.value.temperature",
+                             "$.species.name",
+                             "$.species.population",
+                             "$.id"});
+}
+
+TEST_F(GetVariantFieldsTest, DuplicateAndPrefixPaths)
+{
+  // "$.observation" is both a requested output and the prefix of another path, and appears twice.
+  auto const col = make_apache_variant(avf::object_nested);
+  expect_matches_looped_get(
+    col, {"$.observation", "$.observation.time", "$.observation", "$.observation.value"});
+}
+
+TEST_F(GetVariantFieldsTest, ArrayIndexSteps)
+{
+  // array_primitive encodes the int8 array [2, 1, 5, 9]; "[9]" is out of bounds.
+  auto const col = make_apache_variant(avf::array_primitive);
+  expect_matches_looped_get(col, {"[0]", "[3]", "[9]", "[1]"});
+}
+
+TEST_F(GetVariantFieldsTest, NullRowsAndSlicedInput)
+{
+  std::vector<uint8_t> const m = {0x01, 0x01, 0x00, 0x01, 'x'};
+  std::vector<uint8_t> const v = {0x02, 0x01, 0x00, 0x00, 0x05, 0x14, 0x07, 0x00, 0x00, 0x00};
+  cudf::test::lists_column_wrapper<uint8_t> meta{
+    {m.begin(), m.end()}, {0x00}, {m.begin(), m.end()}};
+  cudf::test::lists_column_wrapper<uint8_t> val{{v.begin(), v.end()}, {0x00}, {v.begin(), v.end()}};
+  cudf::test::structs_column_wrapper const col{{meta, val}, std::vector<bool>{true, false, true}};
+
+  expect_matches_looped_get(col, {"x", "y"});
+  expect_matches_looped_get(cudf::slice(col, {1, 3}).front(), {"x", "y"});
+}
+
+TEST_F(GetVariantFieldsTest, ManyPathsUseGlobalScratch)
+{
+  // More leaves than `max_local_trie_slots`, so the walk falls back to global slot scratch.
+  auto paths = std::vector<std::string>{"x", "y", "z"};
+  for (int i = 0; i < 40; ++i) {
+    paths.push_back(std::format("$.field_{}", i));
+  }
+  expect_matches_looped_get(make_xyz_three_row_variant(), paths);
+}
+
+TEST_F(GetVariantFieldsTest, DeepTrieUsesGlobalScratch)
+{
+  // Every path extends the previous one, so the trie is a chain deeper than the per-thread stack
+  // the walk normally uses, which pushes it onto global scratch. Only "x" resolves.
+  std::vector<std::string> paths{"x"};
+  for (int i = 0; i < 20; ++i) {
+    paths.push_back(std::format("{}.s{}", paths.back(), i));
+  }
+  expect_matches_looped_get(make_xyz_three_row_variant(), paths);
+}
+
+TEST_F(GetVariantFieldsTest, NoPathsYieldsNoColumns)
+{
+  auto const col = make_xyz_three_row_variant();
+  auto const got = cudf::io::parquet::experimental::get_variant_fields(
+    col, std::vector<std::string_view>{}, {}, cudf::test::get_default_stream());
+  EXPECT_EQ(got->num_columns(), 0);
+}
+
+TEST_F(GetVariantFieldsTest, EmptyInput)
+{
+  auto const stream  = cudf::test::get_default_stream();
+  auto const variant = cudf::empty_like(make_xyz_three_row_variant());
+
+  std::vector<std::string_view> const paths{"x", "$.y.z"};
+  auto const got = cudf::io::parquet::experimental::get_variant_fields(*variant, paths, {}, stream);
+
+  ASSERT_EQ(got->num_columns(), 2);
+  for (auto const& column : got->view()) {
+    EXPECT_EQ(column.type().id(), cudf::type_id::LIST);
+    EXPECT_EQ(column.size(), 0);
+    EXPECT_EQ(cudf::lists_column_view{column}.child().type().id(), cudf::type_id::UINT8);
+  }
+}
+
+TEST_F(GetVariantFieldsTest, MalformedPathThrows)
+{
+  auto const col = make_xyz_three_row_variant();
+  auto const bad = std::vector<std::string_view>{"x", "$.a[", "y"};
+  EXPECT_THROW(static_cast<void>(cudf::io::parquet::experimental::get_variant_fields(
+                 col, bad, {}, cudf::test::get_default_stream())),
+               std::invalid_argument);
+}
+
+struct ExtractVariantFieldsTest : public cudf::test::BaseFixture {};
+
+TEST_F(ExtractVariantFieldsTest, MatchesLoopedExtract)
+{
+  auto const col    = make_xyz_three_row_variant();
+  auto const stream = cudf::test::get_default_stream();
+
+  std::vector<std::string_view> const paths{"x", "y", "z"};
+  std::vector<cudf::data_type> const types{cudf::data_type{cudf::type_id::INT32},
+                                           cudf::data_type{cudf::type_id::STRING},
+                                           cudf::data_type{cudf::type_id::INT32}};
+
+  auto const got =
+    cudf::io::parquet::experimental::extract_variant_fields(col, paths, types, {}, stream);
+
+  ASSERT_EQ(got->num_columns(), 3);
+  for (std::size_t p = 0; p < paths.size(); ++p) {
+    SCOPED_TRACE(std::string{"path: "} + std::string{paths[p]});
+    auto const expected = cudf::io::parquet::experimental::extract_variant_field(
+      col, paths[p], types[p], std::nullopt, stream);
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(got->get_column(static_cast<cudf::size_type>(p)), *expected);
+  }
+}
+
+TEST_F(ExtractVariantFieldsTest, SharedPrefixesTypedValues)
+{
+  auto const col = make_apache_variant(avf::object_nested);
+  std::vector<std::string_view> const paths{"$.observation.location",
+                                            "$.observation.value.temperature",
+                                            "$.species.population",
+                                            "$.species.nope"};
+  std::vector<cudf::data_type> const types{cudf::data_type{cudf::type_id::STRING},
+                                           cudf::data_type{cudf::type_id::INT8},
+                                           cudf::data_type{cudf::type_id::INT16},
+                                           cudf::data_type{cudf::type_id::STRING}};
+
+  auto const got = cudf::io::parquet::experimental::extract_variant_fields(
+    col, paths, types, {}, cudf::test::get_default_stream());
+
+  ASSERT_EQ(got->num_columns(), 4);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(got->get_column(0),
+                                 cudf::test::strings_column_wrapper({"In the Volcano"}));
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(got->get_column(1),
+                                 cudf::test::fixed_width_column_wrapper<int8_t>{int8_t{123}});
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(got->get_column(2),
+                                 cudf::test::fixed_width_column_wrapper<int16_t>{int16_t{6789}});
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(got->get_column(3),
+                                 cudf::test::strings_column_wrapper({"donotread"}, {false}));
+}
+
+TEST_F(ExtractVariantFieldsTest, MismatchedDesiredTypesThrows)
+{
+  auto const col = make_xyz_three_row_variant();
+  std::vector<std::string_view> const paths{"x", "y"};
+  std::vector<cudf::data_type> const types{cudf::data_type{cudf::type_id::INT32}};
+
+  EXPECT_THROW(static_cast<void>(cudf::io::parquet::experimental::extract_variant_fields(
+                 col, paths, types, {}, cudf::test::get_default_stream())),
+               std::invalid_argument);
+}
+
+TEST_F(ExtractVariantFieldsTest, UnsupportedDesiredTypeThrows)
+{
+  auto const col = make_xyz_three_row_variant();
+  std::vector<std::string_view> const paths{"x", "y"};
+  std::vector<cudf::data_type> const types{cudf::data_type{cudf::type_id::INT32},
+                                           cudf::data_type{cudf::type_id::TIMESTAMP_DAYS}};
+
+  EXPECT_THROW(static_cast<void>(cudf::io::parquet::experimental::extract_variant_fields(
+                 col, paths, types, {}, cudf::test::get_default_stream())),
+               std::invalid_argument);
+}
+
 template <typename T, std::size_t M, std::size_t V>
 std::unique_ptr<cudf::column> cast_apache_primitive(avf::fixture<M, V> const& fixture)
 {
@@ -2999,4 +3219,176 @@ TEST_F(ExtractVariantFieldStatusTest, MissingNestedPathStatus)
 
   expect_status_values(*status, {ST_MISSING});
   EXPECT_EQ(got->null_count(), 1);
+}
+
+// ---------------------------------------------------------------------------
+// GetVariantFields / ExtractVariantFields status tests
+// ---------------------------------------------------------------------------
+// The batched status columns are checked against the single-path ones for every path of every case
+// in expect_matches_looped_get; the cases here pin down the values that agreement rests on.
+
+struct GetVariantFieldsStatusTest : public cudf::test::BaseFixture {};
+
+TEST_F(GetVariantFieldsStatusTest, PerPathStatuses)
+{
+  // Row 0 has x and y, row 1 has x and z, row 2 has only y; no row has "nope".
+  auto const col    = make_xyz_three_row_variant();
+  auto const stream = cudf::test::get_default_stream();
+
+  std::vector<std::string_view> const paths{"x", "y", "z", "nope"};
+  status_buffers status{paths.size(), cudf::column_view{col}.size()};
+  auto const got = expns::get_variant_fields(col, paths, status.views, stream, cmr());
+
+  ASSERT_EQ(got->num_columns(), 4);
+  expect_status_values(*status.columns[0], {ST_SUCCESS, ST_SUCCESS, ST_MISSING});
+  expect_status_values(*status.columns[1], {ST_SUCCESS, ST_MISSING, ST_SUCCESS});
+  expect_status_values(*status.columns[2], {ST_MISSING, ST_SUCCESS, ST_MISSING});
+  expect_status_values(*status.columns[3], {ST_MISSING, ST_MISSING, ST_MISSING});
+}
+
+TEST_F(GetVariantFieldsStatusTest, FailedPrefixReasonReachesItsWholeSubtree)
+{
+  // "$.a" is a VARIANT null, so the paths below it are missing_path rather than the malformed
+  // status that probing the empty value they inherit would give.
+  auto const m      = build_metadata({"a"});
+  auto const v      = build_single_field_object(/*fid=*/0, enc_null());
+  auto const col    = wrap_single_variant(m, v);
+  auto const stream = cudf::test::get_default_stream();
+
+  std::vector<std::string_view> const paths{"$.a", "$.a.b", "$.a.b.c", "$.a[0]"};
+  status_buffers status{paths.size(), cudf::column_view{col}.size()};
+  auto const got = expns::get_variant_fields(col, paths, status.views, stream, cmr());
+
+  ASSERT_EQ(got->num_columns(), 4);
+  expect_status_values(*status.columns[0], {ST_VNULL});
+  expect_status_values(*status.columns[1], {ST_MISSING});
+  expect_status_values(*status.columns[2], {ST_MISSING});
+  expect_status_values(*status.columns[3], {ST_MISSING});
+}
+
+TEST_F(GetVariantFieldsStatusTest, MalformedMetadataFailsEveryPath)
+{
+  std::vector<uint8_t> const bad_meta = {0x02};  // too short / version != 1
+  std::vector<uint8_t> const val      = {0x14, 0x07, 0x00, 0x00, 0x00};
+  auto const col                      = wrap_single_variant(bad_meta, val);
+  auto const stream                   = cudf::test::get_default_stream();
+
+  std::vector<std::string_view> const paths{"x", "y", "$.x.deeper"};
+  status_buffers status{paths.size(), cudf::column_view{col}.size()};
+  static_cast<void>(expns::get_variant_fields(col, paths, status.views, stream, cmr()));
+
+  for (auto const& column : status.columns) {
+    expect_status_values(*column, {ST_MALFORMED});
+  }
+}
+
+TEST_F(GetVariantFieldsStatusTest, SqlNullRowIsRowNullForEveryPath)
+{
+  std::vector<uint8_t> const m = {0x01, 0x01, 0x00, 0x01, 'x'};
+  std::vector<uint8_t> const v = {0x02, 0x01, 0x00, 0x00, 0x05, 0x14, 0x07, 0x00, 0x00, 0x00};
+  cudf::test::lists_column_wrapper<uint8_t> meta{{m.begin(), m.end()}, {m.begin(), m.end()}};
+  cudf::test::lists_column_wrapper<uint8_t> val{{v.begin(), v.end()}, {v.begin(), v.end()}};
+  cudf::test::structs_column_wrapper const col{{meta, val}, std::vector<bool>{true, false}};
+
+  std::vector<std::string_view> const paths{"x", "y"};
+  status_buffers status{paths.size(), cudf::column_view{col}.size()};
+  static_cast<void>(
+    expns::get_variant_fields(col, paths, status.views, cudf::test::get_default_stream(), cmr()));
+
+  expect_status_values(*status.columns[0], {ST_SUCCESS, ST_ROW_NULL});
+  expect_status_values(*status.columns[1], {ST_MISSING, ST_ROW_NULL});
+}
+
+TEST_F(GetVariantFieldsStatusTest, SinglePathFillsStatus)
+{
+  // One path is served by the single-path entry point, which has to fill the status too.
+  auto const col    = make_xyz_three_row_variant();
+  auto const stream = cudf::test::get_default_stream();
+
+  std::vector<std::string_view> const paths{"x"};
+  status_buffers status{paths.size(), cudf::column_view{col}.size()};
+  auto const got = expns::get_variant_fields(col, paths, status.views, stream, cmr());
+
+  ASSERT_EQ(got->num_columns(), 1);
+  expect_status_values(*status.columns[0], {ST_SUCCESS, ST_SUCCESS, ST_MISSING});
+}
+
+TEST_F(GetVariantFieldsStatusTest, EmptyInputLeavesStatusEmpty)
+{
+  auto const stream  = cudf::test::get_default_stream();
+  auto const variant = cudf::empty_like(make_xyz_three_row_variant());
+
+  std::vector<std::string_view> const paths{"x", "$.y.z"};
+  status_buffers status{paths.size(), variant->size()};
+  auto const got = expns::get_variant_fields(*variant, paths, status.views, stream, cmr());
+
+  ASSERT_EQ(got->num_columns(), 2);
+  for (auto const& column : status.columns) {
+    EXPECT_EQ(column->size(), 0);
+  }
+}
+
+TEST_F(GetVariantFieldsStatusTest, RejectsMalformedStatusColumns)
+{
+  auto const col      = make_xyz_three_row_variant();
+  auto const stream   = cudf::test::get_default_stream();
+  auto const num_rows = cudf::column_view{col}.size();
+  std::vector<std::string_view> const paths{"x", "y"};
+
+  // One column short of one per path
+  status_buffers too_few{1, num_rows};
+  EXPECT_THROW(
+    static_cast<void>(expns::get_variant_fields(col, paths, too_few.views, stream, cmr())),
+    std::invalid_argument);
+
+  // Wrong row count
+  status_buffers wrong_rows{2, num_rows + 1};
+  EXPECT_THROW(
+    static_cast<void>(expns::get_variant_fields(col, paths, wrong_rows.views, stream, cmr())),
+    std::invalid_argument);
+
+  // Wrong type
+  auto wide = cudf::make_numeric_column(
+    cudf::data_type{cudf::type_id::INT32}, num_rows, cudf::mask_state::UNALLOCATED);
+  status_buffers ok{2, num_rows};
+  std::vector<cudf::mutable_column_view> wrong_type{ok.views[0], wide->mutable_view()};
+  EXPECT_THROW(static_cast<void>(expns::get_variant_fields(col, paths, wrong_type, stream, cmr())),
+               std::invalid_argument);
+
+  // Nullable
+  auto nullable = cudf::make_numeric_column(
+    cudf::data_type{cudf::type_id::UINT8}, num_rows, cudf::mask_state::ALL_VALID);
+  std::vector<cudf::mutable_column_view> nullable_status{ok.views[0], nullable->mutable_view()};
+  EXPECT_THROW(
+    static_cast<void>(expns::get_variant_fields(col, paths, nullable_status, stream, cmr())),
+    std::invalid_argument);
+}
+
+struct ExtractVariantFieldsStatusTest : public cudf::test::BaseFixture {};
+
+TEST_F(ExtractVariantFieldsStatusTest, MatchesLoopedExtractStatus)
+{
+  auto const col    = make_xyz_three_row_variant();
+  auto const stream = cudf::test::get_default_stream();
+
+  // "y" as INT32 is a type mismatch where it resolves, so the cast's own status has to reach the
+  // batched output too.
+  std::vector<std::string_view> const paths{"x", "y", "nope"};
+  std::vector<cudf::data_type> const types{cudf::data_type{cudf::type_id::INT32},
+                                           cudf::data_type{cudf::type_id::INT32},
+                                           cudf::data_type{cudf::type_id::STRING}};
+
+  status_buffers status{paths.size(), cudf::column_view{col}.size()};
+  auto const got = expns::extract_variant_fields(col, paths, types, status.views, stream, cmr());
+
+  ASSERT_EQ(got->num_columns(), 3);
+  for (std::size_t p = 0; p < paths.size(); ++p) {
+    SCOPED_TRACE(std::string{"path: "} + std::string{paths[p]});
+    auto const expected_status = make_status_buffer(cudf::column_view{col}.size());
+    auto const expected        = expns::extract_variant_field(
+      col, paths[p], types[p], expected_status->mutable_view(), stream, cmr());
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(got->get_column(static_cast<cudf::size_type>(p)), *expected);
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(*status.columns[p], *expected_status);
+  }
+  expect_status_values(*status.columns[1], {ST_MISMATCH, ST_MISSING, ST_MISMATCH});
 }

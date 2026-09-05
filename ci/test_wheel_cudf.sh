@@ -7,14 +7,14 @@ set -euo pipefail
 source rapids-init-pip
 
 RAPIDS_PY_CUDA_SUFFIX="$(rapids-wheel-ctk-name-gen "${RAPIDS_CUDA_VERSION}")"
-RUN_CUDF="${RUN_CUDF:-true}"
-RUN_CUDF_STREAMING="${RUN_CUDF_STREAMING:-true}"
+RUN_CUDF_TESTS="${RUN_CUDF_TESTS:-true}"
+RUN_CUDF_STREAMING_TESTS="${RUN_CUDF_STREAMING_TESTS:-true}"
 
 # Download the wheel artifacts built in the previous steps.
 LIBCUDF_WHEELHOUSE=$(rapids-download-from-github "$(rapids-artifact-name wheel_cpp libcudf cudf --cuda "$RAPIDS_CUDA_VERSION")")
 PYLIBCUDF_WHEELHOUSE=$(rapids-download-from-github "$(rapids-artifact-name wheel_python pylibcudf cudf --stable --cuda "$RAPIDS_CUDA_VERSION")")
 
-if [[ "${RUN_CUDF}" == "true" ]]; then
+if [[ "${RUN_CUDF_TESTS}" == "true" ]]; then
   CUDF_WHEELHOUSE=$(rapids-download-from-github "$(rapids-artifact-name wheel_python cudf cudf --stable --cuda "$RAPIDS_CUDA_VERSION")")
 
   rapids-logger "Install libcudf and verify its runtime dependencies in a virtual environment"
@@ -97,7 +97,7 @@ if [[ "${RUN_CUDF}" == "true" ]]; then
   popd
 fi
 
-if [[ "${RUN_CUDF_STREAMING}" == "true" ]]; then
+if [[ "${RUN_CUDF_STREAMING_TESTS}" == "true" ]]; then
   CUDF_STREAMING_WHEELHOUSE=$(rapids-download-from-github "$(rapids-artifact-name wheel_python cudf-streaming cudf --stable --cuda "$RAPIDS_CUDA_VERSION")")
   LIBCUDF_STREAMING_WHEELHOUSE=$(rapids-download-from-github "$(rapids-artifact-name wheel_cpp libcudf-streaming cudf --cuda "$RAPIDS_CUDA_VERSION")")
 
@@ -119,6 +119,9 @@ if [[ "${RUN_CUDF_STREAMING}" == "true" ]]; then
   deactivate
 
   rapids-logger "Install cudf_streaming and its dependencies"
+
+  python -m venv cudf-streaming-env
+  . cudf-streaming-env/bin/activate
 
   rapids-pip-retry install \
       -v \
@@ -143,5 +146,10 @@ if [[ "${RUN_CUDF_STREAMING}" == "true" ]]; then
   if [ ${EXITCODE} -ne 0 ] && [ ${EXITCODE} -ne 5 ]; then
     exit ${EXITCODE}
   fi
+  if [ ${EXITCODE} -eq 5 ]; then
+    rapids-logger "No cudf_streaming tests were collected; accepting exit code 5"
+  fi
   popd
+
+  deactivate
 fi

@@ -12,10 +12,14 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 
+import java.util.Arrays;
 import java.util.stream.Stream;
 
 import static ai.rapids.cudf.AssertUtils.assertColumnsAreEqual;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 public class IfElseTest extends CudfTestBase {
   private static Stream<Arguments> createBooleanVVParams() {
@@ -1200,6 +1204,65 @@ public class IfElseTest extends CudfTestBase {
     try (ColumnVector input = ColumnVector.fromBoxedInts(0, 100, 1, 2);
          ColumnVector mask = ColumnVector.fromBoxedBooleans(true, false, true)) {
       assertThrows(IllegalArgumentException.class, () -> input.applyNullMask(mask));
+    }
+  }
+
+  @Test
+  void testApplyNullMaskPropagatesToStructChildren() {
+    try (ColumnVector c0 = ColumnVector.fromInts(1, 2, 3, 4, 5);
+         ColumnVector c1 = ColumnVector.fromInts(10, 20, 30, 40, 50);
+         ColumnVector struct = ColumnVector.makeStruct(c0, c1);
+         ColumnVector mask = ColumnVector.fromBoxedBooleans(true, true, false, null, true);
+         ColumnVector result = struct.applyNullMask(mask);
+         HostColumnVector hostResult = result.copyToHost()) {
+      assertEquals(2, hostResult.getNullCount(), "parent null count");
+      assertFalse(hostResult.isNull(0));
+      assertFalse(hostResult.isNull(1));
+      assertTrue(hostResult.isNull(2));
+      assertTrue(hostResult.isNull(3));
+      assertFalse(hostResult.isNull(4));
+
+      // Each child should have the same null mask as the parent.
+      assertEquals(2, hostResult.getNumChildren());
+      for (int i = 0; i < hostResult.getNumChildren(); i++) {
+        HostColumnVectorCore child = hostResult.getChildColumnView(i);
+        assertEquals(2, child.getNullCount(), "child " + i + " null count");
+        assertTrue(child.isNull(2), "child " + i + " row 2");
+        assertTrue(child.isNull(3), "child " + i + " row 3");
+      }
+    }
+  }
+
+  @Test
+  void testApplyNullMaskPurgesListOffsetsOfMaskedRows() {
+    HostColumnVector.DataType intType  = new HostColumnVector.BasicType(true, DType.INT32);
+    HostColumnVector.DataType listType = new HostColumnVector.ListType(true, intType);
+    try (ColumnVector list = ColumnVector.fromLists(listType,
+             Arrays.asList(1, 2),
+             Arrays.asList(3, 4, 5),
+             Arrays.asList(6),  // will be masked null.
+             Arrays.asList(7, 8, 9, 10),  // will be masked null.
+             Arrays.asList(11));
+         ColumnVector mask = ColumnVector.fromBoxedBooleans(true, true, false, null, true);
+         ColumnVector result = list.applyNullMask(mask);
+         HostColumnVector hostResult = result.copyToHost()) {
+      assertEquals(2, hostResult.getNullCount(), "parent null count");
+      assertTrue(hostResult.isNull(2));
+      assertTrue(hostResult.isNull(3));
+
+      // Rows 2 and 3 collapse so the inner INT should have only 6 elements.
+      assertEquals(1, hostResult.getNumChildren());
+      HostColumnVectorCore intChild = hostResult.getChildColumnView(0);
+      assertEquals(6, intChild.getRowCount(), "purged inner row count");
+      int[] expectedInner = {1, 2, 3, 4, 5, 11};
+      for (int i = 0; i < expectedInner.length; i++) {
+        assertEquals(expectedInner[i], intChild.getInt(i), "inner " + i);
+      }
+      HostMemoryBuffer offsets = hostResult.getOffsets();
+      int[] expectedOffsets = {0, 2, 5, 5, 5, 6};
+      for (int i = 0; i < expectedOffsets.length; i++) {
+        assertEquals(expectedOffsets[i], offsets.getInt(i * 4L), "offset " + i);
+      }
     }
   }
 }

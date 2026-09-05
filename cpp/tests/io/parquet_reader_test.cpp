@@ -2303,9 +2303,8 @@ TEST_F(ParquetReaderTest, ExtendedFilterExpressions)
       cudf::io::parquet_reader_options::builder(cudf::io::source_info{filepath}).filter(filter);
     auto result = cudf::io::read_parquet(read_opts);
     CUDF_TEST_EXPECT_TABLES_EQUAL(*result.tbl, *expected);
-    // Stats filter cannot prune row groups
-    EXPECT_EQ(result.metadata.num_row_groups_after_stats_filter.value(),
-              result.metadata.num_input_row_groups);
+    // Stats filter cannot prune `false`, but still prunes on 50 > col_a
+    EXPECT_EQ(result.metadata.num_row_groups_after_stats_filter.value(), 1);
   }
 
   // Filter: NOT(col_a NULL_EQUAL 10)

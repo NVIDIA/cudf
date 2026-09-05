@@ -144,11 +144,15 @@ std::optional<std::vector<std::vector<size_type>>> aggregate_reader_metadata::ap
   auto stats_table = cudf::table(std::move(columns));
 
   // Converts AST to StatsAST with reference to min, max columns in above `stats_table`.
-  stats_expression_converter const stats_expr{filter.get(), output_dtypes, stream};
+  stats_expression_converter const stats_expr{filter.get(), output_dtypes};
+
+  // Nothing in the filter can be answered by statistics, so all row groups are required
+  auto const converted_expr = stats_expr.get_stats_expr();
+  if (not converted_expr.has_value()) { return std::nullopt; }
 
   // Filter stats table with StatsAST expression and collect filtered row group indices
   return collect_filtered_row_group_indices(
-    stats_table, stats_expr.get_stats_expr(), input_row_group_indices, stream);
+    stats_table, converted_expr.value(), input_row_group_indices, stream);
 }
 
 std::pair<std::optional<std::vector<std::vector<size_type>>>, surviving_row_group_metrics>

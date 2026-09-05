@@ -288,6 +288,149 @@ std::reference_wrapper<ast::expression const> parquet_filter_normalizer::visit(
   return std::reference_wrapper<ast::expression const>(_operators.back());
 }
 
+pruning_expression_builder::pruning_expression_builder(
+  std::span<cudf::data_type const> output_dtypes)
+  : _output_dtypes{output_dtypes}
+{
+}
+
+void pruning_expression_builder::validate_column_reference(
+  ast::column_reference const& col_ref) const
+{
+  CUDF_EXPECTS(col_ref.get_table_source() == ast::table_reference::LEFT,
+               "Parquet pruning expressions support only the left table");
+  CUDF_EXPECTS(std::cmp_less(col_ref.get_column_index(), _output_dtypes.size()),
+               "Column index cannot be more than number of columns in the table");
+}
+
+void pruning_expression_builder::validate(ast::expression const& expr) const
+{
+  if (auto const* col_ref = dynamic_cast<ast::column_reference const*>(&expr); col_ref != nullptr) {
+    validate_column_reference(*col_ref);
+  } else if (auto const* operation = dynamic_cast<ast::operation const*>(&expr);
+             operation != nullptr) {
+    for (auto const& operand : operation->get_operands()) {
+      validate(operand.get());
+    }
+  } else if (dynamic_cast<ast::column_name_reference const*>(&expr) != nullptr) {
+    CUDF_FAIL("Column name references are not supported in Parquet pruning expressions");
+  }
+}
+
+pruning_expression_builder::negation_result pruning_expression_builder::build_negation(
+  ast::expression const& operand)
+{
+  auto const* operation = dynamic_cast<ast::operation const*>(&operand);
+  if (operation == nullptr) { return {.handled = false, .expr = std::nullopt}; }
+
+  if (cudf::ast::detail::ast_operator_arity(operation->get_operator()) == 1) {
+    auto const [kind, col_ref] = extract_unary_operand(*operation);
+    if (kind != operand_kind::COLUMN_REF) { return {.handled = false, .expr = std::nullopt}; }
+    validate_column_reference(*col_ref);
+    return {.handled = true, .expr = build_negated_unary(operation->get_operator(), *col_ref)};
+  }
+
+  auto const [op, lhs_kind, rhs_kind, col_ref, literal] = extract_binary_operands(*operation);
+  if (lhs_kind != operand_kind::COLUMN_REF or rhs_kind != operand_kind::LITERAL) {
+    return {.handled = false, .expr = std::nullopt};
+  }
+  validate_column_reference(*col_ref);
+  return {.handled = true, .expr = build_negated_comparison(op, *col_ref, *literal)};
+}
+
+maybe_pruning_expr pruning_expression_builder::combine(ast::ast_operator op,
+                                                       maybe_pruning_expr lhs,
+                                                       maybe_pruning_expr rhs)
+{
+  using cudf::ast::ast_operator;
+
+  switch (op) {
+    // A conjunct that constrains nothing can simply be dropped: the remaining one still only ever
+    // keeps chunks the filter might match.
+    case ast_operator::LOGICAL_AND: [[fallthrough]];
+    case ast_operator::NULL_LOGICAL_AND:
+      if (lhs.has_value() and rhs.has_value()) {
+        return _tree.push(ast::operation{ast_operator::NULL_LOGICAL_AND, lhs.value(), rhs.value()});
+      }
+      return lhs.has_value() ? lhs : rhs;
+
+    // A disjunct that constrains nothing may match anywhere, so it relaxes the whole disjunction.
+    case ast_operator::LOGICAL_OR: [[fallthrough]];
+    case ast_operator::NULL_LOGICAL_OR:
+      if (lhs.has_value() and rhs.has_value()) {
+        return _tree.push(ast::operation{ast_operator::NULL_LOGICAL_OR, lhs.value(), rhs.value()});
+      }
+      return std::nullopt;
+
+    default: CUDF_UNREACHABLE("combine() is only called for logical connectives");
+  }
+}
+
+maybe_pruning_expr pruning_expression_builder::build(ast::expression const& expr)
+{
+  using cudf::ast::ast_operator;
+
+  auto const* operation = dynamic_cast<ast::operation const*>(&expr);
+  // A bare column reference or literal is not a predicate a summary can evaluate
+  if (operation == nullptr) {
+    validate(expr);
+    return std::nullopt;
+  }
+
+  auto const input_op = operation->get_operator();
+
+  // Unary operation
+  if (cudf::ast::detail::ast_operator_arity(input_op) == 1) {
+    auto const [kind, col_ref] = extract_unary_operand(*operation);
+
+    if (kind == operand_kind::COLUMN_REF) {
+      validate_column_reference(*col_ref);
+      return build_unary(input_op, *col_ref);
+    }
+
+    // `parquet_filter_normalizer` has already pushed negations to the leaves, but only where an
+    // exact rewrite exists, so `NOT` over an operation still reaches here.
+    if (input_op == ast_operator::NOT) {
+      auto const [handled, negated] = build_negation(operation->get_operands().front().get());
+      if (handled) { return negated; }
+    }
+
+    validate(*operation);
+    return std::nullopt;
+  }
+
+  auto const& operands = operation->get_operands();
+
+  // A logical connective combines whatever its operands yield, whichever forms those take. An
+  // operand that constrains nothing simply returns std::nullopt and `combine` folds it away.
+  switch (input_op) {
+    case ast_operator::LOGICAL_AND: [[fallthrough]];
+    case ast_operator::NULL_LOGICAL_AND: [[fallthrough]];
+    case ast_operator::LOGICAL_OR: [[fallthrough]];
+    case ast_operator::NULL_LOGICAL_OR: {
+      auto lhs = build(operands.front().get());
+      auto rhs = build(operands.back().get());
+      return combine(input_op, lhs, rhs);
+    }
+    default: break;
+  }
+
+  // Binary operation, with `lit op col` normalized to `col op lit`
+  auto const [op, lhs_kind, rhs_kind, col_ref, literal] = extract_binary_operands(*operation);
+
+  if (lhs_kind == operand_kind::COLUMN_REF and rhs_kind == operand_kind::LITERAL) {
+    validate_column_reference(*col_ref);
+    return build_comparison(op, *col_ref, *literal);
+  }
+
+  // Any other operator over two subexpressions would be applied to two existentials rather than to
+  // two values. For `(a == 1) == (b == 2)`, summaries of `true` and `false` yield `false` and
+  // prune, although rows with `a != 1` do satisfy the predicate. `col op col`, `expr op col` and
+  // `expr op lit` forms are likewise not evaluable against summaries.
+  validate(*operation);
+  return std::nullopt;
+}
+
 names_from_expression::names_from_expression(
   std::optional<std::reference_wrapper<ast::expression const>> expr,
   std::vector<std::string> const& skip_names,

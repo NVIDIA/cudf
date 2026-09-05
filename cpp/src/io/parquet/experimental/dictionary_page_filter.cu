@@ -1313,23 +1313,21 @@ struct dictionary_caster {
   }
 };
 
+using parquet::detail::maybe_pruning_expr;
+using parquet::detail::pruning_expression_builder;
+
 /**
  * @brief Converts AST expression to dictionary membership (DictionaryAST) expression.
  * This is used in row group filtering based on equality predicate.
  */
-class dictionary_expression_converter : public equality_literals_collector {
+class dictionary_expression_converter : public pruning_expression_builder {
  public:
   dictionary_expression_converter(ast::expression const& expr,
                                   cudf::host_span<cudf::data_type const> output_dtypes,
-                                  cudf::host_span<std::vector<ast::literal*> const> literals,
-                                  cuda::stream_ref stream)
-    : _literals{literals},
-      _always_true_scalar{std::make_unique<cudf::numeric_scalar<bool>>(true, true, stream)},
-      _always_true{std::make_unique<ast::literal>(*_always_true_scalar)}
+                                  cudf::host_span<std::vector<ast::literal*> const> literals)
+    : pruning_expression_builder{std::span{output_dtypes.data(), output_dtypes.size()}},
+      _literals{literals}
   {
-    // Set the output data types
-    _output_dtypes = output_dtypes;
-
     // Compute and store columns literals offsets
     _col_literals_offsets.reserve(static_cast<cudf::size_type>(_output_dtypes.size()) + 1);
     _col_literals_offsets.emplace_back(0);
@@ -1343,100 +1341,61 @@ class dictionary_expression_converter : public equality_literals_collector {
                             static_cast<cudf::size_type>(col_literal_map.size());
                    });
 
-    // Add this visitor
-    expr.accept(*this);
+    _dictionary_expr = build(expr);
   }
 
   /**
-   * @brief Delete equality literals getter as it's not needed in the derived class
+   * @brief Returns the AST to apply on dictionary membership
+   *
+   * @return The membership expression, or std::nullopt if no row group can be pruned
    */
-  [[nodiscard]] std::vector<std::vector<ast::literal*>> get_equality_literals() && = delete;
+  [[nodiscard]] maybe_pruning_expr get_dictionary_expr() const { return _dictionary_expr; }
 
-  // Bring all overloads of `visit` from equality_predicate_collector into scope
-  using equality_literals_collector::visit;
-
+ protected:
   /**
-   * @copydoc ast::detail::expression_transformer::visit(ast::operation const& )
+   * @copydoc pruning_expression_builder::build_comparison
+   *
+   * A dictionary page answers only which values the chunk holds, so equality and inequality are
+   * the comparisons it can evaluate. Every other node relaxes via the base class defaults,
+   * including `NOT`: a membership answer cannot be complemented, which is the bug this class
+   * previously had.
    */
-  std::reference_wrapper<ast::expression const> visit(ast::operation const& expr) override
+  [[nodiscard]] maybe_pruning_expr build_comparison(ast::ast_operator op,
+                                                    ast::column_reference const& col_ref,
+                                                    ast::literal const& literal) override
   {
     using cudf::ast::ast_operator;
-    using parquet::detail::extract_binary_operands;
-    using parquet::detail::operand_kind;
 
-    auto const input_op       = expr.get_operator();
-    auto const operator_arity = cudf::ast::detail::ast_operator_arity(input_op);
+    if (op != ast_operator::EQUAL and op != ast_operator::NOT_EQUAL) { return std::nullopt; }
 
-    // Membership filters cannot evaluate unary operations. Visit operands and push always true
-    if (operator_arity == 1) {
-      std::ignore = this->visit_operands(expr.get_operands());
-      _dictionary_expr.push(ast::operation{ast_operator::IDENTITY, *_always_true});
-      return *_always_true;
+    auto const col_idx            = col_ref.get_column_index();
+    auto const& equality_literals = _literals[col_idx];
+    auto const literal_iter =
+      std::find(equality_literals.cbegin(), equality_literals.cend(), &literal);
+    CUDF_EXPECTS(literal_iter != equality_literals.end(),
+                 "Dictionary expression converter encountered an unexpected literal");
+
+    auto const col_literal_offset =
+      _col_literals_offsets[col_idx] +
+      static_cast<cudf::size_type>(std::distance(equality_literals.cbegin(), literal_iter));
+    auto const& value = _tree.push(ast::column_reference{col_literal_offset});
+
+    if (op == ast_operator::NOT_EQUAL) {
+      // For NOT_EQUAL operator, simply evaluate boolean is_false(value) expression as
+      // NOT(value). The value indicates if the row group should be pruned (if the literal is
+      // present in the hash set and it's the only value in the hash set)
+      return _tree.push(ast::operation{ast_operator::NOT, value});
     }
-
-    // Binary operation
-    auto const [op, lhs_kind, rhs_kind, col_ref, literal] = extract_binary_operands(expr);
-
-    // Push expressions for `col op lit` or `lit op col` forms
-    if (lhs_kind == operand_kind::COLUMN_REF and rhs_kind == operand_kind::LITERAL) {
-      col_ref->accept(*this);
-
-      if (op == ast_operator::EQUAL or op == ast_operator::NOT_EQUAL) {
-        auto const col_idx            = col_ref->get_column_index();
-        auto const& equality_literals = _literals[col_idx];
-        auto col_literal_offset       = _col_literals_offsets[col_idx];
-        auto const literal_iter =
-          std::find(equality_literals.cbegin(), equality_literals.cend(), literal);
-        CUDF_EXPECTS(literal_iter != equality_literals.end(),
-                     "Dictionary expression converter encountered an unexpected literal");
-        col_literal_offset += std::distance(equality_literals.cbegin(), literal_iter);
-
-        auto const& value = _dictionary_expr.push(ast::column_reference{col_literal_offset});
-
-        if (op == ast_operator::NOT_EQUAL) {
-          // For NOT_EQUAL operator, simply evaluate boolean is_false(value) expression as
-          // NOT(value). The value indicates if the row group should be pruned (if the literal is
-          // present in the hash set and it's the only value in the hash set)
-          _dictionary_expr.push(ast::operation{ast_operator::NOT, value});
-        } else {
-          // For EQUAL operator, evaluate boolean is_true(value) expression as IDENTITY(value)
-          // The value indicates if the row group should be kept (if the literal is present in the
-          // hash set)
-          _dictionary_expr.push(ast::operation{ast_operator::IDENTITY, value});
-        }
-      }  // For all other expressions, push the `_always_true` expression
-      else {
-        _dictionary_expr.push(ast::operation{ast_operator::IDENTITY, *_always_true});
-        return *_always_true;
-      }
-    }  // Visit operands and push expression for `expr op expr` form
-    else if (lhs_kind == operand_kind::EXPRESSION and rhs_kind == operand_kind::EXPRESSION) {
-      auto new_operands = visit_operands(expr.get_operands());
-      _dictionary_expr.push(ast::operation{op, new_operands.front(), new_operands.back()});
-    }  // Push _always_true for `col op col`, `expr op col`, `expr op lit` forms
-    else {
-      _dictionary_expr.push(ast::operation{ast_operator::IDENTITY, *_always_true});
-      return *_always_true;
-    }
-    return _dictionary_expr.back();
-  }
-
-  /**
-   * @brief Returns the AST to apply on dictionary membership.
-   *
-   * @return AST operation expression
-   */
-  [[nodiscard]] std::reference_wrapper<ast::expression const> get_dictionary_expr() const
-  {
-    return _dictionary_expr.back();
+    // For EQUAL operator, evaluate boolean is_true(value) expression as IDENTITY(value)
+    // The value indicates if the row group should be kept (if the literal is present in the
+    // hash set)
+    return _tree.push(ast::operation{ast_operator::IDENTITY, value});
   }
 
  private:
   std::vector<cudf::size_type> _col_literals_offsets;
   cudf::host_span<std::vector<ast::literal*> const> _literals;
-  ast::tree _dictionary_expr;
-  std::unique_ptr<cudf::numeric_scalar<bool>> _always_true_scalar;
-  std::unique_ptr<ast::literal> _always_true;
+  maybe_pruning_expr _dictionary_expr;
 };
 
 }  // namespace
@@ -1524,14 +1483,17 @@ aggregate_reader_metadata::apply_dictionary_filter(
   dictionary_expression_converter dictionary_expr{
     filter.get(),
     cudf::host_span<cudf::data_type const>{output_dtypes.data(), output_dtypes.size()},
-    cudf::host_span<std::vector<ast::literal*> const>{literals.data(), literals.size()},
-    stream};
+    cudf::host_span<std::vector<ast::literal*> const>{literals.data(), literals.size()}};
+
+  // Nothing in the filter can be answered by dictionary pages, so all row groups are required
+  auto const converted_expr = dictionary_expr.get_dictionary_expr();
+  if (not converted_expr.has_value()) { return std::nullopt; }
 
   // Filter dictionary membership table with the DictionaryAST expression and collect
   // filtered row group indices
   return parquet::detail::collect_filtered_row_group_indices(
     dictionary_membership_table,
-    dictionary_expr.get_dictionary_expr(),
+    converted_expr.value(),
     cudf::host_span<std::vector<size_type> const>{input_row_group_indices.data(),
                                                   input_row_group_indices.size()},
     stream);

@@ -18,6 +18,7 @@
 
 #include <list>
 #include <optional>
+#include <span>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -110,6 +111,147 @@ template <operator_transform mode>
  * @return Whether the expression yields `BOOL8`
  */
 [[nodiscard]] bool is_boolean_valued(ast::expression const& expr);
+
+/**
+ * @brief A pruning expression, or std::nullopt if the input constrains nothing
+ *
+ * Absent means "unconstrained": the input expression carries no information a summary can
+ * evaluate, so nothing may be pruned on its account.
+ */
+using maybe_pruning_expr = std::optional<std::reference_wrapper<ast::expression const>>;
+
+/**
+ * @brief Builds an expression over per-row-group (or per-page) summaries from a filter expression
+ *
+ * A summary answers "might some row in this chunk satisfy the predicate?" — an existential, not
+ * the predicate's truth value. Existentials are not closed under negation or under arbitrary
+ * operators, so only conjunction and disjunction combine meaningfully; everything else must
+ * *relax*, that is, decline to constrain the chunk at all.
+ *
+ * This base owns the traversal and the combination rules. Derived classes implement only the
+ * leaves their summary can evaluate, returning std::nullopt for the rest:
+ *
+ * | node | rule |
+ * |---|---|
+ * | `col op lit` | `build_comparison` |
+ * | `op(col)` | `build_unary` |
+ * | `NOT(op(col))` | `build_negated_unary` |
+ * | `NOT(col op lit)` | `build_negated_comparison` |
+ * | `a AND b` | both present => `AND`; one present => that one; neither => relax |
+ * | `a OR b` | both present => `OR`; otherwise relax |
+ * | anything else | relax |
+ *
+ * A derived class that does not override a hook cannot see the corresponding node, so a summary
+ * can never be negated or compared by accident.
+ */
+class pruning_expression_builder {
+ protected:
+  /**
+   * @brief Constructs a builder over the specified output column data types
+   */
+  explicit pruning_expression_builder(std::span<cudf::data_type const> output_dtypes);
+
+  virtual ~pruning_expression_builder() = default;
+
+  pruning_expression_builder(pruning_expression_builder const&)            = delete;
+  pruning_expression_builder& operator=(pruning_expression_builder const&) = delete;
+
+  /**
+   * @brief Builds the pruning expression for `expr`
+   *
+   * @param expr Filter expression, already normalized into negation normal form
+   * @return The pruning expression, or std::nullopt if nothing may be pruned
+   */
+  [[nodiscard]] maybe_pruning_expr build(ast::expression const& expr);
+
+  /**
+   * @brief Builds the pruning expression for a `col op lit` comparison
+   *
+   * @param op Comparison operator, normalized so that the column is the left operand
+   * @param col_ref Column being compared
+   * @param literal Literal being compared against
+   * @return The pruning expression, or std::nullopt to relax
+   */
+  [[nodiscard]] virtual maybe_pruning_expr build_comparison(ast::ast_operator op,
+                                                            ast::column_reference const& col_ref,
+                                                            ast::literal const& literal) = 0;
+
+  /**
+   * @brief Builds the pruning expression for a `op(col)` unary operation
+   *
+   * @return The pruning expression, or std::nullopt to relax. Relaxes by default
+   */
+  [[nodiscard]] virtual maybe_pruning_expr build_unary(ast::ast_operator,
+                                                       ast::column_reference const&)
+  {
+    return std::nullopt;
+  }
+
+  /**
+   * @brief Builds the pruning expression for a `NOT(op(col))` unary operation
+   *
+   * Only summaries that are *exact* may be negated. An existential one must not override this.
+   *
+   * @return The pruning expression, or std::nullopt to relax. Relaxes by default
+   */
+  [[nodiscard]] virtual maybe_pruning_expr build_negated_unary(ast::ast_operator,
+                                                               ast::column_reference const&)
+  {
+    return std::nullopt;
+  }
+
+  /**
+   * @brief Builds the pruning expression for a `NOT(col op lit)` comparison
+   *
+   * Reached only for the comparisons `parquet_filter_normalizer` leaves un-complemented.
+   *
+   * @return The pruning expression, or std::nullopt to relax. Relaxes by default
+   */
+  [[nodiscard]] virtual maybe_pruning_expr build_negated_comparison(ast::ast_operator,
+                                                                    ast::column_reference const&,
+                                                                    ast::literal const&)
+  {
+    return std::nullopt;
+  }
+
+  /**
+   * @brief Checks that a column reference is usable as a pruning input
+   */
+  void validate_column_reference(ast::column_reference const& col_ref) const;
+
+  std::span<cudf::data_type const> _output_dtypes;
+  ast::tree _tree;
+
+ private:
+  /**
+   * @brief Result of attempting to distribute a negation into `NOT`'s operand
+   *
+   * `handled` is reported separately from `expr`, as a hook may legitimately relax. Without it the
+   * caller could not tell "the hook declined" from "no hook applies", and would walk — and so
+   * re-validate — an operand the hook already consumed.
+   */
+  struct negation_result {
+    bool handled;             ///< Whether a hook was invoked for the operand
+    maybe_pruning_expr expr;  ///< What the hook returned, if one was invoked
+  };
+
+  /**
+   * @brief Distributes a negation into the operand of a `NOT`
+   */
+  [[nodiscard]] negation_result build_negation(ast::expression const& operand);
+
+  /**
+   * @brief Combines the pruning expressions of a binary operation's two operands
+   */
+  [[nodiscard]] maybe_pruning_expr combine(ast::ast_operator op,
+                                           maybe_pruning_expr lhs,
+                                           maybe_pruning_expr rhs);
+
+  /**
+   * @brief Recursively validates the column references in a subtree that will not be pruned on
+   */
+  void validate(ast::expression const& expr) const;
+};
 
 /**
  * @brief Collects column names from the expression ignoring the `skip_names`

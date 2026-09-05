@@ -5,6 +5,7 @@
 
 #pragma once
 
+#include "expression_transform_helpers.hpp"
 #include "timestamp_utils.cuh"
 
 #include <cudf/ast/detail/expression_transformer.hpp>
@@ -355,47 +356,70 @@ class stats_columns_collector : public ast::detail::expression_transformer {
  * statistics max value of a column is referenced by column_index*3+1
  * statistics all_nulls value of a column is referenced by column_index*3+2
  */
-class stats_expression_converter : public stats_columns_collector {
+class stats_expression_converter : public pruning_expression_builder {
  public:
   stats_expression_converter(ast::expression const& expr,
-                             std::span<cudf::data_type const> output_dtypes,
-                             cuda::stream_ref stream);
-
-  // Bring all overrides of `visit` from stats_columns_collector into scope
-  using stats_columns_collector::visit;
+                             std::span<cudf::data_type const> output_dtypes);
 
   /**
-   * @copydoc ast::detail::expression_transformer::visit(ast::operation const& )
-   */
-  std::reference_wrapper<ast::expression const> visit(ast::operation const& expr) override;
-
-  /**
-   * @brief Returns the AST to apply on Column chunk statistics.
+   * @brief Returns the AST to apply on column chunk statistics
    *
-   * @return AST operation expression
+   * @return The statistics expression, or std::nullopt if no row group can be pruned
    */
-  [[nodiscard]] std::reference_wrapper<ast::expression const> get_stats_expr() const;
+  [[nodiscard]] maybe_pruning_expr get_stats_expr() const;
+
+ protected:
+  /**
+   * @copydoc pruning_expression_builder::build_comparison
+   */
+  [[nodiscard]] maybe_pruning_expr build_comparison(ast::ast_operator op,
+                                                    ast::column_reference const& col_ref,
+                                                    ast::literal const& literal) override;
 
   /**
-   * @brief Delete stats columns mask getter as it's not needed in the derived class
+   * @copydoc pruning_expression_builder::build_unary
+   *
+   * `IS_NULL` is the only unary operation statistics can answer, via the all-nulls column.
    */
-  thrust::host_vector<bool> get_stats_columns_mask() && = delete;
+  [[nodiscard]] maybe_pruning_expr build_unary(ast::ast_operator op,
+                                               ast::column_reference const& col_ref) override;
+
+  /**
+   * @copydoc pruning_expression_builder::build_negated_unary
+   *
+   * The all-nulls column is an *exact* three-state summary rather than an existential, so
+   * `NOT(IS_NULL(col))` may be answered by negating it.
+   */
+  [[nodiscard]] maybe_pruning_expr build_negated_unary(
+    ast::ast_operator op, ast::column_reference const& col_ref) override;
+
+  /**
+   * @copydoc pruning_expression_builder::build_negated_comparison
+   *
+   * Statistics use different columns for different operators, so `NOT(col < val)` is answered by
+   * building the complement `col >= val` rather than by negating `vmin < val`.
+   */
+  [[nodiscard]] maybe_pruning_expr build_negated_comparison(ast::ast_operator op,
+                                                            ast::column_reference const& col_ref,
+                                                            ast::literal const& literal) override;
 
  private:
+  /// Number of statistics columns per input table column: min, max and all-nulls
+  static constexpr size_type stats_cols_per_column = 3;
+
   /**
-   * @brief Push `not_all_null AND stats_expr` for a column, so that a chunk holding nothing but
+   * @brief Returns `not_all_null AND stats_expr` for a column, so that a chunk holding nothing but
    * nulls is pruned by a predicate needing a non-null value to match, rather than kept because its
    * absent min and max leave the comparison null
    *
    * @param col_index Index of the column in the input table
    * @param stats_expr Statistics expression to guard, already pushed onto the tree
+   * @return The guarded statistics expression
    */
-  void push_non_null_guard(size_type col_index, ast::expression const& stats_expr);
+  [[nodiscard]] ast::expression const& push_non_null_guard(size_type col_index,
+                                                           ast::expression const& stats_expr);
 
-  ast::tree _stats_expr;
-  cudf::size_type _stats_cols_per_column;
-  std::unique_ptr<cudf::numeric_scalar<bool>> _always_true_scalar;
-  std::unique_ptr<ast::literal> _always_true;
+  maybe_pruning_expr _stats_expr;
 };
 
 }  // namespace cudf::io::parquet::detail

@@ -75,6 +75,82 @@ TYPED_TEST(TypedScatterListsTest, SlicedInputLists)
     cudf::test::lists_column_wrapper<T, int32_t>{{8, 8, 8}, {2, 2}, {9, 9, 9, 9}, {4, 4}, {5, 5}});
 }
 
+TYPED_TEST(TypedScatterListsTest, SlicedInputListsOfLists)
+{
+  using T = TypeParam;
+
+  auto src_list_column =
+    cudf::test::lists_column_wrapper<T, int32_t>{
+      {{{0, 0}, {9, 9}}, {{1, 1}, {8, 8}}, {{2, 2}, {7, 7}}, {{3, 3}, {6, 6}}},
+      cudf::test::iterators::null_at(2)}
+      .release();
+  auto src_sliced = cudf::slice(src_list_column->view(), {1, 4}).front();
+
+  auto target_list_column = cudf::test::lists_column_wrapper<T, int32_t>{{{9, 9}, {8, 8}, {7, 7}},
+                                                                         {{6, 6}, {5, 5}, {4, 4}},
+                                                                         {{3, 3}, {2, 2}, {1, 1}},
+                                                                         {{9, 9}, {8, 8}, {7, 7}},
+                                                                         {{6, 6}, {5, 5}, {4, 4}},
+                                                                         {{3, 3}, {2, 2}, {1, 1}}};
+
+  auto scatter_map = cudf::test::fixed_width_column_wrapper<cudf::size_type>{2, 0};
+
+  auto ret = cudf::scatter(
+    cudf::table_view({src_sliced}), scatter_map, cudf::table_view({target_list_column}));
+
+  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(
+    cudf::test::lists_column_wrapper<T, int32_t>{{{},
+                                                  {{6, 6}, {5, 5}, {4, 4}},
+                                                  {{1, 1}, {8, 8}},
+                                                  {{9, 9}, {8, 8}, {7, 7}},
+                                                  {{6, 6}, {5, 5}, {4, 4}},
+                                                  {{3, 3}, {2, 2}, {1, 1}}},
+                                                 cudf::test::iterators::null_at(0)},
+    ret->get_column(0));
+}
+
+TYPED_TEST(TypedScatterListsTest, SlicedInputListsOfStructs)
+{
+  using T               = TypeParam;
+  using offsets_column  = cudf::test::fixed_width_column_wrapper<cudf::size_type>;
+  using numerics_column = cudf::test::fixed_width_column_wrapper<T>;
+
+  auto src_numerics = numerics_column{0, 1, 2, 3};
+  auto src_structs  = cudf::test::structs_column_wrapper{{src_numerics}};
+  auto src_validity = cudf::test::iterators::null_at(2);
+  auto [src_mask, src_null_count] =
+    cudf::test::detail::make_null_mask(src_validity, src_validity + 3);
+  auto src_list_column = cudf::make_lists_column(3,
+                                                 offsets_column{0, 2, 4, 4}.release(),
+                                                 src_structs.release(),
+                                                 src_null_count,
+                                                 std::move(src_mask));
+  auto src_sliced      = cudf::slice(src_list_column->view(), {1, 3}).front();
+
+  auto tgt_numerics       = numerics_column{0, 1, 2, 3, 4};
+  auto tgt_structs        = cudf::test::structs_column_wrapper{{tgt_numerics}};
+  auto target_list_column = cudf::make_lists_column(
+    5, offsets_column{0, 1, 2, 3, 4, 5}.release(), tgt_structs.release(), 0, {});
+
+  auto scatter_map = cudf::test::fixed_width_column_wrapper<cudf::size_type>{2, 0};
+
+  auto ret = cudf::scatter(
+    cudf::table_view({src_sliced}), scatter_map, cudf::table_view({target_list_column->view()}));
+
+  auto expected_numerics = numerics_column{1, 2, 3, 3, 4};
+  auto expected_structs  = cudf::test::structs_column_wrapper{{expected_numerics}};
+  auto expected_validity = cudf::test::iterators::null_at(0);
+  auto [expected_mask, expected_null_count] =
+    cudf::test::detail::make_null_mask(expected_validity, expected_validity + 5);
+  auto expected = cudf::make_lists_column(5,
+                                          offsets_column{0, 0, 1, 3, 4, 5}.release(),
+                                          expected_structs.release(),
+                                          expected_null_count,
+                                          std::move(expected_mask));
+
+  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(expected->view(), ret->get_column(0));
+}
+
 TYPED_TEST(TypedScatterListsTest, EmptyListsOfFixedWidth)
 {
   using T = TypeParam;
@@ -214,6 +290,37 @@ TEST_F(ScatterListsTest, ListsOfStrings)
                                                         {"all", "the", "leaves", "are", "brown"},
                                                         {"three", "three", "three"},
                                                         {"four", "four", "four", "four"}},
+    ret->get_column(0));
+}
+
+TEST_F(ScatterListsTest, SlicedInputListsOfStrings)
+{
+  auto src_list_column =
+    cudf::test::lists_column_wrapper<cudf::string_view>{
+      {{"zero"}, {"one", "one", "one"}, {"two", "two"}, {"three", "three", "three", "three"}},
+      cudf::test::iterators::null_at(2)}
+      .release();
+  auto src_sliced = cudf::slice(src_list_column->view(), {1, 4}).front();
+
+  auto target_list_column =
+    cudf::test::lists_column_wrapper<cudf::string_view>{{"a", "a", "a", "a", "a"},
+                                                        {"b", "b", "b", "b", "b"},
+                                                        {"c", "c", "c", "c", "c"},
+                                                        {"d", "d", "d", "d", "d"},
+                                                        {"e", "e", "e", "e", "e"}};
+
+  auto scatter_map = cudf::test::fixed_width_column_wrapper<int32_t>{2, 0};
+
+  auto ret = cudf::scatter(
+    cudf::table_view({src_sliced}), scatter_map, cudf::table_view({target_list_column}));
+
+  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(
+    cudf::test::lists_column_wrapper<cudf::string_view>{{{},
+                                                         {"b", "b", "b", "b", "b"},
+                                                         {"one", "one", "one"},
+                                                         {"d", "d", "d", "d", "d"},
+                                                         {"e", "e", "e", "e", "e"}},
+                                                        cudf::test::iterators::null_at(0)},
     ret->get_column(0));
 }
 

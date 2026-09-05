@@ -81,8 +81,18 @@ jobs:
         run: |
           set -euo pipefail
 
-          rapids-install-sccache
-          rapids-configure-sccache
+          # These helpers export the compiler launchers and sccache-dist settings,
+          # so they must run in this shell rather than in child processes.
+          source rapids-install-sccache
+          source rapids-configure-sccache
+          export CPP_PARALLEL_LEVEL="$PARALLEL_LEVEL"
+
+          sccache --start-server
+          if ! sccache --dist-status 2>/dev/null | jq -e '.SchedulerStatus != null' >/dev/null; then
+            echo "Error: distributed sccache is unavailable"
+            cat "$SCCACHE_ERROR_LOG" 2>/dev/null || true
+            exit 1
+          fi
 
           # Don't use the build cluster for CMake's compiler tests
           echo -e '\nset(ENV{SCCACHE_NO_DIST_COMPILE} "1")' >> thirdparty/cudf-pins/add_dependency_pins.cmake

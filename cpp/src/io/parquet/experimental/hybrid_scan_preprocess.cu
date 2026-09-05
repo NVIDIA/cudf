@@ -40,8 +40,9 @@ using parquet::detail::PageInfo;
  *
  * @param chunks Host device span of column chunk descriptors, one per input column chunk
  * @param pages Host device span of empty page headers to fill in, one per input column chunk
- * @param dict_page_data Device spans of dictionary page data, one per input column chunk. Empty
- *                       for column chunks without a dictionary page
+ * @param dict_page_data Device spans of dictionary page data, one span per input column chunk,
+ *                       each holding exactly that chunk's dictionary page. Empty for column chunks
+ *                       without a dictionary page, which are then not pruned with.
  * @param stream CUDA stream
  */
 void decode_dictionary_page_headers(
@@ -85,9 +86,27 @@ void decode_dictionary_page_headers(
     cuda::counting_iterator<cuda::std::size_t>(0),
     cuda::counting_iterator<cuda::std::size_t>(chunks.size()),
     [chunks = chunks.device_begin(), pages = pages.device_begin()] __device__(auto chunk_idx) {
-      auto const& page = pages[chunk_idx];
+      auto& page  = pages[chunk_idx];
+      auto& chunk = chunks[chunk_idx];
       if (page.flags & parquet::detail::PAGEINFO_FLAGS_DICTIONARY) {
-        chunks[chunk_idx].dict_page = &page;
+        chunk.dict_page = &page;
+      } else if (chunk.compressed_size > 0) {
+        // The span held a page that is not a dictionary page, which is what a chunk claiming
+        // dictionary encoding but written without a dictionary page has where its page would be.
+        // The prune kernels skip a page only when it has no values, and decompression here only
+        // covers dictionary pages, so otherwise they decode this page's still-compressed bytes as
+        // dictionary values, bounded by its uncompressed size and thus past the end of the span.
+        // Leave the chunk the way an empty span leaves it instead, so it is simply not pruned.
+        auto const src_col_schema = page.src_col_schema;
+        page                      = PageInfo{};
+        page.chunk_idx            = static_cast<int32_t>(chunk_idx);
+        page.src_col_schema       = src_col_schema;
+        page.skipped_values       = -1;
+        page.is_compressed        = true;
+        page.kernel_mask          = parquet::detail::decode_kernel_mask::NONE;
+        chunk.compressed_data     = nullptr;
+        chunk.compressed_size     = 0;
+        chunk.num_dict_pages      = 0;
       }
     });
 

@@ -332,7 +332,7 @@ std::vector<std::vector<std::vector<size_type>>> hybrid_scan_multifile::construc
   return source_passes;
 }
 
-std::pair<std::vector<text::byte_range_info>, std::vector<size_type>>
+std::pair<std::vector<dictionary_page_range>, std::vector<size_type>>
 hybrid_scan_multifile::dictionary_pages_byte_ranges(
   cudf::host_span<std::vector<size_type> const> row_group_indices,
   parquet_reader_options const& options) const

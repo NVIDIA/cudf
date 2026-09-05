@@ -232,6 +232,74 @@ std::unique_ptr<cudf::table> concatenate_tables(std::vector<std::unique_ptr<cudf
 
 namespace {
 
+// Read the (possibly upper-bound) bytes for each dictionary page range on the host, measure a real
+// dictionary page in an upper-bound range with `dictionary_page_length`, and copy only the verified
+// page bytes to the device, leaving an empty span for a chunk with no page. `source_for_index`
+// returns the datasource to read range `i` from.
+template <typename SourceForIndex>
+std::pair<std::vector<rmm::device_buffer>, std::vector<cudf::device_span<uint8_t const>>>
+fetch_trimmed_dictionary_pages_impl(
+  cudf::host_span<cudf::io::parquet::experimental::dictionary_page_range const> dict_page_ranges,
+  int64_t max_upper_bound_size,
+  cuda::stream_ref stream,
+  rmm::device_async_resource_ref mr,
+  SourceForIndex source_for_index)
+{
+  using cudf::io::parquet::experimental::dictionary_page_extent;
+
+  // Cap each upper-bound range at `max_upper_bound_size`; exact ranges pass through whole.
+  auto const read_ranges = cudf::io::parquet::experimental::dictionary_page_byte_ranges_to_read(
+    dict_page_ranges, max_upper_bound_size);
+
+  auto buffers = std::vector<rmm::device_buffer>{};
+  auto spans   = std::vector<cudf::device_span<uint8_t const>>{};
+  buffers.reserve(read_ranges.size());
+  spans.reserve(read_ranges.size());
+
+  // The device copies below read from these host buffers, so keep them alive until the stream sync.
+  auto host_reads = std::vector<std::unique_ptr<cudf::io::datasource::buffer>>{};
+
+  // Build one span per range, aligned by position: the reader matches spans to ranges by index.
+  for (std::size_t i = 0; i < read_ranges.size(); ++i) {
+    auto const read_size = read_ranges[i].size();
+
+    // A chunk the reader will not prune with has an empty range; keep an empty span in its place.
+    if (read_size == 0) {
+      buffers.emplace_back();
+      spans.emplace_back();
+      continue;
+    }
+
+    // Read on the host so the dictionary page can be measured before it reaches the GPU.
+    auto host_buffer = source_for_index(i).host_read(read_ranges[i].offset(), read_size);
+    auto const bytes = cudf::host_span<uint8_t const>{host_buffer->data(), host_buffer->size()};
+
+    // An exact range is already one page. An upper-bound range runs past its page, so read the page
+    // header to find where it ends; no page (or a page larger than what was read) yields nullopt.
+    auto const page_size =
+      (dict_page_ranges[i].extent == dictionary_page_extent::upper_bound_if_present)
+        ? cudf::io::parquet::experimental::dictionary_page_length(bytes).value_or(0)
+        : static_cast<int64_t>(bytes.size());
+
+    // No dictionary page here; leave an empty span so this chunk is not pruned with.
+    if (page_size == 0) {
+      buffers.emplace_back();
+      spans.emplace_back();
+      continue;
+    }
+
+    // Copy only the verified page to the device, dropping any trailing data-page bytes.
+    auto const page_bytes = static_cast<std::size_t>(page_size);
+    auto device_buffer    = rmm::device_buffer{bytes.data(), page_bytes, stream, mr};
+    spans.emplace_back(static_cast<uint8_t const*>(device_buffer.data()), page_bytes);
+    buffers.emplace_back(std::move(device_buffer));
+    host_reads.emplace_back(std::move(host_buffer));
+  }
+
+  stream.sync();  // host_reads are freed on return, so the copies must finish first
+  return {std::move(buffers), std::move(spans)};
+}
+
 // Shared implementation templated over the reader; the single-file and multi-file public helpers
 // below forward to it.
 template <typename ReaderType, typename InputType>
@@ -246,41 +314,21 @@ auto filter_row_groups_with_dictionaries_impl(InputType& inputs,
 
   if constexpr (std::is_same_v<ReaderType,
                                cudf::io::parquet::experimental::hybrid_scan_multifile>) {
-    auto const dict_pages = reader.dictionary_pages_byte_ranges(row_group_indices, options);
-    CUDF_EXPECTS(dict_pages.first.size() > 0, "No dictionary page byte ranges found");
+    auto const [dict_page_ranges, dict_page_source_map] =
+      reader.dictionary_pages_byte_ranges(row_group_indices, options);
+    CUDF_EXPECTS(dict_page_ranges.size() > 0, "No dictionary page byte ranges found");
 
-    auto const dict_page_ranges_per_source =
-      group_byte_ranges_by_source(dict_pages, inputs.datasources.size());
-    [[maybe_unused]] auto [dict_page_buffers, dict_page_data_per_source, task] =
-      cudf::io::parquet::fetch_byte_ranges_to_device_async(
-        inputs.datasource_refs,
-        dict_page_ranges_per_source,
-        cudf::io::parquet::io_submission_policy::SERIALIZE,
-        stream,
-        mr);
-    task.get();
-
-    std::vector<cudf::device_span<uint8_t const>> dict_page_data;
-    for (auto const& source_dict_pages : dict_page_data_per_source) {
-      dict_page_data.insert(
-        dict_page_data.end(), source_dict_pages.begin(), source_dict_pages.end());
-    }
+    auto [dict_page_buffers, dict_page_data] =
+      fetch_trimmed_dictionary_pages(inputs, dict_page_ranges, dict_page_source_map, stream, mr);
 
     return reader.filter_row_groups_with_dictionary_pages(
       dict_page_data, row_group_indices, options, stream);
   } else {
-    auto const dict_page_byte_ranges =
-      reader.dictionary_pages_byte_ranges(row_group_indices, options);
-    CUDF_EXPECTS(dict_page_byte_ranges.size() > 0, "No dictionary page byte ranges found");
+    auto const dict_page_ranges = reader.dictionary_pages_byte_ranges(row_group_indices, options);
+    CUDF_EXPECTS(dict_page_ranges.size() > 0, "No dictionary page byte ranges found");
 
-    [[maybe_unused]] auto [dict_page_buffers, dict_page_data, dict_page_tasks] =
-      cudf::io::parquet::fetch_byte_ranges_to_device_async(
-        inputs,
-        dict_page_byte_ranges,
-        cudf::io::parquet::io_submission_policy::SERIALIZE,
-        stream,
-        mr);
-    dict_page_tasks.get();
+    auto [dict_page_buffers, dict_page_data] =
+      fetch_trimmed_dictionary_pages(inputs, dict_page_ranges, stream, mr);
 
     return reader.filter_row_groups_with_dictionary_pages(
       dict_page_data, row_group_indices, options, stream);
@@ -307,6 +355,40 @@ std::vector<std::vector<cudf::size_type>> filter_row_groups_with_dictionaries(
   rmm::device_async_resource_ref mr)
 {
   return filter_row_groups_with_dictionaries_impl(inputs, reader, options, stream, mr);
+}
+
+std::pair<std::vector<rmm::device_buffer>, std::vector<cudf::device_span<uint8_t const>>>
+fetch_trimmed_dictionary_pages(
+  cudf::io::datasource& datasource,
+  cudf::host_span<cudf::io::parquet::experimental::dictionary_page_range const> dict_page_ranges,
+  cuda::stream_ref stream,
+  rmm::device_async_resource_ref mr,
+  int64_t max_upper_bound_size)
+{
+  return fetch_trimmed_dictionary_pages_impl(
+    dict_page_ranges, max_upper_bound_size, stream, mr, [&](std::size_t) -> cudf::io::datasource& {
+      return datasource;
+    });
+}
+
+std::pair<std::vector<rmm::device_buffer>, std::vector<cudf::device_span<uint8_t const>>>
+fetch_trimmed_dictionary_pages(
+  multifile_inputs const& inputs,
+  cudf::host_span<cudf::io::parquet::experimental::dictionary_page_range const> dict_page_ranges,
+  cudf::host_span<cudf::size_type const> source_map,
+  cuda::stream_ref stream,
+  rmm::device_async_resource_ref mr,
+  int64_t max_upper_bound_size)
+{
+  CUDF_EXPECTS(source_map.size() == dict_page_ranges.size(),
+               "Source map size must match the number of dictionary page ranges");
+  return fetch_trimmed_dictionary_pages_impl(dict_page_ranges,
+                                             max_upper_bound_size,
+                                             stream,
+                                             mr,
+                                             [&](std::size_t i) -> cudf::io::datasource& {
+                                               return inputs.datasource_refs[source_map[i]].get();
+                                             });
 }
 
 template <typename T, size_t NumTableConcats, bool IsConstantStrings, bool IsNullable>

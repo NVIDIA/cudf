@@ -9,10 +9,17 @@
 #include <cudf_test/testing_main.hpp>
 
 #include <cudf/io/experimental/hybrid_scan.hpp>
+#include <cudf/io/parquet.hpp>
 #include <cudf/io/parquet_io_utils.hpp>
 #include <cudf/io/parquet_schema.hpp>
 #include <cudf/table/table.hpp>
+#include <cudf/utilities/memory_resource.hpp>
+#include <cudf/utilities/span.hpp>
 
+#include <rmm/device_buffer.hpp>
+
+#include <cstdint>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -116,15 +123,44 @@ TEST_F(HybridScanTest, DictionaryPageFiltering)
 
   auto input_row_group_indices = reader->all_row_groups(in_opts);
 
-  auto const dict_byte_ranges =
+  auto const dict_page_ranges =
     reader->dictionary_pages_byte_ranges(input_row_group_indices, in_opts);
-  auto [dict_page_buffers, dict_page_data, dict_page_tasks] =
-    cudf::io::parquet::fetch_byte_ranges_to_device_async(
-      datasource_ref,
-      dict_byte_ranges,
-      cudf::io::parquet::io_submission_policy::SERIALIZE,
-      cudf::test::get_default_stream());
-  dict_page_tasks.get();
+  auto const dict_byte_ranges =
+    cudf::io::parquet::experimental::dictionary_page_byte_ranges_to_read(dict_page_ranges);
+
+  // Trim each range to exactly one dictionary page (or an empty span when the chunk has none), so
+  // the reader never reads following data-page bytes as dictionary data.
+  auto const stream = cudf::test::get_default_stream();
+  auto const mr     = cudf::get_current_device_resource_ref();
+  std::vector<rmm::device_buffer> dict_page_buffers;
+  std::vector<cudf::device_span<uint8_t const>> dict_page_data;
+  std::vector<std::unique_ptr<cudf::io::datasource::buffer>> host_reads;
+  for (std::size_t i = 0; i < dict_byte_ranges.size(); ++i) {
+    auto const read_size = dict_byte_ranges[i].size();
+    if (read_size == 0) {
+      dict_page_buffers.emplace_back();
+      dict_page_data.emplace_back();
+      continue;
+    }
+    auto host_buffer = datasource->host_read(dict_byte_ranges[i].offset(), read_size);
+    auto const bytes = cudf::host_span<uint8_t const>{host_buffer->data(), host_buffer->size()};
+    auto const page_size =
+      (dict_page_ranges[i].extent ==
+       cudf::io::parquet::experimental::dictionary_page_extent::upper_bound_if_present)
+        ? cudf::io::parquet::experimental::dictionary_page_length(bytes).value_or(0)
+        : static_cast<int64_t>(bytes.size());
+    if (page_size == 0) {
+      dict_page_buffers.emplace_back();
+      dict_page_data.emplace_back();
+      continue;
+    }
+    auto const page_bytes = static_cast<std::size_t>(page_size);
+    auto device_buffer    = rmm::device_buffer{bytes.data(), page_bytes, stream, mr};
+    dict_page_data.emplace_back(static_cast<uint8_t const*>(device_buffer.data()), page_bytes);
+    dict_page_buffers.emplace_back(std::move(device_buffer));
+    host_reads.emplace_back(std::move(host_buffer));
+  }
+  stream.sync();
 
   auto result = reader->filter_row_groups_with_dictionary_pages(
     dict_page_data, input_row_group_indices, in_opts, cudf::test::get_default_stream());

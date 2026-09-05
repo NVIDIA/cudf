@@ -194,15 +194,19 @@ class hybrid_scan_multifile {
    *
    * @param row_group_indices Span of vectors of input row group indices, one per source
    * @param options Parquet reader options
-   * @return Pair of flattened byte ranges to column chunk dictionary pages subject to the filter
+   * @return Pair of flattened dictionary page ranges of column chunks subject to the filter
    *         predicate and their corresponding source indices
    */
-  [[nodiscard]] std::pair<std::vector<byte_range_info>, std::vector<size_type>>
+  [[nodiscard]] std::pair<std::vector<dictionary_page_range>, std::vector<size_type>>
   dictionary_pages_byte_ranges(cudf::host_span<std::vector<size_type> const> row_group_indices,
                                parquet_reader_options const& options) const;
 
   /**
    * @brief Filter the row groups using column chunk dictionary pages
+   *
+   * Each span must hold exactly one dictionary page, or nothing at all for a column chunk that has
+   * no dictionary page to prune with. See `dictionary_page_range` for trimming a range that only
+   * bounds its page.
    *
    * @param dictionary_page_data Device spans of dictionary page data of column chunks with an
    * (in)equality predicate, in the same order as the byte ranges returned by

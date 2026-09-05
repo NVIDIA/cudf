@@ -1,9 +1,10 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-from libc.stdint cimport uint8_t
+from libc.stdint cimport int64_t, uint8_t
 from libcpp cimport bool
 from libcpp.memory cimport unique_ptr
+from libcpp.optional cimport optional
 from libcpp.span cimport span as std_span
 from libcpp.vector cimport vector
 from pylibcudf.exception_handler cimport libcudf_exception_handler
@@ -28,6 +29,14 @@ cdef extern from "cudf/io/experimental/hybrid_scan.hpp" \
     cpdef enum class use_data_page_mask(bool):
         YES
         NO
+
+    cpdef enum class dictionary_page_extent(bool):
+        exact
+        upper_bound_if_present
+
+    cdef cppclass dictionary_page_range:
+        byte_range_info byte_range
+        dictionary_page_extent extent
 
     cdef cppclass hybrid_scan_metadata:
         hybrid_scan_metadata(
@@ -84,7 +93,7 @@ cdef extern from "cudf/io/experimental/hybrid_scan.hpp" \
             const parquet_reader_options& options
         ) except +libcudf_exception_handler
 
-        vector[byte_range_info] dictionary_pages_byte_ranges(
+        vector[dictionary_page_range] dictionary_pages_byte_ranges(
             std_span[const_size_type] row_group_indices,
             const parquet_reader_options& options
         ) except +libcudf_exception_handler
@@ -197,3 +206,19 @@ cdef extern from "cudf/io/experimental/hybrid_scan.hpp" \
         ) except +libcudf_exception_handler
 
         bool has_next_table_chunk() except +libcudf_exception_handler
+
+ctypedef const dictionary_page_range const_dictionary_page_range
+
+cdef extern from "cudf/io/experimental/hybrid_scan.hpp" \
+        namespace "cudf::io::parquet::experimental" nogil:
+
+    const int64_t default_max_dictionary_page_read_size
+
+    vector[byte_range_info] dictionary_page_byte_ranges_to_read(
+        host_span[const_dictionary_page_range] dictionary_page_ranges,
+        int64_t max_upper_bound_size
+    ) except +libcudf_exception_handler
+
+    optional[int64_t] dictionary_page_length(
+        host_span[const_uint8_t] page_bytes
+    ) except +libcudf_exception_handler

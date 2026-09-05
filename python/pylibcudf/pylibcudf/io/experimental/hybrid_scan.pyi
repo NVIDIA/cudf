@@ -19,9 +19,30 @@ try:
 except ImportError:
     from typing_extensions import Buffer
 
+DEFAULT_MAX_DICTIONARY_PAGE_READ_SIZE: int
+
 class UseDataPageMask(IntEnum):
     YES = 1
     NO = 0
+
+class DictionaryPageExtent(IntEnum):
+    exact = 0
+    upper_bound_if_present = 1
+
+class DictionaryPageRange:
+    def __init__(
+        self, byte_range: ByteRangeInfo, extent: DictionaryPageExtent
+    ) -> None: ...
+    @property
+    def byte_range(self) -> ByteRangeInfo: ...
+    @property
+    def extent(self) -> DictionaryPageExtent: ...
+
+def dictionary_page_byte_ranges_to_read(
+    dictionary_page_ranges: list[DictionaryPageRange],
+    max_upper_bound_size: int | None = None,
+) -> list[ByteRangeInfo]: ...
+def dictionary_page_length(page_bytes: Buffer) -> int | None: ...
 
 class HybridScanMetadata:
     @staticmethod
@@ -62,7 +83,7 @@ class HybridScanReader:
     ) -> list[ByteRangeInfo]: ...
     def dictionary_pages_byte_ranges(
         self, row_group_indices: list[int], options: ParquetReaderOptions
-    ) -> list[ByteRangeInfo]: ...
+    ) -> list[DictionaryPageRange]: ...
     def filter_row_groups_with_dictionary_pages(
         self,
         dictionary_page_data: Sequence[Span],

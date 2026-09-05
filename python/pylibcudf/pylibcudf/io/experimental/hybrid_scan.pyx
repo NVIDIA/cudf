@@ -2,10 +2,11 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from cython.operator cimport dereference
-from libc.stdint cimport uint8_t, uintptr_t
+from libc.stdint cimport int64_t, uint8_t, uintptr_t
 from libc.stddef cimport size_t
 from libcpp cimport bool
 from libcpp.memory cimport make_unique, unique_ptr
+from libcpp.optional cimport optional
 from libcpp.span cimport span as std_span
 from libcpp.utility cimport move
 from libcpp.vector cimport vector
@@ -16,15 +17,20 @@ from rmm.pylibrmm.stream cimport Stream
 from pylibcudf.column cimport Column
 from pylibcudf.io.parquet cimport ParquetReaderOptions
 from pylibcudf.io.parquet_metadata cimport FileMetaData as c_FileMetaData
-from pylibcudf.libcudf.io.parquet_schema cimport FileMetaData as cpp_FileMetaData
 from pylibcudf.io.text cimport ByteRangeInfo
 from pylibcudf.io.types cimport TableWithMetadata
 from pylibcudf.libcudf.column.column cimport column
 from pylibcudf.libcudf.column.column_view cimport column_view, mutable_column_view
 from pylibcudf.libcudf.io.hybrid_scan cimport (
     const_device_span_const_uint8_t,
+    const_dictionary_page_range,
     const_size_type,
     const_uint8_t,
+    default_max_dictionary_page_read_size as cpp_default_max_dictionary_page_read_size,
+    dictionary_page_byte_ranges_to_read as cpp_dictionary_page_byte_ranges_to_read,
+    dictionary_page_extent as cpp_dictionary_page_extent,
+    dictionary_page_length as cpp_dictionary_page_length,
+    dictionary_page_range as cpp_dictionary_page_range,
     hybrid_scan_metadata as cpp_hybrid_scan_metadata,
     hybrid_scan_reader as cpp_hybrid_scan_reader,
     use_data_page_mask as cpp_use_data_page_mask,
@@ -48,8 +54,21 @@ from pylibcudf.io.parquet_metadata import FileMetaData
 import pylibcudf.libcudf.io.hybrid_scan
 
 UseDataPageMask = pylibcudf.libcudf.io.hybrid_scan.use_data_page_mask
+DictionaryPageExtent = pylibcudf.libcudf.io.hybrid_scan.dictionary_page_extent
 
-__all__ = ["FileMetaData", "HybridScanMetadata", "HybridScanReader", "UseDataPageMask"]
+DEFAULT_MAX_DICTIONARY_PAGE_READ_SIZE = cpp_default_max_dictionary_page_read_size
+
+__all__ = [
+    "DEFAULT_MAX_DICTIONARY_PAGE_READ_SIZE",
+    "DictionaryPageExtent",
+    "DictionaryPageRange",
+    "FileMetaData",
+    "HybridScanMetadata",
+    "HybridScanReader",
+    "UseDataPageMask",
+    "dictionary_page_byte_ranges_to_read",
+    "dictionary_page_length",
+]
 
 
 cdef device_span[const_uint8_t] _get_device_span(object obj) except *:
@@ -61,6 +80,105 @@ cdef device_span[const_uint8_t] _get_device_span(object obj) except *:
     return device_span[const_uint8_t](<const_uint8_t*>
                                       <uintptr_t>obj.ptr,
                                       <size_t>obj.size)
+
+
+cdef class DictionaryPageRange:
+    """Byte range of a column chunk's dictionary page, and how closely it
+    describes that page.
+
+    For details, see
+    :cpp:struct:`cudf::io::parquet::experimental::dictionary_page_range`
+
+    Parameters
+    ----------
+    byte_range : ByteRangeInfo
+        Byte range to read from the file
+    extent : DictionaryPageExtent
+        How closely ``byte_range`` describes the dictionary page
+    """
+
+    def __init__(
+        self,
+        ByteRangeInfo byte_range,
+        cpp_dictionary_page_extent extent,
+    ):
+        self.byte_range = byte_range
+        self.extent = extent
+
+
+def dictionary_page_byte_ranges_to_read(
+    list dictionary_page_ranges: list[DictionaryPageRange],
+    max_upper_bound_size: int | None = None,
+) -> list[ByteRangeInfo]:
+    """Get the byte ranges to read for the given dictionary page ranges.
+
+    No more than ``max_upper_bound_size`` bytes are read of a range that only
+    bounds its dictionary page, which is how a caller caps what it spends
+    looking for a page that may not be there.
+
+    Parameters
+    ----------
+    dictionary_page_ranges : list[DictionaryPageRange]
+        Dictionary page ranges from
+        :py:meth:`HybridScanReader.dictionary_pages_byte_ranges`
+    max_upper_bound_size : int, optional
+        Most bytes to read of a range that only bounds its dictionary page. A
+        column chunk whose dictionary page is longer than this is not pruned.
+        Defaults to ``DEFAULT_MAX_DICTIONARY_PAGE_READ_SIZE``.
+
+    Returns
+    -------
+    list[ByteRangeInfo]
+        Byte ranges to read, one per input dictionary page range
+    """
+    cdef vector[cpp_dictionary_page_range] c_ranges
+    cdef cpp_dictionary_page_range c_range
+    cdef DictionaryPageRange page_range
+
+    c_ranges.reserve(len(dictionary_page_ranges))
+    for page_range in dictionary_page_ranges:
+        c_range.byte_range = page_range.byte_range.c_obj
+        c_range.extent = page_range.extent
+        c_ranges.push_back(c_range)
+
+    cdef int64_t c_max_upper_bound_size = (
+        cpp_default_max_dictionary_page_read_size
+        if max_upper_bound_size is None
+        else max_upper_bound_size
+    )
+    cdef vector[byte_range_info] ranges = cpp_dictionary_page_byte_ranges_to_read(
+        host_span[const_dictionary_page_range](
+            <const_dictionary_page_range*>c_ranges.data(), c_ranges.size()
+        ),
+        c_max_upper_bound_size,
+    )
+    return [ByteRangeInfo(r.offset(), r.size()) for r in ranges]
+
+
+def dictionary_page_length(
+    const uint8_t[::1] page_bytes: Buffer,
+) -> int | None:
+    """Get the length of the dictionary page at the front of the given bytes,
+    header included.
+
+    Parameters
+    ----------
+    page_bytes : Buffer
+        Bytes read for a dictionary page range, from the start of the range
+
+    Returns
+    -------
+    int | None
+        Length of the dictionary page, or ``None`` if these bytes do not begin
+        with a whole dictionary page, which is the case for a column chunk that
+        has none to prune with
+    """
+    if len(page_bytes) == 0:
+        return None
+    cdef optional[int64_t] length = cpp_dictionary_page_length(
+        host_span[const_uint8_t](&page_bytes[0], len(page_bytes))
+    )
+    return length.value() if length.has_value() else None
 
 
 cdef class HybridScanMetadata:
@@ -400,8 +518,12 @@ cdef class HybridScanReader:
         self,
         list row_group_indices: list[int],
         ParquetReaderOptions options
-    ) -> list[ByteRangeInfo]:
-        """Get byte ranges of column chunk dictionary pages for row group pruning.
+    ) -> list[DictionaryPageRange]:
+        """Get the ranges of column chunk dictionary pages for row group pruning.
+
+        A dictionary page range that only bounds its page has to be capped with
+        :py:func:`dictionary_page_byte_ranges_to_read` and then cut down to its
+        page with :py:func:`dictionary_page_length` before the reader takes it.
 
         Parameters
         ----------
@@ -412,17 +534,22 @@ cdef class HybridScanReader:
 
         Returns
         -------
-        list[ByteRangeInfo]
-            Byte ranges to column chunk dictionary pages subject to the filter predicate
+        list[DictionaryPageRange]
+            Dictionary page ranges of column chunks subject to the filter predicate
         """
         cdef vector[size_type] indices_vec = row_group_indices
-        cdef vector[byte_range_info] ranges
+        cdef vector[cpp_dictionary_page_range] ranges
         with nogil:
             ranges = move(self.c_obj.get()[0].dictionary_pages_byte_ranges(
                 std_span[const_size_type](indices_vec.data(), indices_vec.size()),
                 options.c_obj
             ))
-        return [ByteRangeInfo(r.offset(), r.size()) for r in ranges]
+        return [
+            DictionaryPageRange(
+                ByteRangeInfo(r.byte_range.offset(), r.byte_range.size()), r.extent
+            )
+            for r in ranges
+        ]
 
     def filter_row_groups_with_dictionary_pages(
         self,

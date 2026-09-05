@@ -233,16 +233,18 @@ class aggregate_reader_metadata : public aggregate_reader_metadata_base {
   /**
    * @brief Get the dictionary page byte ranges, one per column chunk with (in)equality predicate
    *
+   * A range is exact when the footer says where the dictionary page ends. When it does not, the
+   * range is an upper bound that begins at the column chunk's first page and covers the whole
+   * chunk, and the dictionary page it bounds may turn out not to be there at all.
+   *
    * @param row_group_indices Input row groups indices
    * @param output_dtypes Datatypes of output columns
    * @param output_column_schemas schema indices of output columns
    * @param filter AST expression to filter row groups based on dictionary pages
    *
-   * @return A pair of vectors containing dictionary page byte ranges and corresponding source
-   *         indices
+   * @return A pair of vectors containing dictionary page ranges and corresponding source indices
    */
-  [[nodiscard]] std::pair<std::vector<cudf::io::text::byte_range_info>,
-                          std::vector<cudf::size_type>>
+  [[nodiscard]] std::pair<std::vector<dictionary_page_range>, std::vector<cudf::size_type>>
   dictionary_pages_byte_ranges(std::span<std::vector<size_type> const> row_group_indices,
                                std::span<data_type const> output_dtypes,
                                std::span<cudf::size_type const> output_column_schemas,

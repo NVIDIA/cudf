@@ -16,10 +16,12 @@
 #include <cudf/scalar/scalar_factories.hpp>
 #include <cudf/types.hpp>
 #include <cudf/utilities/default_stream.hpp>
+#include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 
 #include <memory>
+#include <optional>
 #include <utility>
 #include <vector>
 
@@ -212,7 +214,53 @@ JNIEXPORT jlongArray JNICALL Java_ai_rapids_cudf_HybridScanReader_dictionaryPage
     auto* wrapper = reinterpret_cast<hybrid_scan_reader_wrapper*>(handle);
     auto holder   = make_row_group_span(env, j_row_groups);
     auto ranges   = wrapper->reader->dictionary_pages_byte_ranges(holder.span(), wrapper->options);
-    return ranges_to_jlong_array(env, ranges);
+    // Pack as [o0, s0, extent0, o1, s1, extent1, ...]
+    auto const total_len = ranges.size() * 3;
+    auto result          = env->NewLongArray(total_len);
+    if (result == nullptr) { return nullptr; }
+    std::vector<jlong> data;
+    data.reserve(total_len);
+    for (auto const& r : ranges) {
+      data.push_back(static_cast<jlong>(r.byte_range.offset()));
+      data.push_back(static_cast<jlong>(r.byte_range.size()));
+      // The extent is packed as its enumerator value, which DictionaryPageRange.Extent mirrors
+      data.push_back(static_cast<jlong>(r.extent));
+    }
+    env->SetLongArrayRegion(result, 0, data.size(), data.data());
+    return result;
+  }
+  JNI_CATCH(env, nullptr);
+}
+
+JNIEXPORT jlongArray JNICALL Java_ai_rapids_cudf_HybridScanReader_dictionaryPageLengths(
+  JNIEnv* env, jclass, jlongArray j_addrs, jlongArray j_lens)
+{
+  JNI_NULL_CHECK(env, j_addrs, "page addresses are null", nullptr);
+  JNI_NULL_CHECK(env, j_lens, "page lengths are null", nullptr);
+  JNI_TRY
+  {
+    cudf::jni::native_jlongArray addrs(env, j_addrs);
+    cudf::jni::native_jlongArray lens(env, j_lens);
+    CUDF_EXPECTS(addrs.size() == lens.size(), "addrs and lens arrays must have the same length");
+    std::vector<jlong> page_lengths;
+    page_lengths.reserve(addrs.size());
+    for (int i = 0; i < addrs.size(); ++i) {
+      auto const* page_ptr = reinterpret_cast<uint8_t const*>(addrs[i]);
+      auto const len       = checked_size_t(env, lens[i], "page length");
+      auto page_length     = std::optional<int64_t>{};
+      if (page_ptr != nullptr and len > 0) {
+        page_length = cudf::io::parquet::experimental::dictionary_page_length({page_ptr, len});
+      }
+      page_lengths.push_back(static_cast<jlong>(page_length.value_or(0)));
+    }
+    addrs.cancel();
+    lens.cancel();
+    auto result = env->NewLongArray(page_lengths.size());
+    if (result == nullptr) { return nullptr; }
+    if (not page_lengths.empty()) {
+      env->SetLongArrayRegion(result, 0, page_lengths.size(), page_lengths.data());
+    }
+    return result;
   }
   JNI_CATCH(env, nullptr);
 }

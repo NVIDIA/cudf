@@ -18,8 +18,12 @@ from pylibcudf.expressions import (
     Operation,
 )
 from pylibcudf.io.experimental import (
+    DictionaryPageExtent,
+    DictionaryPageRange,
     HybridScanReader,
     UseDataPageMask,
+    dictionary_page_byte_ranges_to_read,
+    dictionary_page_length,
 )
 
 
@@ -247,9 +251,21 @@ def test_hybrid_scan_bloom_filter_and_dictionary_page_byte_ranges(
         all_row_groups, simple_parquet_options
     )
 
-    # These should be lists of ByteRangeInfo
+    # These should be lists of ByteRangeInfo and DictionaryPageRange
     assert isinstance(bloom_ranges, list)
     assert isinstance(dict_ranges, list)
+    assert all(isinstance(r, DictionaryPageRange) for r in dict_ranges)
+
+    # A range that only bounds its page is read no further than the cap, and
+    # one that is exactly its page is read whole whatever the cap says.
+    to_read = dictionary_page_byte_ranges_to_read(dict_ranges, 64)
+    assert len(to_read) == len(dict_ranges)
+    for page_range, byte_range in zip(dict_ranges, to_read, strict=True):
+        assert byte_range.offset == page_range.byte_range.offset
+        if page_range.extent == DictionaryPageExtent.upper_bound_if_present:
+            assert byte_range.size == min(page_range.byte_range.size, 64)
+        else:
+            assert byte_range.size == page_range.byte_range.size
 
 
 def test_hybrid_scan_column_chunk_byte_ranges(
@@ -868,13 +884,29 @@ def test_hybrid_scan_filter_row_groups_with_dictionary_pages_negation(
         dictionary_ranges = reader.dictionary_pages_byte_ranges(
             all_row_groups, simple_parquet_options
         )
+        to_read = dictionary_page_byte_ranges_to_read(dictionary_ranges)
+        # Hand the reader exactly one dictionary page per chunk. An upper-bound
+        # range runs past its page and may hold none at all, so it is measured
+        # with dictionary_page_length and trimmed to that page, or left empty
+        # when the chunk has no dictionary page. The reader matches spans to
+        # ranges by position, so an empty span is kept in place.
+        dict_page_bytes = []
+        for page_range, byte_range in zip(
+            dictionary_ranges, to_read, strict=True
+        ):
+            read = simple_parquet_bytes[
+                byte_range.offset : byte_range.offset + byte_range.size
+            ]
+            if (
+                page_range.extent
+                == DictionaryPageExtent.upper_bound_if_present
+            ):
+                length = dictionary_page_length(read) if read else None
+                read = read[:length] if length is not None else b""
+            dict_page_bytes.append(read)
         # the caller is responsible for keeping the source bytes alive until
         # synchronize_stream() below runs.
         # See https://github.com/rapidsai/rmm/issues/2521
-        dict_page_bytes = [
-            simple_parquet_bytes[r.offset : r.offset + r.size]
-            for r in dictionary_ranges
-        ]
         dictionary_data = [
             plc.gpumemoryview(
                 rmm.DeviceBuffer.to_device(b, plc.utils._get_stream())

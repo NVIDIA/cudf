@@ -267,10 +267,12 @@ public class HybridScanReaderTest extends CudfTestBase {
     try (OpenReader open = OpenReader.pageIndex(tmp).withFilter("num_units", BinaryOperator.EQUAL, 2)) {
       open.withPageIndex();
       HybridScanReader reader = open.reader;
-      ByteRange[] dict = reader.dictionaryPagesByteRanges(reader.allRowGroups());
+      DictionaryPageRange[] dict = reader.dictionaryPagesByteRanges(reader.allRowGroups());
       assertEquals(3, dict.length, "3 row groups × 1 dict-eligible filter column");
-      for (ByteRange r : dict) {
-        assertTrue(r.size() > 0, "Dictionary page range must be non-empty");
+      for (DictionaryPageRange r : dict) {
+        assertTrue(r.byteRange().size() > 0, "Dictionary page range must be non-empty");
+        assertEquals(DictionaryPageRange.Extent.EXACT, r.extent(),
+            "The writer sets dictionary_page_offset, so the range is the page itself");
       }
     }
   }
@@ -302,10 +304,10 @@ public class HybridScanReaderTest extends CudfTestBase {
   @Test
   void testDictionaryPagesByteRangesForRowGroupStats(@TempDir Path tmp) throws IOException {
     try (OpenReader open = OpenReader.rowGroupStats(tmp).withFilter("num_units", BinaryOperator.EQUAL, 2)) {
-      ByteRange[] dict = open.reader.dictionaryPagesByteRanges(new int[]{0});
+      DictionaryPageRange[] dict = open.reader.dictionaryPagesByteRanges(new int[]{0});
       assertEquals(1, dict.length,
           "A row group has only one dictionary-page per (filter) column");
-      assertTrue(dict[0].size() > 0, "Dictionary page range must be non-empty");
+      assertTrue(dict[0].byteRange().size() > 0, "Dictionary page range must be non-empty");
     }
   }
 
@@ -406,6 +408,117 @@ public class HybridScanReaderTest extends CudfTestBase {
             "The dictionary page is discoverable even without a page index");
         assertArrayEquals(rgs, open.reader.filterRowGroupsWithDictionaryPages(dictBufs, rgs),
             "num_units == 2 is present in the row group's dictionary");
+      } finally {
+        closeAll(dictBufs);
+      }
+    }
+  }
+
+  /**
+   * Verifies filterRowGroupsWithDictionaryPages() keeps a row group whose buffer is empty. The
+   * reader hands back an empty range for a column chunk it will not prune with, and a caller that
+   * had to guess where a chunk's dictionary page would be and found none passes an empty buffer
+   * too, so an empty buffer must leave its row group alone rather than prune it on a page that was
+   * never read (and the reader must not fail the read over it). Here {@code num_units == 5} is in
+   * no dictionary, so a dictionary would have pruned the only row group.
+   */
+  @Test
+  void testFilterRowGroupsWithDictionaryPagesKeepsGroupWithEmptyBuffer(@TempDir Path tmp)
+      throws IOException {
+    try (OpenReader open = OpenReader.rowGroupStats(tmp).withFilter("num_units", BinaryOperator.EQUAL, 5)) {
+      int[] rgs = new int[]{0};
+      DeviceMemoryBuffer[] dictBufs = new DeviceMemoryBuffer[]{DeviceMemoryBuffer.allocate(0)};
+      try {
+        assertArrayEquals(rgs, open.reader.filterRowGroupsWithDictionaryPages(dictBufs, rgs),
+            "There is no dictionary page in the buffer to prune the row group with");
+      } finally {
+        closeAll(dictBufs);
+      }
+    }
+  }
+
+  /**
+   * Verifies dictionaryPageLengths() finds the dictionary page inside a buffer that holds far more
+   * than the page. A writer is allowed to leave out where the dictionary page ends, and a caller
+   * that has to guess reads a window running past it, so the page's own header is what says where
+   * the page ends. Here the window runs from the dictionary page to the end of the file.
+   */
+  @Test
+  void testDictionaryPageLengthsMeasuresPageInsideWindow(@TempDir Path tmp) throws IOException {
+    try (OpenReader open = OpenReader.rowGroupStats(tmp).withFilter("num_units", BinaryOperator.EQUAL, 2)) {
+      ByteRange page = open.reader.dictionaryPagesByteRanges(new int[]{0})[0].byteRange();
+      long windowSize = open.file.getLength() - page.offset();
+      assertTrue(windowSize > page.size(), "The window must run past the dictionary page");
+      try (HostMemoryBuffer window = open.file.slice(page.offset(), windowSize)) {
+        long[] lengths =
+            HybridScanReader.dictionaryPageLengths(new HostMemoryBuffer[]{window});
+        assertArrayEquals(new long[]{page.size()}, lengths,
+            "The measured page must match the byte range the reader reported for it");
+      }
+    }
+  }
+
+  /**
+   * Verifies dictionaryPageLengths() reports nothing for a buffer that holds no dictionary page. A
+   * writer may say a column chunk is dictionary encoded and write no dictionary page, so a caller
+   * guessing where one would be gets a data page instead. Here the window starts just past the
+   * dictionary page, and the chunk must be reported as having no page rather than measured off a
+   * data page header.
+   */
+  @Test
+  void testDictionaryPageLengthsZeroWithoutDictionaryPage(@TempDir Path tmp) throws IOException {
+    try (OpenReader open = OpenReader.rowGroupStats(tmp).withFilter("num_units", BinaryOperator.EQUAL, 2)) {
+      ByteRange page = open.reader.dictionaryPagesByteRanges(new int[]{0})[0].byteRange();
+      long dataPagesStart = page.offset() + page.size();
+      try (HostMemoryBuffer window =
+               open.file.slice(dataPagesStart, open.file.getLength() - dataPagesStart)) {
+        assertArrayEquals(new long[]{0},
+            HybridScanReader.dictionaryPageLengths(new HostMemoryBuffer[]{window}),
+            "A window starting at a data page holds no dictionary page");
+      }
+    }
+  }
+
+  /**
+   * Verifies dictionaryPageLengths() reports nothing for a page that runs past the buffer, which is
+   * what a caller capping how much of a bound it reads ends up with when the page is larger than
+   * the cap. Such a chunk cannot be pruned with what was read.
+   */
+  @Test
+  void testDictionaryPageLengthsZeroWhenPageDoesNotFit(@TempDir Path tmp) throws IOException {
+    try (OpenReader open = OpenReader.rowGroupStats(tmp).withFilter("num_units", BinaryOperator.EQUAL, 2)) {
+      ByteRange page = open.reader.dictionaryPagesByteRanges(new int[]{0})[0].byteRange();
+      try (HostMemoryBuffer window = open.file.slice(page.offset(), page.size() - 1)) {
+        assertArrayEquals(new long[]{0},
+            HybridScanReader.dictionaryPageLengths(new HostMemoryBuffer[]{window}),
+            "One byte short of the whole page is not enough to prune with");
+      }
+    }
+  }
+
+  /**
+   * Verifies the whole path a caller takes for a range that only bounds its dictionary page: read a
+   * window, measure the page in it, and hand over only that page. Here {@code num_units == 5} is in
+   * no dictionary, so the only row group is pruned — which it cannot be unless the trimmed buffer
+   * really is the dictionary page.
+   */
+  @Test
+  void testFilterRowGroupsWithDictionaryPagesFromTrimmedWindow(@TempDir Path tmp)
+      throws IOException {
+    try (OpenReader open = OpenReader.rowGroupStats(tmp).withFilter("num_units", BinaryOperator.EQUAL, 5)) {
+      int[] rgs = new int[]{0};
+      ByteRange page = open.reader.dictionaryPagesByteRanges(rgs)[0].byteRange();
+      long windowSize = open.file.getLength() - page.offset();
+      DeviceMemoryBuffer[] dictBufs;
+      try (HostMemoryBuffer window = open.file.slice(page.offset(), windowSize)) {
+        long pageLength =
+            HybridScanReader.dictionaryPageLengths(new HostMemoryBuffer[]{window})[0];
+        dictBufs = copyRangesToDevice(open.file,
+            new ByteRange[]{new ByteRange(page.offset(), pageLength)});
+      }
+      try {
+        assertEquals(0, open.reader.filterRowGroupsWithDictionaryPages(dictBufs, rgs).length,
+            "num_units == 5 is not in the dictionary the window was trimmed to");
       } finally {
         closeAll(dictBufs);
       }
@@ -1419,6 +1532,20 @@ public class HybridScanReaderTest extends CudfTestBase {
     HostMemoryBuffer footer = HostMemoryBuffer.allocate(footerLength);
     footer.setBytes(0, footerBytes, 0, footerLength);
     return footer;
+  }
+
+  /**
+   * Copy dictionary page ranges from a host buffer into device buffers (one per range). Every range
+   * these fixtures produce is exactly a dictionary page, since the writer records where each one
+   * starts, so none of them has to be trimmed to its page first.
+   */
+  private static DeviceMemoryBuffer[] copyRangesToDevice(HostMemoryBuffer fileBuffer,
+                                                         DictionaryPageRange[] ranges) {
+    ByteRange[] byteRanges = new ByteRange[ranges.length];
+    for (int i = 0; i < ranges.length; i++) {
+      byteRanges[i] = ranges[i].byteRange();
+    }
+    return copyRangesToDevice(fileBuffer, byteRanges);
   }
 
   /** Copy byte ranges from a host buffer into device buffers (one per range). */

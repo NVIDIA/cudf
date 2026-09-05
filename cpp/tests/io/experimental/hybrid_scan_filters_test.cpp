@@ -24,6 +24,8 @@
 #include <src/io/parquet/parquet_gpu.hpp>
 
 #include <algorithm>
+#include <cstddef>
+#include <cstdint>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -1928,8 +1930,8 @@ TEST_P(DictionaryFilterGapTest, FilterRowGroupsWithMissingDictPages)
     auto const dict_page_byte_ranges =
       reader->dictionary_pages_byte_ranges(row_group_indices, options);
     ASSERT_EQ(dict_page_byte_ranges.size(), 2);
-    EXPECT_GT(dict_page_byte_ranges[0].size(), 0);
-    EXPECT_EQ(dict_page_byte_ranges[1].size(), 0);
+    EXPECT_GT(dict_page_byte_ranges[0].byte_range.size(), 0);
+    EXPECT_EQ(dict_page_byte_ranges[1].byte_range.size(), 0);
   }
 
   // Filtering - col0 == "plain_value_5": row group 0 is pruned by its dictionary, row group 1
@@ -2031,3 +2033,681 @@ INSTANTIATE_TEST_SUITE_P(Compression,
                          DictionaryFilterGapTest,
                          ::testing::Values(cudf::io::compression_type::NONE,
                                            cudf::io::compression_type::ZSTD));
+
+// The dictionary page range paths exercised below cannot be reached through cudf's own writer: it
+// always records per page `encoding_stats`, and always sets `dictionary_page_offset` past the start
+// of the file. Getting there means editing the footer, which is what these helpers do.
+namespace {
+
+auto constexpr dict_metadata_rows_per_row_group = 20'000;
+auto constexpr dict_metadata_rg0_value          = "rg0_value";
+auto constexpr dict_metadata_rg1_value          = "rg1_value";
+
+// Writes a two row group file for the tests below, so that what they reach turns only on the footer
+// fields they edit. Row group 0 holds one distinct value, which makes pruning observable per row
+// group, and row group 1 holds either one other distinct value or, when
+// `second_row_group_falls_back` is set, values enough to overrun the dictionary size limit so that
+// it falls back to plain and holds no dictionary page at all.
+//
+// The column is nullable on purpose. Its definition levels put `RLE` in each chunk's encoding list
+// alongside `PLAIN_DICTIONARY`, and a list of that shape is what the fallback under test has to
+// accept: a required flat column would list `PLAIN_DICTIONARY` by itself and never show that a
+// level encoding is tolerated there.
+void write_dictionary_parquet(std::string const& filepath,
+                              bool second_row_group_falls_back = false,
+                              bool write_v2_headers            = false)
+{
+  auto const strings =
+    cudf::detail::make_counting_transform_iterator(0, [second_row_group_falls_back](auto const i) {
+      if (i < dict_metadata_rows_per_row_group) { return std::string{dict_metadata_rg0_value}; }
+      auto const row = i - dict_metadata_rows_per_row_group;
+      return second_row_group_falls_back ? "plain_value_" + std::to_string(row)
+                                         : std::string{dict_metadata_rg1_value};
+    });
+  auto const validity =
+    cudf::detail::make_counting_transform_iterator(0, [](auto const i) { return i % 7 != 0; });
+
+  auto const column = cudf::test::strings_column_wrapper(
+    strings, strings + (2 * dict_metadata_rows_per_row_group), validity);
+  auto const table = cudf::table_view{{column}};
+
+  auto table_metadata = cudf::io::table_input_metadata{table};
+  table_metadata.column_metadata[0].set_name("col0");
+
+  auto builder = cudf::io::parquet_writer_options::builder(cudf::io::sink_info{filepath}, table)
+                   .metadata(std::move(table_metadata))
+                   .row_group_size_rows(dict_metadata_rows_per_row_group)
+                   .stats_level(cudf::io::statistics_freq::STATISTICS_COLUMN)
+                   .write_v2_headers(write_v2_headers);
+  if (second_row_group_falls_back) {
+    builder.dictionary_policy(cudf::io::dictionary_policy::ADAPTIVE).max_dictionary_size(1024);
+  } else {
+    builder.dictionary_policy(cudf::io::dictionary_policy::ALWAYS);
+  }
+  cudf::io::write_parquet(builder.build());
+}
+
+// Footer metadata for the file that a reader will accept back.
+//
+// `read_footer` hands back a raw thrift parse, in which the derived schema fields (`parent_idx`,
+// `children_idx`, and each chunk's `schema_idx`) are left unset. The `FileMetaData` reader
+// constructor takes what it is given without initializing those, so a reader built from such a
+// parse resolves no column name at all. Going out through a reader built from the footer bytes
+// gives back metadata that has already been through that initialization.
+cudf::io::parquet::FileMetaData initialized_footer_metadata(cudf::io::datasource& datasource)
+{
+  auto const footer_buffer = cudf::io::parquet::fetch_footer_to_host(datasource);
+  auto const reader        = std::make_unique<cudf::io::parquet::experimental::hybrid_scan_reader>(
+    *footer_buffer, cudf::io::parquet_reader_options::builder().build());
+  return reader->parquet_metadata();
+}
+
+// A chunk is only pruned with when its metadata shows that every one of its pages is dictionary
+// encoded. Check the row group a test relies on for that, so a change in what the writer records
+// fails loudly rather than quietly skipping the chunk and leaving the test asserting nothing.
+//
+// `RLE` is expected alongside `PLAIN_DICTIONARY` because the column is nullable, and a list of that
+// shape is the one the fallback under test has to accept. The `encoding_stats` check makes sure the
+// field the tests drop is there to begin with, so that dropping it is a real change.
+void expect_v1_dictionary_encodings(cudf::io::parquet::FileMetaData const& metadata,
+                                    std::size_t row_group_index)
+{
+  using cudf::io::parquet::Encoding;
+
+  ASSERT_LT(row_group_index, metadata.row_groups.size());
+  auto const& row_group = metadata.row_groups[row_group_index];
+  ASSERT_FALSE(row_group.columns.empty());
+  for (auto const& column : row_group.columns) {
+    auto const& encodings = column.meta_data.encodings;
+    EXPECT_NE(std::find(encodings.cbegin(), encodings.cend(), Encoding::PLAIN_DICTIONARY),
+              encodings.cend());
+    EXPECT_NE(std::find(encodings.cbegin(), encodings.cend(), Encoding::RLE), encodings.cend());
+    EXPECT_EQ(std::find(encodings.cbegin(), encodings.cend(), Encoding::PLAIN), encodings.cend());
+    EXPECT_GT(column.meta_data.dictionary_page_offset, 0);
+    EXPECT_TRUE(column.meta_data.encoding_stats.has_value());
+  }
+}
+
+// Every row group of a file written without a fallback.
+void expect_all_row_groups_v1_dictionary_encoded(cudf::io::parquet::FileMetaData const& metadata)
+{
+  ASSERT_FALSE(metadata.row_groups.empty());
+  for (std::size_t i = 0; i < metadata.row_groups.size(); ++i) {
+    expect_v1_dictionary_encodings(metadata, i);
+  }
+}
+
+// The row group that fell back holds no dictionary page, and its metadata says as much: it has no
+// dictionary page offset, and its encoding list carries the fallback's `PLAIN`.
+void expect_fell_back_to_plain(cudf::io::parquet::FileMetaData const& metadata,
+                               std::size_t row_group_index)
+{
+  using cudf::io::parquet::Encoding;
+
+  ASSERT_LT(row_group_index, metadata.row_groups.size());
+  auto const& row_group = metadata.row_groups[row_group_index];
+  ASSERT_FALSE(row_group.columns.empty());
+  for (auto const& column : row_group.columns) {
+    auto const& encodings = column.meta_data.encodings;
+    EXPECT_NE(std::find(encodings.cbegin(), encodings.cend(), Encoding::PLAIN), encodings.cend());
+    EXPECT_EQ(column.meta_data.dictionary_page_offset, 0);
+  }
+}
+
+// Drop the per page encoding stats that cudf always records, leaving the chunk's `encodings` list
+// as the only evidence that every page is dictionary encoded.
+void drop_encoding_stats(cudf::io::parquet::FileMetaData& metadata)
+{
+  for (auto& row_group : metadata.row_groups) {
+    for (auto& column : row_group.columns) {
+      column.meta_data.encoding_stats.reset();
+    }
+  }
+}
+
+// Add the encoding a fallback data page would have been written with. That is what tells the reader
+// some page holds values the dictionary does not have, and so that the chunk cannot be pruned with.
+void add_fallback_encoding(cudf::io::parquet::FileMetaData& metadata, std::size_t row_group_index)
+{
+  for (auto& column : metadata.row_groups[row_group_index].columns) {
+    column.meta_data.encodings.push_back(cudf::io::parquet::Encoding::PLAIN);
+  }
+}
+
+// Add the other encoding that only ever encodes levels. cudf's writer picks `RLE` for those and
+// never `BIT_PACKED`, so the only way to put it in a chunk's list is to put it there.
+void add_bit_packed_level_encoding(cudf::io::parquet::FileMetaData& metadata,
+                                   std::size_t row_group_index)
+{
+  for (auto& column : metadata.row_groups[row_group_index].columns) {
+    column.meta_data.encodings.push_back(cudf::io::parquet::Encoding::BIT_PACKED);
+  }
+}
+
+// Claim every page of a row group is dictionary encoded, whatever it actually holds. A writer is
+// allowed to say this and then write no dictionary page, which is the case an upper-bound range
+// exists to allow for.
+void claim_all_pages_dictionary_encoded(cudf::io::parquet::FileMetaData& metadata,
+                                        std::size_t row_group_index)
+{
+  using cudf::io::parquet::Encoding;
+
+  for (auto& column : metadata.row_groups[row_group_index].columns) {
+    column.meta_data.encodings = {Encoding::PLAIN_DICTIONARY, Encoding::RLE};
+  }
+}
+
+// Emulate the writer bug the reader works around: `dictionary_page_offset` is left at 0 and
+// `data_page_offset` points at the dictionary page rather than at the first data page. Only a chunk
+// that has a dictionary page is touched, since zeroing the offset of one that has none would just
+// describe a different file.
+void hide_dictionary_page_offsets(cudf::io::parquet::FileMetaData& metadata)
+{
+  for (auto& row_group : metadata.row_groups) {
+    for (auto& column : row_group.columns) {
+      auto& col_meta = column.meta_data;
+      if (col_meta.dictionary_page_offset <= 0) { continue; }
+      col_meta.data_page_offset       = col_meta.dictionary_page_offset;
+      col_meta.dictionary_page_offset = 0;
+    }
+  }
+}
+
+// Where each dictionary page starts and the size of the column chunk that bounds it, read before
+// the offsets are hidden so the resulting upper-bound ranges can be checked against them.
+std::pair<std::vector<int64_t>, std::vector<int64_t>> dictionary_page_offsets_and_chunk_sizes(
+  cudf::io::parquet::FileMetaData const& metadata)
+{
+  auto offsets     = std::vector<int64_t>{};
+  auto chunk_sizes = std::vector<int64_t>{};
+  for (auto const& row_group : metadata.row_groups) {
+    for (auto const& column : row_group.columns) {
+      offsets.push_back(column.meta_data.dictionary_page_offset);
+      chunk_sizes.push_back(column.meta_data.total_compressed_size);
+    }
+  }
+  return {std::move(offsets), std::move(chunk_sizes)};
+}
+
+}  // namespace
+
+TEST_F(HybridScanFiltersTest, FilterRowGroupsWithDictionaryWithoutEncodingStats)
+{
+  auto const filepath = temp_env->get_temp_filepath("DictionaryWithoutEncodingStats.parquet");
+  write_dictionary_parquet(filepath);
+
+  auto stream = cudf::get_default_stream();
+  auto mr     = cudf::get_current_device_resource_ref();
+
+  auto const datasource     = cudf::io::datasource::create(filepath);
+  auto const datasource_ref = std::ref(*datasource);
+
+  auto metadata = initialized_footer_metadata(*datasource);
+  expect_all_row_groups_v1_dictionary_encoded(metadata);
+  drop_encoding_stats(metadata);
+
+  // Build the reader from the edited footer, and never call `setup_page_index()`, so there is no
+  // offset index to fall back on either.
+  auto const default_options = cudf::io::parquet_reader_options::builder().build();
+  auto const reader = std::make_unique<cudf::io::parquet::experimental::hybrid_scan_reader>(
+    metadata, default_options);
+
+  auto const reader_ref = std::ref(*reader);
+  auto const col0_ref   = cudf::ast::column_name_reference("col0");
+
+  // `dictionary_page_offset` still says where each page starts and `data_page_offset` where it
+  // ends, so the ranges are exact even with the per page stats gone.
+  {
+    auto literal_value = cudf::string_scalar(dict_metadata_rg0_value, true, stream);
+    auto literal       = cudf::ast::literal(literal_value);
+    auto const filter_expression =
+      cudf::ast::operation(cudf::ast::ast_operator::EQUAL, col0_ref, literal);
+    auto const options =
+      cudf::io::parquet_reader_options::builder().filter(filter_expression).build();
+
+    reader->reset_column_selection();
+    auto const row_group_indices = reader->all_row_groups(options);
+    ASSERT_EQ(row_group_indices.size(), 2);
+
+    auto const dict_page_ranges = reader->dictionary_pages_byte_ranges(row_group_indices, options);
+    ASSERT_EQ(dict_page_ranges.size(), 2);
+    for (auto const& range : dict_page_ranges) {
+      EXPECT_EQ(range.extent, cudf::io::parquet::experimental::dictionary_page_extent::exact);
+      EXPECT_GT(range.byte_range.size(), 0);
+    }
+  }
+
+  auto const expect_dictionary_filtered = [&](std::string const& value,
+                                              std::vector<cudf::size_type> const& expected) {
+    auto literal_value = cudf::string_scalar(value, true, stream);
+    auto literal       = cudf::ast::literal(literal_value);
+    auto const filter_expression =
+      cudf::ast::operation(cudf::ast::ast_operator::EQUAL, col0_ref, literal);
+    auto const options =
+      cudf::io::parquet_reader_options::builder().filter(filter_expression).build();
+
+    EXPECT_EQ(filter_row_groups_with_dictionaries(datasource_ref, reader_ref, options, stream, mr),
+              expected);
+  };
+
+  // Each row group holds a single distinct value, so its dictionary alone decides whether it
+  // survives. Pruning still works with the `encodings` list as the only evidence.
+  expect_dictionary_filtered(dict_metadata_rg0_value, {0});
+  expect_dictionary_filtered(dict_metadata_rg1_value, {1});
+  expect_dictionary_filtered("absent_value", {});
+}
+
+TEST_F(HybridScanFiltersTest, FilterRowGroupsWithDictionaryUpperBoundRanges)
+{
+  auto const filepath = temp_env->get_temp_filepath("DictionaryUpperBoundRanges.parquet");
+  write_dictionary_parquet(filepath);
+
+  auto stream = cudf::get_default_stream();
+  auto mr     = cudf::get_current_device_resource_ref();
+
+  auto const datasource     = cudf::io::datasource::create(filepath);
+  auto const datasource_ref = std::ref(*datasource);
+
+  auto metadata = initialized_footer_metadata(*datasource);
+  expect_all_row_groups_v1_dictionary_encoded(metadata);
+
+  auto const [expected_offsets, expected_chunk_sizes] =
+    dictionary_page_offsets_and_chunk_sizes(metadata);
+
+  drop_encoding_stats(metadata);
+  hide_dictionary_page_offsets(metadata);
+
+  // Build the reader from the edited footer, and never call `setup_page_index()`, so nothing left
+  // says where a dictionary page ends.
+  auto const default_options = cudf::io::parquet_reader_options::builder().build();
+  auto const reader = std::make_unique<cudf::io::parquet::experimental::hybrid_scan_reader>(
+    metadata, default_options);
+
+  auto const reader_ref = std::ref(*reader);
+  auto const col0_ref   = cudf::ast::column_name_reference("col0");
+
+  // Each range now only bounds the page it points at: it starts where the page starts and runs to
+  // the end of the column chunk.
+  {
+    auto literal_value = cudf::string_scalar(dict_metadata_rg0_value, true, stream);
+    auto literal       = cudf::ast::literal(literal_value);
+    auto const filter_expression =
+      cudf::ast::operation(cudf::ast::ast_operator::EQUAL, col0_ref, literal);
+    auto const options =
+      cudf::io::parquet_reader_options::builder().filter(filter_expression).build();
+
+    reader->reset_column_selection();
+    auto const row_group_indices = reader->all_row_groups(options);
+    ASSERT_EQ(row_group_indices.size(), 2);
+
+    auto const dict_page_ranges = reader->dictionary_pages_byte_ranges(row_group_indices, options);
+    ASSERT_EQ(dict_page_ranges.size(), expected_offsets.size());
+    for (std::size_t i = 0; i < dict_page_ranges.size(); ++i) {
+      EXPECT_EQ(dict_page_ranges[i].extent,
+                cudf::io::parquet::experimental::dictionary_page_extent::upper_bound_if_present);
+      EXPECT_EQ(dict_page_ranges[i].byte_range.offset(), expected_offsets[i]);
+      EXPECT_EQ(dict_page_ranges[i].byte_range.size(), expected_chunk_sizes[i]);
+    }
+  }
+
+  auto const expect_dictionary_filtered = [&](std::string const& value,
+                                              std::vector<cudf::size_type> const& expected) {
+    auto literal_value = cudf::string_scalar(value, true, stream);
+    auto literal       = cudf::ast::literal(literal_value);
+    auto const filter_expression =
+      cudf::ast::operation(cudf::ast::ast_operator::EQUAL, col0_ref, literal);
+    auto const options =
+      cudf::io::parquet_reader_options::builder().filter(filter_expression).build();
+
+    EXPECT_EQ(filter_row_groups_with_dictionaries(datasource_ref, reader_ref, options, stream, mr),
+              expected);
+  };
+
+  // Reading such a range and trimming it with `dictionary_page_length` recovers exactly the page,
+  // so pruning lands where it does when the footer says where the page ends.
+  expect_dictionary_filtered(dict_metadata_rg0_value, {0});
+  expect_dictionary_filtered(dict_metadata_rg1_value, {1});
+  expect_dictionary_filtered("absent_value", {});
+}
+
+TEST_F(HybridScanFiltersTest, FilterRowGroupsWithDictionaryTruncatedUpperBoundRanges)
+{
+  auto const filepath = temp_env->get_temp_filepath("DictionaryTruncatedUpperBound.parquet");
+  write_dictionary_parquet(filepath);
+
+  auto stream = cudf::get_default_stream();
+  auto mr     = cudf::get_current_device_resource_ref();
+
+  auto const datasource = cudf::io::datasource::create(filepath);
+
+  auto metadata = initialized_footer_metadata(*datasource);
+  expect_all_row_groups_v1_dictionary_encoded(metadata);
+  drop_encoding_stats(metadata);
+  hide_dictionary_page_offsets(metadata);
+
+  auto const default_options = cudf::io::parquet_reader_options::builder().build();
+  auto const reader = std::make_unique<cudf::io::parquet::experimental::hybrid_scan_reader>(
+    metadata, default_options);
+
+  auto const col0_ref = cudf::ast::column_name_reference("col0");
+
+  // No row group holds this value, so both are pruned when their dictionaries can be read. That is
+  // what makes the fallback below visible in the result.
+  auto literal_value = cudf::string_scalar("absent_value", true, stream);
+  auto literal       = cudf::ast::literal(literal_value);
+  auto const filter_expression =
+    cudf::ast::operation(cudf::ast::ast_operator::EQUAL, col0_ref, literal);
+  auto const options =
+    cudf::io::parquet_reader_options::builder().filter(filter_expression).build();
+
+  reader->reset_column_selection();
+  auto const row_group_indices = reader->all_row_groups(options);
+  auto const dict_page_ranges  = reader->dictionary_pages_byte_ranges(row_group_indices, options);
+  ASSERT_EQ(dict_page_ranges.size(), 2);
+
+  // Measure the real pages first, reading as much of each range as the default cap allows.
+  auto const full_read_ranges =
+    cudf::io::parquet::experimental::dictionary_page_byte_ranges_to_read(dict_page_ranges);
+  auto page_lengths = std::vector<int64_t>{};
+  for (auto const& range : full_read_ranges) {
+    auto const host_buffer = datasource->host_read(range.offset(), range.size());
+    auto const page_length = cudf::io::parquet::experimental::dictionary_page_length(
+      cudf::host_span<uint8_t const>{host_buffer->data(), host_buffer->size()});
+    ASSERT_TRUE(page_length.has_value());
+    page_lengths.push_back(page_length.value());
+  }
+
+  // One byte short of the smallest page, so no range read under this cap holds a whole page.
+  auto const truncating_cap = *std::min_element(page_lengths.cbegin(), page_lengths.cend()) - 1;
+  ASSERT_GT(truncating_cap, 0);
+
+  auto const truncated_ranges =
+    cudf::io::parquet::experimental::dictionary_page_byte_ranges_to_read(dict_page_ranges,
+                                                                         truncating_cap);
+  for (auto const& range : truncated_ranges) {
+    EXPECT_EQ(range.size(), truncating_cap);
+  }
+
+  // A page that does not fit in what was read cannot be measured, so its chunk is handed an empty
+  // span and is not pruned with.
+  auto const [dict_page_buffers, dict_page_data] =
+    fetch_trimmed_dictionary_pages(*datasource, dict_page_ranges, stream, mr, truncating_cap);
+  ASSERT_EQ(dict_page_data.size(), dict_page_ranges.size());
+  for (auto const& span : dict_page_data) {
+    EXPECT_TRUE(span.empty());
+  }
+
+  auto const surviving_row_groups = reader->filter_row_groups_with_dictionary_pages(
+    dict_page_data, row_group_indices, options, stream);
+  EXPECT_EQ(surviving_row_groups, std::vector<cudf::size_type>({0, 1}));
+}
+
+TEST_F(HybridScanFiltersTest, FilterRowGroupsWithDictionaryAbsentDictionaryPage)
+{
+  auto const filepath = temp_env->get_temp_filepath("DictionaryAbsentDictionaryPage.parquet");
+  write_dictionary_parquet(filepath, /*second_row_group_falls_back=*/true);
+
+  auto stream = cudf::get_default_stream();
+  auto mr     = cudf::get_current_device_resource_ref();
+
+  auto const datasource     = cudf::io::datasource::create(filepath);
+  auto const datasource_ref = std::ref(*datasource);
+
+  auto metadata = initialized_footer_metadata(*datasource);
+  expect_v1_dictionary_encodings(metadata, 0);
+  expect_fell_back_to_plain(metadata, 1);
+
+  // Row group 1 holds no dictionary page. Claiming it is dictionary encoded is exactly what a
+  // writer is allowed to do without writing such a page, which is the case an upper-bound range
+  // exists to allow for: the bytes it points at begin with a data page instead.
+  drop_encoding_stats(metadata);
+  claim_all_pages_dictionary_encoded(metadata, 1);
+  hide_dictionary_page_offsets(metadata);
+
+  auto const default_options = cudf::io::parquet_reader_options::builder().build();
+  auto const reader = std::make_unique<cudf::io::parquet::experimental::hybrid_scan_reader>(
+    metadata, default_options);
+
+  auto const reader_ref = std::ref(*reader);
+  auto const col0_ref   = cudf::ast::column_name_reference("col0");
+
+  // Neither row group says where its dictionary page ends any more, so both bound one that may not
+  // be there. Only row group 0's bound holds a real dictionary page, which is what tells the two
+  // apart, and measuring the bytes is the only way to find that out.
+  {
+    auto literal_value = cudf::string_scalar(dict_metadata_rg0_value, true, stream);
+    auto literal       = cudf::ast::literal(literal_value);
+    auto const filter_expression =
+      cudf::ast::operation(cudf::ast::ast_operator::EQUAL, col0_ref, literal);
+    auto const options =
+      cudf::io::parquet_reader_options::builder().filter(filter_expression).build();
+
+    reader->reset_column_selection();
+    auto const row_group_indices = reader->all_row_groups(options);
+    ASSERT_EQ(row_group_indices.size(), 2);
+
+    auto const dict_page_ranges = reader->dictionary_pages_byte_ranges(row_group_indices, options);
+    ASSERT_EQ(dict_page_ranges.size(), 2);
+    for (auto const& range : dict_page_ranges) {
+      EXPECT_EQ(range.extent,
+                cudf::io::parquet::experimental::dictionary_page_extent::upper_bound_if_present);
+      EXPECT_GT(range.byte_range.size(), 0);
+    }
+
+    auto const read_ranges =
+      cudf::io::parquet::experimental::dictionary_page_byte_ranges_to_read(dict_page_ranges);
+    ASSERT_EQ(read_ranges.size(), 2);
+
+    auto const measured_page_length = [&](std::size_t i) {
+      auto const host_buffer =
+        datasource->host_read(read_ranges[i].offset(), read_ranges[i].size());
+      return cudf::io::parquet::experimental::dictionary_page_length(
+        cudf::host_span<uint8_t const>{host_buffer->data(), host_buffer->size()});
+    };
+    EXPECT_TRUE(measured_page_length(0).has_value());
+    EXPECT_FALSE(measured_page_length(1).has_value());
+  }
+
+  auto const expect_dictionary_filtered = [&](std::string const& value,
+                                              std::vector<cudf::size_type> const& expected) {
+    auto literal_value = cudf::string_scalar(value, true, stream);
+    auto literal       = cudf::ast::literal(literal_value);
+    auto const filter_expression =
+      cudf::ast::operation(cudf::ast::ast_operator::EQUAL, col0_ref, literal);
+    auto const options =
+      cudf::io::parquet_reader_options::builder().filter(filter_expression).build();
+
+    EXPECT_EQ(filter_row_groups_with_dictionaries(datasource_ref, reader_ref, options, stream, mr),
+              expected);
+  };
+
+  // Row group 0's dictionary rules the value out. Row group 1 has no dictionary page to rule it out
+  // with, so it survives rather than being pruned on bytes that are not a dictionary.
+  expect_dictionary_filtered("absent_value", {1});
+  expect_dictionary_filtered(dict_metadata_rg0_value, {0, 1});
+}
+
+TEST_F(HybridScanFiltersTest, FilterRowGroupsWithDictionaryFallbackEncodingInList)
+{
+  auto const filepath = temp_env->get_temp_filepath("DictionaryFallbackEncodingInList.parquet");
+  write_dictionary_parquet(filepath);
+
+  auto stream = cudf::get_default_stream();
+  auto mr     = cudf::get_current_device_resource_ref();
+
+  auto const datasource     = cudf::io::datasource::create(filepath);
+  auto const datasource_ref = std::ref(*datasource);
+
+  auto metadata = initialized_footer_metadata(*datasource);
+  expect_all_row_groups_v1_dictionary_encoded(metadata);
+
+  // With the per page stats gone, the encoding list is all that rules out a page that fell back to
+  // a non-dictionary encoding and so holds values the dictionary does not have. Row group 0's list
+  // carries such an encoding, so it must not be pruned with even though it has a dictionary page.
+  drop_encoding_stats(metadata);
+  add_fallback_encoding(metadata, 0);
+
+  auto const default_options = cudf::io::parquet_reader_options::builder().build();
+  auto const reader = std::make_unique<cudf::io::parquet::experimental::hybrid_scan_reader>(
+    metadata, default_options);
+
+  auto const reader_ref = std::ref(*reader);
+  auto const col0_ref   = cudf::ast::column_name_reference("col0");
+
+  // The chunk that may hold a fallback page gets an empty range, which is how the reader is told
+  // not to prune with it. Row group 1's list still shows only dictionary and level encodings.
+  {
+    auto literal_value = cudf::string_scalar(dict_metadata_rg0_value, true, stream);
+    auto literal       = cudf::ast::literal(literal_value);
+    auto const filter_expression =
+      cudf::ast::operation(cudf::ast::ast_operator::EQUAL, col0_ref, literal);
+    auto const options =
+      cudf::io::parquet_reader_options::builder().filter(filter_expression).build();
+
+    reader->reset_column_selection();
+    auto const row_group_indices = reader->all_row_groups(options);
+    ASSERT_EQ(row_group_indices.size(), 2);
+
+    auto const dict_page_ranges = reader->dictionary_pages_byte_ranges(row_group_indices, options);
+    ASSERT_EQ(dict_page_ranges.size(), 2);
+    EXPECT_EQ(dict_page_ranges[0].byte_range.size(), 0);
+    EXPECT_EQ(dict_page_ranges[1].extent,
+              cudf::io::parquet::experimental::dictionary_page_extent::exact);
+    EXPECT_GT(dict_page_ranges[1].byte_range.size(), 0);
+  }
+
+  auto const expect_dictionary_filtered = [&](std::string const& value,
+                                              std::vector<cudf::size_type> const& expected) {
+    auto literal_value = cudf::string_scalar(value, true, stream);
+    auto literal       = cudf::ast::literal(literal_value);
+    auto const filter_expression =
+      cudf::ast::operation(cudf::ast::ast_operator::EQUAL, col0_ref, literal);
+    auto const options =
+      cudf::io::parquet_reader_options::builder().filter(filter_expression).build();
+
+    EXPECT_EQ(filter_row_groups_with_dictionaries(datasource_ref, reader_ref, options, stream, mr),
+              expected);
+  };
+
+  // Row group 1 is still pruned on its dictionary, but row group 0 survives a value its dictionary
+  // does not hold, because its encoding list no longer rules out a page that does.
+  expect_dictionary_filtered("absent_value", {0});
+}
+
+TEST_F(HybridScanFiltersTest, FilterRowGroupsWithDictionaryBitPackedLevelEncoding)
+{
+  auto const filepath = temp_env->get_temp_filepath("DictionaryBitPackedLevels.parquet");
+  write_dictionary_parquet(filepath);
+
+  auto stream = cudf::get_default_stream();
+  auto mr     = cudf::get_current_device_resource_ref();
+
+  auto const datasource     = cudf::io::datasource::create(filepath);
+  auto const datasource_ref = std::ref(*datasource);
+
+  auto metadata = initialized_footer_metadata(*datasource);
+  expect_all_row_groups_v1_dictionary_encoded(metadata);
+
+  // `BIT_PACKED` encodes levels and never values, so a list carrying it still says every data page
+  // was dictionary encoded. Row group 0's list carries it, and must be pruned with all the same.
+  drop_encoding_stats(metadata);
+  add_bit_packed_level_encoding(metadata, 0);
+
+  auto const default_options = cudf::io::parquet_reader_options::builder().build();
+  auto const reader = std::make_unique<cudf::io::parquet::experimental::hybrid_scan_reader>(
+    metadata, default_options);
+
+  auto const reader_ref = std::ref(*reader);
+  auto const col0_ref   = cudf::ast::column_name_reference("col0");
+
+  // A range per row group, neither of them empty. Row group 0's would be empty if the level
+  // encoding in its list were taken for one a value could have been written with.
+  {
+    auto literal_value = cudf::string_scalar(dict_metadata_rg0_value, true, stream);
+    auto literal       = cudf::ast::literal(literal_value);
+    auto const filter_expression =
+      cudf::ast::operation(cudf::ast::ast_operator::EQUAL, col0_ref, literal);
+    auto const options =
+      cudf::io::parquet_reader_options::builder().filter(filter_expression).build();
+
+    reader->reset_column_selection();
+    auto const row_group_indices = reader->all_row_groups(options);
+    ASSERT_EQ(row_group_indices.size(), 2);
+
+    auto const dict_page_ranges = reader->dictionary_pages_byte_ranges(row_group_indices, options);
+    ASSERT_EQ(dict_page_ranges.size(), 2);
+    for (auto const& range : dict_page_ranges) {
+      EXPECT_EQ(range.extent, cudf::io::parquet::experimental::dictionary_page_extent::exact);
+      EXPECT_GT(range.byte_range.size(), 0);
+    }
+  }
+
+  auto const expect_dictionary_filtered = [&](std::string const& value,
+                                              std::vector<cudf::size_type> const& expected) {
+    auto literal_value = cudf::string_scalar(value, true, stream);
+    auto literal       = cudf::ast::literal(literal_value);
+    auto const filter_expression =
+      cudf::ast::operation(cudf::ast::ast_operator::EQUAL, col0_ref, literal);
+    auto const options =
+      cudf::io::parquet_reader_options::builder().filter(filter_expression).build();
+
+    EXPECT_EQ(filter_row_groups_with_dictionaries(datasource_ref, reader_ref, options, stream, mr),
+              expected);
+  };
+
+  // Both row groups prune, so the extra level encoding cost row group 0 nothing.
+  expect_dictionary_filtered(dict_metadata_rg0_value, {0});
+  expect_dictionary_filtered(dict_metadata_rg1_value, {1});
+  expect_dictionary_filtered("absent_value", {});
+}
+
+TEST_F(HybridScanFiltersTest, FilterRowGroupsWithDictionaryV2EncodingsWithoutStats)
+{
+  using cudf::io::parquet::Encoding;
+
+  auto const filepath = temp_env->get_temp_filepath("DictionaryV2Encodings.parquet");
+  write_dictionary_parquet(
+    filepath, /*second_row_group_falls_back=*/false, /*write_v2_headers=*/true);
+
+  auto stream = cudf::get_default_stream();
+
+  auto const datasource = cudf::io::datasource::create(filepath);
+
+  auto metadata = initialized_footer_metadata(*datasource);
+
+  // A chunk written with the v2 encodings lists `RLE_DICTIONARY` and never `PLAIN_DICTIONARY`, and
+  // lists it for a dictionary encoded data page and for a fallback's alike.
+  for (auto const& row_group : metadata.row_groups) {
+    for (auto const& column : row_group.columns) {
+      auto const& encodings = column.meta_data.encodings;
+      EXPECT_NE(std::find(encodings.cbegin(), encodings.cend(), Encoding::RLE_DICTIONARY),
+                encodings.cend());
+      EXPECT_EQ(std::find(encodings.cbegin(), encodings.cend(), Encoding::PLAIN_DICTIONARY),
+                encodings.cend());
+    }
+  }
+
+  drop_encoding_stats(metadata);
+
+  auto const default_options = cudf::io::parquet_reader_options::builder().build();
+  auto const reader = std::make_unique<cudf::io::parquet::experimental::hybrid_scan_reader>(
+    metadata, default_options);
+
+  auto const col0_ref = cudf::ast::column_name_reference("col0");
+
+  // So without the per page stats the encoding list cannot show that every data page was dictionary
+  // encoded, and every chunk is skipped. That leaves no chunk to prune with, which is reported as
+  // no ranges at all rather than as an empty range per chunk.
+  auto literal_value = cudf::string_scalar(dict_metadata_rg0_value, true, stream);
+  auto literal       = cudf::ast::literal(literal_value);
+  auto const filter_expression =
+    cudf::ast::operation(cudf::ast::ast_operator::EQUAL, col0_ref, literal);
+  auto const options =
+    cudf::io::parquet_reader_options::builder().filter(filter_expression).build();
+
+  reader->reset_column_selection();
+  auto const row_group_indices = reader->all_row_groups(options);
+  ASSERT_EQ(row_group_indices.size(), 2);
+
+  EXPECT_TRUE(reader->dictionary_pages_byte_ranges(row_group_indices, options).empty());
+}

@@ -73,7 +73,8 @@ std::vector<cudf::size_type> apply_row_group_filters(
 
   if (filters.contains(hybrid_scan_filter_type::ROW_GROUPS_WITH_DICT_PAGES)) {
     auto const dict_page_byte_ranges =
-      reader.dictionary_pages_byte_ranges(current_row_group_indices, options);
+      cudf::io::parquet::experimental::dictionary_page_byte_ranges_to_read(
+        reader.dictionary_pages_byte_ranges(current_row_group_indices, options));
 
     if (not dict_page_byte_ranges.empty()) {
       auto [dictionary_page_buffers, dictionary_page_data, dict_read_tasks] =

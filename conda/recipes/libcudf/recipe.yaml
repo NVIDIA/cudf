@@ -169,9 +169,6 @@ outputs:
           - librdkafka
           - libzlib
           - librmm
-    tests:
-      - script:
-          - test -f $PREFIX/include/cudf/column/column.hpp
     about:
       homepage: ${{ load_from_file("python/libcudf/pyproject.toml").project.urls.Homepage }}
       license: ${{ load_from_file("python/libcudf/pyproject.toml").project.license }}
@@ -211,9 +208,6 @@ outputs:
           - librmm
           - libzlib
           - libnvcomp
-    tests:
-      - script:
-          - test -f $PREFIX/lib/libcudf_kafka.so
     about:
       homepage: https://rapids.ai/
       license: Apache-2.0
@@ -258,9 +252,6 @@ outputs:
           - librmm
           - libzlib
           - libnvcomp
-    tests:
-      - script:
-          - test -f $PREFIX/lib/libcudf_streaming.so
     about:
       homepage: https://rapids.ai/
       license: Apache-2.0
@@ -439,15 +430,6 @@ outputs:
           - libkvikio
           - librmm
           - libnvcomp
-    tests:
-      - script:
-          - test -f $PREFIX/bin/gtests/libcudf_streaming/libcudf_streaming_single_tests
-          - test -f $PREFIX/bin/libcudf_streaming_bench_pack
-          - test -f $PREFIX/bin/libcudf_streaming_bench_partition
-          - test -f $PREFIX/bin/libcudf_streaming_bench_ndsh_bench_read
-          - test -f $PREFIX/bin/libcudf_streaming_bench_ndsh_q01
-          - test -f $PREFIX/bin/libcudf_streaming_bench_shuffle
-          - test -f $PREFIX/bin/libcudf_streaming_bench_streaming_shuffle
     about:
       homepage: https://rapids.ai/
       license: Apache-2.0

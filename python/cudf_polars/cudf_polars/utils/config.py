@@ -357,6 +357,11 @@ class ParquetOptions:
         Whether to use the two-pass ``HybridScanReader`` for ``SplitScan``
         tasks when a predicate can be pushed down to a parquet filter.
         Default is False.
+    hybrid_scan_interleave_remote_io
+        Whether hybrid scan I/O requests for remote sources (e.g. ``s3://``)
+        are allowed to interleave with I/O requests from other concurrent
+        hybrid scan tasks, rather than being serialized. Only affects remote
+        sources; I/O for local sources is always serialized. Default is True.
     """
 
     _env_prefix = "CUDF_POLARS__PARQUET_OPTIONS"
@@ -405,6 +410,13 @@ class ParquetOptions:
             default=False,
         )
     )
+    hybrid_scan_interleave_remote_io: bool = dataclasses.field(
+        default_factory=_make_default_factory(
+            f"{_env_prefix}__HYBRID_SCAN_INTERLEAVE_REMOTE_IO",
+            _bool_converter,
+            default=True,
+        )
+    )
     # Internal benchmarking flag. When False, skips stats and bloom-filter pruning
     # before the first pass of a hybrid scan so you can measure two-pass read
     # overhead in isolation. No reason to set this to False in production.
@@ -442,6 +454,8 @@ class ParquetOptions:
             raise TypeError("prefetch_file_metadata must be a bool when specified")
         if not isinstance(self.use_hybrid_scan, bool):
             raise TypeError("use_hybrid_scan must be a bool")
+        if not isinstance(self.hybrid_scan_interleave_remote_io, bool):
+            raise TypeError("hybrid_scan_interleave_remote_io must be a bool")
         if self.use_hybrid_scan and self.prefetch_file_metadata is False:
             raise ValueError(
                 "use_hybrid_scan requires prefetch_file_metadata to be enabled"

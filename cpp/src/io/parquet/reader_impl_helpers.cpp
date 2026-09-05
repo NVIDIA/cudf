@@ -2089,16 +2089,17 @@ aggregate_reader_metadata::select_columns(
   // Compares two schema elements to be equal except their number of children
   auto const equal_to_except_num_children = [selection_mode](SchemaElement const& lhs,
                                                              SchemaElement const& rhs) {
-    // Match by field ID if enabled, otherwise match by name
+    // Match by field ID only when it is the selection method, otherwise match by name. Field IDs
+    // are optional in Parquet and may not be present in all sources.
     auto const match_schema_by_field_id = selection_mode == column_selection_mode::BY_FIELD_ID;
-    auto const names_match =
+    auto const identities_match =
       (match_schema_by_field_id and lhs.field_id.has_value() and rhs.field_id.has_value())
         ? lhs.field_id == rhs.field_id
         : lhs.name == rhs.name;
     return lhs.type == rhs.type and lhs.converted_type == rhs.converted_type and
-           lhs.type_length == rhs.type_length and names_match and
+           lhs.type_length == rhs.type_length and identities_match and
            lhs.decimal_scale == rhs.decimal_scale and
-           lhs.decimal_precision == rhs.decimal_precision and lhs.field_id == rhs.field_id;
+           lhs.decimal_precision == rhs.decimal_precision;
   };
 
   // Maps a projected column's schema_idx in the zeroth per_file_metadata (source) to the

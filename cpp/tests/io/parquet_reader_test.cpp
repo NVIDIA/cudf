@@ -6465,6 +6465,40 @@ TEST_F(ParquetReaderTest, MismatchedSchemaColumnValidation)
         .build();
     EXPECT_THROW(cudf::io::read_parquet(opts), std::invalid_argument);
   }
+
+  // Sources that disagree on field-ID presence but agree on names and types should succeed.
+  {
+    auto const id = i64{1, 2, 3};
+    auto const with_ids =
+      write_parquet_temp_file(cudf::table_view{{id}}, "FieldIdExists.parquet", {"id"}, {1});
+    auto const without_ids =
+      write_parquet_temp_file(cudf::table_view{{id}}, "FieldIdAbsent.parquet", {"id"});
+
+    auto const expected_id = i64{1, 2, 3, 1, 2, 3};
+    cudf::table_view const expected{{expected_id}};
+
+    for (auto const& paths : {std::vector<std::string>{with_ids, with_ids},
+                              std::vector<std::string>{with_ids, without_ids},
+                              std::vector<std::string>{without_ids, with_ids},
+                              std::vector<std::string>{without_ids, without_ids}}) {
+      auto result = cudf::io::table_with_metadata{};
+      ASSERT_NO_THROW(result = cudf::io::read_parquet(
+                        cudf::io::parquet_reader_options::builder(cudf::io::source_info{paths})
+                          .allow_mismatched_pq_schemas(true)
+                          .column_names({"id"})
+                          .build()));
+      CUDF_TEST_EXPECT_TABLES_EQUAL(expected, result.tbl->view());
+    }
+
+    for (auto const& paths : {std::vector<std::string>{with_ids, without_ids},
+                              std::vector<std::string>{without_ids, with_ids}}) {
+      auto const opts = cudf::io::parquet_reader_options::builder(cudf::io::source_info{paths})
+                          .allow_mismatched_pq_schemas(true)
+                          .column_field_ids({1})
+                          .build();
+      EXPECT_THROW(cudf::io::read_parquet(opts), std::invalid_argument);
+    }
+  }
 }
 
 TEST_F(ParquetReaderTest, NestedMismatchedSchemaColumnValidation)

@@ -35,12 +35,6 @@ requirements:
     - nvidia-ml-py>=12
     - rapids-dask-dependency =${{ minor_version }}
 
-tests:
-  - python:
-      imports:
-        - dask_cudf
-      pip_check: false
-
 about:
   homepage: ${{ load_from_file("python/dask_cudf/pyproject.toml").project.urls.Homepage }}
   license: ${{ load_from_file("python/dask_cudf/pyproject.toml").project.license }}

@@ -29,7 +29,6 @@ requirements:
     - rapids-build-backend >=0.4.0,<0.5.0
     - setuptools>=77.0.0
     - python-confluent-kafka
-    - cudf_kafka =${{ version }}
   run:
     - python
     - streamz
@@ -37,12 +36,6 @@ requirements:
     - cudf_kafka =${{ version }}
     - rapids-dask-dependency =${{ minor_version }}
     - python-confluent-kafka
-
-tests:
-  - python:
-      imports:
-        - custreamz
-      pip_check: false
 
 about:
   homepage: ${{ load_from_file("python/custreamz/pyproject.toml").project.urls.Homepage }}

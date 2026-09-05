@@ -332,7 +332,7 @@ jobs:
       # Build a conda package for each CUDA x ARCH x minimum supported Python version
       matrix_filter: group_by({CUDA_VER, ARCH}) | map(min_by(.PY_VER | split(".") | map(tonumber)))
   conda-python-build-noarch:
-    needs: [build-details, conda-cpp-build, conda-python-build]
+    needs: [build-details]
     permissions:
       actions: read
       contents: read
@@ -364,7 +364,7 @@ jobs:
       matrix_filter: map(select(.GPU != "gb300" and .GPU != "gh200"))
   conda-python-other-tests:
     # Tests for dask_cudf, cudf_polars, custreamz, cudf_kafka are separated for CI parallelism
-    needs: [conda-python-build-noarch, changed-files]
+    needs: [conda-python-build, conda-python-build-noarch, changed-files]
     permissions:
       actions: read
       contents: read
@@ -541,7 +541,7 @@ jobs:
       # https://github.com/NVIDIA/cudf/issues/23498
       matrix_filter: map(select(.GPU != "gb300" and .GPU != "gh200"))
   wheel-python-build-noarch:
-    needs: [build-details, wheel-cpp-build, wheel-python-build]
+    needs: [build-details, checks]
     permissions:
       actions: read
       contents: read
@@ -628,7 +628,7 @@ jobs:
         --cudf-polars-shard-id ${{ matrix.shard_id }}
         --cudf-polars-num-shards ${{ matrix.num_shards }}
   wheel-tests-dask-cudf:
-    needs: [wheel-python-build-noarch, changed-files]
+    needs: [wheel-python-build, wheel-python-build-noarch, changed-files]
     permissions:
       actions: read
       contents: read

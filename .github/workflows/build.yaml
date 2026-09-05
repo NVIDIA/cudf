@@ -88,7 +88,7 @@ jobs:
       # Build a conda package for each CUDA x ARCH x minimum supported Python version
       matrix_filter: group_by({CUDA_VER, ARCH}) | map(min_by(.PY_VER | split(".") | map(tonumber)))
   python-build-noarch:
-    needs: [build-details, telemetry-setup, cpp-build, python-build]
+    needs: [build-details, telemetry-setup]
     permissions:
       actions: read
       contents: read
@@ -304,7 +304,7 @@ jobs:
       # trailing underscore to avoid collision with `cudf-streaming` and `cudf-polars`
       publish-wheel-search-key: cudf_wheel_python_cudf_
   wheel-python-build-noarch:
-    needs: [build-details, telemetry-setup, wheel-cpp-build, wheel-python-build]
+    needs: [build-details, telemetry-setup]
     permissions:
       actions: read
       contents: read

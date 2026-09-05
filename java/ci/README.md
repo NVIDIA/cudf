@@ -24,7 +24,7 @@ For local testing only, `java/ci/test_java_build_local.sh` runs Steps 1-3 end-to
 ### Step 1 - Build the static libcudf install tree
 
 ```bash
-./java/ci/build_static_libcudf.sh --output-dir /tmp/libcudf-cuda12 --cuda-version 12.9
+./java/ci/build_static_libcudf.sh --output-dir /tmp/libcudf-cuda12 --cuda-version 12.9.2
 ```
 
 This produces a static libcudf install tree (`lib/libcudf.a` plus its static
@@ -37,7 +37,7 @@ so plain `rm -rf` works.
 ./java/ci/build_cudf_java_jar.sh \
   --libcudf-dir /tmp/libcudf-cuda12 \
   --output-dir /tmp/jars \
-  --cuda-version 12.9
+  --cuda-version 12.9.2
 ```
 
 Optional `GITHUB_REF` selects release tag vs SNAPSHOT versioning. Unset means

@@ -32,8 +32,8 @@ CMAKE_CUDA_ARCHITECTURES=""
 
 # CUDA versions built for both classifiers. Keep in sync with the java-build
 # matrix in .github/workflows/build.yaml.
-CUDA12_VERSION="12.9"
-CUDA13_VERSION="13.3"
+CUDA12_VERSION="12.9.2"
+CUDA13_VERSION="13.3.0"
 
 # Wall-clock timing variables.
 STEP_NAMES=()

@@ -1077,11 +1077,11 @@ dependencies:
           - matrix:
               cuda: "12.*"
             packages:
-              - cuda-bindings>=12.9.2,<13.0
+              - cuda-bindings>=12.9.3,<13.0
           # fallback to CUDA 13 versions if 'cuda' is '13.*' or not provided
           - matrix:
             packages:
-              - cuda-bindings>=13.0.1,<14.0
+              - cuda-bindings>=13.0.2,<14.0
   run_cudf:
     common:
       - output_types: [conda, requirements, constraints, pyproject]
@@ -1173,12 +1173,12 @@ dependencies:
               dependencies: "oldest"
               cuda: "12.*"
             packages:
-              - cuda-bindings==12.9.2
+              - cuda-bindings==12.9.3
           - matrix:
               dependencies: "oldest"
               cuda: "13.*"
             packages:
-              - cuda-bindings==13.0.1
+              - cuda-bindings==13.0.2
           - matrix:
             packages:
       - output_types: [requirements, constraints]
@@ -1256,6 +1256,7 @@ dependencies:
           - hypothesis>=6.131.7
           - pytest-benchmark
           - pytest-cases>=3.8.2
+          - rapids-cli
           - scipy
           - zstandard
       - output_types: conda

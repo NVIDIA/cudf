@@ -17,6 +17,11 @@ import java.io.RandomAccessFile;
 import java.net.URL;
 import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
+import java.nio.file.AtomicMoveNotSupportedException;
+import java.nio.file.FileAlreadyExistsException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -392,22 +397,12 @@ public class NativeDepsLoader {
       }
       return loc;
     }
-    String path = arch + "/" + os + "/" + mappedName;
-    URL chunkManifestResource = loader.getResource(path + CHUNK_MANIFEST_SUFFIX);
-    URL resource = chunkManifestResource == null ? loader.getResource(path) : null;
-    if (chunkManifestResource == null && resource == null) {
-      throw new FileNotFoundException("Could not locate native dependency " + path);
-    }
     long t0 = System.currentTimeMillis();
     File loc = File.createTempFile(baseName, ".so");
     loc.deleteOnExit();
     boolean success = false;
     try {
-      if (chunkManifestResource == null) {
-        extractConventionalResource(resource, loc);
-      } else {
-        extractChunkedResource(chunkManifestResource, mappedName, loc);
-      }
+      extractNativeResource(os, arch, baseName, loc);
       success = true;
     } finally {
       if (!success && loc.exists() && !loc.delete()) {
@@ -420,6 +415,77 @@ public class NativeDepsLoader {
       log.info("Extracted {} in {} ms (size={} MB)", mappedName, elapsed, sizeMB);
     }
     return loc;
+  }
+
+  /**
+   * Extract a native library resource without loading it. The library is searched for under
+   * {@code ${os.arch}/${os.name}/} in the class path using the class loader for this class.
+   * Both conventional resources and chunked resources are supported.
+   *
+   * <p>The destination is replaced only after the resource has been completely extracted and
+   * validated. If extraction fails, an existing destination is left unchanged.</p>
+   *
+   * @param depName the base name of the library; for example, use {@code "cudf"} for
+   *                {@code libcudf.so}
+   * @param destination the file where the reconstructed library will be written
+   * @return the absolute destination file
+   * @throws IOException on any error locating or extracting the library
+   */
+  public static File extractNativeDep(String depName, File destination) throws IOException {
+    String os = System.getProperty("os.name");
+    String arch = System.getProperty("os.arch");
+    return extractNativeDep(os, arch, depName, destination);
+  }
+
+  static File extractNativeDep(String os, String arch, String baseName, File destination)
+      throws IOException {
+    if (baseName == null || baseName.isEmpty()) {
+      throw new IllegalArgumentException("baseName must not be empty");
+    }
+    if (destination == null) {
+      throw new NullPointerException("destination");
+    }
+
+    Path destinationPath = destination.toPath().toAbsolutePath();
+    Path parent = destinationPath.getParent();
+    if (parent == null || !Files.isDirectory(parent)) {
+      throw new IOException("Native dependency destination directory does not exist: " + parent);
+    }
+
+    Path temporaryPath = Files.createTempFile(parent,
+        "." + destinationPath.getFileName(), ".tmp");
+    boolean moved = false;
+    try {
+      extractNativeResource(os, arch, baseName, temporaryPath.toFile());
+      try {
+        Files.move(temporaryPath, destinationPath,
+            StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+      } catch (AtomicMoveNotSupportedException | FileAlreadyExistsException e) {
+        Files.move(temporaryPath, destinationPath, StandardCopyOption.REPLACE_EXISTING);
+      }
+      moved = true;
+      return destinationPath.toFile();
+    } finally {
+      if (!moved) {
+        Files.deleteIfExists(temporaryPath);
+      }
+    }
+  }
+
+  private static void extractNativeResource(
+      String os, String arch, String baseName, File destination) throws IOException {
+    String mappedName = System.mapLibraryName(baseName);
+    String path = arch + "/" + os + "/" + mappedName;
+    URL chunkManifestResource = loader.getResource(path + CHUNK_MANIFEST_SUFFIX);
+    URL resource = chunkManifestResource == null ? loader.getResource(path) : null;
+    if (chunkManifestResource == null && resource == null) {
+      throw new FileNotFoundException("Could not locate native dependency " + path);
+    }
+    if (chunkManifestResource == null) {
+      extractConventionalResource(resource, destination);
+    } else {
+      extractChunkedResource(chunkManifestResource, mappedName, destination);
+    }
   }
 
   private static void extractConventionalResource(URL resource, File loc) throws IOException {

@@ -97,6 +97,65 @@ class NativeDepsLoaderExtractionTest {
   }
 
   @Test
+  void replacesExistingDestination() throws IOException {
+    String baseName = "destinationtest";
+    byte[] expected = "requested destination contents".getBytes(StandardCharsets.UTF_8);
+    writeChunkedResource(baseName, expected, 8, "1", null, null);
+    Path destinationDirectory = Files.createTempDirectory("native-dep-destination");
+    Path destination = destinationDirectory.resolve(System.mapLibraryName(baseName));
+    Files.write(destination, "existing contents".getBytes(StandardCharsets.UTF_8));
+    try {
+      File extracted = NativeDepsLoader.extractNativeDep(
+          TEST_OS, TEST_ARCH, baseName, destination.toFile());
+
+      assertEquals(destination.toAbsolutePath(), extracted.toPath());
+      assertArrayEquals(expected, Files.readAllBytes(destination));
+    } finally {
+      Files.deleteIfExists(destination);
+      Files.deleteIfExists(destinationDirectory);
+    }
+  }
+
+  @Test
+  void failedDestinationExtractionPreservesExistingFile() throws IOException {
+    String baseName = "preservedestinationtest";
+    byte[] expected = "chunk contents".getBytes(StandardCharsets.UTF_8);
+    writeChunkedResource(baseName, expected, 8, "1", 0L, null);
+    Path destinationDirectory = Files.createTempDirectory("native-dep-destination");
+    Path destination = destinationDirectory.resolve(System.mapLibraryName(baseName));
+    byte[] original = "existing contents".getBytes(StandardCharsets.UTF_8);
+    Files.write(destination, original);
+    try {
+      assertThrows(IOException.class, () -> NativeDepsLoader.extractNativeDep(
+          TEST_OS, TEST_ARCH, baseName, destination.toFile()));
+
+      assertArrayEquals(original, Files.readAllBytes(destination));
+    } finally {
+      Files.deleteIfExists(destination);
+      Files.deleteIfExists(destinationDirectory);
+    }
+  }
+
+  @Test
+  void nativeDepUtilExtractsResource() throws IOException {
+    String baseName = "nativeutiltest";
+    byte[] expected = "native util contents".getBytes(StandardCharsets.UTF_8);
+    writeChunkedResource(baseName, expected, 8, "1", null, null);
+    Path destinationDirectory = Files.createTempDirectory("native-dep-util");
+    Path destination = destinationDirectory.resolve(System.mapLibraryName(baseName));
+    try {
+      File extracted = NativeDepUtil.execute(
+          new String[]{"extract", baseName, destination.toString()}, TEST_OS, TEST_ARCH);
+
+      assertEquals(destination.toAbsolutePath(), extracted.toPath());
+      assertArrayEquals(expected, Files.readAllBytes(destination));
+    } finally {
+      Files.deleteIfExists(destination);
+      Files.deleteIfExists(destinationDirectory);
+    }
+  }
+
+  @Test
   void extractsChunksConcurrently() throws Exception {
     String mappedName = "libconcurrent.so";
     byte[] expected = "0123456789abcdef".getBytes(StandardCharsets.UTF_8);

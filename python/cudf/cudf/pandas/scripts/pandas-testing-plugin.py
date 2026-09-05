@@ -550,8 +550,6 @@ NODEIDS_THAT_FAIL = {
     "tests/copy_view/test_methods.py::test_align_with_series_copy_false": "TODO: Add a reason for failure",
     "tests/copy_view/test_methods.py::test_assign_drop_duplicates[assign]": "TODO: Add a reason for failure",
     "tests/copy_view/test_methods.py::test_assign_drop_duplicates[drop_duplicates]": "TODO: Add a reason for failure",
-    "tests/copy_view/test_methods.py::test_between_time[obj0]": "TODO: Add a reason for failure",
-    "tests/copy_view/test_methods.py::test_between_time[obj1]": "TODO: Add a reason for failure",
     "tests/copy_view/test_methods.py::test_chained_methods[reset_index]": "TODO: Add a reason for failure",
     "tests/copy_view/test_methods.py::test_chained_where_mask[mask]": "TODO: Add a reason for failure",
     "tests/copy_view/test_methods.py::test_chained_where_mask[where]": "TODO: Add a reason for failure",

@@ -13,6 +13,7 @@
 #include <nvbench/nvbench.cuh>
 
 #include <optional>
+#include <vector>
 
 static void bench_hash(nvbench::state& state)
 {
@@ -22,13 +23,39 @@ static void bench_hash(nvbench::state& state)
   // disable null bitmask if probability is exactly 0.0
   bool const no_nulls  = nulls == 0.0;
   auto const hash_name = state.get_string("hash_name");
+  auto const data_type = state.get_string("data_type");
 
-  data_profile const profile =
+  auto builder =
     data_profile_builder().null_probability(no_nulls ? std::nullopt : std::optional<double>{nulls});
-  auto const data =
-    create_random_table(cycle_dtypes({cudf::type_id::INT64, cudf::type_id::STRING}, num_cols),
-                        row_count{num_rows},
-                        profile);
+
+  // Column types to hash.  `mixed` is the historical default; the rest isolate a single type so
+  // that per-type costs, such as the byte-wise decimal128 path, are visible on their own.
+  auto const types = [&]() -> std::vector<cudf::type_id> {
+    if (data_type == "mixed") {
+      return cycle_dtypes({cudf::type_id::INT64, cudf::type_id::STRING}, num_cols);
+    }
+    if (data_type == "int64") { return std::vector(num_cols, cudf::type_id::INT64); }
+    if (data_type == "double") { return std::vector(num_cols, cudf::type_id::FLOAT64); }
+    if (data_type == "decimal128") { return std::vector(num_cols, cudf::type_id::DECIMAL128); }
+    if (data_type == "string") { return std::vector(num_cols, cudf::type_id::STRING); }
+    if (data_type == "list") {
+      builder.list_depth(1).list_type(cudf::type_id::INT64);
+      return std::vector(num_cols, cudf::type_id::LIST);
+    }
+    if (data_type == "struct") {
+      builder.struct_types(
+        std::vector<cudf::type_id>{cudf::type_id::INT64, cudf::type_id::FLOAT64});
+      return std::vector(num_cols, cudf::type_id::STRUCT);
+    }
+    return {};
+  }();
+  if (types.empty()) {
+    state.skip(data_type + ": unknown data type");
+    return;
+  }
+
+  data_profile const profile = builder;
+  auto const data            = create_random_table(types, row_count{num_rows}, profile);
 
   auto stream = cudf::get_default_stream();
   state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.get()));
@@ -43,6 +70,12 @@ static void bench_hash(nvbench::state& state)
 
     state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
       auto result = cudf::hashing::murmurhash3_x86_32(data->view());
+    });
+  } else if (hash_name == "spark_murmurhash3_x86_32") {
+    state.add_global_memory_writes<nvbench::uint32_t>(num_rows);
+
+    state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
+      auto result = cudf::hashing::spark_murmurhash3_x86_32(data->view());
     });
   } else if (hash_name == "md5") {
     // md5 creates a 32-byte string
@@ -92,7 +125,16 @@ static void bench_hash(nvbench::state& state)
 NVBENCH_BENCH(bench_hash)
   .set_name("hashing")
   .add_int64_axis("num_rows", {65536, 16777216})
+  .add_string_axis("data_type",
+                   {"mixed", "int64", "double", "decimal128", "string", "list", "struct"})
   .add_int64_axis("num_cols", {2, 64})
   .add_float64_axis("nulls", {0.0, 0.1})
   .add_string_axis("hash_name",
-                   {"murmurhash3_x86_32", "md5", "sha1", "sha224", "sha256", "sha384", "sha512"});
+                   {"murmurhash3_x86_32",
+                    "spark_murmurhash3_x86_32",
+                    "md5",
+                    "sha1",
+                    "sha224",
+                    "sha256",
+                    "sha384",
+                    "sha512"});

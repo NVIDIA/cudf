@@ -194,6 +194,56 @@ TEST_F(TextNormalizeTest, SpecialTokens)
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
 }
 
+TEST_F(TextNormalizeTest, NormalizeCharactersStripAccents)
+{
+  // Tests normalize_flags::STRIP_ACCENTS via the flags overload of normalize_characters.
+  // Row 2: NFD form — plain 'a' followed by U+0301 (combining acute accent) followed by 'b'.
+  // Constructed via char casts to avoid source-encoding ambiguity with precomposed á (U+00E1).
+  char const u0301[]        = {(char)0xcc, (char)0x81, 0};  // UTF-8 for U+0301
+  std::string const nfd_str = std::string("a") + u0301 + "b";
+  auto input                = cudf::test::strings_column_wrapper({
+    "éàïü",   // lowercase precomposed NFC accented
+    "ÉÀÏÜ",   // uppercase precomposed NFC accented
+    nfd_str,  // NFD: a + U+0301 (combining acute accent) + b
+    "ACENU",  // no accents
+  });
+  auto sv                   = cudf::strings_column_view(input);
+
+  // strip_accents=true, do_lower_case=false: de-accent while preserving case
+  auto normalizer = nvtext::create_character_normalizer(false);
+  auto flags    = nvtext::normalize_flags::STRIP_ACCENTS | nvtext::normalize_flags::PAD_PUNCTUATION;
+  auto results  = nvtext::normalize_characters(sv, *normalizer, flags);
+  auto expected = cudf::test::strings_column_wrapper({"eaiu", "EAIU", "ab", "ACENU"});
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
+
+  // strip_accents=true, do_lower_case=true: same result as do_lower_case=true alone
+  normalizer = nvtext::create_character_normalizer(true);
+  results    = nvtext::normalize_characters(sv, *normalizer, flags);
+  expected   = cudf::test::strings_column_wrapper({"eaiu", "eaiu", "ab", "acenu"});
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
+}
+
+TEST_F(TextNormalizeTest, NormalizeCharactersNoTokenizePunctuation)
+{
+  // Tests normalize_flags::NONE / pad_punctuation=false.
+  // Punctuation and CJK characters should not receive padding spaces.
+  // Whitespace normalization (tab→space via ALWAYS_REPLACE) is unaffected.
+  auto input = cudf::test::strings_column_wrapper({"P^NP", "$41.07", "[a,b]", "丏丟", "éè\tâ"});
+  auto sv    = cudf::strings_column_view(input);
+
+  // no pad_punctuation, do_lower_case=false: chars pass through unchanged
+  auto normalizer = nvtext::create_character_normalizer(false);
+  auto results    = nvtext::normalize_characters(sv, *normalizer, nvtext::normalize_flags::NONE);
+  auto expected   = cudf::test::strings_column_wrapper({"P^NP", "$41.07", "[a,b]", "丏丟", "éè â"});
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
+
+  // no pad_punctuation, do_lower_case=true: lowercase + de-accent, no punct padding
+  normalizer = nvtext::create_character_normalizer(true);
+  results    = nvtext::normalize_characters(sv, *normalizer, nvtext::normalize_flags::NONE);
+  expected   = cudf::test::strings_column_wrapper({"p^np", "$41.07", "[a,b]", "丏丟", "ee a"});
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
+}
+
 TEST_F(TextNormalizeTest, NormalizeSlicedColumn)
 {
   cudf::test::strings_column_wrapper strings(

@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import pyarrow as pa
@@ -60,6 +60,46 @@ def test_normalizer(norm_chars_input_data, do_lower):
             ]
         )
     assert_column_eq(expect, got)
+
+
+@pytest.mark.parametrize(
+    "flags,do_lower,expected",
+    [
+        (
+            plc.nvtext.normalize.NormalizeFlags.STRIP_ACCENTS
+            | plc.nvtext.normalize.NormalizeFlags.PAD_PUNCTUATION,
+            False,
+            [
+                "eaio eaio",
+                "ACENU",
+                "ACENU",
+                " $ 24 . 08",
+                " [ a , bb ] ",
+                " [ PAD ] ",
+            ],
+        ),
+        (
+            plc.nvtext.normalize.NormalizeFlags.NONE,
+            False,
+            ["éâîô eaio", "ĂĆĖÑÜ", "ACENU", "$24.08", "[a,bb]", "[PAD]"],
+        ),
+        (
+            plc.nvtext.normalize.NormalizeFlags.NONE,
+            True,
+            ["eaio eaio", "acenu", "acenu", "$24.08", "[a,bb]", "[pad]"],
+        ),
+    ],
+)
+def test_normalizer_flags(norm_chars_input_data, flags, do_lower, expected):
+    got = plc.nvtext.normalize.normalize_characters(
+        plc.Column.from_arrow(norm_chars_input_data),
+        plc.nvtext.normalize.CharacterNormalizer(
+            do_lower,
+            plc.column_factories.make_empty_column(plc.types.TypeId.STRING),
+        ),
+        int(flags),
+    )
+    assert_column_eq(pa.array(expected), got)
 
 
 @pytest.mark.parametrize("do_lower", [True, False])

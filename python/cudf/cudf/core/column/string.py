@@ -861,12 +861,15 @@ class StringColumn(ColumnBase, Scannable):
         )
 
     def normalize_characters(
-        self, normalizer: plc.nvtext.normalize.CharacterNormalizer
+        self,
+        normalizer: plc.nvtext.normalize.CharacterNormalizer,
+        flags: int = int(plc.nvtext.normalize.NormalizeFlags.PAD_PUNCTUATION),
     ) -> Self:
         with self.access(mode="read", scope="internal"):
             plc_column = plc.nvtext.normalize.normalize_characters(
                 self.plc_column,
                 normalizer,
+                flags,
             )
             return cast(
                 "Self",

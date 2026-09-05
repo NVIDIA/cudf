@@ -7,6 +7,7 @@
 
 #include "io/parquet/reader_impl_helpers.hpp"
 
+#include <cudf/column/column_view.hpp>
 #include <cudf/detail/utilities/host_vector.hpp>
 #include <cudf/io/parquet.hpp>
 #include <cudf/types.hpp>
@@ -47,8 +48,7 @@ compute_page_row_offsets_and_colchunk_page_offsets(
  * @param per_file_metadata Span of parquet footer metadata
  * @param row_group_indices Span of input row group indices
  * @param schema_idx Column's schema index
- * @return A pair of page row offsets and the size of the largest page in this
- * column
+ * @return A pair of page row offsets and the size of the largest page in this column
  */
 [[nodiscard]] std::pair<std::vector<size_type>, size_type> compute_page_row_offsets(
   cudf::host_span<metadata_base const> per_file_metadata,
@@ -71,14 +71,32 @@ compute_page_row_offsets_and_colchunk_page_offsets(
   rmm::device_async_resource_ref mr);
 
 /**
- * @brief Computes the offsets of the Fenwick tree levels (level 1 and higher) until the tree level
- * block size becomes larger than the maximum page (search range) size
+ * @brief Checks whether every row is retained by the boolean row mask
  *
- * @param level0_size Size of the zeroth tree level (the row mask)
- * @param max_page_size Maximum page (search range) size
- * @return Fenwick tree level offsets
+ * Null entries in the row mask are treated as surviving rows
+ *
+ * @param retention_mask Boolean column indicating retained rows
+ * @param stream CUDA stream used for device memory operations and kernel launches
+ * @return Boolean indicating whether every row is retained
  */
-[[nodiscard]] std::vector<size_type> compute_fenwick_tree_level_offsets(
-  cudf::size_type level0_size, cudf::size_type max_page_size);
+[[nodiscard]] bool are_all_rows_retained(cudf::column_view const& retention_mask,
+                                         cuda::stream_ref stream);
+
+/**
+ * @brief Computes a mask indicating which row ranges contain at least one selected row
+ *
+ * Null entries in the row mask are treated as surviving rows
+ *
+ * @param row_mask Boolean column indicating selected rows
+ * @param page_row_offsets Page row offsets defining the row ranges
+ * @param max_page_size Size of the largest page row range
+ * @param stream CUDA stream used for device memory operations and kernel launches
+ * @return Boolean vector with one entry for each consecutive row range
+ */
+[[nodiscard]] thrust::host_vector<bool> compute_row_range_selection_mask(
+  cudf::column_view const& row_mask,
+  std::span<cudf::size_type const> page_row_offsets,
+  cudf::size_type max_page_size,
+  cuda::stream_ref stream);
 
 }  // namespace cudf::io::parquet::experimental::detail

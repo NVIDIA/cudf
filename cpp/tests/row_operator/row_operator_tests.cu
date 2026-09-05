@@ -15,6 +15,7 @@
 #include <cudf/detail/row_operator/lexicographic.cuh>
 #include <cudf/detail/row_operator/primitive_row_operators.cuh>
 #include <cudf/hashing/detail/xxhash_64.cuh>
+#include <cudf/null_mask.hpp>
 #include <cudf/strings/strings_column_view.hpp>
 
 #include <rmm/exec_policy.hpp>
@@ -210,8 +211,11 @@ TYPED_TEST(TypedTableViewTest, TestSortSameTableFromTwoTablesWithListsOfStructs)
       auto child1 = strings_col{{"a", "c", "a", "b"}, stream, mr};
       return structs_col{{child0, child1}, {}, stream, mr};
     };
-    return cudf::make_lists_column(
-      2, int32s_col{{0, 2, 4}, stream, mr}.release(), get_structs().release(), 0, {});
+    return cudf::make_lists_column(2,
+                                   int32s_col{{0, 2, 4}, stream, mr}.release(),
+                                   get_structs().release(),
+                                   0,
+                                   cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
   }();
   auto const col2 = [] {
     auto const get_structs = [] {
@@ -219,7 +223,11 @@ TYPED_TEST(TypedTableViewTest, TestSortSameTableFromTwoTablesWithListsOfStructs)
       auto child1 = strings_col{};
       return structs_col{{child0, child1}};
     };
-    return cudf::make_lists_column(0, int32s_col{}.release(), get_structs().release(), 0, {});
+    return cudf::make_lists_column(0,
+                                   int32s_col{}.release(),
+                                   get_structs().release(),
+                                   0,
+                                   cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
   }();
 
   auto const column_order = std::vector{cudf::order::ASCENDING};

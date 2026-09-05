@@ -357,7 +357,7 @@ class streaming_hash_join_impl {
 
     auto preprocessed = row::equality::preprocessed_table::create(keys, stream, mr.get_output_mr());
     auto const batch_rows = keys.num_rows();
-    auto row_bitmask      = [&]() -> std::optional<rmm::device_buffer> {
+    auto row_bitmask      = [&]() -> std::optional<cuda::device_buffer<uint8_t>> {
       if (batch_rows > 0 && compare_nulls == null_equality::UNEQUAL && nullable(keys)) {
         return cudf::detail::bitmask_and(keys, stream, mr.get_temporary_mr()).first;
       }

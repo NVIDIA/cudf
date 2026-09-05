@@ -394,7 +394,7 @@ struct dispatch_from_floats_fn {
     auto d_column           = *column;
 
     // copy the null mask
-    rmm::device_buffer null_mask = cudf::detail::copy_bitmask(floats, stream, mr);
+    cuda::device_buffer<uint8_t> null_mask = cudf::detail::copy_bitmask(floats, stream, mr);
 
     auto [offsets, chars] =
       make_strings_children(from_floats_fn<FloatType>{d_column}, strings_count, stream, mr);

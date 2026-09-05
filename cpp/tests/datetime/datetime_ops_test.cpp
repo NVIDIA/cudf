@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -39,7 +39,8 @@ TYPED_TEST(NonTimestampTest, TestThrowsOnNonTimestamp)
   using namespace cuda::std::chrono;
 
   cudf::data_type dtype{cudf::type_to_id<T>()};
-  cudf::column col{dtype, 0, rmm::device_buffer{}, rmm::device_buffer{}, 0};
+  cudf::column col{
+    dtype, 0, rmm::device_buffer{}, cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED), 0};
 
   EXPECT_THROW(extract_datetime_component(col, cudf::datetime::datetime_component::YEAR),
                cudf::logic_error);
@@ -252,8 +253,16 @@ TYPED_TEST(TypedDatetimeOpsTest, TestEmptyColumns)
   auto int16s_dtype     = cudf::data_type{cudf::type_to_id<int16_t>()};
   auto timestamps_dtype = cudf::data_type{cudf::type_to_id<T>()};
 
-  cudf::column int16s{int16s_dtype, 0, rmm::device_buffer{}, rmm::device_buffer{}, 0};
-  cudf::column timestamps{timestamps_dtype, 0, rmm::device_buffer{}, rmm::device_buffer{}, 0};
+  cudf::column int16s{int16s_dtype,
+                      0,
+                      rmm::device_buffer{},
+                      cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
+                      0};
+  cudf::column timestamps{timestamps_dtype,
+                          0,
+                          rmm::device_buffer{},
+                          cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
+                          0};
 
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(
     *extract_datetime_component(timestamps, cudf::datetime::datetime_component::YEAR), int16s);

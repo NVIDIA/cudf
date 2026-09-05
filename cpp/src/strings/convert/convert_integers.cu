@@ -354,7 +354,7 @@ struct dispatch_from_integers_fn {
     auto d_column           = *column;
 
     // copy the null mask
-    rmm::device_buffer null_mask = cudf::detail::copy_bitmask(integers, stream, mr);
+    cuda::device_buffer<uint8_t> null_mask = cudf::detail::copy_bitmask(integers, stream, mr);
 
     auto [offsets, chars] =
       make_strings_children(from_integers_fn<IntegerType>{d_column}, strings_count, stream, mr);

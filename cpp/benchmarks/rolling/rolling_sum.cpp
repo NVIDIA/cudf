@@ -73,7 +73,7 @@ void bench_row_variable_rolling_sum(nvbench::state& state, nvbench::type_list<Ty
     return std::make_unique<cudf::column>(cudf::data_type(cudf::type_to_id<cudf::size_type>()),
                                           num_rows,
                                           std::move(buf),
-                                          rmm::device_buffer{},
+                                          cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
                                           0);
   }();
 
@@ -89,7 +89,7 @@ void bench_row_variable_rolling_sum(nvbench::state& state, nvbench::type_list<Ty
     return std::make_unique<cudf::column>(cudf::data_type(cudf::type_to_id<cudf::size_type>()),
                                           num_rows,
                                           std::move(buf),
-                                          rmm::device_buffer{},
+                                          cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
                                           0);
   }();
 

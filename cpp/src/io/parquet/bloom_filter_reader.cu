@@ -143,7 +143,7 @@ struct bloom_filter_caster {
       cudf::data_type{cudf::type_id::BOOL8},
       static_cast<cudf::size_type>(total_row_groups),
       std::move(results),
-      rmm::device_buffer{0, stream, cudf::get_current_device_resource_ref()},
+      cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED, stream),
       0);
   }
 

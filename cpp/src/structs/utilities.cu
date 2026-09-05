@@ -267,7 +267,7 @@ std::unique_ptr<column> superimpose_nulls(bitmask_type const* null_mask,
                "Child columns must have the same number of rows as the Struct column.");
 
   for (auto& child : content.children) {
-    child = superimpose_nulls(static_cast<bitmask_type const*>(content.null_mask->data()),
+    child = superimpose_nulls(reinterpret_cast<bitmask_type const*>(content.null_mask->data()),
                               new_null_count,
                               std::move(child),
                               stream,
@@ -551,10 +551,10 @@ std::vector<std::unique_ptr<column>> enforce_null_consistency(
 
   // Helper struct to store and manipulate struct column properties
   struct contents {
-    size_type null_count                          = 0;        // Number of null values in the struct
-    std::unique_ptr<rmm::device_buffer> null_mask = nullptr;  // Null mask buffer for the struct
-    size_type num_children                        = 0;  // Number of child columns in this struct
-    size_type num_elements                        = 0;  // Number of rows in the struct
+    size_type null_count                                    = 0;        // Number of null values
+    std::unique_ptr<cuda::device_buffer<uint8_t>> null_mask = nullptr;  // Null mask buffer
+    size_type num_children                                  = 0;        // Number of child columns
+    size_type num_elements                                  = 0;        // Number of rows
   };
 
   std::vector<contents> struct_contents;  // Store properties of each struct column
@@ -576,7 +576,7 @@ std::vector<std::unique_ptr<column>> enforce_null_consistency(
       struct_root_masks.insert(
         struct_root_masks.end(),
         col_contents.children.size(),
-        static_cast<bitmask_type const*>(struct_contents.back().null_mask->data()));
+        reinterpret_cast<bitmask_type const*>(struct_contents.back().null_mask->data()));
 
       // Add all child columns from this struct
       for (auto& child : col_contents.children) {

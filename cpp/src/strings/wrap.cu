@@ -97,7 +97,7 @@ std::unique_ptr<column> wrap(strings_column_view const& strings,
   size_type null_count = strings.null_count();
 
   // copy null mask
-  rmm::device_buffer null_mask = cudf::detail::copy_bitmask(strings.parent(), stream, mr);
+  cuda::device_buffer<uint8_t> null_mask = cudf::detail::copy_bitmask(strings.parent(), stream, mr);
 
   // build offsets column
   auto offsets_column = std::make_unique<column>(strings.offsets(), stream, mr);  // makes a copy

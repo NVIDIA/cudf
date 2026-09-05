@@ -34,9 +34,10 @@ namespace detail {
  * @param num_child_rows Number of rows in child column
  * @param stream CUDA stream used for device memory operations and kernel launches
  * @param mr Device memory resource used to allocate child column's null mask
- * @return std::pair<rmm::device_buffer, size_type> Child column's null mask and null row count
+ * @return std::pair<cuda::device_buffer<uint8_t>, size_type> Child column's null mask and null row
+ * count
  */
-std::pair<rmm::device_buffer, size_type> construct_child_nullmask(
+std::pair<cuda::device_buffer<uint8_t>, size_type> construct_child_nullmask(
   rmm::device_uvector<unbound_list_view> const& parent_list_vector,
   column_view const& parent_list_offsets,
   cudf::lists_column_device_view const& source_lists,
@@ -165,7 +166,7 @@ struct list_child_constructor {
       source_lists_column_view.child().nullable() || target_lists_column_view.child().nullable()
         ? construct_child_nullmask(
             list_vector, list_offsets, source_lists, target_lists, num_child_rows, stream, mr)
-        : std::pair(rmm::device_buffer{}, 0);
+        : std::pair(cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED), 0);
 
     auto child_column = cudf::make_fixed_width_column(source_lists_column_view.child().type(),
                                                       num_child_rows,
@@ -346,7 +347,7 @@ struct list_child_constructor {
       source_lists_column_view.child().nullable() || target_lists_column_view.child().nullable()
         ? construct_child_nullmask(
             list_vector, list_offsets, source_lists, target_lists, num_child_rows, stream, mr)
-        : std::pair(rmm::device_buffer{}, 0);
+        : std::pair(cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED), 0);
 
     return cudf::make_lists_column(num_child_rows,
                                    std::move(child_offsets),
@@ -437,7 +438,7 @@ struct list_child_constructor {
       source_lists_column_view.child().nullable() || target_lists_column_view.child().nullable()
         ? construct_child_nullmask(
             list_vector, list_offsets, source_lists, target_lists, num_child_rows, stream, mr)
-        : std::pair(rmm::device_buffer{}, 0);
+        : std::pair(cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED), 0);
 
     return cudf::make_structs_column(num_child_rows,
                                      std::move(child_columns),

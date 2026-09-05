@@ -10,8 +10,7 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 
-#include <rmm/device_buffer.hpp>
-
+#include <cuda/buffer>
 #include <cuda/stream>
 
 #include <span>
@@ -82,7 +81,7 @@ size_type num_bitmask_words(size_type number_of_bits);
  * @return A `device_buffer` for use as a null bitmask
  * satisfying the desired size and state
  */
-rmm::device_buffer create_null_mask(
+cuda::device_buffer<uint8_t> create_null_mask(
   size_type size,
   mask_state state,
   cuda::stream_ref stream           = cudf::get_default_stream(),
@@ -166,7 +165,7 @@ void set_null_masks_unsafe(cudf::host_span<bitmask_type*> bitmasks,
  * @return A `device_buffer` containing the bits
  * `[begin_bit, end_bit)` from `mask`.
  */
-rmm::device_buffer copy_bitmask(
+cuda::device_buffer<uint8_t> copy_bitmask(
   bitmask_type const* mask,
   size_type begin_bit,
   size_type end_bit,
@@ -185,7 +184,7 @@ rmm::device_buffer copy_bitmask(
  * @return A `device_buffer` containing the bits
  * `[view.offset(), view.offset() + view.size())` from `view`'s bitmask.
  */
-rmm::device_buffer copy_bitmask(
+cuda::device_buffer<uint8_t> copy_bitmask(
   column_view const& view,
   cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
@@ -202,7 +201,7 @@ rmm::device_buffer copy_bitmask(
  * @param mr Device memory resource used to allocate the returned device_buffer
  * @return A pair of resulting bitmask and count of unset bits
  */
-std::pair<rmm::device_buffer, size_type> bitmask_and(
+std::pair<cuda::device_buffer<uint8_t>, size_type> bitmask_and(
   table_view const& view,
   cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
@@ -219,7 +218,7 @@ std::pair<rmm::device_buffer, size_type> bitmask_and(
  * @param mr Device memory resource used to allocate the returned device_buffer
  * @return A pair of resulting bitmask of size mask_size and the count of unset bits
  */
-std::pair<rmm::device_buffer, size_type> bitmask_and(
+std::pair<cuda::device_buffer<uint8_t>, size_type> bitmask_and(
   host_span<bitmask_type const* const> masks,
   host_span<size_type const> begin_bits,
   size_type mask_size,
@@ -250,7 +249,7 @@ std::pair<rmm::device_buffer, size_type> bitmask_and(
  * @param mr Device memory resource used to allocate the returned device_buffer
  * @return A pair of vectors containing resulting bitmask and count of unset bits for each segment
  */
-std::pair<std::vector<std::unique_ptr<rmm::device_buffer>>, std::vector<size_type>>
+std::pair<std::vector<std::unique_ptr<cuda::device_buffer<uint8_t>>>, std::vector<size_type>>
 segmented_bitmask_and(host_span<column_view const> colviews,
                       host_span<size_type const> segment_offsets,
                       cuda::stream_ref stream           = cudf::get_default_stream(),
@@ -280,7 +279,7 @@ segmented_bitmask_and(host_span<column_view const> colviews,
  * @param mr Device memory resource used to allocate the returned device_buffer
  * @return A pair of vectors containing resulting bitmask and count of unset bits for each segment
  */
-std::pair<std::vector<std::unique_ptr<rmm::device_buffer>>, std::vector<size_type>>
+std::pair<std::vector<std::unique_ptr<cuda::device_buffer<uint8_t>>>, std::vector<size_type>>
 segmented_bitmask_and(host_span<bitmask_type const* const> masks,
                       host_span<size_type const> segment_offsets,
                       size_type mask_size_bits,
@@ -299,7 +298,7 @@ segmented_bitmask_and(host_span<bitmask_type const* const> masks,
  * @param mr Device memory resource used to allocate the returned device_buffer
  * @return A pair of resulting bitmask and count of unset bits
  */
-std::pair<rmm::device_buffer, size_type> bitmask_or(
+std::pair<cuda::device_buffer<uint8_t>, size_type> bitmask_or(
   table_view const& view,
   cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());

@@ -50,8 +50,13 @@ std::unique_ptr<column> find_multiple(strings_column_view const& input,
   auto const total_count = static_cast<size_type>(total_elements);
 
   // create output column
-  auto results = make_numeric_column(
-    data_type{type_id::INT32}, total_count, rmm::device_buffer{0, stream, mr}, 0, stream, mr);
+  auto results =
+    make_numeric_column(data_type{type_id::INT32},
+                        total_count,
+                        cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED, stream, mr),
+                        0,
+                        stream,
+                        mr);
 
   // fill output column with position values
   thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
@@ -73,8 +78,11 @@ std::unique_ptr<column> find_multiple(strings_column_view const& input,
     numeric_scalar<int32_t>(targets_count, true, stream, cudf::get_current_device_resource_ref()),
     stream,
     mr);
-  return make_lists_column(
-    strings_count, std::move(offsets), std::move(results), 0, rmm::device_buffer{0, stream, mr});
+  return make_lists_column(strings_count,
+                           std::move(offsets),
+                           std::move(results),
+                           0,
+                           cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED, stream, mr));
 }
 
 }  // namespace detail

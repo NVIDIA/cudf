@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -225,7 +225,11 @@ TEST_F(MinHashTest, ErrorsTest)
     cuda::counting_iterator<cudf::size_type>{0},
     cuda::counting_iterator{static_cast<cudf::size_type>(h_input.size() + 1)});
   auto input_ngrams =
-    cudf::make_lists_column(h_input.size(), offsets.release(), input.release(), 0, {});
+    cudf::make_lists_column(h_input.size(),
+                            offsets.release(),
+                            input.release(),
+                            0,
+                            cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
   lview = cudf::lists_column_view(input_ngrams->view());
   EXPECT_THROW(nvtext::minhash_ngrams(lview, 4, 0, pview, pview), std::overflow_error);
   EXPECT_THROW(nvtext::minhash64_ngrams(lview, 4, 0, pview64, pview64), std::overflow_error);
@@ -275,7 +279,11 @@ TEST_F(MinHashTest, NgramsWide)
   auto str_data = cudf::test::strings_column_wrapper(many.begin(), many.end());
   auto offsets =
     cudf::test::fixed_width_column_wrapper<int32_t, uint64_t>({0ul, many.size() / 2, many.size()});
-  auto input = cudf::make_lists_column(2, offsets.release(), str_data.release(), 0, {});
+  auto input = cudf::make_lists_column(2,
+                                       offsets.release(),
+                                       str_data.release(),
+                                       0,
+                                       cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
   auto view = cudf::lists_column_view(input->view());
 

@@ -357,11 +357,12 @@ struct column_gatherer_impl<list_view> {
         lists::detail::gather_list_nested(list.get_sliced_child(stream), gd, stream, output_mr);
 
       // return the final column
-      return make_lists_column(gather_map_size,
-                               std::move(gd.offsets),
-                               std::move(child),
-                               0,
-                               rmm::device_buffer{0, stream, output_mr});
+      return make_lists_column(
+        gather_map_size,
+        std::move(gd.offsets),
+        std::move(child),
+        0,
+        cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED, stream, output_mr));
     }
 
     // it's a leaf.  do a regular gather
@@ -369,11 +370,12 @@ struct column_gatherer_impl<list_view> {
       lists::detail::gather_list_leaf(list.get_sliced_child(stream), gd, stream, output_mr);
 
     // assemble final column
-    return make_lists_column(gather_map_size,
-                             std::move(gd.offsets),
-                             std::move(child),
-                             0,
-                             rmm::device_buffer{0, stream, output_mr});
+    return make_lists_column(
+      gather_map_size,
+      std::move(gd.offsets),
+      std::move(child),
+      0,
+      cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED, stream, output_mr));
   }
 };
 
@@ -494,7 +496,10 @@ struct column_gatherer_impl<struct_view> {
       gather_map_size,
       std::move(output_struct_members),
       0,
-      rmm::device_buffer{0, stream, output_mr},  // Null mask will be fixed up in cudf::gather().
+      cudf::create_null_mask(0,
+                             cudf::mask_state::UNALLOCATED,
+                             stream,
+                             output_mr),  // Null mask will be fixed up in cudf::gather().
       stream,
       output_mr);
   }

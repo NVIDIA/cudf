@@ -72,7 +72,7 @@ auto write_file(std::vector<std::unique_ptr<cudf::column>>& input_columns,
       auto const [null_mask, null_count] =
         cudf::test::detail::make_null_mask(valid_iter + offset, valid_iter + col->size() + offset);
       col = cudf::structs::detail::superimpose_and_sanitize_nulls(
-        static_cast<cudf::bitmask_type const*>(null_mask.data()),
+        reinterpret_cast<cudf::bitmask_type const*>(null_mask.data()),
         null_count,
         std::move(col),
         cudf::get_default_stream(),
@@ -549,8 +549,11 @@ TEST_F(ParquetChunkedReaderTest, TestChunkedReadWithPlainListOfStringSpanningPag
 
   auto child_col   = strings_col(child_strings.begin(), child_strings.end()).release();
   auto offsets_col = int32s_col(offsets.begin(), offsets.end()).release();
-  auto list_col    = cudf::make_lists_column(
-    num_rows, std::move(offsets_col), std::move(child_col), 0, rmm::device_buffer{});
+  auto list_col    = cudf::make_lists_column(num_rows,
+                                          std::move(offsets_col),
+                                          std::move(child_col),
+                                          0,
+                                          cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
   std::vector<std::unique_ptr<cudf::column>> cols;
   cols.push_back(std::move(list_col));
@@ -1090,7 +1093,7 @@ TEST_F(ParquetChunkedReaderTest, TestChunkedReadWithListsOfStructs)
                               int32s_col(offsets.begin(), offsets.end()).release(),
                               make_structs_col(),
                               0,
-                              rmm::device_buffer{}));
+                              cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED)));
 
     return write_file(input_columns,
                       "chunked_read_with_lists_of_structs",
@@ -1438,18 +1441,23 @@ TEST_F(ParquetChunkedReaderInputLimitTest, ListSpanningPagesAtPassEnd)
   auto const make_offsets = [&] { return int32s_col(offsets.begin(), offsets.end()).release(); };
 
   // array<string>
-  auto list_of_string = cudf::make_lists_column(num_rows,
-                                                make_offsets(),
-                                                strings_col(keys.begin(), keys.end()).release(),
-                                                0,
-                                                rmm::device_buffer{});
+  auto list_of_string =
+    cudf::make_lists_column(num_rows,
+                            make_offsets(),
+                            strings_col(keys.begin(), keys.end()).release(),
+                            0,
+                            cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
   // map<string, string>, modeled as list<struct<string, string>>
   std::vector<std::unique_ptr<cudf::column>> key_value;
   key_value.emplace_back(strings_col(keys.begin(), keys.end()).release());
   key_value.emplace_back(strings_col(values.begin(), values.end(), value_valid.begin()).release());
-  auto list_of_struct = cudf::make_lists_column(
-    num_rows, make_offsets(), structs_col{std::move(key_value)}.release(), 0, rmm::device_buffer{});
+  auto list_of_struct =
+    cudf::make_lists_column(num_rows,
+                            make_offsets(),
+                            structs_col{std::move(key_value)}.release(),
+                            0,
+                            cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
   std::vector<std::unique_ptr<cudf::column>> cols;
   cols.emplace_back(std::move(list_of_string));
@@ -1608,7 +1616,12 @@ void tiny_list_rowgroup_test(bool just_list_col)
     // write out the single-row list column as it's own file
     cudf::test::fixed_width_column_wrapper<int> values(iter, iter + row_sizes[idx]);
     cudf::test::fixed_width_column_wrapper<int> offsets({0, row_sizes[idx]});
-    cols.push_back(cudf::make_lists_column(1, offsets.release(), values.release(), 0, {}));
+    cols.push_back(
+      cudf::make_lists_column(1,
+                              offsets.release(),
+                              values.release(),
+                              0,
+                              cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED)));
 
     // add a column after the list
     if (!just_list_col) {
@@ -2554,8 +2567,12 @@ TEST_F(ParquetReaderTest, ManyLargeLists)
     stream.sync();
 
     // list<bool> column
-    auto list_col = cudf::make_lists_column(
-      num_rows, std::move(offsets_col), std::move(bools_col), 0, rmm::device_buffer{});
+    auto list_col =
+      cudf::make_lists_column(num_rows,
+                              std::move(offsets_col),
+                              std::move(bools_col),
+                              0,
+                              cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
     auto const table    = cudf::table_view({*list_col});
     auto const filepath = temp_env->get_temp_filepath("ManyLargeLists.parquet");

@@ -55,13 +55,14 @@ bool is_supported_operation(data_type out, data_type lhs, data_type rhs, binary_
 /**
  * @brief Computes output valid mask for op between a column and a scalar
  */
-std::pair<rmm::device_buffer, size_type> scalar_col_valid_mask_and(
+std::pair<cuda::device_buffer<uint8_t>, size_type> scalar_col_valid_mask_and(
   column_view const& col,
   scalar const& s,
   cuda::stream_ref stream,
   rmm::device_async_resource_ref mr)
 {
-  if (col.is_empty()) return std::pair(rmm::device_buffer{0, stream, mr}, 0);
+  if (col.is_empty())
+    return std::pair(cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED, stream, mr), 0);
 
   if (not s.is_valid(stream)) {
     return std::pair(cudf::detail::create_null_mask(col.size(), mask_state::ALL_NULL, stream, mr),
@@ -69,7 +70,7 @@ std::pair<rmm::device_buffer, size_type> scalar_col_valid_mask_and(
   } else if (s.is_valid(stream) and col.nullable()) {
     return std::pair(cudf::detail::copy_bitmask(col, stream, mr), col.null_count());
   } else {
-    return std::pair(rmm::device_buffer{0, stream, mr}, 0);
+    return std::pair(cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED, stream, mr), 0);
   }
 }
 

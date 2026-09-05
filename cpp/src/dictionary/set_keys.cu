@@ -67,7 +67,7 @@ struct apply_indices_map_fn {
 
 struct remap_result {
   std::unique_ptr<cudf::column> indices;
-  rmm::device_buffer null_mask;
+  cuda::device_buffer<uint8_t> null_mask = cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED);
   cudf::size_type null_count;
 };
 

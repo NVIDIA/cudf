@@ -160,15 +160,15 @@ struct GroupedRollingRangeOrderByNumericTest : public BaseGroupedRollingRangeOrd
     auto const nulled_order_by = [&] {
       auto col           = generate_order_by_column();
       auto new_null_mask = create_null_mask(col->size(), cudf::mask_state::ALL_VALID);
-      cudf::set_null_mask(static_cast<cudf::bitmask_type*>(new_null_mask.data()),
+      cudf::set_null_mask(reinterpret_cast<cudf::bitmask_type*>(new_null_mask.data()),
                           0,
                           2,
                           false);  // Nulls in first group.
-      cudf::set_null_mask(static_cast<cudf::bitmask_type*>(new_null_mask.data()),
+      cudf::set_null_mask(reinterpret_cast<cudf::bitmask_type*>(new_null_mask.data()),
                           6,
                           8,
                           false);  // Nulls in second group.
-      cudf::set_null_mask(static_cast<cudf::bitmask_type*>(new_null_mask.data()),
+      cudf::set_null_mask(reinterpret_cast<cudf::bitmask_type*>(new_null_mask.data()),
                           10,
                           12,
                           false);  // Nulls in third group.
@@ -473,15 +473,15 @@ struct GroupedRollingRangeOrderByDecimalTypedTest
     auto const nulled_order_by = [&] {
       auto col           = generate_order_by_column(order_by_column_scale);
       auto new_null_mask = create_null_mask(col->size(), cudf::mask_state::ALL_VALID);
-      cudf::set_null_mask(static_cast<cudf::bitmask_type*>(new_null_mask.data()),
+      cudf::set_null_mask(reinterpret_cast<cudf::bitmask_type*>(new_null_mask.data()),
                           0,
                           2,
                           false);  // Nulls in first group.
-      cudf::set_null_mask(static_cast<cudf::bitmask_type*>(new_null_mask.data()),
+      cudf::set_null_mask(reinterpret_cast<cudf::bitmask_type*>(new_null_mask.data()),
                           6,
                           8,
                           false);  // Nulls in second group.
-      cudf::set_null_mask(static_cast<cudf::bitmask_type*>(new_null_mask.data()),
+      cudf::set_null_mask(reinterpret_cast<cudf::bitmask_type*>(new_null_mask.data()),
                           10,
                           12,
                           false);  // Nulls in third group.

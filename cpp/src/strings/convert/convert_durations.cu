@@ -403,7 +403,7 @@ struct dispatch_from_durations_fn {
     auto d_column           = *column;
 
     // copy null mask
-    rmm::device_buffer null_mask = cudf::detail::copy_bitmask(durations, stream, mr);
+    cuda::device_buffer<uint8_t> null_mask = cudf::detail::copy_bitmask(durations, stream, mr);
 
     auto [offsets, chars] =
       make_strings_children(from_durations_fn<T>{d_column, d_format_items, compiler.items_count()},

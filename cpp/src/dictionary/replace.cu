@@ -134,7 +134,8 @@ std::unique_ptr<column> replace_nulls(dictionary_column_view const& input,
     cudf::detail::indexalator_factory::make_input_optional_iterator(*scalar_index, stream),
     stream,
     mr);
-  new_indices->set_null_mask(rmm::device_buffer{0, stream, mr}, 0);
+  new_indices->set_null_mask(cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED, stream, mr),
+                             0);
 
   return make_dictionary_column(
     std::move(input_matched->release().children.back()), std::move(new_indices), stream, mr);

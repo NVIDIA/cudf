@@ -93,14 +93,20 @@ CUDF_KERNEL void copy_shifted_bitmask(bitmask_type* __restrict__ destination,
 }
 
 // copies the bitmask to device and automatically applies the offset
-std::pair<std::unique_ptr<rmm::device_buffer>, size_type> get_mask_buffer(
+std::pair<std::unique_ptr<cuda::device_buffer<uint8_t>>, size_type> get_mask_buffer(
   ArrowArray const* input, cuda::stream_ref stream, rmm::device_async_resource_ref mr)
 {
-  if (input->length == 0) { return {std::make_unique<rmm::device_buffer>(0, stream, mr), 0}; }
+  if (input->length == 0) {
+    return {std::make_unique<cuda::device_buffer<uint8_t>>(
+              cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED, stream, mr)),
+            0};
+  }
 
   auto bitmap = static_cast<uint8_t const*>(input->buffers[validity_buffer_idx]);
   if (bitmap == nullptr || input->null_count == 0) {
-    return {std::make_unique<rmm::device_buffer>(0, stream, mr), 0};
+    return {std::make_unique<cuda::device_buffer<uint8_t>>(
+              cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED, stream, mr)),
+            0};
   }
 
   constexpr auto bits_in_byte = static_cast<int64_t>(size_in_bits<uint8_t>());
@@ -127,7 +133,10 @@ std::pair<std::unique_ptr<rmm::device_buffer>, size_type> get_mask_buffer(
   auto const null_count =
     mask_words > 0 ? cudf::detail::count_unset_bits(mask.data(), 0, num_rows, stream) : 0;
 
-  return {std::make_unique<rmm::device_buffer>(std::move(mask.release())), null_count};
+  auto const mask_bytes = reinterpret_cast<uint8_t const*>(mask.data());
+  return {std::make_unique<cuda::device_buffer<uint8_t>>(cudf::detail::copy_bitmask(
+            reinterpret_cast<bitmask_type const*>(mask_bytes), 0, num_rows, stream, mr)),
+          null_count};
 }
 
 std::unique_ptr<column> get_column_copy(ArrowSchemaView const* schema,
@@ -224,9 +233,11 @@ std::unique_ptr<column> dispatch_copy_from_arrow_host::operator()<cudf::string_v
     std::overflow_error);
 
   if (input->length == 0) { return make_empty_column(type_id::STRING); }
-  auto [mask, null_count] = !skip_mask
-                              ? get_mask_buffer(input, stream, mr)
-                              : std::pair{std::make_unique<rmm::device_buffer>(0, stream, mr), 0};
+  auto [mask, null_count] =
+    !skip_mask ? get_mask_buffer(input, stream, mr)
+               : std::pair{std::make_unique<cuda::device_buffer<uint8_t>>(
+                             cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED, stream, mr)),
+                           0};
   return string_column_from_arrow_host(schema, input, std::move(mask), null_count, stream, mr);
 }
 
@@ -281,7 +292,9 @@ std::unique_ptr<column> dispatch_copy_from_arrow_host::operator()<cudf::struct_v
 
   auto [out_mask, null_count] =
     !skip_mask ? get_mask_buffer(input, stream, mr)
-               : std::pair{std::make_unique<rmm::device_buffer>(0, stream, mr), 0};
+               : std::pair{std::make_unique<cuda::device_buffer<uint8_t>>(
+                             cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED, stream, mr)),
+                           0};
 
   return make_structs_column(
     input->length, std::move(child_columns), null_count, std::move(*out_mask), stream, mr);
@@ -346,7 +359,9 @@ std::unique_ptr<column> dispatch_copy_from_arrow_host::operator()<cudf::list_vie
 
   auto [out_mask, null_count] =
     !skip_mask ? get_mask_buffer(input, stream, mr)
-               : std::pair{std::make_unique<rmm::device_buffer>(0, stream, mr), 0};
+               : std::pair{std::make_unique<cuda::device_buffer<uint8_t>>(
+                             cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED, stream, mr)),
+                           0};
 
   return make_lists_column(static_cast<size_type>(input->length),
                            std::move(offsets_column),
@@ -387,7 +402,7 @@ std::unique_ptr<column> get_column_copy(ArrowSchemaView const* schema,
     return std::make_unique<column>(data_type(type_id::EMPTY),
                                     input->length,
                                     rmm::device_buffer{},
-                                    rmm::device_buffer{},
+                                    cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
                                     input->length);
   }
 

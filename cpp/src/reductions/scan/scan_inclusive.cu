@@ -33,12 +33,12 @@ namespace cudf {
 namespace detail {
 
 // logical-and scan of the null mask of the input view
-std::pair<rmm::device_buffer, size_type> mask_scan(column_view const& input_view,
-                                                   scan_type inclusive,
-                                                   cuda::stream_ref stream,
-                                                   rmm::device_async_resource_ref mr)
+std::pair<cuda::device_buffer<uint8_t>, size_type> mask_scan(column_view const& input_view,
+                                                             scan_type inclusive,
+                                                             cuda::stream_ref stream,
+                                                             rmm::device_async_resource_ref mr)
 {
-  rmm::device_buffer mask =
+  cuda::device_buffer<uint8_t> mask =
     detail::create_null_mask(input_view.size(), mask_state::UNINITIALIZED, stream, mr);
   auto d_input   = column_device_view::create(input_view, stream);
   auto valid_itr = detail::make_validity_iterator(*d_input);
@@ -54,9 +54,12 @@ std::pair<rmm::device_buffer, size_type> mask_scan(column_view const& input_view
     return std::min(input_view.size(), first_null + exclusive_offset);
   }();
 
-  set_null_mask(static_cast<bitmask_type*>(mask.data()), 0, first_null_position, true, stream);
-  set_null_mask(
-    static_cast<bitmask_type*>(mask.data()), first_null_position, input_view.size(), false, stream);
+  set_null_mask(reinterpret_cast<bitmask_type*>(mask.data()), 0, first_null_position, true, stream);
+  set_null_mask(reinterpret_cast<bitmask_type*>(mask.data()),
+                first_null_position,
+                input_view.size(),
+                false,
+                stream);
   return {std::move(mask), input_view.size() - first_null_position};
 }
 
@@ -207,11 +210,11 @@ std::unique_ptr<column> scan_inclusive(column_view const& input,
     } else if (input.nullable()) {
       return mask_scan(input, scan_type::INCLUSIVE, stream, mr);
     }
-    return std::make_pair(rmm::device_buffer{}, size_type{0});
+    return std::make_pair(cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED), size_type{0});
   }();
 
   auto output = scan_agg_dispatch<scan_dispatcher>(
-    input, agg, static_cast<bitmask_type*>(mask.data()), stream, mr);
+    input, agg, reinterpret_cast<bitmask_type*>(mask.data()), stream, mr);
   // Use the null mask produced by the op for EWM
   if (agg.kind != aggregation::EWMA) { output->set_null_mask(std::move(mask), null_count); }
 

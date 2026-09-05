@@ -10,8 +10,7 @@
 #include <cudf/io/json.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/device_buffer.hpp>
-
+#include <cuda/buffer>
 #include <cuda/stream>
 
 #include <memory>
@@ -28,7 +27,7 @@ namespace io::json::detail {
 std::unique_ptr<column> make_escaped_json_strings(column_device_view const& d_column,
                                                   size_type size,
                                                   size_type null_count,
-                                                  rmm::device_buffer null_mask,
+                                                  cuda::device_buffer<uint8_t> null_mask,
                                                   bool append_colon,
                                                   bool escaped_utf8,
                                                   cuda::stream_ref stream,

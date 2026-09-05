@@ -188,7 +188,7 @@ std::unique_ptr<column> filter_characters_of_type(strings_column_view const& str
                            d_replacement};
 
   // copy null mask from input column
-  rmm::device_buffer null_mask = cudf::detail::copy_bitmask(strings.parent(), stream, mr);
+  cuda::device_buffer<uint8_t> null_mask = cudf::detail::copy_bitmask(strings.parent(), stream, mr);
 
   // this utility calls filterer to build the offsets and chars columns
   auto [offsets_column, chars] = make_strings_children(filterer, strings_count, stream, mr);

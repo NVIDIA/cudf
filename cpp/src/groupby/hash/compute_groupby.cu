@@ -62,8 +62,8 @@ std::unique_ptr<table> compute_groupby(table_view const& keys,
   [[maybe_unused]] auto [row_bitmask_data, row_bitmask] =
     skip_rows_with_nulls
       ? cudf::groupby::detail::compute_row_bitmask(keys, stream)
-      : std::pair<rmm::device_buffer, bitmask_type const*>{
-          rmm::device_buffer{0, stream, cudf::get_current_device_resource_ref()}, nullptr};
+      : std::pair<cuda::device_buffer<uint8_t>, bitmask_type const*>{
+          cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED, stream), nullptr};
 
   auto const cached_hashes = [&]() -> rmm::device_uvector<hash_value_type> {
     auto const num_columns =

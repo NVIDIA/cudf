@@ -84,7 +84,7 @@ std::vector<std::unique_ptr<column>> make_strings_column_batch(
   auto [offsets_cols, d_chars_sizes] =
     make_offsets_child_column_batch_async<size_type>(input, stream, mr);
 
-  std::vector<rmm::device_buffer> null_masks;
+  std::vector<cuda::device_buffer<uint8_t>> null_masks;
   null_masks.reserve(num_columns);
 
   rmm::device_uvector<size_type> d_valid_counts(num_columns, stream, mr);
@@ -173,7 +173,8 @@ std::vector<std::unique_ptr<column>> make_strings_column_batch(
       std::move(offsets_cols[idx]),
       chars_data.release(),
       null_count,
-      null_count ? std::move(null_masks[idx]) : rmm::device_buffer{0, stream, mr});
+      null_count ? std::move(null_masks[idx])
+                           : cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED, stream, mr));
   }
 
   return output;
@@ -231,7 +232,7 @@ std::unique_ptr<column> make_strings_column(size_type num_strings,
                                             std::unique_ptr<column> offsets_column,
                                             rmm::device_buffer&& chars_buffer,
                                             size_type null_count,
-                                            rmm::device_buffer&& null_mask)
+                                            cuda::device_buffer<uint8_t>&& null_mask)
 {
   CUDF_FUNC_RANGE();
 
@@ -254,7 +255,7 @@ std::unique_ptr<column> make_strings_column(size_type num_strings,
 std::unique_ptr<column> make_strings_column(size_type num_strings,
                                             rmm::device_uvector<size_type>&& offsets,
                                             rmm::device_uvector<char>&& chars,
-                                            rmm::device_buffer&& null_mask,
+                                            cuda::device_buffer<uint8_t>&& null_mask,
                                             size_type null_count)
 {
   CUDF_FUNC_RANGE();
@@ -271,7 +272,7 @@ std::unique_ptr<column> make_strings_column(size_type num_strings,
     data_type{type_id::INT32},
     offsets_size,
     offsets.release(),
-    rmm::device_buffer(),
+    cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
     0);
 
   auto children = std::vector<std::unique_ptr<column>>();

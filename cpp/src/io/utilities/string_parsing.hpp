@@ -11,6 +11,7 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 
+#include <cuda/buffer>
 #include <cuda/iterator>
 #include <cuda/std/tuple>
 #include <cuda/stream>
@@ -143,7 +144,7 @@ CUDF_EXPORT std::unique_ptr<column> parse_data(
   cuda::zip_iterator<size_type const*, size_type const*> offset_length_begin,
   size_type col_size,
   data_type col_type,
-  rmm::device_buffer&& null_mask,
+  cuda::device_buffer<uint8_t>&& null_mask,
   size_type null_count,
   cudf::io::parse_options_view const& options,
   cuda::stream_ref stream,

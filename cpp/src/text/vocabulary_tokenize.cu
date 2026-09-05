@@ -432,8 +432,8 @@ std::unique_ptr<cudf::column> tokenize_with_vocabulary(cudf::strings_column_view
     },
     stream);
 
-  auto tmp_offsets =
-    std::make_unique<cudf::column>(std::move(d_tmp_offsets), rmm::device_buffer{}, 0);
+  auto tmp_offsets = std::make_unique<cudf::column>(
+    std::move(d_tmp_offsets), cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED), 0);
   auto const tmp_input = cudf::column_view(
     input.parent().type(), total_count, d_input_chars, nullptr, 0, 0, {tmp_offsets->view()});
 

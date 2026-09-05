@@ -221,7 +221,8 @@ std::unique_ptr<column> compute_approx_percentiles(tdigest_column_view const& in
                  },
                  stream,
                  mr)
-             : std::pair<rmm::device_buffer, size_type>{rmm::device_buffer{}, 0};
+             : std::pair<cuda::device_buffer<uint8_t>, size_type>{
+                 cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED), 0};
   }();
 
   auto result = cudf::make_fixed_width_column(
@@ -269,18 +270,31 @@ std::unique_ptr<column> make_tdigest_column(size_type num_rows,
   inner_children.push_back(std::move(centroid_means));
   inner_children.push_back(std::move(centroid_weights));
   auto tdigest_data =
-    cudf::make_structs_column(centroids_size, std::move(inner_children), 0, {}, stream, mr);
+    cudf::make_structs_column(centroids_size,
+                              std::move(inner_children),
+                              0,
+                              cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
+                              stream,
+                              mr);
 
   // grouped into lists
-  auto tdigest =
-    cudf::make_lists_column(num_rows, std::move(tdigest_offsets), std::move(tdigest_data), 0, {});
+  auto tdigest = cudf::make_lists_column(num_rows,
+                                         std::move(tdigest_offsets),
+                                         std::move(tdigest_data),
+                                         0,
+                                         cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
   // create the final column
   std::vector<std::unique_ptr<column>> children;
   children.push_back(std::move(tdigest));
   children.push_back(std::move(min_values));
   children.push_back(std::move(max_values));
-  return make_structs_column(num_rows, std::move(children), 0, {}, stream, mr);
+  return make_structs_column(num_rows,
+                             std::move(children),
+                             0,
+                             cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
+                             stream,
+                             mr);
 }
 
 std::unique_ptr<column> make_empty_tdigests_column(size_type num_rows,
@@ -383,7 +397,8 @@ std::unique_ptr<column> percentile_approx(tdigest_column_view const& input,
                      tdigest_is_empty + tdv.size(),
                      0);
     if (null_count == 0) {
-      return std::pair<rmm::device_buffer, size_type>{rmm::device_buffer{}, null_count};
+      return std::pair<cuda::device_buffer<uint8_t>, size_type>{
+        cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED), null_count};
     }
     return cudf::detail::valid_if(
       tdigest_is_empty, tdigest_is_empty + tdv.size(), cuda::std::logical_not{}, stream, mr);

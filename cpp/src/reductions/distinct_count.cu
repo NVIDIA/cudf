@@ -170,7 +170,7 @@ cudf::size_type distinct_count(table_view const& keys,
       // zero. So, it is only when null_count is not zero that we need
       // to do a filtered insertion.
       if (null_count > 0) {
-        row_validity pred{static_cast<bitmask_type const*>(row_bitmask.data())};
+        row_validity pred{reinterpret_cast<cudf::bitmask_type const*>(row_bitmask.data())};
         return key_set.insert_if(iter, iter + num_rows, stencil, pred, stream.get()) + 1;
       }
     }

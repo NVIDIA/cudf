@@ -442,7 +442,7 @@ std::unique_ptr<column> make_strings_column(size_type num_strings,
                                             std::unique_ptr<column> offsets_column,
                                             rmm::device_buffer&& chars_buffer,
                                             size_type null_count,
-                                            rmm::device_buffer&& null_mask);
+                                            cuda::device_buffer<uint8_t>&& null_mask);
 
 /**
  * @brief Construct a LIST type column given offsets column, child column, null mask and null
@@ -501,7 +501,7 @@ std::unique_ptr<cudf::column> make_lists_column(size_type num_rows,
                                                 std::unique_ptr<column> offsets_column,
                                                 std::unique_ptr<column> child_column,
                                                 size_type null_count,
-                                                rmm::device_buffer&& null_mask);
+                                                cuda::device_buffer<uint8_t>&& null_mask);
 
 /**
  * @brief Create an empty LIST column
@@ -540,7 +540,7 @@ std::unique_ptr<cudf::column> make_structs_column(
   size_type num_rows,
   std::vector<std::unique_ptr<column>>&& child_columns,
   size_type null_count,
-  rmm::device_buffer&& null_mask,
+  cuda::device_buffer<uint8_t>&& null_mask,
   cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
@@ -574,7 +574,7 @@ std::unique_ptr<cudf::column> create_structs_hierarchy(
   size_type num_rows,
   std::vector<std::unique_ptr<column>>&& child_columns,
   size_type null_count,
-  rmm::device_buffer&& null_mask,
+  cuda::device_buffer<uint8_t>&& null_mask,
   cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 

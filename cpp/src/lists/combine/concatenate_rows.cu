@@ -59,7 +59,7 @@ namespace {
  * We can do this by recomputing a new offsets column that does this regrouping.
  *
  */
-std::tuple<std::unique_ptr<column>, rmm::device_buffer, size_type>
+std::tuple<std::unique_ptr<column>, cuda::device_buffer<uint8_t>, size_type>
 generate_regrouped_offsets_and_null_mask(table_device_view const& input,
                                          bool build_null_mask,
                                          concatenate_null_policy null_policy,
@@ -125,7 +125,8 @@ generate_regrouped_offsets_and_null_mask(table_device_view const& input,
   auto [null_mask, null_count] = [&]() {
     // if the input doesn't contain nulls, no work to do
     if (!build_null_mask) {
-      return std::pair<rmm::device_buffer, size_type>{rmm::device_buffer{}, 0};
+      return std::pair<cuda::device_buffer<uint8_t>, size_type>{
+        cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED), 0};
     }
 
     // row is null if -all- input rows are null

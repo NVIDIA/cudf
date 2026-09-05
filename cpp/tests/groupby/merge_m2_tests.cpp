@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -62,9 +62,12 @@ auto compute_partial_results(cudf::column_view const& keys, cudf::column_view co
                                               cudf::data_type(cudf::type_id::INT64),
                                               cudf::get_default_stream());
   auto const num_output_rows     = out_keys->num_rows();
-  return std::pair(std::move(out_keys->release()[0]),
-                   cudf::make_structs_column(
-                     num_output_rows, std::move(out_results[0].results), 0, rmm::device_buffer{}));
+  return std::pair(
+    std::move(out_keys->release()[0]),
+    cudf::make_structs_column(num_output_rows,
+                              std::move(out_results[0].results),
+                              0,
+                              cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED)));
 }
 
 /**

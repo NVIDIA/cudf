@@ -13,9 +13,9 @@
 #include <cudf/utilities/export.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/device_buffer.hpp>
 #include <rmm/device_uvector.hpp>
 
+#include <cuda/buffer>
 #include <cuda/stream>
 
 #include <memory>
@@ -120,7 +120,7 @@ class sort_merge_join {
                                    ///< rows of the unprocessed table view if null equality is set
                                    ///< to false, otherwise equal to the unprocessed table view
 
-    std::optional<rmm::device_buffer> _validity_mask =
+    std::optional<cuda::device_buffer<uint8_t>> _validity_mask =
       std::nullopt;  ///< Optional validity mask for null_equality::UNEQUAL case
     std::optional<size_type> _num_nulls =
       std::nullopt;  ///< Optional count of nulls for null_equality::UNEQUAL case

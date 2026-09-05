@@ -25,7 +25,8 @@ void bench_replace_nans(nvbench::state& state, nvbench::type_list<FloatingType>)
 
   auto const dtype = cudf::type_to_id<FloatingType>();
   auto const input = create_random_column(dtype, row_count{n_rows});
-  if (!include_nulls) input->set_null_mask(rmm::device_buffer{}, 0);
+  if (!include_nulls)
+    input->set_null_mask(cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED), 0);
 
   auto zero = cudf::make_fixed_width_scalar<FloatingType>(0);
 

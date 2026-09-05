@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -88,12 +88,13 @@ TEST_F(CompoundColumnTest, ChildrenLevel1)
   children.emplace_back(std::move(child2));
   children.emplace_back(std::move(child3));
 
-  auto parent = std::make_unique<cudf::column>(cudf::data_type{cudf::type_id::STRING},
-                                               100,
-                                               rmm::device_buffer{},
-                                               rmm::device_buffer{},
-                                               0,
-                                               std::move(children));
+  auto parent =
+    std::make_unique<cudf::column>(cudf::data_type{cudf::type_id::STRING},
+                                   100,
+                                   rmm::device_buffer{},
+                                   cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
+                                   0,
+                                   std::move(children));
 
   {
     auto column = cudf::column_device_view::create(parent->view());
@@ -170,28 +171,31 @@ TEST_F(CompoundColumnTest, ChildrenLevel2)
   gchildren2.emplace_back(std::move(gchild22));
   gchildren2.emplace_back(std::move(gchild23));
 
-  auto children1 = std::make_unique<cudf::column>(cudf::data_type{cudf::type_id::STRING},
-                                                  100,
-                                                  rmm::device_buffer{},
-                                                  rmm::device_buffer{},
-                                                  0,
-                                                  std::move(gchildren1));
-  auto children2 = std::make_unique<cudf::column>(cudf::data_type{cudf::type_id::STRING},
-                                                  100,
-                                                  rmm::device_buffer{},
-                                                  rmm::device_buffer{},
-                                                  0,
-                                                  std::move(gchildren2));
+  auto children1 =
+    std::make_unique<cudf::column>(cudf::data_type{cudf::type_id::STRING},
+                                   100,
+                                   rmm::device_buffer{},
+                                   cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
+                                   0,
+                                   std::move(gchildren1));
+  auto children2 =
+    std::make_unique<cudf::column>(cudf::data_type{cudf::type_id::STRING},
+                                   100,
+                                   rmm::device_buffer{},
+                                   cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
+                                   0,
+                                   std::move(gchildren2));
 
   std::vector<std::unique_ptr<cudf::column>> children;
   children.emplace_back(std::move(children1));
   children.emplace_back(std::move(children2));
-  auto parent = std::make_unique<cudf::column>(cudf::data_type{cudf::type_id::STRING},
-                                               100,
-                                               rmm::device_buffer{},
-                                               rmm::device_buffer{},
-                                               0,
-                                               std::move(children));
+  auto parent =
+    std::make_unique<cudf::column>(cudf::data_type{cudf::type_id::STRING},
+                                   100,
+                                   rmm::device_buffer{},
+                                   cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
+                                   0,
+                                   std::move(children));
 
   {
     auto column = cudf::column_device_view::create(parent->view());

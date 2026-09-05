@@ -72,7 +72,8 @@ struct dispatch_topk_fn {
         tmp.data(), tmp_size, keys_in, keys_out, vals_in, vals_out, size, k, env));
     }
 
-    return std::make_unique<column>(std::move(indices), rmm::device_buffer{}, 0);
+    return std::make_unique<column>(
+      std::move(indices), cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED), 0);
   }
 
   template <typename T>

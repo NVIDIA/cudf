@@ -10,6 +10,7 @@
 #include <cudf/ast/detail/expression_transformer.hpp>
 #include <cudf/ast/expressions.hpp>
 #include <cudf/column/column_factories.hpp>
+#include <cudf/detail/utilities/cuda_memcpy.hpp>
 #include <cudf/detail/utilities/integer_utils.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/io/parquet_schema.hpp>
@@ -280,19 +281,26 @@ class stats_caster_base {
     {
       if constexpr (std::is_same_v<T, string_view>) {
         auto [d_chars, d_offsets, _] = make_strings_children(val, chars, stream, mr);
-        auto null_mask_buffer        = rmm::device_buffer{
-          null_mask.data(), cudf::bitmask_allocation_size_bytes(val.size()), stream, mr};
+        auto null_mask_buffer =
+          cudf::create_null_mask(val.size(), cudf::mask_state::UNINITIALIZED, stream, mr);
+        CUDF_CUDA_TRY(cudf::detail::memcpy_async(
+          null_mask_buffer.data(), null_mask.data(), null_mask_buffer.size(), stream));
         stream.sync();
         return cudf::make_strings_column(
           val.size(),
-          std::make_unique<column>(std::move(d_offsets), rmm::device_buffer{0, stream, mr}, 0),
+          std::make_unique<column>(
+            std::move(d_offsets),
+            cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED, stream, mr),
+            0),
           d_chars.release(),
           null_count,
           std::move(null_mask_buffer));
       }
-      auto data             = cudf::detail::make_device_uvector_async(val, stream, mr);
-      auto null_mask_buffer = rmm::device_buffer{
-        null_mask.data(), cudf::bitmask_allocation_size_bytes(val.size()), stream, mr};
+      auto data = cudf::detail::make_device_uvector_async(val, stream, mr);
+      auto null_mask_buffer =
+        cudf::create_null_mask(val.size(), cudf::mask_state::UNINITIALIZED, stream, mr);
+      CUDF_CUDA_TRY(cudf::detail::memcpy_async(
+        null_mask_buffer.data(), null_mask.data(), null_mask_buffer.size(), stream));
       stream.sync();
       return std::make_unique<column>(
         dtype, val.size(), data.release(), std::move(null_mask_buffer), null_count);

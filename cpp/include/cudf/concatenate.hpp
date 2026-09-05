@@ -11,6 +11,7 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 
+#include <cuda/buffer>
 #include <cuda/stream>
 
 #include <memory>
@@ -39,7 +40,7 @@ namespace CUDF_EXPORT cudf {
  * @param stream CUDA stream used for device memory operations and kernel launches
  * @return Bitmasks of all the column views in the views vector
  */
-rmm::device_buffer concatenate_masks(
+cuda::device_buffer<uint8_t> concatenate_masks(
   std::span<column_view const> views,
   cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());

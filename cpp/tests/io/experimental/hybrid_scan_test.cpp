@@ -727,7 +727,7 @@ TEST_F(HybridScanTest, MaterializeMixedPayloadColumns)
       if (is_nullable) {
         return cudf::test::detail::make_null_mask(list_valids, list_valids + num_rows);
       } else {
-        return std::make_pair(rmm::device_buffer{}, 0);
+        return std::make_pair(cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED), 0);
       }
     }();
     return cudf::make_lists_column(

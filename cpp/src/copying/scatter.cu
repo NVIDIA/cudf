@@ -260,7 +260,7 @@ struct column_scalar_scatterer_impl<struct_view, MapIterator> {
     std::vector<std::unique_ptr<column>> fields(fields_iter_begin, fields_iter_begin + n_fields);
 
     // Compute null mask
-    rmm::device_buffer null_mask =
+    cuda::device_buffer<uint8_t> null_mask =
       target.nullable()
         ? detail::copy_bitmask(target, stream, mr)
         : detail::create_null_mask(target.size(), mask_state::UNALLOCATED, stream, mr);

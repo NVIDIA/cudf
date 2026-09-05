@@ -23,10 +23,10 @@ namespace detail {
  *
  * @param stream CUDA stream used for device memory operations and kernel launches.
  */
-rmm::device_buffer create_null_mask(size_type size,
-                                    mask_state state,
-                                    cuda::stream_ref stream,
-                                    rmm::device_async_resource_ref mr);
+cuda::device_buffer<uint8_t> create_null_mask(size_type size,
+                                              mask_state state,
+                                              cuda::stream_ref stream,
+                                              rmm::device_async_resource_ref mr);
 
 /**
  * @copydoc cudf::set_null_mask(bitmask_type*, size_type, size_type, bool)
@@ -162,20 +162,20 @@ std::vector<size_type> segmented_null_count(bitmask_type const* bitmask,
  *
  * @param stream CUDA stream used for device memory operations and kernel launches.
  */
-rmm::device_buffer copy_bitmask(bitmask_type const* mask,
-                                size_type begin_bit,
-                                size_type end_bit,
-                                cuda::stream_ref stream,
-                                rmm::device_async_resource_ref mr);
+cuda::device_buffer<uint8_t> copy_bitmask(bitmask_type const* mask,
+                                          size_type begin_bit,
+                                          size_type end_bit,
+                                          cuda::stream_ref stream,
+                                          rmm::device_async_resource_ref mr);
 
 /**
  * @copydoc cudf::copy_bitmask(column_view const& view, rmm::device_async_resource_ref)
  *
  * @param stream CUDA stream used for device memory operations and kernel launches.
  */
-rmm::device_buffer copy_bitmask(column_view const& view,
-                                cuda::stream_ref stream,
-                                rmm::device_async_resource_ref mr);
+cuda::device_buffer<uint8_t> copy_bitmask(column_view const& view,
+                                          cuda::stream_ref stream,
+                                          rmm::device_async_resource_ref mr);
 
 /**
  * @copydoc bitmask_and(host_span<bitmask_type const* const>, host_span<size_type> const,
@@ -183,25 +183,26 @@ rmm::device_buffer copy_bitmask(column_view const& view,
  *
  * @param stream CUDA stream used for device memory operations and kernel launches
  */
-std::pair<rmm::device_buffer, size_type> bitmask_and(host_span<bitmask_type const* const> masks,
-                                                     host_span<size_type const> masks_begin_bits,
-                                                     size_type mask_size_bits,
-                                                     cuda::stream_ref stream,
-                                                     rmm::device_async_resource_ref mr);
+std::pair<cuda::device_buffer<uint8_t>, size_type> bitmask_and(
+  host_span<bitmask_type const* const> masks,
+  host_span<size_type const> masks_begin_bits,
+  size_type mask_size_bits,
+  cuda::stream_ref stream,
+  rmm::device_async_resource_ref mr);
 
 /**
  * @copydoc cudf::bitmask_and
  *
  * @param[in] stream CUDA stream used for device memory operations and kernel launches.
  */
-std::pair<rmm::device_buffer, size_type> bitmask_and(table_view const& view,
-                                                     cuda::stream_ref stream,
-                                                     rmm::device_async_resource_ref mr);
+std::pair<cuda::device_buffer<uint8_t>, size_type> bitmask_and(table_view const& view,
+                                                               cuda::stream_ref stream,
+                                                               rmm::device_async_resource_ref mr);
 
 /**
  * @copydoc cudf::segmented_bitmask_and
  */
-std::pair<std::vector<std::unique_ptr<rmm::device_buffer>>, std::vector<size_type>>
+std::pair<std::vector<std::unique_ptr<cuda::device_buffer<uint8_t>>>, std::vector<size_type>>
 segmented_bitmask_and(host_span<column_view const> colviews,
                       host_span<size_type const> segment_offsets,
                       cuda::stream_ref stream,
@@ -210,7 +211,7 @@ segmented_bitmask_and(host_span<column_view const> colviews,
 /**
  * @copydoc cudf::segmented_bitmask_and
  */
-std::pair<std::vector<std::unique_ptr<rmm::device_buffer>>, std::vector<size_type>>
+std::pair<std::vector<std::unique_ptr<cuda::device_buffer<uint8_t>>>, std::vector<size_type>>
 segmented_bitmask_and(host_span<bitmask_type const* const> masks,
                       host_span<size_type const> segment_offsets,
                       size_type mask_size_bits,
@@ -221,9 +222,9 @@ segmented_bitmask_and(host_span<bitmask_type const* const> masks,
  *
  * @param[in] stream CUDA stream used for device memory operations and kernel launches.
  */
-std::pair<rmm::device_buffer, size_type> bitmask_or(table_view const& view,
-                                                    cuda::stream_ref stream,
-                                                    rmm::device_async_resource_ref mr);
+std::pair<cuda::device_buffer<uint8_t>, size_type> bitmask_or(table_view const& view,
+                                                              cuda::stream_ref stream,
+                                                              rmm::device_async_resource_ref mr);
 
 /**
  * @brief Performs a bitwise AND of the specified bitmasks,

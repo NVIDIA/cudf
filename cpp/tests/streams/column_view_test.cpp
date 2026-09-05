@@ -22,7 +22,7 @@ struct TypedColumnTest : public cudf::test::BaseFixture {
 
   TypedColumnTest(cuda::stream_ref stream = cudf::test::get_default_stream())
     : data{_num_elements * sizeof(T), stream},
-      mask{cudf::bitmask_allocation_size_bytes(_num_elements), stream}
+      mask{cudf::create_null_mask(_num_elements, cudf::mask_state::UNINITIALIZED, stream)}
   {
     std::vector<char> h_data(std::max(data.size(), mask.size()));
     std::iota(h_data.begin(), h_data.end(), 0);
@@ -39,11 +39,11 @@ struct TypedColumnTest : public cudf::test::BaseFixture {
   std::uniform_int_distribution<cudf::size_type> distribution{200, 1000};
   cudf::size_type _num_elements{distribution(generator)};
   rmm::device_buffer data{};
-  rmm::device_buffer mask{};
-  rmm::device_buffer all_valid_mask{create_null_mask(
-    num_elements(), cudf::mask_state::ALL_VALID, cudf::test::get_default_stream())};
-  rmm::device_buffer all_null_mask{
-    create_null_mask(num_elements(), cudf::mask_state::ALL_NULL, cudf::test::get_default_stream())};
+  cuda::device_buffer<uint8_t> mask = cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED);
+  cuda::device_buffer<uint8_t> all_valid_mask =
+    create_null_mask(num_elements(), cudf::mask_state::ALL_VALID, cudf::test::get_default_stream());
+  cuda::device_buffer<uint8_t> all_null_mask =
+    create_null_mask(num_elements(), cudf::mask_state::ALL_NULL, cudf::test::get_default_stream());
 };
 
 TYPED_TEST_SUITE(TypedColumnTest, cudf::test::Types<int32_t>);

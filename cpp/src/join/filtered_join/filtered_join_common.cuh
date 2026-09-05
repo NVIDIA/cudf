@@ -13,9 +13,8 @@
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/span.hpp>
 
-#include <rmm/device_buffer.hpp>
-
 #include <cuco/detail/open_addressing/kernels.cuh>
+#include <cuda/buffer>
 #include <cuda/iterator>
 #include <cuda/stream>
 #include <cuda_runtime_api.h>
@@ -37,7 +36,7 @@ struct precomputed_hash {
   hash_value_type const* _hashes;
 };
 
-std::pair<rmm::device_buffer, bitmask_type const*> make_filtered_join_row_bitmask(
+std::pair<cuda::device_buffer<uint8_t>, bitmask_type const*> make_filtered_join_row_bitmask(
   table_view const& input, null_equality nulls_equal, cuda::stream_ref stream);
 
 class filtered_join_row_is_valid {

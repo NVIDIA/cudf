@@ -43,7 +43,7 @@ std::unique_ptr<rmm::device_uvector<size_type>> hash_join<Hasher>::make_match_co
   auto const temp_mr     = cudf::get_current_device_resource_ref();
   auto const row_bitmask = cudf::detail::bitmask_and(left, stream, temp_mr).first;
   auto const valid_rows  = _nulls_equal == null_equality::UNEQUAL
-                             ? static_cast<bitmask_type const*>(row_bitmask.data())
+                             ? reinterpret_cast<bitmask_type const*>(row_bitmask.data())
                              : nullptr;
 
   auto count_matches = [&](auto equality, auto hasher) {

@@ -55,7 +55,7 @@ std::unique_ptr<cudf::column> make_lists_column_from_scalar(list_scalar const& v
   auto one_row_col_view = column_view(data_type{type_id::LIST},
                                       1,
                                       nullptr,
-                                      static_cast<bitmask_type const*>(null_mask.data()),
+                                      reinterpret_cast<bitmask_type const*>(null_mask.data()),
                                       null_count,
                                       0,
                                       children_views);
@@ -74,7 +74,11 @@ std::unique_ptr<column> make_empty_lists_column(data_type child_type)
 {
   auto offsets = make_empty_column(data_type(type_id::INT32));
   auto child   = make_empty_column(child_type);
-  return make_lists_column(0, std::move(offsets), std::move(child), 0, rmm::device_buffer{});
+  return make_lists_column(0,
+                           std::move(offsets),
+                           std::move(child),
+                           0,
+                           cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 }
 
 std::unique_ptr<column> make_all_nulls_lists_column(size_type size,
@@ -85,7 +89,8 @@ std::unique_ptr<column> make_all_nulls_lists_column(size_type size,
   auto offsets = [&] {
     auto offsets_buff =
       cudf::detail::make_zeroed_device_uvector_async<int32_t>(size + 1, stream, mr);
-    return std::make_unique<column>(std::move(offsets_buff), rmm::device_buffer{}, 0);
+    return std::make_unique<column>(
+      std::move(offsets_buff), cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED), 0);
   }();
   auto child     = make_empty_column(child_type);
   auto null_mask = cudf::detail::create_null_mask(size, mask_state::ALL_NULL, stream, mr);
@@ -107,7 +112,7 @@ std::unique_ptr<column> make_lists_column(size_type num_rows,
                                           std::unique_ptr<column> offsets_column,
                                           std::unique_ptr<column> child_column,
                                           size_type null_count,
-                                          rmm::device_buffer&& null_mask)
+                                          cuda::device_buffer<uint8_t>&& null_mask)
 {
   if (null_count > 0) { CUDF_EXPECTS(null_mask.size() > 0, "Column with nulls must be nullable."); }
   CUDF_EXPECTS(

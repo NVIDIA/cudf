@@ -44,12 +44,12 @@ auto setup_masks(nvbench::state& state)
   std::exclusive_scan(segments.begin(), segments.end(), segments.begin(), 0);
 
   // Create masks
-  std::vector<rmm::device_buffer> masks;
+  std::vector<cuda::device_buffer<uint8_t>> masks;
   std::vector<cudf::bitmask_type*> mask_pointers;
   masks.reserve(num_masks);
   std::generate_n(std::back_inserter(masks), num_masks, [mask_size_bits, seed, &mask_pointers]() {
     auto mask_pair = create_random_null_mask(mask_size_bits, null_probability, seed);
-    mask_pointers.push_back(static_cast<cudf::bitmask_type*>(mask_pair.first.data()));
+    mask_pointers.push_back(reinterpret_cast<cudf::bitmask_type*>(mask_pair.first.data()));
     return std::move(mask_pair.first);
   });
 

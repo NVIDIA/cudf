@@ -296,11 +296,12 @@ std::pair<std::unique_ptr<column>, std::vector<column_name_info>> device_json_co
     CUDF_EXPECTS(json_col.validity.size() >= bitmask_allocation_size_bytes(json_col.num_rows),
                  "valid_count is too small");
   };
-  auto make_validity = [stream, validity_size_check](
-                         device_json_column& json_col) -> std::pair<rmm::device_buffer, size_type> {
+  auto make_validity =
+    [stream, validity_size_check](
+      device_json_column& json_col) -> std::pair<cuda::device_buffer<uint8_t>, size_type> {
     validity_size_check(json_col);
     auto null_count = cudf::detail::null_count(
-      static_cast<bitmask_type*>(json_col.validity.data()), 0, json_col.num_rows, stream);
+      reinterpret_cast<bitmask_type*>(json_col.validity.data()), 0, json_col.num_rows, stream);
     // full null_mask is always required for parse_data
     return {std::move(json_col.validity), null_count};
     // Note: json_col modified here, moves this memory
@@ -386,7 +387,9 @@ std::pair<std::unique_ptr<column>, std::vector<column_name_info>> device_json_co
       // This is to match the existing JSON reader's behaviour:
       // - Non-string columns will always be returned as nullable
       // - String columns will be returned as nullable, iff there's at least one null entry
-      if (col->null_count() == 0) { col->set_null_mask(rmm::device_buffer{0, stream, mr}, 0); }
+      if (col->null_count() == 0) {
+        col->set_null_mask(cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED, stream, mr), 0);
+      }
 
       // For string columns return ["offsets"] schema
       if (target_type.id() == type_id::STRING) {
@@ -455,11 +458,12 @@ std::pair<std::unique_ptr<column>, std::vector<column_name_info>> device_json_co
 
       // If child is not present, set the null mask correctly, but offsets are zero, and children
       // are empty. Note: json_col modified here, reuse the memory
-      auto offsets_column = std::make_unique<column>(data_type{type_id::INT32},
-                                                     num_rows + 1,
-                                                     json_col.child_offsets.release(),
-                                                     rmm::device_buffer{},
-                                                     0);
+      auto offsets_column =
+        std::make_unique<column>(data_type{type_id::INT32},
+                                 num_rows + 1,
+                                 json_col.child_offsets.release(),
+                                 cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
+                                 0);
       // Create children column
       auto child_schema_element  = get_list_child_schema();
       auto [child_column, names] = [&]() {
@@ -491,7 +495,8 @@ std::pair<std::unique_ptr<column>, std::vector<column_name_info>> device_json_co
         std::move(offsets_column),
         std::move(child_column),
         null_count,
-        null_count == 0 ? rmm::device_buffer{0, stream, mr} : std::move(result_bitmask));
+        null_count == 0 ? cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED, stream, mr)
+                                             : std::move(result_bitmask));
       // Since some rows in child column may need to be nullified due to mixed types, we cannot
       // skip the purge_nonempty_nulls call.
       if (auto const output_cv = ret_col->view();

@@ -141,8 +141,11 @@ std::unique_ptr<cudf::column> generate_ngrams(cudf::strings_column_view const& s
     ngram_generator_fn{d_strings, ngrams, d_separator}, ngrams_count, stream, mr);
 
   // make the output strings column from the offsets and chars column
-  return cudf::make_strings_column(
-    ngrams_count, std::move(offsets_column), chars.release(), 0, rmm::device_buffer{});
+  return cudf::make_strings_column(ngrams_count,
+                                   std::move(offsets_column),
+                                   chars.release(),
+                                   0,
+                                   cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 }
 
 }  // namespace detail
@@ -287,11 +290,17 @@ std::unique_ptr<cudf::column> generate_character_ngrams(cudf::strings_column_vie
   auto [offsets_column, chars] =
     cudf::strings::detail::make_strings_children(generator, input.size(), total_ngrams, stream, mr);
 
-  auto output = cudf::make_strings_column(
-    total_ngrams, std::move(offsets_column), chars.release(), 0, rmm::device_buffer{});
+  auto output = cudf::make_strings_column(total_ngrams,
+                                          std::move(offsets_column),
+                                          chars.release(),
+                                          0,
+                                          cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
-  return make_lists_column(
-    input.size(), std::move(offsets), std::move(output), 0, rmm::device_buffer{});
+  return make_lists_column(input.size(),
+                           std::move(offsets),
+                           std::move(output),
+                           0,
+                           cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 }
 
 namespace {
@@ -393,8 +402,11 @@ std::unique_ptr<cudf::column> hash_character_ngrams(cudf::strings_column_view co
     *d_strings, ngrams, seed, d_offsets, d_hashes);
   CUDF_CUDA_TRY(cudaGetLastError());
 
-  return make_lists_column(
-    input.size(), std::move(offsets), std::move(hashes), 0, rmm::device_buffer{});
+  return make_lists_column(input.size(),
+                           std::move(offsets),
+                           std::move(hashes),
+                           0,
+                           cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 }
 
 }  // namespace detail

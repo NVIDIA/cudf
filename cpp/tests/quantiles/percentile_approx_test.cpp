@@ -134,7 +134,10 @@ void percentile_approx_test(cudf::column_view const& _keys,
           tbl.begin(), tbl.end(), std::back_inserter(cols), [](cudf::column_view const& col) {
             return std::make_unique<cudf::column>(col);
           });
-        return cudf::make_structs_column(tbl.num_rows(), std::move(cols), 0, rmm::device_buffer());
+        return cudf::make_structs_column(tbl.num_rows(),
+                                         std::move(cols),
+                                         0,
+                                         cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
       };
       // groupby path
       reduce_parts.push_back(cudf::type_dispatcher(values[v_idx].type(),
@@ -224,7 +227,8 @@ void grouped_test(cudf::data_type input_type, std::vector<std::pair<int, int>> p
   });
 }
 
-std::pair<rmm::device_buffer, cudf::size_type> make_null_mask(cudf::column_view const& col)
+std::pair<cuda::device_buffer<uint8_t>, cudf::size_type> make_null_mask(
+  cudf::column_view const& col)
 {
   auto itr = cudf::test::iterators::valids_at_multiples_of(2);
   return cudf::test::detail::make_null_mask(itr, itr + col.size());

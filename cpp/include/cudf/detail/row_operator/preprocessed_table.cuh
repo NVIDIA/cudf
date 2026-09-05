@@ -7,10 +7,10 @@
 
 #include <cudf/table/table_device_view.cuh>
 
-#include <rmm/device_buffer.hpp>
 #include <rmm/device_uvector.hpp>
 #include <rmm/resource_ref.hpp>
 
+#include <cuda/buffer>
 #include <cuda/stream>
 
 #include <memory>
@@ -78,7 +78,7 @@ struct preprocessed_table {
                                                        rmm::device_async_resource_ref>;
 
   preprocessed_table(table_device_view_owner&& table,
-                     std::vector<rmm::device_buffer>&& null_buffers,
+                     std::vector<cuda::device_buffer<uint8_t>>&& null_buffers,
                      std::vector<std::unique_ptr<column>>&& tmp_columns)
     : _t(std::move(table)),
       _null_buffers(std::move(null_buffers)),
@@ -87,7 +87,7 @@ struct preprocessed_table {
   }
 
   table_device_view_owner _t;
-  std::vector<rmm::device_buffer> _null_buffers;
+  std::vector<cuda::device_buffer<uint8_t>> _null_buffers;
   std::vector<std::unique_ptr<column>> _tmp_columns;
 };
 

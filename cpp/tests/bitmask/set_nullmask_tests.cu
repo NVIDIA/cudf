@@ -55,10 +55,10 @@ struct SetBitmaskTest : public cudf::test::BaseFixture {
   {
     thrust::host_vector<bool> expected(end - begin, valid);
     // TEST
-    rmm::device_buffer mask = create_null_mask(size, cudf::mask_state::UNINITIALIZED);
+    cuda::device_buffer<uint8_t> mask = create_null_mask(size, cudf::mask_state::UNINITIALIZED);
     // valid ? cudf::mask_state::ALL_NULL : cudf::mask_state::ALL_VALID);
-    cudf::set_null_mask(static_cast<cudf::bitmask_type*>(mask.data()), begin, end, valid);
-    expect_bitmask_equal(static_cast<cudf::bitmask_type*>(mask.data()), begin, expected);
+    cudf::set_null_mask(reinterpret_cast<cudf::bitmask_type*>(mask.data()), begin, end, valid);
+    expect_bitmask_equal(reinterpret_cast<cudf::bitmask_type*>(mask.data()), begin, expected);
   }
 
   void test_null_partition(cudf::size_type size, cudf::size_type middle, bool valid)
@@ -69,10 +69,10 @@ struct SetBitmaskTest : public cudf::test::BaseFixture {
       return (!valid) ^ (i < middle);
     });
     // TEST
-    rmm::device_buffer mask = create_null_mask(size, cudf::mask_state::UNINITIALIZED);
-    cudf::set_null_mask(static_cast<cudf::bitmask_type*>(mask.data()), 0, middle, valid);
-    cudf::set_null_mask(static_cast<cudf::bitmask_type*>(mask.data()), middle, size, !valid);
-    expect_bitmask_equal(static_cast<cudf::bitmask_type*>(mask.data()), 0, expected);
+    cuda::device_buffer<uint8_t> mask = create_null_mask(size, cudf::mask_state::UNINITIALIZED);
+    cudf::set_null_mask(reinterpret_cast<cudf::bitmask_type*>(mask.data()), 0, middle, valid);
+    cudf::set_null_mask(reinterpret_cast<cudf::bitmask_type*>(mask.data()), middle, size, !valid);
+    expect_bitmask_equal(reinterpret_cast<cudf::bitmask_type*>(mask.data()), 0, expected);
   }
 
   void test_null_partition_bulk_unsafe(cudf::size_type size, cudf::size_type middle, bool valid)
@@ -86,11 +86,11 @@ struct SetBitmaskTest : public cudf::test::BaseFixture {
                     expected2[i] = (valid) ^ (i < middle);
                   });
     // TEST
-    rmm::device_buffer mask1 = create_null_mask(size, cudf::mask_state::UNINITIALIZED);
-    rmm::device_buffer mask2 = create_null_mask(size, cudf::mask_state::UNINITIALIZED);
+    cuda::device_buffer<uint8_t> mask1 = create_null_mask(size, cudf::mask_state::UNINITIALIZED);
+    cuda::device_buffer<uint8_t> mask2 = create_null_mask(size, cudf::mask_state::UNINITIALIZED);
 
-    std::vector<cudf::bitmask_type*> masks{static_cast<cudf::bitmask_type*>(mask1.data()),
-                                           static_cast<cudf::bitmask_type*>(mask2.data())};
+    std::vector<cudf::bitmask_type*> masks{reinterpret_cast<cudf::bitmask_type*>(mask1.data()),
+                                           reinterpret_cast<cudf::bitmask_type*>(mask2.data())};
 
     // Set first halves of bitmasks
     std::vector<cudf::size_type> begins{0, 0};
@@ -109,8 +109,8 @@ struct SetBitmaskTest : public cudf::test::BaseFixture {
       masks, begins, ends, cudf::host_span<bool const>{valids.data(), valids.size()});
 
     // Verify bitmasks
-    expect_bitmask_equal(static_cast<cudf::bitmask_type*>(mask1.data()), 0, expected1);
-    expect_bitmask_equal(static_cast<cudf::bitmask_type*>(mask2.data()), 0, expected2);
+    expect_bitmask_equal(reinterpret_cast<cudf::bitmask_type*>(mask1.data()), 0, expected1);
+    expect_bitmask_equal(reinterpret_cast<cudf::bitmask_type*>(mask2.data()), 0, expected2);
   }
 
   void test_null_partition_bulk_safe(cudf::size_type size, cudf::size_type middle, bool valid)
@@ -121,19 +121,19 @@ struct SetBitmaskTest : public cudf::test::BaseFixture {
       return (!valid) ^ (i < middle);
     });
 
-    rmm::device_buffer mask = create_null_mask(size, cudf::mask_state::UNINITIALIZED);
+    cuda::device_buffer<uint8_t> mask = create_null_mask(size, cudf::mask_state::UNINITIALIZED);
     std::vector<cudf::size_type> begins{0, middle};
     std::vector<cudf::size_type> ends{middle, size};
 
-    std::vector<cudf::bitmask_type*> masks{static_cast<cudf::bitmask_type*>(mask.data()),
-                                           static_cast<cudf::bitmask_type*>(mask.data())};
+    std::vector<cudf::bitmask_type*> masks{reinterpret_cast<cudf::bitmask_type*>(mask.data()),
+                                           reinterpret_cast<cudf::bitmask_type*>(mask.data())};
     auto valids = cudf::detail::make_host_vector<bool>(masks.size(), cudf::get_default_stream());
     valids[0]   = valid;
     valids[1]   = !valid;
 
     cudf::set_null_masks_safe(masks, begins, ends, valids);
     // Verify bitmasks
-    expect_bitmask_equal(static_cast<cudf::bitmask_type*>(mask.data()), 0, expected);
+    expect_bitmask_equal(reinterpret_cast<cudf::bitmask_type*>(mask.data()), 0, expected);
   }
 };
 

@@ -2102,13 +2102,15 @@ std::pair<std::unique_ptr<column>, std::vector<column_name_info>> json_column_to
   CUDF_FUNC_RANGE();
 
   auto make_validity =
-    [stream, mr](json_column const& json_col) -> std::pair<rmm::device_buffer, size_type> {
+    [stream,
+     mr](json_column const& json_col) -> std::pair<cuda::device_buffer<uint8_t>, size_type> {
     auto const null_count = json_col.current_offset - json_col.valid_count;
-    if (null_count == 0) { return {rmm::device_buffer{}, null_count}; }
-    return {rmm::device_buffer{json_col.validity.data(),
-                               bitmask_allocation_size_bytes(json_col.current_offset),
-                               stream,
-                               mr},
+    if (null_count == 0) {
+      return {cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED), null_count};
+    }
+    auto const data = reinterpret_cast<uint8_t const*>(json_col.validity.data());
+    return {cudf::detail::copy_bitmask(
+              reinterpret_cast<bitmask_type const*>(data), 0, json_col.current_offset, stream, mr),
             null_count};
   };
 
@@ -2175,7 +2177,9 @@ std::pair<std::unique_ptr<column>, std::vector<column_name_info>> json_column_to
       // This is to match the existing JSON reader's behaviour:
       // - Non-string columns will always be returned as nullable
       // - String columns will be returned as nullable, iff there's at least one null entry
-      if (col->null_count() == 0) { col->set_null_mask(rmm::device_buffer{0, stream, mr}, 0); }
+      if (col->null_count() == 0) {
+        col->set_null_mask(cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED, stream, mr), 0);
+      }
 
       // For string columns return ["offsets"] schema
       if (target_type.id() == type_id::STRING) {
@@ -2219,8 +2223,12 @@ std::pair<std::unique_ptr<column>, std::vector<column_name_info>> json_column_to
 
       rmm::device_uvector<json_column::row_offset_t> d_offsets =
         cudf::detail::make_device_uvector_async(json_col.child_offsets, stream, mr);
-      auto offsets_column = std::make_unique<column>(
-        data_type{type_id::INT32}, num_rows, d_offsets.release(), rmm::device_buffer{}, 0);
+      auto offsets_column =
+        std::make_unique<column>(data_type{type_id::INT32},
+                                 num_rows,
+                                 d_offsets.release(),
+                                 cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
+                                 0);
       // Create children column
       auto [child_column, names] =
         json_col.child_columns.empty()

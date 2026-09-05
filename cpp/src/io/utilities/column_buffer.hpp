@@ -128,12 +128,12 @@ class column_buffer_base {
   // input column, including same type, nullability, name, and user_data.
   static string_policy empty_like(string_policy const& input);
 
-  void set_null_mask(rmm::device_buffer&& mask) { _null_mask = std::move(mask); }
+  void set_null_mask(cuda::device_buffer<uint8_t>&& mask) { _null_mask = std::move(mask); }
 
   template <typename T = uint32_t>
   auto null_mask()
   {
-    return static_cast<T*>(_null_mask.data());
+    return reinterpret_cast<T*>(_null_mask.data());
   }
   auto null_mask_size() { return _null_mask.size(); }
   auto& null_count() { return _null_count; }
@@ -152,7 +152,8 @@ class column_buffer_base {
 
  protected:
   rmm::device_buffer _data{};
-  rmm::device_buffer _null_mask{};
+  cuda::device_buffer<uint8_t> _null_mask =
+    cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED);
   size_type _null_count{0};
   rmm::device_async_resource_ref _mr{cudf::get_current_device_resource_ref()};
 

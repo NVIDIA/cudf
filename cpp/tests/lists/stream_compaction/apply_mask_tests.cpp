@@ -199,10 +199,13 @@ TYPED_TEST(ApplyRetentionMaskTypedTest, NullsInBooleanMask)
   // mask offsets:                {0,           3,        5,             9}
   // kept (valid AND true):       {10, 30},     {},       {80}
   auto mask_child = fwcw<bool>{{1, X, 1, 0, X, X, 0, 1, 0}, nulls_at({1, 4, 5})};
-  auto mask =
-    cudf::make_lists_column(3, offsets{0, 3, 5, 9}.release(), mask_child.release(), 0, {});
-  auto filtered = apply_retention_mask(lists_column_view{input}, lists_column_view{*mask});
-  auto expected = lists<T>{{10, 30}, lists<T>{}, {80}};
+  auto mask       = cudf::make_lists_column(3,
+                                      offsets{0, 3, 5, 9}.release(),
+                                      mask_child.release(),
+                                      0,
+                                      cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
+  auto filtered   = apply_retention_mask(lists_column_view{input}, lists_column_view{*mask});
+  auto expected   = lists<T>{{10, 30}, lists<T>{}, {80}};
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*filtered, expected);
 }
 
@@ -360,10 +363,13 @@ TYPED_TEST(ApplyDeletionMaskTypedTest, NullsInDeletionMask)
   // mask offsets:                {0,           3,        5,            9}
   // kept (valid AND false):      {},           {40},     {70, 90}
   auto mask_child = fwcw<bool>{{1, X, 1, 0, X, X, 0, 1, 0}, nulls_at({1, 4, 5})};
-  auto mask =
-    cudf::make_lists_column(3, offsets{0, 3, 5, 9}.release(), mask_child.release(), 0, {});
-  auto filtered = apply_deletion_mask(lists_column_view{input}, lists_column_view{*mask});
-  auto expected = lists<T>{lists<T>{}, {40}, {70, 90}};
+  auto mask       = cudf::make_lists_column(3,
+                                      offsets{0, 3, 5, 9}.release(),
+                                      mask_child.release(),
+                                      0,
+                                      cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
+  auto filtered   = apply_deletion_mask(lists_column_view{input}, lists_column_view{*mask});
+  auto expected   = lists<T>{lists<T>{}, {40}, {70, 90}};
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*filtered, expected);
 }
 

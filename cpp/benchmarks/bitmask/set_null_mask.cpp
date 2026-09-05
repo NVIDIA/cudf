@@ -39,11 +39,13 @@ auto generate_test_data(cudf::size_type num_masks,
 
   auto valids = thrust::host_vector<bool>(num_masks, true);
 
-  std::vector<rmm::device_buffer> masks(num_masks);
-  std::vector<cudf::bitmask_type*> masks_ptr(num_masks);
-  for (cudf::size_type i = 0; i < num_masks; ++i) {
-    masks[i]     = cudf::create_null_mask(mask_size, cudf::mask_state::UNINITIALIZED);
-    masks_ptr[i] = static_cast<cudf::bitmask_type*>(masks[i].data());
+  std::vector<cuda::device_buffer<uint8_t>> masks;
+  masks.reserve(num_masks);
+  std::vector<cudf::bitmask_type*> masks_ptr;
+  masks_ptr.reserve(num_masks);
+  for (auto const& mask : masks) {
+    masks.emplace_back(cudf::create_null_mask(mask_size, cudf::mask_state::UNINITIALIZED));
+    masks_ptr.emplace_back(reinterpret_cast<cudf::bitmask_type*>(mask.data()));
   }
 
   return std::make_tuple(std::move(begin_bits),
@@ -57,19 +59,20 @@ auto generate_test_data(cudf::size_type num_masks,
 
 void BM_setnullmask(nvbench::state& state)
 {
-  auto const mask_size    = static_cast<cudf::size_type>(state.get_int64("mask_size"));
-  rmm::device_buffer mask = cudf::create_null_mask(mask_size, cudf::mask_state::UNINITIALIZED);
+  auto const mask_size = static_cast<cudf::size_type>(state.get_int64("mask_size"));
+  cuda::device_buffer<uint8_t> mask =
+    cudf::create_null_mask(mask_size, cudf::mask_state::UNINITIALIZED);
   auto begin = 0, end = mask_size;
 
   state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().get()));
   auto const mem_stats_logger = cudf::memory_stats_logger();
 
-  state.exec(nvbench::exec_tag::sync | nvbench::exec_tag::timer,
-             [&](nvbench::launch& launch, auto& timer) {
-               timer.start();
-               cudf::set_null_mask(static_cast<cudf::bitmask_type*>(mask.data()), begin, end, true);
-               timer.stop();
-             });
+  state.exec(
+    nvbench::exec_tag::sync | nvbench::exec_tag::timer, [&](nvbench::launch& launch, auto& timer) {
+      timer.start();
+      cudf::set_null_mask(reinterpret_cast<cudf::bitmask_type*>(mask.data()), begin, end, true);
+      timer.stop();
+    });
 
   state.add_buffer_size(
     mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");

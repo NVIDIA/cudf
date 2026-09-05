@@ -11,6 +11,8 @@
 #include <cudf/types.hpp>
 #include <cudf/utilities/export.hpp>
 
+#include <cuda/buffer>
+
 #include <map>
 #include <unordered_set>
 #include <vector>
@@ -152,7 +154,7 @@ struct device_json_column {
   rmm::device_uvector<int32_t> child_offsets;
 
   // Validity bitmap
-  rmm::device_buffer validity;
+  cuda::device_buffer<uint8_t> validity = cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED);
 
   // Map of child columns, if applicable.
   // Following "element" as the default child column's name of a list column
@@ -189,7 +191,7 @@ struct device_json_column {
     : string_offsets(0, stream),
       string_lengths(0, stream),
       child_offsets(0, stream, mr),
-      validity(0, stream, mr)
+      validity(stream, mr)
   {
   }
 };

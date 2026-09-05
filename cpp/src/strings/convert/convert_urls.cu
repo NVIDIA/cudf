@@ -409,7 +409,7 @@ std::unique_ptr<column> url_decode(strings_column_view const& strings,
   CUDF_CUDA_TRY(cudaGetLastError());
 
   // copy null mask
-  rmm::device_buffer null_mask = cudf::detail::copy_bitmask(strings.parent(), stream, mr);
+  cuda::device_buffer<uint8_t> null_mask = cudf::detail::copy_bitmask(strings.parent(), stream, mr);
 
   return make_strings_column(strings_count,
                              std::move(offsets_column),

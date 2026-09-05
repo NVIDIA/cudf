@@ -158,7 +158,7 @@ struct escape_strings_fn {
 
   std::unique_ptr<column> make_strings_column(size_type size,
                                               size_type null_count,
-                                              rmm::device_buffer null_mask,
+                                              cuda::device_buffer<uint8_t> null_mask,
                                               cuda::stream_ref stream,
                                               rmm::device_async_resource_ref mr)
   {
@@ -178,7 +178,7 @@ struct escape_strings_fn {
 std::unique_ptr<column> make_escaped_json_strings(column_device_view const& d_column,
                                                   size_type size,
                                                   size_type null_count,
-                                                  rmm::device_buffer null_mask,
+                                                  cuda::device_buffer<uint8_t> null_mask,
                                                   bool append_colon,
                                                   bool escaped_utf8,
                                                   cuda::stream_ref stream,
@@ -378,10 +378,11 @@ std::unique_ptr<column> struct_to_strings(table_view const& strings_columns,
   auto chars_data = joined_col->release().data;
   return make_strings_column(
     num_rows,
-    std::make_unique<cudf::column>(std::move(row_string_offsets), rmm::device_buffer{}, 0),
+    std::make_unique<cudf::column>(
+      std::move(row_string_offsets), cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED), 0),
     std::move(chars_data.release()[0]),
     0,
-    {});
+    cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 }
 
 struct scatter_fn {
@@ -533,7 +534,8 @@ std::unique_ptr<column> join_list_of_strings(lists_column_view const& lists_stri
   auto chars_data = joined_col->release().data;
   return make_strings_column(
     num_lists,
-    std::make_unique<cudf::column>(std::move(row_string_offsets), rmm::device_buffer{}, 0),
+    std::make_unique<cudf::column>(
+      std::move(row_string_offsets), cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED), 0),
     std::move(chars_data.release()[0]),
     lists_strings.null_count(),
     cudf::detail::copy_bitmask(lists_strings.parent(), stream, mr));

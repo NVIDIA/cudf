@@ -171,7 +171,7 @@ struct dispatch_from_durations_fn {
     auto d_column           = *column;
 
     // copy null mask
-    rmm::device_buffer null_mask = cudf::detail::copy_bitmask(durations, stream, mr);
+    cuda::device_buffer<uint8_t> null_mask = cudf::detail::copy_bitmask(durations, stream, mr);
 
     // build offsets column
     auto offsets_transformer_itr =

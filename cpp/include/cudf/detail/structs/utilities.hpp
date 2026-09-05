@@ -32,7 +32,7 @@ struct temporary_nullable_data {
   /**
    * @brief Store the newly generated null masks (if any).
    */
-  std::vector<rmm::device_buffer> new_null_masks;
+  std::vector<cuda::device_buffer<uint8_t>> new_null_masks;
 
   /**
    * @brief Store the newly generated columns with new null masks (if any).

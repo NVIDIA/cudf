@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -11,6 +11,7 @@
 #include <cudf/column/column_factories.hpp>
 #include <cudf/copying.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
+#include <cudf/null_mask.hpp>
 #include <cudf/scalar/scalar.hpp>
 #include <cudf/scalar/scalar_factories.hpp>
 #include <cudf/strings/string_view.cuh>
@@ -137,12 +138,12 @@ TEST_F(StringsFactoriesTest, CreateColumnFromOffsets)
   auto d_offsets = std::make_unique<cudf::column>(
     cudf::detail::make_device_uvector(
       h_offsets, cudf::get_default_stream(), cudf::get_current_device_resource_ref()),
-    rmm::device_buffer{},
+    cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
     0);
-  auto d_nulls = cudf::detail::make_device_uvector(
-    h_nulls, cudf::get_default_stream(), cudf::get_current_device_resource_ref());
+  auto d_nulls = cuda::device_buffer<uint8_t>{
+    cudf::get_default_stream(), cudf::get_current_device_resource_ref(), h_nulls};
   auto column = cudf::make_strings_column(
-    count, std::move(d_offsets), d_buffer.release(), null_count, d_nulls.release());
+    count, std::move(d_offsets), d_buffer.release(), null_count, std::move(d_nulls));
   EXPECT_EQ(column->type(), cudf::data_type{cudf::type_id::STRING});
   EXPECT_EQ(column->null_count(), null_count);
   EXPECT_EQ(1, column->num_children());
@@ -185,12 +186,12 @@ TEST_F(StringsFactoriesTest, EmptyStringsColumn)
   auto d_offsets = std::make_unique<cudf::column>(
     cudf::detail::make_zeroed_device_uvector<cudf::size_type>(
       1, cudf::get_default_stream(), cudf::get_current_device_resource_ref()),
-    rmm::device_buffer{},
+    cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
     0);
-  rmm::device_uvector<cudf::bitmask_type> d_nulls{0, cudf::get_default_stream()};
+  auto d_nulls = cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED);
 
   auto results =
-    cudf::make_strings_column(0, std::move(d_offsets), d_chars.release(), 0, d_nulls.release());
+    cudf::make_strings_column(0, std::move(d_offsets), d_chars.release(), 0, std::move(d_nulls));
   cudf::test::expect_column_empty(results->view());
 
   rmm::device_uvector<string_pair> d_strings{0, cudf::get_default_stream()};

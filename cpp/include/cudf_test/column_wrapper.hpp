@@ -288,21 +288,23 @@ std::pair<std::vector<bitmask_type>, cudf::size_type> make_null_mask_vector(Vali
  * @param end The end of the validity indicator sequence
  * @param stream CUDA stream used for device memory operations
  * @param mr Memory resources used to allocate the returned buffer
- * @return rmm::device_buffer Contains a bitmask where bits are set for every
+ * @return cuda::device_buffer<uint8_t> Contains a bitmask where bits are set for every
  * element in `[begin,end)` that evaluated to `true`.
  */
 template <typename ValidityIterator>
-std::pair<rmm::device_buffer, cudf::size_type> make_null_mask(
+std::pair<cuda::device_buffer<uint8_t>, cudf::size_type> make_null_mask(
   ValidityIterator begin,
   ValidityIterator end,
   cuda::stream_ref stream   = cudf::test::get_default_stream(),
   cudf::memory_resources mr = cudf::get_current_device_resource_ref())
 {
   auto [null_mask, null_count] = make_null_mask_vector(begin, end);
-  rmm::device_buffer d_mask{null_mask.data(),
-                            cudf::bitmask_allocation_size_bytes(cudf::distance(begin, end)),
-                            stream,
-                            mr.get_output_mr()};
+  auto const* data             = reinterpret_cast<uint8_t const*>(null_mask.data());
+  cuda::device_buffer<uint8_t> d_mask{
+    stream,
+    mr.get_output_mr(),
+    data,
+    data + cudf::bitmask_allocation_size_bytes(cudf::distance(begin, end))};
   stream.sync();  // wait for async H2D before host source is destroyed
   return {std::move(d_mask), null_count};
 }
@@ -390,7 +392,7 @@ class fixed_width_column_wrapper : public detail::column_wrapper {
       new cudf::column{cudf::data_type{cudf::type_to_id<ElementTo>()},
                        size,
                        detail::make_elements<ElementTo, SourceElementT>(begin, end, stream, mr),
-                       rmm::device_buffer{},
+                       cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
                        0});
   }
 
@@ -625,7 +627,11 @@ class fixed_point_column_wrapper : public detail::column_wrapper {
     auto const id        = type_to_id<numeric::fixed_point<Rep, numeric::Radix::BASE_10>>();
     auto const data_type = cudf::data_type{id, static_cast<int32_t>(scale)};
     rmm::device_buffer data{elements.data(), size * sizeof(Rep), stream, mr.get_output_mr()};
-    wrapped.reset(new cudf::column{data_type, size, std::move(data), rmm::device_buffer{}, 0});
+    wrapped.reset(new cudf::column{data_type,
+                                   size,
+                                   std::move(data),
+                                   cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
+                                   0});
     stream.sync();  // wait for async H2D before host source is destroyed
   }
 
@@ -848,10 +854,13 @@ class strings_column_wrapper : public detail::column_wrapper {
     auto d_chars   = cudf::detail::make_device_uvector_async(chars, stream, mr.get_output_mr());
     auto d_offsets = std::make_unique<cudf::column>(
       cudf::detail::make_device_uvector(offsets, stream, mr.get_output_mr()),
-      rmm::device_buffer{},
+      cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
       0);
-    wrapped =
-      cudf::make_strings_column(num_strings, std::move(d_offsets), d_chars.release(), 0, {});
+    wrapped = cudf::make_strings_column(num_strings,
+                                        std::move(d_offsets),
+                                        d_chars.release(),
+                                        0,
+                                        cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
   }
 
   /**
@@ -897,16 +906,15 @@ class strings_column_wrapper : public detail::column_wrapper {
       wrapped = cudf::make_empty_column(cudf::type_id::STRING);
       return;
     }
-    auto [chars, offsets]        = detail::make_chars_and_offsets(begin, end, v);
-    auto [null_mask, null_count] = detail::make_null_mask_vector(v, v + num_strings);
+    auto [chars, offsets] = detail::make_chars_and_offsets(begin, end, v);
     auto d_chars   = cudf::detail::make_device_uvector_async(chars, stream, mr.get_output_mr());
     auto d_offsets = std::make_unique<cudf::column>(
       cudf::detail::make_device_uvector_async(offsets, stream, mr.get_output_mr()),
-      rmm::device_buffer{},
+      cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
       0);
-    auto d_bitmask = cudf::detail::make_device_uvector(null_mask, stream, mr.get_output_mr());
-    wrapped        = cudf::make_strings_column(
-      num_strings, std::move(d_offsets), d_chars.release(), null_count, d_bitmask.release());
+    auto [d_bitmask, null_count] = detail::make_null_mask(v, v + num_strings, stream, mr);
+    wrapped                      = cudf::make_strings_column(
+      num_strings, std::move(d_offsets), d_chars.release(), null_count, std::move(d_bitmask));
   }
 
   /**
@@ -1783,7 +1791,7 @@ class lists_column_wrapper : public detail::column_wrapper {
       offsets.release(),
       values.release(),
       valid ? 0 : 1,
-      valid ? rmm::device_buffer{}
+      valid ? cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED)
             : cudf::create_null_mask(1, cudf::mask_state::ALL_NULL, stream, mr.get_output_mr()));
   }
 
@@ -1801,7 +1809,7 @@ class lists_column_wrapper : public detail::column_wrapper {
                        std::unique_ptr<cudf::column>&& offsets,
                        std::unique_ptr<cudf::column>&& values,
                        size_type null_count,
-                       rmm::device_buffer&& null_mask)
+                       cuda::device_buffer<uint8_t>&& null_mask)
   {
     // construct the list column
     wrapped = make_lists_column(
@@ -1883,7 +1891,10 @@ class lists_column_wrapper : public detail::column_wrapper {
     depth = expected_depth + 1;
 
     auto [null_mask, null_count] = [&] {
-      if (v.size() <= 0) return std::make_pair(rmm::device_buffer{}, cudf::size_type{0});
+      if (v.size() <= 0) {
+        return std::make_pair(cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
+                              cudf::size_type{0});
+      }
       return cudf::test::detail::make_null_mask(v.begin(), v.end(), stream, mr);
     }();
 
@@ -1922,8 +1933,11 @@ class lists_column_wrapper : public detail::column_wrapper {
     depth = 0;
 
     size_type num_elements = offsets->size() == 0 ? 0 : offsets->size() - 1;
-    wrapped =
-      make_lists_column(num_elements, std::move(offsets), std::move(c), 0, rmm::device_buffer{});
+    wrapped                = make_lists_column(num_elements,
+                                std::move(offsets),
+                                std::move(c),
+                                0,
+                                cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
   }
 
   /**
@@ -2204,7 +2218,10 @@ class structs_column_wrapper : public detail::column_wrapper {
                  "Validity buffer must have as many elements as rows in the struct column.");
 
     auto [null_mask, null_count] = [&] {
-      if (validity.size() <= 0) return std::make_pair(rmm::device_buffer{}, cudf::size_type{0});
+      if (validity.size() <= 0) {
+        return std::make_pair(cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
+                              cudf::size_type{0});
+      }
       return cudf::test::detail::make_null_mask(validity.begin(), validity.end(), stream, mr);
     }();
 

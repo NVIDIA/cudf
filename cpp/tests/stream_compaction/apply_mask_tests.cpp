@@ -315,7 +315,7 @@ TEST_F(ApplyRetentionMask, ListOfStructsFiltering)
                             fixed_width_column_wrapper<int32_t>{0, 2, 4, 6, 8, 10}.release(),
                             struct_column.release(),
                             0,
-                            {});
+                            cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
   auto filter_mask = fixed_width_column_wrapper<bool>{{1, 0, 1, 0, 1}};
 
@@ -337,7 +337,7 @@ TEST_F(ApplyRetentionMask, ListOfStructsFiltering)
                             fixed_width_column_wrapper<int32_t>{0, 2, 4, 6}.release(),
                             expected_struct_column.release(),
                             0,
-                            {});
+                            cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(filtered_list_column,
                                       expected_list_of_structs_column->view());

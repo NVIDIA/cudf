@@ -64,7 +64,7 @@ CUDF_KERNEL void valid_if_kernel(
  *
  * Bit `i` in the output mask will be set if `p(*(begin+i)) == true`.
  *
- * If `distance(begin,end) == 0`, returns an empty `rmm::device_buffer`.
+ * If `distance(begin,end) == 0`, returns an empty `cuda::device_buffer<uint8_t>`.
  *
  * @throws cudf::logic_error if `(begin > end)`
  *
@@ -76,11 +76,11 @@ CUDF_KERNEL void valid_if_kernel(
  * @return A pair containing a `device_buffer` with the new bitmask and its null count
  */
 template <typename InputIterator, typename Predicate>
-std::pair<rmm::device_buffer, size_type> valid_if(InputIterator begin,
-                                                  InputIterator end,
-                                                  Predicate p,
-                                                  cuda::stream_ref stream,
-                                                  cudf::memory_resources resources)
+std::pair<cuda::device_buffer<uint8_t>, size_type> valid_if(InputIterator begin,
+                                                            InputIterator end,
+                                                            Predicate p,
+                                                            cuda::stream_ref stream,
+                                                            cudf::memory_resources resources)
 {
   CUDF_EXPECTS(begin <= end, "Invalid range.");
 
@@ -97,7 +97,7 @@ std::pair<rmm::device_buffer, size_type> valid_if(InputIterator begin,
     grid_1d grid{size, block_size};
 
     valid_if_kernel<block_size><<<grid.num_blocks, grid.num_threads_per_block, 0, stream.get()>>>(
-      static_cast<bitmask_type*>(null_mask.data()), begin, size, p, valid_count.data());
+      reinterpret_cast<bitmask_type*>(null_mask.data()), begin, size, p, valid_count.data());
 
     null_count = size - valid_count.value(stream);
   }

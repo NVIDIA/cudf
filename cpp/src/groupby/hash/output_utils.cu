@@ -95,11 +95,11 @@ struct result_column_creator {
       return children;
     };
 
-    auto [null_mask, null_count] = [&]() -> std::pair<rmm::device_buffer, size_type> {
+    auto [null_mask, null_count] = [&]() -> std::pair<cuda::device_buffer<uint8_t>, size_type> {
       if (output_size > 0 && nullable) {
         return {create_null_mask(output_size, mask_state::ALL_NULL, stream, mr), output_size};
       }
-      return {rmm::device_buffer{}, 0};
+      return {cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED), 0};
     }();
     return create_structs_hierarchy(output_size,
                                     make_children(output_size),

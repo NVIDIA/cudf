@@ -19,8 +19,8 @@ namespace cudf::detail {
  * @param stream CUDA stream used for device memory operations and kernel launches
  * @return A pair of pointer to the output bitmask and the buffer containing the bitmask
  */
-std::pair<rmm::device_buffer, bitmask_type const*> build_row_bitmask(table_view const& input,
-                                                                     cuda::stream_ref stream)
+std::pair<cuda::device_buffer<uint8_t>, bitmask_type const*> build_row_bitmask(
+  table_view const& input, cuda::stream_ref stream)
 {
   auto const nullable_columns = get_nullable_columns(input);
   CUDF_EXPECTS(nullable_columns.size() > 0,
@@ -33,11 +33,12 @@ std::pair<rmm::device_buffer, bitmask_type const*> build_row_bitmask(table_view 
       cudf::detail::bitmask_and(
         table_view{nullable_columns}, stream, cudf::get_current_device_resource_ref())
         .first;
-    auto const row_bitmask_ptr = static_cast<bitmask_type const*>(row_bitmask.data());
+    auto const row_bitmask_ptr = reinterpret_cast<bitmask_type const*>(row_bitmask.data());
     return std::pair(std::move(row_bitmask), row_bitmask_ptr);
   }
 
-  return std::pair(rmm::device_buffer{0, stream}, nullable_columns.front().null_mask());
+  return std::pair(cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED, stream),
+                   nullable_columns.front().null_mask());
 }
 
 }  // namespace cudf::detail

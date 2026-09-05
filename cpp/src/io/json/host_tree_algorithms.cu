@@ -112,7 +112,7 @@ std::vector<std::string> copy_strings_to_host_sync(
                                    d_offset_length_it,
                                    num_strings,
                                    data_type{type_id::STRING},
-                                   rmm::device_buffer{},
+                                   cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
                                    0,
                                    options_view,
                                    stream,
@@ -1014,7 +1014,7 @@ void scatter_offsets(tree_meta_t const& tree,
     columns_data[col_id] = json_column_data{col.string_offsets.data(),
                                             col.string_lengths.data(),
                                             col.child_offsets.data(),
-                                            static_cast<bitmask_type*>(col.validity.data())};
+                                            reinterpret_cast<bitmask_type*>(col.validity.data())};
   }
 
   auto d_ignore_vals = cudf::detail::make_device_uvector_async(

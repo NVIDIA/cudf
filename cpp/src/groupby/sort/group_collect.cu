@@ -52,7 +52,8 @@ std::pair<std::unique_ptr<column>, std::unique_ptr<column>> purge_null_entries(
     cudf::detail::copy_if(table_view{{values}}, not_null_pred, stream, mr)->release();
 
   auto null_purged_values = std::move(null_purged_entries.front());
-  null_purged_values->set_null_mask(rmm::device_buffer{0, stream, mr}, 0);
+  null_purged_values->set_null_mask(
+    cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED, stream, mr), 0);
 
   // Recalculate offsets after null entries are purged.
   rmm::device_uvector<size_type> null_purged_sizes(num_groups, stream);
@@ -107,7 +108,7 @@ std::unique_ptr<column> group_collect(column_view const& values,
                            std::move(offsets_column),
                            std::move(child_column),
                            0,
-                           rmm::device_buffer{0, stream, mr});
+                           cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED, stream, mr));
 }
 }  // namespace detail
 }  // namespace groupby

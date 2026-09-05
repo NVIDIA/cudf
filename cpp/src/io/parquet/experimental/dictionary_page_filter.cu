@@ -981,7 +981,7 @@ struct dictionary_caster {
                        cudf::data_type{cudf::type_id::BOOL8},
                        static_cast<cudf::size_type>(total_row_groups),
                        std::move(result_buffer),
-                       rmm::device_buffer{0, stream, mr},
+                       cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED, stream, mr),
                        0);
                    });
     return columns;

@@ -549,7 +549,7 @@ std::pair<size_t, rmm::device_uvector<size_type>> remapped_field_nodes_after_uni
                                         offset_length_it,
                                         num_keys,
                                         data_type{type_id::STRING},
-                                        rmm::device_buffer{},
+                                        cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
                                         0,
                                         opt,
                                         stream,

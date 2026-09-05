@@ -38,8 +38,8 @@ namespace cudf {
 namespace detail {
 namespace {
 
-std::pair<rmm::device_buffer, bitmask_type const*> build_row_bitmask(table_view const& input,
-                                                                     cuda::stream_ref stream)
+std::pair<cuda::device_buffer<uint8_t>, bitmask_type const*> build_row_bitmask(
+  table_view const& input, cuda::stream_ref stream)
 {
   auto const nullable_columns = get_nullable_columns(input);
   CUDF_EXPECTS(nullable_columns.size() > 0,
@@ -49,11 +49,12 @@ std::pair<rmm::device_buffer, bitmask_type const*> build_row_bitmask(table_view 
   if (nullable_columns.size() > 1) {
     auto row_bitmask =
       cudf::detail::bitmask_and(table_view{nullable_columns}, stream, temp_mr).first;
-    auto const row_bitmask_ptr = static_cast<bitmask_type const*>(row_bitmask.data());
+    auto const row_bitmask_ptr = reinterpret_cast<cudf::bitmask_type const*>(row_bitmask.data());
     return std::pair(std::move(row_bitmask), row_bitmask_ptr);
   }
 
-  return std::pair(rmm::device_buffer{0, stream, temp_mr}, nullable_columns.front().null_mask());
+  return std::pair(cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED, stream, temp_mr),
+                   nullable_columns.front().null_mask());
 }
 
 struct row_is_null {
@@ -505,7 +506,8 @@ std::unique_ptr<rmm::device_uvector<cudf::size_type>> mark_join::mark_probe_and_
   auto const num_buckets = static_cast<cudf::thread_index_type>(storage_ref.num_buckets());
 
   auto const right_has_nulls = has_nested_nulls(right);
-  rmm::device_buffer right_bitmask_buffer(0, stream, temp_mr);
+  auto right_bitmask_buffer =
+    cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED, stream, temp_mr);
   bitmask_type const* right_bitmask_ptr = nullptr;
   if (right_has_nulls && _nulls_equal == null_equality::UNEQUAL) {
     auto bitmask_buffer_and_ptr = build_row_bitmask(right, stream);
@@ -623,7 +625,8 @@ mark_join::mark_join(cudf::table_view const& left,
     cudf::has_nested_nulls(_left) && _nulls_equal == null_equality::UNEQUAL;
 
   auto const temp_mr = cudf::get_current_device_resource_ref();
-  rmm::device_buffer row_bitmask_buffer(0, stream, temp_mr);
+  auto row_bitmask_buffer =
+    cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED, stream, temp_mr);
   bitmask_type const* row_bitmask_ptr = nullptr;
   if (has_null_left_keys) {
     auto bitmask_buffer_and_ptr = build_row_bitmask(_left, stream);

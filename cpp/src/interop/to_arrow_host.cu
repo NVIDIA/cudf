@@ -87,7 +87,8 @@ struct dispatch_to_arrow_host {
     enable_hugepage(&bitmap->buffer);
     CUDF_CUDA_TRY(cudf::detail::memcpy_async(
       bitmap->buffer.data,
-      (column.offset() > 0) ? cudf::detail::copy_bitmask(column, stream, mr).data()
+      (column.offset() > 0) ? reinterpret_cast<cudf::bitmask_type const*>(
+                                cudf::detail::copy_bitmask(column, stream, mr).data())
                             : column.null_mask(),
       bitmap->buffer.size_bytes,
       stream));

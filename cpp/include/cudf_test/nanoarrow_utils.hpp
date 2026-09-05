@@ -194,10 +194,11 @@ void populate_from_col(ArrowArray* arr,
     ArrowArrayBuffer(arr, 1),
     ArrowBufferDeallocator(
       [](ArrowBufferAllocator* alloc, uint8_t*, int64_t) {
-        auto buf = reinterpret_cast<std::unique_ptr<rmm::device_buffer>*>(alloc->private_data);
+        auto buf =
+          reinterpret_cast<std::unique_ptr<cuda::device_buffer<uint8_t>>*>(alloc->private_data);
         delete buf;
       },
-      new std::unique_ptr<rmm::device_buffer>(std::move(bitmask.first)))));
+      new std::unique_ptr<cuda::device_buffer<uint8_t>>(std::move(bitmask.first)))));
   ArrowArrayBuffer(arr, 1)->size_bytes = cudf::bitmask_allocation_size_bytes(view.size());
   ArrowArrayBuffer(arr, 1)->data       = ptr;
 }

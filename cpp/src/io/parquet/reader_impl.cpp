@@ -1023,22 +1023,22 @@ table_with_metadata reader_impl::finalize_output(read_mode mode,
     out_metadata.num_rows_per_source.clear();
 
     bool use_jit = cudf::get_context().use_jit() || _options.use_jit_filter;
+    std::unique_ptr<column> predicate;
 
     if (!use_jit) {
-      auto predicate =
+      predicate =
         cudf::detail::compute_column(*read_table, final_filter_expr.value().get(), _stream, _mr);
-      CUDF_EXPECTS(predicate->view().type().id() == type_id::BOOL8,
-                   "Predicate filter should return a boolean");
-      // Exclude columns present in filter only in output
-      auto output_table = cudf::detail::apply_mask(
-        only_output, *predicate, cudf::detail::mask_type::RETENTION, _stream, _mr);
-      return {encode_output_dict_columns(std::move(output_table)), std::move(out_metadata)};
     } else {
-      auto output_table = cudf::filter(
-        read_table->view(), final_filter_expr.value().get(), only_output, _stream, _mr);
-
-      return {encode_output_dict_columns(std::move(output_table)), std::move(out_metadata)};
+      predicate =
+        cudf::compute_column_jit(*read_table, final_filter_expr.value().get(), _stream, _mr);
     }
+
+    CUDF_EXPECTS(predicate->view().type().id() == type_id::BOOL8,
+                 "Predicate filter should return a boolean");
+    // Exclude columns present in filter only in output
+    auto output_table = cudf::detail::apply_mask(
+      only_output, *predicate, cudf::detail::mask_type::RETENTION, _stream, _mr);
+    return {encode_output_dict_columns(std::move(output_table)), std::move(out_metadata)};
   }
   return {encode_output_dict_columns(std::make_unique<table>(std::move(out_columns))),
           std::move(out_metadata)};

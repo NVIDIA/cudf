@@ -1,7 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-from cython.operator cimport dereference
 from libcpp.memory cimport unique_ptr
 from libcpp.utility cimport move
 from libcpp.vector cimport vector
@@ -23,7 +22,6 @@ from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 from rmm.pylibrmm.stream cimport Stream
 
 from .column cimport Column
-from .expressions cimport Expression
 from .table cimport Table
 from .utils cimport _get_stream, _get_memory_resource
 
@@ -43,7 +41,6 @@ __all__ = [
     "distinct_indices",
     "drop_nans",
     "drop_nulls",
-    "filter",
     "stable_distinct",
     "unique",
 ]
@@ -403,48 +400,5 @@ cpdef Table stable_distinct(
         )
     return Table.from_libcudf(move(c_result), _stream, mr)
 
-
-cpdef Table filter(
-    Table predicate_table,
-    Expression predicate_expr,
-    Table filter_table,
-    object stream: CudaStreamLike | None = None,
-    DeviceMemoryResource mr=None,
-):
-    """Filters a table using a predicate expression.
-
-    For details, see :cpp:func:`filter`.
-
-    Parameters
-    ----------
-    predicate_table : Table
-        The table used for predicate expression evaluation.
-    predicate_expr : Expression
-        The predicate filter expression.
-    filter_table : Table
-        The table to be filtered.
-
-    Returns
-    -------
-    Table
-        The filtered table.
-    """
-    cdef unique_ptr[table] c_result
-
-    cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
-    mr = _get_memory_resource(mr)
-
-    cdef table_view c_predicate_table = predicate_table.view()
-    cdef table_view c_filter_table = filter_table.view()
-    with nogil:
-        c_result = cpp_stream_compaction.filter(
-            c_predicate_table,
-            dereference(predicate_expr.c_obj.get()),
-            c_filter_table,
-            _cs,
-            mr.get_mr()
-        )
-    return Table.from_libcudf(move(c_result), _stream, mr)
 
 DuplicateKeepOption.__str__ = DuplicateKeepOption.__repr__

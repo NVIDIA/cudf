@@ -10,7 +10,6 @@ from pylibcudf.libcudf.types cimport (
 from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 
 from .column cimport Column
-from .expressions cimport Expression
 from .table cimport Table
 
 
@@ -85,14 +84,6 @@ cpdef Table stable_distinct(
     duplicate_keep_option keep,
     null_equality nulls_equal,
     nan_equality nans_equal,
-    object stream = *,
-    DeviceMemoryResource mr = *,
-)
-
-cpdef Table filter(
-    Table predicate_table,
-    Expression predicate_expr,
-    Table filter_table,
     object stream = *,
     DeviceMemoryResource mr = *,
 )

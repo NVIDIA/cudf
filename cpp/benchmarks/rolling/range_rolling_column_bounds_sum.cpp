@@ -52,7 +52,7 @@ void bench_range_rolling_column_bounds_sum(nvbench::state& state)
   requests.push_back({vals->view(), 1, cudf::make_sum_aggregation<cudf::rolling_aggregation>()});
 
   auto const mem_stats_logger = cudf::memory_stats_logger();
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().value()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().get()));
   state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
     auto const result =
       cudf::grouped_range_rolling_window(cudf::table_view{},

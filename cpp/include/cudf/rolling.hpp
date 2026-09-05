@@ -115,7 +115,7 @@ struct bounded_closed_column {
    *
    * @param delta Per-row delta column. Must not contain nulls and must match the orderby type.
    */
-  bounded_closed_column(cudf::column_view delta) : delta_{delta} {}
+  bounded_closed_column(cudf::column_view const& delta) : delta_{delta} {}
   /**
    * @brief Return the per-row delta column.
    * @return the per-row delta column.
@@ -140,7 +140,7 @@ struct bounded_open_column {
    *
    * @param delta Per-row delta column. Must not contain nulls and must match the orderby type.
    */
-  bounded_open_column(cudf::column_view delta) : delta_{delta} {}
+  bounded_open_column(cudf::column_view const& delta) : delta_{delta} {}
   /**
    * @brief Return the per-row delta column.
    * @return the per-row delta column.

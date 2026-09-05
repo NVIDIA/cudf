@@ -36,7 +36,12 @@ from cudf_polars.streaming.base import (
     SerializedDataSourceInfo,
 )
 from cudf_polars.streaming.dispatch import lower_ir_node
-from cudf_polars.utils.config import Cluster
+from cudf_polars.utils.config import (
+    UNSPECIFIED,
+    Cluster,
+    HybridScanPassMode,
+    Unspecified,
+)
 from cudf_polars.utils.cuda_stream import get_cuda_stream
 from cudf_polars.utils.versions import POLARS_VERSION_LT_137
 
@@ -233,6 +238,7 @@ def _read_with_hybrid_scan(
     split_index: int = 0,
     total_splits: int = 1,
     stats_pruning: bool = True,
+    pass_mode: HybridScanPassMode | Unspecified = UNSPECIFIED,
 ) -> DataFrame:
     """Two-pass parquet read via HybridScanReader for a row-group-aligned split."""
     assert len(paths) == 1, (
@@ -251,6 +257,7 @@ def _read_with_hybrid_scan(
 
         reader = cached_info.hybrid_scan_reader(options)
 
+        row_group_count_before_pruning = len(row_group_indices)
         if stats_pruning:
             row_group_indices = reader.filter_row_groups_with_stats(
                 row_group_indices, options, stream=stream
@@ -291,6 +298,38 @@ def _read_with_hybrid_scan(
         # reuse the same page index for all splits of the same file, so the overhead of
         # reading the page index can be amortized. For FusedScans, we would need to read
         # the page index for all files, which may be too expensive.
+        if isinstance(pass_mode, Unspecified):
+            # row_group_indices already reflects both stats and bloom-filter
+            # pruning, so this covers selectivity at those two levels. It
+            # misses page-level stats pruning (not yet implemented, see TODO
+            # above) and exact row-level selectivity, which can't be known
+            # without materializing filter columns (i.e. the thing TWO_PASS itself
+            # would do).
+            effective_pass_mode = (
+                HybridScanPassMode.TWO_PASS
+                if len(row_group_indices) < row_group_count_before_pruning
+                else HybridScanPassMode.SINGLE_PASS
+            )
+        else:
+            effective_pass_mode = pass_mode
+
+        if effective_pass_mode is HybridScanPassMode.SINGLE_PASS:
+            all_chunks = plc.io.parquet_io_utils.fetch_byte_ranges_to_device(
+                source_info,
+                reader.all_column_chunks_byte_ranges(row_group_indices, options),
+                stream=stream,
+            )
+            tbl_w_meta = reader.materialize_all_columns(
+                row_group_indices, all_chunks, options, stream=stream
+            )
+            names = tbl_w_meta.column_names(include_children=False)
+            return DataFrame.from_table(
+                tbl_w_meta.tbl,
+                names,
+                [schema[n] for n in names],
+                stream=stream,
+            ).select(list(schema.keys()))
+
         row_mask = reader.build_all_true_row_mask(row_group_indices, stream=stream)
 
         filter_chunks = plc.io.parquet_io_utils.fetch_byte_ranges_to_device(
@@ -537,6 +576,7 @@ class SplitScan(IR):
                         split_index=split_index,
                         total_splits=total_splits,
                         stats_pruning=parquet_options._hybrid_scan_stats_pruning,
+                        pass_mode=parquet_options.pass_mode,
                     )
         else:
             # There are not enough row-groups to align

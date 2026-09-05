@@ -1286,9 +1286,11 @@ table_with_metadata hybrid_scan_reader_impl::read_chunk_internal(
     // Only construct `out_metadata` if `_output_metadata` has not been cached.
     if (!_output_metadata) {
       column_name_info& col_name = out_metadata.schema_info[i];
-      out_columns.emplace_back(make_column(_output_buffers[i], &col_name, metadata, _stream));
+      out_columns.emplace_back(
+        std::move(_output_buffers[i]).make_column(&col_name, metadata, _stream));
     } else {
-      out_columns.emplace_back(make_column(_output_buffers[i], nullptr, metadata, _stream));
+      out_columns.emplace_back(
+        std::move(_output_buffers[i]).make_column(nullptr, metadata, _stream));
     }
   }
 

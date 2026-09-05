@@ -60,28 +60,6 @@ inline rmm::device_buffer create_data(data_type type,
 
 using string_index_pair = cuda::std::pair<char const*, size_type>;
 
-// forward declare friend functions
-template <typename string_policy>
-class column_buffer_base;
-
-/**
- * @brief Creates a column from an existing set of device memory buffers.
- *
- * @throws std::bad_alloc if device memory allocation fails
- *
- * @param buffer Column buffer descriptors
- * @param schema_info Schema information for the column to write optionally.
- * @param schema Optional schema used to control string to binary conversions.
- * @param stream CUDA stream used for device memory operations and kernel launches.
- *
- * @return `std::unique_ptr<cudf::column>` Column from the existing device data
- */
-template <class string_policy>
-std::unique_ptr<column> make_column(column_buffer_base<string_policy>& buffer,
-                                    column_name_info* schema_info,
-                                    std::optional<reader_column_schema> const& schema,
-                                    cuda::stream_ref stream);
-
 template <typename string_policy>
 class column_buffer_base {
  public:
@@ -150,6 +128,26 @@ class column_buffer_base {
     return static_cast<string_policy*>(this)->make_string_column_impl(stream);
   }
 
+  /**
+   * @brief Creates a column from an existing set of device memory buffers.
+   *
+   * The buffer contents are moved into the returned column where possible; the buffer must be
+   * treated as consumed and must not be reused after the call. The method is only callable on
+   * rvalues so that call sites make the consumption explicit via `std::move`.
+   *
+   * @throws std::bad_alloc if device memory allocation fails
+   *
+   * @param schema_info Schema information for the column to write optionally.
+   * @param schema Optional schema used to control string to binary conversions.
+   * @param stream CUDA stream used for device memory operations and kernel launches.
+   *
+   * @return Column from the existing device data
+   */
+  [[nodiscard]] std::unique_ptr<column> make_column(
+    column_name_info* schema_info,
+    std::optional<reader_column_schema> const& schema,
+    cuda::stream_ref stream) &&;
+
  protected:
   rmm::device_buffer _data{};
   rmm::device_buffer _null_mask{};
@@ -166,12 +164,6 @@ class column_buffer_base {
   std::string name;
 
   std::vector<string_policy> children;
-
-  friend std::unique_ptr<column> make_column<string_policy>(
-    column_buffer_base& buffer,
-    column_name_info* schema_info,
-    std::optional<reader_column_schema> const& schema,
-    cuda::stream_ref stream);
 };
 
 // column buffer that uses a string_index_pair for strings data, requiring a gather step when

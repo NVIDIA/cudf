@@ -166,9 +166,11 @@ struct update_target_element<Source, aggregation::SUM_OVERFLOW> {
  * SFINAE is used to prevent recursion for dictionary type. Dictionary keys cannot be a
  * dictionary.
  *
+ * @tparam k Aggregation to perform
  */
+template <aggregation::Kind k>
 struct update_target_from_dictionary {
-  template <typename Source, aggregation::Kind k>
+  template <typename Source>
   __device__ void operator()(mutable_column_device_view target,
                              size_type target_index,
                              column_device_view source,
@@ -177,7 +179,7 @@ struct update_target_from_dictionary {
   {
     update_target_element<Source, k>{}(target, target_index, source, source_index);
   }
-  template <typename Source, aggregation::Kind k>
+  template <typename Source>
   __device__ void operator()(mutable_column_device_view,
                              size_type,
                              column_device_view,
@@ -207,14 +209,12 @@ struct update_target_element<dictionary32, k> {
                              column_device_view source,
                              size_type source_index) const noexcept
   {
-    dispatch_type_and_aggregation(
-      source.child(cudf::dictionary_column_view::keys_column_index).type(),
-      k,
-      update_target_from_dictionary{},
-      target,
-      target_index,
-      source.child(cudf::dictionary_column_view::keys_column_index),
-      static_cast<cudf::size_type>(source.element<dictionary32>(source_index)));
+    type_dispatcher(source.child(cudf::dictionary_column_view::keys_column_index).type(),
+                    update_target_from_dictionary<k>{},
+                    target,
+                    target_index,
+                    source.child(cudf::dictionary_column_view::keys_column_index),
+                    static_cast<cudf::size_type>(source.element<dictionary32>(source_index)));
   }
 };
 

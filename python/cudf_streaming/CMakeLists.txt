@@ -37,7 +37,7 @@ include(rapids-cython-core)
 rapids_cython_init()
 
 # Enable Cython's translation cache when CI supplies a persistent cache directory.
-if(DEFINED ENV{CYTHON_CACHE_DIR})
+if(DEFINED ENV{CYTHON_CACHE_DIR} AND NOT "$ENV{CYTHON_CACHE_DIR}" STREQUAL "")
   list(PREPEND CYTHON_FLAGS "--cache")
 endif()
 

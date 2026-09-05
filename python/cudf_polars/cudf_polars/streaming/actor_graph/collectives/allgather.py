@@ -63,17 +63,17 @@ class AllGatherManager:
                 The table chunk to insert. Need not be GPU-resident; if spilled,
                 it will be made available internally.
             """
-            # The chunk's data moves into AllGather-owned packed buffers,
-            # nothing lasting is added.
-            chunk, _ = await make_table_chunks_available_or_wait(
+            # The chunk's data moves into AllGather-owned packed buffers, so
+            # nothing lasting is added. into_packed_data() packs the chunk
+            # unless it already arrived packed, hence the extra.
+            chunk, extra = await make_table_chunks_available_or_wait(
                 self._manager.context,
                 chunk,
-                reserve_extra=0,
+                reserve_extra=chunk.into_packed_data_cost(),
                 net_memory_delta=0,
             )
             self._manager.allgather.insert(
-                sequence_number,
-                chunk.into_packed_data(self._manager.context.br()),
+                sequence_number, chunk.into_packed_data(extra)
             )
             del chunk
 

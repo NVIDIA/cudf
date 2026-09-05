@@ -268,24 +268,32 @@ class table_chunk {
    *
    * If the chunk's data is already in packed form (e.g., it arrived over the network
    * or was constructed from a `PackedData`), the packed data is moved out directly
-   * with no copy. Otherwise the table is serialized via `cudf::pack()`.
+   * with no copy. Otherwise the table is serialized via `cudf::pack()`, taking
+   * `into_packed_data_cost()` bytes from @p reservation.
    *
-   * @param br Buffer resource used for the device memory resource when packing
-   * is required.
+   * @param reservation Memory reservation covering the pack. Must be device memory.
    * @return A unique pointer to the resulting `PackedData`.
    *
    * @throws std::invalid_argument If the data is not already packed and
    * `is_available() == false`.
+   * @throws rapidsmpf::reservation_error If @p reservation is smaller than
+   * `into_packed_data_cost()`.
    *
    * @note After this call, this object is in a moved-from state; only reassignment,
    * movement, or destruction are valid.
-   *
-   * @note No memory reservation is required. If the data is already in packed form,
-   * no allocation occurs. If packing is required, `cudf::pack()` allocates device
-   * memory that is not tracked via a reservation.
    */
   [[nodiscard]] std::unique_ptr<rapidsmpf::PackedData> into_packed_data(
-    rapidsmpf::BufferResource* br) &&;
+    rapidsmpf::MemoryReservation& reservation) &&;
+
+  /**
+   * @brief Return the device memory `into_packed_data()` allocates.
+   *
+   * Zero when the data is already in packed form, since it is then moved out
+   * rather than serialized.
+   *
+   * @return The cost in bytes.
+   */
+  [[nodiscard]] std::size_t into_packed_data_cost() const noexcept;
 
   /**
    * @brief Return the shape of the table stored by the table chunk.

@@ -457,8 +457,16 @@ def test_into_packed_data(
         )
     assert chunk.is_available()
 
-    result = chunk.into_packed_data(context.br())
+    # Already-packed data is moved out, so only the unpacked case allocates.
+    cost = chunk.into_packed_data_cost()
+    assert cost == 0 if from_pack else cost > 0
+
+    res, _ = context.br().reserve(
+        MemoryType.DEVICE, cost, allow_overbooking=False
+    )
+    result = chunk.into_packed_data(res)
     assert isinstance(result, PackedData)
+    assert res.size == 0
 
     # Wrap the PackedData back into a TableChunk and verify contents.
     result_chunk = TableChunk.from_packed_data(result, br=context.br())

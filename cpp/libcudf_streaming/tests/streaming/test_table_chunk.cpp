@@ -460,7 +460,9 @@ TEST_F(StreamingTableChunk, ToPackedDataFromPackedChunk)
     std::move(packed_columns.metadata), br->move(std::move(packed_columns.gpu_data), stream))};
   EXPECT_TRUE(chunk.is_available());
 
-  auto packed = std::move(chunk).into_packed_data(br.get());
+  auto [reservation, overbooking] = br->reserve(
+    rapidsmpf::MemoryType::DEVICE, chunk.into_packed_data_cost(), rapidsmpf::AllowOverbooking::NO);
+  auto packed = std::move(chunk).into_packed_data(reservation);
   EXPECT_FALSE(chunk.is_available());
   CUDF_TEST_EXPECT_TABLES_EQUIVALENT(expect, table_chunk{std::move(packed)}.table_view());
 }
@@ -474,9 +476,67 @@ TEST_F(StreamingTableChunk, ToPackedDataFromTable)
   table_chunk chunk{std::make_unique<cudf::table>(expect), stream};
   EXPECT_TRUE(chunk.is_available());
 
-  auto packed = std::move(chunk).into_packed_data(br.get());
+  auto [reservation, overbooking] = br->reserve(
+    rapidsmpf::MemoryType::DEVICE, chunk.into_packed_data_cost(), rapidsmpf::AllowOverbooking::NO);
+  auto packed = std::move(chunk).into_packed_data(reservation);
   EXPECT_FALSE(chunk.is_available());
   CUDF_TEST_EXPECT_TABLES_EQUIVALENT(expect, table_chunk{std::move(packed)}.table_view());
+}
+
+TEST_F(StreamingTableChunk, ToPackedDataCost)
+{
+  constexpr unsigned int num_rows = 100;
+  constexpr std::int64_t seed     = 1337;
+
+  cudf::table expect = random_table_with_index(seed, num_rows, 0, 10);
+
+  // Packing an unpacked table allocates, so the cost is the packed size.
+  table_chunk from_table{std::make_unique<cudf::table>(expect), stream};
+  EXPECT_EQ(from_table.into_packed_data_cost(),
+            from_table.data_alloc_size(rapidsmpf::MemoryType::DEVICE));
+  EXPECT_GT(from_table.into_packed_data_cost(), 0);
+
+  // Already-packed data is moved out, so it costs nothing.
+  auto packed_columns = cudf::pack(expect, stream);
+  table_chunk from_packed{std::make_unique<rapidsmpf::PackedData>(
+    std::move(packed_columns.metadata), br->move(std::move(packed_columns.gpu_data), stream))};
+  EXPECT_EQ(from_packed.into_packed_data_cost(), 0);
+}
+
+TEST_F(StreamingTableChunk, ToPackedDataWithReservation)
+{
+  constexpr unsigned int num_rows = 100;
+  constexpr std::int64_t seed     = 1337;
+
+  cudf::table expect = random_table_with_index(seed, num_rows, 0, 10);
+  table_chunk chunk{std::make_unique<cudf::table>(expect), stream};
+  auto const cost = chunk.into_packed_data_cost();
+
+  auto [reservation, overbooking] =
+    br->reserve(rapidsmpf::MemoryType::DEVICE, cost, rapidsmpf::AllowOverbooking::NO);
+  EXPECT_EQ(overbooking, 0);
+
+  auto packed = std::move(chunk).into_packed_data(reservation);
+  // The pack consumed exactly the cost.
+  EXPECT_EQ(reservation.size(), 0);
+  CUDF_TEST_EXPECT_TABLES_EQUIVALENT(expect, table_chunk{std::move(packed)}.table_view());
+}
+
+TEST_F(StreamingTableChunk, ToPackedDataRejectsSmallReservation)
+{
+  constexpr unsigned int num_rows = 100;
+  constexpr std::int64_t seed     = 1337;
+
+  cudf::table expect = random_table_with_index(seed, num_rows, 0, 10);
+  table_chunk chunk{std::make_unique<cudf::table>(expect), stream};
+
+  auto [reservation, overbooking] = br->reserve(rapidsmpf::MemoryType::DEVICE,
+                                                chunk.into_packed_data_cost() - 1,
+                                                rapidsmpf::AllowOverbooking::NO);
+  EXPECT_EQ(overbooking, 0);
+  EXPECT_THROW(
+    { [[maybe_unused]] auto packed = std::move(chunk).into_packed_data(reservation); },
+    rapidsmpf::reservation_error);
 }
 
 TEST_P(StreamingTableChunk, ToMessageUnalignedSize)

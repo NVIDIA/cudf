@@ -58,11 +58,30 @@ build_example() {
   fi
 }
 
-build_example basic
-build_example hybrid_scan_io
-build_example strings
-build_example string_transforms
-build_example nested_types
-build_example parquet_inspect
-build_example parquet_io
-build_example billion_rows
+example_build_pids=()
+
+cleanup_example_builds() {
+  for pid in "${example_build_pids[@]}"; do
+    kill "${pid}" 2>/dev/null || true
+  done
+}
+trap cleanup_example_builds EXIT
+
+for example_name in \
+  basic \
+  hybrid_scan_io \
+  strings \
+  string_transforms \
+  nested_types \
+  parquet_inspect \
+  parquet_io \
+  billion_rows; do
+  build_example "${example_name}" &
+  example_build_pids+=("$!")
+done
+
+for pid in "${example_build_pids[@]}"; do
+  wait "${pid}"
+done
+
+trap - EXIT

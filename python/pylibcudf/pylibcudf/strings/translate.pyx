@@ -79,7 +79,7 @@ cpdef Column translate(
         chars_table
     )
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
     cdef column_view c_input = input.view()
     with nogil:
@@ -135,7 +135,7 @@ cpdef Column filter_characters(
         replacement.c_obj.get()
     )
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
     cdef column_view c_input = input.view()
     with nogil:

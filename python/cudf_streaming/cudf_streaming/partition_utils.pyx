@@ -119,7 +119,7 @@ cpdef size_t partition_and_pack_cost(
     --------
     cudf_streaming.partition_utils.partition_and_pack
     """
-    cdef stream_ref _stream = stream_ref(stream.view().value())
+    cdef stream_ref _stream = stream_ref(stream.view().get())
     cdef cpp_BufferResource* _br = br.ptr()
     cdef table_view tbl = table.view()
     cdef size_t ret
@@ -177,7 +177,7 @@ cpdef object partition_and_pack(
     pylibcudf.contiguous_split.pack
     cudf_streaming.partition_utils.split_and_pack
     """
-    cdef stream_ref _stream = stream_ref(stream.view().value())
+    cdef stream_ref _stream = stream_ref(stream.view().get())
     cdef cpp_BufferResource* _br = br.ptr()
     cdef vector[size_type] _columns_to_hash = tuple(columns_to_hash)
     cdef unordered_map[uint32_t, cpp_PackedData] _ret
@@ -244,7 +244,7 @@ cpdef size_t split_and_pack_cost(
     --------
     cudf_streaming.partition_utils.split_and_pack
     """
-    cdef stream_ref _stream = stream_ref(stream.view().value())
+    cdef stream_ref _stream = stream_ref(stream.view().get())
     cdef cpp_BufferResource* _br = br.ptr()
     cdef table_view tbl = table.view()
     cdef size_t ret
@@ -299,7 +299,7 @@ cpdef object split_and_pack(
     pylibcudf.copying.split
     cudf_streaming.partition_utils.partition_and_pack
     """
-    cdef stream_ref _stream = stream_ref(stream.view().value())
+    cdef stream_ref _stream = stream_ref(stream.view().get())
     cdef cpp_BufferResource* _br = br.ptr()
     cdef vector[size_type] _splits = tuple(splits)
     cdef unordered_map[uint32_t, cpp_PackedData] _ret
@@ -463,7 +463,7 @@ cpdef object unpack_and_concat(
     cudf_streaming.partition_utils.unpack_and_concat_cost
     cudf_streaming.partition_utils.partition_and_pack
     """
-    cdef stream_ref _stream = stream_ref(stream.view().value())
+    cdef stream_ref _stream = stream_ref(stream.view().get())
     cdef cpp_BufferResource* _br = br.ptr()
     cdef vector[cpp_PackedData] _partitions = _partitions_py_to_cpp(partitions)
     cdef unique_ptr[cpp_table] _ret
@@ -550,7 +550,7 @@ cpdef object packed_data_from_cudf_packed_columns(
     """
     if packed_columns is None or stream is None or br is None:
         raise TypeError("Arguments must not be None")
-    cdef stream_ref _stream = stream_ref(stream.view().value())
+    cdef stream_ref _stream = stream_ref(stream.view().get())
     cdef cpp_BufferResource* _br = br.ptr()
     cdef PackedData ret = PackedData.__new__(PackedData)
     with nogil:

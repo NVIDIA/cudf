@@ -474,7 +474,7 @@ cpdef TableWithMetadata read_orc(
     """
     cdef table_with_metadata c_result
     cdef Stream s = _get_stream(stream)
-    cdef cudaStream_t _cs = s.view().value()
+    cdef cudaStream_t _cs = s.view().get()
     mr = _get_memory_resource(mr)
     with nogil:
         c_result = move(cpp_read_orc(options.c_obj, _cs, mr.get_mr()))
@@ -503,7 +503,7 @@ cpdef ParsedOrcStatistics read_parsed_orc_statistics(
     """
     cdef Stream s = _get_stream(stream)
     cdef parsed_orc_statistics parsed
-    cdef cudaStream_t _cs = s.view().value()
+    cdef cudaStream_t _cs = s.view().get()
     with nogil:
         parsed = cpp_read_parsed_orc_statistics(source_info.c_obj, _cs)
     return ParsedOrcStatistics.from_libcudf(parsed)
@@ -702,7 +702,7 @@ cpdef void write_orc(OrcWriterOptions options, object stream: CudaStreamLike | N
     None
     """
     cdef Stream s = _get_stream(stream)
-    cdef cudaStream_t _cs = s.view().value()
+    cdef cudaStream_t _cs = s.view().get()
     with nogil:
         cpp_write_orc(move(options.c_obj), _cs)
 
@@ -759,7 +759,7 @@ cdef class OrcChunkedWriter:
             OrcChunkedWriter
         )
         cdef Stream s = _get_stream(stream)
-        cdef cudaStream_t _cs = s.view().value()
+        cdef cudaStream_t _cs = s.view().get()
         orc_writer.c_obj.reset(new orc_chunked_writer(options.c_obj, _cs))
         return orc_writer
 

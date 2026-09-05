@@ -54,13 +54,13 @@ cpdef Column strip(
         New strings column.
     """
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
     cdef column_view c_input
 
     if to_strip is None:
         to_strip = Scalar.from_libcudf(
-            cpp_make_string_scalar("".encode(), _stream.view().value(), mr.get_mr())
+            cpp_make_string_scalar("".encode(), _stream.view().get(), mr.get_mr())
         )
 
     cdef unique_ptr[column] c_result

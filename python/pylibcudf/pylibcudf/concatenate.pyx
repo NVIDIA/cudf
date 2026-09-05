@@ -52,7 +52,7 @@ cpdef concatenate(
     cdef vector[column_view] c_columns
     cdef vector[table_view] c_tables
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
 
     cdef unique_ptr[column] c_col_result

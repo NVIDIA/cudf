@@ -6,6 +6,7 @@
 #pragma once
 
 #include <cudf/aggregation.hpp>
+#include <cudf/column/column_view.hpp>
 #include <cudf/rolling/range_window_bounds.hpp>
 #include <cudf/types.hpp>
 #include <cudf/utilities/default_stream.hpp>
@@ -89,6 +90,65 @@ struct bounded_open {
 };
 
 /**
+ * @brief Strongly typed wrapper for bounded closed rolling windows whose delta varies row-to-row.
+ *
+ * Unlike `bounded_closed`, which applies a single scalar delta to every row, this endpoint reads a
+ * per-row delta from a column: row `i`'s endpoint is computed from `orderby[i]` and `delta[i]`.
+ * This lets engines evaluate windows such as `RANGE BETWEEN <expr> PRECEDING AND ...` where the
+ * bound is a projected column rather than a literal.
+ *
+ * The delta column must have exactly one entry per orderby row, must not contain nulls, and must
+ * have the same type as the orderby column (or, when the orderby column is a TIMESTAMP, the
+ * matching DURATION type). Per-row delta values must be finite, otherwise behaviour is undefined.
+ *
+ * Fixed-point (decimal) orderby columns are not supported, unlike the scalar `bounded_closed` /
+ * `bounded_open` endpoints.
+ *
+ * The endpoints of this window are included.
+ */
+struct bounded_closed_column {
+  cudf::column_view delta_;  ///< Per-row delta column, one entry per orderby row. Must not contain
+                             ///< nulls and must match the orderby column's type.
+
+  /**
+   * @brief Construct a bounded closed rolling window with a per-row delta column.
+   *
+   * @param delta Per-row delta column. Must not contain nulls and must match the orderby type.
+   */
+  bounded_closed_column(cudf::column_view const& delta) : delta_{delta} {}
+  /**
+   * @brief Return the per-row delta column.
+   * @return the per-row delta column.
+   */
+  [[nodiscard]] cudf::column_view delta() const noexcept { return delta_; }
+};
+
+/**
+ * @brief Strongly typed wrapper for bounded open rolling windows whose delta varies row-to-row.
+ *
+ * The column-valued analogue of `bounded_open`. See `bounded_closed_column` for the per-row delta
+ * column requirements.
+ *
+ * The endpoints of this window are excluded.
+ */
+struct bounded_open_column {
+  cudf::column_view delta_;  ///< Per-row delta column, one entry per orderby row. Must not contain
+                             ///< nulls and must match the orderby column's type.
+
+  /**
+   * @brief Construct a bounded open rolling window with a per-row delta column.
+   *
+   * @param delta Per-row delta column. Must not contain nulls and must match the orderby type.
+   */
+  bounded_open_column(cudf::column_view const& delta) : delta_{delta} {}
+  /**
+   * @brief Return the per-row delta column.
+   * @return the per-row delta column.
+   */
+  [[nodiscard]] cudf::column_view delta() const noexcept { return delta_; }
+};
+
+/**
  * @brief Strongly typed wrapper for unbounded rolling windows.
  *
  * This window runs to the begin/end of the current row's group.
@@ -115,8 +175,16 @@ struct current_row {
 
 /**
  * @brief The type of the range-based rolling window endpoint.
+ *
+ * `bounded_closed_column` and `bounded_open_column` carry a per-row delta column (one entry per
+ * orderby row) instead of a single scalar delta, so the window width can vary row-to-row.
  */
-using range_window_type = std::variant<unbounded, current_row, bounded_closed, bounded_open>;
+using range_window_type = std::variant<unbounded,
+                                       current_row,
+                                       bounded_closed,
+                                       bounded_open,
+                                       bounded_closed_column,
+                                       bounded_open_column>;
 
 /**
  * @brief A request for a rolling aggregation on a column.

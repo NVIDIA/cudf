@@ -24,7 +24,7 @@
 namespace cudf::detail {
 
 std::unique_ptr<column> dispatch_range_window(
-  unbounded,
+  bounded_open_column,
   column_view const& orderby,
   rolling::direction direction,
   order order,
@@ -35,7 +35,7 @@ std::unique_ptr<column> dispatch_range_window(
   rmm::device_async_resource_ref mr)
 {
   return type_dispatcher(orderby.type(),
-                         rolling::range_window_clamper<unbounded>{},
+                         rolling::range_window_clamper<bounded_open_column>{},
                          orderby,
                          direction,
                          order,

@@ -982,7 +982,9 @@ add_library(
   src/rolling/grouped_rolling.cu
   src/rolling/range_rolling.cu
   src/rolling/range_rolling_bounded_closed.cu
+  src/rolling/range_rolling_bounded_closed_column.cu
   src/rolling/range_rolling_bounded_open.cu
+  src/rolling/range_rolling_bounded_open_column.cu
   src/rolling/range_rolling_current_row.cu
   src/rolling/range_rolling_multi_column.cu
   src/rolling/range_rolling_unbounded.cu

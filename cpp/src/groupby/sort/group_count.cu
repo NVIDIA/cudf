@@ -36,7 +36,7 @@ std::unique_ptr<column> group_count_valid(column_view const& values,
 
   if (num_groups == 0) { return result; }
 
-  if (values.nullable()) {
+  if (values.has_nulls()) {
     auto values_view = column_device_view::create(values, stream);
 
     // make_validity_iterator returns a boolean iterator that sums to 1 (1+1=1)

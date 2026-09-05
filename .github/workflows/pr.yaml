@@ -31,7 +31,6 @@ jobs:
       - docs-build
       - publish-api-docs
       - wheel-cpp-build
-      - wheel-tests-cudf-streaming
       - wheel-python-build
       - wheel-tests-cudf
       - wheel-tests-cudf-polars
@@ -214,7 +213,7 @@ jobs:
         test_python_wheel_cudf:
           - 'ci/test_wheel_cudf.sh'
         test_python_wheel_cudf_streaming:
-          - 'ci/test_wheel_cudf_streaming.sh'
+          - 'ci/test_wheel_cudf.sh'
         test_python_wheel_cudf_polars:
           - 'ci/test_wheel_cudf_polars.sh'
           - 'ci/utils/get_matrix_values.py'
@@ -524,22 +523,6 @@ jobs:
       node_type: cpu16
       script: ci/build_wheel_python.sh
       stage: python
-  wheel-tests-cudf-streaming:
-    needs: [wheel-python-build, changed-files]
-    permissions:
-      actions: read
-      contents: read
-      id-token: write
-      packages: read
-      pull-requests: read
-    secrets: inherit # zizmor: ignore[secrets-inherit]
-    uses: rapidsai/shared-workflows/.github/workflows/wheels-test.yaml@main
-    if: fromJSON(needs.changed-files.outputs.changed_file_groups).cpp_build_inputs || fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_all || fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_cudf_streaming || fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_wheels || fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_wheel_cudf_streaming
-    with:
-      build_type: pull-request
-      script: ci/test_wheel_cudf_streaming.sh
-      # https://github.com/NVIDIA/cudf/issues/23498
-      matrix_filter: map(select(.GPU != "gb300" and .GPU != "gh200"))
   wheel-python-build-noarch:
     needs: [build-details, wheel-cpp-build, wheel-python-build]
     permissions:
@@ -569,10 +552,14 @@ jobs:
       pull-requests: read
     secrets: inherit # zizmor: ignore[secrets-inherit]
     uses: rapidsai/shared-workflows/.github/workflows/wheels-test.yaml@main
-    if: fromJSON(needs.changed-files.outputs.changed_file_groups).cpp_build_inputs || fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_all || fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_cudf || fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_wheels || fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_wheel_cudf
+    if: fromJSON(needs.changed-files.outputs.changed_file_groups).cpp_build_inputs || fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_all || fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_cudf || fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_cudf_streaming || fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_wheels || fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_wheel_cudf || fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_wheel_cudf_streaming
     with:
       build_type: pull-request
-      script: ci/test_wheel_cudf.sh
+      script: >-
+        env
+        RUN_CUDF=${{ fromJSON(needs.changed-files.outputs.changed_file_groups).cpp_build_inputs || fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_all || fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_cudf || fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_wheels || fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_wheel_cudf }}
+        RUN_CUDF_STREAMING=${{ fromJSON(needs.changed-files.outputs.changed_file_groups).cpp_build_inputs || fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_all || fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_cudf_streaming || fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_wheels || fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_wheel_cudf_streaming }}
+        ci/test_wheel_cudf.sh
       # https://github.com/NVIDIA/cudf/issues/23498
       matrix_filter: map(select(.GPU != "gb300" and .GPU != "gh200"))
   wheel-tests-cudf-polars:

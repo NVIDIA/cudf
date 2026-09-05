@@ -20,6 +20,7 @@
 #include <cudf/scalar/scalar.hpp>
 #include <cudf/table/table_view.hpp>
 #include <cudf/transform.hpp>
+#include <cudf/unary.hpp>
 
 #include <rmm/cuda_stream.hpp>
 
@@ -1544,6 +1545,77 @@ TYPED_TEST(DecimalTests, LessConsumesMulOfDecimalsWithNulls)
   auto expected = cudf::test::fixed_width_column_wrapper<bool>({1, 0, 0, 0}, {1, 0, 0, 1});
   auto result   = Executor::compute_column(table, lt);
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, result->view(), verbosity);
+}
+
+TYPED_TEST(TransformTest, OperatorParityNumericCasts)
+{
+  using Executor = TypeParam;
+
+  auto input = column_wrapper<int32_t>{{0, 1, 2, 3}, {1, 0, 1, 1}};
+  auto table = cudf::table_view{{input}};
+  auto ref   = cudf::ast::column_reference{0};
+
+  constexpr auto casts =
+    std::array{std::pair{cudf::ast::ast_operator::CAST_TO_BOOL8, cudf::type_id::BOOL8},
+               std::pair{cudf::ast::ast_operator::CAST_TO_INT8, cudf::type_id::INT8},
+               std::pair{cudf::ast::ast_operator::CAST_TO_INT16, cudf::type_id::INT16},
+               std::pair{cudf::ast::ast_operator::CAST_TO_INT32, cudf::type_id::INT32},
+               std::pair{cudf::ast::ast_operator::CAST_TO_INT64, cudf::type_id::INT64},
+               std::pair{cudf::ast::ast_operator::CAST_TO_UINT8, cudf::type_id::UINT8},
+               std::pair{cudf::ast::ast_operator::CAST_TO_UINT16, cudf::type_id::UINT16},
+               std::pair{cudf::ast::ast_operator::CAST_TO_UINT32, cudf::type_id::UINT32},
+               std::pair{cudf::ast::ast_operator::CAST_TO_UINT64, cudf::type_id::UINT64},
+               std::pair{cudf::ast::ast_operator::CAST_TO_FLOAT32, cudf::type_id::FLOAT32},
+               std::pair{cudf::ast::ast_operator::CAST_TO_FLOAT64, cudf::type_id::FLOAT64}};
+
+  for (auto const& [op, type_id] : casts) {
+    auto expression = cudf::ast::operation{op, ref};
+    auto expected   = cudf::cast(input, cudf::data_type{type_id});
+    auto result     = Executor::compute_column(table, expression);
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected->view(), result->view(), verbosity);
+  }
+}
+
+TYPED_TEST(TransformTest, OperatorParityDecimalCastsAndRescale)
+{
+  using Executor = TypeParam;
+
+  auto input = cudf::test::fixed_point_column_wrapper<int32_t>(
+    {120, -450, 780}, {1, 0, 1}, numeric::scale_type{-2});
+  auto table = cudf::table_view{{input}};
+  auto ref   = cudf::ast::column_reference{0};
+
+  auto cast64 = cudf::ast::operation{cudf::ast::ast_operator::CAST_TO_DECIMAL64, ref};
+  auto expected64 =
+    cudf::cast(input, cudf::data_type{cudf::type_id::DECIMAL64, numeric::scale_type{-2}});
+  auto result64 = Executor::compute_column(table, cast64);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected64->view(), result64->view(), verbosity);
+
+  auto rescale = cudf::ast::operation{cudf::ast::ast_operator::RESCALE, ref, -3};
+  EXPECT_EQ(rescale.get_target_scale(), -3);
+  auto rescale_expected = cudf::test::fixed_point_column_wrapper<int32_t>(
+    {1200, -4500, 7800}, {1, 0, 1}, numeric::scale_type{-3});
+  auto rescale_result = Executor::compute_column(table, rescale);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(rescale_expected, rescale_result->view(), verbosity);
+
+  auto cast128 = cudf::ast::operation{cudf::ast::ast_operator::CAST_TO_DECIMAL128, ref};
+  if constexpr (std::is_same_v<Executor, executor_ast>) {
+    EXPECT_THROW(Executor::compute_column(table, cast128), cudf::data_type_error);
+  } else {
+    auto expected128 =
+      cudf::cast(input, cudf::data_type{cudf::type_id::DECIMAL128, numeric::scale_type{-2}});
+    auto result128 = Executor::compute_column(table, cast128);
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected128->view(), result128->view(), verbosity);
+  }
+}
+
+TEST_F(TransformProgramTest, RescaleMetadataValidation)
+{
+  auto ref = cudf::ast::column_reference{0};
+  EXPECT_THROW((cudf::ast::operation{cudf::ast::ast_operator::RESCALE, ref}),
+               std::invalid_argument);
+  EXPECT_THROW((cudf::ast::operation{cudf::ast::ast_operator::CAST_TO_INT32, ref, -2}),
+               std::invalid_argument);
 }
 
 TYPED_TEST(TransformTest, NonDefaultStream)

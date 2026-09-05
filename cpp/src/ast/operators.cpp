@@ -258,6 +258,12 @@ inline constexpr void unary_operator_dispatcher(ast_operator op,
 cudf::data_type ast_operator_return_type(ast_operator op,
                                          std::vector<cudf::data_type> const& operand_types)
 {
+  if (op == ast_operator::RESCALE) {
+    CUDF_EXPECTS(operand_types.size() == 1 && cudf::is_fixed_point(operand_types.front()),
+                 "RESCALE requires one fixed-point operand.",
+                 cudf::data_type_error);
+    return operand_types.front();
+  }
   cudf::data_type result{cudf::type_id::EMPTY};
   switch (operand_types.size()) {
     case 1: {
@@ -342,6 +348,18 @@ std::string_view ast_operator_string(ast_operator op)
     case ast_operator::CAST_TO_INT64: return "CAST_TO_INT64";
     case ast_operator::CAST_TO_UINT64: return "CAST_TO_UINT64";
     case ast_operator::CAST_TO_FLOAT64: return "CAST_TO_FLOAT64";
+    case ast_operator::CAST_TO_BOOL8: return "CAST_TO_BOOL8";
+    case ast_operator::CAST_TO_INT8: return "CAST_TO_INT8";
+    case ast_operator::CAST_TO_INT16: return "CAST_TO_INT16";
+    case ast_operator::CAST_TO_INT32: return "CAST_TO_INT32";
+    case ast_operator::CAST_TO_UINT8: return "CAST_TO_UINT8";
+    case ast_operator::CAST_TO_UINT16: return "CAST_TO_UINT16";
+    case ast_operator::CAST_TO_UINT32: return "CAST_TO_UINT32";
+    case ast_operator::CAST_TO_FLOAT32: return "CAST_TO_FLOAT32";
+    case ast_operator::CAST_TO_DECIMAL32: return "CAST_TO_DECIMAL32";
+    case ast_operator::CAST_TO_DECIMAL64: return "CAST_TO_DECIMAL64";
+    case ast_operator::CAST_TO_DECIMAL128: return "CAST_TO_DECIMAL128";
+    case ast_operator::RESCALE: return "RESCALE";
     default: CUDF_FAIL("Unrecognized operator type.");
   }
 }

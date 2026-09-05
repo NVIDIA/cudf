@@ -73,6 +73,7 @@ struct expression_device_view {
   device_span<detail::device_data_reference const> data_references;
   device_span<generic_scalar_device_view const> literals;
   device_span<ast_operator const> operators;
+  device_span<int32_t const> operator_target_scales;
   device_span<cudf::size_type const> operator_arities;
   device_span<cudf::size_type const> operator_source_indices;
   cudf::size_type num_intermediates;
@@ -279,6 +280,7 @@ class expression_parser {
   bool _has_complex_type;
   std::vector<detail::device_data_reference> _data_references;
   std::vector<ast_operator> _operators;
+  std::vector<int32_t> _operator_target_scales;
   std::vector<cudf::size_type> _operator_arities;
   std::vector<cudf::size_type> _operator_source_indices;
   std::vector<generic_scalar_device_view> _literals;

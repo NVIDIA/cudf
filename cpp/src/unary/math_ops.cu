@@ -22,6 +22,8 @@
 #include <cuda/stream>
 #include <thrust/transform.h>
 
+#include <transform/checked_arithmetic.hpp>
+
 namespace cudf {
 namespace detail {
 namespace {
@@ -562,6 +564,11 @@ std::unique_ptr<cudf::column> unary_operation(cudf::column_view const& input,
                                               cuda::stream_ref stream,
                                               rmm::device_async_resource_ref mr)
 {
+  if (checked_arithmetic::is_checked(op)) {
+    // Omitting an error policy for a checked operator means propagate any row error.
+    return checked_arithmetic::unary_operation(input, op, error_policy::PROPAGATE, stream, mr);
+  }
+
   if (cudf::is_fixed_point(input.type()))
     return type_dispatcher(input.type(), detail::FixedPointOpDispatcher{}, input, op, stream, mr);
 
@@ -662,6 +669,16 @@ std::unique_ptr<cudf::column> unary_operation(cudf::column_view const& input,
 {
   CUDF_FUNC_RANGE();
   return detail::unary_operation(input, op, stream, mr);
+}
+
+std::unique_ptr<cudf::column> unary_operation(cudf::column_view const& input,
+                                              cudf::unary_operator op,
+                                              cudf::error_policy policy,
+                                              cuda::stream_ref stream,
+                                              rmm::device_async_resource_ref mr)
+{
+  CUDF_FUNC_RANGE();
+  return detail::checked_arithmetic::unary_operation(input, op, policy, stream, mr);
 }
 
 }  // namespace cudf

@@ -92,6 +92,7 @@ void expression_parser::move_to_device(cuda::stream_ref stream, rmm::device_asyn
   extract_size_and_pointer(_data_references, sizes, data_pointers, buffer_alignment);
   extract_size_and_pointer(_literals, sizes, data_pointers, buffer_alignment);
   extract_size_and_pointer(_operators, sizes, data_pointers, buffer_alignment);
+  extract_size_and_pointer(_operator_target_scales, sizes, data_pointers, buffer_alignment);
   extract_size_and_pointer(_operator_arities, sizes, data_pointers, buffer_alignment);
   extract_size_and_pointer(_operator_source_indices, sizes, data_pointers, buffer_alignment);
 
@@ -128,11 +129,14 @@ void expression_parser::move_to_device(cuda::stream_ref stream, rmm::device_asyn
   device_expression_data.operators = device_span<ast_operator const>(
     reinterpret_cast<ast_operator const*>(device_data_buffer_ptr + buffer_offsets[2]),
     _operators.size());
+  device_expression_data.operator_target_scales = device_span<int32_t const>(
+    reinterpret_cast<int32_t const*>(device_data_buffer_ptr + buffer_offsets[3]),
+    _operator_target_scales.size());
   device_expression_data.operator_arities = device_span<cudf::size_type const>(
-    reinterpret_cast<cudf::size_type const*>(device_data_buffer_ptr + buffer_offsets[3]),
+    reinterpret_cast<cudf::size_type const*>(device_data_buffer_ptr + buffer_offsets[4]),
     _operators.size());
   device_expression_data.operator_source_indices = device_span<cudf::size_type const>(
-    reinterpret_cast<cudf::size_type const*>(device_data_buffer_ptr + buffer_offsets[4]),
+    reinterpret_cast<cudf::size_type const*>(device_data_buffer_ptr + buffer_offsets[5]),
     _operator_source_indices.size());
   device_expression_data.num_intermediates = _intermediate_counter.get_max_used();
   shmem_per_thread                         = static_cast<int>(
@@ -258,8 +262,15 @@ cudf::size_type expression_parser::visit(operation const& expr)
       }
     });
   // Resolve expression type
-  auto const data_type = cudf::ast::detail::ast_operator_return_type(op, operand_types);
+  auto data_type = cudf::ast::detail::ast_operator_return_type(op, operand_types);
+  if (op == ast_operator::RESCALE) {
+    CUDF_EXPECTS(expr.get_target_scale().has_value(),
+                 "RESCALE requires target scale metadata.",
+                 std::invalid_argument);
+    data_type = cudf::data_type{data_type.id(), expr.get_target_scale().value()};
+  }
   _operators.push_back(op);
+  _operator_target_scales.push_back(expr.get_target_scale().value_or(0));
   _operator_arities.push_back(cudf::ast::detail::ast_operator_arity(op));
   // Push data reference
   auto const output = [&]() {

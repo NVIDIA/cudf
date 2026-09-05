@@ -1120,6 +1120,7 @@ add_library(
   src/text/vocabulary_tokenize.cu
   src/text/wordpiece_tokenize.cu
   src/transform/bools_to_mask.cu
+  src/transform/checked_arithmetic.cu
   src/transform/compute_column.cu
   src/transform/compute_column_kernel_complex.cu
   src/transform/compute_column_kernel_null_complex.cu

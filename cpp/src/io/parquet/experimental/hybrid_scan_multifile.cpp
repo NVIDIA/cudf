@@ -26,6 +26,12 @@ hybrid_scan_multifile::hybrid_scan_multifile(cudf::host_span<FileMetaData const>
 {
 }
 
+hybrid_scan_multifile::hybrid_scan_multifile(std::vector<FileMetaData>&& parquet_metadata,
+                                             parquet_reader_options const& options)
+  : _impl{std::make_unique<detail::hybrid_scan_reader_impl>(std::move(parquet_metadata), options)}
+{
+}
+
 hybrid_scan_multifile::~hybrid_scan_multifile() = default;
 
 std::vector<FileMetaData> hybrid_scan_multifile::parquet_metadatas() const

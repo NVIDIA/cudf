@@ -107,26 +107,28 @@ struct host_span {
 
   /// Constructor from container
   /// @param in The container to construct the span from
-  template <typename C,
-            // Only supported containers of types convertible to T
-            std::enable_if_t<is_host_span_supported_container<C>::value &&
-                             std::is_convertible_v<
-                               std::remove_pointer_t<decltype(thrust::raw_pointer_cast(  // NOLINT
-                                 std::declval<C&>().data()))> (*)[],
-                               T (*)[]>>* = nullptr>  // NOLINT
+  template <
+    typename C,
+    // Only supported containers of types convertible to T
+    std::enable_if_t<
+      is_host_span_supported_container<C>::value &&
+      std::is_convertible_v<std::remove_pointer_t<decltype(thrust::raw_pointer_cast(  // NOLINT
+                              std::declval<C&>().data()))> (*)[],  // NOLINT(modernize-type-traits)
+                            T (*)[]>>* = nullptr>                  // NOLINT
   constexpr host_span(C& in) : _span{thrust::raw_pointer_cast(in.data()), in.size()}
   {
   }
 
   /// Constructor from const container
   /// @param in The container to construct the span from
-  template <typename C,
-            // Only supported containers of types convertible to T
-            std::enable_if_t<is_host_span_supported_container<C>::value &&
-                             std::is_convertible_v<
-                               std::remove_pointer_t<decltype(thrust::raw_pointer_cast(  // NOLINT
-                                 std::declval<C&>().data()))> (*)[],
-                               T (*)[]>>* = nullptr>  // NOLINT
+  template <
+    typename C,
+    // Only supported containers of types convertible to T
+    std::enable_if_t<
+      is_host_span_supported_container<C>::value &&
+      std::is_convertible_v<std::remove_pointer_t<decltype(thrust::raw_pointer_cast(  // NOLINT
+                              std::declval<C&>().data()))> (*)[],  // NOLINT(modernize-type-traits)
+                            T (*)[]>>* = nullptr>                  // NOLINT
   constexpr host_span(C const& in) : _span{thrust::raw_pointer_cast(in.data()), in.size()}
   {
   }

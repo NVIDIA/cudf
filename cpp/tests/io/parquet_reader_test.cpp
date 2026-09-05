@@ -724,23 +724,24 @@ TEST_F(ParquetReaderTest, SelectMismatchedStructChildByFieldId)
       .metadata(std::move(metadata_a));
   cudf::io::write_parquet(write_args_a);
 
-  auto y_b      = cudf::test::fixed_width_column_wrapper<int32_t>{40, 50};
+  auto y_b      = cudf::test::fixed_width_column_wrapper<int32_t>{{40, 50}, {true, false}};
   auto x_b      = cudf::test::fixed_width_column_wrapper<int32_t>{4, 5};
   auto struct_b = cudf::test::structs_column_wrapper{{y_b, x_b}, {true, true}}.release();
   cudf::table_view const table_b{{*struct_b}};
 
   auto path_b = temp_env->get_temp_filepath("SelectNestedFieldIdChildOrderB.parquet");
   cudf::io::table_input_metadata metadata_b(table_b);
-  metadata_b.column_metadata[0].set_name("record").set_parquet_field_id(1);
-  metadata_b.column_metadata[0].child(0).set_name("y").set_parquet_field_id(3);
-  metadata_b.column_metadata[0].child(1).set_name("x").set_parquet_field_id(2);
+  metadata_b.column_metadata[0].set_name("renamed_record").set_parquet_field_id(1);
+  metadata_b.column_metadata[0].child(0).set_name("renamed_y").set_parquet_field_id(3);
+  metadata_b.column_metadata[0].child(1).set_name("renamed_x").set_parquet_field_id(2);
   auto write_args_b =
     cudf::io::parquet_writer_options::builder(cudf::io::sink_info{path_b}, table_b)
       .metadata(std::move(metadata_b));
   cudf::io::write_parquet(write_args_b);
 
   auto expected_x = cudf::test::fixed_width_column_wrapper<int32_t>{1, 2, 3, 4, 5};
-  auto expected_y = cudf::test::fixed_width_column_wrapper<int32_t>{10, 20, 30, 40, 50};
+  auto expected_y = cudf::test::fixed_width_column_wrapper<int32_t>{
+    {10, 20, 30, 40, 50}, {true, true, true, true, false}};
   auto expected_struct =
     cudf::test::structs_column_wrapper{{expected_x, expected_y}, {true, true, true, true, true}}
       .release();
@@ -5650,6 +5651,17 @@ TEST_F(ParquetReaderTest, LateBindSourceInfo)
   CUDF_TEST_EXPECT_TABLES_EQUAL(result.tbl->view(), expected->view());
 }
 
+TEST_F(ParquetReaderTest, EmptySourcesWithArrowSchema)
+{
+  auto sources        = std::vector<std::unique_ptr<cudf::io::datasource>>{};
+  auto file_metadatas = std::vector<cudf::io::parquet::FileMetaData>{};
+  auto const options  = cudf::io::parquet_reader_options::builder(cudf::io::source_info{})
+                         .use_arrow_schema(true)
+                         .build();
+  EXPECT_THROW(cudf::io::read_parquet(std::move(sources), std::move(file_metadatas), options),
+               std::invalid_argument);
+}
+
 TEST_F(ParquetReaderTest, InvalidFooterMagic)
 {
   auto const expected = create_random_fixed_table<int>(4, 4, false);
@@ -6530,6 +6542,30 @@ TEST_F(ParquetReaderTest, NestedMismatchedSchemaColumnValidation)
     EXPECT_THROW(cudf::io::read_parquet(opts), std::invalid_argument);
   }
 }
+
+TEST_F(ParquetReaderTest, CaseInsensitiveMismatchedSchemasPropagateNullability)
+{
+  auto const required = cudf::test::fixed_width_column_wrapper<int32_t>{1, 2, 3};
+  auto const optional = cudf::test::fixed_width_column_wrapper<int32_t>{{4, 5}, {true, false}};
+  auto const required_path =
+    write_parquet_temp_file(cudf::table_view{{required}}, "CaseRequired.parquet", {"column"});
+  auto const optional_path =
+    write_parquet_temp_file(cudf::table_view{{optional}}, "CaseOptional.parquet", {"COLUMN"});
+
+  auto const options =
+    cudf::io::parquet_reader_options::builder(cudf::io::source_info{{required_path, optional_path}})
+      .allow_mismatched_pq_schemas(true)
+      .case_sensitive_names(false)
+      .column_names({"column"})
+      .build();
+
+  // A non-nullable column in the first source but nullable in another must be read as nullable.
+  auto const expected = cudf::test::fixed_width_column_wrapper<int32_t>{
+    {1, 2, 3, 4, 5}, {true, true, true, true, false}};
+  auto const result = cudf::io::read_parquet(options);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(result.tbl->view().column(0), expected);
+}
+
 namespace {
 
 /**

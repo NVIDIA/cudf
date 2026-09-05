@@ -180,8 +180,10 @@ hybrid_scan_reader_impl::hybrid_scan_reader_impl(
   cudf::host_span<cudf::host_span<uint8_t const> const> footer_bytes,
   parquet_reader_options const& options)
 {
-  _metadata = std::make_shared<aggregate_reader_metadata>(
-    footer_bytes, options.is_enabled_use_arrow_schema(), has_cols_from_mismatched_sources(options));
+  _metadata =
+    std::make_shared<aggregate_reader_metadata>(footer_bytes,
+                                                options.is_enabled_use_arrow_schema(),
+                                                options.is_enabled_allow_mismatched_pq_schemas());
 
   _extended_metadata = static_cast<aggregate_reader_metadata*>(_metadata.get());
 }
@@ -192,7 +194,17 @@ hybrid_scan_reader_impl::hybrid_scan_reader_impl(
   _metadata =
     std::make_shared<aggregate_reader_metadata>(parquet_metadatas,
                                                 options.is_enabled_use_arrow_schema(),
-                                                has_cols_from_mismatched_sources(options));
+                                                options.is_enabled_allow_mismatched_pq_schemas());
+  _extended_metadata = static_cast<aggregate_reader_metadata*>(_metadata.get());
+}
+
+hybrid_scan_reader_impl::hybrid_scan_reader_impl(std::vector<FileMetaData>&& parquet_metadatas,
+                                                 parquet_reader_options const& options)
+{
+  _metadata =
+    std::make_shared<aggregate_reader_metadata>(std::move(parquet_metadatas),
+                                                options.is_enabled_use_arrow_schema(),
+                                                options.is_enabled_allow_mismatched_pq_schemas());
   _extended_metadata = static_cast<aggregate_reader_metadata*>(_metadata.get());
 }
 
@@ -285,12 +297,13 @@ void hybrid_scan_reader_impl::select_columns(read_columns_mode read_columns_mode
   // Save original output-buffer schema for reuse across materialization passes.
   _original_output_buffers_template = make_empty_like_column_buffers(_output_buffers);
 
-  // Initialize mutable output-buffer template for this materialization pass.
-  reset_output_buffers_template();
+  // Initialize mutable output buffers for this materialization pass.
+  reset_output_buffers();
 }
 
-void hybrid_scan_reader_impl::reset_output_buffers_template()
+void hybrid_scan_reader_impl::reset_output_buffers()
 {
+  _output_buffers          = make_empty_like_column_buffers(_original_output_buffers_template);
   _output_buffers_template = make_empty_like_column_buffers(_original_output_buffers_template);
 }
 
@@ -336,7 +349,7 @@ void hybrid_scan_reader_impl::prepare_materialization(read_columns_mode read_col
   reset_internal_state();
   initialize_options(options, num_sources, stream, mr);
   select_columns(read_columns_mode, options);
-  reset_output_buffers_template();
+  reset_output_buffers();
 }
 
 std::vector<std::vector<cudf::size_type>>

@@ -81,6 +81,8 @@ class aggregate_reader_metadata : public aggregate_reader_metadata_base {
   /**
    * @brief Constructor for aggregate_reader_metadata
    *
+   * @throws std::invalid_argument if no sources are provided
+   *
    * @param footer_bytes Host span of Parquet file footer buffer bytes, one per source
    * @param use_arrow_schema Whether to use Arrow schema
    * @param has_cols_from_mismatched_srcs Whether to have columns from mismatched sources
@@ -92,11 +94,26 @@ class aggregate_reader_metadata : public aggregate_reader_metadata_base {
   /**
    * @brief Constructor for aggregate_reader_metadata
    *
+   * @throws std::invalid_argument if no sources are provided
+   *
    * @param parquet_metadatas Host span of pre-populated Parquet file metadata, one per source
    * @param use_arrow_schema Whether to use Arrow schema
    * @param has_cols_from_mismatched_srcs Whether to have columns from mismatched sources
    */
   aggregate_reader_metadata(cudf::host_span<FileMetaData const> parquet_metadatas,
+                            bool use_arrow_schema,
+                            bool has_cols_from_mismatched_srcs);
+
+  /**
+   * @brief Constructor that takes ownership of pre-populated Parquet file metadata
+   *
+   * @throws std::invalid_argument if no sources are provided
+   *
+   * @param parquet_metadatas Pre-populated Parquet file metadata, one per source
+   * @param use_arrow_schema Whether to use Arrow schema
+   * @param has_cols_from_mismatched_srcs Whether to have columns from mismatched sources
+   */
+  aggregate_reader_metadata(std::vector<FileMetaData>&& parquet_metadatas,
                             bool use_arrow_schema,
                             bool has_cols_from_mismatched_srcs);
 

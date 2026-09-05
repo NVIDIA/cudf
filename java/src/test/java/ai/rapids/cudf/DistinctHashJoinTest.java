@@ -15,30 +15,26 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 public class DistinctHashJoinTest {
   @Test
   void testGetNumberOfColumns() {
-    try (Table buildTable = new Table.TestBuilder()
-             .column(1, 2)
-             .column(3, 4)
-             .column(5, 6)
-             .build();
-         DistinctHashJoin hashJoin = new DistinctHashJoin(buildTable, false)) {
+    try (Table t = new Table.TestBuilder().column(1, 2).column(3, 4).column(5, 6).build();
+         DistinctHashJoin hashJoin = new DistinctHashJoin(t, false)) {
       assertEquals(3, hashJoin.getNumberOfColumns());
     }
   }
 
   @Test
   void testGetCompareNullsEqual() {
-    try (Table buildTable = new Table.TestBuilder().column(1, 2, 3, 4).build()) {
-      try (DistinctHashJoin hashJoin = new DistinctHashJoin(buildTable, false)) {
+    try (Table t = new Table.TestBuilder().column(1, 2, 3, 4).build()) {
+      try (DistinctHashJoin hashJoin = new DistinctHashJoin(t, false)) {
         assertFalse(hashJoin.getCompareNullsEqual());
       }
-      try (DistinctHashJoin hashJoin = new DistinctHashJoin(buildTable, true)) {
+      try (DistinctHashJoin hashJoin = new DistinctHashJoin(t, true)) {
         assertTrue(hashJoin.getCompareNullsEqual());
       }
     }
   }
 
   @Test
-  void testLeftJoinGatherMapCanBeReusedAcrossProbeTables() {
+  void testLeftDistinctJoinGatherMapCanBeReusedAcrossProbeTables() {
     final int inv = Integer.MIN_VALUE;
     try (ColumnVector buildKeys = ColumnVector.fromInts(0, 1, 2, 3);
          Table buildTable = new Table(buildKeys);

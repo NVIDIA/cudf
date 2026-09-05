@@ -14,15 +14,19 @@ import pytest
 import polars as pl
 
 import pylibcudf as plc
+from cudf_streaming.channel_metadata import OrderScheme
 from cudf_streaming.table_chunk import TableChunk
 
+from cudf_polars import Translator
 from cudf_polars.containers import DataFrame, DataType
 from cudf_polars.dsl import expr
 from cudf_polars.dsl.ir import Distinct, Empty, GroupBy
 from cudf_polars.engine.options import StreamingOptions
 from cudf_polars.streaming.actor_graph import groupby as groupby_actor_graph
 from cudf_polars.streaming.actor_graph.collectives.shuffle import ShuffleManager
+from cudf_polars.streaming.actor_graph.core import evaluate_logical_plan
 from cudf_polars.testing.asserts import assert_gpu_result_equal
+from cudf_polars.utils.config import ConfigOptions
 
 
 @pytest.fixture(scope="module")
@@ -130,6 +134,58 @@ def test_order_sensitive_execution_does_not_imply_output_order() -> None:
     assert not groupby.preserves_output_order
     assert groupby_actor_graph._maintain_order(distinct)
     assert not distinct.preserves_output_order
+
+
+def test_groupby_adjusts_truncated_ordering_with_maintain_order(
+    spmd_engine_factory,
+) -> None:
+    """GroupBy can adjust an ordered prefix without tree-reducing."""
+    engine = spmd_engine_factory(
+        StreamingOptions(
+            target_partition_size=1,
+            max_rows_per_partition=8,
+            fallback_mode="raise",
+            raise_on_fail=True,
+        )
+    )
+    df = pl.LazyFrame(
+        {
+            "DateTime": [i * 250 for i in range(128)],
+            "RIC": ["a", "b", "a", "b"] * 32,
+            "value": range(128),
+        }
+    )
+    q = (
+        df.sort("DateTime")
+        .with_columns(
+            pl.col("DateTime")
+            .cast(pl.Datetime("ns"))
+            .dt.truncate("1us")
+            .cast(pl.Int64)
+            .alias("ts_bucket")
+        )
+        .group_by("ts_bucket", "RIC", maintain_order=True)
+        .agg(pl.col("value").sum())
+    )
+    assert_gpu_result_equal(q, engine=engine, check_row_order=False)
+
+    ir = Translator(q._ldf.visit(), engine).translate_ir()
+
+    metadata_collector = evaluate_logical_plan(
+        ir, ConfigOptions.from_polars_engine(engine), collect_metadata=True
+    )[1]
+
+    assert metadata_collector is not None
+    assert len(metadata_collector) == 1
+    metadata = metadata_collector[0]
+    assert metadata.partitioning is not None
+    scheme = metadata.partitioning.inter_rank
+    assert isinstance(scheme, OrderScheme)
+    assert metadata.partitioning.local == "inherit"
+    (ordering,) = scheme.orderings
+    assert tuple(key.column_index for key in ordering.keys) == (0,)
+    assert ordering.strict_boundaries is True
+    assert ordering.locally_ordered is True
 
 
 @pytest.mark.parametrize("keys", [("key",), ("key", "key2")])

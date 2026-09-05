@@ -891,6 +891,13 @@ async def groupby_actor(
         fully_partitioned = partitioning.is_strictly_partitioned(
             level=partitioning_level,
         )
+        input_ordering = None if metadata_in.duplicated else partitioning.get_ordering()
+        can_adjust_preserving_order = (
+            isinstance(ir, GroupBy)
+            and preserves_output_order
+            and input_ordering is not None
+            and not _has_stable_sorted_agg(ir.agg_requests)
+        )
         fallback_case = (
             # NOTE: This criteria means that we fell back
             # to one partition at lowering time.
@@ -936,7 +943,7 @@ async def groupby_actor(
             ir_context,
             ch_in,
             target_partition_size,
-            allow_early_exit=not maintain_order,
+            allow_early_exit=not maintain_order or can_adjust_preserving_order,
         )
 
         skip_global_comm = metadata_in.duplicated or isinstance(
@@ -952,7 +959,7 @@ async def groupby_actor(
             collective_ids,
             target_partition_size,
             skip_global_comm,
-            maintain_order,
+            maintain_order and not can_adjust_preserving_order,
             tracer,
         )
 
@@ -969,11 +976,7 @@ async def groupby_actor(
                 aggregated=aggregated,
                 tracer=tracer,
             )
-        elif not metadata_in.duplicated and partitioning.is_ordered(
-            group_keys,
-            level="flat",
-        ):
-            assert isinstance(partitioning.inter_rank_scheme, OrderScheme)
+        elif input_ordering is not None:
             await _ordered_adjust_reduce(
                 context,
                 comm,
@@ -986,7 +989,7 @@ async def groupby_actor(
                 target_partition_size,
                 aggregated=aggregated,
                 input_drained=input_drained,
-                input_ordering=partitioning.inter_rank_scheme.orderings[0],
+                input_ordering=input_ordering,
                 preserves_output_order=preserves_output_order,
                 tracer=tracer,
             )

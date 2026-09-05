@@ -139,6 +139,12 @@ class OrderedJoinStrategy:
 JoinStrategy: TypeAlias = (
     BroadcastJoinStrategy | ShuffleJoinStrategy | OrderedJoinStrategy
 )
+OrderedJoinDecision: TypeAlias = Literal[
+    "ordered_aligned",
+    "ordered_adjust_left",
+    "ordered_adjust_right",
+    "ordered_adjust_both",
+]
 
 
 @define_actor()
@@ -538,6 +544,17 @@ def _make_ordered_strategy(
     if not _ordering_prefix_matches(right_ordering, reference, right_key_indices):
         return None
 
+    left_output_ordering = _update_ordering_indices(reference, left_key_indices)
+    output_ordering = _update_ordering_indices(reference, output_key_indices)
+    if not (
+        left_ordering.locally_ordered
+        and join_preserves_side_order(ir.options[5], "left")
+    ):
+        left_output_ordering = left_output_ordering.with_locally_ordered(
+            locally_ordered=False
+        )
+        output_ordering = output_ordering.with_locally_ordered(locally_ordered=False)
+
     return OrderedJoinStrategy(
         output_indices=output_key_indices,
         left_indices=left_key_indices,
@@ -546,9 +563,11 @@ def _make_ordered_strategy(
         right_keys=right_keys[:reference_key_count],
         left_input_ordering=left_ordering,
         right_input_ordering=right_ordering,
-        left_output_ordering=_update_ordering_indices(reference, left_key_indices),
-        right_output_ordering=_update_ordering_indices(reference, right_key_indices),
-        output_ordering=_update_ordering_indices(reference, output_key_indices),
+        left_output_ordering=left_output_ordering,
+        right_output_ordering=_update_ordering_indices(
+            reference, right_key_indices
+        ).with_locally_ordered(locally_ordered=False),
+        output_ordering=output_ordering,
     )
 
 
@@ -744,6 +763,19 @@ def _local_count_for_ordering(comm: Communicator, ordering: Ordering) -> int:
     return stop - start
 
 
+def _ordered_join_decision(
+    *, left_aligned: bool, right_aligned: bool
+) -> OrderedJoinDecision:
+    """Return the trace decision for ordered join-side alignment."""
+    if left_aligned and right_aligned:
+        return "ordered_aligned"
+    if left_aligned:
+        return "ordered_adjust_right"
+    if right_aligned:
+        return "ordered_adjust_left"
+    return "ordered_adjust_both"
+
+
 async def _adjust_ordered_join_side(
     context: Context,
     comm: Communicator,
@@ -754,21 +786,30 @@ async def _adjust_ordered_join_side(
     input_ordering: Ordering,
     output_ordering: Ordering,
     *,
+    already_aligned: bool,
     collective_id: int,
 ) -> None:
     """Send metadata, then align one join side to output_ordering."""
-    await send_metadata(
-        ch_out,
-        context,
-        ChannelMetadata(
-            local_count=_local_count_for_ordering(comm, output_ordering),
-            partitioning=Partitioning(
-                OrderScheme([output_ordering]),
-                local="inherit",
-            ),
-            duplicated=False,
+    output_metadata = ChannelMetadata(
+        local_count=_local_count_for_ordering(comm, output_ordering),
+        partitioning=Partitioning(
+            OrderScheme([output_ordering]),
+            local="inherit",
         ),
+        duplicated=False,
     )
+    if already_aligned:
+        await replay_buffered_channel(
+            context,
+            ch_out,
+            ch_in,
+            (),
+            output_metadata,
+            trace_ir=schema_ir,
+        )
+        return
+
+    await send_metadata(ch_out, context, output_metadata)
     await adjust_ordering(
         context,
         comm,
@@ -796,6 +837,12 @@ async def _ordered_join(
     tracer: ActorTracer | None,
 ) -> None:
     """Align ordered inputs to common boundaries, then join partition-wise."""
+    left_boundaries_aligned = strategy.left_input_ordering.boundaries_aligned_with(
+        strategy.left_output_ordering, context.br()
+    )
+    right_boundaries_aligned = strategy.right_input_ordering.boundaries_aligned_with(
+        strategy.right_output_ordering, context.br()
+    )
     metadata_out = ChannelMetadata(
         local_count=_local_count_for_ordering(comm, strategy.output_ordering),
         partitioning=Partitioning(
@@ -806,10 +853,26 @@ async def _ordered_join(
     )
     await send_metadata(ch_out, context, metadata_out)
 
-    await gather_in_task_group(
+    left_metadata, right_metadata = await gather_in_task_group(
         recv_metadata(ch_left, context),
         recv_metadata(ch_right, context),
     )
+    left_target_count = _local_count_for_ordering(comm, strategy.left_output_ordering)
+    right_target_count = _local_count_for_ordering(comm, strategy.right_output_ordering)
+    left_aligned = (
+        left_boundaries_aligned
+        and not left_metadata.duplicated
+        and left_metadata.local_count == left_target_count
+    )
+    right_aligned = (
+        right_boundaries_aligned
+        and not right_metadata.duplicated
+        and right_metadata.local_count == right_target_count
+    )
+    if tracer is not None:
+        tracer.decision = _ordered_join_decision(
+            left_aligned=left_aligned, right_aligned=right_aligned
+        )
     ch_left_adjusted = context.create_channel()
     ch_right_adjusted = context.create_channel()
     async with shutdown_on_error(
@@ -829,6 +892,7 @@ async def _ordered_join(
                 ch_left,
                 strategy.left_input_ordering,
                 strategy.left_output_ordering,
+                already_aligned=left_aligned,
                 collective_id=collective_ids.pop(0),
             ),
             _adjust_ordered_join_side(
@@ -840,6 +904,7 @@ async def _ordered_join(
                 ch_right,
                 strategy.right_input_ordering,
                 strategy.right_output_ordering,
+                already_aligned=right_aligned,
                 collective_id=collective_ids.pop(0),
             ),
             _join_chunks(

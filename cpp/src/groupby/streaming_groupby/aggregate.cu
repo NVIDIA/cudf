@@ -17,16 +17,13 @@
 #include <thrust/for_each.h>
 
 #include <limits>
+#include <mutex>
 #include <string>
 
 namespace cudf::groupby {
 
 void streaming_groupby::impl::do_aggregate(table_view const& data, cuda::stream_ref stream)
 {
-  CUDF_EXPECTS(!_invalidated,
-               "streaming_groupby is in an invalidated state from a prior failure; "
-               "no further aggregate()/merge() is allowed.  finalize() may still be called.");
-
   auto const batch_size = data.num_rows();
   if (batch_size == 0) { return; }
 
@@ -40,15 +37,29 @@ void streaming_groupby::impl::do_aggregate(table_view const& data, cuda::stream_
                "Transient key encoding (max_distinct_keys + batch_size) would overflow size_type.",
                std::invalid_argument);
 
-  if (!_initialized) { initialize(data, stream); }
+  // The transient key encoding is only valid while a single insertion is in flight, so
+  // insertion is serialized across concurrent callers on the host and, via the event, on the
+  // device.  The aggregation below is per-group atomic and runs unserialized.
+  auto const result = [&] {
+    std::lock_guard<std::mutex> const lock{_insert_mutex};
 
-  auto const batch_keys = data.select(_key_indices);
+    CUDF_EXPECTS(!_invalidated,
+                 "streaming_groupby is in an invalidated state from a prior failure; "
+                 "no further aggregate()/merge() is allowed.  finalize() may still be called.");
 
-  update_nullable_state(batch_keys);
+    if (!_initialized) { initialize(data, stream); }
 
-  if (!_key_set) { create_key_set(stream); }
+    auto const batch_keys = data.select(_key_indices);
 
-  auto result = probe_and_insert(batch_keys, stream);
+    update_nullable_state(batch_keys);
+
+    if (!_key_set) { create_key_set(stream); }
+
+    _insert_done.wait(stream);
+    auto inserted = probe_and_insert(batch_keys, stream);
+    _insert_done.record(stream);
+    return inserted;
+  }();
 
   auto const values_view = data.select(_value_col_indices);
   auto const d_values    = table_device_view::create(values_view, stream);

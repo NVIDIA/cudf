@@ -18,6 +18,7 @@
 #include <cuda/stream>
 #include <thrust/for_each.h>
 
+#include <mutex>
 #include <string>
 
 namespace cudf::groupby {
@@ -90,6 +91,9 @@ struct merge_single_pass_aggs_fn {
 
 void streaming_groupby::impl::do_merge(impl const& other, cuda::stream_ref stream)
 {
+  // `other` is only read from, so a single lock on this object's insertion state is enough.
+  std::lock_guard<std::mutex> const lock{_insert_mutex};
+
   CUDF_EXPECTS(!_invalidated,
                "streaming_groupby is in an invalidated state from a prior failure; "
                "no further aggregate()/merge() is allowed.  finalize() may still be called.");
@@ -99,8 +103,9 @@ void streaming_groupby::impl::do_merge(impl const& other, cuda::stream_ref strea
   CUDF_EXPECTS(_initialized,
                "Cannot merge into an uninitialized streaming_groupby. "
                "Call aggregate() at least once before merge().");
-  CUDF_EXPECTS(other._distinct_keys <= _max_distinct_keys,
-               "Merge source distinct keys (" + std::to_string(other._distinct_keys) +
+  auto const other_keys_count = other._distinct_keys.load(std::memory_order_relaxed);
+  CUDF_EXPECTS(other_keys_count <= _max_distinct_keys,
+               "Merge source distinct keys (" + std::to_string(other_keys_count) +
                  ") exceeds max_distinct_keys (" + std::to_string(_max_distinct_keys) + ").",
                std::invalid_argument);
   CUDF_EXPECTS(other._agg_kinds == _agg_kinds,
@@ -117,14 +122,16 @@ void streaming_groupby::impl::do_merge(impl const& other, cuda::stream_ref strea
 
   auto other_keys                = other.gather_distinct_keys(stream, mr);
   auto const other_key_view      = other_keys->view();
-  auto const other_distinct_keys = other._distinct_keys;
+  auto const other_distinct_keys = other._distinct_keys.load(std::memory_order_relaxed);
   if (other_distinct_keys == 0) { return; }
 
   update_nullable_state(other_key_view);
 
   if (!_key_set) { create_key_set(stream); }
 
+  _insert_done.wait(stream);
   auto result = probe_and_insert(other_key_view, stream);
+  _insert_done.record(stream);
 
   // Merge aggregation values using dense target indices.  We only read from
   // `other._agg_results`; no need to deep-copy the source rows like keys.

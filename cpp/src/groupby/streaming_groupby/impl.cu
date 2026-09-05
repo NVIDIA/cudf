@@ -243,7 +243,9 @@ std::unique_ptr<table> streaming_groupby::impl::gather_agg_results(
   // The results we care about are dense in `[0, _distinct_keys)` and can be extracted by
   // slice+copy.
   auto const sliced =
-    cudf::detail::slice(_agg_results->view(), {0, _distinct_keys}, stream).front();
+    cudf::detail::slice(
+      _agg_results->view(), {0, _distinct_keys.load(std::memory_order_relaxed)}, stream)
+      .front();
   return std::make_unique<table>(sliced, stream, mr);
 }
 
@@ -378,7 +380,10 @@ std::pair<std::unique_ptr<table>, std::vector<aggregation_result>> streaming_gro
   return _impl->do_finalize(stream, mr);
 }
 
-size_type streaming_groupby::distinct_keys() const noexcept { return _impl->_distinct_keys; }
+size_type streaming_groupby::distinct_keys() const noexcept
+{
+  return _impl->_distinct_keys.load(std::memory_order_relaxed);
+}
 
 bool is_streaming_groupby_supported(data_type values_type, aggregation::Kind kind)
 {

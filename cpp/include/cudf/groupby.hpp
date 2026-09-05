@@ -519,6 +519,13 @@ class streaming_groupby {
    * are updated atomically. The input `data` table is not referenced after this
    * call returns.
    *
+   * This function may be called concurrently from multiple host threads on the same object,
+   * and each call may supply a different stream. Callers do not need to serialize the calls or
+   * synchronize between them. Key insertion is serialized internally, on the host and across
+   * streams, because a batch's newly discovered keys are held in a transient encoding that is
+   * only valid while that one insertion is in flight. The aggregation that follows each
+   * insertion updates every group atomically, so those phases overlap freely across streams.
+   *
    * @param data Table containing both key and value columns
    * @param stream CUDA stream used for device memory operations and kernel launches
    *
@@ -532,6 +539,10 @@ class streaming_groupby {
    *
    * Extracts the other object's accumulated intermediate state and merges it into this
    * object's persistent hash table. The other object is not modified.
+   *
+   * This function shares the insertion path with `aggregate()` and is serialized against it, so
+   * it is safe to call while other host threads are calling `aggregate()` on this object. The
+   * source object must not be mutated concurrently.
    * Both objects must have been constructed with compatible aggregation requests,
    * and this object must have had at least one `aggregate()` call.
    *

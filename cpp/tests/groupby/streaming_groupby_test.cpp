@@ -19,8 +19,12 @@
 #include <cudf/unary.hpp>
 #include <cudf/utilities/traits.hpp>
 
+#include <rmm/cuda_device.hpp>
+#include <rmm/cuda_stream.hpp>
 #include <rmm/mr/statistics_resource_adaptor.hpp>
 
+#include <atomic>
+#include <thread>
 #include <vector>
 
 static std::vector<cudf::size_type> const KEY_COL{0};
@@ -323,6 +327,79 @@ TEST_F(StreamingGroupbyTest, MergeTwoObjects)
   cudf::test::fixed_width_column_wrapper<K> ek{1, 2, 3};
   cudf::test::fixed_width_column_wrapper<R> ev{40, 60, 50};
   check(keys, results, cudf::table_view{{ek}}, {ev});
+}
+
+TEST_F(StreamingGroupbyTest, ConcurrentAggregate)
+{
+  using K = int32_t;
+  using V = int32_t;
+
+  constexpr int num_batches = 8;
+
+  // Every batch re-hits keys 0 and 1 and introduces one key of its own, so concurrent calls
+  // both collide on existing groups and discover new keys at the same time.
+  std::vector<cudf::test::fixed_width_column_wrapper<K>> keys;
+  std::vector<cudf::test::fixed_width_column_wrapper<V>> vals;
+  keys.reserve(num_batches);
+  vals.reserve(num_batches);
+  for (int i = 0; i < num_batches; ++i) {
+    keys.emplace_back(std::initializer_list<K>{0, 1, static_cast<K>(i + 2)});
+    vals.emplace_back(std::initializer_list<V>{1, 10, 100});
+  }
+
+  std::vector<cudf::table_view> batches;
+  batches.reserve(num_batches);
+  for (int i = 0; i < num_batches; ++i) {
+    batches.push_back(cudf::table_view{{keys[i], vals[i]}});
+  }
+
+  std::vector<std::unique_ptr<rmm::cuda_stream>> streams;
+  streams.reserve(num_batches);
+  for (int i = 0; i < num_batches; ++i) {
+    streams.push_back(std::make_unique<rmm::cuda_stream>());
+  }
+
+  auto reqs = single_agg_req(1, cudf::make_sum_aggregation<cudf::groupby_aggregation>());
+  cudf::groupby::streaming_groupby streaming_agg(KEY_COL, reqs, DEFAULT_MAX_DISTINCT_KEYS);
+
+  auto const device = rmm::get_current_cuda_device();
+  std::vector<std::thread> threads;
+  std::vector<std::exception_ptr> errors(num_batches);
+  // `ready` lets the main thread wait until every worker is spinning, and `start` then releases
+  // them together, so the aggregate() calls actually overlap.
+  std::atomic<int> ready{0};
+  std::atomic<bool> start{false};
+  threads.reserve(num_batches);
+  for (int i = 0; i < num_batches; ++i) {
+    threads.emplace_back([&, i] {
+      rmm::cuda_set_device_raii const device_guard{device};
+      ready.fetch_add(1, std::memory_order_relaxed);
+      while (!start.load(std::memory_order_acquire)) {
+        std::this_thread::yield();
+      }
+      try {
+        streaming_agg.aggregate(batches[i], streams[i]->view());
+      } catch (...) {
+        errors[i] = std::current_exception();
+      }
+    });
+  }
+  while (ready.load(std::memory_order_relaxed) != num_batches) {
+    std::this_thread::yield();
+  }
+  start.store(true, std::memory_order_release);
+  for (auto& thread : threads) {
+    thread.join();
+  }
+  for (auto const& error : errors) {
+    EXPECT_FALSE(error);
+  }
+  for (auto const& stream : streams) {
+    stream->synchronize();
+  }
+
+  auto [out_keys, results] = streaming_agg.finalize();
+  verify_against_groupby(out_keys, results, batches, KEY_COL, reqs);
 }
 
 TEST_F(StreamingGroupbyTest, EmptyBatch)

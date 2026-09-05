@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -72,6 +72,37 @@ void BM_parquet_read_fixed_width_struct(nvbench::state& state,
                                         type_list);
 }
 
+// A single PLAIN INT32 column isolates nullable flat-page decode with bounded tiny-page coverage.
+void BM_parquet_read_flat_nullable_pages(nvbench::state& state)
+{
+  cudf::size_type constexpr num_benchmark_cols = 1;
+  auto const data_size                         = static_cast<size_t>(state.get_int64("data_size"));
+  auto const validity                          = state.get_string("validity");
+  auto const page_rows = static_cast<cudf::size_type>(state.get_int64("page_rows"));
+  cuio_source_sink_pair source_sink(io_type::DEVICE_BUFFER);
+
+  auto const num_rows_written = [&]() {
+    auto profile = data_profile_builder();
+    if (validity == "no_validity") {
+      profile.no_validity();
+    } else {
+      profile.null_probability(validity == "nullable_1" ? 0.01 : 0.50);
+    }
+    auto const tbl =
+      create_random_table({cudf::type_id::INT32}, table_size_bytes{data_size}, profile);
+    auto const view = tbl->view();
+
+    cudf::io::write_parquet(
+      cudf::io::parquet_writer_options::builder(source_sink.make_sink_info(), view)
+        .compression(cudf::io::compression_type::NONE)
+        .dictionary_policy(cudf::io::dictionary_policy::NEVER)
+        .max_page_size_rows(page_rows));
+    return view.num_rows();
+  }();
+
+  parquet_read_common(num_rows_written, num_benchmark_cols, source_sink, state);
+}
+
 void BM_parquet_read_io_small_mixed(nvbench::state& state)
 {
   auto const d_type =
@@ -130,6 +161,13 @@ NVBENCH_BENCH_TYPES(BM_parquet_read_data, NVBENCH_TYPE_AXES(d_type_list))
   .add_int64_axis("data_size", {512 << 20})
   .add_int64_axis("row_group_size_bytes", {0})
   .add_int64_axis("row_group_size_rows", {0});
+
+NVBENCH_BENCH(BM_parquet_read_flat_nullable_pages)
+  .set_name("parquet_read_flat_nullable_pages")
+  .set_min_samples(4)
+  .add_string_axis("validity", {"no_validity", "nullable_1", "nullable_50"})
+  .add_int64_axis("page_rows", {31, 32, 33, 255, 256, 257})
+  .add_int64_axis("data_size", {1 << 20});
 
 NVBENCH_BENCH(BM_parquet_read_io_small_mixed)
   .set_name("parquet_read_io_small_mixed")

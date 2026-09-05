@@ -224,6 +224,277 @@ TEST_F(ParquetReaderTest, UserBoundsWithNulls)
   }
 }
 
+TEST_F(ParquetReaderTest, RequiredStructUserBoundsAcrossPages)
+{
+  // Required struct leaves have no definition stream. Exercise the reader's
+  // nested state across page and read boundaries without relying on the
+  // optional-level path used by the neighboring user-bounds tests.
+  constexpr int num_rows = 257;
+  auto values            = cuda::counting_iterator<int>{0};
+
+  cudf::test::fixed_width_column_wrapper<int> child0(values, values + num_rows);
+  cudf::test::fixed_width_column_wrapper<int64_t> child1(values, values + num_rows);
+  auto struct_col = cudf::test::structs_column_wrapper{{child0, child1}};
+  cudf::table_view const expected{{struct_col}};
+
+  auto const filepath = temp_env->get_temp_filepath("RequiredStructUserBoundsAcrossPages.parquet");
+  auto out_opts = cudf::io::parquet_writer_options::builder(cudf::io::sink_info{filepath}, expected)
+                    .max_page_size_rows(32)
+                    .max_page_fragment_size(32);
+  cudf::io::write_parquet(out_opts);
+
+  for (auto const [skip_rows, num_rows_to_read] :
+       std::vector<std::pair<int, int>>{{0, num_rows}, {31, 3}, {32, 3}, {33, 3}, {255, 2}}) {
+    auto read_opts = cudf::io::parquet_reader_options::builder(cudf::io::source_info{filepath})
+                       .skip_rows(skip_rows)
+                       .num_rows(num_rows_to_read);
+    auto const result = cudf::io::read_parquet(read_opts);
+    auto const sliced = cudf::slice(expected, {skip_rows, skip_rows + num_rows_to_read});
+    CUDF_TEST_EXPECT_TABLES_EQUAL(*result.tbl, sliced.front());
+  }
+}
+
+TEST_F(ParquetReaderTest, RequiredFlatByteStreamSplit)
+{
+  // Exercise BYTE_STREAM_SPLIT for required flat fixed-width pages, including a read that crosses
+  // page boundaries and confirmation that the file uses the requested encoding.
+  constexpr int num_rows = 257;
+  auto values            = cudf::detail::make_counting_transform_iterator(
+    0, [](int const i) { return static_cast<float>(i) * 1.25f; });
+  cudf::test::fixed_width_column_wrapper<float> col(values, values + num_rows);
+  cudf::table_view const expected{{col}};
+  auto const filepath = temp_env->get_temp_filepath("RequiredFlatByteStreamSplit.parquet");
+  cudf::io::table_input_metadata metadata(expected);
+  metadata.column_metadata[0].set_encoding(cudf::io::column_encoding::BYTE_STREAM_SPLIT);
+  auto out_opts = cudf::io::parquet_writer_options::builder(cudf::io::sink_info{filepath}, expected)
+                    .metadata(metadata)
+                    .max_page_size_rows(32)
+                    .max_page_fragment_size(32);
+  cudf::io::write_parquet(out_opts);
+  auto const source = cudf::io::datasource::create(filepath);
+  cudf::io::parquet::FileMetaData fmd;
+  read_footer(source, &fmd);
+  auto const& encodings = fmd.row_groups.front().columns.front().meta_data.encodings;
+  EXPECT_NE(
+    std::find(encodings.begin(), encodings.end(), cudf::io::parquet::Encoding::BYTE_STREAM_SPLIT),
+    encodings.end());
+
+  auto const result = cudf::io::read_parquet(
+    cudf::io::parquet_reader_options::builder(cudf::io::source_info{filepath})
+      .skip_rows(31)
+      .num_rows(33));
+  auto const sliced = cudf::slice(expected, {31, 64});
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(result.tbl->view().column(0), sliced.front().column(0));
+}
+
+TEST_F(ParquetReaderTest, NullableStructBoolAndStringUserBounds)
+{
+  // Exercise nullable nested state for mixed BOOL8 and STRING leaves while slicing across Parquet
+  // page boundaries.
+  constexpr int row_count = 257;
+  std::vector<std::string> strings;
+  strings.reserve(row_count);
+  for (int row = 0; row < row_count; ++row) {
+    strings.push_back("nested-" + std::to_string(row % 17));
+  }
+  auto bool_values =
+    cudf::detail::make_counting_transform_iterator(0, [](int const row) { return row % 2 == 0; });
+  auto parent_validity =
+    cudf::detail::make_counting_transform_iterator(0, [](int const row) { return row % 11 != 0; });
+  auto bool_validity =
+    cudf::detail::make_counting_transform_iterator(0, [](int const row) { return row % 7 != 0; });
+  auto string_validity =
+    cudf::detail::make_counting_transform_iterator(0, [](int const row) { return row % 5 != 0; });
+  cudf::test::fixed_width_column_wrapper<bool> bool_child(
+    bool_values, bool_values + row_count, bool_validity);
+  cudf::test::strings_column_wrapper string_child(strings.begin(), strings.end(), string_validity);
+  auto struct_col = cudf::test::structs_column_wrapper{{bool_child, string_child}, parent_validity};
+  cudf::table_view const expected{{struct_col}};
+
+  auto const filepath =
+    temp_env->get_temp_filepath("NullableStructBoolAndStringUserBounds.parquet");
+  cudf::io::write_parquet(
+    cudf::io::parquet_writer_options::builder(cudf::io::sink_info{filepath}, expected)
+      .dictionary_policy(cudf::io::dictionary_policy::NEVER)
+      .max_page_size_rows(32)
+      .max_page_fragment_size(32)
+      .write_v2_headers(true));
+
+  for (auto const [skip_rows, num_rows_to_read] :
+       std::vector<std::pair<int, int>>{{0, row_count}, {31, 3}, {32, 3}, {33, 3}, {255, 2}}) {
+    auto const result = cudf::io::read_parquet(
+      cudf::io::parquet_reader_options::builder(cudf::io::source_info{filepath})
+        .skip_rows(skip_rows)
+        .num_rows(num_rows_to_read));
+    auto const sliced = cudf::slice(expected, {skip_rows, skip_rows + num_rows_to_read});
+    CUDF_TEST_EXPECT_TABLES_EQUAL(*result.tbl, sliced.front());
+  }
+}
+
+TEST_F(ParquetReaderTest, NullableStructDictionaryAndByteStreamSplit)
+{
+  // Exercise nullable STRUCT reads for dictionary and BYTE_STREAM_SPLIT encoded leaves, including
+  // encoding verification and page-boundary user bounds.
+  constexpr int row_count = 257;
+  std::vector<std::string> strings;
+  strings.reserve(row_count);
+  for (int row = 0; row < row_count; ++row) {
+    strings.push_back("dictionary-" + std::to_string(row % 17));
+  }
+  auto int_values =
+    cudf::detail::make_counting_transform_iterator(0, [](int const row) { return row % 13; });
+  auto float_values = cudf::detail::make_counting_transform_iterator(
+    0, [](int const row) { return static_cast<float>(row % 19) * 1.25f; });
+  auto parent_validity =
+    cudf::detail::make_counting_transform_iterator(0, [](int const row) { return row % 11 != 0; });
+  auto int_validity =
+    cudf::detail::make_counting_transform_iterator(0, [](int const row) { return row % 7 != 0; });
+  auto float_validity =
+    cudf::detail::make_counting_transform_iterator(0, [](int const row) { return row % 5 != 0; });
+  auto string_validity =
+    cudf::detail::make_counting_transform_iterator(0, [](int const row) { return row % 3 != 0; });
+  cudf::test::fixed_width_column_wrapper<int> int_child(
+    int_values, int_values + row_count, int_validity);
+  cudf::test::fixed_width_column_wrapper<float> float_child(
+    float_values, float_values + row_count, float_validity);
+  cudf::test::strings_column_wrapper string_child(strings.begin(), strings.end(), string_validity);
+  auto struct_col =
+    cudf::test::structs_column_wrapper{{int_child, float_child, string_child}, parent_validity};
+  cudf::table_view const expected{{struct_col}};
+
+  auto const dictionary_filepath =
+    temp_env->get_temp_filepath("NullableStructDictionaryUserBounds.parquet");
+  cudf::io::write_parquet(
+    cudf::io::parquet_writer_options::builder(cudf::io::sink_info{dictionary_filepath}, expected)
+      .dictionary_policy(cudf::io::dictionary_policy::ALWAYS)
+      .max_page_size_rows(32)
+      .max_page_fragment_size(32)
+      .write_v2_headers(true));
+  auto const dictionary_source = cudf::io::datasource::create(dictionary_filepath);
+  cudf::io::parquet::FileMetaData dictionary_fmd;
+  read_footer(dictionary_source, &dictionary_fmd);
+  for (auto const& column : dictionary_fmd.row_groups.front().columns) {
+    auto const& encodings = column.meta_data.encodings;
+    EXPECT_NE(
+      std::find(encodings.begin(), encodings.end(), cudf::io::parquet::Encoding::RLE_DICTIONARY),
+      encodings.end());
+  }
+
+  auto const bss_filepath = temp_env->get_temp_filepath("NullableStructBssUserBounds.parquet");
+  cudf::io::table_input_metadata metadata(expected);
+  metadata.column_metadata[0].set_name("s");
+  metadata.column_metadata[0].child(0).set_name("i");
+  metadata.column_metadata[0].child(1).set_name("f");
+  metadata.column_metadata[0].child(2).set_name("str");
+  metadata.column_metadata[0].child(1).set_encoding(cudf::io::column_encoding::BYTE_STREAM_SPLIT);
+  cudf::io::write_parquet(
+    cudf::io::parquet_writer_options::builder(cudf::io::sink_info{bss_filepath}, expected)
+      .metadata(metadata)
+      .dictionary_policy(cudf::io::dictionary_policy::NEVER)
+      .max_page_size_rows(32)
+      .max_page_fragment_size(32)
+      .write_v2_headers(true));
+  auto const bss_source = cudf::io::datasource::create(bss_filepath);
+  cudf::io::parquet::FileMetaData bss_fmd;
+  read_footer(bss_source, &bss_fmd);
+  auto const& bss_encodings = bss_fmd.row_groups.front().columns[1].meta_data.encodings;
+  EXPECT_NE(
+    std::find(
+      bss_encodings.begin(), bss_encodings.end(), cudf::io::parquet::Encoding::BYTE_STREAM_SPLIT),
+    bss_encodings.end());
+
+  for (auto const& filepath : {dictionary_filepath, bss_filepath}) {
+    for (auto const [skip_rows, num_rows_to_read] :
+         std::vector<std::pair<int, int>>{{0, row_count}, {31, 3}, {32, 3}, {33, 3}, {255, 2}}) {
+      auto const result = cudf::io::read_parquet(
+        cudf::io::parquet_reader_options::builder(cudf::io::source_info{filepath})
+          .skip_rows(skip_rows)
+          .num_rows(num_rows_to_read));
+      auto const sliced = cudf::slice(expected, {skip_rows, skip_rows + num_rows_to_read});
+      CUDF_TEST_EXPECT_TABLES_EQUAL(*result.tbl, sliced.front());
+    }
+  }
+}
+
+TEST_F(ParquetReaderTest, ByteStreamSplitNestedListFloat)
+{
+  // Exercise BYTE_STREAM_SPLIT under both nesting and repetition. The nullable STRUCT and LIST
+  // levels add definition and repetition streams; 32-row pages and the selected ranges cover both
+  // page boundaries and the 32-value decode boundary.
+  constexpr cudf::size_type num_rows = 257;
+  std::vector<cudf::size_type> offsets{0};
+  std::vector<float> values;
+  std::vector<bool> value_validity;
+  for (cudf::size_type row = 0; row < num_rows; ++row) {
+    auto const struct_is_valid = row % 11 != 0;
+    auto const list_is_valid   = struct_is_valid && row % 7 != 0;
+    auto const list_size       = list_is_valid ? row % 4 : 0;
+    for (cudf::size_type element = 0; element < list_size; ++element) {
+      values.push_back(static_cast<float>(row * 4 + element) * 1.25f);
+      value_validity.push_back((row + element) % 5 != 0);
+    }
+    offsets.push_back(offsets.back() + list_size);
+  }
+  auto list_validity = cudf::detail::make_counting_transform_iterator(
+    0, [](cudf::size_type const row) { return row % 11 != 0 && row % 7 != 0; });
+  auto struct_validity = cudf::detail::make_counting_transform_iterator(
+    0, [](cudf::size_type const row) { return row % 11 != 0; });
+
+  auto [list_mask, list_null_count] =
+    cudf::test::detail::make_null_mask(list_validity, list_validity + num_rows);
+  auto list_col = cudf::make_lists_column(
+    num_rows,
+    cudf::test::fixed_width_column_wrapper<cudf::size_type>(offsets.begin(), offsets.end())
+      .release(),
+    cudf::test::fixed_width_column_wrapper<float>(
+      values.begin(), values.end(), value_validity.begin())
+      .release(),
+    list_null_count,
+    std::move(list_mask));
+
+  auto [struct_mask, struct_null_count] =
+    cudf::test::detail::make_null_mask(struct_validity, struct_validity + num_rows);
+  std::vector<std::unique_ptr<cudf::column>> children;
+  children.push_back(std::move(list_col));
+  auto struct_col = cudf::make_structs_column(
+    num_rows, std::move(children), struct_null_count, std::move(struct_mask));
+  cudf::table_view const expected{{*struct_col}};
+
+  auto const filepath = temp_env->get_temp_filepath("ByteStreamSplitNestedListFloat.parquet");
+  cudf::io::table_input_metadata metadata(expected);
+  metadata.column_metadata[0].set_name("s");
+  metadata.column_metadata[0].child(0).set_name("floats");
+  metadata.column_metadata[0].child(0).child(1).set_encoding(
+    cudf::io::column_encoding::BYTE_STREAM_SPLIT);
+  cudf::io::write_parquet(
+    cudf::io::parquet_writer_options::builder(cudf::io::sink_info{filepath}, expected)
+      .metadata(std::move(metadata))
+      .dictionary_policy(cudf::io::dictionary_policy::NEVER)
+      .max_page_size_rows(32)
+      .write_v2_headers(true));
+
+  // Prove that the requested encoding made it into the file, rather than only testing a writer
+  // fallback. A nullable list leaf has RLE level encodings in addition to the data encoding.
+  auto const source = cudf::io::datasource::create(filepath);
+  cudf::io::parquet::FileMetaData fmd;
+  read_footer(source, &fmd);
+  auto const& encodings = fmd.row_groups.front().columns.front().meta_data.encodings;
+  EXPECT_NE(
+    std::find(encodings.begin(), encodings.end(), cudf::io::parquet::Encoding::BYTE_STREAM_SPLIT),
+    encodings.end());
+
+  for (auto const [skip_rows, num_rows_to_read] :
+       std::vector<std::pair<cudf::size_type, cudf::size_type>>{
+         {0, num_rows}, {31, 3}, {32, 3}, {33, 3}, {255, 2}}) {
+    auto const result = cudf::io::read_parquet(
+      cudf::io::parquet_reader_options::builder(cudf::io::source_info{filepath})
+        .skip_rows(skip_rows)
+        .num_rows(num_rows_to_read));
+    auto const sliced = cudf::slice(expected, {skip_rows, skip_rows + num_rows_to_read});
+    CUDF_TEST_EXPECT_TABLES_EQUAL(*result.tbl, sliced.front());
+  }
+}
+
 TEST_F(ParquetReaderTest, UserBoundsWithNullsMixedTypes)
 {
   constexpr int num_rows = 32 * 1024;
@@ -394,6 +665,40 @@ TEST_F(ParquetReaderTest, ListUserBoundsWithNullsLarge)
     auto expected = cudf::slice(col, slice_indices);
 
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(result.tbl->get_column(0), expected[0]);
+  }
+}
+
+TEST_F(ParquetReaderTest, NullableListAllNullPages)
+{
+  // Exercise repeated-level handling for nullable LIST pages that contain no leaf values because
+  // every list is null.
+  constexpr int num_rows = 257;
+  std::vector<cudf::size_type> offsets(num_rows + 1, 0);
+  auto validity                = cuda::make_constant_iterator(false);
+  auto [null_mask, null_count] = cudf::test::detail::make_null_mask(validity, validity + num_rows);
+
+  auto input = cudf::make_lists_column(
+    num_rows,
+    cudf::test::fixed_width_column_wrapper<cudf::size_type>(offsets.begin(), offsets.end())
+      .release(),
+    cudf::test::strings_column_wrapper{}.release(),
+    null_count,
+    std::move(null_mask));
+  cudf::table_view const expected_table{{*input}};
+  auto const filepath = temp_env->get_temp_filepath("NullableListAllNullPages.parquet");
+  cudf::io::write_parquet(
+    cudf::io::parquet_writer_options::builder(cudf::io::sink_info{filepath}, expected_table)
+      .max_page_size_rows(32)
+      .max_page_fragment_size(32));
+
+  for (auto const [skip_rows, num_rows_to_read] :
+       std::vector<std::pair<int, int>>{{0, num_rows}, {31, 3}, {32, 3}, {33, 3}, {255, 2}}) {
+    auto const result = cudf::io::read_parquet(
+      cudf::io::parquet_reader_options::builder(cudf::io::source_info{filepath})
+        .skip_rows(skip_rows)
+        .num_rows(num_rows_to_read));
+    auto const sliced = cudf::slice(expected_table, {skip_rows, skip_rows + num_rows_to_read});
+    CUDF_TEST_EXPECT_TABLES_EQUAL(*result.tbl, sliced.front());
   }
 }
 

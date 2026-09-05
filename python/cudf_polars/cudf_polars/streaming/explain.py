@@ -563,7 +563,7 @@ def _(ir: Scan) -> dict[str, Serializable]:
 def _(ir: StreamingScan) -> dict[str, Serializable]:
     return {
         "typ": ir.base_scan.typ,
-        "scan_count": len(ir.scans),
+        "task_count": len(ir.tasks),
         "prefix": os.path.commonprefix(ir.base_scan.paths),
         "predicate": (
             _serialize_expr(ir.base_scan.predicate) if ir.base_scan.predicate else None

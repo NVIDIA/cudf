@@ -558,7 +558,7 @@ def test_scan_properties(tmp_path: Path, predicate: pl.Expr | None):
         "prefix": f"{root}/",
         "typ": "parquet",
         "predicate": None,
-        "scan_count": 1,
+        "task_count": 1,
     }
     if predicate is not None:
         q = q.filter(predicate)

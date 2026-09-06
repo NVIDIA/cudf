@@ -31,6 +31,7 @@ using metadata_base                  = parquet::detail::metadata;
 using io::detail::inline_column_buffer;
 using parquet::detail::equality_literals_collector;
 using parquet::detail::input_column_info;
+using parquet::detail::page_index_byte_range;
 using parquet::detail::row_group_info;
 using text::byte_range_info;
 
@@ -58,47 +59,6 @@ namespace {
   CUDF_EXPECTS(total_row_groups <= std::numeric_limits<cudf::size_type>::max(),
                "Total number of row groups exceed the cudf::size_type's limit");
   return static_cast<cudf::size_type>(total_row_groups);
-}
-
-// Compute the page index (column index and/or offset index) byte range
-[[nodiscard]] byte_range_info page_index_byte_range(parquet::detail::metadata const& file_metadata)
-{
-  if (file_metadata.is_page_index_setup()) { return {}; }
-
-  auto const& row_groups = file_metadata.row_groups;
-  if (row_groups.empty() or row_groups.front().columns.empty()) { return {}; }
-
-  // Helpers to check if a column chunk has a column index or offset index
-  auto const has_column_index = [](ColumnChunk const& col) {
-    return col.column_index_offset > 0 and col.column_index_length > 0;
-  };
-  auto const has_offset_index = [](ColumnChunk const& col) {
-    return col.offset_index_offset > 0 and col.offset_index_length > 0;
-  };
-
-  auto const min_offset = [&]() -> int64_t {
-    auto const& first_col = row_groups.front().columns.front();
-    if (has_column_index(first_col)) {
-      return first_col.column_index_offset;
-    } else if (has_offset_index(first_col)) {
-      return first_col.offset_index_offset;
-    }
-    return int64_t{0};
-  }();
-
-  auto const max_offset = [&]() -> int64_t {
-    auto const& last_col = row_groups.back().columns.back();
-    if (has_offset_index(last_col)) {
-      return last_col.offset_index_offset + last_col.offset_index_length;
-    } else if (has_column_index(last_col)) {
-      return last_col.column_index_offset + last_col.column_index_length;
-    }
-    return int64_t{0};
-  }();
-
-  return (min_offset > 0 and max_offset > min_offset)
-           ? byte_range_info{min_offset, max_offset - min_offset}
-           : byte_range_info{};
 }
 
 }  // namespace

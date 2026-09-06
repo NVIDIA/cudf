@@ -29,11 +29,13 @@
 
 #include <cuda/iterator>
 
+#include <src/io/parquet/compact_protocol_writer.hpp>
 #include <src/io/parquet/parquet_gpu.hpp>
 #include <src/io/parquet/stats_filter_helpers.hpp>
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cstring>
 #include <limits>
 #include <memory>
@@ -87,6 +89,175 @@ TEST_F(ParquetReaderTest, ManyTinyStringPages)
 
   CUDF_TEST_EXPECT_TABLES_EQUAL(input, result.tbl->view());
 }
+
+namespace {
+
+class PageIndexTrackingDatasource : public cudf::io::datasource {
+ public:
+  PageIndexTrackingDatasource(std::vector<char> const& data,
+                              std::size_t index_offset,
+                              std::size_t index_size)
+    : source_{cudf::io::datasource::create(cudf::host_span<std::byte const>{
+        reinterpret_cast<std::byte const*>(data.data()), data.size()})},
+      index_offset_{index_offset},
+      index_size_{index_size}
+  {
+  }
+
+  std::unique_ptr<buffer> host_read(std::size_t offset, std::size_t size) override
+  {
+    auto result = source_->host_read(offset, size);
+    record_read(offset, result->size());
+    return result;
+  }
+
+  std::size_t host_read(std::size_t offset, std::size_t size, uint8_t* dst) override
+  {
+    auto const bytes_read = source_->host_read(offset, size, dst);
+    record_read(offset, bytes_read);
+    return bytes_read;
+  }
+
+  [[nodiscard]] std::size_t size() const override { return source_->size(); }
+  [[nodiscard]] std::size_t bytes_read() const { return bytes_read_.load(); }
+  [[nodiscard]] bool read_page_index() const { return read_page_index_.load(); }
+
+ private:
+  void record_read(std::size_t offset, std::size_t size)
+  {
+    bytes_read_ += size;
+    if (index_size_ > 0 and offset == index_offset_ and size == index_size_) {
+      read_page_index_ = true;
+    }
+  }
+
+  std::unique_ptr<cudf::io::datasource> source_;
+  std::size_t const index_offset_;
+  std::size_t const index_size_;
+  std::atomic<std::size_t> bytes_read_{0};
+  std::atomic<bool> read_page_index_{false};
+};
+
+}  // namespace
+
+enum class PageIndexPresence { NONE, COLUMN_ONLY, OFFSET_ONLY, BOTH, MIXED };
+
+struct ParquetPageIndexReadTest
+  : public ParquetReaderTest,
+    public ::testing::WithParamInterface<std::tuple<PageIndexPresence, bool>> {};
+
+TEST_P(ParquetPageIndexReadTest, ReadsOnlyAvailableIndexes)
+{
+  tmp_env_var const footer_hint{"LIBCUDF_PARQUET_METADATA_SIZE_HINT", "65536"};
+  auto const [presence, chunked] = GetParam();
+  auto const has_column_index    = presence == PageIndexPresence::COLUMN_ONLY or
+                                presence == PageIndexPresence::BOTH or
+                                presence == PageIndexPresence::MIXED;
+  auto const has_offset_index = presence == PageIndexPresence::OFFSET_ONLY or
+                                presence == PageIndexPresence::BOTH or
+                                presence == PageIndexPresence::MIXED;
+  auto constexpr rows_per_group = 2048;
+  auto constexpr num_groups     = 4;
+  auto constexpr num_rows       = rows_per_group * num_groups;
+
+  // Keep the file larger than the speculative footer read, and disable dictionary encoding and
+  // compression so reading one row group requires substantially fewer bytes than the whole file.
+  std::vector<std::string> strings;
+  strings.reserve(num_rows);
+  for (int i = 0; i < num_rows; ++i) {
+    strings.push_back(std::to_string(i) + std::string(128, 'x'));
+  }
+  cudf::test::strings_column_wrapper col(strings.begin(), strings.end());
+  cudf::table_view const input{{col}};
+  std::vector<char> data;
+  auto const write_options =
+    cudf::io::parquet_writer_options::builder(cudf::io::sink_info{&data}, input)
+      .row_group_size_rows(rows_per_group)
+      .max_page_fragment_size(rows_per_group)
+      .dictionary_policy(cudf::io::dictionary_policy::NEVER)
+      .compression(cudf::io::compression_type::NONE)
+      .stats_level(cudf::io::statistics_freq::STATISTICS_COLUMN)
+      .build();
+  cudf::io::write_parquet(write_options);
+
+  cudf::io::parquet::FileMetaData metadata;
+  read_footer(cudf::io::datasource::create(cudf::host_span<std::byte const>{
+                reinterpret_cast<std::byte const*>(data.data()), data.size()}),
+              &metadata);
+  ASSERT_EQ(metadata.row_groups.size(), num_groups);
+
+  // Remove index references from the footer to cover different combinations of optional indexes.
+  // Leaving the unused index bytes in place preserves all data-page offsets.
+  for (auto& row_group : metadata.row_groups) {
+    for (auto& column : row_group.columns) {
+      ASSERT_GT(column.column_index_length, 0);
+      ASSERT_GT(column.offset_index_length, 0);
+      if (not has_column_index) {
+        column.column_index_offset = 0;
+        column.column_index_length = 0;
+      }
+      if (not has_offset_index) {
+        column.offset_index_offset = 0;
+        column.offset_index_length = 0;
+      }
+    }
+  }
+
+  // A chunk without a column index can precede chunks that have one. Its offset index is after
+  // those column indexes, so using only the first chunk would omit indexes from the read buffer.
+  auto& first = metadata.row_groups.front().columns.front();
+  if (presence == PageIndexPresence::MIXED) {
+    first.column_index_offset = 0;
+    first.column_index_length = 0;
+  }
+  auto const& first_column_index =
+    presence == PageIndexPresence::MIXED ? metadata.row_groups[1].columns.front() : first;
+  auto const& last = metadata.row_groups.back().columns.back();
+  auto const index_start =
+    has_column_index ? first_column_index.column_index_offset : first.offset_index_offset;
+  auto const index_end = has_offset_index ? last.offset_index_offset + last.offset_index_length
+                                          : last.column_index_offset + last.column_index_length;
+
+  cudf::io::parquet::file_ender_s ender;
+  std::memcpy(&ender, data.data() + data.size() - sizeof(ender), sizeof(ender));
+  data.resize(data.size() - sizeof(ender) - ender.footer_len);
+  std::vector<uint8_t> footer;
+  cudf::io::parquet::detail::CompactProtocolWriter writer(&footer);
+  writer.write(metadata);
+  data.insert(data.end(), footer.begin(), footer.end());
+  ender.footer_len       = static_cast<uint32_t>(footer.size());
+  auto const ender_bytes = reinterpret_cast<char const*>(&ender);
+  data.insert(data.end(), ender_bytes, ender_bytes + sizeof(ender));
+
+  PageIndexTrackingDatasource source(data, index_start, index_end - index_start);
+  auto const read_options =
+    cudf::io::parquet_reader_options::builder(cudf::io::source_info{&source})
+      .row_groups({{1}})
+      .build();
+  auto result = [&]() {
+    if (chunked) {
+      cudf::io::chunked_parquet_reader reader(0, read_options);
+      auto chunk = reader.read_chunk();
+      EXPECT_FALSE(reader.has_next());
+      return chunk;
+    }
+    return cudf::io::read_parquet(read_options);
+  }();
+
+  auto const expected = cudf::slice(input, {rows_per_group, 2 * rows_per_group}).front();
+  CUDF_TEST_EXPECT_TABLES_EQUAL(expected, result.tbl->view());
+  EXPECT_EQ(source.read_page_index(), has_column_index or has_offset_index);
+  EXPECT_LT(source.bytes_read(), data.size() / 2);
+}
+
+INSTANTIATE_TEST_SUITE_P(IndexPresence,
+                         ParquetPageIndexReadTest,
+                         ::testing::Combine(::testing::Values(PageIndexPresence::NONE,
+                                                              PageIndexPresence::COLUMN_ONLY,
+                                                              PageIndexPresence::OFFSET_ONLY,
+                                                              PageIndexPresence::BOTH,
+                                                              PageIndexPresence::MIXED),
+                                            ::testing::Bool()));
 
 TEST_F(ParquetReaderTest, UserBounds)
 {

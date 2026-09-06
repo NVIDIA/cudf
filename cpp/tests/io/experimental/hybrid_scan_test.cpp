@@ -32,6 +32,9 @@
 
 #include <cuda/iterator>
 
+#include <limits>
+#include <stdexcept>
+
 namespace {
 
 /**
@@ -333,6 +336,35 @@ INSTANTIATE_TEST_SUITE_P(IndexPresence,
                                            PageIndexPresence::BOTH,
                                            PageIndexPresence::MISSING_FIRST,
                                            PageIndexPresence::MISSING_LAST));
+
+struct HybridScanPageIndexOverflowTest : public HybridScanTest,
+                                         public ::testing::WithParamInterface<bool> {};
+
+TEST_P(HybridScanPageIndexOverflowTest, RejectsOverflowingIndexRange)
+{
+  auto [written_table, parquet_buffer] = create_parquet_with_stats<uint32_t, 4>();
+  auto const options                   = cudf::io::parquet_reader_options::builder().build();
+  auto datasource          = cudf::io::datasource::create(cudf::host_span<std::byte const>{
+    reinterpret_cast<std::byte const*>(parquet_buffer.data()), parquet_buffer.size()});
+  auto const footer_buffer = cudf::io::parquet::fetch_footer_to_host(*datasource);
+  auto const seed_reader =
+    cudf::io::parquet::experimental::hybrid_scan_reader{*footer_buffer, options};
+  auto file_metadata = seed_reader.parquet_metadata();
+  auto& column       = file_metadata.row_groups.front().columns.front();
+  if (GetParam()) {
+    column.column_index_offset = std::numeric_limits<int64_t>::max() - 1;
+    column.column_index_length = 8;
+  } else {
+    column.offset_index_offset = std::numeric_limits<int64_t>::max() - 1;
+    column.offset_index_length = 8;
+  }
+  auto const metadata =
+    cudf::io::parquet::experimental::hybrid_scan_metadata{std::move(file_metadata), options};
+  auto const reader = cudf::io::parquet::experimental::hybrid_scan_reader{metadata};
+  EXPECT_THROW(std::ignore = reader.page_index_byte_range(), std::invalid_argument);
+}
+
+INSTANTIATE_TEST_SUITE_P(IndexKind, HybridScanPageIndexOverflowTest, ::testing::Bool());
 
 TEST_F(HybridScanTest, FilterRowGroupsOnlyAndScanSelectColumns)
 {

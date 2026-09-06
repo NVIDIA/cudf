@@ -260,11 +260,15 @@ INSTANTIATE_TEST_SUITE_P(IndexPresence,
                                                               PageIndexPresence::MIXED),
                                             ::testing::Bool()));
 
-struct ParquetPageIndexShortReadTest : public ParquetReaderTest,
-                                       public ::testing::WithParamInterface<bool> {};
+enum class InvalidPageIndex { PAST_EOF, COLUMN_OVERFLOW, OFFSET_OVERFLOW };
 
-TEST_P(ParquetPageIndexShortReadTest, RejectsIndexPastEndOfFile)
+struct ParquetPageIndexInvalidRangeTest
+  : public ParquetReaderTest,
+    public ::testing::WithParamInterface<std::tuple<InvalidPageIndex, bool>> {};
+
+TEST_P(ParquetPageIndexInvalidRangeTest, RejectsInvalidIndexRange)
 {
+  auto const [invalid_index, chunked] = GetParam();
   cudf::test::strings_column_wrapper col{"first", "second", "third"};
   cudf::table_view const input{{col}};
   std::vector<char> data;
@@ -279,8 +283,16 @@ TEST_P(ParquetPageIndexShortReadTest, RejectsIndexPastEndOfFile)
               &metadata);
   auto& column = metadata.row_groups.front().columns.front();
   ASSERT_GT(column.offset_index_offset, 0);
-  // Keep the index start within the file but make its advertised length exceed EOF.
-  column.offset_index_length = static_cast<int32_t>(data.size() * 2);
+  if (invalid_index == InvalidPageIndex::PAST_EOF) {
+    // Keep the index start within the file but make its advertised length exceed EOF.
+    column.offset_index_length = static_cast<int32_t>(data.size() * 2);
+  } else if (invalid_index == InvalidPageIndex::COLUMN_OVERFLOW) {
+    column.column_index_offset = std::numeric_limits<int64_t>::max() - 1;
+    column.column_index_length = 8;
+  } else {
+    column.offset_index_offset = std::numeric_limits<int64_t>::max() - 1;
+    column.offset_index_length = 8;
+  }
 
   cudf::io::parquet::file_ender_s ender;
   std::memcpy(&ender, data.data() + data.size() - sizeof(ender), sizeof(ender));
@@ -292,25 +304,36 @@ TEST_P(ParquetPageIndexShortReadTest, RejectsIndexPastEndOfFile)
   ender.footer_len       = static_cast<uint32_t>(footer.size());
   auto const ender_bytes = reinterpret_cast<char const*>(&ender);
   data.insert(data.end(), ender_bytes, ender_bytes + sizeof(ender));
-  ASSERT_GT(column.offset_index_offset + column.offset_index_length, data.size());
+  if (invalid_index == InvalidPageIndex::PAST_EOF) {
+    ASSERT_GT(column.offset_index_offset + column.offset_index_length, data.size());
+  }
 
   auto const options =
     cudf::io::parquet_reader_options::builder(
       cudf::io::source_info{cudf::host_span<char const>{data.data(), data.size()}})
       .build();
-  // A host datasource clamps the read to EOF. Reject the resulting short buffer before parsing it.
+  // Reject malformed ranges before parsing indexes or attempting an overflowing read.
   auto const read = [&] {
-    if (GetParam()) {
+    if (chunked) {
       cudf::io::chunked_parquet_reader reader(0, options);
       std::ignore = reader.read_chunk();
     } else {
       std::ignore = cudf::io::read_parquet(options);
     }
   };
-  EXPECT_THROW(read(), cudf::logic_error);
+  if (invalid_index == InvalidPageIndex::PAST_EOF) {
+    EXPECT_THROW(read(), cudf::logic_error);
+  } else {
+    EXPECT_THROW(read(), std::invalid_argument);
+  }
 }
 
-INSTANTIATE_TEST_SUITE_P(ReaderKind, ParquetPageIndexShortReadTest, ::testing::Bool());
+INSTANTIATE_TEST_SUITE_P(InvalidIndex,
+                         ParquetPageIndexInvalidRangeTest,
+                         ::testing::Combine(::testing::Values(InvalidPageIndex::PAST_EOF,
+                                                              InvalidPageIndex::COLUMN_OVERFLOW,
+                                                              InvalidPageIndex::OFFSET_OVERFLOW),
+                                            ::testing::Bool()));
 
 TEST_F(ParquetReaderTest, UserBounds)
 {

@@ -11,7 +11,9 @@
 #include <cudf/ast/expressions.hpp>
 #include <cudf/detail/utilities/integer_utils.hpp>
 #include <cudf/io/datasource.hpp>
+#include <cudf/io/experimental/hybrid_scan.hpp>
 #include <cudf/io/parquet.hpp>
+#include <cudf/io/parquet_io_utils.hpp>
 #include <cudf/io/parquet_metadata.hpp>
 #include <cudf/scalar/scalar.hpp>
 #include <cudf/utilities/default_stream.hpp>
@@ -19,11 +21,16 @@
 #include <cuda/iterator>
 
 #include <nvbench/nvbench.cuh>
+#include <src/io/parquet/compact_protocol_reader.hpp>
+#include <src/io/parquet/compact_protocol_writer.hpp>
 
 #include <algorithm>
+#include <atomic>
 #include <cctype>
 #include <cstddef>
+#include <cstring>
 #include <limits>
+#include <memory>
 #include <string>
 #include <utility>
 #include <vector>
@@ -82,6 +89,87 @@ auto write_file_data(cudf::size_type num_cols,
   std::ignore = writer.close();
 
   return source_sink;
+}
+
+/** @brief Counts logical host-read bytes without including filesystem or page-cache effects. */
+class PageIndexCountingDatasource : public cudf::io::datasource {
+ public:
+  explicit PageIndexCountingDatasource(std::vector<char> const& data)
+    : source_{cudf::io::datasource::create(cudf::host_span<std::byte const>{
+        reinterpret_cast<std::byte const*>(data.data()), data.size()})}
+  {
+  }
+
+  std::unique_ptr<buffer> host_read(std::size_t offset, std::size_t size) override
+  {
+    auto result = source_->host_read(offset, size);
+    bytes_read_ += result->size();
+    return result;
+  }
+
+  std::size_t host_read(std::size_t offset, std::size_t size, uint8_t* dst) override
+  {
+    auto const result = source_->host_read(offset, size, dst);
+    bytes_read_ += result;
+    return result;
+  }
+
+  [[nodiscard]] std::size_t size() const override { return source_->size(); }
+  [[nodiscard]] std::size_t bytes_read() const { return bytes_read_.load(); }
+  void reset() { bytes_read_ = 0; }
+
+ private:
+  std::unique_ptr<cudf::io::datasource> source_;
+  std::atomic<std::size_t> bytes_read_{0};
+};
+
+/** @brief Reuses the metadata benchmark input, removing only optional index references. */
+std::vector<char> make_optional_index_data(cudf::size_type num_cols,
+                                           cudf::size_type num_row_groups,
+                                           std::string const& layout)
+{
+  auto source_sink         = write_file_data(num_cols, num_row_groups, io_type::HOST_BUFFER, true);
+  auto sources             = cudf::io::make_datasources(source_sink.make_source_info());
+  auto const footer_buffer = cudf::io::parquet::fetch_footer_to_host(*sources.front());
+  cudf::io::parquet::FileMetaData metadata;
+  cudf::io::parquet::detail::CompactProtocolReader cp(footer_buffer->data(), footer_buffer->size());
+  cp.read(&metadata);
+  CUDF_EXPECTS(layout == "none" or layout == "offset_only" or layout == "mixed" or layout == "both",
+               "Unexpected page index layout");
+  for (auto& rg : metadata.row_groups) {
+    for (auto& col : rg.columns) {
+      if (layout == "none" or layout == "offset_only") {
+        col.column_index_offset = 0;
+        col.column_index_length = 0;
+      }
+      if (layout == "none") {
+        col.offset_index_offset = 0;
+        col.offset_index_length = 0;
+      }
+    }
+  }
+  if (layout == "mixed") {
+    metadata.row_groups.front().columns.front().column_index_offset = 0;
+    metadata.row_groups.front().columns.front().column_index_length = 0;
+  }
+
+  auto const original = sources.front()->host_read(0, sources.front()->size());
+  auto const begin    = reinterpret_cast<char const*>(original->data());
+  std::vector<char> data(begin, begin + original->size());
+  cudf::io::parquet::file_ender_s ender;
+  CUDF_EXPECTS(data.size() >= sizeof(ender), "Invalid Parquet benchmark input");
+  std::memcpy(&ender, data.data() + data.size() - sizeof(ender), sizeof(ender));
+  CUDF_EXPECTS(ender.footer_len <= data.size() - sizeof(ender), "Invalid Parquet benchmark footer");
+  data.resize(data.size() - sizeof(ender) - ender.footer_len);
+  // Keep unused index bytes in place so every layout has the same data-page offsets.
+  std::vector<uint8_t> footer;
+  cudf::io::parquet::detail::CompactProtocolWriter writer(&footer);
+  writer.write(metadata);
+  data.insert(data.end(), footer.begin(), footer.end());
+  ender.footer_len       = static_cast<uint32_t>(footer.size());
+  auto const ender_bytes = reinterpret_cast<char const*>(&ender);
+  data.insert(data.end(), ender_bytes, ender_bytes + sizeof(ender));
+  return data;
 }
 
 // Combines `operands` into a balanced AST tree using `op`: pairing adjacent operands gives a tree
@@ -350,6 +438,57 @@ void BM_parquet_filter_name_resolution(nvbench::state& state)
   state.add_buffer_size(
     mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
 }
+
+/**
+ * @brief Measures metadata parsing, index range calculation and index loading for both readers.
+ *
+ * Reports logical host-read bytes per invocation alongside metadata latency. Input generation is
+ * excluded from timing; host-buffer sources isolate metadata work from storage and cache behavior.
+ */
+void BM_parquet_page_index_metadata(nvbench::state& state)
+{
+  auto const num_cols       = static_cast<cudf::size_type>(state.get_int64("num_cols"));
+  auto const num_row_groups = static_cast<cudf::size_type>(state.get_int64("num_row_groups"));
+  auto const hybrid         = state.get_string("reader") == "hybrid";
+  auto const data = make_optional_index_data(num_cols, num_row_groups, state.get_string("layout"));
+  auto source     = std::make_unique<PageIndexCountingDatasource>(data);
+  auto const counter = source.get();
+  std::vector<std::unique_ptr<cudf::io::datasource>> sources;
+  sources.emplace_back(std::move(source));
+  auto const options = cudf::io::parquet_reader_options::builder().use_arrow_schema(false).build();
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().get()));
+
+  state.exec(
+    nvbench::exec_tag::sync | nvbench::exec_tag::timer, [&](nvbench::launch&, auto& timer) {
+      counter->reset();
+      timer.start();
+      if (hybrid) {
+        auto const footer = cudf::io::parquet::fetch_footer_to_host(*counter);
+        auto const reader = cudf::io::parquet::experimental::hybrid_scan_reader{*footer, options};
+        auto const range  = reader.page_index_byte_range();
+        if (not range.is_empty()) {
+          auto const indexes = cudf::io::parquet::fetch_page_index_to_host(*counter, range);
+          reader.setup_page_index(*indexes);
+        }
+      } else {
+        auto const metadata = cudf::io::read_parquet_footers(sources);
+        CUDF_EXPECTS(std::cmp_equal(metadata.front().row_groups.size(), num_row_groups),
+                     "Unexpected number of row groups");
+      }
+      timer.stop();
+    });
+
+  state.add_buffer_size(counter->bytes_read(), "host_bytes_read", "Logical host bytes read");
+  state.add_buffer_size(data.size(), "file_size", "Parquet file size");
+}
+
+NVBENCH_BENCH(BM_parquet_page_index_metadata)
+  .set_name("parquet_page_index_metadata")
+  .set_min_samples(4)
+  .add_string_axis("layout", {"none", "offset_only", "mixed", "both"})
+  .add_string_axis("reader", {"regular", "hybrid"})
+  .add_int64_axis("num_cols", {4, 16})
+  .add_int64_axis("num_row_groups", {10, 100});
 
 NVBENCH_BENCH(BM_parquet_read_footer)
   .set_name("parquet_read_footer")

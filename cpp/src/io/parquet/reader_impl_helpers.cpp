@@ -55,6 +55,9 @@ text::byte_range_info page_index_byte_range(FileMetaData const& file_metadata)
   int64_t max_offset       = 0;
   auto const include_index = [&](int64_t offset, int32_t length) {
     if (offset > 0 and length > 0) {
+      CUDF_EXPECTS(offset <= std::numeric_limits<int64_t>::max() - length,
+                   "Parquet page index range exceeds the supported offset range",
+                   std::invalid_argument);
       min_offset = std::min(min_offset, offset);
       max_offset = std::max(max_offset, offset + length);
     }

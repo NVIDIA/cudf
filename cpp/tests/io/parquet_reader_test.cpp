@@ -146,8 +146,9 @@ struct ParquetPageIndexReadTest
   : public ParquetReaderTest,
     public ::testing::WithParamInterface<std::tuple<PageIndexPresence, bool>> {};
 
-TEST_P(ParquetPageIndexReadTest, ReadsOnlyAvailableIndexes)
+TEST_P(ParquetPageIndexReadTest, ReadsOnlyUsableIndexes)
 {
+  // Pin the default footer hint so an environment override cannot turn this into a whole-file read.
   tmp_env_var const footer_hint{"LIBCUDF_PARQUET_METADATA_SIZE_HINT", "65536"};
   auto const [presence, chunked] = GetParam();
   auto const has_column_index    = presence == PageIndexPresence::COLUMN_ONLY or
@@ -246,7 +247,7 @@ TEST_P(ParquetPageIndexReadTest, ReadsOnlyAvailableIndexes)
 
   auto const expected = cudf::slice(input, {rows_per_group, 2 * rows_per_group}).front();
   CUDF_TEST_EXPECT_TABLES_EQUAL(expected, result.tbl->view());
-  EXPECT_EQ(source.read_page_index(), has_column_index or has_offset_index);
+  EXPECT_EQ(source.read_page_index(), has_offset_index);
   EXPECT_LT(source.bytes_read(), data.size() / 2);
 }
 
@@ -258,6 +259,58 @@ INSTANTIATE_TEST_SUITE_P(IndexPresence,
                                                               PageIndexPresence::BOTH,
                                                               PageIndexPresence::MIXED),
                                             ::testing::Bool()));
+
+struct ParquetPageIndexShortReadTest : public ParquetReaderTest,
+                                       public ::testing::WithParamInterface<bool> {};
+
+TEST_P(ParquetPageIndexShortReadTest, RejectsIndexPastEndOfFile)
+{
+  cudf::test::strings_column_wrapper col{"first", "second", "third"};
+  cudf::table_view const input{{col}};
+  std::vector<char> data;
+  cudf::io::write_parquet(
+    cudf::io::parquet_writer_options::builder(cudf::io::sink_info{&data}, input)
+      .stats_level(cudf::io::statistics_freq::STATISTICS_COLUMN)
+      .build());
+
+  cudf::io::parquet::FileMetaData metadata;
+  read_footer(cudf::io::datasource::create(cudf::host_span<std::byte const>{
+                reinterpret_cast<std::byte const*>(data.data()), data.size()}),
+              &metadata);
+  auto& column = metadata.row_groups.front().columns.front();
+  ASSERT_GT(column.offset_index_offset, 0);
+  // Keep the index start within the file but make its advertised length exceed EOF.
+  column.offset_index_length = static_cast<int32_t>(data.size() * 2);
+
+  cudf::io::parquet::file_ender_s ender;
+  std::memcpy(&ender, data.data() + data.size() - sizeof(ender), sizeof(ender));
+  data.resize(data.size() - sizeof(ender) - ender.footer_len);
+  std::vector<uint8_t> footer;
+  cudf::io::parquet::detail::CompactProtocolWriter writer(&footer);
+  writer.write(metadata);
+  data.insert(data.end(), footer.begin(), footer.end());
+  ender.footer_len       = static_cast<uint32_t>(footer.size());
+  auto const ender_bytes = reinterpret_cast<char const*>(&ender);
+  data.insert(data.end(), ender_bytes, ender_bytes + sizeof(ender));
+  ASSERT_GT(column.offset_index_offset + column.offset_index_length, data.size());
+
+  auto const options =
+    cudf::io::parquet_reader_options::builder(
+      cudf::io::source_info{cudf::host_span<char const>{data.data(), data.size()}})
+      .build();
+  // A host datasource clamps the read to EOF. Reject the resulting short buffer before parsing it.
+  auto const read = [&] {
+    if (GetParam()) {
+      cudf::io::chunked_parquet_reader reader(0, options);
+      std::ignore = reader.read_chunk();
+    } else {
+      std::ignore = cudf::io::read_parquet(options);
+    }
+  };
+  EXPECT_THROW(read(), cudf::logic_error);
+}
+
+INSTANTIATE_TEST_SUITE_P(ReaderKind, ParquetPageIndexShortReadTest, ::testing::Bool());
 
 TEST_F(ParquetReaderTest, UserBounds)
 {

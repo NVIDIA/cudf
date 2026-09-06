@@ -243,6 +243,97 @@ std::unique_ptr<cudf::table> test_hybrid_scan_column_selection(
 // Base test fixture for tests
 struct HybridScanTest : public cudf::test::BaseFixture {};
 
+enum class PageIndexPresence { NONE, COLUMN_ONLY, OFFSET_ONLY, BOTH, MISSING_FIRST, MISSING_LAST };
+
+struct HybridScanPageIndexTest : public HybridScanTest,
+                                 public ::testing::WithParamInterface<PageIndexPresence> {};
+
+TEST_P(HybridScanPageIndexTest, OptionalIndexRanges)
+{
+  auto [written_table, parquet_buffer] = create_parquet_with_stats<uint32_t, 4>();
+  auto const options                   = cudf::io::parquet_reader_options::builder().build();
+  auto datasource          = cudf::io::datasource::create(cudf::host_span<std::byte const>{
+    reinterpret_cast<std::byte const*>(parquet_buffer.data()), parquet_buffer.size()});
+  auto const footer_buffer = cudf::io::parquet::fetch_footer_to_host(*datasource);
+  auto const seed_reader =
+    cudf::io::parquet::experimental::hybrid_scan_reader{*footer_buffer, options};
+  auto file_metadata = seed_reader.parquet_metadata();
+  ASSERT_EQ(file_metadata.row_groups.size(), 4);
+  ASSERT_EQ(file_metadata.row_groups.front().columns.size(), 3);
+  auto const presence = GetParam();
+  auto const has_column_index =
+    presence != PageIndexPresence::NONE and presence != PageIndexPresence::OFFSET_ONLY;
+  auto const has_offset_index =
+    presence != PageIndexPresence::NONE and presence != PageIndexPresence::COLUMN_ONLY;
+
+  for (auto& rg : file_metadata.row_groups) {
+    for (auto& col : rg.columns) {
+      ASSERT_GT(col.column_index_length, 0);
+      ASSERT_GT(col.offset_index_length, 0);
+      if (not has_column_index) {
+        col.column_index_offset = 0;
+        col.column_index_length = 0;
+      }
+      if (not has_offset_index) {
+        col.offset_index_offset = 0;
+        col.offset_index_length = 0;
+      }
+    }
+  }
+  auto& first = file_metadata.row_groups.front().columns.front();
+  auto& last  = file_metadata.row_groups.back().columns.back();
+  if (presence == PageIndexPresence::MISSING_FIRST) {
+    first.column_index_offset = 0;
+    first.column_index_length = 0;
+  }
+  if (presence == PageIndexPresence::MISSING_LAST) {
+    last.offset_index_offset = 0;
+    last.offset_index_length = 0;
+  }
+  // The writer emits all column indexes before all offset indexes. Check both endpoints
+  // independently of the range helper, including missing indexes in the first and last chunks.
+  auto const index_start =
+    presence == PageIndexPresence::MISSING_FIRST
+      ? file_metadata.row_groups.front().columns[1].column_index_offset
+      : (has_column_index ? first.column_index_offset : first.offset_index_offset);
+  auto const& last_offset_chunk =
+    presence == PageIndexPresence::MISSING_LAST ? file_metadata.row_groups.back().columns[1] : last;
+  auto const index_end =
+    has_offset_index ? last_offset_chunk.offset_index_offset + last_offset_chunk.offset_index_length
+                     : last.column_index_offset + last.column_index_length;
+
+  // Supply the modified footer metadata through the public shared-metadata constructor.
+  auto const metadata =
+    cudf::io::parquet::experimental::hybrid_scan_metadata{std::move(file_metadata), options};
+  auto const reader = cudf::io::parquet::experimental::hybrid_scan_reader{metadata};
+  auto const range  = reader.page_index_byte_range();
+  ASSERT_EQ(range.offset(), index_start);
+  ASSERT_EQ(range.size(), index_end - index_start);
+  if (not range.is_empty()) {
+    auto const buffer = cudf::io::parquet::fetch_page_index_to_host(*datasource, range);
+    ASSERT_NO_THROW(reader.setup_page_index(*buffer));
+  }
+
+  auto const stream           = cudf::get_default_stream();
+  auto const mr               = cudf::get_current_device_resource_ref();
+  auto const row_groups       = reader.all_row_groups(options);
+  auto const chunk_ranges     = reader.all_column_chunks_byte_ranges(row_groups, options);
+  auto [buffers, data, tasks] = cudf::io::parquet::fetch_byte_ranges_to_device_async(
+    *datasource, chunk_ranges, cudf::io::parquet::io_submission_policy::SERIALIZE, stream, mr);
+  tasks.get();
+  auto const result = reader.materialize_all_columns(row_groups, data, options, stream, mr);
+  CUDF_TEST_EXPECT_TABLES_EQUIVALENT(written_table->view(), result.tbl->view());
+}
+
+INSTANTIATE_TEST_SUITE_P(IndexPresence,
+                         HybridScanPageIndexTest,
+                         ::testing::Values(PageIndexPresence::NONE,
+                                           PageIndexPresence::COLUMN_ONLY,
+                                           PageIndexPresence::OFFSET_ONLY,
+                                           PageIndexPresence::BOTH,
+                                           PageIndexPresence::MISSING_FIRST,
+                                           PageIndexPresence::MISSING_LAST));
+
 TEST_F(HybridScanTest, FilterRowGroupsOnlyAndScanSelectColumns)
 {
   srand(0xc0ffee);

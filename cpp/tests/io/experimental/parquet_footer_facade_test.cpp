@@ -22,59 +22,54 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <format>
 #include <limits>
 #include <string>
 #include <vector>
 
-namespace pq = cudf::io::parquet;
+using namespace cudf::io::parquet;
 
 namespace {
 
-// Wraps a byte vector as the host_span the facade consumes.
-cudf::host_span<uint8_t const> as_span(std::vector<uint8_t> const& bytes)
-{
-  return cudf::host_span<uint8_t const>{bytes.data(), bytes.size()};
-}
-
 // Builds a fully-populated footer whose values all survive the writer's conditional emission, so a
 // write -> read round-trip is exactly recoverable.
-pq::FileMetaData make_test_footer()
+FileMetaData make_test_footer()
 {
-  pq::FileMetaData meta = {
+  FileMetaData meta = {
     .version    = 2,
     .num_rows   = 12345,
     .created_by = "cudf-facade-test",
   };
 
   meta.schema = {
-    {.type            = pq::Type::UNDEFINED,
-     .repetition_type = pq::FieldRepetitionType::REQUIRED,
+    {.type            = Type::UNDEFINED,
+     .repetition_type = FieldRepetitionType::REQUIRED,
      .name            = "schema",
      .num_children    = 3},
-    {.type            = pq::Type::INT32,
-     .repetition_type = pq::FieldRepetitionType::OPTIONAL,
+    {.type            = Type::INT32,
+     .repetition_type = FieldRepetitionType::OPTIONAL,
      .name            = "a",
      .field_id        = 1},
-    {.type            = pq::Type::BYTE_ARRAY,
-     .repetition_type = pq::FieldRepetitionType::REQUIRED,
+    {.type            = Type::BYTE_ARRAY,
+     .repetition_type = FieldRepetitionType::REQUIRED,
      .name            = "b",
-     .converted_type  = pq::ConvertedType::UTF8,
+     .converted_type  = ConvertedType::UTF8,
      .field_id        = 2},
     // type_length is written only for a typed leaf, so a non-zero value exercises that schema
     // field.
-    {.type            = pq::Type::FIXED_LEN_BYTE_ARRAY,
+    {.type            = Type::FIXED_LEN_BYTE_ARRAY,
      .type_length     = 16,
-     .repetition_type = pq::FieldRepetitionType::REQUIRED,
+     .repetition_type = FieldRepetitionType::REQUIRED,
      .name            = "c",
      .field_id        = 3},
   };
 
-  pq::ColumnChunk const cc[] = {
+  ColumnChunk const cc[] = {
     {.file_offset = 4,
-     .meta_data   = {.type                    = pq::Type::INT32,
-                     .encodings               = {pq::Encoding::PLAIN, pq::Encoding::RLE_DICTIONARY},
+     .meta_data   = {.type                    = Type::INT32,
+                     .encodings               = {Encoding::PLAIN, Encoding::RLE_DICTIONARY},
                      .path_in_schema          = {"a"},
-                     .codec                   = pq::Compression::SNAPPY,
+                     .codec                   = Compression::SNAPPY,
                      .num_values              = 12345,
                      .total_uncompressed_size = 1000,
                      .total_compressed_size   = 500,
@@ -82,10 +77,10 @@ pq::FileMetaData make_test_footer()
                      // non-zero exercises the dictionary_page_offset field
                      .dictionary_page_offset = 4}},
     {.file_offset = 504,
-     .meta_data   = {.type                    = pq::Type::BYTE_ARRAY,
-                     .encodings               = {pq::Encoding::PLAIN},
+     .meta_data   = {.type                    = Type::BYTE_ARRAY,
+                     .encodings               = {Encoding::PLAIN},
                      .path_in_schema          = {"b"},
-                     .codec                   = pq::Compression::ZSTD,
+                     .codec                   = Compression::ZSTD,
                      .num_values              = 12345,
                      .total_uncompressed_size = 2000,
                      .total_compressed_size   = 800,
@@ -105,30 +100,30 @@ pq::FileMetaData make_test_footer()
     {"empty", ""},
   };
 
-  meta.column_orders = {{{pq::ColumnOrder::TYPE_ORDER}, {pq::ColumnOrder::TYPE_ORDER}}};
+  meta.column_orders = {{{ColumnOrder::TYPE_ORDER}, {ColumnOrder::TYPE_ORDER}}};
   return meta;
 }
 
-void expect_schema_equal(pq::SchemaElement const& e, pq::SchemaElement const& a)
+void expect_schema_equal(SchemaElement const& e, SchemaElement const& a)
 {
   EXPECT_EQ(e.type, a.type);
   EXPECT_EQ(e.name, a.name);
   // repetition_type == UNSPECIFIED is omitted by the writer and reads back as REQUIRED.
-  auto const expected_rep = e.repetition_type == pq::FieldRepetitionType::UNSPECIFIED
-                              ? pq::FieldRepetitionType::REQUIRED
+  auto const expected_rep = e.repetition_type == FieldRepetitionType::UNSPECIFIED
+                              ? FieldRepetitionType::REQUIRED
                               : e.repetition_type;
   EXPECT_EQ(expected_rep, a.repetition_type);
   // type_length is written only for a typed leaf; a group node or a zero length reads back 0.
-  auto const expected_len = e.type != pq::Type::UNDEFINED ? e.type_length : 0;
+  auto const expected_len = e.type != Type::UNDEFINED ? e.type_length : 0;
   EXPECT_EQ(expected_len, a.type_length);
   // num_children is written only for group nodes (type == UNDEFINED); leaves read back 0.
-  auto const expected_children = e.type == pq::Type::UNDEFINED ? e.num_children : 0;
+  auto const expected_children = e.type == Type::UNDEFINED ? e.num_children : 0;
   EXPECT_EQ(expected_children, a.num_children);
   EXPECT_EQ(e.converted_type, a.converted_type);
   EXPECT_EQ(e.field_id, a.field_id);
 }
 
-void expect_column_meta_equal(pq::ColumnChunkMetaData const& e, pq::ColumnChunkMetaData const& a)
+void expect_column_meta_equal(ColumnChunkMetaData const& e, ColumnChunkMetaData const& a)
 {
   EXPECT_EQ(e.type, a.type);
   EXPECT_EQ(e.encodings, a.encodings);
@@ -142,7 +137,7 @@ void expect_column_meta_equal(pq::ColumnChunkMetaData const& e, pq::ColumnChunkM
   EXPECT_EQ(e.dictionary_page_offset, a.dictionary_page_offset);
 }
 
-void expect_column_chunk_equal(pq::ColumnChunk const& e, pq::ColumnChunk const& a)
+void expect_column_chunk_equal(ColumnChunk const& e, ColumnChunk const& a)
 {
   EXPECT_EQ(e.file_path, a.file_path);
   EXPECT_EQ(e.file_offset, a.file_offset);
@@ -154,7 +149,7 @@ void expect_column_chunk_equal(pq::ColumnChunk const& e, pq::ColumnChunk const& 
   if (e.column_index_length != 0) { EXPECT_EQ(e.column_index_offset, a.column_index_offset); }
 }
 
-void expect_row_group_equal(pq::RowGroup const& e, pq::RowGroup const& a)
+void expect_row_group_equal(RowGroup const& e, RowGroup const& a)
 {
   EXPECT_EQ(e.total_byte_size, a.total_byte_size);
   EXPECT_EQ(e.num_rows, a.num_rows);
@@ -163,14 +158,14 @@ void expect_row_group_equal(pq::RowGroup const& e, pq::RowGroup const& a)
   EXPECT_EQ(e.ordinal, a.ordinal);
   ASSERT_EQ(e.columns.size(), a.columns.size());
   for (size_t i = 0; i < e.columns.size(); ++i) {
-    SCOPED_TRACE("column index " + std::to_string(i));
+    SCOPED_TRACE(std::format("column index {}", i));
     expect_column_chunk_equal(e.columns[i], a.columns[i]);
   }
 }
 
 // Compares only the fields the Thrift-compact codec serializes; cudf-internal derived fields
 // (schema_idx, index blobs) are excluded.
-void expect_footer_semantic_equal(pq::FileMetaData const& e, pq::FileMetaData const& a)
+void expect_footer_semantic_equal(FileMetaData const& e, FileMetaData const& a)
 {
   EXPECT_EQ(e.version, a.version);
   EXPECT_EQ(e.num_rows, a.num_rows);
@@ -178,19 +173,19 @@ void expect_footer_semantic_equal(pq::FileMetaData const& e, pq::FileMetaData co
 
   ASSERT_EQ(e.schema.size(), a.schema.size());
   for (size_t i = 0; i < e.schema.size(); ++i) {
-    SCOPED_TRACE("schema index " + std::to_string(i));
+    SCOPED_TRACE(std::format("schema index {}", i));
     expect_schema_equal(e.schema[i], a.schema[i]);
   }
 
   ASSERT_EQ(e.row_groups.size(), a.row_groups.size());
   for (size_t i = 0; i < e.row_groups.size(); ++i) {
-    SCOPED_TRACE("row group index " + std::to_string(i));
+    SCOPED_TRACE(std::format("row group index {}", i));
     expect_row_group_equal(e.row_groups[i], a.row_groups[i]);
   }
 
   ASSERT_EQ(e.key_value_metadata.size(), a.key_value_metadata.size());
   for (size_t i = 0; i < e.key_value_metadata.size(); ++i) {
-    SCOPED_TRACE("key/value index " + std::to_string(i));
+    SCOPED_TRACE(std::format("key/value index {}", i));
     EXPECT_EQ(e.key_value_metadata[i].key, a.key_value_metadata[i].key);
     EXPECT_EQ(e.key_value_metadata[i].value, a.key_value_metadata[i].value);
   }
@@ -199,14 +194,14 @@ void expect_footer_semantic_equal(pq::FileMetaData const& e, pq::FileMetaData co
   if (e.column_orders.has_value() && a.column_orders.has_value()) {
     ASSERT_EQ(e.column_orders->size(), a.column_orders->size());
     for (size_t i = 0; i < e.column_orders->size(); ++i) {
-      SCOPED_TRACE("column order index " + std::to_string(i));
+      SCOPED_TRACE(std::format("column order index {}", i));
       EXPECT_EQ(e.column_orders.value()[i].type, a.column_orders.value()[i].type);
     }
   }
 }
 
-// Writes a small two-column table to a parquet host buffer and returns its parsed footer.
-pq::FileMetaData read_written_footer(std::vector<char>& buffer)
+// Writes a small two-column table to a parquet host buffer and fills `out` with its parsed footer.
+void read_written_footer(std::vector<char>& buffer, FileMetaData& out)
 {
   auto col0 = cudf::test::fixed_width_column_wrapper<int32_t>{{1, 2, 3, 4, 5}};
   auto col1 = cudf::test::strings_column_wrapper{{"a", "bb", "ccc", "dddd", "eeeee"}};
@@ -220,8 +215,10 @@ pq::FileMetaData read_written_footer(std::vector<char>& buffer)
     reinterpret_cast<std::byte const*>(buffer.data()), buffer.size()}};
   auto datasources = cudf::io::make_datasources(src);
   auto footers     = cudf::io::read_parquet_footers(datasources);
-  EXPECT_EQ(footers.size(), 1);
-  return footers.at(0);
+  // Fail hard before .at(0) so an unexpectedly empty footer reports a clear assertion, not an
+  // uncaught std::out_of_range.
+  ASSERT_EQ(footers.size(), 1);
+  out = footers.at(0);
 }
 
 // One past the reader's 512-element threshold where struct-list parsing goes parallel.
@@ -254,9 +251,9 @@ struct ParquetFooterFacadeTest : public cudf::test::BaseFixture {};
 TEST_F(ParquetFooterFacadeTest, RoundTrip)
 {
   auto const original = make_test_footer();
-  auto const bytes    = pq::experimental::write_parquet_footer_bytes(original);
+  auto const bytes    = experimental::write_parquet_footer_bytes(original);
   ASSERT_FALSE(bytes.empty());
-  auto const reparsed = pq::experimental::read_parquet_footer_bytes(as_span(bytes));
+  auto const reparsed = experimental::read_parquet_footer_bytes(bytes);
   expect_footer_semantic_equal(original, reparsed);
 }
 
@@ -265,24 +262,25 @@ TEST_F(ParquetFooterFacadeTest, RoundTrip)
 TEST_F(ParquetFooterFacadeTest, RealFooterRoundTrip)
 {
   std::vector<char> buffer;
-  auto const original = read_written_footer(buffer);
+  FileMetaData original;
+  read_written_footer(buffer, original);
   ASSERT_FALSE(original.schema.empty());
   ASSERT_FALSE(original.row_groups.empty());
 
-  auto const bytes    = pq::experimental::write_parquet_footer_bytes(original);
-  auto const reparsed = pq::experimental::read_parquet_footer_bytes(as_span(bytes));
+  auto const bytes    = experimental::write_parquet_footer_bytes(original);
+  auto const reparsed = experimental::read_parquet_footer_bytes(bytes);
   expect_footer_semantic_equal(original, reparsed);
 }
 
 // A footer with no schema or row groups round-trips; an absent column_orders stays absent.
 TEST_F(ParquetFooterFacadeTest, EmptyFooterRoundTrip)
 {
-  pq::FileMetaData meta;
+  FileMetaData meta;
   meta.version  = 1;
   meta.num_rows = 0;
 
-  auto const bytes  = pq::experimental::write_parquet_footer_bytes(meta);
-  auto const parsed = pq::experimental::read_parquet_footer_bytes(as_span(bytes));
+  auto const bytes  = experimental::write_parquet_footer_bytes(meta);
+  auto const parsed = experimental::read_parquet_footer_bytes(bytes);
   EXPECT_EQ(parsed.version, 1);
   EXPECT_EQ(parsed.num_rows, 0);
   EXPECT_TRUE(parsed.schema.empty());
@@ -295,12 +293,12 @@ TEST_F(ParquetFooterFacadeTest, EmptyFooterRoundTrip)
 // A boundary-value num_rows survives the zigzag-varint round-trip.
 TEST_F(ParquetFooterFacadeTest, LargeNumRows)
 {
-  pq::FileMetaData meta;
+  FileMetaData meta;
   meta.version  = 2;
   meta.num_rows = std::numeric_limits<int64_t>::max();
 
-  auto const bytes  = pq::experimental::write_parquet_footer_bytes(meta);
-  auto const parsed = pq::experimental::read_parquet_footer_bytes(as_span(bytes));
+  auto const bytes  = experimental::write_parquet_footer_bytes(meta);
+  auto const parsed = experimental::read_parquet_footer_bytes(bytes);
   EXPECT_EQ(parsed.num_rows, std::numeric_limits<int64_t>::max());
 }
 
@@ -309,7 +307,7 @@ TEST_F(ParquetFooterFacadeTest, LargeNumRows)
 TEST_F(ParquetFooterFacadeTest, TrailingBytesAreTolerated)
 {
   auto const original = make_test_footer();
-  auto const exact    = pq::experimental::write_parquet_footer_bytes(original);
+  auto const exact    = experimental::write_parquet_footer_bytes(original);
   ASSERT_FALSE(exact.empty());
 
   // The appended footer-length word never reaches the reader, so its value here is just a
@@ -324,43 +322,33 @@ TEST_F(ParquetFooterFacadeTest, TrailingBytesAreTolerated)
   std::vector<uint8_t> const magic_frame_tail{'P', 'A', 'R', '1'};
 
   for (auto const& tail : {length_word_frame, garbage_tail, magic_frame_tail}) {
-    SCOPED_TRACE("trailing tail of " + std::to_string(tail.size()) + " bytes");
+    SCOPED_TRACE(std::format("trailing tail of {} bytes", tail.size()));
     std::vector<uint8_t> over_length = exact;
     over_length.insert(over_length.end(), tail.begin(), tail.end());
     ASSERT_GT(over_length.size(), exact.size());
-    auto const reparsed = pq::experimental::read_parquet_footer_bytes(as_span(over_length));
+    auto const reparsed = experimental::read_parquet_footer_bytes(over_length);
     expect_footer_semantic_equal(original, reparsed);
   }
 }
 
 // Overread guard: every proper prefix of a valid footer (including cuts inside the row_groups
-// list) must throw cleanly, not return structurally-invalid metadata.
+// list) must throw cleanly, not return structurally-invalid metadata. Each cut point also runs
+// with the truncation padded past the cut -- the non-zero padding never forms a struct
+// terminator the reader would otherwise stop on.
 TEST_F(ParquetFooterFacadeTest, TruncatedFooterThrows)
 {
-  auto const full = pq::experimental::write_parquet_footer_bytes(make_test_footer());
+  auto const full = experimental::write_parquet_footer_bytes(make_test_footer());
   ASSERT_GT(full.size(), 8u);
 
   for (size_t len : {full.size() / 4, full.size() / 2, full.size() * 3 / 4, full.size() - 1}) {
     std::vector<uint8_t> const truncated(full.begin(), full.begin() + len);
-    EXPECT_THROW((void)pq::experimental::read_parquet_footer_bytes(as_span(truncated)),
-                 cudf::logic_error)
-      << "truncation length " << len << " did not throw";
-  }
-}
+    EXPECT_THROW((void)experimental::read_parquet_footer_bytes(truncated), cudf::logic_error)
+      << std::format("truncation length {} did not throw", len);
 
-// A mid-struct truncation padded past the cut still throws -- the non-zero padding never forms the
-// struct terminator the reader would otherwise stop on.
-TEST_F(ParquetFooterFacadeTest, TruncatedFooterWithPaddingThrows)
-{
-  auto const full = pq::experimental::write_parquet_footer_bytes(make_test_footer());
-  ASSERT_GT(full.size(), 8u);
-
-  for (size_t len : {full.size() / 4, full.size() / 2, full.size() * 3 / 4, full.size() - 1}) {
     std::vector<uint8_t> padded(full.begin(), full.begin() + len);
     padded.insert(padded.end(), full.size(), 0x5a);  // unrelated bytes past the truncation point
-    EXPECT_THROW((void)pq::experimental::read_parquet_footer_bytes(as_span(padded)),
-                 cudf::logic_error)
-      << "truncation length " << len << " with padding did not throw";
+    EXPECT_THROW((void)experimental::read_parquet_footer_bytes(padded), cudf::logic_error)
+      << std::format("truncation length {} with padding did not throw", len);
   }
 }
 
@@ -369,15 +357,14 @@ TEST_F(ParquetFooterFacadeTest, TruncatedFooterWithPaddingThrows)
 TEST_F(ParquetFooterFacadeTest, GarbageBufferThrows)
 {
   std::vector<uint8_t> const garbage(16, 0xff);
-  EXPECT_THROW((void)pq::experimental::read_parquet_footer_bytes(as_span(garbage)),
-               cudf::logic_error);
+  EXPECT_THROW((void)experimental::read_parquet_footer_bytes(garbage), cudf::logic_error);
 }
 
 // Overread guard: a zero-length buffer trips the sticky overread flag on the first field read
 // rather than returning empty metadata.
 TEST_F(ParquetFooterFacadeTest, EmptyBufferThrows)
 {
-  EXPECT_THROW((void)pq::experimental::read_parquet_footer_bytes(cudf::host_span<uint8_t const>{}),
+  EXPECT_THROW((void)experimental::read_parquet_footer_bytes(cudf::host_span<uint8_t const>{}),
                cudf::logic_error);
 }
 
@@ -388,7 +375,7 @@ TEST_F(ParquetFooterFacadeTest, EmptyBufferThrows)
 TEST_F(ParquetFooterFacadeTest, EmptyFooterReportsCannotInitializeSchema)
 {
   try {
-    pq::experimental::detail::metadata md{cudf::host_span<uint8_t const>{}};
+    experimental::detail::metadata md{cudf::host_span<uint8_t const>{}};
     FAIL() << "an empty footer should never initialize a schema";
   } catch (cudf::logic_error const& e) {
     std::string const msg = e.what();
@@ -407,7 +394,7 @@ TEST_F(ParquetFooterFacadeTest, OversizedContainerCountThrows)
     0xfc,  // list header: long-form size prefix, STRUCT elements
     0xff, 0xff, 0xff, 0xff, 0x07};  // size varint = 0x7fffffff
   // clang-format on
-  EXPECT_THROW((void)pq::experimental::read_parquet_footer_bytes(as_span(bomb)), cudf::logic_error);
+  EXPECT_THROW((void)experimental::read_parquet_footer_bytes(bomb), cudf::logic_error);
 }
 
 // Count guard: the I32 `encodings` primitive list under row_groups[0].columns[0].meta_data
@@ -426,7 +413,7 @@ TEST_F(ParquetFooterFacadeTest, OversizedPrimitiveListCountThrows)
     0xf5,  // list header: long-form size prefix, I32 elements
     0xff, 0xff, 0xff, 0xff, 0x07};  // size varint = 0x7fffffff
   // clang-format on
-  EXPECT_THROW((void)pq::experimental::read_parquet_footer_bytes(as_span(bomb)), cudf::logic_error);
+  EXPECT_THROW((void)experimental::read_parquet_footer_bytes(bomb), cudf::logic_error);
 }
 
 // Count guard: an unknown top-level LIST field routes to skip_struct_field, whose list branch
@@ -439,7 +426,7 @@ TEST_F(ParquetFooterFacadeTest, OversizedSkippedListCountThrows)
     0xfc,  // list header: long-form size prefix, STRUCT elements
     0xff, 0xff, 0xff, 0xff, 0x07};  // size varint = 0x7fffffff
   // clang-format on
-  EXPECT_THROW((void)pq::experimental::read_parquet_footer_bytes(as_span(bomb)), cudf::logic_error);
+  EXPECT_THROW((void)experimental::read_parquet_footer_bytes(bomb), cudf::logic_error);
 }
 
 // Count guard: an unknown top-level MAP field declares 0x7fffffff key/value pairs with no bytes
@@ -451,7 +438,7 @@ TEST_F(ParquetFooterFacadeTest, OversizedMapCountThrows)
     0x8b,  // FileMetaData field 8 (unknown id), type MAP -> skip path
     0xff, 0xff, 0xff, 0xff, 0x07};  // map size varint = 0x7fffffff, no pairs follow
   // clang-format on
-  EXPECT_THROW((void)pq::experimental::read_parquet_footer_bytes(as_span(bomb)), cudf::logic_error);
+  EXPECT_THROW((void)experimental::read_parquet_footer_bytes(bomb), cudf::logic_error);
 }
 
 // An unknown top-level MAP field with one scalar key/value pair is skipped and the parse stays in
@@ -470,7 +457,7 @@ TEST_F(ParquetFooterFacadeTest, UnknownMapFieldIsSkipped)
     0x54,        // version i32 = 42
     0x00};       // STOP
   // clang-format on
-  auto const parsed = pq::experimental::read_parquet_footer_bytes(as_span(footer));
+  auto const parsed = experimental::read_parquet_footer_bytes(footer);
   EXPECT_EQ(parsed.version, 42);
 }
 
@@ -490,7 +477,7 @@ TEST_F(ParquetFooterFacadeTest, UnknownMapFieldWithBoolValueIsSkipped)
     0x54,        // version i32 = 42
     0x00};       // STOP
   // clang-format on
-  auto const parsed = pq::experimental::read_parquet_footer_bytes(as_span(footer));
+  auto const parsed = experimental::read_parquet_footer_bytes(footer);
   EXPECT_EQ(parsed.version, 42);
 }
 
@@ -505,7 +492,7 @@ TEST_F(ParquetFooterFacadeTest, UnknownUuidFieldIsSkipped)
     0x54,        // version i32 = 42
     0x00};       // STOP
   // clang-format on
-  auto const parsed = pq::experimental::read_parquet_footer_bytes(as_span(footer));
+  auto const parsed = experimental::read_parquet_footer_bytes(footer);
   EXPECT_EQ(parsed.version, 42);
 }
 
@@ -523,7 +510,7 @@ TEST_F(ParquetFooterFacadeTest, KnownScalarFieldWithWrongTypeIsSkipped)
     0x00};       // STOP
   // clang-format on
   auto const parsed =
-    pq::experimental::read_parquet_footer_bytes(as_span(footer), pq::throw_if_type_mismatch::NO);
+    experimental::read_parquet_footer_bytes(footer, experimental::thrift_mismatch_policy::COMPAT);
   EXPECT_EQ(parsed.version, 0);
   EXPECT_EQ(parsed.num_rows, 42);
 }
@@ -539,7 +526,7 @@ TEST_F(ParquetFooterFacadeTest, KnownOptionalFieldWithWrongTypeStaysUnset)
     0x00};             // STOP
   // clang-format on
   auto const parsed =
-    pq::experimental::read_parquet_footer_bytes(as_span(footer), pq::throw_if_type_mismatch::NO);
+    experimental::read_parquet_footer_bytes(footer, experimental::thrift_mismatch_policy::COMPAT);
   EXPECT_EQ(parsed.version, 2);
   EXPECT_FALSE(parsed.column_orders.has_value());
 }
@@ -562,7 +549,7 @@ TEST_F(ParquetFooterFacadeTest, NestedOptionalFieldWithWrongTypeIsSkipped)
     0x00};       // FileMetaData STOP
   // clang-format on
   auto const parsed =
-    pq::experimental::read_parquet_footer_bytes(as_span(footer), pq::throw_if_type_mismatch::NO);
+    experimental::read_parquet_footer_bytes(footer, experimental::thrift_mismatch_policy::COMPAT);
   ASSERT_EQ(parsed.row_groups.size(), 1);
   ASSERT_EQ(parsed.row_groups[0].columns.size(), 1);
   EXPECT_FALSE(parsed.row_groups[0].columns[0].meta_data.bloom_filter_length.has_value());
@@ -585,7 +572,7 @@ TEST_F(ParquetFooterFacadeTest, KnownBoolFieldWithWrongTypeIsSkipped)
     0x00};       // FileMetaData STOP
   // clang-format on
   auto const parsed =
-    pq::experimental::read_parquet_footer_bytes(as_span(footer), pq::throw_if_type_mismatch::NO);
+    experimental::read_parquet_footer_bytes(footer, experimental::thrift_mismatch_policy::COMPAT);
   ASSERT_EQ(parsed.row_groups.size(), 1);
   ASSERT_TRUE(parsed.row_groups[0].sorting_columns.has_value());
   ASSERT_EQ(parsed.row_groups[0].sorting_columns->size(), 1);
@@ -608,10 +595,10 @@ TEST_F(ParquetFooterFacadeTest, UnionFieldWithWrongTypeIsTreatedAbsent)
     0x00};       // FileMetaData STOP
   // clang-format on
   auto const parsed =
-    pq::experimental::read_parquet_footer_bytes(as_span(footer), pq::throw_if_type_mismatch::NO);
+    experimental::read_parquet_footer_bytes(footer, experimental::thrift_mismatch_policy::COMPAT);
   ASSERT_TRUE(parsed.column_orders.has_value());
   ASSERT_EQ(parsed.column_orders->size(), 1);
-  EXPECT_EQ(parsed.column_orders.value()[0].type, pq::ColumnOrder::UNDEFINED);
+  EXPECT_EQ(parsed.column_orders.value()[0].type, ColumnOrder::UNDEFINED);
 }
 
 // Struct-list parsing goes parallel at 512+ elements; every sub-reader must inherit lenient mode.
@@ -620,7 +607,7 @@ TEST_F(ParquetFooterFacadeTest, ParallelStructListPropagatesLenientMode)
 {
   auto const footer = make_parallel_mismatch_footer();
   auto const parsed =
-    pq::experimental::read_parquet_footer_bytes(as_span(footer), pq::throw_if_type_mismatch::NO);
+    experimental::read_parquet_footer_bytes(footer, experimental::thrift_mismatch_policy::COMPAT);
   ASSERT_EQ(parsed.row_groups.size(), parallel_list_count);
   // Every element, not just the boundaries, must have the mismatched field unset -- a
   // task-partitioning off-by-one would leave a silently-wrong middle range untested.
@@ -631,7 +618,7 @@ TEST_F(ParquetFooterFacadeTest, ParallelStructListPropagatesLenientMode)
 
 // The same wrong-type footer throws under the default strict mode: cudf's readers keep the
 // exact-type contract; only the spark-rapids facade opts into leniency via
-// `throw_if_type_mismatch::NO`.
+// `experimental::thrift_mismatch_policy::COMPAT`.
 TEST_F(ParquetFooterFacadeTest, KnownFieldWithWrongTypeThrowsInStrictMode)
 {
   // clang-format off
@@ -640,8 +627,7 @@ TEST_F(ParquetFooterFacadeTest, KnownFieldWithWrongTypeThrowsInStrictMode)
     0x26, 0x54,  // field 3 (num_rows) i64 = 42
     0x00};       // STOP
   // clang-format on
-  EXPECT_THROW((void)pq::experimental::read_parquet_footer_bytes(as_span(footer)),
-               cudf::logic_error);
+  EXPECT_THROW((void)experimental::read_parquet_footer_bytes(footer), cudf::logic_error);
 }
 
 // The wrong-typed bool field throws under the default strict mode via parquet_field_bool's own
@@ -659,8 +645,7 @@ TEST_F(ParquetFooterFacadeTest, KnownBoolFieldWithWrongTypeThrowsInStrictMode)
     0x00,        //   RowGroup STOP
     0x00};       // FileMetaData STOP
   // clang-format on
-  EXPECT_THROW((void)pq::experimental::read_parquet_footer_bytes(as_span(footer)),
-               cudf::logic_error);
+  EXPECT_THROW((void)experimental::read_parquet_footer_bytes(footer), cudf::logic_error);
 }
 
 // The wrong-typed union arm throws under the default strict mode via
@@ -674,8 +659,7 @@ TEST_F(ParquetFooterFacadeTest, UnionFieldWithWrongTypeThrowsInStrictMode)
     0x00,        //   ColumnOrder STOP
     0x00};       // FileMetaData STOP
   // clang-format on
-  EXPECT_THROW((void)pq::experimental::read_parquet_footer_bytes(as_span(footer)),
-               cudf::logic_error);
+  EXPECT_THROW((void)experimental::read_parquet_footer_bytes(footer), cudf::logic_error);
 }
 
 // The parallel sub-readers inherit the default strict mode too: the mismatch is detected in a
@@ -683,8 +667,7 @@ TEST_F(ParquetFooterFacadeTest, UnionFieldWithWrongTypeThrowsInStrictMode)
 TEST_F(ParquetFooterFacadeTest, ParallelStructListThrowsInStrictMode)
 {
   auto const footer = make_parallel_mismatch_footer();
-  EXPECT_THROW((void)pq::experimental::read_parquet_footer_bytes(as_span(footer)),
-               cudf::logic_error);
+  EXPECT_THROW((void)experimental::read_parquet_footer_bytes(footer), cudf::logic_error);
 }
 
 // An empty LIST field is accepted regardless of its wire element-type nibble: a zero-length list
@@ -698,7 +681,7 @@ TEST_F(ParquetFooterFacadeTest, EmptyListWithZeroElementTypeIsAccepted)
     0x19, 0x00,  // field 2 (schema): empty LIST with element-type nibble 0 (not STRUCT)
     0x00};       // STOP
   // clang-format on
-  auto const parsed = pq::experimental::read_parquet_footer_bytes(as_span(footer));
+  auto const parsed = experimental::read_parquet_footer_bytes(footer);
   EXPECT_EQ(parsed.version, 2);
   EXPECT_TRUE(parsed.schema.empty());
 }
@@ -719,7 +702,7 @@ TEST_F(ParquetFooterFacadeTest, EmptyPrimitiveListWithWrongElementTypeIsAccepted
     0x00,        //   RowGroup STOP
     0x00};       // FileMetaData STOP
   // clang-format on
-  auto const parsed = pq::experimental::read_parquet_footer_bytes(as_span(footer));
+  auto const parsed = experimental::read_parquet_footer_bytes(footer);
   ASSERT_EQ(parsed.row_groups.size(), 1);
   ASSERT_EQ(parsed.row_groups[0].columns.size(), 1);
   EXPECT_TRUE(parsed.row_groups[0].columns[0].meta_data.encodings.empty());

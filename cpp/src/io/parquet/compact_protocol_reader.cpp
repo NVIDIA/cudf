@@ -450,7 +450,7 @@ class parquet_field_struct_list : public parquet_field {
     constexpr uint32_t parallel_threshold = 512;
     if (n >= parallel_threshold) {
       // Propagate the reader's strict/lenient mode to the parallel per-struct sub-readers below.
-      auto const mode = cpr->m_throw_if_type_mismatch;
+      auto const mode = cpr->m_mismatch_policy;
       auto const num_tasks =
         std::min<uint32_t>(n, cudf::detail::host_worker_pool().get_thread_count() * 2);
       auto const items_per_task = n / num_tasks;
@@ -503,9 +503,6 @@ class parquet_field_struct_list : public parquet_field {
           task.wait();
         }
         throw;
-      }
-      for (auto& task : tasks) {
-        task.wait();
       }
       for (auto& task : tasks) {
         task.get();

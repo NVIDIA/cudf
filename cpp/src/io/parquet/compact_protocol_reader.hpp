@@ -7,6 +7,7 @@
 
 #include "parquet_common.hpp"
 
+#include <cudf/io/experimental/parquet_footer.hpp>
 #include <cudf/io/parquet_metadata.hpp>
 #include <cudf/io/parquet_schema.hpp>
 #include <cudf/utilities/error.hpp>
@@ -39,10 +40,11 @@ namespace io::parquet::detail {
  */
 class CompactProtocolReader {
  public:
-  explicit CompactProtocolReader(uint8_t const* base         = nullptr,
-                                 size_t len                  = 0,
-                                 throw_if_type_mismatch mode = throw_if_type_mismatch::YES)
-    : m_throw_if_type_mismatch(mode)
+  explicit CompactProtocolReader(
+    uint8_t const* base                       = nullptr,
+    size_t len                                = 0,
+    experimental::thrift_mismatch_policy mode = experimental::thrift_mismatch_policy::THROW)
+    : m_mismatch_policy(mode)
   {
     init(base, len);
   }
@@ -71,11 +73,11 @@ class CompactProtocolReader {
   static constexpr char const* const kOverreadMessage =
     "Parquet footer is truncated or corrupt (read past end of buffer)";
   static constexpr char const* const kCannotInitSchemaMessage = "Cannot initialize schema";
-  // True if a wire-type/schema-type mismatch must be rejected (default YES); false means skip it
-  // per Thrift forward-compat (NO), which the spark-rapids footer facade uses.
+  // True if a wire-type/schema-type mismatch must be rejected (default THROW); false means skip it
+  // per Thrift forward-compat (COMPAT), which the spark-rapids footer facade uses.
   [[nodiscard]] bool should_throw_on_type_mismatch() const noexcept
   {
-    return m_throw_if_type_mismatch == throw_if_type_mismatch::YES;
+    return m_mismatch_policy == experimental::thrift_mismatch_policy::THROW;
   }
   // A read at end-of-buffer sets the sticky overread flag (queried via overread()) and
   // yields 0, keeping the hot parse path noexcept.
@@ -198,8 +200,9 @@ class CompactProtocolReader {
   uint8_t const* m_end  = nullptr;
   // Sticky flag: a required read was attempted past end-of-buffer (truncated/corrupt input).
   bool m_overread = false;
-  // Reject (`YES`) vs skip (`NO`) a struct field whose wire type mismatches the schema type.
-  throw_if_type_mismatch m_throw_if_type_mismatch = throw_if_type_mismatch::YES;
+  // Reject (`THROW`) vs skip (`COMPAT`) a struct field whose wire type mismatches the schema type.
+  experimental::thrift_mismatch_policy m_mismatch_policy =
+    experimental::thrift_mismatch_policy::THROW;
 
   friend class parquet_field_string;
   friend class parquet_field_string_list;

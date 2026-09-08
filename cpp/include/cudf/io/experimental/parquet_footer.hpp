@@ -17,6 +17,12 @@ namespace CUDF_EXPORT cudf {
 namespace io::parquet::experimental {
 
 /**
+ * @brief Footer-reader policy on a wire-type/schema-type mismatch: reject (`THROW`, the historical
+ * exact-type contract) or skip per Thrift forward-compat (`COMPAT`)
+ */
+enum class thrift_mismatch_policy : bool { THROW, COMPAT };
+
+/**
  * @brief Deserialize a Parquet footer (`FileMetaData`) from Thrift-compact-encoded bytes
  *
  * @ingroup io_readers
@@ -26,17 +32,18 @@ namespace io::parquet::experimental {
  *
  * @throws cudf::logic_error If the footer is truncated or corrupt within the struct, caught by the
  * reader's overread guard and per-field bounds checks
- * @throws cudf::logic_error If `mode == throw_if_type_mismatch::YES` and a field's wire type does
+ * @throws cudf::logic_error If `mode == thrift_mismatch_policy::THROW` and a field's wire type does
  * not match the expected schema type
  *
  * @param footer_bytes Thrift-compact-encoded Parquet `FileMetaData` (footer) bytes
- * @param mode `throw_if_type_mismatch::YES` (default) rejects a field whose wire type mismatches
- * the schema type; `throw_if_type_mismatch::NO` skips it (Thrift forward-compat)
+ * @param mode `thrift_mismatch_policy::THROW` (default) rejects a field whose wire type mismatches
+ * the schema type; `thrift_mismatch_policy::COMPAT` skips it (Thrift forward-compat)
  *
  * @return The deserialized `FileMetaData`
  */
 [[nodiscard]] FileMetaData read_parquet_footer_bytes(
-  host_span<uint8_t const> footer_bytes, throw_if_type_mismatch mode = throw_if_type_mismatch::YES);
+  host_span<uint8_t const> footer_bytes,
+  thrift_mismatch_policy mode = thrift_mismatch_policy::THROW);
 
 /**
  * @brief Serialize a Parquet footer (`FileMetaData`) to Thrift-compact-encoded bytes

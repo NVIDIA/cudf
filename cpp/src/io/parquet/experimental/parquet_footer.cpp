@@ -16,7 +16,7 @@
 namespace cudf::io::parquet::experimental {
 
 FileMetaData read_parquet_footer_bytes(host_span<uint8_t const> footer_bytes,
-                                       throw_if_type_mismatch mode)
+                                       thrift_mismatch_policy mode)
 {
   CUDF_FUNC_RANGE();
   detail::CompactProtocolReader reader{footer_bytes.data(), footer_bytes.size(), mode};

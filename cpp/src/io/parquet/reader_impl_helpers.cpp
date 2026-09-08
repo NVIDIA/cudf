@@ -530,10 +530,9 @@ metadata::metadata(datasource* source, bool read_page_indexes)
   // Schema-init check first: a footer with no buildable schema reports the specific
   // "Cannot initialize schema" rather than generic overread (see hybrid_scan_helpers).
   auto const is_schema_initialized = cp.InitSchema(this);
-  CUDF_EXPECTS(is_schema_initialized, "Cannot initialize schema");
+  CUDF_EXPECTS(is_schema_initialized, CompactProtocolReader::kCannotInitSchemaMessage);
   // A schema that parsed but overran the buffer's stop byte is truncated/corrupt.
-  CUDF_EXPECTS(not cp.overread(),
-               "Parquet footer is truncated or corrupt (read past end of buffer)");
+  CUDF_EXPECTS(not cp.overread(), CompactProtocolReader::kOverreadMessage);
 
   // Reading the page indexes is somewhat expensive, so skip if there are no byte array columns.
   // Currently the indexes are only used for the string size calculations.

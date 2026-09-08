@@ -22,8 +22,7 @@ FileMetaData read_parquet_footer_bytes(host_span<uint8_t const> footer_bytes,
   detail::CompactProtocolReader reader{footer_bytes.data(), footer_bytes.size(), mode};
   FileMetaData metadata;
   reader.read(&metadata);
-  CUDF_EXPECTS(not reader.overread(),
-               "Parquet footer is truncated or corrupt (read past end of buffer)");
+  CUDF_EXPECTS(not reader.overread(), detail::CompactProtocolReader::kOverreadMessage);
   return metadata;
 }
 

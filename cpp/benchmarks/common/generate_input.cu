@@ -35,6 +35,7 @@
 #include <cuda/functional>
 #include <cuda/iterator>
 #include <cuda/std/functional>
+#include <cuda/std/random>
 #include <cuda/std/tuple>
 #include <thrust/binary_search.h>
 #include <thrust/copy.h>
@@ -42,8 +43,9 @@
 #include <thrust/fill.h>
 #include <thrust/for_each.h>
 #include <thrust/gather.h>
-#include <thrust/random/uniform_int_distribution.h>
-#include <thrust/random/uniform_real_distribution.h>
+#include <thrust/iterator/transform_iterator.h>
+#include <thrust/iterator/transform_output_iterator.h>
+#include <thrust/iterator/zip_iterator.h>
 #include <thrust/scan.h>
 #include <thrust/shuffle.h>
 #include <thrust/tabulate.h>
@@ -62,7 +64,7 @@ namespace {
 /**
  * @brief Mersenne Twister pseudo-random engine.
  */
-auto deterministic_engine(unsigned seed) { return thrust::minstd_rand{seed}; }
+auto deterministic_engine(unsigned seed) { return cuda::std::philox4x32{seed}; }
 
 /**
  *  Computes the mean value for a distribution of given type and value bounds.
@@ -224,10 +226,10 @@ double avg_element_size(data_profile const& profile, cudf::data_type dtype)
  * @brief bool generator with given probability [0.0 - 1.0] of returning true.
  */
 struct bool_generator {
-  thrust::minstd_rand engine;
-  thrust::uniform_real_distribution<float> dist;
+  cuda::std::philox4x32 engine;
+  cuda::std::uniform_real_distribution<float> dist;
   double probability_true;
-  bool_generator(thrust::minstd_rand engine, double probability_true)
+  bool_generator(cuda::std::philox4x32 engine, double probability_true)
     : engine(engine), dist{0, 1}, probability_true{probability_true}
   {
   }
@@ -279,7 +281,7 @@ struct random_value_fn<T, std::enable_if_t<cudf::is_chrono<T>()>> {
       nanoseconds_gen = make_distribution<int64_t>(distribution_id::UNIFORM, 0l, 1000000000l);
     } else {
       // Don't need a random seconds generator for sub-second intervals
-      seconds_gen = [range_s](thrust::minstd_rand&, size_t size) {
+      seconds_gen = [range_s](cuda::std::philox4x32&, size_t size) {
         rmm::device_uvector<int64_t> result(size, cudf::get_default_stream());
         thrust::uninitialized_fill(
           thrust::device, result.begin(), result.end(), range_s.second.count());
@@ -295,7 +297,7 @@ struct random_value_fn<T, std::enable_if_t<cudf::is_chrono<T>()>> {
     }
   }
 
-  rmm::device_uvector<T> operator()(thrust::minstd_rand& engine, unsigned size)
+  rmm::device_uvector<T> operator()(cuda::std::philox4x32& engine, unsigned size)
   {
     auto const sec = seconds_gen(engine, size);
     auto const ns  = nanoseconds_gen(engine, size);
@@ -335,7 +337,7 @@ struct random_value_fn<T, std::enable_if_t<cudf::is_fixed_point<T>()>> {
   {
   }
 
-  [[nodiscard]] numeric::scale_type get_scale(thrust::minstd_rand& engine)
+  [[nodiscard]] numeric::scale_type get_scale(cuda::std::philox4x32& engine)
   {
     if (not scale.has_value()) {
       constexpr int max_scale = std::numeric_limits<DeviceType>::digits10;
@@ -346,7 +348,7 @@ struct random_value_fn<T, std::enable_if_t<cudf::is_fixed_point<T>()>> {
     return scale.value_or(numeric::scale_type{0});
   }
 
-  rmm::device_uvector<DeviceType> operator()(thrust::minstd_rand& engine, unsigned size)
+  rmm::device_uvector<DeviceType> operator()(cuda::std::philox4x32& engine, unsigned size)
   {
     return dist(engine, size);
   }
@@ -368,7 +370,7 @@ struct random_value_fn<T, std::enable_if_t<!std::is_same_v<T, bool> && cudf::is_
   {
   }
 
-  auto operator()(thrust::minstd_rand& engine, unsigned size) { return dist(engine, size); }
+  auto operator()(cuda::std::philox4x32& engine, unsigned size) { return dist(engine, size); }
 };
 
 /**
@@ -380,7 +382,7 @@ struct random_value_fn<T, typename std::enable_if_t<std::is_same_v<T, bool>>> {
   distribution_fn<bool> dist;
 
   random_value_fn(distribution_params<bool> const& desc)
-    : dist{[valid_prob = desc.probability_true](thrust::minstd_rand& engine,
+    : dist{[valid_prob = desc.probability_true](cuda::std::philox4x32& engine,
                                                 size_t size) -> rmm::device_uvector<bool> {
         rmm::device_uvector<bool> result(size, cudf::get_default_stream());
         thrust::tabulate(
@@ -389,7 +391,7 @@ struct random_value_fn<T, typename std::enable_if_t<std::is_same_v<T, bool>>> {
       }}
   {
   }
-  auto operator()(thrust::minstd_rand& engine, unsigned size) { return dist(engine, size); }
+  auto operator()(cuda::std::philox4x32& engine, unsigned size) { return dist(engine, size); }
 };
 
 /**
@@ -405,7 +407,7 @@ struct random_value_fn<T, typename std::enable_if_t<std::is_same_v<T, bool>>> {
 rmm::device_uvector<cudf::size_type> sample_indices_with_run_length(cudf::size_type avg_run_len,
                                                                     cudf::size_type cardinality,
                                                                     cudf::size_type num_rows,
-                                                                    thrust::minstd_rand& engine)
+                                                                    cuda::std::philox4x32& engine)
 {
   auto sample_dist = random_value_fn<cudf::size_type>{
     distribution_params<cudf::size_type>{distribution_id::UNIFORM, 0, cardinality - 1}};
@@ -448,9 +450,9 @@ enum class string_encoding {
 template <string_encoding Encoding = string_encoding::UTF8>
 struct string_generator {
   char* chars;
-  thrust::minstd_rand engine;
-  thrust::uniform_int_distribution<unsigned char> char_dist;
-  string_generator(char* c, thrust::minstd_rand& engine)
+  cuda::std::philox4x32 engine;
+  cuda::std::uniform_int_distribution<unsigned char> char_dist;
+  string_generator(char* c, cuda::std::philox4x32& engine)
     : chars(c), engine(engine), char_dist(32, Encoding == string_encoding::ASCII ? 126 : 137)
   // ~90% ASCII, ~10% UTF-8.
   // ~80% not-space, ~20% space.
@@ -482,7 +484,7 @@ struct string_generator {
  */
 template <string_encoding Encoding = string_encoding::UTF8>
 std::unique_ptr<cudf::column> create_random_utf8_string_column(data_profile const& profile,
-                                                               thrust::minstd_rand& engine,
+                                                               cuda::std::philox4x32& engine,
                                                                cudf::size_type num_rows)
 {
   auto len_dist =
@@ -528,19 +530,19 @@ std::unique_ptr<cudf::column> create_random_utf8_string_column(data_profile cons
 // Forward declarations for create_rand_col_fn
 template <typename T>
 std::unique_ptr<cudf::column> create_random_column(data_profile const& profile,
-                                                   thrust::minstd_rand& engine,
+                                                   cuda::std::philox4x32& engine,
                                                    cudf::size_type num_rows);
 
 template <typename T>
   requires(cudf::is_numeric_not_bool<T>())
 std::unique_ptr<cudf::column> create_distinct_rows_column(data_profile const& profile,
-                                                          thrust::minstd_rand& engine,
+                                                          cuda::std::philox4x32& engine,
                                                           cudf::size_type num_rows);
 
 template <typename T>
   requires(!cudf::is_numeric_not_bool<T>())
 std::unique_ptr<cudf::column> create_distinct_rows_column(data_profile const& profile,
-                                                          thrust::minstd_rand& engine,
+                                                          cuda::std::philox4x32& engine,
                                                           cudf::size_type num_rows);
 
 /**
@@ -550,7 +552,7 @@ struct create_rand_col_fn {
  public:
   template <typename T>
   std::unique_ptr<cudf::column> operator()(data_profile const& profile,
-                                           thrust::minstd_rand& engine,
+                                           cuda::std::philox4x32& engine,
                                            cudf::size_type num_rows)
   {
     if (profile.get_cardinality() >= num_rows) {
@@ -572,7 +574,7 @@ struct create_rand_col_fn {
  */
 template <typename T>
 std::unique_ptr<cudf::column> create_random_column(data_profile const& profile,
-                                                   thrust::minstd_rand& engine,
+                                                   cuda::std::philox4x32& engine,
                                                    cudf::size_type num_rows)
 {
   // Bernoulli distribution
@@ -638,7 +640,7 @@ std::unique_ptr<cudf::column> create_random_column(data_profile const& profile,
  */
 template <>
 std::unique_ptr<cudf::column> create_random_column<cudf::string_view>(data_profile const& profile,
-                                                                      thrust::minstd_rand& engine,
+                                                                      cuda::std::philox4x32& engine,
                                                                       cudf::size_type num_rows)
 {
   auto const cardinality = std::min(profile.get_cardinality(), num_rows);
@@ -658,16 +660,15 @@ std::unique_ptr<cudf::column> create_random_column<cudf::string_view>(data_profi
 }
 
 template <>
-std::unique_ptr<cudf::column> create_random_column<cudf::dictionary32>(data_profile const& profile,
-                                                                       thrust::minstd_rand& engine,
-                                                                       cudf::size_type num_rows)
+std::unique_ptr<cudf::column> create_random_column<cudf::dictionary32>(
+  data_profile const& profile, cuda::std::philox4x32& engine, cudf::size_type num_rows)
 {
   CUDF_FAIL("not implemented yet");
 }
 
 template <>
 std::unique_ptr<cudf::column> create_random_column<cudf::struct_view>(data_profile const& profile,
-                                                                      thrust::minstd_rand& engine,
+                                                                      cuda::std::philox4x32& engine,
                                                                       cudf::size_type num_rows)
 {
   auto const dist_params = profile.get_distribution_params<cudf::struct_view>();
@@ -748,7 +749,7 @@ struct clamp_down {
  */
 template <>
 std::unique_ptr<cudf::column> create_random_column<cudf::list_view>(data_profile const& profile,
-                                                                    thrust::minstd_rand& engine,
+                                                                    cuda::std::philox4x32& engine,
                                                                     cudf::size_type num_rows)
 {
   auto const dist_params       = profile.get_distribution_params<cudf::list_view>();
@@ -814,7 +815,7 @@ std::unique_ptr<cudf::column> create_random_column<cudf::list_view>(data_profile
 template <typename T>
   requires(cudf::is_numeric_not_bool<T>())
 std::unique_ptr<cudf::column> create_distinct_rows_column(data_profile const& profile,
-                                                          thrust::minstd_rand& engine,
+                                                          cuda::std::philox4x32& engine,
                                                           cudf::size_type num_rows)
 {
   auto init = cudf::make_fixed_width_scalar(T{});
@@ -824,7 +825,7 @@ std::unique_ptr<cudf::column> create_distinct_rows_column(data_profile const& pr
   thrust::shuffle(thrust::device,
                   col->mutable_view().template begin<T>(),
                   col->mutable_view().template end<T>(),
-                  engine);
+                  cuda::std::philox4x32(engine()));
 
   if (profile.get_null_probability().has_value()) {
     auto valid_dist =
@@ -842,7 +843,7 @@ std::unique_ptr<cudf::column> create_distinct_rows_column(data_profile const& pr
 template <typename T>
   requires(!cudf::is_numeric_not_bool<T>())
 std::unique_ptr<cudf::column> create_distinct_rows_column(data_profile const& profile,
-                                                          thrust::minstd_rand& engine,
+                                                          cuda::std::philox4x32& engine,
                                                           cudf::size_type num_rows)
 {
   return create_random_column<T>(profile, engine, num_rows);
@@ -850,7 +851,7 @@ std::unique_ptr<cudf::column> create_distinct_rows_column(data_profile const& pr
 
 template <>
 std::unique_ptr<cudf::column> create_distinct_rows_column<cudf::string_view>(
-  data_profile const& profile, thrust::minstd_rand& engine, cudf::size_type num_rows)
+  data_profile const& profile, cuda::std::philox4x32& engine, cudf::size_type num_rows)
 {
   auto col        = create_random_column<cudf::string_view>(profile, engine, num_rows);
   auto int_col    = cudf::sequence(num_rows, *cudf::make_fixed_width_scalar<int32_t>(0));
@@ -861,7 +862,7 @@ std::unique_ptr<cudf::column> create_distinct_rows_column<cudf::string_view>(
 
 template <>
 std::unique_ptr<cudf::column> create_distinct_rows_column<cudf::list_view>(
-  data_profile const& profile, thrust::minstd_rand& engine, cudf::size_type num_rows)
+  data_profile const& profile, cuda::std::philox4x32& engine, cudf::size_type num_rows)
 {
   auto const dist_params = profile.get_distribution_params<cudf::list_view>();
   auto col               = create_random_column<cudf::list_view>(profile, engine, num_rows);
@@ -885,14 +886,14 @@ std::unique_ptr<cudf::column> create_distinct_rows_column<cudf::list_view>(
 
 template <>
 std::unique_ptr<cudf::column> create_distinct_rows_column<cudf::dictionary32>(
-  data_profile const& profile, thrust::minstd_rand& engine, cudf::size_type num_rows)
+  data_profile const& profile, cuda::std::philox4x32& engine, cudf::size_type num_rows)
 {
   CUDF_FAIL("not implemented yet");
 }
 
 template <>
 std::unique_ptr<cudf::column> create_distinct_rows_column<cudf::struct_view>(
-  data_profile const& profile, thrust::minstd_rand& engine, cudf::size_type num_rows)
+  data_profile const& profile, cuda::std::philox4x32& engine, cudf::size_type num_rows)
 {
   auto const dist_params = profile.get_distribution_params<cudf::struct_view>();
   auto col               = create_random_column<cudf::struct_view>(profile, engine, num_rows);
@@ -972,7 +973,7 @@ std::unique_ptr<cudf::table> create_random_table(std::vector<cudf::type_id> cons
                                                  unsigned seed)
 {
   auto seed_engine = deterministic_engine(seed);
-  thrust::uniform_int_distribution<unsigned> seed_dist;
+  cuda::std::uniform_int_distribution<unsigned> seed_dist;
 
   std::vector<std::unique_ptr<cudf::column>> output_columns;
   std::transform(
@@ -998,7 +999,7 @@ std::unique_ptr<cudf::table> create_sequence_table(std::vector<cudf::type_id> co
                                                    unsigned seed)
 {
   auto seed_engine = deterministic_engine(seed);
-  thrust::uniform_int_distribution<unsigned> seed_dist;
+  cuda::std::uniform_int_distribution<unsigned> seed_dist;
 
   auto columns = std::vector<std::unique_ptr<cudf::column>>(dtype_ids.size());
   std::transform(dtype_ids.begin(), dtype_ids.end(), columns.begin(), [&](auto dtype) mutable {

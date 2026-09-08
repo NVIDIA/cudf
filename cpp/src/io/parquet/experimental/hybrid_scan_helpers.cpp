@@ -109,8 +109,13 @@ metadata::metadata(cudf::host_span<uint8_t const> footer_bytes)
 
   CompactProtocolReader cp(footer_bytes.data(), footer_bytes.size());
   cp.read(this);
+  // Check schema-init first: a footer from which no schema can be built (e.g. empty input) reports
+  // the specific "Cannot initialize schema" rather than being mislabeled as generic overread.
   auto const is_schema_initialized = cp.InitSchema(this);
   CUDF_EXPECTS(is_schema_initialized, "Cannot initialize schema");
+  // A schema that parsed but overran the buffer's stop byte is truncated/corrupt.
+  CUDF_EXPECTS(not cp.overread(),
+               "Parquet footer is truncated or corrupt (read past end of buffer)");
   sanitize_schema();
 }
 

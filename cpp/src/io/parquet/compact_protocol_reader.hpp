@@ -63,14 +63,17 @@ class CompactProtocolReader {
     // Avoid `nullptr - nullptr` on a null-base reader; it has consumed nothing.
     return m_base != nullptr ? m_cur - m_base : 0;
   }
+  // True if a read went past the end of buffer (set by getb/skip_bytes on overread). Checked by
+  // callers after their own schema validation; see read(FileMetaData*).
+  [[nodiscard]] bool overread() const noexcept { return m_overread; }
   // True if a wire-type/schema-type mismatch must be rejected (default YES); false means skip it
   // per Thrift forward-compat (NO), which the spark-rapids footer facade uses.
   [[nodiscard]] bool should_throw_on_type_mismatch() const noexcept
   {
     return m_throw_if_type_mismatch == throw_if_type_mismatch::YES;
   }
-  // Reads one byte. A read attempted at end-of-buffer sets the sticky overread flag (checked in
-  // read(FileMetaData*)) and yields 0, keeping the hot parse path noexcept.
+  // A read at end-of-buffer sets the sticky overread flag (queried via overread()) and
+  // yields 0, keeping the hot parse path noexcept.
   unsigned int getb() noexcept
   {
     if (m_cur < m_end) { return *m_cur++; }

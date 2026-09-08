@@ -702,8 +702,9 @@ void CompactProtocolReader::read(FileMetaData* f)
                             optional_list_column_order(7, f->column_orders));
   function_builder(this, op);
   // A set overread flag means a read went past the footer's final stop byte -- truncated or corrupt
-  // input -- so fail rather than return structurally-invalid metadata.
-  CUDF_EXPECTS(not m_overread, "Parquet footer is truncated or corrupt (read past end of buffer)");
+  // input. Callers check overread() AFTER their own schema validation so a footer that yields no
+  // schema at all reports the more specific "Cannot initialize schema" rather than this generic
+  // one.
 }
 
 void CompactProtocolReader::read(SchemaElement* s)

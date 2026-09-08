@@ -3,6 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+#include "io/parquet/experimental/hybrid_scan_helpers.hpp"
+
 #include <cudf_test/base_fixture.hpp>
 #include <cudf_test/column_wrapper.hpp>
 #include <cudf_test/testing_main.hpp>
@@ -377,6 +379,22 @@ TEST_F(ParquetFooterFacadeTest, EmptyBufferThrows)
 {
   EXPECT_THROW((void)pq::experimental::read_parquet_footer_bytes(cudf::host_span<uint8_t const>{}),
                cudf::logic_error);
+}
+
+// An empty footer yields NO schema at all. The hybrid_scan metadata path behind
+// FileMetaData.from_bytes(b"") must run its schema-init check BEFORE the generic overread guard
+// and report the specific "Cannot initialize schema" — regression for the pylibcudf
+// test_file_metadata_from_bytes_empty contract.
+TEST_F(ParquetFooterFacadeTest, EmptyFooterReportsCannotInitializeSchema)
+{
+  try {
+    pq::experimental::detail::metadata md{cudf::host_span<uint8_t const>{}};
+    FAIL() << "an empty footer should never initialize a schema";
+  } catch (cudf::logic_error const& e) {
+    std::string const msg = e.what();
+    EXPECT_NE(msg.find("Cannot initialize schema"), std::string::npos)
+      << "unexpected message: " << msg;
+  }
 }
 
 // Count guard: a field 2 (schema) struct-list header declaring 0x7fffffff elements with no

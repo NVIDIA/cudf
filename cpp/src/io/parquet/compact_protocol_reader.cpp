@@ -14,6 +14,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
+#include <exception>
 #include <functional>
 #include <future>
 #include <tuple>
@@ -504,9 +505,18 @@ class parquet_field_struct_list : public parquet_field {
         }
         throw;
       }
+      // Join EVERY task before leaving, then rethrow the first failure: task.get() throws on a
+      // strict-mode mismatch, and bailing out of this loop mid-way would abandon the remaining
+      // un-joined tasks, whose lambdas still reference all_ranges/val (use-after-free at exit).
+      std::exception_ptr first_error;
       for (auto& task : tasks) {
-        task.get();
+        try {
+          task.get();
+        } catch (...) {
+          if (!first_error) { first_error = std::current_exception(); }
+        }
       }
+      if (first_error) { std::rethrow_exception(first_error); }
     } else {
       // For small numbers of elements, use sequential processing to avoid overhead
       std::for_each(val.begin(), val.end(), [&cpr](auto& elem) { cpr->read(&elem); });

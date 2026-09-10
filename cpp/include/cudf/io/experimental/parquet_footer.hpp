@@ -36,8 +36,7 @@ enum class thrift_mismatch_policy : bool { THROW, COMPAT };
  * not match the expected schema type
  *
  * @param footer_bytes Thrift-compact-encoded Parquet `FileMetaData` (footer) bytes
- * @param mode `thrift_mismatch_policy::THROW` (default) rejects a field whose wire type mismatches
- * the schema type; `thrift_mismatch_policy::COMPAT` skips it (Thrift forward-compat)
+ * @param mode Mismatch policy, see `thrift_mismatch_policy`
  *
  * @return The deserialized `FileMetaData`
  */

@@ -728,10 +728,8 @@ void CompactProtocolReader::read(FileMetaData* f)
                             parquet_field_string(6, f->created_by),
                             optional_list_column_order(7, f->column_orders));
   function_builder(this, op);
-  // A set overread flag means a read went past the footer's final stop byte -- truncated or corrupt
-  // input. Callers check overread() AFTER their own schema validation so a footer that yields no
-  // schema at all reports the more specific "Cannot initialize schema" rather than this generic
-  // one.
+  // Callers check overread() after schema-init so a footer with no schema reports the specific
+  // "Cannot initialize schema", not this generic error.
 }
 
 void CompactProtocolReader::read(SchemaElement* s)

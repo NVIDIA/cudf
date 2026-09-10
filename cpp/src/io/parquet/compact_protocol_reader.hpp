@@ -146,7 +146,7 @@ class CompactProtocolReader {
   void skip_struct_field(int t, int depth = 0);
 
   // True if the wire type matches the schema type; on mismatch strict mode throws while lenient
-  // mode (`NO`) skips the value and returns false, leaving the field (and any optional) unset.
+  // mode (`COMPAT`) skips the value and returns false.
   [[nodiscard]] bool check_field_type(int type, FieldType expected);
 
   // True if a non-empty list's wire element type matches `expected`; on mismatch strict mode

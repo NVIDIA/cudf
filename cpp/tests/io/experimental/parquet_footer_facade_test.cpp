@@ -668,9 +668,8 @@ TEST_F(ParquetFooterFacadeTest, EmptyListWithZeroElementTypeIsAccepted)
   EXPECT_TRUE(parsed.schema.empty());
 }
 
-// An empty PRIMITIVE-element list is likewise accepted regardless of its wire element-type nibble:
-// parquet_field_list<T, ELEM> duplicates the n == 0 short-circuit of parquet_field_struct_list (the
-// struct-list case above), so it needs its own coverage.
+// An empty PRIMITIVE-element list is likewise accepted regardless of its wire element-type nibble
+// (distinct n == 0 short-circuit site from the struct-list case above).
 TEST_F(ParquetFooterFacadeTest, EmptyPrimitiveListWithWrongElementTypeIsAccepted)
 {
   // clang-format off

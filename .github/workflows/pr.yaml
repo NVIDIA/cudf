@@ -97,6 +97,8 @@ jobs:
           - 'cpp/include/**'
           - 'cpp/libcudf_kafka/include/**'
           - 'ci/build_docs.sh'
+          - 'java/pom.xml'
+          - 'java/src/main/java/**'
           - 'python/**'
         test_cpp:
           - 'conda/recipes/libcudf/**'

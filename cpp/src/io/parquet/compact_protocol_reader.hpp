@@ -149,9 +149,8 @@ class CompactProtocolReader {
   // mode (`NO`) skips the value and returns false, leaving the field (and any optional) unset.
   [[nodiscard]] bool check_field_type(int type, FieldType expected);
 
-  // True if the wire element type of a non-empty list matches the expected element type; on
-  // mismatch strict mode throws while lenient mode (`NO`) skips all `count` encoded elements and
-  // returns false, leaving the list (and any optional wrapper) unset.
+  // True if a non-empty list's wire element type matches `expected`; on mismatch strict mode
+  // throws while lenient mode skips all `count` elements and returns false.
   [[nodiscard]] bool check_list_element_type(int type, FieldType expected, uint32_t count);
 
  public:

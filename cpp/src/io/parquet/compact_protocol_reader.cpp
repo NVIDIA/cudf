@@ -702,12 +702,11 @@ bool CompactProtocolReader::check_list_element_type(int type, FieldType expected
       assert_field_type(type, expected);
     }
   }
-  // The list header is already consumed: discard the `count` encoded element payloads so the
-  // caller (or the enclosing struct walk) resumes at the next field.
+  // The header is consumed; discard the `count` element payloads so the struct walk resumes at
+  // the next field. Bool list elements are one byte each (a bool struct field's value lives in
+  // the type nibble).
   auto const et = static_cast<FieldType>(type);
   if (et == FieldType::BOOLEAN_TRUE || et == FieldType::BOOLEAN_FALSE) {
-    // Bool list elements are one byte each (unlike a bool struct field, whose value is in the
-    // type nibble).
     skip_bytes(count);
   } else {
     for (uint32_t i = 0; i < count; ++i) {

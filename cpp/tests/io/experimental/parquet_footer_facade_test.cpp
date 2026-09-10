@@ -5,6 +5,7 @@
 
 #include <cudf_test/base_fixture.hpp>
 #include <cudf_test/column_wrapper.hpp>
+#include <cudf_test/cudf_gtest.hpp>
 #include <cudf_test/testing_main.hpp>
 
 #include <cudf/io/datasource.hpp>
@@ -687,6 +688,71 @@ TEST_F(ParquetFooterFacadeTest, EmptyPrimitiveListWithWrongElementTypeIsAccepted
   ASSERT_EQ(parsed.row_groups.size(), 1);
   ASSERT_EQ(parsed.row_groups[0].columns.size(), 1);
   EXPECT_TRUE(parsed.row_groups[0].columns[0].meta_data.encodings.empty());
+}
+
+// A NON-empty list whose wire element-type nibble mismatches is skipped wholesale in COMPAT mode
+// (Thrift forward-compat): no elements are decoded, the target keeps its default state, and the
+// enclosing struct's later fields are still read. The mismatched list here is `encodings`
+// (expects I32) sent as I64 elements.
+TEST_F(ParquetFooterFacadeTest, PrimitiveListWithWrongElementTypeIsSkippedInCompat)
+{
+  // clang-format off
+  std::vector<uint8_t> const footer{
+    0x49, 0x1c,  // FileMetaData field 4 (row_groups): LIST of 1 STRUCT
+    0x19, 0x1c,  //   RowGroup field 1 (columns): LIST of 1 STRUCT
+    0x3c,        //     ColumnChunk field 3 (meta_data): STRUCT
+    0x29, 0x16,  //       field 2 (encodings): LIST, 1 element, nibble 6 = I64 (not I32)
+    0x02,        //         element zigzag varint I64 = 1 (would be Encoding::GROUP_VAR_INT if read)
+    0x36, 0x02,  //       field 5 (num_values) i64 = 1 -- read despite the skipped list
+    0x00,        //       ColumnChunkMetaData STOP
+    0x00,        //     ColumnChunk STOP
+    0x00,        //   RowGroup STOP
+    0x00};       // FileMetaData STOP
+  // clang-format on
+  auto const parsed =
+    experimental::read_parquet_footer_bytes(footer, experimental::thrift_mismatch_policy::COMPAT);
+  ASSERT_EQ(parsed.row_groups.size(), 1);
+  ASSERT_EQ(parsed.row_groups[0].columns.size(), 1);
+  EXPECT_TRUE(parsed.row_groups[0].columns[0].meta_data.encodings.empty());
+  EXPECT_EQ(parsed.row_groups[0].columns[0].meta_data.num_values, 1);
+}
+
+// The same wrong-element-type footer throws under the default strict mode.
+TEST_F(ParquetFooterFacadeTest, PrimitiveListWithWrongElementTypeThrowsInStrict)
+{
+  // clang-format off
+  std::vector<uint8_t> const footer{
+    0x49, 0x1c,  // FileMetaData field 4 (row_groups): LIST of 1 STRUCT
+    0x19, 0x1c,  //   RowGroup field 1 (columns): LIST of 1 STRUCT
+    0x3c,        //     ColumnChunk field 3 (meta_data): STRUCT
+    0x29, 0x16,  //       field 2 (encodings): LIST, 1 element, nibble 6 = I64 (not I32)
+    0x02,        //         element zigzag varint I64 = 1
+    0x00,        //       ColumnChunkMetaData STOP
+    0x00,        //     ColumnChunk STOP
+    0x00,        //   RowGroup STOP
+    0x00};       // FileMetaData STOP
+  // clang-format on
+  EXPECT_THROW((void)experimental::read_parquet_footer_bytes(footer), cudf::logic_error);
+}
+
+// Struct-element lists need their own coverage: a non-empty `key_value_metadata` (expects STRUCT)
+// sent as a list of I32 elements is skipped wholesale in COMPAT mode, and its neighbouring
+// top-level fields are still read.
+TEST_F(ParquetFooterFacadeTest, StructListWithWrongElementTypeIsSkippedInCompat)
+{
+  // clang-format off
+  std::vector<uint8_t> const footer{
+    0x15, 0x02,  // FileMetaData field 1 (version) i32 = 1
+    0x26, 0x02,  // field 3 (num_rows) i64 = 1 -- read despite the skipped list below
+    0x29, 0x15,  // field 5 (key_value_metadata): LIST, 1 element, nibble 5 = I32 (not STRUCT)
+    0x02,        //   ...zigzag varint I32 = 1
+    0x00};       // FileMetaData STOP
+  // clang-format on
+  auto const parsed =
+    experimental::read_parquet_footer_bytes(footer, experimental::thrift_mismatch_policy::COMPAT);
+  EXPECT_EQ(parsed.version, 1);
+  EXPECT_TRUE(parsed.key_value_metadata.empty());
+  EXPECT_EQ(parsed.num_rows, 1);
 }
 
 CUDF_TEST_PROGRAM_MAIN()

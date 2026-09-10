@@ -150,11 +150,7 @@ class parquet_field_list : public parquet_field {
       val.clear();
       return true;
     }
-    if constexpr (cuda::std::is_same_v<T, bool>) {
-      assert_bool_field_type(t);
-    } else {
-      assert_field_type(t, EXPECTED_ELEM_TYPE);
-    }
+    if (not cpr->check_list_element_type(t, EXPECTED_ELEM_TYPE, n)) { return false; }
     // Reject a count that cannot fit the remaining bytes (each element >= 1 byte), guarding against
     // a malformed size prefix forcing a huge allocation.
     CUDF_EXPECTS(std::cmp_less_equal(n, cpr->m_end - cpr->m_cur),
@@ -441,7 +437,7 @@ class parquet_field_struct_list : public parquet_field {
       val.clear();
       return true;
     }
-    assert_field_type(t, FieldType::STRUCT);
+    if (not cpr->check_list_element_type(t, FieldType::STRUCT, n)) { return false; }
     // Reject a count that cannot fit the remaining bytes (each struct >= 1 byte), guarding against
     // a malformed size prefix forcing a huge allocation.
     CUDF_EXPECTS(std::cmp_less_equal(n, cpr->m_end - cpr->m_cur),
@@ -693,6 +689,31 @@ bool CompactProtocolReader::check_field_type(int type, FieldType expected)
   if (type == static_cast<int>(expected)) { return true; }
   if (should_throw_on_type_mismatch()) { assert_field_type(type, expected); }
   skip_struct_field(type);
+  return false;
+}
+
+bool CompactProtocolReader::check_list_element_type(int type, FieldType expected, uint32_t count)
+{
+  if (type == static_cast<int>(expected)) { return true; }
+  if (should_throw_on_type_mismatch()) {
+    if (expected == FieldType::BOOLEAN_TRUE || expected == FieldType::BOOLEAN_FALSE) {
+      assert_bool_field_type(type);
+    } else {
+      assert_field_type(type, expected);
+    }
+  }
+  // The list header is already consumed: discard the `count` encoded element payloads so the
+  // caller (or the enclosing struct walk) resumes at the next field.
+  auto const et = static_cast<FieldType>(type);
+  if (et == FieldType::BOOLEAN_TRUE || et == FieldType::BOOLEAN_FALSE) {
+    // Bool list elements are one byte each (unlike a bool struct field, whose value is in the
+    // type nibble).
+    skip_bytes(count);
+  } else {
+    for (uint32_t i = 0; i < count; ++i) {
+      skip_struct_field(type);
+    }
+  }
   return false;
 }
 

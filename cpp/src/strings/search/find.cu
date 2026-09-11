@@ -546,20 +546,17 @@ __device__ __forceinline__ void lrb_search_row_tile(Tile const& tile,
       found = d_target.compare(d_str.data() + i, target_bytes) == 0;
     }
   } else {
-    // lane owns 4 consecutive starting positions per iteration; lanes cover 4*G bytes per step
+    // lane owns 4 consecutive starting positions per iteration; lanes cover 4*G bytes per step.
+    // No per-iteration votes: with G chosen from the bin, a lane makes at most a few iterations
+    // for G < 32, so letting each lane simply finish its own positions is cheaper than voting.
     auto constexpr bytes_per_lane = 4;
-    auto pos    = static_cast<size_type>(tile.thread_rank()) * bytes_per_lane;
-    auto active = (pos + target_bytes) <= bytes;
-    while (tile.any(active)) {
-      if (active) {
-        for (auto j = 0; !found && (j < bytes_per_lane); ++j) {
-          found = ((pos + j + target_bytes) <= bytes) &&
-                  (d_target.compare(d_str.data() + pos + j, target_bytes) == 0);
-        }
-        pos += G * bytes_per_lane;
-        active = !found && ((pos + target_bytes) <= bytes);
+    for (auto pos = static_cast<size_type>(tile.thread_rank()) * bytes_per_lane;
+         !found && ((pos + target_bytes) <= bytes);
+         pos += G * bytes_per_lane) {
+      for (auto j = 0; !found && (j < bytes_per_lane); ++j) {
+        found = ((pos + j + target_bytes) <= bytes) &&
+                (d_target.compare(d_str.data() + pos + j, target_bytes) == 0);
       }
-      if (tile.any(found)) { break; }
     }
   }
 

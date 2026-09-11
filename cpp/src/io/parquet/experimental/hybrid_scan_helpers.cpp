@@ -28,7 +28,6 @@ using aggregate_reader_metadata_base = parquet::detail::aggregate_reader_metadat
 using metadata_base                  = parquet::detail::metadata;
 
 using io::detail::inline_column_buffer;
-using parquet::detail::CompactProtocolReader;
 using parquet::detail::equality_literals_collector;
 using parquet::detail::input_column_info;
 using parquet::detail::row_group_info;
@@ -107,14 +106,7 @@ metadata::metadata(cudf::host_span<uint8_t const> footer_bytes)
 {
   CUDF_FUNC_RANGE();
 
-  CompactProtocolReader cp(footer_bytes.data(), footer_bytes.size());
-  cp.read(this);
-  // Check schema-init first: a footer from which no schema can be built (e.g. empty input) reports
-  // the specific "Cannot initialize schema" rather than being mislabeled as generic overread.
-  auto const is_schema_initialized = cp.InitSchema(this);
-  CUDF_EXPECTS(is_schema_initialized, CompactProtocolReader::cannot_init_schema_message);
-  // A schema that parsed but overran the buffer's stop byte is truncated/corrupt.
-  CUDF_EXPECTS(not cp.overread(), CompactProtocolReader::overread_message);
+  parquet::detail::decode_footer_and_init_schema(footer_bytes, this);
   sanitize_schema();
 }
 

@@ -12,6 +12,7 @@
 #include <cudf/io/parquet_schema.hpp>
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/export.hpp>
+#include <cudf/utilities/span.hpp>
 
 #include <cuda/std/bit>
 
@@ -218,6 +219,35 @@ class CompactProtocolReader {
   template <typename T>
   friend class parquet_field_struct_list;
 };
+
+/**
+ * @brief Decode footer bytes into a `FileMetaData`, rejecting truncation/corruption
+ *
+ * @param footer_bytes Thrift-compact-encoded footer bytes
+ * @param metadata Output metadata
+ * @param mode Mismatch policy, see `thrift_mismatch_policy`
+ *
+ * @throws cudf::logic_error If the footer is truncated or corrupt within the struct
+ */
+void decode_footer_bytes(
+  cudf::host_span<uint8_t const> footer_bytes,
+  FileMetaData* metadata,
+  experimental::thrift_mismatch_policy mode = experimental::thrift_mismatch_policy::THROW);
+
+/**
+ * @brief Decode footer bytes and initialize the schema, rejecting truncation/corruption
+ *
+ * The schema-init check precedes the overread check so a footer from which no schema can be built
+ * reports the specific "Cannot initialize schema" rather than generic overread.
+ *
+ * @param footer_bytes Thrift-compact-encoded footer bytes
+ * @param metadata Output metadata
+ *
+ * @throws cudf::logic_error If the schema cannot be initialized
+ * @throws cudf::logic_error If the footer is truncated or corrupt within the struct
+ */
+void decode_footer_and_init_schema(cudf::host_span<uint8_t const> footer_bytes,
+                                   FileMetaData* metadata);
 
 }  // namespace io::parquet::detail
 }  // namespace CUDF_EXPORT cudf

@@ -1100,4 +1100,26 @@ int CompactProtocolReader::WalkSchema(
   }
 }
 
+void decode_footer_bytes(cudf::host_span<uint8_t const> footer_bytes,
+                         FileMetaData* metadata,
+                         experimental::thrift_mismatch_policy mode)
+{
+  CompactProtocolReader reader{footer_bytes.data(), footer_bytes.size(), mode};
+  reader.read(metadata);
+  CUDF_EXPECTS(not reader.overread(), CompactProtocolReader::overread_message);
+}
+
+void decode_footer_and_init_schema(cudf::host_span<uint8_t const> footer_bytes,
+                                   FileMetaData* metadata)
+{
+  CompactProtocolReader reader{footer_bytes.data(), footer_bytes.size()};
+  reader.read(metadata);
+  // Check schema-init first: a footer from which no schema can be built (e.g. empty input) reports
+  // the specific "Cannot initialize schema" rather than being mislabeled as generic overread.
+  auto const is_schema_initialized = reader.InitSchema(metadata);
+  CUDF_EXPECTS(is_schema_initialized, CompactProtocolReader::cannot_init_schema_message);
+  // A schema that parsed but overran the buffer's stop byte is truncated/corrupt.
+  CUDF_EXPECTS(not reader.overread(), CompactProtocolReader::overread_message);
+}
+
 }  // namespace cudf::io::parquet::detail

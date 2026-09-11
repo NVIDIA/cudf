@@ -46,8 +46,7 @@ TYPED_TEST(IteratorTest, scalar_iterator)
   auto it_pair_dev = cudf::detail::make_pair_iterator<T>(*s);
   this->iterator_test_thrust(value_and_validity, it_pair_dev, host_values.size());
 
-  auto it_optional_dev =
-    cudf::detail::make_optional_iterator<T>(*s, cudf::nullate::DYNAMIC{true});
+  auto it_optional_dev = cudf::detail::make_optional_iterator<T>(*s, cudf::nullate::DYNAMIC{true});
   this->iterator_test_thrust(optional_values, it_optional_dev, host_values.size());
 }
 

@@ -530,8 +530,8 @@ metadata::metadata(datasource* source, bool read_page_indexes)
   // Schema-init check first: a footer with no buildable schema reports the specific
   // "Cannot initialize schema" rather than generic overread (see hybrid_scan_helpers).
   auto const is_schema_initialized = cp.InitSchema(this);
-  CUDF_EXPECTS(is_schema_initialized, CompactProtocolReader::kCannotInitSchemaMessage);
-  CUDF_EXPECTS(not cp.overread(), CompactProtocolReader::kOverreadMessage);
+  CUDF_EXPECTS(is_schema_initialized, CompactProtocolReader::cannot_init_schema_message);
+  CUDF_EXPECTS(not cp.overread(), CompactProtocolReader::overread_message);
 
   // Reading the page indexes is somewhat expensive, so skip if there are no byte array columns.
   // Currently the indexes are only used for the string size calculations.

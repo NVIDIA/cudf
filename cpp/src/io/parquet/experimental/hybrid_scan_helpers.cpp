@@ -112,9 +112,9 @@ metadata::metadata(cudf::host_span<uint8_t const> footer_bytes)
   // Check schema-init first: a footer from which no schema can be built (e.g. empty input) reports
   // the specific "Cannot initialize schema" rather than being mislabeled as generic overread.
   auto const is_schema_initialized = cp.InitSchema(this);
-  CUDF_EXPECTS(is_schema_initialized, CompactProtocolReader::kCannotInitSchemaMessage);
+  CUDF_EXPECTS(is_schema_initialized, CompactProtocolReader::cannot_init_schema_message);
   // A schema that parsed but overran the buffer's stop byte is truncated/corrupt.
-  CUDF_EXPECTS(not cp.overread(), CompactProtocolReader::kOverreadMessage);
+  CUDF_EXPECTS(not cp.overread(), CompactProtocolReader::overread_message);
   sanitize_schema();
 }
 

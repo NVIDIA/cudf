@@ -15,14 +15,14 @@
 
 namespace cudf::io::parquet::experimental {
 
-FileMetaData read_parquet_footer_bytes(host_span<uint8_t const> footer_bytes,
+FileMetaData read_parquet_footer_bytes(std::span<uint8_t const> footer_bytes,
                                        thrift_mismatch_policy mode)
 {
   CUDF_FUNC_RANGE();
   detail::CompactProtocolReader reader{footer_bytes.data(), footer_bytes.size(), mode};
   FileMetaData metadata;
   reader.read(&metadata);
-  CUDF_EXPECTS(not reader.overread(), detail::CompactProtocolReader::kOverreadMessage);
+  CUDF_EXPECTS(not reader.overread(), detail::CompactProtocolReader::overread_message);
   return metadata;
 }
 

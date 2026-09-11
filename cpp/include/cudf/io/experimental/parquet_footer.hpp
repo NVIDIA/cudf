@@ -8,7 +8,6 @@
 #include <cudf/io/parquet_metadata.hpp>
 #include <cudf/io/parquet_schema.hpp>
 #include <cudf/utilities/export.hpp>
-#include <cudf/utilities/span.hpp>
 
 #include <cstdint>
 #include <vector>
@@ -41,7 +40,7 @@ enum class thrift_mismatch_policy : bool { THROW, COMPAT };
  * @return The deserialized `FileMetaData`
  */
 [[nodiscard]] FileMetaData read_parquet_footer_bytes(
-  host_span<uint8_t const> footer_bytes,
+  std::span<uint8_t const> footer_bytes,
   thrift_mismatch_policy mode = thrift_mismatch_policy::THROW);
 
 /**

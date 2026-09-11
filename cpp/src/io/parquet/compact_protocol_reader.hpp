@@ -70,9 +70,9 @@ class CompactProtocolReader {
   [[nodiscard]] bool overread() const noexcept { return m_overread; }
   // Shared diagnostics so wording changes stay in lockstep at every overread/schema-init guard
   // site.
-  static constexpr char const* const kOverreadMessage =
+  static constexpr char const* const overread_message =
     "Parquet footer is truncated or corrupt (read past end of buffer)";
-  static constexpr char const* const kCannotInitSchemaMessage = "Cannot initialize schema";
+  static constexpr char const* const cannot_init_schema_message = "Cannot initialize schema";
   // True if a wire-type/schema-type mismatch must be rejected (default THROW); false means skip it
   // per Thrift forward-compat (COMPAT), which the spark-rapids footer facade uses.
   [[nodiscard]] bool should_throw_on_type_mismatch() const noexcept

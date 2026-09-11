@@ -29,76 +29,79 @@ using namespace cudf::io::parquet;
 
 namespace {
 
-// Builds a fully-populated footer whose values all survive the writer's conditional emission, so a
+// Fully-populated footer whose values all survive the writer's conditional emission, so a
 // write -> read round-trip is exactly recoverable.
-FileMetaData make_test_footer()
+FileMetaData const& make_test_footer()
 {
-  FileMetaData meta = {
-    .version    = 2,
-    .num_rows   = 12345,
-    .created_by = "cudf-facade-test",
-  };
+  static FileMetaData const meta = [] {
+    FileMetaData meta = {
+      .version    = 2,
+      .num_rows   = 12345,
+      .created_by = "cudf-facade-test",
+    };
 
-  meta.schema = {
-    {.type            = Type::UNDEFINED,
-     .repetition_type = FieldRepetitionType::REQUIRED,
-     .name            = "schema",
-     .num_children    = 3},
-    {.type            = Type::INT32,
-     .repetition_type = FieldRepetitionType::OPTIONAL,
-     .name            = "a",
-     .field_id        = 1},
-    {.type            = Type::BYTE_ARRAY,
-     .repetition_type = FieldRepetitionType::REQUIRED,
-     .name            = "b",
-     .converted_type  = ConvertedType::UTF8,
-     .field_id        = 2},
-    // type_length is written only for a typed leaf, so a non-zero value exercises that schema
-    // field.
-    {.type            = Type::FIXED_LEN_BYTE_ARRAY,
-     .type_length     = 16,
-     .repetition_type = FieldRepetitionType::REQUIRED,
-     .name            = "c",
-     .field_id        = 3},
-  };
+    meta.schema = {
+      {.type            = Type::UNDEFINED,
+       .repetition_type = FieldRepetitionType::REQUIRED,
+       .name            = "schema",
+       .num_children    = 3},
+      {.type            = Type::INT32,
+       .repetition_type = FieldRepetitionType::OPTIONAL,
+       .name            = "a",
+       .field_id        = 1},
+      {.type            = Type::BYTE_ARRAY,
+       .repetition_type = FieldRepetitionType::REQUIRED,
+       .name            = "b",
+       .converted_type  = ConvertedType::UTF8,
+       .field_id        = 2},
+      // type_length is written only for a typed leaf, so a non-zero value exercises that schema
+      // field.
+      {.type            = Type::FIXED_LEN_BYTE_ARRAY,
+       .type_length     = 16,
+       .repetition_type = FieldRepetitionType::REQUIRED,
+       .name            = "c",
+       .field_id        = 3},
+    };
 
-  ColumnChunk const cc[] = {
-    {.file_offset = 4,
-     .meta_data   = {.type                    = Type::INT32,
-                     .encodings               = {Encoding::PLAIN, Encoding::RLE_DICTIONARY},
-                     .path_in_schema          = {"a"},
-                     .codec                   = Compression::SNAPPY,
-                     .num_values              = 12345,
-                     .total_uncompressed_size = 1000,
-                     .total_compressed_size   = 500,
-                     .data_page_offset        = 8,
-                     // non-zero exercises the dictionary_page_offset field
-                     .dictionary_page_offset = 4}},
-    {.file_offset = 504,
-     .meta_data   = {.type                    = Type::BYTE_ARRAY,
-                     .encodings               = {Encoding::PLAIN},
-                     .path_in_schema          = {"b"},
-                     .codec                   = Compression::ZSTD,
-                     .num_values              = 12345,
-                     .total_uncompressed_size = 2000,
-                     .total_compressed_size   = 800,
-                     .data_page_offset        = 504}},
-  };
+    ColumnChunk const cc[] = {
+      {.file_offset = 4,
+       .meta_data   = {.type                    = Type::INT32,
+                       .encodings               = {Encoding::PLAIN, Encoding::RLE_DICTIONARY},
+                       .path_in_schema          = {"a"},
+                       .codec                   = Compression::SNAPPY,
+                       .num_values              = 12345,
+                       .total_uncompressed_size = 1000,
+                       .total_compressed_size   = 500,
+                       .data_page_offset        = 8,
+                       // non-zero exercises the dictionary_page_offset field
+                       .dictionary_page_offset = 4}},
+      {.file_offset = 504,
+       .meta_data   = {.type                    = Type::BYTE_ARRAY,
+                       .encodings               = {Encoding::PLAIN},
+                       .path_in_schema          = {"b"},
+                       .codec                   = Compression::ZSTD,
+                       .num_values              = 12345,
+                       .total_uncompressed_size = 2000,
+                       .total_compressed_size   = 800,
+                       .data_page_offset        = 504}},
+    };
 
-  meta.row_groups = {{.columns               = {cc[0], cc[1]},
-                      .total_byte_size       = 3000,
-                      .num_rows              = 12345,
-                      .file_offset           = 4,
-                      .total_compressed_size = 1300,
-                      .ordinal               = static_cast<int16_t>(0)}};
+    meta.row_groups = {{.columns               = {cc[0], cc[1]},
+                        .total_byte_size       = 3000,
+                        .num_rows              = 12345,
+                        .file_offset           = 4,
+                        .total_compressed_size = 1300,
+                        .ordinal               = static_cast<int16_t>(0)}};
 
-  meta.key_value_metadata = {
-    {"pandas", "{\"index\": 1}"},
-    // Empty value re-serializes as absent and reads back empty (a documented delta).
-    {"empty", ""},
-  };
+    meta.key_value_metadata = {
+      {"pandas", "{\"index\": 1}"},
+      // Empty value re-serializes as absent and reads back empty (a documented delta).
+      {"empty", ""},
+    };
+    meta.column_orders = {{{ColumnOrder::TYPE_ORDER}, {ColumnOrder::TYPE_ORDER}}};
 
-  meta.column_orders = {{{ColumnOrder::TYPE_ORDER}, {ColumnOrder::TYPE_ORDER}}};
+    return meta;
+  }();
   return meta;
 }
 
@@ -362,7 +365,7 @@ TEST_F(ParquetFooterFacadeTest, GarbageBufferThrows)
 // rather than returning empty metadata.
 TEST_F(ParquetFooterFacadeTest, EmptyBufferThrows)
 {
-  EXPECT_THROW((void)experimental::read_parquet_footer_bytes(cudf::host_span<uint8_t const>{}),
+  EXPECT_THROW((void)experimental::read_parquet_footer_bytes(std::span<uint8_t const>{}),
                cudf::logic_error);
 }
 

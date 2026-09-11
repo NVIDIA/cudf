@@ -355,7 +355,7 @@ namespace {
  *                          {1,2,4,8,16,32} by bin. Rows sharing a warp have lengths within 2x, so
  *                          lanes finish together, and G is chosen so every lane does a bounded
  *                          number of iterations regardless of row length.
- *   lrb_block_search_kernel one thread block per row for rows > 8 KiB, so a handful of huge rows
+ *   lrb_block_search_kernel one thread block per row for rows > 64 KiB, so a handful of huge rows
  *                          cannot serialize the whole column behind a single warp.
  *
  * @see LRB_SHIFT, LRB_BLOCK_TIER_MIN_BIN
@@ -373,9 +373,12 @@ constexpr int LRB_BLOCK_SIZE = 256;
 constexpr int LRB_SHIFT = 4;
 
 /**
- * @brief Bins at or above this index (bytes > 8 KiB) are executed one row per thread block.
+ * @brief Bins at or above this index (bytes > 64 KiB) are executed one row per thread block.
+ *
+ * A warp handles a 64 KiB row in 512 steps, which is still fine when there are many such rows;
+ * the block tier is for the rare, very long row that would otherwise serialize the column.
  */
-constexpr int LRB_BLOCK_TIER_MIN_BIN = 14;
+constexpr int LRB_BLOCK_TIER_MIN_BIN = 17;
 
 /**
  * @brief Rows of at most this many bytes are searched thread-per-row directly inside the
@@ -631,7 +634,7 @@ CUDF_KERNEL void lrb_search_kernel(column_device_view const d_strings,
 }
 
 /**
- * @brief Pass 4: block-tier search, one thread block per row for rows > 8 KiB.
+ * @brief Pass 4: block-tier search, one thread block per row for rows > 64 KiB.
  */
 CUDF_KERNEL void lrb_block_search_kernel(column_device_view const d_strings,
                                          string_view const d_target,
@@ -741,7 +744,11 @@ std::unique_ptr<column> contains_lrb(strings_column_view const& input,
     *d_strings, d_target, d_results, hist.data(), sorted.data());
   CUDF_CUDA_TRY(cudaGetLastError());
 
-  auto const block_grid = static_cast<int>(std::min<int64_t>(num_rows, num_sms * 2));
+  int max_block_tier_blocks_per_sm = 0;
+  CUDF_CUDA_TRY(cudaOccupancyMaxActiveBlocksPerMultiprocessor(
+    &max_block_tier_blocks_per_sm, lrb_block_search_kernel, LRB_BLOCK_SIZE, 0));
+  auto const block_grid = static_cast<int>(std::max<int64_t>(
+    1, std::min<int64_t>(num_rows, static_cast<int64_t>(max_block_tier_blocks_per_sm) * num_sms)));
   lrb_block_search_kernel<<<block_grid, LRB_BLOCK_SIZE, 0, stream.get()>>>(
     *d_strings, d_target, d_results, hist.data(), sorted.data());
   CUDF_CUDA_TRY(cudaGetLastError());

@@ -365,7 +365,7 @@ constexpr int LRB_BLOCK_SIZE = 256;
 /**
  * @brief Threads cooperating on one row = 1 << clamp(bin - LRB_SHIFT, 0, 5).
  *
- * bin b holds rows with 2^(b-1) <= bytes < 2^b. With LRB_SHIFT = 4:
+ * bin b holds rows with 2^(b-1) < bytes <= 2^b. With LRB_SHIFT = 4:
  *   bytes <= 16: 1 thread   17..32: 2   33..64: 4   65..128: 8   129..256: 16   > 256: 32 (a warp)
  * so each lane scans at most ~16 starting positions per row before the group moves on.
  */
@@ -385,7 +385,7 @@ constexpr int LRB_CHUNK_BYTES = 4096;
 constexpr int LRB_CHUNK_SHIFT = 12;  // log2(LRB_CHUNK_BYTES)
 static_assert((1 << LRB_CHUNK_SHIFT) == LRB_CHUNK_BYTES);
 
-/// log2 of the number of chunk tasks per row of `bin`: rows in bin b have fewer than 2^b bytes.
+/// log2 of the number of chunk tasks per row of `bin`: rows in bin b have at most 2^b bytes.
 __host__ __device__ constexpr int lrb_chunk_shift(int bin)
 {
   return bin > LRB_CHUNK_SHIFT ? bin - LRB_CHUNK_SHIFT : 0;
@@ -413,7 +413,9 @@ constexpr size_type LRB_DIRECT_MAX_BYTES = 64;
 __device__ __forceinline__ int lrb_bin(size_type size_bytes, size_type target_bytes, bool is_null)
 {
   if (is_null || size_bytes < target_bytes || size_bytes <= LRB_DIRECT_MAX_BYTES) { return 0; }
-  return 32 - __clz(static_cast<unsigned>(size_bytes));  // floor(log2(bytes)) + 1, in [1, 31]
+  // ceil(log2(bytes)): bin b holds 2^(b-1) < bytes <= 2^b, so a row of exactly 2^b bytes sits at
+  // the top of bin b and the bin's chunk count (2^b / LRB_CHUNK_BYTES) is exact for it
+  return cuda::std::max(1, 32 - __clz(static_cast<unsigned>(size_bytes - 1)));
 }
 
 __host__ __device__ constexpr int lrb_threads_per_row(int bin)

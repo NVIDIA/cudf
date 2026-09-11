@@ -9,6 +9,7 @@
 #include <cudf_test/iterator_utilities.hpp>
 
 #include <cudf/column/column_factories.hpp>
+#include <cudf/copying.hpp>
 #include <cudf/scalar/scalar.hpp>
 #include <cudf/strings/attributes.hpp>
 #include <cudf/strings/find.hpp>
@@ -16,6 +17,10 @@
 
 #include <cuda/iterator>
 
+#include <algorithm>
+#include <numeric>
+#include <random>
+#include <string>
 #include <vector>
 
 struct StringsFindTest : public cudf::test::BaseFixture {};
@@ -228,6 +233,103 @@ TEST_F(StringsFindTest, ContainsLongStrings)
   results  = cudf::strings::contains(strings_view, cudf::string_scalar("~"));
   expected = cudf::test::fixed_width_column_wrapper<bool>({0, 0, 0, 0, 0, 0, 1, 0});
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(*results, expected);
+}
+
+TEST_F(StringsFindTest, ContainsAllLengthTiers)
+{
+  // Rows spanning every LRB bin: 0 bytes up to > 8 KiB (block tier), with the target placed at
+  // the start, the end, the middle, or absent; plus nulls and rows shorter than the target.
+  auto const target = std::string("0987 5W43");
+  std::mt19937 rng(42);
+  std::vector<std::string> data;
+  std::vector<bool> valid;
+  std::vector<bool> expected;
+  auto add = [&](std::string row, bool is_valid) {
+    expected.push_back(is_valid && row.find(target) != std::string::npos);
+    data.push_back(std::move(row));
+    valid.push_back(is_valid);
+  };
+  for (int len : {0, 1, 5, 8, 9, 10, 16, 17, 31, 32, 33, 63, 64, 65, 100, 127, 128, 129, 255,
+                  256, 257, 511, 512, 1000, 1024, 2047, 2048, 4096, 8191, 8192, 8193, 12000,
+                  16384, 40000, 70000}) {
+    std::string filler(len, 'x');
+    add(filler, true);
+    if (len >= static_cast<int>(target.size())) {
+      auto at_start = filler;
+      at_start.replace(0, target.size(), target);
+      add(at_start, true);
+      auto at_end = filler;
+      at_end.replace(len - target.size(), target.size(), target);
+      add(at_end, true);
+      auto mid = filler;
+      mid.replace((len - target.size()) / 2, target.size(), target);
+      add(mid, true);
+      // near miss: all but the last byte of the target
+      auto near = filler;
+      near.replace(0, target.size() - 1, target.substr(0, target.size() - 1));
+      add(near, true);
+    }
+    add(filler, false);  // null
+  }
+  // shuffle so bins are interleaved in row order
+  std::vector<size_t> perm(data.size());
+  std::iota(perm.begin(), perm.end(), 0);
+  std::shuffle(perm.begin(), perm.end(), rng);
+  std::vector<std::string> sdata;
+  std::vector<bool> svalid, sexp;
+  for (auto i : perm) {
+    sdata.push_back(data[i]);
+    svalid.push_back(valid[i]);
+    sexp.push_back(expected[i]);
+  }
+
+  cudf::test::strings_column_wrapper strings(sdata.begin(), sdata.end(), svalid.begin());
+  auto const view = cudf::strings_column_view(strings);
+  auto results    = cudf::strings::contains(view, cudf::string_scalar(target));
+  cudf::test::fixed_width_column_wrapper<bool> exp(sexp.begin(), sexp.end(), svalid.begin());
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, exp);
+
+  // sliced view (non-zero offset) must dispatch and index correctly
+  auto const n      = static_cast<cudf::size_type>(sdata.size());
+  auto const sliced = cudf::slice(strings, {7, n - 5}).front();
+  auto sres         = cudf::strings::contains(cudf::strings_column_view(sliced), cudf::string_scalar(target));
+  std::vector<bool> ssexp(sexp.begin() + 7, sexp.end() - 5);
+  std::vector<bool> ssval(svalid.begin() + 7, svalid.end() - 5);
+  cudf::test::fixed_width_column_wrapper<bool> sexp_col(ssexp.begin(), ssexp.end(), ssval.begin());
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(*sres, sexp_col);
+
+  // empty target: every valid row contains it
+  auto eres = cudf::strings::contains(view, cudf::string_scalar(""));
+  std::vector<bool> ones(sdata.size(), true);
+  cudf::test::fixed_width_column_wrapper<bool> eexp(ones.begin(), ones.end(), svalid.begin());
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(*eres, eexp);
+}
+
+TEST_F(StringsFindTest, ContainsManyRowsMixed)
+{
+  // Enough rows that every scheduling pass spans many blocks; bins mixed row by row.
+  auto const target = std::string("Zq");
+  std::mt19937 rng(7);
+  std::uniform_int_distribution<int> len_d(0, 600);
+  std::uniform_int_distribution<int> hit_d(0, 3);
+  std::vector<std::string> data;
+  std::vector<bool> expected;
+  for (int i = 0; i < 20000; ++i) {
+    auto len = len_d(rng);
+    if (i % 997 == 0) len = 9000 + (i % 3000);  // a few block-tier rows
+    std::string row(len, 'a' + (i % 26));
+    auto const hit = hit_d(rng) == 0 && len >= 2;
+    if (hit) {
+      std::uniform_int_distribution<int> pos_d(0, len - 2);
+      row.replace(pos_d(rng), 2, target);
+    }
+    expected.push_back(hit);
+    data.push_back(std::move(row));
+  }
+  cudf::test::strings_column_wrapper strings(data.begin(), data.end());
+  auto results = cudf::strings::contains(cudf::strings_column_view(strings), cudf::string_scalar(target));
+  cudf::test::fixed_width_column_wrapper<bool> exp(expected.begin(), expected.end());
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, exp);
 }
 
 TEST_F(StringsFindTest, StartsWith)

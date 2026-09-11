@@ -9,7 +9,9 @@
 #include <cudf/detail/null_mask.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/utilities/cuda.cuh>
+#include <cudf/detail/utilities/cuda.hpp>
 #include <cudf/detail/utilities/grid_1d.cuh>
+#include <cudf/detail/utilities/integer_utils.hpp>
 #include <cudf/scalar/scalar_factories.hpp>
 #include <cudf/strings/detail/utilities.hpp>
 #include <cudf/strings/find.hpp>
@@ -19,10 +21,12 @@
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
+#include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cooperative_groups.h>
 #include <cooperative_groups/reduce.h>
+#include <cooperative_groups/scan.h>
 #include <cuda/atomic>
 #include <cuda/iterator>
 #include <cuda/std/limits>
@@ -321,84 +325,393 @@ namespace detail {
 namespace {
 
 /**
- * @brief Check if `d_target` appears in a row in `d_strings`.
+ * @brief Logarithmic Radix Binning (LRB) scheduler for contains(column, scalar).
  *
- * This executes as a warp per string/row and performs well for longer strings.
- * @see AVG_CHAR_BYTES_THRESHOLD
+ * Background: the previous implementation picked one execution shape for the whole column from
+ * the *average* row width (thread-per-row when avg <= 64 B, else warp-per-row). Any real column
+ * with a spread of row lengths pays for that: with thread-per-row, a warp runs at the pace of its
+ * longest row (31 lanes idle); with warp-per-row, a 20-byte row still occupies a full warp and a
+ * 20 MB row still gets only one warp. PR #21917 splits rows at one fixed length (96 B) into two
+ * shapes. LRB generalizes that idea: rows are binned by ceil(log2(bytes)), so all rows in a bin
+ * are within 2x of each other, and every bin is executed by a thread group sized for it.
  *
- * @param d_strings Column of input strings
- * @param d_target String to search for in each row of `d_strings`
- * @param d_results Indicates which rows contain `d_target`
+ * Green et al., "Logarithmic Radix Binning and Vectorized Triangle Counting", HPEC 2018,
+ * doi:10.1109/HPEC.2018.8547581. Their recipe: (1) bin = word_width - clz(work), (2) histogram
+ * the bins, (3) prefix-sum the (tiny) histogram, (4) scatter items into bin order with atomics,
+ * (5) process each bin with a suitable parallel granularity. The steps here map 1:1.
+ *
+ * Pipeline (4 kernels, no host<->device synchronization, O(rows) extra memory for the permutation):
+ *   lrb_histogram_kernel   thread-per-row over offsets only. Rows that are null or shorter than
+ *                          the target get result=false immediately and are never scheduled
+ *                          (bin 0). Other rows are counted in a per-block shared histogram.
+ *   lrb_scatter_kernel     recomputes the 32-entry prefix sum per block, ranks rows within the
+ *                          block per bin (warp-aggregated shared atomics) and appends them to
+ *                          their bin with one global atomic per (block, bin). Rows from the same
+ *                          block stay adjacent inside a bin, which keeps character reads local.
+ *   lrb_search_kernel      persistent grid-stride kernel. Each warp maps its virtual task id to
+ *                          a bin using the same 32-entry scan (kept in registers via warp
+ *                          shuffles) and searches 32/G rows with G threads each, G in
+ *                          {1,2,4,8,16,32} by bin. Rows sharing a warp have lengths within 2x, so
+ *                          lanes finish together, and G is chosen so every lane does a bounded
+ *                          number of iterations regardless of row length.
+ *   lrb_block_search_kernel one thread block per row for rows > 8 KiB, so a handful of huge rows
+ *                          cannot serialize the whole column behind a single warp.
+ *
+ * @see LRB_SHIFT, LRB_BLOCK_TIER_MIN_BIN
  */
-CUDF_KERNEL void contains_warp_parallel_fn(column_device_view const d_strings,
-                                           string_view const d_target,
-                                           bool* d_results)
+constexpr int LRB_NUM_BINS   = 32;
+constexpr int LRB_BLOCK_SIZE = 256;
+
+/**
+ * @brief Threads cooperating on one row = 1 << clamp(bin - LRB_SHIFT, 0, 5).
+ *
+ * bin b holds rows with 2^(b-1) <= bytes < 2^b. With LRB_SHIFT = 4:
+ *   bytes <= 16: 1 thread   17..32: 2   33..64: 4   65..128: 8   129..256: 16   > 256: 32 (a warp)
+ * so each lane scans at most ~16 starting positions per row before the group moves on.
+ */
+constexpr int LRB_SHIFT = 4;
+
+/**
+ * @brief Bins at or above this index (bytes > 8 KiB) are executed one row per thread block.
+ */
+constexpr int LRB_BLOCK_TIER_MIN_BIN = 14;
+
+/**
+ * @brief Bin index of a row. Bin 0 = "cannot contain the target" (null or too short).
+ *
+ * @param size_bytes Row length in bytes (any value if is_null)
+ * @param target_bytes Target length in bytes (> 0)
+ * @param is_null Whether the row is null
+ * @return Bin in [0, 31]
+ */
+__device__ __forceinline__ int lrb_bin(size_type size_bytes, size_type target_bytes, bool is_null)
 {
-  auto const idx = cudf::detail::grid_1d::global_thread_id();
+  if (is_null || size_bytes < target_bytes) { return 0; }
+  return 32 - __clz(static_cast<unsigned>(size_bytes));  // floor(log2(bytes)) + 1, in [1, 31]
+}
 
-  auto const str_idx = idx / cudf::detail::warp_size;
-  if (str_idx >= d_strings.size()) { return; }
+__host__ __device__ constexpr int lrb_threads_per_row(int bin)
+{
+  auto const shift = bin - LRB_SHIFT;
+  return 1 << (shift < 0 ? 0 : (shift > 5 ? 5 : shift));
+}
 
-  namespace cg        = cooperative_groups;
-  auto const warp     = cg::tiled_partition<cudf::detail::warp_size>(cg::this_thread_block());
-  auto const lane_idx = warp.thread_rank();
+/**
+ * @brief Pass 1: per-bin row counts; rows in bin 0 are resolved (false) here.
+ */
+CUDF_KERNEL void lrb_histogram_kernel(column_device_view const d_strings,
+                                      size_type const target_bytes,
+                                      bool* d_results,
+                                      size_type* d_hist)
+{
+  __shared__ size_type s_hist[LRB_NUM_BINS];
+  if (threadIdx.x < LRB_NUM_BINS) { s_hist[threadIdx.x] = 0; }
+  __syncthreads();
 
-  if (d_strings.is_null(str_idx)) { return; }
-  // get the string for this warp
-  auto const d_str = d_strings.element<string_view>(str_idx);
-  // each warp processes 4 starting bytes
-  auto constexpr bytes_per_warp = 4;
-  auto found                    = false;
-  for (auto i = lane_idx * bytes_per_warp;
-       !found && ((i + d_target.size_bytes()) <= d_str.size_bytes());
-       i += cudf::detail::warp_size * bytes_per_warp) {
-    // check the target matches this part of the d_str data
-    // this is definitely faster for very long strings > 128B
-    for (auto j = 0; !found && (j < bytes_per_warp); j++) {
-      if (((i + j + d_target.size_bytes()) <= d_str.size_bytes()) &&
-          d_target.compare(d_str.data() + i + j, d_target.size_bytes()) == 0) {
-        found = true;
+  auto const num_rows = static_cast<thread_index_type>(d_strings.size());
+  auto const stride   = cudf::detail::grid_1d::grid_stride();
+  auto const lane     = threadIdx.x % cudf::detail::warp_size;
+  for (auto idx = cudf::detail::grid_1d::global_thread_id(); idx < num_rows; idx += stride) {
+    auto const row     = static_cast<size_type>(idx);
+    auto const is_null = d_strings.is_null(row);
+    auto const bytes   = is_null ? 0 : d_strings.element<string_view>(row).size_bytes();
+    auto const bin     = lrb_bin(bytes, target_bytes, is_null);
+    if (bin == 0) { d_results[row] = false; }
+    // one shared atomic per (warp, distinct bin) instead of one per lane
+    auto const peers = __match_any_sync(__activemask(), bin);
+    if (bin != 0 && lane == static_cast<unsigned>(__ffs(peers) - 1)) {
+      atomicAdd(&s_hist[bin], __popc(peers));
+    }
+  }
+  __syncthreads();
+  if (threadIdx.x < LRB_NUM_BINS && s_hist[threadIdx.x] != 0) {
+    atomicAdd(&d_hist[threadIdx.x], s_hist[threadIdx.x]);
+  }
+}
+
+/**
+ * @brief Pass 2: append each row index to its bin's segment of `d_sorted`.
+ *
+ * @param d_hist Per-bin counts from pass 1 (read) followed by per-bin cursors (read/write),
+ *               i.e. an array of 2 * LRB_NUM_BINS
+ * @param d_sorted Output permutation grouped by bin, in bin order
+ */
+CUDF_KERNEL void lrb_scatter_kernel(column_device_view const d_strings,
+                                    size_type const target_bytes,
+                                    size_type* d_hist,
+                                    size_type* d_sorted)
+{
+  namespace cg = cooperative_groups;
+  __shared__ size_type s_start[LRB_NUM_BINS];
+  __shared__ size_type s_count[LRB_NUM_BINS];
+  __shared__ size_type s_base[LRB_NUM_BINS];
+
+  auto const warp = cg::tiled_partition<cudf::detail::warp_size>(cg::this_thread_block());
+  auto const lane = warp.thread_rank();
+  if (warp.meta_group_rank() == 0) { s_start[lane] = cg::exclusive_scan(warp, d_hist[lane]); }
+
+  auto const num_rows = static_cast<thread_index_type>(d_strings.size());
+  auto const stride   = cudf::detail::grid_1d::grid_stride();
+  auto* d_cursor      = d_hist + LRB_NUM_BINS;
+  for (auto base = static_cast<thread_index_type>(blockIdx.x) * blockDim.x; base < num_rows;
+       base += stride) {
+    if (threadIdx.x < LRB_NUM_BINS) { s_count[threadIdx.x] = 0; }
+    __syncthreads();
+
+    auto const idx = base + threadIdx.x;
+    auto bin       = 0;
+    if (idx < num_rows) {
+      auto const row     = static_cast<size_type>(idx);
+      auto const is_null = d_strings.is_null(row);
+      auto const bytes   = is_null ? 0 : d_strings.element<string_view>(row).size_bytes();
+      bin                = lrb_bin(bytes, target_bytes, is_null);
+    }
+    // rank within (block, bin): warp-aggregated shared atomic, then lane order within the warp
+    auto const peers  = __match_any_sync(0xffffffffu, bin);
+    auto const leader = __ffs(peers) - 1;
+    size_type wbase   = 0;
+    if (bin != 0 && lane == static_cast<unsigned>(leader)) {
+      wbase = atomicAdd(&s_count[bin], __popc(peers));
+    }
+    wbase = __shfl_sync(0xffffffffu, wbase, leader);
+    auto const rank = wbase + __popc(peers & ((1u << lane) - 1u));
+    __syncthreads();
+
+    if (threadIdx.x < LRB_NUM_BINS && s_count[threadIdx.x] != 0) {
+      s_base[threadIdx.x] = atomicAdd(&d_cursor[threadIdx.x], s_count[threadIdx.x]);
+    }
+    __syncthreads();
+
+    if (bin != 0) { d_sorted[s_start[bin] + s_base[bin] + rank] = static_cast<size_type>(idx); }
+  }
+}
+
+/**
+ * @brief Search one row with a tile of G threads (G == 1 is plain thread-per-row).
+ *
+ * All rows scheduled on one warp belong to the same bin, so `row` is either valid for every lane
+ * of the tile or -1 for every lane of the tile; the early return is tile-uniform.
+ */
+template <int G, typename Tile>
+__device__ __forceinline__ void lrb_search_row_tile(Tile const& tile,
+                                                    column_device_view const& d_strings,
+                                                    string_view const d_target,
+                                                    bool* d_results,
+                                                    size_type const row)
+{
+  if (row < 0) { return; }
+
+  auto const d_str        = d_strings.element<string_view>(row);
+  auto const bytes        = d_str.size_bytes();
+  auto const target_bytes = d_target.size_bytes();
+  auto found              = false;
+
+  if constexpr (G == 1) {
+    for (size_type i = 0; !found && (i <= bytes - target_bytes); ++i) {
+      found = d_target.compare(d_str.data() + i, target_bytes) == 0;
+    }
+  } else {
+    // lane owns 4 consecutive starting positions per iteration; lanes cover 4*G bytes per step
+    auto constexpr bytes_per_lane = 4;
+    auto pos    = static_cast<size_type>(tile.thread_rank()) * bytes_per_lane;
+    auto active = (pos + target_bytes) <= bytes;
+    while (tile.any(active)) {
+      if (active) {
+        for (auto j = 0; !found && (j < bytes_per_lane); ++j) {
+          found = ((pos + j + target_bytes) <= bytes) &&
+                  (d_target.compare(d_str.data() + pos + j, target_bytes) == 0);
+        }
+        pos += G * bytes_per_lane;
+        active = !found && ((pos + target_bytes) <= bytes);
       }
+      if (tile.any(found)) { break; }
     }
   }
 
-  auto const result = warp.any(found);
-  if (lane_idx == 0) { d_results[str_idx] = result; }
+  auto const result = tile.any(found);
+  if (tile.thread_rank() == 0) { d_results[row] = result; }
 }
 
-std::unique_ptr<column> contains_warp_parallel(strings_column_view const& input,
-                                               string_scalar const& target,
-                                               cuda::stream_ref stream,
-                                               rmm::device_async_resource_ref mr)
+template <int G>
+__device__ __forceinline__ void lrb_search_row(
+  cooperative_groups::thread_block_tile<cudf::detail::warp_size> const& warp,
+  column_device_view const& d_strings,
+  string_view const d_target,
+  bool* d_results,
+  size_type const row)
 {
-  CUDF_EXPECTS(target.is_valid(stream), "Parameter target must be valid.");
-  auto d_target = string_view(target.data(), target.size());
+  if constexpr (G == cudf::detail::warp_size) {
+    lrb_search_row_tile<G>(warp, d_strings, d_target, d_results, row);
+  } else {
+    lrb_search_row_tile<G>(
+      cooperative_groups::tiled_partition<G>(warp), d_strings, d_target, d_results, row);
+  }
+}
 
-  // create output column
+/**
+ * @brief Pass 3: warp-tier search. Each warp task covers 32/G consecutive rows of one bin.
+ */
+CUDF_KERNEL void lrb_search_kernel(column_device_view const d_strings,
+                                   string_view const d_target,
+                                   bool* d_results,
+                                   size_type const* d_hist,
+                                   size_type const* d_sorted)
+{
+  namespace cg    = cooperative_groups;
+  auto const warp = cg::tiled_partition<cudf::detail::warp_size>(cg::this_thread_block());
+  auto const lane = static_cast<int>(warp.thread_rank());
+
+  // Schedule table, one bin per lane: task counts and their prefix sums live in registers.
+  auto const bin_count     = d_hist[lane];
+  auto const rows_per_task = cudf::detail::warp_size / lrb_threads_per_row(lane);
+  auto const bin_tasks     = (lane < LRB_BLOCK_TIER_MIN_BIN)
+                               ? cudf::util::div_rounding_up_safe(bin_count, rows_per_task)
+                               : 0;
+  auto const tasks_incl    = cg::inclusive_scan(warp, bin_tasks);
+  auto const tasks_excl    = tasks_incl - bin_tasks;
+  auto const bin_start     = cg::exclusive_scan(warp, bin_count);
+  auto const total_tasks   = warp.shfl(tasks_incl, cudf::detail::warp_size - 1);
+
+  auto const warp_id =
+    cudf::detail::grid_1d::global_thread_id() / cudf::detail::warp_size;
+  auto const num_warps = cudf::detail::grid_1d::grid_stride() / cudf::detail::warp_size;
+
+  for (auto task = warp_id; task < static_cast<thread_index_type>(total_tasks); task += num_warps) {
+    // the bin owning this task is the first lane whose inclusive task count exceeds it
+    auto const bin = __ffs(warp.ballot(task < tasks_incl)) - 1;
+    // per-lane candidate for "first sorted slot of this task", then broadcast from lane `bin`
+    auto const my_first = bin_start + (static_cast<size_type>(task) - tasks_excl) * rows_per_task;
+    auto const first    = warp.shfl(my_first, bin);
+    auto const end      = warp.shfl(bin_start + bin_count, bin);
+    auto const G        = lrb_threads_per_row(bin);
+    auto const slot     = first + lane / G;
+    auto const row      = (slot < end) ? d_sorted[slot] : -1;
+
+    switch (G) {  // warp-uniform
+      case 1: lrb_search_row<1>(warp, d_strings, d_target, d_results, row); break;
+      case 2: lrb_search_row<2>(warp, d_strings, d_target, d_results, row); break;
+      case 4: lrb_search_row<4>(warp, d_strings, d_target, d_results, row); break;
+      case 8: lrb_search_row<8>(warp, d_strings, d_target, d_results, row); break;
+      case 16: lrb_search_row<16>(warp, d_strings, d_target, d_results, row); break;
+      default: lrb_search_row<32>(warp, d_strings, d_target, d_results, row); break;
+    }
+  }
+}
+
+/**
+ * @brief Pass 4: block-tier search, one thread block per row for rows > 8 KiB.
+ */
+CUDF_KERNEL void lrb_block_search_kernel(column_device_view const d_strings,
+                                         string_view const d_target,
+                                         bool* d_results,
+                                         size_type const* d_hist,
+                                         size_type const* d_sorted)
+{
+  namespace cg = cooperative_groups;
+  __shared__ size_type s_first;
+  __shared__ size_type s_total;
+
+  auto const warp = cg::tiled_partition<cudf::detail::warp_size>(cg::this_thread_block());
+  if (warp.meta_group_rank() == 0) {
+    auto const lane      = static_cast<int>(warp.thread_rank());
+    auto const bin_count = d_hist[lane];
+    auto const bin_start = cg::exclusive_scan(warp, bin_count);
+    auto const big       = (lane >= LRB_BLOCK_TIER_MIN_BIN) ? bin_count : 0;
+    auto const total     = cg::reduce(warp, big, cg::plus<size_type>());
+    if (lane == LRB_BLOCK_TIER_MIN_BIN) { s_first = bin_start; }
+    if (lane == 0) { s_total = total; }
+  }
+  __syncthreads();
+
+  auto const target_bytes = d_target.size_bytes();
+  for (auto r = static_cast<size_type>(blockIdx.x); r < s_total; r += gridDim.x) {
+    auto const row   = d_sorted[s_first + r];
+    auto const d_str = d_strings.element<string_view>(row);
+    auto const bytes = d_str.size_bytes();
+
+    auto constexpr bytes_per_thread = 4;
+    auto pos       = static_cast<size_type>(threadIdx.x) * bytes_per_thread;
+    auto found     = false;
+    auto any_found = 0;
+    while (true) {
+      auto const active = (pos + target_bytes) <= bytes;
+      if (active) {
+        for (auto j = 0; !found && (j < bytes_per_thread); ++j) {
+          found = ((pos + j + target_bytes) <= bytes) &&
+                  (d_target.compare(d_str.data() + pos + j, target_bytes) == 0);
+        }
+        pos += blockDim.x * bytes_per_thread;
+      }
+      any_found = __syncthreads_or(found);
+      if (any_found || !__syncthreads_or(active)) { break; }
+    }
+    if (threadIdx.x == 0) { d_results[row] = any_found != 0; }
+  }
+}
+
+std::unique_ptr<column> contains_lrb(strings_column_view const& input,
+                                     string_scalar const& target,
+                                     cuda::stream_ref stream,
+                                     rmm::device_async_resource_ref mr)
+{
+  auto const num_rows = input.size();
+  if (num_rows == 0) { return make_empty_column(type_id::BOOL8); }
+  CUDF_EXPECTS(target.is_valid(stream), "Parameter target must be valid.");
+  auto const d_target = string_view(target.data(), target.size());
+
   auto results = make_numeric_column(data_type{type_id::BOOL8},
-                                     input.size(),
+                                     num_rows,
                                      cudf::detail::copy_bitmask(input.parent(), stream, mr),
                                      input.null_count(),
                                      stream,
                                      mr);
-
-  // fill the output with `false` unless the `d_target` is empty
-  auto results_view = results->mutable_view();
+  auto d_results = results->mutable_view().data<bool>();
   if (d_target.empty()) {
     thrust::fill(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-                 results_view.begin<bool>(),
-                 results_view.end<bool>(),
+                 d_results,
+                 d_results + num_rows,
                  true);
-  } else {
-    // launch warp per string
-    auto const d_strings                   = column_device_view::create(input.parent(), stream);
-    constexpr thread_index_type block_size = 256;
-    constexpr thread_index_type warp_size  = cudf::detail::warp_size;
-    cudf::detail::grid_1d grid{input.size() * warp_size, block_size};
-    contains_warp_parallel_fn<<<grid.num_blocks, grid.num_threads_per_block, 0, stream.get()>>>(
-      *d_strings, d_target, results_view.data<bool>());
-    CUDF_CUDA_TRY(cudaGetLastError());
+    results->set_null_count(input.null_count());
+    return results;
   }
+
+  auto const d_strings = column_device_view::create(input.parent(), stream);
+  auto const tmp_mr    = cudf::get_current_device_resource_ref();
+  // [0, 32): bin counts; [32, 64): scatter cursors
+  rmm::device_uvector<size_type> hist(2 * LRB_NUM_BINS, stream, tmp_mr);
+  CUDF_CUDA_TRY(cudaMemsetAsync(hist.data(), 0, hist.size() * sizeof(size_type), stream.get()));
+  rmm::device_uvector<size_type> sorted(num_rows, stream, tmp_mr);
+
+  auto const num_sms      = static_cast<int64_t>(cudf::detail::num_multiprocessors());
+  auto const row_blocks   = cudf::util::div_rounding_up_safe<int64_t>(num_rows, LRB_BLOCK_SIZE);
+  auto const stride_grid  = static_cast<int>(std::min<int64_t>(row_blocks, num_sms * 8));
+
+  lrb_histogram_kernel<<<stride_grid, LRB_BLOCK_SIZE, 0, stream.get()>>>(
+    *d_strings, d_target.size_bytes(), d_results, hist.data());
+  CUDF_CUDA_TRY(cudaGetLastError());
+
+  lrb_scatter_kernel<<<stride_grid, LRB_BLOCK_SIZE, 0, stream.get()>>>(
+    *d_strings, d_target.size_bytes(), hist.data(), sorted.data());
+  CUDF_CUDA_TRY(cudaGetLastError());
+
+  // persistent launch: enough blocks to fill the GPU, never more than one warp per row
+  int max_blocks_per_sm = 0;
+  CUDF_CUDA_TRY(cudaOccupancyMaxActiveBlocksPerMultiprocessor(
+    &max_blocks_per_sm, lrb_search_kernel, LRB_BLOCK_SIZE, 0));
+  auto constexpr warps_per_block = LRB_BLOCK_SIZE / cudf::detail::warp_size;
+  auto const search_grid         = static_cast<int>(std::max<int64_t>(
+    1,
+    std::min<int64_t>(max_blocks_per_sm * num_sms,
+                      cudf::util::div_rounding_up_safe<int64_t>(num_rows, warps_per_block))));
+  lrb_search_kernel<<<search_grid, LRB_BLOCK_SIZE, 0, stream.get()>>>(
+    *d_strings, d_target, d_results, hist.data(), sorted.data());
+  CUDF_CUDA_TRY(cudaGetLastError());
+
+  auto const block_grid = static_cast<int>(std::min<int64_t>(num_rows, num_sms * 2));
+  lrb_block_search_kernel<<<block_grid, LRB_BLOCK_SIZE, 0, stream.get()>>>(
+    *d_strings, d_target, d_results, hist.data(), sorted.data());
+  CUDF_CUDA_TRY(cudaGetLastError());
+
   results->set_null_count(input.null_count());
   return results;
 }
@@ -530,21 +843,9 @@ std::unique_ptr<column> contains(strings_column_view const& input,
                                  cuda::stream_ref stream,
                                  rmm::device_async_resource_ref mr)
 {
-  // use warp parallel when the average string width is greater than the threshold
-  if ((input.null_count() < input.size()) &&
-      ((input.chars_size(stream) / (input.size() - input.null_count())) >
-       AVG_CHAR_BYTES_THRESHOLD)) {
-    return contains_warp_parallel(input, target, stream, mr);
-  }
-
-  // benchmark measurements showed this to be faster for smaller strings
-  auto pfn = [] __device__(string_view d_string, string_view d_target) {
-    for (size_type i = 0; i <= (d_string.size_bytes() - d_target.size_bytes()); ++i) {
-      if (d_target.compare(d_string.data() + i, d_target.size_bytes()) == 0) { return true; }
-    }
-    return false;
-  };
-  return contains_fn(input, target, pfn, stream, mr);
+  // Logarithmic radix binning adapts the thread-group size per row, so no column-wide
+  // average-width heuristic (and no device-to-host read of the offsets) is needed.
+  return contains_lrb(input, target, stream, mr);
 }
 
 std::unique_ptr<column> contains(strings_column_view const& strings,

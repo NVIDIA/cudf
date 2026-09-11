@@ -341,9 +341,10 @@ namespace {
  * (5) process each bin with a suitable parallel granularity. The steps here map 1:1.
  *
  * Pipeline (4 kernels, no host<->device synchronization, O(rows) extra memory for the permutation):
- *   lrb_histogram_kernel   thread-per-row over offsets only. Rows that are null or shorter than
- *                          the target get result=false immediately and are never scheduled
- *                          (bin 0). Other rows are counted in a per-block shared histogram.
+ *   lrb_histogram_kernel   thread-per-row. Rows that are null or shorter than the target get
+ *                          result=false immediately; rows of at most LRB_DIRECT_MAX_BYTES are
+ *                          searched right here thread-per-row. Neither kind is ever binned
+ *                          (bin 0). Longer rows are counted in a per-block shared histogram.
  *   lrb_scatter_kernel     recomputes the 32-entry prefix sum per block, ranks rows within the
  *                          block per bin (warp-aggregated shared atomics) and appends them to
  *                          their bin with one global atomic per (block, bin). Rows from the same
@@ -377,7 +378,18 @@ constexpr int LRB_SHIFT = 4;
 constexpr int LRB_BLOCK_TIER_MIN_BIN = 14;
 
 /**
- * @brief Bin index of a row. Bin 0 = "cannot contain the target" (null or too short).
+ * @brief Rows of at most this many bytes are searched thread-per-row directly inside the
+ * histogram pass and are never binned or scattered.
+ *
+ * For short rows the fixed cost of the permutation (two extra passes over the offsets plus
+ * writing and reading one index per row) exceeds the imbalance it removes, because a warp of
+ * thread-per-row lanes can only wait on at most this many bytes. Set to 0 for pure LRB.
+ */
+constexpr size_type LRB_DIRECT_MAX_BYTES = 64;
+
+/**
+ * @brief Bin index of a row. Bin 0 = resolved in the histogram pass (null, shorter than the
+ * target, or at most LRB_DIRECT_MAX_BYTES bytes).
  *
  * @param size_bytes Row length in bytes (any value if is_null)
  * @param target_bytes Target length in bytes (> 0)
@@ -386,7 +398,7 @@ constexpr int LRB_BLOCK_TIER_MIN_BIN = 14;
  */
 __device__ __forceinline__ int lrb_bin(size_type size_bytes, size_type target_bytes, bool is_null)
 {
-  if (is_null || size_bytes < target_bytes) { return 0; }
+  if (is_null || size_bytes < target_bytes || size_bytes <= LRB_DIRECT_MAX_BYTES) { return 0; }
   return 32 - __clz(static_cast<unsigned>(size_bytes));  // floor(log2(bytes)) + 1, in [1, 31]
 }
 
@@ -400,10 +412,11 @@ __host__ __device__ constexpr int lrb_threads_per_row(int bin)
  * @brief Pass 1: per-bin row counts; rows in bin 0 are resolved (false) here.
  */
 CUDF_KERNEL void lrb_histogram_kernel(column_device_view const d_strings,
-                                      size_type const target_bytes,
+                                      string_view const d_target,
                                       bool* d_results,
                                       size_type* d_hist)
 {
+  auto const target_bytes = d_target.size_bytes();
   __shared__ size_type s_hist[LRB_NUM_BINS];
   if (threadIdx.x < LRB_NUM_BINS) { s_hist[threadIdx.x] = 0; }
   __syncthreads();
@@ -416,7 +429,17 @@ CUDF_KERNEL void lrb_histogram_kernel(column_device_view const d_strings,
     auto const is_null = d_strings.is_null(row);
     auto const bytes   = is_null ? 0 : d_strings.element<string_view>(row).size_bytes();
     auto const bin     = lrb_bin(bytes, target_bytes, is_null);
-    if (bin == 0) { d_results[row] = false; }
+    if (bin == 0) {
+      // resolved here: false unless it is a short valid row that actually contains the target
+      auto found = false;
+      if (!is_null && bytes >= target_bytes) {
+        auto const d_str = d_strings.element<string_view>(row);
+        for (size_type i = 0; !found && (i <= bytes - target_bytes); ++i) {
+          found = d_target.compare(d_str.data() + i, target_bytes) == 0;
+        }
+      }
+      d_results[row] = found;
+    }
     // one shared atomic per (warp, distinct bin) instead of one per lane
     auto const peers = __match_any_sync(__activemask(), bin);
     if (bin != 0 && lane == static_cast<unsigned>(__ffs(peers) - 1)) {
@@ -687,7 +710,7 @@ std::unique_ptr<column> contains_lrb(strings_column_view const& input,
   auto const stride_grid  = static_cast<int>(std::min<int64_t>(row_blocks, num_sms * 8));
 
   lrb_histogram_kernel<<<stride_grid, LRB_BLOCK_SIZE, 0, stream.get()>>>(
-    *d_strings, d_target.size_bytes(), d_results, hist.data());
+    *d_strings, d_target, d_results, hist.data());
   CUDF_CUDA_TRY(cudaGetLastError());
 
   lrb_scatter_kernel<<<stride_grid, LRB_BLOCK_SIZE, 0, stream.get()>>>(

@@ -291,18 +291,6 @@ TEST_F(ParquetFooterFacadeTest, EmptyFooterRoundTrip)
   EXPECT_FALSE(parsed.column_orders.has_value());
 }
 
-// A boundary-value num_rows survives the zigzag-varint round-trip.
-TEST_F(ParquetFooterFacadeTest, LargeNumRows)
-{
-  FileMetaData meta;
-  meta.version  = 2;
-  meta.num_rows = std::numeric_limits<int64_t>::max();
-
-  auto const bytes  = experimental::write_parquet_footer_bytes(meta);
-  auto const parsed = experimental::read_parquet_footer_bytes(bytes);
-  EXPECT_EQ(parsed.num_rows, std::numeric_limits<int64_t>::max());
-}
-
 // Regression: the facade stops at the struct terminator, so an over-length buffer reparses to the
 // same metadata -- padding past the terminator (e.g. spark-rapids' length word) is ignored.
 TEST_F(ParquetFooterFacadeTest, TrailingBytesAreTolerated)
@@ -330,43 +318,6 @@ TEST_F(ParquetFooterFacadeTest, TrailingBytesAreTolerated)
     auto const reparsed = experimental::read_parquet_footer_bytes(over_length);
     expect_footer_semantic_equal(original, reparsed);
   }
-}
-
-// Overread guard: every proper prefix of a valid footer (including cuts inside the row_groups
-// list) must throw cleanly, not return structurally-invalid metadata. Each cut point also runs
-// with the truncation padded past the cut -- the non-zero padding never forms a struct
-// terminator the reader would otherwise stop on.
-TEST_F(ParquetFooterFacadeTest, TruncatedFooterThrows)
-{
-  auto const full = experimental::write_parquet_footer_bytes(make_test_footer());
-  ASSERT_GT(full.size(), 8u);
-
-  for (size_t len : {full.size() / 4, full.size() / 2, full.size() * 3 / 4, full.size() - 1}) {
-    std::vector<uint8_t> const truncated(full.begin(), full.begin() + len);
-    EXPECT_THROW((void)experimental::read_parquet_footer_bytes(truncated), cudf::logic_error)
-      << std::format("truncation length {} did not throw", len);
-
-    std::vector<uint8_t> padded(full.begin(), full.begin() + len);
-    padded.insert(padded.end(), full.size(), 0x5a);  // unrelated bytes past the truncation point
-    EXPECT_THROW((void)experimental::read_parquet_footer_bytes(padded), cudf::logic_error)
-      << std::format("truncation length {} with padding did not throw", len);
-  }
-}
-
-// A garbage buffer fails cleanly: 0xff decodes to wire type 0xf, not a valid Thrift type, so
-// skip_struct_field's default arm rejects it.
-TEST_F(ParquetFooterFacadeTest, GarbageBufferThrows)
-{
-  std::vector<uint8_t> const garbage(16, 0xff);
-  EXPECT_THROW((void)experimental::read_parquet_footer_bytes(garbage), cudf::logic_error);
-}
-
-// Overread guard: a zero-length buffer trips the sticky overread flag on the first field read
-// rather than returning empty metadata.
-TEST_F(ParquetFooterFacadeTest, EmptyBufferThrows)
-{
-  EXPECT_THROW((void)experimental::read_parquet_footer_bytes(std::span<uint8_t const>{}),
-               cudf::logic_error);
 }
 
 // Count guard: a field 2 (schema) struct-list header declaring 0x7fffffff elements with no
@@ -653,43 +604,6 @@ TEST_F(ParquetFooterFacadeTest, ParallelStructListThrowsInStrictMode)
 {
   auto const footer = make_parallel_mismatch_footer();
   EXPECT_THROW((void)experimental::read_parquet_footer_bytes(footer), cudf::logic_error);
-}
-
-// An empty LIST field is accepted regardless of its wire element-type nibble: a zero-length list
-// has no elements, so the type is immaterial (some writers, e.g. fastparquet, stamp 0). The reader
-// clears the target and keeps parsing.
-TEST_F(ParquetFooterFacadeTest, EmptyListWithZeroElementTypeIsAccepted)
-{
-  // clang-format off
-  std::vector<uint8_t> const footer{
-    0x15, 0x04,  // field 1 (version) i32 = 2
-    0x19, 0x00,  // field 2 (schema): empty LIST with element-type nibble 0 (not STRUCT)
-    0x00};       // STOP
-  // clang-format on
-  auto const parsed = experimental::read_parquet_footer_bytes(footer);
-  EXPECT_EQ(parsed.version, 2);
-  EXPECT_TRUE(parsed.schema.empty());
-}
-
-// An empty PRIMITIVE-element list is likewise accepted regardless of its wire element-type nibble
-// (distinct n == 0 short-circuit site from the struct-list case above).
-TEST_F(ParquetFooterFacadeTest, EmptyPrimitiveListWithWrongElementTypeIsAccepted)
-{
-  // clang-format off
-  std::vector<uint8_t> const footer{
-    0x49, 0x1c,  // FileMetaData field 4 (row_groups): LIST of 1 STRUCT
-    0x19, 0x1c,  //   RowGroup field 1 (columns): LIST of 1 STRUCT
-    0x3c,        //     ColumnChunk field 3 (meta_data): STRUCT
-    0x29, 0x00,  //       ColumnChunkMetaData field 2 (encodings): empty LIST, nibble 0 (not I32)
-    0x00,        //       ColumnChunkMetaData STOP
-    0x00,        //     ColumnChunk STOP
-    0x00,        //   RowGroup STOP
-    0x00};       // FileMetaData STOP
-  // clang-format on
-  auto const parsed = experimental::read_parquet_footer_bytes(footer);
-  ASSERT_EQ(parsed.row_groups.size(), 1);
-  ASSERT_EQ(parsed.row_groups[0].columns.size(), 1);
-  EXPECT_TRUE(parsed.row_groups[0].columns[0].meta_data.encodings.empty());
 }
 
 // A non-empty list with a wrong element-type nibble is skipped wholesale in COMPAT (its

@@ -5,12 +5,17 @@
 
 #pragma once
 
-#include <cudf/io/parquet_metadata.hpp>
 #include <cudf/io/parquet_schema.hpp>
 #include <cudf/utilities/export.hpp>
 
 #include <cstdint>
+#include <span>
 #include <vector>
+
+/**
+ * @file
+ * @brief Freeform APIs for reading and writing Parquet footer bytes
+ */
 
 namespace CUDF_EXPORT cudf {
 namespace io::parquet::experimental {

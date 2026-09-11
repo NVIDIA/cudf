@@ -703,8 +703,11 @@ bool CompactProtocolReader::check_list_element_type(int type, FieldType expected
     }
   }
   // The header is consumed; discard the `count` element payloads so the struct walk resumes at
-  // the next field. Bool list elements are one byte each (a bool struct field's value lives in
-  // the type nibble).
+  // the next field. The guard bounds the skip loop against a malformed size prefix (each element
+  // >= 1 byte). Bool list elements are one byte each (a bool struct field's value lives in the
+  // type nibble).
+  CUDF_EXPECTS(std::cmp_less_equal(count, m_end - m_cur),
+               "Parquet footer list size exceeds remaining buffer");
   auto const et = static_cast<FieldType>(type);
   if (et == FieldType::BOOLEAN_TRUE || et == FieldType::BOOLEAN_FALSE) {
     skip_bytes(count);

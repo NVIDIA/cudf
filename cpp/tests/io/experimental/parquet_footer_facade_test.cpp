@@ -22,7 +22,6 @@
 #include <cstddef>
 #include <cstdint>
 #include <format>
-#include <limits>
 #include <vector>
 
 using namespace cudf::io::parquet;

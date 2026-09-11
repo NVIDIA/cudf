@@ -8,7 +8,6 @@
 #include "parquet_common.hpp"
 
 #include <cudf/io/experimental/parquet_footer.hpp>
-#include <cudf/io/parquet_metadata.hpp>
 #include <cudf/io/parquet_schema.hpp>
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/export.hpp>

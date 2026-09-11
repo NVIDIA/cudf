@@ -42,6 +42,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <cstdint>
 #include <random>
 #include <sstream>
@@ -135,7 +136,6 @@ skewed_column make_skewed_column(std::string const& dist,
   std::vector<int64_t> offsets(num_rows + 1, 0);
   for (int64_t i = 0; i < num_rows; ++i) offsets[i + 1] = offsets[i] + lens[i];
   auto const total = offsets[num_rows];
-  CUDF_EXPECTS(total < (int64_t{1} << 31) - 1, "benchmark column exceeds int32 offsets");
 
   // Random text over a 64-symbol alphabet that includes digits and space, so partial matches of
   // the target's leading bytes do occur (about 1 in 64 positions match the first byte) and the
@@ -178,13 +178,26 @@ skewed_column make_skewed_column(std::string const& dist,
     }
   }
 
-  std::vector<int32_t> offsets32(offsets.begin(), offsets.end());
-  rmm::device_uvector<int32_t> d_offsets(offsets32.size(), stream);
-  CUDF_CUDA_TRY(cudaMemcpyAsync(d_offsets.data(),
-                                offsets32.data(),
-                                offsets32.size() * sizeof(int32_t),
-                                cudaMemcpyHostToDevice,
-                                stream.value()));
+  // int32 offsets when they fit, otherwise int64 (cudf large-strings column)
+  auto offsets_col = [&]() -> std::unique_ptr<cudf::column> {
+    if (total < std::numeric_limits<int32_t>::max()) {
+      std::vector<int32_t> offsets32(offsets.begin(), offsets.end());
+      rmm::device_uvector<int32_t> d_offsets(offsets32.size(), stream);
+      CUDF_CUDA_TRY(cudaMemcpyAsync(d_offsets.data(),
+                                    offsets32.data(),
+                                    offsets32.size() * sizeof(int32_t),
+                                    cudaMemcpyHostToDevice,
+                                    stream.value()));
+      return std::make_unique<cudf::column>(std::move(d_offsets), rmm::device_buffer{}, 0);
+    }
+    rmm::device_uvector<int64_t> d_offsets(offsets.size(), stream);
+    CUDF_CUDA_TRY(cudaMemcpyAsync(d_offsets.data(),
+                                  offsets.data(),
+                                  offsets.size() * sizeof(int64_t),
+                                  cudaMemcpyHostToDevice,
+                                  stream.value()));
+    return std::make_unique<cudf::column>(std::move(d_offsets), rmm::device_buffer{}, 0);
+  }();
   rmm::device_buffer d_chars(chars.data(), chars.size(), stream);
 
   rmm::device_buffer null_mask{};
@@ -202,8 +215,7 @@ skewed_column make_skewed_column(std::string const& dist,
     null_mask = rmm::device_buffer(h_mask.data(), h_mask.size() * sizeof(cudf::bitmask_type), stream);
   }
 
-  auto offsets_col = std::make_unique<cudf::column>(std::move(d_offsets), rmm::device_buffer{}, 0);
-  auto col         = cudf::make_strings_column(static_cast<cudf::size_type>(num_rows),
+  auto col = cudf::make_strings_column(static_cast<cudf::size_type>(num_rows),
                                        std::move(offsets_col),
                                        std::move(d_chars),
                                        null_count,

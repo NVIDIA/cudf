@@ -18,6 +18,8 @@ namespace io::parquet::experimental {
 /**
  * @brief Footer-reader policy on a wire-type/schema-type mismatch: reject (`THROW`, the historical
  * exact-type contract) or skip per Thrift forward-compat (`COMPAT`)
+ *
+ * @ingroup io_readers
  */
 enum class thrift_mismatch_policy : bool { THROW, COMPAT };
 
@@ -39,7 +41,7 @@ enum class thrift_mismatch_policy : bool { THROW, COMPAT };
  *
  * @return The deserialized `FileMetaData`
  */
-[[nodiscard]] FileMetaData read_parquet_footer_bytes(
+[[nodiscard]] parquet::FileMetaData read_parquet_footer_bytes(
   std::span<uint8_t const> footer_bytes,
   thrift_mismatch_policy mode = thrift_mismatch_policy::THROW);
 
@@ -52,7 +54,8 @@ enum class thrift_mismatch_policy : bool { THROW, COMPAT };
  *
  * @return The Thrift-compact-encoded bytes
  */
-[[nodiscard]] std::vector<uint8_t> write_parquet_footer_bytes(FileMetaData const& metadata);
+[[nodiscard]] std::vector<uint8_t> write_parquet_footer_bytes(
+  parquet::FileMetaData const& metadata);
 
 }  // namespace io::parquet::experimental
 }  // namespace CUDF_EXPORT cudf

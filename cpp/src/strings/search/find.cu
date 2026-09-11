@@ -382,10 +382,13 @@ constexpr int LRB_SHIFT = 4;
  */
 constexpr int LRB_CHUNK_BYTES = 4096;
 
-__host__ __device__ constexpr int64_t lrb_chunks_per_row(int bin)
+constexpr int LRB_CHUNK_SHIFT = 12;  // log2(LRB_CHUNK_BYTES)
+static_assert((1 << LRB_CHUNK_SHIFT) == LRB_CHUNK_BYTES);
+
+/// log2 of the number of chunk tasks per row of `bin`: rows in bin b have fewer than 2^b bytes.
+__host__ __device__ constexpr int lrb_chunk_shift(int bin)
 {
-  auto const bytes_upper = int64_t{1} << bin;  // rows in bin b have fewer than 2^b bytes
-  return bytes_upper > LRB_CHUNK_BYTES ? bytes_upper / LRB_CHUNK_BYTES : int64_t{1};
+  return bin > LRB_CHUNK_SHIFT ? bin - LRB_CHUNK_SHIFT : 0;
 }
 
 /**
@@ -550,7 +553,7 @@ __device__ __forceinline__ void lrb_search_row_tile(Tile const& tile,
                                                     string_view const d_target,
                                                     bool* d_results,
                                                     size_type const row,
-                                                    int64_t const chunk)
+                                                    int const chunk)
 {
   if (row < 0) { return; }
 
@@ -558,7 +561,7 @@ __device__ __forceinline__ void lrb_search_row_tile(Tile const& tile,
   auto const bytes        = d_str.size_bytes();
   auto const target_bytes = d_target.size_bytes();
   // starting positions owned by this task: [begin, end). A match may extend past `end`.
-  auto const begin = static_cast<size_type>(chunk * LRB_CHUNK_BYTES);
+  auto const begin = static_cast<size_type>(int64_t{chunk} * LRB_CHUNK_BYTES);
   auto const end   = static_cast<size_type>(
     cuda::std::min<int64_t>((chunk + 1) * LRB_CHUNK_BYTES, int64_t{bytes} - target_bytes + 1));
   auto found = false;
@@ -591,7 +594,7 @@ __device__ __forceinline__ void lrb_search_row(
   string_view const d_target,
   bool* d_results,
   size_type const row,
-  int64_t const chunk)
+  int const chunk)
 {
   if constexpr (G == cudf::detail::warp_size) {
     lrb_search_row_tile<G>(warp, d_strings, d_target, d_results, row, chunk);
@@ -621,9 +624,9 @@ CUDF_KERNEL void lrb_search_kernel(column_device_view const d_strings,
   // Schedule table, one bin per lane: task counts and their prefix sums live in registers.
   auto const bin_count     = d_hist[lane];
   auto const rows_per_task = cudf::detail::warp_size / lrb_threads_per_row(lane);
-  auto const chunks        = lrb_chunks_per_row(lane);
+  auto const chunk_shift   = lrb_chunk_shift(lane);  // chunk tasks per row = 1 << chunk_shift
   auto const bin_tasks =
-    static_cast<int64_t>(cudf::util::div_rounding_up_safe(bin_count, rows_per_task)) * chunks;
+    static_cast<int64_t>(cudf::util::div_rounding_up_safe(bin_count, rows_per_task)) << chunk_shift;
   auto const tasks_incl  = cg::inclusive_scan(warp, bin_tasks);
   auto const tasks_excl  = tasks_incl - bin_tasks;
   auto const bin_start   = cg::exclusive_scan(warp, bin_count);
@@ -637,10 +640,11 @@ CUDF_KERNEL void lrb_search_kernel(column_device_view const d_strings,
     auto const bin = __ffs(warp.ballot(task < tasks_incl)) - 1;
     // per-lane candidates computed for the lane's own bin, then broadcast from lane `bin`
     auto const my_local = task - tasks_excl;
-    auto const my_first = bin_start + static_cast<size_type>(my_local / chunks) * rows_per_task;
-    auto const my_chunk = my_local % chunks;
+    auto const my_first =
+      bin_start + static_cast<size_type>(my_local >> chunk_shift) * rows_per_task;
+    auto const my_chunk = my_local & ((int64_t{1} << chunk_shift) - 1);
     auto const first    = warp.shfl(my_first, bin);
-    auto const chunk    = warp.shfl(my_chunk, bin);
+    auto const chunk    = static_cast<int>(warp.shfl(my_chunk, bin));
     auto const end      = warp.shfl(bin_start + bin_count, bin);
     auto const G        = lrb_threads_per_row(bin);
     auto const slot     = first + lane / G;

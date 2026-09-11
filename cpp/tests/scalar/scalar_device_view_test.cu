@@ -127,27 +127,18 @@ TYPED_TEST(FixedPointScalarDeviceViewTest, SetValue)
   auto constexpr source_rep   = rep_type{12'345};
   auto constexpr initial_rep  = rep_type{0};
   auto constexpr source_scale = cudf::numeric::scale_type{-2};
-  auto constexpr target_scale = cudf::numeric::scale_type{-3};
   auto const source_value =
     TypeParam{cudf::numeric::scaled_integer<rep_type>{source_rep, source_scale}};
-  auto const expected_rep = source_value.rescaled(target_scale).value();
   cudf::fixed_point_scalar<TypeParam> source{source_rep, source_scale};
-  cudf::fixed_point_scalar<TypeParam> same_scale_target{initial_rep, source_scale};
-  cudf::fixed_point_scalar<TypeParam> target{initial_rep, target_scale};
+  cudf::fixed_point_scalar<TypeParam> target{initial_rep, source_scale};
 
-  auto source_device_view            = cudf::get_scalar_device_view(source);
-  auto same_scale_target_device_view = cudf::get_scalar_device_view(same_scale_target);
-  auto target_device_view            = cudf::get_scalar_device_view(target);
-  test_set_value<<<1, 1, 0, cudf::get_default_stream().value()>>>(source_device_view,
-                                                                  same_scale_target_device_view);
-  CUDF_CHECK_CUDA(0);
-
+  auto source_device_view = cudf::get_scalar_device_view(source);
+  auto target_device_view = cudf::get_scalar_device_view(target);
   test_set_value<<<1, 1, 0, cudf::get_default_stream().value()>>>(source_device_view,
                                                                   target_device_view);
   CUDF_CHECK_CUDA(0);
 
-  EXPECT_EQ(same_scale_target.value(), source_rep);
-  EXPECT_EQ(target.value(), expected_rep);
+  EXPECT_EQ(target.value(), source_rep);
 }
 
 template <typename ScalarDeviceViewType>

@@ -268,6 +268,13 @@ TEST_F(StringsFindTest, ContainsAllLengthTiers)
       auto near = filler;
       near.replace(0, target.size() - 1, target.substr(0, target.size() - 1));
       add(near, true);
+      // target straddling each 4 KiB chunk boundary (rows longer than a chunk are searched by
+      // several thread groups, one per chunk)
+      for (int boundary = 4096; boundary + 4 < len; boundary += 4096) {
+        auto straddle = filler;
+        straddle.replace(boundary - 4, target.size(), target);
+        add(straddle, true);
+      }
     }
     add(filler, false);  // null
   }

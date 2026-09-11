@@ -7,6 +7,8 @@
 
 cmake_minimum_required(VERSION 4.0 FATAL_ERROR)
 
+# CI evaluation marker: exercise CMake and C++ linter paths.
+
 include(../cmake/rapids_config.cmake)
 include(rapids-cmake)
 include(rapids-cpm)

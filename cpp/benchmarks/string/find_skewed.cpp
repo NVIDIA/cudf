@@ -109,6 +109,7 @@ struct skewed_column {
   std::unique_ptr<cudf::column> col;
   int64_t chars_bytes;
   int64_t max_len;
+  std::vector<uint8_t> expected;  // 1 where the target was inserted, 2 for null rows
 };
 
 skewed_column make_skewed_column(std::string const& dist,
@@ -136,8 +137,12 @@ skewed_column make_skewed_column(std::string const& dist,
   auto const total = offsets[num_rows];
   CUDF_EXPECTS(total < (int64_t{1} << 31) - 1, "benchmark column exceeds int32 offsets");
 
-  // Random lowercase text. Fill in 8-byte chunks from a fast PRNG; never contains a digit or
-  // space so it can never accidentally contain the target.
+  // Random text over a 64-symbol alphabet that includes digits and space, so partial matches of
+  // the target's leading bytes do occur (about 1 in 64 positions match the first byte) and the
+  // per-position compare cost is realistic. A full 9-byte accidental match has probability 64^-9
+  // per position and is ignored; results are validated against the inserted hits below.
+  static constexpr char alphabet[65] =
+    "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 -";
   std::vector<char> chars(total);
   {
     uint64_t x = 0x9E3779B97F4A7C15ull;
@@ -146,8 +151,8 @@ skewed_column make_skewed_column(std::string const& dist,
       x ^= x << 13; x ^= x >> 7; x ^= x << 17;
       uint64_t v = x;
       for (int k = 0; k < 8; ++k) {
-        chars[i + k] = static_cast<char>('a' + (v & 15));
-        v >>= 4;
+        chars[i + k] = alphabet[v & 63];
+        v >>= 6;
       }
     }
     for (; i < total; ++i) chars[i] = 'a';
@@ -157,13 +162,19 @@ skewed_column make_skewed_column(std::string const& dist,
   auto const tlen = static_cast<int32_t>(std::string(TARGET).size());
   std::uniform_int_distribution<int> hit_d(0, 99);
   int64_t max_len = 0;
+  std::vector<uint8_t> expected(num_rows, 0);
   for (int64_t i = 0; i < num_rows; ++i) {
     max_len = std::max<int64_t>(max_len, lens[i]);
-    if (!valid[i] || lens[i] < tlen) continue;
+    if (!valid[i]) {
+      expected[i] = 2;  // null: value unspecified, only the copied null mask matters
+      continue;
+    }
+    if (lens[i] < tlen) continue;
     if (hit_d(rng) < hit_rate) {
       std::uniform_int_distribution<int32_t> pos_d(0, lens[i] - tlen);
       auto const pos = pos_d(rng);
       std::copy_n(TARGET, tlen, chars.begin() + offsets[i] + pos);
+      expected[i] = 1;
     }
   }
 
@@ -198,7 +209,29 @@ skewed_column make_skewed_column(std::string const& dist,
                                        null_count,
                                        std::move(null_mask));
   stream.synchronize();
-  return {std::move(col), total, max_len};
+  return {std::move(col), total, max_len, std::move(expected)};
+}
+
+/// Run contains() once and check every row against the inserted hits; throws on any mismatch.
+void validate(cudf::strings_column_view const& input,
+              cudf::string_scalar const& target,
+              std::vector<uint8_t> const& expected,
+              rmm::cuda_stream_view stream)
+{
+  auto result = cudf::strings::contains(input, target);
+  std::vector<uint8_t> got(expected.size());
+  CUDF_CUDA_TRY(cudaMemcpyAsync(got.data(),
+                                result->view().data<bool>(),
+                                got.size(),
+                                cudaMemcpyDeviceToHost,
+                                stream.value()));
+  stream.synchronize();
+  int64_t bad = 0;
+  for (size_t i = 0; i < got.size(); ++i) {
+    if (expected[i] == 2) continue;
+    if ((got[i] != 0) != (expected[i] != 0)) ++bad;
+  }
+  CUDF_EXPECTS(bad == 0, "contains() returned " + std::to_string(bad) + " wrong rows");
 }
 
 }  // namespace
@@ -214,6 +247,8 @@ static void bench_find_skewed(nvbench::state& state)
   auto data         = make_skewed_column(dist, num_rows, hit_rate, null_pct, stream);
   auto const input  = cudf::strings_column_view(data.col->view());
   auto target       = cudf::string_scalar(TARGET);
+
+  validate(input, target, data.expected, stream);
 
   state.add_element_count(num_rows, "rows");
   state.add_summary("avg_bytes").set_int64("value", data.chars_bytes / num_rows);

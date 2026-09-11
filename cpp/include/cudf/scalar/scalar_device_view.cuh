@@ -262,9 +262,12 @@ class fixed_point_scalar_device_view : public detail::scalar_device_view_base {
   }
 
   /**
-   * @brief Returns the fixed-point value
+   * @brief Returns the fixed-point value as type `T`
    *
-   * @return The fixed-point value
+   * Unlike `fixed_point_scalar<T>::value()`, this returns the fixed-point value rather than its
+   * underlying representation.
+   *
+   * @return The fixed-point value as type `T`
    */
   [[nodiscard]] __device__ T value() const noexcept
   {

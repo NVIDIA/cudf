@@ -440,10 +440,14 @@ CUDF_KERNEL void lrb_histogram_kernel(column_device_view const d_strings,
       }
       d_results[row] = found;
     }
-    // one shared atomic per (warp, distinct bin) instead of one per lane
-    auto const peers = __match_any_sync(__activemask(), bin);
-    if (bin != 0 && lane == static_cast<unsigned>(__ffs(peers) - 1)) {
-      atomicAdd(&s_hist[bin], __popc(peers));
+    // one shared atomic per (warp, distinct bin) instead of one per lane; nothing at all when
+    // the whole warp was resolved directly (the common case for short-string columns)
+    auto const active = __activemask();
+    if (__any_sync(active, bin != 0)) {
+      auto const peers = __match_any_sync(active, bin);
+      if (bin != 0 && lane == static_cast<unsigned>(__ffs(peers) - 1)) {
+        atomicAdd(&s_hist[bin], __popc(peers));
+      }
     }
   }
   __syncthreads();
@@ -471,7 +475,15 @@ CUDF_KERNEL void lrb_scatter_kernel(column_device_view const d_strings,
 
   auto const warp = cg::tiled_partition<cudf::detail::warp_size>(cg::this_thread_block());
   auto const lane = warp.thread_rank();
-  if (warp.meta_group_rank() == 0) { s_start[lane] = cg::exclusive_scan(warp, d_hist[lane]); }
+  __shared__ size_type s_binned;
+  if (warp.meta_group_rank() == 0) {
+    auto const count = d_hist[lane];
+    auto const incl  = cg::inclusive_scan(warp, count);
+    s_start[lane]    = incl - count;
+    if (lane == cudf::detail::warp_size - 1) { s_binned = incl; }
+  }
+  __syncthreads();
+  if (s_binned == 0) { return; }  // every row was resolved in the histogram pass
 
   auto const num_rows = static_cast<thread_index_type>(d_strings.size());
   auto const stride   = cudf::detail::grid_1d::grid_stride();
@@ -507,6 +519,21 @@ CUDF_KERNEL void lrb_scatter_kernel(column_device_view const d_strings,
 
     if (bin != 0) { d_sorted[s_start[bin] + s_base[bin] + rank] = static_cast<size_type>(idx); }
   }
+}
+
+/**
+ * @brief Minimum rows per warp task. A task's rows are consecutive in `d_sorted` and share a bin.
+ *
+ * With G threads per row a warp naturally covers 32/G rows at once; for the wide tiers (G = 16,
+ * 32) that is only 1-2 rows, so the per-task scheduling work (ballot, shuffles, index loads)
+ * would be paid per row. Tiles therefore loop over several rows per task instead.
+ */
+constexpr int LRB_MIN_ROWS_PER_TASK = 4;
+
+__host__ __device__ constexpr int lrb_rows_per_task(int bin)
+{
+  auto const natural = cudf::detail::warp_size / lrb_threads_per_row(bin);
+  return natural > LRB_MIN_ROWS_PER_TASK ? natural : LRB_MIN_ROWS_PER_TASK;
 }
 
 /**
@@ -572,7 +599,8 @@ __device__ __forceinline__ void lrb_search_row(
 }
 
 /**
- * @brief Pass 3: warp-tier search. Each warp task covers 32/G consecutive rows of one bin.
+ * @brief Pass 3: warp-tier search. Each warp task covers lrb_rows_per_task(bin) consecutive rows
+ * of one bin, searched 32/G at a time with G threads each.
  */
 CUDF_KERNEL void lrb_search_kernel(column_device_view const d_strings,
                                    string_view const d_target,
@@ -586,7 +614,7 @@ CUDF_KERNEL void lrb_search_kernel(column_device_view const d_strings,
 
   // Schedule table, one bin per lane: task counts and their prefix sums live in registers.
   auto const bin_count     = d_hist[lane];
-  auto const rows_per_task = cudf::detail::warp_size / lrb_threads_per_row(lane);
+  auto const rows_per_task = lrb_rows_per_task(lane);
   auto const bin_tasks     = (lane < LRB_BLOCK_TIER_MIN_BIN)
                                ? cudf::util::div_rounding_up_safe(bin_count, rows_per_task)
                                : 0;
@@ -607,16 +635,23 @@ CUDF_KERNEL void lrb_search_kernel(column_device_view const d_strings,
     auto const first    = warp.shfl(my_first, bin);
     auto const end      = warp.shfl(bin_start + bin_count, bin);
     auto const G        = lrb_threads_per_row(bin);
-    auto const slot     = first + lane / G;
-    auto const row      = (slot < end) ? d_sorted[slot] : -1;
+    auto const per_task = lrb_rows_per_task(bin);
+    auto const per_pass = cudf::detail::warp_size / G;  // rows the warp searches concurrently
 
-    switch (G) {  // warp-uniform
-      case 1: lrb_search_row<1>(warp, d_strings, d_target, d_results, row); break;
-      case 2: lrb_search_row<2>(warp, d_strings, d_target, d_results, row); break;
-      case 4: lrb_search_row<4>(warp, d_strings, d_target, d_results, row); break;
-      case 8: lrb_search_row<8>(warp, d_strings, d_target, d_results, row); break;
-      case 16: lrb_search_row<16>(warp, d_strings, d_target, d_results, row); break;
-      default: lrb_search_row<32>(warp, d_strings, d_target, d_results, row); break;
+    // load this task's row indices once (lane i holds the i-th row of the task)
+    auto const my_slot = first + lane;
+    auto const my_row  = (lane < per_task && my_slot < end) ? d_sorted[my_slot] : -1;
+
+    for (auto r = 0; r < per_task; r += per_pass) {
+      auto const row = warp.shfl(my_row, r + lane / G);
+      switch (G) {  // warp-uniform
+        case 1: lrb_search_row<1>(warp, d_strings, d_target, d_results, row); break;
+        case 2: lrb_search_row<2>(warp, d_strings, d_target, d_results, row); break;
+        case 4: lrb_search_row<4>(warp, d_strings, d_target, d_results, row); break;
+        case 8: lrb_search_row<8>(warp, d_strings, d_target, d_results, row); break;
+        case 16: lrb_search_row<16>(warp, d_strings, d_target, d_results, row); break;
+        default: lrb_search_row<32>(warp, d_strings, d_target, d_results, row); break;
+      }
     }
   }
 }

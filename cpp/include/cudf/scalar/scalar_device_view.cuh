@@ -4,6 +4,7 @@
  */
 #pragma once
 
+#include <cudf/detail/utilities/assert.cuh>
 #include <cudf/fixed_point/fixed_point.hpp>
 #include <cudf/scalar/scalar.hpp>
 #include <cudf/strings/string_view.hpp>
@@ -284,15 +285,14 @@ class fixed_point_scalar_device_view : public detail::scalar_device_view_base {
   /**
    * @brief Stores the fixed-point value in the scalar
    *
-   * The value is rescaled to the scalar's scale before its representation is stored.
+   * @pre `value.scale()` must equal the scalar's scale.
    *
    * @param value The fixed-point value to store in the scalar
    */
   __device__ void set_value(T value)
   {
-    auto const target_scale = numeric::scale_type{this->type().scale()};
-
-    *_data = value.rescaled(target_scale).value();
+    cudf_assert(value.scale() == this->type().scale() && "fixed_point scale mismatch");
+    *_data = value.value();
   }
 
   /**

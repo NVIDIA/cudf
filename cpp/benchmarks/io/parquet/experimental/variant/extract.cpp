@@ -383,6 +383,203 @@ std::vector<uint8_t> build_flat_object(int num_fields,
   return out;
 }
 
+// Dictionary key of the i-th leaf field: "f00", "f01", ...
+std::string field_key(int i) { return "f" + std::string(i < 10 ? "0" : "") + std::to_string(i); }
+
+// Build a VARIANT object from (field id, value) pairs. Ids must be ascending, which for a
+// name-sorted dictionary is also name order, as the spec requires. Field offsets widen to 2 bytes
+// once the values region outgrows a single byte.
+std::vector<uint8_t> build_object(
+  std::vector<std::pair<uint8_t, std::vector<uint8_t>>> const& fields)
+{
+  constexpr std::size_t max_single_byte_offset = 255;
+  auto const values_bytes =
+    std::accumulate(fields.begin(), fields.end(), std::size_t{0}, [](auto acc, auto const& field) {
+      return acc + field.second.size();
+    });
+  int const offset_size = values_bytes > max_single_byte_offset ? 2 : 1;
+
+  // object value_header: | is_large (1) | field_id_size-1 (2) | field_offset_size-1 (2) |
+  std::vector<uint8_t> out{
+    make_variant_header(variant_basic_type::OBJECT, static_cast<uint8_t>(offset_size - 1)),
+    static_cast<uint8_t>(fields.size())};
+  for (auto const& [id, value] : fields) {
+    out.push_back(id);
+  }
+  std::size_t running = 0;
+  for (auto const& [id, value] : fields) {
+    append_le(out, running, offset_size);
+    running += value.size();
+  }
+  append_le(out, running, offset_size);  // sentinel offset after the last field
+  for (auto const& [id, value] : fields) {
+    out.insert(out.end(), value.begin(), value.end());
+  }
+  return out;
+}
+
+// Dictionary key "item%03d" of the workload below. Zero padding makes the numeric order the
+// lexicographic order, so key `n` sits at dictionary index `n - 1`.
+std::string item_key(int n)
+{
+  auto const digits = std::to_string(n);
+  return "item" + std::string(3 - digits.size(), '0') + digits;
+}
+
+// A bare VARIANT short string value.
+std::vector<uint8_t> build_short_string(std::string_view s)
+{
+  std::vector<uint8_t> out{make_variant_short_string_header(s.size())};
+  out.insert(out.end(), s.begin(), s.end());
+  return out;
+}
+
+// A VARIANT array value holding `elements` in order.
+std::vector<uint8_t> build_array(std::vector<std::vector<uint8_t>> const& elements)
+{
+  constexpr std::size_t max_single_byte_offset = 255;
+  auto const values_bytes =
+    std::accumulate(elements.begin(), elements.end(), std::size_t{0}, [](auto acc, auto const& e) {
+      return acc + e.size();
+    });
+  int const offset_size = values_bytes > max_single_byte_offset ? 2 : 1;
+
+  // array value_header: | unused (3) | is_large (1) | offset_size-1 (2) |
+  std::vector<uint8_t> out{
+    make_variant_header(variant_basic_type::ARRAY, static_cast<uint8_t>(offset_size - 1)),
+    static_cast<uint8_t>(elements.size())};
+  std::size_t running = 0;
+  for (auto const& element : elements) {
+    append_le(out, running, offset_size);
+    running += element.size();
+  }
+  append_le(out, running, offset_size);
+  for (auto const& element : elements) {
+    out.insert(out.end(), element.begin(), element.end());
+  }
+  return out;
+}
+
+// A VARIANT object whose fields are named rather than pre-assigned ids. Field ids are the keys'
+// positions in the sorted dictionary, and the spec wants them in name order, which for a sorted
+// dictionary is id order.
+std::vector<uint8_t> build_named_object(
+  std::vector<std::string> const& dict,
+  std::vector<std::pair<std::string, std::vector<uint8_t>>> fields)
+{
+  std::ranges::sort(fields, {}, &std::pair<std::string, std::vector<uint8_t>>::first);
+
+  std::vector<std::pair<uint8_t, std::vector<uint8_t>>> by_id;
+  by_id.reserve(fields.size());
+  for (auto& [key, value] : fields) {
+    auto const entry = std::ranges::lower_bound(dict, key);
+    CUDF_EXPECTS(entry != dict.end() && *entry == key, "Key missing from the VARIANT dictionary");
+    by_id.emplace_back(static_cast<uint8_t>(std::distance(dict.begin(), entry)), std::move(value));
+  }
+  return build_object(by_id);
+}
+
+// Build the value blob of the multi-path workload: a root object of six fields whose `item016`
+// child fans out into ~40 sibling sub-trees, most of them `{item085: [{item018: "..."}]}`. The
+// paths in `workload_paths` below match this shape.
+std::vector<uint8_t> build_workload_value(std::vector<std::string> const& dict)
+{
+  auto const fanout_leaf = [&](int n) {
+    auto inner = build_named_object(dict, {{item_key(18), build_short_string("C_" + item_key(n))}});
+    return build_named_object(dict, {{item_key(85), build_array({std::move(inner)})}});
+  };
+
+  std::vector<std::pair<std::string, std::vector<uint8_t>>> item016_fields;
+  for (int n : {19, 20, 21, 22, 23, 24, 25, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40,
+                41, 42, 43, 44, 45, 46, 47, 48, 49, 53, 54, 57, 58, 59, 61, 62}) {
+    item016_fields.emplace_back(item_key(n), fanout_leaf(n));
+  }
+  // Sub-trees that several paths descend into past `item085` or `item027`.
+  for (int n : {26, 55}) {
+    auto element = build_named_object(
+      dict,
+      {{item_key(18), build_short_string("C_18")}, {item_key(30), build_short_string("C_30")}});
+    auto item027 = build_named_object(
+      dict,
+      {{item_key(28), build_short_string("C_28")}, {item_key(29), build_short_string("C_29")}});
+    item016_fields.emplace_back(
+      item_key(n),
+      build_named_object(
+        dict,
+        {{item_key(85), build_array({std::move(element)})}, {item_key(27), std::move(item027)}}));
+  }
+  for (int n : {50, 60}) {
+    auto element = build_named_object(
+      dict,
+      {{item_key(51), build_short_string("C_51")}, {item_key(52), build_short_string("C_52")}});
+    item016_fields.emplace_back(
+      item_key(n), build_named_object(dict, {{item_key(85), build_array({std::move(element)})}}));
+  }
+  // `item056` is an object where one path expects an array, so that path misses.
+  item016_fields.emplace_back(
+    item_key(56),
+    build_named_object(dict,
+                       {{item_key(27),
+                         build_named_object(dict,
+                                            {{item_key(28), build_short_string("C_28")},
+                                             {item_key(29), build_short_string("C_29")}})}}));
+
+  auto item009 = build_named_object(
+    dict,
+    {{item_key(10),
+      build_named_object(dict,
+                         {{item_key(84),
+                           build_array({build_named_object(
+                             dict, {{item_key(11), build_short_string("C_011")}})})}})}});
+
+  return build_named_object(
+    dict,
+    {{item_key(6), build_short_string("C_006")},
+     {item_key(7), build_named_object(dict, {{item_key(8), build_short_string("C_008")}})},
+     {item_key(9), std::move(item009)},
+     {item_key(12),
+      build_named_object(dict,
+                         {{item_key(13), build_short_string("C_013")},
+                          {item_key(14), build_short_string("C_014")},
+                          {item_key(15), build_short_string("C_015")}})},
+     {item_key(16), build_named_object(dict, std::move(item016_fields))},
+     {item_key(63), build_short_string("C_063")}});
+}
+
+// The paths of the multi-path workload: a few shallow ones plus a wide fan-out that all shares the
+// `$.item016` prefix.
+std::vector<std::string> workload_paths()
+{
+  std::vector<std::string> paths{
+    "$." + item_key(6),
+    "$." + item_key(7) + "." + item_key(8),
+    "$." + item_key(9) + "." + item_key(10) + "." + item_key(84) + "[0]." + item_key(11),
+    "$." + item_key(12) + "." + item_key(13),
+    "$." + item_key(12) + "." + item_key(14),
+    "$." + item_key(12) + "." + item_key(15),
+    "$." + item_key(63)};
+
+  auto const under_016 = [](int n) { return "$." + item_key(16) + "." + item_key(n); };
+  for (int n : {19, 20, 21, 22, 23, 24, 25, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40,
+                41, 42, 43, 44, 45, 46, 47, 48, 49, 53, 54, 57, 58, 59, 61, 62}) {
+    paths.push_back(under_016(n) + "." + item_key(85) + "[0]." + item_key(18));
+  }
+  for (int n : {26, 55}) {
+    paths.push_back(under_016(n) + "." + item_key(85) + "[0]." + item_key(18));
+    paths.push_back(under_016(n) + "." + item_key(85) + "[0]." + item_key(30));
+    paths.push_back(under_016(n) + "." + item_key(27) + "." + item_key(28));
+    paths.push_back(under_016(n) + "." + item_key(27) + "." + item_key(29));
+  }
+  for (int n : {50, 60}) {
+    paths.push_back(under_016(n) + "." + item_key(85) + "[0]." + item_key(51));
+    paths.push_back(under_016(n) + "." + item_key(85) + "[0]." + item_key(52));
+  }
+  paths.push_back(under_016(56) + "." + item_key(27) + "." + item_key(28));
+  paths.push_back(under_016(56) + "." + item_key(27) + "." + item_key(29));
+  paths.push_back(under_016(56) + "[0]." + item_key(18));
+  return paths;
+}
+
 // Build the JSONPath-like extraction path.
 // For nesting=2, type=array: "a.b[1]"
 // For nesting=3, type=string: "a.b.c"
@@ -639,3 +836,189 @@ NVBENCH_BENCH(bench_variant_extract_fields)
   .add_string_axis("field_position", {"first", "last", "random"})
   .add_int64_axis("hit_rate", {20, 80})
   .add_string_axis("sorted", {"true", "false"});
+
+// One status column per path, for the benchmarks' `status` axis, or none when it is off. The
+// extraction APIs read a status buffer as incoming status before overwriting it, so the buffers
+// start at SUCCESS.
+struct status_columns {
+  std::vector<std::unique_ptr<cudf::column>> columns;
+  std::vector<cudf::mutable_column_view> views;
+};
+
+status_columns make_status_columns(std::size_t num_paths,
+                                   cudf::size_type num_rows,
+                                   rmm::cuda_stream_view stream,
+                                   rmm::device_async_resource_ref mr)
+{
+  status_columns out;
+  out.columns.reserve(num_paths);
+  out.views.reserve(num_paths);
+  for (std::size_t p = 0; p < num_paths; ++p) {
+    out.columns.push_back(cudf::make_numeric_column(
+      cudf::data_type{cudf::type_id::UINT8}, num_rows, cudf::mask_state::UNALLOCATED, stream, mr));
+    auto view = out.columns.back()->mutable_view();
+    CUDF_CUDA_TRY(
+      cudaMemsetAsync(view.data<uint8_t>(), 0, static_cast<std::size_t>(num_rows), stream.value()));
+    out.views.push_back(view);
+  }
+  CUDF_CUDA_TRY(cudaStreamSynchronize(stream.value()));
+  return out;
+}
+
+// Compares extracting many fields in one batched call against looping the single-field API, with
+// and without a prefix shared by all the requested paths. Type is fixed to int32_t; both APIs
+// decode, so the two sides of the comparison are end-to-end equivalent. The `status` axis asks both
+// for per-row status, which the batched walk writes once per path and row.
+static void bench_variant_extract_multi_field(nvbench::state& state)
+{
+  auto stream = cudf::get_default_stream();
+  auto mr     = cudf::get_current_device_resource_ref();
+
+  auto const num_rows      = static_cast<cudf::size_type>(state.get_int64("num_rows"));
+  auto const num_fields    = static_cast<int>(state.get_int64("num_fields"));
+  auto const hit_rate      = static_cast<int>(state.get_int64("hit_rate"));
+  bool const shared_prefix = state.get_string("prefix") == "shared";
+  bool const batched       = state.get_string("api") == "batched";
+  bool const with_status   = state.get_string("status") == "on";
+
+  // Dictionary: the shared parent key "a", the leaf keys f00..f{N-1}, and "z" for miss rows, in
+  // sorted order. Field ids are dictionary indices, so "a" is 0 and leaf `i` is `i + 1`.
+  std::vector<std::string> keys{"a"};
+  for (int i = 0; i < num_fields; ++i) {
+    keys.push_back(field_key(i));
+  }
+  keys.emplace_back("z");
+  auto const meta_blob = build_metadata(keys);
+
+  auto const leaf = build_leaf_value(bench_variant_type::INT32);
+  std::vector<std::pair<uint8_t, std::vector<uint8_t>>> leaf_fields;
+  for (int i = 0; i < num_fields; ++i) {
+    leaf_fields.emplace_back(static_cast<uint8_t>(i + 1), leaf);
+  }
+  // Shared-prefix layout nests every leaf under "a"; the disjoint layout puts them at the top
+  // level.
+  auto const leaf_object = build_object(leaf_fields);
+  auto hit_val           = shared_prefix ? build_object({{uint8_t{0}, leaf_object}}) : leaf_object;
+  // Miss rows hold an object keyed on "z" alone, so every path fails at its first step.
+  auto miss_val = build_object({{static_cast<uint8_t>(num_fields + 1), leaf}});
+  pad_to_equal_size(hit_val, miss_val);
+
+  std::vector<std::span<uint8_t const>> meta_spans(num_rows, std::span<uint8_t const>{meta_blob});
+  auto val_spans = fill_val_rows(num_rows, hit_val, miss_val, hit_rate);
+  auto col       = build_variant_column(meta_spans, val_spans, stream, mr);
+  CUDF_CUDA_TRY(cudaStreamSynchronize(stream.value()));
+
+  std::vector<std::string> path_strings;
+  path_strings.reserve(num_fields);
+  for (int i = 0; i < num_fields; ++i) {
+    path_strings.push_back((shared_prefix ? "$.a." : "$.") + field_key(i));
+  }
+  std::vector<std::string_view> const paths(path_strings.begin(), path_strings.end());
+  auto const target_type = cudf::data_type{cudf::type_id::INT32};
+  std::vector<cudf::data_type> const target_types(num_fields, target_type);
+
+  auto status = make_status_columns(with_status ? paths.size() : 0, num_rows, stream, mr);
+
+  auto const data_size = static_cast<std::size_t>(num_rows) * (meta_blob.size() + hit_val.size());
+
+  auto mem_stats_logger = cudf::memory_stats_logger();
+  mr                    = cudf::get_current_device_resource_ref();
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.value()));
+  state.exec(nvbench::exec_tag::sync, [&](nvbench::launch&) {
+    if (batched) {
+      std::ignore = cudf::io::parquet::experimental::extract_variant_fields(
+        col->view(), paths, target_types, status.views, stream, mr);
+    } else {
+      for (std::size_t p = 0; p < path_strings.size(); ++p) {
+        std::ignore = cudf::io::parquet::experimental::extract_variant_field(
+          col->view(),
+          path_strings[p],
+          target_type,
+          with_status ? std::optional{status.views[p]} : std::nullopt,
+          stream,
+          mr);
+      }
+    }
+  });
+
+  auto const time = state.get_summary("nv/cold/time/gpu/mean").get_float64("value");
+  state.add_element_count(static_cast<double>(data_size) / time, "bytes_per_second");
+  state.add_buffer_size(
+    mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
+}
+
+NVBENCH_BENCH(bench_variant_extract_multi_field)
+  .set_name("bench_variant_extract_multi_field")
+  .add_int64_axis("num_rows", {262144, 2097152})
+  .add_int64_axis("num_fields", {1, 4, 16, 64})
+  .add_string_axis("prefix", {"shared", "disjoint"})
+  .add_string_axis("api", {"batched", "looped"})
+  .add_string_axis("status", {"off", "on"})
+  .add_int64_axis("hit_rate", {80});
+
+// Compares batched against looped extraction on a workload shaped like a real one: an 85-key
+// dictionary, a root object that nests most of its data under `item016`, and 50 paths that fan out
+// below that shared prefix at a depth of four to five steps.
+static void bench_variant_extract_workload(nvbench::state& state)
+{
+  auto stream = cudf::get_default_stream();
+  auto mr     = cudf::get_current_device_resource_ref();
+
+  auto const num_rows    = static_cast<cudf::size_type>(state.get_int64("num_rows"));
+  bool const batched     = state.get_string("api") == "batched";
+  bool const with_status = state.get_string("status") == "on";
+
+  std::vector<std::string> dict;
+  dict.reserve(85);
+  for (int n = 1; n <= 85; ++n) {
+    dict.push_back(item_key(n));
+  }
+
+  auto const meta_blob = build_metadata(dict);
+  auto const val_blob  = build_workload_value(dict);
+
+  std::vector<std::span<uint8_t const>> meta_spans(num_rows, std::span<uint8_t const>{meta_blob});
+  std::vector<std::span<uint8_t const>> val_spans(num_rows, std::span<uint8_t const>{val_blob});
+  auto col = build_variant_column(meta_spans, val_spans, stream, mr);
+  CUDF_CUDA_TRY(cudaStreamSynchronize(stream.value()));
+
+  auto const path_strings = workload_paths();
+  std::vector<std::string_view> const paths(path_strings.begin(), path_strings.end());
+  auto const target_type = cudf::data_type{cudf::type_id::STRING};
+  std::vector<cudf::data_type> const target_types(paths.size(), target_type);
+
+  auto status = make_status_columns(with_status ? paths.size() : 0, num_rows, stream, mr);
+
+  auto const data_size = static_cast<std::size_t>(num_rows) * (meta_blob.size() + val_blob.size());
+
+  auto mem_stats_logger = cudf::memory_stats_logger();
+  mr                    = cudf::get_current_device_resource_ref();
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.value()));
+  state.exec(nvbench::exec_tag::sync, [&](nvbench::launch&) {
+    if (batched) {
+      std::ignore = cudf::io::parquet::experimental::extract_variant_fields(
+        col->view(), paths, target_types, status.views, stream, mr);
+    } else {
+      for (std::size_t p = 0; p < path_strings.size(); ++p) {
+        std::ignore = cudf::io::parquet::experimental::extract_variant_field(
+          col->view(),
+          path_strings[p],
+          target_type,
+          with_status ? std::optional{status.views[p]} : std::nullopt,
+          stream,
+          mr);
+      }
+    }
+  });
+
+  auto const time = state.get_summary("nv/cold/time/gpu/mean").get_float64("value");
+  state.add_element_count(static_cast<double>(data_size) / time, "bytes_per_second");
+  state.add_buffer_size(
+    mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
+}
+
+NVBENCH_BENCH(bench_variant_extract_workload)
+  .set_name("bench_variant_extract_workload")
+  .add_int64_axis("num_rows", {262144, 1048576})
+  .add_string_axis("api", {"batched", "looped"})
+  .add_string_axis("status", {"off", "on"});

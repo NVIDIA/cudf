@@ -23,6 +23,12 @@
 namespace cudf::io::parquet::detail {
 namespace {
 
+// Shared diagnostics so wording changes stay in lockstep at every overread/schema-init guard
+// site. File-local: no consumer outside this TU.
+constexpr char const* overread_message =
+  "Parquet footer is truncated or corrupt (read past end of buffer)";
+constexpr char const* cannot_init_schema_message = "Cannot initialize schema";
+
 std::string field_type_string(FieldType type)
 {
   switch (type) {
@@ -150,11 +156,11 @@ class parquet_field_list : public parquet_field {
       val.clear();
       return true;
     }
-    if (not cpr->check_list_element_type(t, EXPECTED_ELEM_TYPE, n)) { return false; }
-    // Reject a count that cannot fit the remaining bytes (each element >= 1 byte), guarding against
-    // a malformed size prefix forcing a huge allocation.
+    // Reject a count that cannot fit the remaining bytes (each element >= 1 byte) before any
+    // per-element work, skipping included.
     CUDF_EXPECTS(std::cmp_less_equal(n, cpr->m_end - cpr->m_cur),
                  "Parquet footer list size exceeds remaining buffer");
+    if (not cpr->check_list_element_type(t, EXPECTED_ELEM_TYPE, n)) { return false; }
     val.resize(n);
     for (uint32_t i = 0; i < n; i++) {
       _read_value(i, cpr);
@@ -437,11 +443,11 @@ class parquet_field_struct_list : public parquet_field {
       val.clear();
       return true;
     }
-    if (not cpr->check_list_element_type(t, FieldType::STRUCT, n)) { return false; }
-    // Reject a count that cannot fit the remaining bytes (each struct >= 1 byte), guarding against
-    // a malformed size prefix forcing a huge allocation.
+    // Reject a count that cannot fit the remaining bytes (each struct >= 1 byte) before any
+    // per-element work, skipping included.
     CUDF_EXPECTS(std::cmp_less_equal(n, cpr->m_end - cpr->m_cur),
                  "Parquet footer list size exceeds remaining buffer");
+    if (not cpr->check_list_element_type(t, FieldType::STRUCT, n)) { return false; }
     val.resize(n);
 
     constexpr uint32_t parallel_threshold = 512;
@@ -703,11 +709,9 @@ bool CompactProtocolReader::check_list_element_type(int type, FieldType expected
     }
   }
   // The header is consumed; discard the `count` element payloads so the struct walk resumes at
-  // the next field. The guard bounds the skip loop against a malformed size prefix (each element
-  // >= 1 byte). Bool list elements are one byte each (a bool struct field's value lives in the
-  // type nibble).
-  CUDF_EXPECTS(std::cmp_less_equal(count, m_end - m_cur),
-               "Parquet footer list size exceeds remaining buffer");
+  // the next field. Callers bound `count` against the remaining bytes before this call, so the
+  // skip loop is bounded. Bool list elements are one byte each (a bool struct field's value
+  // lives in the type nibble).
   auto const et = static_cast<FieldType>(type);
   if (et == FieldType::BOOLEAN_TRUE || et == FieldType::BOOLEAN_FALSE) {
     skip_bytes(count);
@@ -1109,7 +1113,7 @@ void decode_footer_bytes(cudf::host_span<uint8_t const> footer_bytes,
 {
   CompactProtocolReader reader{footer_bytes.data(), footer_bytes.size(), mode};
   reader.read(metadata);
-  CUDF_EXPECTS(not reader.overread(), CompactProtocolReader::overread_message);
+  CUDF_EXPECTS(not reader.overread(), overread_message);
 }
 
 void decode_footer_and_init_schema(cudf::host_span<uint8_t const> footer_bytes,
@@ -1120,9 +1124,9 @@ void decode_footer_and_init_schema(cudf::host_span<uint8_t const> footer_bytes,
   // Check schema-init first: a footer from which no schema can be built (e.g. empty input) reports
   // the specific "Cannot initialize schema" rather than being mislabeled as generic overread.
   auto const is_schema_initialized = reader.InitSchema(metadata);
-  CUDF_EXPECTS(is_schema_initialized, CompactProtocolReader::cannot_init_schema_message);
+  CUDF_EXPECTS(is_schema_initialized, cannot_init_schema_message);
   // A schema that parsed but overran the buffer's stop byte is truncated/corrupt.
-  CUDF_EXPECTS(not reader.overread(), CompactProtocolReader::overread_message);
+  CUDF_EXPECTS(not reader.overread(), overread_message);
 }
 
 }  // namespace cudf::io::parquet::detail

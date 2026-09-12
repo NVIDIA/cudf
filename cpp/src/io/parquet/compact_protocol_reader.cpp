@@ -23,8 +23,7 @@
 namespace cudf::io::parquet::detail {
 namespace {
 
-// Shared diagnostics so wording changes stay in lockstep at every overread/schema-init guard
-// site. File-local: no consumer outside this TU.
+// Shared overread/schema-init diagnostics for the decode helpers below.
 constexpr char const* overread_message =
   "Parquet footer is truncated or corrupt (read past end of buffer)";
 constexpr char const* cannot_init_schema_message = "Cannot initialize schema";
@@ -156,8 +155,7 @@ class parquet_field_list : public parquet_field {
       val.clear();
       return true;
     }
-    // Reject a count that cannot fit the remaining bytes (each element >= 1 byte) before any
-    // per-element work, skipping included.
+    // Fail before any per-element work on a count that cannot fit the remaining bytes.
     CUDF_EXPECTS(std::cmp_less_equal(n, cpr->m_end - cpr->m_cur),
                  "Parquet footer list size exceeds remaining buffer");
     if (not cpr->check_list_element_type(t, EXPECTED_ELEM_TYPE, n)) { return false; }
@@ -443,8 +441,7 @@ class parquet_field_struct_list : public parquet_field {
       val.clear();
       return true;
     }
-    // Reject a count that cannot fit the remaining bytes (each struct >= 1 byte) before any
-    // per-element work, skipping included.
+    // Fail before any per-element work on a count that cannot fit the remaining bytes.
     CUDF_EXPECTS(std::cmp_less_equal(n, cpr->m_end - cpr->m_cur),
                  "Parquet footer list size exceeds remaining buffer");
     if (not cpr->check_list_element_type(t, FieldType::STRUCT, n)) { return false; }
@@ -708,10 +705,8 @@ bool CompactProtocolReader::check_list_element_type(int type, FieldType expected
       assert_field_type(type, expected);
     }
   }
-  // The header is consumed; discard the `count` element payloads so the struct walk resumes at
-  // the next field. Callers bound `count` against the remaining bytes before this call, so the
-  // skip loop is bounded. Bool list elements are one byte each (a bool struct field's value
-  // lives in the type nibble).
+  // Discard the element payloads so the walk resumes at the next field. Bool elements are one
+  // byte each (the value lives in the type nibble); callers bound `count` against the buffer.
   auto const et = static_cast<FieldType>(type);
   if (et == FieldType::BOOLEAN_TRUE || et == FieldType::BOOLEAN_FALSE) {
     skip_bytes(count);
@@ -1121,11 +1116,9 @@ void decode_footer_and_init_schema(cudf::host_span<uint8_t const> footer_bytes,
 {
   CompactProtocolReader reader{footer_bytes.data(), footer_bytes.size()};
   reader.read(metadata);
-  // Check schema-init first: a footer from which no schema can be built (e.g. empty input) reports
-  // the specific "Cannot initialize schema" rather than being mislabeled as generic overread.
+  // Schema-init failure (e.g. empty input) reports the specific message, not generic overread.
   auto const is_schema_initialized = reader.InitSchema(metadata);
   CUDF_EXPECTS(is_schema_initialized, cannot_init_schema_message);
-  // A schema that parsed but overran the buffer's stop byte is truncated/corrupt.
   CUDF_EXPECTS(not reader.overread(), overread_message);
 }
 

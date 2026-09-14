@@ -1,0 +1,18 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# Intentionally broader than python/cudf_polars/pyproject.toml. This configuration
+# is for comparing suites, not enforcing the regular project coverage threshold.
+[tool.coverage.run]
+source = ["cudf_polars"]
+parallel = true
+# Python 3.14 defaults to sysmon, which cannot record pytest-cov's dynamic
+# per-test contexts. The C tracer is required for --cov-context=test.
+core = "ctrace"
+
+[tool.coverage.report]
+exclude_also = [
+  "if TYPE_CHECKING:",
+  "class .*\\bProtocol(?:\\[[^]]+\\])?:",
+  "assert_never\\("
+]

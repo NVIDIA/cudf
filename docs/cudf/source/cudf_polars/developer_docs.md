@@ -564,6 +564,61 @@ def test_whatever():
 
 This test will fail if translation does not raise.
 
+## Upstream Polars coverage and local-test classification
+
+The local cudf-polars suite and upstream Polars suite serve different purposes.
+The broad upstream run remains a compatibility test and may use CPU fallback
+for functionality that is not GPU-supported. A separate strict upstream subset
+makes an explicit GPU-support claim: it runs with `raise_on_fail=True`, so
+fallback is a failure.
+
+Strict GPU runs are exception-driven: every lazy query is strict by default,
+while versioned fallback and expected-failure maps in
+`cudf_polars/testing/inject_gpu_engine.py` document the exceptions. In-memory
+exceptions form the base policy and small-blocksize SPMD adds its own
+exceptions. CPU-fallback entries must actually fall back; stale entries and
+contradictory classifications fail collection.
+
+To compare coverage from the two suites, first prepare the upstream Polars
+checkout used by CI, then run:
+
+```bash
+ci/test_cudf_polars_polars_tests.sh  # prepares ./polars and test dependencies
+ci/run_cudf_polars_coverage_comparison.sh
+```
+
+The command writes separate local and upstream coverage data with test contexts,
+then produces `coverage-results/cudf-polars-comparison/coverage-comparison.json`,
+`index.html`, `strict-gpu-candidates.html`, and
+`local-test-classification.html`. The JSON records context counts
+and up to 20 representative pytest contexts for each covered line, classified as `local_only`,
+`upstream_only`, or `both`; the separate coverage data files retain every
+context for deeper analysis. The candidate table ranks focused upstream unit
+tests by sampled shared lines in ordinary translation, boolean, aggregation, or
+container paths; it is a review queue, not proof that a node is GPU-supported.
+The analysis configuration intentionally includes engine, optimizer, streaming, and testing
+modules omitted by the normal coverage threshold.
+
+The local-test classification covers every collected local node. It retains
+scan/IO, streaming/engine, unsupported/fallback, numeric/dtype, and internal
+contracts; flags IR/repr tests for behavioral rewrites; and marks a test for
+deletion review only when it has no local-only covered lines and every covered
+line is exercised by the strict no-fallback upstream subset. A deletion-review
+candidate still requires manual confirmation that both tests assert the same
+public contract.
+
+This evidence is required for follow-up pruning. Retain local tests for
+unsupported/fallback behavior, GPU numeric and dtype edge cases,
+engine/config/optimizer internals, and SPMD execution semantics. Rewrite IR or
+repr assertions into public-API behavioral tests where they cover the same
+contract, and upstream ordinary engine-agnostic Polars behavior that is absent
+upstream. Delete a local test only when this comparison and the strict
+supported-node run demonstrate equivalent upstream GPU coverage.
+
+Scan and IO local tests are explicitly deferred from pruning: the upstream
+scan/IO suite is currently too slow for this comparison, so coverage overlap
+alone is not enough to remove them.
+
 # Debugging
 
 If the callback execution fails during the polars `collect` call, we

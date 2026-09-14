@@ -8,6 +8,7 @@ TIMEOUT_TOOL_PATH="$(dirname "$(realpath "${BASH_SOURCE[0]}")")"/timeout_with_st
 
 ENGINE="both"
 BLOCKSIZE="default"
+RUN_SLOW=false
 PYTEST_ARGS=()
 while (($#)); do
     case "$1" in
@@ -35,6 +36,10 @@ while (($#)); do
             BLOCKSIZE="${1#*=}"
             shift
             ;;
+        --run-slow)
+            RUN_SLOW=true
+            shift
+            ;;
         *)
             PYTEST_ARGS+=("$1")
             shift
@@ -49,6 +54,11 @@ fi
 if [[ "${BLOCKSIZE}" != "default" && "${BLOCKSIZE}" != "small" ]]; then
     echo "Unknown blocksize: ${BLOCKSIZE}. Expected one of: default, small." >&2
     exit 2
+fi
+if [[ "${RUN_SLOW}" == "true" ]]; then
+    PYTEST_MARK_EXPR=""
+else
+    PYTEST_MARK_EXPR="not slow"
 fi
 
 # Support invoking run_cudf_polars_pytests.sh outside the script directory
@@ -117,7 +127,7 @@ if [[ "${ENGINE}" == "both" || "${ENGINE}" == "in-memory" ]]; then
            --import-mode=importlib \
            --cache-clear \
            -x \
-           -m "" \
+           -m "${PYTEST_MARK_EXPR}" \
            -p cudf_polars.testing.inject_gpu_engine \
            -n 4 \
            --dist=worksteal \
@@ -139,7 +149,7 @@ if [[ "${ENGINE}" == "both" || "${ENGINE}" == "spmd" ]]; then
            --import-mode=importlib \
            --cache-clear \
            -x \
-           -m "" \
+           -m "${PYTEST_MARK_EXPR}" \
            -p cudf_polars.testing.inject_gpu_engine \
            -W ignore::ResourceWarning \
            -n 4 \

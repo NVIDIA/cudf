@@ -352,6 +352,7 @@ jobs:
       script: >-
         ci/test_cudf_polars_polars_tests.sh --engine ${{ matrix.engine }}
         --inject-gpu-engine-blocksize small
+        --run-slow
         --cudf-polars-shard-id ${{ matrix.shard_id }}
         --cudf-polars-num-shards ${{ matrix.num_shards }}
       # https://github.com/NVIDIA/cudf/issues/23498

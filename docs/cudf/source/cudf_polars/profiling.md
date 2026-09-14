@@ -103,8 +103,8 @@ KvikIO I/O summary
 ```
 
 Every row is also an attribute, `s.bytes_read`, `s.busy_ns` and so on. See the
-[KvikIO reference][kvikio-stats] for the full set, and [busy time and bandwidth][kvikio-busy]
-for how the busy figures are measured.
+[KvikIO statistics reference][kvikio-stats] for the full set, and [busy time and
+bandwidth][kvikio-busy] for how the busy figures are measured.
 
 ### What is and is not counted
 
@@ -250,9 +250,9 @@ shape: (2, 3)
 
 [nsight]: https://developer.nvidia.com/nsight-systems
 [nvtx]: https://nvidia.github.io/NVTX/
-[kvikio-stats]: https://docs.rapids.ai/api/kvikio/nightly/statistics/
-[kvikio-busy]: https://docs.rapids.ai/api/kvikio/nightly/statistics/#busy-time-and-bandwidth
-[rapidsmpf-stats]: https://docs.rapids.ai/api/rapidsmpf/nightly/statistics/
+[kvikio-stats]: inv:kvikio:std:doc:#statistics
+[kvikio-busy]: <inv:kvikio:std:label:#statistics:busy time and bandwidth>
+[rapidsmpf-stats]: inv:rapidsmpf:std:doc:#statistics
 [structlog]: https://www.structlog.org/en/stable/
 [structlog-configure]: https://www.structlog.org/en/stable/configuration.html
 [structlog-context]: https://www.structlog.org/en/stable/contextvars.html

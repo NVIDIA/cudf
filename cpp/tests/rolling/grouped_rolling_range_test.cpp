@@ -1076,3 +1076,53 @@ TEST_F(GroupedRollingRangeOrderByStringTest, Descending_NoParts_WithNulls)
                                    *orderby, cudf::order::DESCENDING, current_row, current_row),
                                  nullable_ints_column({3, 3, 3, 3, 3, 3, 4, 4, 4, 4, 2, 2, 2, 2}));
 }
+
+// End-to-end exercise of the column-valued RANGE bounds through `grouped_range_rolling_window`:
+// a constant per-row delta column must produce the same aggregation as the equivalent scalar bound
+// (and the known hand-computed result). The orderby is sorted group-wise.
+TEST(GroupedRollingRangeColumnDeltaTest, PerRowDeltaSumMatchesScalarAndOracle)
+{
+  auto const group_keys = ints_column{0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2}.release();
+  auto const orderby =
+    ints_column{0, 100, 200, 300, 400, 500, 0, 100, 200, 300, 0, 100, 200, 300}.release();
+  auto const values   = ints_column{1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3}.release();
+  auto const num_rows = orderby->size();
+
+  std::vector<int32_t> const preceding_deltas(static_cast<std::size_t>(num_rows), 200);
+  std::vector<int32_t> const following_deltas(static_cast<std::size_t>(num_rows), 100);
+  auto const preceding_wrapper = ints_column(preceding_deltas.begin(), preceding_deltas.end());
+  auto const following_wrapper = ints_column(following_deltas.begin(), following_deltas.end());
+  cudf::column_view const preceding_col = preceding_wrapper;
+  cudf::column_view const following_col = following_wrapper;
+  auto const preceding_scalar           = cudf::make_fixed_width_scalar<int32_t>(200);
+  auto const following_scalar           = cudf::make_fixed_width_scalar<int32_t>(100);
+
+  auto make_requests = [&] {
+    std::vector<cudf::rolling_request> requests;
+    requests.push_back(
+      {values->view(), 1, cudf::make_sum_aggregation<cudf::rolling_aggregation>()});
+    return requests;
+  };
+
+  auto const column_result =
+    cudf::grouped_range_rolling_window(cudf::table_view{{group_keys->view()}},
+                                       orderby->view(),
+                                       cudf::order::ASCENDING,
+                                       cudf::null_order::BEFORE,
+                                       cudf::bounded_closed_column{preceding_col},
+                                       cudf::bounded_closed_column{following_col},
+                                       make_requests());
+  auto const scalar_result =
+    cudf::grouped_range_rolling_window(cudf::table_view{{group_keys->view()}},
+                                       orderby->view(),
+                                       cudf::order::ASCENDING,
+                                       cudf::null_order::BEFORE,
+                                       cudf::bounded_closed{*preceding_scalar},
+                                       cudf::bounded_closed{*following_scalar},
+                                       make_requests());
+
+  auto const expected =
+    bigints_column{{2, 3, 4, 4, 4, 3, 4, 6, 8, 6, 6, 9, 12, 9}, cudf::test::iterators::no_nulls()};
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(column_result->view().column(0), expected);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(column_result->view().column(0), scalar_result->view().column(0));
+}

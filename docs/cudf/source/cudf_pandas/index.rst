@@ -34,8 +34,10 @@ automatically **falling back to pandas** for other operations.
 | Nothing changes, not even your `import` statements, when going from CPU to GPU.             | Combines the full flexibility of Pandas with blazing fast performance of cuDF                                       |
 +---------------------------------------------------------------------------------------------+---------------------------------------------------------------------------------------------------------------------+
 
-``cudf.pandas`` is now Generally Available (GA) as part of the ``cudf`` package.  See `RAPIDS
-Quick Start <https://rapids.ai/#quick-start>`_ to get up-and-running with ``cudf``.
+``cudf.pandas`` is available as part of the ``cudf`` package. See the
+`installation and deployment guide
+<https://docs.rapids.ai/install/#install-rapids>_`
+to get up-and-running with cuDF.
 
 .. toctree::
    :maxdepth: 1

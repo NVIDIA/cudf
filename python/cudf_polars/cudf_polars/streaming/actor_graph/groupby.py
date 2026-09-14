@@ -32,8 +32,12 @@ from cudf_polars.streaming.actor_graph.collectives.ordering import (
 from cudf_polars.streaming.actor_graph.collectives.shuffle import ShuffleManager
 from cudf_polars.streaming.actor_graph.dispatch import (
     generate_ir_sub_network,
+    ir_context_for_node,
 )
-from cudf_polars.streaming.actor_graph.tracing import send_chunk
+from cudf_polars.streaming.actor_graph.tracing import (
+    send_chunk,
+    trace_channel,
+)
 from cudf_polars.streaming.actor_graph.utils import (
     MAX_ROWS_PER_PARTITION,
     ChannelManager,
@@ -874,6 +878,8 @@ async def groupby_actor(
     async with shutdown_on_error(
         context, ch_in, ch_out, trace_ir=ir, ir_context=ir_context
     ) as tracer:
+        ch_in = trace_channel(ch_in, tracer)
+        ch_out = trace_channel(ch_out, tracer)
         metadata_in = await recv_metadata(ch_in, context)
 
         nranks = comm.nranks
@@ -890,6 +896,13 @@ async def groupby_actor(
         preserves_output_order = ir.preserves_output_order
         fully_partitioned = partitioning.is_strictly_partitioned(
             level=partitioning_level,
+        )
+        input_ordering = None if metadata_in.duplicated else partitioning.get_ordering()
+        can_adjust_preserving_order = (
+            isinstance(ir, GroupBy)
+            and preserves_output_order
+            and input_ordering is not None
+            and not _has_stable_sorted_agg(ir.agg_requests)
         )
         fallback_case = (
             # NOTE: This criteria means that we fell back
@@ -936,7 +949,7 @@ async def groupby_actor(
             ir_context,
             ch_in,
             target_partition_size,
-            allow_early_exit=not maintain_order,
+            allow_early_exit=not maintain_order or can_adjust_preserving_order,
         )
 
         skip_global_comm = metadata_in.duplicated or isinstance(
@@ -952,7 +965,7 @@ async def groupby_actor(
             collective_ids,
             target_partition_size,
             skip_global_comm,
-            maintain_order,
+            maintain_order and not can_adjust_preserving_order,
             tracer,
         )
 
@@ -969,11 +982,7 @@ async def groupby_actor(
                 aggregated=aggregated,
                 tracer=tracer,
             )
-        elif not metadata_in.duplicated and partitioning.is_ordered(
-            group_keys,
-            level="flat",
-        ):
-            assert isinstance(partitioning.inter_rank_scheme, OrderScheme)
+        elif input_ordering is not None:
             await _ordered_adjust_reduce(
                 context,
                 comm,
@@ -986,7 +995,7 @@ async def groupby_actor(
                 target_partition_size,
                 aggregated=aggregated,
                 input_drained=input_drained,
-                input_ordering=partitioning.inter_rank_scheme.orderings[0],
+                input_ordering=input_ordering,
                 preserves_output_order=preserves_output_order,
                 tracer=tracer,
             )
@@ -1025,6 +1034,7 @@ def _(
     actors, channels = process_children(ir, rec)
     channels[ir] = ChannelManager(rec.state["context"])
     collective_ids = list(rec.state["collective_id_map"].get(ir, []))
+    ir_context = ir_context_for_node(rec, ir)
     assert len(collective_ids) == 2, (
         f"{type(ir).__name__} requires 2 collective IDs, got {len(collective_ids)}"
     )
@@ -1033,7 +1043,7 @@ def _(
             rec.state["context"],
             rec.state["comm"],
             ir,
-            rec.state["ir_context"],
+            ir_context,
             channels[ir].reserve_input_slot(),
             channels[ir.children[0]].reserve_output_slot(),
             config_options.executor.target_partition_size,

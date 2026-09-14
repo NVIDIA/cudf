@@ -105,7 +105,7 @@ if [[ "${ENGINE}" == "both" || "${ENGINE}" == "in-memory" ]]; then
            -n 4 \
            --dist=worksteal \
            --tb=native \
-           --durations 10 --durations-min 10 \
+           --durations=50 --durations-min=1 \
            "${DESELECTED_TEST_ARGS[@]}" \
            "${PYTEST_ARGS[@]}" \
            py-polars/tests \
@@ -128,7 +128,7 @@ if [[ "${ENGINE}" == "both" || "${ENGINE}" == "spmd" ]]; then
            -n 4 \
            --dist=worksteal \
            --tb=native \
-           --durations 10 --durations-min 10 \
+           --durations=50 --durations-min=1 \
            "${DESELECTED_TEST_ARGS[@]}" \
            "${PYTEST_ARGS[@]}" \
            py-polars/tests \

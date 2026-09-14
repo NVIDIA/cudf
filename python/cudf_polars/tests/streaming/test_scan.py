@@ -20,6 +20,7 @@ from cudf_polars.dsl.ir import (
 from cudf_polars.dsl.utils.io import (
     CachedParquetInfo,
     _prefetch_parquet_footers_for_paths,
+    attach_cached_parquet_metadata,
     prefetch_parquet_file_metadata_for_ir,
 )
 from cudf_polars.engine.options import StreamingOptions
@@ -130,6 +131,16 @@ def test_prefetch_parquet_file_metadata_no_parquet_scans() -> None:
         Empty({}), py_executor=None, stats=None
     )
     assert result == {}
+
+
+def test_attach_cached_parquet_metadata_skips_incomplete_scan() -> None:
+    scan = _make_parquet_scan(["first.parquet", "second.parquet"])
+    fused = FusedScan(scan.schema, scan, scan.paths, scan.parquet_options, None)
+    streaming_scan = StreamingScan([fused], scan, "fused")
+
+    attach_cached_parquet_metadata(streaming_scan, {})
+
+    assert fused.cached_parquet_info is None
 
 
 def test_prefetch_skips_paths_cached_by_stats_collection(

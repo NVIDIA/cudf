@@ -355,6 +355,8 @@ class SplitScan(IR):
     (skip_rows and n_rows) is calculated at IO time.
     """
 
+    is_io_node: bool = True
+
     __slots__ = (
         "base_scan",
         "cached_parquet_info",
@@ -580,6 +582,8 @@ class FusedScan(IR):
     SINGLE_FILE (N = 1).
     """
 
+    is_io_node: bool = True
+
     __slots__ = (
         "base_scan",
         "cached_parquet_info",
@@ -745,6 +749,8 @@ def _(
 
 class StreamingScan(IR):
     """A streaming scan node."""
+
+    is_io_node: bool = True
 
     __slots__ = (
         "base_scan",
@@ -1385,6 +1391,17 @@ def _build_parquet_source(
     )
 
 
+def _resolve_max_footer_samples(
+    paths: tuple[str, ...], max_footer_samples: int | None
+) -> int:
+    """Resolve automatic footer sampling from the scan paths."""
+    if max_footer_samples is not None:
+        return max_footer_samples
+    if any(plc.io.SourceInfo._is_remote_uri(path) for path in paths):
+        return 0
+    return 3
+
+
 def _build_source_info(
     ir: Scan | DataFrameScan,
     config_options: ConfigOptions[StreamingExecutor],
@@ -1396,11 +1413,13 @@ def _build_source_info(
     if isinstance(ir, DataFrameScan):
         return DataFrameSourceInfo.from_polars(pl.DataFrame._from_pydf(ir.df))
     elif isinstance(ir, Scan) and ir.typ == "parquet":
-        max_footer = config_options.parquet_options.max_footer_samples
+        paths = tuple(ir.paths)
+        max_footer = _resolve_max_footer_samples(
+            paths, config_options.parquet_options.max_footer_samples
+        )
         max_rg = config_options.parquet_options.max_row_group_samples
         needed_cols = frozenset(ir.schema) if needed_cols is None else needed_cols
         schema = tuple(ir.schema.items()) if schema is None else schema
-        paths = tuple(ir.paths)
         use_hybrid_scan = config_options.parquet_options.use_hybrid_scan
         return _build_parquet_source(
             paths,

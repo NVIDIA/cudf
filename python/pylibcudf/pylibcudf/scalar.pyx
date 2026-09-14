@@ -163,7 +163,7 @@ cdef class Scalar:
     cpdef bool is_valid(self, object stream: CudaStreamLike | None = None):
         """True if the scalar is valid, false if not"""
         cdef Stream _stream = _get_stream(stream)
-        cdef cudaStream_t _cs = _stream.view().value()
+        cdef cudaStream_t _cs = _stream.view().get()
         return self.get().is_valid(_cs)
 
     def to_arrow(
@@ -187,7 +187,7 @@ cdef class Scalar:
         # Note that metadata for scalars is primarily important for preserving
         # information on nested types since names are otherwise irrelevant.
         cdef Stream _stream = _get_stream(stream)
-        cdef cudaStream_t _cs = _stream.view().value()
+        cdef cudaStream_t _cs = _stream.view().get()
         return Column.from_scalar(self, 1, _stream).to_arrow(metadata=metadata)[0]
 
     @staticmethod
@@ -234,7 +234,7 @@ cdef class Scalar:
         New empty (null) scalar of the given type.
         """
         cdef Stream _stream = <Stream>stream
-        cdef cudaStream_t _cs = _stream.view().value()
+        cdef cudaStream_t _cs = _stream.view().get()
         return Scalar.from_libcudf(
             move(make_empty_scalar_like(column.view(), _cs, mr.get_mr()))
         )
@@ -281,7 +281,7 @@ cdef class Scalar:
             New pylibcudf.Scalar
         """
         cdef Stream _stream = _get_stream(stream)
-        cdef cudaStream_t _cs = _stream.view().value()
+        cdef cudaStream_t _cs = _stream.view().get()
         mr = _get_memory_resource(mr)
         return _from_py(py_val, dtype, _stream, mr)
 
@@ -310,7 +310,7 @@ cdef class Scalar:
             New pylibcudf.Scalar
         """
         cdef Stream _stream = _get_stream(stream)
-        cdef cudaStream_t _cs = _stream.view().value()
+        cdef cudaStream_t _cs = _stream.view().get()
         mr = _get_memory_resource(mr)
         return _from_numpy(np_val, _stream, mr)
 
@@ -331,7 +331,7 @@ cdef class Scalar:
             A Python scalar associated with the type of the Scalar.
         """
         cdef Stream _stream = _get_stream(stream)
-        cdef cudaStream_t _cs = _stream.view().value()
+        cdef cudaStream_t _cs = _stream.view().get()
         if not self.is_valid(stream):
             return None
 
@@ -395,7 +395,7 @@ def _(
     py_val, dtype: DataType | None, stream: Stream, mr: DeviceMemoryResource
 ):
     cdef Stream _stream = stream
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     cdef DataType c_dtype
     if dtype is None:
         raise ValueError("Must specify a dtype for a None value.")
@@ -424,7 +424,7 @@ def _(
     py_val, dtype: DataType | None, stream: Stream, mr: DeviceMemoryResource
 ):
     cdef Stream _stream = stream
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     cdef unique_ptr[scalar] c_obj
     cdef DataType c_dtype
     if dtype is None:
@@ -454,7 +454,7 @@ def _(
     py_val, dtype: DataType | None, stream: Stream, mr: DeviceMemoryResource
 ):
     cdef Stream _stream = stream
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     cdef unique_ptr[scalar] c_obj
     cdef DataType c_dtype
     cdef duration_ns c_duration_ns
@@ -618,7 +618,7 @@ def _(
     py_val, dtype: DataType | None, stream: Stream, mr: DeviceMemoryResource
 ):
     cdef Stream _stream = stream
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     if dtype is None:
         dtype = DataType(type_id.BOOL8)
     elif dtype.id() != type_id.BOOL8:
@@ -641,7 +641,7 @@ def _(
     py_val, dtype: DataType | None, stream: Stream, mr: DeviceMemoryResource
 ):
     cdef Stream _stream = stream
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     if dtype is None:
         dtype = DataType(type_id.STRING)
     elif dtype.id() != type_id.STRING:
@@ -660,7 +660,7 @@ def _(
     py_val, dtype: DataType | None, stream: Stream, mr: DeviceMemoryResource
 ):
     cdef Stream _stream = stream
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     cdef unique_ptr[scalar] c_obj
     cdef duration_us c_duration_us
     cdef duration_ns c_duration_ns
@@ -739,7 +739,7 @@ def _(
     py_val, dtype: DataType | None, stream: Stream, mr: DeviceMemoryResource
 ):
     cdef Stream _stream = stream
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     cdef unique_ptr[scalar] c_obj
     cdef duration_us c_duration_us
     cdef duration_ns c_duration_ns
@@ -836,7 +836,7 @@ def _(
     py_val, dtype: DataType | None, stream: Stream, mr: DeviceMemoryResource
 ):
     cdef Stream _stream = stream
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     scale = py_val.as_tuple().exponent
     # 38 for the max precision of DECIMAL128
     with decimal.localcontext(prec=38):
@@ -878,7 +878,7 @@ if np is not None:
     @_from_numpy.register(np.bool_)
     def _(np_val, stream: Stream, mr: DeviceMemoryResource):
         cdef Stream _stream = stream
-        cdef cudaStream_t _cs = _stream.view().value()
+        cdef cudaStream_t _cs = _stream.view().get()
         cdef DataType dtype = DataType(type_id.BOOL8)
         cdef unique_ptr[scalar] c_obj = make_numeric_scalar(
             dtype.c_obj, _cs, mr.get_mr()
@@ -891,7 +891,7 @@ if np is not None:
     @_from_numpy.register(np.str_)
     def _(np_val, stream: Stream, mr: DeviceMemoryResource):
         cdef Stream _stream = stream
-        cdef cudaStream_t _cs = _stream.view().value()
+        cdef cudaStream_t _cs = _stream.view().get()
         cdef DataType dtype = DataType(type_id.STRING)
         cdef unique_ptr[scalar] c_obj = make_string_scalar(
             np_val.item().encode(),
@@ -904,7 +904,7 @@ if np is not None:
     @_from_numpy.register(np.int8)
     def _(np_val, stream: Stream, mr: DeviceMemoryResource):
         cdef Stream _stream = stream
-        cdef cudaStream_t _cs = _stream.view().value()
+        cdef cudaStream_t _cs = _stream.view().get()
         dtype = DataType(type_id.INT8)
         cdef unique_ptr[scalar] c_obj = make_numeric_scalar(
             dtype.c_obj, _cs, mr.get_mr()
@@ -916,7 +916,7 @@ if np is not None:
     @_from_numpy.register(np.int16)
     def _(np_val, stream: Stream, mr: DeviceMemoryResource):
         cdef Stream _stream = stream
-        cdef cudaStream_t _cs = _stream.view().value()
+        cdef cudaStream_t _cs = _stream.view().get()
         dtype = DataType(type_id.INT16)
         cdef unique_ptr[scalar] c_obj = make_numeric_scalar(
             dtype.c_obj, _cs, mr.get_mr()
@@ -928,7 +928,7 @@ if np is not None:
     @_from_numpy.register(np.int32)
     def _(np_val, stream: Stream, mr: DeviceMemoryResource):
         cdef Stream _stream = stream
-        cdef cudaStream_t _cs = _stream.view().value()
+        cdef cudaStream_t _cs = _stream.view().get()
         dtype = DataType(type_id.INT32)
         cdef unique_ptr[scalar] c_obj = make_numeric_scalar(
             dtype.c_obj, _cs, mr.get_mr()
@@ -940,7 +940,7 @@ if np is not None:
     @_from_numpy.register(np.int64)
     def _(np_val, stream: Stream, mr: DeviceMemoryResource):
         cdef Stream _stream = stream
-        cdef cudaStream_t _cs = _stream.view().value()
+        cdef cudaStream_t _cs = _stream.view().get()
         dtype = DataType(type_id.INT64)
         cdef unique_ptr[scalar] c_obj = make_numeric_scalar(
             dtype.c_obj, _cs, mr.get_mr()
@@ -952,7 +952,7 @@ if np is not None:
     @_from_numpy.register(np.uint8)
     def _(np_val, stream: Stream, mr: DeviceMemoryResource):
         cdef Stream _stream = stream
-        cdef cudaStream_t _cs = _stream.view().value()
+        cdef cudaStream_t _cs = _stream.view().get()
         dtype = DataType(type_id.UINT8)
         cdef unique_ptr[scalar] c_obj = make_numeric_scalar(
             dtype.c_obj, _cs, mr.get_mr()
@@ -964,7 +964,7 @@ if np is not None:
     @_from_numpy.register(np.uint16)
     def _(np_val, stream: Stream, mr: DeviceMemoryResource):
         cdef Stream _stream = stream
-        cdef cudaStream_t _cs = _stream.view().value()
+        cdef cudaStream_t _cs = _stream.view().get()
         dtype = DataType(type_id.UINT16)
         cdef unique_ptr[scalar] c_obj = make_numeric_scalar(
             dtype.c_obj, _cs, mr.get_mr()
@@ -976,7 +976,7 @@ if np is not None:
     @_from_numpy.register(np.uint32)
     def _(np_val, stream: Stream, mr: DeviceMemoryResource):
         cdef Stream _stream = stream
-        cdef cudaStream_t _cs = _stream.view().value()
+        cdef cudaStream_t _cs = _stream.view().get()
         dtype = DataType(type_id.UINT32)
         cdef unique_ptr[scalar] c_obj = make_numeric_scalar(
             dtype.c_obj, _cs, mr.get_mr()
@@ -988,7 +988,7 @@ if np is not None:
     @_from_numpy.register(np.uint64)
     def _(np_val, stream: Stream, mr: DeviceMemoryResource):
         cdef Stream _stream = stream
-        cdef cudaStream_t _cs = _stream.view().value()
+        cdef cudaStream_t _cs = _stream.view().get()
         dtype = DataType(type_id.UINT64)
         cdef unique_ptr[scalar] c_obj = make_numeric_scalar(
             dtype.c_obj, _cs, mr.get_mr()
@@ -1000,7 +1000,7 @@ if np is not None:
     @_from_numpy.register(np.float32)
     def _(np_val, stream: Stream, mr: DeviceMemoryResource):
         cdef Stream _stream = stream
-        cdef cudaStream_t _cs = _stream.view().value()
+        cdef cudaStream_t _cs = _stream.view().get()
         dtype = DataType(type_id.FLOAT32)
         cdef unique_ptr[scalar] c_obj = make_numeric_scalar(
             dtype.c_obj, _cs, mr.get_mr()
@@ -1012,7 +1012,7 @@ if np is not None:
     @_from_numpy.register(np.float64)
     def _(np_val, stream: Stream, mr: DeviceMemoryResource):
         cdef Stream _stream = stream
-        cdef cudaStream_t _cs = _stream.view().value()
+        cdef cudaStream_t _cs = _stream.view().get()
         dtype = DataType(type_id.FLOAT64)
         cdef unique_ptr[scalar] c_obj = make_numeric_scalar(
             dtype.c_obj, _cs, mr.get_mr()

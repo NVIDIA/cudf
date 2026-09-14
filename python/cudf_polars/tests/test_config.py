@@ -37,7 +37,6 @@ from cudf_polars.utils.config import (
     MemoryResourceConfig,
     ParquetOptions,
     StreamingExecutor,
-    Unspecified,
     configure_kvikio,
 )
 from cudf_polars.utils.cuda_stream import get_cuda_stream
@@ -644,9 +643,21 @@ def test_use_hybrid_scan_requires_prefetch_file_metadata() -> None:
         )
 
 
+def test_use_hybrid_scan_enables_prefetch_file_metadata_by_default() -> None:
+    assert ParquetOptions(use_hybrid_scan=True).prefetch_file_metadata is True
+
+    config = ConfigOptions.from_polars_engine(
+        pl.GPUEngine(
+            executor="streaming",
+            parquet_options={"use_hybrid_scan": True},
+        )
+    )
+    assert config.parquet_options.prefetch_file_metadata is True
+
+
 def test_prefetch_file_metadata_default() -> None:
     config = ConfigOptions.from_polars_engine(pl.GPUEngine(executor="streaming"))
-    assert isinstance(config.parquet_options.prefetch_file_metadata, Unspecified)
+    assert config.parquet_options.prefetch_file_metadata is False
 
     config = ConfigOptions.from_polars_engine(pl.GPUEngine(executor="in-memory"))
     assert config.parquet_options.prefetch_file_metadata is False
@@ -667,12 +678,9 @@ def test_parquet_options_object_passthrough() -> None:
     assert config.parquet_options is parquet_options
 
 
-def test_parquet_options_object_engine_default() -> None:
-    # If a user passes in a ParquetOptions object instead of a plain dict, and
-    # doesn't set prefetch_file_metadata on it, we still need to fill in the
-    # right default for the chosen executor.
+def test_parquet_options_object_default() -> None:
     parquet_options = ParquetOptions()
-    assert isinstance(parquet_options.prefetch_file_metadata, Unspecified)
+    assert parquet_options.prefetch_file_metadata is False
 
     config = ConfigOptions.from_polars_engine(
         pl.GPUEngine(executor="in-memory", parquet_options=parquet_options)
@@ -682,17 +690,17 @@ def test_parquet_options_object_engine_default() -> None:
     config = ConfigOptions.from_polars_engine(
         pl.GPUEngine(executor="streaming", parquet_options=parquet_options)
     )
-    assert isinstance(config.parquet_options.prefetch_file_metadata, Unspecified)
+    assert config.parquet_options.prefetch_file_metadata is False
 
 
-def test_parquet_options_unspecified_dict_factory() -> None:
+def test_parquet_options_default_dict_factory() -> None:
     parquet_options = ParquetOptions()
     config = ConfigOptions.from_polars_engine(
         pl.GPUEngine(executor="streaming", parquet_options=parquet_options)
     )
-    assert isinstance(config.parquet_options.prefetch_file_metadata, Unspecified)
+    assert config.parquet_options.prefetch_file_metadata is False
     result = dataclasses.asdict(config, dict_factory=ConfigOptions.dict_factory)
-    assert result["parquet_options"]["prefetch_file_metadata"] is None
+    assert result["parquet_options"]["prefetch_file_metadata"] is False
     assert result["executor"]["max_concurrent_io_tasks"] == {"local": 2, "remote": 8}
 
 
@@ -856,10 +864,15 @@ def test_join_filter_pushdown_options_from_env(
     monkeypatch.setenv(
         "CUDF_POLARS__EXECUTOR__JOIN_FILTER_PUSHDOWN__THRESHOLD", "0.125"
     )
+    monkeypatch.setenv(
+        "CUDF_POLARS__EXECUTOR__JOIN_FILTER_PUSHDOWN__BLOOM_FILTER_MAX_SIZE",
+        "1024",
+    )
     monkeypatch.setenv("CUDF_POLARS__EXECUTOR__JOIN_FILTER_PUSHDOWN__TRACE", "1")
     config = ConfigOptions.from_polars_engine(pl.GPUEngine())
     assert config.executor.join_filter_pushdown is not None
     assert config.executor.join_filter_pushdown.threshold == 0.125
+    assert config.executor.join_filter_pushdown.bloom_filter_max_size == 1024
     assert config.executor.join_filter_pushdown.trace
 
 
@@ -894,6 +907,24 @@ def test_validate_join_filter_pushdown_options() -> None:
                 executor_options={"join_filter_pushdown": {"trace": "bad"}},
             )
         )
+    with pytest.raises(TypeError, match="bloom_filter_max_size must be"):
+        ConfigOptions.from_polars_engine(
+            pl.GPUEngine(
+                executor="streaming",
+                executor_options={
+                    "join_filter_pushdown": {"bloom_filter_max_size": "bad"}
+                },
+            )
+        )
+    with pytest.raises(ValueError, match="bloom_filter_max_size must be"):
+        ConfigOptions.from_polars_engine(
+            pl.GPUEngine(
+                executor="streaming",
+                executor_options={
+                    "join_filter_pushdown": {"bloom_filter_max_size": -1}
+                },
+            )
+        )
 
 
 def test_validate_join_filter_pushdown_type() -> None:
@@ -910,7 +941,9 @@ def test_validate_join_filter_pushdown_type() -> None:
 
 
 def test_join_filter_pushdown_from_instance() -> None:
-    options = JoinFilterPushdownOptions(threshold=0.25, trace=True)
+    options = JoinFilterPushdownOptions(
+        threshold=0.25, bloom_filter_max_size=1024, trace=True
+    )
     config = ConfigOptions.from_polars_engine(
         pl.GPUEngine(
             executor="streaming",
@@ -920,7 +953,10 @@ def test_join_filter_pushdown_from_instance() -> None:
     assert config.executor.join_filter_pushdown is options
 
 
-def test_join_filter_pushdown_disabled_from_options() -> None:
+def test_join_filter_pushdown_disabled_from_options(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("CUDF_POLARS__EXECUTOR__JOIN_FILTER_PUSHDOWN", "1")
     config = ConfigOptions.from_polars_engine(
         pl.GPUEngine(
             executor="streaming",

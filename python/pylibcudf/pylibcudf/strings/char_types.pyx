@@ -57,7 +57,7 @@ cpdef Column all_characters_of_type(
     """
     cdef unique_ptr[column] c_result
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
     cdef column_view c_source_strings = source_strings.view()
     with nogil:
@@ -107,7 +107,7 @@ cpdef Column filter_characters_of_type(
     )
     cdef unique_ptr[column] c_result
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
     cdef column_view c_source_strings = source_strings.view()
     with nogil:

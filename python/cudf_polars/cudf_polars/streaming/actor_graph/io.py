@@ -86,7 +86,9 @@ class Lineariser:
     Linearizer that ensures ordered delivery from multiple concurrent producers.
 
     Creates one input channel per producer and streams messages to output
-    in sequence-number order, buffering only out-of-order arrivals.
+    in sequence-number order. Each producer must provide a monotonic
+    increasing order of sequence numbers. For best performance, sequence
+    numbers should be assigned round-robin to producers.
     """
 
     def __init__(
@@ -96,6 +98,18 @@ class Lineariser:
         self.ch_out = ch_out
         self.num_producers = num_producers
         self.input_channels = [context.create_channel() for _ in range(num_producers)]
+        self._producer_slots = [asyncio.Semaphore(1) for _ in range(num_producers)]
+
+    async def acquire(self, producer_id: int) -> Channel[TableChunk]:
+        """
+        Wait for capacity to produce, then return the producer's channel.
+
+        Capacity is returned only after the lineariser has forwarded the
+        producer's message downstream. Acquiring before constructing the next
+        message therefore bounds each producer to one in-flight message.
+        """
+        await self._producer_slots[producer_id].acquire()
+        return self.input_channels[producer_id]
 
     async def drain(self) -> None:
         """
@@ -108,7 +122,8 @@ class Lineariser:
         buffer = {}
 
         pending_tasks = {
-            asyncio.create_task(ch.recv(self.context)): ch for ch in self.input_channels
+            asyncio.create_task(ch.recv(self.context)): producer_id
+            for producer_id, ch in enumerate(self.input_channels)
         }
 
         while pending_tasks:
@@ -117,22 +132,27 @@ class Lineariser:
             )
 
             for task in done:
-                ch = pending_tasks.pop(task)
+                producer_id = pending_tasks.pop(task)
                 msg = await task
 
                 if msg is not None:
-                    buffer[msg.sequence_number] = msg
-                    new_task = asyncio.create_task(ch.recv(self.context))
-                    pending_tasks[new_task] = ch
+                    buffer[msg.sequence_number] = (msg, producer_id)
 
             # Forward consecutive messages
             while next_seq in buffer:
-                await self.ch_out.send(self.context, buffer.pop(next_seq))
+                msg, producer_id = buffer.pop(next_seq)
+                await self.ch_out.send(self.context, msg)
+                self._producer_slots[producer_id].release()
+                ch = self.input_channels[producer_id]
+                new_task = asyncio.create_task(ch.recv(self.context))
+                pending_tasks[new_task] = producer_id
                 next_seq += 1
 
         # Forward any remaining buffered messages
         for seq in sorted(buffer.keys()):
-            await self.ch_out.send(self.context, buffer.pop(seq))
+            msg, producer_id = buffer.pop(seq)
+            await self.ch_out.send(self.context, msg)
+            self._producer_slots[producer_id].release()
 
         await self.ch_out.drain(self.context)
 
@@ -272,8 +292,9 @@ async def dataframescan_node(
             producer_id = task_idx % num_producers
             producer_tasks[producer_id].append((task_idx, ir_slice))
 
-        async def _producer(producer_id: int, ch_out: Channel) -> None:
+        async def _producer(producer_id: int) -> None:
             for task_idx, ir_slice in producer_tasks[producer_id]:
+                ch_out = await lineariser.acquire(producer_id)
                 await read_chunk(
                     context,
                     ir_slice,
@@ -292,10 +313,7 @@ async def dataframescan_node(
         ):
             await gather_in_task_group(
                 lineariser.drain(),
-                *(
-                    _producer(i, ch_in)
-                    for i, ch_in in enumerate(lineariser.input_channels)
-                ),
+                *(_producer(i) for i in range(num_producers)),
             )
 
 
@@ -672,8 +690,9 @@ async def scan_node(
             # mypy resolves __iter__ on union-of-sequences to the common base (IR)
             producer_tasks[producer_id].append((task_idx, scan))  # type: ignore[arg-type]
 
-        async def _producer(producer_id: int, ch_out: Channel) -> None:
+        async def _producer(producer_id: int) -> None:
             for task_idx, scan in producer_tasks[producer_id]:
+                ch_out = await lineariser.acquire(producer_id)
                 await read_chunk(
                     context,
                     scan,
@@ -692,10 +711,7 @@ async def scan_node(
         ):
             await gather_in_task_group(
                 lineariser.drain(),
-                *(
-                    _producer(i, ch_in)
-                    for i, ch_in in enumerate(lineariser.input_channels)
-                ),
+                *(_producer(i) for i in range(num_producers)),
             )
 
 

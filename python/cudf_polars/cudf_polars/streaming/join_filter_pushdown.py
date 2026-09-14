@@ -5,13 +5,14 @@ Rewrite a plan, inserting prefilters in join DAGs.
 
 For a supported inner equijoin, this optimization tries to use the join-key
 values produced by one input to reduce the size of the other input before
-the original join. In relational notation, a simple rewrite is::
+the original join. It records that opportunity with a logical
+``PushdownFilterHint``::
 
     left join[left.key = right.key] right
 
         ->
 
-    (left semijoin[left.key = right.key] project(right.key))
+    PushdownFilterHint(left, left.key, project(right.key), right.key)
        join[left.key = right.key] right
 
 In this example, the right hand table is selected to pre-filter the left
@@ -49,14 +50,14 @@ The implementation uses the following terms:
     A rewrite that projects one domain join key and uses it to filter the
     corresponding target key directly.
 ``composite candidate``
-    For a multi-key join, a rewrite that first semi-joins the domain using the
-    constraint domain, then projects the reduced domain's key used to filter
-    the target.
+    For a multi-key join, a rewrite that first hints that the domain should be
+    filtered using the constraint domain, then projects the reduced domain's
+    key used to filter the target.
 
 Plan rewrite has three stages. ``analyze_plan`` gathers row estimates, source
 scan facts, selective nodes, and column value-domain lineages.
 Candidate selection consumes those facts and returns a decision.
-``apply_candidate`` then constructs the selected semi-join rewrite.
+``apply_candidate`` then constructs the selected filter-hint rewrite.
 
 Row estimates, selectivity propagation, thresholds, and candidate scores are
 only heuristics for deciding whether a safe rewrite is likely to improve
@@ -100,11 +101,13 @@ from cudf_polars.dsl.utils.column_domain import (
     ColumnRef,
     column_domain_bindings,
 )
+from cudf_polars.streaming.filter_hint import PushdownFilterHint
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Iterator, Mapping, Sequence
 
     from cudf_polars.streaming.base import StatsCollector
+    from cudf_polars.streaming.filter_hint import HintPlacement
     from cudf_polars.typing import GenericTransformer
     from cudf_polars.utils.config import ConfigOptions, StreamingExecutor
 
@@ -249,6 +252,12 @@ def analyze_plan(ir: IR, stats: StatsCollector) -> PlanFacts:
                 rows = node.df.shape()[0]
         elif isinstance(node, (Select, Projection, HStack, Filter, Distinct, GroupBy)):
             rows = row_estimates[node.children[0]]
+        elif isinstance(node, PushdownFilterHint):
+            rows = _estimate_join_rows(
+                "Semi",
+                row_estimates[node.children[0]],
+                row_estimates[node.children[1]],
+            )
         elif isinstance(node, Join):
             rows = _estimate_join_rows(
                 node.options[0],
@@ -329,7 +338,7 @@ def blocks_pushdown(node: IR, facts: PlanFacts) -> bool:
     Returns
     -------
     bool
-        True if a semijoin cannot be pushed past this node, otherwise False.
+        True if a filter hint cannot be pushed past this node, otherwise False.
     """
     # TODO: Need better cost model to handle nodes that are shared. Pushing
     # a filter into a shared node will typically mean that it is no longer
@@ -350,11 +359,11 @@ def blocks_pushdown(node: IR, facts: PlanFacts) -> bool:
     )
 
 
-def semijoin_pushdown_candidates(
+def filter_hint_pushdown_candidates(
     facts: PlanFacts, root: IR, column: str
 ) -> Iterator[tuple[ColumnRef, tuple[int, ...]]]:
     """
-    Yield column domain lineage providing valid locations for semijoin pushdown.
+    Yield column domain lineage providing valid locations for a filter hint.
 
     Parameters
     ----------
@@ -452,7 +461,7 @@ def _(node: Join, rec: GenericTransformer[IR, IR, _RewriteState]) -> IR:
     if node is original:
         facts = rec.state["facts"]
     else:
-        # Child rewrites introduce new semi joins and reconstructed ancestors.
+        # Child rewrites introduce new filter hints and reconstructed ancestors.
         # Re-analyze that current subtree so parent joins can use the derived
         # selectivity and cardinality when ranking their own candidates.
         facts = analyze_plan(node, rec.state["stats"])
@@ -473,13 +482,13 @@ def apply_candidate(ir: Join, candidate: Candidate) -> IR:
     left, right = ir.children
     domain = _make_domain(candidate, ir)
     target = candidate.target
-    target_filter = _make_semi_join(
+    target_filter = _make_filter_hint(
         target.node,
         expr.Col(target.node.schema[target.column], target.column),
         domain,
         expr.Col(domain.schema[candidate.domain_key.name], candidate.domain_key.name),
         nulls_equal=ir.options[1],
-        suffix=ir.options[3],
+        placement="join_input" if not target.path else "pushed_down",
     )
     if candidate.target_side == "left":
         left = replace_at_path(left, target.path, target_filter)
@@ -611,7 +620,7 @@ def _simple_candidates(
             continue
         if contains_node(target.node, domain.node):
             continue
-        if domain.is_single_source and has_filtering_semi_ancestor(
+        if domain.is_single_source and has_filtering_hint_ancestor(
             target_child, target.path
         ):
             continue
@@ -704,7 +713,7 @@ def _make_domain(candidate: Candidate, ir: Join) -> IR:
         candidate.constraint_domain.column,
         candidate.target_constraint_key,
     )
-    constrained = _make_semi_join(
+    constrained = _make_filter_hint(
         candidate.domain.node,
         expr.Col(
             candidate.domain.node.schema[candidate.domain.columns[1]],
@@ -716,7 +725,6 @@ def _make_domain(candidate: Candidate, ir: Join) -> IR:
             candidate.target_constraint_key.name,
         ),
         nulls_equal=ir.options[1],
-        suffix=ir.options[3],
     )
     return _project_bound_key(
         constrained, candidate.domain.column, candidate.domain_key
@@ -735,20 +743,21 @@ def _project_bound_key(source: IR, bound_column: str, output_key: expr.Col) -> S
     )
 
 
-def _make_semi_join(
+def _make_filter_hint(
     target: IR,
     target_key: expr.Col,
     domain: IR,
     domain_key: expr.Col,
     *,
     nulls_equal: bool,
-    suffix: str,
-) -> Join:
-    return Join(
+    placement: HintPlacement = "pushed_down",
+) -> PushdownFilterHint:
+    return PushdownFilterHint(
         target.schema,
         (expr.NamedExpr(target_key.name, target_key),),
         (expr.NamedExpr(domain_key.name, domain_key),),
-        ("Semi", nulls_equal, None, suffix, False, "none"),
+        nulls_equal,
+        placement,
         target,
         domain,
     )
@@ -784,7 +793,7 @@ def _smallest_key_producer(
     exclude: IR | None = None,
 ) -> _Producer | None:
     producers = []
-    for reference, path in semijoin_pushdown_candidates(facts, root, column):
+    for reference, path in filter_hint_pushdown_candidates(facts, root, column):
         node, bound_column = reference.node, reference.name
         if node is exclude:
             continue
@@ -840,7 +849,7 @@ def _smallest_node_containing_all(
 def _largest_key_source(root: IR, column: str, facts: PlanFacts) -> _Producer | None:
     source_candidates = []
     fallback_candidates = []
-    for reference, path in semijoin_pushdown_candidates(facts, root, column):
+    for reference, path in filter_hint_pushdown_candidates(facts, root, column):
         node, bound_column = reference.node, reference.name
         producer = make_producer(node, (bound_column,), path, facts)
         if producer is None:
@@ -890,11 +899,11 @@ def domain_cost_is_small(
     return domain.cost / target.rows <= threshold
 
 
-def has_filtering_semi_ancestor(root: IR, path: Sequence[int]) -> bool:
-    """Return whether a selected child edge is below a filtering semi join."""
+def has_filtering_hint_ancestor(root: IR, path: Sequence[int]) -> bool:
+    """Return whether a selected child edge is below a pushdown-filter hint."""
     node = root
     for child_index in path:
-        if isinstance(node, Join) and node.options[0] == "Semi" and child_index == 0:
+        if isinstance(node, PushdownFilterHint) and child_index == 0:
             return True
         node = node.children[child_index]
     return False

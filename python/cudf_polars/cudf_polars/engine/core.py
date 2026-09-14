@@ -43,7 +43,7 @@ from cudf_polars.streaming.base import StatsCollector
 from cudf_polars.streaming.parallel import lower_ir_graph_with_node_map
 from cudf_polars.streaming.statistics import collect_statistics
 from cudf_polars.streaming.utils import _concat
-from cudf_polars.utils.config import Unspecified, get_total_device_memory
+from cudf_polars.utils.config import get_total_device_memory
 
 if TYPE_CHECKING:
     from collections.abc import Callable, MutableMapping
@@ -211,6 +211,8 @@ def resolve_rapidsmpf_options(rapidsmpf_options: Options | None) -> Options:
 
     - ``num_streaming_threads=4``: moderate worker count for the rapidsmpf
       streaming runtime, shared across frontends.
+    - ``pinned_memory=true``, ``pinned_initial_pool_size=0``: pinned host
+      memory enabled by default.
 
     Parameters
     ----------
@@ -226,7 +228,13 @@ def resolve_rapidsmpf_options(rapidsmpf_options: Options | None) -> Options:
     if rapidsmpf_options is None:
         rapidsmpf_options = Options(get_environment_variables())
 
-    rapidsmpf_options.insert_if_absent({"num_streaming_threads": "4"})
+    rapidsmpf_options.insert_if_absent(
+        {
+            "num_streaming_threads": "4",
+            "pinned_memory": "true",
+            "pinned_initial_pool_size": "0",
+        }
+    )
     return rapidsmpf_options
 
 
@@ -660,7 +668,7 @@ def execute_ir_on_rank(
             hint = (
                 f"Try lowering `target_partition_size` (current {target_partition_size}) "
                 f"and/or RAPIDSMPF_SPILL_DEVICE_LIMIT (default '80%') to reduce peak memory."
-                f"\nSee https://docs.rapids.ai/api/cudf/stable/cudf_polars/memory_errors/ "
+                f"\nSee https://docs.nvidia.com/cudf/latest/cudf_polars/memory_errors/ "
                 f"for troubleshooting guidance."
                 f"\nOriginal error:\n{mem_error}"
             )
@@ -941,7 +949,6 @@ def evaluate_on_rank(
             ir,
             ir_context.py_executor,
             stats=stats,
-            remote_only=isinstance(prefetch_file_metadata, Unspecified),
             parse_hybrid_metadata=config_options.parquet_options.use_hybrid_scan,
         )
         attach_cached_parquet_metadata(ir, cached_parquet_info_map)

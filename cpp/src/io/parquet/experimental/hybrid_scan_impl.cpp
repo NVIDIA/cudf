@@ -9,6 +9,7 @@
 #include "hybrid_scan_helpers.hpp"
 #include "io/parquet/reader_impl_chunking_utils.cuh"
 #include "io/parquet/synthetic_column_helpers.hpp"
+#include "page_index_filter_utils.hpp"
 
 #include <cudf/copying.hpp>
 #include <cudf/detail/stream_compaction.hpp>
@@ -629,8 +630,8 @@ hybrid_scan_reader_impl::payload_pages_byte_ranges(
 
   // Compute the data page mask
   auto const mask_size = mask_offsets.back();
-  auto data_page_mask  = _extended_metadata->compute_data_page_mask(
-    row_mask, row_group_indices, _input_columns, 0, stream);
+  auto data_page_mask =
+    _extended_metadata->compute_data_page_mask(row_mask, row_group_indices, _input_columns, stream);
   CUDF_EXPECTS(data_page_mask.empty() or data_page_mask.size() == mask_size,
                "Computed data page mask does not match offset indexes");
 
@@ -729,13 +730,10 @@ table_with_metadata hybrid_scan_reader_impl::materialize_filter_columns(
     return read_chunk_internal(read_mode::READ_ALL, read_columns_mode::FILTER_COLUMNS, row_mask);
   }
 
-  auto data_page_mask = thrust::host_vector<bool>{};
-  if (mask_data_pages == use_data_page_mask::YES) {
-    data_page_mask = _extended_metadata->compute_data_page_mask(
-      row_mask, row_group_indices, _input_columns, _row_mask_offset, stream);
-  }
-
-  prepare_data(read_mode::READ_ALL, row_group_indices, column_chunk_data, data_page_mask);
+  auto const retention_mask = mask_data_pages == use_data_page_mask::YES
+                                ? std::optional<cudf::column_view>{cudf::column_view{row_mask}}
+                                : std::nullopt;
+  prepare_data(read_mode::READ_ALL, row_group_indices, column_chunk_data, retention_mask);
 
   return read_chunk_internal(read_mode::READ_ALL, read_columns_mode::FILTER_COLUMNS, row_mask);
 }
@@ -767,13 +765,10 @@ table_with_metadata hybrid_scan_reader_impl::materialize_payload_columns(
     return read_chunk_internal(read_mode::READ_ALL, read_columns_mode::PAYLOAD_COLUMNS, row_mask);
   }
 
-  auto data_page_mask = thrust::host_vector<bool>{};
-  if (not row_mask.is_empty() and mask_data_pages == use_data_page_mask::YES) {
-    data_page_mask = _extended_metadata->compute_data_page_mask(
-      row_mask, row_group_indices, _input_columns, _row_mask_offset, stream);
-  }
-
-  prepare_data(read_mode::READ_ALL, row_group_indices, column_chunk_data, data_page_mask);
+  auto const retention_mask = mask_data_pages == use_data_page_mask::YES
+                                ? std::optional<cudf::column_view>{row_mask}
+                                : std::nullopt;
+  prepare_data(read_mode::READ_ALL, row_group_indices, column_chunk_data, retention_mask);
 
   return read_chunk_internal(read_mode::READ_ALL, read_columns_mode::PAYLOAD_COLUMNS, row_mask);
 }
@@ -838,13 +833,9 @@ void hybrid_scan_reader_impl::setup_chunking_for_filter_columns(
     return;
   }
 
-  auto data_page_mask = thrust::host_vector<bool>{};
-  if (mask_data_pages == use_data_page_mask::YES) {
-    data_page_mask = _extended_metadata->compute_data_page_mask(
-      row_mask, row_group_indices, _input_columns, _row_mask_offset, stream);
-  }
-
-  prepare_data(read_mode::CHUNKED_READ, row_group_indices, column_chunk_data, data_page_mask);
+  auto const retention_mask =
+    mask_data_pages == use_data_page_mask::YES ? std::optional{row_mask} : std::nullopt;
+  prepare_data(read_mode::CHUNKED_READ, row_group_indices, column_chunk_data, retention_mask);
 }
 
 table_with_metadata hybrid_scan_reader_impl::materialize_filter_columns_chunk(
@@ -898,13 +889,9 @@ void hybrid_scan_reader_impl::setup_chunking_for_payload_columns(
     return;
   }
 
-  auto data_page_mask = thrust::host_vector<bool>{};
-  if (not row_mask.is_empty() and mask_data_pages == use_data_page_mask::YES) {
-    data_page_mask = _extended_metadata->compute_data_page_mask(
-      row_mask, row_group_indices, _input_columns, _row_mask_offset, stream);
-  }
-
-  prepare_data(read_mode::CHUNKED_READ, row_group_indices, column_chunk_data, data_page_mask);
+  auto const retention_mask =
+    mask_data_pages == use_data_page_mask::YES ? std::optional{row_mask} : std::nullopt;
+  prepare_data(read_mode::CHUNKED_READ, row_group_indices, column_chunk_data, retention_mask);
 }
 
 void hybrid_scan_reader_impl::setup_chunking_for_payload_columns(
@@ -1109,7 +1096,6 @@ bool hybrid_scan_reader_impl::has_next_table_chunk()
 
 void hybrid_scan_reader_impl::reset_internal_state()
 {
-  _row_mask_offset   = 0;
   _file_itm_data     = file_intermediate_data{};
   _file_preprocessed = false;
   _has_offset_index  = false;
@@ -1133,6 +1119,9 @@ void hybrid_scan_reader_impl::reset_internal_state()
   _output_chunk_read_limit = 0;
   _strings_to_categorical  = false;
   _reader_column_schema.reset();
+
+  _row_mask_offset = 0;
+
   _expr_conv = parquet_filter_normalizer{};
   _mr        = cudf::get_current_device_resource_ref();
 }
@@ -1188,7 +1177,7 @@ void hybrid_scan_reader_impl::prepare_data(
   read_mode mode,
   std::span<std::vector<size_type> const> row_group_indices,
   std::span<cudf::device_span<uint8_t const> const> column_chunk_data,
-  host_span<bool const> data_page_mask)
+  std::optional<cudf::column_view> row_mask)
 {
   // if we have not preprocessed at the whole-file level, do that now
   if (not _file_preprocessed) {
@@ -1199,10 +1188,17 @@ void hybrid_scan_reader_impl::prepare_data(
     prepare_row_groups(read_mode::READ_ALL, row_group_indices);
   }
 
+  // Compute data page mask from the row (retention) mask
+  auto data_page_mask = thrust::host_vector<bool>{};
+  if (_has_offset_index and row_mask.has_value() and not _sparse_page_io) {
+    data_page_mask = _extended_metadata->compute_data_page_mask(
+      row_mask.value(), row_group_indices, _input_columns, _stream);
+  }
+
   // handle any chunking work (ratcheting through the subpasses and chunks within
   // our current pass) if in bounds
   if (_file_itm_data._current_input_pass < _file_itm_data.num_passes()) {
-    handle_chunking(mode, column_chunk_data, data_page_mask);
+    handle_chunking(mode, column_chunk_data, data_page_mask, row_mask);
   }
 }
 
@@ -1354,9 +1350,9 @@ table_with_metadata hybrid_scan_reader_impl::finalize_output(
   // Prepend the source and row index columns to filter columns only
   if (read_columns_mode == read_columns_mode::FILTER_COLUMNS) {
     if (_options.prepend_row_index_column) {
-      out_columns.emplace(
-        out_columns.begin(),
-        synthesize_row_index_column(_file_itm_data.row_groups, read_info, _stream, _mr));
+      out_columns.emplace(out_columns.begin(),
+                          parquet::detail::synthesize_row_index_column(
+                            _file_itm_data.row_groups, read_info, _stream, _mr));
       out_metadata.schema_info.emplace(out_metadata.schema_info.begin(),
                                        column_name_info{.name = "row_index", .is_nullable = false});
     }
@@ -1478,6 +1474,74 @@ void hybrid_scan_reader_impl::set_pass_page_mask(std::span<bool const> data_page
 
   // Mark output buffers nullable when page pruning produces nulls
   mark_buffers_nullable_for_pruned_pages();
+}
+
+thrust::host_vector<bool> hybrid_scan_reader_impl::compute_data_page_mask_with_page_headers(
+  cudf::column_view const& row_mask)
+{
+  auto const& pass = *_pass_itm_data;
+
+  // Return an empty vector if all rows are required
+  if (are_all_rows_retained(row_mask, _stream)) { return thrust::host_vector<bool>{}; }
+
+  std::vector<cudf::size_type> page_row_offsets;
+  page_row_offsets.reserve(pass.pages.size() * 2);
+
+  // Maps each data page to its flat-page range; -1 keeps nested pages enabled.
+  std::vector<cudf::size_type> row_range_map;
+  row_range_map.reserve(pass.pages.size());
+
+  cudf::size_type previous_chunk_idx = -1;
+  auto max_page_size                 = cudf::size_type{0};
+
+  for (auto const& page : pass.pages) {
+    // Ignore dictionary pages altogether
+    if (page.flags & parquet::detail::PAGEINFO_FLAGS_DICTIONARY) { continue; }
+
+    auto const& chunk = pass.chunks[page.chunk_idx];
+
+    // Don't prune list column pages as rows may span page boundaries when offset index isn't
+    // present.
+    if (chunk.max_level[parquet::detail::level_type::REPETITION] > 0) {
+      row_range_map.push_back(-1);
+      continue;
+    }
+
+    auto const page_start = chunk.start_row + page.chunk_row;
+    auto const page_end   = page_start + page.num_rows;
+    max_page_size         = std::max<cudf::size_type>(max_page_size, page_end - page_start);
+
+    // Starting a new column chunk. Push page start row
+    if (page.chunk_idx != previous_chunk_idx) {
+      page_row_offsets.push_back(page_start);
+      previous_chunk_idx = page.chunk_idx;
+    }
+
+    // Push row range index and page end row
+    row_range_map.push_back(page_row_offsets.size() - 1);
+    page_row_offsets.push_back(page_end);
+  }
+
+  auto data_page_mask = thrust::host_vector<bool>{};
+
+  // Compute the row range mask
+  CUDF_EXPECTS(std::cmp_equal(row_mask.size(), pass.num_rows),
+               "Row mask must span across all rows in the pass");
+  auto const row_range_mask =
+    compute_row_range_selection_mask(row_mask, page_row_offsets, max_page_size, _stream);
+
+  if (row_range_mask.empty()) { return data_page_mask; }
+
+  CUDF_EXPECTS(row_range_mask.size() == page_row_offsets.size() - 1,
+               "Encountered invalid row range mask size");
+
+  data_page_mask.reserve(row_range_map.size());
+
+  // Scatter row range results while retaining list column pages.
+  for (auto const range_idx : row_range_map) {
+    data_page_mask.push_back(range_idx < 0 ? true : row_range_mask[range_idx]);
+  }
+  return data_page_mask;
 }
 
 void hybrid_scan_reader_impl::set_sparse_pass_page_mask(

@@ -52,7 +52,7 @@ cpdef bool tables_equal(
     """
     cdef bool c_result
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     cdef table_view c_left = left.view()
     cdef table_view c_right = right.view()
 

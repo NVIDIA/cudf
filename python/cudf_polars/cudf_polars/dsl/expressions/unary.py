@@ -1197,7 +1197,7 @@ class UnaryFunction(Expr):
             ]
             (keys_table, (counts_table,)) = plc.groupby.GroupBy(
                 df.table, null_handling=plc.types.NullPolicy.INCLUDE
-            ).aggregate(gb_requests)
+            ).aggregate(gb_requests, stream=df.stream)
             if sort:
                 sort_indices = plc.sorting.stable_sorted_order(
                     counts_table,

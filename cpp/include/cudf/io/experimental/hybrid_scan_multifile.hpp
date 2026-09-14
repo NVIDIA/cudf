@@ -274,7 +274,7 @@ class hybrid_scan_multifile {
    * @param column_chunk_data Flattened device spans of filter column chunk data returned in the
    * same order as `filter_column_chunks_byte_ranges`
    * @param[in,out] row_mask Mutable boolean column spanning all selected rows across all sources
-   * and indicating surviving rows from page pruning
+   * indicating surviving rows
    * @param mask_data_pages Whether to build and use a data page mask using the row mask
    * @param options Parquet reader options
    * @param stream CUDA stream used for device memory operations and kernel launches
@@ -389,8 +389,8 @@ class hybrid_scan_multifile {
    * @param pass_read_limit Limit on the memory used for reading and decompressing data. `0` if
    * there is no limit
    * @param row_group_indices Span of vectors of input row group indices, one per source
-   * @param row_mask Boolean column spanning all selected rows across all sources and indicating
-   * which rows need to be read
+   * @param row_mask Boolean column spanning all selected rows across all sources
+   * indicating surviving rows
    * @param mask_data_pages Whether to build and use a data page mask using the row mask
    * @param column_chunk_data Flattened device spans of filter column chunk data returned in the
    * same order as `filter_column_chunks_byte_ranges`

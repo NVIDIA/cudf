@@ -49,7 +49,7 @@ repos:
           "pyarrow>=19.0.0,<24.0.0",  # https://github.com/NVIDIA/cudf/issues/22229
           "pytest>=8.0.0,<9.1.0",
           "types-cachetools>=5.5.0",
-          "rmm-cu12==26.10.*,>=0.0.0a0; sys_platform=='linux'",
+          "rmm-cu12==26.12.*,>=0.0.0a0; sys_platform=='linux'",
           "--extra-index-url=https://pypi.anaconda.org/rapidsai-wheels-nightly/simple/"
         ]
         args: ["--config-file=pyproject.toml",

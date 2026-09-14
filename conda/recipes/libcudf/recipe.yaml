@@ -209,7 +209,7 @@ outputs:
           - libzlib
           - libnvcomp
     about:
-      homepage: https://rapids.ai/
+      homepage: https://docs.nvidia.com/cudf/
       license: Apache-2.0
       summary: libcudf_kafka library
 
@@ -253,7 +253,7 @@ outputs:
           - libzlib
           - libnvcomp
     about:
-      homepage: https://rapids.ai/
+      homepage: https://docs.nvidia.com/cudf/
       license: Apache-2.0
       summary: libcudf-streaming library
 
@@ -310,6 +310,8 @@ outputs:
         - cuda-version =${{ cuda_version }}
         - cuda-nvtx-dev
         - cuda-cudart-dev
+        - cuda-nvrtc-dev
+        - libnvjitlink-dev
       run:
         - ${{ pin_subpackage("libcudf", exact=True) }}
         - ${{ pin_compatible("cuda-version", upper_bound="x", lower_bound="x") }}
@@ -431,6 +433,6 @@ outputs:
           - librmm
           - libnvcomp
     about:
-      homepage: https://rapids.ai/
+      homepage: https://docs.nvidia.com/cudf/
       license: Apache-2.0
       summary: libcudf-streaming test & benchmark executables

@@ -334,7 +334,8 @@ class ParquetOptions:
         Maximum number of file footers to sample for metadata. This
         option is currently used by the streaming executor to gather
         datasource statistics before generating a physical plan. Set to
-        0 to avoid metadata sampling. Default is 3.
+        0 to avoid metadata sampling. By default, metadata sampling is disabled
+        for remote scans and samples 3 footers for local-only scans.
     max_row_group_samples
         Maximum number of row-groups to sample for unique-value statistics.
         This option may be used by the streaming executor to optimize
@@ -345,9 +346,8 @@ class ParquetOptions:
     prefetch_file_metadata
         Whether to prefetch parquet file metadata and pass it through
         `parquet_metadatas` to avoid rereading file footers. Not supported
-        by the in-memory executor, where it defaults to disabled. For the
-        streaming executor, it defaults to being enabled for remote URIs
-        (e.g. ``s3://``) only; pass ``True`` to also prefetch local files.
+        by the in-memory executor. It defaults to disabled; enabling
+        ``use_hybrid_scan`` implicitly enables it.
     use_jit_filter
         Whether to use JIT compilation for post-read filtering in Parquet scans.
         When enabled, filter predicates are JIT-compiled to CUDA kernels for
@@ -381,9 +381,9 @@ class ParquetOptions:
             f"{_env_prefix}__PASS_READ_LIMIT", int, default=0
         )
     )
-    max_footer_samples: int = dataclasses.field(
+    max_footer_samples: int | None = dataclasses.field(
         default_factory=_make_default_factory(
-            f"{_env_prefix}__MAX_FOOTER_SAMPLES", int, default=3
+            f"{_env_prefix}__MAX_FOOTER_SAMPLES", int, default=None
         )
     )
     max_row_group_samples: int = dataclasses.field(
@@ -434,14 +434,16 @@ class ParquetOptions:
             raise TypeError("chunk_read_limit must be an int")
         if not isinstance(self.pass_read_limit, int):
             raise TypeError("pass_read_limit must be an int")
-        if not isinstance(self.max_footer_samples, int):
-            raise TypeError("max_footer_samples must be an int")
+        if not isinstance(self.max_footer_samples, (int, type(None))):
+            raise TypeError("max_footer_samples must be an int or None")
         if not isinstance(self.max_row_group_samples, int):
             raise TypeError("max_row_group_samples must be an int")
         if not isinstance(self.prefetch_file_metadata, (bool, Unspecified)):
             raise TypeError("prefetch_file_metadata must be a bool when specified")
         if not isinstance(self.use_hybrid_scan, bool):
             raise TypeError("use_hybrid_scan must be a bool")
+        if isinstance(self.prefetch_file_metadata, Unspecified):
+            object.__setattr__(self, "prefetch_file_metadata", self.use_hybrid_scan)
         if self.use_hybrid_scan and self.prefetch_file_metadata is False:
             raise ValueError(
                 "use_hybrid_scan requires prefetch_file_metadata to be enabled"
@@ -509,7 +511,7 @@ class DynamicPlanningOptions:
 @dataclasses.dataclass(frozen=True)
 class JoinFilterPushdownOptions:
     """
-    Configuration options for join filter pushdown in the logical plan.
+    Configuration options for join filter pushdown.
 
     When performing a join between two tables, it is often favourable
     to pre-filter one side of the join with the keys (full or partial) of
@@ -517,7 +519,8 @@ class JoinFilterPushdownOptions:
     participate in the join.
 
     cudf-polars supports a form of this where we can rewrite inner joins by
-    selecting a side to be filtered by the keys of the other side.
+    selecting a side to be filtered by the keys of the other side. At execution
+    time, these options also control how optional filters are applied.
 
     Pass ``None`` to ``StreamingExecutor(join_filter_pushdown=...)`` to
     disable the rewrite.
@@ -530,6 +533,10 @@ class JoinFilterPushdownOptions:
     threshold
         Row-count ratio (key-provider-rows / to-be-filtered-table-rows) below which a
         filter on is inserted on the to-be-filtered table. Default is 0.5.
+    bloom_filter_max_size
+        Maximum Bloom-filter size in bytes. If the estimated Bloom filter exceeds
+        this size, an exact semi-join is preferred when its projected keys fit the
+        broadcast limit. Set to 0 to disable Bloom filters. Default is 32 MiB.
     trace
         Whether to emit plan-time trace decisions for filter decisions. Default is False.
     """
@@ -539,6 +546,13 @@ class JoinFilterPushdownOptions:
     threshold: float = dataclasses.field(
         default_factory=_make_default_factory(
             f"{_env_prefix}__THRESHOLD", float, default=0.5
+        )
+    )
+    bloom_filter_max_size: int = dataclasses.field(
+        default_factory=_make_default_factory(
+            f"{_env_prefix}__BLOOM_FILTER_MAX_SIZE",
+            int,
+            default=32 * 1024 * 1024,
         )
     )
     trace: bool = dataclasses.field(
@@ -555,6 +569,12 @@ class JoinFilterPushdownOptions:
         object.__setattr__(self, "threshold", threshold)
         if not 0.0 <= threshold <= 1.0:
             raise ValueError("threshold must be between 0 and 1")
+        if isinstance(self.bloom_filter_max_size, bool) or not isinstance(
+            self.bloom_filter_max_size, int
+        ):
+            raise TypeError("bloom_filter_max_size must be an int")
+        if self.bloom_filter_max_size < 0:
+            raise ValueError("bloom_filter_max_size must be non-negative")
         if not isinstance(self.trace, bool):
             raise TypeError("trace must be a bool")
 
@@ -831,8 +851,8 @@ class StreamingExecutor:
         :class:`~cudf_polars.utils.config.DynamicPlanningOptions` for more.
     join_filter_pushdown
         Options controlling the logical join-domain prefilter rewrite. See
-        :class:`~cudf_polars.utils.config.JoinFilterPushdownOptions` for more.
-        ``None`` disables the rewrite.
+        :class:`~cudf_polars.utils.config.JoinFilterPushdownOptions` for
+        more. Disabled by default (or by explicitly providing ``None``).
 
         Enable through environment variables with
         ``CUDF_POLARS__EXECUTOR__JOIN_FILTER_PUSHDOWN=1``.
@@ -931,7 +951,7 @@ class StreamingExecutor:
         default_factory=DynamicPlanningOptions
     )
     join_filter_pushdown: JoinFilterPushdownOptions | None = dataclasses.field(
-        default_factory=JoinFilterPushdownOptions
+        default=None
     )
     max_concurrent_io_tasks: MaxConcurrentIOTasks = dataclasses.field(
         default_factory=_make_default_factory(
@@ -1184,31 +1204,10 @@ class ConfigOptions(Generic[ExecutorType]):
         if user_parquet_options is None:
             user_parquet_options = {}
 
-        # Engine-dependent default: only prefetch for the streaming executor.
-        # Skipped if the user or the environment has already set a value.
-        prefetch_default = UNSPECIFIED if user_executor == "streaming" else False
-        prefetch_env_set = (
-            os.environ.get(f"{ParquetOptions._env_prefix}__PREFETCH_FILE_METADATA")
-            is not None
-        )
-
         if isinstance(user_parquet_options, dict):
             user_parquet_options = dict(user_parquet_options)
-            if (
-                "prefetch_file_metadata" not in user_parquet_options
-                and not prefetch_env_set
-            ):
-                user_parquet_options["prefetch_file_metadata"] = prefetch_default
             parquet_options = ParquetOptions(**user_parquet_options)
         else:
-            if (
-                isinstance(user_parquet_options.prefetch_file_metadata, Unspecified)
-                and not prefetch_env_set
-            ):
-                user_parquet_options = dataclasses.replace(
-                    user_parquet_options,
-                    prefetch_file_metadata=prefetch_default,
-                )
             parquet_options = user_parquet_options
         # This is set in polars, and so can't be overridden by the environment
         user_raise_on_fail = engine.config.get("raise_on_fail", False)
@@ -1264,15 +1263,14 @@ class ConfigOptions(Generic[ExecutorType]):
                         user_executor_options["dynamic_planning"] = None
 
                 # Handle join_filter_pushdown: check user config, then env var
-                user_join_filter_pushdown = user_executor_options.get(
-                    "join_filter_pushdown", None
-                )
-                if user_join_filter_pushdown is None:
+                if "join_filter_pushdown" not in user_executor_options:
                     env_join_filter_pushdown = os.environ.get(
                         "CUDF_POLARS__EXECUTOR__JOIN_FILTER_PUSHDOWN", "0"
                     )
-                    if not _bool_converter(env_join_filter_pushdown):
-                        user_executor_options["join_filter_pushdown"] = None
+                    if _bool_converter(env_join_filter_pushdown):
+                        user_executor_options["join_filter_pushdown"] = (
+                            JoinFilterPushdownOptions()
+                        )
 
                 executor = StreamingExecutor(**user_executor_options)
             case _:  # pragma: no cover; Unreachable

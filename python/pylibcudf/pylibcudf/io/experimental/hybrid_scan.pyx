@@ -359,7 +359,7 @@ cdef class HybridScanReader:
                     indices_vec.data(), indices_vec.size()
                 ),
                 options.c_obj,
-                _stream.view().value()
+                _stream.view().get()
             ))
         return list(filtered)
 
@@ -464,7 +464,7 @@ cdef class HybridScanReader:
                 ),
                 std_span[const_size_type](indices_vec.data(), indices_vec.size()),
                 options.c_obj,
-                _stream.view().value()
+                _stream.view().get()
             ))
         return list(filtered)
 
@@ -508,7 +508,7 @@ cdef class HybridScanReader:
                 ),
                 std_span[const_size_type](indices_vec.data(), indices_vec.size()),
                 options.c_obj,
-                _stream.view().value()
+                _stream.view().get()
             ))
         return list(filtered)
 
@@ -541,7 +541,7 @@ cdef class HybridScanReader:
         with nogil:
             c_result = move(self.c_obj.get()[0].build_all_true_row_mask(
                 std_span[const_size_type](indices_vec.data(), indices_vec.size()),
-                _stream.view().value(),
+                _stream.view().get(),
                 mr.get_mr()
             ))
         return Column.from_libcudf(move(c_result), _stream, mr)
@@ -579,7 +579,7 @@ cdef class HybridScanReader:
             c_result = move(self.c_obj.get()[0].build_row_mask_with_page_index_stats(
                 std_span[const_size_type](indices_vec.data(), indices_vec.size()),
                 options.c_obj,
-                _stream.view().value(),
+                _stream.view().get(),
                 mr.get_mr()
             ))
         return Column.from_libcudf(move(c_result), _stream, mr)
@@ -665,7 +665,7 @@ cdef class HybridScanReader:
                 mask_view,
                 mask_data_pages,
                 options.c_obj,
-                _stream.view().value(),
+                _stream.view().get(),
                 mr.get_mr()
             ))
         return TableWithMetadata.from_libcudf(c_result, _stream, mr)
@@ -751,7 +751,7 @@ cdef class HybridScanReader:
                 mask_view,
                 mask_data_pages,
                 options.c_obj,
-                _stream.view().value(),
+                _stream.view().get(),
                 mr.get_mr()
             ))
         return TableWithMetadata.from_libcudf(c_result, _stream, mr)
@@ -827,7 +827,7 @@ cdef class HybridScanReader:
                     <const_device_span_const_uint8_t*>spans_vec.data(), spans_vec.size()
                 ),
                 options.c_obj,
-                _stream.view().value(),
+                _stream.view().get(),
                 mr.get_mr()
             ))
         return TableWithMetadata.from_libcudf(c_result, _stream, mr)
@@ -890,7 +890,7 @@ cdef class HybridScanReader:
                     <const_device_span_const_uint8_t*>spans_vec.data(), spans_vec.size()
                 ),
                 options.c_obj,
-                self._stream.view().value(),
+                self._stream.view().get(),
                 self.mr.get_mr()
             )
 
@@ -980,7 +980,7 @@ cdef class HybridScanReader:
                     <const_device_span_const_uint8_t*>spans_vec.data(), spans_vec.size()
                 ),
                 options.c_obj,
-                self._stream.view().value(),
+                self._stream.view().get(),
                 self.mr.get_mr()
             )
 

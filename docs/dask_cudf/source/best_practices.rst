@@ -3,8 +3,8 @@
 Dask cuDF Best Practices
 ========================
 
-This page outlines several important guidelines for using `Dask cuDF
-<https://docs.rapids.ai/api/dask-cudf/stable/>`__ effectively.
+This page outlines several important guidelines for using
+:doc:`Dask cuDF <index>` effectively.
 
 .. note::
   Since Dask cuDF is a backend extension for
@@ -22,24 +22,23 @@ Use Dask-CUDA
 ~~~~~~~~~~~~~
 
 To execute a Dask workflow on multiple GPUs, a Dask cluster must
-be deployed with `Dask-CUDA <https://docs.rapids.ai/api/dask-cuda/stable/>`__
+be deployed with :doc:`Dask-CUDA <dask-cuda:index>`
 and `Dask.distributed <https://distributed.dask.org/en/stable/>`__.
 
-When running on a single machine, the `LocalCUDACluster <https://docs.rapids.ai/api/dask-cuda/stable/api/#dask_cuda.LocalCUDACluster>`__
+When running on a single machine, the :class:`~dask_cuda.LocalCUDACluster`
 convenience function is strongly recommended. No matter how many GPUs are
-available on the machine (even one!), using `Dask-CUDA has many advantages
-<https://docs.rapids.ai/api/dask-cuda/stable/#motivation>`__
+available on the machine (even one!), using :ref:`Dask-CUDA has many advantages
+<dask-cuda:index:motivation>`
 over default (threaded) execution. Just to list a few:
 
 * Dask-CUDA makes it easy to pin workers to specific devices.
 * Dask-CUDA makes it easy to configure memory-spilling options.
 * The distributed scheduler collects useful diagnostic information that can be viewed on a dashboard in real time.
 
-Please see `Dask-CUDA's API <https://docs.rapids.ai/api/dask-cuda/stable/>`__
-and `Best Practices <https://docs.rapids.ai/api/dask-cuda/stable/examples/best-practices/>`__
+Please see :doc:`Dask-CUDA's API <dask-cuda:index>`
+and :doc:`Best Practices <dask-cuda:examples/best-practices>`
 documentation for detailed information. Typical ``LocalCUDACluster`` usage
-is also illustrated within the multi-GPU section of `Dask cuDF's
-<https://docs.rapids.ai/api/dask-cudf/stable/>`__ documentation.
+is also shown in :ref:`multiple_gpus`.
 
 .. note::
   When running on cloud infrastructure or HPC systems, it is usually best to
@@ -47,7 +46,7 @@ is also illustrated within the multi-GPU section of `Dask cuDF's
   <https://docs.dask.org/en/latest/deploying-kubernetes.html>`__ and `Dask-Jobqueue
   <https://jobqueue.dask.org/en/latest/>`__.
 
-  Please see `the RAPIDS deployment documentation <https://docs.rapids.ai/deployment/stable/>`__
+  Please see `the cloud deployment documentation <https://docs.rapids.ai/deployment/stable/>`__
   for further details and examples.
 
 
@@ -71,23 +70,23 @@ Enable cuDF spilling
 ~~~~~~~~~~~~~~~~~~~~
 
 When using Dask cuDF for classic ETL workloads, it is usually best
-to enable `native spilling support in cuDF
-<https://docs.rapids.ai/api/cudf/stable/cudf/developer_guide/library_design/#spilling-to-host-memory>`__.
-When using :class:`dask_cuda.LocalCUDACluster`, this is easily accomplished by
+to enable :ref:`native spilling support in cuDF
+<cudf:cudf/developer_guide/library_design:spilling-to-host-memory>`.
+When using :class:`~dask_cuda.LocalCUDACluster`, this is easily accomplished by
 setting ``enable_cudf_spill=True``.
 
 Use RMM
 ~~~~~~~
 
 Memory allocations in cuDF are significantly faster and more efficient when
-the `RAPIDS Memory Manager (RMM) <https://docs.rapids.ai/api/rmm/stable/>`__
-library is configured appropriately on worker processes. In most cases, the best way to manage
+:doc:`NVIDIA RMM <rmm:index>`
+is configured appropriately on worker processes. In most cases, the best way to manage
 memory is by initializing an RMM pool on each worker before executing a
-workflow. When using :class:`dask_cuda.LocalCUDACluster`, this is easily accomplished
+workflow. When using :class:`~dask_cuda.LocalCUDACluster`, this is easily accomplished
 by setting ``rmm_pool_size`` to a large fraction (e.g. ``0.9``).
 
-See the `Dask-CUDA memory-management documentation
-<https://docs.rapids.ai/api/dask-cuda/nightly/examples/best-practices/#gpu-memory-management>`__
+See the :ref:`Dask-CUDA memory-management documentation
+<dask-cuda:examples/best-practices:gpu memory management>`
 for more details.
 
 Use the Dask DataFrame API
@@ -289,15 +288,15 @@ bottleneck is typically device-to-host memory spilling.
 Although every workflow is different, the following guidelines
 are often recommended:
 
-* Use a distributed cluster with `Dask-CUDA <https://docs.rapids.ai/api/dask-cuda/stable/>`__ workers
+* Use a distributed cluster with :doc:`Dask-CUDA <dask-cuda:index>` workers
 
-* Use native cuDF spilling whenever possible (`Dask-CUDA spilling documentation <https://docs.rapids.ai/api/dask-cuda/stable/spilling/>`__)
+* Use native cuDF spilling whenever possible (:doc:`Dask-CUDA spilling documentation <dask-cuda:spilling>`)
 
 * Avoid shuffling whenever possible
     * Use ``split_out=1`` for low-cardinality groupby aggregations
     * Use ``broadcast=True`` for joins when at least one collection comprises a small number of partitions (e.g. ``<=5``)
 
-* `Use UCX <https://docs.rapids.ai/api/dask-cuda/nightly/examples/ucx/>`__ if communication is a bottleneck.
+* :doc:`Use UCX <dask-cuda:examples/ucx>` if communication is a bottleneck.
 
 .. note::
   UCX enables Dask-CUDA workers to communicate using high-performance

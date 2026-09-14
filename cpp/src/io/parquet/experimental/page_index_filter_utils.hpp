@@ -51,7 +51,7 @@ compute_page_row_offsets_and_colchunk_page_offsets(
  * @return A pair of page row offsets and the size of the largest page in this column
  */
 [[nodiscard]] std::pair<std::vector<size_type>, size_type> compute_page_row_offsets(
-  cudf::host_span<metadata_base const> per_file_metadata,
+  std::span<metadata_base const> per_file_metadata,
   std::span<std::vector<size_type> const> row_group_indices,
   size_type schema_idx);
 

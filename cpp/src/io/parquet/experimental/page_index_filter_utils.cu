@@ -399,7 +399,7 @@ compute_page_row_offsets_and_colchunk_page_offsets(
 }
 
 std::pair<std::vector<size_type>, size_type> compute_page_row_offsets(
-  cudf::host_span<metadata_base const> per_file_metadata,
+  std::span<metadata_base const> per_file_metadata,
   std::span<std::vector<size_type> const> row_group_indices,
   cudf::size_type schema_idx)
 {

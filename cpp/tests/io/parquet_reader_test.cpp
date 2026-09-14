@@ -2613,7 +2613,28 @@ TEST_F(ParquetReaderTest, ExtendedFilterExpressions)
       cudf::io::parquet_reader_options::builder(cudf::io::source_info{filepath}).filter(filter);
     auto result = cudf::io::read_parquet(read_opts);
     CUDF_TEST_EXPECT_TABLES_EQUAL(*result.tbl, *expected);
-    // Stats filter cannot prune row groups
+    // Stats filter cannot prune `false`, but still prunes on 50 > col_a
+    EXPECT_EQ(result.metadata.num_row_groups_after_stats_filter.value(), 1);
+  }
+
+  // Filter: (col_a == 1) == (col_b == 2)
+  {
+    auto literal_1_value = cudf::numeric_scalar<int32_t>(1);
+    auto literal_1       = cudf::ast::literal(literal_1_value);
+    auto literal_2_value = cudf::numeric_scalar<int32_t>(2);
+    auto literal_2       = cudf::ast::literal(literal_2_value);
+    auto a_eq_1 = cudf::ast::operation(cudf::ast::ast_operator::EQUAL, col_ref_a, literal_1);
+    auto b_eq_2 = cudf::ast::operation(cudf::ast::ast_operator::EQUAL, col_ref_b, literal_2);
+    auto filter = cudf::ast::operation(cudf::ast::ast_operator::EQUAL, a_eq_1, b_eq_2);
+
+    auto predicate = cudf::compute_column(written_table, filter);
+    auto expected  = cudf::apply_retention_mask(written_table, *predicate);
+
+    cudf::io::parquet_reader_options read_opts =
+      cudf::io::parquet_reader_options::builder(cudf::io::source_info{filepath}).filter(filter);
+    auto result = cudf::io::read_parquet(read_opts);
+    CUDF_TEST_EXPECT_TABLES_EQUAL(*result.tbl, *expected);
+    // Comparing two per-row expressions cannot be evaluated using their independent summaries
     EXPECT_EQ(result.metadata.num_row_groups_after_stats_filter.value(),
               result.metadata.num_input_row_groups);
   }

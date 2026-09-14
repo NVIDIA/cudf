@@ -5,6 +5,13 @@ from cython.operator import dereference
 
 from cuda.bindings import runtime
 
+from cuda.bindings.cydriver cimport (
+    CUDA_ERROR_NOT_INITIALIZED,
+    CUDA_SUCCESS,
+    CUcontext,
+    CUresult,
+    cuCtxGetCurrent,
+)
 from cuda.bindings.cyruntime cimport (
     cudaError_t,
     cudaFree,
@@ -68,11 +75,16 @@ cdef vector[reference_wrapper[const scalar]] _as_vector(list source):
 
 
 cdef inline int _ensure_cuda_context() except -1:
-    cdef cudaError_t status
-    with nogil:
-        status = cudaFree(NULL)
-    if status != cudaSuccess:
-        raise RuntimeError(f"Failed to initialize CUDA context: {status}")
+    cdef CUcontext context = NULL
+    cdef CUresult status = cuCtxGetCurrent(&context)
+    cdef cudaError_t runtime_status
+    if status != CUDA_SUCCESS and status != CUDA_ERROR_NOT_INITIALIZED:
+        raise RuntimeError(f"Failed to get current CUDA context: {status}")
+    if status == CUDA_ERROR_NOT_INITIALIZED or context == NULL:
+        with nogil:
+            runtime_status = cudaFree(NULL)
+        if runtime_status != cudaSuccess:
+            raise RuntimeError(f"Failed to initialize CUDA context: {runtime_status}")
     return 0
 
 

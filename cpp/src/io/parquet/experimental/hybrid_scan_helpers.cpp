@@ -300,7 +300,7 @@ std::unique_ptr<cudf::column> aggregate_reader_metadata::build_all_true_row_mask
 {
   CUDF_FUNC_RANGE();
   auto const num_rows = total_rows_in_row_groups(row_group_indices);
-  CUDF_EXPECTS(num_rows < std::numeric_limits<cudf::size_type>::max(),
+  CUDF_EXPECTS(std::cmp_less_equal(num_rows, std::numeric_limits<cudf::size_type>::max()),
                "Total rows in row groups exceed the cudf's column size limit. Retry with a smaller "
                "set of row groups",
                std::invalid_argument);

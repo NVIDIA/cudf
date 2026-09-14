@@ -1,0 +1,64 @@
+{
+  "skill_name": "cudf-data-preparation",
+  "evals": [
+    {
+      "id": "cudf-prep-explicit-join-fanout",
+      "prompt": "Use the cuDF data-preparation skill to repair the unsafe many-orders-to-one-customer join in the provided workspace. Modify code/prepare_orders.py so duplicate or null customer keys fail before the join instead of being hidden by drop_duplicates. Preserve unmatched orders, one output row per order, and amount totals. Keep the function API-compatible with both pandas (the CPU semantic reference) and cuDF DataFrames; do not import pandas in the production module. Run `python3 code/smoke.py` and report changed files and validation results.",
+      "expected_output": "The agent reads the skill, edits code/prepare_orders.py, removes the post-join drop_duplicates repair, and adds explicit right-key null/duplicate gates before a left join. The supplied smoke test passes, proving valid many-to-one behavior, unmatched-order retention, row uniqueness, total reconciliation, and rejection of duplicate dimension keys. The implementation uses DataFrame methods common to pandas and cuDF and does not rely on cuDF merge(validate=...).",
+      "assertions": [
+        "Reads cudf-data-preparation/SKILL.md",
+        "Removes the arbitrary post-join drop_duplicates repair",
+        "Checks null and duplicate customer_id values before joining",
+        "Keeps a left join and one row per order for valid input",
+        "Runs python3 code/smoke.py successfully and reports the result"
+      ],
+      "expected_skill": "cudf-data-preparation",
+      "expected_script": null,
+      "files": [
+        "files/join-fanout/code/prepare_orders.py",
+        "files/join-fanout/code/smoke.py"
+      ]
+    },
+    {
+      "id": "cudf-prep-implicit-time-cutoff",
+      "prompt": "Prepare a cuDF feature table for a churn model scored at midnight on April 1. The event table has event_time and available_at, late-arriving events are common, and the output must remain keyed by customer_id. Explain the implementation and validation gates.",
+      "expected_output": "The agent treats event time and availability time as separate gates, asks or states whether records exactly at midnight are allowed, filters both columns under that rule, and tests records immediately below, at, and above the boundary. It returns stable customer keys and records the snapshot/cutoff rather than using current revised data silently.",
+      "assertions": [
+        "Filters on availability time as well as event time",
+        "Makes the strict or inclusive boundary explicit",
+        "Tests below, at, and above the cutoff",
+        "Preserves stable output keys and cutoff/snapshot metadata"
+      ],
+      "expected_skill": "cudf-data-preparation",
+      "expected_script": null,
+      "files": []
+    },
+    {
+      "id": "cudf-prep-contextual-population",
+      "prompt": "In a reporting pipeline, a cuDF groupby emits monthly spend only for customers who purchased. The contract requires every active customer-month, including zero-purchase customers, while genuinely unknown spend must stay null. Design the corrected output and its tests.",
+      "expected_output": "The agent starts from an active-customer-month population spine, left-joins the purchase aggregate at the declared grain, and distinguishes a contractually valid no-purchase zero from unknown spend. It checks one output row per customer-month and full population coverage instead of assuming an event-only groupby contains inactive entities.",
+      "assertions": [
+        "Uses an explicit required-population spine",
+        "Separates no activity from unknown or missing data",
+        "Checks exact customer-month grain and full population coverage",
+        "Does not globally fill every missing measure with zero"
+      ],
+      "expected_skill": "cudf-data-preparation",
+      "expected_script": null,
+      "files": []
+    },
+    {
+      "id": "cudf-prep-negative-model-training",
+      "prompt": "My feature table is already complete and validated. Choose a classifier, tune it, and report test ROC AUC for fraud detection with cuML.",
+      "expected_output": "This request should not activate cudf-data-preparation. The requested work is model selection, fitting, and evaluation after preparation is complete, so the agent routes it to a cuML machine-learning workflow and does not add an unrelated data-preparation audit.",
+      "assertions": [
+        "Does not claim ownership of classifier selection or fitting",
+        "Treats the validated feature table as an upstream input",
+        "Routes to cuML machine-learning guidance"
+      ],
+      "expected_skill": null,
+      "expected_script": null,
+      "files": []
+    }
+  ]
+}

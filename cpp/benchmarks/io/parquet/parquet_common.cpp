@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#include "reader_common.hpp"
+#include "parquet_common.hpp"
 
 #include <benchmarks/common/generate_input.hpp>
 #include <benchmarks/common/memory_stats.hpp>
@@ -19,7 +19,6 @@
 #include <nvbench/nvbench.cuh>
 
 #include <algorithm>
-#include <filesystem>  // TEMPORARY, NOT FOR MERGE
 #include <string>
 
 void parquet_read_common(cudf::size_type num_rows_to_read,
@@ -142,16 +141,32 @@ cuio_source_sink_pair write_file_shape_parquet_file(cudf::type_id dtype,
                                     : cudf::io::statistics_freq::STATISTICS_ROWGROUP);
   cudf::io::write_parquet(write_opts);
 
-  // TEMPORARY, NOT FOR MERGE: copy the file out of the sink so that its row group and page layout
-  // can be inspected with the parquet_inspect example. Requires `-a io_type=FILEPATH`.
-  if (source_type == io_type::FILEPATH) {
-    std::filesystem::create_directories("/tmp/file_shape");
-    std::filesystem::copy_file(source_sink.make_source_info().filepaths().front(),
-                               "/tmp/file_shape/AFTER_r" + std::to_string(num_rows) + "_rg" +
-                                 std::to_string(num_row_groups) + "_pg" +
-                                 std::to_string(pages_per_row_group) + ".parquet",
-                               std::filesystem::copy_options::overwrite_existing);
+  return source_sink;
+}
+
+cuio_source_sink_pair write_named_resolution_parquet_file(cudf::size_type num_cols,
+                                                          io_type source_type)
+{
+  cuio_source_sink_pair source_sink(source_type);
+
+  // A single INT32 row keeps the file negligible so name resolution dominates the read; resolution
+  // cost is independent of dtype, so the cheapest type is used.
+  constexpr cudf::size_type num_rows = 1;
+  auto const tbl =
+    create_random_table(cycle_dtypes({cudf::type_id::INT32}, num_cols),
+                        row_count{num_rows},
+                        data_profile_builder().cardinality(0).avg_run_length(1).no_validity());
+
+  cudf::io::table_input_metadata input_meta(tbl->view());
+  for (cudf::size_type i = 0; i < num_cols; ++i) {
+    input_meta.column_metadata[i].set_name("col" + std::to_string(i));
   }
+
+  cudf::io::parquet_writer_options write_opts =
+    cudf::io::parquet_writer_options::builder(source_sink.make_sink_info(), tbl->view())
+      .metadata(std::move(input_meta))
+      .compression(cudf::io::compression_type::NONE);
+  cudf::io::write_parquet(write_opts);
 
   return source_sink;
 }

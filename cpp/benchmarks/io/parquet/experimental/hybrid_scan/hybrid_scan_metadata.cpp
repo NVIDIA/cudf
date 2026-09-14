@@ -6,7 +6,7 @@
 #include <benchmarks/common/memory_stats.hpp>
 #include <benchmarks/io/cuio_common.hpp>
 #include <benchmarks/io/nvbench_helpers.hpp>
-#include <benchmarks/io/parquet/reader_common.hpp>
+#include <benchmarks/io/parquet/parquet_common.hpp>
 
 #include <cudf/io/datasource.hpp>
 #include <cudf/io/experimental/hybrid_scan.hpp>
@@ -20,11 +20,6 @@
 #include <string>
 #include <utility>
 
-/**
- * Benchmark for hybrid scan's caller-visible setup path.
- *
- * Every cell runs the whole setup path and brackets the timer around one step.
- */
 enum class setup_phase : int32_t {
   FOOTER_FETCH,      // copy footer bytes to host
   READER_CTOR,       // parse footer, construct reader
@@ -121,14 +116,11 @@ void BM_hybrid_scan_setup_phase(nvbench::state& state,
     mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
 }
 
-// Isolated page-index fetch vs parse as page count grows.
+// Measure how page-index fetch and setup cost scales with file shape.
 template <setup_phase Phase>
 void BM_hybrid_scan_file_shape(nvbench::state& state, nvbench::type_list<nvbench::enum_type<Phase>>)
 {
-  // Matches parquet_read_file_shape, which needs a string column for the naive reader to read the
-  // page index at all
-  auto constexpr d_type = cudf::type_id::STRING;
-  // Both phases measured here parse the page index, so it is always written
+  auto constexpr d_type           = cudf::type_id::STRING;
   auto constexpr write_page_index = true;
 
   auto const source_type    = retrieve_io_type_enum(state.get_string("io_type"));

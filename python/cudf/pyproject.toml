@@ -86,7 +86,7 @@ cudf-pandas-tests = [
 
 [project.urls]
 Homepage = "https://github.com/NVIDIA/cudf"
-Documentation = "https://docs.rapids.ai/api/cudf/stable/"
+Documentation = "https://docs.nvidia.com/cudf/"
 
 [project.entry-points.rapids_doctor_check]
 cudf_import = "cudf._health_checks:import_check"

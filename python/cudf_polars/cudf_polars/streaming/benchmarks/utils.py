@@ -874,7 +874,12 @@ def print_query_plan(
     elif CUDF_POLARS_AVAILABLE:
         assert isinstance(engine, pl.GPUEngine)
         if args.explain_logical:
-            logical_plan = explain_query(q, engine, physical=False)
+            logical_plan = explain_query(
+                q,
+                engine,
+                optimized=run_config.frontend in _STREAMING_FRONTENDS,
+                physical=False,
+            )
         if args.explain and run_config.frontend in _STREAMING_FRONTENDS:
             plan = explain_query(q, engine)
     else:

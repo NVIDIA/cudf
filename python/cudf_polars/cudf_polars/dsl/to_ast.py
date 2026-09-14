@@ -182,7 +182,7 @@ def _(node: expr.BinOp, self: Transformer) -> plc_expr.Expression:
     if c1.dtype != c2.dtype:
         if isinstance(c1, expr.Literal):  # pragma: no cover
             c1 = c1.astype(c2.dtype)
-        elif isinstance(c2, expr.Literal):
+        elif isinstance(c2, expr.Literal):  # pragma: no cover
             c2 = c2.astype(c1.dtype)
         elif (
             isinstance(c1, (expr.Col, expr.ColRef)) and c1.dtype.id() in _DECIMAL_IDS

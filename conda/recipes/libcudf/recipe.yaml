@@ -209,7 +209,7 @@ outputs:
           - libzlib
           - libnvcomp
     about:
-      homepage: https://rapids.ai/
+      homepage: https://docs.nvidia.com/cudf/
       license: Apache-2.0
       summary: libcudf_kafka library
 
@@ -253,7 +253,7 @@ outputs:
           - libzlib
           - libnvcomp
     about:
-      homepage: https://rapids.ai/
+      homepage: https://docs.nvidia.com/cudf/
       license: Apache-2.0
       summary: libcudf-streaming library
 
@@ -433,6 +433,6 @@ outputs:
           - librmm
           - libnvcomp
     about:
-      homepage: https://rapids.ai/
+      homepage: https://docs.nvidia.com/cudf/
       license: Apache-2.0
       summary: libcudf-streaming test & benchmark executables

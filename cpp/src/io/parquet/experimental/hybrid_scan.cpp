@@ -18,7 +18,7 @@ hybrid_scan_metadata::hybrid_scan_metadata(cudf::host_span<uint8_t const> footer
   : _metadata{std::make_shared<detail::aggregate_reader_metadata>(
       std::vector<cudf::host_span<uint8_t const>>{footer_bytes},
       options.is_enabled_use_arrow_schema(),
-      options.get_column_names().has_value() and options.is_enabled_allow_mismatched_pq_schemas())}
+      options.is_enabled_allow_mismatched_pq_schemas())}
 {
 }
 
@@ -27,7 +27,7 @@ hybrid_scan_metadata::hybrid_scan_metadata(FileMetaData const& parquet_metadata,
   : _metadata{std::make_shared<detail::aggregate_reader_metadata>(
       std::vector<FileMetaData>{parquet_metadata},
       options.is_enabled_use_arrow_schema(),
-      options.get_column_names().has_value() and options.is_enabled_allow_mismatched_pq_schemas())}
+      options.is_enabled_allow_mismatched_pq_schemas())}
 {
 }
 

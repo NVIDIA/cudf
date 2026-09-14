@@ -3876,7 +3876,7 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
    * ```
    * Any null string entries return corresponding null output column entries.
    * For supported regex patterns refer to:
-   * @link https://docs.rapids.ai/api/libcudf/nightly/md_regex.html
+   * @link https://docs.nvidia.com/cudf/latest/libcudf/md_regex/
    *
    * @param pattern Regex pattern to match to each string.
    * @return New ColumnVector of boolean results for each string.
@@ -3898,7 +3898,7 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
    * ```
    * Any null string entries return corresponding null output column entries.
    * For supported regex patterns refer to:
-   * @link https://docs.rapids.ai/api/libcudf/nightly/md_regex.html
+   * @link https://docs.nvidia.com/cudf/latest/libcudf/md_regex/
    *
    * @param regexProg Regex program to match to each string.
    * @return New ColumnVector of boolean results for each string.
@@ -3922,7 +3922,7 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
    * ```
    * Any null string entries return corresponding null output column entries.
    * For supported regex patterns refer to:
-   * @link https://docs.rapids.ai/api/libcudf/nightly/md_regex.html
+   * @link https://docs.nvidia.com/cudf/latest/libcudf/md_regex/
    *
    * @param pattern Regex pattern to match to each string.
    * @return New ColumnVector of boolean results for each string.
@@ -3944,7 +3944,7 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
    * ```
    * Any null string entries return corresponding null output column entries.
    * For supported regex patterns refer to:
-   * @link https://docs.rapids.ai/api/libcudf/nightly/md_regex.html
+   * @link https://docs.nvidia.com/cudf/latest/libcudf/md_regex/
    *
    * @param regexProg Regex program to match to each string.
    * @return New ColumnVector of boolean results for each string.
@@ -3963,7 +3963,7 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
    * does not match. Any null inputs also result in null output entries.
    *
    * For supported regex patterns refer to:
-   * @link https://docs.rapids.ai/api/libcudf/nightly/md_regex.html
+   * @link https://docs.nvidia.com/cudf/latest/libcudf/md_regex/
    * @param pattern the pattern to use
    * @return the table of extracted matches
    * @throws CudfException if any error happens including if the RE does
@@ -3980,7 +3980,7 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
    * does not match. Any null inputs also result in null output entries.
    *
    * For supported regex patterns refer to:
-   * @link https://docs.rapids.ai/api/libcudf/nightly/md_regex.html
+   * @link https://docs.nvidia.com/cudf/latest/libcudf/md_regex/
    * @param regexProg the regex program to use
    * @return the table of extracted matches
    * @throws CudfException if any error happens including if the regex
@@ -3998,7 +3998,7 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
    * regular expression group index. Any null inputs also result in null output entries.
    *
    * For supported regex patterns refer to:
-   * @link https://docs.rapids.ai/api/libcudf/nightly/md_regex.html
+   * @link https://docs.nvidia.com/cudf/latest/libcudf/md_regex/
    * @param pattern The regex pattern
    * @param idx The regex group index
    * @return A new column vector of extracted matches
@@ -4016,7 +4016,7 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
    * regular expression group index. Any null inputs also result in null output entries.
    *
    * For supported regex patterns refer to:
-   * @link https://docs.rapids.ai/api/libcudf/nightly/md_regex.html
+   * @link https://docs.nvidia.com/cudf/latest/libcudf/md_regex/
    * @param regexProg The regex program
    * @param idx The regex group index
    * @return A new column vector of extracted matches

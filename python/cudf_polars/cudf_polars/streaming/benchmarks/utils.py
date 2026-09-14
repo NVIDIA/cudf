@@ -899,8 +899,8 @@ def print_query_plan(
 
 
 def is_remote_path(path: os.PathLike | str) -> bool:
-    """Return True if `path` is an object-storage URL rather than a local path."""
-    return "://" in str(path)
+    """Return True if `path` is an S3 URL rather than a local path."""
+    return str(path).startswith("s3://")
 
 
 def drop_file_page_cache_recursively(path: os.PathLike | str) -> None:

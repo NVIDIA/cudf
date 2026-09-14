@@ -59,6 +59,7 @@ __all__ = [
     "ConfigOptions",
     "DaskContext",
     "DynamicPlanningOptions",
+    "HybridScanPassMode",
     "InMemoryExecutor",
     "JoinFilterPushdownOptions",
     "MaxConcurrentIOTasks",
@@ -211,6 +212,21 @@ class StreamingFallbackMode(enum.StrEnum):
     WARN = "warn"
     RAISE = "raise"
     SILENT = "silent"
+
+
+class HybridScanPassMode(enum.StrEnum):
+    """
+    How a hybrid scan read fetches and materializes its columns.
+
+    * ``HybridScanPassMode.SINGLE_PASS`` : Fetch and materialize all columns
+      in one pass, via ``HybridScanReader.materialize_all_columns``.
+    * ``HybridScanPassMode.TWO_PASS`` : Fetch and materialize filter columns,
+      then payload columns, via ``materialize_filter_columns`` and
+      ``materialize_payload_columns``.
+    """
+
+    SINGLE_PASS = "single_pass"
+    TWO_PASS = "two_pass"
 
 
 class Cluster(enum.StrEnum):
@@ -606,6 +622,14 @@ class ParquetOptions:
         Whether to use the two-pass ``HybridScanReader`` for ``SplitScan``
         tasks when a predicate can be pushed down to a parquet filter.
         Default is False.
+    pass_mode
+        How a hybrid scan read fetches and materializes its columns.
+        See :class:`HybridScanPassMode`. Ignored when ``use_hybrid_scan`` is
+        False. When unspecified, chosen per split: ``TWO_PASS`` if stats/bloom
+        pruning eliminates any row groups, otherwise ``SINGLE_PASS``. Force
+        ``TWO_PASS`` if a predicate is expected to be selective at any level,
+        row group or page, since the automatic choice only has visibility
+        into row-group elimination.
     """
 
     _env_prefix = "CUDF_POLARS__PARQUET_OPTIONS"
@@ -654,6 +678,13 @@ class ParquetOptions:
             default=False,
         )
     )
+    pass_mode: HybridScanPassMode | Unspecified = dataclasses.field(
+        default_factory=_make_default_factory(
+            f"{_env_prefix}__PASS_MODE",
+            HybridScanPassMode.__call__,
+            default=UNSPECIFIED,
+        )
+    )
     # Internal benchmarking flag. When False, skips stats and bloom-filter pruning
     # before the first pass of a hybrid scan so you can measure two-pass read
     # overhead in isolation. No reason to set this to False in production.
@@ -697,6 +728,8 @@ class ParquetOptions:
             raise ValueError(
                 "use_hybrid_scan requires prefetch_file_metadata to be enabled"
             )
+        if not isinstance(self.pass_mode, (HybridScanPassMode, Unspecified)):
+            raise TypeError("pass_mode must be a HybridScanPassMode when specified")
         if not isinstance(self.use_jit_filter, bool):
             raise TypeError("use_jit_filter must be a bool")
 

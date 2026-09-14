@@ -1529,6 +1529,7 @@ transform_program::transform_program(
       std::visit([](auto& view) { return view.nullable(); }, input));
     if (auto const* scalar = std::get_if<scalar_column_view>(&input)) {
       // The program must outlive non-owning scalar-column literals in the source AST.
+      // TODO: Reuse converter-owned scalar columns to avoid copies while preserving input order.
       impl_->ast_scalar_columns_.push_back(
         std::make_unique<column>(scalar->as_column_view(), stream, mr));
     }

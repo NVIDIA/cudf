@@ -157,7 +157,7 @@ TEST_F(TransformProgramTest, OwnsStringScalarColumnViewLiterals)
 TEST_F(TransformProgramTest, OwnsMixedLiteralRepresentationsInInputOrder)
 {
   for (bool scalar_first : {false, true}) {
-    SCOPED_TRACE(scalar_first);
+    SCOPED_TRACE(scalar_first ? "scalar first" : "column first");
     auto program = [scalar_first]() {
       auto construction_input = column_wrapper<int32_t>{0};
       auto construction_table = cudf::table_view{{construction_input}};
@@ -175,6 +175,7 @@ TEST_F(TransformProgramTest, OwnsMixedLiteralRepresentationsInInputOrder)
     }();
 
     for (int32_t base : {10, 30}) {
+      SCOPED_TRACE(base);
       auto input    = column_wrapper<int32_t>{base, base + 10};
       auto table    = cudf::table_view{{input}};
       auto offset   = scalar_first ? 5 : -5;

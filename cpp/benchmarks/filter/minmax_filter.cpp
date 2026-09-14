@@ -21,6 +21,7 @@
 
 #include <array>
 #include <concepts>
+#include <span>
 #include <vector>
 
 namespace {
@@ -142,7 +143,7 @@ void BM_filter_min_max(nvbench::state& state)
                           cudf::udf_source_type::CUDA,
                           cudf::null_aware::NO,
                           std::nullopt,
-                          predicate_inputs,
+                          std::span{predicate_inputs},
                           std::array{cudf::transform_output{cudf::data_type{cudf::type_id::BOOL8},
                                                             cudf::output_nullability::PRESERVE}},
                           {},
@@ -150,7 +151,7 @@ void BM_filter_min_max(nvbench::state& state)
                           stream,
                           mr);
         auto result = cudf::apply_retention_mask(
-          cudf::table_view{filter_column_views}, predicate->view(), stream, mr);
+          cudf::table_view{filter_column_views}, predicate->view().column(0), stream, mr);
       } break;
       default: CUDF_UNREACHABLE("Unrecognised engine type requested");
     }

@@ -20,6 +20,7 @@
 #include <cudf/types.hpp>
 
 #include <array>
+#include <span>
 
 auto constexpr NaN          = std::numeric_limits<double>::quiet_NaN();
 auto constexpr KEEP_ANY     = cudf::duplicate_keep_option::KEEP_ANY;
@@ -402,6 +403,7 @@ TEST_F(StreamCompactionTest, FilterUDF)
 {
   auto const col                 = int32s_col{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14};
   auto const expected            = int32s_col{0, 1, 2, 3, 4, 5, 6, 7, 8, 9}.release();
+  auto const input               = cudf::table_view{{col}};
   cudf::transform_input inputs[] = {col};
   auto const predicate =
     cudf::transform(R"***(
@@ -411,14 +413,14 @@ __device__ void filter(bool * out, int32_t a){
                     cudf::udf_source_type::CUDA,
                     cudf::null_aware::NO,
                     std::nullopt,
-                    inputs,
+                    std::span{inputs},
                     std::array{cudf::transform_output{cudf::data_type{cudf::type_id::BOOL8},
                                                       cudf::output_nullability::PRESERVE}},
                     {},
-                    col.size(),
+                    input.num_rows(),
                     cudf::test::get_default_stream());
   auto const result = cudf::apply_retention_mask(
-    cudf::table_view{{col}}, predicate->view(), cudf::test::get_default_stream());
+    input, predicate->view().column(0), cudf::test::get_default_stream());
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*expected, result->view().column(0));
 }
 

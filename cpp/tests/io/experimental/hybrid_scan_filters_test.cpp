@@ -855,6 +855,24 @@ TYPED_TEST(PageFilteringWithPageIndexStats, FilterPages)
     auto constexpr expected_surviving_rows = 2 * num_concat * page_size_for_ordered_tests;
     test_filter_data_pages_with_stats(filter_expression, expected_surviving_rows);
   }
+
+  // Filtering AST - table[0] > 150 OR table[0] < table[1]. Page statistics cannot evaluate
+  // table[0] < table[1] so the filter cannot prune anything
+  {
+    auto literal_value  = cudf::numeric_scalar<T>(T{150}, true, stream);
+    auto const literal  = cudf::ast::literal(literal_value);
+    auto const col_ref0 = cudf::ast::column_name_reference("col0");
+    auto const col_ref1 = cudf::ast::column_name_reference("col1");
+    auto filter_expression0 =
+      cudf::ast::operation(cudf::ast::ast_operator::GREATER, col_ref0, literal);
+    auto filter_expression1 =
+      cudf::ast::operation(cudf::ast::ast_operator::LESS, col_ref0, col_ref1);
+
+    auto filter_expression = cudf::ast::operation(
+      cudf::ast::ast_operator::LOGICAL_OR, filter_expression0, filter_expression1);
+    auto constexpr expected_surviving_rows = num_concat * num_ordered_rows;
+    test_filter_data_pages_with_stats(filter_expression, expected_surviving_rows);
+  }
 }
 
 TEST_F(HybridScanFiltersTest, RowMaskNullsAreRetained)
@@ -1258,15 +1276,13 @@ TEST_F(HybridScanFiltersTest, FilterRowGroupsWithDictionary)
   }
 
   {
-    // Filtering - table[0] != 50 and table[0] == 50
-    auto uint_literal_value  = cudf::numeric_scalar<T>(50, true, stream);
-    auto uint_literal_value2 = cudf::numeric_scalar<T>(50, true, stream);
-    auto uint_literal        = cudf::ast::literal(uint_literal_value);
-    auto uint_literal2       = cudf::ast::literal(uint_literal_value2);
+    // Filtering - table[0] != 50 and table[0] == 50, reusing the same literal expression
+    auto uint_literal_value = cudf::numeric_scalar<T>(50, true, stream);
+    auto uint_literal       = cudf::ast::literal(uint_literal_value);
     auto uint_filter_expression =
       cudf::ast::operation(cudf::ast::ast_operator::NOT_EQUAL, col0_ref, uint_literal);
     auto uint_filter_expression2 =
-      cudf::ast::operation(cudf::ast::ast_operator::EQUAL, col0_ref, uint_literal2);
+      cudf::ast::operation(cudf::ast::ast_operator::EQUAL, col0_ref, uint_literal);
     auto filter_expression = cudf::ast::operation(
       cudf::ast::ast_operator::LOGICAL_AND, uint_filter_expression, uint_filter_expression2);
 
@@ -1312,6 +1328,28 @@ TEST_F(HybridScanFiltersTest, FilterRowGroupsWithDictionary)
       cudf::ast::operation(cudf::ast::ast_operator::NOT_EQUAL, col2_ref, str_literal);
     auto filter_expression = cudf::ast::operation(
       cudf::ast::ast_operator::LOGICAL_OR, uint_filter_expression, str_filter_expression);
+
+    constexpr size_t expected_row_groups = 4;
+    auto const options =
+      cudf::io::parquet_reader_options::builder().filter(filter_expression).build();
+    EXPECT_EQ(
+      filter_row_groups_with_dictionaries(datasource_ref, reader_ref, options, stream, mr).size(),
+      expected_row_groups);
+  }
+
+  {
+    // Filtering - table[0] == 1000 or table[0] < 100. Dictionaries cannot evaluate table[0] < 100
+    // so the filter cannot prune anything.
+    auto uint_literal_value  = cudf::numeric_scalar<T>(1000, true, stream);
+    auto uint_literal_value2 = cudf::numeric_scalar<T>(100, true, stream);
+    auto uint_literal        = cudf::ast::literal(uint_literal_value);
+    auto uint_literal2       = cudf::ast::literal(uint_literal_value2);
+    auto uint_filter_expression =
+      cudf::ast::operation(cudf::ast::ast_operator::EQUAL, col0_ref, uint_literal);
+    auto uint_filter_expression2 =
+      cudf::ast::operation(cudf::ast::ast_operator::LESS, col0_ref, uint_literal2);
+    auto filter_expression = cudf::ast::operation(
+      cudf::ast::ast_operator::LOGICAL_OR, uint_filter_expression, uint_filter_expression2);
 
     constexpr size_t expected_row_groups = 4;
     auto const options =

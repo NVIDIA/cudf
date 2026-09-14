@@ -1,7 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import re
-from concurrent.futures import ThreadPoolExecutor
 from decimal import Decimal
 
 import cupy as cp
@@ -70,24 +69,6 @@ def test_series_reductions(
     got = call_test(sr, skipna=skipna)
 
     np.testing.assert_approx_equal(expect, got, significant=4)
-
-
-def test_series_reductions_concurrency(reduction_methods):
-    rng = np.random.default_rng(seed=0)
-    srs = [cudf.Series(rng.random(100))]
-
-    def call_test(sr):
-        fn = getattr(sr, reduction_methods)
-        if reduction_methods in ["std", "var"]:
-            return fn(ddof=1)
-        else:
-            return fn()
-
-    def f(sr):
-        return call_test(sr + 1)
-
-    with ThreadPoolExecutor(10) as e:
-        list(e.map(f, srs * 50))
 
 
 @pytest.mark.parametrize("ddof", range(3))

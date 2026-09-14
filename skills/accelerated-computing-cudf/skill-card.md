@@ -9,7 +9,7 @@ NVIDIA <br>
 ### License/Terms of Use: <br>
 CC-BY-4.0 AND Apache-2.0 <br>
 ## Use Case: <br>
-Developers and engineers implementing GPU-accelerated DataFrame operations with NVIDIA cuDF, including pandas-to-GPU migration, ETL pipeline optimization, and multi-GPU workloads with dask-cuDF. <br>
+Developers and engineers accelerating tabular data processing with GPU DataFrames, migrating pandas code to cuDF, optimizing ETL pipelines, and scaling DataFrame workloads across multiple GPUs. <br>
 
 ### Deployment Geography for Use: <br>
 Global <br>
@@ -28,9 +28,9 @@ Mitigation: Review and scan skill before deployment. <br>
 - [cuDF API Patterns, Gaps, and Semantic Differences](references/api-patterns.md) <br>
 - [cudf.pandas Accelerator Deep Dive](references/cudf-pandas-accelerator.md) <br>
 - [dask-cuDF Patterns](references/dask-cudf-patterns.md) <br>
-- [cuDF Documentation](https://docs.rapids.ai/api/cudf/stable/) <br>
-- [dask-cuDF API Reference](https://docs.rapids.ai/api/dask-cudf/stable/api/) <br>
-- [cuDF GitHub Repository](https://github.com/NVIDIA/cudf) <br>
+- [NVIDIA cuDF Documentation](https://docs.nvidia.com/cudf/) <br>
+- [dask-cuDF Documentation](https://docs.nvidia.com/dask-cudf/) <br>
+- [NVIDIA cuDF GitHub Repository](https://github.com/NVIDIA/cudf) <br>
 
 
 ## Skill Output: <br>
@@ -46,38 +46,39 @@ Mitigation: Review and scan skill before deployment. <br>
 
 
 ## Evaluation Tasks: <br>
-13 evaluation tasks (12 positive, 1 negative). <br>
+13 evaluation tasks (12 positive, 1 negative), each run with 3 attempts in isolated sandbox pods. <br>
 
 ## Evaluation Metrics Used: <br>
 Reported benchmark dimensions: <br>
-- Security: Whether the skill avoids unsafe operations, secret leakage, and unauthorized access. <br>
-- Correctness: Whether the final answer is correct against the reference answer. <br>
-- Discoverability: Whether the expected skill is found and executed when needed. <br>
-- Effectiveness: Whether the skill helps complete the user's goal and follows expected workflow. <br>
-- Efficiency: Whether the skill avoids wasted tool or skill usage. <br>
+- Security: Checks for unsafe operations, secret leakage, and unauthorized access. <br>
+- Correctness: Checks final-answer correctness against the reference answer. <br>
+- Discoverability: Checks whether the expected skill was selected and the workflow executed. <br>
+- Effectiveness: Checks whether the user’s goal was achieved and expected workflow behavior was followed. <br>
+- Efficiency: Checks tool-call productivity and token usage efficiency. <br>
 
 Underlying evaluation signals used in this run: <br>
-- `security`: Checks for unsafe operations, secret leakage, and unauthorized access. <br>
+- `security`: Detects unsafe operations, secret leakage, and unauthorized access. <br>
 - `accuracy`: Verifies final-answer correctness against the reference answer. <br>
-- `skill_execution`: Whether the expected skill was found and executed. <br>
-- `skill_efficiency`: Routing quality, workspace-aware skill reads, and productive tool use. <br>
-- `goal_accuracy`: Whether the user's goal was achieved. <br>
-- `behavior_check`: Whether the expected workflow behavior was followed. <br>
+- `skill_execution`: Verifies whether the expected skill was selected and decoys were avoided. <br>
+- `goal_accuracy`: Verifies whether the user’s goal was achieved. <br>
+- `behavior_check`: Verifies whether the expected workflow behavior was followed. <br>
+- `skill_efficiency`: Measures tool-call productivity. <br>
+- `token_efficiency`: Measures actual uncached prompt plus completion token usage. <br>
 
 
 
 ## Evaluation Results: <br>
 | Measure | Claude Code (Baseline → Skill Uplift) | Codex (Baseline → Skill Uplift) |
 |---|---:|---:|
-| Overall | 74% → 88% (+14 points) | 68% → 83% (+15 points) |
-| Security | 85% → 69% (-15 points) | 54% → 46% (-8 points) |
-| Correctness | 100% → 100% (±0 points) | 100% → 98% (-2 points) |
-| Discoverability | 47% → 89% (+42 points) | 45% → 85% (+40 points) |
-| Effectiveness | 96% → 96% (±0 points) | 95% → 94% (-1 points) |
-| Efficiency | 44% → 87% (+43 points) | 46% → 89% (+43 points) |
+| Overall | Not available | 84.7% — baseline ran, but no comparable score was available; uplift unavailable |
+| Security | Not available | 76.9% → 69.2% (-7.7 points) |
+| Correctness | Not available | 100.0% → 100.0% (±0.0 points) |
+| Discoverability | Not available | 81.3% — baseline ran, but no comparable score was available; uplift unavailable |
+| Effectiveness | Not available | 94.4% → 90.9% (-3.5 points) |
+| Efficiency | Not available | 82.3% — baseline ran, but no comparable score was available; uplift unavailable |
 
 ## Skill Version(s): <br>
-333911cf41 (source: git SHA, committed 2026-08-26) <br>
+4ad07b44f1 (source: git SHA, committed 2026-09-10) <br>
 
 ## Ethical Considerations: <br>
 NVIDIA believes Trustworthy AI is a shared responsibility and we have established policies and practices to enable development for a wide array of AI applications. When downloaded or used in accordance with our terms of service, developers should work with their internal team to ensure this skill meets requirements for the relevant industry and use case and addresses unforeseen product misuse. <br>

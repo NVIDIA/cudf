@@ -182,7 +182,7 @@ cdef class TableChunk:
         persists even when the chunk is transferred through Channels.
 
         """
-        cdef stream_ref _stream = stream_ref(stream.view().get())
+        cdef stream_ref _stream = stream.view()
         cdef cpp_table_view view = table.view()
         return TableChunk.from_handle(
             cpp_from_table_view_with_owner(

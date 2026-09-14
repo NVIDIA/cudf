@@ -185,6 +185,7 @@ def expand_scan_for_rank(
     """
     local_offset, local_count = _rank_slice(partition_count, rank, nranks)
     if plan.flavor == IOPartitionFlavor.SPLIT_FILES:
+        assert ir.typ == "parquet"
         path_offset = local_offset // plan.factor
         path_end = math.ceil((local_offset + local_count) / plan.factor)
         local_paths = ir.paths[path_offset:path_end]
@@ -530,7 +531,7 @@ class ParquetScanTask(ScanTask):
             return None
         return [cached_by_path[path] for path in self.paths]
 
-    def _fetch_parquet_info(self) -> list[CachedParquetInfo]:
+    def _fetch_parquet_info_for_hybrid_scan(self) -> list[CachedParquetInfo]:
         """Fetch parquet metadata for hybrid scan."""
         from cudf_polars.dsl.utils.io import _prefetch_parquet_footers_for_paths
 
@@ -634,7 +635,7 @@ class ParquetScanTask(ScanTask):
         if cached_parquet_info is None and should_try_hybrid_scan:
             # read_parquet_metadata is faster (for now),
             # but hybrid scan needs FileMetaData.
-            cached_parquet_info = task._fetch_parquet_info()
+            cached_parquet_info = task._fetch_parquet_info_for_hybrid_scan()
         bounds = task._get_task_bounds(cached_parquet_info)
         # Hybrid scan reads through cached parquet metadata, so it is only used
         # when the metadata is available to this task.

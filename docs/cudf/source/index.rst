@@ -55,7 +55,7 @@ The following data engines and tools integrate with cuDF:
      - `Velox-cuDF documentation <https://github.com/facebookincubator/velox/blob/main/velox/experimental/cudf/README.md>`_
 
 See the `installation and deployment guide
-<https://docs.rapids.ai/install/#install-rapids>`_
+<https://docs.nvidia.com/datascience/install/#install-rapids>`_
 to get up-and-running with cuDF.
 
 .. toctree::

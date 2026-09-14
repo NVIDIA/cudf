@@ -57,7 +57,7 @@ Use all applicable checklist items from those files when reviewing the PR. The D
 | Documentation guide | `cpp/doxygen/developer_guide/DOCUMENTATION.md` |
 | Profiling guide | `cpp/doxygen/developer_guide/PROFILING.md` |
 
-Online libcudf API docs if needed: https://docs.rapids.ai/api/cudf/nightly/libcudf/
+Online libcudf API docs if needed: https://docs.nvidia.com/cudf/latest/libcudf/
 
 ---
 

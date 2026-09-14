@@ -420,6 +420,28 @@ TESTS_TO_SKIP: dict[str, str] = {
     # across engines. Skip both runs rather than xfail (which would XPASS on in-memory).
     "tests/unit/lazyframe/test_predicates.py::test_hconcat_predicate": "polars 1.42: test uses deprecated how='horizontal' with strict=True in ways that behave differently across GPU engines",
     "tests/unit/functions/test_union.py::test_union_lazyframe_horizontal": "polars 1.42: test uses deprecated how='horizontal' with strict=True in ways that behave differently across GPU engines",
+    # Cloud credential provider tests that don't possible exercise cudf-polars.
+    "tests/unit/io/cloud/test_credential_provider.py::test_credential_provider_scan": "Unused by cudf-polars",
+    "tests/unit/io/cloud/test_credential_provider.py::test_credential_provider_serialization_auto_init": "Unused by cudf-polars",
+    "tests/unit/io/cloud/test_credential_provider.py::test_credential_provider_serialization_custom_provider": "Unused by cudf-polars",
+    "tests/unit/io/cloud/test_credential_provider.py::test_credential_provider_gcp_skips_config_autoload": "Unused by cudf-polars",
+    "tests/unit/io/cloud/test_credential_provider.py::test_credential_provider_aws_import_error_with_requested_profile": "Unused by cudf-polars",
+    "tests/unit/io/cloud/test_credential_provider.py::test_credential_provider_aws_endpoint_url_scan_no_parameters": "Unused by cudf-polars",
+    "tests/unit/io/cloud/test_credential_provider.py::test_credential_provider_aws_endpoint_url_serde": "Unused by cudf-polars",
+    "tests/unit/io/cloud/test_credential_provider.py::test_credential_provider_aws_endpoint_url_with_storage_options": "Unused by cudf-polars",
+    "tests/unit/io/cloud/test_credential_provider.py::test_credential_provider_aws_endpoint_url_passed_in_storage_options": "Unused by cudf-polars",
+    "tests/unit/io/cloud/test_credential_provider.py::test_credential_provider_python_builder_cache": "Unused by cudf-polars",
+    "tests/unit/io/cloud/test_credential_provider.py::test_credential_provider_python_credentials_cache": "Unused by cudf-polars",
+    "tests/unit/io/cloud/test_credential_provider.py::test_no_pickle_option": "Unused by cudf-polars",
+    "tests/unit/io/cloud/test_credential_provider.py::test_credential_provider_aws_expiry": "Unused by cudf-polars",
+    "tests/unit/io/cloud/test_credential_provider.py::test_credential_provider_rebuild_clears_cache": "Unused by cudf-polars",
+    "tests/unit/io/cloud/test_credential_provider.py::test_user_gcp_token_provider": "Unused by cudf-polars",
+    "tests/unit/io/cloud/test_credential_provider.py::test_auto_init_cache_key_memoize": "Unused by cudf-polars",
+    "tests/unit/io/cloud/test_credential_provider.py::test_cached_credential_provider_returns_copied_creds": "Unused by cudf-polars",
+    "tests/unit/io/cloud/test_credential_provider.py::test_credential_provider_init_from_partition_target": "Unused by cudf-polars",
+    "tests/unit/io/cloud/test_credential_provider.py::test_cache_user_credential_provider": "Unused by cudf-polars",
+    "tests/unit/io/cloud/test_credential_provider.py::test_credential_provider_global_config": "Unused by cudf-polars",
+    "tests/unit/io/cloud/test_credential_provider.py::test_cache_user_credential_provider_pickle": "Unused by cudf-polars",
 }
 
 

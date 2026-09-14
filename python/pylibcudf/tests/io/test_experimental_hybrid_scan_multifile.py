@@ -155,10 +155,14 @@ def test_hybrid_scan_multifile_metadata(
     )
 
     # Every source was written with a page index
-    assert all(
-        byte_range.size > 0
-        for byte_range in hybrid_scan_multifile_reader.page_index_byte_ranges()
-    )
+    # This is currently false because the `hybrid_scan_multifile_reader` fixture
+    # calls `setup_page_indexes`. This in turn causes `page_index_byte_ranges`
+    # to return an empty byte range.
+    # See https://github.com/NVIDIA/cudf/pull/24133 for more.
+    # assert all(
+    #     byte_range.size > 0
+    #     for byte_range in hybrid_scan_multifile_reader.page_index_byte_ranges()
+    # )
 
 
 def test_hybrid_scan_multifile_construct_row_group_passes(

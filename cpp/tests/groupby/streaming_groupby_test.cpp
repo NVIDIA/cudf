@@ -378,7 +378,7 @@ TEST_F(StreamingGroupbyTest, ConcurrentAggregate)
         std::this_thread::yield();
       }
       try {
-        streaming_agg.aggregate(batches[i], streams[i]->view());
+        streaming_agg.aggregate(batches[i], *streams[i]);
       } catch (...) {
         errors[i] = std::current_exception();
       }

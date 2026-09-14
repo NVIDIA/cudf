@@ -147,7 +147,7 @@ std::vector<table_t> read_parquet_multithreaded(std::vector<io_source> const& in
   if (read_mode == read_mode::CONCATENATE_ALL) {
     auto stream    = stream_pool.get_stream();
     auto final_tbl = concatenate_tables(std::move(tables), stream);
-    stream.synchronize();
+    stream.sync();
     tables.clear();
     tables.emplace_back(std::move(final_tbl));
   }

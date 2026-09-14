@@ -61,6 +61,8 @@ class hybrid_scan_multifile {
   /**
    * @brief Constructor for the multi-file experimental Parquet reader
    *
+   * @throws std::invalid_argument if no sources are provided
+   *
    * @param footer_bytes Host span of Parquet file footer byte spans, one per source
    * @param options Parquet reader options
    */
@@ -70,10 +72,23 @@ class hybrid_scan_multifile {
   /**
    * @brief Constructor for the multi-file experimental Parquet reader
    *
+   * @throws std::invalid_argument if no sources are provided
+   *
    * @param parquet_metadata Host span of pre-populated Parquet file metadata, one per source
    * @param options Parquet reader options
    */
   explicit hybrid_scan_multifile(cudf::host_span<FileMetaData const> parquet_metadata,
+                                 parquet_reader_options const& options);
+
+  /**
+   * @brief Constructor that takes ownership of pre-populated Parquet file metadata
+   *
+   * @throws std::invalid_argument if no sources are provided
+   *
+   * @param parquet_metadata Pre-populated Parquet file metadata, one per source
+   * @param options Parquet reader options
+   */
+  explicit hybrid_scan_multifile(std::vector<FileMetaData>&& parquet_metadata,
                                  parquet_reader_options const& options);
 
   /**

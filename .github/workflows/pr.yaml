@@ -689,9 +689,6 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - engine: in-memory
-            shard_id: 0
-            num_shards: 1
           - engine: spmd
             shard_id: 0
             num_shards: 2

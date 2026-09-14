@@ -20,6 +20,9 @@ from rapidsmpf.streaming.core.actor import define_actor
 from cudf_polars.dsl.ir import IR, MapFunction
 from cudf_polars.dsl.utils.naming import names_to_indices
 from cudf_polars.streaming.actor_graph.dispatch import generate_ir_sub_network
+from cudf_polars.streaming.actor_graph.tracing import (
+    trace_channel,
+)
 from cudf_polars.streaming.actor_graph.utils import (
     ChannelManager,
     process_children,
@@ -162,7 +165,9 @@ async def hint_sorted_actor(
     """Forward data and attach safe ordering metadata for ``hint_sorted``."""
     async with shutdown_on_error(
         context, ch_in, ch_replay, ch_out, trace_ir=ir, ir_context=ir_context
-    ):
+    ) as tracer:
+        ch_in = trace_channel(ch_in, tracer)
+        ch_out = trace_channel(ch_out, tracer)
         metadata = await recv_metadata(ch_in, context)
         metadata, ch_forward = await extract_hint_sorted_metadata(
             context,

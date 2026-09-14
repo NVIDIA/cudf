@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any
 
 import distributed
 import distributed.system
+import kvikio
 import pynvml
 import ucxx._lib.libucxx as ucx_api
 
@@ -52,14 +53,16 @@ from cudf_polars.engine.persisted_result import (
     PersistedBackend,
     execute_persisted_query,
 )
-from cudf_polars.quent._context import LocalQuentContext
+from cudf_polars.quent._context import (
+    LocalQuentContext,
+    WorkerResources,
+)
 from cudf_polars.unstable import unstable
 from cudf_polars.utils.config import (
     DaskContext,
     MemoryResourceConfig,
     configure_kvikio,
-    resolve_kvikio_nthreads,
-    resolve_kvikio_statistics,
+    resolve_kvikio_executor_options,
 )
 
 if TYPE_CHECKING:
@@ -75,6 +78,7 @@ if TYPE_CHECKING:
     from cudf_polars.engine.core import T
     from cudf_polars.engine.options import StreamingOptions
     from cudf_polars.engine.persisted_result import PersistedQueryResult
+    from cudf_polars.quent._context import QuentContext
     from cudf_polars.streaming.parallel import ConfigOptions
     from cudf_polars.utils.config import StreamingExecutor
 
@@ -143,6 +147,7 @@ class _WorkerContext:
     statistics: Statistics
     mr: RmmResourceAdaptor | None = None  # set after `Context` is built (below).
     kvikio_monitor: kvikio.SummaryMonitor | None = None
+    worker_resources: WorkerResources | None = None
 
 
 def _worker_evaluate_persisted(
@@ -248,7 +253,7 @@ def _setup_root(
     dask_worker: distributed.Worker | None = None,
     engine_id: uuid.UUID,
     worker_id: uuid.UUID,
-    quent_context: cudf_polars.quent.QuentContext | None,
+    quent_context: QuentContext | None,
 ) -> bytes:
     """
     Initialize the root rank on one Dask worker.
@@ -338,9 +343,15 @@ def _setup_worker(
     worker_ids: list[uuid.UUID],
     engine_id: uuid.UUID,
     num_py_executors: int,
-    kvikio_nthreads: int,
+    kvikio_nthreads: int | None,
     kvikio_statistics: bool,
-    quent_context: cudf_polars.quent.QuentContext | None,
+    kvikio_remote_io_backend: kvikio.RemoteIOBackend,
+    kvikio_task_size: int,
+    kvikio_bounce_buffer_bytes: int,
+    kvikio_reactor_count: int,
+    kvikio_reactor_dispatch: kvikio.RemoteReactorDispatch,
+    kvikio_request_ceiling: int,
+    quent_context: QuentContext | None,
     dask_worker: distributed.Worker | None = None,
 ) -> None:
     """
@@ -376,9 +387,22 @@ def _setup_worker(
     num_py_executors
         Number of Python executors to use for this worker.
     kvikio_nthreads
-        Number of kvikio threads to configure on this worker process.
+        Number of kvikio threads to configure on this worker process. ``None``
+        defers to kvikio's own built-in default.
     kvikio_statistics
         Whether to collect KvikIO I/O statistics on this worker.
+    kvikio_remote_io_backend
+        The kvikio remote I/O backend to configure on this worker process.
+    kvikio_task_size
+        Size, in bytes, of the kvikio task size to configure on this worker process.
+    kvikio_bounce_buffer_bytes
+        Size, in bytes, of the kvikio bounce buffer to configure on this worker process.
+    kvikio_reactor_count
+        Number of ``MULTI_POLL`` reactor threads to configure on this worker process.
+    kvikio_reactor_dispatch
+        ``MULTI_POLL`` reactor dispatch policy to configure on this worker process.
+    kvikio_request_ceiling
+        ``MULTI_POLL`` concurrent-request ceiling to configure on this worker process.
     quent_context
         Quent context to use for this worker, if quent is enabled.
 
@@ -391,7 +415,15 @@ def _setup_worker(
     if mp_ctx is None:
         # Non-root worker: create communicator now.
         bind_to_gpu(hardware_binding)
-        configure_kvikio(kvikio_nthreads)
+        configure_kvikio(
+            kvikio_nthreads,
+            remote_io_backend=kvikio_remote_io_backend,
+            task_size=kvikio_task_size,
+            bounce_buffer_bytes=kvikio_bounce_buffer_bytes,
+            reactor_count=kvikio_reactor_count,
+            reactor_dispatch=kvikio_reactor_dispatch,
+            request_ceiling=kvikio_request_ceiling,
+        )
         memory_resource_config = (
             memory_resource_config or MemoryResourceConfig.default()
         )
@@ -412,7 +444,15 @@ def _setup_worker(
         base_mr = mp_ctx.base_mr
         comm = mp_ctx.comm
         statistics = mp_ctx.statistics
-        configure_kvikio(kvikio_nthreads)
+        configure_kvikio(
+            kvikio_nthreads,
+            remote_io_backend=kvikio_remote_io_backend,
+            task_size=kvikio_task_size,
+            bounce_buffer_bytes=kvikio_bounce_buffer_bytes,
+            reactor_count=kvikio_reactor_count,
+            reactor_dispatch=kvikio_reactor_dispatch,
+            request_ceiling=kvikio_request_ceiling,
+        )
 
     barrier(comm)
     worker_id = worker_ids[comm.rank]
@@ -432,11 +472,19 @@ def _setup_worker(
     )
 
     if quent_context is not None:
-        quent_logger: cudf_polars.quent._logging.QuentLogger | None = (
-            cudf_polars.quent._logging.QuentLogger()
+        quent_logger = cudf_polars.quent._logging.QuentLogger()
+        worker_resources = WorkerResources.build(
+            instance_suffix=f"rank-{comm.rank}",
+            engine_id=engine_id,
+            worker_id=worker_id,
+            rank=comm.rank,
+            nranks=comm.nranks,
         )
+        quent_logger.emit(quent_worker._init())
+        worker_resources.declare(quent_logger)
     else:
         quent_logger = None
+        worker_resources = None
 
     mp_ctx = _WorkerContext(
         comm=comm,
@@ -446,12 +494,11 @@ def _setup_worker(
         mr=mr,
         quent_worker=quent_worker,
         quent_logger=quent_logger,
+        worker_resources=worker_resources,
         statistics=statistics,
         kvikio_monitor=make_kvikio_monitor(enabled=kvikio_statistics),
     )
     setattr(dask_worker, attr, mp_ctx)
-    if mp_ctx.quent_logger is not None:
-        mp_ctx.quent_logger.emit(quent_worker._init())
 
 
 def _teardown_worker(
@@ -480,7 +527,9 @@ def _teardown_worker(
         if mp_ctx.kvikio_monitor is not None:
             mp_ctx.kvikio_monitor.stop()
             mp_ctx.kvikio_monitor = None
-        if mp_ctx.quent_worker is not None and mp_ctx.quent_logger is not None:
+        if mp_ctx.quent_logger is not None:
+            if mp_ctx.worker_resources is not None:
+                mp_ctx.worker_resources.finalize(mp_ctx.quent_logger)
             mp_ctx.quent_logger.emit(mp_ctx.quent_worker._exit())
             traces = mp_ctx.quent_logger.drain()
 
@@ -508,8 +557,14 @@ def _reset_worker(
     rapidsmpf_options_as_bytes: bytes,
     *,
     uid: str,
-    kvikio_nthreads: int,
+    kvikio_nthreads: int | None,
     kvikio_statistics: bool,
+    kvikio_remote_io_backend: kvikio.RemoteIOBackend,
+    kvikio_task_size: int,
+    kvikio_bounce_buffer_bytes: int,
+    kvikio_reactor_count: int,
+    kvikio_reactor_dispatch: kvikio.RemoteReactorDispatch,
+    kvikio_request_ceiling: int,
     dask_worker: distributed.Worker | None = None,
 ) -> None:
     """
@@ -525,14 +580,35 @@ def _reset_worker(
     uid
         Cluster instance identifier used to look up the per-worker context.
     kvikio_nthreads
-        Number of kvikio threads to configure on this worker process.
+        Number of kvikio threads to configure on this worker process. ``None``
+        defers to kvikio's own built-in default.
     kvikio_statistics
         Whether to collect KvikIO I/O statistics on this worker.
+    kvikio_remote_io_backend
+        The kvikio remote I/O backend to configure on this worker process.
+    kvikio_task_size
+        Size, in bytes, of the kvikio task size to configure on this worker process.
+    kvikio_bounce_buffer_bytes
+        Size, in bytes, of the kvikio bounce buffer to configure on this worker process.
+    kvikio_reactor_count
+        Number of ``MULTI_POLL`` reactor threads to configure on this worker process.
+    kvikio_reactor_dispatch
+        ``MULTI_POLL`` reactor dispatch policy to configure on this worker process.
+    kvikio_request_ceiling
+        ``MULTI_POLL`` concurrent-request ceiling to configure on this worker process.
     dask_worker
         Injected by ``distributed`` when called via :meth:`distributed.Client.run`.
     """
     assert dask_worker is not None
-    configure_kvikio(kvikio_nthreads)
+    configure_kvikio(
+        kvikio_nthreads,
+        remote_io_backend=kvikio_remote_io_backend,
+        task_size=kvikio_task_size,
+        bounce_buffer_bytes=kvikio_bounce_buffer_bytes,
+        reactor_count=kvikio_reactor_count,
+        reactor_dispatch=kvikio_reactor_dispatch,
+        request_ceiling=kvikio_request_ceiling,
+    )
     attr = f"_cudf_polars_mp_context_{uid}"
     mp_ctx: _WorkerContext | None = getattr(dask_worker, attr, None)
     if mp_ctx is None:
@@ -733,12 +809,14 @@ def _worker_evaluate(
         raise RuntimeError("_setup_worker must be called before _worker_evaluate")
     local_quent_context: LocalQuentContext | None = None
     if quent_context is not None:
+        assert mp_ctx.worker_resources is not None
         assert mp_ctx.quent_logger is not None
         local_quent_context = LocalQuentContext(
             context=quent_context,
             query=quent_context.query_for(query_id),
             worker=mp_ctx.quent_worker,
             logger=mp_ctx.quent_logger,
+            worker_resources=mp_ctx.worker_resources,
         )
     # evaluate_on_rank always collects metadata internally so we can read
     # metadata[-1].duplicated to decide whether to suppress this rank's output.
@@ -951,13 +1029,7 @@ class DaskEngine(StreamingEngine):
         executor_options: dict[str, Any] | None = None,
         engine_options: dict[str, Any] | None = None,
     ) -> None:
-        executor_options = executor_options or {}
-        executor_options.setdefault(
-            "kvikio_nthreads", resolve_kvikio_nthreads(executor_options)
-        )
-        executor_options.setdefault(
-            "kvikio_statistics", resolve_kvikio_statistics(executor_options)
-        )
+        executor_options = resolve_kvikio_executor_options(executor_options or {})
         engine_options = engine_options or {}
 
         quent_context: cudf_polars.quent.QuentContext | None = executor_options.get(
@@ -1074,6 +1146,12 @@ class DaskEngine(StreamingEngine):
             num_py_executors=executor_options.get("num_py_executors", 8),
             kvikio_nthreads=executor_options["kvikio_nthreads"],
             kvikio_statistics=executor_options["kvikio_statistics"],
+            kvikio_remote_io_backend=executor_options["kvikio_remote_io_backend"],
+            kvikio_task_size=executor_options["kvikio_task_size"],
+            kvikio_bounce_buffer_bytes=executor_options["kvikio_bounce_buffer_bytes"],
+            kvikio_reactor_count=executor_options["kvikio_reactor_count"],
+            kvikio_reactor_dispatch=executor_options["kvikio_reactor_dispatch"],
+            kvikio_request_ceiling=executor_options["kvikio_request_ceiling"],
         )
 
         dask_ctx = DaskContext(
@@ -1111,16 +1189,16 @@ class DaskEngine(StreamingEngine):
         )
         executor_options = executor_options or {}
         existing_executor_options = self.config.get("executor_options", {})
-        if isinstance(existing_executor_options, dict):
-            existing_quent_context = existing_executor_options.get("quent_context")
-            if existing_quent_context is not None:
-                executor_options.setdefault("quent_context", existing_quent_context)
-            existing_kvikio_nthreads = existing_executor_options.get("kvikio_nthreads")
-            if existing_kvikio_nthreads is not None:
-                executor_options.setdefault("kvikio_nthreads", existing_kvikio_nthreads)
-        executor_options.setdefault(
-            "kvikio_statistics", resolve_kvikio_statistics(executor_options)
-        )
+        if not isinstance(existing_executor_options, dict):
+            existing_executor_options = {}
+        existing_quent_context = existing_executor_options.get("quent_context")
+        if existing_quent_context is not None:
+            executor_options.setdefault("quent_context", existing_quent_context)
+        if "kvikio_nthreads" in existing_executor_options:
+            executor_options.setdefault(
+                "kvikio_nthreads", existing_executor_options["kvikio_nthreads"]
+            )
+        executor_options = resolve_kvikio_executor_options(executor_options)
         engine_options = engine_options or {}
 
         self.rapidsmpf_options = resolve_rapidsmpf_options(rapidsmpf_options)
@@ -1137,6 +1215,14 @@ class DaskEngine(StreamingEngine):
                 uid=ctx.rapidsmpf_id,
                 kvikio_nthreads=executor_options["kvikio_nthreads"],
                 kvikio_statistics=executor_options["kvikio_statistics"],
+                kvikio_remote_io_backend=executor_options["kvikio_remote_io_backend"],
+                kvikio_task_size=executor_options["kvikio_task_size"],
+                kvikio_bounce_buffer_bytes=executor_options[
+                    "kvikio_bounce_buffer_bytes"
+                ],
+                kvikio_reactor_count=executor_options["kvikio_reactor_count"],
+                kvikio_reactor_dispatch=executor_options["kvikio_reactor_dispatch"],
+                kvikio_request_ceiling=executor_options["kvikio_request_ceiling"],
             ),
             rapidsmpf_options_as_bytes,
         )
@@ -1331,8 +1417,11 @@ class DaskEngine(StreamingEngine):
         )
         return dict(sorted(results.values(), key=lambda pair: pair[0]))
 
+    # TODO: adopt polars' Engine.execute(lf, *, optimizations) contract
+    # (added in polars>=1.43) so we can return our own result type from
+    # LazyFrame.execute(engine=...) too (See https://github.com/NVIDIA/cudf/issues/22917).
     @unstable()
-    def execute(self, lf: pl.LazyFrame) -> PersistedQueryResult:
+    def execute(self, lf: pl.LazyFrame) -> PersistedQueryResult:  # type: ignore[override]
         """
         Execute a :class:`~polars.LazyFrame` and return a distributed result.
 

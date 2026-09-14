@@ -731,9 +731,10 @@ rmm::device_uvector<size_t> compute_decompression_scratch_sizes(
   // retrieve to host so we can get compression scratch sizes
   auto temp_cost     = cudf::detail::make_pinned_vector_async<size_t>(pages.size(), stream);
   auto h_decomp_info = cudf::detail::make_pinned_vector(decomp_info, stream);
-  std::transform(h_decomp_info.begin(), h_decomp_info.end(), temp_cost.begin(), [](auto const& d) {
-    return cudf::io::detail::get_decompression_scratch_size(d);
-  });
+  std::transform(
+    h_decomp_info.begin(), h_decomp_info.end(), temp_cost.begin(), [stream](auto const& d) {
+      return cudf::io::detail::get_decompression_scratch_size(d, stream);
+    });
 
   rmm::device_uvector<size_t> d_temp_cost =
     cudf::detail::make_device_uvector(temp_cost, stream, cudf::get_current_device_resource_ref());
@@ -790,7 +791,7 @@ rmm::device_uvector<size_t> compute_decompression_scratch_sizes(
       }
       page_spans.resize(end_iter - page_spans.begin(), stream);
 
-      auto const total_temp_size    = get_decompression_scratch_size(total_decomp_info);
+      auto const total_temp_size    = get_decompression_scratch_size(total_decomp_info, stream);
       auto const total_temp_size_ex = cudf::io::detail::get_decompression_scratch_size_ex(
         total_decomp_info.type,
         page_spans,

@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 from __future__ import annotations
 
@@ -15,7 +15,6 @@ from cudf_polars.containers import DataType
 from cudf_polars.dsl import expr as ir_expr
 from cudf_polars.dsl.ir import ConditionalJoin
 from cudf_polars.testing.asserts import assert_gpu_result_equal
-from cudf_polars.testing.engine_utils import is_streaming_engine
 
 
 @pytest.fixture(params=[False, True], ids=["nulls_not_equal", "nulls_equal"])
@@ -80,15 +79,7 @@ def test_non_coalesce_join(
     how,
     nulls_equal,
     join_expr,
-    request,
 ):
-    request.applymarker(
-        pytest.mark.xfail(
-            is_streaming_engine(engine),
-            strict=False,
-            reason="Non deterministic sort/join on nulls",
-        )
-    )
     query = left.join(
         right, on=join_expr, how=how, nulls_equal=nulls_equal, coalesce=False
     )
@@ -333,6 +324,54 @@ def test_cross_join_filter_with_decimals(
         )
 
     q = left.join(right, how="cross").filter(expr)
+
+    assert_gpu_result_equal(q, engine=engine, check_row_order=False)
+
+
+@pytest.mark.parametrize(
+    "expr",
+    [
+        pl.col("foo") > pl.col("bar"),
+        pl.col("foo") >= pl.col("bar"),
+        pl.col("foo") < pl.col("bar"),
+        pl.col("foo") <= pl.col("bar"),
+    ],
+)
+@pytest.mark.parametrize("threshold", [2.499, 2.501])
+@pytest.mark.parametrize("right_dtype", [pl.Float32, pl.Float64])
+@pytest.mark.skip_on_streaming_engine(
+    "ConditionalJoin not supported for multiple partitions"
+)
+def test_cross_join_filter_decimal_float_finer_than_scale(
+    engine: pl.GPUEngine, expr, threshold, right_dtype
+):
+    left = pl.LazyFrame(
+        {"foo": [Decimal("2.49"), Decimal("2.50"), Decimal("2.51")]},
+        schema={"foo": pl.Decimal(15, 2)},
+    )
+    right = pl.LazyFrame({"bar": [threshold]}, schema={"bar": right_dtype})
+
+    q = left.join(right, how="cross").filter(expr)
+
+    assert_gpu_result_equal(q, engine=engine, check_row_order=False)
+
+
+@pytest.mark.skip_on_streaming_engine(
+    "ConditionalJoin not supported for multiple partitions"
+)
+def test_cross_join_filter_decimal_float_and_decimal_conditions(engine: pl.GPUEngine):
+    left = pl.LazyFrame(
+        {"foo": [Decimal("2.49"), Decimal("2.50"), Decimal("2.51")]},
+        schema={"foo": pl.Decimal(15, 2)},
+    )
+    right = pl.LazyFrame(
+        {"bar": [2.499], "baz": [Decimal("2.5100")]},
+        schema={"bar": pl.Float64, "baz": pl.Decimal(15, 4)},
+    )
+
+    q = left.join(right, how="cross").filter(
+        (pl.col("foo") > pl.col("bar")) & (pl.col("foo") < pl.col("baz"))
+    )
 
     assert_gpu_result_equal(q, engine=engine, check_row_order=False)
 

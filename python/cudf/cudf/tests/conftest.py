@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import datetime
@@ -98,10 +98,55 @@ def _get_all_zones():
     return sorted(zones)
 
 
+def _get_transition_zones(timestamps, always_include):
+    zones = set(always_include)
+    for zone in _get_all_zones():
+        timezone = zoneinfo.ZoneInfo(zone)
+        if any(
+            timestamp.replace(tzinfo=timezone, fold=0).utcoffset()
+            != timestamp.replace(tzinfo=timezone, fold=1).utcoffset()
+            for timestamp in timestamps
+        ):
+            zones.add(zone)
+    return sorted(zones)
+
+
 # NOTE: _get_all_zones is a very large list; we likely do NOT want to
 # use it for more than a handful of tests
 @pytest.fixture(params=_get_all_zones())
 def all_timezones(request):
+    return request.param
+
+
+@pytest.fixture(
+    params=_get_transition_zones(
+        [
+            datetime.datetime(2018, 11, 4, 0, 30),
+            datetime.datetime(2018, 11, 4, 1),
+            datetime.datetime(2018, 11, 4, 1, 30),
+            datetime.datetime(2018, 11, 4, 2),
+            datetime.datetime(2018, 11, 4, 2, 30),
+        ],
+        {"America/Metlakatla", "UTC"},
+    )
+)
+def ambiguous_timezones(request):
+    return request.param
+
+
+@pytest.fixture(
+    params=_get_transition_zones(
+        [
+            datetime.datetime(2018, 3, 11, 1, 30),
+            datetime.datetime(2018, 3, 11, 2),
+            datetime.datetime(2018, 3, 11, 2, 30),
+            datetime.datetime(2018, 3, 11, 3),
+            datetime.datetime(2018, 3, 11, 3, 30),
+        ],
+        {"America/Grand_Turk", "UTC"},
+    )
+)
+def nonexistent_timezones(request):
     return request.param
 
 

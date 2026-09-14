@@ -15,6 +15,7 @@ import polars as pl
 # handlers at import time so the dispatch table is populated before any query
 # is lowered.
 import cudf_polars.streaming.distinct
+import cudf_polars.streaming.filter_hint
 import cudf_polars.streaming.groupby
 import cudf_polars.streaming.io
 import cudf_polars.streaming.join

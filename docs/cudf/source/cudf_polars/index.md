@@ -9,8 +9,10 @@ and runs on the CPU.
 
 ## Install
 
-Follow the [RAPIDS installation guide](https://docs.rapids.ai/install/) and pick the
-`cudf-polars` package for your CUDA and Python versions. For example, with conda:
+Follow the [NVIDIA CUDA-X installation
+guide](https://docs.rapids.ai/install/#install-rapids)
+and pick the `cudf-polars` package for your CUDA and Python versions. For
+example, with conda:
 
 ```bash
 conda install -c rapidsai -c conda-forge -c nvidia cudf-polars

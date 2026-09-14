@@ -1,9 +1,10 @@
 NVIDIA cuDF Documentation
 =========================
 
-**NVIDIA cuDF** (pronounced "KOO-dee-eff") is a GPU-accelerated library for tabular
-data processing. It is part of the `RAPIDS <https://rapids.ai/>`_ suite of
-libraries and is composed of multiple sub-projects:
+**NVIDIA cuDF** (pronounced "KOO-dee-eff") is a GPU-accelerated library for
+tabular data processing. It is part of `NVIDIA CUDA-X for Data Science
+<https://developer.nvidia.com/topics/ai/data-science/cuda-x-for-data-science>`_
+suite, and is composed of multiple sub-projects:
 
 .. list-table::
    :header-rows: 1
@@ -11,15 +12,15 @@ libraries and is composed of multiple sub-projects:
 
    * - Library
      - Description
-   * - `cudf <cudf/index.html>`_
-     - A Python library providing a `pandas <https://pandas.pydata.org/>`_-like DataFrame API and a zero-code change accelerator, `cudf.pandas <cudf_pandas/index.html>`_, for existing pandas code.
-   * - `cudf-polars <cudf_polars/index.html>`_
+   * - :doc:`cudf <cudf/index>`
+     - A Python library providing a `pandas <https://pandas.pydata.org/>`_-like DataFrame API and a zero-code change accelerator, :doc:`cudf.pandas <cudf_pandas/index>`, for existing pandas code.
+   * - :doc:`cudf-polars <cudf_polars/index>`
      - A Python library providing a GPU engine for `Polars <https://pola.rs/>`_.
-   * - `dask-cudf <https://docs.rapids.ai/api/dask-cudf/stable/>`_
+   * - :doc:`dask-cudf <dask-cudf:index>`
      - A Python library providing a GPU backend for `Dask <https://www.dask.org/>`_ DataFrames.
-   * - `libcudf <libcudf/index.html>`_
+   * - :doc:`libcudf <libcudf/index>`
      - A CUDA C++ library with `Apache Arrow <https://arrow.apache.org/>`_ compliant data structures and fundamental algorithms for tabular data.
-   * - `pylibcudf <pylibcudf/index.html>`_
+   * - :doc:`pylibcudf <pylibcudf/index>`
      - A Python library providing `Cython <https://cython.org/>`_ bindings for libcudf.
 
 Accelerated Data Engines and Tools
@@ -42,16 +43,20 @@ The following data engines and tools integrate with cuDF:
      - `Sirius documentation <https://github.com/sirius-db/sirius>`_
    * - pandas
      - cudf.pandas
-     - `cudf.pandas documentation <https://docs.rapids.ai/api/cudf/stable/cudf_pandas/>`_
+     - :doc:`cudf.pandas documentation <cudf_pandas/index>`
    * - Polars
      - Polars GPU engine
-     - `Polars GPU engine documentation <https://docs.rapids.ai/api/cudf/stable/cudf_polars/>`_
+     - :doc:`Polars GPU engine documentation <cudf_polars/index>`
    * - Presto
      - Presto-GPU
      - `Presto on GPU tutorial <https://github.com/prestodb/prestorials/tree/main/docker-compose-native/gpu>`_
    * - Velox
      - Velox on GPU (experimental)
      - `Velox-cuDF documentation <https://github.com/facebookincubator/velox/blob/main/velox/experimental/cudf/README.md>`_
+
+See the `installation and deployment guide
+<https://docs.rapids.ai/install/#install-rapids>`_
+to get up-and-running with cuDF.
 
 .. toctree::
    :maxdepth: 1

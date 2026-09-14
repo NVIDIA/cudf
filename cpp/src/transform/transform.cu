@@ -453,16 +453,20 @@ std::string reflect_udf_signature(bool is_null_aware,
   }
 
   std::vector<std::string> params;
-  if (has_user_data) { params.push_back("void*"); }
+  if (has_user_data) {
+    params.emplace_back("void*");
+    params.emplace_back("cudf::size_type");
+  }
   params.insert(params.end(), out_types.begin(), out_types.end());
   params.insert(params.end(), in_types.begin(), in_types.end());
 
   auto joined =
     params.empty()
       ? ""
-      : std::accumulate(std::next(params.begin()), params.end(), params[0], [](auto a, auto b) {
-          return std::format("{}, {}", a, b);
-        });
+      : std::accumulate(
+          std::next(params.begin()), params.end(), params[0], [](auto const& a, auto const& b) {
+            return std::format("{}, {}", a, b);
+          });
 
   return std::format("int({})", joined);
 }

@@ -224,6 +224,13 @@ class UnaryFunction(Expr):
             raise NotImplementedError(f"Unary function {name=}")  # pragma: no cover
         if self.name == "index_of" and plc.traits.is_nested(children[0].dtype.plc_type):
             raise NotImplementedError("index_of on nested types is not supported")
+        if (
+            self.name in UnaryFunction._OP_MAPPING
+            or self.name in UnaryFunction._supported_math_fns
+            or self.name == "pct_change"
+        ) and plc.traits.is_nested(children[0].dtype.plc_type):
+            # TODO: polars should fail ahead of us
+            raise NotImplementedError(f"{name} on nested types is not supported")
         if self.name == "entropy" and not plc.traits.is_numeric_not_bool(
             children[0].dtype.plc_type
         ):
@@ -1197,7 +1204,7 @@ class UnaryFunction(Expr):
             ]
             (keys_table, (counts_table,)) = plc.groupby.GroupBy(
                 df.table, null_handling=plc.types.NullPolicy.INCLUDE
-            ).aggregate(gb_requests)
+            ).aggregate(gb_requests, stream=df.stream)
             if sort:
                 sort_indices = plc.sorting.stable_sorted_order(
                     counts_table,

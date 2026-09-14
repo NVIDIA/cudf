@@ -40,8 +40,12 @@ from cudf_polars.dsl.expr import Col
 from cudf_polars.dsl.traversal import traversal
 from cudf_polars.streaming.actor_graph.dispatch import (
     generate_ir_sub_network,
+    ir_context_for_node,
 )
 from cudf_polars.streaming.actor_graph.nodes import shutdown_on_error
+from cudf_polars.streaming.actor_graph.tracing import (
+    trace_channel,
+)
 from cudf_polars.streaming.actor_graph.utils import (
     ChannelManager,
     _is_already_partitioned,
@@ -622,7 +626,9 @@ async def shuffle_actor(
     """
     async with shutdown_on_error(
         context, ch_in, ch_out, trace_ir=ir, ir_context=ir_context
-    ):
+    ) as tracer:
+        ch_in = trace_channel(ch_in, tracer)
+        ch_out = trace_channel(ch_out, tracer)
         await _global_shuffle(
             context,
             comm,
@@ -656,6 +662,7 @@ def _(
 
     # Create output ChannelManager
     channels[ir] = ChannelManager(rec.state["context"])
+    ir_context = ir_context_for_node(rec, ir)
 
     # Complete shuffle node
     nodes[ir] = [
@@ -663,7 +670,7 @@ def _(
             context,
             rec.state["comm"],
             ir,
-            rec.state["ir_context"],
+            ir_context,
             ch_in=channels[child].reserve_output_slot(),
             ch_out=channels[ir].reserve_input_slot(),
             keys_to_hash=ir.keys,

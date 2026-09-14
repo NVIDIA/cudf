@@ -3,7 +3,16 @@
 
 from cython.operator import dereference
 
-from libc.stdint cimport uint32_t
+from cuda.bindings import runtime
+
+from cuda.bindings.cyruntime cimport (
+    cudaError_t,
+    cudaFree,
+    cudaStream_t,
+    cudaSuccess,
+)
+
+from libc.stdint cimport uint32_t, uintptr_t
 from libcpp.functional cimport reference_wrapper
 from libcpp.optional cimport make_optional, nullopt, optional
 from libcpp.vector cimport vector
@@ -58,11 +67,25 @@ cdef vector[reference_wrapper[const scalar]] _as_vector(list source):
     return c_scalars
 
 
+cdef inline int _ensure_cuda_context() except -1:
+    cdef cudaError_t status
+    with nogil:
+        status = cudaFree(NULL)
+    if status != cudaSuccess:
+        raise RuntimeError(f"Failed to initialize CUDA context: {status}")
+    return 0
+
+
 cpdef Stream _get_stream(object stream: CudaStreamLike | None = None):
+    _ensure_cuda_context()
     if stream is None:
         return CUDF_DEFAULT_STREAM
     if isinstance(stream, Stream):
         return <Stream>stream
+    if isinstance(stream, runtime.cudaStream_t):
+        return Stream._from_cudaStream_t(
+            <cudaStream_t><uintptr_t>int(stream), owner=stream
+        )
     return Stream(stream)  # Handles __cuda_stream__ protocol
 
 

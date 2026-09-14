@@ -17,6 +17,8 @@ from cudf_polars.utils.versions import (
     POLARS_VERSION_LT_138,
     POLARS_VERSION_LT_141,
     POLARS_VERSION_LT_142,
+    POLARS_VERSION_LT_143,
+    POLARS_VERSION_LT_144,
 )
 
 
@@ -61,6 +63,17 @@ def test_from_polars_all_names(function):
     if POLARS_VERSION_LT_142 and function == BooleanFunction:
         # 'IsSorted' was added to polars' BooleanFunction in 1.42.
         cudf_polars_names_set = cudf_polars_names_set - {"IsSorted"}
+    if POLARS_VERSION_LT_143 and function == StringFunction:
+        # 'ExtractMany', 'FindMany', and 'Format' were added to polars'
+        # StringFunction in 1.43.
+        cudf_polars_names_set = cudf_polars_names_set - {
+            "ExtractMany",
+            "FindMany",
+            "Format",
+        }
+    if POLARS_VERSION_LT_144 and function == StructFunction:
+        # 'DropFields' was added to polars' StructFunction in 1.44.
+        cudf_polars_names_set = cudf_polars_names_set - {"DropFields"}
     assert polars_names_set == cudf_polars_names_set
     names = function.Name
     if function == StructFunction:
@@ -77,6 +90,14 @@ def test_from_polars_all_names(function):
         }
     if POLARS_VERSION_LT_142 and function == BooleanFunction:
         names = set(names) - {BooleanFunction.Name.IsSorted}
+    if POLARS_VERSION_LT_143 and function == StringFunction:
+        names = set(names) - {
+            StringFunction.Name.ExtractMany,
+            StringFunction.Name.FindMany,
+            StringFunction.Name.Format,
+        }
+    if POLARS_VERSION_LT_144 and function == StructFunction:
+        names = set(names) - {StructFunction.Name.DropFields}
     for name in names:
         attr = getattr(polars_function, name.name)
         assert function.Name.from_polars(attr) == name

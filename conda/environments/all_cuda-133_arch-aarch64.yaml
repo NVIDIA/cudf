@@ -78,7 +78,7 @@ dependencies:
 - packaging
 - pandas>=3.0.0,<3.1.0
 - pandoc
-- polars>=1.35,<1.43
+- polars>=1.35,<1.45
 - pre-commit
 - psutil
 - pyarrow>=19.0.0

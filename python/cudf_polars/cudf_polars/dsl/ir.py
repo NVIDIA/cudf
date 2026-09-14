@@ -831,11 +831,18 @@ class Scan(IR):
                 # column names, we would need to do file introspection to infer the number
                 # of columns so column projection works right.
                 reader_schema = self.reader_options.get("schema")
-                if not (
-                    reader_schema
-                    and isinstance(schema, dict)
-                    and "fields" in reader_schema
-                ):
+                has_new_columns = bool(
+                    (
+                        reader_schema
+                        and isinstance(schema, dict)
+                        and "fields" in reader_schema
+                    )
+                    # polars 1.43 added a separate "column_names_overwrite"
+                    # for headerless new_columns; "schema" still covers other
+                    # renaming mechanisms (e.g. with_column_names) unchanged.
+                    or self.reader_options.get("column_names_overwrite")
+                )
+                if not has_new_columns:
                     raise NotImplementedError(
                         "Reading CSV without header requires user-provided column names via new_columns"
                     )
@@ -1012,6 +1019,18 @@ class Scan(IR):
             if reader_options["schema"] is not None:
                 # Reader schema provides names
                 column_names = list(reader_options["schema"]["fields"].keys())
+            elif reader_options.get("column_names_overwrite"):
+                # polars 1.43 added "column_names_overwrite" for headerless
+                # new_columns; "schema" (above) still covers other renaming
+                # mechanisms (e.g. with_column_names) unchanged.
+                # "column_names_overwrite" only lists the overridden names,
+                # not any trailing columns padded with polars' default
+                # "column_N" names. Read the full, resolved set of names from
+                # schema instead. Exclude the row index, which isn't a
+                # column the CSV reader produces.
+                column_names = [
+                    name for name in schema if row_index is None or name != row_index[0]
+                ]
             else:
                 # file provides column names
                 column_names = None

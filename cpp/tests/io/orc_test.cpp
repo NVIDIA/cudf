@@ -2053,7 +2053,7 @@ TEST_F(OrcReaderTest, NullDecodeSpanningRowGroups)
     return (i % 7) != 0;
   });
 
-  auto const ints = cudf::detail::make_counting_transform_iterator(0, [](auto i) { return i; });
+  auto const ints = cuda::counting_iterator<int32_t>{0};
   int32_col int_column{ints, ints + num_rows, valids};
 
   std::vector<std::string> strings(num_rows);

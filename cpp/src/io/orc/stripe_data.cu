@@ -29,7 +29,9 @@ constexpr int num_warps  = 32;
 constexpr int block_size = 32 * num_warps;
 // Add some margin to look ahead to future rows in case there are many zeroes
 constexpr int row_decoder_buffer_size = block_size + 128;
-// Longest byte RLE run, measured in the rows it covers in a PRESENT stream
+// A byte RLE repeated run encodes its length as a header byte in [0, 0x7f] plus three, so it covers
+// at most 130 bytes; literal runs are shorter. In a PRESENT stream each byte holds the validity of
+// eight rows, so this bounds how far into a run the row index can point.
 constexpr uint32_t max_byte_rle_run_bits = 130 * 8;
 inline __device__ uint8_t is_rlev1(uint8_t encoding_mode) { return encoding_mode < DIRECT_V2; }
 

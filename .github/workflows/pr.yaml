@@ -10,15 +10,18 @@ permissions: {}
 jobs:
   # TEMPORARY: this file has been slimmed to rehearse Sonatype snapshot
   # publishing against the shared-workflows feature branch
-  # paul-aiyedun/add_sonatype_nightly_snapshots. The java build/test/gather
-  # chain is replaced with a cross-run fetch of a pre-built
-  # cudf_java_maven_repo artifact from run 34650575586.
+  # paul-aiyedun/add_sonatype_nightly_snapshots.
   # Revert this commit before merge.
   # Please keep pr-builder as the top job here
   pr-builder:
     needs:
+      - build-details
+      - check-nightly-ci
       - checks
-      - fetch-cached-maven-repo
+      - java-build-matrix
+      - java-build
+      - java-tests
+      - java-gather
       - java-publish
       - telemetry-setup
     uses: rapidsai/shared-workflows/.github/workflows/pr-builder.yaml@main
@@ -38,6 +41,25 @@ jobs:
       - name: Telemetry setup
         if: ${{ vars.TELEMETRY_ENABLED == 'true' }}
         uses: rapidsai/shared-actions/telemetry-dispatch-stash-base-env-vars@main
+  build-details:
+    uses: rapidsai/shared-workflows/.github/workflows/compute-build-details.yaml@main
+  check-nightly-ci:
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      id-token: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Get PR Info
+        id: get-pr-info
+        uses: nv-gha-runners/get-pr-info@090577647b8ddc4e06e809e264f7881650ecdccf # main
+      - name: Check if nightly CI is passing
+        uses: rapidsai/shared-actions/check_nightly_success/dispatch@main
+        with:
+          repo: ${{ github.repository }}
+          target-branch: ${{ fromJSON(steps.get-pr-info.outputs.pr-info).base.ref }}
+          max-days-without-success: 14
   checks:
     permissions:
       contents: read
@@ -49,30 +71,87 @@ jobs:
       # Main builds seed this cache. PR merge refs can restore it but should not create
       # duplicate archives that are inaccessible to other PRs.
       pre-commit-cache-read-only: true
-  # TEMPORARY: pull a pre-built cudf_java_maven_repo from a prior successful
-  # nightly run and re-publish it as an artifact in this run so the downstream
-  # java-publish step can consume it as usual.
-  fetch-cached-maven-repo:
+  # Build and test the cuDF Java JAR for every Maven classifier.
+  java-build-matrix:
+    needs: [checks]
+    permissions:
+      contents: read
+    uses: rapidsai/shared-workflows/.github/workflows/compute-matrix.yaml@main
+    with:
+      build_type: pull-request
+      matrix_name: conda-cpp-build
+      matrix_filter: 'map(. + {CUDA_MAJOR: (.CUDA_VER | split(".") | .[0])})'
+  java-build:
+    needs: [build-details, java-build-matrix]
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+      packages: read
+      pull-requests: read
+    secrets: inherit # zizmor: ignore[secrets-inherit]
+    uses: rapidsai/shared-workflows/.github/workflows/custom-job.yaml@main
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.java-build-matrix.outputs.matrix) }}
+    with:
+      build_type: pull-request
+      build-datetime: ${{ needs.build-details.outputs.build-datetime }}
+      arch: ${{ matrix.ARCH }}
+      node_type: cpu16
+      container_image: "rapidsai/ci-wheel:26.12-cuda${{ matrix.CUDA_VER }}-${{ matrix.LINUX_VER }}-py${{ matrix.PY_VER }}"
+      script: "ci/build_java.sh"
+      file_to_upload: output_jars
+      artifact-name: cudf_java_${{ matrix.ARCH }}_cu${{ matrix.CUDA_MAJOR }}
+  java-tests:
+    needs: [java-build, java-build-matrix]
+    if: ${{ !cancelled() && needs.java-build.result == 'success' }}
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+      packages: read
+      pull-requests: read
+    secrets: inherit # zizmor: ignore[secrets-inherit]
+    uses: rapidsai/shared-workflows/.github/workflows/custom-job.yaml@main
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.java-build-matrix.outputs.matrix) }}
+    with:
+      build_type: pull-request
+      arch: ${{ matrix.ARCH }}
+      node_type: ${{ matrix.ARCH == 'amd64' && 'gpu-rtxpro6000-latest-1' || 'gpu-l4-latest-1' }}
+      container_image: "rapidsai/ci-wheel:26.12-cuda${{ matrix.CUDA_VER }}-${{ matrix.LINUX_VER }}-py${{ matrix.PY_VER }}"
+      script: "ci/test_packaged_java.sh"
+  java-gather:
+    needs: [java-build]
     runs-on: linux-amd64-cpu4
     permissions:
       contents: read
-      actions: read
     steps:
-      - name: Download cudf_java_maven_repo from prior run
+      - name: Checkout code repo
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+      - name: Download per-entry JAR artifacts
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
-          name: cudf_java_maven_repo
-          path: ${{ runner.temp }}/maven-repo
-          github-token: ${{ github.token }}
-          run-id: 34650575586
-      - name: Re-upload into this run's artifact scope
+          pattern: cudf_java_*
+          path: ${{ runner.temp }}/jars
+          merge-multiple: true
+      - name: Assemble Maven repository layout
+        run: |
+          ./java/ci/assemble_maven_repo.sh \
+            --jars-dir "${RUNNER_TEMP}/jars" \
+            --output-dir "${RUNNER_TEMP}/maven-repo"
+      - name: Upload combined Maven repository artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: cudf_java_maven_repo
           path: ${{ runner.temp }}/maven-repo
           if-no-files-found: error
   java-publish:
-    needs: [fetch-cached-maven-repo]
+    needs: [java-gather]
     permissions:
       actions: read
       contents: read

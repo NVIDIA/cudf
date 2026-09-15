@@ -186,6 +186,7 @@ add_library(
   src/VariantUtilsJni.cpp
   src/aggregation128_utils.cu
   src/check_nvcomp_output_sizes.cu
+  src/cuda_error_diagnostics.cpp
   src/maps_column_view.cu
   src/multi_host_buffer_source.cpp
 )
@@ -291,7 +292,25 @@ else()
   )
 endif()
 
-target_link_libraries(cudfjni PRIVATE nvtx3::nvtx3-cpp)
+target_link_libraries(cudfjni PRIVATE nvtx3::nvtx3-cpp ${CMAKE_DL_LIBS})
+
+if(BUILD_TESTS)
+  enable_testing()
+  find_package(Threads REQUIRED)
+
+  add_executable(
+    CUDA_ERROR_DIAGNOSTICS_TEST tests/cuda_error_diagnostics_test.cpp
+                                src/cuda_error_diagnostics.cpp
+  )
+  set_target_properties(
+    CUDA_ERROR_DIAGNOSTICS_TEST PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON
+  )
+  target_include_directories(
+    CUDA_ERROR_DIAGNOSTICS_TEST PRIVATE "${CMAKE_SOURCE_DIR}/include" "${CUDAToolkit_INCLUDE_DIRS}"
+  )
+  target_link_libraries(CUDA_ERROR_DIAGNOSTICS_TEST PRIVATE Threads::Threads ${CMAKE_DL_LIBS})
+  add_test(NAME CUDA_ERROR_DIAGNOSTICS_TEST COMMAND CUDA_ERROR_DIAGNOSTICS_TEST)
+endif()
 
 # ##################################################################################################
 # * cudart options --------------------------------------------------------------------------------

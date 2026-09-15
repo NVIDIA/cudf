@@ -941,7 +941,6 @@ dependencies:
           - cuda-nvtx-dev
           - cuda-sanitizer-api
           - libcufile-dev
-          - libcurand-dev
           - libnvjitlink-dev
     specific:
       - output_types: [requirements, constraints, pyproject]

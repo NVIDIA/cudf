@@ -13,17 +13,17 @@
 #include <cudf/utilities/default_stream.hpp>
 
 #include <cuda/iterator>
+#include <cuda/std/random>
 #include <thrust/execution_policy.h>
 #include <thrust/for_each.h>
-#include <thrust/random.h>
 
 #include <nvbench/nvbench.cuh>
 
 struct url_string_generator {
   cudf::column_device_view d_strings;
   double esc_seq_chance;
-  thrust::minstd_rand engine;
-  thrust::uniform_real_distribution<float> esc_seq_dist{0, 1};
+  cuda::std::philox4x32 engine;
+  cuda::std::uniform_real_distribution<float> esc_seq_dist{0, 1};
 
   __device__ void operator()(cudf::size_type idx)
   {
@@ -47,7 +47,7 @@ auto generate_column(cudf::size_type num_rows, cudf::size_type chars_per_row, do
   auto result_col = cudf::make_column_from_scalar(cudf::string_scalar(str_row), num_rows);
   auto d_strings  = cudf::column_device_view::create(result_col->view());
 
-  auto engine = thrust::default_random_engine{};
+  auto engine = cuda::std::philox4x32{};
   thrust::for_each_n(thrust::device,
                      cuda::counting_iterator<cudf::size_type>{0},
                      num_rows,

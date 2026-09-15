@@ -95,10 +95,10 @@ struct Spark_MurmurHash3_x86_32 {
     return h;
   }
 
-  uint32_t __device__ inline compute_remaining_bytes(cuda::std::byte const* data,
-                                                     std::size_t len,
-                                                     std::size_t tail_offset,
-                                                     uint32_t h) const
+  uint32_t __device__ static inline compute_remaining_bytes(cuda::std::byte const* data,
+                                                            std::size_t len,
+                                                            std::size_t tail_offset,
+                                                            uint32_t h)
   {
     // Process remaining bytes that do not fill a four-byte chunk using Spark's approach
     // (does not conform to normal MurmurHash3).

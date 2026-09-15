@@ -116,14 +116,24 @@ class SparkMurmurHashTest : public cudf::test::BaseFixture {};
 TEST_F(SparkMurmurHashTest, EmptyInput)
 {
   cudf::test::fixed_width_column_wrapper<int32_t> const empty{};
+  cudf::test::fixed_width_column_wrapper<int32_t> empty_struct_field{};
   auto const expected = cudf::test::fixed_width_column_wrapper<int32_t>{};
+  auto const empty_list_of_structs =
+    cudf::make_lists_column(0,
+                            cudf::test::fixed_width_column_wrapper<int32_t>{0}.release(),
+                            cudf::test::structs_column_wrapper{{empty_struct_field}}.release(),
+                            0,
+                            {});
 
   auto const empty_table_output = cudf::hashing::spark_murmurhash3_x86_32(cudf::table_view{}, 42);
   auto const empty_column_output =
     cudf::hashing::spark_murmurhash3_x86_32(cudf::table_view{{empty}}, 42);
+  auto const empty_list_of_structs_output =
+    cudf::hashing::spark_murmurhash3_x86_32(cudf::table_view{{*empty_list_of_structs}}, 42);
 
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, empty_table_output->view());
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, empty_column_output->view());
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, empty_list_of_structs_output->view());
 }
 
 TEST_F(SparkMurmurHashTest, SlicedInput)
@@ -704,6 +714,16 @@ class SparkMurmurHashTestUnsupportedChronoTyped : public cudf::test::BaseFixture
 using UnsupportedSparkChronoTypes =
   cudf::test::RemoveIf<cudf::test::ContainedIn<SparkChronoTypes>, cudf::test::ChronoTypes>;
 TYPED_TEST_SUITE(SparkMurmurHashTestUnsupportedChronoTyped, UnsupportedSparkChronoTypes);
+
+TYPED_TEST(SparkMurmurHashTestUnsupportedChronoTyped, EmptyInput)
+{
+  cudf::test::fixed_width_column_wrapper<TypeParam> const empty{};
+  cudf::test::fixed_width_column_wrapper<int32_t> const expected{};
+
+  auto const output = cudf::hashing::spark_murmurhash3_x86_32(cudf::table_view{{empty}}, 42);
+
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, output->view());
+}
 
 TYPED_TEST(SparkMurmurHashTestUnsupportedChronoTyped, UnsupportedChronoUnits)
 {

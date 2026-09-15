@@ -217,7 +217,7 @@ void detect_malformed_pages(device_span<PageInfo const> pages,
 /**
  * @brief Computes the per-page scratch space required for decompression.
  */
-CUDF_EXPORT rmm::device_uvector<size_t> compute_decompression_scratch_sizes(
+rmm::device_uvector<size_t> compute_decompression_scratch_sizes(
   device_span<ColumnChunkDesc const> chunks,
   device_span<PageInfo const> pages,
   cuda::stream_ref stream);
@@ -405,8 +405,10 @@ struct flat_column_num_rows {
 struct codec_stats {
   Compression compression_type  = Compression::UNCOMPRESSED;
   size_t num_pages              = 0;
+  size_t num_level_pages        = 0;
   int32_t max_decompressed_size = 0;
   size_t total_decomp_size      = 0;
+  size_t total_output_size      = 0;
 
   enum class page_selection { DICT_PAGES, NON_DICT_PAGES };
 
@@ -417,18 +419,33 @@ struct codec_stats {
 };
 
 /**
+ * @brief Describes the input and output for a page decompressed by the codec.
+ */
+struct decompression_input {
+  device_span<uint8_t const> values;
+  int32_t level_bytes;
+  int32_t uncompressed_values_size;
+  bool is_page_compressed;
+};
+
+/**
  * @brief Returns the compressed values passed to the decompressor, excluding V2 level bytes.
  */
-struct get_decompression_input {
-  __device__ inline device_span<uint8_t const> operator()(PageInfo const& page) const
-  {
-    auto const is_compressed = (page.flags & PAGEINFO_FLAGS_V2) ? page.is_compressed : true;
-    auto const offset =
-      page.lvl_bytes[level_type::DEFINITION] + page.lvl_bytes[level_type::REPETITION];
-    if (not is_compressed or page.compressed_page_size <= offset) { return {}; }
-    return {page.page_data + offset, static_cast<size_t>(page.compressed_page_size - offset)};
+CUDF_HOST_DEVICE inline decompression_input get_decompression_input(PageInfo const& page)
+{
+  auto const is_page_compressed = (page.flags & PAGEINFO_FLAGS_V2) ? page.is_compressed : true;
+  auto const level_bytes =
+    page.lvl_bytes[level_type::DEFINITION] + page.lvl_bytes[level_type::REPETITION];
+  if (not is_page_compressed or page.compressed_page_size <= level_bytes or
+      page.uncompressed_page_size <= level_bytes) {
+    return {{}, level_bytes, 0, is_page_compressed};
   }
-};
+  return {
+    {page.page_data + level_bytes, static_cast<size_t>(page.compressed_page_size - level_bytes)},
+    level_bytes,
+    page.uncompressed_page_size - level_bytes,
+    true};
+}
 
 /**
  * @brief Functor which retrieves per-page decompression information.
@@ -438,12 +455,12 @@ struct get_decomp_info {
   __device__ inline decompression_info operator()(PageInfo const& p) const
   {
     auto const codec = parquet_compression_support(chunks[p.chunk_idx].codec).first;
-    if (get_decompression_input{}(p).empty()) { return {codec, 0, 0, 0}; }
-    // Keep the full page size as a conservative bound, as in codec_stats::add_pages.
+    auto const input = get_decompression_input(p);
+    if (input.values.empty()) { return {codec, 0, 0, 0}; }
     return {codec,
             1,
-            static_cast<size_t>(p.uncompressed_page_size),
-            static_cast<size_t>(p.uncompressed_page_size)};
+            static_cast<size_t>(input.uncompressed_values_size),
+            static_cast<size_t>(input.uncompressed_values_size)};
   }
 };
 

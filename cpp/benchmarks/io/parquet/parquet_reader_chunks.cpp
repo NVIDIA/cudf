@@ -86,10 +86,9 @@ void BM_parquet_read_subrowgroup_chunks(nvbench::state& state,
   auto const pass_read_limit  = static_cast<cudf::size_type>(state.get_int64("pass_read_limit"));
   auto const source_type      = retrieve_io_type_enum(state.get_string("io_type"));
   auto const data_size        = static_cast<size_t>(state.get_int64("data_size"));
-  auto const compression   = retrieve_compression_type_enum(state.get_string("compression_type"));
-  auto const v2_headers    = state.get_int64("write_v2_headers") != 0;
-  auto const rg_size_bytes = state.get_int64("row_group_size_bytes");
-  auto const rg_size_rows  = state.get_int64("row_group_size_rows");
+  auto const compression      = cudf::io::compression_type::SNAPPY;
+  auto const rg_size_bytes    = state.get_int64("row_group_size_bytes");
+  auto const rg_size_rows     = state.get_int64("row_group_size_rows");
   cuio_source_sink_pair source_sink(source_type);
 
   auto const num_rows_written = [&]() {
@@ -101,9 +100,7 @@ void BM_parquet_read_subrowgroup_chunks(nvbench::state& state,
 
     cudf::io::parquet_writer_options write_opts =
       cudf::io::parquet_writer_options::builder(source_sink.make_sink_info(), view)
-        .compression(compression)
-        .write_v2_headers(v2_headers)
-        .page_level_compression(state.get_int64("page_level_compression") != 0);
+        .compression(compression);
     if (rg_size_bytes > 0) write_opts.set_row_group_size_bytes(rg_size_bytes);
     if (rg_size_rows > 0) write_opts.set_row_group_size_rows(rg_size_rows);
     cudf::io::write_parquet(write_opts);
@@ -163,33 +160,11 @@ NVBENCH_BENCH_TYPES(BM_parquet_read_chunks, NVBENCH_TYPE_AXES(d_type_list))
 NVBENCH_BENCH_TYPES(BM_parquet_read_subrowgroup_chunks, NVBENCH_TYPE_AXES(d_type_list))
   .set_name("parquet_read_subrowgroup_chunks")
   .add_string_axis("io_type", {"DEVICE_BUFFER"})
-  .add_string_axis("compression_type", {"SNAPPY"})
-  .add_int64_axis("write_v2_headers", {0})
-  .add_int64_axis("page_level_compression", {0})
   .set_min_samples(4)
   .add_int64_axis("cardinality", {0, 1000})
   .add_int64_axis("run_length", {1, 32})
   .add_int64_axis("chunk_read_limit", {0, 500'000})
   .add_int64_axis("pass_read_limit", {0, 500'000})
   .add_int64_axis("data_size", {512 << 20})
-  .add_int64_axis("row_group_size_bytes", {0})
-  .add_int64_axis("row_group_size_rows", {0});
-
-// Keep the existing 512 MiB matrix unchanged; cover V2 scratch queries with 12 small cases.
-using scratch_type_list =
-  nvbench::enum_type_list<data_type::INTEGRAL, data_type::STRING, data_type::LIST>;
-
-NVBENCH_BENCH_TYPES(BM_parquet_read_subrowgroup_chunks, NVBENCH_TYPE_AXES(scratch_type_list))
-  .set_name("parquet_read_v2_scratch")
-  .add_string_axis("io_type", {"DEVICE_BUFFER"})
-  .add_string_axis("compression_type", {"ZSTD"})
-  .add_int64_axis("write_v2_headers", {1})
-  .add_int64_axis("page_level_compression", {0, 1})
-  .set_min_samples(4)
-  .add_int64_axis("cardinality", {1000})
-  .add_int64_axis("run_length", {1})
-  .add_int64_axis("chunk_read_limit", {0})
-  .add_int64_axis("pass_read_limit", {0, 500'000})
-  .add_int64_axis("data_size", {8 << 20})
   .add_int64_axis("row_group_size_bytes", {0})
   .add_int64_axis("row_group_size_rows", {0});

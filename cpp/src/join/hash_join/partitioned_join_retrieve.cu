@@ -102,7 +102,7 @@ hash_join<Hasher>::partitioned_join_retrieve(join_kind join,
   rmm::device_uvector<size_type> probe_slots(partition_size, stream, temp_mr);
   auto const row_bitmask = cudf::detail::bitmask_and(left_partition_view, stream, temp_mr).first;
   auto const valid_rows  = _nulls_equal == null_equality::UNEQUAL
-                             ? static_cast<bitmask_type const*>(row_bitmask.data())
+                             ? reinterpret_cast<bitmask_type const*>(row_bitmask.data())
                              : nullptr;
   auto save_slots        = [&](auto equality, auto hasher) {
     if (join == join_kind::INNER_JOIN) {

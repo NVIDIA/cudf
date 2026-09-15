@@ -229,7 +229,11 @@ inline std::unique_ptr<cudf::column> make_long_offsets_string_column()
 
   cudf::test::fixed_width_column_wrapper<int64_t> long_offsets{
     0, 20, 40, 60, 80, 100, 500, 600, 700, 1000, 1010};
-  auto str = cudf::make_strings_column(10, long_offsets.release(), std::move(d_chars), 0, {});
+  auto str = cudf::make_strings_column(10,
+                                       long_offsets.release(),
+                                       std::move(d_chars),
+                                       0,
+                                       cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
   cudf::strings_column_view scv(*str);
   CUDF_EXPECTS(scv.offsets().type().id() == cudf::type_id::INT64, "Unexpected short offset type");
 
@@ -269,7 +273,11 @@ inline std::unique_ptr<cudf::column> make_long_offsets_and_chars_string_column()
     block_d - 1000,
     block_d + (block_size / 2),
     static_cast<int64_t>(d_chars.size())};
-  auto str = cudf::make_strings_column(10, long_offsets.release(), std::move(d_chars), 0, {});
+  auto str = cudf::make_strings_column(10,
+                                       long_offsets.release(),
+                                       std::move(d_chars),
+                                       0,
+                                       cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
   cudf::strings_column_view scv(*str);
   CUDF_EXPECTS(scv.offsets().type().id() == cudf::type_id::INT64, "Unexpected short offset type");
 

@@ -297,7 +297,11 @@ TEST_F(PartitionTestNotTyped, ListOfListOfIntEmpty)
 
   fixed_width_column_wrapper<int32_t> level_1_offsets{0, 0, 0};
   std::unique_ptr<cudf::column> level_1_list =
-    cudf::make_lists_column(2, level_1_offsets.release(), level_2_list.release(), 0, {});
+    cudf::make_lists_column(2,
+                            level_1_offsets.release(),
+                            level_2_list.release(),
+                            0,
+                            cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
   auto table_to_partition = cudf::table_view{{*level_1_list}};
   fixed_width_column_wrapper<int32_t> map{0, 0};
@@ -313,11 +317,19 @@ TEST_F(PartitionTestNotTyped, ListOfListOfListOfIntEmpty)
 
   fixed_width_column_wrapper<int32_t> level_2_offsets{};
   std::unique_ptr<cudf::column> level_2_list =
-    cudf::make_lists_column(0, level_2_offsets.release(), level_3_list.release(), 0, {});
+    cudf::make_lists_column(0,
+                            level_2_offsets.release(),
+                            level_3_list.release(),
+                            0,
+                            cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
   fixed_width_column_wrapper<int32_t> level_1_offsets{0, 0};
   std::unique_ptr<cudf::column> level_1_list =
-    cudf::make_lists_column(1, level_1_offsets.release(), std::move(level_2_list), 0, {});
+    cudf::make_lists_column(1,
+                            level_1_offsets.release(),
+                            std::move(level_2_list),
+                            0,
+                            cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
   auto table_to_partition = cudf::table_view{{*level_1_list}};
   fixed_width_column_wrapper<int32_t> map{0};

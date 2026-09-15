@@ -124,7 +124,9 @@ struct interleave_columns_impl<T, std::enable_if_t<std::is_same_v<T, cudf::struc
 
     // Only create null mask if at least one input structs column is nullable.
     auto [null_mask, null_count] =
-      create_mask ? create_mask_fn() : std::pair{rmm::device_buffer{0, stream, mr}, size_type{0}};
+      create_mask ? create_mask_fn()
+                  : std::pair{cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED, stream, mr),
+                              size_type{0}};
     return make_structs_column(
       output_size, std::move(output_struct_members), null_count, std::move(null_mask), stream, mr);
   }

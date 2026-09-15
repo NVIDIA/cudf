@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -89,8 +89,11 @@ TEST_P(JsonCompressedWriterTest, EmptyLeaf)
 {
   cudf::test::strings_column_wrapper col1{""};
   cudf::test::fixed_width_column_wrapper<cudf::size_type> offsets{0, 0};
-  auto col2 = make_lists_column(
-    1, offsets.release(), cudf::test::strings_column_wrapper{}.release(), 0, rmm::device_buffer{});
+  auto col2 = make_lists_column(1,
+                                offsets.release(),
+                                cudf::test::strings_column_wrapper{}.release(),
+                                0,
+                                cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
   auto col3 = cudf::test::lists_column_wrapper<int>::make_one_empty_row_column();
   cudf::table_view tbl_view{{col1, *col2, col3}};
   cudf::io::table_metadata mt{{{"col1"}, {"col2"}, {"col3"}}};

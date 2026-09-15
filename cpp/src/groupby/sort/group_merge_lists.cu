@@ -50,8 +50,11 @@ std::unique_ptr<column> group_merge_lists(column_view const& values,
   auto child_column =
     std::make_unique<column>(lists_column_view(values).get_sliced_child(stream), stream, mr);
 
-  return make_lists_column(
-    num_groups, std::move(offsets_column), std::move(child_column), 0, rmm::device_buffer{});
+  return make_lists_column(num_groups,
+                           std::move(offsets_column),
+                           std::move(child_column),
+                           0,
+                           cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 }
 
 }  // namespace detail

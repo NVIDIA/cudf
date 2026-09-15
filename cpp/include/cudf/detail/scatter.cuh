@@ -306,12 +306,13 @@ struct column_scatterer_impl<struct_view> {
 
     // Need to put the result column in a vector to call `gather_bitmask`.
     std::vector<std::unique_ptr<column>> result;
-    result.emplace_back(cudf::make_structs_column(target.size(),
-                                                  std::move(output_struct_members),
-                                                  0,
-                                                  rmm::device_buffer{0, stream, mr},
-                                                  stream,
-                                                  mr));
+    result.emplace_back(cudf::make_structs_column(
+      target.size(),
+      std::move(output_struct_members),
+      0,
+      cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED, stream, mr),
+      stream,
+      mr));
 
     // Only gather bitmask from the target column for the rows that have not been scattered onto
     // The bitmask from the source column will be gathered at the top level `scatter()` call.

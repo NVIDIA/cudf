@@ -52,7 +52,8 @@ std::unique_ptr<column> make_empty_column(data_type type)
   CUDF_EXPECTS(type.id() == type_id::EMPTY || !cudf::is_nested(type),
                "make_empty_column is invalid to call on nested types",
                cudf::data_type_error);
-  return std::make_unique<column>(type, 0, rmm::device_buffer{}, rmm::device_buffer{}, 0);
+  return std::make_unique<column>(
+    type, 0, rmm::device_buffer{}, cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED), 0);
 }
 
 // Empty column of specified type id
@@ -175,7 +176,7 @@ std::unique_ptr<column> make_dictionary_from_scalar(scalar const& s,
       size,
       stream,
       mr),
-    rmm::device_buffer{0, stream, mr},
+    cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED, stream, mr),
     0);
 }
 

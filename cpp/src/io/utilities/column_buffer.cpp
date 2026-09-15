@@ -215,8 +215,12 @@ std::unique_ptr<column> make_column(column_buffer_base<string_policy>& buffer,
                        "Cannot convert strings column to lists column due to size_type limit",
                        std::overflow_error);
 
-          auto uint8_col = std::make_unique<column>(
-            data_type{type_id::UINT8}, char_size, std::move(*data), rmm::device_buffer{}, 0);
+          auto uint8_col =
+            std::make_unique<column>(data_type{type_id::UINT8},
+                                     char_size,
+                                     std::move(*data),
+                                     cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
+                                     0);
 
           if (schema_info != nullptr) {
             schema_info->children.emplace_back("offsets");
@@ -248,8 +252,12 @@ std::unique_ptr<column> make_column(column_buffer_base<string_policy>& buffer,
 
       case type_id::LIST: {
         // make offsets column
-        auto offsets = std::make_unique<column>(
-          data_type{type_id::INT32}, buffer.size, std::move(buffer._data), rmm::device_buffer{}, 0);
+        auto offsets =
+          std::make_unique<column>(data_type{type_id::INT32},
+                                   buffer.size,
+                                   std::move(buffer._data),
+                                   cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
+                                   0);
 
         column_name_info* child_info = nullptr;
         if (schema_info != nullptr) {
@@ -342,7 +350,11 @@ std::unique_ptr<column> empty_like(column_buffer_base<string_policy>& buffer,
           schema_info->is_binary = true;
         }
         return make_lists_column(
-          0, std::move(offsets), std::move(child), 0, rmm::device_buffer{0, stream, mr});
+          0,
+          std::move(offsets),
+          std::move(child),
+          0,
+          cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED, stream, mr));
       }
       return cudf::make_empty_column(buffer.type);
     }
@@ -365,7 +377,11 @@ std::unique_ptr<column> empty_like(column_buffer_base<string_policy>& buffer,
 
       // make the final list column
       return make_lists_column(
-        0, std::move(offsets), std::move(child), 0, rmm::device_buffer{0, stream, mr});
+        0,
+        std::move(offsets),
+        std::move(child),
+        0,
+        cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED, stream, mr));
     } break;
 
     case type_id::STRUCT: {
@@ -385,7 +401,12 @@ std::unique_ptr<column> empty_like(column_buffer_base<string_policy>& buffer,
                      });
 
       return make_structs_column(
-        0, std::move(output_children), 0, rmm::device_buffer{0, stream, mr}, stream, mr);
+        0,
+        std::move(output_children),
+        0,
+        cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED, stream, mr),
+        stream,
+        mr);
     } break;
 
     default: return cudf::make_empty_column(buffer.type);

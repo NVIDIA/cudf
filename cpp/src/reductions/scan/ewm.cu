@@ -310,7 +310,7 @@ struct ewma_functor {
     return std::make_unique<column>(cudf::data_type(cudf::type_to_id<T>()),
                                     input.size(),
                                     result.release(),
-                                    rmm::device_buffer{},
+                                    cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
                                     0);
   }
 };

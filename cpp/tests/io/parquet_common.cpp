@@ -181,16 +181,22 @@ std::unique_ptr<cudf::column> make_parquet_list_list_col(
                           child_values.begin(), child_values.begin() + child_value_count);
 
   int child_offsets_size = static_cast<cudf::column_view>(child_offsets).size() - 1;
-  auto child             = cudf::make_lists_column(
-    child_offsets_size, child_offsets.release(), child_data.release(), 0, rmm::device_buffer{});
+  auto child             = cudf::make_lists_column(child_offsets_size,
+                                       child_offsets.release(),
+                                       child_data.release(),
+                                       0,
+                                       cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
   int offsets_size             = static_cast<cudf::column_view>(offsets).size() - 1;
   auto [null_mask, null_count] = cudf::test::detail::make_null_mask(valids, valids + offsets_size);
   return include_validity
            ? cudf::make_lists_column(
                offsets_size, offsets.release(), std::move(child), null_count, std::move(null_mask))
-           : cudf::make_lists_column(
-               offsets_size, offsets.release(), std::move(child), 0, rmm::device_buffer{});
+           : cudf::make_lists_column(offsets_size,
+                                     offsets.release(),
+                                     std::move(child),
+                                     0,
+                                     cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 }
 
 template std::unique_ptr<cudf::column> make_parquet_list_list_col<int>(

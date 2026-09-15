@@ -205,10 +205,12 @@ void initialize_dictionary_hash_maps(device_2dspan<stripe_dictionary> dictionari
  *
  * @param dictionaries Dictionary descriptors
  * @param columns  Pre-order flattened device array of ORC column views
+ * @param max_dict_rows Largest number of rows in any of the dictionaries, used to size the grid
  * @param stream CUDA stream used for device memory operations and kernel launches
  */
 void populate_dictionary_hash_maps(device_2dspan<stripe_dictionary> dictionaries,
                                    device_span<orc_column_device_view const> columns,
+                                   size_type max_dict_rows,
                                    cuda::stream_ref stream);
 
 /**
@@ -224,10 +226,12 @@ void collect_map_entries(device_2dspan<stripe_dictionary> dictionaries, cuda::st
  *
  * @param dictionaries Dictionary descriptors
  * @param columns Pre-order flattened device array of ORC column views
+ * @param max_dict_rows Largest number of rows in any of the dictionaries, used to size the grid
  * @param stream CUDA stream used for device memory operations and kernel launches
  */
 void get_dictionary_indices(device_2dspan<stripe_dictionary> dictionaries,
                             device_span<orc_column_device_view const> columns,
+                            size_type max_dict_rows,
                             cuda::stream_ref stream);
 
 constexpr uint32_t encode_block_size = 512;

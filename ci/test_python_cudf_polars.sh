@@ -18,7 +18,7 @@ rapids-logger "pytest cudf-polars"
   -x \
   --junitxml="${RAPIDS_TESTS_DIR}/junit-cudf-polars.xml" \
   --numprocesses=4 \
-  --dist=worksteal \
+  --dist=loadgroup \
   --cov-config=./pyproject.toml \
   --cov=cudf_polars \
   --cov-report=xml:"${RAPIDS_COVERAGE_DIR}/cudf-polars-coverage.xml" \

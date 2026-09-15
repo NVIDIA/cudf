@@ -376,9 +376,22 @@ def pytest_generate_tests(metafunc: pytest.Metafunc):
     else:
         raise AssertionError("Unknown engine fixture")
 
+    params = [
+        (
+            engine
+            if engine == "in-memory"
+            else pytest.param(
+                engine,
+                marks=pytest.mark.xdist_group(
+                    name=f"engine-{EngineFixtureParam(engine).engine_name}"
+                ),
+            )
+        )
+        for engine in engines
+    ]
     metafunc.parametrize(
         "_engine_param",
-        engines,
+        params,
         indirect=True,
         ids=engines,
         scope="session",

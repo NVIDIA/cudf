@@ -405,8 +405,10 @@ struct flat_column_num_rows {
 struct codec_stats {
   Compression compression_type  = Compression::UNCOMPRESSED;
   size_t num_pages              = 0;
+  size_t num_level_pages        = 0;
   int32_t max_decompressed_size = 0;
   size_t total_decomp_size      = 0;
+  size_t total_output_size      = 0;
 
   enum class page_selection { DICT_PAGES, NON_DICT_PAGES };
 
@@ -417,16 +419,51 @@ struct codec_stats {
 };
 
 /**
+ * @brief Describes the input and output for a page decompressed by the codec.
+ */
+struct decompression_input {
+  device_span<uint8_t const> values;
+  int32_t level_bytes;
+  int32_t uncompressed_values_size;
+  bool is_page_compressed;
+};
+
+/**
+ * @brief Returns the compressed values passed to the decompressor, excluding V2 level bytes.
+ */
+CUDF_HOST_DEVICE inline decompression_input get_decompression_input(PageInfo const& page)
+{
+  // V2 data pages record compression per page so check the `is_compressed` field. Dictionary and V1
+  // pages are compressed whenever their column chunk uses a compression codec.
+  auto const is_page_compressed = (page.flags & PAGEINFO_FLAGS_V2) ? page.is_compressed : true;
+
+  auto const level_bytes =
+    page.lvl_bytes[level_type::DEFINITION] + page.lvl_bytes[level_type::REPETITION];
+  if (not is_page_compressed or page.compressed_page_size <= level_bytes or
+      page.uncompressed_page_size <= level_bytes) {
+    return {{}, level_bytes, 0, is_page_compressed};
+  }
+  return {
+    {page.page_data + level_bytes, static_cast<size_t>(page.compressed_page_size - level_bytes)},
+    level_bytes,
+    page.uncompressed_page_size - level_bytes,
+    true};
+}
+
+/**
  * @brief Functor which retrieves per-page decompression information.
  */
 struct get_decomp_info {
   device_span<ColumnChunkDesc const> chunks;
   __device__ inline decompression_info operator()(PageInfo const& p) const
   {
-    return {parquet_compression_support(chunks[p.chunk_idx].codec).first,
+    auto const codec = parquet_compression_support(chunks[p.chunk_idx].codec).first;
+    auto const input = get_decompression_input(p);
+    if (input.values.empty()) { return {codec, 0, 0, 0}; }
+    return {codec,
             1,
-            static_cast<size_t>(p.uncompressed_page_size),
-            static_cast<size_t>(p.uncompressed_page_size)};
+            static_cast<size_t>(input.uncompressed_values_size),
+            static_cast<size_t>(input.uncompressed_values_size)};
   }
 };
 

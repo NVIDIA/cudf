@@ -26,6 +26,7 @@
 #include <cudf/io/data_sink.hpp>
 #include <cudf/io/datasource.hpp>
 #include <cudf/io/parquet.hpp>
+#include <cudf/io/parquet_metadata.hpp>
 #include <cudf/io/parquet_schema.hpp>
 #include <cudf/strings/strings_column_view.hpp>
 #include <cudf/table/table.hpp>
@@ -42,6 +43,7 @@
 #include <fstream>
 #include <numeric>
 #include <optional>
+#include <random>
 #include <ranges>
 #include <type_traits>
 
@@ -1345,6 +1347,39 @@ TEST_F(ParquetChunkedReaderInputLimitConstrainedTest, MixedColumns)
 }
 
 struct ParquetChunkedReaderInputLimitTest : public cudf::test::BaseFixture {};
+
+TEST_F(ParquetChunkedReaderInputLimitTest, V2PagesWithLevels)
+{
+  tmp_env_var const nvcomp{nvcomp_policy_env_var, "ALWAYS"};
+  tmp_env_var const host_decomp{host_decomp_env_var, "OFF"};
+  constexpr cudf::size_type num_rows = 20'000;
+  auto values = cudf::detail::make_counting_transform_iterator(0, [](auto i) { return i % 25; });
+  auto valid =
+    cudf::detail::make_counting_transform_iterator(0, [](auto i) { return i % 10 != 0; });
+  int64s_col flat(values, values + num_rows, valid);
+  int64s_col all_null(values, values + num_rows, cuda::make_constant_iterator(false));
+  int32s_col child(values, values + 2 * num_rows, valid);
+  auto offsets = cudf::detail::make_counting_transform_iterator(0, [](auto i) { return 2 * i; });
+  int32s_col list_offsets(offsets, offsets + num_rows + 1);
+  auto const lists = cudf::make_lists_column(
+    num_rows, list_offsets.release(), child.release(), 0, rmm::device_buffer{});
+  auto const expected = cudf::table_view{{flat, all_null, lists->view()}};
+  auto const filepath = temp_env->get_temp_filepath("ScratchLevels.parquet");
+  auto const options =
+    cudf::io::parquet_writer_options::builder(cudf::io::sink_info{filepath}, expected)
+      .compression(cudf::io::compression_type::ZSTD)
+      .write_v2_headers(true)
+      .dictionary_policy(cudf::io::dictionary_policy::NEVER)
+      .max_page_size_rows(5'000)
+      .max_page_fragment_size(5'000)
+      .row_group_size_rows(5'000)
+      .build();
+  cudf::io::write_parquet(options);
+
+  auto const [result, num_chunks] = chunked_read(filepath, 0, 32'768);
+  CUDF_TEST_EXPECT_TABLES_EQUIVALENT(expected, result->view());
+  EXPECT_GT(num_chunks, 0);
+}
 
 TEST_F(ParquetChunkedReaderInputLimitTest, ProjectedColumnsReducePasses)
 {

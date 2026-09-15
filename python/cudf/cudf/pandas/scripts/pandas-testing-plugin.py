@@ -5587,7 +5587,6 @@ NODEIDS_TO_SKIP_WHEN_SHARDED: dict[str, str] = {
     "tests/strings/test_extract.py::test_extract_series[string=string[python]-None]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
     "tests/strings/test_extract.py::test_extract_series[string=str[python]-None]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
     "tests/strings/test_find_replace.py::test_contains_compiled_regex_flags[string=string[pyarrow]]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
-    "tests/strings/test_find_replace.py::test_contains_compiled_regex[string=object]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
     "tests/strings/test_find_replace.py::test_contains_compiled_regex[string=string[pyarrow]]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
     "tests/strings/test_find_replace.py::test_contains_end_of_string[string=string[pyarrow]]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
     "tests/strings/test_find_replace.py::test_contains_lookarounds[string=object-na5-ab-expected_data4]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",

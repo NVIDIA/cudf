@@ -1588,11 +1588,10 @@ public final class Table implements AutoCloseable {
    * Get a table writer to write parquet data to a file.
    * @param options the parquet writer options.
    * @param outputFile where to write the file.
-   * @return a Parquet table writer to use for writing out multiple tables.
+   * @return a table writer to use for writing out multiple tables.
    */
-  public static ParquetTableWriter writeParquetChunked(ParquetWriterOptions options,
-                                                       File outputFile) {
-    return new ParquetTableWriter(options, outputFile);
+  public static TableWriter writeParquetChunked(ParquetWriterOptions options, File outputFile) {
+    return writeParquetChunkedWithFooter(options, outputFile);
   }
 
   /**
@@ -1601,17 +1600,48 @@ public final class Table implements AutoCloseable {
    * @param consumer a class that will be called when host buffers are ready with parquet
    *                 formatted data in them.
    * @param hostMemoryAllocator allocator for host memory buffers
+   * @return a table writer to use for writing out multiple tables.
+   */
+  public static TableWriter writeParquetChunked(ParquetWriterOptions options,
+                                                HostBufferConsumer consumer,
+                                                HostMemoryAllocator hostMemoryAllocator) {
+    return writeParquetChunkedWithFooter(options, consumer, hostMemoryAllocator);
+  }
+
+  public static TableWriter writeParquetChunked(ParquetWriterOptions options,
+                                                HostBufferConsumer consumer) {
+    return writeParquetChunked(options, consumer, DefaultHostMemoryAllocator.get());
+  }
+
+  /**
+   * Get a Parquet table writer that can return footer metadata when writing to a file.
+   * @param options the parquet writer options.
+   * @param outputFile where to write the file.
    * @return a Parquet table writer to use for writing out multiple tables.
    */
-  public static ParquetTableWriter writeParquetChunked(ParquetWriterOptions options,
-                                                       HostBufferConsumer consumer,
-                                                       HostMemoryAllocator hostMemoryAllocator) {
+  public static ParquetTableWriter writeParquetChunkedWithFooter(ParquetWriterOptions options,
+                                                                 File outputFile) {
+    return new ParquetTableWriter(options, outputFile);
+  }
+
+  /**
+   * Get a Parquet table writer that can return footer metadata and handle each chunk with a
+   * callback.
+   * @param options the parquet writer options.
+   * @param consumer a class that will be called when host buffers are ready with parquet
+   *                 formatted data in them.
+   * @param hostMemoryAllocator allocator for host memory buffers
+   * @return a Parquet table writer to use for writing out multiple tables.
+   */
+  public static ParquetTableWriter writeParquetChunkedWithFooter(ParquetWriterOptions options,
+                                                                 HostBufferConsumer consumer,
+                                                                 HostMemoryAllocator hostMemoryAllocator) {
     return new ParquetTableWriter(options, consumer, hostMemoryAllocator);
   }
 
-  public static ParquetTableWriter writeParquetChunked(ParquetWriterOptions options,
-                                                       HostBufferConsumer consumer) {
-    return writeParquetChunked(options, consumer, DefaultHostMemoryAllocator.get());
+  public static ParquetTableWriter writeParquetChunkedWithFooter(ParquetWriterOptions options,
+                                                                 HostBufferConsumer consumer) {
+    return writeParquetChunkedWithFooter(options, consumer, DefaultHostMemoryAllocator.get());
   }
 
   /**

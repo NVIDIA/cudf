@@ -2,9 +2,11 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from libcpp cimport bool
+from libcpp.memory cimport unique_ptr
 from libcpp.pair cimport pair
 from libcpp.vector cimport vector
 from pylibcudf.exception_handler cimport libcudf_exception_handler
+from pylibcudf.libcudf.column.column cimport column
 from pylibcudf.libcudf.column.column_view cimport column_view
 from pylibcudf.libcudf.io.hybrid_scan cimport (
     const_device_span_const_uint8_t,
@@ -42,8 +44,67 @@ cdef extern from "cudf/io/experimental/hybrid_scan_multifile.hpp" \
             host_span[const_host_span_const_uint8_t] page_index_bytes
         ) except +libcudf_exception_handler
 
+        vector[vector[size_type]] all_row_groups(
+            const parquet_reader_options& options
+        ) except +libcudf_exception_handler
+
         size_type total_rows_in_row_groups(
             host_span[const_vector_size_type] row_group_indices
+        ) except +libcudf_exception_handler
+
+        void reset_column_selection() except +libcudf_exception_handler
+
+        vector[vector[size_type]] filter_row_groups_with_byte_range(
+            host_span[const_vector_size_type] row_group_indices,
+            const parquet_reader_options& options
+        ) except +libcudf_exception_handler
+
+        vector[vector[size_type]] filter_row_groups_with_stats(
+            host_span[const_vector_size_type] row_group_indices,
+            const parquet_reader_options& options,
+            cudaStream_t stream
+        ) except +libcudf_exception_handler
+
+        pair[
+            vector[byte_range_info], vector[size_type]
+        ] bloom_filters_byte_ranges(
+            host_span[const_vector_size_type] row_group_indices,
+            const parquet_reader_options& options
+        ) except +libcudf_exception_handler
+
+        pair[
+            vector[byte_range_info], vector[size_type]
+        ] dictionary_pages_byte_ranges(
+            host_span[const_vector_size_type] row_group_indices,
+            const parquet_reader_options& options
+        ) except +libcudf_exception_handler
+
+        unique_ptr[column] build_all_true_row_mask(
+            host_span[const_vector_size_type] row_group_indices,
+            cudaStream_t stream,
+            device_async_resource_ref mr
+        ) except +libcudf_exception_handler
+
+        unique_ptr[column] build_row_mask_with_page_index_stats(
+            host_span[const_vector_size_type] row_group_indices,
+            const parquet_reader_options& options,
+            cudaStream_t stream,
+            device_async_resource_ref mr
+        ) except +libcudf_exception_handler
+
+        pair[
+            vector[byte_range_info], vector[size_type]
+        ] all_column_chunks_byte_ranges(
+            host_span[const_vector_size_type] row_group_indices,
+            const parquet_reader_options& options
+        ) except +libcudf_exception_handler
+
+        table_with_metadata materialize_all_columns(
+            host_span[const_vector_size_type] row_group_indices,
+            host_span[const_device_span_const_uint8_t] column_chunk_data,
+            const parquet_reader_options& options,
+            cudaStream_t stream,
+            device_async_resource_ref mr
         ) except +libcudf_exception_handler
 
         pair[vector[byte_range_info], vector[size_type]] payload_pages_byte_ranges(

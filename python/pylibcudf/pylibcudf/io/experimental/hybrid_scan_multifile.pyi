@@ -29,9 +29,60 @@ class HybridScanMultiFile:
     def setup_page_indexes(
         self, page_index_bytes: Sequence[Buffer]
     ) -> None: ...
+    def all_row_groups(
+        self, options: ParquetReaderOptions
+    ) -> list[list[int]]: ...
     def total_rows_in_row_groups(
         self, row_group_indices: list[list[int]]
     ) -> int: ...
+    def reset_column_selection(self) -> None: ...
+    def filter_row_groups_with_byte_range(
+        self,
+        row_group_indices: list[list[int]],
+        options: ParquetReaderOptions,
+    ) -> list[list[int]]: ...
+    def filter_row_groups_with_stats(
+        self,
+        row_group_indices: list[list[int]],
+        options: ParquetReaderOptions,
+        stream: CudaStreamLike | None = None,
+    ) -> list[list[int]]: ...
+    def bloom_filters_byte_ranges(
+        self,
+        row_group_indices: list[list[int]],
+        options: ParquetReaderOptions,
+    ) -> tuple[list[ByteRangeInfo], list[int]]: ...
+    def dictionary_pages_byte_ranges(
+        self,
+        row_group_indices: list[list[int]],
+        options: ParquetReaderOptions,
+    ) -> tuple[list[ByteRangeInfo], list[int]]: ...
+    def build_all_true_row_mask(
+        self,
+        row_group_indices: list[list[int]],
+        stream: CudaStreamLike | None = None,
+        mr: DeviceMemoryResource | None = None,
+    ) -> Column: ...
+    def build_row_mask_with_page_index_stats(
+        self,
+        row_group_indices: list[list[int]],
+        options: ParquetReaderOptions,
+        stream: CudaStreamLike | None = None,
+        mr: DeviceMemoryResource | None = None,
+    ) -> Column: ...
+    def all_column_chunks_byte_ranges(
+        self,
+        row_group_indices: list[list[int]],
+        options: ParquetReaderOptions,
+    ) -> tuple[list[ByteRangeInfo], list[int]]: ...
+    def materialize_all_columns(
+        self,
+        row_group_indices: list[list[int]],
+        column_chunk_data: list[Span],
+        options: ParquetReaderOptions,
+        stream: CudaStreamLike | None = None,
+        mr: DeviceMemoryResource | None = None,
+    ) -> TableWithMetadata: ...
     def payload_pages_byte_ranges(
         self,
         row_group_indices: list[list[int]],

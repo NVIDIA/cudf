@@ -86,7 +86,12 @@ enum class binary_operator : int32_t {
                      ///< operands are true, returns true; otherwise returns null
   NULL_LOGICAL_OR,   ///< three-valued (Kleene) ||: if any operand is true, returns true; if both
                      ///< operands are false, returns false; otherwise returns null
-  INVALID_BINARY     ///< invalid operation
+  INVALID_BINARY,    ///< invalid operation
+  ADD_OVERFLOW,      ///< Addition with overflow detection
+  SUB_OVERFLOW,      ///< Subtraction with overflow detection
+  MUL_OVERFLOW,      ///< Multiplication with overflow detection
+  DIV_OVERFLOW,      ///< Division with overflow and divide-by-zero detection
+  MOD_OVERFLOW       ///< Modulo with divide-by-zero detection
 };
 
 /// Binary operation common type default
@@ -236,6 +241,54 @@ std::unique_ptr<column> binary_operation(
   column_view const& rhs,
   binary_operator op,
   data_type output_type,
+  cuda::stream_ref stream           = cudf::get_default_stream(),
+  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+
+/**
+ * @brief Performs a checked binary operation between a scalar and a column.
+ *
+ * `PROPAGATE` throws `cudf::evaluation_error` when any row fails; `NULLIFY` makes failing rows
+ * null.
+ *
+ * @param lhs Left operand scalar
+ * @param rhs Right operand column
+ * @param op Checked binary operator
+ * @param output_type Desired output type
+ * @param policy Error handling policy
+ * @param stream CUDA stream used for device memory operations and kernel launches
+ * @param mr Device memory resource used to allocate the returned column
+ * @return Output column
+ */
+std::unique_ptr<column> binary_operation(
+  scalar const& lhs,
+  column_view const& rhs,
+  binary_operator op,
+  data_type output_type,
+  error_policy policy,
+  cuda::stream_ref stream           = cudf::get_default_stream(),
+  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+
+/** @copydoc binary_operation(scalar const&, column_view const&, binary_operator, data_type,
+ * error_policy, cuda::stream_ref, rmm::device_async_resource_ref)
+ */
+std::unique_ptr<column> binary_operation(
+  column_view const& lhs,
+  scalar const& rhs,
+  binary_operator op,
+  data_type output_type,
+  error_policy policy,
+  cuda::stream_ref stream           = cudf::get_default_stream(),
+  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+
+/** @copydoc binary_operation(scalar const&, column_view const&, binary_operator, data_type,
+ * error_policy, cuda::stream_ref, rmm::device_async_resource_ref)
+ */
+std::unique_ptr<column> binary_operation(
+  column_view const& lhs,
+  column_view const& rhs,
+  binary_operator op,
+  data_type output_type,
+  error_policy policy,
   cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 

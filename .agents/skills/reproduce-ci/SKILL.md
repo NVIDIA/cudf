@@ -5,7 +5,7 @@ description: Reproduce cudf CI failures locally. Provide a GitHub Actions job UR
 
 # Reproducing cudf CI Failures Locally
 
-For full background, see the [RAPIDS docs on reproducing CI](https://docs.rapids.ai/resources/reproducing-ci/).
+For full background, see the [RAPIDS docs on reproducing CI](https://docs.nvidia.com/datascience/resources/reproducing-ci/).
 
 ## Prerequisites
 
@@ -24,7 +24,7 @@ Verify all of the following before proceeding. Stop and report if any are missin
 
 3. **Working directory** is a `cudf` checkout with the correct PR commit checked out.
 
-4. **Consistency check** — Read `run.sh` and verify it is still consistent with the [RAPIDS reproducing-CI guide](https://docs.rapids.ai/resources/reproducing-ci/). Key things to check:
+4. **Consistency check** — Read `run.sh` and verify it is still consistent with the [RAPIDS reproducing-CI guide](https://docs.nvidia.com/datascience/resources/reproducing-ci/). Key things to check:
    - Environment variables passed to docker (`RAPIDS_BUILD_TYPE`, `RAPIDS_REPOSITORY`, `RAPIDS_REF_NAME`, `GH_TOKEN`)
    - The `docker run` flags (`--pull=always`, `--volume $PWD:/repo`, `--workdir /repo`)
    - The CI script invocation pattern

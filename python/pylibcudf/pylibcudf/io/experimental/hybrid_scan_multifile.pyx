@@ -246,7 +246,7 @@ cdef class HybridScanMultiFile:
                 ),
                 mask_view,
                 options.c_obj,
-                _stream.view().value()
+                _stream.view().get()
             ))
         return (
             [ByteRangeInfo(r.offset(), r.size()) for r in c_result.first],
@@ -321,7 +321,7 @@ cdef class HybridScanMultiFile:
                     spans_vec.size()
                 ),
                 options.c_obj,
-                self._stream.view().value(),
+                self._stream.view().get(),
                 self.mr.get_mr()
             )
 

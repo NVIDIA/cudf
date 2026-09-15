@@ -139,8 +139,8 @@ struct Spark_MurmurHash3_x86_32 {
    * matching Spark's tail-byte handling without staging an intermediate byte buffer.
    */
   template <typename T>
-  [[nodiscard]] uint32_t __device__ inline hash_low_bytes(T value, std::size_t length) const
     requires(cuda::std::is_integral_v<T>)
+  [[nodiscard]] uint32_t __device__ inline hash_low_bytes(T value, std::size_t length) const
   {
     auto const nblocks = length / 4;
     uint32_t h         = m_seed;

@@ -1008,7 +1008,8 @@ void reader_impl::decompress_and_decode_stripes(read_mode mode)
       _out_metadata.schema_info.emplace_back("");
       auto col_buffer = assemble_buffer(
         orc_col_meta.id, 0, *_col_meta, _metadata, _selected_columns, _out_buffers, _stream, _mr);
-      return make_column(col_buffer, &_out_metadata.schema_info.back(), std::nullopt, _stream);
+      return std::move(col_buffer)
+        .make_column(&_out_metadata.schema_info.back(), std::nullopt, _stream);
     });
   _chunk_read_data.decoded_table = std::make_unique<table>(std::move(out_columns));
 

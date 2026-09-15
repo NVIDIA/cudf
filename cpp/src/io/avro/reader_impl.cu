@@ -568,7 +568,8 @@ table_with_metadata read_avro(std::unique_ptr<cudf::io::datasource>&& source,
                                      mr);
 
       for (size_t i = 0; i < column_types.size(); ++i) {
-        out_columns.emplace_back(make_column(out_buffers[i], nullptr, std::nullopt, stream));
+        out_columns.emplace_back(
+          std::move(out_buffers[i]).make_column(nullptr, std::nullopt, stream));
       }
     } else {
       // Create empty columns

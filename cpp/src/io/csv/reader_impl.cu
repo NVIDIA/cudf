@@ -1004,7 +1004,7 @@ table_with_metadata read_csv(cudf::io::datasource* source,
           true);
         if (num_quoted == 0) {
           // Fast path: no rows were quoted, skip replacement entirely
-          out_columns[col_idx] = make_column(*buffer, nullptr, std::nullopt, col_stream);
+          out_columns[col_idx] = std::move(*buffer).make_column(nullptr, std::nullopt, col_stream);
         } else {
           auto replaced_all_col = cudf::strings::detail::replace(
             cudf::make_strings_column(
@@ -1074,15 +1074,15 @@ table_with_metadata read_csv(cudf::io::datasource* source,
       }
     }
 
+    for (size_t i = 0; i < column_types.size(); ++i) {
+      metadata.schema_info.emplace_back(out_buffers[i].name);
+    }
+
     // Create output columns for the columns that were not processed in the parallel loop
     for (size_t i = 0; i < column_types.size(); ++i) {
       if (!out_columns[i]) {
-        out_columns[i] = make_column(out_buffers[i], nullptr, std::nullopt, stream);
+        out_columns[i] = std::move(out_buffers[i]).make_column(nullptr, std::nullopt, stream);
       }
-    }
-
-    for (size_t i = 0; i < column_types.size(); ++i) {
-      metadata.schema_info.emplace_back(out_buffers[i].name);
     }
   } else {
     // Create empty columns

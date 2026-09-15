@@ -30,36 +30,40 @@ namespace CUDF_EXPORT cudf {
  * @brief Types of unary operations that can be performed on data.
  */
 enum class unary_operator : int32_t {
-  SIN,         ///< Trigonometric sine
-  COS,         ///< Trigonometric cosine
-  TAN,         ///< Trigonometric tangent
-  ARCSIN,      ///< Trigonometric sine inverse
-  ARCCOS,      ///< Trigonometric cosine inverse
-  ARCTAN,      ///< Trigonometric tangent inverse
-  SINH,        ///< Hyperbolic sine
-  COSH,        ///< Hyperbolic cosine
-  TANH,        ///< Hyperbolic tangent
-  ARCSINH,     ///< Hyperbolic sine inverse
-  ARCCOSH,     ///< Hyperbolic cosine inverse
-  ARCTANH,     ///< Hyperbolic tangent inverse
-  EXP,         ///< Exponential (base e, Euler number)
-  LOG,         ///< Natural Logarithm (base e)
-  SQRT,        ///< Square-root (x^0.5)
-  CBRT,        ///< Cube-root (x^(1.0/3))
-  CEIL,        ///< Smallest integer value not less than arg
-  FLOOR,       ///< largest integer value not greater than arg
-  ABS,         ///< Absolute value
-  RINT,        ///< Rounds the floating-point argument arg to an integer value
-  BIT_COUNT,   ///< Count the number of bits set to 1 of an integer value
-  BIT_INVERT,  ///< Bitwise Not (~)
-  NOT,         ///< Logical Not (!)
-  NEGATE,      ///< Unary negation (-), only for signed numeric and duration types.
+  SIN,           ///< Trigonometric sine
+  COS,           ///< Trigonometric cosine
+  TAN,           ///< Trigonometric tangent
+  ARCSIN,        ///< Trigonometric sine inverse
+  ARCCOS,        ///< Trigonometric cosine inverse
+  ARCTAN,        ///< Trigonometric tangent inverse
+  SINH,          ///< Hyperbolic sine
+  COSH,          ///< Hyperbolic cosine
+  TANH,          ///< Hyperbolic tangent
+  ARCSINH,       ///< Hyperbolic sine inverse
+  ARCCOSH,       ///< Hyperbolic cosine inverse
+  ARCTANH,       ///< Hyperbolic tangent inverse
+  EXP,           ///< Exponential (base e, Euler number)
+  LOG,           ///< Natural Logarithm (base e)
+  SQRT,          ///< Square-root (x^0.5)
+  CBRT,          ///< Cube-root (x^(1.0/3))
+  CEIL,          ///< Smallest integer value not less than arg
+  FLOOR,         ///< largest integer value not greater than arg
+  ABS,           ///< Absolute value
+  RINT,          ///< Rounds the floating-point argument arg to an integer value
+  BIT_COUNT,     ///< Count the number of bits set to 1 of an integer value
+  BIT_INVERT,    ///< Bitwise Not (~)
+  NOT,           ///< Logical Not (!)
+  NEGATE,        ///< Unary negation (-), only for signed numeric and duration types.
+  NEG_OVERFLOW,  ///< Negation with overflow detection
+  ABS_OVERFLOW   ///< Absolute value with overflow detection
 };
 
 /**
  * @brief Performs unary op on all values in column
  *
  * Note: For `decimal32` and `decimal64`, only `ABS`, `CEIL` and `FLOOR` are supported.
+ * Checked operators use error_policy::PROPAGATE; use the policy-aware overload to nullify
+ * errors.
  *
  * @param input A `column_view` as input
  * @param op operation to perform
@@ -71,6 +75,29 @@ enum class unary_operator : int32_t {
 std::unique_ptr<cudf::column> unary_operation(
   cudf::column_view const& input,
   cudf::unary_operator op,
+  cuda::stream_ref stream           = cudf::get_default_stream(),
+  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+
+/**
+ * @brief Performs a checked unary operation on all values in a column.
+ *
+ * `PROPAGATE` throws `cudf::evaluation_error` when any row fails; `NULLIFY` makes failing rows
+ * null.
+ *
+ * @param input Input column
+ * @param op Checked unary operator
+ * @param policy Error handling policy
+ * @param stream CUDA stream used for device memory operations and kernel launches
+ * @param mr Device memory resource used to allocate the returned column
+ * @return Output column
+ * @throws cudf::evaluation_error if @p policy is `error_policy::PROPAGATE` and any row fails
+ * @throws cudf::logic_error if @p op is not a checked arithmetic operator
+ * @throws cudf::data_type_error if @p input is not a supported arithmetic or fixed-point type
+ */
+std::unique_ptr<cudf::column> unary_operation(
+  cudf::column_view const& input,
+  cudf::unary_operator op,
+  cudf::error_policy policy,
   cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 

@@ -603,7 +603,7 @@ class ParquetOptions:
         improved performance on large datasets with complex filters.
         Default is False.
     use_hybrid_scan
-        Whether to use the two-pass ``HybridScanReader`` for ``SplitScan``
+        Whether to use the two-pass ``HybridScanReader`` for split parquet
         tasks when a predicate can be pushed down to a parquet filter.
         Default is False.
     """

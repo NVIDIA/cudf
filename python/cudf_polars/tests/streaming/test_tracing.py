@@ -246,7 +246,7 @@ def test_io_tasks_wait_for_memory_admission(
 
     assert len(events) == 2, result.decode(errors="replace")
     assert all(event["scope"] == "io_task" for event in events)
-    assert all(event["ir_type"] == "SplitScan" for event in events)
+    assert all(event["ir_type"] == "ParquetScanTask" for event in events)
     assert all(
         event["reservation_bytes"] == 2 * event["estimated_output_bytes"]
         for event in events

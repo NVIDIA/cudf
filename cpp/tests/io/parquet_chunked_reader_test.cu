@@ -1270,20 +1270,21 @@ void input_limit_test_write(std::vector<std::string> const& test_filenames,
     test_filenames[3], t, cudf::io::compression_type::SNAPPY, cudf::io::dictionary_policy::ALWAYS);
 }
 
-void input_limit_test_read(std::vector<std::string> const& test_filenames,
-                           cudf::table_view const& t,
-                           std::size_t output_limit,
-                           std::size_t input_limit,
-                           int const expected_chunk_counts[input_limit_expected_file_count])
+void input_limit_test_read(
+  std::vector<std::string> const& test_filenames,
+  cudf::table_view const& t,
+  std::size_t output_limit,
+  std::size_t input_limit,
+  [[maybe_unused]] int const expected_chunk_counts[input_limit_expected_file_count],
+  bool require_multiple_chunks = false)
 {
   CUDF_EXPECTS(test_filenames.size() == input_limit_expected_file_count,
                "Unexpected count of test filenames");
 
   for (std::size_t idx = 0; idx < test_filenames.size(); idx++) {
     auto result = chunked_read(test_filenames[idx], output_limit, input_limit);
-    // CUDF_EXPECTS(result.second == expected_chunk_counts[idx],
-    //            "Unexpected number of chunks produced in chunk read");
     CUDF_TEST_EXPECT_TABLES_EQUIVALENT(*result.first, t);
+    if (require_multiple_chunks) { EXPECT_GT(result.second, 1); }
   }
 }
 }  // namespace
@@ -1528,7 +1529,7 @@ TEST_F(ParquetChunkedReaderInputLimitTest, List)
   auto base_path      = temp_env->get_temp_filepath("list");
   auto test_filenames = input_limit_get_test_names(base_path);
 
-  constexpr int num_rows  = 10'000'000;
+  constexpr int num_rows  = 2'500'000;
   constexpr int list_size = 4;
 
   auto const stream = cudf::get_default_stream();
@@ -1575,16 +1576,13 @@ TEST_F(ParquetChunkedReaderInputLimitTest, List)
   //   size of the decompressed data. so 2 GB is actually not enough to hold the whole thing at
   //   once.
   //
-  // Note that in the dictionary cases, both of these revert down to 1 chunk because the
-  // dictionaries dramatically shrink the size of the uncompressed data.
   constexpr int expected_a[] = {3, 3, 1, 1};
-  input_limit_test_read(test_filenames, tbl, 0, 256 * 1024 * 1024, expected_a);
-  // smaller limit
+  input_limit_test_read(test_filenames, tbl, 0, 64 * 1024 * 1024, expected_a);
   constexpr int expected_b[] = {5, 5, 2, 1};
-  input_limit_test_read(test_filenames, tbl, 0, 128 * 1024 * 1024, expected_b);
-  // include output chunking as well
+  input_limit_test_read(test_filenames, tbl, 0, 32 * 1024 * 1024, expected_b);
+  // Include output chunking as well, and verify each input format is split.
   constexpr int expected_c[] = {10, 9, 8, 7};
-  input_limit_test_read(test_filenames, tbl, 32 * 1024 * 1024, 64 * 1024 * 1024, expected_c);
+  input_limit_test_read(test_filenames, tbl, 8 * 1024 * 1024, 16 * 1024 * 1024, expected_c, true);
 }
 
 namespace {
@@ -1678,7 +1676,7 @@ TEST_F(ParquetChunkedReaderInputLimitTest, Mixed)
   auto base_path      = temp_env->get_temp_filepath("mixed_types");
   auto test_filenames = input_limit_get_test_names(base_path);
 
-  constexpr int num_rows  = 10'000'000;
+  constexpr int num_rows  = 2'500'000;
   constexpr int list_size = 4;
   constexpr int str_size  = 3;
 
@@ -1757,16 +1755,13 @@ TEST_F(ParquetChunkedReaderInputLimitTest, Mixed)
   //   size of the decompressed data. so 2 GB is actually not enough to hold the whole thing at
   //   once.
   //
-  // Note that in the dictionary cases, both of these revert down to 1 chunk because the
-  // dictionaries dramatically shrink the size of the uncompressed data.
   constexpr int expected_a[] = {5, 5, 2, 1};
-  input_limit_test_read(test_filenames, tbl, 0, 256 * 1024 * 1024, expected_a);
-  // smaller limit
+  input_limit_test_read(test_filenames, tbl, 0, 64 * 1024 * 1024, expected_a);
   constexpr int expected_b[] = {10, 9, 3, 1};
-  input_limit_test_read(test_filenames, tbl, 0, 128 * 1024 * 1024, expected_b);
-  // include output chunking as well
+  input_limit_test_read(test_filenames, tbl, 0, 32 * 1024 * 1024, expected_b);
+  // Include output chunking as well, and verify each input format is split.
   constexpr int expected_c[] = {20, 18, 15, 12};
-  input_limit_test_read(test_filenames, tbl, 32 * 1024 * 1024, 64 * 1024 * 1024, expected_c);
+  input_limit_test_read(test_filenames, tbl, 8 * 1024 * 1024, 16 * 1024 * 1024, expected_c, true);
 }
 
 TEST_F(ParquetChunkedReaderTest, TestChunkedReadOutOfBoundChunks)

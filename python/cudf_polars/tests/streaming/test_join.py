@@ -12,7 +12,11 @@ import pytest
 import polars as pl
 
 import pylibcudf as plc
-from cudf_streaming.channel_metadata import OrderKey, OrderScheme, Ordering
+from cudf_streaming.channel_metadata import (
+    OrderKey,
+    OrderScheme,
+    Ordering,
+)
 from cudf_streaming.table_chunk import TableChunk
 
 from cudf_polars import Translator
@@ -20,8 +24,10 @@ from cudf_polars.containers import DataFrame
 from cudf_polars.dsl.ir import Cache, Join
 from cudf_polars.dsl.traversal import traversal
 from cudf_polars.engine.options import StreamingOptions
+from cudf_polars.streaming.actor_graph.core import evaluate_logical_plan
 from cudf_polars.streaming.actor_graph.join import (
     _make_ordered_strategy,
+    _ordered_join_decision,
     _use_pwise_join,
 )
 from cudf_polars.streaming.actor_graph.utils import NormalizedPartitioning
@@ -32,9 +38,12 @@ from cudf_polars.streaming.statistics import collect_statistics
 from cudf_polars.testing.asserts import assert_gpu_result_equal
 from cudf_polars.testing.engine_utils import warns_on_spmd
 from cudf_polars.utils.config import ConfigOptions, StreamingExecutor
+from cudf_polars.utils.versions import POLARS_VERSION_LT_138
 
 if TYPE_CHECKING:
     import concurrent.futures
+
+    from cudf_streaming.channel_metadata import ChannelMetadata
 
 
 @pytest.fixture
@@ -170,6 +179,46 @@ def _order_partitioning(
     )
 
 
+def _set_sorted_join_metadata(spmd_engine_factory) -> ChannelMetadata:
+    engine = spmd_engine_factory(
+        StreamingOptions(
+            max_rows_per_partition=128,
+            target_partition_size=1,
+            broadcast_limit=1,
+            fallback_mode="raise",
+            raise_on_fail=True,
+        ),
+    )
+    left = pl.LazyFrame({"k": [1, 2, 3], "x": [10, 20, 30]}).set_sorted("k")
+    right = pl.LazyFrame({"k": [1, 2, 3], "y": [100, 200, 300]}).set_sorted("k")
+    q = left.join(right, on="k", how="inner")
+
+    assert_gpu_result_equal(q, engine=engine, check_row_order=False)
+    ir = Translator(q._ldf.visit(), engine).translate_ir()
+    metadata_collector = evaluate_logical_plan(
+        ir, ConfigOptions.from_polars_engine(engine), collect_metadata=True
+    )[1]
+    assert metadata_collector is not None
+    assert len(metadata_collector) == 1
+    return metadata_collector[0]
+
+
+@pytest.mark.skipif(
+    POLARS_VERSION_LT_138, reason="set_sorted lowers to unsupported hint ir"
+)
+def test_ordered_join_after_set_sorted_inputs(spmd_engine_factory):
+    metadata = _set_sorted_join_metadata(spmd_engine_factory)
+
+    assert metadata.local_count == 1
+    assert metadata.partitioning is not None
+    assert isinstance(metadata.partitioning.inter_rank, OrderScheme)
+    assert metadata.partitioning.local == "inherit"
+    (ordering,) = metadata.partitioning.inter_rank.orderings
+    assert tuple(key.column_index for key in ordering.keys) == (0,)
+    assert ordering.strict_boundaries is True
+    assert ordering.locally_ordered is False
+
+
 def test_ordered_join_strategy_matches_exact_ordering_width(spmd_engine):
     left = pl.LazyFrame({"k0": [1], "k1": [2], "x": [3]})
     right = pl.LazyFrame({"k0": [1], "k1": [2], "y": [4]})
@@ -194,6 +243,25 @@ def test_ordered_join_strategy_checks_order_key_semantics(spmd_engine):
         is not None
     )
     assert _make_ordered_strategy(join_ir, left_partitioning, mismatched_right) is None
+
+
+@pytest.mark.parametrize(
+    "left_aligned,right_aligned,expected",
+    [
+        (True, True, "ordered_aligned"),
+        (True, False, "ordered_adjust_right"),
+        (False, True, "ordered_adjust_left"),
+        (False, False, "ordered_adjust_both"),
+    ],
+)
+def test_ordered_join_decision(left_aligned, right_aligned, expected):
+    assert (
+        _ordered_join_decision(
+            left_aligned=left_aligned,
+            right_aligned=right_aligned,
+        )
+        == expected
+    )
 
 
 @pytest.mark.parametrize("how", ["right", "full"])

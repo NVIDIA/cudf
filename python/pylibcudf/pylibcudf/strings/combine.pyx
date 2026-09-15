@@ -76,14 +76,14 @@ cpdef Column concatenate(
     cdef const string_scalar* c_col_narep
     cdef const string_scalar* c_separator
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
     cdef table_view c_strings_columns
     cdef column_view c_separator_view
 
     if narep is None:
         narep = Scalar.from_libcudf(
-            cpp_make_string_scalar("".encode(), _stream.view().value(), mr.get_mr())
+            cpp_make_string_scalar("".encode(), _stream.view().get(), mr.get_mr())
         )
     cdef const string_scalar* c_narep = <const string_scalar*>(
         narep.c_obj.get()
@@ -92,7 +92,7 @@ cpdef Column concatenate(
     if ColumnOrScalar is Column:
         if col_narep is None:
             col_narep = Scalar.from_libcudf(
-                cpp_make_string_scalar("".encode(), _stream.view().value(), mr.get_mr())
+                cpp_make_string_scalar("".encode(), _stream.view().get(), mr.get_mr())
             )
         c_col_narep = <const string_scalar*>(
             col_narep.c_obj.get()
@@ -163,7 +163,7 @@ cpdef Column join_strings(
     """
     cdef unique_ptr[column] c_result
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
     cdef column_view c_input
     cdef const string_scalar* c_separator = <const string_scalar*>(
@@ -234,7 +234,7 @@ cpdef Column join_list_elements(
     """
     cdef unique_ptr[column] c_result
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
     cdef column_view c_lists_strings_column
     cdef column_view c_separator_view

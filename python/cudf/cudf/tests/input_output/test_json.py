@@ -33,8 +33,9 @@ def lines(request):
     return request.param
 
 
-@pytest.fixture(params=[0, 10])
+@pytest.fixture(scope="module", params=[0, 10])
 def pdf(request):
+    # JSON tests share this immutable source dataframe.
     rng = np.random.default_rng(seed=0)
     types = NUMERIC_TYPES + DATETIME_TYPES + ["bool"]
     nrows = request.param
@@ -50,12 +51,12 @@ def pdf(request):
     return test_pdf
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def gdf(pdf):
     return cudf.DataFrame(pdf)
 
 
-@pytest.fixture(params=[0, 10])
+@pytest.fixture(scope="module", params=[0, 10])
 def gdf_writer_types(request):
     # datetime64[us], datetime64[ns] are unsupported due to a bug in parser
     types = [
@@ -175,6 +176,7 @@ def test_json_writer(tmp_path, pdf, gdf):
 
 def test_cudf_json_writer(pdf, lines):
     # removing datetime column because pandas doesn't support it
+    pdf = pdf.copy()
     for col_name in pdf.columns:
         if "datetime" in col_name:
             pdf.drop(col_name, axis=1, inplace=True)

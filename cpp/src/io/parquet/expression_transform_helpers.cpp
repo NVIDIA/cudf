@@ -484,6 +484,168 @@ std::reference_wrapper<ast::expression const> offset_column_references::visit(
   return column_indices_to_names;
 }
 
+parquet_expression_simplifier::parquet_expression_simplifier(
+  std::span<cudf::data_type const> output_dtypes)
+  : _output_dtypes{output_dtypes}
+{
+}
+
+simplified_expression_opt parquet_expression_simplifier::simplify_unary_op(
+  ast::ast_operator, ast::column_reference const&)
+{
+  return std::nullopt;
+}
+
+simplified_expression_opt parquet_expression_simplifier::simplify_negated_unary_op(
+  ast::ast_operator, ast::column_reference const&)
+{
+  return std::nullopt;
+}
+
+simplified_expression_opt parquet_expression_simplifier::simplify_negated_comparison(
+  ast::ast_operator, ast::column_reference const&, ast::literal const&)
+{
+  return std::nullopt;
+}
+
+void parquet_expression_simplifier::validate_column_reference(
+  ast::column_reference const& col_ref) const
+{
+  CUDF_EXPECTS(col_ref.get_table_source() == ast::table_reference::LEFT,
+               "Parquet filter expressions only support left-table column references",
+               std::invalid_argument);
+  auto const col_index = col_ref.get_column_index();
+  CUDF_EXPECTS(col_index >= 0 and std::cmp_less(col_index, _output_dtypes.size()),
+               std::format("Parquet filter column index {} is out of range of {} output columns",
+                           col_index,
+                           _output_dtypes.size()),
+               std::out_of_range);
+}
+
+void parquet_expression_simplifier::validate_operands(ast::expression const& expr) const
+{
+  // Validate column references and traverse operations. Literals don't really need validation.
+  if (auto const* col_ref = dynamic_cast<ast::column_reference const*>(&expr); col_ref != nullptr) {
+    validate_column_reference(*col_ref);
+  } else if (auto const* operation = dynamic_cast<ast::operation const*>(&expr);
+             operation != nullptr) {
+    for (auto const& operand : operation->get_operands()) {
+      validate_operands(operand.get());
+    }
+  } else if (dynamic_cast<ast::column_name_reference const*>(&expr) != nullptr) {
+    // Column name references must not exist in the normalized filter expression
+    CUDF_FAIL("Column name references are not supported in normalized Parquet filter expressions");
+  }
+}
+
+simplified_expression_opt parquet_expression_simplifier::simplify_negation(
+  ast::expression const& operand)
+{
+  auto const* operation = dynamic_cast<ast::operation const*>(&operand);
+  if (operation == nullptr) { return std::nullopt; }
+
+  // Unary operation
+  if (cudf::ast::detail::ast_operator_arity(operation->get_operator()) == 1) {
+    auto const [kind, col_ref] = extract_unary_operand(*operation);
+    if (kind != operand_kind::COLUMN_REF) { return std::nullopt; }
+    return simplify_negated_unary_op(operation->get_operator(), *col_ref);
+  }
+
+  // Binary operation
+  auto const [op, lhs_kind, rhs_kind, col_ref, literal] = extract_binary_operands(*operation);
+  if (lhs_kind != operand_kind::COLUMN_REF or rhs_kind != operand_kind::LITERAL) {
+    return std::nullopt;
+  }
+  return simplify_negated_comparison(op, *col_ref, *literal);
+}
+
+simplified_expression_opt parquet_expression_simplifier::combine_logical_operands(
+  ast::ast_operator op, simplified_expression_opt lhs, simplified_expression_opt rhs)
+{
+  using cudf::ast::ast_operator;
+
+  switch (op) {
+    // An AND operand that cannot filter can be dropped. The remaining expression still keeps every
+    // row the filter might match.
+    case ast_operator::LOGICAL_AND: [[fallthrough]];
+    case ast_operator::NULL_LOGICAL_AND:
+      if (lhs.has_value() and rhs.has_value()) {
+        return _tree.push(ast::operation{ast_operator::NULL_LOGICAL_AND, lhs.value(), rhs.value()});
+      }
+      return lhs.has_value() ? lhs : rhs;
+
+    // An OR operand that cannot filter must return std::nullopt.
+    case ast_operator::LOGICAL_OR: [[fallthrough]];
+    case ast_operator::NULL_LOGICAL_OR:
+      if (lhs.has_value() and rhs.has_value()) {
+        return _tree.push(ast::operation{ast_operator::NULL_LOGICAL_OR, lhs.value(), rhs.value()});
+      }
+      return std::nullopt;
+
+    default: CUDF_UNREACHABLE("Invalid operator for expression combination");
+  }
+}
+
+simplified_expression_opt parquet_expression_simplifier::simplify_expr(ast::expression const& expr)
+{
+  // Validate operands and simplify the expression
+  validate_operands(expr);
+  return simplify_expr_impl(expr);
+}
+
+simplified_expression_opt parquet_expression_simplifier::simplify_expr_impl(
+  ast::expression const& expr)
+{
+  using cudf::ast::ast_operator;
+
+  auto const* operation = dynamic_cast<ast::operation const*>(&expr);
+
+  // A column reference or literal cannot be simplified
+  if (operation == nullptr) { return std::nullopt; }
+
+  auto const input_op = operation->get_operator();
+
+  // Unary operation
+  if (cudf::ast::detail::ast_operator_arity(input_op) == 1) {
+    auto const [kind, col_ref] = extract_unary_operand(*operation);
+
+    if (kind == operand_kind::COLUMN_REF) { return simplify_unary_op(input_op, *col_ref); }
+
+    // `parquet_filter_normalizer` has already pushed negations to the leaves, but only where an
+    // exact rewrite exists, so `NOT` over an operation still reaches here.
+    if (input_op == ast_operator::NOT) {
+      return simplify_negation(operation->get_operands().front().get());
+    }
+
+    return std::nullopt;
+  }
+
+  auto const& operands = operation->get_operands();
+
+  // Combine simplified logical operands.
+  switch (input_op) {
+    case ast_operator::LOGICAL_AND: [[fallthrough]];
+    case ast_operator::NULL_LOGICAL_AND: [[fallthrough]];
+    case ast_operator::LOGICAL_OR: [[fallthrough]];
+    case ast_operator::NULL_LOGICAL_OR: {
+      auto lhs = simplify_expr_impl(operands.front().get());
+      auto rhs = simplify_expr_impl(operands.back().get());
+      return combine_logical_operands(input_op, lhs, rhs);
+    }
+    default: break;
+  }
+
+  // Binary operation, with `lit op col` normalized to `col op lit`
+  auto const [op, lhs_kind, rhs_kind, col_ref, literal] = extract_binary_operands(*operation);
+
+  if (lhs_kind == operand_kind::COLUMN_REF and rhs_kind == operand_kind::LITERAL) {
+    return simplify_comparison(op, *col_ref, *literal);
+  }
+
+  // Other binary expressions cannot be evaluated against chunk summaries.
+  return std::nullopt;
+}
+
 [[nodiscard]] std::vector<std::string> get_column_names_in_expression(
   std::optional<std::reference_wrapper<ast::expression const>> expr,
   std::vector<std::string> const& skip_names,

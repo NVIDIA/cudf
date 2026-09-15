@@ -18,7 +18,7 @@ run_mpirun_test() {
     local nrank="$1" # Number of ranks
     echo "Running pytest with $nrank ranks"
     mpirun --oversubscribe --map-by node --bind-to none -np "$nrank" \
-        python -m pytest --cache-clear --verbose "${EXTRA_ARGS[@]}" .
+        python -m pytest --cache-clear "${EXTRA_ARGS[@]}" .
 }
 
 # Note, we run with many different number of ranks, which we can do as long as

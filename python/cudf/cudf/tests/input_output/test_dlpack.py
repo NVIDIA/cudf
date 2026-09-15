@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2019-2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import itertools
@@ -30,8 +30,9 @@ def data_size_expectation_builder(data, nan_null_param=False):
         return does_not_raise()
 
 
-@pytest.fixture(params=params_1d)
+@pytest.fixture(scope="module", params=params_1d)
 def data_1d(request):
+    # DLPack conversion tests only read the generated host array.
     nelems = request.param[0]
     dtype = request.param[1]
     nulls = request.param[2]
@@ -43,8 +44,9 @@ def data_1d(request):
     return a
 
 
-@pytest.fixture(params=params_2d)
+@pytest.fixture(scope="module", params=params_2d)
 def data_2d(request):
+    # DLPack conversion tests only read the generated host array.
     ncols = request.param[0]
     nrows = request.param[1]
     dtype = request.param[2]

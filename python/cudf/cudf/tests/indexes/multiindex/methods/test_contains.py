@@ -7,8 +7,9 @@ import pytest
 import cudf
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def mi_pair():
+    # Containment tests only read the shared cuDF and pandas indexes.
     arrays = [[1, 1, 2, 2], ["a", "b", "a", "b"], [10, 20, 30, 40]]
     pmi = pd.MultiIndex.from_arrays(arrays, names=["x", "y", "z"])
     return cudf.from_pandas(pmi), pmi

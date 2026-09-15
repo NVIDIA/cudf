@@ -30,7 +30,7 @@ std::unique_ptr<column> dispatch_range_window(
   order order,
   std::optional<rolling::preprocessed_group_info> const& grouping,
   bool nulls_at_start,
-  scalar const* row_delta,
+  range_window_delta const& delta,
   cuda::stream_ref stream,
   rmm::device_async_resource_ref mr)
 {
@@ -41,7 +41,7 @@ std::unique_ptr<column> dispatch_range_window(
                          order,
                          grouping,
                          nulls_at_start,
-                         row_delta,
+                         delta,
                          stream,
                          mr);
 }

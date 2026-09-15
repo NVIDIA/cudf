@@ -204,7 +204,7 @@ cdef class GroupBy:
 
         cdef pair[unique_ptr[table], vector[aggregation_result]] c_res
         cdef Stream _stream = _get_stream(stream)
-        cdef cudaStream_t _cs = _stream.view().value()
+        cdef cudaStream_t _cs = _stream.view().get()
         mr = _get_memory_resource(mr)
         # TODO: Need to capture C++ exceptions indicating that an invalid type was used.
         # We rely on libcudf to tell us this rather than checking the types beforehand
@@ -248,7 +248,7 @@ cdef class GroupBy:
 
         cdef pair[unique_ptr[table], vector[aggregation_result]] c_res
         cdef Stream _stream = _get_stream(stream)
-        cdef cudaStream_t _cs = _stream.view().value()
+        cdef cudaStream_t _cs = _stream.view().get()
         mr = _get_memory_resource(mr)
         with nogil:
             c_res = dereference(self.c_obj).scan(
@@ -295,7 +295,7 @@ cdef class GroupBy:
         cdef vector[size_type] c_offset = offset
         cdef pair[unique_ptr[table], unique_ptr[table]] c_res
         cdef Stream _stream = _get_stream(stream)
-        cdef cudaStream_t _cs = _stream.view().value()
+        cdef cudaStream_t _cs = _stream.view().get()
         mr = _get_memory_resource(mr)
         c_values = values.view()
         with nogil:
@@ -340,7 +340,7 @@ cdef class GroupBy:
         cdef pair[unique_ptr[table], unique_ptr[table]] c_res
         cdef vector[replace_policy] c_replace_policies = replace_policies
         cdef Stream _stream = _get_stream(stream)
-        cdef cudaStream_t _cs = _stream.view().value()
+        cdef cudaStream_t _cs = _stream.view().get()
         mr = _get_memory_resource(mr)
         cdef table_view c_value = value.view()
         with nogil:
@@ -385,7 +385,7 @@ cdef class GroupBy:
         mr = _get_memory_resource(mr)
         if values:
             c_groups = dereference(self.c_obj).get_groups(
-                values.view(), _stream.view().value(), mr.get_mr()
+                values.view(), _stream.view().get(), mr.get_mr()
             )
             return (
                 c_groups.offsets,
@@ -395,7 +395,7 @@ cdef class GroupBy:
         else:
             # c_groups.values is nullptr - call get_groups with empty table view
             c_groups = dereference(self.c_obj).get_groups(
-                empty_view, _stream.view().value(), mr.get_mr()
+                empty_view, _stream.view().get(), mr.get_mr()
             )
             return (
                 c_groups.offsets,

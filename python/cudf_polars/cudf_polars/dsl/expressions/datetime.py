@@ -48,7 +48,7 @@ def _tz_transition_columns(
         tzif_dir, zone_name, stream=stream
     )
     columns = table.columns()
-    if len(columns) == 0:
+    if len(columns) == 0:  # pragma: no cover
         return None
     transition_times, offsets = columns
     return transition_times, offsets
@@ -61,7 +61,7 @@ def _local_wall_clock(
     if from_zone_desc is None:
         return column
     data = _tz_transition_columns(*from_zone_desc, stream)
-    if data is None:
+    if data is None:  # pragma: no cover
         return column
     transition_times, offsets = data
     unit = column.type()
@@ -359,7 +359,7 @@ def _localize(
 ) -> plc.Column:
     """Interpret naive wall-clock timestamps as local times in ``to_zone``."""
     data = _tz_transition_columns(to_zone, tzif_dir, stream)
-    if data is None:
+    if data is None:  # pragma: no cover
         return _apply_ambiguous_without_transitions(
             local, ambiguous_scalar, ambiguous_column, stream
         )

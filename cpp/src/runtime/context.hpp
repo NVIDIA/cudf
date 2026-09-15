@@ -35,7 +35,6 @@ struct [[nodiscard]] context_config {
   bool dump_jit_time_profile : 1      = false;
   std::string rtcx_cache_dir          = {};
   std::string jit_bundle_dir          = {};
-  std::string jit_pch_dir             = {};
   std::string jit_tmp_dir             = {};
   uint32_t kernel_cache_limit_process = 0;
 };
@@ -83,8 +82,6 @@ class context {
   [[nodiscard]] bool use_jit() const;
 
   [[nodiscard]] context_config const& config() const;
-
-  [[nodiscard]] std::string const& get_jit_pch_dir() const;
 
   [[nodiscard]] device_properties const& get_device_properties() const;
 

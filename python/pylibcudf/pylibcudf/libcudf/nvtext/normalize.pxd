@@ -1,5 +1,6 @@
-# SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+from libc.stdint cimport uint32_t
 from libcpp cimport bool
 from libcpp.memory cimport unique_ptr
 from pylibcudf.exception_handler cimport libcudf_exception_handler
@@ -27,9 +28,17 @@ cdef extern from "nvtext/normalize.hpp" namespace "nvtext" nogil:
         device_async_resource_ref mr
     ) except +libcudf_exception_handler
 
+    cpdef enum class normalize_flags:
+        NONE
+        STRIP_ACCENTS
+        PAD_PUNCTUATION
+
     cdef unique_ptr[column] normalize_characters(
         const column_view & strings,
         const character_normalizer & normalizer,
+        normalize_flags flags,
         cudaStream_t stream,
         device_async_resource_ref mr
     ) except +libcudf_exception_handler
+
+ctypedef uint32_t underlying_type_t_normalize_flags

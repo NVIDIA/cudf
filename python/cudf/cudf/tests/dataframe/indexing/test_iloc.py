@@ -10,6 +10,36 @@ import cudf
 from cudf.testing import assert_eq
 
 
+@pytest.fixture(scope="module")
+def multiindex_iloc_frames():
+    rng = np.random.default_rng(seed=0)
+    pdf = pd.DataFrame(rng.random(size=(7, 5)))
+    pdf.index = pd.MultiIndex(
+        [
+            ["a", "b", "c"],
+            ["house", "store", "forest"],
+            ["clouds", "clear", "storm"],
+            ["fire", "smoke", "clear"],
+            [
+                np.datetime64("2001-01-01", "ns"),
+                np.datetime64("2002-01-01", "ns"),
+                np.datetime64("2003-01-01", "ns"),
+            ],
+        ],
+        [
+            [0, 0, 0, 0, 1, 1, 2],
+            [1, 1, 1, 1, 0, 0, 2],
+            [0, 0, 2, 2, 2, 0, 1],
+            [0, 0, 0, 1, 2, 0, 1],
+            [1, 0, 1, 2, 0, 0, 1],
+        ],
+        names=["alpha", "location", "weather", "sign", "timestamp"],
+    )
+    gdf = cudf.from_pandas(pdf)
+    assert_eq(pdf.index, gdf.index)
+    return pdf, gdf
+
+
 @pytest.mark.parametrize(
     "iloc_rows",
     [
@@ -38,35 +68,8 @@ from cudf.testing import assert_eq
         slice(1, None),
     ],
 )
-def test_multiindex_iloc(iloc_rows, iloc_columns):
-    rng = np.random.default_rng(seed=0)
-    pdf = pd.DataFrame(rng.random(size=(7, 5)))
-    gdf = cudf.from_pandas(pdf)
-    pdfIndex = pd.MultiIndex(
-        [
-            ["a", "b", "c"],
-            ["house", "store", "forest"],
-            ["clouds", "clear", "storm"],
-            ["fire", "smoke", "clear"],
-            [
-                np.datetime64("2001-01-01", "ns"),
-                np.datetime64("2002-01-01", "ns"),
-                np.datetime64("2003-01-01", "ns"),
-            ],
-        ],
-        [
-            [0, 0, 0, 0, 1, 1, 2],
-            [1, 1, 1, 1, 0, 0, 2],
-            [0, 0, 2, 2, 2, 0, 1],
-            [0, 0, 0, 1, 2, 0, 1],
-            [1, 0, 1, 2, 0, 0, 1],
-        ],
-    )
-    pdfIndex.names = ["alpha", "location", "weather", "sign", "timestamp"]
-    gdfIndex = cudf.from_pandas(pdfIndex)
-    assert_eq(pdfIndex, gdfIndex)
-    pdf.index = pdfIndex
-    gdf.index = gdfIndex
+def test_multiindex_iloc(multiindex_iloc_frames, iloc_rows, iloc_columns):
+    pdf, gdf = multiindex_iloc_frames
     presult = pdf.iloc[iloc_rows, iloc_columns]
     gresult = gdf.iloc[iloc_rows, iloc_columns]
     if isinstance(gresult, cudf.DataFrame):
@@ -117,35 +120,8 @@ def test_multiindex_iloc_scalar():
         slice(1, None),
     ],
 )
-def test_multicolumn_iloc(iloc_rows, iloc_columns):
-    rng = np.random.default_rng(seed=0)
-    pdf = pd.DataFrame(rng.random(size=(7, 5)))
-    gdf = cudf.from_pandas(pdf)
-    pdfIndex = pd.MultiIndex(
-        [
-            ["a", "b", "c"],
-            ["house", "store", "forest"],
-            ["clouds", "clear", "storm"],
-            ["fire", "smoke", "clear"],
-            [
-                np.datetime64("2001-01-01", "ns"),
-                np.datetime64("2002-01-01", "ns"),
-                np.datetime64("2003-01-01", "ns"),
-            ],
-        ],
-        [
-            [0, 0, 0, 0, 1, 1, 2],
-            [1, 1, 1, 1, 0, 0, 2],
-            [0, 0, 2, 2, 2, 0, 1],
-            [0, 0, 0, 1, 2, 0, 1],
-            [1, 0, 1, 2, 0, 0, 1],
-        ],
-    )
-    pdfIndex.names = ["alpha", "location", "weather", "sign", "timestamp"]
-    gdfIndex = cudf.from_pandas(pdfIndex)
-    assert_eq(pdfIndex, gdfIndex)
-    pdf.index = pdfIndex
-    gdf.index = gdfIndex
+def test_multicolumn_iloc(multiindex_iloc_frames, iloc_rows, iloc_columns):
+    pdf, gdf = multiindex_iloc_frames
     pdf = pdf.T
     gdf = gdf.T
     presult = pdf.iloc[iloc_rows, iloc_columns]

@@ -1155,6 +1155,59 @@ class Series(SingleColumnFrame, IndexedFrame):
         return res
 
     @_performance_tracking
+    def unstack(self, level=-1, fill_value=None, sort: bool = True):
+        """
+        Unstack, also known as pivot, Series with MultiIndex to produce
+        DataFrame.
+
+        Parameters
+        ----------
+        level : int, str, or list of these, default last level
+            Level(s) to unstack, can pass level name.
+        fill_value
+            Non-functional argument provided for compatibility with Pandas.
+        sort : bool, default True
+            Sort the level(s) in the resulting MultiIndex columns.
+
+        Returns
+        -------
+        DataFrame
+            Unstacked Series.
+
+        Examples
+        --------
+        >>> import cudf
+        >>> s = cudf.Series(
+        ...     [1, 2, 3, 4],
+        ...     index=cudf.MultiIndex.from_product([["one", "two"], ["a", "b"]]),
+        ... )
+        >>> s
+        one  a    1
+             b    2
+        two  a    3
+             b    4
+        dtype: int64
+        >>> s.unstack(level=-1)
+             a  b
+        one  1  2
+        two  3  4
+        """
+        if not isinstance(self.index, cudf.MultiIndex):
+            raise ValueError(
+                "index must be a MultiIndex to unstack, "
+                f"{type(self.index)} was passed"
+            )
+        result = self.to_frame().unstack(
+            level=level, fill_value=fill_value, sort=sort
+        )
+        if result.columns.nlevels == 1:
+            # No level was actually unstacked (e.g. level=[]); pandas
+            # returns the original Series unchanged in that case.
+            return self.copy(deep=False)
+        result.columns = result.columns.droplevel(0)
+        return result
+
+    @_performance_tracking
     def memory_usage(self, index: bool = True, deep: bool = False) -> int:
         """
         Return the memory usage of the Series.

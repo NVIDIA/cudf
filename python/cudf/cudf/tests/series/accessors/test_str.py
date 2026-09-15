@@ -89,6 +89,25 @@ def test_replace_invalid_scalar_repl():
         ser.str.replace("1", 2)
 
 
+@pytest.mark.parametrize("storage", ["python", "pyarrow"])
+@pytest.mark.parametrize("na", [no_default, None, pd.NA, np.nan, True, False])
+def test_string_contains_nan_dtype_na(storage, na):
+    dtype = pd.StringDtype(storage=storage, na_value=np.nan)
+    ps = pd.Series(["abc", None, "a"], dtype=dtype)
+    gs = cudf.from_pandas(ps)
+    kwargs = {} if na is no_default else {"na": na}
+
+    assert_eq(gs.str.contains("a", **kwargs), ps.str.contains("a", **kwargs))
+
+
+@pytest.mark.parametrize("method", ["contains", "startswith", "endswith"])
+def test_string_object_predicate_preserves_nulls(method):
+    ps = pd.Series(["abc", None, "a"], dtype=object)
+    gs = cudf.from_pandas(ps)
+
+    assert_eq(getattr(gs.str, method)("a"), getattr(ps.str, method)("a"))
+
+
 def test_string_methods_setattr():
     ser = cudf.Series(["ab", "cd", "ef"])
     pser = ser.to_pandas()

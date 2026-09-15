@@ -1884,7 +1884,7 @@ class StringColumn(ColumnBase, Scannable):
                 )
             dtype = get_dtype_of_same_kind(self.dtype, np.dtype(np.bool_))
             result = cast("Self", ColumnBase.create(plc_result, dtype))
-        if self._PANDAS_NA_VALUE in {np.nan, None}:
+        if self._PANDAS_NA_VALUE is np.nan:
             result = result.fillna(False)
         return result
 

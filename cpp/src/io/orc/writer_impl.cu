@@ -8,6 +8,7 @@
  * @brief cuDF-IO ORC writer class implementation
  */
 
+#include "datetime/timezone_utils.hpp"
 #include "io/comp/compression.hpp"
 #include "io/orc/orc_gpu.hpp"
 #include "io/statistics/column_statistics.cuh"
@@ -16,6 +17,7 @@
 #include <cudf/detail/iterator.cuh>
 #include <cudf/detail/null_mask.cuh>
 #include <cudf/detail/null_mask.hpp>
+#include <cudf/detail/timezone.hpp>
 #include <cudf/detail/utilities/batched_memcpy.hpp>
 #include <cudf/detail/utilities/cuda.cuh>
 #include <cudf/detail/utilities/cuda_memcpy.hpp>
@@ -868,6 +870,7 @@ struct extent_info {
  * @param[in] segmentation stripe and rowgroup ranges
  * @param[in] streams List of stream descriptors
  * @param[in] uncomp_block_align Required alignment of the codec's chunks
+ * @param[in] base_epoch Instant that encoded timestamps are stored relative to
  * @param[in] stream CUDA stream used for device memory operations and kernel launches
  * @return The encoded data, along with a [stripe][strm_id] description of every extent, flattened
  * with `streams.size()` elements per row
@@ -878,6 +881,7 @@ std::pair<encoded_data, std::vector<extent_info>> encode_columns(
   file_segmentation const& segmentation,
   orc_streams const& streams,
   uint32_t uncomp_block_align,
+  duration_s base_epoch,
   cuda::stream_ref stream)
 {
   CUDF_EXPECTS(uncomp_block_align > 0 and extent_alignment % uncomp_block_align == 0,
@@ -1129,7 +1133,7 @@ std::pair<encoded_data, std::vector<extent_info>> encode_columns(
                                  stream);
     }
 
-    encode_orc_column_data(chunks, chunk_streams, stream);
+    encode_orc_column_data(chunks, chunk_streams, base_epoch, stream);
   }
   chunk_streams.device_to_host(stream);
 
@@ -2462,6 +2466,7 @@ struct stripe_stream_size_less {
  * @param table_meta The table metadata
  * @param max_stripe_size Maximum size of stripes in the output file
  * @param row_index_stride The row index stride
+ * @param timezone Timezone that the written timestamps are relative to
  * @param enable_dictionary Whether dictionary is enabled
  * @param sort_dictionaries Whether to sort the dictionaries
  * @param compression The compression format
@@ -2477,6 +2482,7 @@ auto convert_table_to_orc_data(table_view const& input,
                                table_input_metadata const& table_meta,
                                stripe_size_limits max_stripe_size,
                                size_type row_index_stride,
+                               writer_timezone const& timezone,
                                bool enable_dictionary,
                                bool sort_dictionaries,
                                compression_type compression,
@@ -2515,8 +2521,13 @@ auto convert_table_to_orc_data(table_view const& input,
                                 compression,
                                 write_mode);
 
-  auto [enc_data, extents] = encode_columns(
-    orc_table, std::move(dec_chunk_sizes), segmentation, streams, block_align, stream);
+  auto [enc_data, extents] = encode_columns(orc_table,
+                                            std::move(dec_chunk_sizes),
+                                            segmentation,
+                                            streams,
+                                            block_align,
+                                            timezone.base_epoch,
+                                            stream);
 
   stripe_dicts.on_encode_complete(stream);
 
@@ -2638,6 +2649,16 @@ auto convert_table_to_orc_data(table_view const& input,
 
 }  // namespace
 
+// ORC timestamps are wall-clock values, stored relative to the ORC epoch as it occurs in the
+// writer's timezone.
+writer_timezone::writer_timezone(std::string timezone)
+  : name{std::move(timezone)}, base_epoch{orc_utc_epoch}
+{
+  if (not is_utc()) {
+    base_epoch -= cudf::detail::get_ut_offset(std::nullopt, name, timestamp_s{base_epoch});
+  }
+}
+
 writer::impl::impl(std::unique_ptr<data_sink> sink,
                    orc_writer_options const& options,
                    single_write_mode mode,
@@ -2652,6 +2673,7 @@ writer::impl::impl(std::unique_ptr<data_sink> sink,
     _sort_dictionaries{options.get_enable_dictionary_sort()},
     _single_write_mode(mode),
     _kv_meta(options.get_key_value_metadata()),
+    _timezone(options.get_writer_timezone()),
     _out_sink(std::move(sink))
 {
   if (options.get_metadata()) {
@@ -2675,6 +2697,7 @@ writer::impl::impl(std::unique_ptr<data_sink> sink,
     _sort_dictionaries{options.get_enable_dictionary_sort()},
     _single_write_mode(mode),
     _kv_meta(options.get_key_value_metadata()),
+    _timezone(options.get_writer_timezone()),
     _out_sink(std::move(sink))
 {
   if (options.get_metadata()) {
@@ -2713,6 +2736,7 @@ void writer::impl::write(table_view const& input)
                               *_table_meta,
                               _max_stripe_size,
                               _row_index_stride,
+                              _timezone,
                               _enable_dictionary,
                               _sort_dictionaries,
                               _compression,
@@ -2825,7 +2849,7 @@ void writer::impl::write_orc_data_to_sink(encoded_data const& enc_data,
         (sf.columns[i].kind == DICTIONARY_V2)
           ? orc_table.column(i - 1).host_stripe_dict(stripe_id).entry_count
           : 0;
-      if (orc_table.column(i - 1).orc_kind() == TIMESTAMP) { sf.writerTimezone = "UTC"; }
+      if (orc_table.column(i - 1).orc_kind() == TIMESTAMP) { sf.writerTimezone = _timezone.name; }
     }
 
     protobuf_writer pbw;

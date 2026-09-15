@@ -332,10 +332,12 @@ void decode_column_data(column_desc* chunks,
  *
  * @param[in] chunks  encoder chunk device array [column][rowgroup]
  * @param[in, out] streams chunk streams device array [column][rowgroup]
+ * @param[in] base_epoch Instant that encoded timestamps are stored relative to
  * @param[in] stream CUDA stream used for device memory operations and kernel launches
  */
 void encode_orc_column_data(device_2dspan<encoder_chunk const> chunks,
                             device_2dspan<encoder_chunk_streams> streams,
+                            duration_s base_epoch,
                             cuda::stream_ref stream);
 
 /**

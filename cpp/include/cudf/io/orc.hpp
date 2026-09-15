@@ -653,6 +653,8 @@ class orc_writer_options {
   std::shared_ptr<writer_compression_statistics> _compression_stats;
   // Specify whether string dictionaries should be alphabetically sorted
   bool _enable_dictionary_sort = true;
+  // Timezone that the written timestamps are relative to, recorded in the stripe footers
+  std::string _writer_timezone = "UTC";
 
   friend orc_writer_options_builder;
 
@@ -782,6 +784,13 @@ class orc_writer_options {
    */
   [[nodiscard]] bool get_enable_dictionary_sort() const { return _enable_dictionary_sort; }
 
+  /**
+   * @brief Returns the timezone the written timestamps are relative to.
+   *
+   * @return Timezone name
+   */
+  [[nodiscard]] std::string const& get_writer_timezone() const { return _writer_timezone; }
+
   // Setters
 
   /**
@@ -891,6 +900,18 @@ class orc_writer_options {
    * @param val Boolean value to enable/disable
    */
   void set_enable_dictionary_sort(bool val) { _enable_dictionary_sort = val; }
+
+  /**
+   * @brief Sets the timezone that the written timestamps are relative to.
+   *
+   * A non-UTC file is meant for a reader whose timezone matches; it does not round-trip through
+   * the libcudf reader, which has no session timezone and returns the writer's wall clock.
+   *
+   * @param timezone Timezone name, for example "America/Los_Angeles"
+   *
+   * @throw cudf::logic_error when writing, if `timezone` does not resolve to a timezone file
+   */
+  void set_writer_timezone(std::string timezone) { _writer_timezone = std::move(timezone); }
 };
 
 /**
@@ -1044,6 +1065,16 @@ class orc_writer_options_builder {
   }
 
   /**
+   * @copydoc orc_writer_options::set_writer_timezone
+   * @return this for chaining
+   */
+  orc_writer_options_builder& writer_timezone(std::string timezone)
+  {
+    options.set_writer_timezone(std::move(timezone));
+    return *this;
+  }
+
+  /**
    * @brief move orc_writer_options member once it's built.
    */
   operator orc_writer_options&&() { return std::move(options); }
@@ -1075,6 +1106,8 @@ class orc_writer_options_builder {
  *
  * @param options Settings for controlling reading behavior
  * @param stream CUDA stream used for device memory operations and kernel launches
+ *
+ * @throw cudf::logic_error if the writer timezone does not resolve to a timezone file
  */
 void write_orc(orc_writer_options const& options,
                cuda::stream_ref stream = cudf::get_default_stream());
@@ -1108,6 +1141,8 @@ class chunked_orc_writer_options {
   std::shared_ptr<writer_compression_statistics> _compression_stats;
   // Specify whether string dictionaries should be alphabetically sorted
   bool _enable_dictionary_sort = true;
+  // Timezone that the written timestamps are relative to, recorded in the stripe footers
+  std::string _writer_timezone = "UTC";
 
   friend chunked_orc_writer_options_builder;
 
@@ -1215,6 +1250,13 @@ class chunked_orc_writer_options {
    */
   [[nodiscard]] bool get_enable_dictionary_sort() const { return _enable_dictionary_sort; }
 
+  /**
+   * @brief Returns the timezone the written timestamps are relative to.
+   *
+   * @return Timezone name
+   */
+  [[nodiscard]] std::string const& get_writer_timezone() const { return _writer_timezone; }
+
   // Setters
 
   /**
@@ -1317,6 +1359,24 @@ class chunked_orc_writer_options {
    * @param val Boolean value to enable/disable
    */
   void set_enable_dictionary_sort(bool val) { _enable_dictionary_sort = val; }
+
+  /**
+   * @brief Sets the timezone that the written timestamps are relative to.
+   *
+   * ORC timestamps are wall-clock values: readers shift them by the difference between the writer's
+   * timezone, recorded in the stripe footers, and their own. libcudf timestamps are UTC instants,
+   * so the default of "UTC" writes them unshifted. Set this to the timezone that gave the values
+   * their meaning to interoperate with writers that record a local timezone, such as Hive and
+   * Spark.
+   *
+   * A non-UTC file is meant for a reader whose timezone matches; it does not round-trip through
+   * the libcudf reader, which has no session timezone and returns the writer's wall clock.
+   *
+   * @param timezone Timezone name, for example "America/Los_Angeles"
+   *
+   * @throw cudf::logic_error when writing, if `timezone` does not resolve to a timezone file
+   */
+  void set_writer_timezone(std::string timezone) { _writer_timezone = std::move(timezone); }
 };
 
 /**
@@ -1452,6 +1512,16 @@ class chunked_orc_writer_options_builder {
   chunked_orc_writer_options_builder& enable_dictionary_sort(bool val)
   {
     options.set_enable_dictionary_sort(val);
+    return *this;
+  }
+
+  /**
+   * @copydoc chunked_orc_writer_options::set_writer_timezone
+   * @return this for chaining
+   */
+  chunked_orc_writer_options_builder& writer_timezone(std::string timezone)
+  {
+    options.set_writer_timezone(std::move(timezone));
     return *this;
   }
 

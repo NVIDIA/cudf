@@ -17,6 +17,7 @@
 #include <cudf/table/table_device_view.cuh>
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/span.hpp>
+#include <cudf/wrappers/durations.hpp>
 
 #include <rmm/device_uvector.hpp>
 
@@ -200,6 +201,32 @@ struct encoded_footer_statistics {
   std::vector<col_stats_blob> file_level;
 };
 
+/**
+ * @brief Timezone that the written timestamps are relative to.
+ */
+struct writer_timezone {
+  // Recorded in the stripe footers as `writerTimezone`
+  std::string name;
+  // Instant that encoded timestamps are stored relative to: the ORC epoch as wall-clock time in
+  // `name`. Equal to `orc_utc_epoch` when writing UTC.
+  duration_s base_epoch;
+
+  /**
+   * @brief Resolves a timezone name into the epoch that timestamps are encoded relative to.
+   *
+   * The offset is looked up at the ORC epoch as a UTC instant, matching how the reader derives its
+   * epoch in `decode_column_data`; the Apache writer resolves it as a local time, which differs
+   * only for a timezone with a transition inside that offset-wide window.
+   *
+   * @param timezone Timezone name, or an empty string for UTC
+   *
+   * @throw cudf::logic_error if `timezone` does not resolve to a TZif file
+   */
+  explicit writer_timezone(std::string timezone);
+
+  [[nodiscard]] bool is_utc() const { return name == "UTC" or name.empty(); }
+};
+
 enum class writer_state {
   NO_DATA_WRITTEN,  // No table data has been written to the sink; if the writer is closed or
                     // destroyed in this state, it should not write the footer.
@@ -329,6 +356,7 @@ class writer::impl {
                                                // indicate that we are guaranteeing a single table
                                                // write. This enables some internal optimizations.
   std::map<std::string, std::string> const _kv_meta;  // Optional user metadata.
+  writer_timezone const _timezone;
   std::unique_ptr<data_sink> const _out_sink;
 
   // Debug parameter---currently not yet supported to be user-specified.

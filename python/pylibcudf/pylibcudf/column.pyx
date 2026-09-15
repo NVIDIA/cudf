@@ -119,7 +119,7 @@ cdef class _OwnerWithCAI:
             # Cast to Python integers before multiplying to avoid overflow.
             size = int(cv.size()) * int(cpp_size_of(cv.type()))
         elif cv.type().id() == type_id.STRING:
-            size = strings_column_view(cv).chars_size((<Stream>stream).view().value())
+            size = strings_column_view(cv).chars_size((<Stream>stream).view().get())
 
         obj.cai = {
             "shape": (size,),
@@ -474,7 +474,7 @@ cdef class Column:
         cdef unique_ptr[arrow_column] c_result
 
         cdef Stream _stream = _get_stream(stream)
-        cdef cudaStream_t _cs = _stream.view().value()
+        cdef cudaStream_t _cs = _stream.view().get()
         mr = _get_memory_resource(mr)
 
         if hasattr(obj, "__arrow_c_device_array__"):
@@ -855,7 +855,7 @@ cdef class Column:
         cdef const cpp_scalar* c_scalar = slr.get()
         cdef unique_ptr[cpp_column] c_result
         cdef Stream _stream = _get_stream(stream)
-        cdef cudaStream_t _cs = _stream.view().value()
+        cdef cudaStream_t _cs = _stream.view().get()
         mr = _get_memory_resource(mr)
         with nogil:
             c_result = make_column_from_scalar(
@@ -890,7 +890,7 @@ cdef class Column:
         cdef column_view cv = self.view()
         cdef unique_ptr[cpp_scalar] result
         cdef Stream _stream = _get_stream(stream)
-        cdef cudaStream_t _cs = _stream.view().value()
+        cdef cudaStream_t _cs = _stream.view().get()
         mr = _get_memory_resource(mr)
 
         with nogil:
@@ -922,7 +922,7 @@ cdef class Column:
             An all-null column of `size` rows and type matching `like`.
         """
         cdef Stream _stream = _get_stream(stream)
-        cdef cudaStream_t _cs = _stream.view().value()
+        cdef cudaStream_t _cs = _stream.view().get()
         mr = _get_memory_resource(mr)
         cdef Scalar slr = Scalar.empty_like(like, _stream, mr)
         cdef unique_ptr[cpp_column] c_result
@@ -1306,7 +1306,7 @@ cdef class Column:
             and self.child(0).type().id() == type_id.INT64
         )
         cdef Stream _stream = _get_stream(None)
-        cdef cudaStream_t _cs = _stream.view().value()
+        cdef cudaStream_t _cs = _stream.view().get()
         cdef ArrowArray* raw_host_array_ptr = NULL
         c_self = self.view()
         with nogil:
@@ -1436,7 +1436,7 @@ cdef class Column:
         """Create a copy of the column."""
         cdef unique_ptr[cpp_column] c_result
         cdef Stream _stream = _get_stream(stream)
-        cdef cudaStream_t _cs = _stream.view().value()
+        cdef cudaStream_t _cs = _stream.view().get()
 
         mr = _get_memory_resource(mr)
         cdef column_view c_self = self.view()
@@ -1497,7 +1497,7 @@ cdef class Column:
     def _to_host_array(self, object stream: CudaStreamLike):
         cdef ArrowArray* raw_host_array_ptr
         cdef Stream _stream = _get_stream(stream)
-        cdef cudaStream_t _cs = _stream.view().value()
+        cdef cudaStream_t _cs = _stream.view().get()
 
         cdef column_view c_self = self.view()
         with nogil:
@@ -1581,7 +1581,7 @@ cdef class ListsColumnView:
         """
         cdef Stream _stream = _get_stream(stream)
 
-        cdef column_view c_child = self.view().get_sliced_child(_stream.view().value())
+        cdef column_view c_child = self.view().get_sliced_child(_stream.view().get())
         return Column.from_column_view(c_child, self._column.child(1))
 
 
@@ -1621,7 +1621,7 @@ cdef class StructsColumnView:
         """
         cdef Stream _stream = _get_stream(stream)
 
-        cdef cudaStream_t _cs = _stream.view().value()
+        cdef cudaStream_t _cs = _stream.view().get()
         cdef column_view c_child = self.view().get_sliced_child(index, _cs)
         return Column.from_column_view(c_child, self._column.child(index))
 

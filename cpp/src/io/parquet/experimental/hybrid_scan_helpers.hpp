@@ -81,6 +81,8 @@ class aggregate_reader_metadata : public aggregate_reader_metadata_base {
   /**
    * @brief Constructor for aggregate_reader_metadata
    *
+   * @throws std::invalid_argument if no sources are provided
+   *
    * @param footer_bytes Host span of Parquet file footer buffer bytes, one per source
    * @param use_arrow_schema Whether to use Arrow schema
    * @param has_cols_from_mismatched_srcs Whether to have columns from mismatched sources
@@ -92,11 +94,26 @@ class aggregate_reader_metadata : public aggregate_reader_metadata_base {
   /**
    * @brief Constructor for aggregate_reader_metadata
    *
+   * @throws std::invalid_argument if no sources are provided
+   *
    * @param parquet_metadatas Host span of pre-populated Parquet file metadata, one per source
    * @param use_arrow_schema Whether to use Arrow schema
    * @param has_cols_from_mismatched_srcs Whether to have columns from mismatched sources
    */
   aggregate_reader_metadata(cudf::host_span<FileMetaData const> parquet_metadatas,
+                            bool use_arrow_schema,
+                            bool has_cols_from_mismatched_srcs);
+
+  /**
+   * @brief Constructor that takes ownership of pre-populated Parquet file metadata
+   *
+   * @throws std::invalid_argument if no sources are provided
+   *
+   * @param parquet_metadatas Pre-populated Parquet file metadata, one per source
+   * @param use_arrow_schema Whether to use Arrow schema
+   * @param has_cols_from_mismatched_srcs Whether to have columns from mismatched sources
+   */
+  aggregate_reader_metadata(std::vector<FileMetaData>&& parquet_metadatas,
                             bool use_arrow_schema,
                             bool has_cols_from_mismatched_srcs);
 
@@ -338,24 +355,18 @@ class aggregate_reader_metadata : public aggregate_reader_metadata_base {
    * Compute a vector of boolean vectors indicating which data pages need to be decoded to
    * construct each input column based on the row mask, one vector per column
    *
-   * @tparam ColumnView Type of the row mask column view - cudf::mutable_column_view for filter
-   * columns and cudf::column_view for payload columns
-   *
-   * @param row_mask Boolean column indicating which rows need to be read after page-pruning
+   * @param row_mask Boolean column view indicating surviving rows
    * @param row_group_indices Input row groups indices
    * @param input_columns Input column information
-   * @param row_mask_offset Offset into the row mask column for the current pass
    * @param stream CUDA stream used for device memory operations and kernel launches
    *
    * @return Boolean vector indicating which data pages need to be decoded to produce
    *         the output table based on the input row mask across all input columns
    */
-  template <typename ColumnView>
   [[nodiscard]] thrust::host_vector<bool> compute_data_page_mask(
-    ColumnView const& row_mask,
+    cudf::column_view const& row_mask,
     std::span<std::vector<size_type> const> row_group_indices,
     std::span<input_column_info const> input_columns,
-    cudf::size_type row_mask_offset,
     cuda::stream_ref stream) const;
 };
 

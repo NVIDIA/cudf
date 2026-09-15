@@ -44,14 +44,14 @@ Optional `GITHUB_REF` selects release tag vs SNAPSHOT versioning. Unset means
 SNAPSHOT. See the versioning section below.
 
 This compiles the JNI layer against the static libcudf from Step 1 and emits
-the classifier JAR (e.g. `cudf-26.10.0-SNAPSHOT-cuda12.jar`), a
+the classifier JAR (e.g. `cudf-26.12.0-SNAPSHOT-cuda12.jar`), a
 classifier-independent sources jar and javadoc jar, and the POM into a
 classifier-named subdirectory under `--output-dir`:
 
 ```text
 /tmp/jars/cuda12/
-    cudf-26.10.0-SNAPSHOT-cuda12.jar
-    cudf-26.10.0-SNAPSHOT.pom
+    cudf-26.12.0-SNAPSHOT-cuda12.jar
+    cudf-26.12.0-SNAPSHOT.pom
 ```
 
 The classifier is derived from `--cuda-version` (major) + host arch (`uname
@@ -171,4 +171,4 @@ ${sclCMD} "java/ci/build-in-docker.sh"
 
 ### The output
 
-You can find the cuDF jar in java/target/ like cudf-26.10.0-SNAPSHOT-cuda12.jar.
+You can find the cuDF jar in java/target/ like cudf-26.12.0-SNAPSHOT-cuda12.jar.

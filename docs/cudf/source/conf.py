@@ -31,17 +31,71 @@ from enum import IntEnum, IntFlag
 from typing import Any
 
 import cudf
+from breathe.directives.content_block import DoxygenPageDirective
+from breathe.renderer.sphinxrenderer import SphinxRenderer
 from docutils import nodes
 from docutils.nodes import Node, Text
 from packaging.version import Version
 from pygments.lexer import RegexLexer
 from pygments.token import Text as PText
+from sphinx import addnodes
 from sphinx.addnodes import pending_xref
 from sphinx.application import Sphinx
 from sphinx.ext import intersphinx
 from sphinx.ext.autodoc import ClassDocumenter
 from sphinx.highlighting import lexers
+from sphinx.util import logging
 from sphinx.util.nodes import clean_astext, make_refnode
+
+
+# TODO: ship this upstream in breathe. Today breathe doesn't render
+# docsect4 headers or the contents at all.
+def visit_docsect4(self, node):
+    (title,) = (item for item in node.content_ if item.name == "title")
+
+    section = nodes.section(ids=[self.get_refid(node.id)])
+    section += nodes.title("", "", *self.render(title))
+    section += self.create_doxygen_target(node)
+    section += self.render_iterable(
+        [item for item in node.content_ if item.name != "title"]
+    )
+    return [section]
+
+
+SphinxRenderer.methods["docsect4"] = visit_docsect4
+
+
+class FlatDoxygenPageDirective(DoxygenPageDirective):
+    """
+    Render a Doxygen page body as direct children of its RST section.
+
+    This is basically the same as breathe's doxygenpage directive but
+    allows us to splice a page in to the toctree at the right level such
+    that it is rendered with an "on this page" sidebar by the theme we use.
+    """
+
+    def run(self):
+        self.options["content-only"] = None
+        rendered = super().run()
+
+        if len(rendered) != 1 or not isinstance(rendered[0], nodes.container):
+            return rendered
+
+        content = next(
+            (
+                child
+                for child in rendered[0].children
+                if isinstance(child, addnodes.desc_content)
+            ),
+            None,
+        )
+        if content is None:
+            return rendered
+
+        children = list(content.children)
+        for child in children:
+            content.remove(child)
+        return children
 
 
 class PseudoLexer(RegexLexer):
@@ -166,6 +220,9 @@ nb_execution_timeout = 300
 copybutton_prompt_text = ">>> "
 autosummary_generate = True
 
+toc_object_entries_show_parents = "hide"
+maximum_signature_line_length = 70
+
 # Enable automatic generation of systematic, namespaced labels for sections
 myst_heading_anchors = 2
 
@@ -176,7 +233,7 @@ templates_path = ["_templates"]
 # You can specify multiple suffix as a list of string:
 #
 # source_suffix = ['.rst', '.md']
-source_suffix = {".rst": "restructuredtext"}
+source_suffix = {".rst": "restructuredtext", ".md": "myst-nb"}
 
 # The master toctree document.
 master_doc = "index"
@@ -324,22 +381,33 @@ texinfo_documents = [
     )
 ]
 
+with open("../../../RAPIDS_BRANCH", "r") as f:
+    branch = f.read().strip()
+intersphinx_version = "latest" if branch == "main" else version
 
-# Example configuration for intersphinx: refer to the Python standard library.
 intersphinx_mapping = {
     "cupy": ("https://docs.cupy.dev/en/stable/", None),
+    "dask-cuda": (
+        f"https://docs.nvidia.com/dask-cuda/{intersphinx_version}/",
+        None,
+    ),
+    "dask-cudf": (
+        f"https://docs.nvidia.com/dask-cudf/{intersphinx_version}/",
+        None,
+    ),
     "dlpack": ("https://dmlc.github.io/dlpack/latest/", None),
+    "kvikio": (f"https://docs.nvidia.com/kvikio/{intersphinx_version}/", None),
     "nanoarrow": ("https://arrow.apache.org/nanoarrow/latest/", None),
     "numpy": ("https://numpy.org/doc/stable/", None),
-    # Temporarily disable nitpick warnings for pandas: https://github.com/pandas-dev/pandas/issues/64584
-    # "pandas": (
-    #     "https://pandas.pydata.org/pandas-docs/stable/",
-    #     None,
-    # ),
+    "pandas": ("https://pandas.pydata.org/pandas-docs/stable/", None),
     "polars": ("https://docs.pola.rs/api/python/stable/", None),
     "pyarrow": ("https://arrow.apache.org/docs/", None),
     "python": ("https://docs.python.org/3/", None),
-    "rmm": ("https://docs.rapids.ai/api/rmm/nightly/", None),
+    "rmm": (f"https://docs.nvidia.com/rmm/{intersphinx_version}/", None),
+    "rapidsmpf": (
+        f"https://docs.nvidia.com/rapidsmpf/{intersphinx_version}/",
+        None,
+    ),
     "typing_extensions": (
         "https://typing-extensions.readthedocs.io/en/stable/",
         None,
@@ -456,6 +524,8 @@ _names_to_skip_in_cpp = {
     "type_to_scalar_type_impl",
     "type_to_scalar_type_impl",
     "detail",
+    # Test-only helper types are intentionally not published as API pages.
+    "classcudf_1_1test_1_1",
     # kafka objects
     "python_callable_type",
     "kafka_oauth_callback_wrapper_type",
@@ -479,7 +549,7 @@ _intersphinx_cache = {}
 _intersphinx_extra_prefixes = ("rmm", "rmm::mr", "mr")
 
 _external_intersphinx_aliases = {
-    # "pandas": "pd",
+    "pandas": "pd",
     "pyarrow": "pa",
     "numpy": "np",
     "cupy": "cp",
@@ -653,6 +723,12 @@ def on_missing_reference(app, env, node, contnode):
 nitpick_ignore = [
     ("py:class", "Dtype"),
     ("py:class", "pandas.core.indexes.frozen.FrozenList"),
+    # pandas does not publish these implementation types in its inventory.
+    ("py:class", "pandas.api.typing.FrozenList"),
+    (
+        "py:class",
+        "pandas.core.arrays.arrow.extension_types.ArrowIntervalType",
+    ),
     ("py:class", "ScalarLike"),
     ("py:class", "StringColumn"),
     ("py:class", "ColumnLike"),
@@ -670,6 +746,11 @@ nitpick_ignore = [
     ("py:class", "Statistics"),
     ("py:class", "Communicator"),
     ("py:class", "Options"),
+    # Not yet published in API docs.
+    ("py:class", "rapidsmpf.streaming.core.context.Context"),
+    ("py:func", "rapidsmpf.rrun.rrun.bind"),
+    # kvikio aliases that don't match the public intersphinx targets.
+    ("py:class", "kvikio.Summary"),
     # polars aliases that don't match the public intersphinx targets.
     ("py:class", "pl.DataFrame"),
     ("py:class", "pl.DataType"),
@@ -693,18 +774,13 @@ nitpick_ignore = [
     ("py:class", "SupportsArrayInterface"),
     ("py:class", "SupportsCudaArrayInterface"),
     ("py:class", "T"),
+    ("py:class", "Buffer"),
 ]
-# Temporarily disable nitpick warnings for pandas: https://github.com/pandas-dev/pandas/issues/64584
+
 nitpick_ignore_regex = [
-    ("py:.*", "pandas.*"),
-    ("py:.*", "pd.*"),
-    ("ref.*", ".*pandas.*"),
     # External libs without configured intersphinx inventories.
-    ("py:.*", r"rapidsmpf(\..*)?"),
-    ("py:.*", r"kvikio(\..*)?"),
     ("py:.*", r"ray(\..*)?"),
     ("py:.*", r"distributed(\..*)?"),
-    ("py:.*", r"dask_cuda(\..*)?"),
 ]
 
 
@@ -854,15 +930,201 @@ def register_sections_as_label(app: Sphinx, document: Node) -> None:
         domain.labels[name] = docname, labelid, title
 
 
+_libcudf_developer_guide_documents = {
+    "DEVELOPER_GUIDE.md": "libcudf/developer_guide/DEVELOPER_GUIDE",
+    "DOCUMENTATION.md": "libcudf/developer_guide/DOCUMENTATION",
+    "TESTING.md": "libcudf/developer_guide/TESTING",
+    "BENCHMARKING.md": "libcudf/developer_guide/BENCHMARKING",
+    "PROFILING.md": "libcudf/developer_guide/PROFILING",
+}
+_libcudf_developer_guide_source_files = {
+    docname: filename
+    for filename, docname in _libcudf_developer_guide_documents.items()
+}
+_libcudf_developer_guide_xref_prefix = "libcudf-guide-md:"
+_libcudf_developer_guide_logger = logging.getLogger(__name__)
+_libcudf_developer_guide_source_dir = os.path.abspath(
+    os.path.join(
+        os.path.dirname(__file__), "../../../cpp/doxygen/developer_guide"
+    )
+)
+
+
+def _markdown_heading_slug(title: str) -> str:
+    """Return the GitHub-style fragment generated for a Markdown heading."""
+    slug = title.lower()
+    slug = re.sub(r"[^\w\s-]", "", slug)
+    return re.sub(r"-+", "-", re.sub(r"\s+", "-", slug)).strip("-")
+
+
+def _find_libcudf_developer_guide_section(env, docname, fragment):
+    """Return the guide section identified by a Markdown or Doxygen fragment."""
+    slugs: dict[str, int] = {}
+    for section in env.get_doctree(docname).findall(nodes.section):
+        title = clean_astext(section[0])
+        base_slug = _markdown_heading_slug(title)
+        occurrence = slugs.get(base_slug, 0)
+        slugs[base_slug] = occurrence + 1
+        heading_slug = (
+            base_slug if occurrence == 0 else f"{base_slug}-{occurrence}"
+        )
+        if fragment in (heading_slug, section["ids"][0]):
+            return section, title
+        for target in section.findall(nodes.target):
+            refid = target.get("refid", "")
+            if fragment in target["ids"] or fragment in (
+                refid,
+                refid.rsplit("_1", maxsplit=1)[-1],
+            ):
+                return section, title
+    return None
+
+
+def _source_markdown_fragment(app, docname, link_text):
+    """Find the unique same-page fragment for a link in its source Markdown."""
+    source_filename = _libcudf_developer_guide_source_files[docname]
+    source_path = os.path.join(
+        _libcudf_developer_guide_source_dir, source_filename
+    )
+    with open(source_path) as source:
+        markdown = source.read()
+
+    normalized_text = " ".join(link_text.replace("`", "").split())
+    fragments = {
+        match.group("fragment")
+        for match in re.finditer(
+            r"\[([^]]+)\]\((?P<path>[^#)]*)#(?P<fragment>[^)\s]+)\)",
+            markdown,
+        )
+        if " ".join(match.group(1).replace("`", "").split()) == normalized_text
+        and match.group("path").removeprefix("./") in ("", source_filename)
+    }
+    return fragments.pop() if len(fragments) == 1 else None
+
+
+def rewrite_libcudf_developer_guide_references(
+    app: Sphinx, document: Node
+) -> None:
+    """Rewrite Doxygen assets and local Markdown links in the developer guide."""
+    if not app.env.docname.startswith("libcudf/developer_guide/"):
+        return
+
+    for image in document.findall(nodes.image):
+        if image["uri"].endswith("cpp/doxygen/xml/strings.png"):
+            image["uri"] = "strings.png"
+
+    for reference in list(document.findall(nodes.reference)):
+        refuri = reference.get("refuri")
+        if not refuri or "#" not in refuri or not reference.children:
+            continue
+
+        path, fragment = refuri.split("#", maxsplit=1)
+        # No anchor, nothing to do.
+        if not fragment:
+            continue
+        if not path:
+            path = _libcudf_developer_guide_source_files[app.env.docname]
+        else:
+            path = path.removeprefix("./")
+        # Paths outside this directory remain ordinary source/external links.
+        if "/" in path:
+            continue
+
+        target = _libcudf_developer_guide_documents.get(path)
+        reftarget = f"{_libcudf_developer_guide_xref_prefix}{path}#{fragment}"
+        xref = pending_xref(
+            "",
+            refdomain="std",
+            reftype="ref",
+            reftarget=reftarget,
+            refexplicit=True,
+            refwarn=True,
+        )
+        xref["refdoc"] = app.env.docname
+        xref["libcudf_guide_target_docname"] = target
+        xref.source = reference.source
+        xref.line = reference.line
+        xref.extend(child.deepcopy() for child in reference.children)
+        reference.replace_self(xref)
+
+
+def resolve_libcudf_developer_guide_markdown_link(app, env, node, contnode):
+    """Resolve a rewritten guide Markdown link or warn with its original URL."""
+    reftarget = node.get("reftarget", "")
+    if not reftarget.startswith(_libcudf_developer_guide_xref_prefix):
+        return None
+
+    markdown_target = reftarget.removeprefix(
+        _libcudf_developer_guide_xref_prefix
+    )
+    target_docname = node.get("libcudf_guide_target_docname")
+    if target_docname is not None:
+        _, fragment = markdown_target.split("#", maxsplit=1)
+        section_data = _find_libcudf_developer_guide_section(
+            env, target_docname, fragment
+        )
+        if section_data is None and target_docname == node["refdoc"]:
+            # Doxygen may replace a Markdown heading fragment with an
+            # unrelated Doxygen anchor. Recover only an unambiguous fragment
+            # from the original Markdown so invalid source links still warn.
+            source_fragment = _source_markdown_fragment(
+                app, target_docname, contnode.astext()
+            )
+            if source_fragment is not None:
+                section_data = _find_libcudf_developer_guide_section(
+                    env, target_docname, source_fragment
+                )
+        if section_data is not None:
+            section, title = section_data
+            return make_refnode(
+                app.builder,
+                node["refdoc"],
+                target_docname,
+                section["ids"][0],
+                contnode,
+                title,
+            )
+
+    _libcudf_developer_guide_logger.warning(
+        "libcudf developer-guide Markdown link target not found: %s",
+        markdown_target,
+        location=node,
+        type="ref",
+        subtype="libcudf_guide_markdown",
+    )
+    return contnode
+
+
 def use_slugged_duplicate_ids(app):
     # Use default docutils deduplication scheme for duplicate node ids.
     app.env.settings["auto_id_prefix"] = "%"
 
 
-def setup(app):
+def setup(app: Sphinx):
+    app.add_directive("flatdoxygenpage", FlatDoxygenPageDirective)
     app.connect("builder-inited", use_slugged_duplicate_ids)
-    app.connect("doctree-read", resolve_aliases)
-    app.connect("doctree-read", register_sections_as_label)
-    app.connect("missing-reference", on_missing_reference)
+
+    # Do some rewrite passes on the doctrees. Lower priority hooks run
+    # earlier, equal priority in registration order.
+    # First rewrite Doxygen assets and Markdown links in the libcudf dev guide.
+    app.connect(
+        "doctree-read",
+        rewrite_libcudf_developer_guide_references,
+        priority=100,
+    )
+    # Then rewrite xrefs in all documents for aliases.
+    app.connect("doctree-read", resolve_aliases, priority=200)
+    # Finally add std:label labels to all section headers for intersphinx
+    app.connect("doctree-read", register_sections_as_label, priority=300)
+
+    # Now hook up missing-reference rewrites. First handle libcudf dev
+    # guide links.
+    app.connect(
+        "missing-reference",
+        resolve_libcudf_developer_guide_markdown_link,
+        priority=100,
+    )
+    # Let intersphinx and other default-priority resolvers run first.
+    app.connect("missing-reference", on_missing_reference, priority=501)
     app.setup_extension("sphinx.ext.autodoc")
     app.add_autodocumenter(PLCIntEnumDocumenter)

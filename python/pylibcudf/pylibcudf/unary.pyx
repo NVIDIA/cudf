@@ -62,7 +62,7 @@ cpdef Column unary_operation(
     cdef unique_ptr[column] result
 
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
 
     cdef column_view c_input = input.view()
@@ -96,7 +96,7 @@ cpdef Column is_null(Column input, object stream: CudaStreamLike | None = None, 
     cdef unique_ptr[column] result
 
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
 
     cdef column_view c_input = input.view()
@@ -128,7 +128,7 @@ cpdef Column is_valid(Column input, object stream: CudaStreamLike | None = None,
     cdef unique_ptr[column] result
 
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
 
     cdef column_view c_input = input.view()
@@ -164,7 +164,7 @@ cpdef Column cast(
     cdef unique_ptr[column] result
 
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
 
     cdef column_view c_input = input.view()
@@ -202,7 +202,7 @@ cpdef Column bit_cast(
     cdef unique_ptr[column] result
 
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
 
     cdef column_view c_input = input.view()
@@ -236,7 +236,7 @@ cpdef Column is_nan(Column input, object stream: CudaStreamLike | None = None, D
     cdef unique_ptr[column] result
 
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
 
     cdef column_view c_input = input.view()
@@ -268,7 +268,7 @@ cpdef Column is_not_nan(Column input, object stream: CudaStreamLike | None = Non
     cdef unique_ptr[column] result
 
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
 
     cdef column_view c_input = input.view()

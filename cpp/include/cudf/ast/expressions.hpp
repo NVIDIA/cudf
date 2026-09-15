@@ -20,6 +20,7 @@
 #include <initializer_list>
 #include <memory>
 #include <optional>
+#include <variant>
 #include <vector>
 
 /**

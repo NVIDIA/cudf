@@ -453,16 +453,20 @@ std::string reflect_udf_signature(bool is_null_aware,
   }
 
   std::vector<std::string> params;
-  if (has_user_data) { params.push_back("void*"); }
+  if (has_user_data) {
+    params.emplace_back("void*");
+    params.emplace_back("cudf::size_type");
+  }
   params.insert(params.end(), out_types.begin(), out_types.end());
   params.insert(params.end(), in_types.begin(), in_types.end());
 
   auto joined =
     params.empty()
       ? ""
-      : std::accumulate(std::next(params.begin()), params.end(), params[0], [](auto a, auto b) {
-          return std::format("{}, {}", a, b);
-        });
+      : std::accumulate(
+          std::next(params.begin()), params.end(), params[0], [](auto const& a, auto const& b) {
+            return std::format("{}, {}", a, b);
+          });
 
   return std::format("int({})", joined);
 }
@@ -1517,12 +1521,23 @@ transform_program::transform_program(
                            args.user_data,
                            jit_transform::make_input_specs(args.inputs),
                            jit_transform::make_output_specs(args.outputs, args.string_offsets));
-  for (auto& input : args.inputs) {
+  CUDF_EXPECTS(args.inputs.size() == args.input_column_indices.size(),
+               "AST transform input metadata size mismatch");
+  for (auto i = std::size_t{0}; i < args.inputs.size(); ++i) {
+    auto& input = args.inputs[i];
+    CUDF_EXPECTS(
+      args.input_column_indices[i].has_value() == std::holds_alternative<column_view>(input),
+      "AST transform inputs must be table columns or scalar literals");
     impl_->ast_input_types_.push_back(std::visit([](auto& view) { return view.type(); }, input));
     impl_->ast_input_nullable_.push_back(
       std::visit([](auto& view) { return view.nullable(); }, input));
+    if (auto const* scalar = std::get_if<scalar_column_view>(&input)) {
+      // The program must outlive non-owning scalar-column literals in the source AST.
+      // TODO: Reuse converter-owned scalar columns to avoid copies while preserving input order.
+      impl_->ast_scalar_columns_.push_back(
+        std::make_unique<column>(scalar->as_column_view(), stream, mr));
+    }
   }
-  impl_->ast_scalar_columns_       = std::move(args.scalar_columns);
   impl_->ast_input_column_indices_ = std::move(args.input_column_indices);
   impl_->ast_outputs_              = std::move(args.outputs);
 }
@@ -1576,9 +1591,13 @@ std::unique_ptr<table> transform_program::run(table_view const& table,
                    std::invalid_argument);
       inputs.emplace_back(input);
     } else {
+      CUDF_EXPECTS(scalar_index < impl_->ast_scalar_columns_.size(),
+                   "AST transform scalar input metadata mismatch");
       inputs.emplace_back(scalar_column_view{impl_->ast_scalar_columns_[scalar_index++]->view()});
     }
   }
+  CUDF_EXPECTS(scalar_index == impl_->ast_scalar_columns_.size(),
+               "AST transform scalar input metadata mismatch");
   return run(inputs, impl_->ast_outputs_, {}, table.num_rows(), stream, mr);
 }
 

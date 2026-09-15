@@ -62,7 +62,7 @@ cpdef Column generate_ngrams(
     cdef const string_scalar* c_separator = <const string_scalar*>separator.c_obj.get()
     cdef unique_ptr[column] c_result
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
 
     with nogil:
@@ -104,7 +104,7 @@ cpdef Column generate_character_ngrams(
     cdef column_view c_strings = input.view()
     cdef unique_ptr[column] c_result
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
 
     with nogil:
@@ -148,7 +148,7 @@ cpdef Column hash_character_ngrams(
     cdef column_view c_strings = input.view()
     cdef unique_ptr[column] c_result
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
 
     with nogil:

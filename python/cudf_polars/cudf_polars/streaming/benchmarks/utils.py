@@ -554,7 +554,7 @@ class RunConfig:
     # Query selection & dataset
     queries: list[int]
     query_set: str
-    dataset_path: Path
+    dataset_path: str | Path
     scale_factor: int | float
     suffix: str
     qualification: bool = False
@@ -874,7 +874,12 @@ def print_query_plan(
     elif CUDF_POLARS_AVAILABLE:
         assert isinstance(engine, pl.GPUEngine)
         if args.explain_logical:
-            logical_plan = explain_query(q, engine, physical=False)
+            logical_plan = explain_query(
+                q,
+                engine,
+                optimized=run_config.frontend in _STREAMING_FRONTENDS,
+                physical=False,
+            )
         if args.explain and run_config.frontend in _STREAMING_FRONTENDS:
             plan = explain_query(q, engine)
     else:
@@ -893,8 +898,18 @@ def print_query_plan(
     return logical_plan, plan
 
 
+def is_remote_path(path: os.PathLike | str) -> bool:
+    """Return True if `path` is an S3 URL rather than a local path."""
+    return str(path).startswith("s3://")
+
+
 def drop_file_page_cache_recursively(path: os.PathLike | str) -> None:
     """Drop the Linux page cache for all files under `path`."""
+    if is_remote_path(path):
+        raise ValueError(
+            f"--io-mode cold cannot drop the page cache for the remote dataset {path!r}; "
+            "use --io-mode lukewarm or point --path at a local copy."
+        )
     try:
         import kvikio
     except ImportError as err:
@@ -1954,10 +1969,32 @@ def _make_duckdb_config(run_config: RunConfig | None) -> dict[str, Any]:
     return config
 
 
+def _duckdb_register_views(
+    conn: duckdb.DuckDBPyConnection,
+    dataset_path: str | Path,
+    suffix: str,
+    query_set: str,
+) -> None:
+    """Register one view per table in the query set over `dataset_path`."""
+    if is_remote_path(dataset_path):
+        # Object-storage reads go through httpfs, and each caller opens its own
+        # connection, so the extension and credentials are set up per connection.
+        conn.execute("INSTALL httpfs")
+        conn.execute("LOAD httpfs")
+        conn.execute("CREATE OR REPLACE SECRET (TYPE s3, PROVIDER credential_chain)")
+
+    tbl_names = PDSDS_TABLE_NAMES if query_set == "pdsds" else PDSH_TABLE_NAMES
+    for name in tbl_names:
+        pattern = str(dataset_path).removesuffix("/") + f"/{name}{suffix}"
+        conn.execute(
+            f"CREATE OR REPLACE VIEW {name} AS SELECT * FROM parquet_scan('{pattern}');"
+        )
+
+
 def print_duckdb_plan(
     q_id: int,
     sql: str,
-    dataset_path: Path,
+    dataset_path: str | Path,
     suffix: str,
     query_set: str,
     args: argparse.Namespace,
@@ -1967,18 +2004,8 @@ def print_duckdb_plan(
     if duckdb is None:
         raise ImportError(duckdb_err)
 
-    if query_set == "pdsds":
-        tbl_names = PDSDS_TABLE_NAMES
-    else:
-        tbl_names = PDSH_TABLE_NAMES
-
     with duckdb.connect(config=_make_duckdb_config(run_config)) as conn:
-        for name in tbl_names:
-            pattern = (Path(dataset_path) / name).as_posix() + suffix
-            conn.execute(
-                f"CREATE OR REPLACE VIEW {name} AS "
-                f"SELECT * FROM parquet_scan('{pattern}');"
-            )
+        _duckdb_register_views(conn, dataset_path, suffix, query_set)
 
         if args.explain_logical and args.explain:
             conn.execute("PRAGMA explain_output = 'all';")
@@ -1996,7 +2023,7 @@ def print_duckdb_plan(
 
 def execute_duckdb_query(
     query: str,
-    dataset_path: Path,
+    dataset_path: str | Path,
     *,
     suffix: str = ".parquet",
     query_set: str = "pdsh",
@@ -2005,17 +2032,8 @@ def execute_duckdb_query(
     """Execute a query with DuckDB."""
     if duckdb is None:
         raise ImportError(duckdb_err)
-    if query_set == "pdsds":
-        tbl_names = PDSDS_TABLE_NAMES
-    else:
-        tbl_names = PDSH_TABLE_NAMES
     with duckdb.connect(config=_make_duckdb_config(run_config)) as conn:
-        for name in tbl_names:
-            pattern = (Path(dataset_path) / name).as_posix() + suffix
-            conn.execute(
-                f"CREATE OR REPLACE VIEW {name} AS "
-                f"SELECT * FROM parquet_scan('{pattern}');"
-            )
+        _duckdb_register_views(conn, dataset_path, suffix, query_set)
         return conn.execute(query).pl()
 
 

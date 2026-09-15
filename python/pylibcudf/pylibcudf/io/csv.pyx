@@ -699,7 +699,7 @@ cpdef TableWithMetadata read_csv(
     """
     cdef table_with_metadata c_result
     cdef Stream s = _get_stream(stream)
-    cdef cudaStream_t _cs = s.view().value()
+    cdef cudaStream_t _cs = s.view().get()
     mr = _get_memory_resource(mr)
     with nogil:
         c_result = move(cpp_read_csv(options.c_obj, _cs, mr.get_mr()))
@@ -964,7 +964,7 @@ cpdef void write_csv(
         CUDA stream used for device memory operations and kernel launches
     """
     cdef Stream s = _get_stream(stream)
-    cdef cudaStream_t _cs = s.view().value()
+    cdef cudaStream_t _cs = s.view().get()
     with nogil:
         cpp_write_csv(move(options.c_obj), _cs)
 

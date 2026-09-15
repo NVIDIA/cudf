@@ -181,6 +181,34 @@ class DeletionVectorTableTest extends CudfTestBase {
     }
   }
 
+  /**
+   * Verifies batched row counting for chunked deletion and retention vectors.
+   *
+   * @param isRetention whether the input bitmaps identify retained rows
+   */
+  @ParameterizedTest(name = "isRetention={0}")
+  @CsvSource({"false", "true"})
+  void testComputeNumDeletedRowsBatch(boolean isRetention) throws IOException {
+    byte[] bitmapData = TableTestUtils.arrayFrom(DELETED_ROWS_FILE2);
+    long[] rowGroupOffsets = new long[] {10000L, 30000L};
+    int[] rowGroupNumRows = new int[] {10000, 10000};
+    try (HostMemoryBufferArray bitmapArray =
+             TableTestUtils.buffersFrom(new byte[][] {bitmapData, bitmapData})) {
+      DeletionVectorInfo[] dvInfos = Arrays.stream(bitmapArray.buffers)
+          .map(bitmap -> new DeletionVectorInfo(
+              bitmap, isRetention, rowGroupOffsets, rowGroupNumRows))
+          .toArray(DeletionVectorInfo[]::new);
+      long expectedRowsDeletedPerVector = isRetention
+          ? 20000 - DELETED_ROWS_COUNT2_RGS_1_AND_3
+          : DELETED_ROWS_COUNT2_RGS_1_AND_3;
+      assertEquals(2 * expectedRowsDeletedPerVector,
+          DeletionVector.computeNumDeletedRows(dvInfos, 5000));
+    }
+  }
+
+  /**
+   * Verifies invalid row-count arguments are rejected with the expected messages.
+   */
   @Test
   void testComputeNumDeletedRowsInvalidArguments() throws IOException {
     byte[] bitmapData = TableTestUtils.arrayFrom(DELETED_ROWS_FILE1);
@@ -196,8 +224,19 @@ class DeletionVectorTableTest extends CudfTestBase {
           bitmapArray.buffers[0], false, new long[] {-1}, new int[] {1000});
       DeletionVectorInfo negativeRowCount = new DeletionVectorInfo(
           bitmapArray.buffers[0], false, new long[] {0}, new int[] {-1});
+      DeletionVectorInfo retentionInfo = new DeletionVectorInfo(
+          bitmapArray.buffers[0], true, new long[] {0}, new int[] {1000});
       assertEquals("Expected non-null deletionVectorInfo", assertThrows(NullPointerException.class,
-          () -> DeletionVector.computeNumDeletedRows(null, 1000)).getMessage());
+          () -> DeletionVector.computeNumDeletedRows(
+              (DeletionVectorInfo) null, 1000)).getMessage());
+      assertEquals("Expected non-null deletionVectorInfos",
+          assertThrows(NullPointerException.class,
+              () -> DeletionVector.computeNumDeletedRows(
+                  (DeletionVectorInfo[]) null, 1000)).getMessage());
+      assertEquals("deletionVectorInfos must be non-empty",
+          assertThrows(IllegalArgumentException.class,
+              () -> DeletionVector.computeNumDeletedRows(
+                  new DeletionVectorInfo[0], 1000)).getMessage());
       assertEquals("maxChunkRows must be positive", assertThrows(IllegalArgumentException.class,
           () -> DeletionVector.computeNumDeletedRows(dvInfo, 0)).getMessage());
       assertEquals("row-group metadata must be non-empty",
@@ -212,6 +251,10 @@ class DeletionVectorTableTest extends CudfTestBase {
       assertEquals("row-group metadata values must be non-negative",
           assertThrows(IllegalArgumentException.class,
               () -> DeletionVector.computeNumDeletedRows(negativeRowCount, 1000)).getMessage());
+      assertEquals("All DeletionVectorInfo objects must have the same isRetention value.",
+          assertThrows(IllegalArgumentException.class,
+              () -> DeletionVector.computeNumDeletedRows(
+                  new DeletionVectorInfo[] {dvInfo, retentionInfo}, 1000)).getMessage());
     }
   }
 

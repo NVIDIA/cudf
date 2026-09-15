@@ -9,15 +9,23 @@ from typing import TYPE_CHECKING
 import numpy as np
 from numba_cuda_mlir import types
 from numba_cuda_mlir._mlir import ir as mlir_ir
-from numba_cuda_mlir._mlir.dialects import arith, llvm
+from numba_cuda_mlir._mlir.dialects import arith, linalg, llvm, tensor
+from numba_cuda_mlir._mlir.extras import types as T
 from numba_cuda_mlir.extending import lower_cast, lowering_registry
 from numba_cuda_mlir.lowering_utilities import (
+    bool_of,
     coerce_numpy_scalars_for_binary_op,
+    concretize_tuple_to_tensor,
     convert,
+    equal,
     false,
+    float_of,
+    int_of,
     true,
+    try_extract_constant,
 )
 from numba_cuda_mlir.models import PrimitiveModel, register_model
+from numba_cuda_mlir.numba_cuda import typing as nb_typing
 from numba_cuda_mlir.numba_cuda.core import ir as numba_ir
 from numba_cuda_mlir.numba_cuda.types.misc import unliteral
 
@@ -199,6 +207,74 @@ def _lower_masked_na_compare(builder, target, args, kwargs, *, is_null):
     builder.store_var(target, valid)
 
 
+def _needs_datetimelike_delegate(
+    op: Callable, ty1: types.Type, ty2: types.Type
+) -> bool:
+    """Whether a masked binary ``op`` over datetime64/timedelta64 operands must
+    delegate to numba_cuda_mlir's unit-aware scalar lowering.
+
+    A raw i64 op on the payloads is wrong whenever units matter:
+
+    * ``+``/``-`` must scale the operands to a common unit before combining.
+    * comparisons must likewise compare on a common unit (``1 s < 2 ns`` is
+      ``1_000_000_000 < 2``, not ``1 < 2``).
+
+    So delegate for add/sub and all comparison operators when either operand is
+    temporal. This is a lowering-time gate downstream of typing: invalid
+    temporal combinations (``datetime + datetime``, ``datetime < timedelta``,
+    ...) are already rejected during typing, so the permissive operand-type
+    check here never actually fires for them. Extending support to other
+    unit-sensitive ops (e.g. ``int * timedelta``) would mean adding those
+    operators to the set below.
+    """
+    if op not in (operator.add, operator.sub, *comparison_ops):
+        return False
+    return isinstance(
+        ty1, (types.NPDatetime, types.NPTimedelta)
+    ) or isinstance(ty2, (types.NPDatetime, types.NPTimedelta))
+
+
+def _apply_masked_datetimelike_binary(
+    builder: MLIRLower,
+    target: Var,
+    target_type: MaskedType,
+    v1: mlir_ir.Value,
+    v2: mlir_ir.Value,
+    result_valid: mlir_ir.Value,
+    op: Callable,
+    ty1: types.Type,
+    ty2: types.Type,
+) -> None:
+    """Lower a temporal masked binary op by delegating to the registered
+    unit-aware scalar builder, then repacking with the operand validity.
+
+    The two payloads are staged into fresh typed IR vars (with their true
+    datetime/timedelta types), handed to numba_cuda_mlir's scalar lowering for
+    ``op`` (which handles unit scaling), and the result is converted to the
+    target Masked's value type and packed with ``result_valid``. Staging vars
+    are keyed off the unique ``target`` so distinct temporal ops in one
+    expression never share a typemap slot.
+    """
+    ret_ty = target_type.value_type
+    nb_sig = nb_typing.signature(ret_ty, ty1, ty2)
+    cg = builder.get_registered_builder(op, nb_sig)
+    if cg is None:
+        raise NotImplementedError(
+            f"No MLIR lowering for masked {op!r} with {ty1}, {ty2}; "
+            f"signature {nb_sig}"
+        )
+    tag = getattr(op, "__name__", "op")
+    in1 = _make_temp_var(builder, target, f"dt_{tag}_l", ty1)
+    in2 = _make_temp_var(builder, target, f"dt_{tag}_r", ty2)
+    outv = _make_temp_var(builder, target, f"dt_{tag}_o", ret_ty)
+    builder.store_var(in1, convert(v1, builder.get_mlir_type(ty1)))
+    builder.store_var(in2, convert(v2, builder.get_mlir_type(ty2)))
+    cg(builder, outv, [in1, in2], ())
+    result_val = convert(builder.load_var(outv), builder.get_mlir_type(ret_ty))
+    packed = _pack_masked(builder, target_type, result_val, result_valid)
+    builder.store_var(target, packed)
+
+
 def _apply_masked_binary_op(
     builder: MLIRLower,
     target: Var,
@@ -207,11 +283,34 @@ def _apply_masked_binary_op(
     v2: mlir_ir.Value,
     result_valid: mlir_ir.Value,
     op: Callable,
+    *,
+    inner_ty1: types.Type | None = None,
+    inner_ty2: types.Type | None = None,
 ) -> None:
     """Apply ``op(v1, v2)`` to two scalar MLIR values, convert the result to
     the target Masked's value type, and pack it with the given validity bit.
     Numeric/boolean only at this layer.
     """
+    # datetime/timedelta add/sub/comparisons: delegate to the unit-aware
+    # scalar lowering when we know the operand inner types.
+    if (
+        inner_ty1 is not None
+        and inner_ty2 is not None
+        and _needs_datetimelike_delegate(op, inner_ty1, inner_ty2)
+    ):
+        _apply_masked_datetimelike_binary(
+            builder,
+            target,
+            target_type,
+            v1,
+            v2,
+            result_valid,
+            op,
+            inner_ty1,
+            inner_ty2,
+        )
+        return
+
     target_value_mlir_ty = builder.get_mlir_type(target_type.value_type)
     v1, v2 = coerce_numpy_scalars_for_binary_op(v1, v2)
     # Comparisons compute on the (already coerced) operand type and
@@ -239,8 +338,18 @@ def _make_lower_masked_binary(op: Callable) -> Callable:
         v1, valid1 = _extract_masked_value_valid(m1, st1.body[0], st1.body[1])
         v2, valid2 = _extract_masked_value_valid(m2, st2.body[0], st2.body[1])
         result_valid = arith.andi(valid1, valid2)
+        ty1 = builder.get_numba_type(args[0].name).value_type
+        ty2 = builder.get_numba_type(args[1].name).value_type
         _apply_masked_binary_op(
-            builder, target, target_type, v1, v2, result_valid, op
+            builder,
+            target,
+            target_type,
+            v1,
+            v2,
+            result_valid,
+            op,
+            inner_ty1=ty1,
+            inner_ty2=ty2,
         )
 
     return _lower
@@ -287,13 +396,34 @@ def _make_lower_masked_binary_scalar(
         st = llvm.StructType(m.type)
         m_val, m_valid = _extract_masked_value_valid(m, st.body[0], st.body[1])
         s_val = _scalar_value_from_var(builder, s_var)
+        m_inner_ty = builder.get_numba_type(m_var.name).value_type
+        s_ty = builder.get_numba_type(s_var.name)
+        s_inner_ty = (
+            unliteral(s_ty) if isinstance(s_ty, types.Literal) else s_ty
+        )
         if masked_first:
             _apply_masked_binary_op(
-                builder, target, target_type, m_val, s_val, m_valid, op
+                builder,
+                target,
+                target_type,
+                m_val,
+                s_val,
+                m_valid,
+                op,
+                inner_ty1=m_inner_ty,
+                inner_ty2=s_inner_ty,
             )
         else:
             _apply_masked_binary_op(
-                builder, target, target_type, s_val, m_val, m_valid, op
+                builder,
+                target,
+                target_type,
+                s_val,
+                m_val,
+                m_valid,
+                op,
+                inner_ty1=s_inner_ty,
+                inner_ty2=m_inner_ty,
             )
 
     return _lower
@@ -321,14 +451,15 @@ def _make_temp_var(
 ) -> Var:
     """Create a fresh typed IR ``Var`` for staging an intermediate value.
 
-    Used to feed the masked payload into a registered scalar lowering (which
+    Used to feed a masked payload into a registered scalar lowering (which
     operates on plain IR vars) and to receive its result. The name is derived
-    from ``base_var`` plus ``name_suffix`` so typemap keys stay unique when one
-    operand feeds several unary calls in a single expression.
+    from ``base_var`` plus ``name_suffix``; callers pass a unique ``base_var``
+    (e.g. the result ``target``) so typemap keys stay distinct when one operand
+    feeds several op lowerings in a single expression.
     """
     scope = getattr(base_var, "scope", None)
     loc = getattr(base_var, "loc", None)
-    name = f"$masked_uop_{base_var.name}_{name_suffix}"
+    name = f"$masked_tmp_{base_var.name}_{name_suffix}"
     temp = numba_ir.Var(scope=scope, name=name, loc=loc)
     builder.fndesc.typemap[temp.name] = numba_type
     return temp
@@ -478,6 +609,103 @@ def _make_lower_masked_numeric_cast() -> Callable:
     return _lower
 
 
+def _const_mlir_for_membership(
+    py_const: int | float | bool, mlir_ty: mlir_ir.Type
+) -> mlir_ir.Value:
+    """Materialize a Python numeric constant as an MLIR value of ``mlir_ty`` for
+    comparison against a masked payload in a membership test.
+    """
+    if isinstance(py_const, float):
+        return float_of(py_const, mlir_ty)
+    if isinstance(py_const, bool):
+        return int_of(int(py_const), mlir_ty)
+    return int_of(py_const, mlir_ty)
+
+
+def _lower_masked_literal_tuple_contains(
+    builder: MLIRLower, target: Var, args: list[Var], kwargs: list
+) -> None:
+    """``value in (c0, c1, ...)`` for a literal tuple of constants: OR together
+    equality of the payload against each constant, carrying the operand's
+    validity.
+    """
+    tup = builder.load_var(args[0])
+    m = builder.load_var(args[1])
+    st = llvm.StructType(m.type)
+    m_val, m_valid = _extract_masked_value_valid(m, st.body[0], st.body[1])
+
+    constant_values = []
+    for x in tup:
+        cv = try_extract_constant(x)
+        if cv is None:
+            raise NotImplementedError(
+                "Masked membership in a tuple is only implemented for "
+                f"constant tuple elements, got {x!r}"
+            )
+        constant_values.append(cv)
+
+    result = false()
+    for const_val in constant_values:
+        c = _const_mlir_for_membership(const_val, m_val.type)
+        m_v, c_v = coerce_numpy_scalars_for_binary_op(m_val, c)
+        result = arith.ori(result, equal(m_v, c_v))
+
+    bool_mlir_ty = builder.get_mlir_type(types.boolean)
+    undef_bool = llvm.UndefOp(bool_mlir_ty)
+    final_bool = arith.select(m_valid, result, undef_bool)
+    target_type = builder.get_numba_type(target.name)
+    packed = _pack_masked(builder, target_type, final_bool, m_valid)
+    builder.store_var(target, packed)
+
+
+def _lower_masked_unittuple_contains(
+    builder: MLIRLower, target: Var, args: list[Var], kwargs: list
+) -> None:
+    """``value in homogeneous_tuple``: reduce equality of the payload across the
+    tuple elements, carrying the operand's validity.
+    """
+    tup = builder.load_var(args[0])
+    if not isinstance(tup, tuple):
+        raise NotImplementedError(
+            f"UniTuple contains expects a lowered tuple, got {type(tup)}"
+        )
+    tup_t = concretize_tuple_to_tensor(tup)
+
+    m = builder.load_var(args[1])
+    st = llvm.StructType(m.type)
+    m_val, m_valid = _extract_masked_value_valid(m, st.body[0], st.body[1])
+    elem_ty = tup_t.type.element_type
+    m_cmp = convert(m_val, elem_ty)
+
+    def body(_op, element, accumulator):
+        found = equal(element, m_cmp)
+        found = arith.ori(found, accumulator)
+        linalg.yield_([found])
+
+    result_type = mlir_ir.RankedTensorType.get((), T.bool())
+    init = tensor.splat(result_type, false(), [])
+    dims_attr = mlir_ir.DenseI64ArrayAttr.get([0])
+    reduce_op = linalg.ReduceOp(
+        result=[result_type],
+        inputs=[tup_t],
+        inits=[init],
+        dimensions=dims_attr,
+    )
+    block = reduce_op.combiner.blocks.append(
+        tup_t.type.element_type, result_type.element_type
+    )
+    with mlir_ir.InsertionPoint(block):
+        body(reduce_op, *block.arguments)
+    combined = bool_of(tensor.extract(reduce_op.results[0], []))
+
+    bool_mlir_ty = builder.get_mlir_type(types.boolean)
+    undef_bool = llvm.UndefOp(bool_mlir_ty)
+    final_bool = arith.select(m_valid, combined, undef_bool)
+    target_type = builder.get_numba_type(target.name)
+    packed = _pack_masked(builder, target_type, final_bool, m_valid)
+    builder.store_var(target, packed)
+
+
 def _register() -> None:
     """Register the data model and lowerings with ``numba_cuda_mlir``.
 
@@ -542,6 +770,13 @@ def _register() -> None:
 
     lower(float, MaskedType)(_make_lower_masked_numeric_cast())
     lower(int, MaskedType)(_make_lower_masked_numeric_cast())
+
+    lower(operator.contains, types.Tuple, MaskedType)(
+        _lower_masked_literal_tuple_contains
+    )
+    lower(operator.contains, types.UniTuple, MaskedType)(
+        _lower_masked_unittuple_contains
+    )
 
 
 _register()

@@ -182,5 +182,23 @@ def test_sets_cudf_polars_query_id():
                     "scope",
                     "actor_ir_id",
                 }
+            case "io_task":
+                keys = set(log.keys())
+                assert keys >= {
+                    "actor_ir_id",
+                    "actor_ir_type",
+                    "admitted",
+                    "cudf_polars_query_id",
+                    "estimated_output_bytes",
+                    "event",
+                    "ir_id",
+                    "ir_type",
+                    "log_level",
+                    "reservation_bytes",
+                    "scope",
+                    "sequence_number",
+                    "start",
+                    "stop",
+                }
             case _:
                 pytest.fail(f"Unexpected scope: {log['scope']}")

@@ -753,6 +753,119 @@ def test_dataframe_setitem_loc(key, value):
     assert_eq(pdf, gdf)
 
 
+@pytest.mark.parametrize("pandas_compatible", [False, True])
+@pytest.mark.parametrize("mixed_dtypes", [False, True])
+@pytest.mark.parametrize(
+    "key",
+    [
+        pytest.param([], id="empty-list"),
+        pytest.param([False, False], id="false-mask"),
+        pytest.param(slice(0, -1), id="empty-slice"),
+        pytest.param(np.array([]), id="empty-array"),
+        pytest.param(([], "a"), id="empty-list-scalar-column"),
+        pytest.param((slice(0, -1), ["a"]), id="empty-slice-column-list"),
+        pytest.param(
+            (np.array([]), slice(None)), id="empty-array-all-columns"
+        ),
+    ],
+)
+def test_dataframe_setitem_loc_empty_selection(
+    key, mixed_dtypes, pandas_compatible
+):
+    data = {"a": [1, 2]}
+    if mixed_dtypes:
+        data["b"] = ["x", "y"]
+    pdf = pd.DataFrame(data)
+    expected = pdf.copy()
+
+    with cudf.option_context("mode.pandas_compatible", pandas_compatible):
+        gdf = cudf.from_pandas(pdf)
+        pdf.loc[key] = 1.5
+        gdf.loc[key] = 1.5
+
+        assert_eq(expected, pdf, check_dtype=True)
+        assert_eq(expected, gdf, check_dtype=True)
+
+
+@pytest.mark.parametrize(
+    "key", [np.array([], dtype=bool), (np.array([], dtype=bool), "a")]
+)
+def test_dataframe_setitem_loc_empty_frame_boolean_mask(key):
+    pdf = pd.DataFrame({"a": pd.Series([], dtype="int64")})
+    gdf = cudf.from_pandas(pdf)
+    expected = pdf.copy()
+
+    pdf.loc[key] = 1.5
+    gdf.loc[key] = 1.5
+
+    assert_eq(expected, pdf)
+    assert_eq(expected, gdf)
+
+
+@pytest.mark.parametrize("pandas_compatible", [False, True])
+@pytest.mark.parametrize("mask_values", [[False, False], [False, pd.NA]])
+def test_dataframe_setitem_loc_empty_boolean_series(
+    mask_values, pandas_compatible
+):
+    pdf = pd.DataFrame({"a": [1, 2], "b": ["x", "y"]})
+    expected = pdf.copy()
+    pmask = pd.Series(mask_values, index=[1, 0], dtype="boolean")
+
+    with cudf.option_context("mode.pandas_compatible", pandas_compatible):
+        gdf = cudf.from_pandas(pdf)
+        gmask = cudf.from_pandas(pmask)
+        pdf.loc[pmask] = 1.5
+        gdf.loc[gmask] = 1.5
+
+        assert_eq(expected, pdf, check_dtype=True)
+        assert_eq(expected, gdf, check_dtype=True)
+
+
+@pytest.mark.parametrize("pandas_compatible", [False, True])
+@pytest.mark.parametrize(
+    "key, error",
+    [
+        pytest.param([False], IndexError, id="short-false-mask"),
+        pytest.param([False, False, False], IndexError, id="long-false-mask"),
+        pytest.param(np.array([], dtype=bool), IndexError, id="empty-bool"),
+        pytest.param([4], KeyError, id="missing-row"),
+    ],
+)
+def test_dataframe_setitem_loc_invalid_indexer(key, error, pandas_compatible):
+    pdf = pd.DataFrame({"a": [1, 2]})
+    with cudf.option_context("mode.pandas_compatible", pandas_compatible):
+        gdf = cudf.from_pandas(pdf)
+        for frame in (pdf, gdf):
+            with pytest.raises(error):
+                frame.loc[key] = 1.5
+
+        assert_eq(pdf, gdf, check_dtype=True)
+
+
+@pytest.mark.parametrize("pandas_compatible", [False, True])
+@pytest.mark.parametrize(
+    "key",
+    [
+        pytest.param([0], id="nonempty-list"),
+        pytest.param([True, False], id="nonempty-mask"),
+        pytest.param(([False, False], "a"), id="false-mask-scalar-column"),
+        pytest.param(([False, False], ["a"]), id="false-mask-column-list"),
+        pytest.param(
+            ([False, False], slice(None)), id="false-mask-all-columns"
+        ),
+    ],
+)
+def test_dataframe_setitem_loc_incompatible_scalar(key, pandas_compatible):
+    pdf = pd.DataFrame({"a": [1, 2]})
+    with cudf.option_context("mode.pandas_compatible", pandas_compatible):
+        gdf = cudf.from_pandas(pdf)
+        for frame in (pdf, gdf):
+            with pytest.raises(TypeError, match="Invalid value"):
+                frame.loc[key] = 1.5
+
+        assert_eq(pdf, gdf, check_dtype=True)
+
+
 @pytest.mark.parametrize(
     "key, value",
     [

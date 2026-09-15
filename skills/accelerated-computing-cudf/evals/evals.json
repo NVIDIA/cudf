@@ -9,7 +9,11 @@
       "evals/files/cudf-apply-udf/code/udf_pipeline.py"
     ],
     "ground_truth": "A successful answer uses the provided cudf-apply-udf starter files, especially code/udf_pipeline.py, to migrate the pandas DataFrame workload to cuDF where supported. It replaces row-wise apply/applymap or column UDF logic with vectorized cuDF expressions, Numba-compatible GPU logic, or a narrow compatibility boundary, preserves representative pandas results, and reports validation performed or the runtime blocker.",
-    "expected_behavior": []
+    "expected_behavior": [
+      "Uses the provided cudf-apply-udf starter workspace and edits code/udf_pipeline.py rather than giving generic advice.",
+      "Replaces pandas row-wise apply/applymap or column UDF logic with vectorized cuDF expressions, Numba-compatible GPU logic, or a clearly documented CPU compatibility boundary.",
+      "Preserves representative pandas results and reports the validation command run or the runtime blocker encountered."
+    ]
   },
   {
     "id": "cudf-csv-etl__generic",
@@ -21,7 +25,11 @@
       "evals/files/cudf-csv-etl/code/generate_data.py"
     ],
     "ground_truth": "A successful answer uses the provided cudf-csv-etl starter files, especially code/etl_pipeline.py, to move CSV read, filtering, computed columns, groupby aggregation, and parquet output to cuDF. It preserves filter predicates, computed-column formulas, grouping keys, aggregate columns, generated data paths, output paths, and reports validation performed or the runtime blocker.",
-    "expected_behavior": []
+    "expected_behavior": [
+      "Uses the provided cudf-csv-etl starter workspace and edits code/etl_pipeline.py rather than inventing a new pipeline.",
+      "Moves CSV reading, filtering, computed columns, groupby aggregation, and parquet output to cuDF where supported.",
+      "Preserves filter predicates, computed-column formulas, grouping keys, aggregate outputs, generated data paths, and output paths, then reports validation or the runtime blocker."
+    ]
   },
   {
     "id": "cudf-groupby-agg__generic",
@@ -33,7 +41,11 @@
       "evals/files/cudf-groupby-agg/code/groupby_analysis.py"
     ],
     "ground_truth": "A successful answer uses the provided cudf-groupby-agg starter files, especially code/groupby_analysis.py, to run the DataFrame loading and groupby work with cuDF. It preserves grouping keys, sum, mean, std, count, nunique, named aggregation, transform semantics or a documented compatibility boundary, output column names, and reports validation performed or the runtime blocker.",
-    "expected_behavior": []
+    "expected_behavior": [
+      "Uses the provided cudf-groupby-agg starter workspace and edits code/groupby_analysis.py.",
+      "Runs DataFrame loading and groupby work with cuDF while preserving grouping keys, sum, mean, std, count, nunique, named aggregation, and output column names.",
+      "Handles transform semantics with cuDF or documents a compatibility boundary, and reports validation performed or the runtime blocker."
+    ]
   },
   {
     "id": "cudf-multi-join__generic",
@@ -45,7 +57,11 @@
       "evals/files/cudf-multi-join/code/multi_join.py"
     ],
     "ground_truth": "A successful answer uses the provided cudf-multi-join starter files, especially code/multi_join.py, to migrate the orders, customers, and products joins plus downstream filtering and aggregation to cuDF. It preserves left and inner join types, join keys, suffix behavior, row-count expectations, post-join filters, output schema, and reports validation performed or the runtime blocker.",
-    "expected_behavior": []
+    "expected_behavior": [
+      "Uses the provided cudf-multi-join starter workspace and edits code/multi_join.py.",
+      "Migrates the orders, customers, and products joins plus downstream filtering and aggregation to cuDF where supported.",
+      "Preserves join types, join keys, suffix behavior, row-count expectations, post-join filters, and output schema, then reports validation or the runtime blocker."
+    ]
   },
   {
     "id": "cudf-null-handling__generic",
@@ -57,7 +73,11 @@
       "evals/files/cudf-null-handling/code/null_pipeline.py"
     ],
     "ground_truth": "A successful answer uses the provided cudf-null-handling starter files, especially code/null_pipeline.py, to move null detection, fill, drop, mask, and conditional fill logic to cuDF where supported. It preserves scalar and dictionary fill rules, subset and threshold drop rules, NA-aware boolean masks, interpolation or other compatibility boundaries, and reports validation performed or the runtime blocker.",
-    "expected_behavior": []
+    "expected_behavior": [
+      "Uses the provided cudf-null-handling starter workspace and edits code/null_pipeline.py.",
+      "Moves null detection, fill, drop, mask, and conditional fill logic to cuDF where supported.",
+      "Preserves scalar and dictionary fill rules, subset and threshold drop rules, NA-aware masks, and any interpolation compatibility boundary, then reports validation or the runtime blocker."
+    ]
   },
   {
     "id": "cudf-parquet-io__generic",
@@ -69,7 +89,11 @@
       "evals/files/cudf-parquet-io/code/parquet_pipeline.py"
     ],
     "ground_truth": "A successful answer uses the provided cudf-parquet-io starter files, especially code/parquet_pipeline.py, to migrate parquet reads, concatenation, filtering, column selection, dtype handling, and parquet writes to cuDF. It preserves multi-file input handling, partitioned output behavior, generated data paths, output paths, and reports validation performed or the runtime blocker.",
-    "expected_behavior": []
+    "expected_behavior": [
+      "Uses the provided cudf-parquet-io starter workspace and edits code/parquet_pipeline.py.",
+      "Migrates parquet reads, concatenation, filtering, column selection, dtype handling, and parquet writes to cuDF where supported.",
+      "Preserves multi-file input handling, partitioned output behavior, generated data paths, and output paths, then reports validation or the runtime blocker."
+    ]
   },
   {
     "id": "cudf-pivot-melt__generic",
@@ -81,7 +105,11 @@
       "evals/files/cudf-pivot-melt/code/reshape_analysis.py"
     ],
     "ground_truth": "A successful answer uses the provided cudf-pivot-melt starter files, especially code/reshape_analysis.py, to move supported reshape operations such as pivot, melt, stack/unstack, or crosstab-style logic to cuDF where practical. It preserves index labels, column labels, fill values, aggregation choices, output schema, compatibility boundaries, and reports validation performed or the runtime blocker.",
-    "expected_behavior": []
+    "expected_behavior": [
+      "Uses the provided cudf-pivot-melt starter workspace and edits code/reshape_analysis.py.",
+      "Moves supported reshape operations such as pivot, melt, stack/unstack, or crosstab-style logic to cuDF where practical.",
+      "Preserves index labels, column labels, fill values, aggregation choices, output schema, and any compatibility boundary, then reports validation or the runtime blocker."
+    ]
   },
   {
     "id": "cudf-string-ops__generic",
@@ -93,7 +121,11 @@
       "evals/files/cudf-string-ops/code/generate_data.py"
     ],
     "ground_truth": "A successful answer uses the provided cudf-string-ops starter files, especially code/clean_contacts.py, to migrate string cleaning to cuDF string accessors for lowercase, strip, contains, replace, and extract-style operations. It preserves regex patterns, extracted columns, null handling, string dtype behavior, representative cleaned values, and reports validation performed or the runtime blocker.",
-    "expected_behavior": []
+    "expected_behavior": [
+      "Uses the provided cudf-string-ops starter workspace and edits code/clean_contacts.py.",
+      "Migrates string cleaning to cuDF string accessors for lowercase, strip, contains, replace, and extract-style operations where supported.",
+      "Preserves regex patterns, extracted columns, null handling, string dtype behavior, and representative cleaned values, then reports validation or the runtime blocker."
+    ]
   },
   {
     "id": "cudf-timeseries-resample__generic",
@@ -105,7 +137,11 @@
       "evals/files/cudf-timeseries-resample/code/timeseries_analysis.py"
     ],
     "ground_truth": "A successful answer uses the provided cudf-timeseries-resample starter files, especially code/timeseries_analysis.py, to run datetime parsing, timestamp ordering, bucket creation, aggregation, and rolling computations with cuDF where supported. It preserves hourly and daily grouping semantics, missing buckets, rolling window sizes, output ordering, compatibility boundaries, and reports validation performed or the runtime blocker.",
-    "expected_behavior": []
+    "expected_behavior": [
+      "Uses the provided cudf-timeseries-resample starter workspace and edits code/timeseries_analysis.py.",
+      "Runs datetime parsing, timestamp ordering, bucket creation, aggregation, and rolling computations with cuDF where supported.",
+      "Preserves hourly and daily grouping semantics, missing buckets, rolling window sizes, output ordering, and any compatibility boundary, then reports validation or the runtime blocker."
+    ]
   },
   {
     "id": "cudf-window-functions__generic",
@@ -117,7 +153,11 @@
       "evals/files/cudf-window-functions/code/window_analysis.py"
     ],
     "ground_truth": "A successful answer uses the provided cudf-window-functions starter files, especially code/window_analysis.py, to migrate ranking, cumulative operations, rolling calculations, expanding calculations, and shift/lag work to cuDF where supported. It preserves group keys, ordering columns, rank methods, window sizes, edge and null behavior, output names, and reports validation performed or the runtime blocker.",
-    "expected_behavior": []
+    "expected_behavior": [
+      "Uses the provided cudf-window-functions starter workspace and edits code/window_analysis.py.",
+      "Migrates ranking, cumulative operations, rolling calculations, expanding calculations, and shift/lag work to cuDF where supported.",
+      "Preserves group keys, ordering columns, rank methods, window sizes, edge and null behavior, and output names, then reports validation or the runtime blocker."
+    ]
   },
   {
     "id": "source-cudf-null-fillna-semantics__generic",
@@ -129,7 +169,11 @@
       "evals/files/source-cudf-null-fillna-semantics/code/null_cleanup.py"
     ],
     "ground_truth": "A successful answer uses the provided source-cudf-null-fillna-semantics starter files, especially code/null_cleanup.py, to migrate the cleanup workflow to cuDF without changing missing-value meaning. It preserves nullable integer, string, category-like, mask/where, fillna, and groupby semantics without lossy sentinel conversions, includes or describes pandas-versus-cuDF parity validation, and reports validation performed or the runtime blocker.",
-    "expected_behavior": []
+    "expected_behavior": [
+      "Uses the provided source-cudf-null-fillna-semantics starter workspace and edits code/null_cleanup.py.",
+      "Migrates the cleanup workflow to cuDF without changing missing-value meaning for nullable integers, strings, categories, masks, fillna, and groupby operations.",
+      "Includes or describes pandas-versus-cuDF parity validation and reports validation performed or the runtime blocker."
+    ]
   },
   {
     "id": "cudf-native-stream-handoff-boundary__generic",
@@ -142,7 +186,11 @@
       "evals/files/cudf-native-stream-handoff-boundary/code/threaded_handoff.cu"
     ],
     "ground_truth": "A successful answer uses the provided cudf-native-stream-handoff-boundary starter files, especially code/threaded_handoff.cu, to fix cross-thread or cross-stream GPU handoff by tying CUDA event readiness to the object dependency. It orders consumer work after producer writes, orders destruction or free after last stream use, preserves asynchronous overlap where practical, and reports compile or smoke validation performed or the runtime blocker.",
-    "expected_behavior": []
+    "expected_behavior": [
+      "Uses the provided cudf-native-stream-handoff-boundary starter workspace and edits code/threaded_handoff.cu.",
+      "Fixes cross-thread or cross-stream GPU handoff by tying CUDA event readiness to the object dependency without adding unnecessary device-wide blocking.",
+      "Orders consumer work after producer writes and destruction/free after last stream use, then reports compile or smoke validation performed or the runtime blocker."
+    ]
   },
   {
     "id": "negative-deep-learning-training__generic",
@@ -153,6 +201,10 @@
       "evals/files/negative-deep-learning-training/code/train.py"
     ],
     "ground_truth": "A successful answer treats the provided train.py context as a PyTorch/deep-learning training performance task rather than a cuDF migration. It keeps guidance focused on model training, data loading, batching, mixed precision, profiling, or other training-specific tactics, and only mentions cuDF as optional upstream tabular ETL when that is directly relevant.",
-    "expected_behavior": []
+    "expected_behavior": [
+      "Identifies the task as PyTorch or deep-learning training performance work rather than a cuDF DataFrame migration.",
+      "Keeps guidance focused on model training, data loading, batching, mixed precision, profiling, or other training-specific tactics.",
+      "Avoids invoking the cuDF skill except for an explicitly optional upstream tabular ETL note when directly relevant."
+    ]
   }
 ]

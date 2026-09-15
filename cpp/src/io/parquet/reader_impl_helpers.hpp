@@ -7,14 +7,17 @@
 
 #include "parquet_gpu.hpp"
 
+#include <cudf/detail/utilities/host_worker_pool.hpp>
 #include <cudf/fixed_point/fixed_point.hpp>
 #include <cudf/io/datasource.hpp>
 #include <cudf/io/parquet.hpp>
 #include <cudf/io/parquet_schema.hpp>
 #include <cudf/types.hpp>
 
-#include <cstddef>
+#include <algorithm>
+#include <exception>
 #include <functional>
+#include <future>
 #include <memory>
 #include <optional>
 #include <span>
@@ -22,10 +25,65 @@
 #include <string_view>
 #include <tuple>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
 namespace cudf::io::parquet::detail {
+
+/**
+ * @brief Construct metadatas from inputs using the host worker pool for multiple inputs
+ *
+ * All submitted tasks are waited on before any exception is propagated.
+ *
+ * @tparam T Metadata construction input type
+ * @tparam UnaryOp Callable invocable as `op(T const&)`
+ *
+ * @throws std::exception The first exception from submitting or running the tasks
+ *
+ * @param inputs Metadata construction inputs, one per source
+ * @param op Operation constructing a metadata object from one input
+ * @return Constructed metadata objects, in input order
+ */
+template <typename T, typename UnaryOp>
+[[nodiscard]] auto parallel_construct_metadatas(cudf::host_span<T const> inputs, UnaryOp op)
+{
+  using result_type = std::invoke_result_t<UnaryOp, T const&>;
+
+  std::vector<result_type> results;
+  results.reserve(inputs.size());
+
+  // Avoid using the thread pool for a single input
+  if (inputs.size() == 1) {
+    results.emplace_back(op(inputs.front()));
+    return results;
+  }
+
+  std::vector<std::future<result_type>> tasks;
+  tasks.reserve(inputs.size());
+
+  auto pending_exception = std::exception_ptr{};
+  try {
+    std::transform(inputs.begin(), inputs.end(), std::back_inserter(tasks), [&op](T const& input) {
+      return cudf::detail::host_worker_pool().submit_task(
+        [&op, input_ptr = &input] { return op(*input_ptr); });
+    });
+  } catch (...) {
+    pending_exception = std::current_exception();
+  }
+
+  for (auto& task : tasks) {
+    try {
+      results.emplace_back(task.get());
+    } catch (...) {
+      if (not pending_exception) { pending_exception = std::current_exception(); }
+    }
+  }
+
+  if (pending_exception) { std::rethrow_exception(pending_exception); }
+
+  return results;
+}
 
 /**
  * @brief page location and size info
@@ -145,8 +203,13 @@ struct metadata : public FileMetaData {
 
   void setup_page_index(cudf::host_span<uint8_t const> page_index_bytes, int64_t min_offset);
 
+  [[nodiscard]] bool is_page_index_setup() const { return is_page_index_setup_; }
+
  protected:
   void sanitize_schema();
+
+ private:
+  bool is_page_index_setup_ = false;
 };
 
 /**
@@ -211,6 +274,7 @@ class aggregate_reader_metadata {
   std::vector<metadata> per_file_metadata;
   std::vector<std::unordered_map<std::string, std::string>> keyval_maps;
   std::vector<std::unordered_map<int32_t, int32_t>> schema_idx_maps;
+  std::unordered_set<int32_t> nullable_across_sources;
 
   int64_t num_rows;
   size_type num_row_groups;
@@ -239,6 +303,15 @@ class aggregate_reader_metadata {
    */
   [[nodiscard]] std::vector<std::unordered_map<int32_t, int32_t>> init_schema_idx_maps(
     bool has_cols_from_mismatched_srcs) const;
+
+  /**
+   * @brief Records a schema index as nullable if the corresponding field is nullable in another
+   * source
+   *
+   * @param schema_idx Schema index in the zeroth source
+   * @param src Corresponding SchemaElement in another source
+   */
+  void propagate_optional_field(int schema_idx, SchemaElement const& src);
 
   /**
    * @brief Decodes and constructs the arrow schema from the ARROW_SCHEMA_KEY IPC message
@@ -569,6 +642,8 @@ class aggregate_reader_metadata {
   /**
    * @brief Checks if a schema index from 0th source is mapped to the specified file index
    *
+   * @note Only columns selected by `select_columns` are mapped.
+   *
    * @param schema_idx The index of the SchemaElement in the zeroth file.
    * @param pfm_idx The index of the file (per_file_metadata) to check mappings for.
    *
@@ -579,12 +654,30 @@ class aggregate_reader_metadata {
   /**
    * @brief Maps schema index from 0th source file to the specified file index
    *
+   * @note Only columns selected by `select_columns` are mapped.
+   *
+   * @throws std::out_of_range if `schema_idx` is not mapped to `pfm_idx`
+   *
    * @param schema_idx The index of the SchemaElement in the zeroth file.
    * @param pfm_idx The index of the file (per_file_metadata) to map the schema_idx to.
    *
    * @return Mapped schema index
    */
   [[nodiscard]] int map_schema_index(int schema_idx, int pfm_idx) const;
+
+  /**
+   * @brief Checks if a field that is REQUIRED in the zeroth source is nullable in another source
+   *
+   * @note Only columns selected by `select_columns` are tracked.
+   *
+   * @param schema_idx The index of the SchemaElement in the zeroth file.
+   *
+   * @return True if the field is nullable in a source other than the zeroth one
+   */
+  [[nodiscard]] bool is_nullable_across_sources(int schema_idx) const
+  {
+    return nullable_across_sources.contains(schema_idx);
+  }
 
   /**
    * @brief Extracts the schema_idx'th SchemaElement from the pfm_idx'th file
@@ -722,6 +815,9 @@ class aggregate_reader_metadata {
 
   /**
    * @brief Filters and reduces down to a selection of columns
+   *
+   * @note Not thread-safe. Builds the cross-source schema index mappings and the set of fields
+   * nullable across sources, which are shared by every reader using this metadata object.
    *
    * @param use_names List of paths of column names to select; `nullopt` if user did not select
    * columns to read

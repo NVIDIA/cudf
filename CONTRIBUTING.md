@@ -17,7 +17,7 @@ Contributions to cuDF fall into the following categories:
 
 As contributors and maintainers to this project, you are expected to abide by cuDF's code of
 conduct. More information can be found at:
-[Contributor Code of Conduct](https://docs.rapids.ai/resources/conduct/).
+[Contributor Code of Conduct](https://docs.nvidia.com/datascience/resources/conduct/).
 
 ## Documentation contributions
 
@@ -69,7 +69,7 @@ prioritized issues for our next release in our
 [project boards](https://github.com/NVIDIA/cudf/projects).
 
 **Note:** Always look at the release board that is
-[currently under development](https://docs.rapids.ai/maintainers/) for issues to work on. This is
+[currently under development](https://docs.nvidia.com/datascience/maintainers/) for issues to work on. This is
 where RAPIDS developers also focus their efforts.
 
 Look at the unassigned issues, and find an issue to which you are comfortable contributing. Start

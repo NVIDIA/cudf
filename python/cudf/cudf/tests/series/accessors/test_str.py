@@ -2566,10 +2566,46 @@ def test_string_extract_named_groups():
     assert_eq(expect, got)
 
 
-def test_string_invalid_regex():
-    gs = cudf.Series(["a"])
-    with pytest.raises(RuntimeError):
-        gs.str.extract(r"{\}")
+@pytest.mark.parametrize("klass", [pd.Series, pd.Index])
+@pytest.mark.parametrize("values", [[], ["a1"], ["a1", "b2", None]])
+@pytest.mark.parametrize(
+    "pat",
+    [
+        r"(a)",
+        r"(?P<letter>a)",
+        r"(a)(1)",
+        r"(?P<letter>a)(1)",
+        r"(a)(?P<number>1)",
+    ],
+)
+@pytest.mark.parametrize("expand", [True, False])
+def test_string_extract_result_structure(klass, values, pat, expand):
+    ps = klass(values, name="source", dtype="str")
+    gs = cudf.from_pandas(ps)
+
+    if klass is pd.Index and not expand and re.compile(pat).groups > 1:
+        for obj in (ps, gs):
+            with pytest.raises(
+                ValueError,
+                match="only one regex group is supported with Index",
+            ):
+                obj.str.extract(pat, expand=expand)
+    else:
+        expected = ps.str.extract(pat, expand=expand)
+        result = gs.str.extract(pat, expand=expand)
+        assert_eq(expected, result)
+
+
+@pytest.mark.parametrize("klass", [pd.Series, pd.Index])
+@pytest.mark.parametrize("pat", [r"{\}", r"a", r"(?:a)"])
+def test_string_extract_no_capture_groups(klass, pat):
+    ps = klass(["a"])
+    gs = cudf.from_pandas(ps)
+    for obj in (ps, gs):
+        with pytest.raises(
+            ValueError, match="pattern contains no capture groups"
+        ):
+            obj.str.extract(pat)
 
 
 def _cat_convert_seq_to_cudf(others):

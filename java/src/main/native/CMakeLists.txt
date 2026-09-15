@@ -247,7 +247,6 @@ target_compile_definitions(
 )
 target_link_options(cudfjni PRIVATE "-Wl,--no-undefined")
 
-set(CUDF_ENABLE_ARROW_PARQUET ON)
 include(cmake/thirdparty/get_arrow.cmake)
 target_link_libraries(cudfjni PRIVATE ${ARROW_LIBRARIES})
 

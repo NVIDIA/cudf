@@ -346,6 +346,7 @@ ConfigureTest(
   PERCENT 100
 )
 ConfigureTest(COMPACT_PROTOCOL_READER_TEST io/compact_protocol_reader_test.cpp)
+ConfigureTest(PARQUET_FOOTER_FACADE_TEST io/experimental/parquet_footer_facade_test.cpp)
 ConfigureTest(
   HYBRID_SCAN_TEST
   io/experimental/hybrid_scan_common.cpp

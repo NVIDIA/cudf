@@ -1370,6 +1370,8 @@ TEST_F(ParquetChunkedReaderInputLimitTest, V2PagesWithLevels)
       .write_v2_headers(true)
       .dictionary_policy(cudf::io::dictionary_policy::NEVER)
       .max_page_size_rows(5'000)
+      .max_page_fragment_size(5'000)
+      .row_group_size_rows(5'000)
       .build();
   cudf::io::write_parquet(options);
 

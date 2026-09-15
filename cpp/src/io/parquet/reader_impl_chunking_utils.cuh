@@ -433,7 +433,10 @@ struct decompression_input {
  */
 CUDF_HOST_DEVICE inline decompression_input get_decompression_input(PageInfo const& page)
 {
+  // V2 data pages record compression per page so check the `is_compressed` field. Dictionary and V1
+  // pages are compressed whenever their column chunk uses a compression codec.
   auto const is_page_compressed = (page.flags & PAGEINFO_FLAGS_V2) ? page.is_compressed : true;
+
   auto const level_bytes =
     page.lvl_bytes[level_type::DEFINITION] + page.lvl_bytes[level_type::REPETITION];
   if (not is_page_compressed or page.compressed_page_size <= level_bytes or

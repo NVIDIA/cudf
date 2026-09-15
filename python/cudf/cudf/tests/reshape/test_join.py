@@ -544,6 +544,229 @@ def test_typecast_on_join_indexes_matching_categorical():
     assert_join_results_equal(expect, got, how="inner")
 
 
+@pytest.mark.parametrize("empty_side", ["left", "right"])
+def test_outer_merge_dtype_preserved_with_empty_side(empty_side):
+    # https://github.com/rapidsai/cudf/issues/9981
+    # In an outer merge, every output row's key value comes from whichever
+    # side is non-empty, so if one side of the merge key has no rows, no
+    # value could actually be lost. The non-empty side's dtype should
+    # survive the merge just like it does in pandas, instead of being
+    # promoted to float64.
+    pdf_data = pd.DataFrame({"a": [1, 2, 3, 4]})
+    pdf_empty = pd.DataFrame(columns=["a"])
+    lhs, rhs = (
+        (pdf_empty, pdf_data)
+        if empty_side == "left"
+        else (pdf_data, pdf_empty)
+    )
+    glhs, grhs = cudf.from_pandas(lhs), cudf.from_pandas(rhs)
+
+    expect = lhs.merge(rhs, how="outer")
+    got = glhs.merge(grhs, how="outer")
+
+    assert expect["a"].dtype == got["a"].dtype
+    assert_join_results_equal(expect, got, how="outer")
+
+
+@pytest.mark.parametrize("empty_side", ["left", "right"])
+def test_outer_merge_int_width_preserved_with_empty_side(empty_side):
+    # https://github.com/rapidsai/cudf/issues/9981
+    # In an outer merge, every output row's key value comes from whichever
+    # side is non-empty, so if one side of the merge key has no rows, no
+    # value could actually be lost. The non-empty side's width should
+    # survive the merge just like it does in pandas, instead of being
+    # promoted to max(ltype, rtype).
+    pdf_data = pd.DataFrame({"a": pd.Series([1, 2, 3], dtype="int8")})
+    pdf_empty = pd.DataFrame({"a": pd.Series([], dtype="int64")})
+    lhs, rhs = (
+        (pdf_empty, pdf_data)
+        if empty_side == "left"
+        else (pdf_data, pdf_empty)
+    )
+    glhs, grhs = cudf.from_pandas(lhs), cudf.from_pandas(rhs)
+
+    expect = lhs.merge(rhs, how="outer")
+    got = glhs.merge(grhs, how="outer")
+
+    assert expect["a"].dtype == got["a"].dtype
+    assert_join_results_equal(expect, got, how="outer")
+
+
+def test_outer_merge_both_sides_empty_dtype():
+    # https://github.com/rapidsai/cudf/issues/9981
+    # With BOTH sides empty the one-empty-side shortcut does not apply;
+    # pandas keeps the left (object) dtype for the combined key, and so
+    # should cudf via the empty-key dtype restore.
+    lhs = pd.DataFrame(columns=["a"])
+    rhs = pd.DataFrame({"a": pd.Series([], dtype="int64")})
+    glhs, grhs = cudf.from_pandas(lhs), cudf.from_pandas(rhs)
+
+    expect = lhs.merge(rhs, how="outer")
+    got = glhs.merge(grhs, how="outer")
+
+    assert expect["a"].dtype == got["a"].dtype
+    assert_join_results_equal(expect, got, how="outer")
+
+
+@pytest.mark.parametrize("empty_side", ["left", "right"])
+def test_outer_merge_datetime_resolution_preserved_with_empty_side(
+    empty_side,
+):
+    # https://github.com/rapidsai/cudf/issues/9981
+    # Same reasoning as test_outer_merge_dtype_preserved_with_empty_side,
+    # but for a case that used to go through the datetime/timedelta
+    # promotion branch (max(ltype, rtype)) rather than the float64
+    # fallback: an empty side should not force promotion to the finer
+    # resolution, it should just adopt the non-empty side's resolution.
+    pdf_data = pd.DataFrame(
+        {"a": pd.to_datetime(["2020-01-01", "2020-01-02"])}
+    ).astype({"a": "datetime64[s]"})
+    pdf_empty = pd.DataFrame({"a": pd.Series([], dtype="datetime64[ns]")})
+    lhs, rhs = (
+        (pdf_empty, pdf_data)
+        if empty_side == "left"
+        else (pdf_data, pdf_empty)
+    )
+    glhs, grhs = cudf.from_pandas(lhs), cudf.from_pandas(rhs)
+
+    expect = lhs.merge(rhs, how="outer")
+    got = glhs.merge(grhs, how="outer")
+
+    assert expect["a"].dtype == got["a"].dtype
+    assert_join_results_equal(expect, got, how="outer")
+
+
+@pytest.mark.parametrize("empty_side", ["left", "right"])
+def test_outer_merge_categorical_preserved_with_empty_side(empty_side):
+    # https://github.com/rapidsai/cudf/issues/9981
+    # Same reasoning as test_outer_merge_dtype_preserved_with_empty_side,
+    # but for a categorical key: an empty side should not force the two
+    # sides' categories to be unioned or decategorized, it should just
+    # adopt the non-empty side's (categorical) dtype.
+    pdf_data = pd.DataFrame(
+        {"a": pd.Categorical(["x", "y", "z"], categories=["x", "y", "z"])}
+    )
+    pdf_empty = pd.DataFrame(
+        {"a": pd.Categorical([], categories=["x", "y", "z"])}
+    )
+    lhs, rhs = (
+        (pdf_empty, pdf_data)
+        if empty_side == "left"
+        else (pdf_data, pdf_empty)
+    )
+    glhs, grhs = cudf.from_pandas(lhs), cudf.from_pandas(rhs)
+
+    expect = lhs.merge(rhs, how="outer")
+    got = glhs.merge(grhs, how="outer")
+
+    assert isinstance(got["a"].dtype, cudf.CategoricalDtype)
+    assert_join_results_equal(expect, got, how="outer")
+
+
+@pytest.mark.parametrize("empty_side", ["left", "right"])
+def test_outer_merge_categorical_category_mismatch_with_empty_side(
+    empty_side,
+):
+    # https://github.com/rapidsai/cudf/issues/9981
+    # When the empty side's categories differ from the non-empty side's,
+    # pandas keeps the non-empty side's categorical dtype (categories and
+    # all); the shortcut adopts the non-empty side's dtype, matching that.
+    pdf_data = pd.DataFrame(
+        {"a": pd.Categorical(["x", "y"], categories=["x", "y"])}
+    )
+    pdf_empty = pd.DataFrame({"a": pd.Categorical([], categories=["y", "z"])})
+    lhs, rhs = (
+        (pdf_empty, pdf_data)
+        if empty_side == "left"
+        else (pdf_data, pdf_empty)
+    )
+    glhs, grhs = cudf.from_pandas(lhs), cudf.from_pandas(rhs)
+
+    expect = lhs.merge(rhs, how="outer")
+    got = glhs.merge(grhs, how="outer")
+
+    assert isinstance(got["a"].dtype, cudf.CategoricalDtype)
+    assert list(got["a"].dtype.categories.to_pandas()) == list(
+        expect["a"].dtype.categories
+    )
+    assert_join_results_equal(expect, got, how="outer")
+
+
+@pytest.mark.parametrize("empty_side", ["left", "right"])
+def test_outer_merge_int_vs_empty_categorical(empty_side):
+    # https://github.com/rapidsai/cudf/issues/9981
+    # A non-empty int64 key against an empty categorical key adopts the
+    # int64 dtype, matching pandas.
+    pdf_data = pd.DataFrame({"a": pd.Series([1, 2, 3], dtype="int64")})
+    pdf_empty = pd.DataFrame({"a": pd.Categorical([])})
+    lhs, rhs = (
+        (pdf_empty, pdf_data)
+        if empty_side == "left"
+        else (pdf_data, pdf_empty)
+    )
+    glhs, grhs = cudf.from_pandas(lhs), cudf.from_pandas(rhs)
+
+    expect = lhs.merge(rhs, how="outer")
+    got = glhs.merge(grhs, how="outer")
+
+    assert expect["a"].dtype == got["a"].dtype
+    assert_join_results_equal(expect, got, how="outer")
+
+
+@pytest.mark.parametrize("empty_side", ["left", "right"])
+def test_outer_merge_categorical_ordering_mismatch_with_empty_side(
+    empty_side,
+):
+    # https://github.com/rapidsai/cudf/issues/9981
+    # Merging on categorical variables with mismatched ordering is normally
+    # ambiguous and rejected, but that ambiguity is a value-comparison
+    # concern that is vacuous when one side has no values to compare. An
+    # empty side should adopt the non-empty side's (unordered) dtype
+    # instead of raising, matching pandas.
+    pdf_data = pd.DataFrame(
+        {"a": pd.Categorical(["a", "b", "a"], categories=["a", "b"])}
+    )
+    pdf_empty = pd.DataFrame(
+        {"a": pd.Categorical([], categories=["a", "b"], ordered=True)}
+    )
+    lhs, rhs = (
+        (pdf_empty, pdf_data)
+        if empty_side == "left"
+        else (pdf_data, pdf_empty)
+    )
+    glhs, grhs = cudf.from_pandas(lhs), cudf.from_pandas(rhs)
+
+    expect = lhs.merge(rhs, how="outer")
+    got = glhs.merge(grhs, how="outer")
+
+    assert isinstance(got["a"].dtype, cudf.CategoricalDtype)
+    assert got["a"].dtype.ordered == expect["a"].dtype.ordered
+    assert_join_results_equal(expect, got, how="outer")
+
+
+@pytest.mark.parametrize("empty_side", ["left", "right"])
+def test_outer_merge_datetime_vs_int_with_empty_side(empty_side):
+    # https://github.com/rapidsai/cudf/issues/9981
+    # Merging a datetime64 key against an int64 key normally raises, since
+    # neither can safely cast to the other. But an empty side has no data
+    # that could actually be lost, so it should adopt the non-empty side's
+    # dtype instead of raising, matching pandas.
+    pdf_data = pd.DataFrame({"a": pd.Series([1, 2, 3], dtype="int64")})
+    pdf_empty = pd.DataFrame({"a": pd.Series([], dtype="datetime64[ns]")})
+    lhs, rhs = (
+        (pdf_empty, pdf_data)
+        if empty_side == "left"
+        else (pdf_data, pdf_empty)
+    )
+    glhs, grhs = cudf.from_pandas(lhs), cudf.from_pandas(rhs)
+
+    expect = lhs.merge(rhs, how="outer")
+    got = glhs.merge(grhs, how="outer")
+
+    assert expect["a"].dtype == got["a"].dtype
+    assert_join_results_equal(expect, got, how="outer")
+
+
 def test_join_multiindex_empty():
     lhs = pd.DataFrame({"a": [1, 2, 3], "b": [2, 3, 4]}, index=["a", "b", "c"])
     lhs.columns = pd.MultiIndex.from_tuples([("a", "x"), ("a", "y")])

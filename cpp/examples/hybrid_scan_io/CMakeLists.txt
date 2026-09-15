@@ -50,6 +50,7 @@ add_hybrid_scan_example(hybrid_scan_io hybrid_scan_io.cpp)
 add_hybrid_scan_example(hybrid_scan_pipeline hybrid_scan_pipeline.cpp)
 add_hybrid_scan_example(hybrid_scan_multifile_single_step hybrid_scan_multifile_single_step.cpp)
 add_hybrid_scan_example(hybrid_scan_multifile_two_step hybrid_scan_multifile_two_step.cpp)
+add_hybrid_scan_example(mint1t_hybrid_scan mint1t_hybrid_scan.cpp)
 
 # Install the example.parquet file
 install(FILES ${CMAKE_CURRENT_LIST_DIR}/example.parquet

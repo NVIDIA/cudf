@@ -1458,6 +1458,65 @@ class IndexedFrame(Frame):
 
         return self.iloc[-n:]
 
+    def _find_valid_index(self, *, how: str) -> Hashable:
+        valid = self.notna()
+        if valid.ndim == 2:
+            valid = valid.any(axis=1)
+        valid_index = self.index[valid]
+        if len(valid_index) == 0:
+            return None
+        return valid_index[0] if how == "first" else valid_index[-1]
+
+    @_performance_tracking
+    def first_valid_index(self) -> Hashable:
+        """
+        Return index for first non-NA value or None, if no non-NA value is found.
+
+        Returns
+        -------
+        type of index
+            Index of first non-missing value, or None if all entries are
+            missing or the Series/DataFrame is empty.
+
+        See Also
+        --------
+        Series.last_valid_index : Return index for last non-NA value.
+        DataFrame.last_valid_index : Return index for last non-NA value.
+
+        Examples
+        --------
+        >>> import cudf
+        >>> s = cudf.Series([None, 3, 4])
+        >>> s.first_valid_index()
+        np.int64(1)
+        """
+        return self._find_valid_index(how="first")
+
+    @_performance_tracking
+    def last_valid_index(self) -> Hashable:
+        """
+        Return index for last non-NA value or None, if no non-NA value is found.
+
+        Returns
+        -------
+        type of index
+            Index of last non-missing value, or None if all entries are
+            missing or the Series/DataFrame is empty.
+
+        See Also
+        --------
+        Series.first_valid_index : Return index for first non-NA value.
+        DataFrame.first_valid_index : Return index for first non-NA value.
+
+        Examples
+        --------
+        >>> import cudf
+        >>> s = cudf.Series([None, 3, 4])
+        >>> s.last_valid_index()
+        np.int64(2)
+        """
+        return self._find_valid_index(how="last")
+
     @_performance_tracking
     def pipe(self, func, *args, **kwargs):
         """

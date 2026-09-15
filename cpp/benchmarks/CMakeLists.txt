@@ -260,6 +260,7 @@ ConfigureNVBench(HASHING_NVBENCH hashing/hash.cpp hashing/partition.cpp)
 # ----------------------------------------------------------------------
 ConfigureNVBench(
   HYBRID_SCAN_FILTERS_NVBENCH io/parquet/experimental/hybrid_scan/dict_page_filter.cpp
+  io/parquet/experimental/hybrid_scan/page_stats_row_mask.cpp
 )
 
 # ##################################################################################################

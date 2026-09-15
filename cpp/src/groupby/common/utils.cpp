@@ -11,10 +11,9 @@
 
 namespace cudf::groupby::detail {
 
-std::pair<rmm::device_buffer, bitmask_type const*> compute_row_bitmask(table_view const& keys,
-                                                                       cuda::stream_ref stream)
+std::pair<rmm::device_buffer, bitmask_type const*> compute_row_bitmask(
+  table_view const& keys, cuda::stream_ref stream, rmm::device_async_resource_ref mr)
 {
-  auto const mr = cudf::get_current_device_resource_ref();
   if (keys.num_columns() == 0 || !cudf::has_nulls(keys)) {
     return {rmm::device_buffer{0, stream, mr}, nullptr};
   }

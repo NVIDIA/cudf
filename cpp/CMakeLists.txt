@@ -735,18 +735,17 @@ add_library(
   src/groupby/common/m2_var_std.cu
   src/groupby/common/utils.cpp
   src/groupby/groupby.cu
-  src/groupby/hash/compute_global_memory_aggs.cu
-  src/groupby/hash/compute_global_memory_aggs_null.cu
   src/groupby/hash/compute_groupby.cu
-  src/groupby/hash/compute_mapping_indices.cu
-  src/groupby/hash/compute_mapping_indices_null.cu
-  src/groupby/hash/compute_shared_memory_aggs.cu
   src/groupby/hash/compute_single_pass_aggs.cu
-  src/groupby/hash/compute_single_pass_aggs_null.cu
   src/groupby/hash/extract_single_pass_aggs.cpp
   src/groupby/hash/groupby.cu
   src/groupby/hash/hash_compound_agg_finalizer.cu
   src/groupby/hash/output_utils.cu
+  src/groupby/hash/single_pass_argminmax.cu
+  src/groupby/hash/single_pass_minmax.cu
+  src/groupby/hash/single_pass_product.cu
+  src/groupby/hash/single_pass_sum_overflow.cu
+  src/groupby/hash/single_pass_sums.cu
   src/groupby/sort/aggregate.cpp
   src/groupby/sort/group_argmax.cu
   src/groupby/sort/group_argmin.cu

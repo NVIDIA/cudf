@@ -27,6 +27,7 @@
 #include <cuda/stream>
 
 #include <atomic>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <vector>
@@ -333,7 +334,8 @@ struct streaming_groupby::impl {
    * built once and reused on every aggregate() / merge() call rather than rebuilt
    * (which requires a host-to-device copy of the column metadata).
    */
-  std::unique_ptr<mutable_table_device_view, void (*)(mutable_table_device_view*)> _d_agg_results;
+  std::unique_ptr<mutable_table_device_view, std::function<void(mutable_table_device_view*)>>
+    _d_agg_results;
   std::vector<size_type> _value_col_indices;
   std::unique_ptr<rmm::device_uvector<aggregation::Kind>> _d_agg_kinds;
 

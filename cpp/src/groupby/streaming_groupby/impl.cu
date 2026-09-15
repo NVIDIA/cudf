@@ -15,21 +15,25 @@
 #include <cudf/detail/aggregation/aggregation.hpp>
 #include <cudf/detail/aggregation/result_cache.hpp>
 #include <cudf/detail/copy.hpp>
-#include <cudf/detail/groupby.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
+#include <cudf/dictionary/dictionary_column_view.hpp>
+#include <cudf/fixed_point/fixed_point.hpp>
 #include <cudf/table/table.hpp>
 #include <cudf/table/table_view.hpp>
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
+#include <cudf/utilities/traits.cuh>
 
 #include <rmm/device_uvector.hpp>
 
 #include <cuda/stream>
 
 #include <algorithm>
+#include <cstddef>
 #include <memory>
 #include <string>
+#include <type_traits>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -37,6 +41,32 @@
 namespace cudf::groupby {
 
 namespace {
+
+// Streaming still uses element_aggregator, whose atomic requirements are independent of the
+// reductions used by ordinary hash groupby.
+struct is_atomic_aggregation_supported {
+  template <typename T, aggregation::Kind K>
+  bool operator()() const
+  {
+    if constexpr (cudf::is_nested<T>()) {
+      return false;
+    } else if constexpr (std::is_same_v<T, numeric::decimal128> && K == aggregation::SUM) {
+      // The existing decimal128 SUM implementation provides its own atomic addition.
+      return true;
+    } else {
+      using Target = cudf::detail::target_type_t<T, K>;
+      constexpr auto uses_storage =
+        cudf::is_fixed_point<T>() &&
+        (K == aggregation::MIN || K == aggregation::MAX || K == aggregation::SUM);
+      using DeviceTarget =
+        std::conditional_t<uses_storage, cudf::device_storage_type_t<Target>, Target>;
+      if constexpr (!std::is_void_v<DeviceTarget>) {
+        return cudf::has_atomic_support<DeviceTarget>();
+      }
+      return false;
+    }
+  }
+};
 
 void validate_requests(host_span<streaming_aggregation_request const> requests)
 {
@@ -86,10 +116,7 @@ streaming_groupby::impl::impl(host_span<size_type const> key_indices,
                               size_type max_distinct_keys,
                               null_policy null_handling,
                               cuda::mr::any_resource<cuda::mr::device_accessible> mr)
-  : _max_distinct_keys{max_distinct_keys},
-    _null_handling{null_handling},
-    _mr{std::move(mr)},
-    _d_agg_results{nullptr, +[](mutable_table_device_view*) {}}
+  : _max_distinct_keys{max_distinct_keys}, _null_handling{null_handling}, _mr{std::move(mr)}
 {
   CUDF_EXPECTS(max_distinct_keys > 0, "max_distinct_keys must be positive.", std::invalid_argument);
   if (!key_indices.empty()) { _key_indices.assign(key_indices.begin(), key_indices.end()); }
@@ -125,18 +152,6 @@ void streaming_groupby::impl::initialize(table_view const& data, cuda::stream_re
 
   auto agg_requests = build_aggregation_requests(_requests_clone, data);
 
-  // TODO: streaming aggregation reuses the cudf hash-groupby element_aggregator,
-  // so it inherits the same atomic-support requirement.  In particular, decimal128
-  // MIN/MAX/SUM falls through to CUDF_UNREACHABLE because __int128 is not
-  // lock-free atomic.  Stateless cudf::groupby falls back to sort-based groupby
-  // in that case; streaming has no such fallback.  Until streaming has a
-  // non-atomic aggregator path (or 128-bit atomics gain hardware support), gate
-  // by the same predicate to fail loudly instead of silently producing garbage.
-  CUDF_EXPECTS(detail::hash::can_use_hash_groupby(agg_requests),
-               "streaming_groupby does not support this combination of value type and "
-               "aggregation kind (e.g. decimal128 MIN/MAX/SUM require 128-bit atomics).",
-               std::invalid_argument);
-
   auto [values_view, agg_kinds_hv, agg_objects, is_intermediate, has_compound] =
     detail::hash::extract_single_pass_aggs(agg_requests, stream);
 
@@ -146,7 +161,8 @@ void streaming_groupby::impl::initialize(table_view const& data, cuda::stream_re
   _has_compound_aggs   = has_compound;
 
   // Reject aggregation kinds that are unsupported in streaming after decomposition.
-  for (auto k : _agg_kinds) {
+  for (std::size_t i = 0; i < _agg_kinds.size(); ++i) {
+    auto const k = _agg_kinds[i];
     CUDF_EXPECTS(k != aggregation::ARGMIN && k != aggregation::ARGMAX,
                  "Streaming groupby does not support MIN/MAX on variable-width types "
                  "(internally decomposed to ARGMIN/ARGMAX).",
@@ -154,6 +170,15 @@ void streaming_groupby::impl::initialize(table_view const& data, cuda::stream_re
     CUDF_EXPECTS(k != aggregation::SUM_OVERFLOW,
                  "Streaming groupby does not support SUM_OVERFLOW "
                  "(struct intermediate cannot be merged across batches).",
+                 std::invalid_argument);
+    auto const& values     = values_view.column(i);
+    auto const values_type = cudf::is_dictionary(values.type())
+                               ? cudf::dictionary_column_view(values).keys().type()
+                               : values.type();
+    CUDF_EXPECTS(cudf::detail::dispatch_type_and_aggregation(
+                   values_type, k, is_atomic_aggregation_supported{}),
+                 "streaming_groupby does not support this combination of value type and "
+                 "aggregation kind.",
                  std::invalid_argument);
   }
 
@@ -163,11 +188,7 @@ void streaming_groupby::impl::initialize(table_view const& data, cuda::stream_re
   // Cache the mutable_table_device_view once; the underlying table is fixed-size and
   // never reallocated, so the device-side descriptor stays valid for the whole
   // lifetime of this impl.
-  {
-    auto raii = mutable_table_device_view::create(*_agg_results, stream);
-    _d_agg_results =
-      decltype(_d_agg_results){raii.release(), +[](mutable_table_device_view* t) { t->destroy(); }};
-  }
+  _d_agg_results = mutable_table_device_view::create(*_agg_results, stream);
 
   _d_agg_kinds = std::make_unique<rmm::device_uvector<aggregation::Kind>>(
     cudf::detail::make_device_uvector_async(_agg_kinds, stream, mr));
@@ -404,8 +425,8 @@ bool is_streaming_groupby_supported(data_type values_type, aggregation::Kind kin
       break;
     default: return false;
   }
-  // decimal128 SUM/MIN/MAX needs 128-bit atomics, which aren't supported.
-  if ((kind == aggregation::SUM || kind == aggregation::MIN || kind == aggregation::MAX) &&
+  // decimal128 MIN/MAX needs unsupported 128-bit atomics; SUM has its own atomic addition.
+  if ((kind == aggregation::MIN || kind == aggregation::MAX) &&
       values_type.id() == type_id::DECIMAL128) {
     return false;
   }

@@ -145,13 +145,13 @@ void run_dict_page_pruning(nvbench::state& state,
   auto filter_expr_many_literals =
     cudf::ast::operation(cudf::ast::ast_operator::LOGICAL_OR, filter_expr_few_literals, expr3);
 
-  BM_filter_row_groups_with_dicts_common(state,
-                                         dtype,
-                                         table_profile,
-                                         is_inline_eval ? filter_expr_few_literals
-                                                        : filter_expr_many_literals,
-                                         average_value_width,
-                                         cardinality);
+  BM_filter_row_groups_with_dicts_common(
+    state,
+    dtype,
+    table_profile,
+    is_inline_eval ? filter_expr_few_literals : filter_expr_many_literals,
+    average_value_width,
+    cardinality);
 }
 
 void BM_hybrid_scan_dict_page_pruning_string(nvbench::state& state)
@@ -179,7 +179,7 @@ void BM_hybrid_scan_dict_page_pruning_fixed_width(nvbench::state& state,
 {
   auto const cardinality = static_cast<cudf::size_type>(state.get_int64("cardinality"));
 
-  using T = cudf::id_to_type<DType>;
+  using T           = cudf::id_to_type<DType>;
   auto filter_value = cudf::numeric_scalar<T>(static_cast<T>(0));
 
   // The dictionary entry width of a fixed-width column is the type width

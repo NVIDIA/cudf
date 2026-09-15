@@ -202,7 +202,7 @@ The different scopes have different schemas. Fields in **bold** are required / a
 | **overhead_duration**   | int    | The overhead, in nanoseconds, added by tracing |
 | `count_frames_{phase}` | int | The number of dataframes for the input / output `phase`. This metric can be disabled by setting `CUDF_POLARS_LOG_TRACES_DATAFRAMES=0`. |
 | `frames_{phase}` | `list[dict]` | A list with dictionaries with "shape" and "size" fields, one per input dataframe, for the input / output `phase`. This metric can be disabled by setting `CUDF_POLARS_LOG_TRACES_DATAFRAMES=0`. |
-| `total_bytes_{phase}` | int | The sum of the size (in bytes) of the dataframes for the input / output `phase`. This metric can be enabled by setting `CUDF_POLARS_LOG_TRACES_MEMORY=1`. |
+| `total_bytes_{phase}` | int | The sum of the size (in bytes) of the dataframes for the input / output `phase`. This metric can be disabled by setting `CUDF_POLARS_LOG_TRACES_DATAFRAMES=0`. |
 | `rmm_current_bytes_{phase}` | int | The current number of bytes allocated by RMM Memory Resource used by cudf-polars for the input / output `phase`. This metric can be enabled by setting `CUDF_POLARS_LOG_TRACES_MEMORY=1`. |
 | `rmm_current_count_{phase}` | int | The current number of allocations made by RMM Memory Resource used by cudf-polars for the input / output `phase`. This metric can be enabled by setting `CUDF_POLARS_LOG_TRACES_MEMORY=1`. |
 | `rmm_peak_bytes_{phase}` | int | The peak number of bytes allocated by RMM Memory Resource used by cudf-polars for the input / output `phase`. This metric can be enabled by setting `CUDF_POLARS_LOG_TRACES_MEMORY=1`. |

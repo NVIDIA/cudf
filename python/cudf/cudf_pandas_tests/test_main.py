@@ -1,6 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+import re
 import subprocess
 import tempfile
 import textwrap
@@ -57,6 +58,16 @@ def test_run_cudf_pandas_line_profile_preserves_file(tmp_path):
     res = _run_python(cudf_pandas=True, command=f"--line-profile {script}")
     assert "CONTENT: hello-sibling" in res
     assert str(script) in res
+
+
+def test_run_cudf_pandas_line_profile_reports_script_line_numbers(tmp_path):
+    # ``--line-profile`` must report the line numbers of the original script.
+    script = tmp_path / "script.py"
+    script.write_text("x = 1\ny = 2\nz = 3\nprint(x + y + z)\n")
+
+    res = _run_python(cudf_pandas=True, command=f"--line-profile {script}")
+    reported = re.findall(r"^[│|]\s*(\d+)\s*[│|]", res, re.MULTILINE)
+    assert reported == ["1", "2", "3", "4"]
 
 
 def test_run_cudf_pandas_with_script_with_cmd_args():

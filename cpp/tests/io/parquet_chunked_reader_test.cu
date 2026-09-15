@@ -1357,12 +1357,13 @@ TEST_F(ParquetChunkedReaderInputLimitTest, V2PagesWithLevels)
   auto valid =
     cudf::detail::make_counting_transform_iterator(0, [](auto i) { return i % 10 != 0; });
   int64s_col flat(values, values + num_rows, valid);
+  int64s_col all_null(values, values + num_rows, cuda::make_constant_iterator(false));
   int32s_col child(values, values + 2 * num_rows, valid);
   auto offsets = cudf::detail::make_counting_transform_iterator(0, [](auto i) { return 2 * i; });
   int32s_col list_offsets(offsets, offsets + num_rows + 1);
   auto const lists = cudf::make_lists_column(
     num_rows, list_offsets.release(), child.release(), 0, rmm::device_buffer{});
-  auto const expected = cudf::table_view{{flat, lists->view()}};
+  auto const expected = cudf::table_view{{flat, all_null, lists->view()}};
   auto const filepath = temp_env->get_temp_filepath("ScratchLevels.parquet");
   auto const options =
     cudf::io::parquet_writer_options::builder(cudf::io::sink_info{filepath}, expected)

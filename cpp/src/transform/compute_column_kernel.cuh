@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -14,7 +14,7 @@
 #include <cudf/table/table_device_view.cuh>
 #include <cudf/types.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
+#include <cuda/stream>
 
 namespace cudf::detail {
 /**
@@ -67,10 +67,10 @@ void launch_compute_column_kernel(table_device_view const& table_device,
                                   mutable_column_device_view& mutable_output_device,
                                   cudf::detail::grid_1d const& config,
                                   size_t shmem_per_block,
-                                  rmm::cuda_stream_view stream)
+                                  cuda::stream_ref stream)
 {
   compute_column_kernel<MAX_BLOCK_SIZE, HasNull, HasComplexType>
-    <<<config.num_blocks, config.num_threads_per_block, shmem_per_block, stream.value()>>>(
+    <<<config.num_blocks, config.num_threads_per_block, shmem_per_block, stream.get()>>>(
       table_device, device_expression_data, mutable_output_device);
   CUDF_CUDA_TRY(cudaGetLastError());
 }

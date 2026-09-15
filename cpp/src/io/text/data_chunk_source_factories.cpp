@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -45,7 +45,7 @@ class datasource_chunk_reader : public data_chunk_reader {
   };
 
   std::unique_ptr<device_data_chunk> get_next_chunk(std::size_t read_size,
-                                                    rmm::cuda_stream_view stream) override
+                                                    cuda::stream_ref stream) override
   {
     CUDF_FUNC_RANGE();
 
@@ -78,7 +78,7 @@ class datasource_chunk_reader : public data_chunk_reader {
         stream);
 
       // record the host-to-device copy.
-      CUDF_CUDA_TRY(cudaEventRecord(h_ticket.event, stream.value()));
+      CUDF_CUDA_TRY(cudaEventRecord(h_ticket.event, stream.get()));
     }
 
     _offset += read_size;
@@ -114,7 +114,7 @@ class istream_data_chunk_reader : public data_chunk_reader {
   };
 
   std::unique_ptr<device_data_chunk> get_next_chunk(std::size_t read_size,
-                                                    rmm::cuda_stream_view stream) override
+                                                    cuda::stream_ref stream) override
   {
     CUDF_FUNC_RANGE();
 
@@ -146,7 +146,7 @@ class istream_data_chunk_reader : public data_chunk_reader {
       stream);
 
     // record the host-to-device copy.
-    CUDF_CUDA_TRY(cudaEventRecord(h_ticket.event, stream.value()));
+    CUDF_CUDA_TRY(cudaEventRecord(h_ticket.event, stream.get()));
 
     // return the device buffer so it can be processed.
     return std::make_unique<device_uvector_data_chunk>(std::move(chunk));
@@ -172,7 +172,7 @@ class host_span_data_chunk_reader : public data_chunk_reader {
   }
 
   std::unique_ptr<device_data_chunk> get_next_chunk(std::size_t read_size,
-                                                    rmm::cuda_stream_view stream) override
+                                                    cuda::stream_ref stream) override
   {
     CUDF_FUNC_RANGE();
 
@@ -212,7 +212,7 @@ class device_span_data_chunk_reader : public data_chunk_reader {
   }
 
   std::unique_ptr<device_data_chunk> get_next_chunk(std::size_t read_size,
-                                                    rmm::cuda_stream_view stream) override
+                                                    cuda::stream_ref stream) override
   {
     // limit the read size to the number of bytes remaining in the device_span.
     read_size = std::min(read_size, _data.size() - _position);

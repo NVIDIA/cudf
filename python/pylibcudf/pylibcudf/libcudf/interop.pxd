@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 from libc.stdint cimport int32_t
 from libcpp.memory cimport shared_ptr, unique_ptr
@@ -175,7 +175,7 @@ cdef extern from *:
     ArrowDeviceArray* to_arrow_device_raw(
       ViewType const& obj,
       PyObject* owner,
-      cudaStream_t stream       = cudf::get_default_stream(),
+      cuda::stream_ref stream       = cudf::get_default_stream(),
       rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref()) {
       auto tmp = cudf::to_arrow_device(obj, stream, mr);
 

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -12,7 +12,7 @@
 #include <cudf/dictionary/update_keys.hpp>
 #include <cudf/utilities/error.hpp>
 
-#include <thrust/iterator/transform_iterator.h>
+#include <cuda/iterator>
 
 #include <vector>
 
@@ -34,7 +34,7 @@ TEST_F(DictionarySetKeysTest, StringsKeys)
   cudf::test::strings_column_wrapper expected(
     h_expected.begin(),
     h_expected.end(),
-    thrust::make_transform_iterator(h_expected.begin(), [](auto str) { return str != nullptr; }));
+    cuda::transform_iterator(h_expected.begin(), [](auto str) { return str != nullptr; }));
   auto decoded = cudf::dictionary::decode(result->view());
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*decoded, expected);
 }
@@ -105,4 +105,20 @@ TEST_F(DictionarySetKeysTest, MatchDictionaries)
   auto result2   = cudf::dictionary::decode(cudf::dictionary_column_view(results[1]->view()));
   auto expected2 = cudf::dictionary::decode(cudf::dictionary_column_view(col2));
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(result2->view(), expected2->view());
+}
+
+TEST_F(DictionarySetKeysTest, DuplicateKeys)
+{
+  auto input = cudf::test::strings_column_wrapper{
+    "eee", "aaa", "ddd", "bbb", "ccc", "ccc", "ccc", "eee", "aaa"};
+  auto dictionary = cudf::dictionary::encode(input);
+
+  auto new_keys = cudf::test::strings_column_wrapper{"fff", "eee", "ccc", "aaa", "ccc"};
+  auto result   = cudf::dictionary::set_keys(dictionary->view(), new_keys);
+  EXPECT_TRUE(result->null_count() > 0);  // duplicate keys should result in nulls
+
+  auto expected = cudf::test::strings_column_wrapper(
+    {"eee", "aaa", "", "", "ccc", "ccc", "ccc", "eee", "aaa"}, {1, 1, 0, 0, 1, 1, 1, 1, 1});
+  auto decoded = cudf::dictionary::decode(result->view());
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(*decoded, expected);
 }

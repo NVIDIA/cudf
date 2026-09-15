@@ -1,11 +1,11 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
 #include <cudf/detail/utilities/linked_column.hpp>
 
-#include <thrust/iterator/transform_iterator.h>
+#include <cuda/iterator>
 
 namespace cudf::detail {
 
@@ -23,7 +23,7 @@ linked_column_view::linked_column_view(linked_column_view* parent, column_view c
 
 linked_column_view::operator column_view() const
 {
-  auto child_it = thrust::make_transform_iterator(
+  auto child_it = cuda::transform_iterator(
     children.begin(), [](auto const& c) { return static_cast<column_view>(*c); });
   return column_view(this->type(),
                      this->size(),
@@ -36,7 +36,7 @@ linked_column_view::operator column_view() const
 
 LinkedColVector table_to_linked_columns(table_view const& table)
 {
-  auto linked_it = thrust::make_transform_iterator(
+  auto linked_it = cuda::transform_iterator(
     table.begin(), [](auto const& c) { return std::make_shared<linked_column_view>(c); });
   return LinkedColVector(linked_it, linked_it + table.num_columns());
 }

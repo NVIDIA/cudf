@@ -11,12 +11,12 @@
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_uvector.hpp>
 
 #include <cuco/hyperloglog_ref.cuh>
 #include <cuda/functional>
 #include <cuda/std/span>
+#include <cuda/stream>
 
 #include <cstddef>
 #include <cstdint>
@@ -85,7 +85,7 @@ class approx_distinct_count {
                         std::int32_t precision,
                         null_policy null_handling,
                         nan_policy nan_handling,
-                        rmm::cuda_stream_view stream,
+                        cuda::stream_ref stream,
                         cuda::mr::any_resource<cuda::mr::device_accessible> mr);
 
   /**
@@ -111,7 +111,7 @@ class approx_distinct_count {
                         cudf::approx_distinct_count::desired_standard_error error,
                         null_policy null_handling,
                         nan_policy nan_handling,
-                        rmm::cuda_stream_view stream,
+                        cuda::stream_ref stream,
                         cuda::mr::any_resource<cuda::mr::device_accessible> mr);
 
   /**
@@ -154,7 +154,7 @@ class approx_distinct_count {
    * @param input Table whose rows will be added
    * @param stream CUDA stream used for device memory operations and kernel launches
    */
-  void add(table_view const& input, rmm::cuda_stream_view stream);
+  void add(table_view const& input, cuda::stream_ref stream);
 
   /**
    * @brief Merges another sketch into this sketch
@@ -168,7 +168,7 @@ class approx_distinct_count {
    * @param other The sketch to merge into this sketch
    * @param stream CUDA stream used for device memory operations and kernel launches
    */
-  void merge(approx_distinct_count const& other, rmm::cuda_stream_view stream);
+  void merge(approx_distinct_count const& other, cuda::stream_ref stream);
 
   /**
    * @brief Merges a sketch from raw bytes into this sketch
@@ -183,7 +183,7 @@ class approx_distinct_count {
    * @param sketch_span The sketch bytes to merge into this sketch
    * @param stream CUDA stream used for device memory operations and kernel launches
    */
-  void merge(cuda::std::span<cuda::std::byte const> sketch_span, rmm::cuda_stream_view stream);
+  void merge(cuda::std::span<cuda::std::byte const> sketch_span, cuda::stream_ref stream);
 
   /**
    * @brief Estimates the approximate number of distinct rows in the sketch
@@ -191,7 +191,7 @@ class approx_distinct_count {
    * @param stream CUDA stream used for device memory operations and kernel launches
    * @return Approximate number of distinct rows
    */
-  [[nodiscard]] std::size_t estimate(rmm::cuda_stream_view stream) const;
+  [[nodiscard]] std::size_t estimate(cuda::stream_ref stream) const;
 
   /**
    * @brief Gets the raw sketch bytes

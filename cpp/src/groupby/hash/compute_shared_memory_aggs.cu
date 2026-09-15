@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -10,6 +10,7 @@
 #include "single_pass_functors.cuh"
 
 #include <cudf/aggregation.hpp>
+#include <cudf/detail/utilities/assert.cuh>
 #include <cudf/detail/utilities/cuda.cuh>
 #include <cudf/detail/utilities/cuda.hpp>
 #include <cudf/detail/utilities/grid_1d.cuh>
@@ -17,16 +18,103 @@
 #include <cudf/table/table_device_view.cuh>
 #include <cudf/types.hpp>
 #include <cudf/utilities/bit.hpp>
-
-#include <rmm/cuda_stream_view.hpp>
+#include <cudf/utilities/error.hpp>
+#include <cudf/utilities/type_dispatcher.hpp>
 
 #include <cooperative_groups.h>
+#include <cuda/std/algorithm>
 #include <cuda/std/cstddef>
+#include <cuda/std/type_traits>
+#include <cuda/std/utility>
+#include <cuda/stream>
+
+#include <cstddef>
+#include <cstdint>
 
 namespace cudf::groupby::detail::hash {
 namespace {
 /// Shared memory data alignment
 CUDF_HOST_DEVICE cudf::size_type constexpr ALIGNMENT = 16;
+
+// Dictionary and nested value columns are rejected before this kernel is launched.
+struct unsupported_shared_memory_type {};
+
+template <cudf::type_id Id>
+struct dispatch_shared_memory_type {
+  using type = cuda::std::conditional_t<Id == cudf::type_id::DICTIONARY32 or
+                                          Id == cudf::type_id::LIST or Id == cudf::type_id::STRUCT,
+                                        unsupported_shared_memory_type,
+                                        cudf::id_to_type<Id>>;
+};
+
+// Compound hash aggregations are decomposed into these simple aggregations before this kernel is
+// launched. SUM_OVERFLOW is the only other simple hash aggregation and is explicitly rejected by
+// is_shared_memory_compatible.
+template <typename F, typename... Ts>
+__device__ auto dispatch_shared_memory_aggregation(cudf::aggregation::Kind kind,
+                                                   F&& f,
+                                                   Ts&&... args)
+{
+  switch (kind) {
+    case cudf::aggregation::SUM:
+      return f.template operator()<cudf::aggregation::SUM>(cuda::std::forward<Ts>(args)...);
+    case cudf::aggregation::PRODUCT:
+      return f.template operator()<cudf::aggregation::PRODUCT>(cuda::std::forward<Ts>(args)...);
+    case cudf::aggregation::MIN:
+      return f.template operator()<cudf::aggregation::MIN>(cuda::std::forward<Ts>(args)...);
+    case cudf::aggregation::MAX:
+      return f.template operator()<cudf::aggregation::MAX>(cuda::std::forward<Ts>(args)...);
+    case cudf::aggregation::COUNT_VALID:
+      return f.template operator()<cudf::aggregation::COUNT_VALID>(cuda::std::forward<Ts>(args)...);
+    case cudf::aggregation::COUNT_ALL:
+      return f.template operator()<cudf::aggregation::COUNT_ALL>(cuda::std::forward<Ts>(args)...);
+    case cudf::aggregation::SUM_OF_SQUARES:
+      return f.template operator()<cudf::aggregation::SUM_OF_SQUARES>(
+        cuda::std::forward<Ts>(args)...);
+    case cudf::aggregation::ARGMAX:
+      return f.template operator()<cudf::aggregation::ARGMAX>(cuda::std::forward<Ts>(args)...);
+    case cudf::aggregation::ARGMIN:
+      return f.template operator()<cudf::aggregation::ARGMIN>(cuda::std::forward<Ts>(args)...);
+    default: CUDF_UNREACHABLE("Unsupported shared memory aggregation.");
+  }
+}
+
+template <typename Element>
+struct dispatch_shared_memory_aggregation_fn {
+  template <cudf::aggregation::Kind kind, typename F, typename... Ts>
+  __device__ auto operator()(F&& f, Ts&&... args) const
+  {
+    return f.template operator()<Element, kind>(cuda::std::forward<Ts>(args)...);
+  }
+};
+
+struct dispatch_shared_memory_source_fn {
+  template <typename Element, typename F, typename... Ts>
+  __device__ auto operator()(cudf::aggregation::Kind kind, F&& f, Ts&&... args) const
+  {
+    if constexpr (cuda::std::is_same_v<Element, unsupported_shared_memory_type>) {
+      CUDF_UNREACHABLE("Unsupported shared memory aggregation type.");
+    } else {
+      return dispatch_shared_memory_aggregation(kind,
+                                                dispatch_shared_memory_aggregation_fn<Element>{},
+                                                cuda::std::forward<F>(f),
+                                                cuda::std::forward<Ts>(args)...);
+    }
+  }
+};
+
+template <typename F, typename... Ts>
+__device__ auto dispatch_shared_memory_type_and_aggregation(cudf::data_type type,
+                                                            cudf::aggregation::Kind kind,
+                                                            F&& f,
+                                                            Ts&&... args)
+{
+  return cudf::type_dispatcher<dispatch_shared_memory_type>(type,
+                                                            dispatch_shared_memory_source_fn{},
+                                                            kind,
+                                                            cuda::std::forward<F>(f),
+                                                            cuda::std::forward<Ts>(args)...);
+}
 
 // Allocates shared memory required for output columns. Exits if there is insufficient memory to
 // perform shared memory aggregation for the current output column.
@@ -81,7 +169,7 @@ __device__ void initialize_shmem_aggregations(cooperative_groups::thread_block c
         reinterpret_cast<cuda::std::byte*>(shmem_agg_storage + shmem_agg_res_offsets[col_idx]);
       auto target_mask =
         reinterpret_cast<bool*>(shmem_agg_storage + shmem_agg_mask_offsets[col_idx]);
-      cudf::detail::dispatch_type_and_aggregation(output_values.column(col_idx).type(),
+      dispatch_shared_memory_type_and_aggregation(output_values.column(col_idx).type(),
                                                   d_agg_kinds[col_idx],
                                                   initialize_shmem{},
                                                   target,
@@ -116,7 +204,7 @@ __device__ void compute_pre_aggregations(cudf::size_type col_start,
         bool* target_mask =
           reinterpret_cast<bool*>(shmem_agg_storage + shmem_agg_mask_offsets[col_idx]);
 
-        cudf::detail::dispatch_type_and_aggregation(source_col.type(),
+        dispatch_shared_memory_type_and_aggregation(source_col.type(),
                                                     d_agg_kinds[col_idx],
                                                     shmem_element_aggregator{},
                                                     target,
@@ -154,7 +242,7 @@ __device__ void compute_final_aggregations(cooperative_groups::thread_block cons
         reinterpret_cast<cuda::std::byte*>(shmem_agg_storage + agg_res_offsets[col_idx]);
       bool* source_mask = reinterpret_cast<bool*>(shmem_agg_storage + agg_mask_offsets[col_idx]);
 
-      cudf::detail::dispatch_type_and_aggregation(input_values.column(col_idx).type(),
+      dispatch_shared_memory_type_and_aggregation(input_values.column(col_idx).type(),
                                                   d_agg_kinds[col_idx],
                                                   gmem_element_aggregator{},
                                                   target_col,
@@ -295,7 +383,7 @@ void compute_shared_memory_aggs(cudf::size_type grid_size,
                                 cudf::table_device_view input_values,
                                 cudf::mutable_table_device_view output_values,
                                 cudf::aggregation::Kind const* d_agg_kinds,
-                                rmm::cuda_stream_view stream)
+                                cuda::stream_ref stream)
 {
   // For each aggregation, need one offset determining where the aggregation is
   // performed, another indicating the validity of the aggregation
@@ -304,17 +392,19 @@ void compute_shared_memory_aggs(cudf::size_type grid_size,
   CUDF_EXPECTS(available_shmem_size > offsets_size * 2,
                "No enough space for shared memory aggregations");
   auto const shmem_agg_size = available_shmem_size - offsets_size * 2;
-  single_pass_shmem_aggs_kernel<<<grid_size, GROUPBY_BLOCK_SIZE, available_shmem_size, stream>>>(
-    num_input_rows,
-    row_bitmask,
-    local_mapping_index,
-    global_mapping_index,
-    block_cardinality,
-    input_values,
-    output_values,
-    d_agg_kinds,
-    shmem_agg_size,
-    offsets_size);
+  single_pass_shmem_aggs_kernel<<<grid_size,
+                                  GROUPBY_BLOCK_SIZE,
+                                  available_shmem_size,
+                                  stream.get()>>>(num_input_rows,
+                                                  row_bitmask,
+                                                  local_mapping_index,
+                                                  global_mapping_index,
+                                                  block_cardinality,
+                                                  input_values,
+                                                  output_values,
+                                                  d_agg_kinds,
+                                                  shmem_agg_size,
+                                                  offsets_size);
   CUDF_CUDA_TRY(cudaGetLastError());
 }
 }  // namespace cudf::groupby::detail::hash

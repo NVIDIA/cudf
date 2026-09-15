@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -18,13 +18,11 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
-
 #include <cuda/functional>
 #include <cuda/iterator>
+#include <cuda/stream>
 #include <thrust/execution_policy.h>
 #include <thrust/fill.h>
-#include <thrust/iterator/permutation_iterator.h>
 
 namespace cudf {
 namespace strings {
@@ -76,7 +74,7 @@ struct extract_fn {
 //
 std::unique_ptr<table> extract(strings_column_view const& input,
                                regex_program const& prog,
-                               rmm::cuda_stream_view stream,
+                               cuda::stream_ref stream,
                                rmm::device_async_resource_ref mr)
 {
   // create device object from regex_program
@@ -98,7 +96,7 @@ std::unique_ptr<table> extract(strings_column_view const& input,
   std::vector<std::unique_ptr<column>> results(groups);
   auto make_strings_lambda = [&](size_type column_index) {
     // this iterator transposes the extract results into column order
-    auto indices_itr = thrust::make_permutation_iterator(
+    auto indices_itr = cuda::make_permutation_iterator(
       indices.begin(),
       cudf::detail::make_counting_transform_iterator(
         0, cuda::proclaim_return_type<size_type>([column_index, groups] __device__(size_type idx) {
@@ -146,7 +144,7 @@ struct extract_single_fn {
 std::unique_ptr<column> extract_single(strings_column_view const& input,
                                        regex_program const& prog,
                                        size_type group,
-                                       rmm::cuda_stream_view stream,
+                                       cuda::stream_ref stream,
                                        rmm::device_async_resource_ref mr)
 {
   if (input.is_empty()) { return make_empty_column(type_id::STRING); }
@@ -167,7 +165,7 @@ std::unique_ptr<column> extract_single(strings_column_view const& input,
   launch_transform_kernel(
     extract_single_fn{*d_strings, group}, *d_prog, indices.data(), input.size(), stream);
 
-  return make_strings_column(indices.begin(), indices.end(), stream, mr);
+  return cudf::make_strings_column(indices, stream, mr);
 }
 
 }  // namespace detail
@@ -176,7 +174,7 @@ std::unique_ptr<column> extract_single(strings_column_view const& input,
 
 std::unique_ptr<table> extract(strings_column_view const& input,
                                regex_program const& prog,
-                               rmm::cuda_stream_view stream,
+                               cuda::stream_ref stream,
                                rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
@@ -186,7 +184,7 @@ std::unique_ptr<table> extract(strings_column_view const& input,
 std::unique_ptr<column> extract_single(strings_column_view const& input,
                                        regex_program const& prog,
                                        size_type group,
-                                       rmm::cuda_stream_view stream,
+                                       cuda::stream_ref stream,
                                        rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();

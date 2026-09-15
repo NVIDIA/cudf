@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from rmm.mr import DeviceMemoryResource
@@ -10,9 +10,7 @@ from pylibcudf.utils import CudaStreamLike
 
 class PackedColumns:
     def __init__(self): ...
-    def release(
-        self, stream: CudaStreamLike | None = None
-    ) -> tuple[memoryview[bytes], gpumemoryview]: ...
+    def release(self) -> tuple[memoryview[bytes], gpumemoryview]: ...
 
 def pack(
     input: Table,

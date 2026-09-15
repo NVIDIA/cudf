@@ -1,4 +1,7 @@
-.. _unicode_limitations:
+.. _mr::md_doxygen_unicode:
 
-.. include:: ../../../../cpp/doxygen/unicode.md
-   :parser: myst_parser.sphinx_
+Unicode Limitations
+===================
+
+.. flatdoxygenpage:: md_doxygen_unicode
+   :project: libcudf

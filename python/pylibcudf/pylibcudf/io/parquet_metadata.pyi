@@ -1,8 +1,13 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+from collections.abc import Sequence
+
 from pylibcudf.io.types import SourceInfo
+from pylibcudf.table import Table
 from pylibcudf.types import DataType
+from pylibcudf.utils import CudaStreamLike
+from rmm.pylibrmm.memory_resource import DeviceMemoryResource
 
 try:
     from collections.abc import Buffer
@@ -12,12 +17,14 @@ except ImportError:
 __all__ = [
     "ColumnChunk",
     "ColumnChunkMetaData",
+    "ColumnChunkStatistics",
     "FileMetaData",
     "ParquetColumnSchema",
     "ParquetMetadata",
     "ParquetSchema",
     "RowGroup",
     "SortingColumn",
+    "read_parquet_column_chunk_bounds",
     "read_parquet_footers",
     "read_parquet_metadata",
 ]
@@ -54,6 +61,8 @@ class FileMetaData:
     def row_groups(self) -> list[RowGroup]: ...
     @property
     def row_group_num_rows(self) -> list[int]: ...
+    @property
+    def columnchunk_metadata(self) -> dict[str, list[int]]: ...
 
 class SortingColumn:
     @property
@@ -81,6 +90,22 @@ class ColumnChunk:
     @property
     def meta_data(self) -> ColumnChunkMetaData: ...
 
+class ColumnChunkStatistics:
+    @property
+    def has_min_max(self) -> bool: ...
+    @property
+    def min_encoded(self) -> bytes | None: ...
+    @property
+    def max_encoded(self) -> bytes | None: ...
+    @property
+    def null_count(self) -> int | None: ...
+    @property
+    def distinct_count(self) -> int | None: ...
+    @property
+    def is_min_value_exact(self) -> bool | None: ...
+    @property
+    def is_max_value_exact(self) -> bool | None: ...
+
 class ColumnChunkMetaData:
     @property
     def path_in_schema(self) -> list[str]: ...
@@ -90,6 +115,8 @@ class ColumnChunkMetaData:
     def total_uncompressed_size(self) -> int: ...
     @property
     def total_compressed_size(self) -> int: ...
+    @property
+    def statistics(self) -> ColumnChunkStatistics: ...
 
 class RowGroup:
     @property
@@ -109,3 +136,9 @@ class RowGroup:
 
 def read_parquet_metadata(src_info: SourceInfo) -> ParquetMetadata: ...
 def read_parquet_footers(src_info: SourceInfo) -> list[FileMetaData]: ...
+def read_parquet_column_chunk_bounds(
+    file_metadatas: Sequence[FileMetaData],
+    columns: Sequence[str],
+    stream: CudaStreamLike | None = None,
+    mr: DeviceMemoryResource | None = None,
+) -> Table: ...

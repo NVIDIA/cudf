@@ -405,7 +405,7 @@ def to_json(
                 _plc_write_json(
                     cudf_val,
                     colnames,
-                    path_or_buf,
+                    file_obj,
                     compression,
                     *args,
                     **kwargs,

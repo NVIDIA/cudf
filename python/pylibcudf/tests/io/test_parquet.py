@@ -1,7 +1,8 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import io
 import os
+import struct
 
 import pyarrow as pa
 import pyarrow.compute as pc
@@ -104,6 +105,53 @@ def test_read_parquet_basic(
     # No filtering done
     assert res.num_row_groups_after_stats_filter is None
     assert res.num_row_groups_after_bloom_filter is None
+
+
+def test_read_parquet_column_field_ids(binary_source_or_sink):
+    schema = pa.schema(
+        [
+            pa.field(
+                "col_int64",
+                pa.int64(),
+                metadata={b"PARQUET:field_id": b"10"},
+            ),
+            pa.field(
+                "col_string",
+                pa.string(),
+                metadata={b"PARQUET:field_id": b"20"},
+            ),
+            pa.field(
+                "col_bool",
+                pa.bool_(),
+                metadata={b"PARQUET:field_id": b"30"},
+            ),
+        ]
+    )
+    pa_table = pa.Table.from_arrays(
+        [
+            pa.array([1, 2, 3], type=pa.int64()),
+            pa.array(["a", "b", "c"], type=pa.string()),
+            pa.array([True, False, True], type=pa.bool_()),
+        ],
+        schema=schema,
+    )
+    source = make_source(
+        binary_source_or_sink, pa_table, **_COMMON_PARQUET_SOURCE_KWARGS
+    )
+    source_info = plc.io.SourceInfo([source])
+    options = (
+        plc.io.parquet.ParquetReaderOptions.builder(source_info)
+        .column_field_ids([30, 10])
+        .build()
+    )
+
+    res = plc.io.parquet.read_parquet(options)
+
+    assert_table_and_meta_eq(
+        pa_table.select(["col_bool", "col_int64"]),
+        res,
+        check_field_nullability=False,
+    )
 
 
 @pytest.mark.parametrize("if_prune_rowgroup,result", [(True, 0), (False, 1)])
@@ -234,12 +282,14 @@ def test_read_parquet_from_device_buffers(
         binary_source_or_sink, pa_table, **_COMMON_PARQUET_SOURCE_KWARGS
     )
 
-    rmm_buf = DeviceBuffer.to_device(
-        get_bytes_from_source(source), plc.utils._get_stream(stream)
-    )
-    buf = FooSpan(rmm_buf) if use_foo_span else rmm_buf
-
+    # to_device() is documented as fully async on a non-default stream, and
+    # the caller is responsible for keeping the source bytes alive until
+    # synchronize_stream() below runs.
+    # See https://github.com/rapidsai/rmm/issues/2521
+    src_bytes = get_bytes_from_source(source)
+    rmm_buf = DeviceBuffer.to_device(src_bytes, plc.utils._get_stream(stream))
     synchronize_stream(stream)
+    buf = FooSpan(rmm_buf) if use_foo_span else rmm_buf
 
     options = plc.io.parquet.ParquetReaderOptions.builder(
         plc.io.SourceInfo([buf] * num_buffers)
@@ -447,6 +497,202 @@ def test_file_metadata_row_groups_and_column_chunks() -> None:
             assert meta_data.path_in_schema[-1] == pa_col_chunk.path_in_schema
 
 
+def test_file_metadata_columnchunk_statistics() -> None:
+    table = pa.table(
+        {
+            "a": pa.array([1, 2, 3, None], type=pa.int64()),
+            "s": pa.array(["aa", "bb", "cc", None]),
+        }
+    )
+    sink = io.BytesIO()
+    write_table(table, sink, row_group_size=2)
+    sink.seek(0)
+
+    source_info = plc.io.SourceInfo([sink])
+    file_metadata = plc.io.parquet_metadata.read_parquet_footers(source_info)[
+        0
+    ]
+
+    expected = [
+        (1, 2, 0, b"aa", b"bb"),
+        (3, 3, 1, b"cc", b"cc"),
+    ]
+    for row_group, (
+        min_a,
+        max_a,
+        null_count,
+        min_s,
+        max_s,
+    ) in zip(file_metadata.row_groups, expected, strict=True):
+        stats_by_name = {
+            column.meta_data.path_in_schema[-1]: column.meta_data.statistics
+            for column in row_group.columns
+        }
+
+        a_stats = stats_by_name["a"]
+        assert a_stats.has_min_max
+        assert a_stats.min_encoded == struct.pack("<q", min_a)
+        assert a_stats.max_encoded == struct.pack("<q", max_a)
+        assert a_stats.null_count == null_count
+        assert a_stats.distinct_count is None
+
+        s_stats = stats_by_name["s"]
+        assert s_stats.has_min_max
+        assert s_stats.min_encoded == min_s
+        assert s_stats.max_encoded == max_s
+        assert s_stats.null_count == null_count
+        assert s_stats.distinct_count is None
+
+
+def test_file_metadata_columnchunk_statistics_without_minmax() -> None:
+    table = pa.table({"a": pa.array([1, 2], type=pa.int64())})
+    sink = io.BytesIO()
+    write_table(table, sink, write_statistics=False)
+    sink.seek(0)
+
+    source_info = plc.io.SourceInfo([sink])
+    file_metadata = plc.io.parquet_metadata.read_parquet_footers(source_info)[
+        0
+    ]
+    statistics = file_metadata.row_groups[0].columns[0].meta_data.statistics
+
+    assert not statistics.has_min_max
+    assert statistics.min_encoded is None
+    assert statistics.max_encoded is None
+    assert statistics.is_min_value_exact is None
+    assert statistics.is_max_value_exact is None
+
+
+def test_read_parquet_column_chunk_bounds(tmp_path) -> None:
+    table_0 = pa.table(
+        {
+            "a": pa.array([1, 2, 3, 4], type=pa.int64()),
+            "s": ["b", "a", "d", "c"],
+            "ts": pa.array([0, 1, 2, 3], type=pa.timestamp("us")),
+            "n": pa.array([None, 2, None, None], type=pa.int64()),
+        }
+    )
+    table_1 = pa.table(
+        {
+            "a": pa.array([10, 20, 30, 40], type=pa.int64()),
+            "s": ["z", "y", "x", "w"],
+            "ts": pa.array([10, 20, 30, 40], type=pa.timestamp("us")),
+            "n": pa.array([5, None, None, 8], type=pa.int64()),
+        }
+    )
+    path_0 = tmp_path / "part-0.parquet"
+    path_1 = tmp_path / "part-1.parquet"
+    write_table(table_0, path_0, row_group_size=2)
+    write_table(table_1, path_1, row_group_size=2)
+
+    file_metadatas = plc.io.parquet_metadata.read_parquet_footers(
+        plc.io.SourceInfo([path_0, path_1])
+    )
+
+    bounds = plc.io.parquet_metadata.read_parquet_column_chunk_bounds(
+        file_metadatas,
+        columns=["a", "s", "ts", "n"],
+    )
+    columns = bounds.columns()
+
+    assert len(columns) == 10
+    assert columns[0].to_pylist() == [0, 0, 1, 1]
+    assert columns[1].to_pylist() == [0, 1, 0, 1]
+
+    a_min, a_max = columns[2], columns[3]
+    assert a_min.to_pylist() == [1, 3, 10, 30]
+    assert a_max.to_pylist() == [2, 4, 20, 40]
+
+    s_min, s_max = columns[4], columns[5]
+    assert s_min.to_pylist() == ["a", "c", "y", "w"]
+    assert s_max.to_pylist() == ["b", "d", "z", "x"]
+
+    ts_min, ts_max = columns[6], columns[7]
+    assert ts_min.to_arrow().equals(
+        pa.array([0, 2, 10, 30], type=pa.timestamp("us"))
+    )
+    assert ts_max.to_arrow().equals(
+        pa.array([1, 3, 20, 40], type=pa.timestamp("us"))
+    )
+
+    n_min, n_max = columns[8], columns[9]
+    assert n_min.to_pylist() == [2, None, 5, 8]
+    assert n_max.to_pylist() == [2, None, 5, 8]
+
+
+def test_read_parquet_column_chunk_bounds_without_minmax(tmp_path) -> None:
+    table = pa.table({"a": pa.array([1, 2], type=pa.int64())})
+    path = tmp_path / "no-stats.parquet"
+    write_table(table, path, write_statistics=False)
+
+    file_metadatas = plc.io.parquet_metadata.read_parquet_footers(
+        plc.io.SourceInfo([path])
+    )
+
+    bounds = plc.io.parquet_metadata.read_parquet_column_chunk_bounds(
+        file_metadatas,
+        columns=["a"],
+    )
+    columns = bounds.columns()
+
+    assert len(columns) == 4
+    assert columns[0].to_pylist() == [0]
+    assert columns[1].to_pylist() == [0]
+    min_col, max_col = columns[2], columns[3]
+    assert min_col.to_pylist() == [None]
+    assert max_col.to_pylist() == [None]
+
+
+def test_read_parquet_column_chunk_bounds_invalid_inputs(tmp_path) -> None:
+    table = pa.table({"a": pa.array([1, 2], type=pa.int64())})
+    path = tmp_path / "input.parquet"
+    write_table(table, path)
+
+    file_metadatas = plc.io.parquet_metadata.read_parquet_footers(
+        plc.io.SourceInfo([path])
+    )
+
+    with pytest.raises(
+        ValueError, match="Parquet leaf column path not found: missing"
+    ):
+        plc.io.parquet_metadata.read_parquet_column_chunk_bounds(
+            file_metadatas,
+            columns=["missing"],
+        )
+
+    with pytest.raises(TypeError, match="columns must contain only strings"):
+        plc.io.parquet_metadata.read_parquet_column_chunk_bounds(
+            file_metadatas,
+            columns=[1],
+        )
+
+    with pytest.raises(
+        TypeError, match="columns must be a sequence of strings"
+    ):
+        plc.io.parquet_metadata.read_parquet_column_chunk_bounds(
+            file_metadatas,
+            columns="a",
+        )
+
+    with pytest.raises(
+        TypeError,
+        match="file_metadatas must contain only FileMetaData objects",
+    ):
+        plc.io.parquet_metadata.read_parquet_column_chunk_bounds(
+            [object()],
+            columns=["a"],
+        )
+
+    with pytest.raises(
+        ValueError,
+        match="without source metadata",
+    ):
+        plc.io.parquet_metadata.read_parquet_column_chunk_bounds(
+            [],
+            columns=["a"],
+        )
+
+
 def test_file_metadata_wrappers_not_directly_constructible() -> None:
     with pytest.raises(
         ValueError, match="SortingColumn cannot be constructed directly"
@@ -460,6 +706,11 @@ def test_file_metadata_wrappers_not_directly_constructible() -> None:
         ValueError, match="ColumnChunkMetaData cannot be constructed directly"
     ):
         plc.io.parquet_metadata.ColumnChunkMetaData()
+    with pytest.raises(
+        ValueError,
+        match="ColumnChunkStatistics cannot be constructed directly",
+    ):
+        plc.io.parquet_metadata.ColumnChunkStatistics()
     with pytest.raises(
         ValueError, match="RowGroup cannot be constructed directly"
     ):
@@ -499,6 +750,40 @@ def test_file_metadata_row_group_sorting_columns(tmp_path) -> None:
             assert sorting_column.nulls_first == pa_sorting_column.nulls_first
 
 
+def test_file_metadata_columnchunk_metadata() -> None:
+    table = pa.table(
+        {
+            "a": list(range(100)),
+            "b": [x * 10 for x in range(100)],
+        }
+    )
+    sink = io.BytesIO()
+    write_table(table, sink, row_group_size=25)
+    sink.seek(0)
+    parquet_file = pq.ParquetFile(sink)
+    sink.seek(0)
+
+    source_info = plc.io.SourceInfo([sink])
+    file_metadata = plc.io.parquet_metadata.read_parquet_footers(source_info)[
+        0
+    ]
+
+    result = file_metadata.columnchunk_metadata
+    assert set(result) == {"a", "b"}
+
+    expected: dict[str, list[int]] = {"a": [], "b": []}
+    for rg_idx in range(parquet_file.metadata.num_row_groups):
+        pa_row_group = parquet_file.metadata.row_group(rg_idx)
+        for col_idx in range(pa_row_group.num_columns):
+            pa_col = pa_row_group.column(col_idx)
+            expected[pa_col.path_in_schema].append(
+                pa_col.total_uncompressed_size
+            )
+
+    for name, sizes in expected.items():
+        assert result[name] == sizes
+
+
 # TODO: Test these options
 # list row_groups = None,
 # ^^^ This one is not tested since it's not in pyarrow/pandas, deprecate?
@@ -536,7 +821,7 @@ def test_write_parquet(
 ):
     _, pa_table = table_data
     if len(pa_table) == 0 and partitions is not None:
-        pytest.skip("https://github.com/rapidsai/cudf/issues/17361")
+        pytest.skip("https://github.com/NVIDIA/cudf/issues/17361")
     plc_table = plc.Table.from_arrow(pa_table)
     table_meta = plc.io.types.TableInputMetadata(plc_table)
     sink = plc.io.SinkInfo([io.BytesIO()])
@@ -576,6 +861,36 @@ def test_write_parquet(
     synchronize_stream(stream)
 
     assert isinstance(result, memoryview)
+
+
+# cupy allocates on its own stream, so this cannot honor the injected default
+# stream used by the stream-validation test pass.
+@pytest.mark.uses_custom_stream
+def test_write_large_list_row_group():
+    import cupy as cp
+
+    # 524.3k list<float32>[1024] rows exceed 2 GiB plain data. The writer must retain the correct
+    # plain-data size for dictionary selection.
+    rows = 524_300
+    embedding_dim = 1024
+    values = cp.zeros((rows, embedding_dim), dtype=cp.float32)
+    table = plc.Table(
+        [plc.Column.from_cuda_array_interface(values)],
+        num_rows=rows,
+    )
+    metadata = plc.io.types.TableInputMetadata(table)
+    sink = plc.io.SinkInfo([io.BytesIO()])
+    options = (
+        plc.io.parquet.ParquetWriterOptions.builder(sink, table)
+        .metadata(metadata)
+        .build()
+    )
+
+    result = plc.io.parquet.write_parquet(options)
+    parquet_file = pq.ParquetFile(io.BytesIO(result))
+
+    assert parquet_file.metadata.num_rows == rows
+    assert parquet_file.metadata.num_row_groups == 1
 
 
 @pytest.mark.parametrize("use_jit_filter", [False, True])
@@ -638,5 +953,90 @@ def test_read_parquet_filters_jit(
     assert_table_and_meta_eq(
         expect,
         got,
+        check_field_nullability=False,
+    )
+
+
+@pytest.fixture
+def source_index_sources(tmp_path) -> list[os.PathLike[str]]:
+    """Two parquet sources with differing row counts."""
+    path_0 = tmp_path / "part-0.parquet"
+    path_1 = tmp_path / "part-1.parquet"
+    write_table(pa.table({"a": pa.array([1, 2, 3], type=pa.int64())}), path_0)
+    write_table(pa.table({"a": pa.array([4, 5], type=pa.int64())}), path_1)
+    return [path_0, path_1]
+
+
+def test_read_parquet_prepend_source_index_column_default(
+    source_index_sources,
+) -> None:
+    options = plc.io.parquet.ParquetReaderOptions.builder(
+        plc.io.SourceInfo(source_index_sources)
+    ).build()
+
+    assert options.is_enabled_prepend_source_index_column() is False
+
+    expect = pa.table({"a": pa.array([1, 2, 3, 4, 5], type=pa.int64())})
+    assert_table_and_meta_eq(
+        expect,
+        plc.io.parquet.read_parquet(options),
+        check_field_nullability=False,
+    )
+
+
+@pytest.mark.parametrize("use_builder", [False, True])
+def test_read_parquet_prepend_source_index_column(
+    source_index_sources, use_builder
+) -> None:
+    builder = plc.io.parquet.ParquetReaderOptions.builder(
+        plc.io.SourceInfo(source_index_sources)
+    )
+    if use_builder:
+        options = builder.prepend_source_index_column(True).build()
+    else:
+        options = builder.build()
+        options.enable_prepend_source_index_column(True)
+
+    assert options.is_enabled_prepend_source_index_column() is True
+
+    expect = pa.table(
+        {
+            "source_index": pa.array([0, 0, 0, 1, 1], type=pa.int32()),
+            "a": pa.array([1, 2, 3, 4, 5], type=pa.int64()),
+        }
+    )
+    assert_table_and_meta_eq(
+        expect,
+        plc.io.parquet.read_parquet(options),
+        check_field_nullability=False,
+    )
+
+
+def test_read_parquet_prepend_source_index_column_with_filter(
+    source_index_sources,
+) -> None:
+    options = (
+        plc.io.parquet.ParquetReaderOptions.builder(
+            plc.io.SourceInfo(source_index_sources)
+        )
+        .prepend_source_index_column(True)
+        .build()
+    )
+    plc_filter = Operation(
+        ASTOperator.GREATER,
+        ColumnNameReference("a"),
+        Literal(plc.Scalar.from_arrow(pa.scalar(2, type=pa.int64()))),
+    )
+    options.set_filter(plc_filter)
+
+    expect = pa.table(
+        {
+            "source_index": pa.array([0, 1, 1], type=pa.int32()),
+            "a": pa.array([3, 4, 5], type=pa.int64()),
+        }
+    )
+    assert_table_and_meta_eq(
+        expect,
+        plc.io.parquet.read_parquet(options),
         check_field_nullability=False,
     )

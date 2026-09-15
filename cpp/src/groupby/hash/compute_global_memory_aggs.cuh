@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -12,10 +12,10 @@
 #include <cudf/detail/gather.hpp>
 #include <cudf/types.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/iterator>
+#include <cuda/stream>
 #include <thrust/for_each.h>
 #include <thrust/transform.h>
 
@@ -41,7 +41,7 @@ template <typename SetRef>
 rmm::device_uvector<size_type> compute_matching_keys(bitmask_type const* row_bitmask,
                                                      SetRef set_ref,
                                                      size_type num_rows,
-                                                     rmm::cuda_stream_view stream)
+                                                     cuda::stream_ref stream)
 {
   // Mapping from each row in the input key/value into the indices of the key.
   rmm::device_uvector<size_type> key_indices(num_rows, stream);
@@ -78,7 +78,7 @@ std::pair<std::unique_ptr<table>, rmm::device_uvector<size_type>> compute_aggs_d
   host_span<aggregation::Kind const> h_agg_kinds,
   device_span<aggregation::Kind const> d_agg_kinds,
   std::span<int8_t const> is_agg_intermediate,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr)
 {
   auto const num_rows                = values.num_rows();
@@ -127,7 +127,7 @@ std::pair<std::unique_ptr<table>, rmm::device_uvector<size_type>> compute_aggs_s
   host_span<aggregation::Kind const> h_agg_kinds,
   device_span<aggregation::Kind const> d_agg_kinds,
   std::span<int8_t const> is_agg_intermediate,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr)
 {
   auto const num_rows = values.num_rows();
@@ -164,7 +164,7 @@ std::pair<std::unique_ptr<table>, rmm::device_uvector<size_type>> compute_global
   host_span<aggregation::Kind const> h_agg_kinds,
   device_span<aggregation::Kind const> d_agg_kinds,
   std::span<int8_t const> is_agg_intermediate,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr)
 {
   return h_agg_kinds.size() > GROUPBY_DENSE_OUTPUT_THRESHOLD

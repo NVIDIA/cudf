@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 from __future__ import annotations
 
@@ -129,12 +129,10 @@ def test_shift_by_expression_get(engine: pl.GPUEngine):
 @pytest.mark.parametrize(
     "expr",
     [
-        pl.col("a").diff(),
-        pl.col("a").pct_change(),
         pl.col("a").interpolate(),
         pl.col("a").ewm_mean(com=1),
     ],
-    ids=["diff", "pct_change", "interpolate", "ewm_mean"],
+    ids=["interpolate", "ewm_mean"],
 )
 def test_shift_like_unsupported(engine: pl.GPUEngine, expr: pl.Expr) -> None:
     df = pl.LazyFrame({"a": [1.0, 2.0, 4.0, 8.0]})

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -12,7 +12,7 @@
 namespace cudf::groupby::detail {
 
 std::pair<rmm::device_buffer, bitmask_type const*> compute_row_bitmask(table_view const& keys,
-                                                                       rmm::cuda_stream_view stream)
+                                                                       cuda::stream_ref stream)
 {
   auto const mr = cudf::get_current_device_resource_ref();
   if (keys.num_columns() == 0 || !cudf::has_nulls(keys)) {

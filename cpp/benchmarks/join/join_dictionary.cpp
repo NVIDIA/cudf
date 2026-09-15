@@ -69,7 +69,7 @@ void BM_join_dictionary(nvbench::state& state, Join join_func)
   state.add_element_count(join_input_size, "join_input_size");
   state.add_global_memory_reads<nvbench::int8_t>(join_input_size);
 
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.value()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.get()));
   auto const mem_stats_logger = cudf::memory_stats_logger();
 
   state.exec(nvbench::exec_tag::sync, [&](nvbench::launch&) {

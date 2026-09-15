@@ -12,72 +12,72 @@ on: # zizmor: ignore[dangerous-triggers]
 permissions: {}
 
 jobs:
-    get-project-id:
-      uses: rapidsai/shared-workflows/.github/workflows/project-get-item-id.yaml@main
-      secrets:
-        ADD_TO_PROJECT_GITHUB_TOKEN: ${{ secrets.ADD_TO_PROJECT_GITHUB_TOKEN }}
-      if: github.event.pull_request.state == 'open'
-      permissions:
-        contents: read
-      with:
-        PROJECT_ID: "PVT_kwDOAp2shc4AiNzl"
-        ITEM_NODE_ID: "${{ github.event.pull_request.node_id }}"
+  get-project-id:
+    uses: rapidsai/shared-workflows/.github/workflows/project-get-item-id.yaml@main
+    secrets:
+      ADD_TO_PROJECT_GITHUB_TOKEN: ${{ secrets.ADD_TO_PROJECT_GITHUB_TOKEN }}
+    if: github.event.pull_request.state == 'open'
+    permissions:
+      contents: read
+    with:
+      PROJECT_ID: "PVT_kwDOAp2shc4AiNzl"
+      ITEM_NODE_ID: "${{ github.event.pull_request.node_id }}"
 
-    update-status:
-      # This job sets the PR and its linked issues to "In Progress" status
-      uses: rapidsai/shared-workflows/.github/workflows/project-get-set-single-select-field.yaml@main
-      secrets:
-        ADD_TO_PROJECT_GITHUB_TOKEN: ${{ secrets.ADD_TO_PROJECT_GITHUB_TOKEN }}
-      if: ${{ github.event.pull_request.state == 'open' && needs.get-project-id.outputs.ITEM_PROJECT_ID != '' }}
-      needs: get-project-id
-      permissions:
-        contents: read
-      with:
-        PROJECT_ID: "PVT_kwDOAp2shc4AiNzl"
-        SINGLE_SELECT_FIELD_ID: "PVTSSF_lADOAp2shc4AiNzlzgaxNac"
-        SINGLE_SELECT_FIELD_NAME: "Status"
-        SINGLE_SELECT_OPTION_VALUE: "In Progress"
-        ITEM_PROJECT_ID: "${{ needs.get-project-id.outputs.ITEM_PROJECT_ID }}"
-        ITEM_NODE_ID: "${{ github.event.pull_request.node_id }}"
-        UPDATE_ITEM: true
-        UPDATE_LINKED_ISSUES: true
+  update-status:
+    # This job sets the PR and its linked issues to "In Progress" status
+    uses: rapidsai/shared-workflows/.github/workflows/project-get-set-single-select-field.yaml@main
+    secrets:
+      ADD_TO_PROJECT_GITHUB_TOKEN: ${{ secrets.ADD_TO_PROJECT_GITHUB_TOKEN }}
+    if: ${{ github.event.pull_request.state == 'open' && needs.get-project-id.outputs.ITEM_PROJECT_ID != '' }}
+    needs: get-project-id
+    permissions:
+      contents: read
+    with:
+      PROJECT_ID: "PVT_kwDOAp2shc4AiNzl"
+      SINGLE_SELECT_FIELD_ID: "PVTSSF_lADOAp2shc4AiNzlzgaxNac"
+      SINGLE_SELECT_FIELD_NAME: "Status"
+      SINGLE_SELECT_OPTION_VALUE: "In Progress"
+      ITEM_PROJECT_ID: "${{ needs.get-project-id.outputs.ITEM_PROJECT_ID }}"
+      ITEM_NODE_ID: "${{ github.event.pull_request.node_id }}"
+      UPDATE_ITEM: true
+      UPDATE_LINKED_ISSUES: true
 
-    get-release:
-      if: ${{ github.event.pull_request.state == 'open' && needs.get-project-id.outputs.ITEM_PROJECT_ID != '' }}
-      needs: get-project-id
-      runs-on: ubuntu-latest
-      permissions:
-        contents: read
-      outputs:
-        release: ${{ steps.get-release.outputs.release }}
-      steps:
-        - name: Checkout repository
-          uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
-          with:
-            persist-credentials: false
-            ref: ${{ github.event.pull_request.base.ref }}
-        - name: Extract version from VERSION file
-          id: get-release
-          run: |
-            version=$(cat VERSION)
-            release=${version%.*}
-            echo "release=$release" >> "$GITHUB_OUTPUT"
+  get-release:
+    if: ${{ github.event.pull_request.state == 'open' && needs.get-project-id.outputs.ITEM_PROJECT_ID != '' }}
+    needs: get-project-id
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      release: ${{ steps.get-release.outputs.release }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.base.ref }}
+      - name: Extract version from VERSION file
+        id: get-release
+        run: |
+          version=$(cat VERSION)
+          release=${version%.*}
+          echo "release=$release" >> "$GITHUB_OUTPUT"
 
-    update-release:
-      # This job sets the PR and its linked issues to the release they are targeting
-      uses: rapidsai/shared-workflows/.github/workflows/project-get-set-single-select-field.yaml@main
-      secrets:
-        ADD_TO_PROJECT_GITHUB_TOKEN: ${{ secrets.ADD_TO_PROJECT_GITHUB_TOKEN }}
-      if: ${{ github.event.pull_request.state == 'open' && needs.get-project-id.outputs.ITEM_PROJECT_ID != '' }}
-      needs: [get-project-id, get-release]
-      permissions:
-        contents: read
-      with:
-        PROJECT_ID: "PVT_kwDOAp2shc4AiNzl"
-        SINGLE_SELECT_FIELD_ID: "PVTSSF_lADOAp2shc4AiNzlzgg52UQ"
-        SINGLE_SELECT_FIELD_NAME: "Release"
-        SINGLE_SELECT_OPTION_VALUE: "${{ needs.get-release.outputs.release }}"
-        ITEM_PROJECT_ID: "${{ needs.get-project-id.outputs.ITEM_PROJECT_ID }}"
-        ITEM_NODE_ID: "${{ github.event.pull_request.node_id }}"
-        UPDATE_ITEM: true
-        UPDATE_LINKED_ISSUES: true
+  update-release:
+    # This job sets the PR and its linked issues to the release they are targeting
+    uses: rapidsai/shared-workflows/.github/workflows/project-get-set-single-select-field.yaml@main
+    secrets:
+      ADD_TO_PROJECT_GITHUB_TOKEN: ${{ secrets.ADD_TO_PROJECT_GITHUB_TOKEN }}
+    if: ${{ github.event.pull_request.state == 'open' && needs.get-project-id.outputs.ITEM_PROJECT_ID != '' }}
+    needs: [get-project-id, get-release]
+    permissions:
+      contents: read
+    with:
+      PROJECT_ID: "PVT_kwDOAp2shc4AiNzl"
+      SINGLE_SELECT_FIELD_ID: "PVTSSF_lADOAp2shc4AiNzlzgg52UQ"
+      SINGLE_SELECT_FIELD_NAME: "Release"
+      SINGLE_SELECT_OPTION_VALUE: "${{ needs.get-release.outputs.release }}"
+      ITEM_PROJECT_ID: "${{ needs.get-project-id.outputs.ITEM_PROJECT_ID }}"
+      ITEM_NODE_ID: "${{ github.event.pull_request.node_id }}"
+      UPDATE_ITEM: true
+      UPDATE_LINKED_ISSUES: true

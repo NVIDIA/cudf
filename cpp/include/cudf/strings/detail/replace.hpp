@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -10,30 +10,30 @@
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
+#include <cuda/stream>
 
 namespace cudf {
 namespace strings::detail {
 
 /**
  * @copydoc cudf::strings::replace(strings_column_view const&, string_scalar const&,
- * string_scalar const&, int32_t, rmm::cuda_stream_view, rmm::device_async_resource_ref)
+ * string_scalar const&, int32_t, cuda::stream_ref, rmm::device_async_resource_ref)
  */
 std::unique_ptr<column> replace(strings_column_view const& strings,
                                 string_scalar const& target,
                                 string_scalar const& repl,
                                 int32_t maxrepl,
-                                rmm::cuda_stream_view stream,
+                                cuda::stream_ref stream,
                                 rmm::device_async_resource_ref mr);
 
 /**
  * @copydoc cudf::strings::replace_multiple(strings_column_view const&, strings_column_view const&,
- * strings_column_view const&, rmm::cuda_stream_view, rmm::device_async_resource_ref)
+ * strings_column_view const&, cuda::stream_ref, rmm::device_async_resource_ref)
  */
 std::unique_ptr<column> replace_mutiple(strings_column_view const& strings,
                                         strings_column_view const& targets,
                                         strings_column_view const& repls,
-                                        rmm::cuda_stream_view stream,
+                                        cuda::stream_ref stream,
                                         rmm::device_async_resource_ref mr);
 
 /**
@@ -56,18 +56,18 @@ std::unique_ptr<column> replace_mutiple(strings_column_view const& strings,
  */
 std::unique_ptr<column> replace_nulls(strings_column_view const& strings,
                                       string_scalar const& repl,
-                                      rmm::cuda_stream_view stream,
+                                      cuda::stream_ref stream,
                                       rmm::device_async_resource_ref mr);
 
 /**
  * @copydoc cudf::strings::replace_slice(strings_column_view const&, string_scalar const&,
- * size_type, size_type, rmm::cuda_stream_view, rmm::device_async_resource_ref)
+ * size_type, size_type, cuda::stream_ref, rmm::device_async_resource_ref)
  */
 std::unique_ptr<column> replace_slice(strings_column_view const& strings,
                                       string_scalar const& repl,
                                       size_type start,
                                       size_type stop,
-                                      rmm::cuda_stream_view stream,
+                                      cuda::stream_ref stream,
                                       rmm::device_async_resource_ref mr);
 
 /**
@@ -85,7 +85,7 @@ std::unique_ptr<cudf::column> find_and_replace_all(
   cudf::strings_column_view const& input,
   cudf::strings_column_view const& values_to_replace,
   cudf::strings_column_view const& replacement_values,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr);
 
 }  // namespace strings::detail

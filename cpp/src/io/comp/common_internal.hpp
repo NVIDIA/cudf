@@ -73,7 +73,7 @@ struct sorted_codec_parameters {
 [[nodiscard]] sorted_codec_parameters sort_decompression_tasks(
   device_span<device_span<uint8_t const> const> inputs,
   device_span<device_span<uint8_t> const> outputs,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr);
 
 /**
@@ -96,7 +96,7 @@ struct sorted_codec_parameters {
                                                host_engine_state host_state,
                                                size_t auto_mode_threshold,
                                                size_t hybrid_mode_cost_ratio,
-                                               rmm::cuda_stream_view stream);
+                                               cuda::stream_ref stream);
 
 /**
  * @brief Sorts input and output spans for compression by output size in descending order
@@ -114,7 +114,7 @@ struct sorted_codec_parameters {
 [[nodiscard]] sorted_codec_parameters sort_compression_tasks(
   device_span<device_span<uint8_t const> const> inputs,
   device_span<device_span<uint8_t> const> outputs,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr);
 
 /**
@@ -137,7 +137,7 @@ struct sorted_codec_parameters {
                                              host_engine_state host_state,
                                              size_t auto_mode_threshold,
                                              size_t hybrid_mode_cost_ratio,
-                                             rmm::cuda_stream_view stream);
+                                             cuda::stream_ref stream);
 
 /**
  * @brief Copies results back to their original positions using the ordering map
@@ -153,6 +153,6 @@ struct sorted_codec_parameters {
 void copy_results_to_original_order(device_span<codec_exec_result const> sorted_results,
                                     device_span<codec_exec_result> original_results,
                                     device_span<std::size_t const> order,
-                                    rmm::cuda_stream_view stream);
+                                    cuda::stream_ref stream);
 
 }  // namespace cudf::io::detail

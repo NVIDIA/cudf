@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -10,6 +10,7 @@
 #include <cudf_test/type_list_utilities.hpp>
 #include <cudf_test/type_lists.hpp>
 
+#include <cudf/copying.hpp>
 #include <cudf/quantiles.hpp>
 #include <cudf/types.hpp>
 
@@ -36,18 +37,25 @@ struct q_expect {
       lower(0, false),
       linear(0, false),
       midpoint(0, false),
-      nearest(0, false)
+      nearest(0, false),
+      nearest_half_up(0, false)
   {
   }
 
-  q_expect(
-    double quantile, double higher, double lower, double linear, double midpoint, double nearest)
+  q_expect(double quantile,
+           double higher,
+           double lower,
+           double linear,
+           double midpoint,
+           double nearest,
+           double nearest_half_up)
     : quantile(quantile),
       higher(higher),
       lower(lower),
       linear(linear),
       midpoint(midpoint),
-      nearest(nearest)
+      nearest(nearest),
+      nearest_half_up(nearest_half_up)
   {
   }
 
@@ -57,6 +65,7 @@ struct q_expect {
   q_res linear;
   q_res midpoint;
   q_res nearest;
+  q_res nearest_half_up;
 };
 
 template <typename T>
@@ -89,7 +98,7 @@ test_case<T> interpolate_center()
   auto max_d = static_cast<double>(max);
   auto low_d = static_cast<double>(low);
   return test_case<T>{cudf::test::fixed_width_column_wrapper<T>({low, max}),
-                      {q_expect{0.50, max_d, low_d, lin_d, mid_d, low_d}}};
+                      {q_expect{0.50, max_d, low_d, lin_d, mid_d, low_d, max_d}}};
 }
 
 template <>
@@ -101,7 +110,7 @@ test_case<bool> interpolate_center()
   auto low_d = static_cast<double>(low);
   auto max_d = static_cast<double>(max);
   return test_case<bool>{cudf::test::fixed_width_column_wrapper<bool>({low, max}),
-                         {q_expect{0.5, max_d, low_d, mid_d, mid_d, low_d}}};
+                         {q_expect{0.5, max_d, low_d, mid_d, mid_d, low_d, max_d}}};
 }
 
 // interpolate_extrema_high
@@ -115,7 +124,7 @@ test_case<T> interpolate_extrema_high()
   auto max_d   = static_cast<double>(max);
   auto exact_d = static_cast<double>(max - 1);
   return test_case<T>{cudf::test::fixed_width_column_wrapper<T>({low, max}),
-                      {q_expect{0.50, max_d, low_d, exact_d, exact_d, low_d}}};
+                      {q_expect{0.50, max_d, low_d, exact_d, exact_d, low_d, max_d}}};
 }
 
 template <>
@@ -136,7 +145,7 @@ test_case<T> interpolate_extrema_low()
   auto b_d     = static_cast<double>(b);
   auto exact_d = static_cast<double>(a + 1);
   return test_case<T>{cudf::test::fixed_width_column_wrapper<T>({a, b}),
-                      {q_expect{0.50, b_d, a_d, exact_d, exact_d, a_d}}};
+                      {q_expect{0.50, b_d, a_d, exact_d, exact_d, a_d, b_d}}};
 }
 
 template <>
@@ -160,6 +169,7 @@ test_case<T> single()
                           7.309999942779541,
                           7.309999942779541,
                           7.309999942779541,
+                          7.309999942779541,
                         },
                         q_expect{
                           0.0,
@@ -168,9 +178,11 @@ test_case<T> single()
                           7.309999942779541,
                           7.309999942779541,
                           7.309999942779541,
+                          7.309999942779541,
                         },
                         q_expect{
                           1.0,
+                          7.309999942779541,
                           7.309999942779541,
                           7.309999942779541,
                           7.309999942779541,
@@ -185,7 +197,7 @@ test_case<T> single()
   requires(std::is_integral_v<T> and not cudf::is_boolean<T>())
 {
   return test_case<T>{cudf::test::fixed_width_column_wrapper<T>({1}),
-                      {q_expect{0.7, 1, 1, 1, 1, 1}}};
+                      {q_expect{0.7, 1, 1, 1, 1, 1, 1}}};
 }
 
 template <typename T>
@@ -193,7 +205,7 @@ test_case<T> single()
   requires(cudf::is_boolean<T>())
 {
   return test_case<T>{cudf::test::fixed_width_column_wrapper<T>({1}),
-                      {q_expect{0.7, 1.0, 1.0, 1.0, 1.0, 1.0}}};
+                      {q_expect{0.7, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0}}};
 }
 
 // all_invalid
@@ -239,11 +251,11 @@ test_case<T> some_invalid()
   return test_case<T>{
     cudf::test::fixed_width_column_wrapper<T>({6.8, high, 3.4, 4.17, 2.13, 1.11, low, 0.8, 5.7},
                                               {0, 1, 0, 0, 0, 0, 1, 0, 0}),
-    {q_expect{-1.0, low, low, low, low, low},
-     q_expect{0.0, low, low, low, low, low},
-     q_expect{0.5, high, low, lin, mid, low},
-     q_expect{1.0, high, high, high, high, high},
-     q_expect{2.0, high, high, high, high, high}},
+    {q_expect{-1.0, low, low, low, low, low, low},
+     q_expect{0.0, low, low, low, low, low, low},
+     q_expect{0.5, high, low, lin, mid, low, high},
+     q_expect{1.0, high, high, high, high, high, high},
+     q_expect{2.0, high, high, high, high, high, high}},
     cudf::test::fixed_width_column_wrapper<cudf::size_type>({6, 1})};
 }
 
@@ -258,11 +270,11 @@ test_case<T> some_invalid()
   return test_case<T>{cudf::test::fixed_width_column_wrapper<T>(
                         {T(6.8), high, T(3.4), T(4.17), T(2.13), T(1.11), low, T(0.8), T(5.7)},
                         {0, 1, 0, 0, 0, 0, 1, 0, 0}),
-                      {q_expect{-1.0, low, low, low, low, low},
-                       q_expect{0.0, low, low, low, low, low},
-                       q_expect{0.5, high, low, lin, mid, low},
-                       q_expect{1.0, high, high, high, high, high},
-                       q_expect{2.0, high, high, high, high, high}},
+                      {q_expect{-1.0, low, low, low, low, low, low},
+                       q_expect{0.0, low, low, low, low, low, low},
+                       q_expect{0.5, high, low, lin, mid, low, high},
+                       q_expect{1.0, high, high, high, high, high, high},
+                       q_expect{2.0, high, high, high, high, high, high}},
                       cudf::test::fixed_width_column_wrapper<cudf::size_type>({6, 1})};
 }
 
@@ -272,9 +284,9 @@ test_case<T> some_invalid()
 {
   return test_case<T>{cudf::test::fixed_width_column_wrapper<T>({6, 0, 3, 4, 2, 1, -1, 1, 6},
                                                                 {0, 0, 1, 0, 0, 0, 0, 0, 1}),
-                      {q_expect{0.0, 3.0, 3.0, 3.0, 3.0, 3.0},
-                       q_expect{0.5, 6.0, 3.0, 4.5, 4.5, 3.0},
-                       q_expect{1.0, 6.0, 6.0, 6.0, 6.0, 6.0}},
+                      {q_expect{0.0, 3.0, 3.0, 3.0, 3.0, 3.0, 3.0},
+                       q_expect{0.5, 6.0, 3.0, 4.5, 4.5, 3.0, 6.0},
+                       q_expect{1.0, 6.0, 6.0, 6.0, 6.0, 6.0, 6.0}},
                       cudf::test::fixed_width_column_wrapper<cudf::size_type>({2, 8})};
 }
 
@@ -284,9 +296,9 @@ test_case<T> some_invalid()
 {
   return test_case<T>{cudf::test::fixed_width_column_wrapper<T>({1, 0, 1, 1, 0, 1, 0, 1, 1},
                                                                 {0, 0, 1, 0, 1, 0, 0, 0, 0}),
-                      {q_expect{0.0, 0.0, 0.0, 0.0, 0.0, 0.0},
-                       q_expect{0.5, 1.0, 0.0, 0.5, 0.5, 0.0},
-                       q_expect{1.0, 1.0, 1.0, 1.0, 1.0, 1.0}},
+                      {q_expect{0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0},
+                       q_expect{0.5, 1.0, 0.0, 0.5, 0.5, 0.0, 1.0},
+                       q_expect{1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0}},
                       cudf::test::fixed_width_column_wrapper<cudf::size_type>({4, 2})};
 }
 
@@ -299,7 +311,7 @@ test_case<T> unsorted()
   return test_case<T>{
     cudf::test::fixed_width_column_wrapper<T>({6.8, 0.15, 3.4, 4.17, 2.13, 1.11, -1.00, 0.8, 5.7}),
     {
-      q_expect{0.0, -1.00, -1.00, -1.00, -1.00, -1.00},
+      q_expect{0.0, -1.00, -1.00, -1.00, -1.00, -1.00, -1.00},
     },
     cudf::test::fixed_width_column_wrapper<cudf::size_type>({6, 1, 7, 5, 4, 2, 3, 8, 0})};
 }
@@ -310,11 +322,11 @@ test_case<T> unsorted()
 {
   return std::is_signed<T>()
            ? test_case<T>{cudf::test::fixed_width_column_wrapper<T>({6, 0, 3, 4, 2, 1, -1, 1, 6}),
-                          {q_expect{0.0, -1, -1, -1, -1, -1}},
+                          {q_expect{0.0, -1, -1, -1, -1, -1, -1}},
                           cudf::test::fixed_width_column_wrapper<cudf::size_type>(
                             {6, 1, 7, 5, 4, 2, 3, 8, 0})}
            : test_case<T>{cudf::test::fixed_width_column_wrapper<T>({6, 0, 3, 4, 2, 1, 1, 1, 6}),
-                          {q_expect{0.0, 1, 1, 1, 1, 1}},
+                          {q_expect{0.0, 1, 1, 1, 1, 1, 1}},
                           cudf::test::fixed_width_column_wrapper<cudf::size_type>(
                             {6, 1, 7, 5, 4, 2, 3, 8, 0})};
 }
@@ -326,6 +338,7 @@ test_case<T> unsorted()
   return test_case<T>{
     cudf::test::fixed_width_column_wrapper<T>({0, 0, 1, 1, 0, 1, 1, 0, 1}),
     {q_expect{
+      0.0,
       0.0,
       0.0,
       0.0,
@@ -379,6 +392,11 @@ void test(testdata::test_case<T> test_case)
       cudf::quantile(test_case.column, q, cudf::interpolation::NEAREST, test_case.ordered_indices);
     auto expected_nearest_col = make_expected_column(expected.nearest);
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_nearest_col, actual_nearest->view());
+
+    auto actual_nearest_half_up = cudf::quantile(
+      test_case.column, q, cudf::interpolation::NEAREST_HALF_UP, test_case.ordered_indices);
+    auto expected_nearest_half_up_col = make_expected_column(expected.nearest_half_up);
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_nearest_half_up_col, actual_nearest_half_up->view());
   }
 }
 
@@ -421,7 +439,6 @@ TYPED_TEST(QuantileTest, TestEmpty)
 template <typename T>
 struct QuantileUnsupportedTypesTest : public cudf::test::BaseFixture {};
 
-// TODO add tests for FixedPointTypes
 using UnsupportedTestTypes = cudf::test::RemoveIf<
   cudf::test::ContainedIn<cudf::test::Concat<TestTypes, cudf::test::FixedPointTypes>>,
   cudf::test::AllTypes>;
@@ -471,6 +488,189 @@ TEST_F(QuantileDictionaryTest, TestValid)
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(
     result->view(), cudf::test::fixed_width_column_wrapper<double>{3.5, 5.5, 7.5});
 };
+
+template <typename T>
+struct QuantileFixedPointTest : public cudf::test::BaseFixture {};
+
+TYPED_TEST_SUITE(QuantileFixedPointTest, cudf::test::FixedPointTypes);
+
+TYPED_TEST(QuantileFixedPointTest, TestExactQuantiles)
+{
+  using namespace numeric;
+  using decimalXX  = TypeParam;
+  using RepType    = cudf::device_storage_type_t<decimalXX>;
+  using fp_wrapper = cudf::test::fixed_point_column_wrapper<RepType>;
+
+  auto const scale    = scale_type{-2};
+  auto const input    = fp_wrapper{{1, 2, 3, 4, 5}, scale};
+  auto const expected = fp_wrapper{{1, 2, 3, 4, 5}, scale};
+
+  auto const result =
+    cudf::quantile(input, {0.0, 0.25, 0.5, 0.75, 1.0}, cudf::interpolation::LINEAR);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, result->view());
+}
+
+TYPED_TEST(QuantileFixedPointTest, TestTruncateTowardZero)
+{
+  using namespace numeric;
+  using decimalXX  = TypeParam;
+  using RepType    = cudf::device_storage_type_t<decimalXX>;
+  using fp_wrapper = cudf::test::fixed_point_column_wrapper<RepType>;
+
+  auto const scale    = scale_type{-2};
+  auto const input    = fp_wrapper{{1, 2}, scale};
+  auto const expected = fp_wrapper{{1}, scale};
+
+  auto const result = cudf::quantile(input, {0.5}, cudf::interpolation::LINEAR);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, result->view());
+}
+
+TYPED_TEST(QuantileFixedPointTest, TestTruncateTowardZeroNegative)
+{
+  using namespace numeric;
+  using decimalXX  = TypeParam;
+  using RepType    = cudf::device_storage_type_t<decimalXX>;
+  using fp_wrapper = cudf::test::fixed_point_column_wrapper<RepType>;
+
+  auto const scale    = scale_type{-2};
+  auto const input    = fp_wrapper{{-2, -1}, scale};
+  auto const expected = fp_wrapper{{-1}, scale};
+
+  auto const result = cudf::quantile(input, {0.5}, cudf::interpolation::LINEAR);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, result->view());
+}
+
+TYPED_TEST(QuantileFixedPointTest, TestOtherInterpolations)
+{
+  using namespace numeric;
+  using decimalXX  = TypeParam;
+  using RepType    = cudf::device_storage_type_t<decimalXX>;
+  using fp_wrapper = cudf::test::fixed_point_column_wrapper<RepType>;
+
+  auto const scale           = scale_type{-2};
+  auto const input           = fp_wrapper{{1, 2}, scale};
+  auto const expected_lower  = fp_wrapper{{1}, scale};
+  auto const expected_higher = fp_wrapper{{2}, scale};
+
+  auto result = cudf::quantile(input, {0.5}, cudf::interpolation::LOWER);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_lower, result->view());
+
+  result = cudf::quantile(input, {0.5}, cudf::interpolation::HIGHER);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_higher, result->view());
+
+  result = cudf::quantile(input, {0.5}, cudf::interpolation::NEAREST);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_lower, result->view());
+
+  result = cudf::quantile(input, {0.5}, cudf::interpolation::MIDPOINT);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_lower, result->view());
+}
+
+TYPED_TEST(QuantileFixedPointTest, TestPositiveScale)
+{
+  using namespace numeric;
+  using decimalXX  = TypeParam;
+  using RepType    = cudf::device_storage_type_t<decimalXX>;
+  using fp_wrapper = cudf::test::fixed_point_column_wrapper<RepType>;
+
+  auto const scale    = scale_type{2};
+  auto const input    = fp_wrapper{{1, 2, 3}, scale};
+  auto const expected = fp_wrapper{{2}, scale};
+
+  auto const result = cudf::quantile(input, {0.5}, cudf::interpolation::LINEAR);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, result->view());
+}
+
+TYPED_TEST(QuantileFixedPointTest, TestRealInterpolation)
+{
+  using namespace numeric;
+  using decimalXX  = TypeParam;
+  using RepType    = cudf::device_storage_type_t<decimalXX>;
+  using fp_wrapper = cudf::test::fixed_point_column_wrapper<RepType>;
+
+  auto const scale    = scale_type{-3};
+  auto const input    = fp_wrapper{{10, 20, 30, 40}, scale};
+  auto const expected = fp_wrapper{{25}, scale};
+
+  auto const result = cudf::quantile(input, {0.5}, cudf::interpolation::LINEAR);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, result->view());
+}
+
+TYPED_TEST(QuantileFixedPointTest, TestEmpty)
+{
+  using namespace numeric;
+  using decimalXX  = TypeParam;
+  using RepType    = cudf::device_storage_type_t<decimalXX>;
+  using fp_wrapper = cudf::test::fixed_point_column_wrapper<RepType>;
+
+  auto const scale    = scale_type{-3};
+  auto const input    = fp_wrapper{{}, scale};
+  auto const expected = fp_wrapper{{0, 0}, {false, false}, scale};
+
+  auto const result = cudf::quantile(input, {0.5, 0.25}, cudf::interpolation::LINEAR);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, result->view());
+}
+
+TYPED_TEST(QuantileFixedPointTest, TestAllElementsInvalid)
+{
+  using namespace numeric;
+  using decimalXX  = TypeParam;
+  using RepType    = cudf::device_storage_type_t<decimalXX>;
+  using fp_wrapper = cudf::test::fixed_point_column_wrapper<RepType>;
+
+  auto const scale    = scale_type{-3};
+  auto const input    = fp_wrapper{{1, 2, 3, 4, 5}, {0, 0, 0, 0, 0}, scale};
+  auto const expected = fp_wrapper{{0}, {false}, scale};
+
+  auto const result = cudf::quantile(input, {0.5}, cudf::interpolation::LINEAR);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, result->view());
+}
+
+TYPED_TEST(QuantileFixedPointTest, TestSomeElementsInvalid)
+{
+  using namespace numeric;
+  using decimalXX  = TypeParam;
+  using RepType    = cudf::device_storage_type_t<decimalXX>;
+  using fp_wrapper = cudf::test::fixed_point_column_wrapper<RepType>;
+
+  auto const scale = scale_type{-3};
+  auto const input = fp_wrapper{{1, 2, 3, 4, 5}, {1, 0, 1, 0, 1}, scale};
+  // q=0.25 selects index 1, which is null; q=0.5 selects index 2, which is valid
+  auto const expected = fp_wrapper{{0, 3}, {false, true}, scale};
+
+  auto const result = cudf::quantile(input, {0.25, 0.5}, cudf::interpolation::LINEAR);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, result->view());
+}
+
+TYPED_TEST(QuantileFixedPointTest, TestSlicedInput)
+{
+  using namespace numeric;
+  using decimalXX  = TypeParam;
+  using RepType    = cudf::device_storage_type_t<decimalXX>;
+  using fp_wrapper = cudf::test::fixed_point_column_wrapper<RepType>;
+
+  auto const scale    = scale_type{-2};
+  auto const full     = fp_wrapper{{1, 2, 3, 4, 5, 6, 7}, scale};
+  auto const sliced   = cudf::slice(full, {2, 7})[0];
+  auto const expected = fp_wrapper{{5}, scale};
+
+  auto const result = cudf::quantile(sliced, {0.5}, cudf::interpolation::LINEAR);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, result->view());
+}
+
+TYPED_TEST(QuantileFixedPointTest, TestSingleElement)
+{
+  using namespace numeric;
+  using decimalXX  = TypeParam;
+  using RepType    = cudf::device_storage_type_t<decimalXX>;
+  using fp_wrapper = cudf::test::fixed_point_column_wrapper<RepType>;
+
+  auto const scale    = scale_type{-2};
+  auto const input    = fp_wrapper{{7}, scale};
+  auto const expected = fp_wrapper{{7, 7, 7}, scale};
+
+  auto const result = cudf::quantile(input, {0.0, 0.5, 1.0}, cudf::interpolation::LINEAR);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, result->view());
+}
 
 }  // anonymous namespace
 

@@ -99,25 +99,22 @@ class kvikio_source : public datasource {
   std::future<size_t> device_read_async(size_t offset,
                                         size_t size,
                                         uint8_t* dst,
-                                        rmm::cuda_stream_view stream) override
+                                        cuda::stream_ref stream) override
   {
     CUDF_EXPECTS(supports_device_read(), "Device reads are not supported for this file.");
     auto const read_size = std::min(size, this->size() - offset);
-    stream.synchronize();
+    stream.sync();
     return _kvikio_handle.pread(dst, read_size, offset);
   }
 
-  size_t device_read(size_t offset,
-                     size_t size,
-                     uint8_t* dst,
-                     rmm::cuda_stream_view stream) override
+  size_t device_read(size_t offset, size_t size, uint8_t* dst, cuda::stream_ref stream) override
   {
     return device_read_async(offset, size, dst, stream).get();
   }
 
   std::unique_ptr<datasource::buffer> device_read(size_t offset,
                                                   size_t size,
-                                                  rmm::cuda_stream_view stream) override
+                                                  cuda::stream_ref stream) override
   {
     rmm::device_buffer out_data(size, stream);
     size_t const read =
@@ -153,11 +150,11 @@ class file_source : public kvikio_source<kvikio::FileHandle> {
   std::future<size_t> device_read_async(size_t offset,
                                         size_t size,
                                         uint8_t* dst,
-                                        rmm::cuda_stream_view stream) override
+                                        cuda::stream_ref stream) override
   {
     CUDF_EXPECTS(supports_device_read(), "Device reads are not supported for this file.");
     auto const read_size = std::min(size, this->size() - offset);
-    stream.synchronize();
+    stream.sync();
     return _kvikio_handle.pread(dst,
                                 read_size,
                                 offset,
@@ -203,7 +200,7 @@ class device_buffer_source final : public datasource {
   size_t host_read(size_t offset, size_t size, uint8_t* dst) override
   {
     auto const count  = std::min(size, this->size() - offset);
-    auto const stream = cudf::detail::global_cuda_stream_pool().get_stream();
+    auto const stream = cudf::detail::current_cuda_stream_pool().get_stream();
     cudf::detail::cuda_memcpy(host_span<uint8_t>{dst, count},
                               device_span<uint8_t const>{
                                 reinterpret_cast<uint8_t const*>(_d_buffer.data() + offset), count},
@@ -214,10 +211,10 @@ class device_buffer_source final : public datasource {
   std::unique_ptr<buffer> host_read(size_t offset, size_t size) override
   {
     auto const count  = std::min(size, this->size() - offset);
-    auto const stream = cudf::detail::global_cuda_stream_pool().get_stream();
+    auto const stream = cudf::detail::current_cuda_stream_pool().get_stream();
     auto h_data       = cudf::detail::make_host_vector_async(
       cudf::device_span<std::byte const>{_d_buffer.data() + offset, count}, stream);
-    stream.synchronize();
+    stream.sync();
     return std::make_unique<owning_buffer<cudf::detail::host_vector<std::byte>>>(std::move(h_data));
   }
 
@@ -226,24 +223,19 @@ class device_buffer_source final : public datasource {
   std::future<size_t> device_read_async(size_t offset,
                                         size_t size,
                                         uint8_t* dst,
-                                        rmm::cuda_stream_view stream) override
+                                        cuda::stream_ref stream) override
   {
     auto const count = std::min(size, this->size() - offset);
     CUDF_CUDA_TRY(cudf::detail::memcpy_async(dst, _d_buffer.data() + offset, count, stream));
     return std::async(std::launch::deferred, [count] { return count; });
   }
 
-  size_t device_read(size_t offset,
-                     size_t size,
-                     uint8_t* dst,
-                     rmm::cuda_stream_view stream) override
+  size_t device_read(size_t offset, size_t size, uint8_t* dst, cuda::stream_ref stream) override
   {
     return device_read_async(offset, size, dst, stream).get();
   }
 
-  std::unique_ptr<buffer> device_read(size_t offset,
-                                      size_t size,
-                                      rmm::cuda_stream_view stream) override
+  std::unique_ptr<buffer> device_read(size_t offset, size_t size, cuda::stream_ref stream) override
   {
     return std::make_unique<non_owning_buffer>(
       reinterpret_cast<uint8_t const*>(_d_buffer.data() + offset), size);
@@ -324,17 +316,12 @@ class user_datasource_wrapper : public datasource {
     return source->is_device_read_preferred(size);
   }
 
-  size_t device_read(size_t offset,
-                     size_t size,
-                     uint8_t* dst,
-                     rmm::cuda_stream_view stream) override
+  size_t device_read(size_t offset, size_t size, uint8_t* dst, cuda::stream_ref stream) override
   {
     return source->device_read(offset, size, dst, stream);
   }
 
-  std::unique_ptr<buffer> device_read(size_t offset,
-                                      size_t size,
-                                      rmm::cuda_stream_view stream) override
+  std::unique_ptr<buffer> device_read(size_t offset, size_t size, cuda::stream_ref stream) override
   {
     return source->device_read(offset, size, stream);
   }
@@ -342,7 +329,7 @@ class user_datasource_wrapper : public datasource {
   std::future<size_t> device_read_async(size_t offset,
                                         size_t size,
                                         uint8_t* dst,
-                                        rmm::cuda_stream_view stream) override
+                                        cuda::stream_ref stream) override
   {
     return source->device_read_async(offset, size, dst, stream);
   }

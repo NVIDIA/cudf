@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 from libcpp cimport bool
 from libcpp.memory cimport unique_ptr
@@ -37,6 +37,13 @@ cdef extern from "cudf/stream_compaction.hpp" namespace "cudf" nogil:
         table_view source_table,
         vector[size_type] keys,
         size_type keep_threshold,
+        cudaStream_t stream,
+        device_async_resource_ref mr
+    ) except +libcudf_exception_handler
+
+    cdef unique_ptr[table] apply_retention_mask(
+        table_view source_table,
+        column_view retention_mask,
         cudaStream_t stream,
         device_async_resource_ref mr
     ) except +libcudf_exception_handler

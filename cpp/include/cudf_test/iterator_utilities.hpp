@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -10,13 +10,16 @@
 #include <cudf/utilities/export.hpp>
 
 #include <cuda/iterator>
-#include <thrust/iterator/transform_iterator.h>
 
+#include <algorithm>
 #include <iterator>
+#include <memory>
+#include <vector>
 
 namespace CUDF_EXPORT cudf {
 namespace test {
 namespace iterators {
+
 /**
  * @brief Bool iterator for marking (possibly multiple) null elements in a column_wrapper.
  *
@@ -43,9 +46,10 @@ template <typename Iter>
 {
   using index_type = typename std::iterator_traits<Iter>::value_type;
 
-  return cudf::detail::make_counting_transform_iterator(
-    0, [indices = std::vector<index_type>{index_start, index_end}](auto i) {
-      return std::find(indices.cbegin(), indices.cend(), i) == indices.cend();
+  auto indices = std::make_shared<std::vector<index_type> const>(index_start, index_end);
+  return cuda::transform_iterator(
+    cuda::counting_iterator<cudf::size_type>{0}, [indices = std::move(indices)](auto i) {
+      return std::find(indices->cbegin(), indices->cend(), i) == indices->cend();
     });
 }
 
@@ -165,7 +169,7 @@ template <typename Iter>
 template <class T>
 [[maybe_unused]] static auto nulls_from_nullptrs(std::vector<T const*> const& ptrs)
 {
-  return thrust::make_transform_iterator(ptrs.begin(), [](auto ptr) { return ptr != nullptr; });
+  return cuda::transform_iterator(ptrs.begin(), [](auto ptr) { return ptr != nullptr; });
 }
 
 }  // namespace iterators

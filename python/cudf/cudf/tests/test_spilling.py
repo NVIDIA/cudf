@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 from __future__ import annotations
 
@@ -518,6 +518,17 @@ def test_df_transpose(manager: SpillManager):
     assert df1._data._data["a"].data.owner.spillable
     assert df2._data._data[0].data.owner.spillable
     assert df2._data._data[1].data.owner.spillable
+
+
+def test_memory_usage_of_sliced_nested_column(manager: SpillManager):
+    # Computing memory usage of a sliced list column reads its offsets
+    # from device memory, which must spill lock the underlying buffers
+    df = cudf.Series([[1, 2], [3, 4], [5, 6]])[1:]
+    assert df.memory_usage() == 44
+    for child_index in range(2):
+        buf = df._column.plc_column.child(child_index).data()
+        assert not buf.owner.exposed
+        assert buf.owner.spillable
 
 
 def test_as_buffer_of_spillable_buffer(manager: SpillManager):

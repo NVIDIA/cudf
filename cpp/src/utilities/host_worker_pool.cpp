@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -7,9 +7,16 @@
 #include <cudf/detail/utilities/host_worker_pool.hpp>
 #include <cudf/utilities/error.hpp>
 
+#include <pthread.h>
+
+#include <algorithm>
+#include <array>
+#include <cstddef>
+#include <cstdio>
 #include <memory>
 #include <mutex>
 #include <shared_mutex>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -22,6 +29,14 @@ thread_local int thread_pool_level = THREAD_POOL_LEVEL_NONE;
 hierarchical_thread_pool::hierarchical_thread_pool(std::size_t num_threads, int level)
   : pool_(num_threads), level_(level)
 {
+}
+
+void set_thread_name_for_pool_level(int level)
+{
+  // Linux caps thread names (comm) at 15 chars + NUL. Keep the name short.
+  std::array<char, 16> name{};
+  std::snprintf(name.data(), name.size(), "cudf-hwp-L%d", level);
+  pthread_setname_np(pthread_self(), name.data());
 }
 
 namespace {

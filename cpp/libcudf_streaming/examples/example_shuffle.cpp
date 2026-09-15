@@ -45,7 +45,7 @@ int main(int argc, char** argv)
     std::make_shared<rapidsmpf::MPI>(MPI_COMM_WORLD, progress_thread, log);
 
   // We will use the same stream, memory, and buffer resource throughout the example.
-  rmm::cuda_stream_view stream      = cudf::get_default_stream();
+  cuda::stream_ref stream           = cudf::get_default_stream();
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref();
   auto br                           = rapidsmpf::BufferResource::create(mr);
 

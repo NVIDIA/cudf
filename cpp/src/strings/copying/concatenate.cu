@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -20,10 +20,10 @@
 #include <cudf/table/table_device_view.cuh>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/std/iterator>
+#include <cuda/stream>
 #include <thrust/binary_search.h>
 #include <thrust/execution_policy.h>
 #include <thrust/scan.h>
@@ -33,7 +33,7 @@
 namespace cudf {
 namespace strings {
 namespace detail {
-// Benchmark data, shared at https://github.com/rapidsai/cudf/pull/4703, shows
+// Benchmark data, shared at https://github.com/NVIDIA/cudf/pull/4703, shows
 // that the single kernel optimization generally performs better, but when the
 // number of chars/col is beyond a certain threshold memcpy performs better.
 // This heuristic estimates which strategy will give better performance by
@@ -62,7 +62,7 @@ struct chars_size_transform {
   }
 };
 
-auto create_strings_device_views(host_span<column_view const> views, rmm::cuda_stream_view stream)
+auto create_strings_device_views(host_span<column_view const> views, cuda::stream_ref stream)
 {
   CUDF_FUNC_RANGE();
   // Assemble contiguous array of device views
@@ -95,7 +95,7 @@ auto create_strings_device_views(host_span<column_view const> views, rmm::cuda_s
     chars_size_transform{},
     cuda::std::plus{});
   auto const output_chars_size = d_partition_offsets.back_element(stream);
-  stream.synchronize();  // ensure copy of output_chars_size is complete before returning
+  stream.sync();  // ensure copy of output_chars_size is complete before returning
 
   return std::make_tuple(std::move(device_view_owners),
                          device_views_ptr,
@@ -196,7 +196,7 @@ CUDF_KERNEL void fused_concatenate_string_chars_kernel(column_device_view const*
 }
 
 std::unique_ptr<column> concatenate(host_span<column_view const> columns,
-                                    rmm::cuda_stream_view stream,
+                                    cuda::stream_ref stream,
                                     rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
@@ -242,7 +242,7 @@ std::unique_ptr<column> concatenate(host_span<column_view const> columns,
     cudf::detail::grid_1d config(offsets_count, block_size);
     auto const kernel = has_nulls ? fused_concatenate_string_offset_kernel<block_size, true>
                                   : fused_concatenate_string_offset_kernel<block_size, false>;
-    kernel<<<config.num_blocks, config.num_threads_per_block, 0, stream.value()>>>(
+    kernel<<<config.num_blocks, config.num_threads_per_block, 0, stream.get()>>>(
       d_views,
       d_input_offsets.data(),
       d_partition_offsets.data(),
@@ -264,11 +264,11 @@ std::unique_ptr<column> concatenate(host_span<column_view const> columns,
       // cudf::detail::grid_1d limited to size_type elements
       auto const num_blocks = util::div_rounding_up_safe(total_bytes, block_size);
       auto const kernel     = fused_concatenate_string_chars_kernel;
-      kernel<<<num_blocks, block_size, 0, stream.value()>>>(d_views,
-                                                            d_partition_offsets.data(),
-                                                            static_cast<size_type>(columns.size()),
-                                                            total_bytes,
-                                                            d_new_chars);
+      kernel<<<num_blocks, block_size, 0, stream.get()>>>(d_views,
+                                                          d_partition_offsets.data(),
+                                                          static_cast<size_type>(columns.size()),
+                                                          total_bytes,
+                                                          d_new_chars);
       CUDF_CUDA_TRY(cudaGetLastError());
     } else {
       // Memcpy each input chars column (more efficient for very large strings)

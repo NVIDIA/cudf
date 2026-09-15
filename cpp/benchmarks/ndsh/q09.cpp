@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -19,6 +19,9 @@
 #include <cudf/utilities/memory_resource.hpp>
 
 #include <nvbench/nvbench.cuh>
+
+#include <array>
+#include <utility>
 
 enum class engine_type : int32_t { BINARYOP = 0, AST = 1, TRANSFORM = 2 };
 
@@ -104,14 +107,14 @@ struct q9_data {
   cudf::column_view const& extendedprice,
   cudf::column_view const& supplycost,
   cudf::column_view const& quantity,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref())
 {
   CUDF_BENCHMARK_RANGE();
 
   auto const one = cudf::numeric_scalar<double>(1);
   auto const one_minus_discount =
-    cudf::binary_operation(one, discount, cudf::binary_operator::SUB, discount.type());
+    cudf::binary_operation(one, discount, cudf::binary_operator::SUB, discount.type(), stream, mr);
   auto const extendedprice_discounted_type = cudf::data_type{cudf::type_id::FLOAT64};
   auto const extendedprice_discounted      = cudf::binary_operation(extendedprice,
                                                                one_minus_discount->view(),
@@ -121,7 +124,7 @@ struct q9_data {
                                                                mr);
   auto const supplycost_quantity_type      = cudf::data_type{cudf::type_id::FLOAT64};
   auto const supplycost_quantity           = cudf::binary_operation(
-    supplycost, quantity, cudf::binary_operator::MUL, supplycost_quantity_type);
+    supplycost, quantity, cudf::binary_operator::MUL, supplycost_quantity_type, stream, mr);
   auto amount = cudf::binary_operation(extendedprice_discounted->view(),
                                        supplycost_quantity->view(),
                                        cudf::binary_operator::SUB,
@@ -136,7 +139,7 @@ struct q9_data {
   cudf::column_view const& extendedprice,
   cudf::column_view const& supplycost,
   cudf::column_view const& quantity,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref())
 {
   CUDF_BENCHMARK_RANGE();
@@ -150,16 +153,20 @@ struct q9_data {
 
   cudf::transform_input transform_inputs[] = {discount, extendedprice, supplycost, quantity};
 
-  return cudf::transform_extended(transform_inputs,
-                                  udf,
-                                  cudf::data_type{cudf::type_id::FLOAT64},
-                                  cudf::udf_source_type::CUDA,
-                                  std::nullopt,
-                                  cudf::null_aware::NO,
-                                  std::nullopt,
-                                  cudf::output_nullability::PRESERVE,
-                                  stream,
-                                  mr);
+  return std::move(
+    cudf::transform(udf,
+                    cudf::udf_source_type::CUDA,
+                    cudf::null_aware::NO,
+                    std::nullopt,
+                    transform_inputs,
+                    std::array{cudf::transform_output{cudf::data_type{cudf::type_id::FLOAT64},
+                                                      cudf::output_nullability::PRESERVE}},
+                    {},
+                    std::nullopt,
+                    stream,
+                    mr)
+      ->release()
+      .front());
 }
 
 [[nodiscard]] std::unique_ptr<cudf::column> compute_amount_ast(
@@ -167,7 +174,7 @@ struct q9_data {
   cudf::column_view const& extendedprice,
   cudf::column_view const& supplycost,
   cudf::column_view const& quantity,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref())
 {
   CUDF_BENCHMARK_RANGE();
@@ -204,7 +211,7 @@ struct q9_data {
   cudf::column_view const& supplycost,
   cudf::column_view const& quantity,
   engine_type engine,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref())
 {
   switch (engine) {
@@ -262,7 +269,7 @@ std::unique_ptr<table_with_names> compute_profit(
   nvbench::state& state,
   engine_type engine,
   q9_data const& data,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref())
 {
   auto joined_table = join_data(data);

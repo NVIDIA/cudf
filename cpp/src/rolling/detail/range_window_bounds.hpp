@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -78,7 +78,7 @@ template <typename RangeT,
 RepT range_comparable_value_impl(scalar const& range_scalar,
                                  bool,
                                  data_type const&,
-                                 rmm::cuda_stream_view stream)
+                                 cuda::stream_ref stream)
 {
   auto val = static_cast<numeric_scalar<RangeT> const&>(range_scalar).value(stream);
   assert_non_negative(val);
@@ -89,7 +89,7 @@ template <typename RangeT, typename RepT, CUDF_ENABLE_IF(cudf::is_duration<Range
 RepT range_comparable_value_impl(scalar const& range_scalar,
                                  bool,
                                  data_type const&,
-                                 rmm::cuda_stream_view stream)
+                                 cuda::stream_ref stream)
 {
   auto val = static_cast<duration_scalar<RangeT> const&>(range_scalar).value(stream).count();
   assert_non_negative(val);
@@ -100,7 +100,7 @@ template <typename RangeT, typename RepT, CUDF_ENABLE_IF(cudf::is_fixed_point<Ra
 RepT range_comparable_value_impl(scalar const& range_scalar,
                                  bool is_unbounded,
                                  data_type const& order_by_data_type,
-                                 rmm::cuda_stream_view stream)
+                                 cuda::stream_ref stream)
 {
   CUDF_EXPECTS(is_unbounded || range_scalar.type().scale() >= order_by_data_type.scale(),
                "Range bounds scalar must match/exceed the scale of the orderby column.");
@@ -125,7 +125,7 @@ RepT range_comparable_value_impl(scalar const& range_scalar,
 template <typename OrderByType>
 range_rep_type<OrderByType> range_comparable_value(range_window_bounds const& range_bounds,
                                                    data_type const& order_by_data_type,
-                                                   rmm::cuda_stream_view stream)
+                                                   cuda::stream_ref stream)
 {
   auto const& range_scalar = range_bounds.range_scalar();
   CUDF_EXPECTS(

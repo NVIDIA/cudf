@@ -2186,6 +2186,38 @@ def test_module_proxy_write_through_config(monkeypatch):
     cf.register_option("foo", 1)
 
 
+def test_class_monkeypatch_roundtrip_restores_real_pandas(monkeypatch):
+    # Class-level patches on proxy types are mirrored onto the real pandas
+    # type (so they stay visible to fallback code running under
+    # ``disable_module_accelerator``); undoing them must restore the real
+    # type's own attributes — including for attributes that cudf.pandas
+    # replaces on the proxy, like ``columns``/``eval``/``str``.
+    real_df = xpd.DataFrame._fsproxy_slow
+    real_series = xpd.Series._fsproxy_slow
+    orig_columns = real_df.__dict__["columns"]
+    orig_eval = real_df.__dict__["eval"]
+    orig_str = real_series.__dict__["str"]
+
+    def fake_eval(self, *args, **kwargs):
+        return "patched"
+
+    monkeypatch.setattr(xpd.DataFrame, "eval", fake_eval)
+    assert real_df.__dict__["eval"] is fake_eval
+    monkeypatch.setattr(
+        xpd.DataFrame, "columns", property(lambda self: "patched")
+    )
+    monkeypatch.setattr(xpd.Series, "str", property(lambda self: "patched"))
+    monkeypatch.undo()
+
+    assert real_df.__dict__["columns"] is orig_columns
+    assert real_df.__dict__["eval"] is orig_eval
+    assert real_series.__dict__["str"] is orig_str
+    # The real type must remain fully functional on the fallback path.
+    df = real_df({"a": [1, 2]})
+    assert list(df.columns) == ["a"]
+    assert list(df.eval("b = a + 1").columns) == ["a", "b"]
+
+
 @pytest.mark.parametrize("box", ["Series", "array"])
 @pytest.mark.parametrize("na_value", [pd.NA, np.nan], ids=["NA", "NaN"])
 @pytest.mark.parametrize("storage", ["python", "pyarrow"])

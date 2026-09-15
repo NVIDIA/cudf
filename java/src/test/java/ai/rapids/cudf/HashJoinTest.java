@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2021, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -21,12 +21,14 @@ public class HashJoinTest {
   }
 
   @Test
-  void testGetCompareNulls() {
-    try (Table t = new Table.TestBuilder().column(1, 2, 3, 4).column(5, 6, 7, 8).build()) {
+  void testGetCompareNullsEqual() {
+    try (Table t = new Table.TestBuilder().column(1, 2, 3, 4).build()) {
       try (HashJoin hashJoin = new HashJoin(t, false)) {
+        assertFalse(hashJoin.getCompareNullsEqual());
         assertFalse(hashJoin.getCompareNulls());
       }
       try (HashJoin hashJoin = new HashJoin(t, true)) {
+        assertTrue(hashJoin.getCompareNullsEqual());
         assertTrue(hashJoin.getCompareNulls());
       }
     }

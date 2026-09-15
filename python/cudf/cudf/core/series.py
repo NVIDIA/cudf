@@ -2618,8 +2618,8 @@ class Series(SingleColumnFrame, IndexedFrame):
         Thus the allowed operations within ``func`` are limited to `those
         supported by the CUDA Python Numba target
         <https://numba.readthedocs.io/en/stable/cuda/cudapysupported.html>`__.
-        For more information, see the `cuDF guide to user defined functions
-        <https://docs.rapids.ai/api/cudf/stable/cudf/guide-to-udfs/>`__.
+        For more information, see the :doc:`cuDF guide to user defined functions
+        </cudf/guide-to-udfs>`.
 
         Some string functions and methods are supported. Refer to the guide
         to UDFs for details.
@@ -2751,8 +2751,8 @@ class Series(SingleColumnFrame, IndexedFrame):
         >>> sr.apply(f)  # doctest: +SKIP
 
         For a complete list of supported functions and methods that may be
-        used to manipulate string data, see the UDF guide,
-        <https://docs.rapids.ai/api/cudf/stable/cudf/guide-to-udfs/>
+        used to manipulate string data, see the :doc:`UDF guide
+        </cudf/guide-to-udfs>`
 
         """
         if convert_dtype is not True:
@@ -2857,8 +2857,22 @@ class Series(SingleColumnFrame, IndexedFrame):
         if len(val_counts) > 0:
             val_counts = val_counts[val_counts == val_counts.iloc[0]]
 
+        # pandas sorts mode results on the underlying representation:
+        # NaT (INT64_MIN as i8) and the categorical null code (-1) sort
+        # before valid values, while float NaN and the <NA> of
+        # nullable/arrow dtypes (including arrow timestamps/durations)
+        # sort last.
+        na_position = (
+            "first"
+            if (
+                self.dtype.kind in "mM"
+                and isinstance(self.dtype, (np.dtype, pd.DatetimeTZDtype))
+            )
+            or isinstance(self.dtype, cudf.CategoricalDtype)
+            else "last"
+        )
         return Series._from_column(
-            val_counts.index.sort_values()._column,
+            val_counts.index.sort_values(na_position=na_position)._column,
             name=self.name,
             attrs=self.attrs,
         )
@@ -5144,7 +5158,7 @@ class DatetimeProperties(BaseDatelikeProperties):
             )
 
         # TODO: Remove following validations
-        # once https://github.com/rapidsai/cudf/issues/5991
+        # once https://github.com/NVIDIA/cudf/issues/5991
         # is implemented
         not_implemented_formats = {
             "%c",
@@ -5156,7 +5170,7 @@ class DatetimeProperties(BaseDatelikeProperties):
                 raise NotImplementedError(
                     f"{d_format} date-time format is not "
                     f"supported yet, Please follow this issue "
-                    f"https://github.com/rapidsai/cudf/issues/5991 "
+                    f"https://github.com/NVIDIA/cudf/issues/5991 "
                     f"for tracking purposes."
                 )
         if isinstance(self.series.dtype, pd.ArrowDtype):

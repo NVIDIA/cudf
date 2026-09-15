@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -21,13 +21,12 @@
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/functional>
 #include <cuda/iterator>
-#include <thrust/iterator/permutation_iterator.h>
+#include <cuda/stream>
 #include <thrust/iterator/transform_iterator.h>
 #include <thrust/transform.h>
 
@@ -43,7 +42,7 @@ struct quantile_functor {
   std::vector<double> const& q;
   interpolation interp;
   bool retain_types;
-  rmm::cuda_stream_view stream;
+  cuda::stream_ref stream;
   rmm::device_async_resource_ref mr;
 
   template <typename T>
@@ -81,7 +80,7 @@ struct quantile_functor {
 
     if (!cudf::is_dictionary(input.type())) {
       auto sorted_data =
-        thrust::make_permutation_iterator(input.data<StorageType>(), ordered_indices);
+        cuda::make_permutation_iterator(input.data<StorageType>(), ordered_indices);
       thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                         q_device.begin(),
                         q_device.end(),
@@ -92,7 +91,7 @@ struct quantile_functor {
                               sorted_data, size, q, interp);
                           }));
     } else {
-      auto sorted_data = thrust::make_permutation_iterator(
+      auto sorted_data = cuda::make_permutation_iterator(
         dictionary::detail::make_dictionary_iterator<T>(*d_input), ordered_indices);
       thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                         q_device.begin(),
@@ -106,7 +105,7 @@ struct quantile_functor {
     }
 
     if (input.nullable()) {
-      auto sorted_validity = thrust::make_transform_iterator(
+      auto sorted_validity = cuda::transform_iterator(
         ordered_indices,
         cuda::proclaim_return_type<bool>(
           [input = *d_input] __device__(size_type idx) { return input.is_valid_nocheck(idx); }));
@@ -134,7 +133,7 @@ std::unique_ptr<column> quantile(column_view const& input,
                                  std::vector<double> const& q,
                                  interpolation interp,
                                  bool retain_types,
-                                 rmm::cuda_stream_view stream,
+                                 cuda::stream_ref stream,
                                  rmm::device_async_resource_ref mr)
 {
   auto functor = quantile_functor<exact, SortMapIterator>{
@@ -152,7 +151,7 @@ std::unique_ptr<column> quantile(column_view const& input,
                                  interpolation interp,
                                  column_view const& indices,
                                  bool exact,
-                                 rmm::cuda_stream_view stream,
+                                 cuda::stream_ref stream,
                                  rmm::device_async_resource_ref mr)
 {
   if (indices.is_empty()) {
@@ -183,7 +182,7 @@ std::unique_ptr<column> quantile(column_view const& input,
                                  interpolation interp,
                                  column_view const& ordered_indices,
                                  bool exact,
-                                 rmm::cuda_stream_view stream,
+                                 cuda::stream_ref stream,
                                  rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();

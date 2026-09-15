@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -19,6 +19,8 @@
 #include <cudf/types.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/span.hpp>
+
+#include <rmm/mr/statistics_resource_adaptor.hpp>
 
 #include <algorithm>
 #include <set>
@@ -740,6 +742,30 @@ TEST_F(KeyRemappingTest, EmptyLeftSchemaMismatchColumnCount)
 }
 
 // Tests for optional metrics computation
+
+TEST_F(KeyRemappingTest, MemoryResource)
+{
+  column_wrapper<int32_t> right_col{1, 2, 2, 3};
+  auto right_table = cudf::table_view{{right_col}};
+
+  auto mr = rmm::mr::statistics_resource_adaptor(cudf::get_current_device_resource_ref());
+
+  cudf::key_remapping remap{right_table,
+                            cudf::null_equality::EQUAL,
+                            cudf::compute_metrics::YES,
+                            cudf::get_default_stream(),
+                            mr};
+
+  EXPECT_GT(mr.get_bytes_counter().peak, 0);
+
+  auto result = remap.remap_right_keys();
+  auto ids    = to_host<int32_t>(result->view());
+
+  ASSERT_EQ(ids.size(), 4);
+  EXPECT_EQ(ids[1], ids[2]);
+  EXPECT_NE(ids[0], ids[1]);
+  EXPECT_NE(ids[1], ids[3]);
+}
 
 TEST_F(KeyRemappingTest, MetricsEnabled)
 {

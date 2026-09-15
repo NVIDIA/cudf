@@ -18,7 +18,6 @@
 
 #include <cuda/iterator>
 #include <thrust/host_vector.h>
-#include <thrust/iterator/transform_iterator.h>
 
 #include <algorithm>
 #include <array>
@@ -65,9 +64,9 @@ TEST_F(StringsContainsTests, ContainsTest)
                                      ""};
 
   cudf::test::strings_column_wrapper strings(
-    h_strings.begin(),
-    h_strings.end(),
-    thrust::make_transform_iterator(h_strings.begin(), [](auto str) { return str != nullptr; }));
+    h_strings.begin(), h_strings.end(), cuda::transform_iterator(h_strings.begin(), [](auto str) {
+      return str != nullptr;
+    }));
   auto strings_view = cudf::strings_column_view(strings);
 
   std::vector<std::string> patterns{"\\d",
@@ -141,7 +140,7 @@ TEST_F(StringsContainsTests, ContainsTest)
     cudf::test::fixed_width_column_wrapper<bool> expected(
       h_expected,
       h_expected + h_strings.size(),
-      thrust::make_transform_iterator(h_strings.begin(), [](auto str) { return str != nullptr; }));
+      cuda::transform_iterator(h_strings.begin(), [](auto str) { return str != nullptr; }));
     auto prog    = cudf::strings::regex_program::create(ptn);
     auto results = cudf::strings::contains_re(strings_view, *prog);
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
@@ -153,16 +152,16 @@ TEST_F(StringsContainsTests, MatchesTest)
   std::vector<char const*> h_strings{
     "The quick brown @fox jumps", "ovér the", "lazy @dog", "1234", "00:0:00", nullptr, ""};
   cudf::test::strings_column_wrapper strings(
-    h_strings.begin(),
-    h_strings.end(),
-    thrust::make_transform_iterator(h_strings.begin(), [](auto str) { return str != nullptr; }));
+    h_strings.begin(), h_strings.end(), cuda::transform_iterator(h_strings.begin(), [](auto str) {
+      return str != nullptr;
+    }));
 
   auto strings_view = cudf::strings_column_view(strings);
   {
     auto const pattern = std::string("lazy");
     cudf::test::fixed_width_column_wrapper<bool> expected(
       {false, false, true, false, false, false, false},
-      thrust::make_transform_iterator(h_strings.begin(), [](auto str) { return str != nullptr; }));
+      cuda::transform_iterator(h_strings.begin(), [](auto str) { return str != nullptr; }));
     auto prog    = cudf::strings::regex_program::create(pattern);
     auto results = cudf::strings::matches_re(strings_view, *prog);
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
@@ -171,7 +170,7 @@ TEST_F(StringsContainsTests, MatchesTest)
     auto const pattern = std::string("\\d+");
     cudf::test::fixed_width_column_wrapper<bool> expected(
       {false, false, false, true, true, false, false},
-      thrust::make_transform_iterator(h_strings.begin(), [](auto str) { return str != nullptr; }));
+      cuda::transform_iterator(h_strings.begin(), [](auto str) { return str != nullptr; }));
     auto prog    = cudf::strings::regex_program::create(pattern);
     auto results = cudf::strings::matches_re(strings_view, *prog);
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
@@ -180,7 +179,7 @@ TEST_F(StringsContainsTests, MatchesTest)
     auto const pattern = std::string("@\\w+");
     cudf::test::fixed_width_column_wrapper<bool> expected(
       {false, false, false, false, false, false, false},
-      thrust::make_transform_iterator(h_strings.begin(), [](auto str) { return str != nullptr; }));
+      cuda::transform_iterator(h_strings.begin(), [](auto str) { return str != nullptr; }));
     auto prog    = cudf::strings::regex_program::create(pattern);
     auto results = cudf::strings::matches_re(strings_view, *prog);
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
@@ -189,7 +188,7 @@ TEST_F(StringsContainsTests, MatchesTest)
     auto const pattern = std::string(".*");
     cudf::test::fixed_width_column_wrapper<bool> expected(
       {true, true, true, true, true, false, true},
-      thrust::make_transform_iterator(h_strings.begin(), [](auto str) { return str != nullptr; }));
+      cuda::transform_iterator(h_strings.begin(), [](auto str) { return str != nullptr; }));
     auto prog    = cudf::strings::regex_program::create(pattern);
     auto results = cudf::strings::matches_re(strings_view, *prog);
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);

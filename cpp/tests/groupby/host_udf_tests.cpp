@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -59,7 +59,7 @@ struct host_udf_groupby_test : cudf::groupby_host_udf {
   }
 
   [[nodiscard]] std::unique_ptr<cudf::column> get_empty_output(
-    [[maybe_unused]] rmm::cuda_stream_view stream,
+    [[maybe_unused]] cuda::stream_ref stream,
     [[maybe_unused]] rmm::device_async_resource_ref mr) const override
   {
     // Dummy output.
@@ -67,7 +67,7 @@ struct host_udf_groupby_test : cudf::groupby_host_udf {
   }
 
   [[nodiscard]] std::unique_ptr<cudf::column> operator()(
-    rmm::cuda_stream_view stream, rmm::device_async_resource_ref mr) const override
+    cuda::stream_ref stream, rmm::device_async_resource_ref mr) const override
   {
     SCOPED_TRACE("Test instance created at line: " + std::to_string(test_location_line));
 

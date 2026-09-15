@@ -1,40 +1,46 @@
 #cpp code owners
-cpp/                 @rapidsai/cudf-cpp-codeowners
-python/cudf/udf_cpp/ @rapidsai/cudf-cpp-codeowners
+cpp/                 @NVIDIA/cudf-cpp-codeowners
+python/cudf/udf_cpp/ @NVIDIA/cudf-cpp-codeowners
 
 #libcudf_streaming code owners (order matters, this supersedes cpp/ for files in this directory)
-cpp/libcudf_streaming/  @rapidsai/rapidsmpf-cpp-codeowners
+cpp/libcudf_streaming/  @NVIDIA/rapidsmpf-cpp-codeowners
 
 #python code owners
-python/            @rapidsai/cudf-python-codeowners
-notebooks/         @rapidsai/cudf-python-codeowners
-python/dask_cudf/  @rapidsai/cudf-dask-codeowners
-python/cudf_polars/ @rapidsai/cudf-polars-codeowners
-python/cudf_streaming/ @rapidsai/rapidsmpf-python-codeowners
+python/            @NVIDIA/cudf-python-codeowners
+notebooks/         @NVIDIA/cudf-python-codeowners
+python/dask_cudf/  @NVIDIA/cudf-dask-codeowners
+python/cudf_polars/ @NVIDIA/cudf-polars-codeowners
+python/cudf_streaming/ @NVIDIA/rapidsmpf-python-codeowners
 
 #cmake code owners
-CMakeLists.txt @rapidsai/cudf-cmake-codeowners
-**/cmake/      @rapidsai/cudf-cmake-codeowners
-*.cmake        @rapidsai/cudf-cmake-codeowners
-cpp/libcudf_streaming/CMakeLists.txt @rapidsai/rapidsmpf-cmake-codeowners
-cpp/libcudf_streaming/**/cmake/      @rapidsai/rapidsmpf-cmake-codeowners
-cpp/libcudf_streaming/*.cmake        @rapidsai/rapidsmpf-cmake-codeowners
+CMakeLists.txt @NVIDIA/cudf-cmake-codeowners
+**/cmake/      @NVIDIA/cudf-cmake-codeowners
+*.cmake        @NVIDIA/cudf-cmake-codeowners
+cpp/libcudf_streaming/CMakeLists.txt @NVIDIA/rapidsmpf-cmake-codeowners
+cpp/libcudf_streaming/**/cmake/      @NVIDIA/rapidsmpf-cmake-codeowners
+cpp/libcudf_streaming/*.cmake        @NVIDIA/rapidsmpf-cmake-codeowners
 
 #java code owners
-java/              @rapidsai/cudf-java-codeowners
+java/              @NVIDIA/cudf-java-codeowners
 
 #CI code owners
-/.github/                @rapidsai/ci-codeowners
-/ci/                     @rapidsai/ci-codeowners
-/.coderabbit.yaml        @rapidsai/ci-codeowners
+/.github/                @NVIDIA/adi-ci-codeowners
+/ci/                     @NVIDIA/adi-ci-codeowners
+/.coderabbit.yaml        @NVIDIA/adi-ci-codeowners
+/.yamllint.yaml          @NVIDIA/adi-ci-codeowners
 
 #packaging code owners
-/.pre-commit-config.yaml @rapidsai/packaging-codeowners
-/.devcontainer/          @rapidsai/packaging-codeowners
-/conda/                  @rapidsai/packaging-codeowners
-dependencies.yaml        @rapidsai/packaging-codeowners
-/build.sh                @rapidsai/packaging-codeowners
-pyproject.toml           @rapidsai/packaging-codeowners
+/.pre-commit-config.yaml @NVIDIA/adi-packaging-codeowners
+/.devcontainer/          @NVIDIA/adi-packaging-codeowners
+/conda/                  @NVIDIA/adi-packaging-codeowners
+dependencies.yaml        @NVIDIA/adi-packaging-codeowners
+/build.sh                @NVIDIA/adi-packaging-codeowners
+pyproject.toml           @NVIDIA/adi-packaging-codeowners
 
 # Ops code owners
-/SECURITY.md             @rapidsai/ops-codeowners
+/SECURITY.md             @NVIDIA/adi-ops-codeowners
+
+# Overrides to ensure the appropriate team manages these library-specific plugins.
+/ci/narwhals_cudf_test_plugin.py @NVIDIA/cudf-python-codeowners
+/ci/narwhals_cudf_pandas_test_plugin.py @NVIDIA/cudf-python-codeowners
+/ci/narwhals_cudf_polars_test_plugin.py @NVIDIA/cudf-polars-codeowners

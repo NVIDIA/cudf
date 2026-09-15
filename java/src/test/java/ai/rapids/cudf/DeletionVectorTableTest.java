@@ -1,6 +1,6 @@
 /*
  *
- *  SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION.
+ *  SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  *  SPDX-License-Identifier: Apache-2.0
  *
  */
@@ -11,6 +11,8 @@ import ai.rapids.cudf.TableTestUtils.HostMemoryBufferArray;
 import ai.rapids.cudf.DeletionVector.DeletionVectorInfo;
 import ai.rapids.cudf.DeletionVector.ParquetChunkedReader;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 
 import java.io.File;
 import java.io.IOException;
@@ -18,6 +20,7 @@ import java.util.Arrays;
 
 import static ai.rapids.cudf.AssertUtils.assertTableTypes;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 
 class DeletionVectorTableTest extends CudfTestBase {
@@ -29,8 +32,9 @@ class DeletionVectorTableTest extends CudfTestBase {
   private static final int DELETED_ROWS_COUNT2 = 3959;
   private static final int DELETED_ROWS_COUNT2_RGS_1_AND_3 = 1974;
 
-  @Test
-  void testReadParquetReadAllRowGroups() throws IOException {
+  @ParameterizedTest(name = "isRetention={0}")
+  @CsvSource({"false", "true"})
+  void testReadParquetReadAllRowGroups(boolean isRetention) throws IOException {
     ParquetOptions opts = ParquetOptions.builder()
             .includeColumn("loan_id")
             .includeColumn("zip")
@@ -40,10 +44,12 @@ class DeletionVectorTableTest extends CudfTestBase {
     byte[] bitmapData = TableTestUtils.arrayFrom(DELETED_ROWS_FILE1);
     try (HostMemoryBufferArray array = TableTestUtils.buffersFrom(data);
          HostMemoryBufferArray bitmapArray = TableTestUtils.buffersFrom(new byte[][] { bitmapData })) {
-      DeletionVectorInfo dvInfo = new DeletionVectorInfo(bitmapArray.buffers[0], null, null);
+      DeletionVectorInfo dvInfo = new DeletionVectorInfo(
+          bitmapArray.buffers[0], isRetention, null, null);
       try (Table table = DeletionVector.readParquet(opts, array.buffers, new DeletionVectorInfo[] { dvInfo })) {
-        long rows = table.getRowCount();
-        assertEquals(1000 - DELETED_ROWS_COUNT1, rows);
+        long expectedRows =
+            isRetention ? DELETED_ROWS_COUNT1 : 1000 - DELETED_ROWS_COUNT1;
+        assertEquals(expectedRows, table.getRowCount());
         assertTableTypes(new DType[]{DType.UINT64, DType.INT64, DType.INT32, DType.INT32}, table);
       }
     }
@@ -59,7 +65,7 @@ class DeletionVectorTableTest extends CudfTestBase {
          HostMemoryBufferArray bitmapArray = TableTestUtils.buffersFrom(new byte[][] { bitmapData })) {
       long[] rowGroupOffsets = Arrays.stream(rowGroups[0]).mapToLong(i -> i * 10000L).toArray();
       int[] rowGroupNumRows = Arrays.stream(rowGroups[0]).map(i -> 10000).toArray();
-      DeletionVectorInfo dvInfo = new DeletionVectorInfo(bitmapArray.buffers[0], rowGroupOffsets, rowGroupNumRows);
+      DeletionVectorInfo dvInfo = new DeletionVectorInfo(bitmapArray.buffers[0], false, rowGroupOffsets, rowGroupNumRows);
       try (Table table = DeletionVector.readParquet(opts, array.buffers, rowGroups, new DeletionVectorInfo[] { dvInfo })) {
         long rows = table.getRowCount();
         assertEquals(20000 - DELETED_ROWS_COUNT2_RGS_1_AND_3, rows);
@@ -76,7 +82,7 @@ class DeletionVectorTableTest extends CudfTestBase {
     try (HostMemoryBufferArray array = TableTestUtils.buffersFrom(data);
          HostMemoryBufferArray bitmapArray = TableTestUtils.buffersFrom(new byte[][] { bitmapData })) {
       ParquetOptions opts = ParquetOptions.DEFAULT;
-      DeletionVectorInfo dvInfo = new DeletionVectorInfo(bitmapArray.buffers[0], null, null);
+      DeletionVectorInfo dvInfo = new DeletionVectorInfo(bitmapArray.buffers[0], false, null, null);
       try (ParquetChunkedReader reader = DeletionVector.newParquetChunkedReader(240000, 0, opts, array.buffers,
               new DeletionVectorInfo[] { dvInfo })) {
         int numChunks = 0;
@@ -94,8 +100,9 @@ class DeletionVectorTableTest extends CudfTestBase {
     }
   }
 
-  @Test
-  void testChunkedReadParquetSomeRowGroups() throws Exception {
+  @ParameterizedTest(name = "isRetention={0}")
+  @CsvSource({"false", "true"})
+  void testChunkedReadParquetSomeRowGroups(boolean isRetention) throws Exception {
     byte[][] data = TableTestUtils.sliceBytes(TableTestUtils.arrayFrom(TEST_FILE2), 2);
     byte[] bitmapData = TableTestUtils.arrayFrom(DELETED_ROWS_FILE2);
     int[][] rowGroups = new int[][] { {1, 3} };
@@ -104,7 +111,8 @@ class DeletionVectorTableTest extends CudfTestBase {
       ParquetOptions opts = ParquetOptions.DEFAULT;
       long[] rowGroupOffsets = Arrays.stream(rowGroups[0]).mapToLong(i -> i * 10000L).toArray();
       int[] rowGroupNumRows = Arrays.stream(rowGroups[0]).map(i -> 10000).toArray();
-      DeletionVectorInfo dvInfo = new DeletionVectorInfo(bitmapArray.buffers[0], rowGroupOffsets, rowGroupNumRows);
+      DeletionVectorInfo dvInfo = new DeletionVectorInfo(
+          bitmapArray.buffers[0], isRetention, rowGroupOffsets, rowGroupNumRows);
       try (ParquetChunkedReader reader = DeletionVector.newParquetChunkedReader(120000, 0, opts, array.buffers,
         rowGroups, new DeletionVectorInfo[] { dvInfo })) {
         int numChunks = 0;
@@ -117,7 +125,10 @@ class DeletionVectorTableTest extends CudfTestBase {
           }
         }
         assertEquals(2, numChunks);
-        assertEquals(20000 - DELETED_ROWS_COUNT2_RGS_1_AND_3, totalRows);
+        long expectedRows = isRetention
+            ? DELETED_ROWS_COUNT2_RGS_1_AND_3
+            : 20000 - DELETED_ROWS_COUNT2_RGS_1_AND_3;
+        assertEquals(expectedRows, totalRows);
       }
     }
   }
@@ -132,7 +143,7 @@ class DeletionVectorTableTest extends CudfTestBase {
       ParquetOptions opts = ParquetOptions.DEFAULT;
       long[] rowGroupOffsets = new long[] { 30000L, 10000L };
       int[] rowGroupNumRows = new int[] { 10000, 10000 };
-      DeletionVectorInfo dvInfo = new DeletionVectorInfo(bitmapArray.buffers[0], rowGroupOffsets, rowGroupNumRows);
+      DeletionVectorInfo dvInfo = new DeletionVectorInfo(bitmapArray.buffers[0], false, rowGroupOffsets, rowGroupNumRows);
       try (ParquetChunkedReader reader = DeletionVector.newParquetChunkedReader(120000, 0, opts, new String[] {
               TEST_FILE2.getAbsolutePath(),
               TEST_FILE2.getAbsolutePath()
@@ -150,6 +161,121 @@ class DeletionVectorTableTest extends CudfTestBase {
         assertEquals(2, numChunks);
         assertEquals(20000 - DELETED_ROWS_COUNT2_RGS_1_AND_3, totalRows);
       }
+    }
+  }
+
+  @ParameterizedTest(name = "isRetention={0}")
+  @CsvSource({"false", "true"})
+  void testComputeNumDeletedRows(boolean isRetention) throws IOException {
+    byte[] bitmapData = TableTestUtils.arrayFrom(DELETED_ROWS_FILE2);
+    long[] rowGroupOffsets = new long[] {10000L, 30000L};
+    int[] rowGroupNumRows = new int[] {10000, 10000};
+    try (HostMemoryBufferArray bitmapArray =
+             TableTestUtils.buffersFrom(new byte[][] {bitmapData})) {
+      DeletionVectorInfo dvInfo = new DeletionVectorInfo(
+          bitmapArray.buffers[0], isRetention, rowGroupOffsets, rowGroupNumRows);
+      long expectedRowsDeleted = isRetention
+          ? 20000 - DELETED_ROWS_COUNT2_RGS_1_AND_3
+          : DELETED_ROWS_COUNT2_RGS_1_AND_3;
+      assertEquals(expectedRowsDeleted, DeletionVector.computeNumDeletedRows(dvInfo, 5000));
+    }
+  }
+
+  /**
+   * Verifies batched row counting for chunked deletion and retention vectors.
+   *
+   * @param isRetention whether the input bitmaps identify retained rows
+   */
+  @ParameterizedTest(name = "isRetention={0}")
+  @CsvSource({"false", "true"})
+  void testComputeNumDeletedRowsBatch(boolean isRetention) throws IOException {
+    byte[] bitmapData = TableTestUtils.arrayFrom(DELETED_ROWS_FILE2);
+    long[] rowGroupOffsets = new long[] {10000L, 30000L};
+    int[] rowGroupNumRows = new int[] {10000, 10000};
+    try (HostMemoryBufferArray bitmapArray =
+             TableTestUtils.buffersFrom(new byte[][] {bitmapData, bitmapData})) {
+      DeletionVectorInfo[] dvInfos = Arrays.stream(bitmapArray.buffers)
+          .map(bitmap -> new DeletionVectorInfo(
+              bitmap, isRetention, rowGroupOffsets, rowGroupNumRows))
+          .toArray(DeletionVectorInfo[]::new);
+      long expectedRowsDeletedPerVector = isRetention
+          ? 20000 - DELETED_ROWS_COUNT2_RGS_1_AND_3
+          : DELETED_ROWS_COUNT2_RGS_1_AND_3;
+      assertEquals(2 * expectedRowsDeletedPerVector,
+          DeletionVector.computeNumDeletedRows(dvInfos, 5000));
+    }
+  }
+
+  /**
+   * Verifies invalid row-count arguments are rejected with the expected messages.
+   */
+  @Test
+  void testComputeNumDeletedRowsInvalidArguments() throws IOException {
+    byte[] bitmapData = TableTestUtils.arrayFrom(DELETED_ROWS_FILE1);
+    try (HostMemoryBufferArray bitmapArray =
+             TableTestUtils.buffersFrom(new byte[][] {bitmapData})) {
+      DeletionVectorInfo dvInfo = new DeletionVectorInfo(
+          bitmapArray.buffers[0], false, new long[] {0}, new int[] {1000});
+      DeletionVectorInfo missingMetadata = new DeletionVectorInfo(
+          bitmapArray.buffers[0], false, null, null);
+      DeletionVectorInfo emptyMetadata = new DeletionVectorInfo(
+          bitmapArray.buffers[0], false, new long[0], new int[0]);
+      DeletionVectorInfo negativeOffset = new DeletionVectorInfo(
+          bitmapArray.buffers[0], false, new long[] {-1}, new int[] {1000});
+      DeletionVectorInfo negativeRowCount = new DeletionVectorInfo(
+          bitmapArray.buffers[0], false, new long[] {0}, new int[] {-1});
+      DeletionVectorInfo retentionInfo = new DeletionVectorInfo(
+          bitmapArray.buffers[0], true, new long[] {0}, new int[] {1000});
+      assertEquals("Expected non-null deletionVectorInfo", assertThrows(NullPointerException.class,
+          () -> DeletionVector.computeNumDeletedRows(
+              (DeletionVectorInfo) null, 1000)).getMessage());
+      assertEquals("Expected non-null deletionVectorInfos",
+          assertThrows(NullPointerException.class,
+              () -> DeletionVector.computeNumDeletedRows(
+                  (DeletionVectorInfo[]) null, 1000)).getMessage());
+      assertEquals("deletionVectorInfos must be non-empty",
+          assertThrows(IllegalArgumentException.class,
+              () -> DeletionVector.computeNumDeletedRows(
+                  new DeletionVectorInfo[0], 1000)).getMessage());
+      assertEquals("maxChunkRows must be positive", assertThrows(IllegalArgumentException.class,
+          () -> DeletionVector.computeNumDeletedRows(dvInfo, 0)).getMessage());
+      assertEquals("row-group metadata must be non-empty",
+          assertThrows(IllegalArgumentException.class,
+              () -> DeletionVector.computeNumDeletedRows(missingMetadata, 1000)).getMessage());
+      assertEquals("row-group metadata must be non-empty",
+          assertThrows(IllegalArgumentException.class,
+              () -> DeletionVector.computeNumDeletedRows(emptyMetadata, 1000)).getMessage());
+      assertEquals("row-group metadata values must be non-negative",
+          assertThrows(IllegalArgumentException.class,
+              () -> DeletionVector.computeNumDeletedRows(negativeOffset, 1000)).getMessage());
+      assertEquals("row-group metadata values must be non-negative",
+          assertThrows(IllegalArgumentException.class,
+              () -> DeletionVector.computeNumDeletedRows(negativeRowCount, 1000)).getMessage());
+      assertEquals("All DeletionVectorInfo objects must have the same isRetention value.",
+          assertThrows(IllegalArgumentException.class,
+              () -> DeletionVector.computeNumDeletedRows(
+                  new DeletionVectorInfo[] {dvInfo, retentionInfo}, 1000)).getMessage());
+    }
+  }
+
+  @Test
+  void testMixedDeletionAndRetentionVectorsRejected() throws IOException {
+    byte[][] data = TableTestUtils.sliceBytes(TableTestUtils.arrayFrom(TEST_FILE1), 10);
+    byte[] bitmapData = TableTestUtils.arrayFrom(DELETED_ROWS_FILE1);
+    try (HostMemoryBufferArray array = TableTestUtils.buffersFrom(data);
+         HostMemoryBufferArray bitmapArray =
+             TableTestUtils.buffersFrom(new byte[][] { bitmapData })) {
+      DeletionVectorInfo[] mixedVectorInfos = new DeletionVectorInfo[] {
+          new DeletionVectorInfo(bitmapArray.buffers[0], false, null, null),
+          new DeletionVectorInfo(bitmapArray.buffers[0], true, null, null)
+      };
+
+      assertThrows(IllegalArgumentException.class,
+          () -> DeletionVector.readParquet(
+              ParquetOptions.DEFAULT, array.buffers, mixedVectorInfos));
+      assertThrows(IllegalArgumentException.class,
+          () -> DeletionVector.newParquetChunkedReader(
+              0, 0, ParquetOptions.DEFAULT, array.buffers, mixedVectorInfos));
     }
   }
 }

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -11,7 +11,7 @@
 #include <cudf/io/types.hpp>
 #include <cudf/utilities/span.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
+#include <cuda/stream>
 
 #include <optional>
 
@@ -33,7 +33,7 @@ void batched_decompress(compression_type compression,
                         device_span<codec_exec_result> results,
                         size_t max_uncomp_chunk_size,
                         size_t max_total_uncomp_size,
-                        rmm::cuda_stream_view stream);
+                        cuda::stream_ref stream);
 
 /**
  * @brief Return the amount of temporary space required in bytes for a given decompression
@@ -46,12 +46,14 @@ void batched_decompress(compression_type compression,
  * @param[in] num_chunks The number of decompression chunks to be processed
  * @param[in] max_uncomp_chunk_size Maximum size of any single uncompressed chunk
  * @param[in] max_total_uncomp_size Maximum total size of uncompressed data
+ * @param[in] stream CUDA stream that the decompression will run on
  * @returns The total required size in bytes
  */
 size_t batched_decompress_temp_size(compression_type compression,
                                     size_t num_chunks,
                                     size_t max_uncomp_chunk_size,
-                                    size_t max_total_uncomp_size);
+                                    size_t max_total_uncomp_size,
+                                    cuda::stream_ref stream);
 
 /**
  * @brief Return the amount of temporary space required in bytes for a given decompression
@@ -73,7 +75,7 @@ size_t batched_decompress_temp_size(compression_type compression,
   device_span<device_span<uint8_t const> const> inputs,
   size_t max_uncomp_chunk_size,
   size_t max_total_uncomp_size,
-  rmm::cuda_stream_view stream);
+  cuda::stream_ref stream);
 
 [[nodiscard]] bool is_batched_decompress_temp_size_ex_supported(compression_type compression);
 
@@ -132,6 +134,6 @@ void batched_compress(compression_type compression,
                       device_span<device_span<uint8_t const> const> inputs,
                       device_span<device_span<uint8_t> const> outputs,
                       device_span<codec_exec_result> results,
-                      rmm::cuda_stream_view stream);
+                      cuda::stream_ref stream);
 
 }  // namespace cudf::io::detail::nvcomp

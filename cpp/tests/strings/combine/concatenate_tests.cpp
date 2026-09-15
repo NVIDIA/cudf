@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -13,7 +13,7 @@
 #include <cudf/strings/strings_column_view.hpp>
 #include <cudf/types.hpp>
 
-#include <thrust/iterator/transform_iterator.h>
+#include <cuda/iterator>
 
 constexpr cudf::test::debug_output_level verbosity{cudf::test::debug_output_level::ALL_ERRORS};
 
@@ -25,12 +25,12 @@ TEST_F(StringsCombineTest, Concatenate)
   cudf::test::strings_column_wrapper strings1(
     h_strings1.begin(),
     h_strings1.end(),
-    thrust::make_transform_iterator(h_strings1.begin(), [](auto str) { return str != nullptr; }));
+    cuda::transform_iterator(h_strings1.begin(), [](auto str) { return str != nullptr; }));
   std::vector<char const*> h_strings2{"xyz", "abc", "d", "éa", "", nullptr, "f"};
   cudf::test::strings_column_wrapper strings2(
     h_strings2.begin(),
     h_strings2.end(),
-    thrust::make_transform_iterator(h_strings2.begin(), [](auto str) { return str != nullptr; }));
+    cuda::transform_iterator(h_strings2.begin(), [](auto str) { return str != nullptr; }));
 
   std::vector<cudf::column_view> strings_columns;
   strings_columns.push_back(strings1);
@@ -43,7 +43,7 @@ TEST_F(StringsCombineTest, Concatenate)
     cudf::test::strings_column_wrapper expected(
       h_expected.begin(),
       h_expected.end(),
-      thrust::make_transform_iterator(h_expected.begin(), [](auto str) { return str != nullptr; }));
+      cuda::transform_iterator(h_expected.begin(), [](auto str) { return str != nullptr; }));
 
     auto results = cudf::strings::concatenate(table);
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
@@ -54,7 +54,7 @@ TEST_F(StringsCombineTest, Concatenate)
     cudf::test::strings_column_wrapper expected(
       h_expected.begin(),
       h_expected.end(),
-      thrust::make_transform_iterator(h_expected.begin(), [](auto str) { return str != nullptr; }));
+      cuda::transform_iterator(h_expected.begin(), [](auto str) { return str != nullptr; }));
 
     auto results = cudf::strings::concatenate(table, cudf::string_scalar(":"));
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
@@ -64,7 +64,7 @@ TEST_F(StringsCombineTest, Concatenate)
     cudf::test::strings_column_wrapper expected(
       h_expected.begin(),
       h_expected.end(),
-      thrust::make_transform_iterator(h_expected.begin(), [](auto str) { return str != nullptr; }));
+      cuda::transform_iterator(h_expected.begin(), [](auto str) { return str != nullptr; }));
 
     auto results =
       cudf::strings::concatenate(table, cudf::string_scalar(":"), cudf::string_scalar("_"));
@@ -75,7 +75,7 @@ TEST_F(StringsCombineTest, Concatenate)
     cudf::test::strings_column_wrapper expected(
       h_expected.begin(),
       h_expected.end(),
-      thrust::make_transform_iterator(h_expected.begin(), [](auto str) { return str != nullptr; }));
+      cuda::transform_iterator(h_expected.begin(), [](auto str) { return str != nullptr; }));
 
     auto results =
       cudf::strings::concatenate(table, cudf::string_scalar(""), cudf::string_scalar(""));

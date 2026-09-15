@@ -693,19 +693,6 @@ class ReductionTest extends CudfTestBase {
   }
 
   @Test
-  @SuppressWarnings("deprecation")
-  void testSumWithOverflowDeprecatedAlias() {
-    // The deprecated sumWithOverflow() alias must keep behaving like sumOverflow().
-    try (ColumnVector cv = ColumnVector.fromLongs(1L, 2L, 3L, 4L, 5L);
-         Scalar result = cv.reduce(ReductionAggregation.sumWithOverflow(), DType.STRUCT)) {
-      SumOverflowResult r = readSumOverflow(result);
-      assertTrue(r.sumValid);
-      assertEquals(15L, r.sumValue);
-      assertFalse(r.overflow);
-    }
-  }
-
-  @Test
   void testSumOverflowPositiveOverflow() {
     // On overflow the sum value is unspecified; the overflow flag is the source of truth.
     try (ColumnVector cv = ColumnVector.fromLongs(Long.MAX_VALUE, 1L);

@@ -476,7 +476,7 @@ def test_repartition_hash(by, npartitions, max_branch):
 
 
 def test_repartition_no_extra_row():
-    # see https://github.com/rapidsai/cudf/issues/11930
+    # see https://github.com/NVIDIA/cudf/issues/11930
     gdf = cudf.DataFrame({"a": [10, 20, 30], "b": [1, 2, 3]}).set_index("a")
     ddf = dask_cudf.from_cudf(gdf, npartitions=1)
     ddf_new = ddf.repartition([0, 5, 10, 30], force=True)
@@ -760,7 +760,7 @@ def test_large_numbers_var():
 
 
 def test_index_map_partitions():
-    # https://github.com/rapidsai/cudf/issues/6738
+    # https://github.com/NVIDIA/cudf/issues/6738
 
     ddf = dd.from_pandas(pd.DataFrame({"a": range(10)}), npartitions=2)
     mins_pd = ddf.index.map_partitions(M.min, meta=ddf.index).compute()
@@ -804,7 +804,7 @@ def test_merging_categorical_columns():
 
 def test_correct_meta():
     # Need these local imports in this specific order.
-    # For context: https://github.com/rapidsai/cudf/issues/7946
+    # For context: https://github.com/NVIDIA/cudf/issues/7946
     import pandas as pd
 
     from dask import dataframe as dd
@@ -829,7 +829,7 @@ def test_categorical_dtype_round_trip():
     assert ds.dtype.ordered is False
 
     # Below validations are required, see:
-    # https://github.com/rapidsai/cudf/issues/11487#issuecomment-1208912383
+    # https://github.com/NVIDIA/cudf/issues/11487#issuecomment-1208912383
     actual = ds.compute()
     expected = pds.compute()
     assert actual.dtype.ordered == expected.dtype.ordered
@@ -922,7 +922,7 @@ def test_cov_corr(op, numeric_only):
     ddf = dd.from_pandas(df, npartitions=2)
     res = getattr(ddf, op)(numeric_only=numeric_only)
     # Use to_pandas until cudf supports numeric_only
-    # (See: https://github.com/rapidsai/cudf/issues/12626)
+    # (See: https://github.com/NVIDIA/cudf/issues/12626)
     expect = getattr(df.to_pandas(), op)(numeric_only=numeric_only)
     dd.assert_eq(res, expect)
 

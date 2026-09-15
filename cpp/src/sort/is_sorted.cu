@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -12,11 +12,11 @@
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/error.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/iterator>
+#include <cuda/stream>
 #include <thrust/count.h>
 #include <thrust/sort.h>
 #include <thrust/transform.h>
@@ -27,7 +27,7 @@ namespace detail {
 bool is_sorted(cudf::table_view const& in,
                std::vector<order> const& column_order,
                std::vector<null_order> const& null_precedence,
-               rmm::cuda_stream_view stream)
+               cuda::stream_ref stream)
 {
   auto const comparator =
     detail::row::lexicographic::self_comparator{in, column_order, null_precedence, stream};
@@ -67,7 +67,7 @@ bool is_sorted(cudf::table_view const& in,
 bool is_sorted(cudf::table_view const& in,
                std::vector<order> const& column_order,
                std::vector<null_order> const& null_precedence,
-               rmm::cuda_stream_view stream)
+               cuda::stream_ref stream)
 {
   CUDF_FUNC_RANGE();
   if (in.num_columns() == 0 || in.num_rows() == 0) { return true; }

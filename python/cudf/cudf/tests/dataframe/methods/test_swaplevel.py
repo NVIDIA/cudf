@@ -1,7 +1,8 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 
+import pandas as pd
 import pytest
 
 import cudf
@@ -35,6 +36,24 @@ def test_dataframe_swaplevel_axis_0():
     assert_eq(pdf.swaplevel(-1, -3), cdf.swaplevel(-1, -3))
     assert_eq(pdf.swaplevel("a", "b", 0), cdf.swaplevel("a", "b", 0))
     assert_eq(cdf.swaplevel("a", "b"), cdf.swaplevel("b", "a"))
+
+
+def test_dataframe_swaplevel_stacked_names():
+    # the index produced by an unstack/stack round trip keys its levels
+    # positionally while carrying real level names; swaplevel must
+    # preserve the names, not re-derive them from the internal keys
+    pidx = pd.MultiIndex.from_product(
+        [[2000, 2001], [1, 2], [1, 15]], names=["year", "month", "day"]
+    )
+    pdf = pd.DataFrame(
+        {"A": range(8), "B": range(8, 16)}, index=pidx, dtype="float64"
+    )
+    cdf = cudf.DataFrame(pdf)
+
+    expected = pdf.unstack(1).stack(future_stack=True).swaplevel(1, 2)
+    result = cdf.unstack(1).stack(future_stack=True).swaplevel(1, 2)
+    assert list(result.index.names) == ["year", "month", "day"]
+    assert_eq(expected.sort_index(), result.sort_index())
 
 
 def test_dataframe_swaplevel_TypeError():

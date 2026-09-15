@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -12,6 +12,8 @@
 
 #include <nvbench/nvbench.cuh>
 
+#include <algorithm>
+#include <numeric>
 #include <random>
 
 namespace {
@@ -30,11 +32,12 @@ auto setup_masks(nvbench::state& state)
 
   // Create segments
   std::mt19937 generator(seed);
-  std::normal_distribution normal_dist(static_cast<double>(expected_masks_per_segment), 1.0);
+  std::poisson_distribution<cudf::size_type> segment_size_dist(
+    static_cast<double>(expected_masks_per_segment));
   std::vector<cudf::size_type> segments(num_segments + 1);
   auto num_masks = 0;
-  std::generate_n(segments.begin(), num_segments, [&normal_dist, &generator, &num_masks]() {
-    cudf::size_type segment_size = normal_dist(generator);
+  std::generate_n(segments.begin(), num_segments, [&segment_size_dist, &generator, &num_masks]() {
+    auto const segment_size = segment_size_dist(generator);
     num_masks += segment_size;
     return segment_size;
   });
@@ -70,7 +73,7 @@ void BM_segmented_bitmask_and(nvbench::state& state)
 
   auto [segments, masks, mask_pointers, mask_begin_bits, data_bytes] = setup_masks(state);
 
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().value()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().get()));
   state.add_element_count(data_bytes, "input size");
   state.template add_global_memory_reads<nvbench::int8_t>(data_bytes);
   auto const mem_stats_logger = cudf::memory_stats_logger();
@@ -84,6 +87,8 @@ void BM_segmented_bitmask_and(nvbench::state& state)
   set_throughputs(state);
 }
 
+void BM_segmented_bitmask_and_wide_masks(nvbench::state& state) { BM_segmented_bitmask_and(state); }
+
 void BM_multi_segment_bitmask_and(nvbench::state& state)
 {
   auto const mask_size_bits = static_cast<size_t>(state.get_int64("mask_size_bits"));
@@ -91,7 +96,7 @@ void BM_multi_segment_bitmask_and(nvbench::state& state)
 
   auto [segments, masks, mask_pointers, mask_begin_bits, data_bytes] = setup_masks(state);
 
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().value()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().get()));
   state.add_element_count(data_bytes, "input size");
   state.template add_global_memory_reads<nvbench::int8_t>(data_bytes);
   auto const mem_stats_logger = cudf::memory_stats_logger();
@@ -133,6 +138,12 @@ NVBENCH_BENCH(BM_segmented_bitmask_and)
   .add_int64_axis("num_segments", {100, 1000, 10000})
   .add_int64_axis("expected_masks_per_segment", {4, 8, 16})
   .add_int64_axis("mask_size_bits", {32, 64, 128});
+
+NVBENCH_BENCH(BM_segmented_bitmask_and_wide_masks)
+  .set_name("segmented_bitmask_and_wide_masks")
+  .add_int64_axis("num_segments", {8, 64, 512})
+  .add_int64_axis("expected_masks_per_segment", {4, 8})
+  .add_int64_axis("mask_size_bits", {100000, 1000000});
 
 NVBENCH_BENCH(BM_multi_segment_bitmask_and)
   .set_name("multi_segment_bitmask_and")

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -172,14 +172,14 @@ void nvbench_join_on_int32(nvbench::state& state,
   state.add_element_count(input_size, "input_size");
   state.add_global_memory_reads<nvbench::int8_t>(input_size);
 
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().value()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().get()));
 
   state.exec(nvbench::exec_tag::sync, [&](nvbench::launch&) {
     if constexpr (Algo == join_algo::HASH) {
       auto result = cudf::inner_join(left, right, cudf::null_equality::EQUAL);
     } else {
       auto smj    = cudf::sort_merge_join(right, cudf::sorted::NO, cudf::null_equality::EQUAL);
-      auto result = smj.inner_join(left, cudf::sorted::NO);
+      auto result = smj.inner_join(left);
     }
   });
 }

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -7,6 +7,10 @@
 
 namespace cudf {
 
-std::string type_to_name(data_type type) { return type_dispatcher(type, type_to_name_impl{}); }
+std::string type_to_name(data_type type)
+{
+  if (type.id() == type_id::EMPTY) { return "EMPTY"; }
+  return type_dispatcher(type, type_to_name_impl{});
+}
 
 }  // namespace cudf

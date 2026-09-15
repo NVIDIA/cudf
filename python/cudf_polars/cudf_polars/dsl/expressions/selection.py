@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 # TODO: remove need for this
 # ruff: noqa: D101
@@ -28,6 +28,8 @@ class Gather(Expr):
         self.dtype = dtype
         self.children = (values, indices)
         self.is_pointwise = False
+        if not plc.traits.is_integral_not_bool(indices.dtype.plc_type):
+            raise NotImplementedError("Gather with non-integer indices")
 
     def do_evaluate(
         self, df: DataFrame, *, context: ExecutionContext = ExecutionContext.FRAME
@@ -79,7 +81,7 @@ class Filter(Expr):
         values, mask = (child.evaluate(df, context=context) for child in self.children)
         # polars type-puns length-1 columns as scalars.
         values, mask = broadcast(values, mask, stream=df.stream)
-        table = plc.stream_compaction.apply_boolean_mask(
+        table = plc.stream_compaction.apply_retention_mask(
             plc.Table([values.obj]), mask.obj, stream=df.stream
         )
         return Column(table.columns()[0], dtype=self.dtype).sorted_like(values)

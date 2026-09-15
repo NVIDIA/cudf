@@ -38,14 +38,6 @@
  * @brief Type declarations for libcudf.
  */
 
-// Forward declarations
-/// @cond
-namespace rmm {
-class device_buffer;
-/// @endcond
-
-}  // namespace rmm
-
 namespace CUDF_EXPORT cudf {
 // Forward declaration
 class column;
@@ -179,11 +171,12 @@ enum class mask_state : int32_t {
  * two data points i and j
  */
 enum class interpolation : int32_t {
-  LINEAR,    ///< Linear interpolation between i and j
-  LOWER,     ///< Lower data point (i)
-  HIGHER,    ///< Higher data point (j)
-  MIDPOINT,  ///< (i + j)/2
-  NEAREST    ///< i or j, whichever is nearest
+  LINEAR,          ///< Linear interpolation between i and j
+  LOWER,           ///< Lower data point (i)
+  HIGHER,          ///< Higher data point (j)
+  MIDPOINT,        ///< (i + j)/2
+  NEAREST,         ///< i or j, whichever is nearest (half-to-even rounding)
+  NEAREST_HALF_UP  ///< i or j, whichever is nearest (half-away-from-zero rounding)
 };
 
 /**

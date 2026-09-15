@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -20,10 +20,8 @@
 #include <cudf/utilities/traits.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
-
 #include <cuda/iterator>
-#include <thrust/iterator/transform_iterator.h>
+#include <cuda/stream>
 #include <thrust/reduce.h>
 
 namespace cudf {
@@ -47,7 +45,7 @@ namespace detail {
 template <typename ElementType, typename ResultType, typename Op>
 std::unique_ptr<scalar> simple_reduction(column_view const& col,
                                          std::optional<std::reference_wrapper<scalar const>> init,
-                                         rmm::cuda_stream_view stream,
+                                         cuda::stream_ref stream,
                                          rmm::device_async_resource_ref mr)
 {
   // reduction by iterator
@@ -68,11 +66,11 @@ std::unique_ptr<scalar> simple_reduction(column_view const& col,
   auto result = [&] {
     if (col.has_nulls()) {
       auto f  = simple_op.template get_null_replacing_element_transformer<ResultType>();
-      auto it = thrust::make_transform_iterator(dcol->pair_begin<ElementType, true>(), f);
+      auto it = cuda::transform_iterator(dcol->pair_begin<ElementType, true>(), f);
       return cudf::reduction::detail::reduce(it, col.size(), simple_op, initial_value, stream, mr);
     } else {
       auto f  = simple_op.template get_element_transformer<ResultType>();
-      auto it = thrust::make_transform_iterator(dcol->begin<ElementType>(), f);
+      auto it = cuda::transform_iterator(dcol->begin<ElementType>(), f);
       return cudf::reduction::detail::reduce(it, col.size(), simple_op, initial_value, stream, mr);
     }
   }();
@@ -100,7 +98,7 @@ template <typename DecimalXX, typename Op>
 std::unique_ptr<scalar> fixed_point_reduction(
   column_view const& col,
   std::optional<std::reference_wrapper<scalar const>> init,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr)
 {
   using Type = device_storage_type_t<DecimalXX>;
@@ -143,7 +141,7 @@ template <typename ElementType, typename ResultType, typename Op>
 std::unique_ptr<scalar> dictionary_reduction(
   column_view const& col,
   std::optional<std::reference_wrapper<scalar const>> init,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr)
 {
   CUDF_EXPECTS(!init.has_value(), "Initial value not supported for dictionary reductions");
@@ -155,7 +153,7 @@ std::unique_ptr<scalar> dictionary_reduction(
     auto f = simple_op.template get_null_replacing_element_transformer<ResultType>();
     auto p =
       cudf::dictionary::detail::make_dictionary_pair_iterator<ElementType>(*dcol, col.has_nulls());
-    auto it = thrust::make_transform_iterator(p, f);
+    auto it = cuda::transform_iterator(p, f);
     return cudf::reduction::detail::reduce(it, col.size(), simple_op, {}, stream, mr);
   }();
 
@@ -206,7 +204,7 @@ struct cast_numeric_scalar_fn {
  public:
   template <typename ResultType>
   std::unique_ptr<scalar> operator()(numeric_scalar<InputType>* input,
-                                     rmm::cuda_stream_view stream,
+                                     cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr)
     requires(is_supported<ResultType>())
   {
@@ -220,7 +218,7 @@ struct cast_numeric_scalar_fn {
 
   template <typename ResultType>
   std::unique_ptr<scalar> operator()(numeric_scalar<InputType>*,
-                                     rmm::cuda_stream_view,
+                                     cuda::stream_ref,
                                      rmm::device_async_resource_ref)
     requires(not is_supported<ResultType>())
   {
@@ -240,7 +238,7 @@ struct bool_result_element_dispatcher {
   template <typename ElementType>
   std::unique_ptr<scalar> operator()(column_view const& col,
                                      std::optional<std::reference_wrapper<scalar const>> init,
-                                     rmm::cuda_stream_view stream,
+                                     cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr)
     requires(std::is_arithmetic_v<ElementType>)
   {
@@ -250,7 +248,7 @@ struct bool_result_element_dispatcher {
   template <typename ElementType>
   std::unique_ptr<scalar> operator()(column_view const&,
                                      std::optional<std::reference_wrapper<scalar const>>,
-                                     rmm::cuda_stream_view,
+                                     cuda::stream_ref,
                                      rmm::device_async_resource_ref)
     requires(not std::is_arithmetic_v<ElementType>)
   {
@@ -277,7 +275,7 @@ struct same_element_type_dispatcher {
   template <typename IndexType>
   std::unique_ptr<scalar> resolve_key(column_view const& keys,
                                       scalar const& keys_index,
-                                      rmm::cuda_stream_view stream,
+                                      cuda::stream_ref stream,
                                       rmm::device_async_resource_ref mr)
     requires(cudf::is_index_type<IndexType>())
   {
@@ -288,7 +286,7 @@ struct same_element_type_dispatcher {
   template <typename IndexType>
   std::unique_ptr<scalar> resolve_key(column_view const&,
                                       scalar const&,
-                                      rmm::cuda_stream_view,
+                                      cuda::stream_ref,
                                       rmm::device_async_resource_ref)
     requires(!cudf::is_index_type<IndexType>())
   {
@@ -299,7 +297,7 @@ struct same_element_type_dispatcher {
   template <typename ElementType>
   std::unique_ptr<scalar> operator()(column_view const& input,
                                      std::optional<std::reference_wrapper<scalar const>> init,
-                                     rmm::cuda_stream_view stream,
+                                     cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr)
     requires(cudf::is_nested<ElementType>() &&
              (std::is_same_v<Op, cudf::reduction::detail::op::min> ||
@@ -326,7 +324,7 @@ struct same_element_type_dispatcher {
   template <typename ElementType>
   std::unique_ptr<scalar> operator()(column_view const& col,
                                      std::optional<std::reference_wrapper<scalar const>> init,
-                                     rmm::cuda_stream_view stream,
+                                     cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr)
     requires(is_supported<ElementType>() && !cudf::is_nested<ElementType>() &&
              !cudf::is_fixed_point<ElementType>())
@@ -342,7 +340,7 @@ struct same_element_type_dispatcher {
   template <typename ElementType>
   std::unique_ptr<scalar> operator()(column_view const& col,
                                      std::optional<std::reference_wrapper<scalar const>> init,
-                                     rmm::cuda_stream_view stream,
+                                     cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr)
     requires(cudf::is_fixed_point<ElementType>())
   {
@@ -352,7 +350,7 @@ struct same_element_type_dispatcher {
   template <typename ElementType>
   std::unique_ptr<scalar> operator()(column_view const&,
                                      std::optional<std::reference_wrapper<scalar const>>,
-                                     rmm::cuda_stream_view,
+                                     cuda::stream_ref,
                                      rmm::device_async_resource_ref)
     requires(not is_supported<ElementType>())
   {
@@ -377,7 +375,7 @@ struct element_type_dispatcher {
   template <typename ElementType, typename OutputType>
   std::unique_ptr<scalar> reduce(column_view const& col,
                                  std::optional<std::reference_wrapper<scalar const>> init,
-                                 rmm::cuda_stream_view stream,
+                                 cuda::stream_ref stream,
                                  rmm::device_async_resource_ref mr)
   {
     return !cudf::is_dictionary(col.type())
@@ -400,7 +398,7 @@ struct element_type_dispatcher {
   std::unique_ptr<scalar> operator()(column_view const& col,
                                      data_type const output_type,
                                      std::optional<std::reference_wrapper<scalar const>> init,
-                                     rmm::cuda_stream_view stream,
+                                     cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr)
     requires(cudf::is_numeric<ElementType>())
   {
@@ -426,7 +424,7 @@ struct element_type_dispatcher {
   std::unique_ptr<scalar> operator()(column_view const& col,
                                      data_type const output_type,
                                      std::optional<std::reference_wrapper<scalar const>> init,
-                                     rmm::cuda_stream_view stream,
+                                     cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr)
     requires(cudf::is_fixed_point<ElementType>())
   {
@@ -438,7 +436,7 @@ struct element_type_dispatcher {
   std::unique_ptr<scalar> operator()(column_view const&,
                                      data_type const,
                                      std::optional<std::reference_wrapper<scalar const>> init,
-                                     rmm::cuda_stream_view,
+                                     cuda::stream_ref,
                                      rmm::device_async_resource_ref)
     requires(not cudf::is_numeric<ElementType>() and not cudf::is_fixed_point<ElementType>())
   {

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -104,7 +104,7 @@ static void BM_string_compare_binaryop_transform(nvbench::state& state)
   auto const mem_stats_logger = cudf::memory_stats_logger();
 
   state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
-    rmm::cuda_stream_view stream{launch.get_stream().get_stream()};
+    cuda::stream_ref stream{launch.get_stream().get_stream()};
     std::unique_ptr<cudf::column> reduction =
       cudf::binary_operation(table.get_column(0), table.get_column(1), cmp_op, bool_type, stream);
     std::for_each(
@@ -115,7 +115,7 @@ static void BM_string_compare_binaryop_transform(nvbench::state& state)
           table.get_column(idx * 2), table.get_column(idx * 2 + 1), cmp_op, bool_type, stream);
         std::unique_ptr<cudf::column> reduced =
           cudf::binary_operation(*comparison, *reduction, reduce_op, bool_type, stream);
-        stream.synchronize();
+        stream.sync();
         reduction = std::move(reduced);
       });
   });

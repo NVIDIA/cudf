@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -11,7 +11,7 @@
 #include <cudf/types.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
+#include <cuda/stream>
 
 #include <memory>
 
@@ -31,7 +31,7 @@ struct store_result_functor {
   store_result_functor(column_view const& values,
                        sort::sort_groupby_helper& helper,
                        cudf::detail::result_cache& cache,
-                       rmm::cuda_stream_view stream,
+                       cuda::stream_ref stream,
                        rmm::device_async_resource_ref mr,
                        sorted keys_are_sorted = sorted::NO)
     : helper(helper),
@@ -88,7 +88,7 @@ struct store_result_functor {
   cudf::detail::result_cache& cache;  ///< cache of results to store into
   column_view const& values;          ///< Column of values to group and aggregate
 
-  rmm::cuda_stream_view stream;       ///< CUDA stream on which to execute kernels
+  cuda::stream_ref stream;            ///< CUDA stream on which to execute kernels
   rmm::device_async_resource_ref mr;  ///< Memory resource to allocate space for results
 
   sorted keys_are_sorted;                  ///< Whether the keys are sorted

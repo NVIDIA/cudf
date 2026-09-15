@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -19,17 +19,46 @@
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_uvector.hpp>
 
 #include <cuco/static_set.cuh>
 #include <cuda/std/functional>
 #include <cuda/std/utility>
+#include <cuda/stream>
 
+#include <atomic>
 #include <memory>
+#include <mutex>
 #include <vector>
 
 namespace cudf::groupby {
+
+/*
+ * Minimal owning wrapper around a CUDA event, used to order the insertion phase of
+ * `aggregate()` / `merge()` calls that overlap on different streams.  Only the insertion
+ * phase needs this ordering; the aggregation phase updates each group with atomics and is
+ * safe to overlap.
+ */
+class insert_order_event {
+ public:
+  insert_order_event() { CUDF_CUDA_TRY(cudaEventCreateWithFlags(&_event, cudaEventDisableTiming)); }
+  ~insert_order_event() { cudaEventDestroy(_event); }
+  insert_order_event(insert_order_event const&)            = delete;
+  insert_order_event& operator=(insert_order_event const&) = delete;
+
+  /// Makes `stream` wait for the most recently recorded insertion.  No-op before the first
+  /// `record()`, which is exactly the behavior the first call needs.
+  void wait(cuda::stream_ref stream) const
+  {
+    CUDF_CUDA_TRY(cudaStreamWaitEvent(stream.get(), _event));
+  }
+
+  /// Records completion of the insertion just enqueued on `stream`.
+  void record(cuda::stream_ref stream) { CUDF_CUDA_TRY(cudaEventRecord(_event, stream.get())); }
+
+ private:
+  cudaEvent_t _event{};
+};
 
 /*
  * Companion location for a stored dense ID: which compacted batch table the key
@@ -220,7 +249,7 @@ auto build_cross_comparators(
   std::vector<std::shared_ptr<cudf::detail::row::equality::preprocessed_table>> const&
     preprocessed_batches,
   cudf::nullate::DYNAMIC has_null,
-  rmm::cuda_stream_view stream)
+  cuda::stream_ref stream)
 {
   using eq_t = cudf::detail::row::equality::device_row_comparator<
     has_nested_columns,
@@ -239,7 +268,7 @@ auto build_cross_comparators(
     h_eqs.push_back(adapter.comparator);
   }
 
-  return cudf::detail::make_device_uvector_async(h_eqs, stream, temp_mr);
+  return cudf::detail::make_device_uvector(h_eqs, stream, temp_mr);
 }
 
 /// The impl struct for streaming_groupby. Defined in impl.cu.
@@ -248,18 +277,29 @@ struct streaming_groupby::impl {
   std::vector<streaming_aggregation_request> _requests_clone;
   size_type _max_distinct_keys;
   null_policy _null_handling;
+  cuda::mr::any_resource<cuda::mr::device_accessible> _mr;
+
+  /*
+   * Serializes the insertion phase of `aggregate()` and `merge()`.  Callers may invoke those
+   * from multiple host threads; everything they mutate on the host, and the transient key
+   * encoding they place in the hash set, is guarded here.
+   */
+  std::mutex _insert_mutex;
+  /// Orders the insertion phase across calls that supply different streams.
+  insert_order_event _insert_done;
 
   bool _initialized{false};
   /// Set true once an `aggregate()` / `merge()` call has thrown after touching the
   /// hash set.  Subsequent `aggregate()` / `merge()` calls fail fast; only
-  /// `finalize()` may still be called to recover partial results.
-  bool _invalidated{false};
+  /// `finalize()` may still be called to recover partial results.  Atomic so the
+  /// fail-fast check in `do_aggregate` can run ahead of `_insert_mutex`.
+  std::atomic<bool> _invalidated{false};
   /*
    * Number of distinct keys accumulated so far.  Also serves as the high-water
    * mark of dense IDs in the persistent hash set: stored slot values are in
    * [0, _distinct_keys).
    */
-  size_type _distinct_keys{0};
+  std::atomic<size_type> _distinct_keys{0};
   bool _has_nullable_keys{false};
   bool _has_nested_keys{false};
 
@@ -295,20 +335,26 @@ struct streaming_groupby::impl {
    */
   std::unique_ptr<mutable_table_device_view, void (*)(mutable_table_device_view*)> _d_agg_results;
   std::vector<size_type> _value_col_indices;
-  rmm::device_uvector<aggregation::Kind> _d_agg_kinds;
+  std::unique_ptr<rmm::device_uvector<aggregation::Kind>> _d_agg_kinds;
 
   std::unique_ptr<streaming_set_t> _key_set;
 
   [[nodiscard]] size_type num_keys() const { return static_cast<size_type>(_key_indices.size()); }
-  [[nodiscard]] bool has_state() const { return _initialized && _distinct_keys > 0; }
+  void ensure_not_invalidated() const
+  {
+    CUDF_EXPECTS(!_invalidated.load(std::memory_order_relaxed),
+                 "streaming_groupby is in an invalidated state from a prior failure; "
+                 "no further aggregate()/merge() is allowed.  finalize() may still be called.");
+  }
 
   impl(host_span<size_type const> key_indices,
        host_span<streaming_aggregation_request const> requests,
        size_type max_distinct_keys,
-       null_policy null_handling);
+       null_policy null_handling,
+       cuda::mr::any_resource<cuda::mr::device_accessible> mr);
 
-  void initialize(table_view const& data, rmm::cuda_stream_view stream);
-  void create_key_set(rmm::cuda_stream_view stream);
+  void initialize(table_view const& data, cuda::stream_ref stream);
+  void create_key_set(cuda::stream_ref stream);
   void update_nullable_state(table_view const& batch_keys);
 
   struct batch_insert_result {
@@ -317,15 +363,14 @@ struct streaming_groupby::impl {
     rmm::device_buffer bitmask_buffer;
   };
 
-  batch_insert_result probe_and_insert(table_view const& batch_keys, rmm::cuda_stream_view stream);
+  batch_insert_result probe_and_insert(table_view const& batch_keys, cuda::stream_ref stream);
 
   /*
    * Template implementation of probe_and_insert, split by has_nested.
    * Defined in insert.cuh, instantiated in insert.cu and insert_nested.cu.
    */
   template <bool has_nested>
-  batch_insert_result probe_and_insert_impl(table_view const& batch_keys,
-                                            rmm::cuda_stream_view stream);
+  batch_insert_result probe_and_insert_impl(table_view const& batch_keys, cuda::stream_ref stream);
 
   /*
    * Two helpers split off probe_and_insert_impl for compile-time parallelism.
@@ -346,7 +391,7 @@ struct streaming_groupby::impl {
     size_type* target_indices,
     size_type* slot_offsets,
     size_type* batch_local_indices,
-    rmm::cuda_stream_view stream);
+    cuda::stream_ref stream);
 
   template <bool has_nested>
   size_type probe_and_insert_subsequent(
@@ -358,19 +403,19 @@ struct streaming_groupby::impl {
     size_type* target_indices,
     size_type* slot_offsets,
     size_type* batch_local_indices,
-    rmm::cuda_stream_view stream);
+    cuda::stream_ref stream);
 
-  void do_aggregate(table_view const& data, rmm::cuda_stream_view stream);
+  void do_aggregate(table_view const& data, cuda::stream_ref stream);
 
-  [[nodiscard]] std::unique_ptr<table> gather_agg_results(rmm::cuda_stream_view stream,
+  [[nodiscard]] std::unique_ptr<table> gather_agg_results(cuda::stream_ref stream,
                                                           rmm::device_async_resource_ref mr) const;
   [[nodiscard]] std::unique_ptr<table> gather_distinct_keys(
-    rmm::cuda_stream_view stream, rmm::device_async_resource_ref mr) const;
+    cuda::stream_ref stream, rmm::device_async_resource_ref mr) const;
 
   [[nodiscard]] std::pair<std::unique_ptr<table>, std::vector<aggregation_result>> do_finalize(
-    rmm::cuda_stream_view stream, rmm::device_async_resource_ref mr) const;
+    cuda::stream_ref stream, rmm::device_async_resource_ref mr) const;
 
-  void do_merge(impl const& other, rmm::cuda_stream_view stream);
+  void do_merge(impl const& other, cuda::stream_ref stream);
 };
 
 }  // namespace cudf::groupby

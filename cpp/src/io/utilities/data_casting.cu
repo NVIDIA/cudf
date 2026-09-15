@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -19,7 +19,6 @@
 #include <cudf/types.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_buffer.hpp>
 #include <rmm/exec_policy.hpp>
 
@@ -28,6 +27,7 @@
 #include <cuda/iterator>
 #include <cuda/std/iterator>
 #include <cuda/std/utility>
+#include <cuda/stream>
 #include <thrust/copy.h>
 #include <thrust/transform_reduce.h>
 
@@ -794,7 +794,7 @@ static std::unique_ptr<column> parse_string(string_view_pair_it str_tuples,
                                             rmm::device_buffer&& null_mask,
                                             cudf::detail::device_scalar<size_type>& d_null_count,
                                             cudf::io::parse_options_view const& options,
-                                            rmm::cuda_stream_view stream,
+                                            cuda::stream_ref stream,
                                             rmm::device_async_resource_ref mr)
 {
   //  CUDF_FUNC_RANGE();
@@ -827,7 +827,7 @@ static std::unique_ptr<column> parse_string(string_view_pair_it str_tuples,
   // TODO run these independent kernels in parallel streams.
   if (max_length > SINGLE_THREAD_THRESHOLD) {
     parse_fn_string_parallel<true, warps_per_block>
-      <<<num_blocks, threads_per_block, 0, stream.value()>>>(
+      <<<num_blocks, threads_per_block, 0, stream.get()>>>(
         str_tuples,
         col_size,
         str_counter.data(),
@@ -844,7 +844,7 @@ static std::unique_ptr<column> parse_string(string_view_pair_it str_tuples,
     // for strings longer than WARP_THRESHOLD, 1 block per string
     str_counter.set_value(0, stream);
     parse_fn_string_parallel<false, warps_per_block>
-      <<<num_blocks, threads_per_block, 0, stream.value()>>>(
+      <<<num_blocks, threads_per_block, 0, stream.get()>>>(
         str_tuples,
         col_size,
         str_counter.data(),
@@ -857,9 +857,8 @@ static std::unique_ptr<column> parse_string(string_view_pair_it str_tuples,
     CUDF_CUDA_TRY(cudaGetLastError());
   }
 
-  auto [offsets, bytes] =
-    cudf::strings::detail::make_offsets_child_column(sizes.begin(), sizes.end(), stream, mr);
-  auto d_offsets = cudf::detail::offsetalator_factory::make_input_iterator(offsets->view());
+  auto [offsets, bytes] = cudf::strings::detail::make_offsets_child_column(sizes, stream, mr);
+  auto d_offsets        = cudf::detail::offsetalator_factory::make_input_iterator(offsets->view());
 
   // CHARS column
   rmm::device_uvector<char> chars(bytes, stream, mr);
@@ -876,7 +875,7 @@ static std::unique_ptr<column> parse_string(string_view_pair_it str_tuples,
   if (max_length > SINGLE_THREAD_THRESHOLD) {
     str_counter.set_value(0, stream);
     parse_fn_string_parallel<true, warps_per_block>
-      <<<num_blocks, threads_per_block, 0, stream.value()>>>(
+      <<<num_blocks, threads_per_block, 0, stream.get()>>>(
         str_tuples,
         col_size,
         str_counter.data(),
@@ -893,7 +892,7 @@ static std::unique_ptr<column> parse_string(string_view_pair_it str_tuples,
     str_counter.set_value(0, stream);
     // for strings longer than WARP_THRESHOLD, 1 block per string
     parse_fn_string_parallel<false, warps_per_block>
-      <<<num_blocks, threads_per_block, 0, stream.value()>>>(
+      <<<num_blocks, threads_per_block, 0, stream.get()>>>(
         str_tuples,
         col_size,
         str_counter.data(),
@@ -915,13 +914,13 @@ static std::unique_ptr<column> parse_string(string_view_pair_it str_tuples,
 
 std::unique_ptr<column> parse_data(
   char const* data,
-  thrust::zip_iterator<cuda::std::tuple<size_type const*, size_type const*>> offset_length_begin,
+  cuda::zip_iterator<size_type const*, size_type const*> offset_length_begin,
   size_type col_size,
   data_type col_type,
   rmm::device_buffer&& null_mask,
   size_type null_count,
   cudf::io::parse_options_view const& options,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
@@ -935,7 +934,7 @@ std::unique_ptr<column> parse_data(
   }
 
   // Prepare iterator that returns (string_ptr, string_length)-pairs needed by type conversion
-  auto str_tuples = thrust::make_transform_iterator(offset_length_begin, to_string_view_pair{data});
+  auto str_tuples = cuda::transform_iterator(offset_length_begin, to_string_view_pair{data});
 
   if (col_type == cudf::data_type{cudf::type_id::STRING}) {
     return parse_string(

@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2020-2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from io import BytesIO
@@ -13,7 +13,7 @@ import cudf
 from cudf.testing import assert_eq
 
 pytest.skip(
-    reason="https://github.com/rapidsai/cudf/issues/19633",
+    reason="https://github.com/NVIDIA/cudf/issues/19633",
     allow_module_level=True,
 )
 

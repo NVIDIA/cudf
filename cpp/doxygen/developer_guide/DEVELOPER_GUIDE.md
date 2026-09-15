@@ -26,7 +26,7 @@ A column is an array of data of a single type. Along with Tables, columns are th
 structures used in libcudf. Most libcudf algorithms operate on columns. Columns may have a validity
 mask representing whether each element is valid or null (invalid). Columns of nested types are
 supported, meaning that a column may have child columns. A column is the C++ equivalent to a cuDF
-Python [Series](https://docs.rapids.ai/api/cudf/stable/user_guide/api_docs/api/cudf.series/).
+Python [Series](https://docs.nvidia.com/cudf/latest/cudf/api_docs/series/).
 
 ### Element
 
@@ -41,7 +41,7 @@ A type representing a single element of a data type.
 A table is a collection of columns that all have the same number of elements (rows). A table may
 also have zero columns while still carrying a row count, mirroring an `(N, 0)` DataFrame. A table is
 the C++ equivalent to a cuDF Python
-[DataFrame](https://docs.rapids.ai/api/cudf/stable/user_guide/api_docs/api/cudf.dataframe/).
+[DataFrame](https://docs.nvidia.com/cudf/latest/cudf/api_docs/dataframe/).
 
 ### View
 
@@ -114,7 +114,7 @@ prefixed with an underscore.
 
 ```c++
 template <typename IteratorType>
-void algorithm_function(int x, rmm::cuda_stream_view s, rmm::device_async_resource_ref mr)
+void algorithm_function(int x, cuda::stream_ref s, rmm::device_async_resource_ref mr)
 {
   ...
 }
@@ -379,7 +379,7 @@ following function that copies device data to a host `std::vector`.
 
 ```c++
 template <typename T>
-std::vector<T> make_std_vector_async(device_span<T const> v, rmm::cuda_stream_view stream)
+std::vector<T> make_std_vector_async(device_span<T const> v, cuda::stream_ref stream)
 ```
 
 ### When to use `host_span` vs `std::span`
@@ -560,7 +560,7 @@ libcudf throws under different circumstances, see the [section on error handling
 libcudf is in the process of adding support for asynchronous execution using
 CUDA streams. In order to facilitate the usage of streams, all new libcudf APIs
 that allocate device memory or execute a kernel should accept an
-`rmm::cuda_stream_view` parameter at the end with a default value of
+`cuda::stream_ref` parameter at the end with a default value of
 `cudf::get_default_stream()`.  There is one exception to this rule: if the API
 also accepts a memory resource parameter, the stream parameter should be placed
 just *before* the memory resource. This API should then forward the call to a
@@ -579,18 +579,18 @@ For example:
 ```c++
 // cpp/include/cudf/header.hpp
 void external_function(...,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream      = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 // cpp/include/cudf/detail/header.hpp
 namespace detail{
-void external_function(..., rmm::cuda_stream_view stream, rmm::device_async_resource_ref mr)
+void external_function(..., cuda::stream_ref stream, rmm::device_async_resource_ref mr)
 } // namespace detail
 
 // cudf/src/implementation.cpp
 namespace detail{
 // Use the stream parameter in the detail implementation.
-void external_function(..., rmm::cuda_stream_view stream, rmm::device_async_resource_ref mr){
+void external_function(..., cuda::stream_ref stream, rmm::device_async_resource_ref mr){
   // Implementation uses the stream with async APIs.
   rmm::device_buffer buff(..., stream, mr);
   CUDF_CUDA_TRY(cudaMemcpyAsync(...,stream.value()));
@@ -599,7 +599,7 @@ void external_function(..., rmm::cuda_stream_view stream, rmm::device_async_reso
 }
 } // namespace detail
 
-void external_function(..., rmm::cuda_stream_view stream, rmm::device_async_resource_ref mr)
+void external_function(..., cuda::stream_ref stream, rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE(); // Generates an NVTX range for the lifetime of this function.
   detail::external_function(..., stream, mr);
@@ -674,7 +674,7 @@ cudf::detail::copy_if(
 
 ## Memory Allocation
 
-Device [memory resources](#rmmdevice_memory_resource) are used in libcudf to abstract and control
+Device [memory resources](#memory-resources) are used in libcudf to abstract and control
 how device memory is allocated.
 
 ### Output Memory
@@ -749,37 +749,26 @@ custom_memory_resource *mr...;
 rmm::device_buffer custom_buff(100, mr, stream);
 ```
 
-#### rmm::device_scalar<T>
-Allocates a single element of the specified type initialized to the specified value. Use this for
-scalar input/outputs into device kernels, e.g., reduction results, null count, etc. This is
-effectively a convenience wrapper around a `rmm::device_vector<T>` of length 1.
+#### cudf::detail::device_scalar<T>
+A self-contained device scalar for internal libcudf code that needs a single trivially copyable
+value in device memory, such as a reduction result, temporary counter, or kernel status value.
+
+Use this for internal scalar input/output with device kernels. Public libcudf APIs should use
+`cudf::scalar` and derived public scalar classes instead of this detail type.
+
+It exposes `data()` for kernels and `value()`/`set_value_async()` for stream-ordered host/device
+transfers.
 
 ```c++
 // Allocates device memory for a single int using the specified resource and stream
 // and initializes the value to 42
-rmm::device_scalar<int> int_scalar{42, stream, mr};
+cudf::detail::device_scalar<int> int_scalar{42, stream, mr};
 
 // scalar.data() returns pointer to value in device memory
-kernel<<<...>>>(int_scalar.data(),...);
+kernel<<<..., stream>>>(int_scalar.data(), ...);
 
-// scalar.value() synchronizes the scalar's stream and copies the
-// value from device to host and returns the value
-int host_value = int_scalar.value();
-```
-
-##### cudf::detail::device_scalar<T>
-Acts as a drop-in replacement for `rmm::device_scalar<T>`, with the key difference
-being the use of pinned host memory as a bounce buffer for data transfers.
-It is recommended for internal use to avoid the implicit synchronization overhead caused by
-memcpy operations on pageable host memory.
-
-```c++
-// Same as the case with rmm::device_scalar<T> above
-cudf::detail::device_scalar<int> int_scalar{42, stream, mr};
-kernel<<<...>>>(int_scalar.data(),...);
-
-// Note: This device-to-host transfer uses host-pinned bounce buffer for efficient memcpy
-int host_value = int_scalar.value();
+// value() copies the device value to the host on the specified stream
+int host_value = int_scalar.value(stream);
 ```
 
 #### rmm::device_vector<T>
@@ -800,7 +789,7 @@ Similar to a `device_vector`, allocates a contiguous set of elements in device m
 differences:
 - As an optimization, elements are uninitialized and no synchronization occurs at construction.
 This limits the types `T` to trivially copyable types.
-- All operations are stream ordered (i.e., they accept a `cuda_stream_view` specifying the stream
+- All operations are stream ordered (i.e., they accept a `cuda::stream_ref` specifying the stream
 on which the operation is performed). This improves safety when using non-default streams.
 - `device_uvector.hpp` does not include any `__device__` code, unlike `thrust/device_vector.hpp`,
   which means `device_uvector`s can be used in `.cpp` files, rather than just in `.cu` files.
@@ -881,6 +870,13 @@ temporary host staging buffers to avoid the sync:
 ```
 
 The same stream-safety requirements apply to `memcpy_async` and `memcpy_batch_async`.
+
+If CUDA memory copy APIs must be called directly, always use `cudaMemcpyDefault` instead of an
+explicit host/device copy policy. Copy correctness depends on whether the source and destination
+pointers are accessible from the host or device, not where the memory is resident. For example,
+pinned host memory may be device-accessible despite residing on the host. `cudaMemcpyDefault` allows
+CUDA to infer the valid copy direction from the pointers rather than rejecting such copies based on
+an explicit policy.
 
 ## Default Parameters
 
@@ -1578,7 +1574,7 @@ the null masks of both struct fields.
 ## Dictionary columns
 
 Dictionaries provide an efficient way to represent low-cardinality data by storing a single copy
-of each value. A dictionary comprises a column of distinct keys and a column containing an index into
+of each value. A dictionary comprises a column of keys and a column containing an index into
 the keys column for each row of the parent column. The keys column may have any fixed-width data_type
 or STRING data_type. The indices represent the corresponding positions of each
 element's value in the keys. The indices child column can have any signed integer type
@@ -1589,8 +1585,11 @@ input column will produce equivalent dictionary columns but the keys may be in a
 and therefore the indices will not match as well. Using `cudf::dictionary::decode()` on both dictionary
 columns should produce the same result.
 
-Although `cudf::make_dictionary_column()` expects distinct keys, the API does not enforce this constraint.
-Using a dictionary column with non-distinct keys in libcudf APIs may result in undefined behavior.
+The libcudf APIs also accept dictionary columns with non-unique keys.
+However, output dictionary columns will generally contain unique keys in an unspecified order.
+The exceptions are `cudf::make_dictionary_column()`, which accepts keys and indices without
+changing them, and `cudf::dictionary::set_keys()`, which strictly honors the given keys
+(both order and duplicates).
 
 ## Nested column challenges
 

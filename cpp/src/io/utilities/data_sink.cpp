@@ -11,8 +11,7 @@
 
 #include <kvikio/file_handle.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
-
+#include <cuda/stream>
 #include <cuda_runtime_api.h>
 
 namespace cudf {
@@ -59,20 +58,20 @@ class file_sink : public data_sink {
 
   std::future<void> device_write_async(void const* gpu_data,
                                        size_t size,
-                                       rmm::cuda_stream_view stream) override
+                                       cuda::stream_ref stream) override
   {
     if (!supports_device_write()) CUDF_FAIL("Device writes are not supported for this file.");
 
     size_t const offset = _bytes_written;
     _bytes_written += size;
-    stream.synchronize();
+    stream.sync();
 
     // Start the write now via the capture-initializer; only the `.get()` wait is deferred.
     return std::async(std::launch::deferred,
                       [fut = _kvikio_file.pwrite(gpu_data, size, offset)]() mutable { fut.get(); });
   }
 
-  void device_write(void const* gpu_data, size_t size, rmm::cuda_stream_view stream) override
+  void device_write(void const* gpu_data, size_t size, cuda::stream_ref stream) override
   {
     return device_write_async(gpu_data, size, stream).get();
   }
@@ -102,26 +101,26 @@ class host_buffer_sink : public data_sink {
 
   [[nodiscard]] bool is_device_write_preferred(size_t size) const override { return true; }
 
-  void device_write(void const* gpu_data, size_t size, rmm::cuda_stream_view stream) override
+  void device_write(void const* gpu_data, size_t size, cuda::stream_ref stream) override
   {
     device_write_async(gpu_data, size, stream).get();
   }
 
   std::future<void> device_write_async(void const* gpu_data,
                                        size_t size,
-                                       rmm::cuda_stream_view stream) override
+                                       cuda::stream_ref stream) override
   {
     auto const current_size = buffer_->size();
     buffer_->resize(current_size + size);
-    // TODO: https://github.com/rapidsai/cudf/issues/21680
+    // TODO: https://github.com/NVIDIA/cudf/issues/21680
     // We need to replace this with memcpy_batch_async after fixing stream
     // ordering. The issue is that buffer_->resize() can reallocate,
     // invalidating pointers from previous async copies that are still
     // in-flight when using cudaMemcpySrcAccessOrderStream. Need to ensure
     // stream ordering or pre-reserve buffer to avoid reallocation.
     CUDF_CUDA_TRY(cudaMemcpyAsync(
-      buffer_->data() + current_size, gpu_data, size, cudaMemcpyDeviceToHost, stream.value()));
-    return std::async(std::launch::deferred, [stream]() -> void { stream.synchronize(); });
+      buffer_->data() + current_size, gpu_data, size, cudaMemcpyDefault, stream.get()));
+    return std::async(std::launch::deferred, [stream]() -> void { stream.sync(); });
   }
 
   void flush() override {}
@@ -147,14 +146,14 @@ class void_sink : public data_sink {
 
   [[nodiscard]] bool is_device_write_preferred(size_t size) const override { return true; }
 
-  void device_write(void const* gpu_data, size_t size, rmm::cuda_stream_view stream) override
+  void device_write(void const* gpu_data, size_t size, cuda::stream_ref stream) override
   {
     _bytes_written += size;
   }
 
   std::future<void> device_write_async(void const* gpu_data,
                                        size_t size,
-                                       rmm::cuda_stream_view stream) override
+                                       cuda::stream_ref stream) override
   {
     _bytes_written += size;
     return std::async(std::launch::deferred, []() -> void {});
@@ -181,7 +180,7 @@ class user_sink_wrapper : public data_sink {
     return user_sink->supports_device_write();
   }
 
-  void device_write(void const* gpu_data, size_t size, rmm::cuda_stream_view stream) override
+  void device_write(void const* gpu_data, size_t size, cuda::stream_ref stream) override
   {
     CUDF_EXPECTS(user_sink->supports_device_write(),
                  "device_write() was called on a data_sink that doesn't support it");
@@ -190,7 +189,7 @@ class user_sink_wrapper : public data_sink {
 
   std::future<void> device_write_async(void const* gpu_data,
                                        size_t size,
-                                       rmm::cuda_stream_view stream) override
+                                       cuda::stream_ref stream) override
   {
     CUDF_EXPECTS(user_sink->supports_device_write(),
                  "device_write_async() was called on a data_sink that doesn't support it");

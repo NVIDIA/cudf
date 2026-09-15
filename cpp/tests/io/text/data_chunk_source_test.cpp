@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -36,7 +36,7 @@ void test_source(std::string const& content, cudf::io::text::data_chunk_source c
     // full contents
     auto reader      = source.create_reader();
     auto const chunk = reader->get_next_chunk(content.size(), stream);
-    stream.synchronize();
+    stream.sync();
     EXPECT_EQ(chunk->size(), content.size());
     EXPECT_EQ(chunk_to_host(*chunk), content);
   }
@@ -45,7 +45,7 @@ void test_source(std::string const& content, cudf::io::text::data_chunk_source c
     auto reader = source.create_reader();
     reader->skip_bytes(4);
     auto const chunk = reader->get_next_chunk(content.size(), stream);
-    stream.synchronize();
+    stream.sync();
     EXPECT_EQ(chunk->size(), content.size() - 4);
     EXPECT_EQ(chunk_to_host(*chunk), content.substr(4));
   }
@@ -54,7 +54,7 @@ void test_source(std::string const& content, cudf::io::text::data_chunk_source c
     auto reader       = source.create_reader();
     auto const chunk1 = reader->get_next_chunk(5, stream);
     auto const chunk2 = reader->get_next_chunk(content.size() - 5, stream);
-    stream.synchronize();
+    stream.sync();
     EXPECT_EQ(chunk1->size(), 5);
     EXPECT_EQ(chunk2->size(), content.size() - 5);
     EXPECT_EQ(chunk_to_host(*chunk1), content.substr(0, 5));
@@ -65,7 +65,7 @@ void test_source(std::string const& content, cudf::io::text::data_chunk_source c
     auto reader       = source.create_reader();
     auto const chunk1 = reader->get_next_chunk(content.size() / 2, stream);
     auto const chunk2 = reader->get_next_chunk(content.size() - content.size() / 2, stream);
-    stream.synchronize();
+    stream.sync();
     EXPECT_EQ(chunk1->size(), content.size() / 2);
     EXPECT_EQ(chunk2->size(), content.size() - content.size() / 2);
     EXPECT_EQ(chunk_to_host(*chunk1), content.substr(0, content.size() / 2));
@@ -75,11 +75,11 @@ void test_source(std::string const& content, cudf::io::text::data_chunk_source c
     // reading too many bytes
     auto reader      = source.create_reader();
     auto const chunk = reader->get_next_chunk(content.size() + 10, stream);
-    stream.synchronize();
+    stream.sync();
     EXPECT_EQ(chunk->size(), content.size());
     EXPECT_EQ(chunk_to_host(*chunk), content);
     auto next_chunk = reader->get_next_chunk(1, stream);
-    stream.synchronize();
+    stream.sync();
     EXPECT_EQ(next_chunk->size(), 0);
   }
   {
@@ -87,7 +87,7 @@ void test_source(std::string const& content, cudf::io::text::data_chunk_source c
     auto reader = source.create_reader();
     reader->skip_bytes(content.size() + 10);
     auto const next_chunk = reader->get_next_chunk(1, stream);
-    stream.synchronize();
+    stream.sync();
     EXPECT_EQ(next_chunk->size(), 0);
   }
   cudf::set_pinned_memory_resource(last_mr);

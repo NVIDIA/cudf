@@ -228,8 +228,8 @@ Notes
 
 - Setting the cudf option `io.parquet.low_memory=True` will result in the chunked
   low memory parquet reader being used. This can make it easier to read large
-  parquet datasets on systems with limited GPU memory. See all `available options
-  <https://docs.rapids.ai/api/cudf/nightly/cudf/api_docs/options/#api-options>`_.
+  parquet datasets on systems with limited GPU memory. See all :ref:`available options
+  <api.options>`.
 
 Examples
 --------
@@ -262,7 +262,7 @@ path : str or list of str
     File path or Root Directory path. Will be used as Root Directory path
     while writing a partitioned dataset. Use list of str with partition_offsets
     to write parts of the dataframe to different files.
-compression : {{'snappy', 'ZSTD', 'LZ4', None}}, default 'snappy'
+compression : {{'snappy', 'ZSTD', 'LZ4', 'GZIP', None}}, default 'snappy'
     Name of the compression to use; case insensitive.
     Use ``None`` for no compression.
 index : bool, default None
@@ -579,6 +579,12 @@ index : bool, default None
     doesn't require much space and is faster. Other indexes will
     be included as columns in the file output.
 
+Notes
+-----
+Timestamps in the last 999 milliseconds before the UNIX epoch are not
+representable in ORC; they are read back one second later, as with the Apache
+ORC writer (ORC-763, ORC-771).
+
 See Also
 --------
 cudf.read_orc
@@ -724,8 +730,9 @@ chunksize : integer, default None
 compression : {'bz2', 'gzip', 'infer', 'snappy', 'zip', 'zstd'}, default 'infer'
     For on-the-fly decompression of on-disk data. If 'infer', then use
     bz2, gzip, snappy, zip, or zstd if path_or_buf is a string ending in
-    '.bz2', '.gz', '.sz', '.zip', or '.zstd', respectively. If using 'zip', the ZIP file must contain only one data
-    file to be read in. Set to None for no decompression.
+    '.bz2', '.gz', '.sz', '.zip', or '.zst'/'.zstd', respectively. If using
+    'zip', the ZIP file must contain only one data file to be read in. Set to
+    None for no decompression.
 byte_range : list or tuple, default None
 
     .. admonition:: GPU-accelerated
@@ -802,8 +809,8 @@ Notes
 
 - Setting the cudf option `io.json.low_memory=True` will result in the chunked
   low memory json reader being used. This can make it easier to read large
-  json datasets on systems with limited GPU memory. See all `available options
-  <https://docs.rapids.ai/api/cudf/nightly/cudf/api_docs/options/#api-options>`_.
+  json datasets on systems with limited GPU memory. See all :ref:`available options
+  <api.options>`.
 
 See Also
 --------
@@ -1183,12 +1190,12 @@ parse_dates : list of int or names, default None
     speed, explicitly specify `dtype='date'` for the desired columns.
 dayfirst : bool, default False
     DD/MM format dates, international and European format.
-compression : {{'infer', 'gzip', 'zip', None}}, default 'infer'
+compression : {{'infer', 'gzip', 'bz2', 'zip', 'zstd', None}}, default 'infer'
     For on-the-fly decompression of on-disk data. If 'infer', then detect
-    compression from the following extensions: '.gz','.zip' (otherwise no
-    decompression). If using 'zip', the ZIP file must contain only one
-    data file to be read in, otherwise the first non-zero-sized file will
-    be used. Set to None for no decompression.
+    compression from the following extensions: '.gz', '.bz2', '.zip', '.zst'
+    (otherwise no decompression). If using 'zip', the ZIP file must contain
+    only one data file to be read in, otherwise the first non-zero-sized file
+    will be used. Set to None for no decompression.
 thousands : char, default None
     Character used as a thousands delimiter.
 decimal : char, default '.'
@@ -1304,9 +1311,9 @@ index : bool, default True
 encoding : str, default 'utf-8'
     A string representing the encoding to use in the output file
     Only 'utf-8' is currently supported
-compression : str, None
-    A string representing the compression scheme to use in the output file
-    Compression while writing csv is not supported currently
+compression : {{'zstd', None}}, default None
+    A string representing the compression scheme to use in the output file.
+    Not inferred from the file name; ``'infer'`` is not supported.
 quoting : int, optional
     Control field quoting behavior per ``csv.QUOTE_*`` constants.
     Use one of ``csv.QUOTE_MINIMAL`` (0) or ``csv.QUOTE_NONE`` (3).

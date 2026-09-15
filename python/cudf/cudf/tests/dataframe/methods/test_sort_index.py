@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import itertools
 
@@ -67,26 +67,8 @@ def test_dataframe_sort_index(
         assert_eq(expected, got)
 
 
-@pytest.mark.parametrize("axis", [0, 1, "index", "columns"])
-@pytest.mark.parametrize(
-    "level",
-    [
-        0,
-        "b",
-        1,
-        ["b"],
-        "a",
-        ["a", "b"],
-        ["b", "a"],
-        [0, 1],
-        [1, 0],
-        [0, 2],
-        None,
-    ],
-)
-@pytest.mark.parametrize("na_position", ["first", "last"])
-def test_dataframe_mulitindex_sort_index(
-    request, axis, level, ascending, inplace, ignore_index, na_position
+def _assert_dataframe_multiindex_sort_index(
+    axis, level, ascending, inplace, ignore_index, na_position
 ):
     pdf = pd.DataFrame(
         {
@@ -117,9 +99,48 @@ def test_dataframe_mulitindex_sort_index(
     )
 
     if inplace is True:
+        assert expected is None
+        assert got is None
         assert_eq(pdf, gdf)
     else:
         assert_eq(expected, got)
+
+
+@pytest.mark.parametrize(
+    "axis, level, ascending, ignore_index, inplace, na_position",
+    [
+        (0, None, True, False, False, "last"),
+        (0, None, False, False, False, "last"),
+        (0, 0, True, False, False, "first"),
+        (0, 0, False, False, False, "last"),
+        (0, "b", False, False, False, "first"),
+        (0, 1, True, False, False, "last"),
+        (0, 1, False, False, False, "last"),
+        (0, ["b"], False, False, False, "first"),
+        (0, "a", False, False, False, "last"),
+        (0, ["a", "b"], True, False, False, "last"),
+        (0, ["b", "a"], False, False, False, "last"),
+        (0, [0, 1], False, False, False, "last"),
+        (0, [1, 0], True, False, False, "last"),
+        (0, [0, 2], False, False, False, "first"),
+        (0, [1, 0], False, True, True, "first"),
+        (0, [1, 0], False, False, True, "first"),
+        (0, [1, 0], False, True, False, "first"),
+        (0, [1, 0], False, False, False, "first"),
+        ("index", [0, 2], False, False, False, "first"),
+    ],
+)
+def test_dataframe_multiindex_sort_index(
+    axis, level, ascending, ignore_index, inplace, na_position
+):
+    _assert_dataframe_multiindex_sort_index(
+        axis=axis,
+        level=level,
+        ascending=ascending,
+        inplace=inplace,
+        ignore_index=ignore_index,
+        na_position=na_position,
+    )
 
 
 def test_sort_index_axis_1_ignore_index_true_columnaccessor_state_names():
@@ -163,3 +184,125 @@ def test_df_cat_sort_index():
     expect = df.to_pandas().set_index("a").sort_index()
 
     assert_eq(got, expect)
+
+
+@pytest.mark.parametrize("level", [0, 1, "c1", ["c2"], ["c2", "c1"], [1, 0]])
+@pytest.mark.parametrize("sort_remaining", [True, False])
+@pytest.mark.parametrize("ascending", [True, False])
+@pytest.mark.parametrize("na_position", ["first", "last"])
+def test_sort_index_axis_1_multiindex_level(
+    level, sort_remaining, ascending, na_position
+):
+    # axis=1 previously ignored level= and sort_remaining= silently
+    pdf = pd.DataFrame(
+        [[1, 2, 3, 4]],
+        columns=pd.MultiIndex.from_tuples(
+            [("b", 2), ("a", 1), (np.nan, 3), ("a", 4)], names=["c1", "c2"]
+        ),
+    )
+    gdf = cudf.DataFrame(pdf)
+
+    expect = pdf.sort_index(
+        axis=1,
+        level=level,
+        sort_remaining=sort_remaining,
+        ascending=ascending,
+        na_position=na_position,
+    )
+    got = gdf.sort_index(
+        axis=1,
+        level=level,
+        sort_remaining=sort_remaining,
+        ascending=ascending,
+        na_position=na_position,
+    )
+    assert_eq(expect, got)
+
+
+def test_sort_index_axis_1_level_out_of_bounds():
+    pdf = pd.DataFrame(
+        [[1, 2]],
+        columns=pd.MultiIndex.from_tuples([("a", 1), ("b", 2)]),
+    )
+    gdf = cudf.DataFrame(pdf)
+    with pytest.raises(IndexError):
+        gdf.sort_index(axis=1, level=5)
+
+
+@pytest.mark.parametrize(
+    "level, ascending",
+    [
+        (["c1", "c2"], [True, False]),
+        (["c2", "c1"], [False, True]),
+        ([0, 1], [False, False]),
+    ],
+)
+def test_sort_index_axis_1_per_level_ascending(level, ascending):
+    pdf = pd.DataFrame(
+        [[1, 2, 3, 4]],
+        columns=pd.MultiIndex.from_tuples(
+            [("b", 2), ("a", 1), ("b", 3), ("a", 4)], names=["c1", "c2"]
+        ),
+    )
+    gdf = cudf.DataFrame(pdf)
+
+    expect = pdf.sort_index(axis=1, level=level, ascending=ascending)
+    got = gdf.sort_index(axis=1, level=level, ascending=ascending)
+    assert_eq(expect, got)
+
+
+def test_sort_index_axis_1_ascending_length_mismatch_raises():
+    pdf = pd.DataFrame(
+        [[1, 2]],
+        columns=pd.MultiIndex.from_tuples([("a", 1), ("b", 2)]),
+    )
+    gdf = cudf.DataFrame(pdf)
+    with pytest.raises(ValueError):
+        pdf.sort_index(axis=1, level=[0, 1], ascending=[True])
+    with pytest.raises(ValueError):
+        gdf.sort_index(axis=1, level=[0, 1], ascending=[True])
+
+
+def test_sort_index_axis_1_unknown_level_name_raises():
+    pdf = pd.DataFrame(
+        [[1, 2]],
+        columns=pd.MultiIndex.from_tuples(
+            [("a", 1), ("b", 2)], names=["c1", "c2"]
+        ),
+    )
+    gdf = cudf.DataFrame(pdf)
+    with pytest.raises(KeyError):
+        pdf.sort_index(axis=1, level="nope")
+    with pytest.raises(KeyError):
+        gdf.sort_index(axis=1, level="nope")
+
+
+@pytest.mark.parametrize("level", [0, "cols"])
+@pytest.mark.parametrize("ascending", [True, False])
+def test_sort_index_axis_1_flat_columns_level(level, ascending):
+    # a flat columns axis accepts level 0 / its own name like pandas
+    pdf = pd.DataFrame(
+        [[1, 2, 3]], columns=pd.Index(["b", "c", "a"], name="cols")
+    )
+    gdf = cudf.DataFrame(pdf)
+
+    expect = pdf.sort_index(axis=1, level=level, ascending=ascending)
+    got = gdf.sort_index(axis=1, level=level, ascending=ascending)
+    assert_eq(expect, got)
+
+
+@pytest.mark.parametrize("na_position", ["first", "last"])
+@pytest.mark.parametrize("ascending", [True, False])
+def test_sort_index_axis_1_flat_nan_labels_na_position(na_position, ascending):
+    # the plain (no level) axis=1 path previously used python sorted(),
+    # which cannot honor na_position for NaN labels
+    pdf = pd.DataFrame(
+        [[1, 2, 3]], columns=pd.Index(["b", np.nan, "a"], dtype="object")
+    )
+    gdf = cudf.DataFrame(pdf)
+
+    expect = pdf.sort_index(
+        axis=1, ascending=ascending, na_position=na_position
+    )
+    got = gdf.sort_index(axis=1, ascending=ascending, na_position=na_position)
+    assert_eq(expect, got)

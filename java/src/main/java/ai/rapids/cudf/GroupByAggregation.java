@@ -84,14 +84,6 @@ public final class GroupByAggregation {
   }
 
   /**
-   * @deprecated Use {@link #sumOverflow()} instead.
-   */
-  @Deprecated
-  public static GroupByAggregation sumWithOverflow() {
-    return sumOverflow();
-  }
-
-  /**
    * Product Aggregation.
    */
   public static GroupByAggregation product() {

@@ -211,7 +211,7 @@ rapidsmpf::streaming::Actor filter_lineitem(std::shared_ptr<rapidsmpf::streaming
     co_await ch_out->send(cudf_streaming::to_message(
       msg.sequence_number(),
       std::make_unique<cudf_streaming::table_chunk>(
-        cudf::apply_boolean_mask(
+        cudf::apply_retention_mask(
           chunk.table_view().select({0, 1}), mask->view(), chunk.stream(), ctx->br()->device_mr()),
         chunk.stream())));
   }
@@ -243,7 +243,7 @@ rapidsmpf::streaming::Actor filter_grouped_greater(
     co_await ch_out->send(cudf_streaming::to_message(
       msg.sequence_number(),
       std::make_unique<cudf_streaming::table_chunk>(
-        cudf::apply_boolean_mask(
+        cudf::apply_retention_mask(
           chunk.table_view().select({0}), mask->view(), chunk.stream(), ctx->br()->device_mr()),
         chunk.stream())));
     if (!released_lineitem_read) {
@@ -278,7 +278,7 @@ rapidsmpf::streaming::Actor filter_grouped_equal(
     co_await ch_out->send(cudf_streaming::to_message(
       msg.sequence_number(),
       std::make_unique<cudf_streaming::table_chunk>(
-        cudf::apply_boolean_mask(
+        cudf::apply_retention_mask(
           chunk.table_view().select({0}), mask->view(), chunk.stream(), ctx->br()->device_mr()),
         chunk.stream())));
   }
@@ -489,7 +489,6 @@ int main(int argc, char** argv)
 {
   rapidsmpf::ndsh::FinalizeMPI finalize{};
   CUDF_CUDA_TRY(cudaFree(nullptr));
-  cudf::initialize();
   auto mr                 = rmm::mr::cuda_async_memory_resource{};
   auto arguments          = rapidsmpf::ndsh::parse_arguments(argc, argv);
   auto [ctx, comm]        = rapidsmpf::ndsh::create_context(arguments, std::move(mr));
@@ -499,8 +498,8 @@ int main(int argc, char** argv)
   int device;
   RAPIDSMPF_CUDA_TRY(cudaGetDevice(&device));
   RAPIDSMPF_CUDA_TRY(cudaDeviceGetAttribute(&l2size, cudaDevAttrL2CacheSize, device));
-  auto const num_filter_blocks =
-    cudf_streaming::bloom_filter::fitting_num_blocks(static_cast<std::size_t>(l2size));
+  auto const filter_size =
+    cudf_streaming::bloom_filter::aligned_size(static_cast<std::size_t>(l2size) * 2 / 3);
   for (int i = 0; i < arguments.num_iterations; i++) {
     int op_id{0};
     std::vector<rapidsmpf::streaming::Actor> actors;
@@ -670,7 +669,7 @@ int main(int argc, char** argv)
                                             rapidsmpf::streaming::actor::FanoutPolicy::UNBOUNDED));
       auto bloom_output = ctx->create_channel();
       auto bloom_filter =
-        cudf_streaming::bloom_filter(ctx, comm, cudf::DEFAULT_HASH_SEED, num_filter_blocks);
+        cudf_streaming::bloom_filter(ctx, comm, cudf::DEFAULT_HASH_SEED, filter_size);
       // Select the relevant key column(s) and build filter.
       actors.push_back(populate_bloom_filter(ctx,
                                              comm,

@@ -8,8 +8,8 @@
 
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/iterator>
 #include <cuda/std/utility>
-#include <thrust/iterator/transform_iterator.h>
 #include <thrust/reduce.h>
 
 using TestingTypes = cudf::test::NumericTypes;
@@ -104,7 +104,7 @@ TYPED_TEST(NumericPairIteratorTest, mean_var_output)
 
   // GPU test
   auto it_dev         = d_col->template pair_begin<T, true>();
-  auto it_dev_squared = thrust::make_transform_iterator(it_dev, transformer);
+  auto it_dev_squared = cuda::transform_iterator(it_dev, transformer);
   auto result         = thrust::reduce(rmm::exec_policy_nosync(cudf::get_default_stream()),
                                it_dev_squared,
                                it_dev_squared + d_col->size(),

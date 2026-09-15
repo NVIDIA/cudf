@@ -65,7 +65,7 @@ std::unique_ptr<cudf::column> minhash(
   cudf::device_span<uint32_t const> parameter_a,
   cudf::device_span<uint32_t const> parameter_b,
   cudf::size_type width,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -112,7 +112,7 @@ std::unique_ptr<cudf::column> minhash64(
   cudf::device_span<uint64_t const> parameter_a,
   cudf::device_span<uint64_t const> parameter_b,
   cudf::size_type width,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -159,7 +159,7 @@ std::unique_ptr<cudf::column> minhash_ngrams(
   uint32_t seed,
   cudf::device_span<uint32_t const> parameter_a,
   cudf::device_span<uint32_t const> parameter_b,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -206,7 +206,7 @@ std::unique_ptr<cudf::column> minhash64_ngrams(
   uint64_t seed,
   cudf::device_span<uint64_t const> parameter_a,
   cudf::device_span<uint64_t const> parameter_b,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /** @} */  // end of group

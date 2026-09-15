@@ -2,11 +2,11 @@
 comment: false
 coverage:
   status:
-    project: off
+    project: off  # yamllint disable-line rule:truthy
     patch:
       default:
         target: auto
         threshold: 5%
         informational: true  # The coverage will always pass
 github_checks:
-    annotations: true
+  annotations: true

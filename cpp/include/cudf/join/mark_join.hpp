@@ -12,8 +12,9 @@
 #include <cudf/utilities/export.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_uvector.hpp>
+
+#include <cuda/stream>
 
 #include <memory>
 
@@ -83,12 +84,15 @@ class mark_join {
   mark_join(cudf::table_view const& left,
             cudf::null_equality compare_nulls,
             cudf::join_prefilter prefilter,
-            rmm::cuda_stream_view stream = cudf::get_default_stream(),
+            cuda::stream_ref stream = cudf::get_default_stream(),
             cuda::mr::any_resource<cuda::mr::device_accessible> mr =
               cudf::get_current_device_resource_ref());
 
   /**
-   * @brief Constructs a mark join object with explicit prefilter selection.
+   * @brief Constructs a mark join object with explicit prefilter selection and the given load
+   * factor.
+   *
+   * @throws std::invalid_argument if `load_factor` is not in (0, 1]
    *
    * @param left The left table; the hash table is built from this table
    * @param load_factor Hash table load factor in range (0,1]
@@ -101,7 +105,7 @@ class mark_join {
             double load_factor,
             cudf::null_equality compare_nulls = cudf::null_equality::EQUAL,
             cudf::join_prefilter prefilter    = cudf::join_prefilter::NO,
-            rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+            cuda::stream_ref stream           = cudf::get_default_stream(),
             cuda::mr::any_resource<cuda::mr::device_accessible> mr =
               cudf::get_current_device_resource_ref());
 
@@ -115,7 +119,7 @@ class mark_join {
    */
   [[nodiscard]] std::unique_ptr<rmm::device_uvector<size_type>> semi_join(
     cudf::table_view const& right,
-    rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+    cuda::stream_ref stream           = cudf::get_default_stream(),
     rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref()) const;
 
   /**
@@ -128,7 +132,7 @@ class mark_join {
    */
   [[nodiscard]] std::unique_ptr<rmm::device_uvector<size_type>> anti_join(
     cudf::table_view const& right,
-    rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+    cuda::stream_ref stream           = cudf::get_default_stream(),
     rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref()) const;
 
  private:

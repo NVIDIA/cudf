@@ -235,15 +235,14 @@ def set_device(device: int | None) -> Generator[int, None, None]:
                 f"A previous query used device-{SEEN_DEVICE}, "
                 f"the current query is using device-{to_use}."
             )
+        if to_use != current:
+            gpu.setDevice(to_use)
         SEEN_DEVICE = to_use
-    if to_use != current:
-        gpu.setDevice(to_use)
-        try:
-            yield to_use
-        finally:
-            gpu.setDevice(current)
-    else:
+    try:
         yield to_use
+    finally:
+        if to_use != current:
+            gpu.setDevice(current)
 
 
 @overload

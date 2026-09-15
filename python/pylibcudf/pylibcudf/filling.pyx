@@ -26,6 +26,10 @@ from .column cimport Column
 from .scalar cimport Scalar
 from .table cimport Table
 from .utils cimport _get_stream, _get_memory_resource
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pylibcudf.typing import CudaStreamLike
 from cuda.bindings.cyruntime cimport cudaStream_t
 
 
@@ -42,7 +46,7 @@ cpdef Column fill(
     size_type begin,
     size_type end,
     Scalar value,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
 
@@ -74,7 +78,7 @@ cpdef Column fill(
     cdef unique_ptr[column] result
 
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
 
     cdef column_view c_destination = destination.view()
@@ -94,7 +98,7 @@ cpdef void fill_in_place(
     size_type begin,
     size_type end,
     Scalar value,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
 ):
 
     """Fill destination column in place from begin to end with value.
@@ -120,7 +124,7 @@ cpdef void fill_in_place(
     """
 
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
 
     cdef mutable_column_view c_destination = destination.mutable_view()
     with nogil:
@@ -137,7 +141,7 @@ cpdef Column sequence(
     size_type size,
     Scalar init,
     Scalar step,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """Create a sequence column of size ``size`` with initial value ``init`` and step
@@ -166,7 +170,7 @@ cpdef Column sequence(
     cdef size_type c_size = size
 
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
 
     with nogil:
@@ -183,7 +187,7 @@ cpdef Column sequence(
 cpdef Table repeat(
     Table input_table,
     ColumnOrSize count,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """Repeat rows of a Table.
@@ -213,7 +217,7 @@ cpdef Table repeat(
     cdef unique_ptr[table] result
 
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     cdef table_view c_input_table
     cdef column_view c_count_column
 
@@ -245,7 +249,7 @@ cpdef Column calendrical_month_sequence(
     size_type n,
     Scalar init,
     size_type months,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
 
@@ -273,7 +277,7 @@ cpdef Column calendrical_month_sequence(
     cdef unique_ptr[column] c_result
 
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
 
     with nogil:

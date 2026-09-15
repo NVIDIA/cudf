@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -24,11 +24,11 @@
 #include <cudf/utilities/traits.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/atomic>
 #include <cuda/std/algorithm>
+#include <cuda/stream>
 #include <thrust/count.h>
 #include <thrust/detail/copy.h>
 #include <thrust/remove.h>
@@ -802,7 +802,7 @@ CUDF_KERNEL void __launch_bounds__(rowofs_block_dim)
 size_t __host__ count_blank_rows(cudf::io::parse_options_view const& opts,
                                  device_span<char const> data,
                                  device_span<uint64_t const> row_offsets,
-                                 rmm::cuda_stream_view stream)
+                                 cuda::stream_ref stream)
 {
   auto const newline  = opts.skipblanklines ? opts.terminator : opts.comment;
   auto const comment  = opts.comment != '\0' ? opts.comment : newline;
@@ -820,7 +820,7 @@ size_t __host__ count_blank_rows(cudf::io::parse_options_view const& opts,
 device_span<uint64_t> __host__ remove_blank_rows(cudf::io::parse_options_view const& options,
                                                  device_span<char const> data,
                                                  device_span<uint64_t> row_offsets,
-                                                 rmm::cuda_stream_view stream)
+                                                 cuda::stream_ref stream)
 {
   size_t d_size       = data.size();
   auto const newline  = options.skipblanklines ? options.terminator : options.comment;
@@ -843,7 +843,7 @@ cudf::detail::host_vector<column_type_histogram> detect_column_types(
   device_span<column_parse::flags const> const column_flags,
   device_span<uint64_t const> const row_starts,
   size_t const num_active_columns,
-  rmm::cuda_stream_view stream)
+  cuda::stream_ref stream)
 {
   // Calculate actual block count to use based on records count
   int const block_size = csvparse_block_dim;
@@ -852,7 +852,7 @@ cudf::detail::host_vector<column_type_histogram> detect_column_types(
   auto d_stats = cudf::detail::make_zeroed_device_uvector_async<column_type_histogram>(
     num_active_columns, stream, cudf::get_current_device_resource_ref());
 
-  data_type_detection<<<grid_size, block_size, 0, stream.value()>>>(
+  data_type_detection<<<grid_size, block_size, 0, stream.get()>>>(
     options, data, column_flags, row_starts, d_stats);
   CUDF_CUDA_TRY(cudaGetLastError());
 
@@ -868,22 +868,22 @@ void decode_row_column_data(cudf::io::parse_options_view const& options,
                             device_span<cudf::bitmask_type* const> valids,
                             device_span<size_type> valid_counts,
                             device_span<bool* const> is_quoted_flags,
-                            rmm::cuda_stream_view stream)
+                            cuda::stream_ref stream)
 {
   // Calculate actual block count to use based on records count
   auto const block_size = csvparse_block_dim;
   auto const num_rows   = row_offsets.size() - 1;
   auto const grid_size  = cudf::util::div_rounding_up_safe<size_t>(num_rows, block_size);
 
-  convert_csv_to_cudf<<<grid_size, block_size, 0, stream.value()>>>(options,
-                                                                    data,
-                                                                    column_flags,
-                                                                    row_offsets,
-                                                                    dtypes,
-                                                                    columns,
-                                                                    valids,
-                                                                    valid_counts,
-                                                                    is_quoted_flags);
+  convert_csv_to_cudf<<<grid_size, block_size, 0, stream.get()>>>(options,
+                                                                  data,
+                                                                  column_flags,
+                                                                  row_offsets,
+                                                                  dtypes,
+                                                                  columns,
+                                                                  valids,
+                                                                  valid_counts,
+                                                                  is_quoted_flags);
   CUDF_CUDA_TRY(cudaGetLastError());
 }
 
@@ -898,12 +898,12 @@ uint32_t __host__ gather_row_offsets(parse_options_view const& options,
                                      size_t byte_range_start,
                                      size_t byte_range_end,
                                      size_t skip_rows,
-                                     rmm::cuda_stream_view stream)
+                                     cuda::stream_ref stream)
 {
   uint32_t dim_grid = 1 + (chunk_size / rowofs_block_bytes);
   auto ctxtree      = rmm::device_uvector<packed_rowctx_t>(dim_grid * bk_ctxtree_size, stream);
 
-  gather_row_offsets_gpu<<<dim_grid, rowofs_block_dim, 0, stream.value()>>>(
+  gather_row_offsets_gpu<<<dim_grid, rowofs_block_dim, 0, stream.get()>>>(
     row_ctx,
     ctxtree,
     offsets_out,

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -22,13 +22,12 @@
 #include <cudf/utilities/span.hpp>
 #include <cudf/utilities/traits.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_buffer.hpp>
 #include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/stream>
 #include <thrust/equal.h>
-#include <thrust/iterator/transform_output_iterator.h>
 #include <thrust/tabulate.h>
 
 #include <memory>
@@ -180,7 +179,7 @@ class metadata : public file_metadata {
 rmm::device_buffer decompress_data(datasource& source,
                                    metadata& meta,
                                    rmm::device_buffer const& comp_block_data,
-                                   rmm::cuda_stream_view stream)
+                                   cuda::stream_ref stream)
 {
   if (meta.codec == "deflate") {
     auto inflate_in =
@@ -344,7 +343,7 @@ std::vector<column_buffer> decode_data(metadata& meta,
                                        size_t num_rows,
                                        std::vector<std::pair<int, std::string>> const& selection,
                                        std::vector<data_type> const& column_types,
-                                       rmm::cuda_stream_view stream,
+                                       cuda::stream_ref stream,
                                        rmm::device_async_resource_ref mr)
 {
   auto out_buffers = std::vector<column_buffer>();
@@ -456,7 +455,7 @@ std::vector<column_buffer> decode_data(metadata& meta,
 
 table_with_metadata read_avro(std::unique_ptr<cudf::io::datasource>&& source,
                               avro_reader_options const& options,
-                              rmm::cuda_stream_view stream,
+                              cuda::stream_ref stream,
                               rmm::device_async_resource_ref mr)
 {
   auto skip_rows = options.get_skip_rows();
@@ -555,7 +554,7 @@ table_with_metadata read_avro(std::unique_ptr<cudf::io::datasource>&& source,
         d_global_dict_data = cudf::detail::make_device_uvector_async(
           h_global_dict_data, stream, cudf::get_current_device_resource_ref());
 
-        stream.synchronize();
+        stream.sync();
       }
 
       auto out_buffers = decode_data(meta,

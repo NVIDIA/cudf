@@ -11,10 +11,11 @@
 #include <cudf/utilities/span.hpp>
 
 #include <rmm/cuda_device.hpp>
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_buffer.hpp>
 #include <rmm/mr/cuda_async_memory_resource.hpp>
 #include <rmm/mr/pool_memory_resource.hpp>
+
+#include <cuda/stream>
 
 #include <benchmark/benchmark.h>
 #include <rapidsmpf/memory/cuda_memcpy_async.hpp>
@@ -38,7 +39,7 @@ void run_pack(benchmark::State& state,
               std::size_t table_size_mb,
               rmm::device_async_resource_ref table_mr,
               rmm::device_async_resource_ref pack_mr,
-              rmm::cuda_stream_view stream)
+              cuda::stream_ref stream)
 {
   auto const table_size_bytes = table_size_mb * MB;
 
@@ -49,12 +50,12 @@ void run_pack(benchmark::State& state,
 
   // Warm up
   auto warm_up = cudf::pack(table.view(), stream, pack_mr);
-  stream.synchronize();
+  stream.sync();
 
   for (auto _ : state) {
     auto packed = cudf::pack(table.view(), stream, pack_mr);
     benchmark::DoNotOptimize(packed);
-    stream.synchronize();
+    stream.sync();
   }
 
   state.SetBytesProcessed(static_cast<std::int64_t>(state.iterations()) *
@@ -70,7 +71,7 @@ static void BM_Pack_device(benchmark::State& state)
 {
   auto const table_size_mb = static_cast<std::size_t>(state.range(0));
 
-  rmm::cuda_stream_view stream = rmm::cuda_stream_default;
+  cuda::stream_ref stream = cudf::get_default_stream();
 
   // Create memory resources
   rmm::mr::pool_memory_resource pool_mr{rmm::mr::cuda_async_memory_resource{},
@@ -91,7 +92,7 @@ static void BM_Pack_pinned(benchmark::State& state)
 
   auto const table_size_mb = static_cast<std::size_t>(state.range(0));
 
-  rmm::cuda_stream_view stream = rmm::cuda_stream_default;
+  cuda::stream_ref stream = cudf::get_default_stream();
 
   // Create memory resources
   rmm::mr::pool_memory_resource pool_mr{
@@ -115,7 +116,7 @@ void run_chunked_pack(benchmark::State& state,
                       std::size_t table_size,
                       rmm::device_async_resource_ref table_mr,
                       rmm::device_async_resource_ref pack_mr,
-                      rmm::cuda_stream_view stream)
+                      cuda::stream_ref stream)
 {
   // Calculate number of rows for a single-column table of the desired size
   auto const nrows = rapidsmpf::safe_cast<cudf::size_type>(table_size / sizeof(random_data_t));
@@ -150,13 +151,13 @@ void run_chunked_pack(benchmark::State& state,
 
   {
     run_packer();
-    stream.synchronize();
+    stream.sync();
   }
 
   for (auto _ : state) {
     run_packer();
     benchmark::DoNotOptimize(destination);
-    stream.synchronize();
+    stream.sync();
   }
 
   state.SetBytesProcessed(static_cast<std::int64_t>(state.iterations()) *
@@ -178,7 +179,7 @@ static void BM_ChunkedPack_device(benchmark::State& state)
   // Bounce buffer size: max(1MB, table_size / 10)
   auto const bounce_buffer_size = std::max(MB, table_size_bytes / 10);
 
-  rmm::cuda_stream_view stream = rmm::cuda_stream_default;
+  cuda::stream_ref stream = cudf::get_default_stream();
 
   rmm::mr::pool_memory_resource pool_mr{rmm::mr::cuda_async_memory_resource{},
                                         rmm::percent_of_free_device_memory(40)};
@@ -203,7 +204,7 @@ static void BM_ChunkedPack_pinned(benchmark::State& state)
   // Bounce buffer size: max(1MB, table_size / 10)
   auto const bounce_buffer_size = std::max(MB, table_size_bytes / 10);
 
-  rmm::cuda_stream_view stream = rmm::cuda_stream_default;
+  cuda::stream_ref stream = cudf::get_default_stream();
 
   rmm::mr::pool_memory_resource pool_mr{
     rmm::mr::cuda_async_memory_resource{}, rmm::percent_of_free_device_memory(40)
@@ -247,7 +248,7 @@ static void BM_ChunkedPack_fixed_table_device(benchmark::State& state)
   auto const bounce_buffer_size          = static_cast<std::size_t>(state.range(0)) * MB;
   constexpr std::size_t table_size_bytes = 1024 * MB;
 
-  rmm::cuda_stream_view stream = rmm::cuda_stream_default;
+  cuda::stream_ref stream = cudf::get_default_stream();
 
   // Create memory resources
   rmm::mr::pool_memory_resource pool_mr{rmm::mr::cuda_async_memory_resource{},
@@ -271,7 +272,7 @@ static void BM_ChunkedPack_fixed_table_pinned(benchmark::State& state)
   auto const bounce_buffer_size = static_cast<std::size_t>(state.range(0)) * MB;
   constexpr std::size_t table_size_bytes = 1024 * MB;
 
-  rmm::cuda_stream_view stream = rmm::cuda_stream_default;
+  cuda::stream_ref stream = cudf::get_default_stream();
 
   rmm::mr::pool_memory_resource pool_mr{
     rmm::mr::cuda_async_memory_resource{}, rmm::percent_of_free_device_memory(40)

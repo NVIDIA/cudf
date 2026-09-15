@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -13,11 +13,11 @@
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/iterator>
+#include <cuda/stream>
 #include <thrust/for_each.h>
 #include <thrust/transform.h>
 
@@ -27,14 +27,15 @@ namespace cudf::groupby {
 
 template <bool has_nested>
 streaming_groupby::impl::batch_insert_result streaming_groupby::impl::probe_and_insert_impl(
-  table_view const& batch_keys, rmm::cuda_stream_view stream)
+  table_view const& batch_keys, cuda::stream_ref stream)
 {
   auto const batch_size = batch_keys.num_rows();
   auto const temp_mr    = cudf::get_current_device_resource_ref();
   auto const has_null   = cudf::nullate::DYNAMIC{_has_nullable_keys};
 
   // Preprocess batch for row operators.
-  auto preprocessed_batch = cudf::detail::row::hash::preprocessed_table::create(batch_keys, stream);
+  auto preprocessed_batch =
+    cudf::detail::row::hash::preprocessed_table::create(batch_keys, stream, temp_mr);
   auto const batch_hasher_obj = cudf::detail::row::hash::row_hasher{preprocessed_batch};
   auto const d_batch_hash     = batch_hasher_obj.device_hasher(has_null);
 
@@ -95,9 +96,10 @@ streaming_groupby::impl::batch_insert_result streaming_groupby::impl::probe_and_
     // Bound check: the hash set has already been written above (transient slot values),
     // so on failure the object is left invalidated; further aggregate()/merge() calls
     // will throw immediately while finalize() can still recover partial results.
-    if (_distinct_keys + new_distinct_keys > _max_distinct_keys) {
+    auto const distinct_so_far = _distinct_keys.load(std::memory_order_relaxed);
+    if (distinct_so_far + new_distinct_keys > _max_distinct_keys) {
       _invalidated = true;
-      CUDF_FAIL("Distinct key count (" + std::to_string(_distinct_keys + new_distinct_keys) +
+      CUDF_FAIL("Distinct key count (" + std::to_string(distinct_so_far + new_distinct_keys) +
                 ") would exceed max_distinct_keys (" + std::to_string(_max_distinct_keys) + ").");
     }
 
@@ -110,11 +112,11 @@ streaming_groupby::impl::batch_insert_result streaming_groupby::impl::probe_and_
                                           temp_mr);
 
     auto preprocessed_compacted =
-      cudf::detail::row::hash::preprocessed_table::create(compacted->view(), stream);
+      cudf::detail::row::hash::preprocessed_table::create(compacted->view(), stream, temp_mr);
 
     // Store the compacted batch.
     auto const new_batch_id    = static_cast<size_type>(_compacted_batches.size());
-    auto const dense_id_offset = _distinct_keys;
+    auto const dense_id_offset = distinct_so_far;
     _compacted_batches.push_back(std::move(compacted));
     _preprocessed_batches.push_back(preprocessed_compacted);
 
@@ -137,7 +139,7 @@ streaming_groupby::impl::batch_insert_result streaming_groupby::impl::probe_and_
                        update_transient_target_indices_fn{
                          base, slot_offsets.data(), _max_distinct_keys, target_indices.data()});
 
-    _distinct_keys += new_distinct_keys;
+    _distinct_keys.fetch_add(new_distinct_keys, std::memory_order_relaxed);
   }
   // If new_distinct_keys == 0, target_indices is already final from Pass 1 — every
   // slot held a dense ID at probe time, so *iter was already the correct dense ID.

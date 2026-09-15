@@ -1,6 +1,6 @@
-# SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-from libc.stdint cimport int64_t, uint8_t
+from libc.stdint cimport int32_t, int64_t, uint8_t
 from libcpp cimport bool
 from libcpp.functional cimport reference_wrapper
 from libcpp.map cimport map
@@ -43,6 +43,7 @@ cdef extern from "cudf/io/parquet.hpp" namespace "cudf::io" nogil:
         bool is_enabled_ignore_missing_columns() except +libcudf_exception_handler
         bool is_enabled_use_jit_filter() noexcept
         bool is_enabled_case_sensitive_names() noexcept
+        bool is_enabled_prepend_source_index_column() noexcept
         # setter
 
         void set_source(source_info src) except +libcudf_exception_handler
@@ -52,6 +53,9 @@ cdef extern from "cudf/io/parquet.hpp" namespace "cudf::io" nogil:
                 vector[string] col_names) except +libcudf_exception_handler
         void set_column_indices(
             vector[size_type] col_indices
+        ) except +libcudf_exception_handler
+        void set_column_field_ids(
+            vector[int32_t] column_field_ids
         ) except +libcudf_exception_handler
         void set_num_rows(int64_t val) except +libcudf_exception_handler
         void set_row_groups(
@@ -69,6 +73,7 @@ cdef extern from "cudf/io/parquet.hpp" namespace "cudf::io" nogil:
         void set_timestamp_type(data_type type) except +libcudf_exception_handler
         void set_decimal_width(type_id width) noexcept
         void enable_case_sensitive_names(bool val) noexcept
+        void enable_prepend_source_index_column(bool val) noexcept
 
         @staticmethod
         parquet_reader_options_builder builder(
@@ -88,6 +93,9 @@ cdef extern from "cudf/io/parquet.hpp" namespace "cudf::io" nogil:
         ) except +libcudf_exception_handler
         parquet_reader_options_builder& column_indices(
             vector[size_type] col_indices
+        ) except +libcudf_exception_handler
+        parquet_reader_options_builder& column_field_ids(
+            vector[int32_t] column_field_ids
         ) except +libcudf_exception_handler
         parquet_reader_options_builder& row_groups(
             vector[vector[size_type]] row_grp
@@ -120,6 +128,9 @@ cdef extern from "cudf/io/parquet.hpp" namespace "cudf::io" nogil:
             bool use_jit_filter
         ) noexcept
         parquet_reader_options_builder& case_sensitive_names(
+            bool val
+        ) noexcept
+        parquet_reader_options_builder& prepend_source_index_column(
             bool val
         ) noexcept
         parquet_reader_options build() except +libcudf_exception_handler

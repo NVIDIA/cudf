@@ -454,6 +454,18 @@ def test_groupby_quantile(request, interpolation, q):
     assert_groupby_results_equal(pdresult, gdresult)
 
 
+def test_groupby_quantile_nearest_even_length():
+    pdf = pd.DataFrame(
+        {"key": ["a", "a", "b", "b"], "val": [1.5, 2.5, 10.0, 20.0]}
+    )
+    gdf = cudf.DataFrame(pdf)
+
+    pdresult = pdf.groupby("key")["val"].quantile(0.5, interpolation="nearest")
+    gdresult = gdf.groupby("key")["val"].quantile(0.5, interpolation="nearest")
+
+    assert_groupby_results_equal(pdresult, gdresult)
+
+
 def test_groupby_quantile_array_multiple_levels():
     pdf = pd.DataFrame(
         {

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -60,7 +60,7 @@ void nvbench_sort_merge_inner_join(nvbench::state& state,
   auto const join_input_size = estimate_size(build_view) + estimate_size(probe_view);
   state.add_element_count(join_input_size, "join_input_size");
   state.add_global_memory_reads<nvbench::int8_t>(join_input_size);
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().value()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().get()));
 
   if (use_remap) {
     // Benchmark with key remapping
@@ -84,7 +84,7 @@ void nvbench_sort_merge_inner_join(nvbench::state& state,
           cudf::inner_join(remapped_probe_view, remapped_build_view, NullEquality);
       } else if constexpr (Algorithm == join_t::SORT_MERGE) {
         auto smj = cudf::sort_merge_join(remapped_build_view, cudf::sorted::NO, NullEquality);
-        [[maybe_unused]] auto result = smj.inner_join(remapped_probe_view, cudf::sorted::NO);
+        [[maybe_unused]] auto result = smj.inner_join(remapped_probe_view);
       }
     });
   } else {
@@ -94,7 +94,7 @@ void nvbench_sort_merge_inner_join(nvbench::state& state,
         [[maybe_unused]] auto result = cudf::inner_join(probe_keys, build_keys, NullEquality);
       } else if constexpr (Algorithm == join_t::SORT_MERGE) {
         auto smj = cudf::sort_merge_join(build_keys, cudf::sorted::NO, NullEquality);
-        [[maybe_unused]] auto result = smj.inner_join(probe_keys, cudf::sorted::NO);
+        [[maybe_unused]] auto result = smj.inner_join(probe_keys);
       }
     });
   }

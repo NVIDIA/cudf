@@ -10,7 +10,12 @@ from functools import reduce
 from itertools import chain
 from typing import TYPE_CHECKING
 
-from cudf_polars.dsl.expr import Col, GroupedWindow, UnaryFunction
+from cudf_polars.dsl.expr import (
+    Col,
+    FixedSizeRollingWindow,
+    GroupedWindow,
+    UnaryFunction,
+)
 from cudf_polars.dsl.ir import Union
 from cudf_polars.dsl.traversal import traversal
 from cudf_polars.streaming.base import PartitionInfo
@@ -125,8 +130,11 @@ def _contains_unsupported_fill_strategy(exprs: Sequence[Expr]) -> bool:
     return False
 
 
-def _contains_cum_sum_without_order_by(exprs: Sequence[Expr]) -> bool:
-    # Returns True for cum_sum(...) or fill_null_with_strategy(cum_sum(...)).
+_INPUT_ORDER_WINDOW_OPS = frozenset({"cum_sum", "diff", "shift", "shift_and_fill"})
+
+
+def _contains_input_order_window_without_order_by(exprs: Sequence[Expr]) -> bool:
+    """Return True for implicit input-order-sensitive window expressions."""
     for e in traversal(exprs):
         if not (isinstance(e, GroupedWindow) and not e.options[1]):
             continue
@@ -138,6 +146,8 @@ def _contains_cum_sum_without_order_by(exprs: Sequence[Expr]) -> bool:
                 and isinstance(v.children[0], UnaryFunction)
             ):
                 v = v.children[0]
-            if isinstance(v, UnaryFunction) and v.name == "cum_sum":
+            if isinstance(v, UnaryFunction) and v.name in _INPUT_ORDER_WINDOW_OPS:
+                return True
+            if isinstance(v, FixedSizeRollingWindow):
                 return True
     return False

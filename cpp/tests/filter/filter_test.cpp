@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -300,7 +300,7 @@ struct ast_expression_executor {
                                              cudf::table_view const& table)
   {
     auto booleans = cudf::compute_column(table, expr);
-    return cudf::apply_boolean_mask(table, booleans->view());
+    return cudf::apply_retention_mask(table, booleans->view());
   }
 };
 
@@ -349,7 +349,7 @@ TYPED_TEST(FilterExpressionTest, IsNull)
   auto result        = Executor::filter(filter_expr, this->table);
   auto expected_filter =
     cudf::test::fixed_width_column_wrapper<bool>{{true, true, true, true, true, true, true, false}};
-  auto expected_table = cudf::apply_boolean_mask(this->table, expected_filter);
+  auto expected_table = cudf::apply_retention_mask(this->table, expected_filter);
   CUDF_TEST_EXPECT_TABLES_EQUAL(expected_table->view(), result->view());
 }
 
@@ -365,7 +365,7 @@ TYPED_TEST(FilterExpressionTest, NullEqual)
   auto result = Executor::filter(null_equal_expr, this->table);
   auto expected_filter =
     cudf::test::fixed_width_column_wrapper<bool>{{true, false, true, true, true, true, true, true}};
-  auto expected_table = cudf::apply_boolean_mask(this->table, expected_filter);
+  auto expected_table = cudf::apply_retention_mask(this->table, expected_filter);
   CUDF_TEST_EXPECT_TABLES_EQUAL(expected_table->view(), result->view());
 }
 
@@ -381,7 +381,7 @@ TYPED_TEST(FilterExpressionTest, NullLogicalAnd)
   auto result          = Executor::filter(and_expr, this->table);
   auto expected_filter = cudf::test::fixed_width_column_wrapper<bool>{
     {false, false, false, true, false, false, false, false}};
-  auto expected_table = cudf::apply_boolean_mask(this->table, expected_filter);
+  auto expected_table = cudf::apply_retention_mask(this->table, expected_filter);
   CUDF_TEST_EXPECT_TABLES_EQUAL(expected_table->view(), result->view());
 }
 
@@ -397,7 +397,7 @@ TYPED_TEST(FilterExpressionTest, NullLogicalOr)
   auto result          = Executor::filter(or_expr, this->table);
   auto expected_filter = cudf::test::fixed_width_column_wrapper<bool>{
     {false, true, true, true, false, true, false, false}};
-  auto expected_table = cudf::apply_boolean_mask(this->table, expected_filter);
+  auto expected_table = cudf::apply_retention_mask(this->table, expected_filter);
   CUDF_TEST_EXPECT_TABLES_EQUAL(expected_table->view(), result->view());
 }
 

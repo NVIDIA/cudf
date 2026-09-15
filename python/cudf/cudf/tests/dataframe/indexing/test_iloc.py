@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 
@@ -368,7 +368,7 @@ def test_dataframe_iloc_inplace_update_shape_mismatch_RHS_df():
 
 
 def test_iloc_single_row_with_nullable_column():
-    # see https://github.com/rapidsai/cudf/issues/11349
+    # see https://github.com/NVIDIA/cudf/issues/11349
     pdf = pd.DataFrame({"a": [0, 1, 2, 3], "b": [0.1, 0.2, None, 0.4]})
     df = cudf.from_pandas(pdf)
 
@@ -392,7 +392,7 @@ def test_boolean_mask_columns_iloc_series():
 
 
 def test_iloc_column_boolean_mask_issue_13265():
-    # https://github.com/rapidsai/cudf/issues/13265
+    # https://github.com/NVIDIA/cudf/issues/13265
     df = pd.DataFrame(np.arange(4).reshape(2, 2))
     cdf = cudf.from_pandas(df)
     expect = df.iloc[:, [True, True]]
@@ -401,8 +401,8 @@ def test_iloc_column_boolean_mask_issue_13265():
 
 
 def test_iloc_repeated_column_label_issue_13266():
-    # https://github.com/rapidsai/cudf/issues/13266
-    # https://github.com/rapidsai/cudf/issues/13273
+    # https://github.com/NVIDIA/cudf/issues/13266
+    # https://github.com/NVIDIA/cudf/issues/13273
     df = pd.DataFrame(np.arange(4).reshape(2, 2))
     cdf = cudf.from_pandas(df)
 
@@ -419,7 +419,7 @@ def test_iloc_repeated_column_label_issue_13266():
     ids=["row_ellipsis", "column_ellipsis"],
 )
 def test_iloc_ellipsis_as_slice_issue_13267(indexer):
-    # https://github.com/rapidsai/cudf/issues/13267
+    # https://github.com/NVIDIA/cudf/issues/13267
     df = pd.DataFrame(np.arange(4).reshape(2, 2))
     cdf = cudf.from_pandas(df)
 
@@ -443,7 +443,7 @@ def test_iloc_ellipsis_as_slice_issue_13267(indexer):
     ],
 )
 def test_iloc_multiindex_lookup_as_label_issue_13515(indexer):
-    # https://github.com/rapidsai/cudf/issues/13515
+    # https://github.com/NVIDIA/cudf/issues/13515
     df = pd.DataFrame(
         {"a": [1, 1, 3], "b": [2, 3, 4], "c": [1, 6, 7], "d": [1, 8, 9]}
     ).set_index(["a", "b"])

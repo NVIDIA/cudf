@@ -10,12 +10,12 @@
 #include <cudf/table/table_device_view.cuh>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/iterator>
 #include <cuda/std/array>
 #include <cuda/std/limits>
+#include <cuda/stream>
 #include <thrust/for_each.h>
 
 namespace cudf {
@@ -102,7 +102,7 @@ class murmur_device_row_hasher {
 
 std::unique_ptr<table> murmurhash3_x64_128(table_view const& input,
                                            uint64_t seed,
-                                           rmm::cuda_stream_view stream,
+                                           cuda::stream_ref stream,
                                            rmm::device_async_resource_ref mr)
 {
   auto output1 = make_numeric_column(
@@ -133,7 +133,7 @@ std::unique_ptr<table> murmurhash3_x64_128(table_view const& input,
 
 std::unique_ptr<table> murmurhash3_x64_128(table_view const& input,
                                            uint64_t seed,
-                                           rmm::cuda_stream_view stream,
+                                           cuda::stream_ref stream,
                                            rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();

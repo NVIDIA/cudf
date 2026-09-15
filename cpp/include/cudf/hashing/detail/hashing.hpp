@@ -8,7 +8,7 @@
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
+#include <cuda/stream>
 
 #include <cstddef>
 #include <cstdint>
@@ -19,46 +19,46 @@ namespace hashing::detail {
 
 std::unique_ptr<column> murmurhash3_x86_32(table_view const& input,
                                            uint32_t seed,
-                                           rmm::cuda_stream_view,
+                                           cuda::stream_ref,
                                            rmm::device_async_resource_ref mr);
 
 std::unique_ptr<table> murmurhash3_x64_128(table_view const& input,
                                            uint64_t seed,
-                                           rmm::cuda_stream_view,
+                                           cuda::stream_ref,
                                            rmm::device_async_resource_ref mr);
 
 std::unique_ptr<column> md5(table_view const& input,
-                            rmm::cuda_stream_view stream,
+                            cuda::stream_ref stream,
                             rmm::device_async_resource_ref mr);
 
 std::unique_ptr<column> sha1(table_view const& input,
-                             rmm::cuda_stream_view stream,
+                             cuda::stream_ref stream,
                              rmm::device_async_resource_ref mr);
 
 std::unique_ptr<column> sha224(table_view const& input,
-                               rmm::cuda_stream_view stream,
+                               cuda::stream_ref stream,
                                rmm::device_async_resource_ref mr);
 
 std::unique_ptr<column> sha256(table_view const& input,
-                               rmm::cuda_stream_view stream,
+                               cuda::stream_ref stream,
                                rmm::device_async_resource_ref mr);
 
 std::unique_ptr<column> sha384(table_view const& input,
-                               rmm::cuda_stream_view stream,
+                               cuda::stream_ref stream,
                                rmm::device_async_resource_ref mr);
 
 std::unique_ptr<column> sha512(table_view const& input,
-                               rmm::cuda_stream_view stream,
+                               cuda::stream_ref stream,
                                rmm::device_async_resource_ref mr);
 
 std::unique_ptr<column> xxhash_32(table_view const& input,
                                   uint64_t seed,
-                                  rmm::cuda_stream_view,
+                                  cuda::stream_ref,
                                   rmm::device_async_resource_ref mr);
 
 std::unique_ptr<column> xxhash_64(table_view const& input,
                                   uint64_t seed,
-                                  rmm::cuda_stream_view,
+                                  cuda::stream_ref,
                                   rmm::device_async_resource_ref mr);
 
 /* SPDX-SnippetBegin

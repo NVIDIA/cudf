@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -8,7 +8,7 @@
 #include <cudf/io/csv.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
+#include <cuda/stream>
 
 namespace cudf {
 namespace io::detail::csv {
@@ -25,7 +25,7 @@ namespace io::detail::csv {
  */
 table_with_metadata read_csv(std::unique_ptr<cudf::io::datasource>&& source,
                              csv_reader_options const& options,
-                             rmm::cuda_stream_view stream,
+                             cuda::stream_ref stream,
                              rmm::device_async_resource_ref mr);
 
 /**
@@ -41,7 +41,7 @@ void write_csv(data_sink* sink,
                table_view const& table,
                host_span<std::string const> column_names,
                csv_writer_options const& options,
-               rmm::cuda_stream_view stream);
+               cuda::stream_ref stream);
 
 }  // namespace io::detail::csv
 }  // namespace cudf

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -189,7 +189,7 @@ static void bench_query(nvbench::state& state)
   cudf::strings_column_view scv(input->view());
   size_t num_chars = scv.chars_size(stream);
 
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.value()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.get()));
   // This isn't strictly 100% accurate. a given query isn't necessarily
   // going to visit every single incoming character but in spirit it does.
   state.add_global_memory_reads<nvbench::int8_t>(num_chars);

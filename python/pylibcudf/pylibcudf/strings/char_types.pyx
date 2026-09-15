@@ -11,6 +11,10 @@ from pylibcudf.libcudf.strings cimport char_types as cpp_char_types
 from pylibcudf.libcudf.strings.char_types cimport string_character_types
 from pylibcudf.scalar cimport Scalar
 from pylibcudf.utils cimport _get_stream, _get_memory_resource
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pylibcudf.typing import CudaStreamLike
 from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 from rmm.pylibrmm.stream cimport Stream
 
@@ -29,7 +33,7 @@ cpdef Column all_characters_of_type(
     Column source_strings,
     string_character_types types,
     string_character_types verify_types,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """
@@ -53,7 +57,7 @@ cpdef Column all_characters_of_type(
     """
     cdef unique_ptr[column] c_result
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
     cdef column_view c_source_strings = source_strings.view()
     with nogil:
@@ -72,7 +76,7 @@ cpdef Column filter_characters_of_type(
     string_character_types types_to_remove,
     Scalar replacement,
     string_character_types types_to_keep,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """
@@ -103,7 +107,7 @@ cpdef Column filter_characters_of_type(
     )
     cdef unique_ptr[column] c_result
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
     cdef column_view c_source_strings = source_strings.view()
     with nogil:

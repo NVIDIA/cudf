@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -1042,6 +1042,21 @@ TEST_F(JsonPathTests, QueriesContainingQuotes)
 
   // Set 2
   do_test(R"($.'A)", R"({"B'": 3})");
+}
+
+TEST_F(JsonPathTests, ObjectWithEmptyKey)
+{
+  auto const input = cudf::test::strings_column_wrapper{R"({"":0,"a":1})",
+                                                        R"({"a":1,"":0})",
+                                                        R"({"" : 0, "a" : 1})",
+                                                        R"({"":{"a":9},"a":1})",
+                                                        R"({"":[1,2],"a":1})",
+                                                        R"({"":"s","a":1})"};
+
+  auto const result =
+    cudf::get_json_object(cudf::strings_column_view(input), std::string_view{"$.a"});
+  auto const expected = cudf::test::strings_column_wrapper{"1", "1", "1", "1", "1", "1"};
+  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(*result, expected);
 }
 
 // Test that get_json_object creates valid string columns for empty/whitespace JSONPath queries

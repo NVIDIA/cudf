@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -13,6 +13,7 @@
 #include <cudf/utilities/memory_resource.hpp>
 
 #include <cub/block/block_reduce.cuh>
+#include <cuda/iterator>
 #include <cuda/std/tuple>
 
 #include <cstddef>
@@ -227,7 +228,7 @@ cudf::io::column_type_histogram infer_column_type(OptionsView const& options,
                                                   cudf::device_span<char const> data,
                                                   ColumnStringIter offset_length_begin,
                                                   std::size_t const size,
-                                                  rmm::cuda_stream_view stream)
+                                                  cuda::stream_ref stream)
 {
   constexpr int block_size = 128;
 
@@ -235,9 +236,9 @@ cudf::io::column_type_histogram infer_column_type(OptionsView const& options,
   auto d_column_info   = cudf::detail::device_scalar<cudf::io::column_type_histogram>(
     stream, cudf::get_current_device_resource_ref());
   CUDF_CUDA_TRY(cudaMemsetAsync(
-    d_column_info.data(), 0, sizeof(cudf::io::column_type_histogram), stream.value()));
+    d_column_info.data(), 0, sizeof(cudf::io::column_type_histogram), stream.get()));
 
-  infer_column_type_kernel<block_size><<<grid_size, block_size, 0, stream.value()>>>(
+  infer_column_type_kernel<block_size><<<grid_size, block_size, 0, stream.get()>>>(
     options, data, offset_length_begin, size, d_column_info.data());
   CUDF_CUDA_TRY(cudaGetLastError());
 
@@ -247,9 +248,9 @@ cudf::io::column_type_histogram infer_column_type(OptionsView const& options,
 cudf::data_type infer_data_type(
   cudf::io::json_inference_options_view const& options,
   device_span<char const> data,
-  thrust::zip_iterator<cuda::std::tuple<size_type const*, size_type const*>> offset_length_begin,
+  cuda::zip_iterator<size_type const*, size_type const*> offset_length_begin,
   std::size_t const size,
-  rmm::cuda_stream_view stream)
+  cuda::stream_ref stream)
 {
   CUDF_FUNC_RANGE();
   CUDF_EXPECTS(size != 0, "No data available for data type inference.\n");

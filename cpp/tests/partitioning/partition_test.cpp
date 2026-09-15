@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #include <cudf_test/base_fixture.hpp>
@@ -14,8 +14,8 @@
 #include <cudf/sorting.hpp>
 #include <cudf/table/table.hpp>
 
+#include <cuda/iterator>
 #include <cuda/std/tuple>
-#include <thrust/iterator/zip_iterator.h>
 
 #include <algorithm>
 
@@ -96,9 +96,9 @@ void expect_equal_partitions(cudf::table_view expected,
   auto expected_split = cudf::split(expected, split_points);
 
   auto begin =
-    thrust::make_zip_iterator(cuda::std::make_tuple(expected_split.begin(), actual_split.begin()));
+    cuda::make_zip_iterator(cuda::std::make_tuple(expected_split.begin(), actual_split.begin()));
   auto end =
-    thrust::make_zip_iterator(cuda::std::make_tuple(expected_split.end(), actual_split.end()));
+    cuda::make_zip_iterator(cuda::std::make_tuple(expected_split.end(), actual_split.end()));
 
   std::for_each(begin, end, [](auto const& zipped) {
     auto [expected, actual] = zipped;

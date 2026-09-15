@@ -26,12 +26,12 @@ class BloomFilter:
         ctx: Context,
         comm: Communicator,
         seed: int,
-        num_filter_blocks: int,
+        filter_size: int,
     ) -> None: ...
     @property
     def comm(self) -> Communicator: ...
     @staticmethod
-    def fitting_num_blocks(l2size: int) -> int: ...
+    def aligned_size(size: int) -> int: ...
     async def build(
         self,
         ctx: Context,

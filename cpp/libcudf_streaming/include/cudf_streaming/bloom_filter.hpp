@@ -43,18 +43,25 @@ struct bloom_filter {
    * @param ctx Streaming context.
    * @param comm Communicator for the collective operation.
    * @param seed Hash seed used when hashing values into the filter.
-   * @param num_filter_blocks Number of blocks in the filter.
+   * @param filter_size Filter storage size in bytes. Must be positive and satisfy
+   * `aligned_size(filter_size) == filter_size`, and must not exceed the maximum size supported by
+   * the filter policy.
+   *
+   * @throws std::logic_error If `filter_size` is zero, incorrectly aligned, or exceeds the policy
+   * maximum.
    */
   explicit bloom_filter(std::shared_ptr<rapidsmpf::streaming::Context> ctx,
                         std::shared_ptr<rapidsmpf::Communicator> comm,
                         std::uint64_t seed,
-                        std::size_t num_filter_blocks) noexcept
-    : ctx_{std::move(ctx)},
-      comm_{std::move(comm)},
-      seed_{seed},
-      num_filter_blocks_{num_filter_blocks}
-  {
-  }
+                        std::size_t filter_size);
+
+  /**
+   * @brief Find the largest valid filter size no greater than a byte count.
+   *
+   * @param size Byte count to align.
+   * @return Largest valid filter size less than or equal to `size`.
+   */
+  [[nodiscard]] static std::size_t aligned_size(std::size_t size) noexcept;
 
   /**
    * @brief Gets the communicator associated with this bloom_filter.
@@ -100,22 +107,10 @@ struct bloom_filter {
     std::shared_ptr<rapidsmpf::streaming::Channel> ch_out,
     std::vector<cudf::size_type> keys);
 
-  /**
-   * @brief Compute number of filter blocks that fit in the given L2 cache size.
-   *
-   * @param l2size L2 cache size in bytes.
-   * @return Number of filter blocks that fit.
-   */
-  [[nodiscard]] static std::size_t fitting_num_blocks(std::size_t l2size) noexcept
-  {
-    using StorageType = std::uint32_t;
-    return (l2size * 2) / (3 * sizeof(StorageType));
-  }
-
  private:
   std::shared_ptr<rapidsmpf::streaming::Context> ctx_{};
   std::shared_ptr<rapidsmpf::Communicator> comm_{};
   std::uint64_t seed_{};
-  std::size_t num_filter_blocks_{};
+  std::size_t filter_size_{};
 };
 }  // namespace cudf_streaming

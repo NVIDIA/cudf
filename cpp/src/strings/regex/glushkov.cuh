@@ -8,11 +8,10 @@
 
 #include <cudf/strings/string_view.cuh>
 
-#include <rmm/cuda_stream_view.hpp>
-
 #include <cuda/bit>
 #include <cuda/std/array>
 #include <cuda/std/optional>
+#include <cuda/stream>
 
 #include <cstddef>
 #include <cstdint>
@@ -67,7 +66,7 @@ struct gkprog_device {
   gkprog_device& operator=(gkprog_device&&)      = default;
 
   static std::unique_ptr<gkprog_device, std::function<void(gkprog_device*)>> create(
-    gkprog const& prog, rmm::cuda_stream_view stream);
+    gkprog const& prog, cuda::stream_ref stream);
 
   /**
    * @brief Called automatically by the unique_ptr returned from create().

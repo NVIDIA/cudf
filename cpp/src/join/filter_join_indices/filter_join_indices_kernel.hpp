@@ -10,7 +10,7 @@
 #include <cudf/types.hpp>
 #include <cudf/utilities/span.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
+#include <cuda/stream>
 
 #include <cstddef>
 
@@ -50,6 +50,6 @@ void launch_filter_gather_map_kernel(
   cudf::detail::grid_1d const& config,
   std::size_t shmem_per_block,
   bool* output_flags,
-  rmm::cuda_stream_view stream);
+  cuda::stream_ref stream);
 
 }  // namespace cudf::detail

@@ -465,7 +465,7 @@ def test_assert_tpch_result_equal_sort_keys_raises_not_sorted() -> None:
 def test_assert_tpch_result_equal_grouped_float_sort(
     sort_by: list[tuple[str, bool]], drop_columns: list[str]
 ) -> None:
-    # https://github.com/rapidsai/cudf/issues/22129
+    # https://github.com/NVIDIA/cudf/issues/22129
     # Same non-float values with float values reordered inside each non-float group.
     left = pl.DataFrame({"a": [1, 1, 1], "b": [2, 2, 2], "c": [1.0, 2.0, 3.0]})
     right = pl.DataFrame({"a": [1, 1, 1], "b": [2, 2, 2], "c": [1.0, 2.999, 2.0]})

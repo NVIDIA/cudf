@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -95,7 +95,7 @@ void nvbench_key_remap_build(nvbench::state& state,
   state.add_element_count(input_size, "input_size");
   state.add_global_memory_reads<nvbench::int8_t>(input_size);
 
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().value()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().get()));
 
   state.exec(nvbench::exec_tag::sync, [&](nvbench::launch&) {
     cudf::key_remapping remap(

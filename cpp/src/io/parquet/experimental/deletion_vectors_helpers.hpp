@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -14,7 +14,7 @@
 #include <cudf/utilities/roaring_bitmap.hpp>
 #include <cudf/utilities/span.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
+#include <cuda/stream>
 
 #include <functional>
 #include <optional>
@@ -56,7 +56,7 @@ void prepend_index_column_to_table_metadata(table_metadata& metadata);
   cudf::host_span<size_type const> row_group_num_rows,
   std::optional<size_t> start_row,
   size_type num_rows,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr);
 
 /**
@@ -78,7 +78,7 @@ void prepend_index_column_to_table_metadata(table_metadata& metadata);
   size_t start_row,
   size_type num_rows,
   bool is_unspecified_row_group_data,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr);
 
 /**
@@ -96,7 +96,7 @@ void prepend_index_column_to_table_metadata(table_metadata& metadata);
   cudf::column_view const& row_index_column,
   cudf::host_span<std::reference_wrapper<cudf::roaring_bitmap const> const> deletion_vector_refs,
   cudf::host_span<size_type const> rows_per_deletion_vector,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr);
 
 /**
@@ -113,7 +113,7 @@ void prepend_index_column_to_table_metadata(table_metadata& metadata);
   cudf::column_view const& row_index_column,
   cudf::host_span<std::reference_wrapper<cudf::roaring_bitmap const> const> deletion_vector_refs,
   cudf::host_span<size_type const> deletion_vector_row_counts,
-  rmm::cuda_stream_view stream);
+  cuda::stream_ref stream);
 
 /**
  * @brief Computes a chunk of the BOOL8 row mask column by consuming deletion vectors from queues
@@ -130,7 +130,7 @@ void prepend_index_column_to_table_metadata(table_metadata& metadata);
   cudf::column_view const& row_index_column,
   std::queue<cudf::roaring_bitmap>& deletion_vectors,
   std::queue<size_type>& deletion_vector_row_counts,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr);
 
 /**
@@ -147,6 +147,6 @@ void prepend_index_column_to_table_metadata(table_metadata& metadata);
   cudf::column_view const& row_index_column,
   std::queue<cudf::roaring_bitmap>& deletion_vectors,
   std::queue<size_type>& deletion_vector_row_counts,
-  rmm::cuda_stream_view stream);
+  cuda::stream_ref stream);
 
 }  // namespace cudf::io::parquet::experimental

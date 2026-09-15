@@ -12,6 +12,7 @@ from rapidsmpf.shuffler import Shuffler
 
 from cudf_polars.dsl.ir import Distinct, GroupBy, Sort
 from cudf_polars.dsl.traversal import traversal
+from cudf_polars.streaming.filter_hint import PushdownFilterHint
 from cudf_polars.streaming.io import StreamingSink
 from cudf_polars.streaming.join import Join
 from cudf_polars.streaming.over import Over
@@ -107,6 +108,7 @@ class ReserveOpIDs:
                 GroupBy,
                 Distinct,
                 Over,
+                PushdownFilterHint,
             )
 
         self.collective_nodes: list[IR] = [
@@ -138,10 +140,8 @@ class ReserveOpIDs:
                         _get_new_collective_id_unsafe(),
                     ]
                 elif isinstance(node, Join) and self.dynamic_planning_enabled:
-                    # Join needs 4 IDs: allgather, left shuffle, right shuffle,
-                    # and bloom filter.
+                    # Join needs 3 IDs: allgather, left shuffle, right shuffle.
                     self.collective_id_map[node] = [
-                        _get_new_collective_id_unsafe(),
                         _get_new_collective_id_unsafe(),
                         _get_new_collective_id_unsafe(),
                         _get_new_collective_id_unsafe(),

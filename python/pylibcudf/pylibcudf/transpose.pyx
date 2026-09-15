@@ -13,12 +13,16 @@ from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 from .column cimport Column
 from .table cimport Table
 from .utils cimport _get_stream, _get_memory_resource
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pylibcudf.typing import CudaStreamLike
 from cuda.bindings.cyruntime cimport cudaStream_t
 
 __all__ = ["transpose"]
 
 cpdef Table transpose(
-    Table input_table, object stream=None, DeviceMemoryResource mr=None
+    Table input_table, object stream: CudaStreamLike | None = None, DeviceMemoryResource mr=None
 ):
     """Transpose a Table.
 
@@ -41,7 +45,7 @@ cpdef Table transpose(
     cdef pair[unique_ptr[column], table_view] c_result
     cdef Table owner_table
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
 
     cdef table_view c_input_table = input_table.view()

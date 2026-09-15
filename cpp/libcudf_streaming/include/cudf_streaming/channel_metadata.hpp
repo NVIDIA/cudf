@@ -60,7 +60,7 @@ struct order_key {
 };
 
 /**
- * @brief A valid ordering description for sorted/range-partitioned data.
+ * @brief A valid ordering description for order-partitioned data.
  *
  * Data is partitioned by value ranges based on predetermined boundaries.
  * For N partitions, there are N-1 boundary rows:
@@ -77,12 +77,18 @@ struct order_key {
  * `strict_boundaries`: when true, every row in a chunk belongs to a single partition's
  * half-open key range (partition keys do not straddle chunk interiors). When false,
  * a chunk may contain keys spanning multiple partitions.
+ *
+ * `locally_ordered`: when true, rows within each partition at this level are ordered by
+ * `keys`. When false, partitions are still ordered across partition boundaries, but row
+ * order within a partition is not guaranteed.
  */
 struct ordering {
   std::vector<order_key> keys;              ///< Sort keys (column, order, null_order per entry).
   std::shared_ptr<table_chunk> boundaries;  ///< N-1 boundary rows for N partitions.
   /// See struct-level note on `strict_boundaries` semantics.
   bool strict_boundaries{false};
+  /// See struct-level note on `locally_ordered` semantics.
+  bool locally_ordered{true};
 
   /// @brief Default constructor. Produces an invalid (empty) ordering.
   ordering() = default;
@@ -94,12 +100,14 @@ struct ordering {
    * @param boundaries Non-null, device-resident boundary table (N-1 rows for N
    * partitions). Accepts a `unique_ptr<table_chunk>` via implicit conversion.
    * @param strict_boundaries See struct-level doc. Defaults to false.
+   * @param locally_ordered See struct-level doc. Defaults to true.
    * @throws std::invalid_argument if `keys` is empty, `boundaries` is null or not
    * device-resident, or `keys.size() != boundaries->shape().second`.
    */
   ordering(std::vector<order_key> keys,
            std::shared_ptr<table_chunk> boundaries,
-           bool strict_boundaries = false);
+           bool strict_boundaries = false,
+           bool locally_ordered   = true);
 
   /**
    * @brief Return a new ordering with updated key column indices, sharing
@@ -108,11 +116,19 @@ struct ordering {
    * @param new_keys Replacement sort keys; size must equal
    * `boundaries->shape().second`.
    * @return A new ordering with `new_keys` and the same boundaries and
-   * strictness.
+   * ordering flags.
    * @throws std::invalid_argument if `new_keys` is empty or size mismatches
    * boundaries.
    */
   [[nodiscard]] ordering with_keys(std::vector<order_key> new_keys) const;
+
+  /**
+   * @brief Return a new ordering with updated local row-order metadata.
+   *
+   * @param locally_ordered Whether rows within each partition are ordered by `keys`.
+   * @return A new ordering with the same keys, boundaries, and strictness.
+   */
+  [[nodiscard]] ordering with_locally_ordered(bool locally_ordered) const;
 
   /**
    * @brief Check whether boundary values are aligned with another ordering.
@@ -121,19 +137,18 @@ struct ordering {
    * @param br Buffer resource used for temporary allocations during comparison.
    * @return True when both orderings have matching boundary values and
    * strict_boundaries attributes, and are otherwise compatible (same order and
-   * null_order).
+   * null_order). This comparison intentionally ignores `locally_ordered`.
    */
   [[nodiscard]] bool boundaries_aligned_with(ordering const& other,
                                              rapidsmpf::BufferResource& br) const;
 };
 
 /**
- * @brief Order-based partitioning scheme for sorted/range-partitioned data.
+ * @brief Order-based partitioning scheme for order-partitioned data.
  *
- * An order_scheme advertises that the same stream is sorted/range-partitioned
- * with respect to any individual ordering it contains. Consumers are
- * responsible for selecting the ordering that is relevant to a particular
- * operation.
+ * An order_scheme advertises that the same stream is order-partitioned with
+ * respect to any individual ordering it contains. Consumers are responsible for
+ * selecting the ordering that is relevant to a particular operation.
  */
 struct order_scheme {
   std::vector<ordering> orderings;  ///< Ordering descriptions valid for the stream.
@@ -148,7 +163,8 @@ struct order_scheme {
    */
   order_scheme(std::vector<order_key> keys,
                std::shared_ptr<table_chunk> boundaries,
-               bool strict_boundaries = false);
+               bool strict_boundaries = false,
+               bool locally_ordered   = true);
 
   /**
    * @brief Construct a validated multi-ordering order_scheme.

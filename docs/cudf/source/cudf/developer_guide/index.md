@@ -2,7 +2,7 @@
 
 ```{note}
 This document assumes familiarity with the
-[overall contributing guide](https://github.com/rapidsai/cudf/blob/main/CONTRIBUTING.md).
+[overall contributing guide](https://github.com/NVIDIA/cudf/blob/main/CONTRIBUTING.md).
 ```
 
 cuDF is a GPU-accelerated, [pandas-like](https://pandas.pydata.org/) DataFrame library.

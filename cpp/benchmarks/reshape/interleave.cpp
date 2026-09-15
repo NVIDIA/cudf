@@ -31,7 +31,7 @@ static void bench_interleave(nvbench::state& state)
   auto const source_view = source_table->view();
   auto const stream      = cudf::get_default_stream();
 
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.value()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.get()));
   auto input_bytes = source_table->alloc_size();
   state.add_global_memory_reads<nvbench::int8_t>(input_bytes);   // all bytes are read
   state.add_global_memory_writes<nvbench::int8_t>(input_bytes);  // all bytes are written

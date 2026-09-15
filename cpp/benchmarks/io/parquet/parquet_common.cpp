@@ -136,7 +136,6 @@ cuio_source_sink_pair write_file_shape_parquet_file(cudf::type_id dtype,
       // Lift the default 512KB page limit so that it does not close pages before
       // `max_page_size_rows` does
       .max_page_size_bytes(1ul << 30)
-      // Write page index by setting stats_level to STATISTICS_COLUMN
       .stats_level(write_page_index ? cudf::io::statistics_freq::STATISTICS_COLUMN
                                     : cudf::io::statistics_freq::STATISTICS_ROWGROUP);
   cudf::io::write_parquet(write_opts);
@@ -149,8 +148,8 @@ cuio_source_sink_pair write_named_resolution_parquet_file(cudf::size_type num_co
 {
   cuio_source_sink_pair source_sink(source_type);
 
-  // A single INT32 row keeps the file negligible so name resolution dominates the read; resolution
-  // cost is independent of dtype, so the cheapest type is used.
+  // Flat, single-row table of INT32 columns with deterministic names col0..col{n-1}. INT32 keeps
+  // the filter literal trivially type-correct; name-resolution cost is independent of dtype.
   constexpr cudf::size_type num_rows = 1;
   auto const tbl =
     create_random_table(cycle_dtypes({cudf::type_id::INT32}, num_cols),

@@ -51,9 +51,7 @@ namespace {
 
 }  // namespace
 
-// Benchmark to measure parquet footer read time. `read_parquet_footers` also loads page indexes
-// when present. Pair the result with `hybrid_scan_reader_construction` (full hybrid setup), not
-// with an isolated `hybrid_scan_footer` phase.
+// Benchmark to measure parquet footer read time
 void BM_parquet_read_footer(nvbench::state& state)
 {
   auto const num_cols         = static_cast<cudf::size_type>(state.get_int64("num_cols"));
@@ -92,8 +90,7 @@ void BM_parquet_read_footer(nvbench::state& state)
     mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
 }
 
-// Benchmark to measure chunked parquet reader construction time. Pair with
-// `hybrid_scan_reader_construction` on the same axes.
+// Benchmark to measure chunked parquet reader construction time
 void BM_parquet_reader_construction(nvbench::state& state)
 {
   auto const num_cols         = static_cast<cudf::size_type>(state.get_int64("num_cols"));
@@ -197,7 +194,6 @@ void BM_parquet_filter_name_resolution(nvbench::state& state)
 
   auto source_sink = write_named_resolution_parquet_file(num_cols, source_type);
 
-  // The deterministic column names the fixture wrote, regenerated here to build the filter tree.
   std::vector<std::string> file_names(num_cols);
   for (cudf::size_type i = 0; i < num_cols; i++) {
     file_names[i] = "col" + std::to_string(i);
@@ -284,7 +280,6 @@ void BM_parquet_read_column_projection(nvbench::state& state)
 
   auto source_sink = write_named_resolution_parquet_file(num_cols, source_type);
 
-  // The deterministic column names the fixture wrote, requested here as a full projection.
   std::vector<std::string> column_names(num_cols);
   for (cudf::size_type i = 0; i < num_cols; i++) {
     column_names[i] = "col" + std::to_string(i);

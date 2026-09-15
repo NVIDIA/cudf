@@ -173,7 +173,6 @@ NVBENCH_BENCH_TYPES(BM_hybrid_scan_file_shape, NVBENCH_TYPE_AXES(page_index_phas
   .set_name("hybrid_scan_file_shape")
   .set_type_axes_names({"phase"})
   .set_min_samples(4)
-  // Axes match parquet_read_file_shape so the naive and hybrid scan paths can be compared
   .add_string_axis("io_type", {"DEVICE_BUFFER"})
   .add_int64_axis("num_rows", {10'000'000, 100'000'000})
   .add_int64_axis("num_row_groups", {1, 10})

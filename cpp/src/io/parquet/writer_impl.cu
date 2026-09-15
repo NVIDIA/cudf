@@ -1094,12 +1094,15 @@ parquet_column_view::parquet_column_view(schema_tree_node const& schema_node,
     // size of the leaf column
     // Calculate row offset into dremel data (repetition/definition values) and the respective
     // definition and repetition levels
-    cudf::detail::dremel_data dremel =
-      get_dremel_data(cudf_col, _nullability, schema_node.output_as_byte_array, stream);
-    _dremel_offsets = std::move(dremel.dremel_offsets);
-    _rep_level      = std::move(dremel.rep_level);
-    _def_level      = std::move(dremel.def_level);
-    _data_count     = dremel.leaf_data_size;  // Needed for knowing what size dictionary to allocate
+    cudf::detail::dremel_data dremel = get_dremel_data(cudf_col,
+                                                       _nullability,
+                                                       schema_node.output_as_byte_array,
+                                                       stream,
+                                                       cudf::get_current_device_resource_ref());
+    _dremel_offsets                  = std::move(dremel.dremel_offsets);
+    _rep_level                       = std::move(dremel.rep_level);
+    _def_level                       = std::move(dremel.def_level);
+    _data_count = dremel.leaf_data_size;  // Needed for knowing what size dictionary to allocate
 
     stream.sync();
   } else {

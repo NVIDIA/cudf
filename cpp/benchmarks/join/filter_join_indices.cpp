@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -7,6 +7,8 @@
 
 #include <cudf/join/hash_join.hpp>
 #include <cudf/join/join.hpp>
+
+#include <array>
 
 auto const num_keys = 2;
 
@@ -110,14 +112,21 @@ void nvbench_filter_join_indices_full_join(nvbench::state& state,
                  cudf::ast::operation binary_pred,
                  cudf::null_equality compare_nulls) {
     auto hash_joiner                   = cudf::hash_join(right_equality_input, compare_nulls);
-    auto [left_indices, right_indices] = hash_joiner.full_join(left_equality_input);
+    auto [left_indices, right_indices] = hash_joiner.left_join(left_equality_input);
 
-    return cudf::filter_join_indices(left_conditional_input,
-                                     right_conditional_input,
-                                     cudf::device_span<cudf::size_type const>(*left_indices),
-                                     cudf::device_span<cudf::size_type const>(*right_indices),
-                                     binary_pred,
-                                     cudf::join_kind::FULL_JOIN);
+    auto filtered =
+      cudf::filter_join_indices(left_conditional_input,
+                                right_conditional_input,
+                                cudf::device_span<cudf::size_type const>(*left_indices),
+                                cudf::device_span<cudf::size_type const>(*right_indices),
+                                binary_pred,
+                                cudf::join_kind::LEFT_JOIN);
+    std::array<cudf::device_span<cudf::size_type const>, 1> left_partials{*filtered.first};
+    std::array<cudf::device_span<cudf::size_type const>, 1> right_partials{*filtered.second};
+    return cudf::hash_join::finalize_partitioned_full_join(left_partials,
+                                                           right_partials,
+                                                           left_conditional_input.num_rows(),
+                                                           right_conditional_input.num_rows());
   };
 
   auto dtypes = cycle_dtypes(get_type_or_group(static_cast<int32_t>(DataType)), num_keys);

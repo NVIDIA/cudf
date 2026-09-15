@@ -66,9 +66,8 @@ filter_join_indices(cudf::table_view const& left,
                "Left and right index arrays must have the same size",
                std::invalid_argument);
 
-  CUDF_EXPECTS(join_kind == join_kind::INNER_JOIN || join_kind == join_kind::LEFT_JOIN ||
-                 join_kind == join_kind::FULL_JOIN,
-               "filter_join_indices only supports INNER_JOIN, LEFT_JOIN, and FULL_JOIN.",
+  CUDF_EXPECTS(join_kind == join_kind::INNER_JOIN || join_kind == join_kind::LEFT_JOIN,
+               "filter_join_indices only supports INNER_JOIN and LEFT_JOIN.",
                std::invalid_argument);
 
   auto make_empty_result = [&]() {
@@ -160,7 +159,6 @@ filter_join_indices(cudf::table_view const& left,
 
   auto predicate_results_ptr = predicate_results.data();
   auto left_ptr              = left_indices.data();
-  auto right_ptr             = right_indices.data();
 
   auto make_result_vectors = [&](std::size_t size) {
     return std::pair{std::make_unique<rmm::device_uvector<size_type>>(size, stream, mr),
@@ -304,69 +302,6 @@ filter_join_indices(cudf::table_view const& left,
 
     return std::pair{std::move(filtered_left_indices), std::move(filtered_right_indices)};
 
-  } else if (join_kind == join_kind::FULL_JOIN) {
-    // FULL_JOIN: Optimized implementation using stream compaction
-    // Strategy: Use a single scan to identify failed matches, then use stream compaction
-
-    // First, identify failed matched pairs
-    auto is_failed_matched_pair = [=] __device__(size_type i) -> bool {
-      return !predicate_results_ptr[i] && left_ptr[i] != JoinNoMatch && right_ptr[i] != JoinNoMatch;
-    };
-
-    // Count failed matches for output sizing
-    auto const failed_matched_count =
-      output_size.has_value()
-        ? *output_size - left_indices.size()
-        : cudf::detail::count_if(
-            cuda::counting_iterator<cudf::size_type>{0},
-            cuda::counting_iterator{static_cast<size_type>(left_indices.size())},
-            is_failed_matched_pair,
-            stream);
-    auto const result_size = left_indices.size() + failed_matched_count;
-
-    if (result_size == 0) { return make_empty_result(); }
-
-    auto [filtered_left_indices, filtered_right_indices] = make_result_vectors(result_size);
-
-    // Use two-step approach with optimized memory management
-    // Step 1: Handle primary pairs
-    thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-                      cuda::counting_iterator<cudf::size_type>{0},
-                      cuda::counting_iterator{static_cast<size_type>(left_indices.size())},
-                      cuda::make_zip_iterator(cuda::std::tuple{filtered_left_indices->begin(),
-                                                               filtered_right_indices->begin()}),
-                      [=] __device__(size_type i) -> cuda::std::tuple<size_type, size_type> {
-                        auto const left_idx  = left_ptr[i];
-                        auto const right_idx = right_ptr[i];
-                        // For FULL JOIN: preserve original unmatched rows, nullify right side of
-                        // failed matches
-                        auto const output_right_idx =
-                          (predicate_results_ptr[i] || left_idx == JoinNoMatch) ? right_idx
-                                                                                : JoinNoMatch;
-
-                        return cuda::std::tuple{left_idx, output_right_idx};
-                      });
-
-    // Step 2: Add secondary pairs for failed matches using stream compaction
-    if (failed_matched_count > 0) {
-      auto secondary_iter = cuda::make_zip_iterator(
-        cuda::std::tuple{filtered_left_indices->begin() + left_indices.size(),
-                         filtered_right_indices->begin() + left_indices.size()});
-
-      auto failed_match_iter = cudf::detail::make_counting_transform_iterator(
-        0, [=] __device__(size_type i) -> cuda::std::tuple<size_type, size_type> {
-          return cuda::std::tuple{JoinNoMatch, right_ptr[i]};
-        });
-      cudf::detail::copy_if_async(failed_match_iter,
-                                  failed_match_iter + left_indices.size(),
-                                  cuda::counting_iterator<cudf::size_type>{0},
-                                  secondary_iter,
-                                  is_failed_matched_pair,
-                                  stream);
-    }
-
-    return std::pair{std::move(filtered_left_indices), std::move(filtered_right_indices)};
-
   } else {
     CUDF_FAIL("Unsupported join kind for filter_join_indices");
   }
@@ -386,11 +321,9 @@ filter_join_indices_output_size(cudf::table_view const& left,
   CUDF_EXPECTS(left_indices.size() == right_indices.size(),
                "Left and right index arrays must have the same size",
                std::invalid_argument);
-  CUDF_EXPECTS(
-    join_kind == join_kind::INNER_JOIN || join_kind == join_kind::LEFT_JOIN ||
-      join_kind == join_kind::FULL_JOIN,
-    "filter_join_indices_output_size only supports INNER_JOIN, LEFT_JOIN, and FULL_JOIN.",
-    std::invalid_argument);
+  CUDF_EXPECTS(join_kind == join_kind::INNER_JOIN || join_kind == join_kind::LEFT_JOIN,
+               "filter_join_indices_output_size only supports INNER_JOIN and LEFT_JOIN.",
+               std::invalid_argument);
 
   auto empty_counts = [&]() {
     return std::make_unique<rmm::device_uvector<size_type>>(0, stream, mr);

@@ -29,9 +29,6 @@ namespace cudf::detail {
  * each entry records how many output rows the corresponding input contributes:
  * - INNER_JOIN: `output_counts` is indexed per input pair; entry `i` is `1` if the predicate
  *   passes and `0` otherwise.
- * - FULL_JOIN: `output_counts` is indexed per input pair; entry `i` is `1` for a preserved pair
- *   (predicate passes or the pair already contains a `JoinNoMatch`) and `2` for a failed valid
- *   pair (which splits into `(left, JoinNoMatch)` and `(JoinNoMatch, right)`).
  * - LEFT_JOIN: `output_counts` is indexed per left row; the kernel atomically accumulates the
  *   number of passing pairs for each left row. Left rows with no passing pair are floored to `1`
  *   by the host afterwards to account for the synthetic `(left, JoinNoMatch)` entry. The buffer
@@ -67,7 +64,6 @@ CUDF_KERNEL __launch_bounds__(DEFAULT_JOIN_BLOCK_SIZE) void filter_join_indices_
       (left_row_index == cudf::JoinNoMatch || right_row_index == cudf::JoinNoMatch);
 
     bool predicate_pass = false;
-    bool both_valid     = false;
     if (has_non_match) {
       // Outer-join unmatched pair: treat as passing so it is preserved in the output count.
       predicate_pass = true;
@@ -76,14 +72,10 @@ CUDF_KERNEL __launch_bounds__(DEFAULT_JOIN_BLOCK_SIZE) void filter_join_indices_
       auto result = cudf::ast::detail::value_expression_result<bool, has_nulls>{};
       evaluator.evaluate(result, left_row_index, right_row_index, 0, thread_intermediate_storage);
       predicate_pass = result.is_valid() && result.value();
-      both_valid     = true;
     }
 
     switch (join_kind) {
       case cudf::join_kind::INNER_JOIN: output_counts[i] = predicate_pass ? 1 : 0; break;
-      case cudf::join_kind::FULL_JOIN:
-        output_counts[i] = (both_valid && !predicate_pass) ? 2 : 1;
-        break;
       case cudf::join_kind::LEFT_JOIN:
         if (predicate_pass && left_row_index >= 0 && left_row_index < left_table.num_rows()) {
           cuda::atomic_ref<cudf::size_type, cuda::thread_scope_device> count_ref{

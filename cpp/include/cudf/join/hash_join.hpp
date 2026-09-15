@@ -414,16 +414,28 @@ class hash_join {
     rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref()) const;
 
   /**
-   * @brief Finalizes a partitioned full join by concatenating all per-partition results
-   * and appending the unmatched right rows (the complement).
+   * @brief Finalizes a full join by concatenating LEFT results and appending unmatched right rows.
+
    *
    * Call this method after calling `partitioned_full_join()` for every partition.  It combines
    * the per-partition indices with the unmatched right row indices (a global property
    * across all partitions) and returns a single `(left_indices, right_indices)` pair equivalent
    * to the output of `full_join()`.
    *
-   * @param left_partials Per-partition `left_indices` views produced by `partitioned_full_join()`
-   * @param right_partials Per-partition `right_indices` views produced by `partitioned_full_join()`
+   * This method also accepts LEFT join results after applying a conditional predicate with
+   * `filter_join_indices` or either `filter_join_indices_jit` overload using LEFT_JOIN. For a
+   * non-partitioned LEFT join, supply a single pair of partials. The resulting full join preserves
+   * the filtered LEFT pairs and appends `(JoinNoMatch, right_index)` once for each right row with
+   * no surviving match. Matches are determined from the supplied filtered maps, not the original
+   * equality join.
+   *
+   * All partials must use row indices in the original tables. Together they must preserve every
+   * original left row, using `JoinNoMatch` on the right for a left row with no surviving match.
+   * Do not supply unmatched-right entries: this method computes them across all partials.
+   *
+   * @param left_partials Left index views from `partitioned_full_join()` or filtered LEFT results
+   * @param right_partials Corresponding right index views, with `JoinNoMatch` for unmatched left
+   rows
    * @param left_table_num_rows Total number of rows in the original left table
    * @param right_table_num_rows Total number of rows in the right table
    * @param stream CUDA stream used for device memory operations and kernel launches

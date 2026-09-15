@@ -103,10 +103,10 @@ class ActorTracer:
 
 
 def record_channel_metrics(
-    tracer: ActorTracer | None,
+    tracer: ActorTracer,
     *,
-    chs_in: Sequence[Channel[Any]] = (),
-    chs_out: Sequence[Channel[Any]] = (),
+    chs_in: Sequence[Channel[Any]],
+    chs_out: Sequence[Channel[Any]],
 ) -> None:
     """
     Record boundary channel byte volumes on an actor tracer.
@@ -120,8 +120,6 @@ def record_channel_metrics(
     chs_out
         Output boundary channels. ``send_bytes`` are summed per memory tier.
     """
-    if tracer is None:
-        return
     for ch in chs_in:
         for mem_type, nbytes in ch.metrics().recv_bytes.items():
             tracer.input_bytes[mem_type] += nbytes

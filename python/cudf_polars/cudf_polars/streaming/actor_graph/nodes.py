@@ -750,7 +750,11 @@ async def metadata_feeder_node(
     """
     # TODO: Use ir_context
     async with shutdown_on_error(
-        context, chs_in=(ch_in,), chs_out=(ch_out,), trace_ir=ir, ir_context=ir_context
+        context,
+        chs_in=(ch_in,),
+        chs_out=(ch_out,),
+        trace_ir=ir,
+        ir_context=ir_context,
     ):
         await send_metadata(ch_out, context, metadata)
         while (msg := await ch_in.recv(context)) is not None:
@@ -791,7 +795,11 @@ async def metadata_drain_node(
         If None, metadata will not be collected.
     """
     async with shutdown_on_error(
-        context, chs_in=(ch_in,), chs_out=(ch_out,), ir_context=ir_context, trace_ir=ir
+        context,
+        chs_in=(ch_in,),
+        chs_out=(ch_out,),
+        ir_context=ir_context,
+        trace_ir=ir,
     ):
         # Drain metadata channel (we don't need it after this point)
         msg = await ch_in.recv_metadata(context)

@@ -164,7 +164,7 @@ async def hint_sorted_actor(
         context,
         chs_in=(ch_in,),
         chs_out=(ch_out,),
-        auxiliary_channels=(ch_replay,),
+        chs_aux=(ch_replay,),
         trace_ir=ir,
         ir_context=ir_context,
     ):

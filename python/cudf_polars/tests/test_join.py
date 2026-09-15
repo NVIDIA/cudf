@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pickle
+import threading
 from decimal import Decimal
 
 import pytest
@@ -393,3 +394,27 @@ def test_conditional_join_predicate_pickle():
     predicate = ConditionalJoin.Predicate(predicate_expr)
     unpickled = pickle.loads(pickle.dumps(predicate))
     assert unpickled.predicate == predicate.predicate
+
+
+def test_conditional_join_cuda_context_initialized():
+    # https://github.com/NVIDIA/cudf/issues/24156
+    # Create a ConditionalJoin.Predicate on a thread, mimicking how our
+    # cudf-polars does it when executing with a Ray or Dask engine.
+
+    dt = DataType(pl.Int64())
+    col_left = ir_expr.ColRef(
+        dt, 0, plc.expressions.TableReference.LEFT, ir_expr.Col(dt, "a")
+    )
+    col_right = ir_expr.ColRef(
+        dt, 0, plc.expressions.TableReference.RIGHT, ir_expr.Col(dt, "a")
+    )
+    predicate_expr = ir_expr.BinOp(
+        DataType(pl.Boolean()),
+        plc.binaryop.BinaryOperator.LESS,
+        col_left,
+        col_right,
+    )
+
+    t = threading.Thread(target=ConditionalJoin.Predicate, args=(predicate_expr,))
+    t.start()
+    t.join()

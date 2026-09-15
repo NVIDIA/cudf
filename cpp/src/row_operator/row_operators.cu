@@ -297,7 +297,9 @@ auto decompose_structs(table_view table,
  * This helper function generates dremel data for any list-type columns in a
  * table. This data is necessary for lexicographic comparisons.
  */
-auto list_lex_preprocess(table_view const& table, cuda::stream_ref stream)
+auto list_lex_preprocess(table_view const& table,
+                         cuda::stream_ref stream,
+                         cudf::memory_resources mr)
 {
   std::vector<detail::dremel_data> dremel_data;
   auto const num_list_columns = std::count_if(
@@ -310,8 +312,8 @@ auto list_lex_preprocess(table_view const& table, cuda::stream_ref stream)
       dremel_device_views.push_back(dremel_data.back());
     }
   }
-  auto d_dremel_device_views = detail::make_device_uvector(
-    dremel_device_views, stream, cudf::get_current_device_resource_ref());
+  auto d_dremel_device_views =
+    detail::make_device_uvector(dremel_device_views, stream, mr.get_output_mr());
   return std::make_tuple(std::move(dremel_data), std::move(d_dremel_device_views));
 }
 
@@ -562,14 +564,14 @@ transform_lists_of_structs(column_view const& lhs,
                            column_view const& rhs,
                            null_order column_null_order,
                            cuda::stream_ref stream,
-                           rmm::device_async_resource_ref mr)
+                           cudf::memory_resources mr)
 {
   std::vector<std::unique_ptr<column>> out_cols_lhs;
   std::vector<std::unique_ptr<column>> out_cols_rhs;
 
   auto const make_output = [&](auto const& new_child_lhs, auto const& new_child_rhs) {
-    return std::tuple{replace_child(lhs, new_child_lhs, out_cols_lhs, stream, mr),
-                      replace_child(rhs, new_child_rhs, out_cols_rhs, stream, mr),
+    return std::tuple{replace_child(lhs, new_child_lhs, out_cols_lhs, stream, mr.get_output_mr()),
+                      replace_child(rhs, new_child_rhs, out_cols_rhs, stream, mr.get_output_mr()),
                       std::move(out_cols_lhs),
                       std::move(out_cols_rhs)};
   };
@@ -580,22 +582,20 @@ transform_lists_of_structs(column_view const& lhs,
 
     // Found a lists-of-structs column.
     if (child_lhs.type().id() == type_id::STRUCT) {
-      auto const concatenated_children =
-        cudf::detail::concatenate(std::vector<column_view>{child_lhs, child_rhs},
-                                  stream,
-                                  cudf::get_current_device_resource_ref());
+      auto const concatenated_children = cudf::detail::concatenate(
+        std::vector<column_view>{child_lhs, child_rhs}, stream, mr.get_temporary_mr());
 
-      auto const ranks        = compute_ranks(concatenated_children->view(),
-                                       column_null_order,
-                                       stream,
-                                       cudf::get_current_device_resource_ref());
+      auto const ranks = compute_ranks(
+        concatenated_children->view(), column_null_order, stream, mr.get_temporary_mr());
       auto const ranks_slices = cudf::detail::slice(
         ranks->view(),
         {0, child_lhs.size(), child_lhs.size(), child_lhs.size() + child_rhs.size()},
         stream);
 
-      out_cols_lhs.emplace_back(std::make_unique<column>(ranks_slices.front(), stream, mr));
-      out_cols_rhs.emplace_back(std::make_unique<column>(ranks_slices.back(), stream, mr));
+      out_cols_lhs.emplace_back(
+        std::make_unique<column>(ranks_slices.front(), stream, mr.get_output_mr()));
+      out_cols_rhs.emplace_back(
+        std::make_unique<column>(ranks_slices.back(), stream, mr.get_output_mr()));
 
       return make_output(out_cols_lhs.back()->view(), out_cols_rhs.back()->view());
 
@@ -638,21 +638,21 @@ std::shared_ptr<preprocessed_table> preprocessed_table::create(
   host_span<order const> column_order,
   host_span<null_order const> null_precedence,
   bool has_ranked_children,
-  cuda::stream_ref stream)
+  cuda::stream_ref stream,
+  cudf::memory_resources mr)
 {
   check_lex_compatibility(preprocessed_input);
 
-  auto d_table        = table_device_view::create(preprocessed_input, stream);
-  auto d_column_order = detail::make_device_uvector_async(
-    column_order, stream, cudf::get_current_device_resource_ref());
-  auto d_null_precedence = detail::make_device_uvector_async(
-    null_precedence, stream, cudf::get_current_device_resource_ref());
-  auto d_depths = detail::make_device_uvector_async(
-    verticalized_col_depths, stream, cudf::get_current_device_resource_ref());
+  auto d_table        = table_device_view::create(preprocessed_input, stream, mr.get_output_mr());
+  auto d_column_order = detail::make_device_uvector_async(column_order, stream, mr.get_output_mr());
+  auto d_null_precedence =
+    detail::make_device_uvector_async(null_precedence, stream, mr.get_output_mr());
+  auto d_depths =
+    detail::make_device_uvector_async(verticalized_col_depths, stream, mr.get_output_mr());
   cudf::detail::sync_stream(stream);
 
   if (detail::has_nested_columns(preprocessed_input)) {
-    auto [dremel_data, d_dremel_device_view] = list_lex_preprocess(preprocessed_input, stream);
+    auto [dremel_data, d_dremel_device_view] = list_lex_preprocess(preprocessed_input, stream, mr);
     return std::shared_ptr<preprocessed_table>(
       new preprocessed_table(std::move(d_table),
                              std::move(d_column_order),
@@ -677,7 +677,8 @@ std::shared_ptr<preprocessed_table> preprocessed_table::create(
   table_view const& input,
   host_span<order const> column_order,
   host_span<null_order const> null_precedence,
-  cuda::stream_ref stream)
+  cuda::stream_ref stream,
+  cudf::memory_resources mr)
 {
   auto [decomposed_input, new_column_order, new_null_precedence, verticalized_col_depths] =
     decompose_structs(input, decompose_lists_column::NO, column_order, null_precedence);
@@ -695,7 +696,7 @@ std::shared_ptr<preprocessed_table> preprocessed_table::create(
           lhs_col,
           null_precedence.empty() ? null_order::BEFORE : new_null_precedence[col_idx],
           stream,
-          cudf::get_current_device_resource_ref());
+          mr.get_output_mr());
 
         transformed_cvs.emplace_back(std::move(transformed));
         transformed_columns.insert(transformed_columns.end(),
@@ -713,7 +714,8 @@ std::shared_ptr<preprocessed_table> preprocessed_table::create(
                 new_column_order,
                 new_null_precedence,
                 has_ranked_children,
-                stream);
+                stream,
+                mr);
 }
 
 std::pair<std::shared_ptr<preprocessed_table>, std::shared_ptr<preprocessed_table>>
@@ -721,7 +723,8 @@ preprocessed_table::create(table_view const& lhs,
                            table_view const& rhs,
                            host_span<order const> column_order,
                            host_span<null_order const> null_precedence,
-                           cuda::stream_ref stream)
+                           cuda::stream_ref stream,
+                           cudf::memory_resources mr)
 {
   check_shape_compatibility(lhs, rhs);
 
@@ -757,7 +760,7 @@ preprocessed_table::create(table_view const& lhs,
           rhs_col,
           null_precedence.empty() ? null_order::BEFORE : new_null_precedence_lhs[col_idx],
           stream,
-          cudf::get_current_device_resource_ref());
+          mr);
 
       transformed_lhs_cvs.emplace_back(std::move(transformed_lhs));
       transformed_rhs_cvs.emplace_back(std::move(transformed_rhs));
@@ -783,14 +786,16 @@ preprocessed_table::create(table_view const& lhs,
                  new_column_order_lhs,
                  new_null_precedence_lhs,
                  has_ranked_children_lhs,
-                 stream),
+                 stream,
+                 mr),
           create(transformed_rhs,
                  std::move(verticalized_col_depths_rhs),
                  std::move(transformed_columns_rhs),
                  new_column_order_lhs,
                  new_null_precedence_lhs,
                  has_ranked_children_rhs,
-                 stream)};
+                 stream,
+                 mr)};
 }
 
 preprocessed_table::preprocessed_table(
@@ -834,10 +839,11 @@ two_table_comparator::two_table_comparator(table_view const& left,
                                            table_view const& right,
                                            host_span<order const> column_order,
                                            host_span<null_order const> null_precedence,
-                                           cuda::stream_ref stream)
+                                           cuda::stream_ref stream,
+                                           cudf::memory_resources mr)
 {
   std::tie(d_left_table, d_right_table) =
-    preprocessed_table::create(left, right, column_order, null_precedence, stream);
+    preprocessed_table::create(left, right, column_order, null_precedence, stream, mr);
 }
 
 }  // namespace lexicographic

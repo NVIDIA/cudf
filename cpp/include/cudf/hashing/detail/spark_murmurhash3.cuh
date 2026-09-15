@@ -78,58 +78,56 @@ struct Spark_MurmurHash3_x86_32 {
     return compute(key);
   }
 
+  static constexpr std::size_t BLOCK_SIZE = 4;
+
+  /**
+   * @brief Hash `length` bytes using four-byte block and signed tail-byte generators
+   *
+   * Four-byte blocks are mixed whole. Leftover bytes are sign-extended and mixed individually,
+   * matching Spark's tail-byte handling.
+   */
+  template <typename BlockFn, typename ByteFn>
+    requires(cuda::std::is_same_v<int8_t, cuda::std::invoke_result_t<ByteFn, std::size_t>>)
+  [[nodiscard]] __device__ inline uint32_t hash_blocks(std::size_t length,
+                                                       BlockFn extract_block,
+                                                       ByteFn extract_byte) const
+  {
+    auto const nblocks = length / BLOCK_SIZE;
+    uint32_t h         = m_seed;
+
+    for (std::size_t i = 0; i < nblocks; ++i) {
+      h = mix_block(extract_block(i), h);
+    }
+    // Process remaining bytes that do not fill a four-byte chunk using Spark's approach
+    // (does not conform to normal MurmurHash3).
+    for (std::size_t i = nblocks * BLOCK_SIZE; i < length; ++i) {
+      h = mix_block(static_cast<uint32_t>(extract_byte(i)), h);
+    }
+
+    // Finalize hash.
+    h ^= static_cast<uint32_t>(length);
+    h = fmix32(h);
+    return h;
+  }
+
   template <typename T>
-    requires(sizeof(T) % 4 == 0)
+    requires(sizeof(T) % BLOCK_SIZE == 0)
   uint32_t __device__ inline compute(T const& key) const
   {
     // A whole number of four-byte blocks with no tail. Mix the words directly in the
     // device's little-endian order, matching `getblock32`.
-    auto const words = cuda::std::bit_cast<cuda::std::array<uint32_t, sizeof(T) / 4>>(key);
-    uint32_t h       = m_seed;
-    for (auto const word : words) {
-      h = mix_block(word, h);
-    }
-    // Finalize hash.
-    h ^= static_cast<uint32_t>(sizeof(T));
-    h = fmix32(h);
-    return h;
-  }
-
-  uint32_t __device__ static inline compute_remaining_bytes(cuda::std::byte const* data,
-                                                            std::size_t len,
-                                                            std::size_t tail_offset,
-                                                            uint32_t h)
-  {
-    // Process remaining bytes that do not fill a four-byte chunk using Spark's approach
-    // (does not conform to normal MurmurHash3).
-    for (auto i = tail_offset; i < len; i++) {
-      // We require a two-step cast to get the k1 value from the byte. First,
-      // we must cast to a signed int8_t. Then, the sign bit is preserved when
-      // casting to uint32_t under 2's complement. Java preserves the sign when
-      // casting byte-to-int, but C++ does not.
-      h = mix_block(static_cast<uint32_t>(cuda::std::to_integer<int8_t>(data[i])), h);
-    }
-    return h;
+    auto const words = cuda::std::bit_cast<cuda::std::array<uint32_t, sizeof(T) / BLOCK_SIZE>>(key);
+    return hash_blocks(
+      sizeof(T), [=](std::size_t i) { return words[i]; }, [](std::size_t) { return int8_t{}; });
   }
 
   uint32_t __device__ compute_bytes(cuda::std::byte const* data, std::size_t const len) const
   {
-    constexpr std::size_t BLOCK_SIZE = 4;
-    std::size_t const nblocks        = len / BLOCK_SIZE;
-    std::size_t const tail_offset    = nblocks * BLOCK_SIZE;
-    uint32_t h                       = m_seed;
-
-    // Process all four-byte chunks.
-    for (std::size_t i = 0; i < nblocks; i++) {
-      h = mix_block(getblock32(data, i * BLOCK_SIZE), h);
-    }
-
-    h = compute_remaining_bytes(data, len, tail_offset, h);
-
-    // Finalize hash.
-    h ^= static_cast<uint32_t>(len);
-    h = fmix32(h);
-    return h;
+    return hash_blocks(
+      len,
+      [=](std::size_t i) { return getblock32(data, i * BLOCK_SIZE); },
+      // Java preserves the sign when widening byte to int.
+      [=](std::size_t i) { return cuda::std::to_integer<int8_t>(data[i]); });
   }
 
   /**
@@ -142,18 +140,10 @@ struct Spark_MurmurHash3_x86_32 {
     requires(cuda::std::is_integral_v<T>)
   [[nodiscard]] uint32_t __device__ inline hash_low_bytes(T value, std::size_t length) const
   {
-    auto const nblocks = length / 4;
-    uint32_t h         = m_seed;
-    for (std::size_t i = 0; i < nblocks; ++i) {
-      h = mix_block(static_cast<uint32_t>(value >> (32 * i)), h);
-    }
-    for (std::size_t i = nblocks * 4; i < length; ++i) {
-      h = mix_block(static_cast<uint32_t>(static_cast<cuda::std::int8_t>(value >> (8 * i))), h);
-    }
-    // Finalize hash.
-    h ^= static_cast<uint32_t>(length);
-    h = fmix32(h);
-    return h;
+    return hash_blocks(
+      length,
+      [=](std::size_t i) { return static_cast<uint32_t>(value >> (32 * i)); },
+      [=](std::size_t i) { return static_cast<int8_t>(value >> (8 * i)); });
   }
 
  private:

@@ -178,9 +178,50 @@ def check_quent_events(engine: StreamingEngine, quent_context: QuentContext) -> 
     if LOG_TRACES:
         assert len(task_events) > 0
 
+    check_memory_reservations(quent_events, task_events)
+
     # A single collect exercises the full processor lifecycle, so fold that
     # check in here rather than paying for a dedicated engine startup.
     check_processor_lifecycle(quent_events)
+
+
+def check_memory_reservations(
+    quent_events: list[dict], task_events: list[dict]
+) -> None:
+    """Check the reservations the scan makes before reading each chunk."""
+    operator_ids = {
+        x["id"]
+        for x in quent_events
+        if "Operator" in x["data"] and "Declaration" in x["data"]["Operator"]
+    }
+    task_states = [
+        (x, x["data"]["Task"]["state"])
+        for x in task_events
+        if isinstance(x["data"]["Task"]["state"], dict)
+    ]
+    reservation_ids = set()
+    for event, state in task_states:
+        if "Queueing" in state and state["Queueing"]["instance_name"].startswith(
+            "reserve-"
+        ):
+            # Every reservation is attributed to the operator that made it.
+            assert state["Queueing"]["operator_id"] in operator_ids
+            reservation_ids.add(event["id"])
+    assert len(reservation_ids) > 0
+
+    allocating = [
+        state["Allocating"]
+        for event, state in task_states
+        if event["id"] in reservation_ids and "Allocating" in state
+    ]
+    assert len(allocating) == len(reservation_ids)
+    for state in allocating:
+        assert state["purpose"] == "scan"
+        assert state["mem_type"] == "DEVICE"
+        assert state["size_bytes"] > 0
+        assert state["granted"] is True
+        assert state["net_memory_delta"] > 0
+        assert state["sequence_number"] == 0
 
 
 def test_quent_events_multiple_collects(

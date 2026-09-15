@@ -5187,6 +5187,36 @@ class DataFrame(IndexedFrame, GetAttrGetItemMixin):
                     "leftanti",
                 }
 
+            # https://github.com/rapidsai/cudf/issues/9981
+            # When exactly one frame is empty, pandas does not coerce the keys.
+            # Right and outer joins then take a shared-name key from the
+            # non-empty frame, so the dtype of that frame wins.
+            left_empty = len(self) == 0
+            nonempty_key_wins = orig_how in {"outer", "right"} and (
+                left_empty != (len(right) == 0)
+            )
+
+            def _restore_shared_key_dtype(name, left_dtype, right_dtype):
+                if nonempty_key_wins and right_dtype is not None:
+                    target, other = (
+                        (right_dtype, left_dtype)
+                        if left_empty
+                        else (left_dtype, right_dtype)
+                    )
+                    if (
+                        isinstance(target, CategoricalDtype)
+                        and name in result._data
+                        and result._data[name].dtype != target
+                    ):
+                        # The join removed the categories from the key. All
+                        # key values come from the non-empty frame, so they
+                        # are all in its categories.
+                        result[name] = result[name].astype(target)
+                    else:
+                        _restore_key_dtype(name, target, other)
+                elif _keep_left_dtype(left_dtype, right_dtype):
+                    _restore_key_dtype(name, left_dtype, right_dtype)
+
             if not key_li and not key_ri:
                 if key_lon is not None and key_ron is not None:
                     lon = [key_lon] if is_scalar(key_lon) else list(key_lon)
@@ -5200,8 +5230,7 @@ class DataFrame(IndexedFrame, GetAttrGetItemMixin):
                                     if lk in right._data
                                     else None
                                 )
-                                if _keep_left_dtype(target, rd):
-                                    _restore_key_dtype(lk, target, rd)
+                                _restore_shared_key_dtype(lk, target, rd)
                         else:
                             # Differently-named keys both survive, each with
                             # its own operand's dtype.
@@ -5231,8 +5260,7 @@ class DataFrame(IndexedFrame, GetAttrGetItemMixin):
                             if name in right._data
                             else None
                         )
-                        if _keep_left_dtype(target, rd):
-                            _restore_key_dtype(name, target, rd)
+                        _restore_shared_key_dtype(name, target, rd)
 
         return result
 

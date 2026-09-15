@@ -110,6 +110,82 @@ TEST_F(TransformProgramTest, ReusesAstWithCompatibleTable)
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, result->view(), verbosity);
 }
 
+TEST_F(TransformProgramTest, OwnsScalarColumnViewLiterals)
+{
+  auto program = []() {
+    auto construction_input = column_wrapper<int32_t>{3, 20, 1, 50};
+    auto construction_table = cudf::table_view{{construction_input}};
+    auto literal_column     = column_wrapper<int32_t>{2};
+    auto column_ref         = cudf::ast::column_reference{0};
+    auto literal            = cudf::ast::literal{cudf::scalar_column_view{literal_column}};
+    auto expression = cudf::ast::operation{cudf::ast::ast_operator::ADD, column_ref, literal};
+    std::reference_wrapper<cudf::ast::expression const> expressions[] = {expression};
+
+    return std::make_unique<cudf::transform_program>(construction_table, expressions);
+  }();
+
+  auto input    = column_wrapper<int32_t>{10, 20, 30};
+  auto table    = cudf::table_view{{input}};
+  auto expected = column_wrapper<int32_t>{12, 22, 32};
+  auto result   = std::move(program->run(table)->release().front());
+
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, result->view(), verbosity);
+}
+
+TEST_F(TransformProgramTest, OwnsStringScalarColumnViewLiterals)
+{
+  auto program = []() {
+    auto construction_input = cudf::test::strings_column_wrapper{"a", "ccc"};
+    auto construction_table = cudf::table_view{{construction_input}};
+    auto literal_column     = cudf::test::strings_column_wrapper{"ccc"};
+    auto column_ref         = cudf::ast::column_reference{0};
+    auto literal            = cudf::ast::literal{cudf::scalar_column_view{literal_column}};
+    auto expression = cudf::ast::operation{cudf::ast::ast_operator::LESS, column_ref, literal};
+    std::reference_wrapper<cudf::ast::expression const> expressions[] = {expression};
+
+    return std::make_unique<cudf::transform_program>(construction_table, expressions);
+  }();
+
+  auto input    = cudf::test::strings_column_wrapper{"a", "ccc", "dddd"};
+  auto table    = cudf::table_view{{input}};
+  auto expected = column_wrapper<bool>{true, false, false};
+  auto result   = std::move(program->run(table)->release().front());
+
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, result->view(), verbosity);
+}
+
+TEST_F(TransformProgramTest, OwnsMixedLiteralRepresentationsInInputOrder)
+{
+  for (bool scalar_first : {false, true}) {
+    SCOPED_TRACE(scalar_first ? "scalar first" : "column first");
+    auto program = [scalar_first]() {
+      auto construction_input = column_wrapper<int32_t>{0};
+      auto construction_table = cudf::table_view{{construction_input}};
+      auto scalar_value       = cudf::numeric_scalar<int32_t>{7};
+      auto literal_column     = column_wrapper<int32_t>{2};
+      auto scalar_literal     = cudf::ast::literal{scalar_value};
+      auto column_literal     = cudf::ast::literal{cudf::scalar_column_view{literal_column}};
+      auto column_ref         = cudf::ast::column_reference{0};
+      auto difference         = cudf::ast::operation{cudf::ast::ast_operator::SUB,
+                                             scalar_first ? scalar_literal : column_literal,
+                                             scalar_first ? column_literal : scalar_literal};
+      auto expression = cudf::ast::operation{cudf::ast::ast_operator::ADD, column_ref, difference};
+      std::reference_wrapper<cudf::ast::expression const> expressions[] = {expression};
+      return std::make_unique<cudf::transform_program>(construction_table, expressions);
+    }();
+
+    for (int32_t base : {10, 30}) {
+      SCOPED_TRACE(base);
+      auto input    = column_wrapper<int32_t>{base, base + 10};
+      auto table    = cudf::table_view{{input}};
+      auto offset   = scalar_first ? 5 : -5;
+      auto expected = column_wrapper<int32_t>{base + offset, base + 10 + offset};
+      auto result   = std::move(program->run(table)->release().front());
+      CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, result->view(), verbosity);
+    }
+  }
+}
+
 TEST_F(TransformProgramTest, RejectsIncompatibleTable)
 {
   auto construction_input = column_wrapper<int32_t>{3, 20, 1, 50};

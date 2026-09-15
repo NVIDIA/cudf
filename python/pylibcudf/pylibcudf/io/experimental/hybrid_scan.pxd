@@ -11,8 +11,10 @@ from rmm.pylibrmm.stream cimport Stream
 from pylibcudf.column cimport Column
 from pylibcudf.io.parquet cimport ParquetReaderOptions
 from pylibcudf.io.parquet_metadata cimport FileMetaData as c_FileMetaData
+from pylibcudf.io.text cimport ByteRangeInfo
 from pylibcudf.io.types cimport TableWithMetadata
 from pylibcudf.libcudf.io.hybrid_scan cimport (
+    dictionary_page_extent as cpp_dictionary_page_extent,
     hybrid_scan_metadata as cpp_hybrid_scan_metadata,
     hybrid_scan_reader as cpp_hybrid_scan_reader,
     use_data_page_mask,
@@ -22,6 +24,11 @@ from pylibcudf.libcudf.utilities.span cimport device_span
 
 
 cdef device_span[const_uint8_t] _get_device_span(object obj) except *
+
+
+cdef class DictionaryPageRange:
+    cdef readonly ByteRangeInfo byte_range
+    cdef readonly cpp_dictionary_page_extent extent
 
 
 cdef class HybridScanMetadata:

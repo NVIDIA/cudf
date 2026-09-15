@@ -8,6 +8,7 @@
 #include <cudf/ast/expressions.hpp>
 #include <cudf/column/column.hpp>
 #include <cudf/io/datasource.hpp>
+#include <cudf/io/experimental/hybrid_scan.hpp>
 #include <cudf/io/experimental/hybrid_scan_multifile.hpp>
 #include <cudf/io/parquet.hpp>
 #include <cudf/io/text/byte_range_info.hpp>
@@ -27,6 +28,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <limits>
 #include <memory>
 #include <random>
 #include <utility>
@@ -177,3 +179,43 @@ template <typename T,
   cudf::io::parquet_reader_options const& options,
   cuda::stream_ref stream,
   rmm::device_async_resource_ref mr);
+
+/**
+ * @brief Fetch dictionary pages, trimming every upper-bound range to exactly one dictionary page
+ *
+ * Reads each range on the host (capping a range that only bounds its page at `max_upper_bound_size`
+ * bytes), measures a real dictionary page with `dictionary_page_length`, and copies only the
+ * verified page bytes to the device, leaving an empty span for a chunk with no dictionary page.
+ * Positions are preserved so the returned spans stay aligned with `dict_page_ranges`, which is what
+ * `filter_row_groups_with_dictionary_pages` expects.
+ *
+ * @return Owning device buffers and one device span per input range
+ */
+[[nodiscard]] std::pair<std::vector<rmm::device_buffer>,
+                        std::vector<cudf::device_span<uint8_t const>>>
+fetch_trimmed_dictionary_pages(
+  cudf::io::datasource& datasource,
+  cudf::host_span<cudf::io::parquet::experimental::dictionary_page_range const> dict_page_ranges,
+  cuda::stream_ref stream,
+  rmm::device_async_resource_ref mr,
+  int64_t max_upper_bound_size =
+    cudf::io::parquet::experimental::default_max_dictionary_page_read_size);
+
+/**
+ * @brief Multi-file overload of `fetch_trimmed_dictionary_pages`
+ *
+ * Reads each range from the source named by `source_map` and returns flat spans in the same order
+ * as `dict_page_ranges`.
+ *
+ * @return Owning device buffers and one device span per input range
+ */
+[[nodiscard]] std::pair<std::vector<rmm::device_buffer>,
+                        std::vector<cudf::device_span<uint8_t const>>>
+fetch_trimmed_dictionary_pages(
+  multifile_inputs const& inputs,
+  cudf::host_span<cudf::io::parquet::experimental::dictionary_page_range const> dict_page_ranges,
+  cudf::host_span<cudf::size_type const> source_map,
+  cuda::stream_ref stream,
+  rmm::device_async_resource_ref mr,
+  int64_t max_upper_bound_size =
+    cudf::io::parquet::experimental::default_max_dictionary_page_read_size);

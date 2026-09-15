@@ -3,6 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+#include "../compact_protocol_reader.hpp"
 #include "hybrid_scan_impl.hpp"
 
 #include <cudf/detail/nvtx/ranges.hpp>
@@ -11,7 +12,58 @@
 
 #include <thrust/host_vector.h>
 
+#include <algorithm>
+#include <iterator>
+#include <optional>
+#include <utility>
+
 namespace cudf::io::parquet::experimental {
+
+std::vector<text::byte_range_info> dictionary_page_byte_ranges_to_read(
+  cudf::host_span<dictionary_page_range const> dictionary_page_ranges, int64_t max_upper_bound_size)
+{
+  CUDF_EXPECTS(max_upper_bound_size >= 0, "Maximum bytes to read must not be negative");
+
+  auto byte_ranges = std::vector<text::byte_range_info>{};
+  byte_ranges.reserve(dictionary_page_ranges.size());
+  std::transform(dictionary_page_ranges.begin(),
+                 dictionary_page_ranges.end(),
+                 std::back_inserter(byte_ranges),
+                 [max_upper_bound_size](auto const& range) {
+                   if (range.extent == dictionary_page_extent::exact) { return range.byte_range; }
+                   return text::byte_range_info{
+                     range.byte_range.offset(),
+                     std::min(range.byte_range.size(), max_upper_bound_size)};
+                 });
+  return byte_ranges;
+}
+
+std::optional<int64_t> dictionary_page_length(cudf::host_span<uint8_t const> page_bytes)
+{
+  auto header = PageHeader{};
+  auto reader = parquet::detail::CompactProtocolReader{page_bytes.data(), page_bytes.size()};
+
+  // Nothing says these bytes are a page header at all, so a parse that gives up on them means there
+  // is no dictionary page here rather than that the file is corrupt.
+  try {
+    reader.read(&header);
+  } catch (std::exception const&) {
+    return std::nullopt;
+  }
+
+  // A chunk that claims dictionary encoding may have been written without a dictionary page, in
+  // which case these bytes are the chunk's first data page.
+  if (header.type != PageType::DICTIONARY_PAGE or header.compressed_page_size <= 0) {
+    return std::nullopt;
+  }
+
+  // A header cut off by the end of what was read stops parsing without complaint, and a page longer
+  // than what was read cannot be pruned with either way.
+  auto const page_length = static_cast<int64_t>(reader.bytecount()) + header.compressed_page_size;
+  if (std::cmp_greater(page_length, page_bytes.size())) { return std::nullopt; }
+
+  return page_length;
+}
 
 hybrid_scan_metadata::hybrid_scan_metadata(cudf::host_span<uint8_t const> footer_bytes,
                                            parquet_reader_options const& options)
@@ -132,7 +184,7 @@ std::vector<text::byte_range_info> hybrid_scan_reader::bloom_filters_byte_ranges
   return _impl->bloom_filters_byte_ranges(input_row_group_indices, options).first;
 }
 
-std::vector<text::byte_range_info> hybrid_scan_reader::dictionary_pages_byte_ranges(
+std::vector<dictionary_page_range> hybrid_scan_reader::dictionary_pages_byte_ranges(
   std::span<size_type const> row_group_indices, parquet_reader_options const& options) const
 {
   CUDF_FUNC_RANGE();

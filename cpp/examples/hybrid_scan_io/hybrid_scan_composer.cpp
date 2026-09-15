@@ -129,12 +129,12 @@ std::vector<cudf::size_type> apply_row_group_filters(
     }
   }
 
-  // Get dictionary page byte ranges from the reader
-  std::vector<cudf::io::text::byte_range_info> dict_page_byte_ranges;
+  // Get dictionary page ranges from the reader
+  std::vector<cudf::io::parquet::experimental::dictionary_page_range> dict_page_ranges;
   if (filters.contains(hybrid_scan_filter_type::ROW_GROUPS_WITH_DICT_PAGES)) {
     if (verbose) { std::cout << "READER: Get dictionary page byte ranges...\n"; }
     timer.reset();
-    dict_page_byte_ranges = reader.dictionary_pages_byte_ranges(current_row_group_indices, options);
+    dict_page_ranges = reader.dictionary_pages_byte_ranges(current_row_group_indices, options);
     if (verbose) { timer.print_elapsed_millis(); }
   }
 
@@ -143,15 +143,16 @@ std::vector<cudf::size_type> apply_row_group_filters(
   // Filter row groups with dictionary pages
   std::vector<cudf::size_type> dictionary_page_filtered_row_group_indices;
   dictionary_page_filtered_row_group_indices.reserve(current_row_group_indices.size());
-  if (not dict_page_byte_ranges.empty()) {
+  if (not dict_page_ranges.empty()) {
     if (verbose) { std::cout << "READER: Filter row groups with dictionary pages...\n"; }
     timer.reset();
 
-    // Fetch dictionary page buffers and corresponding device spans from the input file buffer
+    // Fetch dictionary pages, trimming any upper-bound range to exactly one dictionary page (or an
+    // empty span when the chunk has none) so the reader never reads data-page bytes as dictionary
+    // data.
     nvtxRangePush("fetch_dict_page_byte_ranges");
-    auto [dictionary_page_buffers, dictionary_page_data, dict_read_tasks] =
-      fetch_byte_ranges_async(datasource, dict_page_byte_ranges, stream, temp_mr);
-    dict_read_tasks.get();
+    auto [dictionary_page_buffers, dictionary_page_data] =
+      fetch_dictionary_pages(datasource, dict_page_ranges, stream, temp_mr);
     nvtxRangePop();
 
     dictionary_page_filtered_row_group_indices = reader.filter_row_groups_with_dictionary_pages(

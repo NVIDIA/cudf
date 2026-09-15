@@ -5,7 +5,6 @@
 
 from __future__ import annotations
 
-import collections
 import logging
 import threading
 from typing import TYPE_CHECKING, Any
@@ -18,6 +17,8 @@ else:
     _HAS_STRUCTLOG = True
 
 if TYPE_CHECKING:
+    import collections.abc
+
     from cudf_polars.quent._types import Event
 
 QUENT_SCOPE = "QUENT"
@@ -33,21 +34,19 @@ class QuentLogger:
         The maximum number of events to buffer.
     """
 
-    def __init__(self, maxlen: int = 100_000) -> None:
-        self._buffer: collections.deque[dict[str, Any]] = collections.deque(
-            maxlen=maxlen
-        )
+    def __init__(self) -> None:
+        self._buffer: list[dict[str, Any]] = []
         self._lock = threading.Lock()
 
     if _HAS_STRUCTLOG:  # pragma: no cover; depends on structlog
 
         def _get_logger(self, **initial_values: Any) -> Any:
             return structlog.wrap_logger(
-                DequeLogger(self._buffer, self._lock),
+                InMemoryLogger(self._buffer, self._lock),
                 processors=[
                     structlog.processors.add_log_level,
                     structlog.processors.TimeStamper(fmt="iso"),
-                    collect_to_deque,
+                    collect_in_memory,
                 ],
                 wrapper_class=structlog.stdlib.BoundLogger,
                 **initial_values,
@@ -73,20 +72,24 @@ class QuentLogger:
         return events
 
 
-class DequeLogger:
-    def __init__(self, deque: collections.deque[dict[str, Any]], lock: threading.Lock):
-        self._deque = deque
+class InMemoryLogger:
+    def __init__(
+        self,
+        container: collections.abc.MutableSequence[dict[str, Any]],
+        lock: threading.Lock,
+    ):
+        self._container = container
         self._lock = lock
 
     def msg(self, **kwargs: Any) -> None:
         with self._lock:
-            self._deque.append(kwargs)
+            self._container.append(kwargs)
 
     # aliases for log levels
     log = debug = info = warn = warning = error = critical = fatal = msg
 
 
-def collect_to_deque(
+def collect_in_memory(
     logger: structlog.types.WrappedLogger,
     method_name: str,
     event_dict: structlog.types.EventDict,

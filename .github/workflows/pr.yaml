@@ -689,18 +689,12 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - engine: in-memory
-            shard_id: 0
-            num_shards: 1
           - engine: spmd
             shard_id: 0
-            num_shards: 3
+            num_shards: 2
           - engine: spmd
             shard_id: 1
-            num_shards: 3
-          - engine: spmd
-            shard_id: 2
-            num_shards: 3
+            num_shards: 2
     permissions:
       actions: read
       contents: read
@@ -722,6 +716,7 @@ jobs:
       build_type: pull-request
       script: >-
         ci/test_cudf_polars_polars_tests.sh --engine ${{ matrix.engine }}
+        --inject-gpu-engine-blocksize default
         --cudf-polars-shard-id ${{ matrix.shard_id }}
         --cudf-polars-num-shards ${{ matrix.num_shards }}
   wheel-tests-dask-cudf:

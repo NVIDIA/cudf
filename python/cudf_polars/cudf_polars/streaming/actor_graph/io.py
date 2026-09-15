@@ -313,7 +313,7 @@ async def dataframescan_node(
         async with (
             shutdown_on_error(
                 context,
-                chs_out=lineariser.input_channels,
+                chs_aux=lineariser.input_channels,
                 trace_ir=ir,
                 ir_context=ir_context,
             ),
@@ -717,7 +717,7 @@ async def scan_node(
         async with (
             shutdown_on_error(
                 context,
-                chs_out=lineariser.input_channels,
+                chs_aux=lineariser.input_channels,
                 trace_ir=ir,
                 ir_context=ir_context,
             ),

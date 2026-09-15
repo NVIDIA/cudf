@@ -945,7 +945,7 @@ async def _shuffle_join(
     # note: this is an actor inside of an actor. How should we log that in our traces?
     async with shutdown_on_error(
         context,
-        chs_out=(ch_left_shuffle, ch_right_shuffle),
+        chs_aux=(ch_left_shuffle, ch_right_shuffle),
         trace_ir=ir,
         ir_context=ir_context,
     ):
@@ -1106,7 +1106,7 @@ async def _ordered_join(
     ch_right_adjusted = context.create_channel()
     async with shutdown_on_error(
         context,
-        chs_out=(ch_left_adjusted, ch_right_adjusted),
+        chs_aux=(ch_left_adjusted, ch_right_adjusted),
         trace_ir=ir,
         ir_context=ir_context,
     ):
@@ -1757,7 +1757,7 @@ async def join_actor(
         )
         async with shutdown_on_error(
             context,
-            chs_out=(ch_left_replay, ch_right_replay, *prefilter_execution.channels),
+            chs_aux=(ch_left_replay, ch_right_replay, *prefilter_execution.channels),
             trace_ir=ir,
             ir_context=ir_context,
         ):

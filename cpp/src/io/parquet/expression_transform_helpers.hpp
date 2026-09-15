@@ -18,6 +18,7 @@
 
 #include <list>
 #include <optional>
+#include <span>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -327,6 +328,120 @@ class offset_column_references : public ast::detail::expression_transformer {
   ast::tree _tree;
   std::optional<std::reference_wrapper<ast::expression const>> _converted_expr;
   size_type _offset{0};
+};
+
+/**
+ * @brief Simplified normalized Parquet filter expression. std::nullopt means no such expression was
+ * derived
+ */
+using simplified_expression_opt = std::optional<std::reference_wrapper<ast::expression const>>;
+
+/**
+ * @brief Simplifies a normalized Parquet filter expression for row-group or page pruning
+ *
+ * This base class handles expression traversal and combination. Derived classes implement supported
+ * leaf operations and return std::nullopt for unsupported ones.
+ *
+ * The result indicates whether a row group or page might contain matching rows. Conjunction and
+ * disjunction combine partial results. Unsupported operators return std::nullopt (relax).
+ *
+ * | node                | rule                                                             |
+ * | ------------------- | ---------------------------------------------------------------- |
+ * | `col op lit`        | `simplify_comparison`                                            |
+ * | `op(col)`           | `simplify_unary_op`                                              |
+ * | `NOT(op(col))`      | `simplify_negated_unary_op`                                      |
+ * | `NOT(col op lit)`   | `simplify_negated_comparison`                                    |
+ * | `a AND b`           | both present => `AND`; one present => that one; neither => relax |
+ * | `a OR b`            | both present => `OR`; otherwise relax                            |
+ * | anything else       | std::nullopt                                                     |
+ *
+ */
+class parquet_expression_simplifier {
+ public:
+  parquet_expression_simplifier(parquet_expression_simplifier const&)            = delete;
+  parquet_expression_simplifier& operator=(parquet_expression_simplifier const&) = delete;
+
+ protected:
+  explicit parquet_expression_simplifier(std::span<cudf::data_type const> output_dtypes);
+
+  ~parquet_expression_simplifier() = default;
+
+  /**
+   * @brief Simplifies a `col op lit` comparison
+   *
+   * @param op Comparison operator, normalized so that the column is the left operand
+   * @param col_ref Column being compared
+   * @param literal Literal being compared against
+   * @return Simplified expression, or std::nullopt if the input expression filters nothing
+   */
+  [[nodiscard]] virtual simplified_expression_opt simplify_comparison(
+    ast::ast_operator op, ast::column_reference const& col_ref, ast::literal const& literal) = 0;
+
+  /**
+   * @brief Simplifies a `NOT(col op lit)` comparison
+   *
+   * @return Simplified expression, or std::nullopt if the input expression filters nothing
+   */
+  [[nodiscard]] virtual simplified_expression_opt simplify_negated_comparison(
+    ast::ast_operator op, ast::column_reference const& col_ref, ast::literal const& literal);
+
+  /**
+   * @brief Simplifies an `op(col)` unary operation
+   *
+   * @return Simplified expression, or std::nullopt if the input expression filters nothing
+   */
+  [[nodiscard]] virtual simplified_expression_opt simplify_unary_op(
+    ast::ast_operator op, ast::column_reference const& col_ref);
+
+  /**
+   * @brief Simplifies a `NOT(op(col))` unary operation
+   *
+   * @return Simplified expression, or std::nullopt if the input expression filters nothing
+   */
+  [[nodiscard]] virtual simplified_expression_opt simplify_negated_unary_op(
+    ast::ast_operator op, ast::column_reference const& col_ref);
+
+  /**
+   * @brief Simplifies `expr` for filtering row groups or pages
+   *
+   * @param expr Filter expression, already normalized into negation normal form
+   * @return Simplified expression, or std::nullopt if the input expression filters nothing
+   */
+  [[nodiscard]] simplified_expression_opt simplify_expr(ast::expression const& expr);
+
+  /**
+   * @brief Validates a column reference
+   */
+  void validate_column_reference(ast::column_reference const& col_ref) const;
+
+  std::span<cudf::data_type const> _output_dtypes;
+  ast::tree _tree;
+
+ private:
+  /**
+   * @brief Simplifies a `NOT` operation
+   *
+   * @param operand Operand of the `NOT` operation
+   * @return Simplified expression, or std::nullopt if the negated operand filters nothing
+   */
+  [[nodiscard]] simplified_expression_opt simplify_negation(ast::expression const& operand);
+
+  /**
+   * @brief Implementation of recursive simplification of `expr` for filtering row groups or pages
+   */
+  [[nodiscard]] simplified_expression_opt simplify_expr_impl(ast::expression const& expr);
+
+  /**
+   * @brief Combines the simplified expressions of a binary operation's operands
+   */
+  [[nodiscard]] simplified_expression_opt combine_logical_operands(ast::ast_operator op,
+                                                                   simplified_expression_opt lhs,
+                                                                   simplified_expression_opt rhs);
+
+  /**
+   * @brief Validates operands in `expr`
+   */
+  void validate_operands(ast::expression const& expr) const;
 };
 
 /**

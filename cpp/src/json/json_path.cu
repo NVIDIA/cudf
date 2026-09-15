@@ -355,7 +355,8 @@ class json_state : private parser {
    * The user can specify whether or not the name string must be present via
    * the `can_be_empty` flag.
    *
-   * When a name is present, it must be followed by a colon `:`
+   * When a name is present, it must be followed by a colon `:`. A present but zero-length
+   * name (the `""` key of `{"":1}`) is not an absent name.
    *
    * @param[out] name The resulting name.
    * @param can_be_empty Parameter indicating whether it is valid for the name
@@ -366,17 +367,16 @@ class json_state : private parser {
   {
     char const quote = options.get_allow_single_quotes() ? 0 : '\"';
 
-    if (parse_string(name, can_be_empty, quote) == parse_result::ERROR) {
-      return parse_result::ERROR;
+    if (auto const result = parse_string(name, can_be_empty, quote);
+        result != parse_result::SUCCESS) {
+      return result;
     }
 
-    // if we got a real string, the next char must be a :
-    if (name.size_bytes() > 0) {
-      if (!parse_whitespace()) { return parse_result::ERROR; }
-      if (*pos == ':') {
-        pos++;
-        return parse_result::SUCCESS;
-      }
+    // a name is present, so the next non-whitespace char must be a ':'
+    if (!parse_whitespace()) { return parse_result::ERROR; }
+    if (*pos == ':') {
+      pos++;
+      return parse_result::SUCCESS;
     }
     return parse_result::EMPTY;
   }

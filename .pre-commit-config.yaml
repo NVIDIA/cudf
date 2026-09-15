@@ -43,7 +43,7 @@ repos:
     hooks:
       - id: mypy
         additional_dependencies: [
-          "polars>=1.35,<1.43",
+          "polars>=1.35,<1.45",
           "numpy>=1.26",
           "pyarrow-stubs>=19.0",
           "pyarrow>=19.0.0,<24.0.0",  # https://github.com/NVIDIA/cudf/issues/22229

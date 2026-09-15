@@ -1011,9 +1011,11 @@ dependencies:
           - breathe>=4.35.0
           - *doxygen
           - make
+          - maven
           - myst-nb
           - nbsphinx
           - numpydoc
+          - openjdk=17.*
           - pandoc
           - scipy
           - sphinx>=8.1.0

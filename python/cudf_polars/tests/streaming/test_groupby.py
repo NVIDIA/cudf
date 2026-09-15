@@ -150,9 +150,11 @@ def test_groupby_adjusts_truncated_ordering_with_maintain_order(
     )
     df = pl.LazyFrame(
         {
-            "DateTime": [i * 250 for i in range(128)],
-            "RIC": ["a", "b", "a", "b"] * 32,
-            "value": range(128),
+            # Four partitions are enough to exercise truncated ordering across
+            # partition boundaries. More just repeats the same SPMD work.
+            "DateTime": [i * 250 for i in range(32)],
+            "RIC": ["a", "b", "a", "b"] * 8,
+            "value": range(32),
         }
     )
     q = (

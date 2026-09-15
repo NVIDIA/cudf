@@ -75,3 +75,44 @@ static void bench_groupby_pre_sorted_sum_scan(nvbench::state& state)
 NVBENCH_BENCH(bench_groupby_pre_sorted_sum_scan)
   .set_name("pre_sorted_sum_scan")
   .add_int64_axis("num_rows", {100'000, 1'000'000, 10'000'000, 100'000'000});
+
+static void bench_groupby_pre_sorted_count_scan(nvbench::state& state)
+{
+  auto const num_rows = static_cast<cudf::size_type>(state.get_int64("num_rows"));
+
+  data_profile profile = data_profile_builder().cardinality(0).no_validity().distribution(
+    cudf::type_to_id<int64_t>(), distribution_id::UNIFORM, 0, 100);
+  auto keys_table =
+    create_random_table({cudf::type_to_id<int64_t>()}, row_count{num_rows}, profile);
+
+  auto const value_validity = state.get_string("value_validity");
+  if (value_validity == "all_valid") {
+    profile.set_null_probability(0.0);
+  } else if (value_validity == "nulls") {
+    profile.set_null_probability(0.1);
+  }
+  auto vals = create_random_column(cudf::type_to_id<int64_t>(), row_count{num_rows}, profile);
+
+  auto sort_order  = cudf::sorted_order(*keys_table);
+  auto sorted_keys = cudf::gather(*keys_table, *sort_order);
+
+  std::vector<cudf::groupby::scan_request> requests;
+  requests.emplace_back(cudf::groupby::scan_request());
+  requests[0].values = vals->view();
+  requests[0].aggregations.push_back(
+    cudf::make_count_aggregation<cudf::groupby_scan_aggregation>(cudf::null_policy::EXCLUDE));
+
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().value()));
+  auto const mem_stats_logger = cudf::memory_stats_logger();
+  state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
+    cudf::groupby::groupby gb_obj(*sorted_keys, cudf::null_policy::EXCLUDE, cudf::sorted::YES);
+    auto result = gb_obj.scan(requests);
+  });
+  state.add_buffer_size(
+    mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
+}
+
+NVBENCH_BENCH(bench_groupby_pre_sorted_count_scan)
+  .set_name("pre_sorted_count_valid_scan")
+  .add_int64_axis("num_rows", {100'000, 1'000'000, 10'000'000, 100'000'000})
+  .add_string_axis("value_validity", {"none", "all_valid", "nulls"});

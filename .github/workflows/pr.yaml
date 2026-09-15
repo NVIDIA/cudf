@@ -35,6 +35,7 @@ jobs:
       - wheel-tests-cudf
       - wheel-tests-cudf-polars
       - cudf-polars-polars-tests
+      - tpc-tests-cudf-polars
       - wheel-python-build-noarch
       - wheel-tests-dask-cudf
       - devcontainer
@@ -613,6 +614,23 @@ jobs:
         ci/test_cudf_polars_polars_tests.sh --engine ${{ matrix.engine }}
         --cudf-polars-shard-id ${{ matrix.shard_id }}
         --cudf-polars-num-shards ${{ matrix.num_shards }}
+  tpc-tests-cudf-polars:
+    needs: [wheel-cpp-build, wheel-python-build, changed-files]
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+      packages: read
+      pull-requests: read
+    secrets: inherit # zizmor: ignore[secrets-inherit]
+    uses: rapidsai/shared-workflows/.github/workflows/wheels-test.yaml@main
+    if: fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_wheels && fromJSON(needs.changed-files.outputs.changed_file_groups).neither_cudf_nor_dask_cudf
+    with:
+      # This selects "ARCH=amd64 + the latest supported Python + CUDA".
+      matrix_filter: map(select(.ARCH == "amd64")) | group_by(.CUDA_VER|split(".")|map(tonumber)|.[0]) | map(max_by([(.PY_VER|split(".")|map(tonumber)), (.CUDA_VER|split(".")|map(tonumber))]))
+      build_type: pull-request
+      container-options: "--cap-add CAP_SYS_PTRACE --shm-size=8g --ulimit=nofile=1000000:1000000"
+      script: "ci/run_cudf_polars_tpc.sh"
   wheel-tests-dask-cudf:
     needs: [wheel-python-build, wheel-python-build-noarch, changed-files]
     permissions:

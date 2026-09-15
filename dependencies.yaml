@@ -468,6 +468,14 @@ files:
       - test_python_common
       - test_python_cudf_polars
       - cudf_polars_trace
+  py_tpch_cudf_polars:
+    output: pyproject
+    pyproject_dir: python/cudf_polars
+    extras:
+      table: project.optional-dependencies
+      key: tpch
+    includes:
+      - test_cudf_polars_tpch
   py_trace_cudf_polars:
     output: pyproject
     matrix:
@@ -1302,6 +1310,14 @@ dependencies:
         packages:
           # Used by timeout_with_stack.py utility
           - gdb
+  test_cudf_polars_tpch:
+    common:
+      - output_types: [conda, requirements, pyproject]
+        packages:
+          - duckdb
+          # added lower bound pinning to get pytest-subtests for free
+          - pytest>=9
+          - tpchgen-cli>=3.0.0
   test_python_narwhals:
     common:
       - output_types: [conda, requirements, constraints, pyproject]

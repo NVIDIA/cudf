@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 """Query 51."""
@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 import polars as pl
 
 from cudf_polars.streaming.benchmarks.pdsds_parameters import load_parameters
+from cudf_polars.streaming.benchmarks.pdsds_queries import sql_sum
 from cudf_polars.streaming.benchmarks.utils import QueryResult, get_data
 
 if TYPE_CHECKING:
@@ -96,6 +97,15 @@ def polars_impl(run_config: RunConfig) -> QueryResult:
     store_sales = get_data(run_config.dataset_path, "store_sales", run_config.suffix)
     date_dim = get_data(run_config.dataset_path, "date_dim", run_config.suffix)
 
+    def _cume_sales(partition_col: str) -> pl.Expr:
+        return (
+            pl.col("daily_sum")
+            .cum_sum()
+            .forward_fill()
+            .over(partition_by=partition_col, order_by="d_date")
+            .alias("cume_sales")
+        )
+
     # web_v1: daily sums -> cumulative sum per (item, ordered by date)
     web_v1 = (
         web_sales.join(date_dim, left_on="ws_sold_date_sk", right_on="d_date_sk")
@@ -104,13 +114,8 @@ def polars_impl(run_config: RunConfig) -> QueryResult:
             & pl.col("ws_item_sk").is_not_null()
         )
         .group_by(["ws_item_sk", "d_date"])
-        .agg(pl.col("ws_sales_price").sum().alias("daily_sum"))
-        .with_columns(
-            pl.col("daily_sum")
-            .cum_sum()
-            .over(partition_by="ws_item_sk", order_by="d_date")
-            .alias("cume_sales")
-        )
+        .agg(sql_sum("ws_sales_price").alias("daily_sum"))
+        .with_columns(_cume_sales("ws_item_sk"))
         .select(
             pl.col("ws_item_sk").alias("item_sk"),
             "d_date",
@@ -126,13 +131,8 @@ def polars_impl(run_config: RunConfig) -> QueryResult:
             & pl.col("ss_item_sk").is_not_null()
         )
         .group_by(["ss_item_sk", "d_date"])
-        .agg(pl.col("ss_sales_price").sum().alias("daily_sum"))
-        .with_columns(
-            pl.col("daily_sum")
-            .cum_sum()
-            .over(partition_by="ss_item_sk", order_by="d_date")
-            .alias("cume_sales")
-        )
+        .agg(sql_sum("ss_sales_price").alias("daily_sum"))
+        .with_columns(_cume_sales("ss_item_sk"))
         .select(
             pl.col("ss_item_sk").alias("item_sk"),
             "d_date",

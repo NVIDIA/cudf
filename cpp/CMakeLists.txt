@@ -953,6 +953,7 @@ add_library(
   src/join/hash_join/partitioned_inner_join.cu
   src/join/hash_join/partitioned_join_retrieve.cu
   src/join/hash_join/partitioned_left_join.cu
+  src/join/asof_join.cu
   src/join/join.cu
   src/join/join_utils.cu
   src/join/key_remapping.cu

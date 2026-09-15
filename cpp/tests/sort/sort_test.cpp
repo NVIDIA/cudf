@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -18,6 +18,7 @@
 
 #include <thrust/host_vector.h>
 
+#include <limits>
 #include <type_traits>
 #include <vector>
 
@@ -46,6 +47,29 @@ template <typename T>
 struct Sort : public cudf::test::BaseFixture {};
 
 TYPED_TEST_SUITE(Sort, TestTypes);
+
+template <typename T>
+struct SortNumeric : public cudf::test::BaseFixture {};
+
+TYPED_TEST_SUITE(SortNumeric, cudf::test::NumericTypes);
+
+TYPED_TEST(SortNumeric, MixedColumnsWithExtrema)
+{
+  using T                = TypeParam;
+  auto constexpr minimum = std::numeric_limits<T>::lowest();
+  auto constexpr maximum = std::numeric_limits<T>::max();
+
+  // Unsigned maxima must retain their ordering above the corresponding signed maximum.
+  cudf::test::fixed_width_column_wrapper<T> primary{maximum, minimum, maximum, minimum, T{0}, T{0}};
+  cudf::test::fixed_width_column_wrapper<int32_t> secondary{1, 2, 0, 1, 0, -1};
+  cudf::table_view input{{primary, secondary}};
+  std::vector<cudf::order> column_order{cudf::order::ASCENDING, cudf::order::DESCENDING};
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> expected{1, 3, 4, 5, 0, 2};
+
+  auto got = cudf::sorted_order(input, column_order);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, got->view());
+  run_sort_test(input, expected, column_order);
+}
 
 TYPED_TEST(Sort, WithNullMax)
 {

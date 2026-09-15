@@ -466,13 +466,14 @@ class QueryGroup:
 
     def _declare(self, engine: Engine, timestamp: int | None = None) -> Event:
         """Declare a Quent QueryGroup."""
+        name = self.instance_name or self.id.hex[:8]
         return Event(
             id=self.id,
             timestamp=timestamp if timestamp is not None else time.time_ns(),
             data={
                 EventName.QUERY_GROUP.value: {
                     "Declaration": {
-                        "instance_name": self.instance_name,
+                        "instance_name": name,
                         "engine_id": str(engine.id),
                     }
                 }

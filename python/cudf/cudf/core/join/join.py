@@ -352,11 +352,11 @@ class Merge:
             # the other (empty) side has a different numeric/object dtype;
             # cudf's common-type cast would otherwise change it. The join maps
             # are unaffected (an empty side yields an empty gather map).
-            # Outer joins with exactly one empty side are excluded: there
-            # ``_match_join_keys`` already adopts the non-empty side's dtype,
-            # so both sides must share that dtype for the combined output key.
-            # When both sides are empty the shortcut does not fire, so the
-            # restore still applies.
+            # Outer joins with exactly one empty side are excluded. For them,
+            # _match_join_keys already cast the empty side to the dtype of the
+            # non-empty side. If the original columns were kept here, the
+            # outer fillna would change the key values to strings. When both
+            # sides are empty, this restore still applies.
             one_side_empty = (len(lcol) == 0) != (len(rcol) == 0)
             if (
                 not (self.how == "outer" and one_side_empty)

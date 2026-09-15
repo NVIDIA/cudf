@@ -135,3 +135,39 @@ if [[ "${ENGINE}" == "both" || "${ENGINE}" == "spmd" ]]; then
            --inject-gpu-engine spmd \
            --inject-gpu-engine-blocksize small
 fi
+
+# These are deliberately separate from the broad compatibility runs above.
+# The plugin is strict by default; explicit exceptions are CPU fallbacks or
+# expected GPU failures.
+if [[ "${ENGINE}" == "both" || "${ENGINE}" == "in-memory" ]]; then
+    echo "Run strict Polars tests with injected in-memory GPU engine"
+    python "${TIMEOUT_TOOL_PATH}" --enable-python 5400 \
+       python -m pytest \
+           --import-mode=importlib \
+           --cache-clear \
+           -x \
+           -p cudf_polars.testing.inject_gpu_engine \
+           --tb=native \
+           "${PYTEST_ARGS[@]}" \
+           --inject-gpu-engine in-memory \
+           --inject-gpu-engine-raise-on-fail \
+           py-polars/tests
+fi
+
+if [[ "${ENGINE}" == "both" || "${ENGINE}" == "spmd" ]]; then
+    echo "Run strict Polars tests with injected SPMD GPU engine, small blocksize"
+    CUDF_POLARS__EXECUTOR__TARGET_PARTITION_SIZE=805306368 \
+    CUDF_POLARS__EXECUTOR__FALLBACK_MODE=silent \
+    python "${TIMEOUT_TOOL_PATH}" --enable-python 5400 \
+       python -m pytest \
+           --import-mode=importlib \
+           --cache-clear \
+           -x \
+           -p cudf_polars.testing.inject_gpu_engine \
+           --tb=native \
+           "${PYTEST_ARGS[@]}" \
+           --inject-gpu-engine spmd \
+           --inject-gpu-engine-blocksize small \
+           --inject-gpu-engine-raise-on-fail \
+           py-polars/tests
+fi

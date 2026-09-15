@@ -3535,6 +3535,61 @@ JNIEXPORT jlongArray JNICALL Java_ai_rapids_cudf_Table_fullHashJoinGatherMapsWit
     });
 }
 
+JNIEXPORT jlongArray JNICALL
+Java_ai_rapids_cudf_Table_filterJoinGatherMaps(JNIEnv* env,
+                                               jclass,
+                                               jlong j_left_gather_map_address,
+                                               jlong j_left_gather_map_length,
+                                               jlong j_right_gather_map_address,
+                                               jlong j_right_gather_map_length,
+                                               jlong j_left_table,
+                                               jlong j_right_table,
+                                               jlong j_condition,
+                                               jint j_join_kind)
+{
+  constexpr jlong index_size = sizeof(cudf::size_type);
+  if (j_left_gather_map_length < 0 || j_left_gather_map_length % index_size != 0) {
+    JNI_THROW_NEW(
+      env, cudf::jni::ILLEGAL_ARG_EXCEPTION_CLASS, "invalid left gather map length", NULL);
+  }
+  if (j_right_gather_map_length != j_left_gather_map_length) {
+    JNI_THROW_NEW(env,
+                  cudf::jni::ILLEGAL_ARG_EXCEPTION_CLASS,
+                  "left and right gather maps must have the same length",
+                  NULL);
+  }
+  if (j_left_gather_map_length != 0) {
+    JNI_NULL_CHECK(env, j_left_gather_map_address, "left gather map is null", NULL);
+    JNI_NULL_CHECK(env, j_right_gather_map_address, "right gather map is null", NULL);
+  }
+  JNI_NULL_CHECK(env, j_left_table, "left table is null", NULL);
+  JNI_NULL_CHECK(env, j_right_table, "right table is null", NULL);
+  JNI_NULL_CHECK(env, j_condition, "condition is null", NULL);
+
+  JNI_TRY
+  {
+    cudf::jni::auto_set_device(env);
+    auto const map_size     = static_cast<std::size_t>(j_left_gather_map_length / index_size);
+    auto const left_indices = cudf::device_span<cudf::size_type const>{
+      reinterpret_cast<cudf::size_type const*>(j_left_gather_map_address), map_size};
+    auto const right_indices = cudf::device_span<cudf::size_type const>{
+      reinterpret_cast<cudf::size_type const*>(j_right_gather_map_address), map_size};
+    auto const left_table  = reinterpret_cast<cudf::table_view const*>(j_left_table);
+    auto const right_table = reinterpret_cast<cudf::table_view const*>(j_right_table);
+    auto const condition   = reinterpret_cast<cudf::jni::ast::compiled_expr const*>(j_condition);
+    auto const join_kind   = static_cast<cudf::join_kind>(j_join_kind);
+
+    return cudf::jni::gather_maps_to_java(env,
+                                          cudf::filter_join_indices(*left_table,
+                                                                    *right_table,
+                                                                    left_indices,
+                                                                    right_indices,
+                                                                    condition->get_top_expression(),
+                                                                    join_kind));
+  }
+  JNI_CATCH(env, NULL);
+}
+
 JNIEXPORT jlongArray JNICALL Java_ai_rapids_cudf_Table_conditionalFullJoinGatherMaps(
   JNIEnv* env, jclass, jlong j_left_table, jlong j_right_table, jlong j_condition)
 {

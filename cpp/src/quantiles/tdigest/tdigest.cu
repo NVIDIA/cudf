@@ -220,7 +220,7 @@ std::unique_ptr<column> compute_approx_percentiles(tdigest_column_view const& in
                    return percentiles.is_valid(i % percentiles.size());
                  },
                  stream,
-                 mr)
+                 cudf::memory_resources{mr, mr})
              : std::pair<rmm::device_buffer, size_type>{rmm::device_buffer{}, 0};
   }();
 
@@ -385,8 +385,11 @@ std::unique_ptr<column> percentile_approx(tdigest_column_view const& input,
     if (null_count == 0) {
       return std::pair<rmm::device_buffer, size_type>{rmm::device_buffer{}, null_count};
     }
-    return cudf::detail::valid_if(
-      tdigest_is_empty, tdigest_is_empty + tdv.size(), cuda::std::logical_not{}, stream, mr);
+    return cudf::detail::valid_if(tdigest_is_empty,
+                                  tdigest_is_empty + tdv.size(),
+                                  cuda::std::logical_not{},
+                                  stream,
+                                  cudf::memory_resources{mr, mr});
   }();
 
   return cudf::make_lists_column(input.size(),

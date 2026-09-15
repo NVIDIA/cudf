@@ -137,7 +137,7 @@ std::unique_ptr<column> remove_keys_fn(dictionary_column_view const& dictionary_
       return (indices_itr[idx] < max_size);  // new nulls have max values
     },
     stream,
-    mr);
+    cudf::memory_resources{mr, mr});
   rmm::device_buffer new_null_mask =
     (new_nulls.second > 0) ? std::move(new_nulls.first) : rmm::device_buffer{0, stream, mr};
 

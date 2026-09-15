@@ -137,7 +137,7 @@ generate_regrouped_offsets_and_null_mask(table_device_view const& input,
           return null_count != num_columns;
         },
         stream,
-        mr);
+        cudf::memory_resources{mr, mr});
     }
 
     // row is null if -any- input rows are null
@@ -146,7 +146,7 @@ generate_regrouped_offsets_and_null_mask(table_device_view const& input,
       row_null_counts.begin() + input.num_rows(),
       [] __device__(size_type null_count) { return null_count == 0; },
       stream,
-      mr);
+      cudf::memory_resources{mr, mr});
   }();
 
   return {std::move(offsets), std::move(null_mask), null_count};
@@ -248,7 +248,7 @@ std::unique_ptr<column> concatenate_rows(table_view const& input,
               return row_null_counts[row_index] != num_columns;
             }),
           stream,
-          cudf::get_current_device_resource_ref());
+          cudf::memory_resources{mr, mr});
       }
       // NULLIFY_OUTPUT_ROW.  Output row is nullfied if any input row is null
       return cudf::detail::valid_if(
@@ -261,7 +261,7 @@ std::unique_ptr<column> concatenate_rows(table_view const& input,
             return row_null_counts[row_index] == 0;
           }),
         stream,
-        cudf::get_current_device_resource_ref());
+        cudf::memory_resources{mr, mr});
     }();
     concat->set_null_mask(std::move(null_mask), null_count);
   }

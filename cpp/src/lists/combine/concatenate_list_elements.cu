@@ -89,7 +89,7 @@ std::unique_ptr<column> concatenate_lists_ignore_null(column_view const& input,
           [&] __device__(auto const list_idx) { return lists_dv.is_valid(list_idx); });
       },
       stream,
-      mr);
+      cudf::memory_resources{mr, mr});
   }();
 
   return make_lists_column(num_rows,
@@ -212,8 +212,11 @@ std::unique_ptr<column> concatenate_lists_nullifying_rows(column_view const& inp
 
   auto list_entries =
     gather_list_entries(input, offsets_view, num_rows, num_output_entries, stream, mr);
-  auto [null_mask, null_count] = cudf::detail::valid_if(
-    list_validities.begin(), list_validities.end(), cuda::std::identity{}, stream, mr);
+  auto [null_mask, null_count] = cudf::detail::valid_if(list_validities.begin(),
+                                                        list_validities.end(),
+                                                        cuda::std::identity{},
+                                                        stream,
+                                                        cudf::memory_resources{mr, mr});
 
   return make_lists_column(num_rows,
                            std::move(list_offsets),

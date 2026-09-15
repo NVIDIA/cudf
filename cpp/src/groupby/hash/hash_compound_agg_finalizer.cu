@@ -126,7 +126,7 @@ void hash_compound_agg_finalizer::operator()<aggregation::MEAN>(aggregation cons
       count_result.end<size_type>(),
       [] __device__(size_type const count) -> bool { return count > 0; },
       stream,
-      mr);
+      cudf::memory_resources{mr, mr});
     if (null_count > 0) { result->set_null_mask(std::move(null_mask), null_count); }
   }
   cache->add_result(col, agg, std::move(result));

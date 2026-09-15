@@ -204,7 +204,7 @@ std::unique_ptr<column> join_list_elements(lists_column_view const& lists_string
                            cuda::counting_iterator<size_type>{num_rows},
                            validities_fn{comp_fn},
                            stream,
-                           mr);
+                           cudf::memory_resources{mr, mr});
 
   return make_strings_column(
     num_rows, std::move(offsets_column), chars.release(), null_count, std::move(null_mask));
@@ -279,7 +279,7 @@ std::unique_ptr<column> join_list_elements(lists_column_view const& lists_string
                            cuda::counting_iterator<size_type>{num_rows},
                            validities_fn{comp_fn},
                            stream,
-                           mr);
+                           cudf::memory_resources{mr, mr});
 
   return make_strings_column(
     num_rows, std::move(offsets_column), chars.release(), null_count, std::move(null_mask));

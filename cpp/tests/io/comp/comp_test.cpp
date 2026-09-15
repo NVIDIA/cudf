@@ -22,6 +22,8 @@
 
 #include <src/io/comp/nvcomp_adapter.hpp>
 
+#include <algorithm>
+#include <array>
 #include <vector>
 
 using cudf::device_span;
@@ -420,16 +422,23 @@ void roundtrip_test(cudf::io::compression_type compression)
       // Keep adding to the test data
       expected.insert(expected.end(), num_string.begin(), num_string.end());
     }
-    if (cudf::io::detail::compress_max_allowed_chunk_size(compression)
-          .value_or(std::numeric_limits<size_t>::max()) < expected.size()) {
-      // Skip if the data is too large for the compressor
-      return;
-    }
+  }
+
+  // Exercise representative small, medium, and large inputs. The largest input preserves the
+  // previous test's maximum coverage without repeating the same round trip at every size in
+  // between.
+  auto const test_sizes     = std::array{size_t{1 << 10}, size_t{1 << 20}, expected.size()};
+  auto const max_input_size = cudf::io::detail::compress_max_allowed_chunk_size(compression)
+                                .value_or(std::numeric_limits<size_t>::max());
+  for (auto const test_size : test_sizes) {
+    if (test_size > max_input_size) { continue; }
+
+    auto const test_input = cudf::host_span<uint8_t const>{expected.data(), test_size};
 
     auto d_comp = rmm::device_uvector<uint8_t>(
-      cudf::io::detail::max_compressed_size(compression, expected.size()), stream, mr);
+      cudf::io::detail::max_compressed_size(compression, test_input.size()), stream, mr);
     {
-      auto const d_orig = cudf::detail::make_device_uvector_async(expected, stream, mr);
+      auto const d_orig = cudf::detail::make_device_uvector_async(test_input, stream, mr);
       auto hd_srcs      = cudf::detail::hostdevice_vector<device_span<uint8_t const>>(1, stream);
       hd_srcs[0]        = d_orig;
       hd_srcs.host_to_device_async(stream);
@@ -448,7 +457,7 @@ void roundtrip_test(cudf::io::compression_type compression)
       d_comp.resize(hd_stats[0].bytes_written, stream);
     }
 
-    auto d_got = rmm::device_uvector<uint8_t>(expected.size(), stream);
+    auto d_got = rmm::device_uvector<uint8_t>(test_input.size(), stream, mr);
     {
       auto hd_srcs = cudf::detail::hostdevice_vector<device_span<uint8_t const>>(1, stream);
       hd_srcs[0]   = d_comp;
@@ -463,14 +472,14 @@ void roundtrip_test(cudf::io::compression_type compression)
       hd_stats.host_to_device_async(stream);
 
       cudf::io::detail::decompress(
-        compression, hd_srcs, hd_dsts, hd_stats, expected.size(), expected.size(), stream);
+        compression, hd_srcs, hd_dsts, hd_stats, test_input.size(), test_input.size(), stream);
       hd_stats.device_to_host(stream);
       ASSERT_EQ(hd_stats[0].status, codec_status::SUCCESS);
     }
 
     auto const got = cudf::detail::make_std_vector(d_got, stream);
 
-    EXPECT_EQ(expected, got);
+    EXPECT_TRUE(std::equal(test_input.begin(), test_input.end(), got.begin(), got.end()));
   }
 }
 

@@ -25,23 +25,9 @@ def test_series_pandas_methods(data, reduction_methods):
     )
 
 
-@pytest.fixture(
-    scope="module",
-    params=[
-        "int8",
-        "int16",
-        "int32",
-        "int64",
-        "uint8",
-        "uint16",
-        "uint32",
-        "uint64",
-        "float32",
-        "float64",
-    ],
-)
-def series_reduction_inputs(request):
-    dtype = request.param
+@pytest.fixture(scope="module")
+def series_reduction_inputs(numeric_types_as_str):
+    dtype = numeric_types_as_str
     rng = np.random.default_rng(seed=0)
     arr = rng.random(100)
     if np.dtype(dtype).kind in "iu":

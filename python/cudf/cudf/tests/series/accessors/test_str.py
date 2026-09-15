@@ -2170,8 +2170,8 @@ def test_string_slice_from():
         ["koala", "fox", "chameleon"],
     ],
 )
-@pytest.mark.parametrize("number", [0, 1, 10])
-@pytest.mark.parametrize("diff", [0, 3])
+@pytest.mark.parametrize("number", [-10, -1, 0, 1, 10])
+@pytest.mark.parametrize("diff", [-3, 0, 3])
 @pytest.mark.parametrize("repl", ["2", "!!"])
 def test_string_slice_replace(string, number, diff, repl):
     pds = pd.Series(string)

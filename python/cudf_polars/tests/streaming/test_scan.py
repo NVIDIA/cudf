@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import functools
 import math
 from typing import TYPE_CHECKING, cast
 
@@ -36,18 +37,23 @@ from cudf_polars.streaming.io import (
     ScanTask,
     StreamingScan,
     expand_scan_for_rank,
+    hybrid_scan_eligible,
     scan_partition_plan,
 )
 from cudf_polars.streaming.parallel import lower_ir_graph
 from cudf_polars.streaming.statistics import collect_statistics
 from cudf_polars.testing.asserts import assert_gpu_result_equal
-from cudf_polars.testing.engine_utils import SMALL_MAX_ROWS_PER_PARTITION
+from cudf_polars.testing.engine_utils import (
+    SMALL_MAX_ROWS_PER_PARTITION,
+    is_streaming_engine,
+)
 from cudf_polars.testing.io import make_partitioned_source
 from cudf_polars.utils.config import (
     ConfigOptions,
     MaxConcurrentIOTasks,
     ParquetOptions,
 )
+from cudf_polars.utils.versions import POLARS_VERSION_LT_142
 
 if TYPE_CHECKING:
     import concurrent.futures
@@ -428,7 +434,7 @@ def _make_parquet_scan(
         None,
         None,
         parquet_options,
-        None,
+        cached_parquet_info=None,
     )
 
 
@@ -459,7 +465,7 @@ def _make_csv_scan(paths: list[str]) -> Scan:
         None,
         None,
         ParquetOptions(),
-        None,
+        cached_parquet_info=None,
     )
 
 
@@ -735,6 +741,7 @@ def test_scan_path_mismatch_raises() -> None:
             scan.include_file_paths,
             scan.predicate,
             scan.parquet_options,
+            scan.hive_parts,
             [],
             context=ctx,
         )
@@ -754,6 +761,7 @@ def test_parquet_split_task_fetches_missing_metadata(tmp_path: Path) -> None:
         0,
         2,
         scan.parquet_options,
+        scan.hive_parts,
         context=IRExecutionContext(),
     )
 
@@ -917,7 +925,7 @@ def test_cached_parquet_info_excluded_from_identity() -> None:
         None,
         None,
         base.parquet_options,
-        info,
+        cached_parquet_info=info,
     )
     assert scan_without == scan_with
     assert hash(scan_without) == hash(scan_with)
@@ -987,3 +995,175 @@ def test_scan_partition_plan_nearest(
     plan = scan_partition_plan(scan, FooStats(scan, file_size), _make_config(10))
     assert plan.factor == expected_factor
     assert plan.flavor == expected_flavor
+
+
+requires_hive_ir = pytest.mark.skipif(
+    POLARS_VERSION_LT_142,
+    reason="hive::HivePartitionedDf not exposed in the logical plan before 1.42",
+)
+
+
+@pytest.fixture
+def hive_root(tmp_path: Path) -> Path:
+    """Hive dataset with several row groups per file, to allow file splitting."""
+    root = tmp_path / "hive"
+    pl.DataFrame(
+        {
+            "x": range(600),
+            "part": [i // 200 for i in range(600)],
+        }
+    ).write_parquet(root, partition_by=["part"], row_group_size=25)
+    return root
+
+
+@requires_hive_ir
+@pytest.mark.parametrize(
+    "target_partition_size,expected_flavor",
+    [
+        (1_000, IOPartitionFlavor.SPLIT_FILES),
+        (1_000_000, IOPartitionFlavor.FUSED_FILES),
+    ],
+)
+@pytest.mark.parametrize(
+    "query",
+    [
+        lambda lf: lf,
+        lambda lf: lf.select("part"),
+        lambda lf: lf.filter(pl.col("x") > 400),
+        lambda lf: lf.filter(pl.col("part") == 1),
+        lambda lf: lf.filter((pl.col("part") == 1) & (pl.col("x") > 250)),
+        lambda lf: lf.group_by("part").agg(pl.col("x").sum()),
+    ],
+)
+def test_hive_partitioned_streaming_scan(
+    hive_root: Path,
+    streaming_engine_factory: Callable[..., StreamingEngine],
+    target_partition_size: int,
+    expected_flavor: IOPartitionFlavor,
+    query,
+) -> None:
+    streaming_engine = streaming_engine_factory(
+        StreamingOptions(target_partition_size=target_partition_size),
+    )
+    q = query(pl.scan_parquet(hive_root, hive_partitioning=True))
+    assert_gpu_result_equal(q, engine=streaming_engine, check_row_order=False)
+
+
+@requires_hive_ir
+def test_hive_partitioned_split_tasks_slice_partitions(
+    hive_root: Path, engine: pl.GPUEngine
+) -> None:
+    if not is_streaming_engine(engine):
+        pytest.skip("Scan tasks are only built for streaming engines")
+    q = pl.scan_parquet(hive_root, hive_partitioning=True)
+    scan = cast("Scan", Translator(q._ldf.visit(), engine).translate_ir())
+    assert scan.hive_parts is not None
+
+    streaming = expand_scan_for_rank(
+        scan,
+        IOPartitionPlan(2, IOPartitionFlavor.SPLIT_FILES),
+        2 * len(scan.paths),
+        rank=0,
+        nranks=1,
+        parquet_options=ParquetOptions(),
+    )
+    # Both splits of a file see that file's partition values, and nothing else.
+    hive_parts = []
+    for task in streaming.tasks:
+        assert isinstance(task, ParquetScanTask)
+        assert task.hive_parts is not None
+        assert task.hive_parts.num_paths == 1
+        assert task.hive_parts.is_uniform
+        hive_parts.append(task.hive_parts)
+    assert [parts.df.rows() for parts in hive_parts] == [
+        [(0,)],
+        [(0,)],
+        [(1,)],
+        [(1,)],
+        [(2,)],
+        [(2,)],
+    ]
+
+
+@requires_hive_ir
+def test_hive_partitioned_fused_tasks_slice_partitions(
+    hive_root: Path, engine: pl.GPUEngine
+) -> None:
+    if not is_streaming_engine(engine):
+        pytest.skip("Scan tasks are only built for streaming engines")
+    q = pl.scan_parquet(hive_root, hive_partitioning=True)
+    scan = cast("Scan", Translator(q._ldf.visit(), engine).translate_ir())
+
+    streaming = expand_scan_for_rank(
+        scan,
+        IOPartitionPlan(2, IOPartitionFlavor.FUSED_FILES),
+        2,
+        rank=0,
+        nranks=1,
+        parquet_options=ParquetOptions(),
+    )
+    hive_parts = []
+    for task in streaming.tasks:
+        assert isinstance(task, ParquetScanTask)
+        assert task.hive_parts is not None
+        hive_parts.append(task.hive_parts)
+    assert [parts.df.rows() for parts in hive_parts] == [[(0,), (1,)], [(2,)]]
+
+
+@requires_hive_ir
+def test_hive_partitioned_scan_skips_hybrid_scan(
+    hive_root: Path, engine: pl.GPUEngine
+) -> None:
+    # The hybrid reader cannot keep hive columns out of what it asks the file
+    # for, so a hive scan must fall back to the regular reader.
+    if not is_streaming_engine(engine):
+        pytest.skip("Scan tasks are only built for streaming engines")
+    q = pl.scan_parquet(hive_root, hive_partitioning=True).filter(pl.col("x") > 400)
+    scan = cast("Scan", Translator(q._ldf.visit(), engine).translate_ir())
+    assert scan.hive_parts is not None
+    assert scan.predicate is not None
+
+    eligibility = functools.partial(
+        hybrid_scan_eligible,
+        ParquetOptions(use_hybrid_scan=True),
+        row_index=None,
+        include_file_paths=None,
+        predicate=scan.predicate,
+    )
+    assert eligibility(hive_parts=None) is True
+    assert eligibility(hive_parts=scan.hive_parts) is False
+
+
+@requires_hive_ir
+@pytest.mark.parametrize("target_partition_size", [1_000, 1_000_000])
+def test_hive_only_projection_with_prefetched_metadata(
+    hive_root: Path,
+    streaming_engine_factory: Callable[..., StreamingEngine],
+    target_partition_size: int,
+) -> None:
+    streaming_engine = streaming_engine_factory(
+        StreamingOptions(
+            target_partition_size=target_partition_size,
+            parquet_options={"prefetch_file_metadata": True},
+        ),
+    )
+    q = pl.scan_parquet(hive_root, hive_partitioning=True).select("part")
+    assert_gpu_result_equal(q, engine=streaming_engine, check_row_order=False)
+
+
+@requires_hive_ir
+def test_hive_partitioned_scan_with_hybrid_scan_enabled(
+    hive_root: Path,
+    streaming_engine_factory: Callable[..., StreamingEngine],
+) -> None:
+    streaming_engine = streaming_engine_factory(
+        StreamingOptions(
+            target_partition_size=1_000,
+            parquet_options={
+                "prefetch_file_metadata": True,
+                "use_hybrid_scan": True,
+            },
+        ),
+    )
+    q = pl.scan_parquet(hive_root, hive_partitioning=True).filter(pl.col("x") > 400)
+    assert_gpu_result_equal(q, engine=streaming_engine, check_row_order=False)

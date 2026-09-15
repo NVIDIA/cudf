@@ -5629,13 +5629,10 @@ NODEIDS_TO_SKIP_WHEN_SHARDED: dict[str, str] = {
     "tests/strings/test_strings.py::test_slice_replace[string=str[python]--10-3-z-expected7]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
     "tests/strings/test_strings.py::test_slice_replace[string=str[python]-None--2-z-expected5]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
     # Failing in sharded pandas-tests CI run 32294121723 (shard 1, job
-    # 96216291366). Both are nondeterministic rather than deterministic
-    # incompatibilities: test_stack_multiple_out_of_bounds[True] and the
-    # sibling unstack tests pass in the other shard, and
-    # test_to_datetime_iso8601_fails passed in the previous run of this
-    # same shard.
+    # 96216291366). Nondeterministic rather than a deterministic
+    # incompatibility: test_stack_multiple_out_of_bounds[True] and the
+    # sibling unstack tests pass in the other shard.
     "tests/frame/test_stack_unstack.py::TestStackUnstackMultiLevel::test_stack_multiple_out_of_bounds[False]": "Flaky under test sharding: cudf.pandas behavior is test-order-dependent (see #22992)",
-    "tests/tools/test_to_datetime.py::TestToDatetimeMisc::test_to_datetime_iso8601_fails[True-2012-01-01-%Y-%m-%d %H]": "Flaky under test sharding: cudf.pandas behavior is test-order-dependent (see #22992)",
 }
 
 # Keep keys in alphabetical order

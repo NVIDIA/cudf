@@ -1932,6 +1932,28 @@ def test_string_partition_fail():
         gs.str.rpartition(["a"])
 
 
+@pytest.mark.parametrize("klass", [pd.Index, pd.Series])
+@pytest.mark.parametrize("method", ["partition", "rpartition"])
+@pytest.mark.parametrize(
+    "dtype", ["object", "category", "string[python]", "string[pyarrow]"]
+)
+def test_string_partition_empty_result(klass, method, dtype):
+    ps = klass([], dtype=dtype, name="source")
+    gs = cudf.from_pandas(ps)
+
+    if klass is pd.Index:
+        for obj in (ps, gs):
+            with pytest.raises(
+                TypeError,
+                match="Cannot infer number of levels from empty list",
+            ):
+                getattr(obj.str, method)(expand=True)
+    else:
+        expected = getattr(ps.str, method)(expand=True)
+        result = getattr(gs.str, method)(expand=True)
+        assert_eq(expected, result)
+
+
 @pytest.mark.parametrize(
     "data",
     [

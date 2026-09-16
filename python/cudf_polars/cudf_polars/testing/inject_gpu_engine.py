@@ -15,6 +15,10 @@ import pytest
 
 import polars
 
+from cudf_polars.testing.engine_utils import (
+    SMALL_MAX_ROWS_PER_PARTITION,
+    SMALL_TARGET_PARTITION_SIZE,
+)
 from cudf_polars.utils.config import StreamingFallbackMode
 
 if TYPE_CHECKING:
@@ -47,8 +51,9 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         default="default",
         choices=("default", "small"),
         help=(
-            "Blocksize mode for the 'spmd' engine. Set to 'small' to run most "
-            "tests with multiple partitions. Ignored for 'in-memory'."
+            "Blocksize mode for the 'spmd' engine. 'small' forces most tests "
+            "onto the multi-partition path. PR CI uses 'default'; nightly uses "
+            "'small'. Ignored for 'in-memory'."
         ),
     )
     group.addoption(
@@ -138,8 +143,8 @@ def pytest_configure(config: pytest.Config) -> None:
 
         executor_options: dict[str, object] = {}
         if blocksize == "small":
-            executor_options["max_rows_per_partition"] = 4
-            executor_options["target_partition_size"] = 10
+            executor_options["max_rows_per_partition"] = SMALL_MAX_ROWS_PER_PARTITION
+            executor_options["target_partition_size"] = SMALL_TARGET_PARTITION_SIZE
             # We expect many tests to fall back, so silence the warnings.
             executor_options["fallback_mode"] = StreamingFallbackMode.SILENT
         engine = SPMDEngine(
@@ -415,6 +420,28 @@ TESTS_TO_SKIP: dict[str, str] = {
     # across engines. Skip both runs rather than xfail (which would XPASS on in-memory).
     "tests/unit/lazyframe/test_predicates.py::test_hconcat_predicate": "polars 1.42: test uses deprecated how='horizontal' with strict=True in ways that behave differently across GPU engines",
     "tests/unit/functions/test_union.py::test_union_lazyframe_horizontal": "polars 1.42: test uses deprecated how='horizontal' with strict=True in ways that behave differently across GPU engines",
+    # Cloud credential provider tests that don't possible exercise cudf-polars.
+    "tests/unit/io/cloud/test_credential_provider.py::test_credential_provider_scan": "Unused by cudf-polars",
+    "tests/unit/io/cloud/test_credential_provider.py::test_credential_provider_serialization_auto_init": "Unused by cudf-polars",
+    "tests/unit/io/cloud/test_credential_provider.py::test_credential_provider_serialization_custom_provider": "Unused by cudf-polars",
+    "tests/unit/io/cloud/test_credential_provider.py::test_credential_provider_gcp_skips_config_autoload": "Unused by cudf-polars",
+    "tests/unit/io/cloud/test_credential_provider.py::test_credential_provider_aws_import_error_with_requested_profile": "Unused by cudf-polars",
+    "tests/unit/io/cloud/test_credential_provider.py::test_credential_provider_aws_endpoint_url_scan_no_parameters": "Unused by cudf-polars",
+    "tests/unit/io/cloud/test_credential_provider.py::test_credential_provider_aws_endpoint_url_serde": "Unused by cudf-polars",
+    "tests/unit/io/cloud/test_credential_provider.py::test_credential_provider_aws_endpoint_url_with_storage_options": "Unused by cudf-polars",
+    "tests/unit/io/cloud/test_credential_provider.py::test_credential_provider_aws_endpoint_url_passed_in_storage_options": "Unused by cudf-polars",
+    "tests/unit/io/cloud/test_credential_provider.py::test_credential_provider_python_builder_cache": "Unused by cudf-polars",
+    "tests/unit/io/cloud/test_credential_provider.py::test_credential_provider_python_credentials_cache": "Unused by cudf-polars",
+    "tests/unit/io/cloud/test_credential_provider.py::test_no_pickle_option": "Unused by cudf-polars",
+    "tests/unit/io/cloud/test_credential_provider.py::test_credential_provider_aws_expiry": "Unused by cudf-polars",
+    "tests/unit/io/cloud/test_credential_provider.py::test_credential_provider_rebuild_clears_cache": "Unused by cudf-polars",
+    "tests/unit/io/cloud/test_credential_provider.py::test_user_gcp_token_provider": "Unused by cudf-polars",
+    "tests/unit/io/cloud/test_credential_provider.py::test_auto_init_cache_key_memoize": "Unused by cudf-polars",
+    "tests/unit/io/cloud/test_credential_provider.py::test_cached_credential_provider_returns_copied_creds": "Unused by cudf-polars",
+    "tests/unit/io/cloud/test_credential_provider.py::test_credential_provider_init_from_partition_target": "Unused by cudf-polars",
+    "tests/unit/io/cloud/test_credential_provider.py::test_cache_user_credential_provider": "Unused by cudf-polars",
+    "tests/unit/io/cloud/test_credential_provider.py::test_credential_provider_global_config": "Unused by cudf-polars",
+    "tests/unit/io/cloud/test_credential_provider.py::test_cache_user_credential_provider_pickle": "Unused by cudf-polars",
 }
 
 
@@ -443,8 +470,6 @@ if packaging.version.parse(sqlite3.sqlite_version) <= packaging.version.parse("3
     )
 
 
-# Generally skip for:
-# 1) Tests that are too slow with --inject-gpu-engine-blocksize=small due to many small partitions for large data
 STREAMING_ENGINE_TESTS_TO_SKIP: Mapping[str, str] = {
     "tests/unit/operations/aggregation/test_aggregations.py::test_boolean_aggs": "float difference in std/var in the unit of least precision",
     # Crashes the worker instead of raising cleanly; skip rather than xfail
@@ -456,6 +481,16 @@ STREAMING_ENGINE_TESTS_TO_SKIP: Mapping[str, str] = {
     # passes on some streaming runs and fails on others, so skip rather than
     # xfail to avoid a flaky XPASS/FAIL.
     "tests/unit/operations/test_group_by.py::test_group_by_unique_parametric[n_unique-True-True]": "non-deterministic key sort under the streaming engine",
+    "tests/unit/operations/test_slice.py::test_slice_slice_pushdown": "Too slow for CI",
+    "tests/unit/io/test_partition.py::test_partition_approximate_size": "Too slow for CI",
+    "tests/unit/io/test_scan.py::test_scan_with_filter_and_limit[single-parquet-async]": "Takes >60 seconds to run locally",
+    "tests/unit/io/test_scan.py::test_scan_with_row_index_projected_out[glob-parquet-async]": "Takes >60 seconds to run locally",
+    "tests/unit/lazyframe/test_optimizations.py::test_collapse_joins_combinations": "Too slow for CI",
+    "tests/unit/operations/test_index_of.py::test_randomized": "Too slow for CI; marked as pytest.mark.slow",
+    "tests/unit/streaming/test_streaming_sort.py::test_streaming_sort_varying_order_and_dtypes[sort_by0]": "Too slow for CI",
+}
+
+STREAMING_ENGINE_TESTS_TO_SKIP_SMALL_BLOCKSIZE: Mapping[str, str] = {
     "tests/benchmark/test_group_by.py::test_groupby_h2oai_q1": "Too slow with --inject-gpu-engine-blocksize=small",
     "tests/benchmark/test_group_by.py::test_groupby_h2oai_q2": "Too slow with --inject-gpu-engine-blocksize=small",
     "tests/benchmark/test_group_by.py::test_groupby_h2oai_q3": "Too slow with --inject-gpu-engine-blocksize=small",
@@ -466,7 +501,6 @@ STREAMING_ENGINE_TESTS_TO_SKIP: Mapping[str, str] = {
     "tests/benchmark/test_join_where.py::test_single_inequality": "Too slow with --inject-gpu-engine-blocksize=small",
     "tests/benchmark/test_join_where.py::test_non_strict_inequalities": "Too slow with --inject-gpu-engine-blocksize=small",
     "tests/benchmark/test_join_where.py::test_strict_inequalities": "Too slow with --inject-gpu-engine-blocksize=small",
-    "tests/unit/io/test_partition.py::test_partition_approximate_size": "Too slow for CI",
     "tests/unit/io/test_lazy_parquet.py::test_parquet_many_row_groups_12297": "Too slow with --inject-gpu-engine-blocksize=small",
     "tests/unit/io/test_scan.py::test_scan[single-parquet-async]": "Too slow with --inject-gpu-engine-blocksize=small",
     "tests/unit/io/test_scan.py::test_scan[single-parquet-sync]": "Too slow with --inject-gpu-engine-blocksize=small",
@@ -476,9 +510,7 @@ STREAMING_ENGINE_TESTS_TO_SKIP: Mapping[str, str] = {
     "tests/unit/io/test_scan.py::test_scan_with_filter[single-parquet-sync]": "Too slow with --inject-gpu-engine-blocksize=small",
     "tests/unit/io/test_scan.py::test_scan_with_filter_and_limit[glob-parquet-async]": "Too slow with --inject-gpu-engine-blocksize=small",
     "tests/unit/io/test_scan.py::test_scan_with_filter_and_limit[glob-parquet-sync]": "Too slow with --inject-gpu-engine-blocksize=small",
-    "tests/unit/io/test_scan.py::test_scan_with_filter_and_limit[single-parquet-async]": "Takes >60 seconds to run locally",
     "tests/unit/io/test_scan.py::test_scan_with_filter_and_limit[single-parquet-sync]": "Too slow with --inject-gpu-engine-blocksize=small",
-    "tests/unit/io/test_scan.py::test_scan_with_row_index_projected_out[glob-parquet-async]": "Takes >60 seconds to run locally",
     "tests/unit/io/test_scan.py::test_scan_with_row_index_projected_out[glob-parquet-sync]": "Too slow with --inject-gpu-engine-blocksize=small",
     "tests/unit/io/test_scan.py::test_scan_with_row_index_projected_out[single-parquet-async]": "Too slow with --inject-gpu-engine-blocksize=small",
     "tests/unit/io/test_scan.py::test_scan_with_row_index_projected_out[single-parquet-sync]": "Too slow with --inject-gpu-engine-blocksize=small",
@@ -496,9 +528,6 @@ STREAMING_ENGINE_TESTS_TO_SKIP: Mapping[str, str] = {
     "tests/unit/lazyframe/test_order_observability.py::test_with_columns_sensitivity[exprs11-False-unordered_columns11]": "Too slow with --inject-gpu-engine-blocksize=small",
     "tests/unit/lazyframe/test_order_observability.py::test_with_columns_sensitivity[exprs12-False-None]": "Too slow with --inject-gpu-engine-blocksize=small",
     "tests/unit/lazyframe/test_order_observability.py::test_with_columns_sensitivity[exprs13-False-None]": "Too slow with --inject-gpu-engine-blocksize=small",
-    "tests/unit/lazyframe/test_optimizations.py::test_collapse_joins_combinations": "Too slow for CI",
-    "tests/unit/operations/test_index_of.py::test_randomized": "Too slow for CI; marked as pytest.mark.slow",
-    "tests/unit/operations/test_slice.py::test_slice_slice_pushdown": "Too slow with --inject-gpu-engine-blocksize=small",
     "tests/unit/operations/test_group_by.py::test_group_by_first_last_big[Int32-10432-False]": "Too slow with --inject-gpu-engine-blocksize=small",
     "tests/unit/operations/test_group_by.py::test_group_by_first_last_big[Int32-10432-True]": "Too slow with --inject-gpu-engine-blocksize=small",
     "tests/unit/operations/test_group_by.py::test_group_by_first_last_big[Boolean-10432-False]": "Too slow with --inject-gpu-engine-blocksize=small",
@@ -512,22 +541,16 @@ STREAMING_ENGINE_TESTS_TO_SKIP: Mapping[str, str] = {
     "tests/unit/operations/test_group_by.py::test_group_by_first_last_big[Int32-1056-False]": "Too slow with --inject-gpu-engine-blocksize=small",
     "tests/unit/operations/test_group_by.py::test_overflow_mean_partitioned_group_by_5194[Int32]": "Too slow with --inject-gpu-engine-blocksize=small",
     "tests/unit/operations/test_group_by.py::test_overflow_mean_partitioned_group_by_5194[UInt32]": "Too slow with --inject-gpu-engine-blocksize=small",
-    "tests/unit/streaming/test_streaming_sort.py::test_streaming_sort_varying_order_and_dtypes[sort_by0]": "Too slow for CI",
 }
 
-# xfail for tests that produce different results than CPU Polars
 STREAMING_ENGINE_EXPECTED_FAILURES: Mapping[str, str] = {
-    "tests/unit/functions/range/test_linear_space.py::test_linear_space_num_samples_expr": "https://github.com/NVIDIA/cudf/issues/22072",
     "tests/unit/functions/test_concat.py::test_concat_horizontal_zero_width_height_mismatch_26876": "https://github.com/NVIDIA/cudf/issues/21644",
     "tests/unit/functions/test_concat.py::test_concat_horizontally_strict": "Correct polars.exceptions.ShapeError raised but it's in a ExceptionGroup",
     "tests/unit/functions/test_when_then.py::test_mismatched_height_should_raise[ternary_expr0-df0]": "Correct polars.exceptions.ShapeError raised but it's in a ExceptionGroup",
     "tests/unit/functions/test_when_then.py::test_mismatched_height_should_raise[ternary_expr0-df1]": "Correct polars.exceptions.ShapeError raised but it's in a ExceptionGroup",
     "tests/unit/functions/test_when_then.py::test_mismatched_height_should_raise[ternary_expr1-df0]": "Correct polars.exceptions.ShapeError raised but it's in a ExceptionGroup",
     "tests/unit/functions/test_when_then.py::test_mismatched_height_should_raise[ternary_expr1-df1]": "Correct polars.exceptions.ShapeError raised but it's in a ExceptionGroup",
-    "tests/unit/operations/test_slice.py::test_slice_pushdown_literal_projection_14349": "https://github.com/NVIDIA/cudf/issues/22072",
     "tests/unit/operations/test_group_by.py::test_group_by_lit_series": "Incorrect broadcasting of literals in groupby-agg",
-    "tests/unit/operations/test_group_by.py::test_unique_head_tail_26429[1]": "https://github.com/NVIDIA/cudf/issues/22075",
-    "tests/unit/operations/test_group_by.py::test_unique_head_tail_26429[4]": "https://github.com/NVIDIA/cudf/issues/22075",
     "tests/unit/operations/aggregation/test_aggregations.py::test_item_too_many": "Correct polars.exceptions.ComputeError raised but it's in an ExceptionGroup",
     "tests/unit/operations/aggregation/test_aggregations.py::test_single_empty": "Correct polars.exceptions.ComputeError raised but it's in an ExceptionGroup",
     "tests/unit/operations/test_join.py::test_empty_outer_join_22206": "https://github.com/NVIDIA/cudf/issues/22084",
@@ -538,6 +561,13 @@ STREAMING_ENGINE_EXPECTED_FAILURES: Mapping[str, str] = {
     "tests/unit/io/test_io_plugin.py::test_defer_validate_true": "correct SchemaError raised but wrapped in an ExceptionGroup under the streaming engine",
     "tests/unit/lazyframe/test_projections.py::test_merge_sorted_projection_pd": "https://github.com/NVIDIA/cudf/issues/23055",
     "tests/unit/operations/test_slice.py::test_hconcat_tail_unequal_heights_strict_raises_27552": "horizontal-concat strict height-mismatch raised inside an ExceptionGroup under the streaming engine",
+}
+
+STREAMING_ENGINE_EXPECTED_FAILURES_SMALL_BLOCKSIZE: Mapping[str, str] = {
+    "tests/unit/operations/test_slice.py::test_slice_pushdown_literal_projection_14349": "https://github.com/NVIDIA/cudf/issues/22072",
+    "tests/unit/functions/range/test_linear_space.py::test_linear_space_num_samples_expr": "https://github.com/NVIDIA/cudf/issues/22072",
+    "tests/unit/operations/test_group_by.py::test_unique_head_tail_26429[1]": "https://github.com/NVIDIA/cudf/issues/22075",
+    "tests/unit/operations/test_group_by.py::test_unique_head_tail_26429[4]": "https://github.com/NVIDIA/cudf/issues/22075",
 }
 
 
@@ -556,18 +586,20 @@ def pytest_collection_modifyitems(
         # Don't xfail tests if running without fallback
         return
     with_streaming_engine = config.getoption("--inject-gpu-engine") == "spmd"
+    with_small_blocksize = (
+        with_streaming_engine
+        and config.getoption("--inject-gpu-engine-blocksize") == "small"
+    )
+    skips = dict(TESTS_TO_SKIP)
+    xfails = dict(EXPECTED_FAILURES)
+    if with_streaming_engine:
+        skips.update(STREAMING_ENGINE_TESTS_TO_SKIP)
+        xfails.update(STREAMING_ENGINE_EXPECTED_FAILURES)
+        if with_small_blocksize:
+            skips.update(STREAMING_ENGINE_TESTS_TO_SKIP_SMALL_BLOCKSIZE)
+            xfails.update(STREAMING_ENGINE_EXPECTED_FAILURES_SMALL_BLOCKSIZE)
     for item in items:
-        if (reason := TESTS_TO_SKIP.get(item.nodeid)) is not None or (
-            with_streaming_engine
-            and (reason := STREAMING_ENGINE_TESTS_TO_SKIP.get(item.nodeid, None))
-            is not None
-        ):
-            item.add_marker(pytest.mark.skip(reason=reason))
-        elif (
-            with_streaming_engine
-            and (s_reason := STREAMING_ENGINE_EXPECTED_FAILURES.get(item.nodeid, None))
-            is not None
-        ):
-            item.add_marker(pytest.mark.xfail(reason=s_reason))
-        elif (reason := EXPECTED_FAILURES.get(item.nodeid)) is not None:
-            item.add_marker(pytest.mark.xfail(reason=reason))
+        if (skip_reason := skips.get(item.nodeid)) is not None:
+            item.add_marker(pytest.mark.skip(reason=skip_reason))
+        elif (xfail_reason := xfails.get(item.nodeid)) is not None:
+            item.add_marker(pytest.mark.xfail(reason=xfail_reason))

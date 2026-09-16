@@ -231,7 +231,7 @@ jobs:
         test_python_cudf_polars_polars:
           - 'ci/test_cudf_polars_polars_tests.sh'
           - 'ci/run_cudf_polars_polars_tests.sh'
-          - 'python/cudf_polars/ci/polars_test_deselections*.txt'
+          - 'ci/cudf_polars/polars_test_deselections*.txt'
         test_python_cudf_polars_runner:
           - 'ci/run_cudf_polars_pytests.sh'
         test_cudf_pandas_third_party_integration:

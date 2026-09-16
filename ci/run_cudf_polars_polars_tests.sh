@@ -6,9 +6,9 @@ set -euo pipefail
 
 SCRIPT_DIR="$(dirname "$(realpath "${BASH_SOURCE[0]}")")"
 TIMEOUT_TOOL_PATH="${SCRIPT_DIR}/timeout_with_stack.py"
-DESELECTED_TESTS_FILE="${SCRIPT_DIR}/../python/cudf_polars/ci/polars_test_deselections.txt"
-AARCH64_DESELECTED_TESTS_FILE="${SCRIPT_DIR}/../python/cudf_polars/ci/polars_test_deselections_aarch64.txt"
-INCOMPATIBLE_GLIBC_DESELECTED_TESTS_FILE="${SCRIPT_DIR}/../python/cudf_polars/ci/polars_test_deselections_incompatible_glibc.txt"
+DESELECTED_TESTS_FILE="${SCRIPT_DIR}/cudf_polars/polars_test_deselections.txt"
+AARCH64_DESELECTED_TESTS_FILE="${SCRIPT_DIR}/cudf_polars/polars_test_deselections_aarch64.txt"
+INCOMPATIBLE_GLIBC_DESELECTED_TESTS_FILE="${SCRIPT_DIR}/cudf_polars/polars_test_deselections_incompatible_glibc.txt"
 
 function load_deselected_tests()
 {

@@ -1026,13 +1026,196 @@ def test_mixed_decimal_typecast(dtype_l, dtype_r):
         gdf_l.merge(gdf_r, on="join_col", how="inner")
 
 
+def _one_side_empty(data, empty, empty_side):
+    lhs, rhs = (empty, data) if empty_side == "left" else (data, empty)
+    return lhs, rhs, cudf.from_pandas(lhs), cudf.from_pandas(rhs)
+
+
+@pytest.mark.parametrize("how", ["outer", "right"])
 @pytest.mark.parametrize("empty_side", ["left", "right"])
-def test_mixed_decimal_typecast_empty_side_still_raises(empty_side):
+@pytest.mark.parametrize(
+    "empty_dtype",
+    [
+        "object",
+        "str",
+        "float64",
+        "int32",
+        "int64",
+        "category",
+        "datetime64[ns]",
+    ],
+)
+def test_merge_one_empty_side_nonempty_key_dtype_wins(
+    how, empty_side, empty_dtype
+):
     # https://github.com/rapidsai/cudf/issues/9981
-    # An empty join key with no rows carries no data, but its declared
-    # dtype must still be respected: mismatched decimal precision/scale
-    # should keep raising even when one side is empty, exactly as it does
-    # when both sides have rows.
+    # If exactly one side is empty, right and outer merges keep the key
+    # dtype and values of the non-empty side. 2**60 + 1 is not exact in
+    # float64.
+    data = pd.DataFrame(
+        {"k": pd.Series([2**60 + 1, 2, 3], dtype="int64"), "a": [1, 2, 3]}
+    )
+    empty = pd.DataFrame(
+        {
+            "k": pd.Series([], dtype=empty_dtype),
+            "b": pd.Series([], dtype="int64"),
+        }
+    )
+    lhs, rhs, glhs, grhs = _one_side_empty(data, empty, empty_side)
+
+    expect = lhs.merge(rhs, on="k", how=how)
+    got = glhs.merge(grhs, on="k", how=how)
+
+    assert_join_results_equal(expect, got, how=how)
+
+
+@pytest.mark.parametrize("how", ["outer", "right"])
+@pytest.mark.parametrize("empty_side", ["left", "right"])
+@pytest.mark.parametrize(
+    "data_key, empty_key",
+    [
+        (pd.Series([1, 2, 3], dtype="int8"), pd.Series([], dtype="int64")),
+        (
+            pd.Series(pd.to_datetime(["2020-01-01", "2020-01-02"])).astype(
+                "datetime64[s]"
+            ),
+            pd.Series([], dtype="datetime64[ns]"),
+        ),
+        (
+            pd.Series([0.1 + 0.2, 1 / 3, 1e300], dtype="float64"),
+            pd.Series([], dtype="str"),
+        ),
+        (pd.Series([1, 2, 3], dtype="category"), pd.Series([], dtype="int64")),
+        (
+            pd.Series(pd.Categorical(["x", "y"], categories=["x", "y"])),
+            pd.Series(pd.Categorical([], categories=["y", "z"])),
+        ),
+        (
+            pd.Series(pd.Categorical(["a", "b"], categories=["a", "b"])),
+            pd.Series(pd.Categorical([], categories=["a", "b"], ordered=True)),
+        ),
+    ],
+    ids=[
+        "int_width",
+        "datetime_unit",
+        "float_vs_str",
+        "cat_vs_int",
+        "cats",
+        "cat_ordered",
+    ],
+)
+def test_merge_one_empty_side_keeps_nonempty_key(
+    how, empty_side, data_key, empty_key
+):
+    # https://github.com/rapidsai/cudf/issues/9981
+    data = pd.DataFrame({"k": data_key})
+    empty = pd.DataFrame({"k": empty_key})
+    lhs, rhs, glhs, grhs = _one_side_empty(data, empty, empty_side)
+
+    expect = lhs.merge(rhs, on="k", how=how)
+    got = glhs.merge(grhs, on="k", how=how)
+
+    assert_join_results_equal(expect, got, how=how, check_exact=True)
+
+
+@pytest.mark.parametrize("how", ["outer", "right"])
+@pytest.mark.parametrize("empty_side", ["left", "right"])
+@pytest.mark.parametrize("empty_dtype", ["object", "float64", "int32"])
+def test_merge_one_empty_side_different_key_names(
+    how, empty_side, empty_dtype
+):
+    # https://github.com/rapidsai/cudf/issues/9981
+    # Keys with different names both stay in the output. Each one keeps the
+    # dtype of its own frame, also when one frame is empty.
+    data = pd.DataFrame({"k": pd.Series([1, 2, 3], dtype="int64")})
+    empty = pd.DataFrame({"k2": pd.Series([], dtype=empty_dtype)})
+    lhs, rhs, glhs, grhs = _one_side_empty(data, empty, empty_side)
+    lkey, rkey = ("k2", "k") if empty_side == "left" else ("k", "k2")
+
+    expect = lhs.merge(rhs, left_on=lkey, right_on=rkey, how=how)
+    got = glhs.merge(grhs, left_on=lkey, right_on=rkey, how=how)
+
+    # Only the dtypes are compared. cudf shows a null object key as None
+    # where pandas shows nan, on main as well.
+    assert dict(got.dtypes) == dict(expect.dtypes)
+
+
+@pytest.mark.parametrize("how", ["outer", "right"])
+@pytest.mark.parametrize("empty_side", ["left", "right"])
+@pytest.mark.parametrize(
+    "empty_dtype", ["object", "str", "float64", "int32", "category"]
+)
+def test_index_join_one_empty_side_keeps_common_type(
+    how, empty_side, empty_dtype
+):
+    # https://github.com/rapidsai/cudf/issues/9981
+    # Index.join does not use the merge rule. An outer join gives the common
+    # type and a right join keeps the dtype of other.
+    data = pd.Index([2**60 + 1, 2, 3], dtype="int64")
+    empty = pd.Index(pd.Series([], dtype=empty_dtype))
+    lhs, rhs = (empty, data) if empty_side == "left" else (data, empty)
+
+    expect = lhs.join(rhs, how=how)
+    got = cudf.from_pandas(lhs).join(cudf.from_pandas(rhs), how=how)
+
+    assert_eq(expect.sort_values(), got.sort_values(), exact=True)
+
+
+@pytest.mark.parametrize("how", ["outer", "right"])
+def test_join_empty_frame_on_datetime_index_raises(how):
+    # https://github.com/rapidsai/cudf/issues/9981
+    # An index key is not cast to the non-empty side. An empty frame has an
+    # int64 RangeIndex, so this join still raises, as it does on a frame
+    # with rows. It must not put raw numbers into a datetime index.
+    empty = cudf.DataFrame({"b": cudf.Series([], dtype="float64")})
+    data = cudf.DataFrame(
+        {"a": [1, 2]},
+        index=cudf.Index(
+            cudf.Series(["2020-01-01", "2020-01-02"], dtype="datetime64[ns]")
+        ),
+    )
+
+    with pytest.raises(TypeError):
+        empty.join(data, how=how)
+
+
+@pytest.mark.parametrize("empty_side", ["left", "right"])
+def test_merge_one_empty_side_mixed_timezone_raises(empty_side):
+    # https://github.com/rapidsai/cudf/issues/9981
+    # A timezone aware key and a timezone naive key cannot be joined, also
+    # when one side is empty.
+    data = cudf.DataFrame(
+        {"k": cudf.Series(["2020-01-01"], dtype="datetime64[ns]")}
+    )
+    empty = cudf.DataFrame(
+        {"k": cudf.Series([], dtype="datetime64[ns]").dt.tz_localize("UTC")}
+    )
+    lhs, rhs = (empty, data) if empty_side == "left" else (data, empty)
+
+    with pytest.raises(TypeError):
+        lhs.merge(rhs, on="k", how="outer")
+
+
+def test_outer_merge_both_sides_empty_key_dtype():
+    # https://github.com/rapidsai/cudf/issues/9981
+    # With both sides empty, pandas keeps the left key dtype.
+    lhs = pd.DataFrame({"k": pd.Series([], dtype="object")})
+    rhs = pd.DataFrame({"k": pd.Series([], dtype="int64")})
+
+    expect = lhs.merge(rhs, on="k", how="outer")
+    got = cudf.from_pandas(lhs).merge(
+        cudf.from_pandas(rhs), on="k", how="outer"
+    )
+
+    assert_join_results_equal(expect, got, how="outer")
+
+
+@pytest.mark.parametrize("how", ["outer", "right"])
+@pytest.mark.parametrize("empty_side", ["left", "right"])
+def test_mixed_decimal_typecast_empty_side_still_raises(how, empty_side):
+    # https://github.com/rapidsai/cudf/issues/9981
+    # Mismatched decimal precision or scale raises also when one side is
+    # empty.
     join_data = cudf.Series(["95.05", "34.6", "74.22", "14.94"]).astype(
         Decimal64Dtype(9, 5)
     )
@@ -1052,7 +1235,7 @@ def test_mixed_decimal_typecast_empty_side_still_raises(empty_side):
         match="Decimal columns can only be merged with decimal columns "
         "of the same precision and scale",
     ):
-        lhs.merge(rhs, on="join_col", how="outer")
+        lhs.merge(rhs, on="join_col", how=how)
 
 
 @pytest.fixture

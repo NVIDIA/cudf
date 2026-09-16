@@ -137,7 +137,7 @@ void codec_stats::add_pages(host_span<ColumnChunkDesc const> chunks,
       auto const input = get_decompression_input(page);
       if (input.is_page_compressed) {
         total_output_size += page.uncompressed_page_size;
-        if (input.level_bytes > 0) { ++num_level_pages; }
+        if (input.needs_level_copy()) { ++num_level_pages; }
         if (not input.values.empty()) {
           ++num_pages;
           total_decomp_size += input.uncompressed_values_size;
@@ -552,7 +552,7 @@ std::vector<row_range> compute_page_splits_by_row(device_span<cumulative_page_in
         // for V2 need to copy def and rep level info into place, and then offset the
         // input and output buffers. otherwise we'd have to keep both the compressed
         // and decompressed data.
-        if (input.level_bytes != 0) {
+        if (input.needs_level_copy()) {
           copy_in[curr_copy_page]  = {page.page_data, static_cast<size_t>(input.level_bytes)};
           copy_out[curr_copy_page] = {dst_base, static_cast<size_t>(input.level_bytes)};
           ++curr_copy_page;
@@ -809,9 +809,8 @@ rmm::device_uvector<size_t> compute_decompression_scratch_sizes(
                           codec] __device__(size_t i) {
                            auto const page_codec =
                              parquet_compression_support(chunks[pages[i].chunk_idx].codec).first;
-                           auto const input = get_decompression_input(pages[i]);
-                           // Only adjust compressed pages that use the current codec.
-                           if (page_codec == codec && not input.values.empty()) {
+                           // Only adjust pages that use the current compression codec.
+                           if (page_codec == codec) {
                              auto const cost = d_temp_cost_ptr[i];
                              // Scale down the cost and round up to ensure we don't underestimate
                              auto const adjusted =

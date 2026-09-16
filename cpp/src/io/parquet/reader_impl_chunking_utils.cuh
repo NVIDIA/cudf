@@ -426,6 +426,14 @@ struct decompression_input {
   int32_t level_bytes;
   int32_t uncompressed_values_size;
   bool is_page_compressed;
+
+  /**
+   * @brief Whether this page contributes a V2 level-bytes copy alongside decompression.
+   */
+  [[nodiscard]] CUDF_HOST_DEVICE constexpr bool needs_level_copy() const
+  {
+    return level_bytes > 0;
+  }
 };
 
 /**

@@ -156,13 +156,13 @@ def test_sets_cudf_polars_query_id():
         assert "scope" in log
         assert "cudf_polars_query_id" in log
         assert log["cudf_polars_query_id"] == query_id
+        keys = set(log.keys())
 
         match log["scope"]:
             case "plan":
-                assert "plan" in log
+                expected_keys = {"plan"}
             case "actor":
-                keys = set(log.keys())
-                assert keys >= {
+                expected_keys = {
                     "actor_ir_id",
                     "actor_ir_type",
                     "cudf_polars_query_id",
@@ -172,8 +172,7 @@ def test_sets_cudf_polars_query_id():
                     "stop",
                 }
             case "evaluate_ir_node":
-                keys = set(log.keys())
-                assert keys >= {
+                expected_keys = {
                     "start",
                     "stop",
                     "cudf_polars_query_id",
@@ -183,8 +182,7 @@ def test_sets_cudf_polars_query_id():
                     "actor_ir_id",
                 }
             case "io_task":
-                keys = set(log.keys())
-                assert keys >= {
+                expected_keys = {
                     "actor_ir_id",
                     "actor_ir_type",
                     "admitted",
@@ -202,3 +200,5 @@ def test_sets_cudf_polars_query_id():
                 }
             case _:
                 pytest.fail(f"Unexpected scope: {log['scope']}")
+
+        assert expected_keys.issubset(keys)

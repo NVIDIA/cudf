@@ -1,0 +1,15 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# This file contains additional pytest node IDs that are skipped on aarch64 when running the
+# upstream polars tests with the `run_cudf_polars_polars_tests.sh` test runner.
+
+# The binary used for TPC-H generation is compiled for x86_64, not aarch64.
+tests/benchmark/test_pdsh.py::test_pdsh
+
+# The connectorx package is not available on aarch64.
+tests/unit/io/database/test_read.py::test_read_database
+
+# The necessary timezone information cannot be found in the CI image.
+tests/unit/io/test_parquet.py::test_parametric_small_page_mask_filtering
+tests/unit/testing/test_assert_series_equal.py::test_assert_series_equal_parametric
+tests/unit/operations/test_join.py::test_join_4_columns_with_validity

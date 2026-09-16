@@ -222,7 +222,6 @@ def test_io_tasks_wait_for_memory_admission(
 
     env = os.environ.copy()
     env["CUDF_POLARS_LOG_TRACES"] = "1"
-    env["CUDF_POLARS_LOG_TRACES_MEMORY"] = "0"
 
     with subprocess.Popen(
         [sys.executable, "-c", code],

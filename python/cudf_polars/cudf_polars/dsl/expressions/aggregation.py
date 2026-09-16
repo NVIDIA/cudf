@@ -569,13 +569,13 @@ class Skew(Expr):
         """
         eps = sys.float_info.epsilon
         is_zero = m2 <= (eps * mean) * (eps * mean)
-        if is_zero:
+        try:
+            denom = m2**1.5
+        except OverflowError:
+            denom = math.inf
+        if is_zero or denom == 0.0:
             biased = math.nan
         else:
-            try:
-                denom = m2**1.5
-            except OverflowError:
-                denom = math.inf
             biased = m3 / denom
         if bias:
             return biased
@@ -687,7 +687,8 @@ class Kurtosis(Expr):
         """
         eps = sys.float_info.epsilon
         is_zero = m2 <= (eps * mean) * (eps * mean)
-        biased = math.nan if is_zero else m4 / (m2 * m2)
+        denom = m2 * m2
+        biased = math.nan if is_zero or denom == 0.0 else m4 / denom
         if bias:
             out = biased
         else:

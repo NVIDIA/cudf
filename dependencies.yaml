@@ -972,6 +972,7 @@ dependencies:
           # if no matching matrix selectors passed, list the CUDA 13 requirement
           # (just as a source of documentation, as this populates pyproject.toml in source control)
           - matrix:
+              use_cuda_wheels: "true"
             packages:
               - cuda-toolkit[nvrtc]==13.*
               - *nvjitlink_cu13

@@ -1128,7 +1128,8 @@ void input_limit_test_read(int test_location,
                            cudf::table_view const& input,
                            output_limit output_limit_bytes,
                            input_limit input_limit_bytes,
-                           int const* expected_chunk_counts)
+                           int const* expected_chunk_counts,
+                           bool require_multiple_chunks = false)
 {
   CUDF_EXPECTS(test_files.size() == input_limit_expected_file_count,
                "Unexpected count of test filenames.");
@@ -1142,6 +1143,7 @@ void input_limit_test_read(int test_location,
     // EXPECT_EQ(expected_chunk_counts[idx], num_chunks);
     // TODO: equal
     CUDF_TEST_EXPECT_TABLES_EQUIVALENT(*result, input);
+    if (require_multiple_chunks) { EXPECT_GT(num_chunks, 1); }
   }
 }
 
@@ -1242,7 +1244,7 @@ TEST_F(OrcChunkedReaderInputLimitTest, ListType)
   // this test runs over 3 hours when racecheck is used
   if (getenv("LIBCUDF_RACECHECK_ENABLED")) { GTEST_SKIP(); }
 
-  int constexpr num_rows  = 50'000'000;
+  int constexpr num_rows  = 25'000'000;
   int constexpr list_size = 4;
 
   auto const stream = cudf::get_default_stream();
@@ -1274,13 +1276,18 @@ TEST_F(OrcChunkedReaderInputLimitTest, ListType)
 
   // Although we set `stripe_size_rows` to be very large, the writer only write
   // 250k rows (top level) per stripe due to having nested type.
-  // Thus, we have 200 stripes in total.
+  // Thus, we have 100 stripes in total.
   input_limit_test_write(test_files, input, cudf::io::default_stripe_size_rows);
 
   {
     int constexpr expected[] = {3, 40, 3};
-    input_limit_test_read(
-      __LINE__, test_files, input, output_limit{0UL}, input_limit{5 * 1024 * 1024UL}, expected);
+    input_limit_test_read(__LINE__,
+                          test_files,
+                          input,
+                          output_limit{0UL},
+                          input_limit{5 * 1024 * 1024UL},
+                          expected,
+                          true);
   }
 
   {
@@ -1299,7 +1306,7 @@ TEST_F(OrcChunkedReaderInputLimitTest, MixedColumnsHavingList)
   // this test runs over 3 hours when racecheck is used
   if (getenv("LIBCUDF_RACECHECK_ENABLED")) { GTEST_SKIP(); }
 
-  int constexpr num_rows  = 50'000'000;
+  int constexpr num_rows  = 25'000'000;
   int constexpr list_size = 4;
   int constexpr str_size  = 3;
 
@@ -1360,13 +1367,18 @@ TEST_F(OrcChunkedReaderInputLimitTest, MixedColumnsHavingList)
 
   // Although we set `stripe_size_rows` to be very large, the writer only write
   // 250k rows (top level) per stripe due to having nested type.
-  // Thus, we have 200 stripes in total.
+  // Thus, we have 100 stripes in total.
   input_limit_test_write(test_files, input, cudf::io::default_stripe_size_rows);
 
   {
     int constexpr expected[] = {13, 8, 6};
-    input_limit_test_read(
-      __LINE__, test_files, input, output_limit{0UL}, input_limit{128 * 1024 * 1024UL}, expected);
+    input_limit_test_read(__LINE__,
+                          test_files,
+                          input,
+                          output_limit{0UL},
+                          input_limit{128 * 1024 * 1024UL},
+                          expected,
+                          true);
   }
 
   {
@@ -1461,7 +1473,7 @@ TEST_F(OrcChunkedReaderInputLimitTest, SizeTypeRowsOverflow)
 
   int64_t constexpr num_rows    = 500'000'000l;
   int constexpr rows_per_stripe = 1'000'000;
-  int constexpr num_reps        = 10;
+  int constexpr num_reps        = 5;
   int64_t constexpr total_rows  = num_rows * num_reps;
   static_assert(total_rows > std::numeric_limits<cudf::size_type>::max());
 

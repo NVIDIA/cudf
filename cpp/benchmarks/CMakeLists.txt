@@ -297,34 +297,35 @@ ConfigureNVBench(
 # * parquet reader benchmark ----------------------------------------------------------------------
 ConfigureNVBench(
   PARQUET_READER_NVBENCH io/parquet/parquet_reader_input.cpp io/parquet/parquet_reader_encoding.cpp
-  io/parquet/parquet_reader_options.cpp io/parquet/reader_common.cpp
+  io/parquet/parquet_reader_options.cpp io/parquet/parquet_common.cpp
 )
 
 # ##################################################################################################
 # * parquet reader chunks benchmark
 # ------------------------------------------------------------------
 ConfigureNVBench(
-  PARQUET_READER_CHUNKS_NVBENCH io/parquet/parquet_reader_chunks.cpp io/parquet/reader_common.cpp
+  PARQUET_READER_CHUNKS_NVBENCH io/parquet/parquet_reader_chunks.cpp io/parquet/parquet_common.cpp
 )
 
 # ##################################################################################################
 # * parquet reader compressed benchmark ------------------------------------------------------------
 ConfigureNVBench(
   PARQUET_READER_COMPRESSED_NVBENCH io/parquet/parquet_reader_compressed.cpp
-  io/parquet/reader_common.cpp
+  io/parquet/parquet_common.cpp
 )
 
 # ##################################################################################################
 # * parquet reader strings benchmark
 # ------------------------------------------------------------------
 ConfigureNVBench(
-  PARQUET_READER_STRINGS_NVBENCH io/parquet/parquet_reader_strings.cpp io/parquet/reader_common.cpp
+  PARQUET_READER_STRINGS_NVBENCH io/parquet/parquet_reader_strings.cpp
+  io/parquet/parquet_common.cpp
 )
 
 # ##################################################################################################
 # * parquet reader wide benchmark ------------------------------------------------------------------
 ConfigureNVBench(
-  PARQUET_READER_WIDE_NVBENCH io/parquet/parquet_reader_wide.cpp io/parquet/reader_common.cpp
+  PARQUET_READER_WIDE_NVBENCH io/parquet/parquet_reader_wide.cpp io/parquet/parquet_common.cpp
 )
 
 # ##################################################################################################

@@ -248,8 +248,7 @@ target_compile_definitions(
 )
 target_link_options(cudfjni PRIVATE "-Wl,--no-undefined")
 
-# cudf-java uses libarrow only for the Arrow C-Data-Interface (from_arrow); it never uses
-# Arrow-Parquet, so leave CUDF_ENABLE_ARROW_PARQUET at its get_arrow default (OFF).
+set(CUDF_ENABLE_ARROW_PARQUET ON)
 include(cmake/thirdparty/get_arrow.cmake)
 target_link_libraries(cudfjni PRIVATE ${ARROW_LIBRARIES})
 

@@ -178,6 +178,7 @@ if(BUILD_TESTS AND NOT CUDF_BUILD_TESTUTIL)
 endif()
 
 set(CUDF_CXX_FLAGS "")
+set(CUDF_CXX_TEST_FLAGS "")
 set(CUDF_CUDA_FLAGS "")
 set(CUDF_CXX_DEFINITIONS "")
 set(CUDF_CUDA_DEFINITIONS "")
@@ -1544,8 +1545,10 @@ if(CUDF_BUILD_TESTUTIL)
   )
 
   target_compile_options(
-    cudftestutil INTERFACE "$<BUILD_INTERFACE:$<$<COMPILE_LANGUAGE:CXX>:${CUDF_CXX_FLAGS}>>"
-                           "$<BUILD_INTERFACE:$<$<COMPILE_LANGUAGE:CUDA>:${CUDF_CUDA_FLAGS}>>"
+    cudftestutil
+    INTERFACE
+      "$<BUILD_INTERFACE:$<$<COMPILE_LANGUAGE:CXX>:${CUDF_CXX_FLAGS};${CUDF_CXX_TEST_FLAGS}>>"
+      "$<BUILD_INTERFACE:$<$<COMPILE_LANGUAGE:CUDA>:${CUDF_CUDA_FLAGS}>>"
   )
 
   target_link_libraries(

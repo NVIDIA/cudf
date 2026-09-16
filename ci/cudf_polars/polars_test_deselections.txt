@@ -43,6 +43,3 @@ tests/unit/io/test_write.py::test_write_async[<lambda>-<lambda>2]
 # See https://github.com/pola-rs/polars/issues/28954.
 tests/unit/io/test_scan.py::test_scan_ndjson_streaming_decompression[schema0]
 tests/unit/io/test_scan.py::test_scan_ndjson_streaming_decompression[None]
-
-# See https://github.com/NVIDIA/cudf/issues/22964.
-tests/unit/operations/test_random.py::test_shuffle_group_by_reseed

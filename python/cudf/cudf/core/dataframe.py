@@ -5065,6 +5065,7 @@ class DataFrame(IndexedFrame, GetAttrGetItemMixin):
             sort=sort,
             indicator=indicator,
             suffixes=suffixes,
+            from_right_join=is_right_join,
         ).perform_merge()
 
         if is_right_join:
@@ -5198,22 +5199,10 @@ class DataFrame(IndexedFrame, GetAttrGetItemMixin):
 
             def _restore_shared_key_dtype(name, left_dtype, right_dtype):
                 if nonempty_key_wins and right_dtype is not None:
-                    target, other = (
-                        (right_dtype, left_dtype)
-                        if left_empty
-                        else (left_dtype, right_dtype)
-                    )
-                    if (
-                        isinstance(target, CategoricalDtype)
-                        and name in result._data
-                        and result._data[name].dtype != target
-                    ):
-                        # The join removed the categories from the key. All
-                        # key values come from the non-empty frame, so they
-                        # are all in its categories.
-                        result[name] = result[name].astype(target)
+                    if left_empty:
+                        _restore_key_dtype(name, right_dtype, left_dtype)
                     else:
-                        _restore_key_dtype(name, target, other)
+                        _restore_key_dtype(name, left_dtype, right_dtype)
                 elif _keep_left_dtype(left_dtype, right_dtype):
                     _restore_key_dtype(name, left_dtype, right_dtype)
 

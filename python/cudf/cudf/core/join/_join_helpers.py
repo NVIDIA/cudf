@@ -80,29 +80,6 @@ def _match_join_keys(
     ltype = lcol.dtype
     rtype = rcol.dtype
 
-    # https://github.com/rapidsai/cudf/issues/9981
-    # In an outer join where exactly one side has no rows, all output key
-    # values come from the non-empty side. Cast only the empty side to the
-    # dtype of the non-empty side. The common type below can change the key
-    # values (for example int64 to float64) or raise (for example an empty
-    # datetime key against an int key). DataFrame.merge sets the final key
-    # dtype. Decimal dtypes are excluded, so mismatched precision or scale
-    # still raises below, as it does when both sides have rows.
-    if (
-        how == "outer"
-        and ltype != rtype
-        and not isinstance(
-            ltype, (Decimal32Dtype, Decimal64Dtype, Decimal128Dtype)
-        )
-        and not isinstance(
-            rtype, (Decimal32Dtype, Decimal64Dtype, Decimal128Dtype)
-        )
-    ):
-        if len(lcol) and not len(rcol):
-            return lcol, rcol.astype(ltype)
-        elif len(rcol) and not len(lcol):
-            return lcol.astype(rtype), rcol
-
     # if either side is categorical, different logic
     left_is_categorical = isinstance(ltype, CategoricalDtype)
     right_is_categorical = isinstance(rtype, CategoricalDtype)

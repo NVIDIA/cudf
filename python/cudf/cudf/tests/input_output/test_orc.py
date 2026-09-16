@@ -102,15 +102,19 @@ def engine(request):
         ("TestOrcFile.demo-12-zlib.orc", ["_col2", "_col3", "_col4", "_col5"]),
     ],
 )
-def test_orc_reader_basic(datadir, inputfile, columns, use_index, engine):
+def test_orc_reader_basic(datadir, inputfile, columns):
     path = datadir / inputfile
 
-    expect = pd.read_orc(path, columns=columns)
-    got = cudf.read_orc(
-        path, engine=engine, columns=columns, use_index=use_index
-    )
-
-    assert_frame_equal(cudf.from_pandas(expect), got, check_categorical=False)
+    expect = cudf.from_pandas(pd.read_orc(path, columns=columns))
+    for engine in ("pyarrow", "cudf"):
+        for use_index in (True, False):
+            got = cudf.read_orc(
+                path,
+                engine=engine,
+                columns=columns,
+                use_index=use_index,
+            )
+            assert_frame_equal(expect, got, check_categorical=False)
 
 
 def test_orc_reader_filenotfound(tmpdir):

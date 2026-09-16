@@ -187,7 +187,6 @@ jobs:
     with:
       docs-projects: cudf,dask-cudf,libcudf
       dry-run: false
-      version-map: ${{ vars.VERSION_MAP }}
   wheel-build:
     needs: [build-details, telemetry-setup]
     permissions:

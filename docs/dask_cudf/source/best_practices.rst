@@ -46,7 +46,7 @@ is also shown in :ref:`multiple_gpus`.
   <https://docs.dask.org/en/latest/deploying-kubernetes.html>`__ and `Dask-Jobqueue
   <https://jobqueue.dask.org/en/latest/>`__.
 
-  Please see `the cloud deployment documentation <https://docs.rapids.ai/deployment/stable/>`__
+  Please see `the cloud deployment documentation <https://docs.nvidia.com/datascience/deployment/latest/>`__
   for further details and examples.
 
 

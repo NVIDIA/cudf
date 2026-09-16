@@ -430,10 +430,7 @@ struct decompression_input {
   /**
    * @brief Whether this page contributes a V2 level-bytes copy alongside decompression.
    */
-  [[nodiscard]] CUDF_HOST_DEVICE constexpr bool needs_level_copy() const
-  {
-    return level_bytes > 0;
-  }
+  [[nodiscard]] CUDF_HOST_DEVICE constexpr bool needs_level_copy() const { return level_bytes > 0; }
 };
 
 /**

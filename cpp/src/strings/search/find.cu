@@ -547,7 +547,9 @@ CUDF_KERNEL void lrb_scatter_kernel(column_device_view const d_strings,
  *
  * All rows scheduled on one warp belong to the same bin, so `row` is either valid for every lane
  * of the tile or -1 for every lane of the tile; the early return is tile-uniform. `chunk` selects
- * which LRB_CHUNK_BYTES window of starting positions this task owns (0 for rows scheduled whole).
+ * which LRB_CHUNK_BYTES window of starting positions this task owns (0 for rows scheduled whole);
+ * `row_is_chunked` says whether other tasks share this row, in which case a result already
+ * written by one of them ends this task immediately.
  */
 template <int G, typename Tile>
 __device__ __forceinline__ void lrb_search_row_tile(Tile const& tile,
@@ -555,9 +557,17 @@ __device__ __forceinline__ void lrb_search_row_tile(Tile const& tile,
                                                     string_view const d_target,
                                                     bool* d_results,
                                                     size_type const row,
-                                                    int const chunk)
+                                                    int const chunk,
+                                                    bool const row_is_chunked)
 {
   if (row < 0) { return; }
+  // A row split into several chunk tasks is resolved as soon as any chunk finds the target:
+  // skip the rest of its chunks. The load is device-scope so it is not served from a stale L1.
+  if (row_is_chunked &&
+      cuda::atomic_ref<bool, cuda::thread_scope_device>(d_results[row]).load(
+        cuda::memory_order_relaxed)) {
+    return;
+  }
 
   auto const d_str        = d_strings.element<string_view>(row);
   auto const bytes        = d_str.size_bytes();
@@ -573,20 +583,24 @@ __device__ __forceinline__ void lrb_search_row_tile(Tile const& tile,
       found = d_target.compare(d_str.data() + i, target_bytes) == 0;
     }
   } else {
-    // lane owns 4 consecutive starting positions per iteration; lanes cover 4*G bytes per step.
-    // No per-iteration votes: a task is at most one chunk, so each lane makes a bounded number of
-    // iterations and simply finishing its own positions is cheaper than voting.
+    // Lanes cover a window of 4*G consecutive starting positions per iteration, 4 per lane.
+    // The work of a row is the position of its *first* match, not its length, so the whole
+    // tile stops at the iteration in which any lane matches (one vote per iteration). The loop
+    // bound is tile-uniform because every lane of the tile searches the same row.
     auto constexpr bytes_per_lane = 4;
-    for (auto pos = begin + static_cast<size_type>(tile.thread_rank()) * bytes_per_lane;
-         !found && (pos < end);
-         pos += G * bytes_per_lane) {
+    auto constexpr window         = G * bytes_per_lane;
+    auto const lane_offset        = static_cast<size_type>(tile.thread_rank()) * bytes_per_lane;
+    for (auto base = begin; base < end; base += window) {
+      auto const pos = base + lane_offset;
       for (auto j = 0; !found && (j < bytes_per_lane); ++j) {
         found = ((pos + j) < end) && (d_target.compare(d_str.data() + pos + j, target_bytes) == 0);
       }
+      found = tile.any(found);  // tile-uniform from here on
+      if (found) { break; }
     }
   }
 
-  if (tile.any(found) && tile.thread_rank() == 0) { d_results[row] = true; }
+  if (found && tile.thread_rank() == 0) { d_results[row] = true; }
 }
 
 template <int G>
@@ -596,13 +610,19 @@ __device__ __forceinline__ void lrb_search_row(
   string_view const d_target,
   bool* d_results,
   size_type const row,
-  int const chunk)
+  int const chunk,
+  bool const row_is_chunked)
 {
   if constexpr (G == cudf::detail::warp_size) {
-    lrb_search_row_tile<G>(warp, d_strings, d_target, d_results, row, chunk);
+    lrb_search_row_tile<G>(warp, d_strings, d_target, d_results, row, chunk, row_is_chunked);
   } else {
-    lrb_search_row_tile<G>(
-      cooperative_groups::tiled_partition<G>(warp), d_strings, d_target, d_results, row, chunk);
+    lrb_search_row_tile<G>(cooperative_groups::tiled_partition<G>(warp),
+                           d_strings,
+                           d_target,
+                           d_results,
+                           row,
+                           chunk,
+                           row_is_chunked);
   }
 }
 
@@ -648,17 +668,22 @@ CUDF_KERNEL void lrb_search_kernel(column_device_view const d_strings,
     auto const first    = warp.shfl(my_first, bin);
     auto const chunk    = static_cast<int>(warp.shfl(my_chunk, bin));
     auto const end      = warp.shfl(bin_start + bin_count, bin);
+    auto const chunked  = lrb_chunk_shift(bin) > 0;  // rows of this bin span several tasks
     auto const G        = lrb_threads_per_row(bin);
     auto const slot     = first + lane / G;
     auto const row      = (slot < end) ? d_sorted[slot] : -1;
 
     switch (G) {  // warp-uniform
-      case 1: lrb_search_row<1>(warp, d_strings, d_target, d_results, row, chunk); break;
-      case 2: lrb_search_row<2>(warp, d_strings, d_target, d_results, row, chunk); break;
-      case 4: lrb_search_row<4>(warp, d_strings, d_target, d_results, row, chunk); break;
-      case 8: lrb_search_row<8>(warp, d_strings, d_target, d_results, row, chunk); break;
-      case 16: lrb_search_row<16>(warp, d_strings, d_target, d_results, row, chunk); break;
-      default: lrb_search_row<32>(warp, d_strings, d_target, d_results, row, chunk); break;
+      case 1: lrb_search_row<1>(warp, d_strings, d_target, d_results, row, chunk, chunked); break;
+      case 2: lrb_search_row<2>(warp, d_strings, d_target, d_results, row, chunk, chunked); break;
+      case 4: lrb_search_row<4>(warp, d_strings, d_target, d_results, row, chunk, chunked); break;
+      case 8: lrb_search_row<8>(warp, d_strings, d_target, d_results, row, chunk, chunked); break;
+      case 16:
+        lrb_search_row<16>(warp, d_strings, d_target, d_results, row, chunk, chunked);
+        break;
+      default:
+        lrb_search_row<32>(warp, d_strings, d_target, d_results, row, chunk, chunked);
+        break;
     }
   }
 }

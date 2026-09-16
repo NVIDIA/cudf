@@ -150,7 +150,6 @@ class CompactProtocolReader {
 
  public:
   // Generate Thrift structure parsing routines
-  void read(FileMetaData* f);
   void read(SchemaElement* s);
   void read(LogicalType* l);
   void read(DecimalType* d);
@@ -203,6 +202,9 @@ class CompactProtocolReader {
   experimental::thrift_mismatch_policy m_mismatch_policy =
     experimental::thrift_mismatch_policy::THROW;
 
+  // Private: only the decode helpers below may read a FileMetaData directly; each pairs the parse
+  // with the mandatory overread check so a truncated footer is always rejected.
+  void read(FileMetaData* f);
   friend class parquet_field_string;
   friend class parquet_field_string_list;
   friend class parquet_field_binary;
@@ -212,6 +214,11 @@ class CompactProtocolReader {
   friend class parquet_field_list;
   template <typename T>
   friend class parquet_field_struct_list;
+  friend void decode_footer_bytes(cudf::host_span<uint8_t const> footer_bytes,
+                                  FileMetaData* metadata,
+                                  experimental::thrift_mismatch_policy mode);
+  friend void decode_footer_and_init_schema(cudf::host_span<uint8_t const> footer_bytes,
+                                            FileMetaData* metadata);
 };
 
 /**

@@ -697,9 +697,14 @@ bool CompactProtocolReader::check_field_type(int type, FieldType expected)
 
 bool CompactProtocolReader::check_list_element_type(int type, FieldType expected, uint32_t count)
 {
-  if (type == static_cast<int>(expected)) { return true; }
+  auto const is_bool = [](FieldType t) {
+    return t == FieldType::BOOLEAN_TRUE || t == FieldType::BOOLEAN_FALSE;
+  };
+  auto const et = static_cast<FieldType>(type);
+  // A bool list may carry either nibble (true/false); both are valid element types.
+  if (type == static_cast<int>(expected) || (is_bool(expected) && is_bool(et))) { return true; }
   if (should_throw_on_type_mismatch()) {
-    if (expected == FieldType::BOOLEAN_TRUE || expected == FieldType::BOOLEAN_FALSE) {
+    if (is_bool(expected)) {
       assert_bool_field_type(type);
     } else {
       assert_field_type(type, expected);
@@ -707,8 +712,7 @@ bool CompactProtocolReader::check_list_element_type(int type, FieldType expected
   }
   // Discard the element payloads so the walk resumes at the next field. Bool elements are one
   // byte each (the value lives in the type nibble); callers bound `count` against the buffer.
-  auto const et = static_cast<FieldType>(type);
-  if (et == FieldType::BOOLEAN_TRUE || et == FieldType::BOOLEAN_FALSE) {
+  if (is_bool(et)) {
     skip_bytes(count);
   } else {
     for (uint32_t i = 0; i < count; ++i) {
@@ -730,8 +734,8 @@ void CompactProtocolReader::read(FileMetaData* f)
                             parquet_field_string(6, f->created_by),
                             optional_list_column_order(7, f->column_orders));
   function_builder(this, op);
-  // Callers check overread() after schema-init so a footer with no schema reports the specific
-  // "Cannot initialize schema", not this generic error.
+  // Callers can check overread() after schema-init so a footer with no schema reports the
+  // specific "Cannot initialize schema", not this generic error.
 }
 
 void CompactProtocolReader::read(SchemaElement* s)

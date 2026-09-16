@@ -215,8 +215,12 @@ def multiindex_loc_frames():
         names=["alpha", "location", "weather", "sign", "timestamp"],
     )
     gdf = cudf.from_pandas(pdf)
-    assert_eq(pdf.index, gdf.index)
     return pdf, gdf
+
+
+def test_multiindex_loc_fixture_indices(multiindex_loc_frames):
+    pdf, gdf = multiindex_loc_frames
+    assert_eq(pdf.index, gdf.index)
 
 
 @pytest.mark.parametrize(

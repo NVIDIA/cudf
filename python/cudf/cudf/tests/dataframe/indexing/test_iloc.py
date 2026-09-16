@@ -36,8 +36,12 @@ def multiindex_iloc_frames():
         names=["alpha", "location", "weather", "sign", "timestamp"],
     )
     gdf = cudf.from_pandas(pdf)
-    assert_eq(pdf.index, gdf.index)
     return pdf, gdf
+
+
+def test_multiindex_iloc_fixture_indices(multiindex_iloc_frames):
+    pdf, gdf = multiindex_iloc_frames
+    assert_eq(pdf.index, gdf.index)
 
 
 @pytest.mark.parametrize(

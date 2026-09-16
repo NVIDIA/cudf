@@ -142,3 +142,30 @@ cuio_source_sink_pair write_mixed_dtype_parquet_file(cudf::size_type num_cols,
 
   return source_sink;
 }
+
+cuio_source_sink_pair write_named_resolution_parquet_file(cudf::size_type num_cols,
+                                                          io_type source_type)
+{
+  cuio_source_sink_pair source_sink(source_type);
+
+  // Flat, single-row table of INT32 columns with deterministic names col0..col{n-1}. INT32 keeps
+  // the filter literal trivially type-correct; name-resolution cost is independent of dtype.
+  constexpr cudf::size_type num_rows = 1;
+  auto const tbl =
+    create_random_table(cycle_dtypes({cudf::type_id::INT32}, num_cols),
+                        row_count{num_rows},
+                        data_profile_builder().cardinality(0).avg_run_length(1).no_validity());
+
+  cudf::io::table_input_metadata input_meta(tbl->view());
+  for (cudf::size_type i = 0; i < num_cols; ++i) {
+    input_meta.column_metadata[i].set_name("col" + std::to_string(i));
+  }
+
+  cudf::io::parquet_writer_options write_opts =
+    cudf::io::parquet_writer_options::builder(source_sink.make_sink_info(), tbl->view())
+      .metadata(std::move(input_meta))
+      .compression(cudf::io::compression_type::NONE);
+  cudf::io::write_parquet(write_opts);
+
+  return source_sink;
+}

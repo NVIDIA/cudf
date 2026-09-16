@@ -38,3 +38,7 @@ void parquet_read_common(cudf::size_type num_rows_to_read,
                                                                    cudf::size_type num_row_groups,
                                                                    io_type source_type,
                                                                    bool write_page_index);
+
+// Writes a negligible single-row file with deterministically named columns
+[[nodiscard]] cuio_source_sink_pair write_named_resolution_parquet_file(cudf::size_type num_cols,
+                                                                        io_type source_type);

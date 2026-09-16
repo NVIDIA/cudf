@@ -58,6 +58,18 @@ def test_skew_kurtosis_constant(engine):
     assert_gpu_result_equal(q, engine=engine, check_exact=False)
 
 
+def test_moment_finalization_handles_underflowed_denominators(engine):
+    # A nonzero second central moment can still underflow when raised to the
+    # skew/kurtosis normalization power. Both results should be NaN rather
+    # than raising ZeroDivisionError during GPU execution.
+    df = pl.LazyFrame({"a": [2e-150, 4e-150]})
+    q = df.select(
+        pl.col("a").skew().alias("skew"),
+        pl.col("a").kurtosis().alias("kurtosis"),
+    )
+    assert_gpu_result_equal(q, engine=engine, check_exact=False)
+
+
 def test_skew_kurtosis_large_offset(engine):
     df = pl.LazyFrame({"a": [1e12 + value for value in range(8)]})
     q = df.select(

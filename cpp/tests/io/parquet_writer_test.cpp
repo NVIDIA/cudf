@@ -2816,136 +2816,69 @@ TYPED_TEST(ParquetWriterTimestampTypeTest, TimestampsByteStreamSplit)
 // Base test fixture for "stress" tests
 struct ParquetWriterStressTest : public cudf::test::BaseFixture {};
 
-TEST_F(ParquetWriterStressTest, LargeTableWeakCompression)
+// Keep row groups aligned with the default 5,000-row page-fragment size.
+constexpr cudf::size_type stress_rows_per_row_group = 65'000;
+constexpr cudf::size_type stress_num_row_groups     = 4;
+constexpr cudf::size_type stress_num_rows = stress_rows_per_row_group * stress_num_row_groups;
+
+template <bool supports_device_writes>
+void write_stress_table(std::unique_ptr<cudf::table> const& expected)
 {
   std::vector<char> mm_buf;
   mm_buf.reserve(4 * 1024 * 1024 * 16);
-  custom_test_memmap_sink<false> custom_sink(&mm_buf);
+  custom_test_memmap_sink<supports_device_writes> custom_sink(&mm_buf);
 
-  // exercises multiple rowgroups
-  srand(31337);
-  auto expected = create_random_fixed_table<int>(16, 4 * 1024 * 1024, false);
-
-  // write out using the custom sink (which uses device writes)
+  // Exercise multiple row groups without depending on the default row-group size.
   cudf::io::parquet_writer_options args =
-    cudf::io::parquet_writer_options::builder(cudf::io::sink_info{&custom_sink}, *expected);
+    cudf::io::parquet_writer_options::builder(cudf::io::sink_info{&custom_sink}, *expected)
+      .row_group_size_rows(stress_rows_per_row_group);
   cudf::io::write_parquet(args);
 
-  cudf::io::parquet_reader_options custom_args = cudf::io::parquet_reader_options::builder(
-    cudf::io::source_info{cudf::host_span<std::byte const>{
-      reinterpret_cast<std::byte const*>(mm_buf.data()), mm_buf.size()}});
-  auto custom_tbl = cudf::io::read_parquet(custom_args);
+  auto const source = cudf::io::source_info{cudf::host_span<std::byte const>{
+    reinterpret_cast<std::byte const*>(mm_buf.data()), mm_buf.size()}};
+  EXPECT_EQ(cudf::io::read_parquet_metadata(source).num_rowgroups(), stress_num_row_groups);
+
+  cudf::io::parquet_reader_options custom_args = cudf::io::parquet_reader_options::builder(source);
+  auto custom_tbl                              = cudf::io::read_parquet(custom_args);
   CUDF_TEST_EXPECT_TABLES_EQUAL(custom_tbl.tbl->view(), expected->view());
+}
+
+TEST_F(ParquetWriterStressTest, LargeTableWeakCompression)
+{
+  srand(31337);
+  write_stress_table<false>(create_random_fixed_table<int>(16, stress_num_rows, false));
 }
 
 TEST_F(ParquetWriterStressTest, LargeTableGoodCompression)
 {
-  std::vector<char> mm_buf;
-  mm_buf.reserve(4 * 1024 * 1024 * 16);
-  custom_test_memmap_sink<false> custom_sink(&mm_buf);
-
-  // exercises multiple rowgroups
   srand(31337);
-  auto expected = create_compressible_fixed_table<int>(16, 4 * 1024 * 1024, 128 * 1024, false);
-
-  // write out using the custom sink (which uses device writes)
-  cudf::io::parquet_writer_options args =
-    cudf::io::parquet_writer_options::builder(cudf::io::sink_info{&custom_sink}, *expected);
-  cudf::io::write_parquet(args);
-
-  cudf::io::parquet_reader_options custom_args = cudf::io::parquet_reader_options::builder(
-    cudf::io::source_info{cudf::host_span<std::byte const>{
-      reinterpret_cast<std::byte const*>(mm_buf.data()), mm_buf.size()}});
-  auto custom_tbl = cudf::io::read_parquet(custom_args);
-  CUDF_TEST_EXPECT_TABLES_EQUAL(custom_tbl.tbl->view(), expected->view());
+  write_stress_table<false>(
+    create_compressible_fixed_table<int>(16, stress_num_rows, 128 * 1024, false));
 }
 
 TEST_F(ParquetWriterStressTest, LargeTableWithValids)
 {
-  std::vector<char> mm_buf;
-  mm_buf.reserve(4 * 1024 * 1024 * 16);
-  custom_test_memmap_sink<false> custom_sink(&mm_buf);
-
-  // exercises multiple rowgroups
   srand(31337);
-  auto expected = create_compressible_fixed_table<int>(16, 4 * 1024 * 1024, 6, true);
-
-  // write out using the custom sink (which uses device writes)
-  cudf::io::parquet_writer_options args =
-    cudf::io::parquet_writer_options::builder(cudf::io::sink_info{&custom_sink}, *expected);
-  cudf::io::write_parquet(args);
-
-  cudf::io::parquet_reader_options custom_args = cudf::io::parquet_reader_options::builder(
-    cudf::io::source_info{cudf::host_span<std::byte const>{
-      reinterpret_cast<std::byte const*>(mm_buf.data()), mm_buf.size()}});
-  auto custom_tbl = cudf::io::read_parquet(custom_args);
-  CUDF_TEST_EXPECT_TABLES_EQUAL(custom_tbl.tbl->view(), expected->view());
+  write_stress_table<false>(create_compressible_fixed_table<int>(16, stress_num_rows, 6, true));
 }
 
 TEST_F(ParquetWriterStressTest, DeviceWriteLargeTableWeakCompression)
 {
-  std::vector<char> mm_buf;
-  mm_buf.reserve(4 * 1024 * 1024 * 16);
-  custom_test_memmap_sink<true> custom_sink(&mm_buf);
-
-  // exercises multiple rowgroups
   srand(31337);
-  auto expected = create_random_fixed_table<int>(16, 4 * 1024 * 1024, false);
-
-  // write out using the custom sink (which uses device writes)
-  cudf::io::parquet_writer_options args =
-    cudf::io::parquet_writer_options::builder(cudf::io::sink_info{&custom_sink}, *expected);
-  cudf::io::write_parquet(args);
-
-  cudf::io::parquet_reader_options custom_args = cudf::io::parquet_reader_options::builder(
-    cudf::io::source_info{cudf::host_span<std::byte const>{
-      reinterpret_cast<std::byte const*>(mm_buf.data()), mm_buf.size()}});
-  auto custom_tbl = cudf::io::read_parquet(custom_args);
-  CUDF_TEST_EXPECT_TABLES_EQUAL(custom_tbl.tbl->view(), expected->view());
+  write_stress_table<true>(create_random_fixed_table<int>(16, stress_num_rows, false));
 }
 
 TEST_F(ParquetWriterStressTest, DeviceWriteLargeTableGoodCompression)
 {
-  std::vector<char> mm_buf;
-  mm_buf.reserve(4 * 1024 * 1024 * 16);
-  custom_test_memmap_sink<true> custom_sink(&mm_buf);
-
-  // exercises multiple rowgroups
   srand(31337);
-  auto expected = create_compressible_fixed_table<int>(16, 4 * 1024 * 1024, 128 * 1024, false);
-
-  // write out using the custom sink (which uses device writes)
-  cudf::io::parquet_writer_options args =
-    cudf::io::parquet_writer_options::builder(cudf::io::sink_info{&custom_sink}, *expected);
-  cudf::io::write_parquet(args);
-
-  cudf::io::parquet_reader_options custom_args = cudf::io::parquet_reader_options::builder(
-    cudf::io::source_info{cudf::host_span<std::byte const>{
-      reinterpret_cast<std::byte const*>(mm_buf.data()), mm_buf.size()}});
-  auto custom_tbl = cudf::io::read_parquet(custom_args);
-  CUDF_TEST_EXPECT_TABLES_EQUAL(custom_tbl.tbl->view(), expected->view());
+  write_stress_table<true>(
+    create_compressible_fixed_table<int>(16, stress_num_rows, 128 * 1024, false));
 }
 
 TEST_F(ParquetWriterStressTest, DeviceWriteLargeTableWithValids)
 {
-  std::vector<char> mm_buf;
-  mm_buf.reserve(4 * 1024 * 1024 * 16);
-  custom_test_memmap_sink<true> custom_sink(&mm_buf);
-
-  // exercises multiple rowgroups
   srand(31337);
-  auto expected = create_compressible_fixed_table<int>(16, 4 * 1024 * 1024, 6, true);
-
-  // write out using the custom sink (which uses device writes)
-  cudf::io::parquet_writer_options args =
-    cudf::io::parquet_writer_options::builder(cudf::io::sink_info{&custom_sink}, *expected);
-  cudf::io::write_parquet(args);
-
-  cudf::io::parquet_reader_options custom_args = cudf::io::parquet_reader_options::builder(
-    cudf::io::source_info{cudf::host_span<std::byte const>{
-      reinterpret_cast<std::byte const*>(mm_buf.data()), mm_buf.size()}});
-  auto custom_tbl = cudf::io::read_parquet(custom_args);
-  CUDF_TEST_EXPECT_TABLES_EQUAL(custom_tbl.tbl->view(), expected->view());
+  write_stress_table<true>(create_compressible_fixed_table<int>(16, stress_num_rows, 6, true));
 }
 
 TEST_F(ParquetWriterTest, ReturnedFooterMetadata)

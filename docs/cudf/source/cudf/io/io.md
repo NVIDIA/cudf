@@ -200,6 +200,6 @@ By default, cuDF's parquet and json readers will try to read the entire file in 
 
 To better support low memory systems, cuDF provides a "low-memory" reader for parquet and json files. This low memory reader processes data in chunks, leading to lower peak memory usage due to the smaller size of intermediate allocations.
 
-To read a parquet or json file in low memory mode, there are [cuDF options](https://docs.rapids.ai/api/cudf/nightly/cudf/api_docs/options/#api-options) that must be set globally prior to calling the reader. To set those options, call:
+To read a parquet or json file in low memory mode, there are {doc}`cuDF options <../api_docs/options>` that must be set globally prior to calling the reader. To set those options, call:
 - `cudf.set_option("io.parquet.low_memory", True)` for parquet files, or
 - `cudf.set_option("io.json.low_memory", True)` for json files.

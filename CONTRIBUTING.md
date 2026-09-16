@@ -17,7 +17,7 @@ Contributions to cuDF fall into the following categories:
 
 As contributors and maintainers to this project, you are expected to abide by cuDF's code of
 conduct. More information can be found at:
-[Contributor Code of Conduct](https://docs.rapids.ai/resources/conduct/).
+[Contributor Code of Conduct](https://docs.nvidia.com/datascience/resources/conduct/).
 
 ## Documentation contributions
 
@@ -32,7 +32,7 @@ conda install cudf -c rapidsai-nightly -c conda-forge
 ```
 
 3. Build and view the docs locally following the instructions in the [Building
-documentation docs](https://docs.rapids.ai/api/cudf/stable/developer_guide/documentation/#building-documentation)
+documentation docs](https://docs.nvidia.com/cudf/latest/cudf/developer_guide/documentation/#building-documentation)
 4. Follow steps 7-10 in the section [Your first issue](#your-first-issue)
 
 ## Code contributions
@@ -69,7 +69,7 @@ prioritized issues for our next release in our
 [project boards](https://github.com/NVIDIA/cudf/projects).
 
 **Note:** Always look at the release board that is
-[currently under development](https://docs.rapids.ai/maintainers/) for issues to work on. This is
+[currently under development](https://docs.nvidia.com/datascience/maintainers/) for issues to work on. This is
 where RAPIDS developers also focus their efforts.
 
 Look at the unassigned issues, and find an issue to which you are comfortable contributing. Start
@@ -325,9 +325,9 @@ This will bring up an interactive prompt to select which spelling fixes to apply
 
 ## Developer Guidelines
 
-The [C++ Developer Guide](cpp/doxygen/developer_guide/DEVELOPER_GUIDE.md) includes details on contributing to libcudf C++ code.
+The [C++ Developer Guide](https://docs.nvidia.com/cudf/latest/libcudf/developer_guide/) includes details on contributing to libcudf C++ code.
 
-The [Python Developer Guide](https://docs.rapids.ai/api/cudf/stable/cudf/developer_guide/) includes details on contributing to cuDF Python code.
+The [Python Developer Guide](https://docs.nvidia.com/cudf/latest/developer_guide/) includes details on contributing to cuDF Python code.
 
 
 ## Attribution

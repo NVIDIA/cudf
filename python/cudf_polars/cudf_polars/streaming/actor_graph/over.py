@@ -62,8 +62,14 @@ from cudf_polars.streaming.actor_graph.collectives.shuffle import (
     LocalRepartitioner,
     ShuffleManager,
 )
-from cudf_polars.streaming.actor_graph.dispatch import generate_ir_sub_network
-from cudf_polars.streaming.actor_graph.tracing import send_chunk
+from cudf_polars.streaming.actor_graph.dispatch import (
+    generate_ir_sub_network,
+    ir_context_for_node,
+)
+from cudf_polars.streaming.actor_graph.tracing import (
+    send_chunk,
+    trace_channel,
+)
 from cudf_polars.streaming.actor_graph.utils import (
     ChannelManager,
     ChunkStore,
@@ -753,6 +759,8 @@ async def over_actor(
     async with shutdown_on_error(
         context, ch_in, ch_out, trace_ir=ir, ir_context=ir_context
     ) as tracer:
+        ch_in = trace_channel(ch_in, tracer)
+        ch_out = trace_channel(ch_out, tracer)
         metadata_in = await recv_metadata(ch_in, context)
 
         partitioning = NormalizedPartitioning.from_keys(
@@ -838,12 +846,13 @@ def _(
         else 0
     )
     scalar_plan = _build_scalar_over_plan(ir) if ir.is_scalar else None
+    ir_context = ir_context_for_node(rec, ir)
     actors[ir] = [
         over_actor(
             rec.state["context"],
             rec.state["comm"],
             ir,
-            rec.state["ir_context"],
+            ir_context,
             channels[ir].reserve_input_slot(),
             channels[ir.children[0]].reserve_output_slot(),
             collective_ids,

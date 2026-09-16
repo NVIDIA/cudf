@@ -103,8 +103,6 @@ class aggregation {
     COLLECT_SET,      ///< collect values into a list without duplicate entries
     LEAD,             ///< window function, accesses row at specified offset following current row
     LAG,              ///< window function, accesses row at specified offset preceding current row
-    PTX,              ///< PTX  based UDF aggregation
-    CUDA,             ///< CUDA based UDF aggregation
     HOST_UDF,         ///< host based UDF aggregation
     MERGE_LISTS,      ///< merge multiple lists values into one list
     MERGE_SETS,       ///< merge multiple lists values into one list then drop duplicate entries
@@ -540,20 +538,6 @@ std::unique_ptr<Base> make_lag_aggregation(size_type offset);
  */
 template <typename Base = aggregation>
 std::unique_ptr<Base> make_lead_aggregation(size_type offset);
-
-/**
- * @brief Factory to create an aggregation base on UDF for PTX or CUDA
- *
- * @param[in] type The source type of the UDF aggregation
- * @param[in] user_defined_aggregator A string containing the aggregator code
- * @param[in] output_type expected output type
- *
- * @return An aggregation containing a user-defined aggregator string
- */
-template <typename Base = aggregation>
-std::unique_ptr<Base> make_udf_aggregation(udf_source_type type,
-                                           std::string const& user_defined_aggregator,
-                                           data_type output_type);
 
 // Forward declaration of `host_udf_base` for the factory function of `HOST_UDF` aggregation.
 class host_udf_base;

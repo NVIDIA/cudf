@@ -13,6 +13,7 @@
 #include <cuda/stream>
 #include <thrust/logical.h>
 
+#include <cstddef>
 #include <future>
 #include <span>
 #include <vector>
@@ -476,7 +477,17 @@ struct page_to_string_size {
  */
 struct set_str_offset_fn {
   PageInfo* p;
-  __device__ constexpr void operator()(size_type i, size_t value) const { p[i].str_offset = value; }
+#if CUDART_VERSION < 13000
+  // Work around a CUDA 12.9 ptxas scan-by-key miscompilation on SM120 by using a pointer-width
+  // tabulate output index.
+  // https://github.com/NVIDIA/cccl/issues/11167
+  __device__ constexpr void operator()(std::ptrdiff_t i, size_t value) const
+#else
+  __device__ constexpr void operator()(size_type i, size_t value) const
+#endif  // CUDART_VERSION < 13000
+  {
+    p[i].str_offset = value;
+  }
 };
 
 /**

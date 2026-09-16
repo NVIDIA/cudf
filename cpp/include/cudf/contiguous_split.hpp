@@ -46,6 +46,9 @@ namespace CUDF_EXPORT cudf {
  * do not outlive the viewed device memory contained in the `all_data` field of the
  * returned packed_table.
  *
+ * @note Every output partition of a dictionary column holds a copy of the complete keys child,
+ * including keys that the partition's rows do not reference.
+ *
  * @code{.pseudo}
  * Example:
  * input:   [{10, 12, 14, 16, 18, 20, 22, 24, 26, 28},

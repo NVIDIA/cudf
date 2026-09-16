@@ -162,6 +162,7 @@ constexpr inline bool binary_op_has_common_type_v =
  * @throw cudf::logic_error if @p output_type dtype isn't boolean for comparison and logical
  * operations.
  * @throw cudf::data_type_error if the operation is not supported for the types of @p lhs and @p rhs
+ * @throw cudf::data_type_error if @p rhs or @p output_type is a dictionary type
  */
 std::unique_ptr<column> binary_operation(
   scalar const& lhs,
@@ -195,6 +196,7 @@ std::unique_ptr<column> binary_operation(
  * @throw cudf::logic_error if @p output_type dtype isn't boolean for comparison and logical
  * operations.
  * @throw cudf::data_type_error if the operation is not supported for the types of @p lhs and @p rhs
+ * @throw cudf::data_type_error if @p lhs or @p output_type is a dictionary type
  */
 std::unique_ptr<column> binary_operation(
   column_view const& lhs,
@@ -227,6 +229,7 @@ std::unique_ptr<column> binary_operation(
  * operations.
  * @throw cudf::logic_error if @p output_type dtype isn't fixed-width
  * @throw cudf::data_type_error if the operation is not supported for the types of @p lhs and @p rhs
+ * @throw cudf::data_type_error if @p lhs, @p rhs, or @p output_type is a dictionary type
  */
 std::unique_ptr<column> binary_operation(
   column_view const& lhs,

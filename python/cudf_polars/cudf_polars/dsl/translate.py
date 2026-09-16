@@ -22,6 +22,7 @@ from polars import polars as plrs  # type: ignore[attr-defined]
 import pylibcudf as plc
 
 from cudf_polars.containers import DataType
+from cudf_polars.containers.datatype import _contains_array
 from cudf_polars.dsl import expr, ir
 from cudf_polars.dsl.expressions.base import ExecutionContext
 from cudf_polars.dsl.to_ast import insert_colrefs
@@ -40,6 +41,8 @@ from cudf_polars.utils.versions import (
     POLARS_VERSION_LT_140,
     POLARS_VERSION_LT_141,
     POLARS_VERSION_LT_142,
+    POLARS_VERSION_LT_143,
+    POLARS_VERSION_LT_144,
 )
 
 if TYPE_CHECKING:
@@ -50,6 +53,8 @@ if TYPE_CHECKING:
     from cudf_polars.typing import NodeTraverser, Slice as Zlice
 
 _HAS_ROLLING_FUNCTION = hasattr(plrs._expr_nodes, "RollingFunction")
+
+_ARRAY_PASSTHROUGH_ERROR = "Only pass-through of Array columns is supported"
 
 __all__ = ["Translator", "translate_named_expr"]
 
@@ -66,7 +71,10 @@ def _align_decimal_float_for_comparison(
     """
     has_decimal = any(plc.traits.is_fixed_point(op.dtype.plc_type) for op in operands)
     has_float = any(plc.traits.is_floating_point(op.dtype.plc_type) for op in operands)
-    if has_decimal and has_float:
+    if has_decimal and has_float:  # pragma: no cover
+        # Polars now inserts this cast itself under the latest supported
+        # version (coverage only runs against latest), but older supported
+        # versions still need this workaround.
         f64 = DataType(pl.Float64())
         return tuple(
             expr.Cast(f64, False, op)  # noqa: FBT003
@@ -75,6 +83,13 @@ def _align_decimal_float_for_comparison(
             for op in operands
         )
     return operands
+
+
+def _contains_array_input(expression: expr.Expr) -> bool:
+    """Return whether an expression consumes an Array-typed input."""
+    return any(
+        _contains_array(node.dtype.polars_type) for node in traversal([expression])
+    )
 
 
 def _strip_file_uri(path: str) -> str:
@@ -143,6 +158,28 @@ def _unsupported_fill_over_window(value: expr.Expr) -> bool:
     )
 
 
+def _is_len_sum_uint128_node(visitor: NodeTraverser, node: Any) -> bool:
+    """
+    Whether ``node`` is part of polars' ``col("len").cast(UInt128).sum()``.
+
+    polars rewrites ``concat(...).select(len())`` into
+    ``col("len").cast(UInt128).sum().cast(IDX_DTYPE)``. Both the ``sum`` and
+    its ``"len"`` cast independently report a ``UInt128`` dtype during
+    translation, so both must be recognized here.
+    """
+    # TODO: this matches the exact shape of that one rewrite, not UInt128 in
+    # general; if polars changes it, or introduces UInt128 elsewhere, this
+    # will stop matching (and fall back to CPU / raise cleanly, not silently
+    # misbehave, since general UInt128 use is still unconditionally rejected
+    # elsewhere). See https://github.com/NVIDIA/cudf/issues/24108.
+    if isinstance(node, plrs._expr_nodes.Agg):
+        return node.name == "sum"
+    if isinstance(node, plrs._expr_nodes.Cast):
+        child = visitor.view_expression(node.expr)
+        return isinstance(child, plrs._expr_nodes.Column) and child.name == "len"
+    return False  # pragma: no cover
+
+
 class Translator:
     """
     Translates polars-internal IR nodes and expressions to our representation.
@@ -197,7 +234,7 @@ class Translator:
         # IR is versioned with major.minor, minor is bumped for backwards
         # compatible changes (e.g. adding new nodes), major is bumped for
         # incompatible changes (e.g. renaming nodes).
-        if (version := self.visitor.version()) >= (14, 4):
+        if (version := self.visitor.version()) >= (14, 8):
             e = NotImplementedError(
                 f"No support for polars IR {version=}"
             )  # pragma: no cover; no such version for now.
@@ -257,7 +294,9 @@ class Translator:
         )
         return NotImplementedError(message, unique_errors)
 
-    def translate_expr(self, *, n: int, schema: Schema) -> expr.Expr:
+    def translate_expr(
+        self, *, n: int, schema: Schema, allow_array_passthrough: bool = False
+    ) -> expr.Expr:
         """
         Translate a polars-internal expression IR into our representation.
 
@@ -267,6 +306,8 @@ class Translator:
             Node to translate, an integer referencing a polars internal node.
         schema
             Schema of the IR node this expression uses as evaluation context.
+        allow_array_passthrough
+            Whether a direct Array column may be returned unchanged.
 
         Returns
         -------
@@ -280,12 +321,39 @@ class Translator:
         to determine if the query is supported.
         """
         node = self.visitor.view_expression(n)
-        dtype = DataType(self.visitor.get_dtype(n))
+        polars_dtype = self.visitor.get_dtype(n)
+        if isinstance(polars_dtype, pl.UInt128) and _is_len_sum_uint128_node(
+            self.visitor, node
+        ):
+            # libcudf has no 128-bit integer type (size_type is 32-bit today;
+            # see https://github.com/NVIDIA/cudf/issues/13159). polars
+            # rewrites concat(...).select(len()) into
+            # col("len").cast(UInt128).sum().cast(IDX_DTYPE), widening before
+            # the sum so it can't overflow, then narrowing back down. This
+            # value is never materialized as real UInt128 data, so represent
+            # it as UInt64 instead: no libcudf table can hold anywhere near
+            # 2**64 rows, so the sum can't overflow it either.
+            polars_dtype = pl.UInt64()
+        dtype = DataType(polars_dtype)
+        is_array_passthrough = (
+            allow_array_passthrough
+            and isinstance(dtype.polars_type, pl.Array)
+            and isinstance(node, plrs._expr_nodes.Column)
+        )
+        if isinstance(dtype.polars_type, pl.Array) and not is_array_passthrough:
+            error = NotImplementedError(_ARRAY_PASSTHROUGH_ERROR)
+            self.errors.append(error)
+            return expr.ErrorExpr(dtype, str(error))
         try:
-            return _translate_expr(node, self, dtype, schema)
+            translated = _translate_expr(node, self, dtype, schema)
         except Exception as e:
             self.errors.append(e)
             return expr.ErrorExpr(dtype, str(e))
+        if not is_array_passthrough and _contains_array_input(translated):
+            error = NotImplementedError(_ARRAY_PASSTHROUGH_ERROR)
+            self.errors.append(error)
+            return expr.ErrorExpr(dtype, str(error))
+        return translated
 
 
 class set_node(AbstractContextManager[None]):
@@ -557,7 +625,12 @@ def _(node: plrs._ir_nodes.Select, translator: Translator, schema: Schema) -> ir
         inp = translator.translate_ir(n=None)
         with set_internal_name_gen(translator, inp.schema):
             exprs = [
-                translate_named_expr(translator, n=e, schema=inp.schema)
+                translate_named_expr(
+                    translator,
+                    n=e,
+                    schema=inp.schema,
+                    allow_array_passthrough=True,
+                )
                 for e in node.expr
             ]
     return ir.Select(schema, exprs, node.should_broadcast, inp)
@@ -678,7 +751,12 @@ def _(node: plrs._ir_nodes.HStack, translator: Translator, schema: Schema) -> ir
         inp = translator.translate_ir(n=None)
         with set_internal_name_gen(translator, inp.schema):
             exprs = [
-                translate_named_expr(translator, n=e, schema=inp.schema)
+                translate_named_expr(
+                    translator,
+                    n=e,
+                    schema=inp.schema,
+                    allow_array_passthrough=True,
+                )
                 for e in node.exprs
             ]
     return ir.HStack(schema, exprs, node.should_broadcast, inp)
@@ -701,13 +779,17 @@ def _(node: plrs._ir_nodes.Distinct, translator: Translator, schema: Schema) -> 
     (keep, subset, maintain_order, zlice) = node.options
     keep = ir.Distinct._KEEP_MAP[keep]
     subset = frozenset(subset) if subset is not None else None
+    inp = translator.translate_ir(n=node.input)
+    keys = inp.schema if subset is None else subset
+    if any(_contains_array(inp.schema[name].polars_type) for name in keys):
+        raise NotImplementedError(_ARRAY_PASSTHROUGH_ERROR)
     return ir.Distinct(
         schema,
         keep,
         subset,
         zlice,
         maintain_order,
-        translator.translate_ir(n=node.input),
+        inp,
     )
 
 
@@ -770,6 +852,11 @@ def _(
     node: plrs._ir_nodes.MergeSorted, translator: Translator, schema: Schema
 ) -> ir.IR:
     key = node.key
+    if not POLARS_VERSION_LT_143:
+        # node.key became a list of keys in polars 1.43.
+        if len(key) != 1:
+            raise NotImplementedError("Merging on multiple keys is not supported")
+        key = key[0]
     inp_left = translator.translate_ir(n=node.input_left)
     inp_right = translator.translate_ir(n=node.input_right)
     return ir.MergeSorted(
@@ -864,6 +951,10 @@ def _(node: plrs._ir_nodes.Sink, translator: Translator, schema: Schema) -> ir.I
     else:
         path = file["target"]["inner"]
 
+    df = translator.translate_ir(n=node.input)
+    if any(_contains_array(dtype.polars_type) for dtype in df.schema.values()):
+        raise NotImplementedError(_ARRAY_PASSTHROUGH_ERROR)
+
     return ir.Sink(
         schema=schema,
         kind=sink_kind,
@@ -871,12 +962,16 @@ def _(node: plrs._ir_nodes.Sink, translator: Translator, schema: Schema) -> ir.I
         parquet_options=translator.config_options.parquet_options,
         options=options,
         cloud_options=cloud_options,
-        df=translator.translate_ir(n=node.input),
+        df=df,
     )
 
 
 def translate_named_expr(
-    translator: Translator, *, n: plrs._expr_nodes.PyExprIR, schema: Schema
+    translator: Translator,
+    *,
+    n: plrs._expr_nodes.PyExprIR,
+    schema: Schema,
+    allow_array_passthrough: bool = False,
 ) -> expr.NamedExpr:
     """
     Translate a polars-internal named expression IR object into our representation.
@@ -889,6 +984,8 @@ def translate_named_expr(
         Node to translate, a named expression node.
     schema
         Schema of the IR node this expression uses as evaluation context.
+    allow_array_passthrough
+        Whether a direct Array column may be returned unchanged.
 
     Returns
     -------
@@ -907,7 +1004,12 @@ def translate_named_expr(
         If any translation fails due to unsupported functionality.
     """
     return expr.NamedExpr(
-        n.output_name, translator.translate_expr(n=n.node, schema=schema)
+        n.output_name,
+        translator.translate_expr(
+            n=n.node,
+            schema=schema,
+            allow_array_passthrough=allow_array_passthrough,
+        ),
     )
 
 
@@ -1015,6 +1117,12 @@ def _(
             return expr.Cast(dtype, True, result_expr)  # noqa: FBT003
         return result_expr
     elif isinstance(name, plrs._expr_nodes.StructFunction):
+        if (
+            not POLARS_VERSION_LT_144
+            and name == plrs._expr_nodes.StructFunction.RenameFields
+        ):
+            (new_field_names,) = options
+            options = (tuple(new_field_names),)
         return expr.StructFunction(
             dtype,
             expr.StructFunction.Name.from_polars(name),
@@ -1422,6 +1530,9 @@ def _(
     strict = node.options != 1
     inner = translator.translate_expr(n=node.expr, schema=schema)
 
+    if isinstance(inner.dtype.polars_type, pl.Array):
+        raise NotImplementedError("Casting from Array is not supported")
+
     if plc.traits.is_floating_point(inner.dtype.plc_type) and plc.traits.is_fixed_point(
         dtype.plc_type
     ):
@@ -1515,6 +1626,10 @@ def _(
 ) -> expr.Expr:
     left = translator.translate_expr(n=node.left, schema=schema)
     right = translator.translate_expr(n=node.right, schema=schema)
+    if isinstance(left.dtype.polars_type, pl.Array) or isinstance(
+        right.dtype.polars_type, pl.Array
+    ):
+        raise NotImplementedError("Binary operations on Array are not supported")
     if node.op == plrs._expr_nodes.Operator.TrueDivide and (
         plc.traits.is_fixed_point(left.dtype.plc_type)
         or plc.traits.is_fixed_point(right.dtype.plc_type)

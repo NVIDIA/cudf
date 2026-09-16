@@ -106,6 +106,31 @@ std::unique_ptr<cudf::io::parquet::experimental::deletion_vector_info> make_dele
   return dv_info;
 }
 
+JNIEXPORT jlong JNICALL
+Java_ai_rapids_cudf_DeletionVector_computeNumDeletedRows(JNIEnv* env,
+                                                         jclass,
+                                                         jlongArray serialized_roaring64,
+                                                         jintArray deletion_vector_row_counts,
+                                                         jlongArray row_group_offsets,
+                                                         jintArray row_group_num_rows,
+                                                         jboolean are_retention_vectors,
+                                                         jint max_chunk_rows)
+{
+  JNI_TRY
+  {
+    cudf::jni::auto_set_device(env);
+    auto const dv_info = make_deletion_vector_info(env,
+                                                   serialized_roaring64,
+                                                   deletion_vector_row_counts,
+                                                   row_group_offsets,
+                                                   row_group_num_rows,
+                                                   are_retention_vectors);
+    return static_cast<jlong>(cudf::io::parquet::experimental::compute_num_deleted_rows(
+      *dv_info, static_cast<cudf::size_type>(max_chunk_rows)));
+  }
+  JNI_CATCH(env, 0);
+}
+
 /**
  * @brief Read a Parquet file with deletion vector support
  *

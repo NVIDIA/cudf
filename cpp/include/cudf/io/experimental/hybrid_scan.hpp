@@ -227,7 +227,11 @@ class hybrid_scan_metadata {
  * if (dict_page_byte_ranges.size()) {
  *   // Fetch dictionary page byte ranges into device buffers and create spans
  *   auto [dict_page_buffers, dict_page_data, dict_page_tasks] =
- *     parquet::fetch_byte_ranges_to_device_async(datasource, dict_page_byte_ranges, stream, mr);
+ *     parquet::fetch_byte_ranges_to_device_async(datasource,
+ *                                                dict_page_byte_ranges,
+ *                                                parquet::io_submission_policy::SERIALIZE,
+ *                                                stream,
+ *                                                mr);
  *   dict_page_tasks.get();
  *
  *   // Prune row groups using dictionaries
@@ -250,8 +254,11 @@ class hybrid_scan_metadata {
  *   auto constexpr bloom_filter_alignment = rmm::CUDA_ALLOCATION_ALIGNMENT;
  *   auto aligned_mr = rmm::mr::aligned_resource_adaptor(mr, bloom_filter_alignment);
  *   auto [bloom_filter_buffers, bloom_filter_data, bloom_filter_tasks] =
- *     parquet::fetch_byte_ranges_to_device_async(
- *       datasource, bloom_filter_byte_ranges, stream, aligned_mr);
+ *     parquet::fetch_byte_ranges_to_device_async(datasource,
+ *                                                bloom_filter_byte_ranges,
+ *                                                parquet::io_submission_policy::SERIALIZE,
+ *                                                stream,
+ *                                                aligned_mr);
  *   bloom_filter_tasks.get();
  *
  *   // Prune row groups using bloom filters
@@ -308,7 +315,11 @@ class hybrid_scan_metadata {
  *
  * // Fetch column chunk data into device buffers and create spans
  * auto [filter_col_buffers, filter_col_data, filter_col_tasks] =
- *   parquet::fetch_byte_ranges_to_device_async(datasource, filter_col_byte_ranges, stream, mr);
+ *   parquet::fetch_byte_ranges_to_device_async(datasource,
+ *                                              filter_col_byte_ranges,
+ *                                              parquet::io_submission_policy::SERIALIZE,
+ *                                              stream,
+ *                                              mr);
  * filter_col_tasks.get();
  *
  * // Materialize the table with only the filter columns
@@ -335,7 +346,11 @@ class hybrid_scan_metadata {
  *
  * // Fetch column chunk data into device buffers and create spans
  * auto [payload_col_buffers, payload_col_data, payload_col_tasks] =
- *   parquet::fetch_byte_ranges_to_device_async(datasource, payload_col_byte_ranges, stream, mr);
+ *   parquet::fetch_byte_ranges_to_device_async(datasource,
+ *                                               payload_col_byte_ranges,
+ *                                               parquet::io_submission_policy::SERIALIZE,
+ *                                               stream,
+ *                                               mr);
  * payload_col_tasks.get();
  *
  * // Materialize the table with only the payload columns
@@ -580,7 +595,7 @@ class hybrid_scan_reader {
    *
    * @param row_group_indices Input row groups indices
    * @param column_chunk_data Device spans of column chunk data of filter columns
-   * @param[in,out] row_mask Mutable boolean column indicating surviving rows from page pruning
+   * @param[in,out] row_mask Mutable boolean column indicating surviving rows
    * @param mask_data_pages Whether to build and use a data page mask using the row mask
    * @param options Parquet reader options
    * @param stream CUDA stream used for device memory operations and kernel launches
@@ -653,6 +668,7 @@ class hybrid_scan_reader {
     parquet_reader_options const& options,
     cuda::stream_ref stream,
     rmm::device_async_resource_ref mr) const;
+
   /**
    * @brief Setup chunking information for filter columns and preprocess the input data pages
    *
@@ -661,7 +677,7 @@ class hybrid_scan_reader {
    * @param pass_read_limit Limit on the memory used for reading and decompressing data. `0` if
    * there is no limit
    * @param row_group_indices Input row groups indices
-   * @param row_mask Boolean column indicating which rows need to be read
+   * @param row_mask Boolean column indicating surviving rows
    * @param mask_data_pages Whether to build and use a data page mask using the row mask
    * @param column_chunk_data Device spans of column chunk data of filter columns
    * @param options Parquet reader options

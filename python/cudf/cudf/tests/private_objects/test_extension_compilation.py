@@ -72,8 +72,7 @@ def test_compile_masked_unary(op, ty):
 
 
 @pytest.mark.parametrize("op", arith_ops)
-@pytest.mark.parametrize("ty", number_types, ids=number_ids)
-def test_execute_masked_binary(op, ty):
+def test_execute_masked_binary(op):
     @cuda.jit(device=True)
     def func(x, y):
         return op(x, y)

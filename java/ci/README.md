@@ -24,7 +24,7 @@ For local testing only, `java/ci/test_java_build_local.sh` runs Steps 1-3 end-to
 ### Step 1 - Build the static libcudf install tree
 
 ```bash
-./java/ci/build_static_libcudf.sh --output-dir /tmp/libcudf-cuda12 --cuda-version 12.9
+./java/ci/build_static_libcudf.sh --output-dir /tmp/libcudf-cuda12 --cuda-version 12.9.2
 ```
 
 This produces a static libcudf install tree (`lib/libcudf.a` plus its static
@@ -37,21 +37,21 @@ so plain `rm -rf` works.
 ./java/ci/build_cudf_java_jar.sh \
   --libcudf-dir /tmp/libcudf-cuda12 \
   --output-dir /tmp/jars \
-  --cuda-version 12.9
+  --cuda-version 12.9.2
 ```
 
 Optional `GITHUB_REF` selects release tag vs SNAPSHOT versioning. Unset means
 SNAPSHOT. See the versioning section below.
 
 This compiles the JNI layer against the static libcudf from Step 1 and emits
-the classifier JAR (e.g. `cudf-26.10.0-SNAPSHOT-cuda12.jar`), a
+the classifier JAR (e.g. `cudf-26.12.0-SNAPSHOT-cuda12.jar`), a
 classifier-independent sources jar and javadoc jar, and the POM into a
 classifier-named subdirectory under `--output-dir`:
 
 ```text
 /tmp/jars/cuda12/
-    cudf-26.10.0-SNAPSHOT-cuda12.jar
-    cudf-26.10.0-SNAPSHOT.pom
+    cudf-26.12.0-SNAPSHOT-cuda12.jar
+    cudf-26.12.0-SNAPSHOT.pom
 ```
 
 The classifier is derived from `--cuda-version` (major) + host arch (`uname
@@ -171,4 +171,4 @@ ${sclCMD} "java/ci/build-in-docker.sh"
 
 ### The output
 
-You can find the cuDF jar in java/target/ like cudf-26.10.0-SNAPSHOT-cuda12.jar.
+You can find the cuDF jar in java/target/ like cudf-26.12.0-SNAPSHOT-cuda12.jar.

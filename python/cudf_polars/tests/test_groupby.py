@@ -157,15 +157,7 @@ def test_groupby_sorted_keys(
     df: pl.LazyFrame,
     keys,
     exprs,
-    request,
 ):
-    request.applymarker(
-        pytest.mark.xfail(
-            is_streaming_engine(engine),
-            strict=False,
-            reason="https://github.com/NVIDIA/cudf/issues/21642 -  no deterministic sort for keys",
-        )
-    )
     sorted_keys = [
         key.sort(descending=descending)
         for key, descending in zip(keys, itertools.cycle([False, True]))
@@ -173,20 +165,9 @@ def test_groupby_sorted_keys(
 
     q = df.group_by(*sorted_keys).agg(*exprs)
 
-    schema = q.collect_schema()
-    sort_keys = list(schema.keys())[: len(keys)]
-    # Multiple keys don't do sorting
+    sort_keys = list(q.collect_schema().keys())[: len(keys)]
     qsorted = q.sort(*sort_keys)
-    if len(keys) > 1:
-        # https://github.com/pola-rs/polars/issues/17556
-        # Can't assert that the query without post-sorting fails,
-        # since it _might_ pass.
-        assert_gpu_result_equal(qsorted, engine=engine, check_exact=False)
-    elif schema[sort_keys[0]] == pl.Boolean():
-        # Boolean keys don't do sorting, so we get random order
-        assert_gpu_result_equal(qsorted, engine=engine, check_exact=False)
-    else:
-        assert_gpu_result_equal(q, engine=engine, check_exact=False)
+    assert_gpu_result_equal(qsorted, engine=engine, check_exact=False)
 
 
 def test_groupby_len(engine: pl.GPUEngine, df, keys):

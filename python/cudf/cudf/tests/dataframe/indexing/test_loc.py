@@ -1394,7 +1394,7 @@ def test_slice_empty_columns(indexer, column_slice):
 # ---------------------------------------------------------------------------
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def mi_df():
     # 2-level row MultiIndex, single-level columns.
     index = cudf.MultiIndex.from_product(

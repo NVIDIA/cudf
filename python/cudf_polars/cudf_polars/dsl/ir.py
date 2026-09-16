@@ -32,6 +32,7 @@ from typing import (
     Any,
     ClassVar,
     ParamSpec,
+    TypeAlias,
     TypeVar,
     assert_never,
     overload,
@@ -85,6 +86,8 @@ if TYPE_CHECKING:
 
     from cudf_polars.containers.dataframe import NamedColumn
     from cudf_polars.dsl.utils.io import CachedParquetInfo
+    from cudf_polars.quent._context import QuentIRExecutionContext
+    from cudf_polars.streaming.actor_graph.tracing import ActorTracer
     from cudf_polars.streaming.rank_aware_source import RankAwareSource
     from cudf_polars.typing import CSECache, ClosedInterval, Schema, Slice as Zlice
     from cudf_polars.utils.config import ParquetOptions
@@ -139,11 +142,17 @@ class IRExecutionContext:
         A zero-argument callable that returns a CUDA stream.
     query_id
         Identifier for the query being executed.
+    quent_ir_execution_context
+        Optional Quent tracing context bound to a physical operator.
+    tracer
+        The actor tracer. Used to propagate statistics.
     """
 
     py_executor: concurrent.futures.ThreadPoolExecutor | None = field(default=None)
     get_cuda_stream: Callable[[], Stream] = field(default=get_cuda_stream)
     query_id: uuid.UUID = field(default_factory=uuid.uuid4)
+    quent_ir_execution_context: QuentIRExecutionContext | None = None
+    tracer: ActorTracer | None = None
 
     async def to_thread(
         self, func: Callable[P, T], /, *args: P.args, **kwargs: P.kwargs
@@ -254,6 +263,9 @@ class IR(Node["IR"]):
     _preserves_output_order: ClassVar[bool] = False
     schema: Schema
     """Mapping from column names to their data types."""
+
+    is_io_node: bool = False
+    """Whether the node is an IO node."""
 
     @property
     def preserves_output_order(self) -> bool:
@@ -719,6 +731,8 @@ class Scan(IR):
     PARQUET_DEFAULT_CHUNK_SIZE: int = 0  # unlimited
     PARQUET_DEFAULT_PASS_LIMIT: int = 16 * 1024**3  # 16GiB
 
+    is_io_node: bool = True
+
     def __init__(
         self,
         schema: Schema,
@@ -817,11 +831,18 @@ class Scan(IR):
                 # column names, we would need to do file introspection to infer the number
                 # of columns so column projection works right.
                 reader_schema = self.reader_options.get("schema")
-                if not (
-                    reader_schema
-                    and isinstance(schema, dict)
-                    and "fields" in reader_schema
-                ):
+                has_new_columns = bool(
+                    (
+                        reader_schema
+                        and isinstance(schema, dict)
+                        and "fields" in reader_schema
+                    )
+                    # polars 1.43 added a separate "column_names_overwrite"
+                    # for headerless new_columns; "schema" still covers other
+                    # renaming mechanisms (e.g. with_column_names) unchanged.
+                    or self.reader_options.get("column_names_overwrite")
+                )
+                if not has_new_columns:
                     raise NotImplementedError(
                         "Reading CSV without header requires user-provided column names via new_columns"
                     )
@@ -998,6 +1019,18 @@ class Scan(IR):
             if reader_options["schema"] is not None:
                 # Reader schema provides names
                 column_names = list(reader_options["schema"]["fields"].keys())
+            elif reader_options.get("column_names_overwrite"):
+                # polars 1.43 added "column_names_overwrite" for headerless
+                # new_columns; "schema" (above) still covers other renaming
+                # mechanisms (e.g. with_column_names) unchanged.
+                # "column_names_overwrite" only lists the overridden names,
+                # not any trailing columns padded with polars' default
+                # "column_N" names. Read the full, resolved set of names from
+                # schema instead. Exclude the row index, which isn't a
+                # column the CSV reader produces.
+                column_names = [
+                    name for name in schema if row_index is None or name != row_index[0]
+                ]
             else:
                 # file provides column names
                 column_names = None
@@ -1656,6 +1689,8 @@ class DataFrameScan(IR):
     """Polars internal PyDataFrame object."""
     projection: tuple[str, ...] | None
     """List of columns to project out."""
+
+    is_io_node: bool = True
 
     def __init__(
         self,
@@ -2544,65 +2579,106 @@ def _strip_predicate_casts(node: expr.Expr) -> expr.Expr:
     return node.reconstruct([_strip_predicate_casts(child) for child in node.children])
 
 
-def _add_cast(
-    target: DataType,
-    side: expr.ColRef,
-    left_casts: dict[str, DataType],
-    right_casts: dict[str, DataType],
-) -> None:
-    (col,) = side.children
-    assert isinstance(col, expr.Col)
-    casts = (
-        left_casts if side.table_ref == plc_expr.TableReference.LEFT else right_casts
-    )
-    casts[col.name] = target
+_ColumnKey: TypeAlias = tuple[plc_expr.TableReference, str]
 
 
-def _align_decimal_binop_types(
-    left_expr: expr.ColRef,
-    right_expr: expr.ColRef,
-    left_casts: dict[str, DataType],
-    right_casts: dict[str, DataType],
-) -> None:
-    left_type, right_type = left_expr.dtype, right_expr.dtype
-    if not (
-        (
-            plc.traits.is_fixed_point(left_type.plc_type)
-            and plc.traits.is_floating_point(right_type.plc_type)
-        )
-        or (
-            plc.traits.is_fixed_point(right_type.plc_type)
-            and plc.traits.is_floating_point(left_type.plc_type)
-        )
-    ):
-        return
+def _colref_comparisons(
+    node: expr.Expr,
+) -> Iterator[tuple[expr.ColRef, expr.ColRef]]:
+    """
+    Yield the column-to-column comparisons in a predicate.
 
-    is_decimal_left = plc.traits.is_fixed_point(left_type.plc_type)
-    decimal_expr, float_expr = (
-        (left_expr, right_expr) if is_decimal_left else (right_expr, left_expr)
-    )
-    _add_cast(decimal_expr.dtype, float_expr, left_casts, right_casts)
+    Parameters
+    ----------
+    node
+        Predicate expression to traverse.
+
+    Yields
+    ------
+    tuple[expr.ColRef, expr.ColRef]
+        Left and right operands of each comparison whose operands are both
+        column references.
+    """
+    if isinstance(node, expr.BinOp) and node.op in _BINOPS:
+        left_expr, right_expr = node.children
+        if isinstance(left_expr, expr.ColRef) and isinstance(right_expr, expr.ColRef):
+            yield (left_expr, right_expr)
+    for child in node.children:
+        yield from _colref_comparisons(child)
 
 
 def _collect_decimal_binop_casts(
     predicate: expr.Expr,
 ) -> tuple[dict[str, DataType], dict[str, DataType]]:
+    """
+    Determine the casts that align decimal and float join operands.
+
+    libcudf's AST requires both operands of a comparison to share a type id,
+    and polars' supertype for a decimal and a float is Float64 (see
+    ``crates/polars-core/src/utils/supertype.rs``), so any column compared
+    against one of the other kind is cast to Float64.
+
+    Parameters
+    ----------
+    predicate
+        Predicate expression of the conditional join, with column references
+        already inserted.
+
+    Returns
+    -------
+    tuple[dict[str, DataType], dict[str, DataType]]
+        Column name to target dtype for the left and right join operands that
+        need casting.
+
+    Notes
+    -----
+    Decimal values beyond 2**53 cannot round-trip through Float64. Polars
+    accepts that loss by making Float64 the supertype.
+    """
+    comparisons: list[tuple[_ColumnKey, _ColumnKey]] = []
+    dtypes: dict[_ColumnKey, DataType] = {}
+    for left_expr, right_expr in _colref_comparisons(predicate):
+        if not all(
+            plc.traits.is_fixed_point(side.dtype.plc_type)
+            or plc.traits.is_floating_point(side.dtype.plc_type)
+            for side in (left_expr, right_expr)
+        ):
+            continue
+        (left_col,) = left_expr.children
+        (right_col,) = right_expr.children
+        assert isinstance(left_col, expr.Col)
+        assert isinstance(right_col, expr.Col)
+        left_key = (left_expr.table_ref, left_col.name)
+        right_key = (right_expr.table_ref, right_col.name)
+        dtypes[left_key] = left_expr.dtype
+        dtypes[right_key] = right_expr.dtype
+        comparisons.append((left_key, right_key))
+
+    parent: dict[_ColumnKey, _ColumnKey] = {key: key for key in dtypes}
+
+    def find(key: _ColumnKey) -> _ColumnKey:
+        while parent[key] != key:
+            parent[key] = parent[parent[key]]
+            key = parent[key]
+        return key
+
+    for left_key, right_key in comparisons:
+        parent[find(left_key)] = find(right_key)
+
+    type_ids: dict[_ColumnKey, set[plc.TypeId]] = {}
+    for key, dtype in dtypes.items():
+        type_ids.setdefault(find(key), set()).add(dtype.plc_type.id())
+
+    target = DataType(pl.Float64())
     left_casts: dict[str, DataType] = {}
     right_casts: dict[str, DataType] = {}
-
-    def _walk(node: expr.Expr) -> None:
-        if isinstance(node, expr.BinOp) and node.op in _BINOPS:
-            left_expr, right_expr = node.children
-            if isinstance(left_expr, expr.ColRef) and isinstance(
-                right_expr, expr.ColRef
-            ):
-                _align_decimal_binop_types(
-                    left_expr, right_expr, left_casts, right_casts
-                )
-        for child in node.children:
-            _walk(child)
-
-    _walk(predicate)
+    for key, dtype in dtypes.items():
+        if len(type_ids[find(key)]) > 1 and dtype != target:
+            table_ref, name = key
+            casts = (
+                left_casts if table_ref == plc_expr.TableReference.LEFT else right_casts
+            )
+            casts[name] = target
     return left_casts, right_casts
 
 
@@ -2610,14 +2686,13 @@ def _apply_casts(df: DataFrame, casts: dict[str, DataType]) -> DataFrame:
     if not casts:
         return df
 
-    columns = []
+    columns: list[Column] = []
     for col in df.columns:
         target = casts.get(col.name)
         if target is None:
-            columns.append(Column(col.obj, dtype=col.dtype, name=col.name))
+            columns.append(col.copy())
         else:
-            casted = col.astype(target, stream=df.stream)
-            columns.append(Column(casted.obj, dtype=casted.dtype, name=col.name))
+            columns.append(col.astype(target, stream=df.stream))
     return DataFrame(columns, stream=df.stream)
 
 
@@ -2756,7 +2831,12 @@ class Join(IR):
     """A join of two dataframes."""
 
     __slots__ = ("left_on", "options", "right_on")
-    _non_child = ("schema", "left_on", "right_on", "options")
+    _non_child: ClassVar[tuple[str, ...]] = (
+        "schema",
+        "left_on",
+        "right_on",
+        "options",
+    )
     _n_non_child_args = 3
     left_on: tuple[expr.NamedExpr, ...]
     """List of expressions used as keys in the left frame."""
@@ -3589,6 +3669,10 @@ class MapFunction(IR):
                 # polars requires that all to-explode columns have the
                 # same sub-shapes
                 raise NotImplementedError("Explode with more than one column")
+            if any(
+                isinstance(df.schema[name].polars_type, pl.Array) for name in to_explode
+            ):
+                raise NotImplementedError("Explode on Array is not supported")
             self.options = (tuple(to_explode),)
         elif self.name == "unpivot":
             indices, pivotees, variable_name, value_name = self.options

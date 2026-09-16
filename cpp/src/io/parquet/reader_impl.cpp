@@ -624,7 +624,8 @@ void reader_impl::populate_metadata(table_metadata& out_metadata)
     auto const& schema               = _metadata->get_schema(_output_column_schemas[i]);
     out_metadata.schema_info[i].name = schema.name;
     out_metadata.schema_info[i].is_nullable =
-      schema.repetition_type != FieldRepetitionType::REQUIRED;
+      schema.repetition_type != FieldRepetitionType::REQUIRED or
+      _metadata->is_nullable_across_sources(_output_column_schemas[i]);
   }
 
   // Return user metadata
@@ -1034,8 +1035,12 @@ table_with_metadata reader_impl::finalize_output(read_mode mode,
         only_output, *predicate, cudf::detail::mask_type::RETENTION, _stream, _mr);
       return {encode_output_dict_columns(std::move(output_table)), std::move(out_metadata)};
     } else {
-      auto output_table = cudf::filter(
-        read_table->view(), final_filter_expr.value().get(), only_output, _stream, _mr);
+      auto predicate =
+        cudf::compute_column_jit(read_table->view(), final_filter_expr.value().get(), _stream, _mr);
+      CUDF_EXPECTS(predicate->view().type().id() == type_id::BOOL8,
+                   "Predicate filter should return a boolean");
+      // Exclude columns present in filter only in output
+      auto output_table = cudf::apply_retention_mask(only_output, predicate->view(), _stream, _mr);
 
       return {encode_output_dict_columns(std::move(output_table)), std::move(out_metadata)};
     }

@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import itertools
@@ -24,8 +24,9 @@ def preserve_order(request):
     return request.param
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def df():
+    # The test matrix only reads this source dataframe.
     return cudf.DataFrame(
         {
             "a": [1, 0, 1, 2, 2, 1, 3, 2, 3, 3, 3],

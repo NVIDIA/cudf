@@ -111,6 +111,18 @@ def test_sink_parquet(
     )
 
 
+def test_sink_parquet_array_falls_back(in_memory_engine, tmp_path):
+    df = pl.LazyFrame({"a": pl.Series([[1, 2], [3, 4]], dtype=pl.Array(pl.Int8, 2))})
+
+    assert_sink_ir_translation_raises(
+        df,
+        tmp_path / "array.parquet",
+        in_memory_engine,
+        {},
+        NotImplementedError,
+    )
+
+
 @pytest.mark.parametrize("compression_level", [9, None])
 @pytest.mark.parametrize(
     "compression", ["zstd", "gzip", "brotli", "snappy", "lz4", "uncompressed"]

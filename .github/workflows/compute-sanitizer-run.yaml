@@ -28,7 +28,7 @@ jobs:
     permissions:
       contents: read
     container:
-      image: rapidsai/ci-conda:26.10-latest
+      image: rapidsai/ci-conda:26.12-latest
     outputs:
       tests: ${{ steps.find-tests.outputs.tests }}
     steps:
@@ -49,7 +49,7 @@ jobs:
     permissions:
       contents: read
     container:
-      image: rapidsai/ci-conda:26.10-latest
+      image: rapidsai/ci-conda:26.12-latest
       options: --gpus all
     continue-on-error: true
     strategy:

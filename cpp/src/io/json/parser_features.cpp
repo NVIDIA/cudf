@@ -121,6 +121,12 @@ struct allnull_column_functor {
     return std::make_unique<column>(std::move(offsets_buff), rmm::device_buffer{}, 0);
   }
 
+  [[nodiscard]] auto make_zeroed_indices(size_type size) const
+  {
+    auto indices_buff = cudf::detail::make_zeroed_device_uvector_async<size_type>(size, stream, mr);
+    return std::make_unique<column>(std::move(indices_buff), rmm::device_buffer{}, 0);
+  }
+
  public:
   template <typename T, CUDF_ENABLE_IF(cudf::is_fixed_width<T>())>
   std::unique_ptr<column> operator()(schema_element const& schema, size_type size) const
@@ -135,8 +141,7 @@ struct allnull_column_functor {
     auto const& child_name = schema.child_types.begin()->first;
     std::unique_ptr<column> child =
       make_empty_column(schema.child_types.at(child_name), stream, mr);
-    return make_fixed_width_column(schema.type, size, mask_state::ALL_NULL, stream, mr);
-    auto indices   = make_zeroed_offsets(size - 1);
+    auto indices   = make_zeroed_indices(size);
     auto null_mask = cudf::detail::create_null_mask(size, mask_state::ALL_NULL, stream, mr);
     return make_dictionary_column(std::move(child), std::move(indices), std::move(null_mask), size);
   }

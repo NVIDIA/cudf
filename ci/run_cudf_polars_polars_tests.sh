@@ -1,10 +1,66 @@
 #!/bin/bash
+
 # SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 set -euo pipefail
 
 TIMEOUT_TOOL_PATH="$(dirname "$(realpath "${BASH_SOURCE[0]}")")"/timeout_with_stack.py
+
+ENGINE="both"
+BLOCKSIZE="default"
+RUN_SLOW=false
+PYTEST_ARGS=()
+while (($#)); do
+    case "$1" in
+        --engine)
+            if (($# < 2)); then
+                echo "Missing value for --engine." >&2
+                exit 2
+            fi
+            ENGINE="$2"
+            shift 2
+            ;;
+        --engine=*)
+            ENGINE="${1#*=}"
+            shift
+            ;;
+        --inject-gpu-engine-blocksize)
+            if (($# < 2)); then
+                echo "Missing value for --inject-gpu-engine-blocksize." >&2
+                exit 2
+            fi
+            BLOCKSIZE="$2"
+            shift 2
+            ;;
+        --inject-gpu-engine-blocksize=*)
+            BLOCKSIZE="${1#*=}"
+            shift
+            ;;
+        --run-slow)
+            RUN_SLOW=true
+            shift
+            ;;
+        *)
+            PYTEST_ARGS+=("$1")
+            shift
+            ;;
+    esac
+done
+
+if [[ "${ENGINE}" != "both" && "${ENGINE}" != "in-memory" && "${ENGINE}" != "spmd" ]]; then
+    echo "Unknown engine: ${ENGINE}. Expected one of: both, in-memory, spmd." >&2
+    exit 2
+fi
+if [[ "${BLOCKSIZE}" != "default" && "${BLOCKSIZE}" != "small" ]]; then
+    echo "Unknown blocksize: ${BLOCKSIZE}. Expected one of: default, small." >&2
+    exit 2
+fi
+if [[ "${RUN_SLOW}" == "true" ]]; then
+    PYTEST_MARK_EXPR=""
+else
+    PYTEST_MARK_EXPR="not slow"
+fi
 
 # Support invoking run_cudf_polars_pytests.sh outside the script directory
 # Assumption, polars has been cloned in the root of the repo.
@@ -35,7 +91,6 @@ DESELECTED_TESTS=(
     "tests/unit/io/test_write.py::test_write_async[<lambda>-<lambda>2]" # kvikio file creation error in CI
     "tests/unit/io/test_scan.py::test_scan_ndjson_streaming_decompression[schema0]" # polars bug: decompresses entire stream instead of stopping at slice limit, see https://github.com/pola-rs/polars/issues/28954
     "tests/unit/io/test_scan.py::test_scan_ndjson_streaming_decompression[None]" # polars bug: decompresses entire stream instead of stopping at slice limit, see https://github.com/pola-rs/polars/issues/28954
-    "tests/unit/operations/test_random.py::test_shuffle_group_by_reseed" # https://github.com/NVIDIA/cudf/issues/22964
 )
 
 if [[ $(arch) == "aarch64" ]]; then
@@ -59,47 +114,51 @@ else
     fi
 fi
 
-DESELECTED_TESTS_STR=$(printf -- " --deselect %s" "${DESELECTED_TESTS[@]}")
+DESELECTED_TEST_ARGS=()
+for test in "${DESELECTED_TESTS[@]}"; do
+    DESELECTED_TEST_ARGS+=(--deselect "${test}")
+done
 
-# Don't quote the `DESELECTED_...` variable because `pytest` can't handle
-# multiple quoted arguments inline
-# shellcheck disable=SC2086
 # Fail fast (-x) rather than trying to continue because failed tests pollute the state
-echo "Run polars tests with injected in-memory GPU engine"
-python "${TIMEOUT_TOOL_PATH}" --enable-python 5400 \
-   python -m pytest \
-       --import-mode=importlib \
-       --cache-clear \
-       -x \
-       -m "" \
-       -p cudf_polars.testing.inject_gpu_engine \
-       -n 4 \
-       --dist=worksteal \
-       --tb=native \
-       --durations 10 --durations-min 10 \
-       $DESELECTED_TESTS_STR \
-       "$@" \
-       py-polars/tests \
-       --inject-gpu-engine in-memory
+if [[ "${ENGINE}" == "both" || "${ENGINE}" == "in-memory" ]]; then
+    echo "Run polars tests with injected in-memory GPU engine"
+    python "${TIMEOUT_TOOL_PATH}" --enable-python 5400 \
+       python -m pytest \
+           --import-mode=importlib \
+           --cache-clear \
+           -x \
+           -m "${PYTEST_MARK_EXPR}" \
+           -p cudf_polars.testing.inject_gpu_engine \
+           -n 4 \
+           --dist=worksteal \
+           --tb=native \
+           --durations=50 --durations-min=1 \
+           "${DESELECTED_TEST_ARGS[@]}" \
+           "${PYTEST_ARGS[@]}" \
+           py-polars/tests \
+           --inject-gpu-engine in-memory
+fi
 
 # TODO(ResourceWarning): https://github.com/NVIDIA/cudf/issues/22181
-echo "Run polars tests with injected SPMD GPU engine, small blocksize"
-CUDF_POLARS__EXECUTOR__TARGET_PARTITION_SIZE=805306368 \
-CUDF_POLARS__EXECUTOR__FALLBACK_MODE=silent \
-python "${TIMEOUT_TOOL_PATH}" --enable-python 5400 \
-   python -m pytest \
-       --import-mode=importlib \
-       --cache-clear \
-       -x \
-       -m "" \
-       -p cudf_polars.testing.inject_gpu_engine \
-       -W ignore::ResourceWarning \
-       -n 4 \
-       --dist=worksteal \
-       --tb=native \
-       --durations 10 --durations-min 10 \
-       $DESELECTED_TESTS_STR \
-       "$@" \
-       py-polars/tests \
-       --inject-gpu-engine spmd \
-       --inject-gpu-engine-blocksize small
+if [[ "${ENGINE}" == "both" || "${ENGINE}" == "spmd" ]]; then
+    echo "Run polars tests with injected SPMD GPU engine, ${BLOCKSIZE} blocksize"
+    CUDF_POLARS__EXECUTOR__TARGET_PARTITION_SIZE=805306368 \
+    CUDF_POLARS__EXECUTOR__FALLBACK_MODE=silent \
+    python "${TIMEOUT_TOOL_PATH}" --enable-python 5400 \
+       python -m pytest \
+           --import-mode=importlib \
+           --cache-clear \
+           -x \
+           -m "${PYTEST_MARK_EXPR}" \
+           -p cudf_polars.testing.inject_gpu_engine \
+           -W ignore::ResourceWarning \
+           -n 4 \
+           --dist=worksteal \
+           --tb=native \
+           --durations=50 --durations-min=1 \
+           "${DESELECTED_TEST_ARGS[@]}" \
+           "${PYTEST_ARGS[@]}" \
+           py-polars/tests \
+           --inject-gpu-engine spmd \
+           --inject-gpu-engine-blocksize "${BLOCKSIZE}"
+fi

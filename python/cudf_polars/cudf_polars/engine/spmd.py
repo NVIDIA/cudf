@@ -55,7 +55,10 @@ from cudf_polars.engine.persisted_result import (
     PersistedBackend,
     execute_persisted_query,
 )
-from cudf_polars.quent._context import LocalQuentContext
+from cudf_polars.quent._context import (
+    LocalQuentContext,
+    WorkerResources,
+)
 from cudf_polars.quent._types import Worker
 from cudf_polars.streaming.actor_graph.collectives.common import reserve_op_id
 from cudf_polars.streaming.actor_graph.utils import set_memory_resource
@@ -65,8 +68,7 @@ from cudf_polars.utils.config import (
     SPMDContext,
     StreamingExecutor,
     configure_kvikio,
-    resolve_kvikio_nthreads,
-    resolve_kvikio_statistics,
+    resolve_kvikio_executor_options,
 )
 
 if TYPE_CHECKING:
@@ -131,24 +133,29 @@ def evaluate_pipeline_spmd_mode(
     comm = config_options.executor.spmd_context.comm
     context = config_options.executor.spmd_context.context
     py_executor = config_options.executor.spmd_context.py_executor
+    spmd_context = config_options.executor.spmd_context
 
     quent_context = config_options.executor.quent_context
     local_quent_context: LocalQuentContext | None = None
     if quent_context is not None:
         quent_logger = config_options.executor.spmd_context.quent_logger
         assert quent_logger is not None
+        assert spmd_context.worker_resources is not None
+
         query = quent_context.query_for(query_id)
         quent_context._emit_query_group_events(quent_logger)
         quent_context._emit_query_events(quent_logger, query)
+        worker_id = config_options.executor.spmd_context.worker_id
         local_quent_context = LocalQuentContext(
             context=quent_context,
             query=query,
             worker=Worker(
-                id=config_options.executor.spmd_context.worker_id,
+                id=worker_id,
                 engine=quent_context.engine,
                 instance_name=f"rank-{comm.rank}",
             ),
             logger=quent_logger,
+            worker_resources=spmd_context.worker_resources,
         )
 
     df, metadata = evaluate_on_rank(
@@ -163,6 +170,8 @@ def evaluate_pipeline_spmd_mode(
     if quent_context is not None:
         assert config_options.executor.spmd_context.quent_logger is not None
         assert local_quent_context is not None
+        # Device memory and the disk->device channel are engine-scoped and are
+        # finalized once at engine shutdown, not per query.
         quent_context._emit_query_exit_events(
             config_options.executor.spmd_context.quent_logger,
             local_quent_context.query,
@@ -251,7 +260,7 @@ def synchronize_quent_context(
     """
     if comm.rank == 0:
         quent_context = cudf_polars.quent.QuentContext()
-        data = quent_context.serialize()
+        data = quent_context._serialize()
     else:
         data = b""
 
@@ -262,7 +271,7 @@ def synchronize_quent_context(
     with reserve_op_id() as op_id:
         all_data = all_gather_host_data(comm, context.br(), op_id, data)
 
-    return cudf_polars.quent.QuentContext.deserialize(all_data[0])
+    return cudf_polars.quent.QuentContext._deserialize(all_data[0])
 
 
 class SPMDEngine(StreamingEngine):
@@ -419,13 +428,7 @@ class SPMDEngine(StreamingEngine):
         executor_options: dict[str, Any] | None = None,
         engine_options: dict[str, Any] | None = None,
     ) -> None:
-        executor_options = executor_options or {}
-        executor_options.setdefault(
-            "kvikio_nthreads", resolve_kvikio_nthreads(executor_options)
-        )
-        executor_options.setdefault(
-            "kvikio_statistics", resolve_kvikio_statistics(executor_options)
-        )
+        executor_options = resolve_kvikio_executor_options(executor_options or {})
         engine_options = engine_options or {}
 
         quent_context: cudf_polars.quent.QuentContext | None = executor_options.get(
@@ -443,7 +446,15 @@ class SPMDEngine(StreamingEngine):
         )
         bind_to_gpu(hw_binding)
 
-        configure_kvikio(executor_options["kvikio_nthreads"])
+        configure_kvikio(
+            executor_options["kvikio_nthreads"],
+            remote_io_backend=executor_options["kvikio_remote_io_backend"],
+            task_size=executor_options["kvikio_task_size"],
+            bounce_buffer_bytes=executor_options["kvikio_bounce_buffer_bytes"],
+            reactor_count=executor_options["kvikio_reactor_count"],
+            reactor_dispatch=executor_options["kvikio_reactor_dispatch"],
+            request_ceiling=executor_options["kvikio_request_ceiling"],
+        )
 
         self.rapidsmpf_options = resolve_rapidsmpf_options(rapidsmpf_options)
         mr_config: MemoryResourceConfig = engine_options.get(
@@ -511,6 +522,22 @@ class SPMDEngine(StreamingEngine):
                 instance_name=f"rank-{self.rank}",  # relies on self.comm
             )
 
+            worker_resources: WorkerResources | None = None
+            if quent_context is not None:
+                assert self._quent_logger is not None
+                self._quent_logger.emit(self._quent_worker._init())
+
+                worker_resources = WorkerResources.build(
+                    instance_suffix=f"rank-{self.rank}",
+                    engine_id=engine_id,
+                    worker_id=self._quent_worker.id,
+                    rank=comm.rank,
+                    nranks=comm.nranks,
+                )
+                worker_resources.declare(self._quent_logger)
+
+            self._worker_resources = worker_resources
+
             # Register after `_cleanup_ctx` so on teardown (LIFO) the
             # executor shuts down first. `wait=True` is safe because
             # rapidsmpf's `run_actor_network` awaits its only submitted
@@ -536,6 +563,7 @@ class SPMDEngine(StreamingEngine):
                         quent_logger=self._quent_logger,
                         context=self._ctx,
                         py_executor=self._py_executor,
+                        worker_resources=self._worker_resources,
                     ),
                 },
                 engine_options={
@@ -544,9 +572,6 @@ class SPMDEngine(StreamingEngine):
                 },
                 exit_stack=exit_stack,
             )
-
-            if self._quent_logger is not None:
-                self._quent_logger.emit(self._quent_worker._init())
         except Exception:
             exit_stack.close()
             raise
@@ -627,16 +652,24 @@ class SPMDEngine(StreamingEngine):
         )
         executor_options = executor_options or {}
         existing_executor_options = self.config.get("executor_options", {})
-        if isinstance(existing_executor_options, dict):
-            existing_quent_context = existing_executor_options.get("quent_context")
-            if existing_quent_context is not None:
-                executor_options.setdefault("quent_context", existing_quent_context)
-            existing_kvikio_nthreads = existing_executor_options.get("kvikio_nthreads")
-            if existing_kvikio_nthreads is not None:
-                executor_options.setdefault("kvikio_nthreads", existing_kvikio_nthreads)
-        configure_kvikio(executor_options["kvikio_nthreads"])
-        executor_options.setdefault(
-            "kvikio_statistics", resolve_kvikio_statistics(executor_options)
+        if not isinstance(existing_executor_options, dict):
+            existing_executor_options = {}
+        existing_quent_context = existing_executor_options.get("quent_context")
+        if existing_quent_context is not None:
+            executor_options.setdefault("quent_context", existing_quent_context)
+        if "kvikio_nthreads" in existing_executor_options:
+            executor_options.setdefault(
+                "kvikio_nthreads", existing_executor_options["kvikio_nthreads"]
+            )
+        executor_options = resolve_kvikio_executor_options(executor_options)
+        configure_kvikio(
+            executor_options["kvikio_nthreads"],
+            remote_io_backend=executor_options["kvikio_remote_io_backend"],
+            task_size=executor_options["kvikio_task_size"],
+            bounce_buffer_bytes=executor_options["kvikio_bounce_buffer_bytes"],
+            reactor_count=executor_options["kvikio_reactor_count"],
+            reactor_dispatch=executor_options["kvikio_reactor_dispatch"],
+            request_ceiling=executor_options["kvikio_request_ceiling"],
         )
         engine_options = engine_options or {}
         quent_context: cudf_polars.quent.QuentContext | None = executor_options.get(
@@ -701,6 +734,7 @@ class SPMDEngine(StreamingEngine):
                     engine_id=engine_id,
                     worker_id=self._quent_worker.id,
                     quent_logger=self._quent_logger,
+                    worker_resources=self._worker_resources,
                 ),
             },
             engine_options={
@@ -868,7 +902,10 @@ class SPMDEngine(StreamingEngine):
         # Clear the references only after shutdown completes.
 
         if self._quent_logger is not None:
+            if self._worker_resources is not None:
+                self._worker_resources.finalize(self._quent_logger)
             self._quent_logger.emit(self._quent_worker._exit())
+
         quent_context: cudf_polars.quent.QuentContext | None = self.config[
             "executor_options"
         ].get("quent_context")
@@ -893,8 +930,11 @@ class SPMDEngine(StreamingEngine):
 
         return [json.loads(r) for r in results]
 
+    # TODO: adopt polars' Engine.execute(lf, *, optimizations) contract
+    # (added in polars>=1.43) so we can return our own result type from
+    # LazyFrame.execute(engine=...) too (See https://github.com/NVIDIA/cudf/issues/22917).
     @unstable()
-    def execute(self, lf: pl.LazyFrame) -> PersistedQueryResult:
+    def execute(self, lf: pl.LazyFrame) -> PersistedQueryResult:  # type: ignore[override]
         """
         Execute a :class:`~polars.LazyFrame` and return a GPU-resident result.
 

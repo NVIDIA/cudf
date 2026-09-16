@@ -16,13 +16,8 @@ namespace hybrid_scan {
 
 cudf::io::parquet_reader_options build_options(JNIEnv* env,
                                                jobjectArray j_column_names,
-                                               jbooleanArray j_read_binary_as_string,
                                                jint time_unit_type_id)
 {
-  // The hybrid_scan_reader's options builder is constructed without a source_info because
-  // the reader works on already-parsed footer bytes (and on byte ranges fetched separately).
-  // Filter is not installed here; use HybridScanReader.setFilter (JNI setFilter) after
-  // construction.
   cudf::io::parquet_reader_options_builder builder;
 
   cudf::jni::native_jstringArray names(env, j_column_names);
@@ -30,24 +25,6 @@ cudf::io::parquet_reader_options build_options(JNIEnv* env,
     builder = builder.column_names(names.as_cpp_vector());
   }
 
-  // Translate Java's per-column "read binary as string" flags into the C++ schema override
-  // hooks. The reader_column_schema mechanism lets callers force binary→string conversion
-  // for the i-th projected column.
-  cudf::jni::native_jbooleanArray binary_as_str(env, j_read_binary_as_string);
-  if (!binary_as_str.is_null() && binary_as_str.size() > 0) {
-    std::vector<cudf::io::reader_column_schema> schemas;
-    schemas.reserve(binary_as_str.size());
-    for (int i = 0; i < binary_as_str.size(); ++i) {
-      cudf::io::reader_column_schema s;
-      s.set_convert_binary_to_strings(static_cast<bool>(binary_as_str[i]));
-      schemas.emplace_back(std::move(s));
-    }
-    builder = builder.set_column_schema(std::move(schemas));
-    binary_as_str.cancel();
-  }
-
-  // convert_strings_to_categories and ignore_missing_columns are fixed to match the
-  // standard cudf-java Parquet reader (see readParquet in TableJni.cpp).
   return builder.convert_strings_to_categories(false)
     .timestamp_type(cudf::data_type(static_cast<cudf::type_id>(time_unit_type_id)))
     .ignore_missing_columns(true)

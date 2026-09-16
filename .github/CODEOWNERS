@@ -39,3 +39,8 @@ pyproject.toml           @NVIDIA/adi-packaging-codeowners
 
 # Ops code owners
 /SECURITY.md             @NVIDIA/adi-ops-codeowners
+
+# Overrides to ensure the appropriate team manages these library-specific plugins.
+/ci/narwhals_cudf_test_plugin.py @NVIDIA/cudf-python-codeowners
+/ci/narwhals_cudf_pandas_test_plugin.py @NVIDIA/cudf-python-codeowners
+/ci/narwhals_cudf_polars_test_plugin.py @NVIDIA/cudf-polars-codeowners

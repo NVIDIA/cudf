@@ -714,7 +714,7 @@ files:
   test_cudf_polars_compat:
     output: none
     matrix:
-      polars_compat_version: ["1.35", "1.36", "1.37", "1.38", "1.39", "1.40", "1.41", "1.42"]
+      polars_compat_version: ["1.35", "1.36", "1.37", "1.38", "1.39", "1.40", "1.41", "1.42", "1.43", "1.44"]
     includes:
       - test_cudf_polars_compat
 channels:
@@ -1059,11 +1059,7 @@ dependencies:
       - output_types: [conda, requirements, constraints, pyproject]
         packages:
           - fsspec>=0.6.0
-          # pandas 3.0.4 segfaults constructing pd.Timedelta on Python 3.14,
-          # which breaks `import cudf` (https://github.com/pandas-dev/pandas/issues/66086).
-          # Cap below 3.0.4 (rather than just excluding it) until a fixed
-          # release is confirmed upstream, then raise the bound.
-          - &pandas pandas>=3.0.0,<3.0.4a0
+          - &pandas pandas>=3.0.0,<3.1.0
   run_libcudf:
     common:
       - output_types: [requirements, pyproject]
@@ -1081,11 +1077,11 @@ dependencies:
           - matrix:
               cuda: "12.*"
             packages:
-              - cuda-bindings>=12.9.2,<13.0
+              - cuda-bindings>=12.9.3,<13.0
           # fallback to CUDA 13 versions if 'cuda' is '13.*' or not provided
           - matrix:
             packages:
-              - cuda-bindings>=13.0.1,<14.0
+              - cuda-bindings>=13.0.2,<14.0
   run_cudf:
     common:
       - output_types: [conda, requirements, constraints, pyproject]
@@ -1102,19 +1098,19 @@ dependencies:
           # 'nvidia-ml-py' provides the 'pynvml' module
           - &nvidia_ml_py nvidia-ml-py>=12
           - packaging
-          - polars>=1.35,<1.43
+          - polars>=1.35,<1.45
           - typing_extensions>=4.0.0
   run_cudf_polars_dask:
     common:
       - output_types: [conda, requirements, constraints, pyproject]
         packages:
-          - rapids-dask-dependency==26.10.*,>=0.0.0a0
+          - rapids-dask-dependency==26.12.*,>=0.0.0a0
   run_dask_cudf:
     common:
       - output_types: [conda, requirements, constraints, pyproject]
         packages:
           - *nvidia_ml_py
-          - rapids-dask-dependency==26.10.*,>=0.0.0a0
+          - rapids-dask-dependency==26.12.*,>=0.0.0a0
   run_custreamz:
     common:
       - output_types: conda
@@ -1138,10 +1134,10 @@ dependencies:
     common:
       - output_types: conda
         packages:
-          - libcudf-example==26.10.*,>=0.0.0a0
-          - libcudf_kafka==26.10.*,>=0.0.0a0
-          - libcudf-tests==26.10.*,>=0.0.0a0
-          - libcudf-streaming-tests==26.10.*,>=0.0.0a0
+          - libcudf-example==26.12.*,>=0.0.0a0
+          - libcudf_kafka==26.12.*,>=0.0.0a0
+          - libcudf-tests==26.12.*,>=0.0.0a0
+          - libcudf-streaming-tests==26.12.*,>=0.0.0a0
   test_python_common:
     common:
       - output_types: [conda, requirements, constraints, pyproject]
@@ -1157,11 +1153,11 @@ dependencies:
           - matrix: {dependencies: "oldest"}
             packages:
               - numba==0.60.0
-              - pandas==3.0.*,<3.0.4a0
+              - *pandas
               - numba-cuda==0.22.2
           - matrix: {dependencies: "latest"}
             packages:
-              - pandas==3.0.3
+              - *pandas
           - matrix:
             packages:
       - output_types: conda
@@ -1177,12 +1173,12 @@ dependencies:
               dependencies: "oldest"
               cuda: "12.*"
             packages:
-              - cuda-bindings==12.9.2
+              - cuda-bindings==12.9.3
           - matrix:
               dependencies: "oldest"
               cuda: "13.*"
             packages:
-              - cuda-bindings==13.0.1
+              - cuda-bindings==13.0.2
           - matrix:
             packages:
       - output_types: [requirements, constraints]
@@ -1260,6 +1256,7 @@ dependencies:
           - hypothesis>=6.131.7
           - pytest-benchmark
           - pytest-cases>=3.8.2
+          - rapids-cli
           - scipy
           - zstandard
       - output_types: conda
@@ -1301,10 +1298,6 @@ dependencies:
           - zstandard
           # Used by ci/timeout_with_stack.py utility
           - psutil
-          # The polars test suite constructs pandas objects for interop and
-          # dask-cuda pulls pandas in transitively (unbounded), so constrain it
-          # here to exclude the 3.0.4 release that segfaults on pd.Timedelta
-          # (https://github.com/pandas-dev/pandas/issues/66086).
           - *pandas
       - output_types: conda
         packages:
@@ -1324,7 +1317,7 @@ dependencies:
     common:
       - output_types: conda
         packages:
-          - &libcudf_unsuffixed libcudf==26.10.*,>=0.0.0a0
+          - &libcudf_unsuffixed libcudf==26.12.*,>=0.0.0a0
       - output_types: [requirements, constraints]
         packages:
           # pip recognizes the index as a global option for the requirements.txt file
@@ -1336,12 +1329,12 @@ dependencies:
               cuda: "12.*"
               cuda_suffixed: "true"
             packages:
-              - libcudf-cu12==26.10.*,>=0.0.0a0
+              - libcudf-cu12==26.12.*,>=0.0.0a0
           - matrix:
               cuda: "13.*"
               cuda_suffixed: "true"
             packages:
-              - libcudf-cu13==26.10.*,>=0.0.0a0
+              - libcudf-cu13==26.12.*,>=0.0.0a0
           - matrix:
               cuda_suffixed: "false"
             packages: [*libcudf_unsuffixed]
@@ -1353,7 +1346,7 @@ dependencies:
           - numba>=0.60.0,<0.65.0
       - output_types: [conda]
         packages:
-          - &numba_cuda numba-cuda>=0.22.2
+          - &numba_cuda numba-cuda>=0.22.2,<0.31.0
     specific:
       - output_types: [requirements, constraints, pyproject]
         matrices:
@@ -1361,12 +1354,12 @@ dependencies:
               cuda: "12.*"
               cuda_suffixed: "true"
             packages:
-              - numba-cuda[cu12]>=0.22.2
+              - numba-cuda[cu12]>=0.22.2,<0.31.0
           - matrix:
               cuda: "13.*"
               cuda_suffixed: "true"
             packages:
-              - numba-cuda[cu13]>=0.22.2
+              - numba-cuda[cu13]>=0.22.2,<0.31.0
           # fallback to numba-cuda with no extra CUDA packages if 'cuda_suffixed' isn't true
           - matrix:
               cuda_suffixed: "false"
@@ -1404,7 +1397,7 @@ dependencies:
     common:
       - output_types: conda
         packages:
-          - &pylibcudf_unsuffixed pylibcudf==26.10.*,>=0.0.0a0
+          - &pylibcudf_unsuffixed pylibcudf==26.12.*,>=0.0.0a0
       - output_types: [requirements, constraints]
         packages:
           # pip recognizes the index as a global option for the requirements.txt file
@@ -1416,12 +1409,12 @@ dependencies:
               cuda: "12.*"
               cuda_suffixed: "true"
             packages:
-              - pylibcudf-cu12==26.10.*,>=0.0.0a0
+              - pylibcudf-cu12==26.12.*,>=0.0.0a0
           - matrix:
               cuda: "13.*"
               cuda_suffixed: "true"
             packages:
-              - pylibcudf-cu13==26.10.*,>=0.0.0a0
+              - pylibcudf-cu13==26.12.*,>=0.0.0a0
           - matrix:
               cuda_suffixed: "false"
             packages: [*pylibcudf_unsuffixed]
@@ -1429,7 +1422,7 @@ dependencies:
     common:
       - output_types: conda
         packages:
-          - &plc_unsuffixed pylibcudf==26.10.*,>=0.0.0a0
+          - &plc_unsuffixed pylibcudf==26.12.*,>=0.0.0a0
       - output_types: [requirements, constraints]
         packages:
           # pip recognizes the index as a global option for the requirements.txt file
@@ -1441,12 +1434,12 @@ dependencies:
               cuda: "12.*"
               cuda_suffixed: "true"
             packages:
-              - pylibcudf-cu12[pyarrow]==26.10.*,>=0.0.0a0
+              - pylibcudf-cu12[pyarrow]==26.12.*,>=0.0.0a0
           - matrix:
               cuda: "13.*"
               cuda_suffixed: "true"
             packages:
-              - pylibcudf-cu13[pyarrow]==26.10.*,>=0.0.0a0
+              - pylibcudf-cu13[pyarrow]==26.12.*,>=0.0.0a0
           - matrix:
               cuda_suffixed: "false"
             packages: [*plc_unsuffixed]
@@ -1454,7 +1447,7 @@ dependencies:
     common:
       - output_types: conda
         packages:
-          - &cudf_unsuffixed cudf==26.10.*,>=0.0.0a0
+          - &cudf_unsuffixed cudf==26.12.*,>=0.0.0a0
       - output_types: [requirements, constraints]
         packages:
           # pip recognizes the index as a global option for the requirements.txt file
@@ -1466,12 +1459,12 @@ dependencies:
               cuda: "12.*"
               cuda_suffixed: "true"
             packages:
-              - cudf-cu12==26.10.*,>=0.0.0a0
+              - cudf-cu12==26.12.*,>=0.0.0a0
           - matrix:
               cuda: "13.*"
               cuda_suffixed: "true"
             packages:
-              - cudf-cu13==26.10.*,>=0.0.0a0
+              - cudf-cu13==26.12.*,>=0.0.0a0
           - matrix:
               cuda_suffixed: "false"
             packages: [*cudf_unsuffixed]
@@ -1479,7 +1472,7 @@ dependencies:
     common:
       - output_types: [conda, pyproject]
         packages:
-          - cudf_kafka==26.10.*,>=0.0.0a0
+          - cudf_kafka==26.12.*,>=0.0.0a0
   depends_on_cupy:
     common:
       - output_types: conda
@@ -1525,7 +1518,7 @@ dependencies:
     common:
       - output_types: conda
         packages:
-          - &kvikio_unsuffixed kvikio==26.10.*,>=0.0.0a0
+          - &kvikio_unsuffixed kvikio==26.12.*,>=0.0.0a0
       - output_types: requirements
         packages:
           - --extra-index-url=https://pypi.anaconda.org/rapidsai-wheels-nightly/simple/
@@ -1536,12 +1529,12 @@ dependencies:
               cuda: "12.*"
               cuda_suffixed: "true"
             packages:
-              - kvikio-cu12==26.10.*,>=0.0.0a0
+              - kvikio-cu12==26.12.*,>=0.0.0a0
           - matrix:
               cuda: "13.*"
               cuda_suffixed: "true"
             packages:
-              - kvikio-cu13==26.10.*,>=0.0.0a0
+              - kvikio-cu13==26.12.*,>=0.0.0a0
           - matrix:
               cuda_suffixed: "false"
             packages:
@@ -1550,7 +1543,7 @@ dependencies:
     common:
       - output_types: conda
         packages:
-          - &libkvikio_unsuffixed libkvikio==26.10.*,>=0.0.0a0
+          - &libkvikio_unsuffixed libkvikio==26.12.*,>=0.0.0a0
       - output_types: [requirements, constraints]
         packages:
           - --extra-index-url=https://pypi.anaconda.org/rapidsai-wheels-nightly/simple/
@@ -1561,12 +1554,12 @@ dependencies:
               cuda: "12.*"
               cuda_suffixed: "true"
             packages:
-              - libkvikio-cu12==26.10.*,>=0.0.0a0
+              - libkvikio-cu12==26.12.*,>=0.0.0a0
           - matrix:
               cuda: "13.*"
               cuda_suffixed: "true"
             packages:
-              - libkvikio-cu13==26.10.*,>=0.0.0a0
+              - libkvikio-cu13==26.12.*,>=0.0.0a0
           - matrix:
               cuda_suffixed: "false"
             packages:
@@ -1575,7 +1568,7 @@ dependencies:
     common:
       - output_types: conda
         packages:
-          - &librmm_unsuffixed librmm==26.10.*,>=0.0.0a0
+          - &librmm_unsuffixed librmm==26.12.*,>=0.0.0a0
       - output_types: [requirements, constraints]
         packages:
           # pip recognizes the index as a global option for the requirements.txt file
@@ -1587,12 +1580,12 @@ dependencies:
               cuda: "12.*"
               cuda_suffixed: "true"
             packages:
-              - librmm-cu12==26.10.*,>=0.0.0a0
+              - librmm-cu12==26.12.*,>=0.0.0a0
           - matrix:
               cuda: "13.*"
               cuda_suffixed: "true"
             packages:
-              - librmm-cu13==26.10.*,>=0.0.0a0
+              - librmm-cu13==26.12.*,>=0.0.0a0
           - matrix:
               cuda_suffixed: "false"
             packages:
@@ -1601,7 +1594,7 @@ dependencies:
     common:
       - output_types: conda
         packages:
-          - &rmm_unsuffixed rmm==26.10.*,>=0.0.0a0
+          - &rmm_unsuffixed rmm==26.12.*,>=0.0.0a0
       - output_types: [requirements, constraints]
         packages:
           # pip recognizes the index as a global option for the requirements.txt file
@@ -1613,12 +1606,12 @@ dependencies:
               cuda: "12.*"
               cuda_suffixed: "true"
             packages:
-              - rmm-cu12==26.10.*,>=0.0.0a0
+              - rmm-cu12==26.12.*,>=0.0.0a0
           - matrix:
               cuda: "13.*"
               cuda_suffixed: "true"
             packages:
-              - rmm-cu13==26.10.*,>=0.0.0a0
+              - rmm-cu13==26.12.*,>=0.0.0a0
           - matrix:
               cuda_suffixed: "false"
             packages:
@@ -1627,7 +1620,7 @@ dependencies:
     common:
       - output_types: conda
         packages:
-          - &libucxx_unsuffixed libucxx==0.52.*,>=0.0.0a0
+          - &libucxx_unsuffixed libucxx==0.53.*,>=0.0.0a0
       - output_types: [requirements, constraints]
         packages:
           # pip recognizes the index as a global option for the requirements.txt file
@@ -1639,12 +1632,12 @@ dependencies:
               cuda: "12.*"
               cuda_suffixed: "true"
             packages:
-              - libucxx-cu12==0.52.*,>=0.0.0a0
+              - libucxx-cu12==0.53.*,>=0.0.0a0
           - matrix:
               cuda: "13.*"
               cuda_suffixed: "true"
             packages:
-              - libucxx-cu13==0.52.*,>=0.0.0a0
+              - libucxx-cu13==0.53.*,>=0.0.0a0
           - matrix:
               cuda_suffixed: "false"
             packages:
@@ -1653,7 +1646,7 @@ dependencies:
     common:
       - output_types: conda
         packages:
-          - &ucxx_unsuffixed ucxx==0.52.*,>=0.0.0a0
+          - &ucxx_unsuffixed ucxx==0.53.*,>=0.0.0a0
       - output_types: [requirements, constraints]
         packages:
           # pip recognizes the index as a global option for the requirements.txt file
@@ -1665,12 +1658,12 @@ dependencies:
               cuda: "12.*"
               cuda_suffixed: "true"
             packages:
-              - ucxx-cu12==0.52.*,>=0.0.0a0
+              - ucxx-cu12==0.53.*,>=0.0.0a0
           - matrix:
               cuda: "13.*"
               cuda_suffixed: "true"
             packages:
-              - ucxx-cu13==0.52.*,>=0.0.0a0
+              - ucxx-cu13==0.53.*,>=0.0.0a0
           - matrix:
               cuda_suffixed: "false"
             packages:
@@ -1679,7 +1672,7 @@ dependencies:
     common:
       - output_types: conda
         packages:
-          - &rapidsmpf_unsuffixed rapidsmpf==26.10.*,>=0.0.0a0
+          - &rapidsmpf_unsuffixed rapidsmpf==26.12.*,>=0.0.0a0
       - output_types: [requirements, constraints]
         packages:
           # pip recognizes the index as a global option for the requirements.txt file
@@ -1691,12 +1684,12 @@ dependencies:
               cuda: "12.*"
               cuda_suffixed: "true"
             packages:
-              - rapidsmpf-cu12==26.10.*,>=0.0.0a0
+              - rapidsmpf-cu12==26.12.*,>=0.0.0a0
           - matrix:
               cuda: "13.*"
               cuda_suffixed: "true"
             packages:
-              - rapidsmpf-cu13==26.10.*,>=0.0.0a0
+              - rapidsmpf-cu13==26.12.*,>=0.0.0a0
           - matrix:
               cuda_suffixed: "false"
             packages:
@@ -1705,7 +1698,7 @@ dependencies:
     common:
       - output_types: conda
         packages:
-          - &librapidsmpf_unsuffixed librapidsmpf==26.10.*,>=0.0.0a0
+          - &librapidsmpf_unsuffixed librapidsmpf==26.12.*,>=0.0.0a0
       - output_types: [requirements, constraints]
         packages:
           # pip recognizes the index as a global option for the requirements.txt file
@@ -1717,12 +1710,12 @@ dependencies:
               cuda: "12.*"
               cuda_suffixed: "true"
             packages:
-              - librapidsmpf-cu12==26.10.*,>=0.0.0a0
+              - librapidsmpf-cu12==26.12.*,>=0.0.0a0
           - matrix:
               cuda: "13.*"
               cuda_suffixed: "true"
             packages:
-              - librapidsmpf-cu13==26.10.*,>=0.0.0a0
+              - librapidsmpf-cu13==26.12.*,>=0.0.0a0
           - matrix:
               cuda_suffixed: "false"
             packages:
@@ -1731,7 +1724,7 @@ dependencies:
     common:
       - output_types: conda
         packages:
-          - &libcudf_streaming_unsuffixed libcudf-streaming==26.10.*,>=0.0.0a0
+          - &libcudf_streaming_unsuffixed libcudf-streaming==26.12.*,>=0.0.0a0
       - output_types: [requirements, constraints]
         packages:
           # pip recognizes the index as a global option for the requirements.txt file
@@ -1743,12 +1736,12 @@ dependencies:
               cuda: "12.*"
               cuda_suffixed: "true"
             packages:
-              - libcudf-streaming-cu12==26.10.*,>=0.0.0a0
+              - libcudf-streaming-cu12==26.12.*,>=0.0.0a0
           - matrix:
               cuda: "13.*"
               cuda_suffixed: "true"
             packages:
-              - libcudf-streaming-cu13==26.10.*,>=0.0.0a0
+              - libcudf-streaming-cu13==26.12.*,>=0.0.0a0
           - matrix:
               cuda_suffixed: "false"
             packages:
@@ -1757,7 +1750,7 @@ dependencies:
     common:
       - output_types: conda
         packages:
-          - &cudf_streaming_unsuffixed cudf-streaming==26.10.*,>=0.0.0a0
+          - &cudf_streaming_unsuffixed cudf-streaming==26.12.*,>=0.0.0a0
       - output_types: [requirements, constraints]
         packages:
           # pip recognizes the index as a global option for the requirements.txt file
@@ -1769,12 +1762,12 @@ dependencies:
               cuda: "12.*"
               cuda_suffixed: "true"
             packages:
-              - cudf-streaming-cu12==26.10.*,>=0.0.0a0
+              - cudf-streaming-cu12==26.12.*,>=0.0.0a0
           - matrix:
               cuda: "13.*"
               cuda_suffixed: "true"
             packages:
-              - cudf-streaming-cu13==26.10.*,>=0.0.0a0
+              - cudf-streaming-cu13==26.12.*,>=0.0.0a0
           - matrix:
               cuda_suffixed: "false"
             packages:
@@ -1845,7 +1838,7 @@ dependencies:
     common:
       - output_types: conda
         packages:
-          - &dask_cuda_unsuffixed dask-cuda==26.10.*,>=0.0.0a0
+          - &dask_cuda_unsuffixed dask-cuda==26.12.*,>=0.0.0a0
       - output_types: [requirements, constraints]
         packages:
           # pip recognizes the index as a global option for the requirements.txt file
@@ -1860,12 +1853,12 @@ dependencies:
               cuda: "12.*"
               cuda_suffixed: "true"
             packages:
-              - dask-cuda[cu12]==26.10.*,>=0.0.0a0
+              - dask-cuda[cu12]==26.12.*,>=0.0.0a0
           - matrix:
               cuda: "13.*"
               cuda_suffixed: "true"
             packages:
-              - dask-cuda[cu13]==26.10.*,>=0.0.0a0
+              - dask-cuda[cu13]==26.12.*,>=0.0.0a0
           - matrix:
               cuda_suffixed: "false"
             packages:
@@ -1874,22 +1867,22 @@ dependencies:
     common:
       - output_types: conda
         packages:
-          - dask-cudf==26.10.*,>=0.0.0a0
+          - dask-cudf==26.12.*,>=0.0.0a0
   depends_on_cuml:
     common:
       - output_types: conda
         packages:
-          - cuml==26.10.*,>=0.0.0a0
+          - cuml==26.12.*,>=0.0.0a0
   depends_on_custreamz:
     common:
       - output_types: conda
         packages:
-          - custreamz==26.10.*,>=0.0.0a0
+          - custreamz==26.12.*,>=0.0.0a0
   depends_on_cudf_polars:
     common:
       - output_types: conda
         packages:
-          - cudf-polars==26.10.*,>=0.0.0a0
+          - cudf-polars==26.12.*,>=0.0.0a0
   depends_on_narwhals:
     common:
       - output_types: [conda, requirements, constraints, pyproject]
@@ -1908,7 +1901,7 @@ dependencies:
               pandas_compat_version: "3.0"
             packages:
               - numpy>=2.0,<3.0
-              - pandas==3.0.*,<3.0.4a0
+              - *pandas
           - matrix:
             packages:
   test_cudf_polars_compat:
@@ -1947,5 +1940,13 @@ dependencies:
               polars_compat_version: "1.42"
             packages:
               - polars==1.42.*
+          - matrix:
+              polars_compat_version: "1.43"
+            packages:
+              - polars==1.43.*
+          - matrix:
+              polars_compat_version: "1.44"
+            packages:
+              - polars==1.44.*
           - matrix:
             packages:

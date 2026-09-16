@@ -50,12 +50,12 @@ cpdef void join_streams(
     >>> # ... continue work on join_stream ...
     """
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     cdef vector[cudaStream_t] c_streams
 
     c_streams.reserve(len(streams))
     for s in streams:
-        c_streams.push_back((<Stream>_get_stream(s)).view().value())
+        c_streams.push_back((<Stream>_get_stream(s)).view().get())
 
     with nogil:
         cpp_stream_pool.join_streams(

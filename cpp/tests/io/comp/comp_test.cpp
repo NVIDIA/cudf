@@ -424,10 +424,15 @@ void roundtrip_test(cudf::io::compression_type compression)
     }
   }
 
-  // Exercise representative small, medium, and large inputs. The largest input preserves the
-  // previous test's maximum coverage without repeating the same round trip at every size in
-  // between.
-  auto const test_sizes     = std::array{size_t{1 << 10}, size_t{1 << 20}, expected.size()};
+  auto const test_sizes     = std::array{size_t{1},
+                                     size_t{2},
+                                     size_t{4},
+                                     size_t{8},
+                                     size_t{22},
+                                     size_t{54},
+                                     size_t{1 << 10},
+                                     size_t{1 << 20},
+                                     expected.size()};
   auto const max_input_size = cudf::io::detail::compress_max_allowed_chunk_size(compression)
                                 .value_or(std::numeric_limits<size_t>::max());
   for (auto const test_size : test_sizes) {

@@ -263,6 +263,14 @@ ConfigureNVBench(
 )
 
 # ##################################################################################################
+# * hybrid scan metadata benchmark
+# ----------------------------------------------------------------------
+ConfigureNVBench(
+  HYBRID_SCAN_METADATA_NVBENCH io/parquet/experimental/hybrid_scan/hybrid_scan_metadata.cpp
+  io/parquet/parquet_common.cpp
+)
+
+# ##################################################################################################
 # * hybrid scan multithread benchmark
 # ----------------------------------------------------------------------
 ConfigureNVBench(

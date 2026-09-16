@@ -53,7 +53,7 @@ namespace {
  */
 struct page_stats_caster : public stats_caster_base {
   cudf::size_type total_rows;
-  cudf::host_span<metadata_base const> per_file_metadata;
+  std::span<metadata_base const> per_file_metadata;
   std::span<std::vector<size_type> const> row_group_indices;
   bool const has_is_null_operator;
 
@@ -536,7 +536,7 @@ struct page_stats_caster : public stats_caster_base {
  */
 struct page_stats_to_row_mask_converter : public page_stats_caster {
   page_stats_to_row_mask_converter(cudf::size_type total_rows,
-                                   cudf::host_span<metadata_base const> per_file_metadata,
+                                   std::span<metadata_base const> per_file_metadata,
                                    std::span<std::vector<size_type> const> row_group_indices,
                                    bool has_is_null_operator)
     : page_stats_caster{.total_rows           = total_rows,
@@ -550,7 +550,7 @@ struct page_stats_to_row_mask_converter : public page_stats_caster {
   [[nodiscard]] std::unique_ptr<cudf::column> operator()(
     cudf::size_type schema_idx,
     cudf::data_type dtype,
-    std::reference_wrapper<ast::expression const> filter,
+    std::reference_wrapper<ast::expression const> stats_expr,
     cuda::stream_ref stream,
     rmm::device_async_resource_ref mr) const
   {
@@ -572,15 +572,10 @@ struct page_stats_to_row_mask_converter : public page_stats_caster {
       }
 
       auto page_stats_table = cudf::table(std::move(columns));
-      // Converts AST to StatsAST with reference to min, max columns in above `stats_table`.
-      parquet::detail::stats_expression_converter const stats_expr{
-        filter.get(), std::span{&dtype, 1}, stream};
 
       // Filter the input table using AST expression and return the (BOOL8) predicate column.
-      auto const page_mask = cudf::detail::compute_column(page_stats_table,
-                                                          stats_expr.get_stats_expr().get(),
-                                                          stream,
-                                                          cudf::get_current_device_resource_ref());
+      auto const page_mask = cudf::detail::compute_column(
+        page_stats_table, stats_expr.get(), stream, cudf::get_current_device_resource_ref());
 
       auto const page_indices = compute_page_indices_async(
         page_row_offsets, total_rows, stream, cudf::get_current_device_resource_ref());
@@ -677,6 +672,14 @@ std::unique_ptr<cudf::column> aggregate_reader_metadata::build_row_mask_with_pag
                "offset indexes to be present",
                std::runtime_error);
 
+  // Convert the filter to an expression over page statistics
+  parquet::detail::stats_expression_converter const stats_expr_converter{filter.get(),
+                                                                         output_dtypes};
+
+  // Return early if statistics cannot prune any pages using the filter
+  auto const stats_expr = stats_expr_converter.get_stats_expr();
+  if (not stats_expr.has_value()) { return build_all_true_row_mask(row_group_indices, stream, mr); }
+
   // Optimization for single column filter: Directly build the row mask from page statistics
   if (num_columns == 1) {
     page_stats_to_row_mask_converter const stats_col{
@@ -685,7 +688,7 @@ std::unique_ptr<cudf::column> aggregate_reader_metadata::build_row_mask_with_pag
                                                         stats_col,
                                                         output_column_schemas.front(),
                                                         output_dtypes.front(),
-                                                        filter,
+                                                        stats_expr.value(),
                                                         stream,
                                                         mr);
   }
@@ -742,12 +745,8 @@ std::unique_ptr<cudf::column> aggregate_reader_metadata::build_row_mask_with_pag
 
   auto page_stats_table = cudf::table(std::move(page_stats_columns));
 
-  // Converts AST to StatsAST with reference to min, max columns in above `stats_table`.
-  parquet::detail::stats_expression_converter const stats_expr{filter.get(), output_dtypes, stream};
-
   // Filter the input table using AST expression and return the (BOOL8) predicate column.
-  return cudf::detail::compute_column(
-    page_stats_table, stats_expr.get_stats_expr().get(), stream, mr);
+  return cudf::detail::compute_column(page_stats_table, stats_expr.value().get(), stream, mr);
 }
 
 thrust::host_vector<bool> aggregate_reader_metadata::compute_data_page_mask(

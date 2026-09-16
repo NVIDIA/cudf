@@ -7,7 +7,6 @@ set -euo pipefail
 RUN_DASK_CUDF_TESTS="${RUN_DASK_CUDF_TESTS:-true}"
 RUN_CUDF_KAFKA_TESTS="${RUN_CUDF_KAFKA_TESTS:-true}"
 RUN_CUSTREAMZ_TESTS="${RUN_CUSTREAMZ_TESTS:-true}"
-RUN_CUDF_POLARS_TESTS="${RUN_CUDF_POLARS_TESTS:-true}"
 RUN_CUDF_STREAMING_TESTS="${RUN_CUDF_STREAMING_TESTS:-true}"
 
 # Support invoking test_python_cudf.sh outside the script directory
@@ -52,21 +51,6 @@ if [[ "${RUN_CUSTREAMZ_TESTS}" == "true" ]]; then
     --cov-config=../.coveragerc \
     --cov=custreamz \
     --cov-report=xml:"${RAPIDS_COVERAGE_DIR}/custreamz-coverage.xml" \
-    --cov-report=term \
-    --durations=50 --durations-min=1
-fi
-
-if [[ "${RUN_CUDF_POLARS_TESTS}" == "true" ]]; then
-  rapids-logger "pytest cudf-polars"
-  # Fail fast (-x) rather than trying to continue because failed tests pollute the state
-  ./ci/run_cudf_polars_pytests.sh \
-    -x \
-    --junitxml="${RAPIDS_TESTS_DIR}/junit-cudf-polars.xml" \
-    --numprocesses=4 \
-    --dist=worksteal \
-    --cov-config=./pyproject.toml \
-    --cov=cudf_polars \
-    --cov-report=xml:"${RAPIDS_COVERAGE_DIR}/cudf-polars-coverage.xml" \
     --cov-report=term \
     --durations=50 --durations-min=1
 fi

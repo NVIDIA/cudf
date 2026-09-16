@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -42,8 +42,8 @@
 
 #include <algorithm>
 #include <cmath>
-#include <limits>
 #include <cstdint>
+#include <limits>
 #include <random>
 #include <sstream>
 #include <string>
@@ -58,7 +58,8 @@ std::vector<std::string> split(std::string const& s, char sep)
   std::vector<std::string> out;
   std::stringstream ss(s);
   std::string tok;
-  while (std::getline(ss, tok, sep)) out.push_back(tok);
+  while (std::getline(ss, tok, sep))
+    out.push_back(tok);
   return out;
 }
 
@@ -70,36 +71,44 @@ std::vector<int32_t> make_lengths(std::string const& dist, int64_t num_rows, std
   auto p           = [&](size_t i) { return std::stoll(parts.at(i)); };
   std::vector<int32_t> lens(num_rows);
   auto constexpr max_len = int64_t{1} << 20;
-  auto clampf = [&](double v) { return static_cast<int32_t>(std::clamp<double>(std::llround(v), 0, max_len)); };
+  auto clampf            = [&](double v) {
+    return static_cast<int32_t>(std::clamp<double>(std::llround(v), 0, max_len));
+  };
 
   if (kind == "fixed") {
     std::fill(lens.begin(), lens.end(), static_cast<int32_t>(p(1)));
   } else if (kind == "uniform") {
-    std::uniform_int_distribution<int32_t> d(static_cast<int32_t>(p(1)), static_cast<int32_t>(p(2)));
-    for (auto& l : lens) l = d(rng);
+    std::uniform_int_distribution<int32_t> d(static_cast<int32_t>(p(1)),
+                                             static_cast<int32_t>(p(2)));
+    for (auto& l : lens)
+      l = d(rng);
   } else if (kind == "bimodal") {
     auto const pct = p(1);
     auto const s   = static_cast<int32_t>(p(2));
     auto const l   = static_cast<int32_t>(p(3));
     std::uniform_int_distribution<int> d(0, 99);
-    for (auto& x : lens) x = d(rng) < pct ? l : s;
+    for (auto& x : lens)
+      x = d(rng) < pct ? l : s;
   } else if (kind == "lognormal") {
     auto const median = static_cast<double>(p(1));
     auto const sigma  = static_cast<double>(p(2)) / 100.0;
     std::lognormal_distribution<double> d(std::log(median), sigma);
-    for (auto& l : lens) l = clampf(d(rng));
+    for (auto& l : lens)
+      l = clampf(d(rng));
   } else if (kind == "pareto") {
     auto const xm    = static_cast<double>(p(1));
     auto const alpha = static_cast<double>(p(2)) / 100.0;
     std::uniform_real_distribution<double> u(0.0, 1.0);
-    for (auto& l : lens) l = clampf(xm / std::pow(1.0 - u(rng), 1.0 / alpha));
+    for (auto& l : lens)
+      l = clampf(xm / std::pow(1.0 - u(rng), 1.0 / alpha));
   } else if (kind == "fewhuge") {
     auto const s = static_cast<int32_t>(p(1));
     auto const h = static_cast<int32_t>(p(2));
     auto const k = p(3);
     std::fill(lens.begin(), lens.end(), s);
     std::uniform_int_distribution<int64_t> d(0, num_rows - 1);
-    for (int64_t i = 0; i < k; ++i) lens[d(rng)] = h;
+    for (int64_t i = 0; i < k; ++i)
+      lens[d(rng)] = h;
   } else {
     CUDF_FAIL("unknown dist: " + dist);
   }
@@ -134,7 +143,8 @@ skewed_column make_skewed_column(std::string const& dist,
   }
 
   std::vector<int64_t> offsets(num_rows + 1, 0);
-  for (int64_t i = 0; i < num_rows; ++i) offsets[i + 1] = offsets[i] + lens[i];
+  for (int64_t i = 0; i < num_rows; ++i)
+    offsets[i + 1] = offsets[i] + lens[i];
   auto const total = offsets[num_rows];
 
   // Random text over a 64-symbol alphabet that includes digits and space, so partial matches of
@@ -148,14 +158,17 @@ skewed_column make_skewed_column(std::string const& dist,
     uint64_t x = 0x9E3779B97F4A7C15ull;
     int64_t i  = 0;
     for (; i + 8 <= total; i += 8) {
-      x ^= x << 13; x ^= x >> 7; x ^= x << 17;
+      x ^= x << 13;
+      x ^= x >> 7;
+      x ^= x << 17;
       uint64_t v = x;
       for (int k = 0; k < 8; ++k) {
         chars[i + k] = alphabet[v & 63];
         v >>= 6;
       }
     }
-    for (; i < total; ++i) chars[i] = 'a';
+    for (; i < total; ++i)
+      chars[i] = 'a';
   }
 
   // Insert the target into hit_rate percent of eligible rows at a random position.
@@ -186,7 +199,7 @@ skewed_column make_skewed_column(std::string const& dist,
       CUDF_CUDA_TRY(cudaMemcpyAsync(d_offsets.data(),
                                     offsets32.data(),
                                     offsets32.size() * sizeof(int32_t),
-                                    cudaMemcpyHostToDevice,
+                                    cudaMemcpyDefault,
                                     stream.value()));
       return std::make_unique<cudf::column>(std::move(d_offsets), rmm::device_buffer{}, 0);
     }
@@ -194,7 +207,7 @@ skewed_column make_skewed_column(std::string const& dist,
     CUDF_CUDA_TRY(cudaMemcpyAsync(d_offsets.data(),
                                   offsets.data(),
                                   offsets.size() * sizeof(int64_t),
-                                  cudaMemcpyHostToDevice,
+                                  cudaMemcpyDefault,
                                   stream.value()));
     return std::make_unique<cudf::column>(std::move(d_offsets), rmm::device_buffer{}, 0);
   }();
@@ -203,7 +216,8 @@ skewed_column make_skewed_column(std::string const& dist,
   rmm::device_buffer null_mask{};
   cudf::size_type null_count = 0;
   if (null_pct > 0) {
-    auto const mask_words = cudf::bitmask_allocation_size_bytes(num_rows) / sizeof(cudf::bitmask_type);
+    auto const mask_words =
+      cudf::bitmask_allocation_size_bytes(num_rows) / sizeof(cudf::bitmask_type);
     std::vector<cudf::bitmask_type> h_mask(mask_words, 0);
     for (int64_t i = 0; i < num_rows; ++i) {
       if (valid[i]) {
@@ -212,7 +226,8 @@ skewed_column make_skewed_column(std::string const& dist,
         ++null_count;
       }
     }
-    null_mask = rmm::device_buffer(h_mask.data(), h_mask.size() * sizeof(cudf::bitmask_type), stream);
+    null_mask =
+      rmm::device_buffer(h_mask.data(), h_mask.size() * sizeof(cudf::bitmask_type), stream);
   }
 
   auto col = cudf::make_strings_column(static_cast<cudf::size_type>(num_rows),
@@ -232,11 +247,8 @@ void validate(cudf::strings_column_view const& input,
 {
   auto result = cudf::strings::contains(input, target);
   std::vector<uint8_t> got(expected.size());
-  CUDF_CUDA_TRY(cudaMemcpyAsync(got.data(),
-                                result->view().data<bool>(),
-                                got.size(),
-                                cudaMemcpyDeviceToHost,
-                                stream.value()));
+  CUDF_CUDA_TRY(cudaMemcpyAsync(
+    got.data(), result->view().data<bool>(), got.size(), cudaMemcpyDefault, stream.value()));
   stream.synchronize();
   int64_t bad = 0;
   for (size_t i = 0; i < got.size(); ++i) {

@@ -249,9 +249,9 @@ TEST_F(StringsFindTest, ContainsAllLengthTiers)
     data.push_back(std::move(row));
     valid.push_back(is_valid);
   };
-  for (int len : {0, 1, 5, 8, 9, 10, 16, 17, 31, 32, 33, 63, 64, 65, 100, 127, 128, 129, 255,
-                  256, 257, 511, 512, 1000, 1024, 2047, 2048, 4096, 8191, 8192, 8193, 12000,
-                  16384, 40000, 70000}) {
+  for (int len : {0,    1,    5,    8,    9,    10,   16,   17,    31,    32,    33,   63,
+                  64,   65,   100,  127,  128,  129,  255,  256,   257,   511,   512,  1000,
+                  1024, 2047, 2048, 4096, 8191, 8192, 8193, 12000, 16384, 40000, 70000}) {
     std::string filler(len, 'x');
     add(filler, true);
     if (len >= static_cast<int>(target.size())) {
@@ -299,7 +299,8 @@ TEST_F(StringsFindTest, ContainsAllLengthTiers)
   // sliced view (non-zero offset) must dispatch and index correctly
   auto const n      = static_cast<cudf::size_type>(sdata.size());
   auto const sliced = cudf::slice(strings, {7, n - 5}).front();
-  auto sres         = cudf::strings::contains(cudf::strings_column_view(sliced), cudf::string_scalar(target));
+  auto sres =
+    cudf::strings::contains(cudf::strings_column_view(sliced), cudf::string_scalar(target));
   std::vector<bool> ssexp(sexp.begin() + 7, sexp.end() - 5);
   std::vector<bool> ssval(svalid.begin() + 7, svalid.end() - 5);
   cudf::test::fixed_width_column_wrapper<bool> sexp_col(ssexp.begin(), ssexp.end(), ssval.begin());
@@ -334,7 +335,8 @@ TEST_F(StringsFindTest, ContainsManyRowsMixed)
     data.push_back(std::move(row));
   }
   cudf::test::strings_column_wrapper strings(data.begin(), data.end());
-  auto results = cudf::strings::contains(cudf::strings_column_view(strings), cudf::string_scalar(target));
+  auto results =
+    cudf::strings::contains(cudf::strings_column_view(strings), cudf::string_scalar(target));
   cudf::test::fixed_width_column_wrapper<bool> exp(expected.begin(), expected.end());
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, exp);
 }

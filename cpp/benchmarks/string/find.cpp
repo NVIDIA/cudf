@@ -11,9 +11,9 @@
 #include <cudf_test/column_wrapper.hpp>
 
 #include <cudf/scalar/scalar.hpp>
-#include <cudf/utilities/bit.hpp>
 #include <cudf/strings/find.hpp>
 #include <cudf/strings/strings_column_view.hpp>
+#include <cudf/utilities/bit.hpp>
 #include <cudf/utilities/default_stream.hpp>
 
 #include <nvbench/nvbench.cuh>
@@ -21,7 +21,8 @@
 #include <string>
 
 namespace {
-/// Check contains(column, scalar) against a host reference; throws on any mismatch (local addition).
+/// Check contains(column, scalar) against a host reference; throws on any mismatch (local
+/// addition).
 void validate_contains(cudf::column_view const& col, std::string const& tgt)
 {
   auto const input               = cudf::strings_column_view(col);

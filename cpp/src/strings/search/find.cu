@@ -526,7 +526,7 @@ CUDF_KERNEL void lrb_scatter_kernel(column_device_view const d_strings,
     if (bin != 0 && lane == static_cast<unsigned>(leader)) {
       wbase = atomicAdd(&s_count[bin], __popc(peers));
     }
-    wbase = __shfl_sync(0xffffffffu, wbase, leader);
+    wbase           = __shfl_sync(0xffffffffu, wbase, leader);
     auto const rank = wbase + __popc(peers & ((1u << lane) - 1u));
     __syncthreads();
 
@@ -563,9 +563,8 @@ __device__ __forceinline__ void lrb_search_row_tile(Tile const& tile,
   if (row < 0) { return; }
   // A row split into several chunk tasks is resolved as soon as any chunk finds the target:
   // skip the rest of its chunks. The load is device-scope so it is not served from a stale L1.
-  if (row_is_chunked &&
-      cuda::atomic_ref<bool, cuda::thread_scope_device>(d_results[row]).load(
-        cuda::memory_order_relaxed)) {
+  if (row_is_chunked && cuda::atomic_ref<bool, cuda::thread_scope_device>(d_results[row])
+                          .load(cuda::memory_order_relaxed)) {
     return;
   }
 
@@ -678,12 +677,8 @@ CUDF_KERNEL void lrb_search_kernel(column_device_view const d_strings,
       case 2: lrb_search_row<2>(warp, d_strings, d_target, d_results, row, chunk, chunked); break;
       case 4: lrb_search_row<4>(warp, d_strings, d_target, d_results, row, chunk, chunked); break;
       case 8: lrb_search_row<8>(warp, d_strings, d_target, d_results, row, chunk, chunked); break;
-      case 16:
-        lrb_search_row<16>(warp, d_strings, d_target, d_results, row, chunk, chunked);
-        break;
-      default:
-        lrb_search_row<32>(warp, d_strings, d_target, d_results, row, chunk, chunked);
-        break;
+      case 16: lrb_search_row<16>(warp, d_strings, d_target, d_results, row, chunk, chunked); break;
+      default: lrb_search_row<32>(warp, d_strings, d_target, d_results, row, chunk, chunked); break;
     }
   }
 }
@@ -698,7 +693,7 @@ std::unique_ptr<column> contains_lrb(strings_column_view const& input,
   CUDF_EXPECTS(target.is_valid(stream), "Parameter target must be valid.");
   auto const d_target = string_view(target.data(), target.size());
 
-  auto results = make_numeric_column(data_type{type_id::BOOL8},
+  auto results   = make_numeric_column(data_type{type_id::BOOL8},
                                      num_rows,
                                      cudf::detail::copy_bitmask(input.parent(), stream, mr),
                                      input.null_count(),
@@ -721,9 +716,9 @@ std::unique_ptr<column> contains_lrb(strings_column_view const& input,
   CUDF_CUDA_TRY(cudaMemsetAsync(hist.data(), 0, hist.size() * sizeof(size_type), stream.get()));
   rmm::device_uvector<size_type> sorted(num_rows, stream, tmp_mr);
 
-  auto const num_sms      = static_cast<int64_t>(cudf::detail::num_multiprocessors());
-  auto const row_blocks   = cudf::util::div_rounding_up_safe<int64_t>(num_rows, LRB_BLOCK_SIZE);
-  auto const stride_grid  = static_cast<int>(std::min<int64_t>(row_blocks, num_sms * 8));
+  auto const num_sms     = static_cast<int64_t>(cudf::detail::num_multiprocessors());
+  auto const row_blocks  = cudf::util::div_rounding_up_safe<int64_t>(num_rows, LRB_BLOCK_SIZE);
+  auto const stride_grid = static_cast<int>(std::min<int64_t>(row_blocks, num_sms * 8));
 
   // one row per thread (like thrust::transform) rather than grid-stride: the direct search in
   // this pass is the whole job for short-string columns and benefits from maximal parallelism

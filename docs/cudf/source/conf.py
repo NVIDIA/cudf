@@ -130,6 +130,7 @@ extensions = [
     "sphinx.ext.autodoc",
     "sphinx.ext.autosummary",
     "sphinx_copybutton",
+    "sphinx_llm.txt",
     "sphinx_remove_toctrees",
     "sphinx.ext.linkcode",
     "numpydoc",
@@ -138,6 +139,8 @@ extensions = [
     "PandasCompat",
     "myst_nb",
 ]
+
+llms_txt_build_parallel = False
 
 remove_from_toctrees = ["cudf/api_docs/api/*"]
 

@@ -407,9 +407,12 @@ class self_comparator {
    * @param t The table to compare
    * @param stream The stream to construct this object on. Not the stream that will be used for
    * comparisons using this object.
+   * @param temp_mr Device memory resource used for temporary allocations
    */
-  self_comparator(table_view const& t, rmm::cuda_stream_view stream)
-    : d_t(preprocessed_table::create(t, stream))
+  self_comparator(table_view const& t,
+                  cuda::stream_ref stream,
+                  rmm::device_async_resource_ref temp_mr)
+    : d_t(preprocessed_table::create(t, stream, temp_mr))
   {
   }
 
@@ -515,10 +518,12 @@ class two_table_comparator {
    * @param right The right table to compare.
    * @param stream The stream to construct this object on. Not the stream that will be used for
    * comparisons using this object.
+   * @param temp_mr Device memory resource used for temporary allocations
    */
   two_table_comparator(table_view const& left,
                        table_view const& right,
-                       rmm::cuda_stream_view stream);
+                       cuda::stream_ref stream,
+                       rmm::device_async_resource_ref temp_mr);
 
   /**
    * @brief Construct an owning object for performing equality comparisons between two rows from two

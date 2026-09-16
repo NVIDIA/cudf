@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2021-2024, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import pytest
@@ -75,7 +75,7 @@ def test_rowwise_reductions(data, op):
 @pytest.mark.parametrize("skipna", [True, False])
 def test_var_nulls(skipna):
     # Copied from 10min example notebook
-    # See: https://github.com/rapidsai/cudf/pull/15347
+    # See: https://github.com/NVIDIA/cudf/pull/15347
     s = cudf.Series([1, 2, 3, None, 4])
     ds = dask_cudf.from_cudf(s, npartitions=2)
     dd.assert_eq(s.var(skipna=skipna), ds.var(skipna=skipna))

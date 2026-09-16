@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -30,7 +30,7 @@ void bench_replace_nans(nvbench::state& state, nvbench::type_list<FloatingType>)
   auto zero = cudf::make_fixed_width_scalar<FloatingType>(0);
 
   auto stream = cudf::get_default_stream();
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.value()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.get()));
 
   auto const data_size = input->alloc_size();
   state.add_global_memory_reads<nvbench::int8_t>(data_size);

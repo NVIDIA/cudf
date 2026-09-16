@@ -7,7 +7,7 @@
 #include <cudf/detail/contiguous_split.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
+#include <cuda/stream>
 
 #include <algorithm>
 #include <cstddef>
@@ -272,7 +272,7 @@ table_view unpack(uint8_t const* metadata, uint8_t const* gpu_data)
  * @copydoc cudf::detail::pack
  */
 packed_columns pack(cudf::table_view const& input,
-                    rmm::cuda_stream_view stream,
+                    cuda::stream_ref stream,
                     rmm::device_async_resource_ref mr)
 {
   // do a contiguous_split with no splits to get the memory for the table
@@ -441,7 +441,7 @@ packed_metadata_view::column_view packed_metadata_view::column(size_type i) cons
  * @copydoc cudf::pack
  */
 packed_columns pack(cudf::table_view const& input,
-                    rmm::cuda_stream_view stream,
+                    cuda::stream_ref stream,
                     rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();

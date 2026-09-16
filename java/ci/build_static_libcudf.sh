@@ -4,7 +4,7 @@
 
 # Self-contained build of a static libcudf install tree.
 #
-# Pulls the RAPIDS ci-conda image, builds libcudf with BUILD_SHARED_LIBS=OFF
+# Pulls the RAPIDS ci-wheel image, builds libcudf with BUILD_SHARED_LIBS=OFF
 # inside a throwaway container, and installs the static libcudf tree (libcudf.a
 # plus its static dependencies) into a directory on the host. No GPU is required
 # to build.
@@ -16,6 +16,8 @@ REPO_ROOT="$(git -C "${SCRIPT_DIR}" rev-parse --show-toplevel)"
 
 # shellcheck disable=SC1091
 . "${SCRIPT_DIR}/argparse.sh"
+# shellcheck disable=SC1091
+. "${SCRIPT_DIR}/ci_wheel_image.sh"
 
 OUTPUT_DIR=""
 CUDA_VERSION=""
@@ -27,15 +29,16 @@ print_help() {
 
 Usage: build_static_libcudf.sh --output-dir <path> --cuda-version <ver> [OPTIONS]
 
-Builds a static libcudf install tree inside a RAPIDS ci-conda container and
+Builds a static libcudf install tree inside a RAPIDS ci-wheel container and
 writes it to a directory on the host. Always builds for the host architecture
-(uname -m). The build image is fixed to rapidsai/ci-conda:<rapids_version>-latest
-(version derived from the VERSION file).
+(uname -m). The build image is derived from --cuda-version and the VERSION file
+(see java/ci/ci_wheel_image.sh).
 
 REQUIRED:
     -o, --output-dir     Host directory to receive the static install tree
                          (libcudf.a and its static dependencies).
-    -c, --cuda-version   CUDA version to build for (e.g. "12.9" or "12.9.1").
+    -c, --cuda-version   CUDA toolkit version to build for (e.g. "12.9.2").
+                         Must match a rapidsai/ci-wheel image tag.
 
 OPTIONS:
     -A, --cmake-cuda-architectures
@@ -50,8 +53,8 @@ OPTIONS:
     -h, --help           Show this help message.
 
 EXAMPLES:
-    build_static_libcudf.sh --output-dir /tmp/libcudf-cuda12 --cuda-version "12.9"
-    build_static_libcudf.sh -o /tmp/libcudf-cuda13 -c 13.3 -A "80"
+    build_static_libcudf.sh --output-dir /tmp/libcudf-cuda12 --cuda-version "12.9.2"
+    build_static_libcudf.sh -o /tmp/libcudf-cuda13 -c 13.3.0 -A "80"
 
 EOF
 }
@@ -97,8 +100,7 @@ parse_args "$@"
 require_arg --output-dir   "${OUTPUT_DIR}"
 require_arg --cuda-version "${CUDA_VERSION}"
 
-RAPIDS_VERSION="$(head -1 "${REPO_ROOT}/VERSION" | cut -d. -f1,2)"
-IMAGE="rapidsai/ci-conda:${RAPIDS_VERSION}-latest"
+IMAGE="$(cudf_java_ci_wheel_image "${CUDA_VERSION}")"
 
 mkdir -p "${OUTPUT_DIR}"
 OUTPUT_DIR="$(cd "${OUTPUT_DIR}" && pwd)"
@@ -121,6 +123,8 @@ DOCKER_ARGS=(
   --env PARALLEL_LEVEL="${PARALLEL_LEVEL}"
   --env HOST_UID="$(id -u)"
   --env HOST_GID="$(id -g)"
+  --env INSTALL_PREFIX=/output
+  --env REPO_ROOT=/repo
 )
 
 if [[ -n ${CMAKE_CUDA_ARCHITECTURES} ]]; then

@@ -8,13 +8,17 @@ from pylibcudf.libcudf.column.column cimport column
 from pylibcudf.libcudf.column.column_view cimport column_view
 from pylibcudf.libcudf.strings cimport reverse as cpp_reverse
 from pylibcudf.utils cimport _get_stream, _get_memory_resource
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pylibcudf.typing import CudaStreamLike
 from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 from rmm.pylibrmm.stream cimport Stream
 from cuda.bindings.cyruntime cimport cudaStream_t
 
 __all__ = ["reverse"]
 
-cpdef Column reverse(Column input, object stream=None, DeviceMemoryResource mr=None):
+cpdef Column reverse(Column input, object stream: CudaStreamLike | None = None, DeviceMemoryResource mr=None):
     """Reverses the characters within each string.
 
     Any null string entries return corresponding null output column entries.
@@ -35,7 +39,7 @@ cpdef Column reverse(Column input, object stream=None, DeviceMemoryResource mr=N
     """
     cdef unique_ptr[column] c_result
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
     cdef column_view c_input = input.view()
     with nogil:

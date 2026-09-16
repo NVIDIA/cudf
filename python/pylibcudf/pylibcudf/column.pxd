@@ -21,7 +21,7 @@ from .types cimport DataType
 from .scalar cimport Scalar
 
 
-cdef class OwnerWithCAI:
+cdef class _OwnerWithCAI:
     cdef object owner
     cdef dict cai
 
@@ -29,7 +29,7 @@ cdef class OwnerWithCAI:
     cdef create(column_view cv, object owner, object stream)
 
 
-cdef class OwnerMaskWithCAI:
+cdef class _OwnerMaskWithCAI:
     cdef object owner
     cdef dict cai
 
@@ -53,6 +53,7 @@ cdef class Column:
         # _children: List[Column]
         list _children
         size_type _num_children
+        object __weakref__
 
     cdef column_view view(self)
     cdef mutable_column_view mutable_view(self)
@@ -94,7 +95,7 @@ cdef class Column:
     cpdef size_type offset(self)
     cpdef object data(self)
     cpdef object null_mask(self)
-    cpdef list children(self)
+    cpdef list[Column] children(self)
     cpdef Column copy(self, object stream=*, DeviceMemoryResource mr=*)
     cpdef uint64_t device_buffer_size(self)
     cpdef Column with_mask(self, object, size_type, bint validate=*)
@@ -105,8 +106,8 @@ cdef class Column:
 
 cdef class ListsColumnView:
     cdef Column _column
-    cpdef child(self)
-    cpdef offsets(self)
+    cpdef Column child(self)
+    cpdef Column offsets(self)
     cdef lists_column_view view(self)
     cpdef Column get_sliced_child(self, object stream=*)
 

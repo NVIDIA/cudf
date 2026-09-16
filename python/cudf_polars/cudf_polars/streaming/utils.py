@@ -130,7 +130,7 @@ def _contains_unsupported_fill_strategy(exprs: Sequence[Expr]) -> bool:
     return False
 
 
-_INPUT_ORDER_WINDOW_OPS = frozenset({"cum_sum", "shift", "shift_and_fill"})
+_INPUT_ORDER_WINDOW_OPS = frozenset({"cum_sum", "diff", "shift", "shift_and_fill"})
 
 
 def _contains_input_order_window_without_order_by(exprs: Sequence[Expr]) -> bool:

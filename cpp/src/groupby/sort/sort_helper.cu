@@ -20,10 +20,10 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/traits.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/stream>
 #include <thrust/transform.h>
 
 #include <algorithm>
@@ -54,7 +54,7 @@ sort_groupby_helper::sort_groupby_helper(table_view const& keys,
   }
 };
 
-size_type sort_groupby_helper::num_keys(rmm::cuda_stream_view stream)
+size_type sort_groupby_helper::num_keys(cuda::stream_ref stream)
 {
   if (_num_keys > -1) return _num_keys;
 
@@ -70,7 +70,7 @@ size_type sort_groupby_helper::num_keys(rmm::cuda_stream_view stream)
   return _num_keys;
 }
 
-column_view sort_groupby_helper::key_sort_order(rmm::cuda_stream_view stream)
+column_view sort_groupby_helper::key_sort_order(cuda::stream_ref stream)
 {
   auto sliced_key_sorted_order = [stream, this]() {
     return cudf::detail::slice(this->_key_sorted_order->view(), 0, this->num_keys(stream), stream);
@@ -117,8 +117,7 @@ column_view sort_groupby_helper::key_sort_order(rmm::cuda_stream_view stream)
   return sliced_key_sorted_order();
 }
 
-sort_groupby_helper::index_vector const& sort_groupby_helper::group_offsets(
-  rmm::cuda_stream_view stream)
+sort_groupby_helper::index_vector const& sort_groupby_helper::group_offsets(cuda::stream_ref stream)
 {
   if (_group_offsets) return *_group_offsets;
 
@@ -137,13 +136,13 @@ sort_groupby_helper::index_vector const& sort_groupby_helper::group_offsets(
 
   group_offsets->set_element_async(num_groups, size, stream);
   group_offsets->resize(num_groups + 1, stream);
+  stream.sync();
 
   _group_offsets = std::move(group_offsets);
   return *_group_offsets;
 }
 
-sort_groupby_helper::index_vector const& sort_groupby_helper::group_labels(
-  rmm::cuda_stream_view stream)
+sort_groupby_helper::index_vector const& sort_groupby_helper::group_labels(cuda::stream_ref stream)
 {
   if (_group_labels) return *_group_labels;
 
@@ -161,7 +160,7 @@ sort_groupby_helper::index_vector const& sort_groupby_helper::group_labels(
   return *_group_labels;
 }
 
-column_view sort_groupby_helper::unsorted_keys_labels(rmm::cuda_stream_view stream)
+column_view sort_groupby_helper::unsorted_keys_labels(cuda::stream_ref stream)
 {
   if (_unsorted_keys_labels) return _unsorted_keys_labels->view();
 
@@ -191,7 +190,7 @@ column_view sort_groupby_helper::unsorted_keys_labels(rmm::cuda_stream_view stre
   return _unsorted_keys_labels->view();
 }
 
-column_view sort_groupby_helper::keys_bitmask_column(rmm::cuda_stream_view stream)
+column_view sort_groupby_helper::keys_bitmask_column(cuda::stream_ref stream)
 {
   if (_keys_bitmask_column) return _keys_bitmask_column->view();
 
@@ -211,7 +210,7 @@ column_view sort_groupby_helper::keys_bitmask_column(rmm::cuda_stream_view strea
 }
 
 sort_groupby_helper::column_ptr sort_groupby_helper::sorted_values(
-  column_view const& values, rmm::cuda_stream_view stream, rmm::device_async_resource_ref mr)
+  column_view const& values, cuda::stream_ref stream, rmm::device_async_resource_ref mr)
 {
   column_ptr values_sort_order =
     cudf::detail::stable_sorted_order(table_view({unsorted_keys_labels(stream), values}),
@@ -235,7 +234,7 @@ sort_groupby_helper::column_ptr sort_groupby_helper::sorted_values(
 }
 
 sort_groupby_helper::column_ptr sort_groupby_helper::grouped_values(
-  column_view const& values, rmm::cuda_stream_view stream, rmm::device_async_resource_ref mr)
+  column_view const& values, cuda::stream_ref stream, rmm::device_async_resource_ref mr)
 {
   auto gather_map = key_sort_order(stream);
 
@@ -249,7 +248,7 @@ sort_groupby_helper::column_ptr sort_groupby_helper::grouped_values(
   return std::move(grouped_values_table->release()[0]);
 }
 
-std::unique_ptr<table> sort_groupby_helper::unique_keys(rmm::cuda_stream_view stream,
+std::unique_ptr<table> sort_groupby_helper::unique_keys(cuda::stream_ref stream,
                                                         rmm::device_async_resource_ref mr)
 {
   auto const num_unique_keys = num_groups(stream);
@@ -269,7 +268,7 @@ std::unique_ptr<table> sort_groupby_helper::unique_keys(rmm::cuda_stream_view st
                               mr);
 }
 
-std::unique_ptr<table> sort_groupby_helper::sorted_keys(rmm::cuda_stream_view stream,
+std::unique_ptr<table> sort_groupby_helper::sorted_keys(cuda::stream_ref stream,
                                                         rmm::device_async_resource_ref mr)
 {
   return cudf::detail::gather(_keys,

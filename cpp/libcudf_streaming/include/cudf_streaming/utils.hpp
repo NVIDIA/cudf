@@ -25,7 +25,7 @@ namespace cudf_streaming {
  */
 std::string str(cudf::column_view col,
                 cudf::size_type index,
-                rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+                cuda::stream_ref stream           = cudf::get_default_stream(),
                 rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -37,7 +37,7 @@ std::string str(cudf::column_view col,
  * @return A string representation of all elements in the column.
  */
 std::string str(cudf::column_view col,
-                rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+                cuda::stream_ref stream           = cudf::get_default_stream(),
                 rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -49,7 +49,7 @@ std::string str(cudf::column_view col,
  * @return A string representation of all rows in the table.
  */
 std::string str(cudf::table_view tbl,
-                rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+                cuda::stream_ref stream           = cudf::get_default_stream(),
                 rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -59,7 +59,7 @@ std::string str(cudf::table_view tbl,
  * @param stream CUDA stream used for device memory operations and kernel launches.
  * @return The estimated memory usage of the column.
  */
-std::size_t estimated_memory_usage(cudf::column_view const& col, rmm::cuda_stream_view stream);
+std::size_t estimated_memory_usage(cudf::column_view const& col, cuda::stream_ref stream);
 
 /**
  * @brief Estimate the memory usage of a table.
@@ -68,6 +68,6 @@ std::size_t estimated_memory_usage(cudf::column_view const& col, rmm::cuda_strea
  * @param stream CUDA stream used for device memory operations and kernel launches.
  * @return The estimated memory usage of the table.
  */
-std::size_t estimated_memory_usage(cudf::table_view const& tbl, rmm::cuda_stream_view stream);
+std::size_t estimated_memory_usage(cudf::table_view const& tbl, cuda::stream_ref stream);
 
 }  // namespace cudf_streaming

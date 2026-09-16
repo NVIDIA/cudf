@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -51,7 +51,7 @@ struct IteratorTest : public cudf::test::BaseFixture {
                               num_items,
                               cuda::minimum{},
                               init,
-                              cudf::get_default_stream().value());
+                              cudf::get_default_stream().get());
 
     // Allocate temporary storage
     rmm::device_buffer d_temp_storage(temp_storage_bytes, cudf::get_default_stream());
@@ -64,7 +64,7 @@ struct IteratorTest : public cudf::test::BaseFixture {
                               num_items,
                               cuda::minimum{},
                               init,
-                              cudf::get_default_stream().value());
+                              cudf::get_default_stream().get());
 
     evaluate(expected, dev_result, "cub test");
   }

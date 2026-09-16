@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -11,6 +11,7 @@
 
 #include <rmm/device_uvector.hpp>
 
+#include <cuda/stream>
 #include <cuda_runtime.h>
 #include <nvtx3/nvToolsExt.h>
 
@@ -111,7 +112,7 @@ std::unique_ptr<cudf::column> redact_strings(cudf::column_view const& names,
                                              cudf::column_view const& visibilities)
 {
   // all device memory operations and kernel functions will run on this stream
-  auto stream = rmm::cuda_stream_default;
+  cuda::stream_ref stream = cudf::get_default_stream();
 
   set_malloc_heap_size();  // to illustrate adjusting the malloc heap
 
@@ -129,7 +130,7 @@ std::unique_ptr<cudf::column> redact_strings(cudf::column_view const& names,
 
   auto result = [&] {
     // build the output strings
-    redact_kernel<<<blocks, block_size, 0, stream.value()>>>(
+    redact_kernel<<<blocks, block_size, 0, stream.get()>>>(
       *d_names, *d_visibilities, d_redaction.value(), str_ptrs->data());
     // create strings column from the string_view vector
     // this copies all the individual strings into a single output column
@@ -137,12 +138,12 @@ std::unique_ptr<cudf::column> redact_strings(cudf::column_view const& names,
   }();
 
   // free the individual temporary memory pointers
-  free_kernel<<<blocks, block_size, 0, stream.value()>>>(
+  free_kernel<<<blocks, block_size, 0, stream.get()>>>(
     d_redaction.value(), str_ptrs->data(), names.size());
   delete str_ptrs;
 
   // wait for all of the above to finish
-  stream.synchronize();
+  stream.sync();
 
   nvtxRangePop();
   return result;

@@ -13,7 +13,7 @@
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/span.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
+#include <cuda/stream>
 
 #include <numeric>
 #include <stack>
@@ -33,14 +33,14 @@ struct tree_meta_t2 {
   std::vector<cuio_json::SymbolOffsetT> node_range_end;
 };
 
-tree_meta_t2 to_cpu_tree(cuio_json::tree_meta_t const& d_value, rmm::cuda_stream_view stream)
+tree_meta_t2 to_cpu_tree(cuio_json::tree_meta_t const& d_value, cuda::stream_ref stream)
 {
   tree_meta_t2 result{cudf::detail::make_std_vector_async(d_value.node_categories, stream),
                       cudf::detail::make_std_vector_async(d_value.parent_node_ids, stream),
                       cudf::detail::make_std_vector_async(d_value.node_levels, stream),
                       cudf::detail::make_std_vector_async(d_value.node_range_begin, stream),
                       cudf::detail::make_std_vector_async(d_value.node_range_end, stream)};
-  stream.synchronize();
+  stream.sync();
   return result;
 }
 
@@ -219,7 +219,7 @@ tree_meta_t2 get_tree_representation_cpu(
   cudf::device_span<cuio_json::PdaTokenT const> tokens_gpu,
   cudf::device_span<cuio_json::SymbolOffsetT const> token_indices_gpu1,
   cudf::io::json_reader_options const& options,
-  rmm::cuda_stream_view stream)
+  cuda::stream_ref stream)
 {
   constexpr bool include_quote_char = true;
   // Copy the JSON tokens to the host
@@ -227,7 +227,7 @@ tree_meta_t2 get_tree_representation_cpu(
   auto token_indices = cudf::detail::make_host_vector_async(token_indices_gpu1, stream);
 
   // Make sure tokens have been copied to the host
-  stream.synchronize();
+  stream.sync();
 
 #if LIBCUDF_JSON_DEBUG_DUMP
   // DEBUG print
@@ -415,7 +415,7 @@ records_orient_tree_traversal_cpu(cudf::host_span<cuio_json::SymbolT const> inpu
                                   tree_meta_t2 const& tree,
                                   bool is_array_of_arrays,
                                   bool is_enabled_lines,
-                                  rmm::cuda_stream_view stream)
+                                  cuda::stream_ref stream)
 {
   std::vector<cuio_json::NodeIndexT> node_ids(tree.parent_node_ids.size());
   std::iota(node_ids.begin(), node_ids.end(), 0);

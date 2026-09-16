@@ -15,6 +15,7 @@ import weakref
 from typing import TYPE_CHECKING, Any, ClassVar, Self, TypeVar
 
 import cuda.core
+import kvikio
 
 import polars as pl
 
@@ -23,6 +24,9 @@ from cudf_streaming.table_chunk import TableChunk
 from rapidsmpf.coll import AllGather
 from rapidsmpf.config import Options, get_environment_variables
 from rapidsmpf.memory.packed_data import PackedData
+from rapidsmpf.memory.pinned_memory_resource import (
+    is_pinned_memory_resources_supported,
+)
 from rapidsmpf.statistics import Statistics
 from rapidsmpf.streaming.core.actor import run_actor_network
 
@@ -32,7 +36,7 @@ from cudf_polars.dsl.utils.io import (
     attach_cached_parquet_metadata,
     prefetch_parquet_file_metadata_for_ir,
 )
-from cudf_polars.quent._plan import build_plan
+from cudf_polars.quent._plan import build_plan, build_quent_operator_map
 from cudf_polars.streaming.actor_graph.collectives import ReserveOpIDs
 from cudf_polars.streaming.actor_graph.collectives.common import reserve_op_id
 from cudf_polars.streaming.actor_graph.core import generate_network
@@ -54,8 +58,8 @@ if TYPE_CHECKING:
     from rapidsmpf.memory.buffer_resource import BufferResource
     from rapidsmpf.streaming.core.context import Context
 
-    import cudf_polars.quent
     import cudf_polars.quent._logging
+    import cudf_polars.quent._types
     from cudf_polars.dsl.ir import IR
     from cudf_polars.dsl.translate import Translator
     from cudf_polars.quent._context import LocalQuentContext
@@ -96,6 +100,106 @@ def reset_statistics_from_options(
     return statistics
 
 
+def make_kvikio_monitor(*, enabled: bool) -> kvikio.SummaryMonitor | None:
+    """
+    Create a kvikio I/O monitor if ``enabled``.
+
+    Parameters
+    ----------
+    enabled
+        Whether to count, from the ``kvikio_statistics`` executor option.
+
+    Returns
+    -------
+    kvikio.SummaryMonitor
+        A monitor, already counting, if statistics are enabled.
+    None
+        If they are not.
+
+    Notes
+    -----
+    kvikio has no enable/disable: the existence of a monitor is what turns
+    counting on for the process, so "disabled" means "no monitor".
+
+    With :class:`~cudf_polars.engine.spmd.SPMDEngine` the monitor counts every
+    thread's kvikio I/O in the script's process, so user code performing kvikio
+    reads is counted too. It cannot attribute I/O to a particular query.
+    """
+    if not enabled:
+        return None
+    return kvikio.SummaryMonitor()
+
+
+def reset_kvikio_monitor(
+    monitor: kvikio.SummaryMonitor | None, *, enabled: bool
+) -> kvikio.SummaryMonitor | None:
+    """
+    Bring a kvikio I/O monitor into line with a new ``enabled`` setting.
+
+    Parameters
+    ----------
+    monitor
+        The rank's existing monitor, if it has one.
+    enabled
+        Whether to count, from the ``kvikio_statistics`` executor option.
+
+    Returns
+    -------
+    kvikio.SummaryMonitor
+        The reset or newly created monitor, if statistics are enabled.
+    None
+        If they are not, in which case any existing monitor has been stopped.
+    """
+    if not enabled:
+        if monitor is not None:
+            monitor.stop()
+        return None
+    if monitor is None:
+        return kvikio.SummaryMonitor()
+    monitor.reset()
+    return monitor
+
+
+def take_io_summary(
+    monitor: kvikio.SummaryMonitor | None, *, clear: bool
+) -> kvikio.Summary | None:
+    """
+    Read a rank's I/O totals, optionally restarting the measured span.
+
+    Parameters
+    ----------
+    monitor
+        The rank's monitor, or ``None`` if it is not counting.
+    clear
+        If ``True``, reset the monitor after reading, so the returned summary
+        is the last word on the span that just ended.
+
+    Returns
+    -------
+    kvikio.Summary
+        The totals so far.
+    None
+        If ``monitor`` is ``None``.
+
+    Notes
+    -----
+    ``None`` means "this rank was not counting", which is not the same as a
+    zeroed summary meaning "this rank did no I/O".
+
+    ``get()`` and ``reset()`` are two separate calls, so an operation
+    completing between them is counted in the returned summary but dropped
+    from the next one. Use ``kvikio.Summary.since(previous)`` if you need
+    gapless differencing.
+    """
+    if monitor is None:
+        return None
+    # Read before the reset, so the returned summary still carries the span.
+    summary = monitor.get()
+    if clear:
+        monitor.reset()
+    return summary
+
+
 def resolve_rapidsmpf_options(rapidsmpf_options: Options | None) -> Options:
     """
     Resolve ``rapidsmpf_options`` and apply cross-frontend defaults.
@@ -110,6 +214,9 @@ def resolve_rapidsmpf_options(rapidsmpf_options: Options | None) -> Options:
 
     - ``num_streaming_threads=4``: moderate worker count for the rapidsmpf
       streaming runtime, shared across frontends.
+    - ``pinned_memory``, ``pinned_initial_pool_size=0``: pinned host memory
+      enabled by default, but only on systems that support it (CUDA 12.6+
+      with async memory pool support).
 
     Parameters
     ----------
@@ -125,7 +232,16 @@ def resolve_rapidsmpf_options(rapidsmpf_options: Options | None) -> Options:
     if rapidsmpf_options is None:
         rapidsmpf_options = Options(get_environment_variables())
 
-    rapidsmpf_options.insert_if_absent({"num_streaming_threads": "4"})
+    pinned_memory_default = (
+        "true" if is_pinned_memory_resources_supported() else "false"
+    )
+    rapidsmpf_options.insert_if_absent(
+        {
+            "num_streaming_threads": "4",
+            "pinned_memory": pinned_memory_default,
+            "pinned_initial_pool_size": "0",
+        }
+    )
     return rapidsmpf_options
 
 
@@ -184,6 +300,25 @@ class StreamingEngine(pl.GPUEngine):
     The engine must be created and shut down on the same thread. In particular,
     destruction and context manager exit must occur on the thread that created
     the instance.
+
+    Creating an engine sets the kvikio remote I/O backend to
+    ``kvikio.RemoteIOBackend.MULTI_POLL`` by default (see the
+    ``kvikio_remote_io_backend`` executor option), along with the
+    ``kvikio_task_size`` executor option (16 MiB under ``MULTI_POLL``, 64 MiB
+    under ``EASY_THREADPOOL``). Because kvikio's configuration is a global
+    singleton, this overrides mutable prior ``kvikio.defaults.set(...)`` calls
+    made in the process. The ``MULTI_POLL`` reactor settings are process-lifetime
+    values: after the first remote I/O, subsequent engines must use the same
+    values. When the backend is ``EASY_THREADPOOL``, engine creation
+    also configures kvikio's thread pool (default 256 threads), which blocks
+    any concurrent kvikio IO in the process until in-flight IO completes. Use
+    the ``kvikio_nthreads`` executor option or the ``KVIKIO_NTHREADS``
+    environment variable to control the thread count. Under ``MULTI_POLL``,
+    cudf-polars does not resolve a thread-pool size at all (kvikio itself may
+    still honor ``KVIKIO_NTHREADS`` via its own deferred default); remote I/O
+    concurrency is instead controlled by the ``kvikio_reactor_count``,
+    ``kvikio_reactor_dispatch``, and ``kvikio_request_ceiling`` executor
+    options.
 
     Parameters
     ----------
@@ -308,6 +443,30 @@ class StreamingEngine(pl.GPUEngine):
         -------
         List of :class:`~rapidsmpf.statistics.Statistics`, one per rank,
         ordered by rank index.
+        """
+        raise NotImplementedError
+
+    def gather_io_summary(self, *, clear: bool = False) -> dict[int, kvikio.Summary]:
+        """
+        Collect kvikio I/O statistics from every rank.
+
+        Parameters
+        ----------
+        clear
+            If ``True``, restart each rank's measured span after reading, so
+            the next call describes only what followed this one.
+
+        Returns
+        -------
+        A :class:`kvikio.Summary` per rank, keyed by rank index and in rank
+        order. A rank that is not counting is absent, so the result is empty
+        unless the ``statistics`` option is enabled.
+
+        Examples
+        --------
+        >>> for rank, summary in engine.gather_io_summary().items():  # doctest: +SKIP
+        ...     print(f"--- rank {rank} ---")
+        ...     print(summary)
         """
         raise NotImplementedError
 
@@ -461,6 +620,9 @@ def execute_ir_on_rank(
     config_options: ConfigOptions[StreamingExecutor],
     stats: StatsCollector,
     collective_id_map: dict[IR, list[int]],
+    *,
+    quent_operator_map: dict[IR, cudf_polars.quent._types.Operator] | None = None,
+    local_quent_context: LocalQuentContext | None = None,
 ) -> tuple[DataFrame, list[ChannelMetadata]]:
     """
     Execute a Polars IR query on a single rank's GPU.
@@ -487,6 +649,12 @@ def execute_ir_on_rank(
         Statistics collector.
     collective_id_map
         Mapping from IR nodes to their pre-allocated collective operation IDs.
+    quent_operator_map
+        Mapping from IR nodes to their Quent operators, or ``None`` when tracing
+        is disabled.
+    local_quent_context
+        The local Quent context for this rank, or ``None`` when tracing is
+        disabled.
 
     Returns
     -------
@@ -507,6 +675,8 @@ def execute_ir_on_rank(
         ir_context=ir_context,
         collective_id_map=collective_id_map,
         metadata_collector=metadata_collector,
+        quent_operator_map=quent_operator_map,
+        local_quent_context=local_quent_context,
     )
 
     try:
@@ -517,7 +687,7 @@ def execute_ir_on_rank(
             hint = (
                 f"Try lowering `target_partition_size` (current {target_partition_size}) "
                 f"and/or RAPIDSMPF_SPILL_DEVICE_LIMIT (default '80%') to reduce peak memory."
-                f"\nSee https://docs.rapids.ai/api/cudf/stable/cudf_polars/memory_errors/ "
+                f"\nSee https://docs.nvidia.com/cudf/latest/cudf_polars/memory_errors/ "
                 f"for troubleshooting guidance."
                 f"\nOriginal error:\n{mem_error}"
             )
@@ -733,6 +903,19 @@ def evaluate_on_rank(
         Collected channel metadata.
     """
     stats = allgather_stats(comm, ctx.br(), ir, config_options, py_executor)
+    # ``get_stable_plan_id`` is a deterministic function of the IR
+    # structure, so every rank derives the same logical plan ID for a
+    # given query (only rank 0 emits the declaration, but physical plans
+    # on every rank reference it as their parent). It is *not* unique
+    # across collects, though: re-running an identical query would reuse
+    # the same plan ID under a different parent query. Namespacing by the
+    # per-collect ``query_id`` (which is identical across ranks but unique
+    # per collect) keeps the cross-rank agreement while making the plan ID
+    # unique per collect.
+    logical_plan_id = uuid.uuid5(query_id, str(ir.get_stable_plan_id()))
+
+    physical_op_by_id: dict[str, cudf_polars.quent._types.Operator] | None = None
+    quent_operator_map: dict[IR, cudf_polars.quent._types.Operator] | None = None
 
     lowering, node_map = lower_ir_graph_with_node_map(
         ir, config_options, stats, rank=comm.rank, nranks=comm.nranks
@@ -740,13 +923,13 @@ def evaluate_on_rank(
     optimized = lowering.optimized
     ir = lowering.lowered
     partition_info = lowering.partition_info
+    # TODO: figure out if we emit anything about optimized.
     if config_options.executor.quent_context is not None:
         assert local_quent_context is not None
-        logical_plan_id = optimized.get_stable_plan_id()
         plan, ops, ports, logical_op_by_id = build_plan(
             optimized,
             config_options,
-            query=local_quent_context.context.query,
+            query=local_quent_context.query,
             plan_id=logical_plan_id,
             worker=local_quent_context.worker,
             instance_name="logical",
@@ -764,7 +947,7 @@ def evaluate_on_rank(
     if config_options.executor.quent_context is not None:
         assert local_quent_context is not None
         physical_plan_id = uuid.uuid4()
-        local_quent_context.context._emit_physical_plan_events(
+        physical_op_by_id = local_quent_context.context._emit_physical_plan_events(
             local_quent_context.logger,
             ir,
             config_options,
@@ -774,15 +957,18 @@ def evaluate_on_rank(
             node_map=node_map,
             logical_op_by_id=logical_op_by_id,
         )
+        quent_operator_map = build_quent_operator_map(ir, physical_op_by_id)
     ir_context = IRExecutionContext(
         py_executor, get_cuda_stream=ctx.br().stream_pool.get_stream, query_id=query_id
     )
 
-    if config_options.parquet_options.prefetch_file_metadata:
+    prefetch_file_metadata = config_options.parquet_options.prefetch_file_metadata
+    if prefetch_file_metadata is not False:
         cached_parquet_info_map = prefetch_parquet_file_metadata_for_ir(
             ir,
             ir_context.py_executor,
             stats=stats,
+            parse_hybrid_metadata=config_options.parquet_options.use_hybrid_scan,
         )
         attach_cached_parquet_metadata(ir, cached_parquet_info_map)
 
@@ -796,6 +982,8 @@ def evaluate_on_rank(
             config_options,
             stats,
             collective_id_map,
+            quent_operator_map=quent_operator_map,
+            local_quent_context=local_quent_context,
         )
 
 

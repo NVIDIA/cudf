@@ -19,9 +19,12 @@ from cudf_polars.dsl.ir import (
 )
 from cudf_polars.dsl.utils.io import (
     CachedParquetInfo,
+    _prefetch_parquet_footers_for_paths,
+    attach_cached_parquet_metadata,
     prefetch_parquet_file_metadata_for_ir,
 )
 from cudf_polars.engine.options import StreamingOptions
+from cudf_polars.streaming.actor_graph.io import resolve_max_concurrent_io_tasks
 from cudf_polars.streaming.base import (
     DataSourceInfo,
     IOPartitionFlavor,
@@ -29,8 +32,8 @@ from cudf_polars.streaming.base import (
     StatsCollector,
 )
 from cudf_polars.streaming.io import (
-    FusedScan,
-    SplitScan,
+    ParquetScanTask,
+    ScanTask,
     StreamingScan,
     expand_scan_for_rank,
     scan_partition_plan,
@@ -40,7 +43,11 @@ from cudf_polars.streaming.statistics import collect_statistics
 from cudf_polars.testing.asserts import assert_gpu_result_equal
 from cudf_polars.testing.engine_utils import SMALL_MAX_ROWS_PER_PARTITION
 from cudf_polars.testing.io import make_partitioned_source
-from cudf_polars.utils.config import ConfigOptions, ParquetOptions
+from cudf_polars.utils.config import (
+    ConfigOptions,
+    MaxConcurrentIOTasks,
+    ParquetOptions,
+)
 
 if TYPE_CHECKING:
     import concurrent.futures
@@ -92,17 +99,6 @@ def test_parallel_scan(
     assert_gpu_result_equal(q, engine=streaming_engine)
 
 
-def test_scan_parquet_use_rapidsmpf_native(tmp_path, df, streaming_engine_factory):
-    streaming_engine = streaming_engine_factory(
-        StreamingOptions(
-            target_partition_size=1_000,
-            parquet_options={"use_rapidsmpf_native": True},
-        ),
-    )
-    make_partitioned_source(df, tmp_path, "parquet", n_files=1)
-    assert_gpu_result_equal(pl.scan_parquet(tmp_path), engine=streaming_engine)
-
-
 @pytest.mark.parametrize(
     "target_partition_size_and_n_files", [(1_000, 1), (1_000, 2), (1_000_000, 5)]
 )
@@ -137,13 +133,175 @@ def test_prefetch_parquet_file_metadata_no_parquet_scans() -> None:
     assert result == {}
 
 
+def test_attach_cached_parquet_metadata_skips_incomplete_scan() -> None:
+    scan = _make_parquet_scan(["first.parquet", "second.parquet"])
+    task = ParquetScanTask(scan, scan.paths, 0, 1, scan.parquet_options)
+    streaming_scan = StreamingScan([task], scan)
+
+    attach_cached_parquet_metadata(streaming_scan, {})
+
+    assert scan.cached_parquet_info is None
+
+
+def test_prefetch_skips_paths_cached_by_stats_collection(
+    tmp_path,
+    df: pl.DataFrame,
+    monkeypatch: pytest.MonkeyPatch,
+    parquet_stats_executor,
+) -> None:
+    import cudf_polars.dsl.utils.io as io_module
+    from cudf_polars.streaming.io import _clear_source_info_cache
+
+    _clear_source_info_cache()
+    n_files = 5
+    max_footer_samples = 2
+    make_partitioned_source(df, tmp_path, "parquet", n_files=n_files)
+    paths = sorted(str(p) for p in tmp_path.glob("*.parquet"))
+
+    engine = pl.GPUEngine(
+        raise_on_fail=True,
+        executor="streaming",
+        parquet_options={"max_footer_samples": max_footer_samples},
+    )
+    q = pl.scan_parquet(tmp_path)
+    from cudf_polars import Translator
+
+    ir = Translator(q._ldf.visit(), engine).translate_ir()
+    config = ConfigOptions.from_polars_engine(engine)
+    stats = collect_statistics(ir, config, parquet_stats_executor)
+
+    source = stats.scan_stats[ir]
+    assert source.cached_parquet_info is not None
+    sampled_paths = {info.path for info in source.cached_parquet_info}
+    assert len(sampled_paths) == max_footer_samples
+
+    fetched_paths: list[str] = []
+    real_prefetch = io_module._prefetch_parquet_footers_for_paths
+
+    def recording_prefetch(
+        paths_arg: list[str], *, parse_hybrid_metadata: bool = False
+    ) -> list:
+        fetched_paths.extend(paths_arg)
+        return real_prefetch(paths_arg, parse_hybrid_metadata=parse_hybrid_metadata)
+
+    monkeypatch.setattr(
+        io_module, "_prefetch_parquet_footers_for_paths", recording_prefetch
+    )
+
+    scan = _make_parquet_scan(paths)
+    task = ParquetScanTask(scan, paths, 0, 1, scan.parquet_options)
+    streaming_scan = StreamingScan([task], scan)
+
+    result = prefetch_parquet_file_metadata_for_ir(
+        streaming_scan, py_executor=None, stats=stats
+    )
+
+    assert set(result) == set(paths)
+    assert set(fetched_paths) == set(paths) - sampled_paths
+
+
+def test_prefetch_parquet_file_metadata_remote_only(tmp_path, df) -> None:
+    make_partitioned_source(df, tmp_path, "parquet", n_files=1)
+    local_path = str(next(tmp_path.glob("*.parquet")))
+
+    scan = _make_parquet_scan([local_path])
+    task = ParquetScanTask(scan, scan.paths, 0, 1, scan.parquet_options)
+    streaming_scan = StreamingScan([task], scan)
+
+    # Local paths are skipped entirely when remote_only=True.
+    result = prefetch_parquet_file_metadata_for_ir(
+        streaming_scan, py_executor=None, stats=None, remote_only=True
+    )
+    assert result == {}
+    attach_cached_parquet_metadata(streaming_scan, result)
+    assert scan.cached_parquet_info is None
+
+    # The same local path is prefetched when remote_only=False (the default).
+    result = prefetch_parquet_file_metadata_for_ir(
+        streaming_scan, py_executor=None, stats=None
+    )
+    assert set(result) == {local_path}
+
+
+def test_cached_parquet_info_hybrid_scan_reader_lazy(tmp_path, df) -> None:
+    make_partitioned_source(df, tmp_path, "parquet", n_files=1)
+    local_path = str(next(tmp_path.glob("*.parquet")))
+
+    [info] = _prefetch_parquet_footers_for_paths([local_path])
+    assert info._hybrid_scan_metadata is None
+
+    info.hybrid_scan_reader(info.default_reader_options())
+    assert info._hybrid_scan_metadata is not None
+
+
+@pytest.mark.parametrize(
+    "paths,expected",
+    [
+        ([], 2),
+        (["file.parquet"], 2),
+        (["file.parquet", "s3://bucket/file.parquet"], 8),
+        (["s3://bucket/file.parquet"], 8),
+    ],
+)
+def test_resolve_max_concurrent_io_tasks_default(
+    paths: list[str], expected: int
+) -> None:
+    assert resolve_max_concurrent_io_tasks(MaxConcurrentIOTasks(), paths) == expected
+
+
+def test_resolve_max_concurrent_io_tasks_explicit() -> None:
+    assert (
+        resolve_max_concurrent_io_tasks(
+            MaxConcurrentIOTasks(local=6, remote=6), ["s3://bucket/file.parquet"]
+        )
+        == 6
+    )
+
+
+@pytest.mark.parametrize(
+    "paths,expected",
+    [
+        (["file.parquet"], 3),
+        (["s3://bucket/file.parquet"], 7),
+    ],
+)
+def test_resolve_max_concurrent_io_tasks_local_remote_policy(
+    paths: list[str], expected: int
+) -> None:
+    assert (
+        resolve_max_concurrent_io_tasks(MaxConcurrentIOTasks(local=3, remote=7), paths)
+        == expected
+    )
+
+
+def test_resolve_max_concurrent_io_tasks_partial_override() -> None:
+    max_concurrent_io_tasks = MaxConcurrentIOTasks(remote=7)
+    assert (
+        resolve_max_concurrent_io_tasks(max_concurrent_io_tasks, ["file.parquet"]) == 2
+    )
+    assert (
+        resolve_max_concurrent_io_tasks(
+            max_concurrent_io_tasks, ["s3://bucket/file.parquet"]
+        )
+        == 7
+    )
+
+
+@pytest.mark.parametrize("use_hybrid_scan", [True, False])
 def test_prefetch_file_metadata_select_fast_count(
     df: pl.DataFrame,
     streaming_engine_factory: Callable[..., StreamingEngine],
     tmp_path: Path,
+    *,
+    use_hybrid_scan: bool,
 ) -> None:
     streaming_engine = streaming_engine_factory(
-        StreamingOptions(parquet_options={"prefetch_file_metadata": True}),
+        StreamingOptions(
+            parquet_options={
+                "prefetch_file_metadata": True,
+                "use_hybrid_scan": use_hybrid_scan,
+            }
+        ),
     )
     source = tmp_path / "data.parquet"
     df.write_parquet(source)
@@ -249,7 +407,12 @@ def test_scan_union(engine: pl.GPUEngine, tmp_path: Path) -> None:
 
 
 def _make_parquet_scan(
-    paths: list[str], parquet_options: ParquetOptions | None = None
+    paths: list[str],
+    parquet_options: ParquetOptions | None = None,
+    *,
+    skip_rows: int = 0,
+    n_rows: int = -1,
+    row_index: tuple[str, int] | None = None,
 ) -> Scan:
     parquet_options = parquet_options or ParquetOptions()
     return Scan(
@@ -259,12 +422,43 @@ def _make_parquet_scan(
         None,
         paths,
         None,
+        skip_rows,
+        n_rows,
+        row_index,
+        None,
+        None,
+        parquet_options,
+        None,
+    )
+
+
+def _make_csv_scan(paths: list[str]) -> Scan:
+    return Scan(
+        {"x": DataType(pl.Int64())},
+        "csv",
+        {
+            "has_header": True,
+            "schema": None,
+            "skip_rows": 0,
+            "skip_rows_after_header": 0,
+            "parse_options": {
+                "separator": ord(","),
+                "quote_char": ord('"'),
+                "eol_char": ord("\n"),
+                "null_values": None,
+                "comment_prefix": None,
+                "decimal_comma": False,
+            },
+        },
+        None,
+        paths,
+        None,
         0,
         -1,
         None,
         None,
         None,
-        parquet_options,
+        ParquetOptions(),
         None,
     )
 
@@ -313,9 +507,11 @@ def test_expand_scan_for_rank_fused_and_single_read(
         parquet_options=ParquetOptions(),
     )
     for scan, expected_paths in zip(
-        streaming_scan.scans, expected_path_groups, strict=True
+        streaming_scan.tasks, expected_path_groups, strict=True
     ):
-        assert isinstance(scan, FusedScan)
+        assert isinstance(scan, ParquetScanTask)
+        assert scan.split_index == 0
+        assert scan.total_splits == 1
         assert scan.paths == expected_paths
 
 
@@ -341,51 +537,187 @@ def test_expand_scan_for_rank_split_files(
         nranks=2,
         parquet_options=ParquetOptions(),
     )
-    assert len(streaming_scan.scans) == len(expected_splits)
+    assert len(streaming_scan.tasks) == len(expected_splits)
     for scan, (split_index, total_splits) in zip(
-        streaming_scan.scans, expected_splits, strict=True
+        streaming_scan.tasks, expected_splits, strict=True
     ):
-        assert isinstance(scan, SplitScan)
+        assert isinstance(scan, ParquetScanTask)
         assert scan.split_index == split_index
         assert scan.total_splits == total_splits
         assert scan.paths == ["file.parquet"]
 
 
+def test_attach_cached_parquet_metadata_resolves_row_groups(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "data.parquet"
+    pl.DataFrame({"x": range(4)}).write_parquet(source, row_group_size=2)
+
+    base = _make_parquet_scan([str(source)])
+    streaming_scan = expand_scan_for_rank(
+        base,
+        IOPartitionPlan(2, IOPartitionFlavor.SPLIT_FILES),
+        partition_count=2,
+        rank=0,
+        nranks=1,
+        parquet_options=base.parquet_options,
+    )
+
+    cached = prefetch_parquet_file_metadata_for_ir(streaming_scan, None)
+    attach_cached_parquet_metadata(streaming_scan, cached)
+
+    row_groups = []
+    for scan in streaming_scan.tasks:
+        assert isinstance(scan, ParquetScanTask)
+        bounds = scan.get_task_bounds()
+        row_groups.append(bounds.row_groups)
+    assert row_groups == [[[0]], [[1]]]
+
+
+def test_attach_cached_parquet_metadata_uses_rank_local_tasks(
+    tmp_path: Path,
+) -> None:
+    paths = [str(tmp_path / f"part-{i}.parquet") for i in range(4)]
+    for path in paths:
+        pl.DataFrame({"x": range(4)}).write_parquet(path, row_group_size=2)
+
+    base = _make_parquet_scan(paths)
+    streaming_scan = expand_scan_for_rank(
+        base,
+        IOPartitionPlan(1, IOPartitionFlavor.SINGLE_FILE),
+        partition_count=4,
+        rank=0,
+        nranks=2,
+        parquet_options=base.parquet_options,
+    )
+
+    cached = prefetch_parquet_file_metadata_for_ir(streaming_scan, None)
+    attach_cached_parquet_metadata(streaming_scan, cached)
+
+    assert base.cached_parquet_info is not None
+    assert [info.path for info in base.cached_parquet_info] == paths[:2]
+    for scan in streaming_scan.tasks:
+        assert isinstance(scan, ParquetScanTask)
+        bounds = scan.get_task_bounds()
+        assert bounds.row_groups == [[0, 1]]
+
+
+def test_attach_cached_parquet_metadata_leaves_sub_row_group_split_unaligned(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "data.parquet"
+    pl.DataFrame({"x": range(4)}).write_parquet(source, row_group_size=2)
+
+    base = _make_parquet_scan([str(source)])
+    streaming_scan = expand_scan_for_rank(
+        base,
+        IOPartitionPlan(4, IOPartitionFlavor.SPLIT_FILES),
+        partition_count=4,
+        rank=0,
+        nranks=1,
+        parquet_options=base.parquet_options,
+    )
+
+    cached = prefetch_parquet_file_metadata_for_ir(streaming_scan, None)
+    attach_cached_parquet_metadata(streaming_scan, cached)
+
+    for scan in streaming_scan.tasks:
+        assert isinstance(scan, ParquetScanTask)
+        assert scan.total_splits > 1
+        bounds = scan.get_task_bounds()
+        assert bounds.row_groups is None
+
+
+@pytest.mark.parametrize(
+    "skip_rows,n_rows,row_index",
+    [(1, -1, None), (0, 2, None), (0, -1, ("index", 0))],
+)
+def test_attach_cached_parquet_metadata_leaves_sliced_single_read_unaligned(
+    tmp_path: Path,
+    skip_rows: int,
+    n_rows: int,
+    row_index: tuple[str, int] | None,
+) -> None:
+    source = tmp_path / "data.parquet"
+    pl.DataFrame({"x": range(4)}).write_parquet(source, row_group_size=2)
+
+    base = _make_parquet_scan(
+        [str(source)], skip_rows=skip_rows, n_rows=n_rows, row_index=row_index
+    )
+    streaming_scan = expand_scan_for_rank(
+        base,
+        IOPartitionPlan(1, IOPartitionFlavor.SINGLE_READ),
+        partition_count=1,
+        rank=0,
+        nranks=1,
+        parquet_options=base.parquet_options,
+    )
+
+    cached = prefetch_parquet_file_metadata_for_ir(streaming_scan, None)
+    attach_cached_parquet_metadata(streaming_scan, cached)
+
+    for scan in streaming_scan.tasks:
+        assert isinstance(scan, ParquetScanTask)
+        assert scan.total_splits == 1
+        bounds = scan.get_task_bounds()
+        assert bounds.row_groups is None
+        assert bounds.skip_rows == skip_rows
+        assert bounds.n_rows == n_rows
+
+
 def test_streaming_scan_raises() -> None:
     # This isn't reachable by normal cudf-polars usage.
-    scan = _make_parquet_scan(["file.parquet"])
-    fused = FusedScan(scan.schema, scan, scan.paths, scan.parquet_options, [])
+    scan = _make_csv_scan(["file.csv"])
+    task = ScanTask(scan, scan.paths, 0, 1)
     ctx = IRExecutionContext()
     with pytest.raises(NotImplementedError, match=r"StreamingScan.do_evaluate"):
-        StreamingScan.do_evaluate([fused], scan, context=ctx)
+        StreamingScan.do_evaluate([task], scan, context=ctx)
 
 
-def test_scan_missing_prefetch_metadata_raises() -> None:
+@pytest.mark.parametrize(
+    "predicate,use_columns",
+    [
+        # uses hybrid scan reader
+        (pl.col("x") < 1_000, None),
+        (pl.col("x") < 1_000, ["x", "z"]),
+        (pl.col("x") < 1_000, ["z"]),
+        (pl.col("x") < 1_000, ["x"]),
+        # falls back to default parquet reader
+        (pl.col("y").str.contains("cat"), None),
+        (None, None),
+    ],
+)
+def test_split_scan_hybrid(
+    tmp_path: Path,
+    df: pl.DataFrame,
+    predicate: pl.Expr | None,
+    use_columns: list[str] | None,
+    streaming_engine_factory: Callable[..., StreamingEngine],
+) -> None:
+    streaming_engine = streaming_engine_factory(
+        StreamingOptions(
+            target_partition_size=1_000,
+            parquet_options={
+                "use_hybrid_scan": True,
+                "prefetch_file_metadata": True,
+            },
+        ),
+    )
+    make_partitioned_source(df, tmp_path, "parquet", n_files=1, row_group_size=100)
+    q = pl.scan_parquet(tmp_path)
+    if predicate is not None:
+        q = q.filter(predicate)
+    if use_columns is not None:
+        q = q.select(use_columns)
+    assert_gpu_result_equal(q, engine=streaming_engine)
+
+
+def test_scan_path_mismatch_raises() -> None:
     # This isn't reachable by polars' public API, so we test it directly.
     scan = _make_parquet_scan(
         ["file.parquet"], parquet_options=ParquetOptions(prefetch_file_metadata=True)
     )
     ctx = IRExecutionContext()
-
-    with pytest.raises(
-        AssertionError,
-        match=r"Cached parquet info is required",
-    ):
-        Scan.do_evaluate(
-            scan.schema,
-            scan.typ,
-            scan.reader_options,
-            scan.paths,
-            scan.with_columns,
-            scan.skip_rows,
-            scan.n_rows,
-            scan.row_index,
-            scan.include_file_paths,
-            scan.predicate,
-            scan.parquet_options,
-            None,
-            context=ctx,
-        )
 
     with pytest.raises(
         AssertionError,
@@ -408,45 +740,24 @@ def test_scan_missing_prefetch_metadata_raises() -> None:
         )
 
 
-def test_streaming_scan_missing_prefetch_metadata_raises() -> None:
-    # This isn't reachable by polars' public API, so we test it directly.
+def test_parquet_split_task_fetches_missing_metadata(tmp_path: Path) -> None:
+    source = tmp_path / "data.parquet"
+    pl.DataFrame({"x": range(4)}).write_parquet(source, row_group_size=2)
+
     scan = _make_parquet_scan(
-        ["file.parquet"], parquet_options=ParquetOptions(prefetch_file_metadata=True)
+        [str(source)], parquet_options=ParquetOptions(prefetch_file_metadata=True)
     )
-    fused = FusedScan(scan.schema, scan, scan.paths, scan.parquet_options, [])
 
-    ctx = IRExecutionContext()
-    with pytest.raises(NotImplementedError, match=r"StreamingScan.do_evaluate"):
-        StreamingScan.do_evaluate([fused], scan, context=ctx)
+    result = ParquetScanTask.do_evaluate(
+        scan,
+        scan.paths,
+        0,
+        2,
+        scan.parquet_options,
+        context=IRExecutionContext(),
+    )
 
-
-def test_split_scan_do_evaluate_missing_prefetch_metadata() -> None:
-    paths = ["/some/missing/file.parquet"]
-    parquet_options = ParquetOptions(prefetch_file_metadata=True)
-    context = IRExecutionContext()
-    schema = {"x": DataType(pl.Int64())}
-
-    with pytest.raises(
-        AssertionError,
-        match=(r"Paths do not match cached parquet info."),
-    ):
-        SplitScan.do_evaluate(
-            0,
-            4,
-            schema,
-            "parquet",
-            {},
-            paths,
-            None,
-            0,
-            -1,
-            None,
-            None,
-            None,
-            parquet_options,
-            [],
-            context=context,
-        )
+    assert result.to_polars().to_dict(as_series=False) == {"x": [0, 1]}
 
 
 def test_prefetch_file_metadata_join(
@@ -504,29 +815,51 @@ def test_prefetch_file_metadata_with_cached_scan_parent_nodes(
     assert_gpu_result_equal(q, engine=engine)
 
 
-def test_fused_scan_identity_equality() -> None:
-    base = _make_parquet_scan(["a.parquet", "b.parquet"])
-    paths = ["a.parquet"]
-    info = _make_cached_parquet_info(paths)
+def test_scan_task_identity_equality() -> None:
+    base = _make_csv_scan(["a.csv", "b.csv"])
+    paths = ["a.csv"]
 
-    a = FusedScan(base.schema, base, paths, base.parquet_options, info)
-    b = FusedScan(base.schema, base, paths, base.parquet_options, info.copy())
-    c = FusedScan(base.schema, base, ["b.parquet"], base.parquet_options, info)
+    a = ScanTask(base, paths, 0, 1)
+    b = ScanTask(base, paths, 0, 1)
+    c = ScanTask(base, ["b.csv"], 0, 1)
 
     assert a == b
     assert hash(a) == hash(b)
     assert a != c
 
 
-def test_split_scan_identity_equality() -> None:
-    base = _make_parquet_scan(["a.parquet"])
-    info = _make_cached_parquet_info(base.paths)
+def test_scan_task_validates_split_bounds() -> None:
+    base = _make_csv_scan(["a.csv"])
 
-    a = SplitScan(base.schema, base, base.paths, 0, 4, base.parquet_options, info)
-    b = SplitScan(
-        base.schema, base, base.paths, 0, 4, base.parquet_options, info.copy()
-    )
-    c = SplitScan(base.schema, base, base.paths, 1, 4, base.parquet_options, info)
+    with pytest.raises(ValueError, match=r"Expected at least one split"):
+        ScanTask(base, ["a.csv"], 0, 0)
+
+    with pytest.raises(ValueError, match=r"Expected split_index in"):
+        ScanTask(base, ["a.csv"], 1, 1)
+
+
+def test_parquet_scan_task_validates_inputs() -> None:
+    csv_scan = _make_csv_scan(["a.csv"])
+    with pytest.raises(ValueError, match=r"Expected a parquet scan"):
+        ParquetScanTask(csv_scan, csv_scan.paths, 0, 1, csv_scan.parquet_options)
+
+    parquet_scan = _make_parquet_scan(["a.parquet", "b.parquet"])
+    with pytest.raises(ValueError, match=r"Expected a single path for a split task"):
+        ParquetScanTask(
+            parquet_scan,
+            parquet_scan.paths,
+            0,
+            2,
+            parquet_scan.parquet_options,
+        )
+
+
+def test_parquet_split_task_identity_equality() -> None:
+    base = _make_parquet_scan(["a.parquet"])
+
+    a = ParquetScanTask(base, base.paths, 0, 4, base.parquet_options)
+    b = ParquetScanTask(base, base.paths, 0, 4, base.parquet_options)
+    c = ParquetScanTask(base, base.paths, 1, 4, base.parquet_options)
 
     assert a == b
     assert hash(a) == hash(b)
@@ -535,37 +868,31 @@ def test_split_scan_identity_equality() -> None:
 
 def test_streaming_scan_identity_equality() -> None:
     base = _make_parquet_scan(["a.parquet"])
-    split = SplitScan(
-        base.schema,
+    split = ParquetScanTask(
         base,
         base.paths,
         0,
         2,
         base.parquet_options,
-        _make_cached_parquet_info(base.paths, size=10),
     )
-    split_same = SplitScan(
-        base.schema,
+    split_same = ParquetScanTask(
         base,
         base.paths,
         0,
         2,
         base.parquet_options,
-        _make_cached_parquet_info(base.paths, size=11),
     )
-    split_diff = SplitScan(
-        base.schema,
+    split_diff = ParquetScanTask(
         base,
         base.paths,
         1,
         2,
         base.parquet_options,
-        _make_cached_parquet_info(base.paths, size=10),
     )
 
-    a = StreamingScan([split], base, "split")
-    b = StreamingScan([split_same], base, "split")
-    c = StreamingScan([split_diff], base, "split")
+    a = StreamingScan([split], base)
+    b = StreamingScan([split_same], base)
+    c = StreamingScan([split_diff], base)
 
     assert a == b
     assert hash(a) == hash(b)
@@ -594,20 +921,6 @@ def test_cached_parquet_info_excluded_from_identity() -> None:
     )
     assert scan_without == scan_with
     assert hash(scan_without) == hash(scan_with)
-
-    split_without = SplitScan(
-        base.schema, base, base.paths, 0, 4, base.parquet_options, None
-    )
-    split_with = SplitScan(
-        base.schema, base, base.paths, 0, 4, base.parquet_options, info
-    )
-    assert split_without == split_with
-    assert hash(split_without) == hash(split_with)
-
-    fused_without = FusedScan(base.schema, base, base.paths, base.parquet_options, None)
-    fused_with = FusedScan(base.schema, base, base.paths, base.parquet_options, info)
-    assert fused_without == fused_with
-    assert hash(fused_without) == hash(fused_with)
 
 
 class FooSource(DataSourceInfo):

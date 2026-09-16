@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2022-2024, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 """Benchmarks of Column methods."""
@@ -13,9 +13,9 @@ from utils import (
 
 
 @benchmark_with_object(cls="column", dtype="float")
-def bench_apply_boolean_mask(benchmark, column):
+def bench_apply_retention_mask(benchmark, column):
     mask = make_boolean_mask_column(column.size)
-    benchmark(column.apply_boolean_mask, mask)
+    benchmark(column.apply_retention_mask, mask)
 
 
 @benchmark_with_object(cls="column", dtype="float")

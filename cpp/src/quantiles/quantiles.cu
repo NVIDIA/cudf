@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -17,10 +17,9 @@
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
-
 #include <cuda/functional>
 #include <cuda/iterator>
+#include <cuda/stream>
 #include <thrust/iterator/transform_iterator.h>
 
 #include <memory>
@@ -34,7 +33,7 @@ std::unique_ptr<table> quantiles(table_view const& input,
                                  SortMapIterator sortmap,
                                  std::vector<double> const& q,
                                  interpolation interp,
-                                 rmm::cuda_stream_view stream,
+                                 cuda::stream_ref stream,
                                  rmm::device_async_resource_ref mr)
 {
   auto quantile_idx_lookup = cuda::proclaim_return_type<size_type>(
@@ -46,7 +45,7 @@ std::unique_ptr<table> quantiles(table_view const& input,
   auto const q_device =
     cudf::detail::make_device_uvector_async(q, stream, cudf::get_current_device_resource_ref());
 
-  auto quantile_idx_iter = thrust::make_transform_iterator(q_device.begin(), quantile_idx_lookup);
+  auto quantile_idx_iter = cuda::transform_iterator(q_device.begin(), quantile_idx_lookup);
 
   return detail::gather(input,
                         quantile_idx_iter,
@@ -62,13 +61,13 @@ std::unique_ptr<table> quantiles(table_view const& input,
                                  cudf::sorted is_input_sorted,
                                  std::vector<order> const& column_order,
                                  std::vector<null_order> const& null_precedence,
-                                 rmm::cuda_stream_view stream,
+                                 cuda::stream_ref stream,
                                  rmm::device_async_resource_ref mr)
 {
   if (q.empty()) { return empty_like(input); }
 
   CUDF_EXPECTS(interp == interpolation::HIGHER || interp == interpolation::LOWER ||
-                 interp == interpolation::NEAREST,
+                 interp == interpolation::NEAREST || interp == interpolation::NEAREST_HALF_UP,
                "multi-column quantiles require a non-arithmetic interpolation strategy.",
                std::invalid_argument);
 
@@ -91,7 +90,7 @@ std::unique_ptr<table> quantiles(table_view const& input,
                                  cudf::sorted is_input_sorted,
                                  std::vector<order> const& column_order,
                                  std::vector<null_order> const& null_precedence,
-                                 rmm::cuda_stream_view stream,
+                                 cuda::stream_ref stream,
                                  rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();

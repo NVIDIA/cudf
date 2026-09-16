@@ -42,8 +42,7 @@ std::tuple<table_view,
            std::vector<std::unique_ptr<aggregation>>,
            std::vector<int8_t>,
            bool>
-extract_single_pass_aggs(std::span<aggregation_request const> requests,
-                         rmm::cuda_stream_view stream);
+extract_single_pass_aggs(std::span<aggregation_request const> requests, cuda::stream_ref stream);
 
 /**
  * @brief Get simple aggregations from groupby aggregation

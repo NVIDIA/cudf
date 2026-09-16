@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -15,10 +15,10 @@
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/iterator>
+#include <cuda/stream>
 #include <thrust/transform.h>
 
 namespace cudf {
@@ -26,7 +26,7 @@ namespace strings {
 namespace detail {
 std::unique_ptr<column> find_multiple(strings_column_view const& input,
                                       strings_column_view const& targets,
-                                      rmm::cuda_stream_view stream,
+                                      cuda::stream_ref stream,
                                       rmm::device_async_resource_ref mr)
 {
   auto const strings_count = input.size();
@@ -69,8 +69,8 @@ std::unique_ptr<column> find_multiple(strings_column_view const& input,
 
   auto offsets = cudf::detail::sequence(
     strings_count + 1,
-    numeric_scalar<size_type>(0, true, stream, cudf::get_current_device_resource_ref()),
-    numeric_scalar<size_type>(targets_count, true, stream, cudf::get_current_device_resource_ref()),
+    numeric_scalar<int32_t>(0, true, stream, cudf::get_current_device_resource_ref()),
+    numeric_scalar<int32_t>(targets_count, true, stream, cudf::get_current_device_resource_ref()),
     stream,
     mr);
   return make_lists_column(
@@ -82,7 +82,7 @@ std::unique_ptr<column> find_multiple(strings_column_view const& input,
 // external API
 std::unique_ptr<column> find_multiple(strings_column_view const& input,
                                       strings_column_view const& targets,
-                                      rmm::cuda_stream_view stream,
+                                      cuda::stream_ref stream,
                                       rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();

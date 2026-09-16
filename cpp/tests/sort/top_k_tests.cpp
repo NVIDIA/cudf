@@ -384,7 +384,7 @@ TEST_F(TopK, SegmentedUncoveredNull)
   // a nested lists_column_wrapper drops the leaf mask, so assemble the list column directly.
   auto expected_values = cudf::test::fixed_width_column_wrapper<int32_t>(
     {50, 40, 25, 15}, cudf::test::iterators::no_nulls());
-  auto expected_offsets = cudf::test::fixed_width_column_wrapper<cudf::size_type>({0, 2, 4});
+  auto expected_offsets = cudf::test::fixed_width_column_wrapper<int32_t>({0, 2, 4});
   auto expected =
     cudf::make_lists_column(2, expected_offsets.release(), expected_values.release(), 0, {});
   auto result = cudf::segmented_top_k(input, offsets, 2);

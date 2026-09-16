@@ -113,5 +113,6 @@ cdef extern from "cudf/types.hpp" namespace "cudf" nogil:
         HIGHER
         MIDPOINT
         NEAREST
+        NEAREST_HALF_UP
 
     cdef size_t size_of(data_type t) except +libcudf_exception_handler

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -310,7 +310,7 @@ TEST_F(SegmentedSortInt, ErrorsMismatchArgSizes)
   CUDF_EXPECT_NO_THROW(cudf::stable_segmented_sort_by_key(input1, input1, segments));
 }
 
-// Test specifically verifies the patch added in https://github.com/rapidsai/cudf/pull/12234
+// Test specifically verifies the patch added in https://github.com/NVIDIA/cudf/pull/12234
 // This test will fail if the CUB bug fix is not available or the patch has not been applied.
 TEST_F(SegmentedSortInt, Bool)
 {
@@ -332,7 +332,7 @@ TEST_F(SegmentedSortInt, Bool)
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(result->view(), expected);
 }
 
-// Specific test for fix in https://github.com/rapidsai/cudf/pull/16463
+// Specific test for fix in https://github.com/NVIDIA/cudf/pull/16463
 TEST_F(SegmentedSortInt, UnbalancedOffsets)
 {
   auto h_input = std::vector<int64_t>(3535);

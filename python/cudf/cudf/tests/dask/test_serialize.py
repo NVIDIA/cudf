@@ -384,7 +384,7 @@ def test_serialize_string_check_buffer_sizes():
 
 
 def test_serialize_sliced_string():
-    # https://github.com/rapidsai/cudf/issues/7735
+    # https://github.com/NVIDIA/cudf/issues/7735
     data = ["hi", "hello", None]
     pd_series = pd.Series(data, dtype=pd.StringDtype())
     gd_series = cudf.Series(data, dtype=pd_series.dtype)

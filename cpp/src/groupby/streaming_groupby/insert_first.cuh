@@ -11,11 +11,11 @@
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_buffer.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/iterator>
+#include <cuda/stream>
 #include <thrust/copy.h>
 
 #include <cstddef>
@@ -50,7 +50,7 @@ size_type streaming_groupby::impl::probe_and_insert_first_batch(
   size_type* target_indices,
   size_type* slot_offsets,
   size_type* batch_local_indices,
-  rmm::cuda_stream_view stream)
+  cuda::stream_ref stream)
 {
   auto const temp_mr        = cudf::get_current_device_resource_ref();
   auto const batch_self_cmp = cudf::detail::row::equality::self_comparator{preprocessed_batch};

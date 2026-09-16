@@ -2358,6 +2358,16 @@ class Index(SingleColumnFrame):
                 f"Requested level ({level}) does not match index name ({self.name})"
             )
 
+    def _level_index_from_level(self, level) -> int:
+        """
+        Return level index from given level name or index.
+
+        A flat index only ever has one level, so this validates ``level``
+        and returns 0.
+        """
+        self._validate_index_level(level)
+        return 0
+
     def unique(self, level: int | None = None) -> Self:
         if level is not None:
             self._validate_index_level(level)

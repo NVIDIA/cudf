@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2019-2024, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from functools import partial
@@ -377,7 +377,7 @@ def test_single_partition():
 
 
 def test_issue_12773():
-    # https://github.com/rapidsai/cudf/issues/12773
+    # https://github.com/NVIDIA/cudf/issues/12773
     df1 = cudf.DataFrame({"a": ["a", "b"], "b": [1, 2]})
     df2 = cudf.DataFrame({"a": ["a", "c"], "b": [2, 3]})
 

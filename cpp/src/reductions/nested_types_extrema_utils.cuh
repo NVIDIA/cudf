@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -37,7 +37,7 @@ struct row_arg_minmax_fn {
   // used with `thrust::reduce_by_key` or `thrust::scan_by_key`.
   __attribute__((noinline)) __device__ auto operator()(size_type lhs_idx, size_type rhs_idx) const
   {
-    // The extra bounds checking is due to issue github.com/rapidsai/cudf/issues/9156 and
+    // The extra bounds checking is due to issue github.com/NVIDIA/cudf/issues/9156 and
     // github.com/NVIDIA/thrust/issues/1525
     // where invalid random values may be passed here by thrust::reduce_by_key
     if (lhs_idx < 0 || lhs_idx >= num_rows) { return rhs_idx; }
@@ -73,7 +73,7 @@ class arg_minmax_binop_generator {
   cudf::table_view const input_tview;
   bool const has_nulls;
   bool const is_min_op;
-  rmm::cuda_stream_view stream;
+  cuda::stream_ref stream;
 
   // Contains data used in `row_comparator` below, thus needs to be kept alive as a member variable.
   std::unique_ptr<cudf::structs::detail::flattened_table> const flattened_input;
@@ -81,9 +81,7 @@ class arg_minmax_binop_generator {
   // Contains data used in the returned binop, thus needs to be kept alive as a member variable.
   cudf::detail::row::lexicographic::self_comparator row_comparator;
 
-  arg_minmax_binop_generator(column_view const& input_,
-                             bool is_min_op_,
-                             rmm::cuda_stream_view stream_)
+  arg_minmax_binop_generator(column_view const& input_, bool is_min_op_, cuda::stream_ref stream_)
     : input_tview{cudf::table_view{{input_}}},
       has_nulls{cudf::has_nested_nulls(input_tview)},
       is_min_op{is_min_op_},
@@ -153,7 +151,7 @@ class arg_minmax_binop_generator {
   auto binop() const { return row_arg_minmax_fn(input_tview.num_rows(), less(), is_min_op); }
 
   template <typename BinOp>
-  static auto create(column_view const& input, rmm::cuda_stream_view stream)
+  static auto create(column_view const& input, cuda::stream_ref stream)
   {
     CUDF_EXPECTS(cudf::is_nested(input.type()),
                  "This utility class is designed exclusively for nested input types.");
@@ -164,7 +162,7 @@ class arg_minmax_binop_generator {
   }
 
   template <cudf::aggregation::Kind K>
-  static auto create(column_view const& input, rmm::cuda_stream_view stream)
+  static auto create(column_view const& input, cuda::stream_ref stream)
   {
     CUDF_EXPECTS(cudf::is_nested(input.type()),
                  "This utility class is designed exclusively for nested input types.");

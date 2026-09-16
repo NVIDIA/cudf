@@ -17,13 +17,13 @@
 #include <cudf/types.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/exec_policy.hpp>
 #include <rmm/mr/polymorphic_allocator.hpp>
 
 #include <cuco/static_set.cuh>
 #include <cuda/iterator>
 #include <cuda/std/iterator>
+#include <cuda/stream>
 #include <thrust/tabulate.h>
 
 namespace cudf::groupby::detail::hash {
@@ -54,7 +54,7 @@ std::unique_ptr<table> compute_groupby(table_view const& keys,
                                        Equal const& d_row_equal,
                                        Hash const& d_row_hash,
                                        cudf::detail::result_cache* cache,
-                                       rmm::cuda_stream_view stream,
+                                       cuda::stream_ref stream,
                                        rmm::device_async_resource_ref mr)
 {
   auto const num_keys = keys.num_rows();
@@ -99,7 +99,7 @@ std::unique_ptr<table> compute_groupby(table_view const& keys,
                      cuco::thread_scope_device,
                      cuco::storage<GROUPBY_BUCKET_SIZE>{},
                      rmm::mr::polymorphic_allocator<char>{},
-                     stream.value()};
+                     stream.get()};
 
   auto const gather_keys = [&](auto const& gather_map) {
     return cudf::detail::gather(keys,
@@ -122,7 +122,7 @@ std::unique_ptr<table> compute_groupby(table_view const& keys,
 
     rmm::device_uvector<size_type> unique_key_indices(
       num_keys, stream, cudf::get_current_device_resource_ref());
-    auto const keys_end       = set.retrieve_all(unique_key_indices.begin(), stream.value());
+    auto const keys_end       = set.retrieve_all(unique_key_indices.begin(), stream.get());
     auto const key_gather_map = device_span<size_type const>{
       unique_key_indices.data(),
       static_cast<std::size_t>(cuda::std::distance(unique_key_indices.begin(), keys_end))};
@@ -161,7 +161,7 @@ template std::unique_ptr<table> compute_groupby<row_comparator_t, row_hash_t>(
   row_comparator_t const& d_row_equal,
   row_hash_t const& d_row_hash,
   cudf::detail::result_cache* cache,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr);
 
 template std::unique_ptr<table> compute_groupby<nullable_row_comparator_t, row_hash_t>(
@@ -171,6 +171,6 @@ template std::unique_ptr<table> compute_groupby<nullable_row_comparator_t, row_h
   nullable_row_comparator_t const& d_row_equal,
   row_hash_t const& d_row_hash,
   cudf::detail::result_cache* cache,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr);
 }  // namespace cudf::groupby::detail::hash

@@ -91,7 +91,7 @@ class data_chunk_reader {
    * relative to the specified @p stream
    */
   virtual std::unique_ptr<device_data_chunk> get_next_chunk(std::size_t size,
-                                                            rmm::cuda_stream_view stream) = 0;
+                                                            cuda::stream_ref stream) = 0;
 };
 
 /**

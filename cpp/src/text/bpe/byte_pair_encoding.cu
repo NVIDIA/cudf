@@ -23,11 +23,11 @@
 
 #include <nvtext/byte_pair_encoding.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/functional>
 #include <cuda/iterator>
+#include <cuda/stream>
 #include <thrust/copy.h>
 #include <thrust/execution_policy.h>
 #include <thrust/merge.h>
@@ -332,7 +332,7 @@ CUDF_KERNEL void bpe_finalize(cudf::column_device_view const d_strings,
 std::unique_ptr<cudf::column> byte_pair_encoding(cudf::strings_column_view const& input,
                                                  bpe_merge_pairs const& merge_pairs,
                                                  cudf::string_scalar const& separator,
-                                                 rmm::cuda_stream_view stream,
+                                                 cuda::stream_ref stream,
                                                  rmm::device_async_resource_ref mr)
 {
   if (input.is_empty() || input.chars_size(stream) == 0) {
@@ -411,14 +411,14 @@ std::unique_ptr<cudf::column> byte_pair_encoding(cudf::strings_column_view const
     rmm::device_uvector<int8_t> d_rerank(chars_size, stream);  // more working memory;
     rmm::device_uvector<cudf::size_type> d_ranks(chars_size, stream);
     auto const pair_map = get_bpe_merge_pairs_impl(merge_pairs)->get_merge_pairs_ref();
-    bpe_parallel_fn<decltype(pair_map)><<<tmp_size, block_size, 0, stream.value()>>>(
+    bpe_parallel_fn<decltype(pair_map)><<<tmp_size, block_size, 0, stream.get()>>>(
       *d_tmp_strings, d_input_chars, pair_map, d_spaces.data(), d_ranks.data(), d_rerank.data());
     CUDF_CUDA_TRY(cudaGetLastError());
   }
 
   // compute the output sizes
   auto output_sizes = rmm::device_uvector<cudf::size_type>(input.size(), stream);
-  bpe_finalize<<<input.size(), block_size, 0, stream.value()>>>(
+  bpe_finalize<<<input.size(), block_size, 0, stream.get()>>>(
     *d_strings, d_input_chars, d_spaces.data(), output_sizes.data());
   CUDF_CUDA_TRY(cudaGetLastError());
 
@@ -461,7 +461,7 @@ std::unique_ptr<cudf::column> byte_pair_encoding(cudf::strings_column_view const
 std::unique_ptr<cudf::column> byte_pair_encoding(cudf::strings_column_view const& input,
                                                  bpe_merge_pairs const& merges_table,
                                                  cudf::string_scalar const& separator,
-                                                 rmm::cuda_stream_view stream,
+                                                 cuda::stream_ref stream,
                                                  rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();

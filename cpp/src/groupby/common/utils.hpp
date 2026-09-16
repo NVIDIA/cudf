@@ -13,8 +13,9 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_buffer.hpp>
+
+#include <cuda/stream>
 
 #include <memory>
 #include <span>
@@ -26,7 +27,7 @@ namespace cudf::groupby::detail {
 template <typename RequestType>
 inline std::vector<aggregation_result> extract_results(std::span<RequestType const> requests,
                                                        cudf::detail::result_cache& cache,
-                                                       rmm::cuda_stream_view stream,
+                                                       cuda::stream_ref stream,
                                                        rmm::device_async_resource_ref mr)
 {
   std::vector<aggregation_result> results(requests.size());
@@ -58,8 +59,8 @@ inline std::vector<aggregation_result> extract_results(std::span<RequestType con
  *
  * @return Pair of {buffer, raw_pointer} where pointer is null if no nulls exist.
  */
-std::pair<rmm::device_buffer, bitmask_type const*> compute_row_bitmask(
-  table_view const& keys, rmm::cuda_stream_view stream);
+std::pair<rmm::device_buffer, bitmask_type const*> compute_row_bitmask(table_view const& keys,
+                                                                       cuda::stream_ref stream);
 
 /// Whether the given aggregation kind is supported by hash-based groupby.
 constexpr bool is_hash_aggregation(aggregation::Kind k)

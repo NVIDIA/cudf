@@ -1,12 +1,11 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
 
 #include "common.cuh"
 
-#include <cudf/detail/iterator.cuh>
 #include <cudf/detail/row_operator/equality.cuh>
 #include <cudf/detail/row_operator/hashing.cuh>
 #include <cudf/detail/row_operator/primitive_row_operators.cuh>
@@ -39,17 +38,6 @@ class pair_equal {
 
  private:
   Equal _check_row_equality;
-};
-
-/**
- * @brief Extracts the right-side row index from a cuco hash table slot.
- */
-struct output_fn {
-  __device__ constexpr cudf::size_type operator()(
-    cuco::pair<hash_value_type, cudf::size_type> const& slot) const
-  {
-    return slot.second;
-  }
 };
 
 /**

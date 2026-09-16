@@ -586,7 +586,7 @@ TEST_P(ParquetV2Test, ListOfStruct)
                     .release();
 
   auto list_offsets_column =
-    cudf::test::fixed_width_column_wrapper<cudf::size_type>{0, 2, 5, 5, 6}.release();
+    cudf::test::fixed_width_column_wrapper<int32_t>{0, 2, 5, 5, 6}.release();
   auto num_list_rows = list_offsets_column->size() - 1;
 
   auto list_col = cudf::make_lists_column(

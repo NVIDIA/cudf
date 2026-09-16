@@ -75,15 +75,14 @@ enum class negative_index_policy : bool {
  * better performance. If `policy` is set to `DONT_CHECK` and there are out-of-bounds indices
  * in the gather map, the behavior is undefined. Defaults to `DONT_CHECK`.
  * @param stream CUDA stream used for device memory operations and kernel launches
- * @param mr Device memory resource used to allocate the returned table's device memory
+ * @param mr Memory resources used for temporary allocations and the returned table
  * @return Result of the gather
  */
-std::unique_ptr<table> gather(
-  table_view const& source_table,
-  column_view const& gather_map,
-  out_of_bounds_policy bounds_policy = out_of_bounds_policy::DONT_CHECK,
-  rmm::cuda_stream_view stream       = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr  = cudf::get_current_device_resource_ref());
+std::unique_ptr<table> gather(table_view const& source_table,
+                              column_view const& gather_map,
+                              out_of_bounds_policy bounds_policy = out_of_bounds_policy::DONT_CHECK,
+                              cuda::stream_ref stream            = cudf::get_default_stream(),
+                              cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Gathers the specified rows of a set of columns according to a gather map.
@@ -112,16 +111,15 @@ std::unique_ptr<table> gather(
  * @param bounds_policy Interpretation of out-of-bounds indices
  * @param neg_indices Interpretation of a negative index `i` in the `gather_map`
  * @param stream CUDA stream used for device memory operations and kernel launches.
- * @param mr Device memory resource used to allocate the returned table's device memory
+ * @param mr Memory resources used for temporary allocations and the returned table
  * @return Result of the gather
  */
-std::unique_ptr<table> gather(
-  table_view const& source_table,
-  column_view const& gather_map,
-  out_of_bounds_policy bounds_policy,
-  negative_index_policy neg_indices,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+std::unique_ptr<table> gather(table_view const& source_table,
+                              column_view const& gather_map,
+                              out_of_bounds_policy bounds_policy,
+                              negative_index_policy neg_indices,
+                              cuda::stream_ref stream   = cudf::get_default_stream(),
+                              cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Reverses the rows within a table.
@@ -140,7 +138,7 @@ std::unique_ptr<table> gather(
  */
 std::unique_ptr<table> reverse(
   table_view const& source_table,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -160,7 +158,7 @@ std::unique_ptr<table> reverse(
  */
 std::unique_ptr<column> reverse(
   column_view const& source_column,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -209,7 +207,7 @@ std::unique_ptr<table> scatter(
   table_view const& source,
   column_view const& scatter_map,
   table_view const& target,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -252,7 +250,7 @@ std::unique_ptr<table> scatter(
   std::vector<std::reference_wrapper<scalar const>> const& source,
   column_view const& indices,
   table_view const& target,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -300,7 +298,7 @@ std::unique_ptr<column> empty_like(scalar const& input);
 std::unique_ptr<column> allocate_like(
   column_view const& input,
   mask_allocation_policy mask_alloc = mask_allocation_policy::RETAIN,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -323,7 +321,7 @@ std::unique_ptr<column> allocate_like(
   column_view const& input,
   size_type size,
   mask_allocation_policy mask_alloc = mask_allocation_policy::RETAIN,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -375,7 +373,7 @@ void copy_range_in_place(column_view const& source,
                          size_type source_begin,
                          size_type source_end,
                          size_type target_begin,
-                         rmm::cuda_stream_view stream = cudf::get_default_stream());
+                         cuda::stream_ref stream = cudf::get_default_stream());
 
 /**
  * @brief Copies a range of elements out-of-place from one column to another.
@@ -415,7 +413,7 @@ std::unique_ptr<column> copy_range(
   size_type source_begin,
   size_type source_end,
   size_type target_begin,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -459,7 +457,7 @@ std::unique_ptr<column> shift(
   column_view const& input,
   size_type offset,
   scalar const& fill_value,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -495,14 +493,14 @@ std::unique_ptr<column> shift(
  */
 std::vector<column_view> slice(column_view const& input,
                                std::span<size_type const> indices,
-                               rmm::cuda_stream_view stream = cudf::get_default_stream());
+                               cuda::stream_ref stream = cudf::get_default_stream());
 /**
  * @ingroup copy_slice
- * @copydoc cudf::slice(column_view const&, std::span<size_type const>, rmm::cuda_stream_view)
+ * @copydoc cudf::slice(column_view const&, std::span<size_type const>, cuda::stream_ref)
  */
 std::vector<column_view> slice(column_view const& input,
                                std::initializer_list<size_type> indices,
-                               rmm::cuda_stream_view stream = cudf::get_default_stream());
+                               cuda::stream_ref stream = cudf::get_default_stream());
 
 /**
  * @brief Slices a `table_view` into a set of `table_view`s according to a set of indices.
@@ -539,14 +537,14 @@ std::vector<column_view> slice(column_view const& input,
  */
 std::vector<table_view> slice(table_view const& input,
                               std::span<size_type const> indices,
-                              rmm::cuda_stream_view stream = cudf::get_default_stream());
+                              cuda::stream_ref stream = cudf::get_default_stream());
 /**
  * @ingroup copy_slice
- * @copydoc cudf::slice(table_view const&, std::span<size_type const>, rmm::cuda_stream_view stream)
+ * @copydoc cudf::slice(table_view const&, std::span<size_type const>, cuda::stream_ref stream)
  */
 std::vector<table_view> slice(table_view const& input,
                               std::initializer_list<size_type> indices,
-                              rmm::cuda_stream_view stream = cudf::get_default_stream());
+                              cuda::stream_ref stream = cudf::get_default_stream());
 
 /**
  * @brief Splits a `column_view` into a set of `column_view`s according to a set of indices
@@ -583,14 +581,14 @@ std::vector<table_view> slice(table_view const& input,
  */
 std::vector<column_view> split(column_view const& input,
                                std::span<size_type const> splits,
-                               rmm::cuda_stream_view stream = cudf::get_default_stream());
+                               cuda::stream_ref stream = cudf::get_default_stream());
 /**
  * @ingroup copy_split
- * @copydoc cudf::split(column_view const&, std::span<size_type const>, rmm::cuda_stream_view)
+ * @copydoc cudf::split(column_view const&, std::span<size_type const>, cuda::stream_ref)
  */
 std::vector<column_view> split(column_view const& input,
                                std::initializer_list<size_type> splits,
-                               rmm::cuda_stream_view stream = cudf::get_default_stream());
+                               cuda::stream_ref stream = cudf::get_default_stream());
 
 /**
  * @brief Splits a `table_view` into a set of `table_view`s according to a set of indices
@@ -629,14 +627,14 @@ std::vector<column_view> split(column_view const& input,
  */
 std::vector<table_view> split(table_view const& input,
                               std::span<size_type const> splits,
-                              rmm::cuda_stream_view stream = cudf::get_default_stream());
+                              cuda::stream_ref stream = cudf::get_default_stream());
 /**
  * @ingroup copy_split
- * @copydoc cudf::split(table_view const&, std::span<size_type const>, rmm::cuda_stream_view)
+ * @copydoc cudf::split(table_view const&, std::span<size_type const>, cuda::stream_ref)
  */
 std::vector<table_view> split(table_view const& input,
                               std::initializer_list<size_type> splits,
-                              rmm::cuda_stream_view stream = cudf::get_default_stream());
+                              cuda::stream_ref stream = cudf::get_default_stream());
 
 /**
  * @brief   Returns a new column, where each element is selected from either @p lhs or
@@ -662,7 +660,7 @@ std::unique_ptr<column> copy_if_else(
   column_view const& lhs,
   column_view const& rhs,
   column_view const& boolean_mask,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -688,7 +686,7 @@ std::unique_ptr<column> copy_if_else(
   scalar const& lhs,
   column_view const& rhs,
   column_view const& boolean_mask,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -714,7 +712,7 @@ std::unique_ptr<column> copy_if_else(
   column_view const& lhs,
   scalar const& rhs,
   column_view const& boolean_mask,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -738,7 +736,7 @@ std::unique_ptr<column> copy_if_else(
   scalar const& lhs,
   scalar const& rhs,
   column_view const& boolean_mask,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -782,7 +780,7 @@ std::unique_ptr<table> boolean_mask_scatter(
   table_view const& input,
   table_view const& target,
   column_view const& boolean_mask,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -821,7 +819,7 @@ std::unique_ptr<table> boolean_mask_scatter(
   std::vector<std::reference_wrapper<scalar const>> const& input,
   table_view const& target,
   column_view const& boolean_mask,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -841,7 +839,7 @@ std::unique_ptr<table> boolean_mask_scatter(
 std::unique_ptr<scalar> get_element(
   column_view const& input,
   size_type index,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -868,8 +866,9 @@ enum class sample_with_replacement : bool {
  * output:       {col1: {3, 1, 1}, col2: {8, 6, 6}}
  * @endcode
  *
- * @throws cudf::logic_error if `n` > `input.num_rows()` and `replacement` == FALSE.
- * @throws cudf::logic_error if `n` < 0.
+ * @throws std::invalid_argument if `n < 0`.
+ * @throws std::invalid_argument if `n > 0` and `input.num_rows() == 0`.
+ * @throws std::invalid_argument if `n > input.num_rows()` and `replacement == FALSE`.
  *
  * @param input View of a table to sample
  * @param n non-negative number of samples expected from `input`
@@ -885,7 +884,7 @@ std::unique_ptr<table> sample(
   size_type const n,
   sample_with_replacement replacement = sample_with_replacement::FALSE,
   int64_t const seed                  = 0,
-  rmm::cuda_stream_view stream        = cudf::get_default_stream(),
+  cuda::stream_ref stream             = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr   = cudf::get_current_device_resource_ref());
 
 /**
@@ -906,7 +905,7 @@ std::unique_ptr<table> sample(
  * @return false If neither the column or its descendants have non-empty null rows
  */
 bool has_nonempty_nulls(column_view const& input,
-                        rmm::cuda_stream_view stream = cudf::get_default_stream());
+                        cuda::stream_ref stream = cudf::get_default_stream());
 
 /**
  * @brief Approximates if a column or its descendants *may* have non-empty null elements
@@ -1002,7 +1001,7 @@ bool may_have_nonempty_nulls(column_view const& input);
  */
 std::unique_ptr<column> purge_nonempty_nulls(
   column_view const& input,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /** @} */

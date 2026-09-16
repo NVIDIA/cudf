@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -17,11 +17,11 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/iterator>
+#include <cuda/stream>
 #include <thrust/execution_policy.h>
 #include <thrust/for_each.h>
 #include <thrust/transform.h>
@@ -79,7 +79,7 @@ struct quantiles_functor {
                                      size_type const num_groups,
                                      device_span<double const> quantile,
                                      interpolation interpolation,
-                                     rmm::cuda_stream_view stream,
+                                     cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr)
     requires(std::is_arithmetic_v<T>)
   {
@@ -152,7 +152,7 @@ std::unique_ptr<column> group_quantiles(column_view const& values,
                                         size_type const num_groups,
                                         std::vector<double> const& quantiles,
                                         interpolation interp,
-                                        rmm::cuda_stream_view stream,
+                                        cuda::stream_ref stream,
                                         rmm::device_async_resource_ref mr)
 {
   auto dv_quantiles = cudf::detail::make_device_uvector_async(

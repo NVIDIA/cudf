@@ -97,6 +97,22 @@ def test_from_list_irregular_shapes_raises():
         plc.Column.from_iterable_of_py(data)
 
 
+@pytest.mark.parametrize(
+    "data",
+    [
+        [[], [1]],
+        [[1], []],
+        [[[1], [2]], [[3, 4], [5, 6]]],
+        [[[1, 2], [3, 4]], [[5], [6, 7, 8]]],
+        [[[1]], [2]],
+        [[[1]], [[[2, 3]]]],
+    ],
+)
+def test_from_list_deeply_irregular_shapes_raises(data):
+    with pytest.raises(ValueError, match="Inconsistent inner list shapes"):
+        plc.Column.from_iterable_of_py(data)
+
+
 def test_from_list_nested_dicts_raises():
     data = [[{"a": 1}], [{"b": 2}]]
     with pytest.raises(TypeError, match="Unsupported scalar type"):

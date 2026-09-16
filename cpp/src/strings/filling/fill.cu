@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -11,9 +11,8 @@
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
-
 #include <cuda/iterator>
+#include <cuda/stream>
 #include <thrust/transform.h>
 
 namespace cudf {
@@ -48,7 +47,7 @@ std::unique_ptr<column> fill(strings_column_view const& input,
                              size_type begin,
                              size_type end,
                              string_scalar const& value,
-                             rmm::cuda_stream_view stream,
+                             cuda::stream_ref stream,
                              rmm::device_async_resource_ref mr)
 {
   auto const strings_count = input.size();
@@ -69,7 +68,7 @@ std::unique_ptr<column> fill(strings_column_view const& input,
                     indices.begin(),
                     fn);
 
-  return make_strings_column(indices.begin(), indices.end(), stream, mr);
+  return cudf::make_strings_column(indices, stream, mr);
 }
 
 }  // namespace detail

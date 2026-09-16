@@ -22,6 +22,7 @@ from cudf_polars.dsl.expr import (
     Len,
     Literal,
     NamedExpr,
+    SortedAgg,
     StructFunction,
     Ternary,
     UnaryFunction,
@@ -40,7 +41,7 @@ from cudf_polars.streaming.utils import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Generator, MutableMapping
+    from collections.abc import Generator, Iterable, MutableMapping
 
     from cudf_polars.containers import DataFrame
     from cudf_polars.dsl.ir import IR
@@ -125,6 +126,15 @@ def combine(
         list(itertools.chain.from_iterable(aggregations)),
         list(itertools.chain.from_iterable(reductions)),
         any(need_preshuffles),
+    )
+
+
+def _has_stable_sorted_agg(exprs: Iterable[NamedExpr]) -> bool:
+    """Return True if any expression requires stable sorted aggregation."""
+    return any(
+        isinstance(expr, SortedAgg) and expr.options[0]
+        for ne in exprs
+        for expr in traversal([ne.value])
     )
 
 
@@ -251,6 +261,64 @@ def _decompose_std_var(
     return selection, aggregations, reductions, False
 
 
+def _decompose_sorted_agg(
+    name: str, expr: SortedAgg, *, names: Generator[str, None, None]
+) -> tuple[NamedExpr, list[NamedExpr], list[NamedExpr], bool]:
+    """Carry the selected payload and its sort-key values through reductions."""
+    payload, *sort_keys = expr.children
+    sort_key_names = [f"{next(names)}__sort_key" for _ in sort_keys]
+    sort_key_cols = [
+        Col(sort_key.dtype, sort_key_name)
+        for sort_key, sort_key_name in zip(sort_keys, sort_key_names, strict=True)
+    ]
+
+    selection = NamedExpr(name, Col(expr.dtype, name))
+    aggregations = [
+        NamedExpr(
+            name,
+            SortedAgg(expr.dtype, expr.name, expr.options, payload, *sort_keys),
+        ),
+        *(
+            NamedExpr(
+                sort_key_name,
+                SortedAgg(
+                    sort_key.dtype, expr.name, expr.options, sort_key, *sort_keys
+                ),
+            )
+            for sort_key, sort_key_name in zip(sort_keys, sort_key_names, strict=True)
+        ),
+    ]
+    reductions = [
+        NamedExpr(
+            name,
+            SortedAgg(
+                expr.dtype,
+                expr.name,
+                expr.options,
+                Col(expr.dtype, name),
+                *sort_key_cols,
+            ),
+        ),
+        *(
+            NamedExpr(
+                sort_key_name,
+                SortedAgg(
+                    sort_key.dtype,
+                    expr.name,
+                    expr.options,
+                    sort_key,
+                    *sort_key_cols,
+                ),
+            )
+            for sort_key, sort_key_name in zip(
+                sort_key_cols, sort_key_names, strict=True
+            )
+        ),
+    ]
+    # SortedAgg supports tree reduction by carrying the winning sort-key values.
+    return selection, aggregations, reductions, False
+
+
 def decompose(
     name: str, expr: Expr, *, names: Generator[str, None, None]
 ) -> tuple[NamedExpr, list[NamedExpr], list[NamedExpr], bool]:
@@ -289,6 +357,8 @@ def decompose(
             )
         ]
         return selection, aggregation, reduction, False
+    if isinstance(expr, SortedAgg):
+        return _decompose_sorted_agg(name, expr, names=names)
     if isinstance(expr, Agg):
         if (aggfunc := _GB_AGG_REDUCTIONS.get(expr.name)) is not None:
             if expr.name == "count":
@@ -436,6 +506,16 @@ def _(
 
     # Preshuffle ir.child if needed
     if need_preshuffle:
+        if _has_stable_sorted_agg(ir.agg_requests):
+            return _lower_ir_fallback(
+                ir,
+                rec,
+                msg=(
+                    "Streaming group_by does not yet preserve input-order ties "
+                    "for sort_by(..., maintain_order=True) when another "
+                    "aggregation requires repartitioning."
+                ),
+            )
         child = Shuffle(
             child.schema,
             ir.keys,

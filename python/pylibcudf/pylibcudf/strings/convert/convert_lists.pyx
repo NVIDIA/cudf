@@ -16,6 +16,10 @@ from pylibcudf.libcudf.strings.convert cimport (
 from pylibcudf.scalar cimport Scalar
 from pylibcudf.types cimport type_id
 from pylibcudf.utils cimport _get_stream, _get_memory_resource
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pylibcudf.typing import CudaStreamLike
 from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 from rmm.pylibrmm.stream cimport Stream
 
@@ -28,7 +32,7 @@ cpdef Column format_list_column(
     Column input,
     Scalar na_rep=None,
     Column separators=None,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """
@@ -60,12 +64,12 @@ cpdef Column format_list_column(
     cdef unique_ptr[column] c_result
 
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
 
     if na_rep is None:
         na_rep = Scalar.from_libcudf(
-            cpp_make_string_scalar("".encode(), _stream.view().value(), mr.get_mr())
+            cpp_make_string_scalar("".encode(), _stream.view().get(), mr.get_mr())
         )
 
     cdef const string_scalar* c_na_rep = <const string_scalar*>(

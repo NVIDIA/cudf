@@ -108,6 +108,7 @@ class UnaryFunction(Expr):
     }
     _supported_misc_fns = frozenset(
         {
+            "approx_n_unique",
             "argwhere",
             "as_struct",
             "arg_max",
@@ -118,13 +119,17 @@ class UnaryFunction(Expr):
             "diff",
             "drop_nans",
             "drop_nulls",
+            "entropy",
             "extend_constant",
             "fill_null",
             "fill_null_with_strategy",
             "gather_every",
             "hash",
+            "hist",
             "index_of",
             "mask_nans",
+            "max_by",
+            "min_by",
             "mode",
             "null_count",
             "pct_change",
@@ -134,6 +139,7 @@ class UnaryFunction(Expr):
             "repeat_by",
             "replace",
             "replace_strict",
+            "reverse",
             "round",
             "round_sig_figs",
             "search_sorted",
@@ -160,8 +166,17 @@ class UnaryFunction(Expr):
     )
     _horizontal_fold_ops: ClassVar[dict[str, plc.binaryop.BinaryOperator]] = {
         "max_horizontal": plc.binaryop.BinaryOperator.NULL_MAX,
+        "min_horizontal": plc.binaryop.BinaryOperator.NULL_MIN,
     }
-    _supported_horizontal_fns = frozenset({"max_horizontal"})
+    _supported_horizontal_fns = frozenset(
+        {
+            "coalesce",
+            "max_horizontal",
+            "mean_horizontal",
+            "min_horizontal",
+            "sum_horizontal",
+        }
+    )
     _supported_math_fns = frozenset(
         {
             "cot",
@@ -172,10 +187,10 @@ class UnaryFunction(Expr):
         }
     )
     _supported_fns = frozenset().union(
-        _supported_misc_fns,
         _supported_cum_aggs,
-        _supported_math_fns,
         _supported_horizontal_fns,
+        _supported_math_fns,
+        _supported_misc_fns,
         _OP_MAPPING.keys(),
     )
     _pointwise_fns = frozenset(
@@ -207,19 +222,37 @@ class UnaryFunction(Expr):
 
         if self.name not in UnaryFunction._supported_fns:
             raise NotImplementedError(f"Unary function {name=}")  # pragma: no cover
-        if self.name in UnaryFunction._supported_cum_aggs:
-            (reverse,) = self.options
-            if reverse:
-                raise NotImplementedError(
-                    "reverse=True is not supported for cumulative aggregations"
-                )
         if self.name == "index_of" and plc.traits.is_nested(children[0].dtype.plc_type):
             raise NotImplementedError("index_of on nested types is not supported")
+        if (
+            self.name in UnaryFunction._OP_MAPPING
+            or self.name in UnaryFunction._supported_math_fns
+            or self.name == "pct_change"
+        ) and plc.traits.is_nested(children[0].dtype.plc_type):
+            # TODO: polars should fail ahead of us
+            raise NotImplementedError(f"{name} on nested types is not supported")
+        if self.name == "entropy" and not plc.traits.is_numeric_not_bool(
+            children[0].dtype.plc_type
+        ):
+            raise NotImplementedError("entropy requires a numeric input")
         if self.name == "fill_null_with_strategy" and self.options[1] not in {0, None}:
             raise NotImplementedError(
                 "Filling null values with limit specified is not yet supported."
             )
-        if self.name == "max_horizontal":
+        if self.name == "hist":
+            bin_count, include_category, include_breakpoint = self.options
+            if include_category or include_breakpoint:
+                raise NotImplementedError(
+                    "hist with category or breakpoint output is not supported"
+                )
+            if bin_count is None:
+                raise NotImplementedError("hist without bin_count is not supported")
+            typ = children[0].dtype.polars_type
+            if not typ.is_numeric() or typ.is_decimal():
+                raise pl.exceptions.InvalidOperationError(
+                    "'hist' is only supported for numeric data"
+                )
+        if self.name in UnaryFunction._horizontal_fold_ops:
             op = UnaryFunction._horizontal_fold_ops[self.name]
             if not plc.binaryop.is_supported_operation(
                 self.dtype.plc_type,
@@ -230,6 +263,23 @@ class UnaryFunction(Expr):
                 raise NotImplementedError(
                     f"{self.name} is not supported for dtype {self.dtype.id().name}"
                 )
+        if self.name == "sum_horizontal" and not plc.binaryop.is_supported_operation(
+            self.dtype.plc_type,
+            self.dtype.plc_type,
+            self.dtype.plc_type,
+            plc.binaryop.BinaryOperator.ADD,
+        ):
+            raise NotImplementedError(
+                f"{self.name} is not supported for dtype {self.dtype.id().name}"
+            )
+        if self.name == "mean_horizontal":
+            for child in children:
+                typ = child.dtype.polars_type
+                if not (typ.is_numeric() or typ == pl.Boolean):
+                    raise pl.exceptions.InvalidOperationError(
+                        f"'horizontal_mean' expects numeric expressions, found "
+                        f"(dtype={typ})"
+                    )
         if self.name == "mode" and not POLARS_VERSION_LT_136:
             (maintain_order,) = self.options
             if maintain_order:
@@ -363,7 +413,7 @@ class UnaryFunction(Expr):
             )
         result = column.obj
         if old.obj.null_count() != old.size:
-            nonnull_old, nonnull_new = plc.stream_compaction.apply_boolean_mask(
+            nonnull_old, nonnull_new = plc.stream_compaction.apply_retention_mask(
                 plc.Table([old.obj, new.obj]),
                 plc.unary.is_valid(old.obj, stream=df.stream),
                 stream=df.stream,
@@ -371,7 +421,7 @@ class UnaryFunction(Expr):
             result = plc.replace.find_and_replace_all(
                 result, nonnull_old, nonnull_new, stream=df.stream
             )
-        null_new = plc.stream_compaction.apply_boolean_mask(
+        null_new = plc.stream_compaction.apply_retention_mask(
             plc.Table([new.obj]),
             plc.unary.is_null(old.obj, stream=df.stream),
             stream=df.stream,
@@ -432,6 +482,21 @@ class UnaryFunction(Expr):
             ).columns()[0],
             dtype=self.dtype,
         )
+
+    def _horizontal_broadcast_columns(
+        self, df: DataFrame, *, context: ExecutionContext
+    ) -> list[plc.Column]:
+        columns = [
+            child.evaluate(df, context=context).astype(self.dtype, stream=df.stream)
+            for child in self.children
+        ]
+        target_length = None if all(col.is_scalar for col in columns) else df.num_rows
+        return [
+            col.obj
+            for col in broadcast(
+                *columns, target_length=target_length, stream=df.stream
+            )
+        ]
 
     def do_evaluate(
         self, df: DataFrame, *, context: ExecutionContext = ExecutionContext.FRAME
@@ -528,7 +593,7 @@ class UnaryFunction(Expr):
                 stream=df.stream,
             )
             return Column(
-                plc.stream_compaction.apply_boolean_mask(
+                plc.stream_compaction.apply_retention_mask(
                     plc.Table([indices]), column.obj, stream=df.stream
                 ).columns()[0],
                 dtype=self.dtype,
@@ -566,6 +631,180 @@ class UnaryFunction(Expr):
                 ),
                 dtype=self.dtype,
             )
+        if self.name == "entropy":
+            base, normalize = self.options
+            column = self.children[0].evaluate(df, context=context)
+            if (
+                column.size == 0
+                or column.null_count == column.size
+                or (column.size == 1 and normalize)
+            ):
+                return Column(
+                    plc.Column.from_scalar(
+                        plc.Scalar.from_py(0.0, self.dtype.plc_type, stream=df.stream),
+                        1,
+                        stream=df.stream,
+                    ),
+                    dtype=self.dtype,
+                )
+            pk = column.astype(self.dtype, stream=df.stream).obj
+            col_ref: plc.expressions.Expression = plc.expressions.ColumnReference(0)
+            if normalize:
+                total = plc.reduce.reduce(
+                    pk, plc.aggregation.sum(), self.dtype.plc_type, stream=df.stream
+                )
+                col_ref = plc.expressions.Operation(
+                    plc.expressions.ASTOperator.DIV,
+                    col_ref,
+                    plc.expressions.Literal(total),
+                )
+            log_value = plc.expressions.Operation(
+                plc.expressions.ASTOperator.LOG, col_ref
+            )
+            if base != math.e:
+                log_value = plc.expressions.Operation(
+                    plc.expressions.ASTOperator.DIV,
+                    log_value,
+                    plc.expressions.Operation(
+                        plc.expressions.ASTOperator.LOG,
+                        plc.expressions.Literal(
+                            plc.Scalar.from_py(
+                                base, self.dtype.plc_type, stream=df.stream
+                            )
+                        ),
+                    ),
+                )
+            expression = plc.expressions.Operation(
+                plc.expressions.ASTOperator.MUL,
+                plc.expressions.Literal(
+                    plc.Scalar.from_py(-1.0, self.dtype.plc_type, stream=df.stream)
+                ),
+                plc.expressions.Operation(
+                    plc.expressions.ASTOperator.MUL,
+                    col_ref,
+                    log_value,
+                ),
+            )
+            terms = plc.transform.compute_column(
+                plc.Table([pk]), expression, stream=df.stream
+            )
+            return Column(
+                plc.Column.from_scalar(
+                    plc.reduce.reduce(
+                        terms,
+                        plc.aggregation.sum(),
+                        self.dtype.plc_type,
+                        stream=df.stream,
+                    ),
+                    1,
+                    stream=df.stream,
+                ),
+                dtype=self.dtype,
+            )
+        if self.name == "hist":
+            bin_count, _, _ = self.options
+            (column,) = (child.evaluate(df, context=context) for child in self.children)
+            if column.null_count > 0:
+                column = Column(
+                    plc.stream_compaction.drop_nulls(
+                        plc.Table([column.obj]), [0], 1, stream=df.stream
+                    ).columns()[0],
+                    dtype=column.dtype,
+                )
+            if plc.traits.is_floating_point(column.obj.type()):
+                column = Column(
+                    plc.stream_compaction.drop_nans(
+                        plc.Table([column.obj]), [0], 1, stream=df.stream
+                    ).columns()[0],
+                    dtype=column.dtype,
+                )
+            zero = plc.Scalar.from_py(0, self.dtype.plc_type, stream=df.stream)
+            if column.size == 0 or bin_count == 0:
+                return Column(
+                    plc.Column.from_scalar(zero, bin_count, stream=df.stream),
+                    dtype=self.dtype,
+                )
+            min_scalar, max_scalar = plc.reduce.minmax(column.obj, stream=df.stream)
+            min_value = min_scalar.to_py(stream=df.stream)
+            max_value = max_scalar.to_py(stream=df.stream)
+            assert isinstance(min_value, int | float)
+            assert isinstance(max_value, int | float)
+            if min_value == max_value:
+                hist_offset = min_value - 0.5
+                hist_width = 1.0 / bin_count
+                hist_upper = max_value + 0.5
+            else:
+                hist_offset = float(min_value)
+                hist_width = (max_value - min_value) / bin_count
+                hist_upper = float(max_value)
+            breaks = [x * hist_width + hist_offset for x in range(bin_count)]
+            breaks.append(hist_upper)
+            f64 = plc.DataType(plc.TypeId.FLOAT64)
+            hist_values = column.obj
+            if hist_values.type().id() != plc.TypeId.FLOAT64:
+                hist_values = plc.unary.cast(hist_values, f64, stream=df.stream)
+            labels = plc.labeling.label_bins(
+                hist_values,
+                plc.Column.from_iterable_of_py(
+                    breaks[:-1], dtype=f64, stream=df.stream
+                ),
+                plc.labeling.Inclusive.NO,
+                plc.Column.from_iterable_of_py(breaks[1:], dtype=f64, stream=df.stream),
+                plc.labeling.Inclusive.YES,
+                stream=df.stream,
+            )
+            if labels.null_count() > 0:
+                assign_left = plc.transform.compute_column(
+                    plc.Table([labels, hist_values]),
+                    plc.expressions.Operation(
+                        plc.expressions.ASTOperator.LOGICAL_AND,
+                        plc.expressions.Operation(
+                            plc.expressions.ASTOperator.IS_NULL,
+                            plc.expressions.ColumnReference(0),
+                        ),
+                        plc.expressions.Operation(
+                            plc.expressions.ASTOperator.EQUAL,
+                            plc.expressions.ColumnReference(1),
+                            plc.expressions.Literal(
+                                plc.Scalar.from_py(breaks[0], f64, stream=df.stream)
+                            ),
+                        ),
+                    ),
+                    stream=df.stream,
+                )
+                labels = plc.copying.copy_if_else(
+                    plc.Scalar.from_py(0, labels.type(), stream=df.stream),
+                    labels,
+                    assign_left,
+                    stream=df.stream,
+                )
+            (keys_table, (counts_table,)) = plc.groupby.GroupBy(
+                plc.Table([labels]), null_handling=plc.types.NullPolicy.EXCLUDE
+            ).aggregate(
+                [
+                    plc.groupby.GroupByRequest(
+                        labels,
+                        [plc.aggregation.count(plc.types.NullPolicy.EXCLUDE)],
+                    )
+                ],
+                stream=df.stream,
+            )
+            counts_col = counts_table.columns()[0]
+            if counts_col.type() != self.dtype.plc_type:
+                counts_col = plc.unary.cast(
+                    counts_col, self.dtype.plc_type, stream=df.stream
+                )
+            return Column(
+                plc.copying.scatter(
+                    plc.Table([counts_col]),
+                    keys_table.columns()[0],
+                    plc.Table(
+                        [plc.Column.from_scalar(zero, bin_count, stream=df.stream)]
+                    ),
+                    stream=df.stream,
+                ).columns()[0],
+                dtype=self.dtype,
+            )
         if self.name == "mode":
             (values,) = (child.evaluate(df, context=context) for child in self.children)
             (keys_table, (counts_table,)) = plc.groupby.GroupBy(
@@ -593,7 +832,7 @@ class UnaryFunction(Expr):
                 plc.DataType(plc.TypeId.BOOL8),
                 stream=df.stream,
             )
-            modes = plc.stream_compaction.apply_boolean_mask(
+            modes = plc.stream_compaction.apply_retention_mask(
                 keys_table, mask, stream=df.stream
             )
             return Column(
@@ -601,6 +840,54 @@ class UnaryFunction(Expr):
                     modes,
                     [plc.types.Order.ASCENDING],
                     [plc.types.NullOrder.BEFORE],
+                    stream=df.stream,
+                ).columns()[0],
+                dtype=self.dtype,
+            )
+        if self.name in ("max_by", "min_by"):
+            val, by = (child.evaluate(df, context=context) for child in self.children)
+            if val.size != by.size:
+                raise pl.exceptions.ShapeError(
+                    f"'by' column in {self.name} expression has incorrect length: "
+                    f"expected {val.size}, got {by.size}"
+                )
+            unmasked = by
+            by = by.mask_nans(stream=df.stream)
+            agg = (
+                plc.aggregation.argmax()
+                if self.name == "max_by"
+                else plc.aggregation.argmin()
+            )
+            index = plc.reduce.reduce(
+                by.obj, agg, plc.types.SIZE_TYPE, stream=df.stream
+            )
+            if not index.is_valid(stream=df.stream):
+                if unmasked.null_count != unmasked.size:
+                    valid = plc.unary.is_valid(unmasked.obj, stream=df.stream)
+                    filtered = plc.stream_compaction.apply_retention_mask(
+                        plc.Table([val.obj]), valid, stream=df.stream
+                    )
+                    return Column(
+                        plc.copying.slice(
+                            filtered.columns()[0], [0, 1], stream=df.stream
+                        )[0],
+                        dtype=self.dtype,
+                    )
+                return Column(
+                    plc.Column.from_scalar(
+                        plc.Scalar.from_py(None, self.dtype.plc_type, stream=df.stream),
+                        1,
+                        stream=df.stream,
+                    ),
+                    dtype=self.dtype,
+                )
+            if val.is_scalar:
+                return val
+            return Column(
+                plc.copying.gather(
+                    plc.Table([val.obj]),
+                    plc.Column.from_scalar(index, 1, stream=df.stream),
+                    plc.copying.OutOfBoundsPolicy.NULLIFY,
                     stream=df.stream,
                 ).columns()[0],
                 dtype=self.dtype,
@@ -889,6 +1176,23 @@ class UnaryFunction(Expr):
                 order=order,
                 null_order=null_order,
             )
+        elif self.name == "approx_n_unique":
+            (column,) = (child.evaluate(df, context=context) for child in self.children)
+            sketch = plc.reduce.ApproxDistinctCount(
+                plc.Table([column.obj]),
+                null_handling=plc.types.NullPolicy.INCLUDE,
+                nan_handling=plc.types.NanPolicy.NAN_IS_VALID,
+                stream=df.stream,
+            )
+            nunique = sketch.estimate(stream=df.stream)
+            return Column(
+                plc.Column.from_scalar(
+                    plc.Scalar.from_py(nunique, self.dtype.plc_type, stream=df.stream),
+                    1,
+                    stream=df.stream,
+                ),
+                dtype=self.dtype,
+            )
         elif self.name == "value_counts":
             (sort, _, _, normalize) = self.options
             count_agg = [plc.aggregation.count(plc.types.NullPolicy.INCLUDE)]
@@ -900,7 +1204,7 @@ class UnaryFunction(Expr):
             ]
             (keys_table, (counts_table,)) = plc.groupby.GroupBy(
                 df.table, null_handling=plc.types.NullPolicy.INCLUDE
-            ).aggregate(gb_requests)
+            ).aggregate(gb_requests, stream=df.stream)
             if sort:
                 sort_indices = plc.sorting.stable_sorted_order(
                     counts_table,
@@ -990,7 +1294,7 @@ class UnaryFunction(Expr):
                 plc.Scalar.from_py(1, self.dtype.plc_type, stream=df.stream),
                 stream=df.stream,
             )
-            matched = plc.stream_compaction.apply_boolean_mask(
+            matched = plc.stream_compaction.apply_retention_mask(
                 plc.Table([indices]), mask, stream=df.stream
             ).columns()[0]
             if matched.size() == 0:
@@ -1145,21 +1449,53 @@ class UnaryFunction(Expr):
                 dtype=self.dtype,
             )
         elif self.name == "as_struct":
-            children = [
-                child.evaluate(df, context=context).obj for child in self.children
-            ]
+            children = [child.evaluate(df, context=context) for child in self.children]
+            non_unit_sizes = [c.size for c in children if c.size != 1]
+            broadcasted = broadcast(
+                *children,
+                target_length=max(non_unit_sizes) if non_unit_sizes else None,
+                stream=df.stream,
+            )
             return Column(
                 plc.Column(
                     data_type=self.dtype.plc_type,
-                    size=children[0].size(),
+                    size=broadcasted[0].size,
                     data=None,
                     mask=None,
                     null_count=0,
                     offset=0,
-                    children=children,
+                    children=[c.obj for c in broadcasted],
                 ),
                 dtype=self.dtype,
             )
+        elif self.name == "coalesce":
+            first_child, *other_children = self.children
+            result = (
+                first_child.evaluate(df, context=context)
+                .astype(self.dtype, stream=df.stream)
+                .obj
+            )
+            for child in other_children:
+                if result.size() != 1 and result.null_count() == 0:
+                    break
+                cast_candidate = child.evaluate(df, context=context).astype(
+                    self.dtype, stream=df.stream
+                )
+                if result.size() == 1 and not cast_candidate.is_scalar:
+                    result = plc.filling.repeat(
+                        plc.Table([result]),
+                        cast_candidate.size,
+                        stream=df.stream,
+                    ).columns()[0]
+                if result.null_count() == 0:
+                    continue
+                fill = (
+                    cast_candidate.obj_scalar(stream=df.stream)
+                    if cast_candidate.is_scalar
+                    else cast_candidate.obj
+                )
+                result = plc.replace.replace_nulls(result, fill, stream=df.stream)
+            return Column(result, dtype=self.dtype)
         elif self.name == "rank":
             (column,) = (child.evaluate(df, context=context) for child in self.children)
             method_str, descending, _ = self.options
@@ -1371,6 +1707,12 @@ class UnaryFunction(Expr):
                 plc.copying.shift(column.obj, offset, fill_scalar, stream=df.stream),
                 dtype=self.dtype,
             )
+        elif self.name == "reverse":
+            column = self.children[0].evaluate(df, context=context)
+            return Column(
+                plc.copying.reverse(column.obj, stream=df.stream),
+                dtype=self.dtype,
+            )
         elif self.name == "reinterpret":
             column = self.children[0].evaluate(df, context=context)
             return column.astype(self.dtype, stream=df.stream)
@@ -1440,25 +1782,98 @@ class UnaryFunction(Expr):
                     stream=df.stream,
                 )
             return Column(clamped, dtype=self.dtype)
-        elif self.name == "max_horizontal":
+        elif self.name in UnaryFunction._horizontal_fold_ops:
             op = UnaryFunction._horizontal_fold_ops[self.name]
-            columns = [
-                col.obj
-                for col in broadcast(
-                    *(
-                        child.evaluate(df, context=context).astype(
-                            self.dtype, stream=df.stream
-                        )
-                        for child in self.children
-                    ),
-                    target_length=df.num_rows,
-                    stream=df.stream,
-                )
-            ]
+            columns = self._horizontal_broadcast_columns(df, context=context)
             result = columns[0]
             for other in columns[1:]:
                 result = plc.binaryop.binary_operation(
                     result, other, op, self.dtype.plc_type, stream=df.stream
+                )
+            return Column(result, dtype=self.dtype)
+        elif self.name == "mean_horizontal":
+            (ignore_nulls,) = self.options
+            add = plc.binaryop.BinaryOperator.ADD
+            denominator: plc.Column | plc.Scalar
+            columns = self._horizontal_broadcast_columns(df, context=context)
+            if ignore_nulls:
+                zero = plc.Scalar.from_py(0, self.dtype.plc_type, stream=df.stream)
+                filled = [
+                    plc.replace.replace_nulls(col, zero, stream=df.stream)
+                    for col in columns
+                ]
+                numerator = filled[0]
+                for col in filled[1:]:
+                    numerator = plc.binaryop.binary_operation(
+                        numerator, col, add, self.dtype.plc_type, stream=df.stream
+                    )
+                valid_counts = [
+                    plc.unary.cast(
+                        plc.unary.is_valid(col, stream=df.stream),
+                        self.dtype.plc_type,
+                        stream=df.stream,
+                    )
+                    for col in columns
+                ]
+                denominator = valid_counts[0]
+                for col in valid_counts[1:]:
+                    denominator = plc.binaryop.binary_operation(
+                        denominator, col, add, self.dtype.plc_type, stream=df.stream
+                    )
+                # Rows where every value was null have a zero non-null count and
+                # must produce null (matching Polars) rather than 0 / 0 == NaN.
+                denominator = plc.replace.find_and_replace_all(
+                    denominator,
+                    plc.Column.from_scalar(
+                        plc.Scalar.from_py(0, self.dtype.plc_type, stream=df.stream),
+                        1,
+                        stream=df.stream,
+                    ),
+                    plc.Column.from_scalar(
+                        plc.Scalar.from_py(None, self.dtype.plc_type, stream=df.stream),
+                        1,
+                        stream=df.stream,
+                    ),
+                    stream=df.stream,
+                )
+            else:
+                numerator = columns[0]
+                for col in columns[1:]:
+                    numerator = plc.binaryop.binary_operation(
+                        numerator, col, add, self.dtype.plc_type, stream=df.stream
+                    )
+                denominator = plc.Scalar.from_py(
+                    float(len(columns)), self.dtype.plc_type, stream=df.stream
+                )
+            return Column(
+                plc.binaryop.binary_operation(
+                    numerator,
+                    denominator,
+                    plc.binaryop.BinaryOperator.DIV,
+                    self.dtype.plc_type,
+                    stream=df.stream,
+                ),
+                dtype=self.dtype,
+            )
+        elif self.name == "sum_horizontal":
+            (ignore_nulls,) = self.options
+            columns = self._horizontal_broadcast_columns(df, context=context)
+            if ignore_nulls:
+                # Treat nulls as the additive identity so that a row is only
+                # null when Polars would produce null (never, for sum).
+                zero = plc.Scalar.from_py(0, self.dtype.plc_type, stream=df.stream)
+                columns = [
+                    plc.replace.replace_nulls(col, zero, stream=df.stream)
+                    for col in columns
+                ]
+            result = columns[0]
+            for other in columns[1:]:
+                result = plc.binaryop.binary_operation(
+                    result,
+                    other,
+                    plc.binaryop.BinaryOperator.ADD,
+                    self.dtype.plc_type,
+                    stream=df.stream,
                 )
             return Column(result, dtype=self.dtype)
         elif self.name == "extend_constant":
@@ -1621,6 +2036,8 @@ class UnaryFunction(Expr):
             )
         elif self.name in UnaryFunction._supported_cum_aggs:
             column = self.children[0].evaluate(df, context=context)
+            (reverse,) = self.options
+            # https://github.com/NVIDIA/cudf/issues/23208 for a native reverse scan
             if self.name == "cum_count":
                 # cum_count is the cumulative count of non-null values.
                 counts = plc.unary.cast(
@@ -1628,16 +2045,24 @@ class UnaryFunction(Expr):
                     self.dtype.plc_type,
                     stream=df.stream,
                 )
-                return Column(
-                    plc.reduce.scan(
-                        counts,
-                        plc.aggregation.sum(),
-                        plc.reduce.ScanType.INCLUSIVE,
-                        stream=df.stream,
-                    ),
-                    dtype=self.dtype,
+                if reverse:
+                    # A reverse cumulative aggregation is a forward one over
+                    # the reversed column, reversed back into place.
+                    counts = plc.copying.reverse(counts, stream=df.stream)
+                result = plc.reduce.scan(
+                    counts,
+                    plc.aggregation.sum(),
+                    plc.reduce.ScanType.INCLUSIVE,
+                    stream=df.stream,
                 )
+                if reverse:
+                    result = plc.copying.reverse(result, stream=df.stream)
+                return Column(result, dtype=self.dtype)
             plc_col = column.obj
+            if reverse:
+                # A reverse cumulative aggregation is a forward one over the
+                # reversed column, reversed back into place.
+                plc_col = plc.copying.reverse(plc_col, stream=df.stream)
             col_type = column.dtype.plc_type
             # cum_sum casts
             # Int8, UInt8, Int16, UInt16 -> Int64 for overflow prevention
@@ -1678,12 +2103,12 @@ class UnaryFunction(Expr):
             elif self.name == "cum_max":
                 agg = plc.aggregation.max()
 
-            return Column(
-                plc.reduce.scan(
-                    plc_col, agg, plc.reduce.ScanType.INCLUSIVE, stream=df.stream
-                ),
-                dtype=self.dtype,
+            result = plc.reduce.scan(
+                plc_col, agg, plc.reduce.ScanType.INCLUSIVE, stream=df.stream
             )
+            if reverse:
+                result = plc.copying.reverse(result, stream=df.stream)
+            return Column(result, dtype=self.dtype)
         raise NotImplementedError(
             f"Unimplemented unary function {self.name=}"
         )  # pragma: no cover; init trips first

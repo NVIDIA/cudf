@@ -29,6 +29,11 @@ import json
 import os
 from typing import TYPE_CHECKING, Any, Generic, Literal, TypeVar
 
+import kvikio
+import kvikio.defaults
+
+import pylibcudf.utils
+
 if TYPE_CHECKING:
     import uuid
     from collections.abc import Callable
@@ -44,23 +49,102 @@ if TYPE_CHECKING:
     from rapidsmpf.streaming.core.context import Context
 
     from cudf_polars.engine.ray import RankActor
-    from cudf_polars.quent._context import QuentContext
+    from cudf_polars.quent._context import QuentContext, WorkerResources
     from cudf_polars.quent._logging import QuentLogger
 
 
 __all__ = [
+    "UNSPECIFIED",
     "Cluster",
     "ConfigOptions",
     "DaskContext",
     "DynamicPlanningOptions",
     "InMemoryExecutor",
     "JoinFilterPushdownOptions",
+    "MaxConcurrentIOTasks",
     "ParquetOptions",
     "RayContext",
     "SPMDContext",
     "StreamingExecutor",
     "StreamingFallbackMode",
+    "Unspecified",
 ]
+
+
+class Unspecified:
+    """
+    Sentinel value meaning "no value was explicitly provided".
+
+    The singleton instance :data:`UNSPECIFIED` is used as the default for every
+    :class:`StreamingOptions` field, as well as for
+    ``ParquetOptions.prefetch_file_metadata``. When a field is still
+    ``UNSPECIFIED`` after construction (i.e. neither an explicit value nor a
+    matching environment variable was provided), the consuming component decides
+    on the semantics.
+    """
+
+    _instance: Unspecified | None = None
+
+    def __new__(cls) -> Unspecified:
+        """Return the singleton instance."""
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+        return cls._instance
+
+    def __repr__(self) -> str:
+        """Return ``"UNSPECIFIED"``."""
+        return "UNSPECIFIED"
+
+
+UNSPECIFIED = Unspecified()
+"""Singleton sentinel for all :class:`StreamingOptions` fields, as well as for
+``ParquetOptions.prefetch_file_metadata``.
+
+A field set to ``UNSPECIFIED`` after construction means no explicit value and no
+matching environment variable was found; the consuming component decides on the
+semantics.
+"""
+
+
+@dataclasses.dataclass(frozen=True)
+class MaxConcurrentIOTasks:
+    """Concurrent IO task defaults for local and remote scan paths."""
+
+    local: int = 2
+    remote: int = 8
+
+    @staticmethod
+    def parse_env(raw: str) -> int | dict[str, int] | None:
+        """Parse an environment-variable value."""
+        raw = raw.strip()
+        try:
+            return int(raw)
+        except ValueError:
+            value = json.loads(raw)
+            MaxConcurrentIOTasks.from_config(value)
+            return value
+
+    @classmethod
+    def from_config(
+        cls, value: int | dict[str, int] | MaxConcurrentIOTasks | None
+    ) -> MaxConcurrentIOTasks:
+        """Construct from the supported configuration shapes."""
+        if value is None:
+            return cls()
+        if isinstance(value, int):
+            return cls(local=value, remote=value)
+        if isinstance(value, MaxConcurrentIOTasks):
+            return value
+        if not isinstance(value, dict):
+            raise TypeError("max_concurrent_io_tasks must be an int, dict, or None")
+        return cls(**value)
+
+    def __post_init__(self) -> None:
+        """Validate local and remote values."""
+        if type(self.local) is not int or type(self.remote) is not int:
+            raise TypeError("max_concurrent_io_tasks values must be ints")
+        if self.local < 1 or self.remote < 1:
+            raise ValueError("max_concurrent_io_tasks values must be positive")
 
 
 def _env_get_int(name: str, default: int) -> int:
@@ -161,6 +245,294 @@ def _make_default_factory(
     return default_factory
 
 
+def resolve_kvikio_statistics(executor_options: dict[str, Any]) -> bool:
+    """Resolve whether kvikio I/O statistics are collected, with env var fallback."""
+    value = executor_options.get("kvikio_statistics")
+    if value is None:
+        value = os.environ.get("CUDF_POLARS__EXECUTOR__KVIKIO_STATISTICS")
+        if value is None:
+            return False
+    return value if isinstance(value, bool) else _bool_converter(value)
+
+
+def resolve_kvikio_nthreads(
+    executor_options: dict[str, Any],
+    *,
+    remote_io_backend: kvikio.RemoteIOBackend | None = None,
+) -> int | None:
+    """
+    Resolve kvikio thread count from executor options with env var fallback.
+
+    Defaults to 256 for the ``EASY_THREADPOOL`` backend (tuned for cloud
+    object-store IO). Under ``MULTI_POLL``, this pool is only used for local
+    (non-remote) I/O, so unless explicitly overridden, resolution returns
+    ``None`` to defer to kvikio's own built-in default (the ``KVIKIO_NTHREADS``
+    environment variable, else 4). ``remote_io_backend`` should be the
+    already-resolved backend (e.g. via :func:`resolve_kvikio_remote_io_backend`);
+    if omitted, it is resolved from ``executor_options`` with the same env var
+    fallback.
+    """
+    value = executor_options.get(
+        "kvikio_nthreads", os.environ.get("CUDF_POLARS__EXECUTOR__KVIKIO_NTHREADS")
+    )
+    if value is not None:
+        return int(value)
+    if remote_io_backend is None:
+        remote_io_backend = resolve_kvikio_remote_io_backend(executor_options)
+    if remote_io_backend == kvikio.RemoteIOBackend.MULTI_POLL:
+        return None
+    return int(os.environ.get("KVIKIO_NTHREADS", "256"))
+
+
+def resolve_kvikio_remote_io_backend(
+    executor_options: dict[str, Any],
+) -> kvikio.RemoteIOBackend:
+    """Resolve the kvikio remote I/O backend from executor options with env var fallback."""
+    value = executor_options.get(
+        "kvikio_remote_io_backend",
+        os.environ.get(
+            "CUDF_POLARS__EXECUTOR__KVIKIO_REMOTE_IO_BACKEND",
+            os.environ.get("KVIKIO_REMOTE_IO_BACKEND", "MULTI_POLL"),
+        ),
+    )
+    if isinstance(value, kvikio.RemoteIOBackend):
+        return value
+    return kvikio.RemoteIOBackend[str(value).upper()]
+
+
+def resolve_kvikio_bounce_buffer_bytes(executor_options: dict[str, Any]) -> int:
+    """
+    Resolve the kvikio bounce buffer size, in bytes, with env var fallback.
+
+    Unlike ``kvikio_task_size``, this setting is not specific to the
+    ``MULTI_POLL`` backend: it sizes the host-memory staging buffer used for
+    any device-memory transfer (local file I/O, mmap I/O, and remote reads
+    under both ``MULTI_POLL`` and ``EASY_THREADPOOL``), so it applies
+    regardless of the active remote I/O backend.
+    """
+    return int(
+        executor_options.get(
+            "kvikio_bounce_buffer_bytes",
+            os.environ.get(
+                "CUDF_POLARS__EXECUTOR__KVIKIO_BOUNCE_BUFFER_BYTES",
+                os.environ.get("KVIKIO_BOUNCE_BUFFER_SIZE", str(16 * 1024 * 1024)),
+            ),
+        )
+    )
+
+
+def resolve_kvikio_task_size(
+    executor_options: dict[str, Any],
+    *,
+    remote_io_backend: kvikio.RemoteIOBackend | None = None,
+) -> int:
+    """
+    Resolve the kvikio task size, in bytes, with env var fallback.
+
+    Defaults to 16 MiB for the ``MULTI_POLL`` remote I/O backend and 64 MiB for
+    ``EASY_THREADPOOL``, unless overridden via ``executor_options`` or an
+    environment variable. ``remote_io_backend`` should be the already-resolved
+    backend (e.g. via :func:`resolve_kvikio_remote_io_backend`); if omitted, it
+    is resolved from ``executor_options`` with the same env var fallback.
+    """
+    if remote_io_backend is None:
+        remote_io_backend = resolve_kvikio_remote_io_backend(executor_options)
+    default = (
+        16 * 1024 * 1024
+        if remote_io_backend == kvikio.RemoteIOBackend.MULTI_POLL
+        else 64 * 1024 * 1024
+    )
+    return int(
+        executor_options.get(
+            "kvikio_task_size",
+            os.environ.get(
+                "CUDF_POLARS__EXECUTOR__KVIKIO_TASK_SIZE",
+                os.environ.get("KVIKIO_TASK_SIZE", str(default)),
+            ),
+        )
+    )
+
+
+def resolve_kvikio_reactor_count(executor_options: dict[str, Any]) -> int:
+    """Resolve the number of MULTI_POLL reactor threads, with env var fallback."""
+    return int(
+        executor_options.get(
+            "kvikio_reactor_count",
+            os.environ.get(
+                "CUDF_POLARS__EXECUTOR__KVIKIO_REACTOR_COUNT",
+                os.environ.get("KVIKIO_REMOTE_IO_NUM_REACTORS", "24"),
+            ),
+        )
+    )
+
+
+def resolve_kvikio_reactor_dispatch(
+    executor_options: dict[str, Any],
+) -> kvikio.RemoteReactorDispatch:
+    """Resolve the MULTI_POLL reactor dispatch policy, with env var fallback."""
+    value = executor_options.get(
+        "kvikio_reactor_dispatch",
+        os.environ.get(
+            "CUDF_POLARS__EXECUTOR__KVIKIO_REACTOR_DISPATCH",
+            os.environ.get("KVIKIO_REMOTE_IO_REACTOR_DISPATCH", "PER_CHUNK"),
+        ),
+    )
+    if isinstance(value, kvikio.RemoteReactorDispatch):
+        return value
+    return kvikio.RemoteReactorDispatch[str(value).upper()]
+
+
+def resolve_kvikio_request_ceiling(executor_options: dict[str, Any]) -> int:
+    """Resolve the MULTI_POLL concurrent-request ceiling, with env var fallback."""
+    return int(
+        executor_options.get(
+            "kvikio_request_ceiling",
+            os.environ.get(
+                "CUDF_POLARS__EXECUTOR__KVIKIO_REQUEST_CEILING",
+                os.environ.get("KVIKIO_REMOTE_IO_MAX_CONCURRENT_REQUESTS", "256"),
+            ),
+        )
+    )
+
+
+def resolve_kvikio_executor_options(executor_options: dict[str, Any]) -> dict[str, Any]:
+    """
+    Resolve every ``kvikio_*`` executor option in place, via ``setdefault``.
+
+    Existing keys (already resolved, e.g. carried over across a ``_reset``) are
+    left untouched. ``kvikio_remote_io_backend`` is resolved first since
+    ``kvikio_nthreads`` and ``kvikio_task_size`` default differently depending
+    on it; the shared, single source of truth for that ordering lives here so
+    the dask/ray/spmd engines don't each re-implement it.
+    """
+    executor_options.setdefault(
+        "kvikio_statistics", resolve_kvikio_statistics(executor_options)
+    )
+    executor_options.setdefault(
+        "kvikio_remote_io_backend",
+        resolve_kvikio_remote_io_backend(executor_options),
+    )
+    executor_options.setdefault(
+        "kvikio_nthreads",
+        resolve_kvikio_nthreads(
+            executor_options,
+            remote_io_backend=executor_options["kvikio_remote_io_backend"],
+        ),
+    )
+    executor_options.setdefault(
+        "kvikio_task_size",
+        resolve_kvikio_task_size(
+            executor_options,
+            remote_io_backend=executor_options["kvikio_remote_io_backend"],
+        ),
+    )
+    executor_options.setdefault(
+        "kvikio_bounce_buffer_bytes",
+        resolve_kvikio_bounce_buffer_bytes(executor_options),
+    )
+    executor_options.setdefault(
+        "kvikio_reactor_count", resolve_kvikio_reactor_count(executor_options)
+    )
+    executor_options.setdefault(
+        "kvikio_reactor_dispatch",
+        resolve_kvikio_reactor_dispatch(executor_options),
+    )
+    executor_options.setdefault(
+        "kvikio_request_ceiling",
+        resolve_kvikio_request_ceiling(executor_options),
+    )
+    return executor_options
+
+
+# kvikio.defaults property names that configure_kvikio may pass to
+# kvikio.defaults.set (checked at the end of configure_kvikio). Also used by
+# callers (e.g. tests that need to snapshot/restore kvikio's process-global
+# defaults) so they don't have to duplicate this list by hand.
+KVIKIO_CONFIGURABLE_PROPERTIES = (
+    "remote_io_backend",
+    "task_size",
+    "bounce_buffer_size",
+    "remote_io_num_reactors",
+    "remote_io_reactor_dispatch",
+    "remote_io_max_concurrent_requests",
+    "num_threads",
+)
+
+# Process-lifetime settings that govern kvikio's MULTI_POLL reactor pool.
+# KvikIO fixes these once the pool starts (i.e. after the first MULTI_POLL
+# remote I/O), so they must be configured through the individual-setter API.
+# Re-applying an already-active value is skipped; a conflicting value is left
+# for KvikIO to reject with its lifecycle error.
+KVIKIO_REACTOR_POOL_PROPERTIES = frozenset(
+    {
+        "remote_io_num_reactors",
+        "remote_io_reactor_dispatch",
+        "remote_io_max_concurrent_requests",
+    }
+)
+
+
+def configure_kvikio(
+    nthreads: int | None,
+    *,
+    remote_io_backend: kvikio.RemoteIOBackend = kvikio.RemoteIOBackend.MULTI_POLL,
+    task_size: int | None = None,
+    bounce_buffer_bytes: int = 16 * 1024 * 1024,
+    reactor_count: int = 24,
+    reactor_dispatch: kvikio.RemoteReactorDispatch = kvikio.RemoteReactorDispatch.PER_CHUNK,
+    request_ceiling: int = 256,
+) -> None:
+    """
+    Configure kvikio for cudf-polars I/O.
+
+    ``nthreads=None`` defers the size of kvikio's local-I/O thread pool to its
+    own built-in default (the ``KVIKIO_NTHREADS`` environment variable, else 4).
+    This is the typical case under the ``MULTI_POLL`` remote I/O backend, whose
+    remote I/O does not use this pool at all.
+    """
+    # HACK: libcudf calls set_up_kvikio() on the first IO op and that resets the thread
+    # pool (default is 4 if KVIKIO_NTHREADS is unset), undoing anything we set via
+    # kvikio.defaults. We call it here with our nthreads so later when it's called in
+    # libcudf it's a no-op. The explicit kvikio.defaults.set below handles subsequent
+    # calls to configure_kvikio (call_once only fires once).
+    pylibcudf.utils._set_up_kvikio(nthreads)
+    if task_size is None:
+        task_size = resolve_kvikio_task_size({}, remote_io_backend=remote_io_backend)
+    settings: dict[str, Any] = {
+        "remote_io_backend": remote_io_backend,
+        "task_size": task_size,
+        # Sizes the host staging buffer for device-memory transfers. This applies
+        # to local and remote I/O under both backends, so it is always set.
+        "bounce_buffer_size": bounce_buffer_bytes,
+    }
+    reactor_settings: dict[str, Any] = {}
+    if remote_io_backend == kvikio.RemoteIOBackend.MULTI_POLL:
+        # The MULTI_POLL backend ignores kvikio's EASY_THREADPOOL thread pool for
+        # remote I/O, so num_threads is not configured here. Local I/O still uses
+        # the thread pool created by `_set_up_kvikio` above. The reactor settings
+        # below are ignored by kvikio when EASY_THREADPOOL is active, so they are
+        # left unset in that case.
+        reactor_settings = {
+            "remote_io_num_reactors": reactor_count,
+            "remote_io_reactor_dispatch": reactor_dispatch,
+            "remote_io_max_concurrent_requests": request_ceiling,
+        }
+    else:
+        if nthreads is None:
+            nthreads = resolve_kvikio_nthreads({}, remote_io_backend=remote_io_backend)
+            assert nthreads is not None  # EASY_THREADPOOL always resolves to an int
+        settings["num_threads"] = nthreads
+    assert set(settings).isdisjoint(KVIKIO_REACTOR_POOL_PROPERTIES)
+    assert set(settings) | set(reactor_settings) <= set(KVIKIO_CONFIGURABLE_PROPERTIES)
+    kvikio.defaults.set(settings)
+    # KvikIO does not permit reactor-pool settings in the dict form. Avoid a
+    # no-op individual setter after the pool has started, because KvikIO
+    # correctly rejects all setters at that point.
+    for key, value in reactor_settings.items():
+        if kvikio.defaults.get(key) != value:
+            kvikio.defaults.set(key, value)
+
+
 def _bool_converter(v: str) -> bool:
     lowered = v.lower()
     if lowered in {"true", "yes", "y", "1"}:
@@ -169,16 +541,6 @@ def _bool_converter(v: str) -> bool:
         return False
     else:
         raise ValueError(f"Invalid boolean value: '{v}'")
-
-
-def _optional_converter(v: str, parse: Callable[[str], T]) -> T | None:
-    if v.lower() in {"none", "null"}:
-        return None
-    return parse(v)
-
-
-def _optional_int_converter(v: str) -> int | None:
-    return _optional_converter(v, int)
 
 
 def _quent_context_converter(v: str) -> QuentContext | None:
@@ -221,7 +583,8 @@ class ParquetOptions:
         Maximum number of file footers to sample for metadata. This
         option is currently used by the streaming executor to gather
         datasource statistics before generating a physical plan. Set to
-        0 to avoid metadata sampling. Default is 3.
+        0 to avoid metadata sampling. By default, metadata sampling is disabled
+        for remote scans and samples 3 footers for local-only scans.
     max_row_group_samples
         Maximum number of row-groups to sample for unique-value statistics.
         This option may be used by the streaming executor to optimize
@@ -229,17 +592,19 @@ class ParquetOptions:
 
         Set to 0 to avoid row-group sampling. Note that row-group sampling
         will also be skipped if ``max_footer_samples`` is 0.
-    use_rapidsmpf_native
-        Whether to use the native rapidsmpf node for parquet reading.
-        This option is only used by the streaming executor.
-        Default is False.
     prefetch_file_metadata
         Whether to prefetch parquet file metadata and pass it through
-        `parquet_metadatas` to avoid rereading file footers.
+        `parquet_metadatas` to avoid rereading file footers. Not supported
+        by the in-memory executor. It defaults to disabled; enabling
+        ``use_hybrid_scan`` implicitly enables it.
     use_jit_filter
         Whether to use JIT compilation for post-read filtering in Parquet scans.
         When enabled, filter predicates are JIT-compiled to CUDA kernels for
         improved performance on large datasets with complex filters.
+        Default is False.
+    use_hybrid_scan
+        Whether to use the two-pass ``HybridScanReader`` for split parquet
+        tasks when a predicate can be pushed down to a parquet filter.
         Default is False.
     """
 
@@ -265,9 +630,9 @@ class ParquetOptions:
             f"{_env_prefix}__PASS_READ_LIMIT", int, default=0
         )
     )
-    max_footer_samples: int = dataclasses.field(
+    max_footer_samples: int | None = dataclasses.field(
         default_factory=_make_default_factory(
-            f"{_env_prefix}__MAX_FOOTER_SAMPLES", int, default=3
+            f"{_env_prefix}__MAX_FOOTER_SAMPLES", int, default=None
         )
     )
     max_row_group_samples: int = dataclasses.field(
@@ -275,19 +640,31 @@ class ParquetOptions:
             f"{_env_prefix}__MAX_ROW_GROUP_SAMPLES", int, default=1
         )
     )
-    use_rapidsmpf_native: bool = dataclasses.field(
+    prefetch_file_metadata: bool | Unspecified = dataclasses.field(
         default_factory=_make_default_factory(
-            f"{_env_prefix}__USE_RAPIDSMPF_NATIVE",
+            f"{_env_prefix}__PREFETCH_FILE_METADATA",
+            _bool_converter,
+            default=UNSPECIFIED,
+        )
+    )
+    use_hybrid_scan: bool = dataclasses.field(
+        default_factory=_make_default_factory(
+            f"{_env_prefix}__USE_HYBRID_SCAN",
             _bool_converter,
             default=False,
         )
     )
-    prefetch_file_metadata: bool = dataclasses.field(
+    # Internal benchmarking flag. When False, skips stats and bloom-filter pruning
+    # before the first pass of a hybrid scan so you can measure two-pass read
+    # overhead in isolation. No reason to set this to False in production.
+    _hybrid_scan_stats_pruning: bool = dataclasses.field(
         default_factory=_make_default_factory(
-            f"{_env_prefix}__PREFETCH_FILE_METADATA",
+            f"{_env_prefix}__HYBRID_SCAN_STATS_PRUNING",
             _bool_converter,
-            default=False,
-        )
+            default=True,
+        ),
+        init=False,
+        repr=False,
     )
     use_jit_filter: bool = dataclasses.field(
         default_factory=_make_default_factory(
@@ -306,18 +683,19 @@ class ParquetOptions:
             raise TypeError("chunk_read_limit must be an int")
         if not isinstance(self.pass_read_limit, int):
             raise TypeError("pass_read_limit must be an int")
-        if not isinstance(self.max_footer_samples, int):
-            raise TypeError("max_footer_samples must be an int")
+        if not isinstance(self.max_footer_samples, (int, type(None))):
+            raise TypeError("max_footer_samples must be an int or None")
         if not isinstance(self.max_row_group_samples, int):
             raise TypeError("max_row_group_samples must be an int")
-        if not isinstance(self.use_rapidsmpf_native, bool):
-            raise TypeError("use_rapidsmpf_native must be a bool")
-        if not isinstance(self.prefetch_file_metadata, bool):
-            raise TypeError("prefetch_file_metadata must be a bool")
-
-        if self.use_rapidsmpf_native and self.prefetch_file_metadata:
-            raise NotImplementedError(
-                "'use_rapidsmpf_native=True' does not currently support 'prefetch_file_metadata=True'"
+        if not isinstance(self.prefetch_file_metadata, (bool, Unspecified)):
+            raise TypeError("prefetch_file_metadata must be a bool when specified")
+        if not isinstance(self.use_hybrid_scan, bool):
+            raise TypeError("use_hybrid_scan must be a bool")
+        if isinstance(self.prefetch_file_metadata, Unspecified):
+            object.__setattr__(self, "prefetch_file_metadata", self.use_hybrid_scan)
+        if self.use_hybrid_scan and self.prefetch_file_metadata is False:
+            raise ValueError(
+                "use_hybrid_scan requires prefetch_file_metadata to be enabled"
             )
         if not isinstance(self.use_jit_filter, bool):
             raise TypeError("use_jit_filter must be a bool")
@@ -362,16 +740,6 @@ class DynamicPlanningOptions:
     sample_chunk_count
         The maximum number of chunks to sample before making
         dynamic-planning decisions. Default is 2.
-    join_prefilter_threshold
-        Row-count ratio (small / large) below which one side of a join is
-        filtered by a bloom filter built from the other side before
-        performing the join. Set to 0 to disable. Default is 0.5.
-    join_prefilter_max_key_columns
-        Maximum number of columns from the join-key prefix to use for the
-        prefilter. Set to ``None`` to use the full join-key list. Default is 1.
-    join_prefilter_trace
-        Whether to collect input/output row counts around applied join
-        prefilters. Default is False.
     """
 
     _env_prefix = "CUDF_POLARS__EXECUTOR__DYNAMIC_PLANNING"
@@ -381,59 +749,18 @@ class DynamicPlanningOptions:
             f"{_env_prefix}__SAMPLE_CHUNK_COUNT", int, default=2
         )
     )
-    join_prefilter_threshold: float = dataclasses.field(
-        default_factory=_make_default_factory(
-            f"{_env_prefix}__JOIN_PREFILTER_THRESHOLD",
-            float,
-            default=0.5,
-        )
-    )
-    join_prefilter_max_key_columns: int | None = dataclasses.field(
-        default_factory=_make_default_factory(
-            f"{_env_prefix}__JOIN_PREFILTER_MAX_KEY_COLUMNS",
-            _optional_int_converter,
-            default=1,
-        )
-    )
-    join_prefilter_trace: bool = dataclasses.field(
-        default_factory=_make_default_factory(
-            f"{_env_prefix}__JOIN_PREFILTER_TRACE",
-            _bool_converter,
-            default=False,
-        )
-    )
 
     def __post_init__(self) -> None:  # noqa: D105
         if not isinstance(self.sample_chunk_count, int):
             raise TypeError("sample_chunk_count must be an int")
         if self.sample_chunk_count < 1:
             raise ValueError("sample_chunk_count must be at least 1")
-        join_prefilter_threshold = self.join_prefilter_threshold
-        if isinstance(join_prefilter_threshold, bool) or not isinstance(
-            join_prefilter_threshold, (int, float)
-        ):
-            raise TypeError("join_prefilter_threshold must be a float or int")
-        join_prefilter_threshold = float(join_prefilter_threshold)
-        object.__setattr__(self, "join_prefilter_threshold", join_prefilter_threshold)
-        if not 0.0 <= join_prefilter_threshold <= 1.0:
-            raise ValueError("join_prefilter_threshold must be between 0 and 1")
-        if self.join_prefilter_max_key_columns is not None:
-            if isinstance(self.join_prefilter_max_key_columns, bool) or not isinstance(
-                self.join_prefilter_max_key_columns, int
-            ):
-                raise TypeError("join_prefilter_max_key_columns must be an int or None")
-            if self.join_prefilter_max_key_columns < 1:
-                raise ValueError(
-                    "join_prefilter_max_key_columns must be at least 1 or None"
-                )
-        if not isinstance(self.join_prefilter_trace, bool):
-            raise TypeError("join_prefilter_trace must be a bool")
 
 
 @dataclasses.dataclass(frozen=True)
 class JoinFilterPushdownOptions:
     """
-    Configuration options for join filter pushdown in the logical plan.
+    Configuration options for join filter pushdown.
 
     When performing a join between two tables, it is often favourable
     to pre-filter one side of the join with the keys (full or partial) of
@@ -441,7 +768,8 @@ class JoinFilterPushdownOptions:
     participate in the join.
 
     cudf-polars supports a form of this where we can rewrite inner joins by
-    selecting a side to be filtered by the keys of the other side.
+    selecting a side to be filtered by the keys of the other side. At execution
+    time, these options also control how optional filters are applied.
 
     Pass ``None`` to ``StreamingExecutor(join_filter_pushdown=...)`` to
     disable the rewrite.
@@ -454,6 +782,10 @@ class JoinFilterPushdownOptions:
     threshold
         Row-count ratio (key-provider-rows / to-be-filtered-table-rows) below which a
         filter on is inserted on the to-be-filtered table. Default is 0.5.
+    bloom_filter_max_size
+        Maximum Bloom-filter size in bytes. If the estimated Bloom filter exceeds
+        this size, an exact semi-join is preferred when its projected keys fit the
+        broadcast limit. Set to 0 to disable Bloom filters. Default is 32 MiB.
     trace
         Whether to emit plan-time trace decisions for filter decisions. Default is False.
     """
@@ -463,6 +795,13 @@ class JoinFilterPushdownOptions:
     threshold: float = dataclasses.field(
         default_factory=_make_default_factory(
             f"{_env_prefix}__THRESHOLD", float, default=0.5
+        )
+    )
+    bloom_filter_max_size: int = dataclasses.field(
+        default_factory=_make_default_factory(
+            f"{_env_prefix}__BLOOM_FILTER_MAX_SIZE",
+            int,
+            default=32 * 1024 * 1024,
         )
     )
     trace: bool = dataclasses.field(
@@ -479,6 +818,12 @@ class JoinFilterPushdownOptions:
         object.__setattr__(self, "threshold", threshold)
         if not 0.0 <= threshold <= 1.0:
             raise ValueError("threshold must be between 0 and 1")
+        if isinstance(self.bloom_filter_max_size, bool) or not isinstance(
+            self.bloom_filter_max_size, int
+        ):
+            raise TypeError("bloom_filter_max_size must be an int")
+        if self.bloom_filter_max_size < 0:
+            raise ValueError("bloom_filter_max_size must be non-negative")
         if not isinstance(self.trace, bool):
             raise TypeError("trace must be a bool")
 
@@ -625,6 +970,10 @@ class SPMDContext:
         The active RapidsMPF context.
     py_executor
         Thread-pool executor used to drive the actor network on each rank.
+    worker_resources
+        Engine/worker-scoped Quent resources (device memory, channels, thread
+        pool, processor registry, network topology). ``None`` when Quent is
+        disabled.
     """
 
     comm: Communicator
@@ -633,6 +982,7 @@ class SPMDContext:
     engine_id: uuid.UUID
     worker_id: uuid.UUID
     quent_logger: QuentLogger | None
+    worker_resources: WorkerResources | None = None
 
 
 @dataclasses.dataclass(frozen=True)
@@ -727,7 +1077,7 @@ class StreamingExecutor:
 
         This can be set via
 
-        - keyword argument to ``polars.GPUEngine``
+        - ``executor_options`` passed to ``polars.GPUEngine``
         - the ``CUDF_POLARS__EXECUTOR__TARGET_PARTITION_SIZE`` environment variable
 
         By default, cudf-polars uses the minimum of 1.5GB or 2.5% of the minimum
@@ -750,22 +1100,108 @@ class StreamingExecutor:
         :class:`~cudf_polars.utils.config.DynamicPlanningOptions` for more.
     join_filter_pushdown
         Options controlling the logical join-domain prefilter rewrite. See
-        :class:`~cudf_polars.utils.config.JoinFilterPushdownOptions` for more.
-        ``None`` disables the rewrite.
+        :class:`~cudf_polars.utils.config.JoinFilterPushdownOptions` for
+        more. Disabled by default (or by explicitly providing ``None``).
 
         Enable through environment variables with
         ``CUDF_POLARS__EXECUTOR__JOIN_FILTER_PUSHDOWN=1``.
-    max_io_threads
-        Maximum number of IO threads. Default is 4.
-        This controls the parallelism of IO operations when reading data.
-    spill_to_pinned_memory
-        Whether RapidsMPF should spill to pinned host memory when available,
-        or use regular pageable host memory. Pinned host memory offers higher
-        bandwidth and lower latency for device to host transfers compared to
-        regular pageable host memory.
+    max_concurrent_io_tasks
+        Maximum number of concurrent IO tasks for each scan node. The default
+        uses ``2`` for local paths and ``8`` for scans with remote URIs.
+        Passing an ``int`` uses the same value for all scans. Passing a dict
+        with ``local`` and/or ``remote`` keys tunes local and remote paths
+        separately. Omit the option, or pass ``None``, to use the default
+        policy. This can be set via
+
+        - ``executor_options`` passed to ``polars.GPUEngine``
+        - the ``CUDF_POLARS__EXECUTOR__MAX_CONCURRENT_IO_TASKS`` environment
+          variable, as an int or JSON dict
     num_py_executors
         Maximum number of workers for the Python ThreadPoolExecutor.
         Default is 8.
+    kvikio_nthreads
+        Number of threads in kvikio's local-I/O thread pool (used for local
+        file I/O under both backends, and for remote I/O under
+        ``EASY_THREADPOOL``; ``MULTI_POLL`` remote I/O uses the reactor threads
+        instead, controlled separately by ``kvikio_reactor_count``). Defaults
+        to 256 (tuned for cloud object-store IO) when
+        ``kvikio_remote_io_backend`` is ``EASY_THREADPOOL``. Under
+        ``MULTI_POLL``, defaults to ``None``, which defers to kvikio's own
+        built-in default (the ``KVIKIO_NTHREADS`` environment variable, else 4)
+        rather than spinning up a 256-thread pool that backend would rarely
+        use. This can be set via
+
+        - ``executor_options`` passed to ``polars.GPUEngine``
+        - the ``CUDF_POLARS__EXECUTOR__KVIKIO_NTHREADS`` environment variable
+        - the ``KVIKIO_NTHREADS`` environment variable (lower precedence)
+
+        .. warning::
+
+            kvikio uses a single process-wide thread pool. When a streaming
+            engine is created, it configures that pool to ``kvikio_nthreads``
+            threads (skipped when ``kvikio_nthreads`` is ``None``). This
+            operation blocks until all in-flight kvikio IO in the process
+            completes and then rebuilds the pool. As a result:
+
+            - Any code in the same process that is using kvikio concurrently at
+              engine creation time will be disrupted.
+            - Any ``kvikio.defaults.set("num_threads", N)`` call made before
+              engine creation will be overridden. Use the ``kvikio_nthreads``
+              executor option or ``KVIKIO_NTHREADS`` environment variable
+              instead.
+    kvikio_remote_io_backend
+        The kvikio remote I/O backend. ``kvikio.RemoteIOBackend.MULTI_POLL`` by
+        default. This can be set via
+
+        - ``executor_options`` passed to ``polars.GPUEngine``
+        - the ``CUDF_POLARS__EXECUTOR__KVIKIO_REMOTE_IO_BACKEND`` environment variable
+        - the ``KVIKIO_REMOTE_IO_BACKEND`` environment variable (lower precedence)
+    kvikio_task_size
+        Size, in bytes, of the chunks kvikio splits reads into for parallel
+        dispatch. Defaults to 16 MiB for the ``MULTI_POLL`` backend and 64 MiB
+        for ``EASY_THREADPOOL``. Applies to local and remote I/O under both
+        backends. This can be set via
+
+        - ``executor_options`` passed to ``polars.GPUEngine``
+        - the ``CUDF_POLARS__EXECUTOR__KVIKIO_TASK_SIZE`` environment variable
+        - the ``KVIKIO_TASK_SIZE`` environment variable (lower precedence)
+    kvikio_bounce_buffer_bytes
+        Size, in bytes, of the kvikio bounce buffer used to stage host memory
+        for device-memory transfers. Defaults to 16 MiB. Applies to local and
+        remote I/O under both backends (not specific to ``MULTI_POLL``), and
+        under ``MULTI_POLL`` must be at least ``kvikio_task_size`` for
+        device-buffer reads. This can be set via
+
+        - ``executor_options`` passed to ``polars.GPUEngine``
+        - the ``CUDF_POLARS__EXECUTOR__KVIKIO_BOUNCE_BUFFER_BYTES`` environment variable
+        - the ``KVIKIO_BOUNCE_BUFFER_SIZE`` environment variable (lower precedence)
+    kvikio_reactor_count
+        Number of reactor threads used by the ``MULTI_POLL`` remote I/O backend.
+        Ignored when ``kvikio_remote_io_backend`` is not ``MULTI_POLL``. Defaults
+        to 24. This can be set via
+
+        - ``executor_options`` passed to ``polars.GPUEngine``
+        - the ``CUDF_POLARS__EXECUTOR__KVIKIO_REACTOR_COUNT`` environment variable
+        - the ``KVIKIO_REMOTE_IO_NUM_REACTORS`` environment variable (lower precedence)
+    kvikio_reactor_dispatch
+        How sub-ranges of one read are distributed across reactor threads under
+        the ``MULTI_POLL`` remote I/O backend. Ignored when
+        ``kvikio_remote_io_backend`` is not ``MULTI_POLL``. Defaults to
+        ``kvikio.RemoteReactorDispatch.PER_CHUNK``. This can be set via
+
+        - ``executor_options`` passed to ``polars.GPUEngine``
+        - the ``CUDF_POLARS__EXECUTOR__KVIKIO_REACTOR_DISPATCH`` environment variable
+        - the ``KVIKIO_REMOTE_IO_REACTOR_DISPATCH`` environment variable (lower precedence)
+    kvikio_request_ceiling
+        Maximum number of concurrent in-flight requests across all reactor
+        threads under the ``MULTI_POLL`` remote I/O backend. 0 means unlimited.
+        Ignored when ``kvikio_remote_io_backend`` is not ``MULTI_POLL``. Defaults
+        to 256. This can be set via
+
+        - ``executor_options`` passed to ``polars.GPUEngine``
+        - the ``CUDF_POLARS__EXECUTOR__KVIKIO_REQUEST_CEILING`` environment variable
+        - the ``KVIKIO_REMOTE_IO_MAX_CONCURRENT_REQUESTS`` environment variable
+          (lower precedence)
     quent_context
         Quent tracing context. When ``None`` (default), Quent tracing is disabled.
         Pass a :class:`~cudf_polars.quent.QuentContext` instance to enable tracing.
@@ -825,22 +1261,50 @@ class StreamingExecutor:
         default_factory=DynamicPlanningOptions
     )
     join_filter_pushdown: JoinFilterPushdownOptions | None = dataclasses.field(
-        default_factory=JoinFilterPushdownOptions
+        default=None
     )
-    max_io_threads: int = dataclasses.field(
+    max_concurrent_io_tasks: MaxConcurrentIOTasks = dataclasses.field(
         default_factory=_make_default_factory(
-            f"{_env_prefix}__MAX_IO_THREADS", int, default=4
-        )
-    )
-    spill_to_pinned_memory: bool = dataclasses.field(
-        default_factory=_make_default_factory(
-            f"{_env_prefix}__SPILL_TO_PINNED_MEMORY", bool, default=False
+            f"{_env_prefix}__MAX_CONCURRENT_IO_TASKS",
+            lambda raw: MaxConcurrentIOTasks.from_config(
+                MaxConcurrentIOTasks.parse_env(raw)
+            ),
+            default=MaxConcurrentIOTasks(),
         )
     )
     num_py_executors: int = dataclasses.field(
         default_factory=_make_default_factory(
             f"{_env_prefix}__NUM_PY_EXECUTORS", int, default=8
         )
+    )
+    # `None` is resolved in `__post_init__`, once `kvikio_remote_io_backend` (an
+    # explicit constructor argument, if any) is known, since the default value
+    # depends on the backend. The resolved value may itself remain `None`
+    # (deferring to kvikio's own built-in default) under `MULTI_POLL`.
+    kvikio_nthreads: int | None = None
+    kvikio_statistics: bool = dataclasses.field(
+        default_factory=_make_default_factory(
+            f"{_env_prefix}__KVIKIO_STATISTICS", _bool_converter, default=False
+        )
+    )
+    kvikio_remote_io_backend: kvikio.RemoteIOBackend = dataclasses.field(
+        default_factory=lambda: resolve_kvikio_remote_io_backend({})
+    )
+    # `None` is resolved in `__post_init__`, once `kvikio_remote_io_backend` (an
+    # explicit constructor argument, if any) is known, since the default value
+    # depends on the backend.
+    kvikio_task_size: int | None = None
+    kvikio_bounce_buffer_bytes: int = dataclasses.field(
+        default_factory=lambda: resolve_kvikio_bounce_buffer_bytes({})
+    )
+    kvikio_reactor_count: int = dataclasses.field(
+        default_factory=lambda: resolve_kvikio_reactor_count({})
+    )
+    kvikio_reactor_dispatch: kvikio.RemoteReactorDispatch = dataclasses.field(
+        default_factory=lambda: resolve_kvikio_reactor_dispatch({})
+    )
+    kvikio_request_ceiling: int = dataclasses.field(
+        default_factory=lambda: resolve_kvikio_request_ceiling({})
     )
 
     min_device_size: int | None = None
@@ -910,7 +1374,6 @@ class StreamingExecutor:
             object.__setattr__(self, "sink_to_directory", True)
         elif self.sink_to_directory is None:
             object.__setattr__(self, "sink_to_directory", False)
-
         # Type / value check everything else
         if not isinstance(self.max_rows_per_partition, int):
             raise TypeError("max_rows_per_partition must be an int")
@@ -922,12 +1385,67 @@ class StreamingExecutor:
             raise TypeError("sink_to_directory must be bool")
         if not isinstance(self.client_device_threshold, float):
             raise TypeError("client_device_threshold must be a float")
-        if not isinstance(self.max_io_threads, int):
-            raise TypeError("max_io_threads must be an int")
-        if not isinstance(self.spill_to_pinned_memory, bool):
-            raise TypeError("spill_to_pinned_memory must be bool")
         if not isinstance(self.num_py_executors, int):
             raise TypeError("num_py_executors must be an int")
+        if not isinstance(self.kvikio_remote_io_backend, kvikio.RemoteIOBackend):
+            object.__setattr__(
+                self,
+                "kvikio_remote_io_backend",
+                kvikio.RemoteIOBackend[str(self.kvikio_remote_io_backend).upper()],
+            )
+        if self.kvikio_nthreads is None:
+            # May remain `None` here, deferring to kvikio's own built-in
+            # default; see `resolve_kvikio_nthreads`.
+            object.__setattr__(
+                self,
+                "kvikio_nthreads",
+                resolve_kvikio_nthreads(
+                    {}, remote_io_backend=self.kvikio_remote_io_backend
+                ),
+            )
+        if self.kvikio_nthreads is not None:
+            if not isinstance(self.kvikio_nthreads, int):
+                raise TypeError("kvikio_nthreads must be an int or None")
+            if self.kvikio_nthreads <= 0:
+                raise ValueError("kvikio_nthreads must be positive")
+        if self.kvikio_task_size is None:
+            object.__setattr__(
+                self,
+                "kvikio_task_size",
+                resolve_kvikio_task_size(
+                    {}, remote_io_backend=self.kvikio_remote_io_backend
+                ),
+            )
+        if not isinstance(self.kvikio_task_size, int):
+            raise TypeError("kvikio_task_size must be an int")
+        if self.kvikio_task_size <= 0:
+            raise ValueError("kvikio_task_size must be positive")
+        if not isinstance(self.kvikio_bounce_buffer_bytes, int):
+            raise TypeError("kvikio_bounce_buffer_bytes must be an int")
+        if self.kvikio_bounce_buffer_bytes <= 0:
+            raise ValueError("kvikio_bounce_buffer_bytes must be positive")
+        if (
+            self.kvikio_remote_io_backend == kvikio.RemoteIOBackend.MULTI_POLL
+            and self.kvikio_bounce_buffer_bytes < self.kvikio_task_size
+        ):
+            raise ValueError(
+                "kvikio_bounce_buffer_bytes must be at least kvikio_task_size "
+                "for the MULTI_POLL backend"
+            )
+        if not isinstance(self.kvikio_reactor_count, int):
+            raise TypeError("kvikio_reactor_count must be an int")
+        if self.kvikio_reactor_count <= 0:
+            raise ValueError("kvikio_reactor_count must be positive")
+        if not isinstance(self.kvikio_reactor_dispatch, kvikio.RemoteReactorDispatch):
+            object.__setattr__(
+                self,
+                "kvikio_reactor_dispatch",
+                kvikio.RemoteReactorDispatch[str(self.kvikio_reactor_dispatch).upper()],
+            )
+        if not isinstance(self.kvikio_request_ceiling, int):
+            raise TypeError("kvikio_request_ceiling must be an int")
+        if self.kvikio_request_ceiling < 0:
+            raise ValueError("kvikio_request_ceiling must be non-negative")
 
     def __hash__(self) -> int:  # noqa: D105
         # dynamic_planning factory, a dataclass, isn't natively hashable. We'll dump it
@@ -935,6 +1453,9 @@ class StreamingExecutor:
         d = dataclasses.asdict(self)
         d["dynamic_planning"] = json.dumps(d["dynamic_planning"])
         d["join_filter_pushdown"] = json.dumps(d["join_filter_pushdown"])
+        d["max_concurrent_io_tasks"] = json.dumps(
+            d["max_concurrent_io_tasks"], sort_keys=True
+        )
 
         # Hash the quent context UUIDs as ints
         quent_context = d["quent_context"]
@@ -1009,6 +1530,27 @@ class ConfigOptions(Generic[ExecutorType]):
     device: int | None = None
     memory_resource_config: MemoryResourceConfig | None = None
 
+    @staticmethod
+    def dict_factory(items: list[tuple[str, Any]]) -> dict[str, Any]:
+        """
+        ``dict_factory`` for :func:`dataclasses.asdict`.
+
+        Converts any :data:`UNSPECIFIED` value to ``None``
+        (e.g. ParquetOptions.prefetch_file_metadata) so the resulting
+        dict can be serialized with :func:`json.dumps`.
+
+        Parameters
+        ----------
+        items
+            The ``(key, value)`` pairs for a single dataclass level, as passed
+            by :func:`dataclasses.asdict`.
+
+        Returns
+        -------
+        A dict with :data:`UNSPECIFIED` values replaced by ``None``.
+        """
+        return {k: (None if isinstance(v, Unspecified) else v) for k, v in items}
+
     def drop_unserializable(self) -> ConfigOptions[ExecutorType]:
         """
         Return a copy safe to pickle to a worker/actor.
@@ -1049,6 +1591,7 @@ class ConfigOptions(Generic[ExecutorType]):
             user_parquet_options = {}
 
         if isinstance(user_parquet_options, dict):
+            user_parquet_options = dict(user_parquet_options)
             parquet_options = ParquetOptions(**user_parquet_options)
         else:
             parquet_options = user_parquet_options
@@ -1079,7 +1622,7 @@ class ConfigOptions(Generic[ExecutorType]):
         match user_executor:
             case "in-memory":
                 executor = InMemoryExecutor(**user_executor_options)
-                if parquet_options.prefetch_file_metadata:
+                if parquet_options.prefetch_file_metadata is True:
                     raise NotImplementedError(
                         "Prefetching is not supported for the in-memory executor."
                     )
@@ -1087,6 +1630,12 @@ class ConfigOptions(Generic[ExecutorType]):
                 user_executor_options = user_executor_options.copy()
                 if "min_device_size" not in user_executor_options:
                     user_executor_options["min_device_size"] = get_total_device_memory()
+                if "max_concurrent_io_tasks" in user_executor_options:
+                    user_executor_options["max_concurrent_io_tasks"] = (
+                        MaxConcurrentIOTasks.from_config(
+                            user_executor_options["max_concurrent_io_tasks"]
+                        )
+                    )
 
                 # Handle dynamic_planning: check user config, then env var
                 user_dynamic_planning = user_executor_options.get(
@@ -1100,15 +1649,14 @@ class ConfigOptions(Generic[ExecutorType]):
                         user_executor_options["dynamic_planning"] = None
 
                 # Handle join_filter_pushdown: check user config, then env var
-                user_join_filter_pushdown = user_executor_options.get(
-                    "join_filter_pushdown", None
-                )
-                if user_join_filter_pushdown is None:
+                if "join_filter_pushdown" not in user_executor_options:
                     env_join_filter_pushdown = os.environ.get(
                         "CUDF_POLARS__EXECUTOR__JOIN_FILTER_PUSHDOWN", "0"
                     )
-                    if not _bool_converter(env_join_filter_pushdown):
-                        user_executor_options["join_filter_pushdown"] = None
+                    if _bool_converter(env_join_filter_pushdown):
+                        user_executor_options["join_filter_pushdown"] = (
+                            JoinFilterPushdownOptions()
+                        )
 
                 executor = StreamingExecutor(**user_executor_options)
             case _:  # pragma: no cover; Unreachable

@@ -958,11 +958,11 @@ class DatetimeColumn(TemporalBaseColumn):
         # At the start of an ambiguous time period, Clock 1 (which has
         # been turned back) reads less than Clock 2:
         cond = clock_1 < clock_2
-        ambiguous_begin = clock_1.apply_boolean_mask(cond)
+        ambiguous_begin = clock_1.apply_retention_mask(cond)
 
         # The end of an ambiguous time period is what Clock 2 reads at
         # the moment of transition:
-        ambiguous_end = clock_2.apply_boolean_mask(cond)
+        ambiguous_end = clock_2.apply_retention_mask(cond)
         ambiguous = self.label_bins(
             left_edge=ambiguous_begin,
             left_inclusive=True,
@@ -973,11 +973,11 @@ class DatetimeColumn(TemporalBaseColumn):
         # At the start of a non-existent time period, Clock 2 reads less
         # than Clock 1 (which has been turned forward):
         cond = clock_1 > clock_2
-        nonexistent_begin = clock_2.apply_boolean_mask(cond)
+        nonexistent_begin = clock_2.apply_retention_mask(cond)
 
         # The end of the non-existent time period is what Clock 1 reads
         # at the moment of transition:
-        nonexistent_end = clock_1.apply_boolean_mask(cond)
+        nonexistent_end = clock_1.apply_retention_mask(cond)
         nonexistent = self.label_bins(
             left_edge=nonexistent_begin,
             left_inclusive=True,

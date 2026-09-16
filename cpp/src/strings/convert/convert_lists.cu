@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -12,7 +12,7 @@
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
+#include <cuda/stream>
 
 namespace cudf {
 namespace strings {
@@ -125,7 +125,7 @@ struct format_lists_fn {
       auto const view = get_nested_child(stack_idx);
 
       auto offsets   = view.child(cudf::lists_column_view::offsets_column_index);
-      auto d_offsets = offsets.data<size_type>() + view.offset();
+      auto d_offsets = offsets.data<int32_t>() + view.offset();
 
       // add pending separator
       if (item.separator == item_separator::LIST) {
@@ -183,7 +183,7 @@ struct format_lists_fn {
 std::unique_ptr<column> format_list_column(lists_column_view const& input,
                                            string_scalar const& na_rep,
                                            strings_column_view const& separators,
-                                           rmm::cuda_stream_view stream,
+                                           cuda::stream_ref stream,
                                            rmm::device_async_resource_ref mr)
 {
   if (input.is_empty()) return make_empty_column(data_type{type_id::STRING});
@@ -224,7 +224,7 @@ std::unique_ptr<column> format_list_column(lists_column_view const& input,
 std::unique_ptr<column> format_list_column(lists_column_view const& input,
                                            string_scalar const& na_rep,
                                            strings_column_view const& separators,
-                                           rmm::cuda_stream_view stream,
+                                           cuda::stream_ref stream,
                                            rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();

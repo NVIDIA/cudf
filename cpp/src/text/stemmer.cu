@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -18,10 +18,10 @@
 
 #include <nvtext/stemmer.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/iterator>
+#include <cuda/stream>
 #include <thrust/for_each.h>
 #include <thrust/transform.h>
 
@@ -87,7 +87,7 @@ template <typename PositionIterator>
 std::unique_ptr<cudf::column> is_letter(cudf::strings_column_view const& strings,
                                         letter_type ltype,
                                         PositionIterator position_itr,
-                                        rmm::cuda_stream_view stream,
+                                        cuda::stream_ref stream,
                                         rmm::device_async_resource_ref mr)
 {
   if (strings.is_empty()) return cudf::make_empty_column(cudf::data_type{cudf::type_id::BOOL8});
@@ -121,7 +121,7 @@ struct dispatch_is_letter_fn {
   std::unique_ptr<cudf::column> operator()(cudf::strings_column_view const& strings,
                                            letter_type ltype,
                                            cudf::column_view const& indices,
-                                           rmm::cuda_stream_view stream,
+                                           cuda::stream_ref stream,
                                            rmm::device_async_resource_ref mr) const
     requires(cudf::is_index_type<T>())
   {
@@ -201,7 +201,7 @@ struct porter_stemmer_measure_fn {
 }  // namespace
 
 std::unique_ptr<cudf::column> porter_stemmer_measure(cudf::strings_column_view const& strings,
-                                                     rmm::cuda_stream_view stream,
+                                                     cuda::stream_ref stream,
                                                      rmm::device_async_resource_ref mr)
 {
   if (strings.is_empty()) {
@@ -230,7 +230,7 @@ std::unique_ptr<cudf::column> porter_stemmer_measure(cudf::strings_column_view c
 std::unique_ptr<cudf::column> is_letter(cudf::strings_column_view const& strings,
                                         letter_type ltype,
                                         cudf::column_view const& indices,
-                                        rmm::cuda_stream_view stream,
+                                        cuda::stream_ref stream,
                                         rmm::device_async_resource_ref mr)
 {
   return cudf::type_dispatcher(
@@ -244,7 +244,7 @@ std::unique_ptr<cudf::column> is_letter(cudf::strings_column_view const& strings
 std::unique_ptr<cudf::column> is_letter(cudf::strings_column_view const& input,
                                         letter_type ltype,
                                         cudf::size_type character_index,
-                                        rmm::cuda_stream_view stream,
+                                        cuda::stream_ref stream,
                                         rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
@@ -255,7 +255,7 @@ std::unique_ptr<cudf::column> is_letter(cudf::strings_column_view const& input,
 std::unique_ptr<cudf::column> is_letter(cudf::strings_column_view const& input,
                                         letter_type ltype,
                                         cudf::column_view const& indices,
-                                        rmm::cuda_stream_view stream,
+                                        cuda::stream_ref stream,
                                         rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
@@ -266,7 +266,7 @@ std::unique_ptr<cudf::column> is_letter(cudf::strings_column_view const& input,
  * @copydoc nvtext::porter_stemmer_measure
  */
 std::unique_ptr<cudf::column> porter_stemmer_measure(cudf::strings_column_view const& input,
-                                                     rmm::cuda_stream_view stream,
+                                                     cuda::stream_ref stream,
                                                      rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();

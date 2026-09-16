@@ -22,11 +22,11 @@
 #include <cudf/utilities/type_checks.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/iterator>
 #include <cuda/std/iterator>
+#include <cuda/stream>
 #include <thrust/binary_search.h>
 #include <thrust/execution_policy.h>
 #include <thrust/transform.h>
@@ -65,12 +65,18 @@ struct apply_indices_map_fn {
   }
 };
 
-struct set_keys_dispatch_fn {
+struct remap_result {
+  std::unique_ptr<cudf::column> indices;
+  rmm::device_buffer null_mask;
+  cudf::size_type null_count;
+};
+
+struct remap_indices_dispatch_fn {
   template <typename T>
-  std::unique_ptr<cudf::column> operator()(cudf::dictionary_column_view const& input,
-                                           cudf::column_view const& new_keys,
-                                           rmm::cuda_stream_view stream,
-                                           rmm::device_async_resource_ref mr)
+  remap_result operator()(cudf::dictionary_column_view const& input,
+                          cudf::column_view const& new_keys,
+                          cuda::stream_ref stream,
+                          rmm::device_async_resource_ref mr)
     requires(cudf::is_dictionary_key<T>())
   {
     // compute sorted-order so the new_keys can be searched more quickly
@@ -116,15 +122,39 @@ struct set_keys_dispatch_fn {
       stream,
       mr);
 
+    return {std::move(indices_column), std::move(null_mask), null_count};
+  }
+
+  template <typename T>
+  remap_result operator()(cudf::dictionary_column_view const&,
+                          cudf::column_view const&,
+                          cuda::stream_ref,
+                          rmm::device_async_resource_ref)
+    requires(not cudf::is_dictionary_key<T>())
+  {
+    CUDF_UNREACHABLE("not a valid dictionary key type");
+  }
+};
+
+struct set_keys_dispatch_fn {
+  template <typename T>
+  std::unique_ptr<cudf::column> operator()(cudf::dictionary_column_view const& input,
+                                           cudf::column_view const& new_keys,
+                                           cuda::stream_ref stream,
+                                           rmm::device_async_resource_ref mr)
+    requires(cudf::is_dictionary_key<T>())
+  {
+    auto [indices, null_mask, null_count] = type_dispatcher<dispatch_storage_type>(
+      new_keys.type(), remap_indices_dispatch_fn{}, input, new_keys, stream, mr);
     auto keys_column = std::make_unique<cudf::column>(new_keys, stream, mr);
     return make_dictionary_column(
-      std::move(keys_column), std::move(indices_column), std::move(null_mask), null_count);
+      std::move(keys_column), std::move(indices), std::move(null_mask), null_count);
   }
 
   template <typename T>
   std::unique_ptr<cudf::column> operator()(cudf::dictionary_column_view const&,
                                            cudf::column_view const&,
-                                           rmm::cuda_stream_view,
+                                           cuda::stream_ref,
                                            rmm::device_async_resource_ref)
     requires(not cudf::is_dictionary_key<T>())
   {
@@ -133,9 +163,25 @@ struct set_keys_dispatch_fn {
 };
 }  // namespace
 
+std::unique_ptr<column> remap_indices(dictionary_column_view const& input,
+                                      column_view const& new_keys,
+                                      cuda::stream_ref stream,
+                                      rmm::device_async_resource_ref mr)
+{
+  CUDF_EXPECTS(!new_keys.has_nulls(), "keys parameter must not have nulls", std::invalid_argument);
+  CUDF_EXPECTS(!new_keys.is_empty(), "keys cannot be empty", std::invalid_argument);
+  CUDF_EXPECTS(
+    cudf::have_same_types(input.keys(), new_keys), "keys types must match", cudf::data_type_error);
+
+  auto [indices, null_mask, null_count] = type_dispatcher<dispatch_storage_type>(
+    new_keys.type(), remap_indices_dispatch_fn{}, input, new_keys, stream, mr);
+  indices->set_null_mask(std::move(null_mask), null_count);
+  return std::move(indices);
+}
+
 std::unique_ptr<column> set_keys(dictionary_column_view const& input,
                                  column_view const& new_keys,
-                                 rmm::cuda_stream_view stream,
+                                 cuda::stream_ref stream,
                                  rmm::device_async_resource_ref mr)
 {
   CUDF_EXPECTS(!new_keys.has_nulls(), "keys parameter must not have nulls", std::invalid_argument);
@@ -153,7 +199,7 @@ std::unique_ptr<column> set_keys(dictionary_column_view const& input,
 
 std::unique_ptr<column> set_keys(dictionary_column_view const& dictionary_column,
                                  column_view const& keys,
-                                 rmm::cuda_stream_view stream,
+                                 cuda::stream_ref stream,
                                  rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();

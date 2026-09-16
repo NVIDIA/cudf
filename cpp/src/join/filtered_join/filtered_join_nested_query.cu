@@ -16,21 +16,20 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
-
 #include <cuco/operator.hpp>
 #include <cuco/static_set_ref.cuh>
 #include <cuco/utility/cuda_thread_scope.cuh>
+#include <cuda/stream>
 
 #include <memory>
 
 namespace cudf::detail {
 
-void distinct_filtered_join::query_right_table_nested(
+void filtered_join::query_right_table_nested(
   cudf::table_view const& left,
   std::shared_ptr<cudf::detail::row::equality::preprocessed_table> const& preprocessed_left,
   cudf::device_span<bool> contains_map,
-  rmm::cuda_stream_view stream)
+  cuda::stream_ref stream)
 {
   auto const comparator =
     cudf::detail::row::equality::two_table_comparator{_preprocessed_right, preprocessed_left}

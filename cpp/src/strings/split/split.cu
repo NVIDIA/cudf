@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -19,11 +19,11 @@
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/functional>
 #include <cuda/iterator>
+#include <cuda/stream>
 #include <thrust/binary_search.h>
 #include <thrust/fill.h>
 #include <thrust/for_each.h>
@@ -142,7 +142,7 @@ template <typename Tokenizer, typename DelimiterFn>
 std::unique_ptr<table> split_fn(strings_column_view const& input,
                                 Tokenizer tokenizer,
                                 DelimiterFn delimiter_fn,
-                                rmm::cuda_stream_view stream,
+                                cuda::stream_ref stream,
                                 rmm::device_async_resource_ref mr)
 {
   std::vector<std::unique_ptr<column>> results;
@@ -183,9 +183,42 @@ std::unique_ptr<table> split_fn(strings_column_view const& input,
   return std::make_unique<table>(std::move(results));
 }
 
+// Build an output table from a (offsets, tokens) pair produced by split_per_row_helper.
+std::unique_ptr<table> build_table_from_tokens(strings_column_view const& input,
+                                               column_view offsets,
+                                               rmm::device_uvector<string_index_pair> const& tokens,
+                                               cuda::stream_ref stream,
+                                               rmm::device_async_resource_ref mr)
+{
+  auto const d_offsets     = cudf::detail::offsetalator_factory::make_input_iterator(offsets);
+  auto const d_tokens      = tokens.data();
+  auto const columns_count = thrust::transform_reduce(
+    rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    cuda::counting_iterator<size_type>{0},
+    cuda::counting_iterator<size_type>{input.size()},
+    cuda::proclaim_return_type<size_type>([d_offsets] __device__(auto idx) -> size_type {
+      return static_cast<size_type>(d_offsets[idx + 1] - d_offsets[idx]);
+    }),
+    0,
+    cuda::maximum{});
+  std::vector<std::unique_ptr<column>> results;
+  for (size_type col = 0; col < columns_count; ++col) {
+    auto itr = cudf::detail::make_counting_transform_iterator(
+      0,
+      cuda::proclaim_return_type<string_index_pair>(
+        [d_tokens, d_offsets, col] __device__(size_type idx) {
+          auto const offset      = d_offsets[idx];
+          auto const token_count = static_cast<size_type>(d_offsets[idx + 1] - offset);
+          return (col < token_count) ? d_tokens[offset + col] : string_index_pair{nullptr, 0};
+        }));
+    results.emplace_back(make_strings_column(itr, itr + input.size(), stream, mr));
+  }
+  return std::make_unique<table>(std::move(results));
+}
+
 // Create a table with a single strings column with all nulls
 std::unique_ptr<table> make_all_null_table(size_type size,
-                                           rmm::cuda_stream_view stream,
+                                           cuda::stream_ref stream,
                                            rmm::device_async_resource_ref mr)
 {
   std::vector<std::unique_ptr<column>> results;
@@ -195,56 +228,80 @@ std::unique_ptr<table> make_all_null_table(size_type size,
   return std::make_unique<table>(std::move(results));
 }
 
+template <bool Forward>
+std::unique_ptr<table> split_impl(strings_column_view const& input,
+                                  string_scalar const& delimiter,
+                                  size_type maxsplit,
+                                  cuda::stream_ref stream,
+                                  rmm::device_async_resource_ref mr)
+{
+  CUDF_EXPECTS(delimiter.is_valid(stream), "Parameter delimiter must be valid");
+
+  size_type const max_tokens = maxsplit > 0 ? maxsplit + 1 : std::numeric_limits<size_type>::max();
+
+  auto d_strings            = column_device_view::create(input.parent(), stream);
+  auto temp_mr              = cudf::get_current_device_resource_ref();
+  auto const non_null_count = input.size() - input.null_count();
+  if (delimiter.size() == 0) {
+    if (non_null_count > 0 &&
+        (input.chars_size(stream) / non_null_count) < AVG_CHAR_BYTES_THRESHOLD) {
+      auto extractor_fn = [d_str = *d_strings, max_tokens](auto d_offsets, auto* d_tokens) {
+        using fn_t = std::conditional_t<Forward, split_ws_extract_fn, rsplit_ws_extract_fn>;
+        return fn_t{d_str, d_offsets, d_tokens, max_tokens};
+      };
+      auto counter_fn = ws_token_count_fn{*d_strings, max_tokens};
+      auto [offsets, tokens] =
+        split_per_row_impl(*d_strings, counter_fn, extractor_fn, stream, temp_mr);
+      auto results = build_table_from_tokens(input, offsets->view(), tokens, stream, mr);
+      return (results->num_columns() == 0) ? make_all_null_table(input.size(), stream, mr)
+                                           : std::move(results);
+    }
+    using ws_tok_t    = std::conditional_t<Forward, split_ws_tokenizer_fn, rsplit_ws_tokenizer_fn>;
+    auto tokenizer    = ws_tok_t{*d_strings, max_tokens};
+    auto delimiter_fn = whitespace_delimiter_fn{};
+    auto results      = split_fn(input, tokenizer, delimiter_fn, stream, mr);
+    // boundary case: if no columns, return one null column (issue #119)
+    return (results->num_columns() == 0) ? make_all_null_table(input.size(), stream, mr)
+                                         : std::move(results);
+  }
+
+  if (non_null_count > 0 &&
+      (input.chars_size(stream) / non_null_count) < AVG_CHAR_BYTES_THRESHOLD) {
+    auto const d_delim = delimiter.value(stream);
+    auto extractor_fn  = [d_str = *d_strings, d_delim](auto d_offsets, auto* d_tokens) {
+      using fn_t = std::conditional_t<Forward, split_extract_fn, rsplit_extract_fn>;
+      return fn_t{d_str, d_delim, d_offsets, d_tokens};
+    };
+    auto counter_fn = token_count_fn{*d_strings, d_delim, max_tokens};
+    auto [offsets, tokens] =
+      split_per_row_impl(*d_strings, counter_fn, extractor_fn, stream, temp_mr);
+    return build_table_from_tokens(input, offsets->view(), tokens, stream, mr);
+  }
+
+  using tok_t       = std::conditional_t<Forward, split_tokenizer_fn, rsplit_tokenizer_fn>;
+  auto tokenizer    = tok_t{*d_strings, delimiter.size(), max_tokens};
+  auto delimiter_fn = string_delimiter_fn{delimiter.value(stream)};
+  return split_fn(input, tokenizer, delimiter_fn, stream, mr);
+}
+
 }  // namespace
 
 std::unique_ptr<table> split(strings_column_view const& input,
                              string_scalar const& delimiter,
                              size_type maxsplit,
-                             rmm::cuda_stream_view stream,
+                             cuda::stream_ref stream,
                              rmm::device_async_resource_ref mr)
 {
-  CUDF_EXPECTS(delimiter.is_valid(stream), "Parameter delimiter must be valid");
-
-  size_type max_tokens = maxsplit > 0 ? maxsplit + 1 : std::numeric_limits<size_type>::max();
-
-  auto d_strings = column_device_view::create(input.parent(), stream);
-  if (delimiter.size() == 0) {
-    auto tokenizer    = split_ws_tokenizer_fn{*d_strings, max_tokens};
-    auto delimiter_fn = whitespace_delimiter_fn{};
-    auto results      = split_fn(input, tokenizer, delimiter_fn, stream, mr);
-    // boundary case: if no columns, return one null column (issue #119)
-    return (results->num_columns() == 0) ? make_all_null_table(input.size(), stream, mr)
-                                         : std::move(results);
-  }
-
-  auto tokenizer    = split_tokenizer_fn{*d_strings, delimiter.size(), max_tokens};
-  auto delimiter_fn = string_delimiter_fn{delimiter.value(stream)};
-  return split_fn(input, tokenizer, delimiter_fn, stream, mr);
+  return split_impl<true>(input, delimiter, maxsplit, stream, mr);
 }
 
 std::unique_ptr<table> rsplit(strings_column_view const& input,
                               string_scalar const& delimiter,
                               size_type maxsplit,
-                              rmm::cuda_stream_view stream,
+                              cuda::stream_ref stream,
                               rmm::device_async_resource_ref mr)
 {
-  CUDF_EXPECTS(delimiter.is_valid(stream), "Parameter delimiter must be valid");
-
-  size_type max_tokens = maxsplit > 0 ? maxsplit + 1 : std::numeric_limits<size_type>::max();
-
-  auto d_strings = column_device_view::create(input.parent(), stream);
-  if (delimiter.size() == 0) {
-    auto tokenizer    = rsplit_ws_tokenizer_fn{*d_strings, max_tokens};
-    auto delimiter_fn = whitespace_delimiter_fn{};
-    auto results      = split_fn(input, tokenizer, delimiter_fn, stream, mr);
-    // boundary case: if no columns, return one null column (issue #119)
-    return (results->num_columns() == 0) ? make_all_null_table(input.size(), stream, mr)
-                                         : std::move(results);
-  }
-
-  auto tokenizer    = rsplit_tokenizer_fn{*d_strings, delimiter.size(), max_tokens};
-  auto delimiter_fn = string_delimiter_fn{delimiter.value(stream)};
-  return split_fn(input, tokenizer, delimiter_fn, stream, mr);
+  return split_impl<false>(input, delimiter, maxsplit, stream, mr);
 }
 
 }  // namespace detail
@@ -254,7 +311,7 @@ std::unique_ptr<table> rsplit(strings_column_view const& input,
 std::unique_ptr<table> split(strings_column_view const& input,
                              string_scalar const& delimiter,
                              size_type maxsplit,
-                             rmm::cuda_stream_view stream,
+                             cuda::stream_ref stream,
                              rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
@@ -264,7 +321,7 @@ std::unique_ptr<table> split(strings_column_view const& input,
 std::unique_ptr<table> rsplit(strings_column_view const& input,
                               string_scalar const& delimiter,
                               size_type maxsplit,
-                              rmm::cuda_stream_view stream,
+                              cuda::stream_ref stream,
                               rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();

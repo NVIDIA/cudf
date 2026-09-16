@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -32,7 +32,7 @@ std::tuple<std::unique_ptr<cudf::table>, std::unique_ptr<cudf::table>> hybrid_sc
   cudf::ast::operation const& filter_expression,
   std::optional<std::vector<std::string>> const& payload_column_names,
   bool case_sensitive_names,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr,
   rmm::mr::aligned_resource_adaptor& aligned_mr);
 
@@ -54,7 +54,7 @@ std::tuple<std::unique_ptr<cudf::table>, std::unique_ptr<cudf::table>> chunked_h
   cudf::ast::operation const& filter_expression,
   std::optional<std::vector<std::string>> const& payload_column_names,
   bool case_sensitive_names,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr,
   rmm::mr::aligned_resource_adaptor& aligned_mr);
 
@@ -75,7 +75,7 @@ std::unique_ptr<cudf::table> hybrid_scan_single_step(
   cudf::ast::operation const& filter_expression,
   std::optional<std::vector<std::string>> const& column_names,
   bool case_sensitive_names,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr);
 
 /**
@@ -95,5 +95,5 @@ std::unique_ptr<cudf::table> chunked_hybrid_scan_single_step(
   cudf::ast::operation const& filter_expression,
   std::optional<std::vector<std::string>> const& column_names,
   bool case_sensitive_names,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr);

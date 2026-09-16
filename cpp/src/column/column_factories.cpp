@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -62,7 +62,7 @@ std::unique_ptr<column> make_empty_column(type_id id) { return make_empty_column
 std::unique_ptr<column> make_numeric_column(data_type type,
                                             size_type size,
                                             mask_state state,
-                                            rmm::cuda_stream_view stream,
+                                            cuda::stream_ref stream,
                                             rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
@@ -84,7 +84,7 @@ std::unique_ptr<column> make_numeric_column(data_type type,
 std::unique_ptr<column> make_fixed_point_column(data_type type,
                                                 size_type size,
                                                 mask_state state,
-                                                rmm::cuda_stream_view stream,
+                                                cuda::stream_ref stream,
                                                 rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
@@ -104,7 +104,7 @@ std::unique_ptr<column> make_fixed_point_column(data_type type,
 std::unique_ptr<column> make_timestamp_column(data_type type,
                                               size_type size,
                                               mask_state state,
-                                              rmm::cuda_stream_view stream,
+                                              cuda::stream_ref stream,
                                               rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
@@ -124,7 +124,7 @@ std::unique_ptr<column> make_timestamp_column(data_type type,
 std::unique_ptr<column> make_duration_column(data_type type,
                                              size_type size,
                                              mask_state state,
-                                             rmm::cuda_stream_view stream,
+                                             cuda::stream_ref stream,
                                              rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
@@ -144,7 +144,7 @@ std::unique_ptr<column> make_duration_column(data_type type,
 std::unique_ptr<column> make_fixed_width_column(data_type type,
                                                 size_type size,
                                                 mask_state state,
-                                                rmm::cuda_stream_view stream,
+                                                cuda::stream_ref stream,
                                                 rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
@@ -162,7 +162,7 @@ std::unique_ptr<column> make_fixed_width_column(data_type type,
 
 std::unique_ptr<column> make_dictionary_from_scalar(scalar const& s,
                                                     size_type size,
-                                                    rmm::cuda_stream_view stream,
+                                                    cuda::stream_ref stream,
                                                     rmm::device_async_resource_ref mr)
 {
   if (size == 0) return make_empty_column(type_id::DICTIONARY32);

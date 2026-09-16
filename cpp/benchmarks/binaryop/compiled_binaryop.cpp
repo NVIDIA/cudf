@@ -163,14 +163,14 @@ __device__ void transform(float* out, float a, float b) {
                                               outputs,
                                               {},
                                               std::nullopt)
-                        : cudf::multi_transform(cuda,
-                                                cudf::udf_source_type::CUDA,
-                                                cudf::null_aware::NO,
-                                                std::nullopt,
-                                                inputs,
-                                                outputs,
-                                                {},
-                                                std::nullopt);
+                        : cudf::transform(cuda,
+                                          cudf::udf_source_type::CUDA,
+                                          cudf::null_aware::NO,
+                                          std::nullopt,
+                                          inputs,
+                                          outputs,
+                                          {},
+                                          std::nullopt);
 
   // use number of bytes read and written to global memory
   state.add_global_memory_reads<TypeLhs>(num_rows);
@@ -186,14 +186,14 @@ __device__ void transform(float* out, float a, float b) {
                                                                  outputs,
                                                                  {},
                                                                  std::nullopt)
-                                           : cudf::multi_transform(cuda,
-                                                                   cudf::udf_source_type::CUDA,
-                                                                   cudf::null_aware::NO,
-                                                                   std::nullopt,
-                                                                   inputs,
-                                                                   outputs,
-                                                                   {},
-                                                                   std::nullopt);
+                                           : cudf::transform(cuda,
+                                                             cudf::udf_source_type::CUDA,
+                                                             cudf::null_aware::NO,
+                                                             std::nullopt,
+                                                             inputs,
+                                                             outputs,
+                                                             {},
+                                                             std::nullopt);
   });
 }
 

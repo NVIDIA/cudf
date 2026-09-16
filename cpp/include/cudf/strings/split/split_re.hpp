@@ -75,7 +75,7 @@ std::unique_ptr<table> split_re(
   strings_column_view const& input,
   regex_program const& prog,
   size_type maxsplit                = -1,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -131,7 +131,7 @@ std::unique_ptr<table> rsplit_re(
   strings_column_view const& input,
   regex_program const& prog,
   size_type maxsplit                = -1,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -189,7 +189,7 @@ std::unique_ptr<column> split_record_re(
   strings_column_view const& input,
   regex_program const& prog,
   size_type maxsplit                = -1,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -249,7 +249,7 @@ std::unique_ptr<column> rsplit_record_re(
   strings_column_view const& input,
   regex_program const& prog,
   size_type maxsplit                = -1,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /** @} */  // end of doxygen group

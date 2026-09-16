@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import pytest
 
@@ -11,11 +11,30 @@ import polars as pl
 
 from cudf_polars import Translator
 from cudf_polars.dsl.expr import Col
-from cudf_polars.dsl.ir import Cache, DataFrameScan, Distinct, Join, Select, Slice
-from cudf_polars.dsl.traversal import traversal
+from cudf_polars.dsl.ir import (
+    IR,
+    Cache,
+    DataFrameScan,
+    Distinct,
+    Join,
+    Projection,
+    Select,
+    Slice,
+)
+from cudf_polars.dsl.traversal import CachingVisitor, traversal
 from cudf_polars.dsl.utils.column_domain import ColumnRef
 from cudf_polars.engine.options import StreamingOptions
-from cudf_polars.streaming.base import StatsCollector
+from cudf_polars.streaming.base import PartitionInfo, StatsCollector
+from cudf_polars.streaming.filter_hint import (
+    JoinInputDomain,
+    JoinWithPrefilter,
+    Prefilter,
+    PushdownFilterHint,
+)
+from cudf_polars.streaming.join import (
+    is_direct_join_prefilter,
+    lower_join_with_prefilters,
+)
 from cudf_polars.streaming.join_filter_pushdown import (
     CompositeCandidate,
     Decision,
@@ -26,10 +45,15 @@ from cudf_polars.streaming.join_filter_pushdown import (
     analyze_plan,
     apply_candidate,
     contains_node,
+    filter_hint_pushdown_candidates,
     optimize_join_filter_pushdown,
-    semijoin_pushdown_candidates,
 )
-from cudf_polars.streaming.parallel import optimize_with_stats, remove_cache_nodes
+from cudf_polars.streaming.parallel import (
+    lower_ir_graph,
+    optimize_with_stats,
+    remove_cache_nodes,
+)
+from cudf_polars.streaming.repartition import Repartition
 from cudf_polars.streaming.statistics import collect_statistics
 from cudf_polars.testing.asserts import assert_gpu_result_equal
 from cudf_polars.utils.config import ConfigOptions
@@ -77,6 +101,10 @@ def find_joins(ir: IR, how: str | None = None) -> list[Join]:
     ]
 
 
+def find_hints(ir: IR) -> list[PushdownFilterHint]:
+    return [node for node in traversal([ir]) if isinstance(node, PushdownFilterHint)]
+
+
 def translate_query(query: pl.LazyFrame, engine: SPMDEngine) -> IR:
     """Translate a public Polars query and remove logical Cache nodes."""
     t = Translator(query._ldf.visit(), engine)
@@ -95,10 +123,12 @@ def dataframe_scan(ir: IR, column: str) -> DataFrameScan:
     return match
 
 
-def join_key_names(join: Join) -> tuple[str, ...]:
-    """Return the column names used on the left of a simple-column join."""
-    names = tuple(key.value.name for key in join.left_on if isinstance(key.value, Col))
-    assert len(names) == len(join.left_on)
+def hint_key_names(hint: PushdownFilterHint) -> tuple[str, ...]:
+    """Return the target column names used by a filter hint."""
+    names = tuple(
+        key.value.name for key in hint.target_on if isinstance(key.value, Col)
+    )
+    assert len(names) == len(hint.target_on)
     return names
 
 
@@ -141,10 +171,11 @@ def test_simple_prefilter_filters_large_side(
 
     assert isinstance(optimized, Join)
     assert optimized.options[0] == "Inner"
-    semis = find_joins(optimized, "Semi")
-    assert len(semis) == 1
-    assert semis[0].children[0] is lineitem_ir
-    assert not find_joins(part_ir, "Semi")
+    assert not find_joins(optimized, "Semi")
+    hints = find_hints(optimized)
+    assert len(hints) == 1
+    assert hints[0].children[0] is lineitem_ir
+    assert not find_hints(part_ir)
     assert_gpu_result_equal(simple_query, engine=engine, check_row_order=False)
 
 
@@ -153,14 +184,90 @@ def test_filter_pushdown_is_independent_of_dynamic_planning(
     engine: SPMDEngine,
 ) -> None:
     root = translate_query(simple_query, engine)
+    config = make_config(dynamic_planning=False)
 
     optimized = optimize_join_filter_pushdown(
         root,
         StatsCollector(),
-        make_config(dynamic_planning=False),
+        config,
     )
 
-    assert find_joins(optimized, "Semi")
+    assert find_hints(optimized)
+    lowering = lower_ir_graph(root, config, StatsCollector())
+    assert not any(
+        isinstance(node, JoinWithPrefilter) for node in traversal([lowering.lowered])
+    )
+
+
+def test_adjacent_filter_hint_is_recorded_on_lowered_join(
+    simple_query: pl.LazyFrame,
+    engine: SPMDEngine,
+) -> None:
+    root = translate_query(simple_query, engine)
+    config = ConfigOptions.from_polars_engine(engine)
+
+    lowering = lower_ir_graph(root, config, StatsCollector())
+
+    assert find_hints(lowering.optimized)
+    assert isinstance(lowering.lowered, JoinWithPrefilter)
+    left, right = lowering.lowered.children
+    assert not isinstance(left, PushdownFilterHint)
+    assert not isinstance(right, PushdownFilterHint)
+    (prefilter,) = lowering.lowered.prefilters
+    assert isinstance(prefilter, Prefilter)
+    assert isinstance(prefilter.domain, JoinInputDomain)
+    assert find_hints(lowering.optimized)[0].placement == "join_input"
+    assert prefilter.target_side == "right"
+    assert prefilter.domain.side == "left"
+    assert tuple(right.schema) == ("l_partkey", "l_suppkey")
+    assert tuple(ne.name for ne in prefilter.target_on) == ("l_partkey",)
+    assert tuple(ne.name for ne in prefilter.domain_on) == ("p_partkey",)
+    assert not prefilter.nulls_equal
+    assert tuple(left.schema) == ("p_partkey",)
+    assert not find_joins(lowering.lowered, "Semi")
+
+
+def test_partition_wise_join_discards_prefilters_before_lowering_domains(
+    simple_query: pl.LazyFrame,
+    engine: SPMDEngine,
+) -> None:
+    """Partition-wise joins must not retain optional prefilter inputs."""
+    root = translate_query(simple_query, engine)
+    config = ConfigOptions.from_polars_engine(engine)
+    optimized = optimize_with_stats(root, config, StatsCollector())
+    assert isinstance(optimized, Join)
+
+    children = list(optimized.children)
+    (hint_index,) = (
+        index for index, child in enumerate(children) if is_direct_join_prefilter(child)
+    )
+    hint = children[hint_index]
+    assert isinstance(hint, PushdownFilterHint)
+    domain = Projection(hint.children[1].schema, hint.children[1])
+    children[hint_index] = hint.reconstruct((hint.children[0], domain))
+    optimized = optimized.reconstruct(children)
+
+    targets = tuple(
+        child.children[0] if is_direct_join_prefilter(child) else child
+        for child in optimized.children
+    )
+    repartitions = tuple(Repartition(target.schema, target) for target in targets)
+    lowered_targets = dict(zip(targets, repartitions, strict=True))
+
+    def lower_target(child: IR, rec: Any) -> tuple[IR, dict[IR, PartitionInfo]]:
+        assert child in lowered_targets, "prefilter domain was lowered"
+        lowered = lowered_targets[child]
+        return lowered, {lowered: PartitionInfo(count=1)}
+
+    rec: Any = CachingVisitor(
+        lower_target,
+        state={"config_options": config},
+    )
+    lowered, partition_info = lower_join_with_prefilters(optimized, rec)
+
+    assert type(lowered) is Join
+    assert lowered.children == repartitions
+    assert domain not in partition_info
 
 
 def test_filter_pushdown_can_be_disabled(
@@ -207,9 +314,9 @@ def test_nullable_join_keys_preserve_results(
         config,
     )
 
-    semi_joins = find_joins(optimized, "Semi")
-    assert semi_joins
-    assert all(join.options[1] is nulls_equal for join in semi_joins)
+    hints = find_hints(optimized)
+    assert hints
+    assert all(hint.nulls_equal is nulls_equal for hint in hints)
     assert_gpu_result_equal(query, engine=engine, check_row_order=False)
 
 
@@ -239,8 +346,8 @@ def test_prefilter_does_not_move_below_distinct_on_non_subset_column(
         config,
     )
 
-    semis = find_joins(optimized, "Semi")
-    assert any(isinstance(semi.children[0], Distinct) for semi in semis)
+    hints = find_hints(optimized)
+    assert any(isinstance(hint.children[0], Distinct) for hint in hints)
     assert_gpu_result_equal(query, engine=engine, check_row_order=False)
 
 
@@ -267,7 +374,7 @@ def test_no_simple_filter_pushdown_when_domain_is_not_selective(
 
     assert decision == Decision(reason="no_profitable_domain")
     assert optimized is root
-    assert not find_joins(optimized, "Semi")
+    assert not find_hints(optimized)
     assert_gpu_result_equal(query, engine=engine, check_row_order=False)
 
 
@@ -329,12 +436,12 @@ def test_composite_filter_pushdown_constrains_domain_first(
 
     assert decision.reason == "applied"
     assert isinstance(decision.candidate, CompositeCandidate)
-    semis = find_joins(optimized, "Semi")
+    hints = find_hints(optimized)
     assert isinstance(optimized, Join)
     assert optimized.options[0] == "Inner"
     assert optimized.children[1] is supplier_ir
-    assert any(semi.children[0] is supplier_ir for semi in semis)
-    assert any(semi.children[0] is lineitem_ir for semi in semis)
+    assert any(hint.children[0] is supplier_ir for hint in hints)
+    assert any(hint.children[0] is lineitem_ir for hint in hints)
     assert_gpu_result_equal(query, engine=engine, check_row_order=False)
 
 
@@ -388,16 +495,16 @@ def test_prefilter_uses_cheaper_source_domain_and_skips_expensive_domain(
     supplier_ir = dataframe_scan(root, "s_suppkey")
     lineitem_ir = dataframe_scan(root, "l_orderkey")
     orders_ir = dataframe_scan(root, "o_orderkey")
-    semis = find_joins(optimized, "Semi")
-    partkey_semis = [
-        semi
-        for semi in semis
-        if semi.children[0] is lineitem_ir and join_key_names(semi) == ("l_partkey",)
+    hints = find_hints(optimized)
+    partkey_hints = [
+        hint
+        for hint in hints
+        if hint.children[0] is lineitem_ir and hint_key_names(hint) == ("l_partkey",)
     ]
-    assert partkey_semis
-    assert not any(semi.children[0] is orders_ir for semi in semis)
-    assert contains_node(partkey_semis[0].children[1], part_ir)
-    assert not contains_node(partkey_semis[0].children[1], supplier_ir)
+    assert partkey_hints
+    assert not any(hint.children[0] is orders_ir for hint in hints)
+    assert contains_node(partkey_hints[0].children[1], part_ir)
+    assert not contains_node(partkey_hints[0].children[1], supplier_ir)
     assert_gpu_result_equal(query, engine=engine, check_row_order=False)
 
 
@@ -442,13 +549,11 @@ def test_source_only_domain_does_not_stack_on_prefiltered_source(
     )
 
     lineitem_ir = dataframe_scan(root, "l_partkey")
-    lineitem_semis = [
-        semi
-        for semi in find_joins(optimized, "Semi")
-        if semi.children[0] is lineitem_ir
+    lineitem_hints = [
+        hint for hint in find_hints(optimized) if hint.children[0] is lineitem_ir
     ]
-    assert any(join_key_names(semi) == ("l_partkey",) for semi in lineitem_semis)
-    assert not any(join_key_names(semi) == ("l_orderkey",) for semi in lineitem_semis)
+    assert any(hint_key_names(hint) == ("l_partkey",) for hint in lineitem_hints)
+    assert not any(hint_key_names(hint) == ("l_orderkey",) for hint in lineitem_hints)
     assert_gpu_result_equal(query, engine=engine, check_row_order=False)
 
 
@@ -496,13 +601,13 @@ def test_derived_selectivity_propagates_through_rewritten_children(
         ConfigOptions.from_polars_engine(engine),
     )
 
-    semis = find_joins(optimized, "Semi")
+    hints = find_hints(optimized)
     expected_targets = {
         dataframe_scan(root, "n_nationkey"),
         dataframe_scan(root, "c_custkey"),
         dataframe_scan(root, "o_orderkey"),
     }
-    assert expected_targets <= {semi.children[0] for semi in semis}
+    assert expected_targets <= {hint.children[0] for hint in hints}
     assert_gpu_result_equal(query, engine=engine, check_row_order=False)
 
 
@@ -552,13 +657,10 @@ def test_rewritten_domain_filters_other_side_instead_of_stacking(
 
     lineitem_ir = dataframe_scan(root, "l_orderkey")
     orders_ir = dataframe_scan(root, "o_orderkey")
-    semis = find_joins(optimized, "Semi")
-    assert sum(semi.children[0] is lineitem_ir for semi in semis) == 1
-    assert not any(semi.children[0] is orders_ir for semi in semis)
-    assert not any(
-        isinstance(semi.children[0], Join) and semi.children[0].options[0] == "Semi"
-        for semi in semis
-    )
+    hints = find_hints(optimized)
+    assert sum(hint.children[0] is lineitem_ir for hint in hints) == 1
+    assert not any(hint.children[0] is orders_ir for hint in hints)
+    assert not any(isinstance(hint.children[0], PushdownFilterHint) for hint in hints)
     assert_gpu_result_equal(query, engine=engine, check_row_order=False)
 
 
@@ -612,9 +714,9 @@ def test_target_source_follows_join_key_through_rename(
         ConfigOptions.from_polars_engine(engine),
     )
 
-    semis = find_joins(optimized, "Semi")
-    assert any(semi.children[0] is small_ir for semi in semis)
-    assert not any(semi.children[0] is big_ir for semi in semis)
+    hints = find_hints(optimized)
+    assert any(hint.children[0] is small_ir for hint in hints)
+    assert not any(hint.children[0] is big_ir for hint in hints)
     assert_gpu_result_equal(query, engine=engine, check_row_order=False)
 
 
@@ -661,14 +763,11 @@ def test_domain_source_follows_join_key_through_rename(
         ConfigOptions.from_polars_engine(engine),
     )
 
-    semi = next(
-        semi for semi in find_joins(optimized, "Semi") if semi.children[0] is target_ir
-    )
-    selected_domain = semi.children[1]
+    hint = next(hint for hint in find_hints(optimized) if hint.children[0] is target_ir)
+    selected_domain = hint.children[1]
     assert isinstance(selected_domain, Select)
     rewritten_domain_source = selected_domain.children[0]
-    assert isinstance(rewritten_domain_source, Join)
-    assert rewritten_domain_source.options[0] == "Semi"
+    assert isinstance(rewritten_domain_source, PushdownFilterHint)
     assert rewritten_domain_source.children[0] is domain_source_ir
     assert rewritten_domain_source.children[0] is not renamed_unrelated_ir
     assert_gpu_result_equal(query, engine=engine, check_row_order=False)
@@ -721,7 +820,7 @@ def test_composite_domain_columns_do_not_reconverge_after_join(
     facts = analyze_plan(joined, StatsCollector())
     producer = _smallest_node_containing_all(joined, ("value", "value_right"), facts)
 
-    candidates = tuple(semijoin_pushdown_candidates(facts, joined, "value"))
+    candidates = tuple(filter_hint_pushdown_candidates(facts, joined, "value"))
     assert candidates[0] == (ColumnRef(joined, "value"), ())
     assert len(candidates) >= 2
     assert all(path == (0,) * len(path) for _, path in candidates[1:])
@@ -802,7 +901,7 @@ def test_target_prefilter_does_not_move_below_slice(engine: SPMDEngine) -> None:
     facts = analyze_plan(root, stats)
     lineage = facts.column_lineages[ColumnRef(sliced, "target_key")]
     assert lineage.column == ColumnRef(sliced, "target_key")
-    assert tuple(semijoin_pushdown_candidates(facts, sliced, "target_key")) == (
+    assert tuple(filter_hint_pushdown_candidates(facts, sliced, "target_key")) == (
         (ColumnRef(sliced, "target_key"), ()),
     )
 
@@ -812,9 +911,9 @@ def test_target_prefilter_does_not_move_below_slice(engine: SPMDEngine) -> None:
         ConfigOptions.from_polars_engine(engine),
     )
 
-    semis = find_joins(optimized, "Semi")
-    assert any(semi.children[0] is sliced for semi in semis)
-    assert not any(semi.children[0] is target_ir for semi in semis)
+    hints = find_hints(optimized)
+    assert any(hint.children[0] is sliced for hint in hints)
+    assert not any(hint.children[0] is target_ir for hint in hints)
     assert_gpu_result_equal(query, engine=engine, check_row_order=False)
 
 
@@ -861,10 +960,10 @@ def test_target_replacement_does_not_rewrite_shared_domain_side(
     filtered, unfiltered_domain = optimized.children
     assert unfiltered_domain is domain_ir
     assert domain_ir.children[0] is shared_ir
-    semis = find_joins(filtered, "Semi")
-    assert len(semis) == 1
-    assert semis[0].children[0] is shared_ir
-    assert not find_joins(unfiltered_domain, "Semi")
+    hints = find_hints(filtered)
+    assert len(hints) == 1
+    assert hints[0].children[0] is shared_ir
+    assert not find_hints(unfiltered_domain)
     assert_gpu_result_equal(query, engine=engine, check_row_order=False)
 
 
@@ -913,12 +1012,12 @@ def test_target_prefilter_rewrites_only_selected_self_join_edge(
     assert isinstance(rewritten_self_join, Join)
     filtered, unfiltered = rewritten_self_join.children
     assert unfiltered is source_ir
-    filtered_semis = find_joins(filtered, "Semi")
-    assert len(filtered_semis) == 1
-    assert not find_joins(unfiltered, "Semi")
+    filtered_hints = find_hints(filtered)
+    assert len(filtered_hints) == 1
+    assert not find_hints(unfiltered)
     # The shared node is a valid insertion point, but its children are not:
-    # Only this consumer should be wrapped by the semi-join.
-    assert filtered_semis[0].children[0] is source_ir
+    # Only this consumer should be wrapped by the filter hint.
+    assert filtered_hints[0].children[0] is source_ir
     assert_gpu_result_equal(query, engine=engine, check_row_order=False)
 
 
@@ -967,8 +1066,8 @@ def test_internal_prefilter_rewrites_shared_subplan_once(
     rewritten_left, rewritten_right = optimized.children
     assert rewritten_left is rewritten_right
     assert rewritten_left is not original_shared
-    (internal_semi,) = find_joins(rewritten_left, "Semi")
-    assert internal_semi.children[0] is target_ir
+    (internal_hint,) = find_hints(rewritten_left)
+    assert internal_hint.children[0] is target_ir
     assert_gpu_result_equal(query, engine=engine, check_row_order=False)
 
 
@@ -1006,5 +1105,5 @@ def test_no_filter_pushdown_for_unsupported_joins(
     )
 
     assert optimized is root
-    assert not find_joins(optimized, "Semi")
+    assert not find_hints(optimized)
     assert_gpu_result_equal(query, engine=engine, check_row_order=False)

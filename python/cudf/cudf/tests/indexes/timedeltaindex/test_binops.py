@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2020-2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import datetime
@@ -138,6 +138,9 @@ def test_timedelta_datetime_index_ops_misc(
         np.timedelta64(1, "ns"),
     ],
 )
+@pytest.mark.parametrize(
+    "arithmetic_op_method", ["add", "sub", "truediv", "floordiv"]
+)
 @pytest.mark.filterwarnings("ignore:divide by zero:RuntimeWarning:pandas")
 def test_timedelta_index_ops_with_scalars(
     request,
@@ -146,9 +149,6 @@ def test_timedelta_index_ops_with_scalars(
     timedelta_types_as_str,
     arithmetic_op_method,
 ):
-    if arithmetic_op_method not in ("add", "sub", "truediv", "floordiv"):
-        pytest.skip(f"Test not applicable for {arithmetic_op_method}")
-
     gtdi = cudf.Index(data=data_non_overflow, dtype=timedelta_types_as_str)
     ptdi = gtdi.to_pandas()
 
@@ -190,7 +190,7 @@ def test_timedelta_index_ops_with_scalars(
                 and 0 in ptdi.astype("int")
                 and np.timedelta64(other_scalars).item() is not None
             ),
-            reason="Related to https://github.com/rapidsai/cudf/issues/5938",
+            reason="Related to https://github.com/NVIDIA/cudf/issues/5938",
         )
     )
     assert_eq(expected, actual)

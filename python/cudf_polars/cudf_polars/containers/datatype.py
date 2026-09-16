@@ -40,7 +40,22 @@ SCALAR_NAME_TO_POLARS_TYPE_MAP: dict[str, pl.DataType] = {
 }
 
 
-def _dtype_to_header(dtype: pl.DataType) -> DataTypeHeader:
+def _contains_array(dtype: PolarsDataType) -> bool:
+    """Return whether ``dtype`` is or contains a Polars Array dtype."""
+    if isinstance(dtype, type):
+        dtype = dtype()
+    if isinstance(dtype, pl.Array):
+        return True
+    if isinstance(dtype, pl.List):
+        return _contains_array(dtype.inner)
+    if isinstance(dtype, pl.Struct):
+        return any(_contains_array(field.dtype) for field in dtype.fields)
+    return False
+
+
+def _dtype_to_header(dtype: PolarsDataType) -> DataTypeHeader:
+    if isinstance(dtype, type):
+        dtype = dtype()
     name = type(dtype).__name__
     if name in SCALAR_NAME_TO_POLARS_TYPE_MAP:
         return {"kind": "scalar", "name": name}
@@ -63,6 +78,13 @@ def _dtype_to_header(dtype: pl.DataType) -> DataTypeHeader:
         return {
             "kind": "list",
             "inner": _dtype_to_header(cast("pl.DataType", dtype.inner)),
+        }
+    if isinstance(dtype, pl.Array):
+        # isinstance narrows dtype to pl.Array, but .inner returns DataTypeClass | DataType
+        return {
+            "kind": "array",
+            "inner": _dtype_to_header(cast("pl.DataType", dtype.inner)),
+            "width": dtype.size,
         }
     if isinstance(dtype, pl.Struct):
         # isinstance narrows dtype to pl.Struct, but field.dtype returns DataTypeClass | DataType
@@ -99,6 +121,8 @@ def _dtype_from_header(header: DataTypeHeader) -> pl.DataType:
         )
     if header["kind"] == "list":
         return pl.List(_dtype_from_header(header["inner"]))
+    if header["kind"] == "array":
+        return pl.Array(_dtype_from_header(header["inner"]), header["width"])
     if header["kind"] == "struct":
         return pl.Struct(
             [
@@ -180,13 +204,28 @@ def _from_polars(dtype: pl.DataType) -> plc.DataType:
         # TODO: Hopefully
         return plc.DataType(plc.TypeId.EMPTY)
     elif isinstance(dtype, pl.List):
+        if _contains_array(dtype.inner):
+            raise NotImplementedError(
+                "Array nested inside another dtype is not supported"
+            )
         # Recurse to catch unsupported inner types
-        _ = _from_polars(dtype.inner)
+        _ = DataType(dtype.inner)
+        return plc.DataType(plc.TypeId.LIST)
+    elif isinstance(dtype, pl.Array):
+        inner = DataType(dtype.inner).plc_type
+        if not plc.traits.is_fixed_width(inner):
+            raise NotImplementedError(
+                f"{dtype=} conversion requires a fixed-width scalar inner dtype"
+            )
         return plc.DataType(plc.TypeId.LIST)
     elif isinstance(dtype, pl.Struct):
         # Recurse to catch unsupported field types
         for field in dtype.fields:
-            _ = _from_polars(field.dtype)
+            if _contains_array(field.dtype):
+                raise NotImplementedError(
+                    "Array nested inside another dtype is not supported"
+                )
+            _ = DataType(field.dtype)
         return plc.DataType(plc.TypeId.STRUCT)
     else:
         raise NotImplementedError(f"{dtype=} conversion not supported")
@@ -222,25 +261,10 @@ class DataType:
                 for field in cast("pl.Struct", self.polars_type).fields
             ]
         elif self.plc_type.id() == plc.TypeId.LIST:
-            # .inner returns DataTypeClass | DataType, need to cast to DataType
-            return [
-                DataType(cast("pl.DataType", cast("pl.List", self.polars_type).inner))
-            ]
+            dtype = self.polars_type
+            assert isinstance(dtype, (pl.List, pl.Array))
+            return [DataType(dtype.inner)]
         return []
-
-    def scale(self) -> int:
-        """The scale of this DataType."""
-        return self.plc_type.scale()
-
-    @staticmethod
-    def common_decimal_dtype(left: DataType, right: DataType) -> DataType:
-        """Return a common decimal DataType for the two inputs."""
-        if not (
-            plc.traits.is_fixed_point(left.plc_type)
-            and plc.traits.is_fixed_point(right.plc_type)
-        ):
-            raise ValueError("Both inputs required to be decimal types.")
-        return DataType(pl.Decimal(38, abs(min(left.scale(), right.scale()))))
 
     def __eq__(self, other: object) -> bool:
         """Equality of DataTypes."""

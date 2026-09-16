@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -13,8 +13,6 @@
 #include <cudf/transform.hpp>
 #include <cudf/types.hpp>
 #include <cudf/utilities/default_stream.hpp>
-
-#include <rmm/cuda_stream_view.hpp>
 
 #include <nvbench/nvbench.cuh>
 
@@ -37,7 +35,7 @@ static void bench_encode(nvbench::state& state, nvbench::type_list<DataType>)
   state.add_global_memory_reads<uint8_t>(alloc_size);
   state.add_global_memory_writes<cudf::size_type>(num_rows);
   auto stream = cudf::get_default_stream();
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.value()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.get()));
 
   auto const mem_stats_logger = cudf::memory_stats_logger();
 

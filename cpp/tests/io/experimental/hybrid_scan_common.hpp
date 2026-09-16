@@ -18,9 +18,10 @@
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/span.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_buffer.hpp>
 #include <rmm/resource_ref.hpp>
+
+#include <cuda/stream>
 
 #include <algorithm>
 #include <cstddef>
@@ -95,7 +96,7 @@ void setup_page_indexes(cudf::io::parquet::experimental::hybrid_scan_multifile c
   multifile_inputs const& inputs,
   std::pair<std::vector<cudf::io::text::byte_range_info>, std::vector<cudf::size_type>> const&
     byte_ranges_and_source_map,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr);
 
 /**
@@ -109,7 +110,7 @@ void setup_page_indexes(cudf::io::parquet::experimental::hybrid_scan_multifile c
  */
 [[nodiscard]] std::unique_ptr<cudf::table> concatenate_tables(
   std::vector<std::unique_ptr<cudf::table>>&& tables,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr);
 
 /**
@@ -151,7 +152,7 @@ template <typename T,
   cudf::io::compression_type compression    = cudf::io::compression_type::AUTO,
   std::vector<std::string> column_names     = {"col0", "col1", "col2"},
   std::vector<cudf::size_type> column_order = {0, 1, 2},
-  rmm::cuda_stream_view stream              = cudf::get_default_stream());
+  cuda::stream_ref stream                   = cudf::get_default_stream());
 
 /**
  * @brief Prune row groups using column chunk dictionaries via the single-file hybrid scan reader
@@ -162,7 +163,7 @@ template <typename T,
   cudf::io::datasource& datasource,
   cudf::io::parquet::experimental::hybrid_scan_reader const& reader,
   cudf::io::parquet_reader_options const& options,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr);
 
 /**
@@ -174,5 +175,5 @@ template <typename T,
   multifile_inputs const& inputs,
   cudf::io::parquet::experimental::hybrid_scan_multifile const& reader,
   cudf::io::parquet_reader_options const& options,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr);

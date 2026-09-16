@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -58,7 +58,7 @@ static void BM_binaryop_polynomials(nvbench::state& state)
   state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
     // computes polynomials: (((ax + b)x + c)x + d)x + e... = ax**4 + bx**3 + cx**2 + dx + e....
     cudf::benchmark::scoped_range range{"benchmark_iteration"};
-    rmm::cuda_stream_view stream{launch.get_stream().get_stream()};
+    cuda::stream_ref stream{launch.get_stream().get_stream()};
     std::vector<std::unique_ptr<cudf::column>> intermediates;
 
     auto result = cudf::make_column_from_scalar(constants[0], num_rows, stream);

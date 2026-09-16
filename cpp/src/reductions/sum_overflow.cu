@@ -18,11 +18,11 @@
 #include <cudf/utilities/traits.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/iterator>
 #include <cuda/numeric>
+#include <cuda/stream>
 #include <thrust/transform_reduce.h>
 
 namespace cudf::reduction::detail {
@@ -35,7 +35,7 @@ std::unique_ptr<cudf::scalar> make_sum_overflow_struct_scalar(
   bool overflow_value,
   bool sum_is_valid,
   cudf::data_type const& source_type,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr)
 {
   auto const temp_mr = cudf::get_current_device_resource_ref();
@@ -64,7 +64,7 @@ template <typename Source>
 std::unique_ptr<cudf::scalar> sum_overflow_impl(
   column_view const& col,
   std::optional<std::reference_wrapper<scalar const>> init,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr)
 {
   using DeviceType = device_storage_type_t<Source>;
@@ -118,7 +118,7 @@ struct sum_overflow_dispatcher {
   template <cudf::detail::sum_overflow_supported Source>
   std::unique_ptr<cudf::scalar> operator()(column_view const& col,
                                            std::optional<std::reference_wrapper<scalar const>> init,
-                                           rmm::cuda_stream_view stream,
+                                           cuda::stream_ref stream,
                                            rmm::device_async_resource_ref mr) const
   {
     return sum_overflow_impl<Source>(col, init, stream, mr);
@@ -128,7 +128,7 @@ struct sum_overflow_dispatcher {
     requires(!cudf::detail::sum_overflow_supported<Source>)
   std::unique_ptr<cudf::scalar> operator()(column_view const&,
                                            std::optional<std::reference_wrapper<scalar const>>,
-                                           rmm::cuda_stream_view,
+                                           cuda::stream_ref,
                                            rmm::device_async_resource_ref) const
   {
     CUDF_FAIL("SUM_OVERFLOW reduction supports only signed integer and decimal types.",
@@ -141,7 +141,7 @@ struct sum_overflow_dispatcher {
 std::unique_ptr<cudf::scalar> sum_overflow(column_view const& col,
                                            cudf::data_type const output_dtype,
                                            std::optional<std::reference_wrapper<scalar const>> init,
-                                           rmm::cuda_stream_view stream,
+                                           cuda::stream_ref stream,
                                            rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();

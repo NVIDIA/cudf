@@ -10,8 +10,9 @@
 #include <cudf/types.hpp>
 #include <cudf/utilities/span.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/resource_ref.hpp>
+
+#include <cuda/stream>
 
 #include <memory>
 
@@ -47,6 +48,6 @@ std::unique_ptr<cudf::table> compute_groupby(table_view const& keys,
                                              Equal const& d_row_equal,
                                              Hash const& d_row_hash,
                                              cudf::detail::result_cache* cache,
-                                             rmm::cuda_stream_view stream,
+                                             cuda::stream_ref stream,
                                              rmm::device_async_resource_ref mr);
 }  // namespace cudf::groupby::detail::hash

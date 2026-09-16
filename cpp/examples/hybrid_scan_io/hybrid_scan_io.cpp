@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -35,7 +35,7 @@ namespace {
  */
 cudf::io::table_with_metadata read_parquet(io_source const& io_source,
                                            cudf::ast::operation const& filter_expression,
-                                           rmm::cuda_stream_view stream)
+                                           cuda::stream_ref stream)
 {
   auto source_info = io_source.get_source_info();
   auto options =
@@ -117,7 +117,7 @@ int main(int argc, char const** argv)
   // Create filter expression
   auto const column_reference = cudf::ast::column_name_reference(column_name);
   auto scalar                 = cudf::string_scalar(literal_value, true, stream);
-  stream.synchronize();
+  stream.sync();
   auto literal = cudf::ast::literal(scalar);
   auto filter_expression =
     cudf::ast::operation(cudf::ast::ast_operator::EQUAL, column_reference, literal);

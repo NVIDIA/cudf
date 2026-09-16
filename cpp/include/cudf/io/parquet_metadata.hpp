@@ -13,9 +13,14 @@
 #include <cudf/io/datasource.hpp>
 #include <cudf/io/parquet_schema.hpp>
 #include <cudf/io/types.hpp>
+#include <cudf/table/table.hpp>
+#include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/export.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 
+#include <memory>
 #include <span>
+#include <string>
 #include <string_view>
 #include <vector>
 
@@ -293,6 +298,36 @@ parquet_metadata read_parquet_metadata(source_info const& src_info);
  */
 std::vector<parquet::FileMetaData> read_parquet_footers(
   std::span<std::unique_ptr<cudf::io::datasource> const> sources);
+
+/**
+ * @brief Decode parquet column-chunk min/max statistics for selected leaf columns.
+ *
+ * Missing min/max statistics are represented as nulls in the corresponding output column. Parquet
+ * min/max exactness flags are not interpreted by this function. The requested column names are
+ * resolved against each file's schema. The returned table contains one row per source row group.
+ * Column 0 is the source file index, column 1 is the file-local row-group index, and subsequent
+ * columns are min/max pairs in the order of ``column_names``.
+ *
+ * @ingroup io_readers
+ *
+ * @param parquet_metadatas Parquet file metadata, one per source
+ * @param column_names Dotted leaf-column paths to decode statistics for
+ * @param stream CUDA stream used for device memory operations
+ * @param mr Memory resources to use for device memory allocation
+ * @return Table of row-group identifiers and decoded min/max bounds. For requested column
+ * ``column_names[i]``, the min column is at ``2 + 2 * i`` and the max column is at
+ * ``3 + 2 * i``.
+ *
+ * @throw std::invalid_argument If a requested leaf-column path is missing or ambiguous.
+ * @throw std::invalid_argument If a requested column has unsupported or compound statistics dtype.
+ * @throw std::invalid_argument If a requested column has mismatching statistics dtype across
+ * sources.
+ */
+std::unique_ptr<table> read_parquet_column_chunk_bounds(
+  std::span<parquet::FileMetaData const> parquet_metadatas,
+  std::span<std::string const> column_names,
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /** @} */  // end of group
 }  // namespace io

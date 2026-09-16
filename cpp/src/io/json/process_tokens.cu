@@ -74,7 +74,7 @@ void validate_token_stream(device_span<char const> d_input,
                            device_span<PdaTokenT> tokens,
                            device_span<SymbolOffsetT> token_indices,
                            cudf::io::json_reader_options const& options,
-                           rmm::cuda_stream_view stream)
+                           cuda::stream_ref stream)
 {
   CUDF_FUNC_RANGE();
   if (!options.is_strict_validation()) { return; }

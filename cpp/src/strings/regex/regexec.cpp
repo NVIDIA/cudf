@@ -12,8 +12,9 @@
 #include <cudf/strings/detail/char_tables.hpp>
 #include <cudf/utilities/error.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_buffer.hpp>
+
+#include <cuda/stream>
 
 #include <functional>
 #include <numeric>
@@ -34,7 +35,7 @@ reprog_device::reprog_device(reprog const& prog)
 }
 
 std::unique_ptr<reprog_device, std::function<void(reprog_device*)>> reprog_device::create(
-  reprog const& h_prog, rmm::cuda_stream_view stream)
+  reprog const& h_prog, cuda::stream_ref stream)
 {
   // compute size to hold all the member data
   auto const insts_count   = h_prog.insts_count();
@@ -116,7 +117,7 @@ std::unique_ptr<reprog_device, std::function<void(reprog_device*)>> reprog_devic
     delete d_buffer;
   };
 
-  stream.synchronize();  // wait for h_buffer to finish copying
+  stream.sync();  // wait for h_buffer to finish copying
   return std::unique_ptr<reprog_device, std::function<void(reprog_device*)>>(d_prog, deleter);
 }
 

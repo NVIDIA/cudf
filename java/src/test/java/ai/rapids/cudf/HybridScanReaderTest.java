@@ -28,6 +28,8 @@ import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Arrays;
+import java.util.List;
 import java.util.function.Consumer;
 import java.util.stream.IntStream;
 import java.util.stream.Stream;
@@ -38,6 +40,8 @@ import java.util.stream.Stream;
 public class HybridScanReaderTest extends CudfTestBase {
 
   private static final String[] DEFAULT_COLS = {"id", "zip_code", "num_units"};
+  private static final HostColumnVector.ListType LIST_OF_INTS =
+      new HostColumnVector.ListType(true, new HostColumnVector.BasicType(true, DType.INT32));
   private static final int[] ALL_ROW_GROUPS = {0, 1, 2};
 
   // --------------------------------------------------------------------
@@ -246,11 +250,11 @@ public class HybridScanReaderTest extends CudfTestBase {
   }
 
   // --------------------------------------------------------------------
-  // Tests: secondaryFiltersByteRanges()
+  // Tests: dictionaryPagesByteRanges() / bloomFiltersByteRanges()
   // --------------------------------------------------------------------
 
   /**
-   * Verifies secondaryFiltersByteRanges() returns one non-empty dictionary-page range per
+   * Verifies dictionaryPagesByteRanges() returns one non-empty dictionary-page range per
    * row group when all three required conditions are met:
    * <ul>
    *   <li>The filter contains an (in)equality predicate (num_units == 2);
@@ -263,12 +267,11 @@ public class HybridScanReaderTest extends CudfTestBase {
    * Result: 3 row groups × 1 dict-eligible filter col = 3 non-empty ranges.
    */
   @Test
-  void testSecondaryFiltersByteRangesPresentForLowCardinality(@TempDir Path tmp) throws IOException {
+  void testDictionaryPagesByteRangesPresentForLowCardinality(@TempDir Path tmp) throws IOException {
     try (OpenReader open = OpenReader.pageIndex(tmp).withFilter("num_units", BinaryOperator.EQUAL, 2)) {
       open.withPageIndex();
       HybridScanReader reader = open.reader;
-      SecondaryFilterRanges sfr = reader.secondaryFiltersByteRanges(reader.allRowGroups());
-      ByteRange[] dict = sfr.dictionaryPageRanges();
+      ByteRange[] dict = reader.dictionaryPagesByteRanges(reader.allRowGroups());
       assertEquals(3, dict.length, "3 row groups × 1 dict-eligible filter column");
       for (ByteRange r : dict) {
         assertTrue(r.size() > 0, "Dictionary page range must be non-empty");
@@ -277,7 +280,7 @@ public class HybridScanReaderTest extends CudfTestBase {
   }
 
   /**
-   * Verifies secondaryFiltersByteRanges() returns no dictionary-page ranges for a
+   * Verifies dictionaryPagesByteRanges() returns no dictionary-page ranges for a
    * high-cardinality int filter column even when the conditions for dictionary lookup
    * are otherwise satisfied: the fixture has a page index (COLUMN stats) and the
    * predicate is EQUAL. The empty result must be attributable solely to the writer's
@@ -285,30 +288,28 @@ public class HybridScanReaderTest extends CudfTestBase {
    * (zip_code is unique per row).
    */
   @Test
-  void testSecondaryFiltersByteRangesEmptyForHighCardinalityInts(@TempDir Path tmp) throws IOException {
+  void testDictionaryPagesByteRangesEmptyForHighCardinalityInts(@TempDir Path tmp) throws IOException {
     try (OpenReader open = OpenReader.pageIndex(tmp).withFilter("zip_code", BinaryOperator.EQUAL, 12345)) {
       open.withPageIndex();
-      SecondaryFilterRanges sfr = open.reader.secondaryFiltersByteRanges(open.reader.allRowGroups());
-      assertEquals(0, sfr.dictionaryPageRanges().length,
+      assertEquals(0, open.reader.dictionaryPagesByteRanges(open.reader.allRowGroups()).length,
           "High-cardinality zip_code: ADAPTIVE policy skips dictionary emission "
               + "even with page index present and an EQUAL predicate requesting it");
     }
   }
 
   /**
-   * Verifies secondaryFiltersByteRanges() finds dictionary pages even without page
+   * Verifies dictionaryPagesByteRanges() finds dictionary pages even without page
    * index. Dictionary pruning relies on encoding statistics and dictionary-page metadata
    * rather than page indexes, so a low-cardinality column with an EQUAL predicate remains
    * eligible.
    */
   @Test
-  void testSecondaryFiltersByteRangesForRowGroupStats(@TempDir Path tmp) throws IOException {
+  void testDictionaryPagesByteRangesForRowGroupStats(@TempDir Path tmp) throws IOException {
     try (OpenReader open = OpenReader.rowGroupStats(tmp).withFilter("num_units", BinaryOperator.EQUAL, 2)) {
-      SecondaryFilterRanges sfr = open.reader.secondaryFiltersByteRanges(new int[]{0});
-      assertEquals(1, sfr.dictionaryPageRanges().length,
+      ByteRange[] dict = open.reader.dictionaryPagesByteRanges(new int[]{0});
+      assertEquals(1, dict.length,
           "A row group has only one dictionary-page per (filter) column");
-      assertTrue(sfr.dictionaryPageRanges()[0].size() > 0,
-          "Dictionary page range must be non-empty");
+      assertTrue(dict[0].size() > 0, "Dictionary page range must be non-empty");
     }
   }
 
@@ -321,7 +322,7 @@ public class HybridScanReaderTest extends CudfTestBase {
    * literal is not present in any group's dictionary. With the pageIndex fixture, num_units
    * dictionaries are {1,2} (g0), {2,3} (g1), {3,4} (g2); filtering on num_units == 5 must
    * yield an empty surviving-group array.
-   * <p>setupPageIndex() must be called before secondaryFiltersByteRanges() so that
+   * <p>setupPageIndex() must be called before dictionaryPagesByteRanges() so that
    * has_page_index_and_only_dict_encoded_pages is true and dictionary page ranges are emitted.</p>
    */
   @Test
@@ -330,8 +331,8 @@ public class HybridScanReaderTest extends CudfTestBase {
       open.withPageIndex();
       HybridScanReader reader = open.reader;
       int[] rgs = reader.allRowGroups();
-      SecondaryFilterRanges sfr = reader.secondaryFiltersByteRanges(rgs);
-      DeviceMemoryBuffer[] dictBufs = copyRangesToDevice(open.file, sfr.dictionaryPageRanges());
+      DeviceMemoryBuffer[] dictBufs =
+          copyRangesToDevice(open.file, reader.dictionaryPagesByteRanges(rgs));
       try {
         int[] result = reader.filterRowGroupsWithDictionaryPages(dictBufs, rgs);
         assertEquals(0, result.length,
@@ -355,8 +356,8 @@ public class HybridScanReaderTest extends CudfTestBase {
       open.withPageIndex();
       HybridScanReader reader = open.reader;
       int[] rgs = reader.allRowGroups();
-      SecondaryFilterRanges sfr = reader.secondaryFiltersByteRanges(rgs);
-      DeviceMemoryBuffer[] dictBufs = copyRangesToDevice(open.file, sfr.dictionaryPageRanges());
+      DeviceMemoryBuffer[] dictBufs =
+          copyRangesToDevice(open.file, reader.dictionaryPagesByteRanges(rgs));
       try {
         int[] result = reader.filterRowGroupsWithDictionaryPages(dictBufs, rgs);
         assertArrayEquals(new int[]{0, 1}, result,
@@ -369,7 +370,7 @@ public class HybridScanReaderTest extends CudfTestBase {
 
   /**
    * Verifies filterRowGroupsWithDictionaryPages() throws when the upstream
-   * secondaryFiltersByteRanges yields no dict ranges due to ADAPTIVE policy skipping dict
+   * dictionaryPagesByteRanges yields no dict ranges due to ADAPTIVE policy skipping dict
    * emission on a high-cardinality column. With EQUAL on zip_code (5,000 distinct values
    * per group), no dict pages exist, so no buffers can be supplied. The C++ CUDF_EXPECTS
    * at prepare_dictionaries enforces buffers.size() == row_groups × dict-eligible cols.
@@ -379,8 +380,8 @@ public class HybridScanReaderTest extends CudfTestBase {
     try (OpenReader open = OpenReader.pageIndex(tmp).withFilter("zip_code", BinaryOperator.EQUAL, 12345)) {
       open.withPageIndex();
       int[] rgs = open.reader.allRowGroups();
-      SecondaryFilterRanges sfr = open.reader.secondaryFiltersByteRanges(rgs);
-      DeviceMemoryBuffer[] dictBufs = copyRangesToDevice(open.file, sfr.dictionaryPageRanges());
+      DeviceMemoryBuffer[] dictBufs =
+          copyRangesToDevice(open.file, open.reader.dictionaryPagesByteRanges(rgs));
       try {
         assertEquals(0, dictBufs.length, "ADAPTIVE skips dict for high-cardinality zip_code");
         assertThrows(CudfException.class,
@@ -402,8 +403,8 @@ public class HybridScanReaderTest extends CudfTestBase {
       throws IOException {
     try (OpenReader open = OpenReader.rowGroupStats(tmp).withFilter("num_units", BinaryOperator.EQUAL, 2)) {
       int[] rgs = new int[]{0};
-      SecondaryFilterRanges sfr = open.reader.secondaryFiltersByteRanges(rgs);
-      DeviceMemoryBuffer[] dictBufs = copyRangesToDevice(open.file, sfr.dictionaryPageRanges());
+      DeviceMemoryBuffer[] dictBufs =
+          copyRangesToDevice(open.file, open.reader.dictionaryPagesByteRanges(rgs));
       try {
         assertEquals(1, dictBufs.length,
             "The dictionary page is discoverable even without a page index");
@@ -586,6 +587,42 @@ public class HybridScanReaderTest extends CudfTestBase {
                fr.rowMask(), false)) {
         assertEquals(1599L, payload.getRowCount());
         assertEquals(2, payload.getNumberOfColumns(), "payload table contains id + num_units");
+      } finally {
+        closeAll(filterCols);
+        closeAll(payloadCols);
+      }
+    }
+  }
+
+  /**
+   * Verifies materializePayloadColumns() prunes pages from page-header row counts when the
+   * file has no page index: zip_code > 100,000 keeps only the last of row group 1's three
+   * pages, so the payload must be exactly the 19,999 rows with ids 100,001–119,999.
+   */
+  @Test
+  void testMaterializePayloadColumnsPagePruningWithoutPageIndex(@TempDir Path tmp)
+      throws IOException {
+    try (OpenReader open =
+             OpenReader.multiPage(tmp).withFilter("zip_code", BinaryOperator.GREATER, 100000)) {
+      HybridScanReader reader = open.reader;
+      assertEquals(0L, reader.pageIndexByteRange().size(),
+          "Fixture must have no page index so the header-derived fallback is exercised");
+      int[] survived = reader.filterRowGroupsWithStats(reader.allRowGroups());
+      assertArrayEquals(new int[]{1}, survived,
+          "Group 0 (zip_code 0-59,999) cannot satisfy zip_code > 100,000");
+      DeviceMemoryBuffer[] filterCols = copyRangesToDevice(
+          open.file, reader.filterColumnChunksByteRanges(survived));
+      DeviceMemoryBuffer[] payloadCols = copyRangesToDevice(
+          open.file, reader.payloadColumnChunksByteRanges(survived));
+      try (HybridScanReader.FilterMaterializationResult fr =
+               reader.materializeFilterColumns(survived, filterCols, false);
+           Table payload = reader.materializePayloadColumns(survived, payloadCols,
+               fr.rowMask(), true);
+           ColumnVector expectedIds = ColumnVector.fromInts(
+               IntStream.rangeClosed(100001, 119999).toArray())) {
+        assertEquals(2, payload.getNumberOfColumns(), "payload table contains id + num_units");
+        assertEquals(19999L, payload.getRowCount());
+        AssertUtils.assertColumnsAreEqual(expectedIds, payload.getColumn(0), "id");
       } finally {
         closeAll(filterCols);
         closeAll(payloadCols);
@@ -825,6 +862,92 @@ public class HybridScanReaderTest extends CudfTestBase {
     }
   }
 
+  /**
+   * Verifies the chunked payload pipeline drains the same 19,999 rows when page pruning
+   * falls back to page-header row counts on a file with no page index.
+   */
+  @Test
+  void testMaterializePayloadColumnsChunkPagePruningWithoutPageIndex(@TempDir Path tmp)
+      throws IOException {
+    try (OpenReader open =
+             OpenReader.multiPage(tmp).withFilter("zip_code", BinaryOperator.GREATER, 100000)) {
+      HybridScanReader reader = open.reader;
+      assertEquals(0L, reader.pageIndexByteRange().size(),
+          "Fixture must have no page index so the header-derived fallback is exercised");
+      int[] survived = reader.filterRowGroupsWithStats(reader.allRowGroups());
+      DeviceMemoryBuffer[] filterCols = copyRangesToDevice(
+          open.file, reader.filterColumnChunksByteRanges(survived));
+      DeviceMemoryBuffer[] payloadCols = copyRangesToDevice(
+          open.file, reader.payloadColumnChunksByteRanges(survived));
+      try {
+        reader.setupChunkingForFilterColumns(0L, 0L, survived, false, filterCols);
+        while (reader.hasNextTableChunk()) {
+          reader.materializeFilterColumnsChunk().close();
+        }
+        try (ColumnVector rowMask = reader.takeFilterRowMask()) {
+          assertEquals(60000L, rowMask.getRowCount(), "Mask spans row group 1");
+          assertEquals(19999L, countTrue(rowMask), "zip_code 100,001-119,999 survive");
+          reader.setupChunkingForPayloadColumns(0L, 0L, survived, rowMask, true, payloadCols);
+          long total = 0;
+          while (reader.hasNextTableChunk()) {
+            try (Table chunk = reader.materializePayloadColumnsChunk(rowMask)) {
+              assertEquals(2, chunk.getNumberOfColumns());
+              total += chunk.getRowCount();
+            }
+          }
+          assertEquals(19999L, total,
+              "Header-derived page pruning must not drop or duplicate selected rows");
+        }
+      } finally {
+        closeAll(filterCols);
+        closeAll(payloadCols);
+      }
+    }
+  }
+
+  /**
+   * Verifies that list payload columns remain readable when header-derived page pruning is used.
+   * List leaf pages may start mid-row, so they must not be pruned without an offset index.
+   */
+  @Test
+  void testMaterializePayloadColumnsChunkListPagePruningWithoutPageIndex(@TempDir Path tmp)
+      throws IOException {
+    try (OpenReader open = OpenReader.multiPageWithList(tmp)
+             .withFilter("zip_code", BinaryOperator.GREATER, 30000)) {
+      HybridScanReader reader = open.reader;
+      assertEquals(0L, reader.pageIndexByteRange().size(),
+          "Fixture must have no page index so the header-derived fallback is exercised");
+      int[] survived = reader.filterRowGroupsWithStats(reader.allRowGroups());
+      DeviceMemoryBuffer[] filterCols = copyRangesToDevice(
+          open.file, reader.filterColumnChunksByteRanges(survived));
+      DeviceMemoryBuffer[] payloadCols = copyRangesToDevice(
+          open.file, reader.payloadColumnChunksByteRanges(survived));
+      try {
+        reader.setupChunkingForFilterColumns(0L, 0L, survived, false, filterCols);
+        while (reader.hasNextTableChunk()) {
+          reader.materializeFilterColumnsChunk().close();
+        }
+        try (ColumnVector rowMask = reader.takeFilterRowMask()) {
+          assertEquals(60000L, rowMask.getRowCount(), "Mask spans the row group");
+          assertEquals(29999L, countTrue(rowMask), "zip_code 30,001-59,999 survive");
+          reader.setupChunkingForPayloadColumns(0L, 0L, survived, rowMask, true, payloadCols);
+          long total = 0;
+          while (reader.hasNextTableChunk()) {
+            try (Table chunk = reader.materializePayloadColumnsChunk(rowMask)) {
+              assertEquals(2, chunk.getNumberOfColumns());
+              total += chunk.getRowCount();
+            }
+          }
+          assertEquals(29999L, total,
+              "Header-derived pruning must retain all selected rows with list payloads");
+        }
+      } finally {
+        closeAll(filterCols);
+        closeAll(payloadCols);
+      }
+    }
+  }
+
   // --------------------------------------------------------------------
   // Tests: setupChunkingForAllColumns() / materializeAllColumnsChunk()
   //
@@ -993,7 +1116,8 @@ public class HybridScanReaderTest extends CudfTestBase {
         invocation("setupPageIndex", r -> r.setupPageIndex(null)),
         invocation("totalRowsInRowGroups", r -> r.totalRowsInRowGroups(null)),
         invocation("filterRowGroupsWithStats", r -> r.filterRowGroupsWithStats(null)),
-        invocation("secondaryFiltersByteRanges", r -> r.secondaryFiltersByteRanges(null)),
+        invocation("bloomFiltersByteRanges", r -> r.bloomFiltersByteRanges(null)),
+        invocation("dictionaryPagesByteRanges", r -> r.dictionaryPagesByteRanges(null)),
         invocation("filterRowGroupsWithDictionaryPagesNullBuffers",
             r -> r.filterRowGroupsWithDictionaryPages(null, new int[]{0})),
         invocation("filterRowGroupsWithDictionaryPagesNullRowGroups",
@@ -1136,7 +1260,8 @@ public class HybridScanReaderTest extends CudfTestBase {
         invocation("allRowGroups", HybridScanReader::allRowGroups),
         invocation("totalRowsInRowGroups", r -> r.totalRowsInRowGroups(new int[]{0})),
         invocation("filterRowGroupsWithStats", r -> r.filterRowGroupsWithStats(new int[]{0})),
-        invocation("secondaryFiltersByteRanges", r -> r.secondaryFiltersByteRanges(new int[]{0})),
+        invocation("bloomFiltersByteRanges", r -> r.bloomFiltersByteRanges(new int[]{0})),
+        invocation("dictionaryPagesByteRanges", r -> r.dictionaryPagesByteRanges(new int[]{0})),
         invocation("filterRowGroupsWithDictionaryPages", r ->
             r.filterRowGroupsWithDictionaryPages(new DeviceMemoryBuffer[0], new int[]{0})),
         invocation("filterColumnChunksByteRanges", r -> r.filterColumnChunksByteRanges(new int[]{0})),
@@ -1212,13 +1337,30 @@ public class HybridScanReaderTest extends CudfTestBase {
       return openFromFile(pq, DEFAULT_COLS);
     }
 
+    /** A single 100-row group, small enough that every column chunk holds one data page. */
     static OpenReader rowGroupStats(Path tmp) throws IOException {
       File pq = tmp.resolve("fixture.parquet").toFile();
-      writeRowGroupStatsParquet(pq);
+      writeNoPageIndexParquet(pq, 100, 1,
+          ParquetWriterOptions.StatisticsFrequency.ROWGROUP);
       return openFromFile(pq, DEFAULT_COLS);
     }
 
-    private static OpenReader openFromFile(File pq, String[] cols) throws IOException {
+    /** Two 60,000-row groups, so each column chunk spans 3 data pages (20,000 rows each). */
+    static OpenReader multiPage(Path tmp) throws IOException {
+      File pq = tmp.resolve("fixture.parquet").toFile();
+      writeNoPageIndexParquet(pq, 60_000, 2,
+          ParquetWriterOptions.StatisticsFrequency.PAGE);
+      return openFromFile(pq, DEFAULT_COLS);
+    }
+
+    /** A 60,000-row group with list payloads spanning multiple leaf pages. */
+    static OpenReader multiPageWithList(Path tmp) throws IOException {
+      File pq = tmp.resolve("fixture.parquet").toFile();
+      writeNoPageIndexListParquet(pq);
+      return openFromFile(pq, "id", "zip_code", "list_values");
+    }
+
+    private static OpenReader openFromFile(File pq, String... cols) throws IOException {
       HostMemoryBuffer file = readFileToHostBuffer(pq);
       HostMemoryBuffer footer = null;
       HybridScanReader reader = null;
@@ -1328,23 +1470,57 @@ public class HybridScanReaderTest extends CudfTestBase {
    * Includes a low-cardinality {@code num_units} column ({1, 2, 3} cycle) so the writer's
    * ADAPTIVE dictionary policy emits a dictionary; this lets tests exercise the
    * "no page index, dict exists" path (see
-   * {@link #testSecondaryFiltersByteRangesEmptyForRowGroupStats}).
+   * {@link #testDictionaryPagesByteRangesForRowGroupStats}).
    */
-  private static void writeRowGroupStatsParquet(File path) {
-    int rows = 100;
+  private static void writeNoPageIndexParquet(File path, int rowsPerGroup, int numGroups,
+                                              ParquetWriterOptions.StatisticsFrequency stats) {
     ParquetWriterOptions opts = ParquetWriterOptions.builder()
         .withNonNullableColumns("id", "zip_code", "num_units")
-        .withRowGroupSizeRows(rows)
-        .withStatisticsFrequency(ParquetWriterOptions.StatisticsFrequency.ROWGROUP)
+        .withRowGroupSizeRows(rowsPerGroup)
+        .withStatisticsFrequency(stats)
         .build();
-    try (TableWriter writer = Table.writeParquetChunked(opts, path);
-         ColumnVector id = ColumnVector.fromInts(IntStream.range(0, rows).toArray());
-         ColumnVector zipCode = ColumnVector.fromInts(
-             IntStream.range(0, rows).map(i -> 10000 + i).toArray());
-         ColumnVector numUnits = ColumnVector.fromInts(
-             IntStream.range(0, rows).map(i -> 1 + (i % 3)).toArray());
-         Table t = new Table(id, zipCode, numUnits)) {
-      writer.write(t);
+    try (TableWriter writer = Table.writeParquetChunked(opts, path)) {
+      for (int g = 0; g < numGroups; g++) {
+        int start = g * rowsPerGroup;
+        try (ColumnVector id = ColumnVector.fromInts(
+                 IntStream.range(start, start + rowsPerGroup).toArray());
+             ColumnVector zipCode = ColumnVector.fromInts(
+                 IntStream.range(start, start + rowsPerGroup).toArray());
+             ColumnVector numUnits = ColumnVector.fromInts(
+                 IntStream.range(start, start + rowsPerGroup)
+                     .map(i -> 1 + (i % 3)).toArray());
+             Table t = new Table(id, zipCode, numUnits)) {
+          writer.write(t);
+        }
+      }
+    }
+  }
+
+  /**
+   * Writes one 60,000-row group with a list payload column. Each row holds three values, so
+   * leaf-page boundaries can fall within a logical row.
+   */
+  @SuppressWarnings("unchecked")
+  private static void writeNoPageIndexListParquet(File path) {
+    int rows = 60_000;
+    ParquetWriterOptions opts = ParquetWriterOptions.builder()
+        .withNonNullableColumns("id", "zip_code")
+        .withListColumn(ColumnWriterOptions.listBuilder("list_values", false)
+            .withNonNullableColumns("element")
+            .build())
+        .withRowGroupSizeRows(rows)
+        .withStatisticsFrequency(ParquetWriterOptions.StatisticsFrequency.PAGE)
+        .build();
+    List<Integer>[] listRows = (List<Integer>[]) new List<?>[rows];
+    for (int i = 0; i < rows; i++) {
+      listRows[i] = Arrays.asList(i * 3, i * 3 + 1, i * 3 + 2);
+    }
+    try (ColumnVector id = ColumnVector.fromInts(IntStream.range(0, rows).toArray());
+         ColumnVector zipCode = ColumnVector.fromInts(IntStream.range(0, rows).toArray());
+         ColumnVector listValues = ColumnVector.fromLists(LIST_OF_INTS, listRows);
+         Table table = new Table(id, zipCode, listValues);
+         TableWriter writer = Table.writeParquetChunked(opts, path)) {
+      writer.write(table);
     }
   }
 

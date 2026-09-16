@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -199,6 +199,15 @@ template <typename T>
 inline auto make_data_type()
 {
   return cudf::data_type{cudf::type_to_id<T>()};
+}
+
+TEST(IsSupportedCast, UnsupportedTypes)
+{
+  auto const to_int32 = cudf::data_type{cudf::type_id::INT32};
+  EXPECT_FALSE(cudf::is_supported_cast(cudf::data_type{cudf::type_id::STRING}, to_int32));
+  EXPECT_FALSE(cudf::is_supported_cast(cudf::data_type{cudf::type_id::LIST}, to_int32));
+  EXPECT_FALSE(cudf::is_supported_cast(cudf::data_type{cudf::type_id::STRUCT}, to_int32));
+  EXPECT_FALSE(cudf::is_supported_cast(cudf::data_type{cudf::type_id::DICTIONARY32}, to_int32));
 }
 
 struct CastTimestampsSimple : public cudf::test::BaseFixture {};

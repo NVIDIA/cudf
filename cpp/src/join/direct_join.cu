@@ -12,13 +12,13 @@
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_uvector.hpp>
 
 #include <cub/device/device_for.cuh>
 #include <cub/device/device_transform.cuh>
 #include <cuda/iterator>
 #include <cuda/std/iterator>
+#include <cuda/stream>
 
 #include <cstdint>
 #include <memory>
@@ -71,7 +71,7 @@ std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
 direct_inner_join(column_view const& left_keys,
                   column_view const& right_keys,
                   std::size_t capacity,
-                  rmm::cuda_stream_view stream,
+                  cuda::stream_ref stream,
                   rmm::device_async_resource_ref mr)
 {
   CUDF_EXPECTS(
@@ -94,11 +94,11 @@ direct_inner_join(column_view const& left_keys,
   auto lookup =
     rmm::device_uvector<size_type>(capacity, stream, cudf::get_current_device_resource_ref());
   CUDF_CUDA_TRY(
-    cub::DeviceTransform::Fill(lookup.begin(), lookup.size(), JoinNoMatch, stream.value()));
+    cub::DeviceTransform::Fill(lookup.begin(), lookup.size(), JoinNoMatch, stream.get()));
   CUDF_CUDA_TRY(
     cub::DeviceFor::Bulk(right_keys.size(),
                          scatter_right_index{lookup.data(), right_keys.begin<std::uint32_t>()},
-                         stream.value()));
+                         stream.get()));
 
   // Probe: a single pass emitting the (left index, matched right index) pairs
   auto left_indices =
@@ -130,7 +130,7 @@ std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
 direct_inner_join(column_view const& left_keys,
                   column_view const& right_keys,
                   std::size_t capacity,
-                  rmm::cuda_stream_view stream,
+                  cuda::stream_ref stream,
                   rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();

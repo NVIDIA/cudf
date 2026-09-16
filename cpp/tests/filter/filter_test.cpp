@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -14,6 +14,9 @@
 #include <cudf/stream_compaction.hpp>
 #include <cudf/transform.hpp>
 
+#include <array>
+#include <span>
+
 namespace filters {
 
 struct FilterTestFixture : public cudf::test::BaseFixture {
@@ -24,6 +27,26 @@ struct FilterTestFixture : public cudf::test::BaseFixture {
     __device__ void is_equal(bool * out, T a, T b) { *out = (a == b); }
     )***";
 };
+
+std::vector<std::unique_ptr<cudf::column>> transform_and_apply_retention_mask(
+  std::span<cudf::transform_input const> predicate_inputs,
+  std::string const& predicate_udf,
+  cudf::table_view const& filter_table,
+  cudf::udf_source_type source_type,
+  cudf::null_aware is_null_aware = cudf::null_aware::NO)
+{
+  auto predicate =
+    cudf::transform(predicate_udf,
+                    source_type,
+                    is_null_aware,
+                    std::nullopt,
+                    predicate_inputs,
+                    std::array{cudf::transform_output{cudf::data_type{cudf::type_id::BOOL8},
+                                                      cudf::output_nullability::PRESERVE}},
+                    {},
+                    filter_table.num_rows());
+  return cudf::apply_retention_mask(filter_table, predicate->view().column(0))->release();
+}
 
 template <typename T>
 struct FilterNumericTest : public FilterTestFixture {};
@@ -46,11 +69,11 @@ TYPED_TEST(FilterNumericTest, NoAssertions)
 
   std::vector<std::unique_ptr<cudf::column>> results;
 
-  cudf::filter_input inputs[] = {a, b};
+  cudf::transform_input inputs[] = {a, b};
 
   EXPECT_NO_THROW(
-    results = cudf::filter_extended(
-      inputs, this->udf, {a}, cudf::udf_source_type::CUDA, std::nullopt, cudf::null_aware::NO));
+    results = transform_and_apply_retention_mask(
+      std::span{inputs}, this->udf, cudf::table_view{{a}}, cudf::udf_source_type::CUDA));
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, results[0]->view());
 }
 
@@ -72,10 +95,10 @@ TYPED_TEST(FilterChronoTest, NoAssertions)
     cudf::test::fixed_width_column_wrapper<T>{{T{}, T{}, T{}, T{}, T{}, T{}}, {1, 1, 1, 1, 1, 1}};
 
   std::vector<std::unique_ptr<cudf::column>> results;
-  cudf::filter_input inputs[] = {a, b};
+  cudf::transform_input inputs[] = {a, b};
   EXPECT_NO_THROW(
-    results = cudf::filter_extended(
-      inputs, this->udf, {a}, cudf::udf_source_type::CUDA, std::nullopt, cudf::null_aware::NO));
+    results = transform_and_apply_retention_mask(
+      std::span{inputs}, this->udf, cudf::table_view{{a}}, cudf::udf_source_type::CUDA));
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, results[0]->view());
 }
 
@@ -97,11 +120,11 @@ TYPED_TEST(FilterFixedPointTest, NoAssertions)
     {2, 3, 5, 6, 7}, {1, 1, 1, 1, 1}, numeric::scale_type{0}};
 
   std::vector<std::unique_ptr<cudf::column>> results;
-  cudf::filter_input inputs[] = {a, b};
+  cudf::transform_input inputs[] = {a, b};
 
   EXPECT_NO_THROW(
-    results = cudf::filter_extended(
-      inputs, this->udf, {a}, cudf::udf_source_type::CUDA, std::nullopt, cudf::null_aware::NO));
+    results = transform_and_apply_retention_mask(
+      std::span{inputs}, this->udf, cudf::table_view{{a}}, cudf::udf_source_type::CUDA));
 
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, results[0]->view());
 }
@@ -116,10 +139,10 @@ TEST_F(FilterTestFixture, StringNoAssertions)
   auto expected = cudf::test::strings_column_wrapper{{"2", "3", "5", "6", "7"}, {1, 1, 1, 1, 1}};
 
   std::vector<std::unique_ptr<cudf::column>> results;
-  cudf::filter_input inputs[] = {a, b};
+  cudf::transform_input inputs[] = {a, b};
   EXPECT_NO_THROW(
-    results = cudf::filter_extended(
-      inputs, this->udf, {a}, cudf::udf_source_type::CUDA, std::nullopt, cudf::null_aware::NO));
+    results = transform_and_apply_retention_mask(
+      std::span{inputs}, this->udf, cudf::table_view{{a}}, cudf::udf_source_type::CUDA));
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, results[0]->view());
 }
 
@@ -135,10 +158,10 @@ TEST_F(FilterTest, Basic)
 __device__ void is_even(bool* out, int32_t a) { *out = (a % 2 == 0); }
   )***";
 
-  cudf::filter_input inputs[] = {a};
+  cudf::transform_input inputs[] = {a};
 
-  auto result = cudf::filter_extended(
-    inputs, cuda, {a}, cudf::udf_source_type::CUDA, std::nullopt, cudf::null_aware::NO);
+  auto result = transform_and_apply_retention_mask(
+    std::span{inputs}, cuda, cudf::table_view{{a}}, cudf::udf_source_type::CUDA);
   auto expected = cudf::test::fixed_width_column_wrapper<int32_t>{{2, 4, 6}, {1, 1, 1}};
 
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, result[0]->view());
@@ -147,8 +170,11 @@ __device__ void is_even(bool* out, int32_t a) { *out = (a % 2 == 0); }
 __device__ void is_even(cuda::std::optional<bool>* out, cuda::std::optional<int32_t> a) { *out = a.has_value() && (*a % 2 == 0); }
   )***";
 
-  auto null_result = cudf::filter_extended(
-    inputs, null_cuda, {a}, cudf::udf_source_type::CUDA, std::nullopt, cudf::null_aware::YES);
+  auto null_result   = transform_and_apply_retention_mask(std::span{inputs},
+                                                        null_cuda,
+                                                        cudf::table_view{{a}},
+                                                        cudf::udf_source_type::CUDA,
+                                                        cudf::null_aware::YES);
   auto null_expected = cudf::test::fixed_width_column_wrapper<int32_t>{{2, 4, 6}, {1, 1, 1}};
 
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(null_expected, null_result[0]->view());
@@ -163,10 +189,10 @@ __device__ void is_divisible(bool* out, int32_t a, int32_t b) { *out = ((a % b) 
   )***";
   auto expected    = cudf::test::fixed_width_column_wrapper<int32_t>{{2, 4, 6, 8, 10}};
 
-  cudf::filter_input inputs[] = {a, cudf::scalar_column_view(b)};
+  cudf::transform_input inputs[] = {a, cudf::scalar_column_view(b)};
 
-  auto result = cudf::filter_extended(
-    inputs, cuda, {a}, cudf::udf_source_type::CUDA, std::nullopt, cudf::null_aware::NO);
+  auto result = transform_and_apply_retention_mask(
+    std::span{inputs}, cuda, cudf::table_view{{a}}, cudf::udf_source_type::CUDA);
 
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, result[0]->view());
 }
@@ -205,23 +231,19 @@ __device__ void filter(bool* out,
   auto timezone1 = cudf::test::strings_column_wrapper{"CET"};
   auto timezone2 = cudf::test::strings_column_wrapper{"EST"};
 
-  cudf::filter_input inputs[] = {countries,
-                                 timezones,
-                                 average_tmp,
-                                 average_humidity,
-                                 cudf::scalar_column_view(min_tmp),
-                                 cudf::scalar_column_view(max_tmp),
-                                 cudf::scalar_column_view(min_hum),
-                                 cudf::scalar_column_view(max_hum),
-                                 cudf::scalar_column_view(timezone1),
-                                 cudf::scalar_column_view(timezone2)};
+  cudf::transform_input inputs[] = {countries,
+                                    timezones,
+                                    average_tmp,
+                                    average_humidity,
+                                    cudf::scalar_column_view(min_tmp),
+                                    cudf::scalar_column_view(max_tmp),
+                                    cudf::scalar_column_view(min_hum),
+                                    cudf::scalar_column_view(max_hum),
+                                    cudf::scalar_column_view(timezone1),
+                                    cudf::scalar_column_view(timezone2)};
 
-  auto result = cudf::filter_extended(inputs,
-                                      cuda,
-                                      {countries, timezones},
-                                      cudf::udf_source_type::CUDA,
-                                      std::nullopt,
-                                      cudf::null_aware::NO);
+  auto result = transform_and_apply_retention_mask(
+    std::span{inputs}, cuda, cudf::table_view{{countries, timezones}}, cudf::udf_source_type::CUDA);
 
   EXPECT_EQ(result.size(), 2);
 
@@ -269,23 +291,19 @@ __device__ void filter(bool* out,
   auto timezone1 = cudf::test::strings_column_wrapper{"CET"};
   auto timezone2 = cudf::test::strings_column_wrapper{"EST"};
 
-  cudf::filter_input inputs[] = {countries,
-                                 timezones,
-                                 average_tmp,
-                                 average_humidity,
-                                 cudf::scalar_column_view(min_tmp),
-                                 cudf::scalar_column_view(max_tmp),
-                                 cudf::scalar_column_view(min_hum),
-                                 cudf::scalar_column_view(max_hum),
-                                 cudf::scalar_column_view(timezone1),
-                                 cudf::scalar_column_view(timezone2)};
+  cudf::transform_input inputs[] = {countries,
+                                    timezones,
+                                    average_tmp,
+                                    average_humidity,
+                                    cudf::scalar_column_view(min_tmp),
+                                    cudf::scalar_column_view(max_tmp),
+                                    cudf::scalar_column_view(min_hum),
+                                    cudf::scalar_column_view(max_hum),
+                                    cudf::scalar_column_view(timezone1),
+                                    cudf::scalar_column_view(timezone2)};
 
-  auto result = cudf::filter_extended(inputs,
-                                      cuda,
-                                      {countries, timezones},
-                                      cudf::udf_source_type::CUDA,
-                                      std::nullopt,
-                                      cudf::null_aware::NO);
+  auto result = transform_and_apply_retention_mask(
+    std::span{inputs}, cuda, cudf::table_view{{countries, timezones}}, cudf::udf_source_type::CUDA);
 
   auto expected_countries = cudf::test::strings_column_wrapper({"Germany", "Spain"}, {true, true});
 
@@ -300,7 +318,7 @@ struct ast_expression_executor {
                                              cudf::table_view const& table)
   {
     auto booleans = cudf::compute_column(table, expr);
-    return cudf::apply_boolean_mask(table, booleans->view());
+    return cudf::apply_retention_mask(table, booleans->view());
   }
 };
 
@@ -308,7 +326,8 @@ struct jit_expression_executor {
   static std::unique_ptr<cudf::table> filter(cudf::ast::expression const& expr,
                                              cudf::table_view const& table)
   {
-    return cudf::filter(table, expr, table);
+    auto booleans = cudf::compute_column_jit(table, expr);
+    return cudf::apply_retention_mask(table, booleans->view());
   }
 };
 
@@ -349,7 +368,7 @@ TYPED_TEST(FilterExpressionTest, IsNull)
   auto result        = Executor::filter(filter_expr, this->table);
   auto expected_filter =
     cudf::test::fixed_width_column_wrapper<bool>{{true, true, true, true, true, true, true, false}};
-  auto expected_table = cudf::apply_boolean_mask(this->table, expected_filter);
+  auto expected_table = cudf::apply_retention_mask(this->table, expected_filter);
   CUDF_TEST_EXPECT_TABLES_EQUAL(expected_table->view(), result->view());
 }
 
@@ -365,7 +384,7 @@ TYPED_TEST(FilterExpressionTest, NullEqual)
   auto result = Executor::filter(null_equal_expr, this->table);
   auto expected_filter =
     cudf::test::fixed_width_column_wrapper<bool>{{true, false, true, true, true, true, true, true}};
-  auto expected_table = cudf::apply_boolean_mask(this->table, expected_filter);
+  auto expected_table = cudf::apply_retention_mask(this->table, expected_filter);
   CUDF_TEST_EXPECT_TABLES_EQUAL(expected_table->view(), result->view());
 }
 
@@ -381,7 +400,7 @@ TYPED_TEST(FilterExpressionTest, NullLogicalAnd)
   auto result          = Executor::filter(and_expr, this->table);
   auto expected_filter = cudf::test::fixed_width_column_wrapper<bool>{
     {false, false, false, true, false, false, false, false}};
-  auto expected_table = cudf::apply_boolean_mask(this->table, expected_filter);
+  auto expected_table = cudf::apply_retention_mask(this->table, expected_filter);
   CUDF_TEST_EXPECT_TABLES_EQUAL(expected_table->view(), result->view());
 }
 
@@ -397,7 +416,7 @@ TYPED_TEST(FilterExpressionTest, NullLogicalOr)
   auto result          = Executor::filter(or_expr, this->table);
   auto expected_filter = cudf::test::fixed_width_column_wrapper<bool>{
     {false, true, true, true, false, true, false, false}};
-  auto expected_table = cudf::apply_boolean_mask(this->table, expected_filter);
+  auto expected_table = cudf::apply_retention_mask(this->table, expected_filter);
   CUDF_TEST_EXPECT_TABLES_EQUAL(expected_table->view(), result->view());
 }
 

@@ -71,8 +71,16 @@ include(../cmake/thirdparty/get_cucollections.cmake)
 # * library target --------------------------------------------------------------------------------
 add_library(
   cudf_streaming SHARED
-  src/bloom_filter.cpp src/channel_metadata.cpp src/detail/device_bloom_filter.cu src/parquet.cpp
-  src/partition.cpp src/partition_utils.cpp src/table_chunk.cpp src/utils.cpp
+  src/approx_distinct_count.cpp
+  src/bloom_filter.cpp
+  src/channel_metadata.cpp
+  src/detail/approx_distinct_count.cu
+  src/detail/device_bloom_filter.cu
+  src/parquet.cpp
+  src/partition.cpp
+  src/partition_utils.cpp
+  src/table_chunk.cpp
+  src/utils.cpp
 )
 
 # ##################################################################################################

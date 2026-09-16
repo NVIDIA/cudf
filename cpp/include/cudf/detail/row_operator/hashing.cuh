@@ -22,9 +22,9 @@
 #include <cudf/utilities/traits.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
+#include <cuda/iterator>
 #include <cuda/std/limits>
 #include <cuda/std/type_traits>
-#include <thrust/iterator/transform_iterator.h>
 
 #include <memory>
 
@@ -126,7 +126,7 @@ class device_row_hasher {
     auto const init        = has_columns ? hasher(_table.column(0)) : _seed;
     auto const start_col   = static_cast<size_type>(has_columns);
 
-    auto it = thrust::make_transform_iterator(_table.begin() + start_col, hasher);
+    auto it = cuda::transform_iterator(_table.begin() + start_col, hasher);
     return detail::accumulate(
       it, it + (_table.num_columns() - start_col), init, [](auto hash, auto h) {
         return cudf::hashing::detail::hash_combine(hash, h);
@@ -240,9 +240,10 @@ class row_hasher {
    * @param t The table containing rows to hash
    * @param stream The stream to construct this object on. Not the stream that will be used for
    * comparisons using this object.
+   * @param temp_mr Device memory resource used for temporary allocations
    */
-  row_hasher(table_view const& t, rmm::cuda_stream_view stream)
-    : d_t(preprocessed_table::create(t, stream))
+  row_hasher(table_view const& t, cuda::stream_ref stream, rmm::device_async_resource_ref temp_mr)
+    : d_t(preprocessed_table::create(t, stream, temp_mr))
   {
   }
 

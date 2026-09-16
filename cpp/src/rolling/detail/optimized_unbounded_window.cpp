@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -55,7 +55,7 @@ std::unique_ptr<Base> convert_to(cudf::rolling_aggregation const& aggr)
 std::unique_ptr<column> aggregation_based_rolling_window(table_view const& group_keys,
                                                          column_view const& input,
                                                          rolling_aggregation const& aggr,
-                                                         rmm::cuda_stream_view stream,
+                                                         cuda::stream_ref stream,
                                                          rmm::device_async_resource_ref mr)
 {
   CUDF_EXPECTS(group_keys.num_columns() > 0,
@@ -89,7 +89,7 @@ std::unique_ptr<column> aggregation_based_rolling_window(table_view const& group
 /// Used for input that has no groupby keys. i.e. The window spans the column.
 std::unique_ptr<column> reduction_based_rolling_window(column_view const& input,
                                                        rolling_aggregation const& aggr,
-                                                       rmm::cuda_stream_view stream,
+                                                       cuda::stream_ref stream,
                                                        rmm::device_async_resource_ref mr)
 {
   auto const reduce_results = [&] {
@@ -143,7 +143,7 @@ bool can_optimize_unbounded_window(bool unbounded_preceding,
 std::unique_ptr<column> optimized_unbounded_window(table_view const& group_keys,
                                                    column_view const& input,
                                                    rolling_aggregation const& aggr,
-                                                   rmm::cuda_stream_view stream,
+                                                   cuda::stream_ref stream,
                                                    rmm::device_async_resource_ref mr)
 {
   return group_keys.num_columns() > 0

@@ -11,7 +11,7 @@
 #include <cudf/dictionary/dictionary_factories.hpp>
 #include <cudf/null_mask.hpp>
 
-#include <thrust/iterator/transform_iterator.h>
+#include <cuda/iterator>
 
 struct DictionaryFactoriesTest : public cudf::test::BaseFixture {};
 
@@ -32,7 +32,7 @@ TEST_F(DictionaryFactoriesTest, ColumnViewsWithNulls)
   cudf::test::fixed_width_column_wrapper<float> keys{-11.75, 4.25, 7.125, 0.5, 12.0};
   std::vector<int32_t> h_values{1, 3, 2, 0, 1, 4, 1};
   cudf::test::fixed_width_column_wrapper<int32_t> indices(
-    h_values.begin(), h_values.end(), thrust::make_transform_iterator(h_values.begin(), [](auto v) {
+    h_values.begin(), h_values.end(), cuda::transform_iterator(h_values.begin(), [](auto v) {
       return v > 0;
     }));
   auto dictionary = cudf::make_dictionary_column(keys, indices);

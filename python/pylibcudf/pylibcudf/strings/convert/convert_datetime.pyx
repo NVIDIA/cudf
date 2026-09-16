@@ -10,6 +10,10 @@ from pylibcudf.libcudf.strings.convert cimport (
     convert_datetime as cpp_convert_datetime,
 )
 from pylibcudf.utils cimport _get_stream, _get_memory_resource
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pylibcudf.typing import CudaStreamLike
 from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 from rmm.pylibrmm.stream cimport Stream
 
@@ -22,7 +26,7 @@ cpdef Column to_timestamps(
     Column input,
     DataType timestamp_type,
     str format,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """
@@ -53,7 +57,7 @@ cpdef Column to_timestamps(
     cdef unique_ptr[column] c_result
     cdef string c_format = format.encode()
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
     cdef column_view c_input = input.view()
     with nogil:
@@ -71,7 +75,7 @@ cpdef Column from_timestamps(
     Column timestamps,
     str format,
     Column input_strings_names,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """
@@ -102,7 +106,7 @@ cpdef Column from_timestamps(
     cdef unique_ptr[column] c_result
     cdef string c_format = format.encode()
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
     cdef column_view c_timestamps = timestamps.view()
     cdef column_view c_input_strings_names = input_strings_names.view()
@@ -120,7 +124,7 @@ cpdef Column from_timestamps(
 cpdef Column is_timestamp(
     Column input,
     str format,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """
@@ -148,7 +152,7 @@ cpdef Column is_timestamp(
     cdef unique_ptr[column] c_result
     cdef string c_format = format.encode()
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
     cdef column_view c_input = input.view()
     with nogil:

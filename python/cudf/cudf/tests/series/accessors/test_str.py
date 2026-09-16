@@ -2593,34 +2593,170 @@ def _cat_convert_seq_to_cudf(others):
     return gd_others
 
 
+def _assert_string_index_cat(
+    data, others, sep, na_rep, name=None, sort_result=False
+):
+    pi, gi = pd.Index(data, name=name), cudf.Index(data, name=name)
+
+    expect = pi.str.cat(others=others, sep=sep, na_rep=na_rep)
+    got = gi.str.cat(
+        others=_cat_convert_seq_to_cudf(others), sep=sep, na_rep=na_rep
+    )
+    if sort_result:
+        # TODO: Remove sorting once `.str.cat` supports `join`.
+        # https://github.com/NVIDIA/cudf/issues/5862
+        expect = (
+            expect.sort_values() if not isinstance(expect, str) else expect
+        )
+        got = got.sort_values() if not isinstance(got, str) else got
+    assert_eq(expect, got, exact=False)
+
+
 @pytest.mark.parametrize(
-    "data",
-    [["a", None, "c", None, "e"], ["a", "b", "c", "d", "a"]],
+    "data, others, sep, na_rep, name",
+    [
+        (["1", "2", "3", "4", "5"], None, None, None, None),
+        (
+            ["a", "b", "c", "d", "e"],
+            ["f", "g", "h", "i", "j"],
+            "",
+            None,
+            "index name",
+        ),
+        (["a", "b", "c", "d", "e"], None, " ", None, None),
+        (["a", "b", "c", "d", "e"], None, ",", None, None),
+        (["a", "b", "c", "d", "e"], None, "|", None, None),
+        (["a", "b", "c", "d", "e"], None, "|||", None, None),
+        (["a", None, "c", None, "e"], None, "|", "", None),
+        (["a", None, "c", None, "e"], None, "|", "null", None),
+        (["a", None, "c", None, "e"], None, "|", "a", None),
+    ],
 )
+def test_string_index_str_cat_join(data, others, sep, na_rep, name):
+    _assert_string_index_cat(data, others, sep, na_rep, name)
+
+
+def _assert_string_cat(data, others, sep, na_rep, index=None):
+    ps = pd.Series(data, index=index, dtype="str", name="nice name")
+    gs = cudf.Series(data, index=index, dtype="str", name="nice name")
+    is_any_others_ndarray = isinstance(others, (list, tuple)) and any(
+        isinstance(item, np.ndarray) for item in others
+    )
+
+    expect = ps.str.cat(others=others, sep=sep, na_rep=na_rep)
+    got = gs.str.cat(
+        others=_cat_convert_seq_to_cudf(others), sep=sep, na_rep=na_rep
+    )
+    if is_any_others_ndarray:
+        # pandas returns Index[object] which cuDF doesn't support
+        expect.index = expect.index.astype(ps.index.dtype)
+    assert_eq(expect, got)
+
+
+@pytest.mark.parametrize(
+    "data, sep, na_rep",
+    [
+        (["AbC", "de", "FGHI", "j", "kLm"], None, None),
+        (["AbC", "de", "FGHI", "j", "kLm"], "", None),
+        (["AbC", "de", "FGHI", "j", "kLm"], "|", None),
+        (["AbC", "de", "FGHI", "j", "kLm"], "|||", None),
+        (["nOPq", None, "RsT", None, "uVw"], "|", None),
+        (["nOPq", None, "RsT", None, "uVw"], "|", ""),
+        (["nOPq", None, "RsT", None, "uVw"], "|", "null"),
+        ([None, None, None, None, None], "|", "null"),
+    ],
+)
+def test_string_cat_join(data, sep, na_rep):
+    _assert_string_cat(data, None, sep, na_rep)
+
+
+@pytest.mark.parametrize(
+    "data, others, sep, na_rep",
+    [
+        pytest.param(
+            ["nOPq", None, "RsT", None, "uVw"],
+            ["f", "g", "h", "i", "j"],
+            None,
+            None,
+        ),
+        pytest.param(
+            ["nOPq", None, "RsT", None, "uVw"],
+            ["f", "g", "h", "i", "j"],
+            "|",
+            "",
+        ),
+        pytest.param(
+            ["nOPq", None, "RsT", None, "uVw"],
+            pd.Series(["f", "g", "h", "i", "j"]),
+            "|",
+            "null",
+        ),
+        pytest.param(
+            [None, None, None, None, None],
+            ["f", "g", "h", "i", "j"],
+            "|",
+            None,
+        ),
+        pytest.param(
+            [None, None, None, None, None],
+            pd.Index(["f", "g", "h", "i", "j"]),
+            "|",
+            "null",
+        ),
+    ],
+)
+def test_string_cat_elementwise_nulls(data, others, sep, na_rep):
+    _assert_string_cat(data, others, sep, na_rep)
+
+
 @pytest.mark.parametrize(
     "others",
     [
-        None,
-        ["f", "g", "h", "i", "j"],
-        pd.Series(["AbC", "de", "FGHI", "j", "kLm"]),
-        pd.Index(["f", "g", "h", "i", "j"]),
-        pd.Index(["AbC", "de", "FGHI", "j", "kLm"]),
-        [
-            np.array(["f", "g", "h", "i", "j"]),
-            np.array(["f", "g", "h", "i", "j"]),
-        ],
-        [
-            pd.Series(["f", "g", "h", "i", "j"]),
-            pd.Series(["f", "g", "h", "i", "j"]),
-        ],
+        pytest.param(["f", "g", "h", "i", "j"], id="list"),
+        pytest.param(("f", "g", "h", "i", "j"), id="tuple"),
+        pytest.param(pd.Series(["f", "g", "h", "i", "j"]), id="series"),
+        pytest.param(pd.Index(["f", "g", "h", "i", "j"]), id="index"),
+        pytest.param(
+            (
+                np.array(["f", "g", "h", "i", "j"]),
+                np.array(["f", "g", "h", "i", "j"]),
+            ),
+            id="tuple-of-ndarrays",
+        ),
+        pytest.param(
+            [
+                np.array(["f", "g", "h", "i", "j"]),
+                np.array(["f", "g", "h", "i", "j"]),
+            ],
+            id="list-of-ndarrays",
+        ),
+        pytest.param(
+            [
+                pd.Series(["f", "g", "h", "i", "j"]),
+                pd.Series(["f", "g", "h", "i", "j"]),
+            ],
+            id="list-of-series",
+        ),
+        pytest.param(
+            (
+                pd.Series(["f", "g", "h", "i", "j"]),
+                pd.Series(["f", "g", "h", "i", "j"]),
+            ),
+            id="tuple-of-series",
+        ),
         pytest.param(
             [
                 pd.Series(["f", "g", "h", "i", "j"]),
                 np.array(["f", "g", "h", "i", "j"]),
             ],
-            marks=pytest.mark.xfail(
-                reason="https://github.com/rapidsai/cudf/issues/5862"
+            id="list-of-series-and-ndarray",
+        ),
+        pytest.param(
+            (
+                pd.Series(["f", "g", "h", "i", "j"]),
+                np.array(["f", "g", "h", "i", "j"]),
             ),
+            id="tuple-of-series-and-ndarray",
         ),
         pytest.param(
             (
@@ -2633,199 +2769,122 @@ def _cat_convert_seq_to_cudf(others):
                 np.array(["f", "a", "b", "f", "a"]),
                 pd.Index(["f", "g", "h", "i", "j"]),
             ),
-            marks=pytest.mark.xfail(
-                reason="https://github.com/pandas-dev/pandas/issues/33436"
-            ),
+            id="heterogeneous-tuple",
         ),
-        [
-            pd.Series(
-                ["hello", "world", "abc", "xyz", "pqr"],
-                index=["a", "b", "c", "d", "e"],
-            ),
-            pd.Series(
-                ["abc", "xyz", "hello", "pqr", "world"],
-                index=["a", "b", "c", "d", "e"],
-            ),
-        ],
-        [
-            pd.Series(
-                ["hello", "world", "abc", "xyz", "pqr"],
-                index=[10, 11, 12, 13, 14],
-            ),
-            pd.Series(
-                ["abc", "xyz", "hello", "pqr", "world"],
-                index=[10, 15, 11, 13, 14],
-            ),
-        ],
-        [
-            pd.Series(
-                ["hello", "world", "abc", "xyz", "pqr"],
-                index=["1", "2", "3", "4", "5"],
-            ),
-            pd.Series(
-                ["abc", "xyz", "hello", "pqr", "world"],
-                index=["1", "2", "3", "4", "5"],
-            ),
-        ],
+        pytest.param(
+            [
+                pd.Index(["f", "g", "h", "i", "j"]),
+                np.array(["f", "a", "b", "f", "a"]),
+                pd.Series(["f", "g", "h", "i", "j"]),
+                np.array(["f", "a", "b", "f", "a"]),
+                np.array(["f", "a", "b", "f", "a"]),
+                pd.Index(["f", "g", "h", "i", "j"]),
+                np.array(["f", "a", "b", "f", "a"]),
+                pd.Index(["f", "g", "h", "i", "j"]),
+            ],
+            id="heterogeneous-list",
+        ),
     ],
 )
-@pytest.mark.parametrize("sep", [None, "", " ", ",", "|||"])
-@pytest.mark.parametrize("na_rep", [None, "", "null", "a"])
-@pytest.mark.parametrize("name", [None, "This is the name"])
-def test_string_index_duplicate_str_cat(data, others, sep, na_rep, name):
-    pi, gi = pd.Index(data, name=name), cudf.Index(data, name=name)
-
-    pd_others = others
-    gd_others = _cat_convert_seq_to_cudf(others)
-
-    got = gi.str.cat(others=gd_others, sep=sep, na_rep=na_rep)
-    expect = pi.str.cat(others=pd_others, sep=sep, na_rep=na_rep)
-
-    # TODO: Remove got.sort_values call once we have `join` param support
-    # in `.str.cat`
-    # https://github.com/rapidsai/cudf/issues/5862
-
-    assert_eq(
-        expect.sort_values() if not isinstance(expect, str) else expect,
-        got.sort_values() if not isinstance(got, str) else got,
-        exact=False,
-    )
+def test_string_cat_input_forms(others):
+    _assert_string_cat(["AbC", "de", "FGHI", "j", "kLm"], others, "|", None)
 
 
 @pytest.mark.parametrize(
-    "others",
+    "index, others",
     [
-        None,
-        ["f", "g", "h", "i", "j"],
-        ("f", "g", "h", "i", "j"),
-        pd.Series(["f", "g", "h", "i", "j"]),
-        pd.Series(["AbC", "de", "FGHI", "j", "kLm"]),
-        pd.Index(["f", "g", "h", "i", "j"]),
-        pd.Index(["AbC", "de", "FGHI", "j", "kLm"]),
-        (
-            np.array(["f", "g", "h", "i", "j"]),
-            np.array(["f", "g", "h", "i", "j"]),
+        pytest.param(
+            [10, 11, 12, 13, 14],
+            pd.Series(["f", "g", "h", "i", "j"]),
+            id="series-reindex",
         ),
-        [
-            np.array(["f", "g", "h", "i", "j"]),
-            np.array(["f", "g", "h", "i", "j"]),
-        ],
-        [
-            pd.Series(["f", "g", "h", "i", "j"]),
-            pd.Series(["f", "g", "h", "i", "j"]),
-        ],
-        (
-            pd.Series(["f", "g", "h", "i", "j"]),
-            pd.Series(["f", "g", "h", "i", "j"]),
+        pytest.param(
+            None,
+            [
+                pd.Series(["hello", "world", "abc", "xyz", "pqr"]),
+                pd.Series(["abc", "xyz", "hello", "pqr", "world"]),
+            ],
+            id="multiple-series-default-index",
         ),
-        [
-            pd.Series(["f", "g", "h", "i", "j"]),
-            np.array(["f", "g", "h", "i", "j"]),
-        ],
-        (
-            pd.Series(["f", "g", "h", "i", "j"]),
-            np.array(["f", "g", "h", "i", "j"]),
+        pytest.param(
+            None,
+            [
+                pd.Series(
+                    ["hello", "world", "abc", "xyz", "pqr"],
+                    index=[10, 11, 12, 13, 14],
+                ),
+                pd.Series(
+                    ["abc", "xyz", "hello", "pqr", "world"],
+                    index=[10, 15, 11, 13, 14],
+                ),
+            ],
+            id="multiple-series-partial-integer-index",
         ),
-        (
-            pd.Series(["f", "g", "h", "i", "j"]),
-            np.array(["f", "a", "b", "f", "a"]),
-            pd.Series(["f", "g", "h", "i", "j"]),
-            np.array(["f", "a", "b", "f", "a"]),
-            np.array(["f", "a", "b", "f", "a"]),
-            pd.Index(["1", "2", "3", "4", "5"]),
-            np.array(["f", "a", "b", "f", "a"]),
-            pd.Index(["f", "g", "h", "i", "j"]),
+        pytest.param(
+            None,
+            [
+                pd.Series(
+                    ["hello", "world", "abc", "xyz", "pqr"],
+                    index=["10", "11", "12", "13", "14"],
+                ),
+                pd.Series(
+                    ["abc", "xyz", "hello", "pqr", "world"],
+                    index=["10", "11", "12", "13", "14"],
+                ),
+            ],
+            marks=pytest.mark.xfail(
+                reason="https://github.com/NVIDIA/cudf/issues/21123"
+            ),
+            id="multiple-series-matching-string-index",
         ),
-        [
-            pd.Index(["f", "g", "h", "i", "j"]),
-            np.array(["f", "a", "b", "f", "a"]),
-            pd.Series(["f", "g", "h", "i", "j"]),
-            np.array(["f", "a", "b", "f", "a"]),
-            np.array(["f", "a", "b", "f", "a"]),
-            pd.Index(["f", "g", "h", "i", "j"]),
-            np.array(["f", "a", "b", "f", "a"]),
-            pd.Index(["f", "g", "h", "i", "j"]),
-        ],
-        [
-            pd.Series(["hello", "world", "abc", "xyz", "pqr"]),
-            pd.Series(["abc", "xyz", "hello", "pqr", "world"]),
-        ],
-        [
-            pd.Series(
-                ["hello", "world", "abc", "xyz", "pqr"],
-                index=[10, 11, 12, 13, 14],
+        pytest.param(
+            None,
+            [
+                pd.Series(
+                    ["hello", "world", "abc", "xyz", "pqr"],
+                    index=["10", "11", "12", "13", "14"],
+                ),
+                pd.Series(
+                    ["abc", "xyz", "hello", "pqr", "world"],
+                    index=["10", "15", "11", "13", "14"],
+                ),
+            ],
+            marks=pytest.mark.xfail(
+                reason="https://github.com/NVIDIA/cudf/issues/21123"
             ),
-            pd.Series(
-                ["abc", "xyz", "hello", "pqr", "world"],
-                index=[10, 15, 11, 13, 14],
+            id="multiple-series-partial-string-index",
+        ),
+        pytest.param(
+            None,
+            [
+                pd.Series(
+                    ["hello", "world", "abc", "xyz", "pqr"],
+                    index=["1", "2", "3", "4", "5"],
+                ),
+                pd.Series(
+                    ["abc", "xyz", "hello", "pqr", "world"],
+                    index=["10", "11", "12", "13", "14"],
+                ),
+            ],
+            marks=pytest.mark.xfail(
+                reason="https://github.com/NVIDIA/cudf/issues/21123"
             ),
-        ],
-        [
-            pd.Series(
-                ["hello", "world", "abc", "xyz", "pqr"],
-                index=["10", "11", "12", "13", "14"],
-            ),
-            pd.Series(
-                ["abc", "xyz", "hello", "pqr", "world"],
-                index=["10", "11", "12", "13", "14"],
-            ),
-        ],
-        [
-            pd.Series(
-                ["hello", "world", "abc", "xyz", "pqr"],
-                index=["10", "11", "12", "13", "14"],
-            ),
-            pd.Series(
-                ["abc", "xyz", "hello", "pqr", "world"],
-                index=["10", "15", "11", "13", "14"],
-            ),
-        ],
-        [
-            pd.Series(
-                ["hello", "world", "abc", "xyz", "pqr"],
-                index=["1", "2", "3", "4", "5"],
-            ),
-            pd.Series(
-                ["abc", "xyz", "hello", "pqr", "world"],
-                index=["10", "11", "12", "13", "14"],
-            ),
-        ],
+            id="multiple-series-disjoint-string-index",
+        ),
     ],
 )
+def test_string_cat_series_alignment(index, others):
+    _assert_string_cat(
+        ["AbC", "de", "FGHI", "j", "kLm"], others, "|", None, index
+    )
+
+
 @pytest.mark.parametrize("sep", [None, "", " ", "|", ",", "|||"])
 @pytest.mark.parametrize("na_rep", [None, "", "null", "a"])
-def test_string_cat(ps_gs, others, sep, na_rep, index, request):
-    # https://github.com/pandas-dev/pandas/issues/63371
-    ps, gs = ps_gs
-    is_any_others_ndarray = isinstance(others, (list, tuple)) and any(
-        isinstance(item, np.ndarray) for item in others
-    )
-    is_any_others_series_with_string_index = isinstance(
-        others, (list, tuple)
-    ) and any(
-        isinstance(item, pd.Series)
-        and isinstance(item.index.dtype, pd.StringDtype)
-        for item in others
-    )
-    request.applymarker(
-        pytest.mark.xfail(
-            is_any_others_series_with_string_index,
-            reason="https://github.com/rapidsai/cudf/issues/21123",
-        )
-    )
-    pd_others = others
-    gd_others = _cat_convert_seq_to_cudf(others)
-
-    expect = ps.str.cat(others=pd_others, sep=sep, na_rep=na_rep)
-    got = gs.str.cat(others=gd_others, sep=sep, na_rep=na_rep)
-    if is_any_others_ndarray:
-        # pandas returns Index[object] which cuDF doesn't support
-        expect.index = expect.index.astype(got.index.dtype)
-    assert_eq(expect, got)
-
+def test_string_cat_index_others(data, sep, na_rep):
     index = ["1", "2", "3", "4", "5"]
-    ps.index = index
-    gs.index = index
+    ps = pd.Series(data, index=index, dtype="str", name="nice name")
+    gs = cudf.Series(data, index=index, dtype="str", name="nice name")
 
     expect = ps.str.cat(others=ps.index, sep=sep, na_rep=na_rep)
     got = gs.str.cat(others=gs.index, sep=sep, na_rep=na_rep)
@@ -2844,14 +2903,6 @@ def test_string_cat(ps_gs, others, sep, na_rep, index, request):
 
 
 @pytest.mark.parametrize(
-    "data",
-    [
-        ["1", "2", "3", "4", "5"],
-        ["a", "b", "c", "d", "e"],
-        ["a", "b", "c", None, "e"],
-    ],
-)
-@pytest.mark.parametrize(
     "others",
     [
         None,
@@ -2895,12 +2946,10 @@ def test_string_cat(ps_gs, others, sep, na_rep, index, request):
         ],
         [
             pd.Series(
-                ["hello", "world", "abc", "xyz", "pqr"],
-                index=["a", "b", "c", "d", "e"],
+                ["hello", "world", "abc", "xyz", "pqr"], index=list("abcde")
             ),
             pd.Series(
-                ["abc", "xyz", "hello", "pqr", "world"],
-                index=["a", "b", "c", "d", "e"],
+                ["abc", "xyz", "hello", "pqr", "world"], index=list("abcde")
             ),
         ],
         [
@@ -2925,22 +2974,54 @@ def test_string_cat(ps_gs, others, sep, na_rep, index, request):
         ],
     ],
 )
-@pytest.mark.parametrize("sep", [None, "", " ", "|", "|||"])
-@pytest.mark.parametrize("na_rep", [None, "", "null", "a"])
-@pytest.mark.parametrize("name", [None, "This is the name"])
-def test_string_index_str_cat(data, others, sep, na_rep, name):
-    pi, gi = pd.Index(data, name=name), cudf.Index(data, name=name)
+def test_string_index_str_cat_input_forms(others):
+    _assert_string_index_cat(["a", "b", "c", "d", "e"], others, "|", None)
 
-    pd_others = others
-    gd_others = _cat_convert_seq_to_cudf(others)
 
-    expect = pi.str.cat(others=pd_others, sep=sep, na_rep=na_rep)
-    got = gi.str.cat(others=gd_others, sep=sep, na_rep=na_rep)
-
-    assert_eq(
-        expect,
-        got,
-        exact=False,
+@pytest.mark.parametrize(
+    "others",
+    [
+        None,
+        ["f", "g", "h", "i", "j"],
+        pd.Series(["AbC", "de", "FGHI", "j", "kLm"]),
+        pd.Index(["f", "g", "h", "i", "j"]),
+        [
+            np.array(["f", "g", "h", "i", "j"]),
+            np.array(["f", "g", "h", "i", "j"]),
+        ],
+        [
+            pd.Series(["f", "g", "h", "i", "j"]),
+            pd.Series(["f", "g", "h", "i", "j"]),
+        ],
+        pytest.param(
+            [
+                pd.Series(["f", "g", "h", "i", "j"]),
+                np.array(["f", "g", "h", "i", "j"]),
+            ],
+            marks=pytest.mark.xfail(
+                reason="https://github.com/NVIDIA/cudf/issues/5862"
+            ),
+        ),
+        pytest.param(
+            (
+                pd.Series(["f", "g", "h", "i", "j"]),
+                np.array(["f", "a", "b", "f", "a"]),
+                pd.Series(["f", "g", "h", "i", "j"]),
+                np.array(["f", "a", "b", "f", "a"]),
+                np.array(["f", "a", "b", "f", "a"]),
+                pd.Index(["1", "2", "3", "4", "5"]),
+                np.array(["f", "a", "b", "f", "a"]),
+                pd.Index(["f", "g", "h", "i", "j"]),
+            ),
+            marks=pytest.mark.xfail(
+                reason="https://github.com/pandas-dev/pandas/issues/33436"
+            ),
+        ),
+    ],
+)
+def test_string_index_duplicate_str_cat_input_forms(others):
+    _assert_string_index_cat(
+        ["a", "b", "c", "d", "a"], others, "|", None, sort_result=True
     )
 
 

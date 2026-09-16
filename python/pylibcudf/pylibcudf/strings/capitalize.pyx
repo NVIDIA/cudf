@@ -14,6 +14,10 @@ from pylibcudf.libcudf.strings cimport capitalize as cpp_capitalize
 from pylibcudf.scalar cimport Scalar
 from pylibcudf.strings.char_types cimport string_character_types
 from pylibcudf.utils cimport _get_stream, _get_memory_resource
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pylibcudf.typing import CudaStreamLike
 from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 from rmm.pylibrmm.stream cimport Stream
 
@@ -25,10 +29,10 @@ __all__ = ["capitalize", "is_title", "title"]
 cpdef Column capitalize(
     Column input,
     Scalar delimiters=None,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
     # TODO: default scalar values
-    # https://github.com/rapidsai/cudf/issues/15505
+    # https://github.com/NVIDIA/cudf/issues/15505
 ):
     """Returns a column of capitalized strings.
 
@@ -48,13 +52,13 @@ cpdef Column capitalize(
     """
     cdef unique_ptr[column] c_result
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
     cdef column_view c_input
 
     if delimiters is None:
         delimiters = Scalar.from_libcudf(
-            cpp_make_string_scalar("".encode(), _stream.view().value(), mr.get_mr())
+            cpp_make_string_scalar("".encode(), _stream.view().get(), mr.get_mr())
         )
 
     cdef const string_scalar* cpp_delimiters = <const string_scalar*>(
@@ -76,7 +80,7 @@ cpdef Column capitalize(
 cpdef Column title(
     Column input,
     string_character_types sequence_type=string_character_types.ALPHA,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """Modifies first character of each word to upper-case and lower-cases
@@ -98,7 +102,7 @@ cpdef Column title(
     """
     cdef unique_ptr[column] c_result
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
     cdef column_view c_input = input.view()
     with nogil:
@@ -109,7 +113,7 @@ cpdef Column title(
     return Column.from_libcudf(move(c_result), _stream, mr)
 
 
-cpdef Column is_title(Column input, object stream=None, DeviceMemoryResource mr=None):
+cpdef Column is_title(Column input, object stream: CudaStreamLike | None = None, DeviceMemoryResource mr=None):
     """Checks if the strings in the input column are title formatted.
 
     For details, see :cpp:func:`is_title`.
@@ -126,7 +130,7 @@ cpdef Column is_title(Column input, object stream=None, DeviceMemoryResource mr=
     """
     cdef unique_ptr[column] c_result
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
     cdef column_view c_input = input.view()
     with nogil:

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -15,9 +15,8 @@
 #include <cudf/types.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
-
 #include <cuda/iterator>
+#include <cuda/stream>
 #include <thrust/transform.h>
 
 namespace cudf {
@@ -43,7 +42,7 @@ struct is_unique_fn {
 std::unique_ptr<cudf::column> segmented_nunique(column_view const& col,
                                                 device_span<size_type const> offsets,
                                                 null_policy null_handling,
-                                                rmm::cuda_stream_view stream,
+                                                cuda::stream_ref stream,
                                                 rmm::device_async_resource_ref mr)
 {
   // only support non-nested types
@@ -52,19 +51,21 @@ std::unique_ptr<cudf::column> segmented_nunique(column_view const& col,
 
   // compute the unique identifiers within each segment
   auto const identifiers = [&] {
-    auto const d_col      = column_device_view::create(col, stream);
-    auto const comparator = cudf::detail::row::equality::self_comparator{table_view({col}), stream};
+    auto const temp_mr = cudf::get_current_device_resource_ref();
+    auto const d_col   = column_device_view::create(col, stream, temp_mr);
+    auto const comparator =
+      cudf::detail::row::equality::self_comparator{table_view({col}), stream, temp_mr};
     auto const row_equal =
       comparator.equal_to<false>(cudf::nullate::DYNAMIC{col.has_nulls()}, null_equality::EQUAL);
 
-    auto labels = rmm::device_uvector<size_type>(col.size(), stream);
+    auto labels = rmm::device_uvector<size_type>(col.size(), stream, temp_mr);
     cudf::detail::label_segments(
       offsets.begin(), offsets.end(), labels.begin(), labels.end(), stream);
     auto fn = is_unique_fn<decltype(row_equal)>{
       *d_col, row_equal, null_handling, offsets.data(), labels.data()};
 
-    auto identifiers = rmm::device_uvector<size_type>(col.size(), stream);
-    thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    auto identifiers = rmm::device_uvector<size_type>(col.size(), stream, temp_mr);
+    thrust::transform(rmm::exec_policy_nosync(stream, temp_mr),
                       cuda::counting_iterator<size_type>{0},
                       cuda::counting_iterator<size_type>{col.size()},
                       identifiers.begin(),

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -33,8 +33,9 @@
 #include <cudf/utilities/traits.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/exec_policy.hpp>
+
+#include <cuda/stream>
 
 #include <memory>
 
@@ -45,20 +46,8 @@ namespace detail {
 static std::unique_ptr<column> empty_output_for_rolling_aggregation(column_view const& input,
                                                                     rolling_aggregation const& agg)
 {
-  // TODO:
-  //  Ideally, for UDF aggregations, the returned column would match
-  //  the agg's return type. It currently returns empty_like(input), because:
-  //    1. This preserves prior behavior for empty input columns.
-  //    2. There is insufficient information to construct nested return columns.
-  //       `cudf::make_udf_aggregation()` expresses the return type as a `data_type`
-  //        which cannot express recursively nested types (e.g. `STRUCT<LIST<INT32>>`.)
-  //    3. In any case, UDFs that return nested types are not currently supported.
-  //  Constructing a more accurate return type for UDFs will be taken up
-  //  at a later date.
-  return agg.kind == aggregation::CUDA || agg.kind == aggregation::PTX
-           ? empty_like(input)
-           : cudf::detail::dispatch_type_and_aggregation(
-               input.type(), agg.kind, agg_specific_empty_output{}, input, agg);
+  return cudf::detail::dispatch_type_and_aggregation(
+    input.type(), agg.kind, agg_specific_empty_output{}, input, agg);
 }
 
 /**
@@ -206,7 +195,7 @@ struct rolling_postprocessor {
   PrecedingWindowIterator preceding_window_begin;
   FollowingWindowIterator following_window_begin;
   int min_periods;
-  rmm::cuda_stream_view stream;
+  cuda::stream_ref stream;
   rmm::device_async_resource_ref mr;
 
   // Default case: pass through the intermediate result unchanged
@@ -430,7 +419,7 @@ struct rolling_window_launcher {
                                      FollowingWindowIterator following_window_begin,
                                      int min_periods,
                                      [[maybe_unused]] rolling_aggregation const& agg,
-                                     rmm::cuda_stream_view stream,
+                                     cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr)
     requires(corresponding_rolling_operator<InputType, op>::type::is_supported())
   {
@@ -456,14 +445,14 @@ struct rolling_window_launcher {
       auto const grid           = cudf::detail::grid_1d(input.size(), block_size);
 
       gpu_rolling<OutType, block_size>
-        <<<grid.num_blocks, block_size, 0, stream.value()>>>(*d_inp_ptr,
-                                                             input.has_nulls(),
-                                                             *d_default_out_ptr,
-                                                             *d_out_ptr,
-                                                             d_valid_count.data(),
-                                                             device_op,
-                                                             preceding_window_begin,
-                                                             following_window_begin);
+        <<<grid.num_blocks, block_size, 0, stream.get()>>>(*d_inp_ptr,
+                                                           input.has_nulls(),
+                                                           *d_default_out_ptr,
+                                                           *d_out_ptr,
+                                                           d_valid_count.data(),
+                                                           device_op,
+                                                           preceding_window_begin,
+                                                           following_window_begin);
       CUDF_CUDA_TRY(cudaGetLastError());
 
       auto const valid_count = d_valid_count.value(stream);
@@ -497,7 +486,7 @@ struct rolling_window_launcher {
                                      FollowingWindowIterator,
                                      int,
                                      rolling_aggregation const&,
-                                     rmm::cuda_stream_view,
+                                     cuda::stream_ref,
                                      rmm::device_async_resource_ref)
     requires(!corresponding_rolling_operator<InputType, op>::type::is_supported())
   {
@@ -522,7 +511,7 @@ struct dispatch_rolling {
                                      FollowingWindowIterator following_window_begin,
                                      size_type min_periods,
                                      rolling_aggregation const& agg,
-                                     rmm::cuda_stream_view stream,
+                                     cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr)
   {
     // do any preprocessing of aggregations (eg, MIN -> ARGMIN, COLLECT_LIST -> nothing)
@@ -577,7 +566,7 @@ std::unique_ptr<column> rolling_window(column_view const& input,
                                        FollowingWindowIterator following_window_begin,
                                        size_type min_periods,
                                        rolling_aggregation const& agg,
-                                       rmm::cuda_stream_view stream,
+                                       cuda::stream_ref stream,
                                        rmm::device_async_resource_ref mr)
 {
   static_assert(warp_size == cudf::detail::size_in_bits<cudf::bitmask_type>(),

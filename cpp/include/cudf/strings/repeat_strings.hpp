@@ -50,7 +50,7 @@ namespace strings {
 std::unique_ptr<string_scalar> repeat_string(
   string_scalar const& input,
   size_type repeat_times,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -81,7 +81,7 @@ std::unique_ptr<string_scalar> repeat_string(
 std::unique_ptr<column> repeat_strings(
   strings_column_view const& input,
   size_type repeat_times,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -118,7 +118,7 @@ std::unique_ptr<column> repeat_strings(
 std::unique_ptr<column> repeat_strings(
   strings_column_view const& input,
   column_view const& repeat_times,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /** @} */  // end of doxygen group

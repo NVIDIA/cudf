@@ -1239,7 +1239,7 @@ class NumericalColumn(NumericalBaseColumn):
                 if self_dtype_numpy.kind == "f":
                     # Exclude 'np.inf', '-np.inf'
                     not_inf = (self != np.inf) & (self != -np.inf)
-                    col = self.apply_boolean_mask(not_inf)
+                    col = self.apply_retention_mask(not_inf)
                 else:
                     col = self
 

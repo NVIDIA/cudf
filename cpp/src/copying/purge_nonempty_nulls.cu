@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #include <cudf/copying.hpp>
@@ -26,7 +26,7 @@ bool type_may_have_nonempty_nulls(cudf::type_id const& type)
 }
 
 /// Check if the (STRING/LIST) column has any null rows with non-zero length.
-bool has_nonempty_null_rows(cudf::column_view const& input, rmm::cuda_stream_view stream)
+bool has_nonempty_null_rows(cudf::column_view const& input, cuda::stream_ref stream)
 {
   if (not input.has_nulls()) { return false; }  // No nulls => no dirty rows.
 
@@ -53,7 +53,7 @@ bool has_nonempty_null_rows(cudf::column_view const& input, rmm::cuda_stream_vie
 /**
  * @copydoc cudf::detail::has_nonempty_nulls
  */
-bool has_nonempty_nulls(cudf::column_view const& input, rmm::cuda_stream_view stream)
+bool has_nonempty_nulls(cudf::column_view const& input, cuda::stream_ref stream)
 {
   auto const type = input.type().id();
 
@@ -77,7 +77,7 @@ bool has_nonempty_nulls(cudf::column_view const& input, rmm::cuda_stream_view st
 }
 
 std::unique_ptr<column> purge_nonempty_nulls(column_view const& input,
-                                             rmm::cuda_stream_view stream,
+                                             cuda::stream_ref stream,
                                              rmm::device_async_resource_ref mr)
 {
   // If not compound types (LIST/STRING/STRUCT/DICTIONARY) then just copy the input into output.
@@ -117,7 +117,7 @@ bool may_have_nonempty_nulls(column_view const& input)
 /**
  * @copydoc cudf::has_nonempty_nulls
  */
-bool has_nonempty_nulls(column_view const& input, rmm::cuda_stream_view stream)
+bool has_nonempty_nulls(column_view const& input, cuda::stream_ref stream)
 {
   return detail::has_nonempty_nulls(input, stream);
 }
@@ -126,7 +126,7 @@ bool has_nonempty_nulls(column_view const& input, rmm::cuda_stream_view stream)
  * @copydoc cudf::purge_nonempty_nulls(column_view const&, rmm::device_async_resource_ref)
  */
 std::unique_ptr<cudf::column> purge_nonempty_nulls(column_view const& input,
-                                                   rmm::cuda_stream_view stream,
+                                                   cuda::stream_ref stream,
                                                    rmm::device_async_resource_ref mr)
 {
   return detail::purge_nonempty_nulls(input, stream, mr);

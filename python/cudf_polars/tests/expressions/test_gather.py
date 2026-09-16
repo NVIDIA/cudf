@@ -50,7 +50,7 @@ def test_gather_empty_indices(engine: pl.GPUEngine):
 
 
 @pytest.mark.parametrize("negative", [False, True])
-def test_gather_out_of_bounds(engine_raise_on_fail: pl.GPUEngine, negative):
+def test_gather_out_of_bounds(engine: pl.GPUEngine, negative):
     ldf = pl.LazyFrame(
         {
             "a": [1, 2, 3, 4, 5, 6, 7],
@@ -60,8 +60,13 @@ def test_gather_out_of_bounds(engine_raise_on_fail: pl.GPUEngine, negative):
 
     query = ldf.select(pl.col("a").gather(pl.col("b")))
 
-    with pytest.raises(ValueError, match="gather indices are out of bounds"):
-        query.collect(engine=engine_raise_on_fail)
+    match = "gather indices are out of bounds"
+    if is_streaming_engine(engine):
+        with pytest.RaisesGroup(pytest.RaisesExc(ValueError, match=match)):
+            query.collect(engine=engine)
+    else:
+        with pytest.raises(ValueError, match=match):
+            query.collect(engine=engine)
 
 
 @pytest.mark.parametrize(
@@ -79,7 +84,7 @@ def test_gather_out_of_bounds(engine_raise_on_fail: pl.GPUEngine, negative):
         pytest.param(
             pl.lit([7]),
             marks=pytest.mark.xfail(
-                reason="List literal loses nesting in gather: https://github.com/rapidsai/cudf/issues/19610"
+                reason="List literal loses nesting in gather: https://github.com/NVIDIA/cudf/issues/19610"
             ),
         ),
         pl.lit([[7]]),

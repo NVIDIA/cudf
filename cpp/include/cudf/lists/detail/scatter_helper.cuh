@@ -125,7 +125,7 @@ std::unique_ptr<column> build_lists_child_column_recursive(
   cudf::column_view const& list_offsets,
   cudf::lists_column_view const& source_lists_column_view,
   cudf::lists_column_view const& target_lists_column_view,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr);
 
 }  // namespace detail

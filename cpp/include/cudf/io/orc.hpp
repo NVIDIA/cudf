@@ -463,7 +463,7 @@ class orc_reader_options_builder {
  */
 table_with_metadata read_orc(
   orc_reader_options const& options,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -533,7 +533,7 @@ class chunked_orc_reader {
     std::size_t pass_read_limit,
     size_type output_row_granularity,
     orc_reader_options const& options,
-    rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+    cuda::stream_ref stream           = cudf::get_default_stream(),
     rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
   /**
@@ -554,7 +554,7 @@ class chunked_orc_reader {
     std::size_t chunk_read_limit,
     std::size_t pass_read_limit,
     orc_reader_options const& options,
-    rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+    cuda::stream_ref stream           = cudf::get_default_stream(),
     rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
   /**
@@ -572,7 +572,7 @@ class chunked_orc_reader {
   explicit chunked_orc_reader(
     std::size_t chunk_read_limit,
     orc_reader_options const& options,
-    rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+    cuda::stream_ref stream           = cudf::get_default_stream(),
     rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
   /**
@@ -1070,11 +1070,14 @@ class orc_writer_options_builder {
  *
  * @note If an exception is thrown during encoding or compression, no data is written to the sink.
  *
+ * @note Timestamps in the last 999 milliseconds before the UNIX epoch are not representable in ORC;
+ * they are read back one second later, as with the Apache ORC writer (ORC-763, ORC-771).
+ *
  * @param options Settings for controlling reading behavior
  * @param stream CUDA stream used for device memory operations and kernel launches
  */
 void write_orc(orc_writer_options const& options,
-               rmm::cuda_stream_view stream = cudf::get_default_stream());
+               cuda::stream_ref stream = cudf::get_default_stream());
 
 /**
  * @brief Builds settings to use for `write_orc_chunked()`.
@@ -1487,6 +1490,9 @@ class chunked_orc_writer_options_builder {
  *    ...
  *  writer.close();
  * @endcode
+ *
+ * @note Timestamps in the last 999 milliseconds before the UNIX epoch are not representable in ORC;
+ * see `write_orc()` for details.
  */
 class orc_chunked_writer {
  public:
@@ -1508,7 +1514,7 @@ class orc_chunked_writer {
    * @param[in] stream CUDA stream used for device memory operations and kernel launches
    */
   orc_chunked_writer(chunked_orc_writer_options const& options,
-                     rmm::cuda_stream_view stream = cudf::get_default_stream());
+                     cuda::stream_ref stream = cudf::get_default_stream());
 
   /**
    * @brief Writes table to output.

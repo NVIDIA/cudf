@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -12,13 +12,12 @@
 #include <cudf/strings/detail/strings_children.cuh>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/functional>
 #include <cuda/iterator>
+#include <cuda/stream>
 #include <thrust/extrema.h>
-#include <thrust/iterator/transform_iterator.h>
 #include <thrust/transform.h>
 
 namespace cudf {
@@ -39,7 +38,7 @@ std::unique_ptr<column> create_collect_offsets(size_type input_size,
                                                PrecedingIter preceding_begin,
                                                FollowingIter following_begin,
                                                size_type min_periods,
-                                               rmm::cuda_stream_view stream,
+                                               cuda::stream_ref stream,
                                                rmm::device_async_resource_ref mr)
 {
   // Materialize offsets column.
@@ -92,7 +91,7 @@ std::unique_ptr<column> create_collect_offsets(size_type input_size,
  *  Mapping back to `input`    == [0,1,0,1,2,1,2,3,2,3,4,3,4]
  */
 std::unique_ptr<column> get_list_child_to_list_row_mapping(cudf::column_view const& offsets,
-                                                           rmm::cuda_stream_view stream);
+                                                           cuda::stream_ref stream);
 
 /**
  * @brief Create gather map to generate the child column of the result of
@@ -102,7 +101,7 @@ template <typename PrecedingIter>
 std::unique_ptr<column> create_collect_gather_map(column_view const& child_offsets,
                                                   column_view const& per_row_mapping,
                                                   PrecedingIter preceding_iter,
-                                                  rmm::cuda_stream_view stream)
+                                                  cuda::stream_ref stream)
 {
   auto gather_map = make_fixed_width_column(data_type{type_to_id<size_type>()},
                                             per_row_mapping.size(),
@@ -116,7 +115,7 @@ std::unique_ptr<column> create_collect_gather_map(column_view const& child_offse
     gather_map->mutable_view().template begin<size_type>(),
     cuda::proclaim_return_type<size_type>(
       [d_offsets =
-         child_offsets.template begin<size_type>(),  // E.g. [0,   2,     5,     8,     11, 13]
+         child_offsets.template begin<int32_t>(),  // E.g.     [0,   2,     5,     8,     11, 13]
        d_groups =
          per_row_mapping.template begin<size_type>(),  // E.g. [0,0, 1,1,1, 2,2,2, 3,3,3, 4,4]
        d_prev = preceding_iter] __device__(auto i) {
@@ -134,7 +133,7 @@ std::unique_ptr<column> create_collect_gather_map(column_view const& child_offse
  */
 size_type count_child_nulls(column_view const& input,
                             std::unique_ptr<column> const& gather_map,
-                            rmm::cuda_stream_view stream);
+                            cuda::stream_ref stream);
 
 /**
  * @brief Purge entries for null inputs from gather_map, and adjust offsets.
@@ -144,7 +143,7 @@ std::pair<std::unique_ptr<column>, std::unique_ptr<column>> purge_null_entries(
   column_view const& gather_map,
   column_view const& offsets,
   size_type num_child_nulls,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr);
 
 template <typename PrecedingIter, typename FollowingIter>
@@ -154,7 +153,7 @@ std::unique_ptr<column> rolling_collect_list(column_view const& input,
                                              FollowingIter following_begin,
                                              size_type min_periods,
                                              null_policy null_handling,
-                                             rmm::cuda_stream_view stream,
+                                             cuda::stream_ref stream,
                                              rmm::device_async_resource_ref mr)
 {
   CUDF_EXPECTS(default_outputs.is_empty(),

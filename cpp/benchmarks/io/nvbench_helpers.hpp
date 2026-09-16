@@ -137,6 +137,8 @@ NVBENCH_DECLARE_ENUM_TYPE_STRINGS(
 
 enum class converts_strings : bool { YES, NO };
 
+enum class output_dict : bool { YES, NO };
+
 enum class uses_pandas_metadata : bool { YES, NO };
 
 NVBENCH_DECLARE_ENUM_TYPE_STRINGS(
@@ -145,6 +147,17 @@ NVBENCH_DECLARE_ENUM_TYPE_STRINGS(
     switch (value) {
       case converts_strings::YES: return "YES";
       case converts_strings::NO: return "NO";
+      default: return "Unknown";
+    }
+  },
+  [](auto) { return std::string{}; })
+
+NVBENCH_DECLARE_ENUM_TYPE_STRINGS(
+  output_dict,
+  [](auto value) {
+    switch (value) {
+      case output_dict::YES: return "YES";
+      case output_dict::NO: return "NO";
       default: return "Unknown";
     }
   },

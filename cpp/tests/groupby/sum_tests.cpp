@@ -284,7 +284,7 @@ TEST_F(GroupByDecimal128ShmemAlignmentTest, Decimal128SumAfterInt32Sum)
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(expected, sorted_result->get_column(0));
 }
 
-// Regression test for https://github.com/rapidsai/cudf/issues/23150.
+// Regression test for https://github.com/NVIDIA/cudf/issues/23150.
 // Blackwell returned incorrect sums when aggregating three DECIMAL128 columns.
 TEST_F(GroupByDecimal128ShmemAlignmentTest, MultiColumnDecimal128Sum)
 {

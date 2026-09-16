@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -58,7 +58,7 @@ void BM_parquet_read_io_compression(nvbench::state& state)
 NVBENCH_BENCH(BM_parquet_read_io_compression)
   .set_name("parquet_read_io_compression")
   .add_string_axis("io_type", {"FILEPATH", "HOST_BUFFER", "DEVICE_BUFFER"})
-  .add_string_axis("compression_type", {"SNAPPY", "ZSTD", "LZ4", "NONE"})
+  .add_string_axis("compression_type", {"SNAPPY", "ZSTD", "LZ4", "GZIP", "NONE"})
   .set_min_samples(4)
   .add_int64_axis("cardinality", {0, 1000})
   .add_int64_axis("run_length", {1, 32})

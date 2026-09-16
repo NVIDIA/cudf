@@ -679,7 +679,7 @@ struct less_equivalent_comparator
 struct preprocessed_table {
   using table_device_view_owner = std::invoke_result_t<decltype(table_device_view::create),
                                                        table_view,
-                                                       rmm::cuda_stream_view,
+                                                       cuda::stream_ref,
                                                        rmm::device_async_resource_ref>;
 
   /**
@@ -707,7 +707,7 @@ struct preprocessed_table {
   static std::shared_ptr<preprocessed_table> create(table_view const& table,
                                                     host_span<order const> column_order,
                                                     host_span<null_order const> null_precedence,
-                                                    rmm::cuda_stream_view stream);
+                                                    cuda::stream_ref stream);
 
   /**
    * @brief Preprocess tables for use with lexicographical comparison
@@ -735,7 +735,7 @@ struct preprocessed_table {
     table_view const& rhs,
     host_span<order const> column_order,
     host_span<null_order const> null_precedence,
-    rmm::cuda_stream_view stream);
+    cuda::stream_ref stream);
 
  private:
   friend class self_comparator;
@@ -767,7 +767,7 @@ struct preprocessed_table {
     host_span<order const> column_order,
     host_span<null_order const> null_precedence,
     bool has_ranked_children,
-    rmm::cuda_stream_view stream);
+    cuda::stream_ref stream);
 
   /**
    * @brief Construct a preprocessed table for use with lexicographical comparison
@@ -924,7 +924,7 @@ class self_comparator {
   self_comparator(table_view const& t,
                   host_span<order const> column_order         = {},
                   host_span<null_order const> null_precedence = {},
-                  rmm::cuda_stream_view stream                = cudf::get_default_stream())
+                  cuda::stream_ref stream                     = cudf::get_default_stream())
     : d_t{preprocessed_table::create(t, column_order, null_precedence, stream)}
   {
   }
@@ -1081,7 +1081,7 @@ class two_table_comparator {
                        table_view const& right,
                        host_span<order const> column_order         = {},
                        host_span<null_order const> null_precedence = {},
-                       rmm::cuda_stream_view stream                = cudf::get_default_stream());
+                       cuda::stream_ref stream                     = cudf::get_default_stream());
 
   /**
    * @brief Construct an owning object for performing a lexicographic comparison between two rows of

@@ -8,7 +8,7 @@
 #include <cudf/column/column.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
+#include <cuda/stream>
 
 namespace cudf {
 
@@ -29,7 +29,7 @@ namespace detail {
  * also need the device program for other work (e.g. extraction) should build it once
  * and pass it here to avoid a redundant device program build.
  *
- * @tparam The regex prog device instance used for this API
+ * @tparam ProgDevice The regex prog device instance used for this API
  * @param d_strings Device view of the input strings column
  * @param d_prog Device regex program to evaluate on each string
  * @param strings_count Number of strings (and rows in the output column)
@@ -41,7 +41,7 @@ template <typename ProgDevice>
 std::unique_ptr<column> count_matches(column_device_view const& d_strings,
                                       ProgDevice& d_prog,
                                       size_type strings_count,
-                                      rmm::cuda_stream_view stream,
+                                      cuda::stream_ref stream,
                                       rmm::device_async_resource_ref mr);
 
 /**
@@ -60,7 +60,7 @@ std::unique_ptr<column> count_matches(column_device_view const& d_strings,
  */
 std::unique_ptr<column> count_matches(column_device_view const& d_strings,
                                       regex_program const& prog,
-                                      rmm::cuda_stream_view stream,
+                                      cuda::stream_ref stream,
                                       rmm::device_async_resource_ref mr);
 
 }  // namespace detail

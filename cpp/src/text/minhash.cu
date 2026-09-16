@@ -26,7 +26,6 @@
 
 #include <nvtext/minhash.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cooperative_groups.h>
@@ -36,6 +35,7 @@
 #include <cuda/std/iterator>
 #include <cuda/std/limits>
 #include <cuda/std/tuple>
+#include <cuda/stream>
 #include <thrust/binary_search.h>
 #include <thrust/execution_policy.h>
 #include <thrust/fill.h>
@@ -194,7 +194,7 @@ CUDF_KERNEL void minhash_ngrams_kernel(cudf::lists_column_device_view const d_in
   if (d_input.is_null(row_idx)) { return; }
 
   // retrieve this row's offset to locate the output position in d_hashes
-  auto const offsets_itr = d_input.offsets().data<cudf::size_type>() + d_input.offset();
+  auto const offsets_itr = d_input.offsets().data<int32_t>() + d_input.offset();
   auto const offset      = offsets_itr[row_idx];
   auto const size_row    = offsets_itr[row_idx + 1] - offset;
   if (size_row == 0) { return; }
@@ -389,10 +389,7 @@ CUDF_KERNEL void minhash_kernel(offsets_type offsets_itr,
  */
 template <typename transform_fn>
 std::pair<cudf::size_type, rmm::device_uvector<cudf::size_type>> partition_input(
-  cudf::size_type size,
-  cudf::size_type threshold_count,
-  transform_fn tfn,
-  rmm::cuda_stream_view stream)
+  cudf::size_type size, cudf::size_type threshold_count, transform_fn tfn, cuda::stream_ref stream)
 {
   auto indices = rmm::device_uvector<cudf::size_type>(size, stream);
   thrust::sequence(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
@@ -432,7 +429,7 @@ std::unique_ptr<cudf::column> minhash_fn(cudf::strings_column_view const& input,
                                          cudf::device_span<hash_value_type const> parameter_a,
                                          cudf::device_span<hash_value_type const> parameter_b,
                                          cudf::size_type width,
-                                         rmm::cuda_stream_view stream,
+                                         cuda::stream_ref stream,
                                          rmm::device_async_resource_ref mr)
 {
   CUDF_EXPECTS(width >= 2,
@@ -469,13 +466,13 @@ std::unique_ptr<cudf::column> minhash_fn(cudf::strings_column_view const& input,
     0, stream, cudf::get_current_device_resource_ref());
 
   minhash_seed_kernel<HashFunction>
-    <<<grid.num_blocks, grid.num_threads_per_block, 0, stream.value()>>>(*d_strings,
-                                                                         seed,
-                                                                         width,
-                                                                         d_hashes.data(),
-                                                                         d_threshold_count.data(),
-                                                                         parameter_a.size(),
-                                                                         d_results);
+    <<<grid.num_blocks, grid.num_threads_per_block, 0, stream.get()>>>(*d_strings,
+                                                                       seed,
+                                                                       width,
+                                                                       d_hashes.data(),
+                                                                       d_threshold_count.data(),
+                                                                       parameter_a.size(),
+                                                                       d_results);
   CUDF_CUDA_TRY(cudaGetLastError());
 
   auto transform_fn = [d_strings = *d_strings] __device__(auto idx) -> cudf::size_type {
@@ -495,7 +492,7 @@ std::unique_ptr<cudf::column> minhash_fn(cudf::strings_column_view const& input,
     cudf::detail::grid_1d grid{static_cast<cudf::thread_index_type>(d_indices.size()) * block_size,
                                block_size};
     minhash_kernel<offsets_type, hash_value_type, 1>
-      <<<grid.num_blocks, grid.num_threads_per_block, 0, stream.value()>>>(
+      <<<grid.num_blocks, grid.num_threads_per_block, 0, stream.get()>>>(
         input_offsets, d_indices, parameter_a, parameter_b, width, d_hashes.data(), d_results);
     CUDF_CUDA_TRY(cudaGetLastError());
   }
@@ -507,7 +504,7 @@ std::unique_ptr<cudf::column> minhash_fn(cudf::strings_column_view const& input,
       cudf::device_span<cudf::size_type const>(indices.data() + threshold_index, count);
     cudf::detail::grid_1d grid{count * block_size * blocks_per_row, block_size};
     minhash_kernel<offsets_type, hash_value_type, blocks_per_row>
-      <<<grid.num_blocks, grid.num_threads_per_block, 0, stream.value()>>>(
+      <<<grid.num_blocks, grid.num_threads_per_block, 0, stream.get()>>>(
         input_offsets, d_indices, parameter_a, parameter_b, width, d_hashes.data(), d_results);
     CUDF_CUDA_TRY(cudaGetLastError());
   }
@@ -522,7 +519,7 @@ std::unique_ptr<cudf::column> minhash_ngrams_fn(
   hash_value_type seed,
   cudf::device_span<hash_value_type const> parameter_a,
   cudf::device_span<hash_value_type const> parameter_b,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr)
 {
   CUDF_EXPECTS(ngrams >= 2,
@@ -560,13 +557,13 @@ std::unique_ptr<cudf::column> minhash_ngrams_fn(
 
   auto d_list = cudf::lists_column_device_view(*d_input);
   minhash_ngrams_kernel<HashFunction>
-    <<<grid.num_blocks, grid.num_threads_per_block, 0, stream.value()>>>(d_list,
-                                                                         seed,
-                                                                         ngrams,
-                                                                         d_hashes.data(),
-                                                                         d_threshold_count.data(),
-                                                                         parameter_a.size(),
-                                                                         d_results);
+    <<<grid.num_blocks, grid.num_threads_per_block, 0, stream.get()>>>(d_list,
+                                                                       seed,
+                                                                       ngrams,
+                                                                       d_hashes.data(),
+                                                                       d_threshold_count.data(),
+                                                                       parameter_a.size(),
+                                                                       d_results);
   CUDF_CUDA_TRY(cudaGetLastError());
 
   auto sizes_fn = [d_list] __device__(auto idx) -> cudf::size_type {
@@ -585,7 +582,7 @@ std::unique_ptr<cudf::column> minhash_ngrams_fn(
     cudf::detail::grid_1d grid{static_cast<cudf::thread_index_type>(d_indices.size()) * block_size,
                                block_size};
     minhash_kernel<offset_type, hash_value_type, 1>
-      <<<grid.num_blocks, grid.num_threads_per_block, 0, stream.value()>>>(
+      <<<grid.num_blocks, grid.num_threads_per_block, 0, stream.get()>>>(
         input_offsets, d_indices, parameter_a, parameter_b, ngrams, d_hashes.data(), d_results);
     CUDF_CUDA_TRY(cudaGetLastError());
   }
@@ -597,7 +594,7 @@ std::unique_ptr<cudf::column> minhash_ngrams_fn(
       cudf::device_span<cudf::size_type const>(indices.data() + threshold_index, count);
     cudf::detail::grid_1d grid{count * block_size * blocks_per_row, block_size};
     minhash_kernel<offset_type, hash_value_type, blocks_per_row>
-      <<<grid.num_blocks, grid.num_threads_per_block, 0, stream.value()>>>(
+      <<<grid.num_blocks, grid.num_threads_per_block, 0, stream.get()>>>(
         input_offsets, d_indices, parameter_a, parameter_b, ngrams, d_hashes.data(), d_results);
     CUDF_CUDA_TRY(cudaGetLastError());
   }
@@ -608,7 +605,7 @@ std::unique_ptr<cudf::column> minhash_ngrams_fn(
 std::unique_ptr<cudf::column> build_list_result(cudf::column_view const& input,
                                                 std::unique_ptr<cudf::column>&& hashes,
                                                 cudf::size_type seeds_size,
-                                                rmm::cuda_stream_view stream,
+                                                cuda::stream_ref stream,
                                                 rmm::device_async_resource_ref mr)
 {
   // build the offsets for the output lists column
@@ -638,7 +635,7 @@ std::unique_ptr<cudf::column> minhash(cudf::strings_column_view const& input,
                                       cudf::device_span<uint32_t const> parameter_a,
                                       cudf::device_span<uint32_t const> parameter_b,
                                       cudf::size_type width,
-                                      rmm::cuda_stream_view stream,
+                                      cuda::stream_ref stream,
                                       rmm::device_async_resource_ref mr)
 {
   using HashFunction = cudf::hashing::detail::MurmurHash3_x86_32<cudf::string_view>;
@@ -652,7 +649,7 @@ std::unique_ptr<cudf::column> minhash_ngrams(cudf::lists_column_view const& inpu
                                              uint32_t seed,
                                              cudf::device_span<uint32_t const> parameter_a,
                                              cudf::device_span<uint32_t const> parameter_b,
-                                             rmm::cuda_stream_view stream,
+                                             cuda::stream_ref stream,
                                              rmm::device_async_resource_ref mr)
 {
   using HashFunction = cudf::hashing::detail::MurmurHash3_x86_32<cudf::string_view>;
@@ -666,7 +663,7 @@ std::unique_ptr<cudf::column> minhash64(cudf::strings_column_view const& input,
                                         cudf::device_span<uint64_t const> parameter_a,
                                         cudf::device_span<uint64_t const> parameter_b,
                                         cudf::size_type width,
-                                        rmm::cuda_stream_view stream,
+                                        cuda::stream_ref stream,
                                         rmm::device_async_resource_ref mr)
 {
   using HashFunction = cudf::hashing::detail::MurmurHash3_x64_128<cudf::string_view>;
@@ -680,7 +677,7 @@ std::unique_ptr<cudf::column> minhash64_ngrams(cudf::lists_column_view const& in
                                                uint64_t seed,
                                                cudf::device_span<uint64_t const> parameter_a,
                                                cudf::device_span<uint64_t const> parameter_b,
-                                               rmm::cuda_stream_view stream,
+                                               cuda::stream_ref stream,
                                                rmm::device_async_resource_ref mr)
 {
   using HashFunction = cudf::hashing::detail::MurmurHash3_x64_128<cudf::string_view>;
@@ -696,7 +693,7 @@ std::unique_ptr<cudf::column> minhash(cudf::strings_column_view const& input,
                                       cudf::device_span<uint32_t const> parameter_a,
                                       cudf::device_span<uint32_t const> parameter_b,
                                       cudf::size_type width,
-                                      rmm::cuda_stream_view stream,
+                                      cuda::stream_ref stream,
                                       rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
@@ -708,7 +705,7 @@ std::unique_ptr<cudf::column> minhash_ngrams(cudf::lists_column_view const& inpu
                                              uint32_t seed,
                                              cudf::device_span<uint32_t const> parameter_a,
                                              cudf::device_span<uint32_t const> parameter_b,
-                                             rmm::cuda_stream_view stream,
+                                             cuda::stream_ref stream,
                                              rmm::device_async_resource_ref mr)
 
 {
@@ -721,7 +718,7 @@ std::unique_ptr<cudf::column> minhash64(cudf::strings_column_view const& input,
                                         cudf::device_span<uint64_t const> parameter_a,
                                         cudf::device_span<uint64_t const> parameter_b,
                                         cudf::size_type width,
-                                        rmm::cuda_stream_view stream,
+                                        cuda::stream_ref stream,
                                         rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
@@ -733,7 +730,7 @@ std::unique_ptr<cudf::column> minhash64_ngrams(cudf::lists_column_view const& in
                                                uint64_t seed,
                                                cudf::device_span<uint64_t const> parameter_a,
                                                cudf::device_span<uint64_t const> parameter_b,
-                                               rmm::cuda_stream_view stream,
+                                               cuda::stream_ref stream,
                                                rmm::device_async_resource_ref mr)
 
 {

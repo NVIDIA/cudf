@@ -54,7 +54,7 @@ void test_shuffler(std::shared_ptr<rapidsmpf::Communicator> const& comm,
                    std::size_t total_num_rows,
                    std::int64_t seed,
                    cudf::hash_id hash_fn,
-                   rmm::cuda_stream_view stream,
+                   cuda::stream_ref stream,
                    rapidsmpf::BufferResource* br)
 {
   // To expose unexpected deadlocks, we use a 30s timeout. In a normal run, the
@@ -155,7 +155,7 @@ class MemoryLimits_NumPartition
   std::size_t total_num_rows;
   std::int64_t seed     = 42;
   cudf::hash_id hash_fn = cudf::hash_id::HASH_MURMUR3;
-  rmm::cuda_stream_view stream;
+  cuda::stream_ref stream{cudaStream_t{cudaStreamDefault}};
   std::shared_ptr<rapidsmpf::BufferResource> br;
   std::unique_ptr<rapidsmpf::shuffler::Shuffler> shuffler;
 };
@@ -205,7 +205,7 @@ class ConcurrentShuffleTest : public cudf::test::BaseFixtureWithParam<std::tuple
   int num_shufflers;
   rapidsmpf::shuffler::PartID total_num_partitions;
 
-  rmm::cuda_stream_view stream;
+  cuda::stream_ref stream{cudaStream_t{cudaStreamDefault}};
   std::shared_ptr<rapidsmpf::BufferResource> br;
 };
 

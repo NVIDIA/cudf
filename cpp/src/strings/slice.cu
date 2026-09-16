@@ -22,14 +22,13 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/type_checks.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
-
 #include <cooperative_groups.h>
 #include <cooperative_groups/reduce.h>
 #include <cuda/iterator>
 #include <cuda/std/algorithm>
 #include <cuda/std/limits>
 #include <cuda/std/utility>
+#include <cuda/stream>
 #include <thrust/transform.h>
 
 namespace cudf {
@@ -240,7 +239,7 @@ template <typename IndexIterator>
 std::unique_ptr<column> compute_substrings_from_fn(strings_column_view const& input,
                                                    IndexIterator starts,
                                                    IndexIterator stops,
-                                                   rmm::cuda_stream_view stream,
+                                                   cuda::stream_ref stream,
                                                    rmm::device_async_resource_ref mr)
 {
   auto results = rmm::device_uvector<string_index_pair>(input.size(), stream);
@@ -259,10 +258,10 @@ std::unique_ptr<column> compute_substrings_from_fn(strings_column_view const& in
       static_cast<cudf::thread_index_type>(input.size()) * cudf::detail::warp_size;
     auto const num_blocks = util::div_rounding_up_safe(threads, block_size);
     substring_from_kernel<IndexIterator>
-      <<<num_blocks, block_size, 0, stream.value()>>>(*d_column, starts, stops, results.data());
+      <<<num_blocks, block_size, 0, stream.get()>>>(*d_column, starts, stops, results.data());
     CUDF_CUDA_TRY(cudaGetLastError());
   }
-  return make_strings_column(results.begin(), results.end(), stream, mr);
+  return cudf::make_strings_column(results, stream, mr);
 }
 
 }  // namespace
@@ -271,7 +270,7 @@ std::unique_ptr<column> slice_strings(strings_column_view const& input,
                                       numeric_scalar<size_type> const& start,
                                       numeric_scalar<size_type> const& stop,
                                       numeric_scalar<size_type> const& step,
-                                      rmm::cuda_stream_view stream,
+                                      cuda::stream_ref stream,
                                       rmm::device_async_resource_ref mr)
 {
   if (input.size() == input.null_count()) {
@@ -319,7 +318,7 @@ std::unique_ptr<column> slice_strings(strings_column_view const& input,
                                       std::optional<size_type> start,
                                       std::optional<size_type> stop,
                                       std::optional<size_type> step,
-                                      rmm::cuda_stream_view stream,
+                                      cuda::stream_ref stream,
                                       rmm::device_async_resource_ref mr)
 {
   if (input.size() == input.null_count()) {
@@ -365,7 +364,7 @@ std::unique_ptr<column> slice_strings(strings_column_view const& input,
 std::unique_ptr<column> slice_strings(strings_column_view const& input,
                                       column_view const& starts_column,
                                       column_view const& stops_column,
-                                      rmm::cuda_stream_view stream,
+                                      cuda::stream_ref stream,
                                       rmm::device_async_resource_ref mr)
 {
   if (input.size() == input.null_count()) {
@@ -392,7 +391,7 @@ std::unique_ptr<column> slice_strings(strings_column_view const& input,
                                       numeric_scalar<size_type> const& start,
                                       numeric_scalar<size_type> const& stop,
                                       numeric_scalar<size_type> const& step,
-                                      rmm::cuda_stream_view stream,
+                                      cuda::stream_ref stream,
                                       rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
@@ -403,7 +402,7 @@ std::unique_ptr<column> slice_strings(strings_column_view const& input,
                                       std::optional<size_type> start,
                                       std::optional<size_type> stop,
                                       std::optional<size_type> step,
-                                      rmm::cuda_stream_view stream,
+                                      cuda::stream_ref stream,
                                       rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
@@ -413,7 +412,7 @@ std::unique_ptr<column> slice_strings(strings_column_view const& input,
 std::unique_ptr<column> slice_strings(strings_column_view const& input,
                                       column_view const& starts_column,
                                       column_view const& stops_column,
-                                      rmm::cuda_stream_view stream,
+                                      cuda::stream_ref stream,
                                       rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();

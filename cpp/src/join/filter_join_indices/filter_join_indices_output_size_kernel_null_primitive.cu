@@ -17,5 +17,5 @@ template void launch_filter_output_size_kernel<true, false>(
   std::size_t shmem_per_block,
   cudf::join_kind join_kind,
   cudf::size_type* output_counts,
-  rmm::cuda_stream_view stream);
+  cuda::stream_ref stream);
 }  // namespace cudf::detail

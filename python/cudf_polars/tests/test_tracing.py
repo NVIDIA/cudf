@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from __future__ import annotations
@@ -68,7 +68,7 @@ def test_trace_basic(
 
 def test_import_without_structlog(timeout_seconds: int) -> None:
     # This test could avoid the subprocess by monkeypatching sys.modules, but
-    # that was flaky. https://github.com/rapidsai/cudf/pull/22012#issuecomment-4284536686
+    # that was flaky. https://github.com/NVIDIA/cudf/pull/22012#issuecomment-4284536686
     # has more details.
     code = textwrap.dedent("""\
     import sys

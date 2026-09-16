@@ -12,7 +12,6 @@
 #include <cuda/iterator>
 #include <cuda/std/utility>
 #include <cuda_runtime.h>
-#include <thrust/iterator/transform_iterator.h>
 
 namespace CUDF_EXPORT cudf {
 
@@ -40,10 +39,10 @@ class list_device_view {
     cudf_assert(row_index >= 0 && row_index < lists_column.size() && row_index < offsets.size() &&
                 "row_index out of bounds");
 
-    begin_offset = offsets.element<size_type>(row_index + lists_column.offset());
+    begin_offset = offsets.element<int32_t>(row_index + lists_column.offset());
     cudf_assert(begin_offset >= 0 && begin_offset <= lists_column.child().size() &&
                 "begin_offset out of bounds.");
-    _size = offsets.element<size_type>(row_index + 1 + lists_column.offset()) - begin_offset;
+    _size = offsets.element<int32_t>(row_index + 1 + lists_column.offset()) - begin_offset;
   }
 
   ~list_device_view() = default;
@@ -144,12 +143,12 @@ class list_device_view {
   /// const pair iterator for the list
   template <typename T>
   using const_pair_iterator =
-    thrust::transform_iterator<pair_accessor<T>, cuda::counting_iterator<cudf::size_type>>;
+    cuda::transform_iterator<pair_accessor<T>, cuda::counting_iterator<cudf::size_type>>;
 
   /// const pair iterator type for the list
   template <typename T>
   using const_pair_rep_iterator =
-    thrust::transform_iterator<pair_rep_accessor<T>, cuda::counting_iterator<cudf::size_type>>;
+    cuda::transform_iterator<pair_rep_accessor<T>, cuda::counting_iterator<cudf::size_type>>;
 
   /**
    * @brief Fetcher for a pair iterator to the first element in the list_device_view.

@@ -292,7 +292,7 @@ void device_compress(compression_type compression,
                      device_span<device_span<uint8_t const> const> inputs,
                      device_span<device_span<uint8_t> const> outputs,
                      device_span<codec_exec_result> results,
-                     rmm::cuda_stream_view stream)
+                     cuda::stream_ref stream)
 {
   CUDF_FUNC_RANGE();
   if (compression == compression_type::NONE or inputs.empty()) { return; }
@@ -314,7 +314,7 @@ void host_compress(compression_type compression,
                    device_span<device_span<uint8_t const> const> inputs,
                    device_span<device_span<uint8_t> const> outputs,
                    device_span<codec_exec_result> results,
-                   rmm::cuda_stream_view stream)
+                   cuda::stream_ref stream)
 {
   CUDF_FUNC_RANGE();
   if (compression == compression_type::NONE or inputs.empty()) { return; }
@@ -322,7 +322,7 @@ void host_compress(compression_type compression,
   auto const num_chunks = inputs.size();
   auto const h_inputs   = cudf::detail::make_host_vector_async(inputs, stream);
   auto const h_outputs  = cudf::detail::make_host_vector_async(outputs, stream);
-  stream.synchronize();
+  stream.sync();
 
   auto h_results = cudf::detail::make_pinned_vector<codec_exec_result>(results, stream);
 
@@ -425,7 +425,7 @@ void compress(compression_type compression,
               device_span<device_span<uint8_t const> const> inputs,
               device_span<device_span<uint8_t> const> outputs,
               device_span<codec_exec_result> results,
-              rmm::cuda_stream_view stream)
+              cuda::stream_ref stream)
 {
   CUDF_FUNC_RANGE();
 

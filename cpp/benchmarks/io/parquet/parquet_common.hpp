@@ -11,6 +11,8 @@
 
 #include <nvbench/nvbench.cuh>
 
+#include <vector>
+
 constexpr cudf::size_type num_cols = 64;
 
 void parquet_read_common(cudf::size_type num_rows_to_read,
@@ -26,3 +28,13 @@ void parquet_read_common(cudf::size_type num_rows_to_read,
   cudf::size_type pages_per_row_group,
   io_type source_type,
   bool write_page_index);
+
+// A mix of string, integral, float, decimal and list types used to fill a schema of the
+// requested width
+[[nodiscard]] std::vector<cudf::type_id> const& mixed_dtypes();
+
+// Writes a mixed-type file with a fixed number of rows per row group
+[[nodiscard]] cuio_source_sink_pair write_mixed_dtype_parquet_file(cudf::size_type num_cols,
+                                                                   cudf::size_type num_row_groups,
+                                                                   io_type source_type,
+                                                                   bool write_page_index);

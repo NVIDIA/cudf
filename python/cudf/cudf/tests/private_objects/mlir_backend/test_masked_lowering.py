@@ -975,3 +975,107 @@ def test_masked_datetime_arith_validity_propagates():
         cp.array([False], dtype=np.bool_),
     )
     assert bool(out_valid.get()[0]) is False
+
+
+@pytest.mark.parametrize(
+    "x,expected", [(1, True), (3, True), (5, True), (4, False), (0, False)]
+)
+def test_masked_in_literal_tuple_int(x, expected):
+    """``value in (int literals)`` is a Masked bool, True on a match."""
+
+    @cuda.jit(
+        types.void(types.boolean[::1], types.int64[::1], types.boolean[::1])
+    )
+    def k(out, a, av):
+        out[0] = (Masked(a[0], av[0]) in (1, 3, 5)).value
+
+    out = cp.zeros(1, dtype=np.bool_)
+    _launch(
+        k,
+        out,
+        cp.array([x], dtype=np.int64),
+        cp.array([True], dtype=np.bool_),
+    )
+    assert bool(out.get()[0]) is expected
+
+
+@pytest.mark.parametrize(
+    "x,expected", [(1.5, True), (2.5, True), (9.9, False)]
+)
+def test_masked_in_literal_tuple_float(x, expected):
+    """``value in (float literals)`` compares the payload against each const."""
+
+    @cuda.jit(
+        types.void(types.boolean[::1], types.float64[::1], types.boolean[::1])
+    )
+    def k(out, a, av):
+        out[0] = (Masked(a[0], av[0]) in (1.5, 2.5)).value
+
+    out = cp.zeros(1, dtype=np.bool_)
+    _launch(
+        k,
+        out,
+        cp.array([x], dtype=np.float64),
+        cp.array([True], dtype=np.bool_),
+    )
+    assert bool(out.get()[0]) is expected
+
+
+@pytest.mark.parametrize(
+    "x,expected", [(2, True), (7, True), (9, True), (8, False)]
+)
+def test_masked_in_unittuple_int(x, expected):
+    """``value in (a, b, c)`` over a homogeneous runtime tuple of scalars."""
+
+    @cuda.jit(
+        types.void(
+            types.boolean[::1],
+            types.int64[::1],
+            types.boolean[::1],
+            types.int64[::1],
+            types.int64[::1],
+            types.int64[::1],
+        )
+    )
+    def k(out, a, av, p, q, r):
+        out[0] = (Masked(a[0], av[0]) in (p[0], q[0], r[0])).value
+
+    out = cp.zeros(1, dtype=np.bool_)
+    _launch(
+        k,
+        out,
+        cp.array([x], dtype=np.int64),
+        cp.array([True], dtype=np.bool_),
+        cp.array([2], dtype=np.int64),
+        cp.array([7], dtype=np.int64),
+        cp.array([9], dtype=np.int64),
+    )
+    assert bool(out.get()[0]) is expected
+
+
+def test_masked_in_tuple_invalid_propagates():
+    """An invalid (NA) operand poisons the membership result's validity."""
+
+    @cuda.jit(
+        types.void(
+            types.boolean[::1],
+            types.boolean[::1],
+            types.int64[::1],
+            types.boolean[::1],
+        )
+    )
+    def k(out_v, out_valid, a, av):
+        m = Masked(a[0], av[0]) in (1, 3, 5)
+        out_v[0] = m.value
+        out_valid[0] = m.valid
+
+    out_v = cp.zeros(1, dtype=np.bool_)
+    out_valid = cp.ones(1, dtype=np.bool_)
+    _launch(
+        k,
+        out_v,
+        out_valid,
+        cp.array([3], dtype=np.int64),  # would be a hit, but operand invalid
+        cp.array([False], dtype=np.bool_),
+    )
+    assert bool(out_valid.get()[0]) is False

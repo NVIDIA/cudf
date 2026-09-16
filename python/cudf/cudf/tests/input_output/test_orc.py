@@ -102,15 +102,19 @@ def engine(request):
         ("TestOrcFile.demo-12-zlib.orc", ["_col2", "_col3", "_col4", "_col5"]),
     ],
 )
-def test_orc_reader_basic(datadir, inputfile, columns, use_index, engine):
+def test_orc_reader_basic(datadir, inputfile, columns):
     path = datadir / inputfile
 
-    expect = pd.read_orc(path, columns=columns)
-    got = cudf.read_orc(
-        path, engine=engine, columns=columns, use_index=use_index
-    )
-
-    assert_frame_equal(cudf.from_pandas(expect), got, check_categorical=False)
+    expect = cudf.from_pandas(pd.read_orc(path, columns=columns))
+    for engine in ("pyarrow", "cudf"):
+        for use_index in (True, False):
+            got = cudf.read_orc(
+                path,
+                engine=engine,
+                columns=columns,
+                use_index=use_index,
+            )
+            assert_frame_equal(expect, got, check_categorical=False)
 
 
 def test_orc_reader_filenotfound(tmpdir):
@@ -147,6 +151,24 @@ def test_orc_reader_trailing_nulls(datadir):
     got = cudf.read_orc(path)
 
     assert_eq(expect, got, check_categorical=True)
+
+
+@pytest.mark.parametrize(
+    "orc_file",
+    [
+        "TestOrcFile.nulls-at-end-snappy.orc",
+        "TestOrcFile.boolean_corruption_PR_6636.orc",
+        "TestOrcFile.boolean_corruption_PR_6702.orc",
+    ],
+)
+def test_orc_reader_null_decode_mid_run_positions(datadir, orc_file):
+    path = datadir / orc_file
+
+    indexed = cudf.read_orc(path)
+    unindexed = cudf.read_orc(path, use_index=False)
+
+    assert_eq(pd.read_orc(path), indexed)
+    assert_eq(unindexed, indexed)
 
 
 @pytest.mark.parametrize(
@@ -641,28 +663,9 @@ def normalized_equals(value1, value2):
         return False
 
 
-@pytest.mark.parametrize("stats_freq", ["STRIPE", "ROWGROUP"])
-@pytest.mark.parametrize("nrows", [1, 100, 100000])
-def test_orc_write_statistics(tmp_path, datadir, nrows, stats_freq):
-    supported_stat_types = [*supported_numpy_dtypes, "str"]
-    # Writing bool columns to multiple row groups is disabled
-    # until #6763 is fixed
-    if nrows == 100000:
-        supported_stat_types.remove("bool")
-
-    # Make a dataframe
-    gdf = cudf.DataFrame(
-        {
-            "col_" + str(dtype): gen_rand_series(dtype, nrows, has_nulls=True)
-            for dtype in supported_stat_types
-        }
-    )
-    fname = tmp_path / "gdf.orc"
-
-    # Write said dataframe to ORC with cuDF
+def _assert_orc_write_statistics(gdf, fname, stats_freq):
     gdf.to_orc(fname, statistics=stats_freq, stripe_size_rows=30000)
 
-    # Read back written ORC's statistics
     orc_file = orc.ORCFile(fname)
     (
         file_stats,
@@ -712,6 +715,26 @@ def test_orc_write_statistics(tmp_path, datadir, nrows, stats_freq):
                 if stats_num_vals is not None:
                     actual_num_vals = stripe_df[col].count()
                     assert stats_num_vals == actual_num_vals
+
+
+@pytest.mark.parametrize("nrows", [1, 100, 100000])
+def test_orc_write_statistics(tmp_path, nrows):
+    supported_stat_types = [*supported_numpy_dtypes, "str"]
+    # Writing bool columns to multiple row groups is disabled
+    # until #6763 is fixed
+    if nrows == 100000:
+        supported_stat_types.remove("bool")
+
+    gdf = cudf.DataFrame(
+        {
+            "col_" + str(dtype): gen_rand_series(dtype, nrows, has_nulls=True)
+            for dtype in supported_stat_types
+        }
+    )
+    for stats_freq in ("STRIPE", "ROWGROUP"):
+        _assert_orc_write_statistics(
+            gdf, tmp_path / f"gdf-{stats_freq}.orc", stats_freq
+        )
 
 
 @pytest.mark.parametrize("stats_freq", ["STRIPE", "ROWGROUP"])

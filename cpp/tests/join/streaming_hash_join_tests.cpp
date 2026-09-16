@@ -137,7 +137,7 @@ TEST_F(StreamingHashJoinTest, ConcurrentInsert)
                                    cudf::nullable_join::NO,
                                    cudf::null_equality::EQUAL,
                                    /*load_factor=*/0.5,
-                                   build_stream.view()};
+                                   build_stream};
   build_stream.synchronize();
 
   auto const device = rmm::get_current_cuda_device();
@@ -157,7 +157,7 @@ TEST_F(StreamingHashJoinTest, ConcurrentInsert)
         std::this_thread::yield();
       }
       try {
-        joiner.insert(right_partitions[i], streams[i]->view());
+        joiner.insert(right_partitions[i], *streams[i]);
       } catch (...) {
         errors[i] = std::current_exception();
       }

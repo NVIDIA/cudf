@@ -187,8 +187,7 @@ jobs:
     with:
       docs-projects: cudf,dask-cudf,libcudf
       dry-run: false
-      version-map: ${{ vars.VERSION_MAP }}
-  wheel-cpp-build:
+  wheel-build:
     needs: [build-details, telemetry-setup]
     permissions:
       actions: read
@@ -199,18 +198,16 @@ jobs:
     secrets: inherit # zizmor: ignore[secrets-inherit]
     uses: ./.github/workflows/wheels-build-stage.yaml
     with:
-      # build for every combination of arch and CUDA version, but only for the latest Python
-      matrix_filter: group_by([.ARCH, (.CUDA_VER|split(".")|map(tonumber)|.[0])]) | map(max_by(.PY_VER|split(".")|map(tonumber)))
+      # Build a wheel for each CUDA x ARCH x minimum supported Python version.
+      matrix_filter: group_by({CUDA_VER, ARCH}) | map(min_by(.PY_VER | split(".") | map(tonumber)))
       build_type: ${{ inputs.build_type || 'branch' }}
       build-datetime: ${{ needs.build-details.outputs.build-datetime }}
       branch: ${{ inputs.branch }}
       sha: ${{ inputs.sha }}
       date: ${{ inputs.date }}
       node_type: cpu16
-      script: ci/build_wheel_cpp.sh
-      stage: cpp
   wheel-publish-libcudf:
-    needs: wheel-cpp-build
+    needs: wheel-build
     permissions:
       actions: read
       contents: read
@@ -231,7 +228,7 @@ jobs:
       # trailing underscore to avoid collision with `libcudf-streaming`
       publish-wheel-search-key: cudf_wheel_cpp_libcudf_
   wheel-publish-libcudf-streaming:
-    needs: wheel-cpp-build
+    needs: wheel-build
     permissions:
       actions: read
       contents: read
@@ -250,29 +247,8 @@ jobs:
       package-name: libcudf_streaming
       package-type: cpp
       publish-wheel-search-key: cudf_wheel_cpp_libcudf-streaming
-  wheel-python-build:
-    needs: [build-details, telemetry-setup, wheel-cpp-build]
-    permissions:
-      actions: read
-      contents: read
-      id-token: write
-      packages: read
-      pull-requests: read
-    secrets: inherit # zizmor: ignore[secrets-inherit]
-    uses: ./.github/workflows/wheels-build-stage.yaml
-    with:
-      # Build a wheel for each CUDA x ARCH x minimum supported Python version
-      matrix_filter: group_by({CUDA_VER, ARCH}) | map(min_by(.PY_VER | split(".") | map(tonumber)))
-      build_type: ${{ inputs.build_type || 'branch' }}
-      build-datetime: ${{ needs.build-details.outputs.build-datetime }}
-      branch: ${{ inputs.branch }}
-      sha: ${{ inputs.sha }}
-      date: ${{ inputs.date }}
-      node_type: cpu8
-      script: ci/build_wheel_python.sh
-      stage: python
   wheel-publish-cudf-streaming:
-    needs: wheel-python-build
+    needs: wheel-build
     permissions:
       actions: read
       contents: read
@@ -292,7 +268,7 @@ jobs:
       package-type: python
       publish-wheel-search-key: cudf_wheel_python_cudf-streaming
   wheel-publish-pylibcudf:
-    needs: wheel-python-build
+    needs: wheel-build
     permissions:
       actions: read
       contents: read
@@ -310,7 +286,7 @@ jobs:
       package-type: python
       publish-wheel-search-key: cudf_wheel_python_pylibcudf
   wheel-publish-cudf:
-    needs: wheel-python-build
+    needs: wheel-build
     permissions:
       actions: read
       contents: read
@@ -347,8 +323,6 @@ jobs:
       sha: ${{ inputs.sha }}
       date: ${{ inputs.date }}
       node_type: cpu8
-      script: ci/build_wheel_python_noarch.sh
-      stage: python-noarch
       pure-wheel: true
   wheel-publish-dask-cudf:
     needs: wheel-python-build-noarch
@@ -388,7 +362,7 @@ jobs:
       publish-wheel-search-key: cudf_wheel_python_cudf-polars
   trigger-pandas-tests:
     if: inputs.build_type == 'nightly'
-    needs: wheel-python-build
+    needs: wheel-build
     permissions:
       actions: write
       contents: read

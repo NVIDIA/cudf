@@ -36,22 +36,6 @@ using text::byte_range_info;
 
 namespace {
 
-// Construct a vector of FileMetaData from the input footer bytes
-[[nodiscard]] std::vector<FileMetaData> parquet_metadatas_from_footer_bytes(
-  cudf::host_span<cudf::host_span<uint8_t const> const> footer_bytes)
-{
-  std::vector<FileMetaData> parquet_metadatas;
-  parquet_metadatas.reserve(footer_bytes.size());
-  std::transform(footer_bytes.begin(),
-                 footer_bytes.end(),
-                 std::back_inserter(parquet_metadatas),
-                 [](auto const& footer_bytes) {
-                   metadata parsed_metadata{footer_bytes};
-                   return FileMetaData{std::move(parsed_metadata)};
-                 });
-  return parquet_metadatas;
-}
-
 // Construct a vector of all row group indices from the input vectors
 [[nodiscard]] auto all_row_group_indices(
   std::span<std::vector<cudf::size_type> const> row_group_indices)
@@ -77,8 +61,10 @@ namespace {
 }
 
 // Compute the page index (column index and/or offset index) byte range
-[[nodiscard]] byte_range_info page_index_byte_range(FileMetaData const& file_metadata)
+[[nodiscard]] byte_range_info page_index_byte_range(parquet::detail::metadata const& file_metadata)
 {
+  if (file_metadata.is_page_index_setup()) { return {}; }
+
   auto const& row_groups = file_metadata.row_groups;
   if (row_groups.empty() or row_groups.front().columns.empty()) { return {}; }
 
@@ -132,25 +118,31 @@ aggregate_reader_metadata::aggregate_reader_metadata(
   cudf::host_span<cudf::host_span<uint8_t const> const> footer_bytes,
   bool use_arrow_schema,
   bool has_cols_from_mismatched_srcs)
-  : aggregate_reader_metadata_base(parquet_metadatas_from_footer_bytes(footer_bytes),
-                                   use_arrow_schema,
-                                   has_cols_from_mismatched_srcs)
+  : aggregate_reader_metadata(
+      parquet::detail::parallel_construct_metadatas(
+        footer_bytes, [](auto const& bytes) { return FileMetaData{metadata{bytes}}; }),
+      use_arrow_schema,
+      has_cols_from_mismatched_srcs)
 {
-  CUDF_EXPECTS(
-    not footer_bytes.empty(), "At least one source must be provided", std::invalid_argument);
 }
 
 aggregate_reader_metadata::aggregate_reader_metadata(
   cudf::host_span<FileMetaData const> parquet_metadatas,
   bool use_arrow_schema,
   bool has_cols_from_mismatched_srcs)
-  : aggregate_reader_metadata_base(
+  : aggregate_reader_metadata(
       std::vector<FileMetaData>{parquet_metadatas.begin(), parquet_metadatas.end()},
       use_arrow_schema,
       has_cols_from_mismatched_srcs)
 {
-  CUDF_EXPECTS(
-    not parquet_metadatas.empty(), "At least one source must be provided", std::invalid_argument);
+}
+
+aggregate_reader_metadata::aggregate_reader_metadata(std::vector<FileMetaData>&& parquet_metadatas,
+                                                     bool use_arrow_schema,
+                                                     bool has_cols_from_mismatched_srcs)
+  : aggregate_reader_metadata_base(
+      std::move(parquet_metadatas), use_arrow_schema, has_cols_from_mismatched_srcs)
+{
 }
 
 std::vector<text::byte_range_info> aggregate_reader_metadata::page_index_byte_ranges() const
@@ -308,7 +300,7 @@ std::unique_ptr<cudf::column> aggregate_reader_metadata::build_all_true_row_mask
 {
   CUDF_FUNC_RANGE();
   auto const num_rows = total_rows_in_row_groups(row_group_indices);
-  CUDF_EXPECTS(num_rows < std::numeric_limits<cudf::size_type>::max(),
+  CUDF_EXPECTS(std::cmp_less_equal(num_rows, std::numeric_limits<cudf::size_type>::max()),
                "Total rows in row groups exceed the cudf's column size limit. Retry with a smaller "
                "set of row groups",
                std::invalid_argument);

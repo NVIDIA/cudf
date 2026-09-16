@@ -235,6 +235,11 @@ TEST_F(StringsFindTest, ContainsLongStrings)
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(*results, expected);
 }
 
+/**
+ * @brief contains() over rows spanning every length tier of the scheduler, including targets at
+ * the start, middle and end of a row, near-misses, targets straddling 4 KiB chunk boundaries,
+ * nulls, a sliced view and the empty target.
+ */
 TEST_F(StringsFindTest, ContainsAllLengthTiers)
 {
   // Rows spanning every LRB bin: 0 bytes up to > 8 KiB (block tier), with the target placed at
@@ -244,6 +249,7 @@ TEST_F(StringsFindTest, ContainsAllLengthTiers)
   std::vector<std::string> data;
   std::vector<bool> valid;
   std::vector<bool> expected;
+  // append one row with its validity and the expected contains() result
   auto add = [&](std::string row, bool is_valid) {
     expected.push_back(is_valid && row.find(target) != std::string::npos);
     data.push_back(std::move(row));
@@ -313,6 +319,10 @@ TEST_F(StringsFindTest, ContainsAllLengthTiers)
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*eres, eexp);
 }
 
+/**
+ * @brief contains() over 20K rows whose lengths interleave every tier row by row, including a few
+ * rows long enough to be split into chunk tasks.
+ */
 TEST_F(StringsFindTest, ContainsManyRowsMixed)
 {
   // Enough rows that every scheduling pass spans many blocks; bins mixed row by row.

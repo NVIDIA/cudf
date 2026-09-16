@@ -53,6 +53,7 @@ namespace {
 
 constexpr char const* TARGET = "0987 5W43";
 
+/// Split `s` on `sep`.
 std::vector<std::string> split(std::string const& s, char sep)
 {
   std::vector<std::string> out;
@@ -68,10 +69,12 @@ std::vector<int32_t> make_lengths(std::string const& dist, int64_t num_rows, std
 {
   auto const parts = split(dist, '_');
   auto const kind  = parts.at(0);
-  auto p           = [&](size_t i) { return std::stoll(parts.at(i)); };
+  // i-th numeric parameter of the distribution spec
+  auto p = [&](size_t i) { return std::stoll(parts.at(i)); };
   std::vector<int32_t> lens(num_rows);
   auto constexpr max_len = int64_t{1} << 20;
-  auto clampf            = [&](double v) {
+  // round and clamp a sampled length to [0, max_len]
+  auto clampf = [&](double v) {
     return static_cast<int32_t>(std::clamp<double>(std::llround(v), 0, max_len));
   };
 
@@ -122,6 +125,12 @@ struct skewed_column {
   std::vector<uint8_t> expected;  // 1 where the target was inserted, 2 for null rows
 };
 
+/**
+ * @brief Build a strings column whose row lengths follow `dist`, with the target inserted at a
+ * random position in `hit_rate` percent of the eligible rows and `null_pct` percent null rows.
+ *
+ * Uses int32 offsets when the characters fit, otherwise int64 (a cudf large-strings column).
+ */
 skewed_column make_skewed_column(std::string const& dist,
                                  int64_t num_rows,
                                  int hit_rate,
@@ -260,6 +269,9 @@ void validate(cudf::strings_column_view const& input,
 
 }  // namespace
 
+/**
+ * @brief contains(column, scalar) over the row-length distribution named by the `dist` axis.
+ */
 static void bench_find_skewed(nvbench::state& state)
 {
   auto const num_rows = state.get_int64("num_rows");

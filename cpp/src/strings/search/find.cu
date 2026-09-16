@@ -418,6 +418,12 @@ __device__ __forceinline__ int lrb_bin(size_type size_bytes, size_type target_by
   return cuda::std::max(1, 32 - __clz(static_cast<unsigned>(size_bytes - 1)));
 }
 
+/**
+ * @brief Threads that cooperate on one row of `bin`, i.e. 1 << clamp(bin - LRB_SHIFT, 0, 5).
+ *
+ * @param bin Bin index from lrb_bin()
+ * @return 1, 2, 4, 8, 16 or 32
+ */
 __host__ __device__ constexpr int lrb_threads_per_row(int bin)
 {
   auto const shift = bin - LRB_SHIFT;
@@ -602,6 +608,21 @@ __device__ __forceinline__ void lrb_search_row_tile(Tile const& tile,
   if (found && tile.thread_rank() == 0) { d_results[row] = true; }
 }
 
+/**
+ * @brief Dispatch lrb_search_row_tile() with a tile of G lanes carved from `warp`.
+ *
+ * The warp itself is the tile when G == 32; otherwise the warp is partitioned into 32/G tiles that
+ * each take one row.
+ *
+ * @tparam G Threads per row for this bin
+ * @param warp The calling warp
+ * @param d_strings Column of input strings
+ * @param d_target String to search for
+ * @param d_results Output flags, one per row
+ * @param row Row for this lane's tile, or -1 when the tile has no row
+ * @param chunk Index of the LRB_CHUNK_BYTES window this task owns
+ * @param row_is_chunked Whether other tasks share this row
+ */
 template <int G>
 __device__ __forceinline__ void lrb_search_row(
   cooperative_groups::thread_block_tile<cudf::detail::warp_size> const& warp,
@@ -683,6 +704,20 @@ CUDF_KERNEL void lrb_search_kernel(column_device_view const d_strings,
   }
 }
 
+/**
+ * @brief contains(column, scalar) scheduled with logarithmic radix binning.
+ *
+ * Runs the histogram, scatter and search passes described above. Rows of at most
+ * LRB_DIRECT_MAX_BYTES are resolved in the histogram pass; longer rows are binned by
+ * ceil(log2(bytes)) and searched by thread groups sized for their bin, with rows longer than
+ * LRB_CHUNK_BYTES split into one task per chunk.
+ *
+ * @param input Strings column to search
+ * @param target Scalar string to look for in each row
+ * @param stream CUDA stream used for device memory operations and kernel launches
+ * @param mr Device memory resource used to allocate the returned column's device memory
+ * @return BOOL8 column, true where the row contains `target`; nulls follow the input
+ */
 std::unique_ptr<column> contains_lrb(strings_column_view const& input,
                                      string_scalar const& target,
                                      cuda::stream_ref stream,
@@ -866,6 +901,10 @@ std::unique_ptr<column> contains_fn(strings_column_view const& strings,
 }
 }  // namespace
 
+/**
+ * @copydoc cudf::strings::contains(strings_column_view const&, string_scalar const&,
+ *                                  cuda::stream_ref, rmm::device_async_resource_ref)
+ */
 std::unique_ptr<column> contains(strings_column_view const& input,
                                  string_scalar const& target,
                                  cuda::stream_ref stream,

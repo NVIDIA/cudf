@@ -39,6 +39,9 @@ void validate_contains(cudf::column_view const& col, std::string const& tgt)
 }
 }  // namespace
 
+/**
+ * @brief find/contains/starts_with/ends_with over a column of uniform-width rows.
+ */
 static void bench_find_string(nvbench::state& state)
 {
   auto const num_rows  = static_cast<cudf::size_type>(state.get_int64("num_rows"));
@@ -112,6 +115,9 @@ NVBENCH_BENCH(bench_find_string)
   .add_string_axis("api", {"find", "contains", "starts_with", "ends_with"})
   .add_string_axis("target", {"scalar", "column"});
 
+/**
+ * @brief contains() over a column of mostly short rows with a fixed-length long tail.
+ */
 static void bench_find_string_skewed(nvbench::state& state)
 {
   auto const num_rows         = static_cast<cudf::size_type>(state.get_int64("num_rows"));

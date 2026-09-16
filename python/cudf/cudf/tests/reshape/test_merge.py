@@ -1179,8 +1179,9 @@ def test_join_empty_frame_on_datetime_index_raises(how):
         empty.join(data, how=how)
 
 
+@pytest.mark.parametrize("how", ["outer", "right"])
 @pytest.mark.parametrize("empty_side", ["left", "right"])
-def test_merge_one_empty_side_mixed_timezone_raises(empty_side):
+def test_merge_one_empty_side_mixed_timezone_raises(how, empty_side):
     # https://github.com/rapidsai/cudf/issues/9981
     # A timezone aware key and a timezone naive key cannot be joined, also
     # when one side is empty.
@@ -1193,7 +1194,7 @@ def test_merge_one_empty_side_mixed_timezone_raises(empty_side):
     lhs, rhs = (empty, data) if empty_side == "left" else (data, empty)
 
     with pytest.raises(TypeError):
-        lhs.merge(rhs, on="k", how="outer")
+        lhs.merge(rhs, on="k", how=how)
 
 
 def test_outer_merge_both_sides_empty_key_dtype():

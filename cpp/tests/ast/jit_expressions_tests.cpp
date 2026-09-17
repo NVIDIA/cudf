@@ -514,74 +514,96 @@ std::unique_ptr<cudf::column> make_cast_input(Values const& values)
   }
 }
 
-template <typename To, typename... From>
-void test_casts_to()
-{
-  auto const values = std::array{0, 1, 2, 3, 4, 5};
+template <typename ToTypes, typename FromTypes>
+struct cast_test;
 
-  auto columns = std::vector<std::unique_ptr<cudf::column>>{};
-  columns.reserve(sizeof...(From));
-  (columns.push_back(make_cast_input<From>(values)), ...);
-  auto table = cudf::table{std::move(columns)};
+template <typename... To, typename... From>
+struct cast_test<cudf::test::Types<To...>, cudf::test::Types<From...>> {
+  static void run()
+  {
+    auto const values = std::array{0, 1, 2, 3, 4, 5};
 
-  auto refs = []<std::size_t... I>(std::index_sequence<I...>) {
-    return std::array{cudf::ast::column_reference(I)...};
-  }(std::index_sequence_for<From...>{});
-  auto tree        = cudf::ast::tree{};
-  auto const op    = get_cast_op<To>();
-  auto expressions = [&]<std::size_t... I>(std::index_sequence<I...>) {
-    return std::to_array<std::reference_wrapper<cudf::ast::expression const>>(
-      {cudf::ast::jit::operation(tree, op, {refs[I]})...});
-  }(std::index_sequence_for<From...>{});
-  auto result = cudf::compute_table_jit(table.view(), expressions);
+    auto columns = std::vector<std::unique_ptr<cudf::column>>{};
+    columns.reserve(sizeof...(From));
+    (columns.push_back(make_cast_input<From>(values)), ...);
+    auto table = cudf::table{std::move(columns)};
 
-  auto expected = make_cast_input<To>(values);
-  ASSERT_EQ(result->num_columns(), static_cast<cudf::size_type>(sizeof...(From)));
-  for (cudf::size_type i = 0; i < result->num_columns(); ++i) {
-    SCOPED_TRACE(i);
-    CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected->view(), result->view().column(i), VERBOSITY);
+    auto refs = []<std::size_t... I>(std::index_sequence<I...>) {
+      return std::array{cudf::ast::column_reference(I)...};
+    }(std::index_sequence_for<From...>{});
+    auto tree        = cudf::ast::tree{};
+    auto expressions = std::vector<std::reference_wrapper<cudf::ast::expression const>>{};
+    expressions.reserve(sizeof...(To) * sizeof...(From));
+    (append_expressions<To>(tree, refs, expressions), ...);
+    auto result = cudf::compute_table_jit(table.view(), expressions);
+
+    ASSERT_EQ(result->num_columns(), static_cast<cudf::size_type>(expressions.size()));
+    auto output_index = cudf::size_type{0};
+    (expect_results<To>(result->view(), values, output_index), ...);
   }
+
+ private:
+  template <typename ToType>
+  static void append_expressions(
+    cudf::ast::tree& tree,
+    std::array<cudf::ast::column_reference, sizeof...(From)> const& refs,
+    std::vector<std::reference_wrapper<cudf::ast::expression const>>& expressions)
+  {
+    auto const op = get_cast_op<ToType>();
+    for (auto const& ref : refs) {
+      expressions.emplace_back(cudf::ast::jit::operation(tree, op, {ref}));
+    }
+  }
+
+  template <typename ToType, typename Values>
+  static void expect_results(cudf::table_view const& result,
+                             Values const& values,
+                             cudf::size_type& output_index)
+  {
+    auto expected = make_cast_input<ToType>(values);
+    for (std::size_t i = 0; i < sizeof...(From); ++i) {
+      SCOPED_TRACE(i);
+      SCOPED_TRACE(output_index);
+      CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected->view(), result.column(output_index), VERBOSITY);
+      ++output_index;
+    }
+  }
+};
+
+template <typename ToTypes, typename FromTypes>
+void test_casts()
+{
+  cast_test<ToTypes, FromTypes>::run();
 }
 
-template <typename To>
-void test_cast_to()
-{
-  test_casts_to<To,
-                uint8_t,
-                uint16_t,
-                uint32_t,
-                uint64_t,
-                int8_t,
-                int16_t,
-                int32_t,
-                int64_t,
-                float,
-                double,
-                numeric::decimal32,
-                numeric::decimal64,
-                numeric::decimal128>();
-}
+using standard_cast_sources = cudf::test::Types<uint8_t,
+                                                uint16_t,
+                                                uint32_t,
+                                                uint64_t,
+                                                int8_t,
+                                                int16_t,
+                                                int32_t,
+                                                int64_t,
+                                                float,
+                                                double,
+                                                numeric::decimal32,
+                                                numeric::decimal64,
+                                                numeric::decimal128>;
+using decimal_cast_sources =
+  cudf::test::Types<numeric::decimal32, numeric::decimal64, numeric::decimal128>;
 
 TEST_F(JITExpressionTest, Cast)
 {
-  test_cast_to<bool>();
-  test_cast_to<int8_t>();
-  test_cast_to<int16_t>();
-  test_cast_to<int32_t>();
-  test_cast_to<int64_t>();
-  test_cast_to<uint8_t>();
-  test_cast_to<uint16_t>();
-  test_cast_to<uint32_t>();
-  test_cast_to<uint64_t>();
-  test_cast_to<float>();
-  test_cast_to<double>();
+  test_casts<cudf::test::Types<bool, int8_t, int16_t>, standard_cast_sources>();
+  test_casts<cudf::test::Types<int32_t, int64_t, uint8_t>, standard_cast_sources>();
+  test_casts<cudf::test::Types<uint16_t, uint32_t, uint64_t>, standard_cast_sources>();
+  test_casts<cudf::test::Types<float, double>, standard_cast_sources>();
 }
 
 TEST_F(JITExpressionTest, DecimalCast)
 {
-  test_casts_to<numeric::decimal32, numeric::decimal32, numeric::decimal64, numeric::decimal128>();
-  test_casts_to<numeric::decimal64, numeric::decimal32, numeric::decimal64, numeric::decimal128>();
-  test_casts_to<numeric::decimal128, numeric::decimal32, numeric::decimal64, numeric::decimal128>();
+  test_casts<cudf::test::Types<numeric::decimal32, numeric::decimal64, numeric::decimal128>,
+             decimal_cast_sources>();
 }
 
 TEST_F(JITExpressionTest, Rescale)

@@ -10,15 +10,18 @@
 #include <cudf/table/table.hpp>
 #include <cudf/table/table_view.hpp>
 #include <cudf/utilities/default_stream.hpp>
+#include <cudf/utilities/error.hpp>
 
 #include <rmm/device_buffer.hpp>
 
 #include <cstddef>
 #include <cstdint>
 #include <iostream>
+#include <limits>
 #include <memory>
 #include <numeric>
 #include <string>
+#include <utility>
 #include <vector>
 
 std::unique_ptr<cudf::column> make_column_from_vector(std::vector<int32_t> const& column_data)
@@ -28,8 +31,11 @@ std::unique_ptr<cudf::column> make_column_from_vector(std::vector<int32_t> const
     column_data.data(), column_data.size() * sizeof(int32_t), cudf::get_default_stream()};
   // Ensure the async H2D copy from `column_data` completes before the caller can reuse or
   // destroy the source vector.
-  cudf::get_default_stream().synchronize();
-  cudf::size_type size       = column_data.size();
+  cudf::get_default_stream().sync();
+  CUDF_EXPECTS(
+    column_data.size() <= static_cast<size_t>(std::numeric_limits<cudf::size_type>::max()),
+    "column_data size exceeds cudf::size_type range");
+  auto const size            = static_cast<cudf::size_type>(column_data.size());
   cudf::size_type null_count = 0;
   rmm::device_buffer null_mask{};
 

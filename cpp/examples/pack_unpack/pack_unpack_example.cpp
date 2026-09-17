@@ -22,6 +22,7 @@
 #include <iostream>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 // Pack and unpack a table entirely on the device.
@@ -49,7 +50,7 @@ void host_pack_copy_unpack(cudf::table_view input)
   cudf::packed_columns packed = cudf::pack(input, stream, phmr);
   // pack's device->pinned copy is stream-ordered, so the CPU must wait for the stream
   // before reading the packed buffer via std::memcpy below.
-  stream.synchronize();
+  stream.sync();
 
   auto copied_metadata = std::make_unique<std::vector<uint8_t>>(*packed.metadata);
   std::vector<uint8_t> copied_data(packed.gpu_data->size());

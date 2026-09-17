@@ -624,6 +624,7 @@ void test_casts_to()
   auto result = cudf::compute_table_jit(table.view(), expressions);
 
   auto expected = make_cast_input<To>(values);
+  ASSERT_EQ(result->num_columns(), static_cast<cudf::size_type>(sizeof...(From)));
   for (cudf::size_type i = 0; i < result->num_columns(); ++i) {
     SCOPED_TRACE(i);
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected->view(), result->view().column(i), VERBOSITY);

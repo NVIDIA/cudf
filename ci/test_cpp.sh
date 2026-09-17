@@ -32,8 +32,17 @@ fi
 if (( SUITEERROR == 0 )) && [[ "${RUN_LIBCUDF_JIT_CACHE_DIAGNOSTICS:-false}" == "true" ]]; then
     rapids-logger "Run cache-disabled JIT cast diagnostics"
     test_dir="${INSTALL_PREFIX:-${CONDA_PREFIX:-/usr}}/bin/gtests/libcudf"
+    test_args=(--gtest_filter="JITExpressionTest.Cast:JITExpressionTest.DecimalCast")
+
+    # Profile all AST tests once, on the representative CUDA 13 amd64 matrix entry.
+    if [[ "${RUN_LIBCUDF_JIT_AST_PROFILE:-false}" == "true" &&
+          "${RAPIDS_CUDA_VERSION}" == "13.3.0" && "$(uname -m)" == "x86_64" ]]; then
+        rapids-logger "Profile cache-disabled AST tests"
+        test_args=(--gtest_print_time=1)
+    fi
+
     timeout 5m "${test_dir}/AST_TEST" \
-        --gtest_filter="JITExpressionTest.Cast:JITExpressionTest.DecimalCast"
+        "${test_args[@]}"
     SUITEERROR=$?
 fi
 

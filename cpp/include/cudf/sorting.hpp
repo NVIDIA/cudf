@@ -373,6 +373,12 @@ std::unique_ptr<table> stable_segmented_sort_by_key(
  * This performs the equivalent of a sort and the slice of the resulting first k elements.
  * However, the returned column may or may not necessarily be sorted.
  *
+ * @note Among keys that compare equal at the k-th boundary, which of the tied rows are returned is
+ * unspecified and may vary between runs (`cub::DeviceTopK` requests `determinism::not_guaranteed`).
+ * The result is always a valid top-k: the row count and the multiset of returned keys are fixed;
+ * only the choice among equal-keyed rows is not. A determinism control may be added if and when
+ * `cub::DeviceTopK` supports it.
+ *
  * @throw std::invalid_argument if k is greater than the number of rows in the column
  *
  * @param col Column to compute top k
@@ -421,6 +427,12 @@ std::unique_ptr<column> top_k(
  *
  * The indices will represent the top k elements but may or may not represent
  * those elements as k sorted values.
+ *
+ * @note Among keys that compare equal at the k-th boundary, which of the tied rows are returned is
+ * unspecified and may vary between runs (`cub::DeviceTopK` requests `determinism::not_guaranteed`).
+ * The result is always a valid top-k: the row count and the multiset of returned keys are fixed;
+ * only the choice among equal-keyed rows is not. A determinism control may be added if and when
+ * `cub::DeviceTopK` supports it.
  *
  * @throw std::invalid_argument if k is greater than the number of rows in the column
  *

@@ -29,6 +29,14 @@ if [[ "${RUN_LIBCUDF_TESTS}" == "true" ]]; then
     SUITEERROR=$?
 fi
 
+if (( SUITEERROR == 0 )) && [[ "${RUN_LIBCUDF_JIT_CACHE_DIAGNOSTICS:-false}" == "true" ]]; then
+    rapids-logger "Run cache-disabled JIT cast diagnostics"
+    test_dir="${INSTALL_PREFIX:-${CONDA_PREFIX:-/usr}}/bin/gtests/libcudf"
+    timeout 5m "${test_dir}/AST_TEST" \
+        --gtest_filter="JITExpressionTest.Cast:JITExpressionTest.DecimalCast"
+    SUITEERROR=$?
+fi
+
 if (( SUITEERROR == 0 )) && [[ "${RUN_EXAMPLES_TESTS}" == "true" ]]; then
     rapids-logger "Run libcudf examples"
     timeout 30m ./ci/run_cudf_examples.sh

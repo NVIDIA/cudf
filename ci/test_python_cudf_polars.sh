@@ -23,4 +23,5 @@ rapids-logger "pytest cudf-polars"
   --cov=cudf_polars \
   --cov-report=xml:"${RAPIDS_COVERAGE_DIR}/cudf-polars-coverage.xml" \
   --cov-report=term \
+  --engine-pool-timings \
   --durations=50 --durations-min=1

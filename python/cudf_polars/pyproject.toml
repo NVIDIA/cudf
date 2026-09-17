@@ -103,6 +103,7 @@ exclude_also = [
 # The cudf_polars test suite are missing some coverage.
 # See https://github.com/NVIDIA/cudf/issues/22568.
 omit = [
+  "cudf_polars/testing/_engine_pool.py",
   "cudf_polars/testing/inject_gpu_engine.py",
   "cudf_polars/streaming/**",
   "cudf_polars/engine/**",

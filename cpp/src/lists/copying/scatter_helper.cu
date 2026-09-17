@@ -245,9 +245,8 @@ struct list_child_constructor {
         auto row_index         = d_list_vector[list_index].row_index();
         auto actual_list_row = d_list_vector[list_index].bind_to_column(source_lists, target_lists);
         auto lists_column    = actual_list_row.get_column();
-        auto lists_offsets_ptr    = lists_column.offsets().template data<int32_t>();
         auto child_strings_column = lists_column.child();
-        auto strings_offset       = lists_offsets_ptr[row_index] + intra_index;
+        auto strings_offset       = lists_column.offset_at(row_index) + intra_index;
 
         if (child_strings_column.is_null(strings_offset)) { return null_string_view; }
         auto const d_str = child_strings_column.template element<string_view>(strings_offset);
@@ -313,11 +312,10 @@ struct list_child_constructor {
         auto actual_list_row = d_list_vector[list_index].bind_to_column(source_lists, target_lists);
         auto lists_column    = actual_list_row.get_column();
         auto child_lists_column = lists_column.child();
-        auto lists_offsets_ptr  = lists_column.offsets().template data<int32_t>();
         auto child_lists_offsets_ptr =
           child_lists_column.child(lists_column_view::offsets_column_index)
             .template data<int32_t>();
-        auto child_row_index = lists_offsets_ptr[row_index] + intra_index;
+        auto child_row_index = lists_column.offset_at(row_index) + intra_index;
         auto size =
           child_lists_offsets_ptr[child_row_index + 1] - child_lists_offsets_ptr[child_row_index];
         return unbound_list_view{label, child_row_index, size};
@@ -389,13 +387,14 @@ struct list_child_constructor {
                                           cudf::size_type const& structs_list_num_rows,
                                           column_view const& structs_list_offsets,
                                           bitmask_type const* structs_list_nullmask,
-                                          cudf::size_type const& structs_list_null_count) {
+                                          cudf::size_type const& structs_list_null_count,
+                                          cudf::size_type const& structs_list_offset) {
       return lists_column_view(column_view(data_type{type_id::LIST},
                                            structs_list_num_rows,
                                            nullptr,
                                            structs_list_nullmask,
                                            structs_list_null_count,
-                                           0,
+                                           structs_list_offset,
                                            {structs_list_offsets, structs_member}));
     };
 
@@ -405,7 +404,8 @@ struct list_child_constructor {
                                            source_lists_column_view.size(),
                                            source_lists_column_view.offsets(),
                                            source_lists_column_view.null_mask(),
-                                           source_lists_column_view.null_count());
+                                           source_lists_column_view.null_count(),
+                                           source_lists_column_view.offset());
       });
 
     auto const iter_target_member_as_list =
@@ -414,7 +414,8 @@ struct list_child_constructor {
                                            target_lists_column_view.size(),
                                            target_lists_column_view.offsets(),
                                            target_lists_column_view.null_mask(),
-                                           target_lists_column_view.null_count());
+                                           target_lists_column_view.null_count(),
+                                           target_lists_column_view.offset());
       });
 
     std::transform(iter_source_member_as_list,

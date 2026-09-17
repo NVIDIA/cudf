@@ -8,7 +8,7 @@ cmake_minimum_required(VERSION 3.30.4 FATAL_ERROR)
 include(../set_cuda_architecture.cmake)
 
 # Initialize CUDA architecture
-rapids_cuda_init_architectures(basic_example)
+rapids_cuda_init_architectures(pack_unpack_examples)
 
 project(
   pack_unpack_examples

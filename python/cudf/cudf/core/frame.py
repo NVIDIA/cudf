@@ -18,7 +18,12 @@ import pylibcudf as plc
 
 import cudf
 from cudf.api.extensions import no_default
-from cudf.api.types import is_dtype_equal, is_scalar, is_string_dtype
+from cudf.api.types import (
+    is_dtype_equal,
+    is_float_dtype,
+    is_scalar,
+    is_string_dtype,
+)
 from cudf.core._internals import copying, sorting
 from cudf.core.abc import Serializable
 from cudf.core.column import (
@@ -642,6 +647,10 @@ class Frame(BinaryOperand, Scannable, Serializable):
                 and dtype is not None
                 and not is_string_dtype(dtype)
                 and na_value is no_default
+                and not (
+                    is_pandas_nullable_extension_dtype(col.dtype)
+                    and is_float_dtype(dtype)
+                )
             ):
                 raise ValueError(
                     f"cannot convert to '{dtype}'-dtype NumPy array "
@@ -707,8 +716,15 @@ class Frame(BinaryOperand, Scannable, Serializable):
             if ncol == 1:
                 to_dtype = next(self._dtypes)[1]
                 if (na_value is no_default or na_value is None) and (
-                    isinstance(to_dtype, np.dtype)
-                    and to_dtype.kind in "iu"
+                    module is np
+                    and is_pandas_nullable_extension_dtype(to_dtype)
+                    and getattr(to_dtype, "kind", None) in ("i", "u", "f")
+                    and self._columns[0].has_nulls()
+                    and pd.options.future.distinguish_nan_and_na
+                ):
+                    to_dtype = np.dtype(object)
+                elif (na_value is no_default or na_value is None) and (
+                    getattr(to_dtype, "kind", None) in ("i", "u")
                     and self._columns[0].has_nulls()
                 ):
                     # A single nullable integer column must be promoted to
@@ -884,11 +900,13 @@ class Frame(BinaryOperand, Scannable, Serializable):
         elif self._num_columns == 1:
             col = self._columns[0]
             final_dtype = col.dtype if dtype is None else dtype
+            final_dtype = getattr(final_dtype, "numpy_dtype", final_dtype)
+            col_dtype = getattr(col.dtype, "numpy_dtype", col.dtype)
 
             if (
                 not copy
-                and col.dtype.kind in {"i", "u", "f", "b"}
-                and cupy.can_cast(col.dtype, final_dtype)
+                and col_dtype.kind in {"i", "u", "f", "b"}
+                and cupy.can_cast(col_dtype, final_dtype)
             ):
                 if col.has_nulls():
                     if na_value is not None:

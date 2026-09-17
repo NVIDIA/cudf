@@ -9,13 +9,16 @@
 #include <cudf_test/iterator_utilities.hpp>
 
 #include <cudf/column/column_factories.hpp>
+#include <cudf/copying.hpp>
 #include <cudf/scalar/scalar.hpp>
 #include <cudf/strings/attributes.hpp>
 #include <cudf/strings/find.hpp>
 #include <cudf/strings/strings_column_view.hpp>
+#include <cudf/utilities/default_stream.hpp>
 
 #include <cuda/iterator>
 
+#include <numeric>
 #include <vector>
 
 struct StringsFindTest : public cudf::test::BaseFixture {};
@@ -228,6 +231,110 @@ TEST_F(StringsFindTest, ContainsLongStrings)
   results  = cudf::strings::contains(strings_view, cudf::string_scalar("~"));
   expected = cudf::test::fixed_width_column_wrapper<bool>({0, 0, 0, 0, 0, 0, 1, 0});
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(*results, expected);
+}
+
+TEST_F(StringsFindTest, ContainsHeterogeneousMixedWidth)
+{
+  // The average byte width of this column falls strictly between the 64-byte
+  // AVG_CHAR_BYTES_THRESHOLD and the 96-byte HETERO_LENGTH_THRESHOLD used by
+  // `cudf::strings::detail::contains(strings_column_view const&, string_scalar const&, ...)`,
+  // so it exercises the heterogeneous two-pass implementation: rows at or below 96 bytes are
+  // searched thread-per-row while rows above 96 bytes are deferred to the warp-per-row pass.
+  auto const target = cudf::string_scalar("ab");
+
+  auto const row0 = std::string("");               // null row
+  auto const row1 = std::string(40, 'x');          // short (<=96), no match
+  auto const row2 = std::string(88, 'x') + "ab";   // short (<=96), match at boundary
+  auto const row3 = std::string(130, 'x');         // long (>96), no match
+  auto const row4 = std::string(148, 'x') + "ab";  // long (>96), match at boundary
+  auto const row5 = std::string("");               // null row
+  auto const row6 = std::string(64, 'y');          // short (<=96), no match
+  auto const row7 = "ab" + std::string(98, 'z');   // long (>96), match at start
+
+  cudf::test::strings_column_wrapper strings({row0, row1, row2, row3, row4, row5, row6, row7},
+                                             {false, true, true, true, true, false, true, true});
+  auto strings_view = cudf::strings_column_view(strings);
+
+  // Sanity check that this column lands in the heterogeneous dispatch range.
+  auto const avg_bytes = strings_view.chars_size(cudf::get_default_stream()) / strings_view.size();
+  EXPECT_GT(avg_bytes, 64);
+  EXPECT_LT(avg_bytes, 96);
+
+  auto results = cudf::strings::contains(strings_view, target);
+  cudf::test::fixed_width_column_wrapper<bool> expected(
+    {0, 0, 1, 0, 1, 0, 0, 1}, {false, true, true, true, true, false, true, true});
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
+
+  // Repeat against a non-zero-offset slice (rows 2-7) to make sure contains() dispatches using
+  // the sliced row window rather than the full underlying buffer. Note that
+  // `strings_column_view::chars_size()` does not account for a view's offset (it reports the
+  // full underlying buffer's char count), so the average below is computed from the individual
+  // row lengths instead of relying on chars_size().
+  auto const sliced      = cudf::slice(strings, {2, 8}).front();
+  auto const sliced_view = cudf::strings_column_view(sliced);
+  std::vector<cudf::size_type> const sliced_row_lengths{static_cast<cudf::size_type>(row2.size()),
+                                                        static_cast<cudf::size_type>(row3.size()),
+                                                        static_cast<cudf::size_type>(row4.size()),
+                                                        0,  // row5 is null
+                                                        static_cast<cudf::size_type>(row6.size()),
+                                                        static_cast<cudf::size_type>(row7.size())};
+  auto const sliced_avg_bytes =
+    std::accumulate(sliced_row_lengths.begin(), sliced_row_lengths.end(), 0) /
+    static_cast<cudf::size_type>(sliced_row_lengths.size());
+  EXPECT_GT(sliced_avg_bytes, 64);
+  EXPECT_LT(sliced_avg_bytes, 96);
+
+  // Contrast against the (incorrect) average that `chars_size()` would produce for this slice:
+  // the full underlying buffer's char count divided by the sliced row count. It lands on the
+  // opposite side of `parent_vs_sliced_threshold` from `sliced_avg_bytes`, confirming that a
+  // chars_size()-based average is not an interchangeable stand-in for the sliced-row average.
+  auto const parent_avg_bytes =
+    strings_view.chars_size(cudf::get_default_stream()) / sliced_view.size();
+  auto constexpr parent_vs_sliced_threshold = 92;
+  EXPECT_LT(sliced_avg_bytes, parent_vs_sliced_threshold);
+  EXPECT_GE(parent_avg_bytes, parent_vs_sliced_threshold);
+
+  auto sliced_results = cudf::strings::contains(sliced_view, target);
+  cudf::test::fixed_width_column_wrapper<bool> sliced_expected(
+    {1, 0, 1, 0, 0, 1}, {true, true, true, false, true, true});
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(*sliced_results, sliced_expected);
+}
+
+TEST_F(StringsFindTest, ContainsHeterogeneousMultiBlock)
+{
+  // contains_heterogeneous dispatches its first (thread-per-row) pass over blocks of 256 rows and
+  // its second (warp-per-row) pass as a grid-stride loop over deferred long rows. A column with
+  // more than 256 rows forces both passes to span multiple blocks, exercising the atomicAdd-based
+  // long-row index aggregation and the second pass's cross-block grid-stride loop.
+  auto constexpr num_rows = 300;
+  auto const target       = cudf::string_scalar("Q");
+
+  std::vector<std::string> data;
+  data.reserve(num_rows);
+  for (int i = 0; i < num_rows; ++i) {
+    bool const is_long   = (i % 5 == 0);  // mix of short (<=96) and long (>96) rows
+    bool const has_match = (i % 7 == 0);  // matches scattered across block boundaries
+    std::string row(is_long ? 150 : 50, 'x');
+    if (has_match) { row.back() = 'Q'; }  // match near the end of the row
+    data.push_back(std::move(row));
+  }
+
+  cudf::test::strings_column_wrapper strings(data.begin(), data.end());
+  auto strings_view = cudf::strings_column_view(strings);
+
+  // Sanity check that this column lands in the heterogeneous dispatch range.
+  auto const avg_bytes = strings_view.chars_size(cudf::get_default_stream()) / strings_view.size();
+  EXPECT_GT(avg_bytes, 64);
+  EXPECT_LT(avg_bytes, 96);
+
+  auto results = cudf::strings::contains(strings_view, target);
+
+  std::vector<bool> expected_data(num_rows);
+  for (int i = 0; i < num_rows; ++i) {
+    expected_data[i] = (i % 7 == 0);
+  }
+  cudf::test::fixed_width_column_wrapper<bool> expected(expected_data.begin(), expected_data.end());
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
 }
 
 TEST_F(StringsFindTest, StartsWith)

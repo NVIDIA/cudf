@@ -6,7 +6,6 @@
 #include <cudf_test/column_utilities.hpp>
 #include <cudf_test/column_wrapper.hpp>
 #include <cudf_test/iterator_utilities.hpp>
-#include <cudf_test/table_utilities.hpp>
 #include <cudf_test/testing_main.hpp>
 #include <cudf_test/type_lists.hpp>
 
@@ -16,6 +15,7 @@
 #include <cudf/detail/iterator.cuh>
 #include <cudf/filling.hpp>
 #include <cudf/scalar/scalar.hpp>
+#include <cudf/table/table.hpp>
 #include <cudf/table/table_view.hpp>
 #include <cudf/transform.hpp>
 
@@ -24,7 +24,10 @@
 #include <cuda/iterator>
 
 #include <array>
+#include <functional>
 #include <limits>
+#include <memory>
+#include <utility>
 #include <vector>
 
 constexpr cudf::test::debug_output_level VERBOSITY{cudf::test::debug_output_level::ALL_ERRORS};
@@ -588,87 +591,62 @@ constexpr cudf::ast::jit::op get_cast_op()
   }
 }
 
-template <typename To>
-void test_cast_to()
+template <typename T, typename Values>
+std::unique_ptr<cudf::column> make_cast_input(Values const& values)
+{
+  if constexpr (cudf::is_fixed_point<T>()) {
+    return decimal_column_wrapper<T>(values.begin(), values.end(), numeric::scale_type{0})
+      .release();
+  } else {
+    return column_wrapper<T>(values.begin(), values.end()).release();
+  }
+}
+
+template <typename To, typename... From>
+void test_casts_to()
 {
   auto const values = std::array{0, 1, 2, 3, 4, 5};
 
-  auto u8  = column_wrapper<uint8_t>(values.begin(), values.end());
-  auto u16 = column_wrapper<uint16_t>(values.begin(), values.end());
-  auto u32 = column_wrapper<uint32_t>(values.begin(), values.end());
-  auto u64 = column_wrapper<uint64_t>(values.begin(), values.end());
-  auto i8  = column_wrapper<int8_t>(values.begin(), values.end());
-  auto i16 = column_wrapper<int16_t>(values.begin(), values.end());
-  auto i32 = column_wrapper<int32_t>(values.begin(), values.end());
-  auto i64 = column_wrapper<int64_t>(values.begin(), values.end());
-  auto f32 = column_wrapper<float>(values.begin(), values.end());
-  auto f64 = column_wrapper<double>(values.begin(), values.end());
-  auto d32 = decimal_column_wrapper<numeric::decimal32>(
-    values.begin(), values.end(), numeric::scale_type{0});
-  auto d64 = decimal_column_wrapper<numeric::decimal64>(
-    values.begin(), values.end(), numeric::scale_type{0});
-  auto d128 = decimal_column_wrapper<numeric::decimal128>(
-    values.begin(), values.end(), numeric::scale_type{0});
-  auto table = cudf::table_view{{u8, u16, u32, u64, i8, i16, i32, i64, f32, f64, d32, d64, d128}};
+  auto columns = std::vector<std::unique_ptr<cudf::column>>{};
+  columns.reserve(sizeof...(From));
+  (columns.push_back(make_cast_input<From>(values)), ...);
+  auto table = cudf::table{std::move(columns)};
 
+  auto refs = []<std::size_t... I>(std::index_sequence<I...>) {
+    return std::array{cudf::ast::column_reference(I)...};
+  }(std::index_sequence_for<From...>{});
   auto tree        = cudf::ast::tree{};
   auto const op    = get_cast_op<To>();
-  auto refs        = std::array{cudf::ast::column_reference(0),
-                         cudf::ast::column_reference(1),
-                         cudf::ast::column_reference(2),
-                         cudf::ast::column_reference(3),
-                         cudf::ast::column_reference(4),
-                         cudf::ast::column_reference(5),
-                         cudf::ast::column_reference(6),
-                         cudf::ast::column_reference(7),
-                         cudf::ast::column_reference(8),
-                         cudf::ast::column_reference(9),
-                         cudf::ast::column_reference(10),
-                         cudf::ast::column_reference(11),
-                         cudf::ast::column_reference(12)};
-  auto& cast_u8    = cudf::ast::jit::operation(tree, op, {refs[0]});
-  auto& cast_u16   = cudf::ast::jit::operation(tree, op, {refs[1]});
-  auto& cast_u32   = cudf::ast::jit::operation(tree, op, {refs[2]});
-  auto& cast_u64   = cudf::ast::jit::operation(tree, op, {refs[3]});
-  auto& cast_i8    = cudf::ast::jit::operation(tree, op, {refs[4]});
-  auto& cast_i16   = cudf::ast::jit::operation(tree, op, {refs[5]});
-  auto& cast_i32   = cudf::ast::jit::operation(tree, op, {refs[6]});
-  auto& cast_i64   = cudf::ast::jit::operation(tree, op, {refs[7]});
-  auto& cast_f32   = cudf::ast::jit::operation(tree, op, {refs[8]});
-  auto& cast_f64   = cudf::ast::jit::operation(tree, op, {refs[9]});
-  auto& cast_d32   = cudf::ast::jit::operation(tree, op, {refs[10]});
-  auto& cast_d64   = cudf::ast::jit::operation(tree, op, {refs[11]});
-  auto& cast_d128  = cudf::ast::jit::operation(tree, op, {refs[12]});
-  auto expressions = std::array<std::reference_wrapper<cudf::ast::expression const>, 13>{cast_u8,
-                                                                                         cast_u16,
-                                                                                         cast_u32,
-                                                                                         cast_u64,
-                                                                                         cast_i8,
-                                                                                         cast_i16,
-                                                                                         cast_i32,
-                                                                                         cast_i64,
-                                                                                         cast_f32,
-                                                                                         cast_f64,
-                                                                                         cast_d32,
-                                                                                         cast_d64,
-                                                                                         cast_d128};
-  auto result      = cudf::compute_table_jit(table, expressions);
+  auto expressions = [&]<std::size_t... I>(std::index_sequence<I...>) {
+    return std::to_array<std::reference_wrapper<cudf::ast::expression const>>(
+      {cudf::ast::jit::operation(tree, op, {refs[I]})...});
+  }(std::index_sequence_for<From...>{});
+  auto result = cudf::compute_table_jit(table.view(), expressions);
 
-  auto expected       = column_wrapper<To>(values.begin(), values.end());
-  auto expected_table = cudf::table_view{{expected,
-                                          expected,
-                                          expected,
-                                          expected,
-                                          expected,
-                                          expected,
-                                          expected,
-                                          expected,
-                                          expected,
-                                          expected,
-                                          expected,
-                                          expected,
-                                          expected}};
-  CUDF_TEST_EXPECT_TABLES_EQUAL(expected_table, result->view());
+  auto expected = make_cast_input<To>(values);
+  for (cudf::size_type i = 0; i < result->num_columns(); ++i) {
+    SCOPED_TRACE(i);
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected->view(), result->view().column(i), VERBOSITY);
+  }
+}
+
+template <typename To>
+void test_cast_to()
+{
+  test_casts_to<To,
+                uint8_t,
+                uint16_t,
+                uint32_t,
+                uint64_t,
+                int8_t,
+                int16_t,
+                int32_t,
+                int64_t,
+                float,
+                double,
+                numeric::decimal32,
+                numeric::decimal64,
+                numeric::decimal128>();
 }
 
 TEST_F(JITExpressionTest, Cast)
@@ -686,25 +664,11 @@ TEST_F(JITExpressionTest, Cast)
   test_cast_to<double>();
 }
 
-template <typename From, typename To>
-void test_decimal_cast()
+TEST_F(JITExpressionTest, DecimalCast)
 {
-  auto a        = decimal_column_wrapper<From>{{0, 1, 2, 3, 4, 5}, numeric::scale_type{0}};
-  auto expected = decimal_column_wrapper<To>{{0, 1, 2, 3, 4, 5}, numeric::scale_type{0}};
-  auto table    = cudf::table_view{{a}};
-  auto a_ref    = cudf::ast::column_reference(0);
-  auto tree     = cudf::ast::tree{};
-  auto result =
-    cudf::compute_column_jit(table, cudf::ast::jit::operation(tree, get_cast_op<To>(), {a_ref}));
-  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, result->view(), VERBOSITY);
-}
-
-TYPED_TEST(JITDecimalArithmeticTest, CastTo)
-{
-  using T = TypeParam;
-  test_decimal_cast<T, numeric::decimal32>();
-  test_decimal_cast<T, numeric::decimal64>();
-  test_decimal_cast<T, numeric::decimal128>();
+  test_casts_to<numeric::decimal32, numeric::decimal32, numeric::decimal64, numeric::decimal128>();
+  test_casts_to<numeric::decimal64, numeric::decimal32, numeric::decimal64, numeric::decimal128>();
+  test_casts_to<numeric::decimal128, numeric::decimal32, numeric::decimal64, numeric::decimal128>();
 }
 
 TEST_F(JITExpressionTest, Rescale)

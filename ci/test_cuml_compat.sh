@@ -13,8 +13,12 @@ source ./ci/test_python_common.sh test_python_cudf test_cuml
 # This makes sure we read RAPIDS_BRANCH from the top level of the repo, no matter
 # what the current working directory is.
 RAPIDS_BRANCH="$(cat "$(dirname "$(realpath "${BASH_SOURCE[0]}")")"/../RAPIDS_BRANCH)"
+CUML_COMMIT="$(python -c "import cuml;print(cuml.__git_commit__)")"
 rapids-logger "Cloning cuml at branch ${RAPIDS_BRANCH}"
 git clone https://github.com/NVIDIA/cuml.git --branch "${RAPIDS_BRANCH}" --depth 1 /tmp/cuml
+rapids-logger "Checking out cuml at commit ${CUML_COMMIT}"
+git -C /tmp/cuml fetch origin "$CUML_COMMIT" --depth=1
+git -C /tmp/cuml checkout "$CUML_COMMIT"
 
 
 CUML_TESTS_DIR=/tmp/cuml/python/cuml/tests

@@ -183,49 +183,53 @@ def test_out_of_bounds_indexing_empty():
     )
 
 
-@pytest.mark.parametrize(
-    "gdf",
-    [
-        lambda: cudf.DataFrame({"a": range(10000)}),
-        lambda: cudf.DataFrame(
-            {
-                "a": range(10000),
-                "b": range(10000),
-                "c": range(10000),
-                "d": range(10000),
-                "e": range(10000),
-                "f": range(10000),
-            }
-        ),
-        lambda: cudf.DataFrame({"a": range(20), "b": range(20)}),
-        lambda: cudf.DataFrame(
-            {
-                "a": range(20),
-                "b": range(20),
-                "c": ["abc", "def", "xyz", "def", "pqr"] * 4,
-            }
-        ),
-        lambda: cudf.DataFrame(index=[1, 2, 3]),
-        lambda: cudf.DataFrame(index=range(10000)),
-        lambda: cudf.DataFrame(columns=["a", "b", "c", "d"]),
-        lambda: cudf.DataFrame(columns=["a"], index=range(10000)),
-        lambda: cudf.DataFrame(
-            columns=["a", "col2", "...col n"], index=range(10000)
-        ),
-        lambda: cudf.DataFrame(index=cudf.Series(range(10000)).astype("str")),
-        lambda: cudf.DataFrame(
-            columns=["a", "b", "c", "d"],
-            index=cudf.Series(range(10000)).astype("str"),
-        ),
-    ],
-)
+_DATAFRAME_ILOC_INDEX_BUILDERS = [
+    lambda: cudf.DataFrame({"a": range(10000)}),
+    lambda: cudf.DataFrame(
+        {
+            "a": range(10000),
+            "b": range(10000),
+            "c": range(10000),
+            "d": range(10000),
+            "e": range(10000),
+            "f": range(10000),
+        }
+    ),
+    lambda: cudf.DataFrame({"a": range(20), "b": range(20)}),
+    lambda: cudf.DataFrame(
+        {
+            "a": range(20),
+            "b": range(20),
+            "c": ["abc", "def", "xyz", "def", "pqr"] * 4,
+        }
+    ),
+    lambda: cudf.DataFrame(index=[1, 2, 3]),
+    lambda: cudf.DataFrame(index=range(10000)),
+    lambda: cudf.DataFrame(columns=["a", "b", "c", "d"]),
+    lambda: cudf.DataFrame(columns=["a"], index=range(10000)),
+    lambda: cudf.DataFrame(
+        columns=["a", "col2", "...col n"], index=range(10000)
+    ),
+    lambda: cudf.DataFrame(index=cudf.Series(range(10000)).astype("str")),
+    lambda: cudf.DataFrame(
+        columns=["a", "b", "c", "d"],
+        index=cudf.Series(range(10000)).astype("str"),
+    ),
+]
+
+
+@pytest.fixture(scope="module", params=_DATAFRAME_ILOC_INDEX_BUILDERS)
+def dataframe_iloc_index_frame(request):
+    gdf = request.param()
+    return gdf, gdf.to_pandas()
+
+
 @pytest.mark.parametrize(
     "slice",
     [slice(6), slice(1), slice(7), slice(1, 3)],
 )
-def test_dataframe_iloc_index(gdf, slice):
-    gdf = gdf()
-    pdf = gdf.to_pandas()
+def test_dataframe_iloc_index(dataframe_iloc_index_frame, slice):
+    gdf, pdf = dataframe_iloc_index_frame
 
     actual = gdf.iloc[:, slice]
     expected = pdf.iloc[:, slice]

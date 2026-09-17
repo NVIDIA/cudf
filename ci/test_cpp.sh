@@ -45,8 +45,15 @@ if (( SUITEERROR == 0 )) && [[ "${RUN_LIBCUDF_STREAMING_TESTS}" == "true" ]]; th
     rapids-logger "Run libcudf_streaming gtests"
     # cudf_streaming contains distributed tests, and running tests in
     # parallel results in resource starvation CI env.
+    # Multiple MPI ranks execute the same GTest binary concurrently. GTest's
+    # directory-mode XML output chooses file names without interprocess
+    # synchronization, so ranks can corrupt a shared report. Keep XML reports
+    # enabled for the non-distributed suites above, but disable them here.
+    saved_gtest_output="${GTEST_OUTPUT}"
+    unset GTEST_OUTPUT
     timeout 5m ./ci/run_cudf_streaming_ctests.sh -j1
     SUITEERROR=$?
+    export GTEST_OUTPUT="${saved_gtest_output}"
 fi
 
 rapids-logger "Test script exiting with value: $EXITCODE"

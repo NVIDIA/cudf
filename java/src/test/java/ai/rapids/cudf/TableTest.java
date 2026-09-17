@@ -1509,6 +1509,20 @@ public class TableTest extends CudfTestBase {
   }
 
   @Test
+  void testReadParquetMissingColumnThrowsIllegalArgumentException() {
+    ParquetOptions opts = ParquetOptions.builder()
+        .includeColumn("doesnotexist")
+        .build();
+    assertThrows(IllegalArgumentException.class, () -> Table.readParquet(opts, TEST_PARQUET_FILE));
+  }
+
+  @Test
+  void testTableConstructorRejectsNullOrEmptyColumns() {
+    assertThrows(IllegalArgumentException.class, () -> new Table((long[]) null));
+    assertThrows(IllegalArgumentException.class, () -> new Table(new long[0]));
+  }
+
+  @Test
   void testReadParquetFromDataSource() throws IOException {
     ParquetOptions opts = ParquetOptions.builder()
             .includeColumn("loan_id")

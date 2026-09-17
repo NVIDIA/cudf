@@ -2855,10 +2855,11 @@ std::unique_ptr<std::vector<uint8_t>> writer::merge_row_group_metadata(
   md.row_groups.reserve(metadata_list.size());
   for (auto const& blob : metadata_list) {
     // The blob is header + thrift metadata + ender; parse the metadata span and reject overreads.
-    auto const begin = blob.get()->data() + sizeof(file_header_s);
-    auto const len =
-      std::max<size_t>(blob.get()->size(), sizeof(file_header_s) + sizeof(file_ender_s)) -
-      sizeof(file_header_s) - sizeof(file_ender_s);
+    auto const& md_blob = *blob.get();
+    CUDF_EXPECTS(md_blob.size() >= sizeof(file_header_s) + sizeof(file_ender_s),
+                 "Parquet row-group metadata blob is too small");
+    auto const begin = md_blob.data() + sizeof(file_header_s);
+    auto const len   = md_blob.size() - sizeof(file_header_s) - sizeof(file_ender_s);
     if (md.num_rows == 0) {
       decode_footer_bytes({begin, len}, &md);
     } else {

@@ -298,8 +298,9 @@ rmm::device_uvector<size_type> select_top_k_rows(column_view const& col,
   if (num_valid_out == 0) { return output; }
 
   // Compacting the non-null rows in input order gives cub a candidate list whose values are the
-  // original row indices, so it carries them through and the output needs no remapping. It also
-  // makes a choice among equal candidates prefer the earlier row.
+  // original row indices, so it carries them through and the output needs no remapping. Input order
+  // fixes the values cub carries, not its tie choice: which of several equal-keyed candidates it
+  // keeps at the k-th boundary is unspecified (determinism::not_guaranteed).
   auto valid_rows = rmm::device_uvector<size_type>(num_valid, stream, temp_mr);
   compact(valid_rows.data(), true);
 

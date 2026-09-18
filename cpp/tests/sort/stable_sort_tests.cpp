@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -287,4 +287,25 @@ TEST_F(StableSortDouble, InfinityAndNaN)
       {5, 11, 0, 14, 7, 8, 6, 4, 10, 1, 2, 3, 9, 12, 13});
   auto results = stable_sorted_order(cudf::table_view({input}));
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(results->view(), expected);
+}
+
+struct StableSortStrings : public cudf::test::BaseFixture {};
+
+TEST_F(StableSortStrings, SingleColumnNoNull)
+{
+  // This test exercises the "fast-path" single strings column sort.
+  // Equivalent strings must retain their relative ordering.
+  //                                              0    1    2    3    4    5   6    7
+  cudf::test::strings_column_wrapper col({"cc", "aa", "bb", "aa", "cc", "", "bb", "aa"});
+  auto const input = cudf::table_view({col});
+
+  auto const expected_asc =
+    cudf::test::fixed_width_column_wrapper<cudf::size_type>({5, 1, 3, 7, 2, 6, 0, 4});
+  auto const results_asc = cudf::stable_sorted_order(input, {cudf::order::ASCENDING});
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(results_asc->view(), expected_asc);
+
+  auto const expected_desc =
+    cudf::test::fixed_width_column_wrapper<cudf::size_type>({0, 4, 2, 6, 1, 3, 7, 5});
+  auto const results_desc = cudf::stable_sorted_order(input, {cudf::order::DESCENDING});
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(results_desc->view(), expected_desc);
 }

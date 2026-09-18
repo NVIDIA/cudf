@@ -1263,6 +1263,28 @@ def test_csv_reader_index_col():
     pd_df = pd.read_csv(StringIO(buffer), header=None, index_col=False)
     assert_eq(cu_df.index, pd_df.index)
 
+    # using a single column index wrapped in a list
+    cu_df = read_csv(StringIO(buffer), header=None, index_col=[0])
+    pd_df = pd.read_csv(StringIO(buffer), header=None, index_col=[0])
+    assert_eq(cu_df.index, pd_df.index)
+
+    # using multiple column indices
+    cu_df = read_csv(StringIO(buffer), header=None, index_col=[0, 1])
+    pd_df = pd.read_csv(StringIO(buffer), header=None, index_col=[0, 1])
+    assert_eq(cu_df.index, pd_df.index)
+
+
+def test_csv_reader_index_col_position_with_explicit_header():
+    buffer = "a,b,c\n3,4,5\n6,7,8"
+
+    cu_df = read_csv(StringIO(buffer), header=0, index_col=[0])
+    pd_df = pd.read_csv(StringIO(buffer), header=0, index_col=[0])
+    assert_eq(cu_df.index, pd_df.index)
+
+    cu_df = read_csv(StringIO(buffer), header=0, index_col=0)
+    pd_df = pd.read_csv(StringIO(buffer), header=0, index_col=0)
+    assert_eq(cu_df.index, pd_df.index)
+
 
 @pytest.mark.parametrize("index_name", [None, "custom name", 124])
 @pytest.mark.parametrize("index_col", [None, 0, "a"])

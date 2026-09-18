@@ -123,10 +123,10 @@ struct Spark_MurmurHash3_x86_32 {
       sizeof(T), [=](std::size_t i) { return words[i]; }, [](std::size_t) { return int8_t{}; });
   }
 
-  uint32_t __device__ compute_bytes(cuda::std::byte const* data, std::size_t const len) const
+  uint32_t __device__ compute_bytes(cuda::std::byte const* data, std::size_t const length) const
   {
     return hash_blocks(
-      len,
+      length,
       [=](std::size_t i) { return getblock32(data, i * BLOCK_SIZE); },
       // Java preserves the sign when widening byte to int.
       [=](std::size_t i) { return cuda::std::to_integer<int8_t>(data[i]); });

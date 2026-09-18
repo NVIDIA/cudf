@@ -17,12 +17,15 @@ import pytest
 import polars as pl
 
 from cudf_streaming.table_chunk import TableChunk
+from rapidsmpf.memory.buffer import MemoryType
 from rapidsmpf.streaming.chunks.arbitrary import ArbitraryChunk
 from rapidsmpf.streaming.core.message import Message
 
 from cudf_polars.containers import DataFrame
+from cudf_polars.dsl.ir import Empty
 from cudf_polars.streaming.actor_graph.io import Lineariser
 from cudf_polars.streaming.actor_graph.tracing import ActorTracer, send_chunk
+from cudf_polars.streaming.actor_graph.utils import shutdown_on_error
 from cudf_polars.utils.versions import POLARS_VERSION_LT_138
 
 if TYPE_CHECKING:
@@ -47,6 +50,45 @@ def test_actor_tracer_counts_table_chunk_without_table_view(chunk: TableChunk) -
     tracer.add_chunk(chunk=chunk)
     assert tracer.chunk_count == 1
     assert tracer.row_count == 3
+
+
+@pytest.mark.spmd
+def test_send_and_recv_bytes(spmd_engine: SPMDEngine, chunk: TableChunk) -> None:
+    context = spmd_engine.context
+    ch = context.create_channel()
+    ir = Empty({})
+
+    async def run() -> tuple[ActorTracer, ActorTracer]:
+
+        async def producer() -> ActorTracer:
+            async with shutdown_on_error(context, chs_out=(ch,), trace_ir=ir) as tracer:
+                await send_chunk(context, ch, chunk, 11, tracer=tracer)
+                await ch.drain(context)
+            return tracer
+
+        async def consumer() -> ActorTracer:
+            async with shutdown_on_error(context, chs_in=(ch,), trace_ir=ir) as tracer:
+                msg = await ch.recv(context)
+                assert msg is not None
+            return tracer
+
+        async with asyncio.TaskGroup() as tg:
+            producer_tracer_task = tg.create_task(producer())
+            consumer_tracer_task = tg.create_task(consumer())
+
+        producer_tracer = await producer_tracer_task
+        consumer_tracer = await consumer_tracer_task
+
+        return producer_tracer, consumer_tracer
+
+    producer_tracer, consumer_tracer = asyncio.run(run())
+    metrics = ch.metrics()
+
+    assert producer_tracer.output_bytes == metrics.send_bytes
+    assert consumer_tracer.input_bytes == metrics.recv_bytes
+    assert producer_tracer.output_bytes[MemoryType.DEVICE] > 0
+    assert producer_tracer.output_bytes[MemoryType.HOST] == 0
+    assert producer_tracer.output_bytes[MemoryType.PINNED_HOST] == 0
 
 
 @pytest.mark.spmd

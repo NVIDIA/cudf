@@ -26,6 +26,7 @@
 #include <cudf/io/data_sink.hpp>
 #include <cudf/io/datasource.hpp>
 #include <cudf/io/parquet.hpp>
+#include <cudf/io/parquet_metadata.hpp>
 #include <cudf/io/parquet_schema.hpp>
 #include <cudf/strings/strings_column_view.hpp>
 #include <cudf/table/table.hpp>
@@ -42,6 +43,7 @@
 #include <fstream>
 #include <numeric>
 #include <optional>
+#include <random>
 #include <ranges>
 #include <type_traits>
 
@@ -1346,6 +1348,51 @@ TEST_F(ParquetChunkedReaderInputLimitConstrainedTest, MixedColumns)
 }
 
 struct ParquetChunkedReaderInputLimitTest : public cudf::test::BaseFixture {};
+
+TEST_F(ParquetChunkedReaderInputLimitTest, V2PagesWithLevels)
+{
+  tmp_env_var const nvcomp{nvcomp_policy_env_var, "ALWAYS"};
+  tmp_env_var const host_decomp{host_decomp_env_var, "OFF"};
+  constexpr cudf::size_type num_rows    = 20'000;
+  constexpr cudf::size_type page_rows   = 5'000;
+  constexpr cudf::size_type rows_per_rg = 10'000;
+  auto values = cudf::detail::make_counting_transform_iterator(0, [](auto i) { return i % 25; });
+  auto valid =
+    cudf::detail::make_counting_transform_iterator(0, [](auto i) { return i % 10 != 0; });
+  auto const mixed_valid = cudf::detail::make_counting_transform_iterator(0, [](auto i) {
+    auto const page = i / page_rows;
+    return (page % 2 == 1) && (i % 10 != 0);
+  });
+  int64s_col mixed(values, values + num_rows, mixed_valid);
+  int64s_col flat(values, values + num_rows, valid);
+  int64s_col all_null(values, values + num_rows, cuda::make_constant_iterator(false));
+  int32s_col child(values, values + 2 * num_rows, valid);
+  auto offsets = cudf::detail::make_counting_transform_iterator(0, [](auto i) { return 2 * i; });
+  int32s_col list_offsets(offsets, offsets + num_rows + 1);
+  auto const lists = cudf::make_lists_column(
+    num_rows, list_offsets.release(), child.release(), 0, rmm::device_buffer{});
+  auto const expected = cudf::table_view{{flat, all_null, mixed, lists->view()}};
+  auto const filepath = temp_env->get_temp_filepath("ScratchLevels.parquet");
+  auto const options =
+    cudf::io::parquet_writer_options::builder(cudf::io::sink_info{filepath}, expected)
+      .compression(cudf::io::compression_type::ZSTD)
+      .write_v2_headers(true)
+      // Per-page compression decisions: lets an all-null page in a ZSTD chunk stay uncompressed.
+      .page_level_compression(true)
+      .dictionary_policy(cudf::io::dictionary_policy::NEVER)
+      .max_page_size_rows(page_rows)
+      .max_page_fragment_size(rows_per_rg)
+      .row_group_size_rows(rows_per_rg)
+      .build();
+  cudf::io::write_parquet(options);
+
+  auto const [result, num_chunks] = chunked_read(filepath, 0, 32'768);
+  CUDF_TEST_EXPECT_TABLES_EQUIVALENT(expected, result->view());
+  // With a 32 KiB input pass limit and two row groups of mixed-compression V2 pages, the reader
+  // must break the file into more than one limited pass; a single chunk would mean the pass
+  // limit was ignored (previously masked by the scratch-cost bug).
+  EXPECT_GT(num_chunks, 1);
+}
 
 TEST_F(ParquetChunkedReaderInputLimitTest, ProjectedColumnsReducePasses)
 {

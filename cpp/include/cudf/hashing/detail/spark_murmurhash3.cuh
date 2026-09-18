@@ -78,8 +78,6 @@ struct Spark_MurmurHash3_x86_32 {
     return compute(key);
   }
 
-  static constexpr std::size_t BLOCK_SIZE = 4;
-
   /**
    * @brief Hash `length` bytes using four-byte block and signed tail-byte generators
    *
@@ -113,7 +111,7 @@ struct Spark_MurmurHash3_x86_32 {
   }
 
   template <typename T>
-    requires(sizeof(T) % BLOCK_SIZE == 0)
+    requires(sizeof(T) % Spark_MurmurHash3_x86_32::BLOCK_SIZE == 0)
   uint32_t __device__ inline compute(T const& key) const
   {
     // A whole number of four-byte blocks with no tail. Mix the words directly in the
@@ -151,11 +149,12 @@ struct Spark_MurmurHash3_x86_32 {
 
  private:
   uint32_t m_seed;
-  static constexpr uint32_t c1     = 0xcc9e2d51;
-  static constexpr uint32_t c2     = 0x1b873593;
-  static constexpr uint32_t c3     = 0xe6546b64;
-  static constexpr uint32_t rot_c1 = 15;
-  static constexpr uint32_t rot_c2 = 13;
+  static constexpr std::size_t BLOCK_SIZE = 4;
+  static constexpr uint32_t c1            = 0xcc9e2d51;
+  static constexpr uint32_t c2            = 0x1b873593;
+  static constexpr uint32_t c3            = 0xe6546b64;
+  static constexpr uint32_t rot_c1        = 15;
+  static constexpr uint32_t rot_c2        = 13;
 };
 
 template <>

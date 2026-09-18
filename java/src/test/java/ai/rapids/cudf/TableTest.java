@@ -10182,7 +10182,7 @@ public class TableTest extends CudfTestBase {
              .column("a", "b", "c")
              .build();
          ParquetTableWriter writer =
-             Table.writeParquetChunked(options, tempFile.getFile())) {
+             Table.writeParquetChunkedWithFooter(options, tempFile.getFile())) {
       writer.write(table);
       writer.write(table);
       try (HostMemoryBuffer footer = writer.closeAndGetFooter()) {
@@ -10210,7 +10210,7 @@ public class TableTest extends CudfTestBase {
              .build();
          MyBufferConsumer consumer = new MyBufferConsumer();
          ParquetTableWriter writer =
-             Table.writeParquetChunked(options, consumer, allocator)) {
+             Table.writeParquetChunkedWithFooter(options, consumer, allocator)) {
       writer.write(table);
       try (HostMemoryBuffer footer = writer.closeAndGetFooter()) {
         byte[] parquetData = new byte[(int) consumer.offset];
@@ -10231,12 +10231,36 @@ public class TableTest extends CudfTestBase {
         .build();
     try (TempFile tempFile = TempFile.create("discarded-footer", ".parquet");
          Table table = new Table.TestBuilder().column(1, 2, 3).build()) {
-      ParquetTableWriter writer = Table.writeParquetChunked(options, tempFile.getFile());
+      ParquetTableWriter writer =
+          Table.writeParquetChunkedWithFooter(options, tempFile.getFile());
       writer.write(table);
       writer.close();
       assertThrows(IllegalStateException.class, writer::closeAndGetFooter);
       assertDoesNotThrow(writer::close);
     }
+  }
+
+  @Test
+  void testParquetWriterFactoryReturnTypes() throws NoSuchMethodException {
+    assertEquals(TableWriter.class,
+        Table.class.getMethod("writeParquetChunked", ParquetWriterOptions.class, File.class)
+            .getReturnType());
+    assertEquals(TableWriter.class,
+        Table.class.getMethod("writeParquetChunked", ParquetWriterOptions.class,
+            HostBufferConsumer.class, HostMemoryAllocator.class).getReturnType());
+    assertEquals(TableWriter.class,
+        Table.class.getMethod("writeParquetChunked", ParquetWriterOptions.class,
+            HostBufferConsumer.class).getReturnType());
+
+    assertEquals(ParquetTableWriter.class,
+        Table.class.getMethod("writeParquetChunkedWithFooter", ParquetWriterOptions.class,
+            File.class).getReturnType());
+    assertEquals(ParquetTableWriter.class,
+        Table.class.getMethod("writeParquetChunkedWithFooter", ParquetWriterOptions.class,
+            HostBufferConsumer.class, HostMemoryAllocator.class).getReturnType());
+    assertEquals(ParquetTableWriter.class,
+        Table.class.getMethod("writeParquetChunkedWithFooter", ParquetWriterOptions.class,
+            HostBufferConsumer.class).getReturnType());
   }
 
   private static void assertReturnedFooterMatches(byte[] parquetData,

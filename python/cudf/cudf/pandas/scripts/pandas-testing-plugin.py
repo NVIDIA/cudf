@@ -5624,10 +5624,6 @@ NODEIDS_TO_SKIP_WHEN_SHARDED: dict[str, str] = {
     "tests/strings/test_strings.py::test_ismethods[string=string[pyarrow]-isalnum-expected1]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
     "tests/strings/test_strings.py::test_ismethods[string=string[pyarrow]-isnumeric-expected4]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
     "tests/strings/test_strings.py::test_len[string=string[python]]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
-    "tests/strings/test_strings.py::test_slice_replace[string=string[pyarrow]-None--2-z-expected5]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
-    "tests/strings/test_strings.py::test_slice_replace[string=string[python]--1-None-z-expected4]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
-    "tests/strings/test_strings.py::test_slice_replace[string=str[python]--10-3-z-expected7]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
-    "tests/strings/test_strings.py::test_slice_replace[string=str[python]-None--2-z-expected5]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
     # Failing in sharded pandas-tests CI run 32294121723 (shard 1, job
     # 96216291366). Both are nondeterministic rather than deterministic
     # incompatibilities: test_stack_multiple_out_of_bounds[True] and the

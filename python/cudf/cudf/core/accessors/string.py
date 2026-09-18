@@ -2300,9 +2300,6 @@ class StringMethods(BaseAccessor):
         if start is None:
             start = 0
 
-        if stop is None:
-            stop = -1
-
         if repl is None:
             repl = ""
 
@@ -2314,8 +2311,25 @@ class StringMethods(BaseAccessor):
             raise TypeError(
                 f"repl should be a string, but got {type(repl).__name__}"
             ) from err
+        if start < 0 or (stop is not None and stop < start):
+            # Python normalizes negative bounds against each string's length.
+            # An empty slice inserts at start, even when stop precedes it.
+            prefix = self._column.slice_strings(0, start, None)
+            suffix = self._column.slice_strings(start, None, None)
+            if stop is not None:
+                removed = self._column.slice_strings(start, stop, None)
+                suffix = self._column.slice_strings(
+                    stop, None, None
+                ).copy_if_else(suffix, removed.count_characters() > 0)
+            else:
+                suffix = self._column.slice_strings(0, 0, None)
+            return self._return_or_inplace(
+                prefix.concatenate([suffix], repl, None)
+            )
         return self._return_or_inplace(
-            self._column.replace_slice(start, stop, plc_repl)
+            self._column.replace_slice(
+                start, -1 if stop is None else stop, plc_repl
+            )
         )
 
     def insert(
@@ -2363,6 +2377,9 @@ class StringMethods(BaseAccessor):
         1    0123456789_
         dtype: str
         """
+        if start is not None and start < 0:
+            # Negative insertion positions append to the string.
+            start = np.iinfo(np.int32).max
         return self.slice_replace(start, start, repl)
 
     def get(self, i: int = 0) -> Series | Index:

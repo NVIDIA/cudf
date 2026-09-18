@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#include "reader_common.hpp"
+#include "parquet_common.hpp"
 
 #include <benchmarks/common/generate_input.hpp>
 #include <benchmarks/common/memory_stats.hpp>
@@ -42,4 +42,39 @@ void parquet_read_common(cudf::size_type num_rows_to_read,
   state.add_buffer_size(
     mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
   state.add_buffer_size(source_sink.size(), "encoded_file_size", "encoded_file_size");
+}
+
+cuio_source_sink_pair write_file_shape_parquet_file(cudf::type_id dtype,
+                                                    cudf::size_type num_rows,
+                                                    cudf::size_type num_row_groups,
+                                                    cudf::size_type pages_per_row_group,
+                                                    io_type source_type,
+                                                    bool write_page_index)
+{
+  cuio_source_sink_pair source_sink(source_type);
+
+  auto const tbl =
+    create_random_table({dtype},
+                        row_count{num_rows},
+                        data_profile_builder().cardinality(num_rows / 10).avg_run_length(4));
+  auto const view = tbl->view();
+
+  auto const rows_per_page = num_rows / (num_row_groups * pages_per_row_group);
+
+  cudf::io::parquet_writer_options write_opts =
+    cudf::io::parquet_writer_options::builder(source_sink.make_sink_info(), view)
+      .compression(cudf::io::compression_type::NONE)
+      .row_group_size_rows(num_rows / num_row_groups)
+      .max_page_size_rows(rows_per_page)
+      // Pages are assembled out of whole fragments, so without this the default 5000-row
+      // fragment is a floor on page size and fewer rows per page cannot be honored
+      .max_page_fragment_size(rows_per_page)
+      // Lift the default 512KB page limit so that it does not close pages before
+      // `max_page_size_rows` does
+      .max_page_size_bytes(1ul << 30)
+      .stats_level(write_page_index ? cudf::io::statistics_freq::STATISTICS_COLUMN
+                                    : cudf::io::statistics_freq::STATISTICS_ROWGROUP);
+  cudf::io::write_parquet(write_opts);
+
+  return source_sink;
 }

@@ -3,20 +3,18 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+#include "parquet_common.hpp"
+
 #include <benchmarks/common/generate_input.hpp>
 #include <benchmarks/common/memory_stats.hpp>
 #include <benchmarks/io/cuio_common.hpp>
-#include <benchmarks/io/nvbench_helpers.hpp>
 
 #include <cudf/ast/expressions.hpp>
-#include <cudf/detail/utilities/integer_utils.hpp>
 #include <cudf/io/datasource.hpp>
 #include <cudf/io/parquet.hpp>
 #include <cudf/io/parquet_metadata.hpp>
 #include <cudf/scalar/scalar.hpp>
 #include <cudf/utilities/default_stream.hpp>
-
-#include <cuda/iterator>
 
 #include <nvbench/nvbench.cuh>
 
@@ -28,61 +26,7 @@
 #include <utility>
 #include <vector>
 
-// Common mixed dtypes used by all benchmarks in this file
-auto const mixed_dtypes = get_type_or_group({static_cast<int32_t>(data_type::STRING),
-                                             static_cast<int32_t>(data_type::INTEGRAL),
-                                             static_cast<int32_t>(data_type::FLOAT),
-                                             static_cast<int32_t>(data_type::DECIMAL),
-                                             static_cast<int32_t>(data_type::LIST)});
-
 namespace {
-
-// Helper to generate and write parquet data using chunked writer
-auto write_file_data(cudf::size_type num_cols,
-                     cudf::size_type num_row_groups,
-                     io_type source_type,
-                     bool write_page_index)
-{
-  cuio_source_sink_pair source_sink(source_type);
-
-  // Minimum row group size that cudf will almost always follow
-  constexpr auto rows_per_row_group = 5000;
-  constexpr auto min_row_groups     = 10;
-  constexpr auto table_rows         = min_row_groups * rows_per_row_group;
-
-  CUDF_EXPECTS(num_row_groups > 0 and num_row_groups % min_row_groups == 0,
-               "Number of requested row groups must be non-zero and a multiple of " +
-                 std::to_string(min_row_groups));
-
-  // Create a table with the enough rows to cover min_row_groups
-  auto const tbl =
-    create_random_table(cycle_dtypes(mixed_dtypes, num_cols),
-                        row_count{table_rows},
-                        data_profile_builder().cardinality(0).avg_run_length(1).distribution(
-                          cudf::type_id::LIST, distribution_id::GEOMETRIC, 0, 4));
-  auto const view = tbl->view();
-
-  auto const stats_level = write_page_index ? cudf::io::statistics_freq::STATISTICS_COLUMN
-                                            : cudf::io::statistics_freq::STATISTICS_ROWGROUP;
-  auto const options =
-    cudf::io::chunked_parquet_writer_options::builder(source_sink.make_sink_info())
-      .row_group_size_rows(rows_per_row_group)
-      .compression(cudf::io::compression_type::NONE)
-      .stats_level(stats_level)
-      .build();
-  auto writer = cudf::io::chunked_parquet_writer(options, cudf::get_default_stream());
-
-  // Compute the number of times the table needs to be written to cover the requested number of row
-  // groups
-  auto num_writes = cudf::util::div_rounding_up_unsafe(num_row_groups, min_row_groups);
-  std::for_each(cuda::counting_iterator<cudf::size_type>{0},
-                cuda::counting_iterator{num_writes},
-                [&](cudf::size_type) { writer.write(view); });
-
-  std::ignore = writer.close();
-
-  return source_sink;
-}
 
 // Combines `operands` into a balanced AST tree using `op`: pairing adjacent operands gives a tree
 // of depth ceil(log2(n)) rather than the n-deep chain a left fold would produce.
@@ -115,7 +59,8 @@ void BM_parquet_read_footer(nvbench::state& state)
   auto const source_type      = retrieve_io_type_enum(state.get_string("io_type"));
   auto const write_page_index = state.get_int64("page_index") != 0;
 
-  auto source_sink = write_file_data(num_cols, num_row_groups, source_type, write_page_index);
+  auto source_sink =
+    write_mixed_dtype_parquet_file(num_cols, num_row_groups, source_type, write_page_index);
   auto const mem_stats_logger = cudf::memory_stats_logger();
 
   state.exec(
@@ -153,7 +98,8 @@ void BM_parquet_reader_construction(nvbench::state& state)
   auto const source_type      = retrieve_io_type_enum(state.get_string("io_type"));
   auto const write_page_index = state.get_int64("page_index") != 0;
 
-  auto source_sink = write_file_data(num_cols, num_row_groups, source_type, write_page_index);
+  auto source_sink =
+    write_mixed_dtype_parquet_file(num_cols, num_row_groups, source_type, write_page_index);
 
   auto constexpr chunk_read_limit = 0;
   auto constexpr pass_read_limit  = 0;
@@ -195,7 +141,7 @@ void BM_parquet_column_selection(nvbench::state& state)
 
   // Create a table with minimal rows (1 row is enough to create valid parquet)
   constexpr cudf::size_type num_rows = 1;
-  auto const tbl                     = create_random_table(cycle_dtypes(mixed_dtypes, num_cols),
+  auto const tbl                     = create_random_table(cycle_dtypes(mixed_dtypes(), num_cols),
                                        row_count{num_rows},
                                        data_profile_builder().cardinality(0).avg_run_length(1));
   auto const view                    = tbl->view();
@@ -246,29 +192,12 @@ void BM_parquet_filter_name_resolution(nvbench::state& state)
   auto const heavy_filter   = state.get_int64("heavy_filter") != 0;
   auto const source_type    = retrieve_io_type_enum(state.get_string("io_type"));
 
-  cuio_source_sink_pair source_sink(source_type);
+  auto source_sink = write_named_resolution_parquet_file(num_cols, source_type);
 
-  // Flat, single-row table of INT32 columns with deterministic names col0..col{n-1}. INT32 keeps
-  // the filter literal trivially type-correct; name-resolution cost is independent of dtype.
-  constexpr cudf::size_type num_rows = 1;
-  auto const tbl =
-    create_random_table(cycle_dtypes({cudf::type_id::INT32}, num_cols),
-                        row_count{num_rows},
-                        data_profile_builder().cardinality(0).avg_run_length(1).no_validity());
-  auto const view = tbl->view();
-
-  cudf::io::table_input_metadata input_meta(view);
   std::vector<std::string> file_names(num_cols);
   for (cudf::size_type i = 0; i < num_cols; i++) {
     file_names[i] = "col" + std::to_string(i);
-    input_meta.column_metadata[i].set_name(file_names[i]);
   }
-
-  cudf::io::parquet_writer_options write_opts =
-    cudf::io::parquet_writer_options::builder(source_sink.make_sink_info(), view)
-      .metadata(std::move(input_meta))
-      .compression(cudf::io::compression_type::NONE);
-  cudf::io::write_parquet(write_opts);
 
   // Query name: exact when case-sensitive, upper-cased when case-insensitive so the converter must
   // normalize on lookup.
@@ -343,6 +272,45 @@ void BM_parquet_filter_name_resolution(nvbench::state& state)
     mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
 }
 
+// Benchmark full-projection column-name resolution during naive reader construction.
+void BM_parquet_read_column_projection(nvbench::state& state)
+{
+  auto const num_cols    = static_cast<cudf::size_type>(state.get_int64("num_cols"));
+  auto const source_type = retrieve_io_type_enum(state.get_string("io_type"));
+
+  auto source_sink = write_named_resolution_parquet_file(num_cols, source_type);
+
+  std::vector<std::string> column_names(num_cols);
+  for (cudf::size_type i = 0; i < num_cols; i++) {
+    column_names[i] = "col" + std::to_string(i);
+  }
+
+  auto read_opts = cudf::io::parquet_reader_options::builder(source_sink.make_source_info())
+                     .column_names(column_names)
+                     .build();
+
+  auto const mem_stats_logger = cudf::memory_stats_logger();
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().get()));
+  state.exec(
+    nvbench::exec_tag::sync | nvbench::exec_tag::timer, [&](nvbench::launch& launch, auto& timer) {
+      auto const source_info = source_sink.make_source_info();
+      drop_page_cache_if_enabled(source_info.filepaths());
+      // Measures column selection alone
+      auto sources   = cudf::io::make_datasources(source_info);
+      auto metadatas = cudf::io::read_parquet_footers(sources);
+
+      timer.start();
+      [[maybe_unused]] auto const reader =
+        cudf::io::chunked_parquet_reader(0, 0, std::move(sources), std::move(metadatas), read_opts);
+      timer.stop();
+    });
+
+  auto const time = state.get_summary("nv/cold/time/gpu/mean").get_float64("value");
+  state.add_element_count(static_cast<double>(num_cols) / time, "cols_per_sec");
+  state.add_buffer_size(
+    mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
+}
+
 NVBENCH_BENCH(BM_parquet_read_footer)
   .set_name("parquet_read_footer")
   .set_min_samples(4)
@@ -372,3 +340,9 @@ NVBENCH_BENCH(BM_parquet_filter_name_resolution)
   .add_int64_axis("num_cols", {64, 128, 256, 512, 1024, 1536, 2048, 4096})
   .add_int64_axis("case_sensitive", {1, 0})
   .add_int64_axis("heavy_filter", {0, 1});
+
+NVBENCH_BENCH(BM_parquet_read_column_projection)
+  .set_name("parquet_read_column_projection")
+  .set_min_samples(4)
+  .add_string_axis("io_type", {"FILEPATH"})
+  .add_int64_axis("num_cols", {64, 512, 2048, 4096});

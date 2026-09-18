@@ -26,6 +26,7 @@ from cudf_polars.streaming.actor_graph.nodes import (
 )
 from cudf_polars.streaming.filter_hint import PushdownFilterHint
 from cudf_polars.streaming.over import Over
+from cudf_polars.streaming.partitioning_requests import collect_partitioning_requests
 from cudf_polars.utils.config import SPMDContext
 
 if TYPE_CHECKING:
@@ -269,6 +270,7 @@ def generate_network(
 
     # Determine which nodes need fanout
     fanout_nodes = determine_fanout_nodes(ir, partition_info, ir_dep_count)
+    partitioning_requests = collect_partitioning_requests(ir)
 
     # Generate the network
     state: GenState = {
@@ -281,6 +283,7 @@ def generate_network(
         "max_concurrent_io_tasks": config_options.executor.max_concurrent_io_tasks,
         "stats": stats,
         "collective_id_map": collective_id_map,
+        "partitioning_requests": partitioning_requests,
         "quent_operator_map": quent_operator_map,
         "quent_execution_context": local_quent_context,
     }

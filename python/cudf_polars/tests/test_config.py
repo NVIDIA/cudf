@@ -891,6 +891,13 @@ def test_validate_dynamic_planning() -> None:
                 executor_options={"dynamic_planning": {"sample_chunk_count": object()}},
             )
         )
+    with pytest.raises(TypeError, match="infer_ordering must be"):
+        ConfigOptions.from_polars_engine(
+            pl.GPUEngine(
+                executor="streaming",
+                executor_options={"dynamic_planning": {"infer_ordering": object()}},
+            )
+        )
 
 
 def test_dynamic_planning_sample_chunk_count_min() -> None:
@@ -909,6 +916,7 @@ def test_dynamic_planning_defaults() -> None:
     # Dynamic planning is enabled by default
     assert config.executor.dynamic_planning is not None
     assert config.executor.dynamic_planning.sample_chunk_count == 2
+    assert config.executor.dynamic_planning.infer_ordering is True
     assert config.executor.join_filter_pushdown is None
 
 
@@ -931,6 +939,26 @@ def test_dynamic_planning_sample_chunk_count_from_env(
     assert config.executor.name == "streaming"
     assert config.executor.dynamic_planning is not None
     assert config.executor.dynamic_planning.sample_chunk_count == 3
+
+
+def test_dynamic_planning_infer_ordering_from_options() -> None:
+    config = ConfigOptions.from_polars_engine(
+        pl.GPUEngine(
+            executor="streaming",
+            executor_options={"dynamic_planning": {"infer_ordering": False}},
+        )
+    )
+    assert config.executor.dynamic_planning is not None
+    assert config.executor.dynamic_planning.infer_ordering is False
+
+
+def test_dynamic_planning_infer_ordering_from_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("CUDF_POLARS__EXECUTOR__DYNAMIC_PLANNING__INFER_ORDERING", "0")
+    config = ConfigOptions.from_polars_engine(pl.GPUEngine())
+    assert config.executor.dynamic_planning is not None
+    assert config.executor.dynamic_planning.infer_ordering is False
 
 
 def test_join_filter_pushdown_options_from_env(

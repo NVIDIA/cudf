@@ -19,10 +19,11 @@ from cudf_polars.testing.engine_utils import (
     SMALL_MAX_ROWS_PER_PARTITION,
     SMALL_TARGET_PARTITION_SIZE,
 )
+from cudf_polars.testing.fallback import fallback_used
 from cudf_polars.utils.config import StreamingFallbackMode
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Generator, Mapping
 
 
 def nonnegative_int(value: str) -> int:
@@ -166,6 +167,16 @@ def pytest_configure(config: pytest.Config) -> None:
         "filterwarnings",
         "ignore:.*Query execution with GPU not possible",
     )
+
+
+@pytest.hookimpl(hookwrapper=True, tryfirst=True)
+def pytest_runtest_protocol(
+    item: pytest.Item, nextitem: pytest.Item | None
+) -> Generator[None, None, None]:
+    """Give each injected-engine pytest item an isolated fallback signal."""
+    token = fallback_used.set(False)
+    yield
+    fallback_used.reset(token)
 
 
 def _verify_collect_patch(engine: object) -> None:

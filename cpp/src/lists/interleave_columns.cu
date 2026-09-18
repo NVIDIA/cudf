@@ -363,17 +363,21 @@ std::unique_ptr<column> interleave_columns(table_view const& input,
                                                              mr);
 
   if (not has_null_mask) {
-    return make_lists_column(
-      num_output_lists, std::move(list_offsets), std::move(list_entries), 0, rmm::device_buffer{});
+    return make_lists_column(num_output_lists,
+                             std::move(list_offsets),
+                             std::move(list_entries),
+                             0,
+                             cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
   }
 
   auto [null_mask, null_count] = cudf::detail::valid_if(
     list_validities.begin(), list_validities.end(), cuda::std::identity{}, stream, mr);
-  return make_lists_column(num_output_lists,
-                           std::move(list_offsets),
-                           std::move(list_entries),
-                           null_count,
-                           null_count ? std::move(null_mask) : rmm::device_buffer{});
+  return make_lists_column(
+    num_output_lists,
+    std::move(list_offsets),
+    std::move(list_entries),
+    null_count,
+    null_count ? std::move(null_mask) : cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 }
 
 }  // namespace detail

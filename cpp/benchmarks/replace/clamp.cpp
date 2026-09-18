@@ -25,7 +25,8 @@ void bench_clamp(nvbench::state& state, nvbench::type_list<ClampType>)
 
   auto const dtype = cudf::type_to_id<ClampType>();
   auto const input = create_random_column(dtype, row_count{n_rows});
-  if (!include_nulls) input->set_null_mask(rmm::device_buffer{}, 0);
+  if (!include_nulls)
+    input->set_null_mask(cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED), 0);
 
   auto [low_scalar, high_scalar] = cudf::minmax(*input);
 

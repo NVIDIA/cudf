@@ -463,7 +463,11 @@ std::unique_ptr<column> replace_string_parallel(strings_column_view const& input
     stream,
     mr);
 
-  return make_strings_column(input.size(), std::move(offsets_column), chars.release(), 0, {});
+  return make_strings_column(input.size(),
+                             std::move(offsets_column),
+                             chars.release(),
+                             0,
+                             cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 }
 
 }  // namespace
@@ -526,11 +530,11 @@ std::unique_ptr<column> replace(strings_column_view const& input,
       auto const views = std::vector<column_view>{input.parent(), targets.parent(), repls.parent()};
       return cudf::detail::bitmask_and(table_view{views}, stream, mr);
     } else {
-      return std::pair{rmm::device_buffer{}, 0};
+      return std::pair{cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED), 0};
     }
   }();
   auto const d_valid_mask =
-    has_any_nulls ? static_cast<bitmask_type const*>(null_mask.data()) : nullptr;
+    has_any_nulls ? reinterpret_cast<bitmask_type const*>(null_mask.data()) : nullptr;
 
   auto d_targets = column_device_view::create(targets.parent(), stream);
   auto d_repls   = column_device_view::create(repls.parent(), stream);

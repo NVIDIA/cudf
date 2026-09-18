@@ -534,7 +534,11 @@ std::unique_ptr<column> sha_hash(table_view const& input,
       hasher.finalize();
     });
 
-  return make_strings_column(input.num_rows(), std::move(offsets_column), chars.release(), 0, {});
+  return make_strings_column(input.num_rows(),
+                             std::move(offsets_column),
+                             chars.release(),
+                             0,
+                             cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 }
 
 }  // namespace detail

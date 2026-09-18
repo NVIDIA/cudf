@@ -96,7 +96,9 @@ std::unique_ptr<column> concatenate_lists_ignore_null(column_view const& input,
                            std::move(out_offsets),
                            std::move(out_entries),
                            null_count,
-                           null_count > 0 ? std::move(null_mask) : rmm::device_buffer{});
+                           null_count > 0
+                             ? std::move(null_mask)
+                             : cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 }
 
 /**
@@ -215,11 +217,12 @@ std::unique_ptr<column> concatenate_lists_nullifying_rows(column_view const& inp
   auto [null_mask, null_count] = cudf::detail::valid_if(
     list_validities.begin(), list_validities.end(), cuda::std::identity{}, stream, mr);
 
-  return make_lists_column(num_rows,
-                           std::move(list_offsets),
-                           std::move(list_entries),
-                           null_count,
-                           null_count ? std::move(null_mask) : rmm::device_buffer{});
+  return make_lists_column(
+    num_rows,
+    std::move(list_offsets),
+    std::move(list_entries),
+    null_count,
+    null_count ? std::move(null_mask) : cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 }
 
 }  // namespace

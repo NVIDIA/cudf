@@ -56,7 +56,8 @@ std::unique_ptr<cudf::column> random_column(cudf::size_type nrows,
 {
   auto vec =
     random_device_vector(rapidsmpf::safe_cast<std::size_t>(nrows), min_val, max_val, stream, mr);
-  return std::make_unique<cudf::column>(std::move(vec), rmm::device_buffer{0, stream, mr}, 0);
+  return std::make_unique<cudf::column>(
+    std::move(vec), cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED, stream, mr), 0);
 }
 
 cudf::table random_table(cudf::size_type ncolumns,

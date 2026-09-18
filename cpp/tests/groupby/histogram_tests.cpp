@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -106,8 +106,11 @@ TYPED_TEST(GroupbyHistogramTest, SimpleInputNoNull)
       auto counts = int64s_col{1, 1, 3, 1, 1, 2, 1, 1, 2, 2};
       return structs_col{{values, counts}};
     }();
-    return cudf::make_lists_column(
-      3, int32s_col{0, 3, 7, 10}.release(), structs.release(), 0, rmm::device_buffer{});
+    return cudf::make_lists_column(3,
+                                   int32s_col{0, 3, 7, 10}.release(),
+                                   structs.release(),
+                                   0,
+                                   cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
   }();
 
   auto const [res_keys, res_histogram] =
@@ -136,8 +139,11 @@ TYPED_TEST(GroupbyHistogramTest, SlicedInputNoNull)
       auto counts = int64s_col{1, 1, 3, 1, 1, 2, 1, 1, 2, 2};
       return structs_col{{values, counts}};
     }();
-    return cudf::make_lists_column(
-      3, int32s_col{0, 3, 7, 10}.release(), structs.release(), 0, rmm::device_buffer{});
+    return cudf::make_lists_column(3,
+                                   int32s_col{0, 3, 7, 10}.release(),
+                                   structs.release(),
+                                   0,
+                                   cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
   }();
 
   auto const [res_keys, res_histogram] =
@@ -167,8 +173,11 @@ TYPED_TEST(GroupbyHistogramTest, InputWithNulls)
       auto counts = int64s_col{2, 1, 2, 1, 1, 3, 2, 1, 2, 1, 1, 3};
       return structs_col{{values, counts}};
     }();
-    return cudf::make_lists_column(
-      3, int32s_col{0, 3, 8, 12}.release(), structs.release(), 0, rmm::device_buffer{});
+    return cudf::make_lists_column(3,
+                                   int32s_col{0, 3, 8, 12}.release(),
+                                   structs.release(),
+                                   0,
+                                   cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
   }();
 
   auto const [res_keys, res_histogram] =
@@ -203,8 +212,11 @@ TYPED_TEST(GroupbyHistogramTest, SlicedInputWithNulls)
       auto counts = int64s_col{2, 1, 2, 1, 1, 3, 2, 1, 2, 1, 1, 3};
       return structs_col{{values, counts}};
     }();
-    return cudf::make_lists_column(
-      3, int32s_col{0, 3, 8, 12}.release(), structs.release(), 0, rmm::device_buffer{});
+    return cudf::make_lists_column(3,
+                                   int32s_col{0, 3, 8, 12}.release(),
+                                   structs.release(),
+                                   0,
+                                   cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
   }();
 
   auto const [res_keys, res_histogram] =
@@ -224,8 +236,11 @@ TYPED_TEST(GroupbyMergeHistogramTest, EmptyInput)
       auto counts = int64s_col{};
       return structs_col{{values, counts}};
     }();
-    return cudf::make_lists_column(
-      0, int32s_col{}.release(), structs.release(), 0, rmm::device_buffer{});
+    return cudf::make_lists_column(0,
+                                   int32s_col{}.release(),
+                                   structs.release(),
+                                   0,
+                                   cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
   }();
   auto const [res_keys, res_histogram] =
     groupby_histogram(keys, *values, cudf::aggregation::MERGE_HISTOGRAM);
@@ -247,8 +262,11 @@ TYPED_TEST(GroupbyMergeHistogramTest, SimpleInputNoNull)
       auto counts = int64s_col{1, 1, 3, 1, 3, 2, 1, 1, 2, 1, 2, 3, 1, 2};
       return structs_col{{values, counts}};
     }();
-    return cudf::make_lists_column(
-      5, int32s_col{0, 3, 6, 8, 11, 14}.release(), structs.release(), 0, rmm::device_buffer{});
+    return cudf::make_lists_column(5,
+                                   int32s_col{0, 3, 6, 8, 11, 14}.release(),
+                                   structs.release(),
+                                   0,
+                                   cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
   }();
 
   auto const expected_keys      = int32s_col{0, 1};
@@ -258,8 +276,11 @@ TYPED_TEST(GroupbyMergeHistogramTest, SimpleInputNoNull)
       auto counts = int64s_col{4, 1, 2, 3, 3, 1, 2, 4, 4};
       return structs_col{{values, counts}};
     }();
-    return cudf::make_lists_column(
-      2, int32s_col{0, 5, 9}.release(), structs.release(), 0, rmm::device_buffer{});
+    return cudf::make_lists_column(2,
+                                   int32s_col{0, 5, 9}.release(),
+                                   structs.release(),
+                                   0,
+                                   cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
   }();
 
   auto const [res_keys, res_histogram] =
@@ -285,7 +306,7 @@ TYPED_TEST(GroupbyMergeHistogramTest, SlicedInputNoNull)
                                    int32s_col{0, 2, 4, 7, 10, 12, 15, 18}.release(),
                                    structs.release(),
                                    0,
-                                   rmm::device_buffer{});
+                                   cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
   }();
   auto const keys   = cudf::slice(keys_original, {2, 7})[0];
   auto const values = cudf::slice(*values_original, {2, 7})[0];
@@ -297,8 +318,11 @@ TYPED_TEST(GroupbyMergeHistogramTest, SlicedInputNoNull)
       auto counts = int64s_col{4, 1, 2, 3, 3, 1, 2, 4, 4};
       return structs_col{{values, counts}};
     }();
-    return cudf::make_lists_column(
-      2, int32s_col{0, 5, 9}.release(), structs.release(), 0, rmm::device_buffer{});
+    return cudf::make_lists_column(2,
+                                   int32s_col{0, 5, 9}.release(),
+                                   structs.release(),
+                                   0,
+                                   cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
   }();
 
   auto const [res_keys, res_histogram] =
@@ -322,8 +346,11 @@ TYPED_TEST(GroupbyMergeHistogramTest, InputWithNulls)
       auto counts = int64s_col{1, 3, 1, 3, 2, 2, 1, 2, 2, 1, 1, 2};
       return structs_col{{values, counts}};
     }();
-    return cudf::make_lists_column(
-      5, int32s_col{0, 2, 5, 8, 10, 12}.release(), structs.release(), 0, rmm::device_buffer{});
+    return cudf::make_lists_column(5,
+                                   int32s_col{0, 2, 5, 8, 10, 12}.release(),
+                                   structs.release(),
+                                   0,
+                                   cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
   }();
 
   auto const expected_keys      = int32s_col{0, 1};
@@ -333,8 +360,11 @@ TYPED_TEST(GroupbyMergeHistogramTest, InputWithNulls)
       auto counts = int64s_col{3, 1, 3, 3, 1, 2, 4, 4};
       return structs_col{{values, counts}};
     }();
-    return cudf::make_lists_column(
-      2, int32s_col{0, 4, 8}.release(), structs.release(), 0, rmm::device_buffer{});
+    return cudf::make_lists_column(2,
+                                   int32s_col{0, 4, 8}.release(),
+                                   structs.release(),
+                                   0,
+                                   cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
   }();
 
   auto const [res_keys, res_histogram] =
@@ -363,7 +393,7 @@ TYPED_TEST(GroupbyMergeHistogramTest, SlicedInputWithNulls)
                                    int32s_col{0, 2, 4, 6, 9, 12, 14, 16}.release(),
                                    structs.release(),
                                    0,
-                                   rmm::device_buffer{});
+                                   cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
   }();
   auto const keys   = cudf::slice(keys_original, {2, 7})[0];
   auto const values = cudf::slice(*values_original, {2, 7})[0];
@@ -375,8 +405,11 @@ TYPED_TEST(GroupbyMergeHistogramTest, SlicedInputWithNulls)
       auto counts = int64s_col{3, 1, 3, 3, 1, 2, 4, 4};
       return structs_col{{values, counts}};
     }();
-    return cudf::make_lists_column(
-      2, int32s_col{0, 4, 8}.release(), structs.release(), 0, rmm::device_buffer{});
+    return cudf::make_lists_column(2,
+                                   int32s_col{0, 4, 8}.release(),
+                                   structs.release(),
+                                   0,
+                                   cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
   }();
 
   auto const [res_keys, res_histogram] =

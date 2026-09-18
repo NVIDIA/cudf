@@ -108,7 +108,7 @@ hash_join<Hasher>::hash_join(cudf::table_view const& right,
   auto const temp_mr     = cudf::get_current_device_resource_ref();
   auto const row_bitmask = cudf::detail::bitmask_and(right, stream, temp_mr).first;
   auto const valid_rows  = _nulls_equal == null_equality::UNEQUAL
-                             ? static_cast<bitmask_type const*>(row_bitmask.data())
+                             ? reinterpret_cast<bitmask_type const*>(row_bitmask.data())
                              : nullptr;
   rmm::device_uvector<build_position_type> build_positions(right.num_rows(), stream, temp_mr);
   auto build = [&](auto equality, auto hasher) {

@@ -57,10 +57,13 @@ std::unique_ptr<column> make_strings_column_from_host(host_span<std::string cons
                                 [](auto& str) { return str.size(); });
   auto d_offsets = std::make_unique<cudf::column>(
     cudf::detail::make_device_uvector(offsets, stream, cudf::get_current_device_resource_ref()),
-    rmm::device_buffer{},
+    cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
     0);
-  return cudf::make_strings_column(
-    host_strings.size(), std::move(d_offsets), d_chars.release(), 0, {});
+  return cudf::make_strings_column(host_strings.size(),
+                                   std::move(d_offsets),
+                                   d_chars.release(),
+                                   0,
+                                   cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 }
 
 std::unique_ptr<column> make_column_names_column(host_span<column_name_info const> column_names,

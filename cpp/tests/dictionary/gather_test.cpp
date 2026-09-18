@@ -54,8 +54,8 @@ TEST_F(DictionaryGatherTest, DuplicateKeys)
   auto keys   = cudf::test::strings_column_wrapper({"pear", "apple", "fruit", "pear"});
   auto values = cudf::test::fixed_width_column_wrapper<int32_t>({1, 2, 3, 1, 2, 3, 0});
 
-  auto dictionary =
-    cudf::make_dictionary_column(keys.release(), values.release(), rmm::device_buffer{}, 0);
+  auto dictionary = cudf::make_dictionary_column(
+    keys.release(), values.release(), cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED), 0);
   auto view = cudf::dictionary_column_view(dictionary->view());
 
   // decoded values are: {apple, fruit, pear, apple, fruit, pear, pear}

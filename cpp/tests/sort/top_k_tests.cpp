@@ -12,6 +12,7 @@
 #include <cudf/column/column_factories.hpp>
 #include <cudf/copying.hpp>
 #include <cudf/lists/lists_column_view.hpp>
+#include <cudf/null_mask.hpp>
 #include <cudf/sorting.hpp>
 #include <cudf/table/table_view.hpp>
 #include <cudf/types.hpp>
@@ -385,9 +386,12 @@ TEST_F(TopK, SegmentedUncoveredNull)
   auto expected_values = cudf::test::fixed_width_column_wrapper<int32_t>(
     {50, 40, 25, 15}, cudf::test::iterators::no_nulls());
   auto expected_offsets = cudf::test::fixed_width_column_wrapper<int32_t>({0, 2, 4});
-  auto expected =
-    cudf::make_lists_column(2, expected_offsets.release(), expected_values.release(), 0, {});
-  auto result = cudf::segmented_top_k(input, offsets, 2);
+  auto expected         = cudf::make_lists_column(2,
+                                          expected_offsets.release(),
+                                          expected_values.release(),
+                                          0,
+                                          cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
+  auto result           = cudf::segmented_top_k(input, offsets, 2);
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected->view(), result->view());
 
   auto expected_order = cudf::test::lists_column_wrapper<cudf::size_type>({{4, 0}, {6, 5}});

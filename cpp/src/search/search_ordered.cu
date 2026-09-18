@@ -57,7 +57,7 @@ std::unique_ptr<column> search_ordered(table_view const& haystack,
   auto const& matched_needles  = matched.second.back();
 
   auto const comparator = cudf::detail::row::lexicographic::two_table_comparator(
-    matched_haystack, matched_needles, column_order, null_precedence, stream);
+    matched_haystack, matched_needles, column_order, null_precedence, stream, mr);
   auto const has_nulls = has_nested_nulls(matched_haystack) or has_nested_nulls(matched_needles);
 
   auto const haystack_it = cudf::detail::row::lhs_iterator(0);

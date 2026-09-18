@@ -203,8 +203,8 @@ right_run_index build_right_run_index(table_view const& table,
   auto const has_nulls = has_nested_nulls(table);
   std::vector<cudf::order> column_order(table.num_columns(), cudf::order::ASCENDING);
   std::vector<cudf::null_order> null_precedence(table.num_columns(), cudf::null_order::BEFORE);
-  auto const row_less =
-    detail::row::lexicographic::self_comparator{table, column_order, null_precedence, stream};
+  auto const row_less = detail::row::lexicographic::self_comparator{
+    table, column_order, null_precedence, stream, cudf::get_current_device_resource_ref()};
   if (cudf::has_nested_columns(table)) {
     return build_right_run_index(
       sorted_order, table.num_rows(), row_less.less<true>(nullate::DYNAMIC{has_nulls}), stream);
@@ -357,7 +357,12 @@ class merge {
     std::vector<cudf::order> column_order(smaller.num_columns(), cudf::order::ASCENDING);
     std::vector<cudf::null_order> null_precedence(smaller.num_columns(), cudf::null_order::BEFORE);
     tt_comparator = std::make_unique<detail::row::lexicographic::two_table_comparator>(
-      smaller, larger, column_order, null_precedence, stream);
+      smaller,
+      larger,
+      column_order,
+      null_precedence,
+      stream,
+      cudf::get_current_device_resource_ref());
   }
 
   std::unique_ptr<rmm::device_uvector<size_type>> matches_per_row(

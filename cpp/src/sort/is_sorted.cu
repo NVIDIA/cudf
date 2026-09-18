@@ -29,8 +29,8 @@ bool is_sorted(cudf::table_view const& in,
                std::vector<null_order> const& null_precedence,
                cuda::stream_ref stream)
 {
-  auto const comparator =
-    detail::row::lexicographic::self_comparator{in, column_order, null_precedence, stream};
+  auto const comparator = detail::row::lexicographic::self_comparator{
+    in, column_order, null_precedence, stream, cudf::get_current_device_resource_ref()};
 
   if (cudf::detail::has_nested_columns(in)) {
     auto const device_comparator = comparator.less<true>(has_nested_nulls(in));

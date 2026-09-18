@@ -14,6 +14,12 @@ RUN_EXAMPLES_TESTS="${RUN_EXAMPLES_TESTS:-true}"
 RUN_LIBCUDF_KAFKA_TESTS="${RUN_LIBCUDF_KAFKA_TESTS:-true}"
 RUN_LIBCUDF_STREAMING_TESTS="${RUN_LIBCUDF_STREAMING_TESTS:-true}"
 
+# Profile the slow CUDA 12.2 ARM/A100 AST test with a cold libcudf JIT cache.
+if [[ "${RAPIDS_CUDA_VERSION:-}" == "12.2.2" && "$(uname -m)" == "aarch64" ]]; then
+    export LIBCUDF_KERNEL_CACHE_DISABLED=1
+    export RUN_LIBCUDF_JIT_AST_PROFILE=true
+fi
+
 EXITCODE=0
 trap "EXITCODE=1" ERR
 set +e
@@ -26,6 +32,13 @@ SUITEERROR=0
 if [[ "${RUN_LIBCUDF_TESTS}" == "true" ]]; then
     rapids-logger "Run libcudf gtests"
     timeout 30m ./ci/run_cudf_ctests.sh -j20
+    SUITEERROR=$?
+fi
+
+if (( SUITEERROR == 0 )) && [[ "${RUN_LIBCUDF_JIT_AST_PROFILE:-false}" == "true" ]]; then
+    rapids-logger "Profile cache-disabled AST tests"
+    test_dir="${INSTALL_PREFIX:-${CONDA_PREFIX:-/usr}}/bin/gtests/libcudf"
+    timeout 30m "${test_dir}/AST_TEST" --gtest_print_time=1
     SUITEERROR=$?
 fi
 

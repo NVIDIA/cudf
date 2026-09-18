@@ -185,13 +185,18 @@ table_chunk table_chunk::copy(rapidsmpf::MemoryReservation& reservation) const
         auto packed_pinned = cudf::pack(table_view(), stream(), br->pinned_mr());
         auto nbytes        = packed_pinned.gpu_data->size();
 
+        // The data leaves device memory here rather than through `BufferResource`, so
+        // the spill token is opened by this copy and handed to the buffer.
+        auto spill_token = std::make_shared<rapidsmpf::SpillTrackToken>();
         br->statistics()->record_copy(rapidsmpf::MemoryType::DEVICE,
                                       rapidsmpf::MemoryType::PINNED_HOST,
                                       nbytes,
-                                      std::move(timing));
+                                      std::move(timing),
+                                      spill_token);
         // update the provided `reservation`
         br->release(reservation, nbytes);
-        auto host_buffer = br->move(std::move(packed_pinned.gpu_data), stream());
+        auto host_buffer =
+          br->move(std::move(packed_pinned.gpu_data), stream(), std::move(spill_token));
         return table_chunk(std::make_unique<rapidsmpf::PackedData>(
           std::move(packed_pinned.metadata), std::move(host_buffer)));
       }

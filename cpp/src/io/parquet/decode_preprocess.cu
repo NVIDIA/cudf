@@ -16,6 +16,7 @@
 
 #include <cooperative_groups.h>
 #include <cuda/barrier>
+#include <cuda/pipeline>
 #include <cuda/std/iterator>
 #include <cuda/std/limits>
 
@@ -389,7 +390,8 @@ CUDF_KERNEL void __launch_bounds__(level_decode_block_size)
                            device_span<ColumnChunkDesc const> chunks,
                            cudf::device_span<bool const> page_mask,
                            size_t min_row,
-                           size_t num_rows)
+                           size_t num_rows,
+                           kernel_error::pointer error_code)
 {
   __shared__ __align__(16) level_scan_state state_g;
 
@@ -411,14 +413,21 @@ CUDF_KERNEL void __launch_bounds__(level_decode_block_size)
   // whether or not we have repetition levels (lists)
   bool const has_repetition = chunks[pp->chunk_idx].max_level[level_type::REPETITION] > 0;
 
-  // Each page is decoded by two blocks where blockIdx.y maps to def/rep level
-  int const stream_id = blockIdx.y;
+  // the required number of runs in shared memory we will need to provide the
+  // rle_stream object
+  constexpr int rle_run_buffer_size =
+    rle_stream_required_run_buffer_size<level_decode_block_size>();
 
-  // The chunked-expand rle_stream does not need a shared-memory ring buffer of
-  // run headers; it parses runs directly into per-chunk tables, so we
-  // default-construct the decoder here.
+  // the level stream decoders. max_output_values is max to remove rolling buffer
+  __shared__ rle_run def_runs[rle_run_buffer_size];
+  __shared__ rle_run rep_runs[rle_run_buffer_size];
   static constexpr int max_output_values = cuda::std::numeric_limits<int>::max();
-  using decoder_stream_t = rle_stream_chunked<level_t, level_decode_block_size, max_output_values>;
+  rle_stream<level_t,
+             level_decode_block_size,
+             max_output_values,
+             true,
+             /*use_smem_staging=*/true>
+    decoders[level_type::NUM_LEVEL_TYPES] = {{def_runs}, {rep_runs}};
 
   // Shared-memory staging scratch for the encoded level streams. Level streams
   // for a page are usually small (definition/repetition levels are dominated by
@@ -426,36 +435,71 @@ CUDF_KERNEL void __launch_bounds__(level_decode_block_size)
   // dependent global loads. Staging the bytes into shared memory once removes
   // that latency from fill_run_batch(). Streams larger than the per-stream
   // budget fall back to parsing from global with no behavior change.
-  __shared__ __align__(16) uint8_t stage[decoder_stream_t::smem_stage_size];
-  __shared__ cuda::barrier<cuda::thread_scope_block> copy_barrier;
+  using rle_stream_t = rle_stream<level_t,
+                                  level_decode_block_size,
+                                  max_output_values,
+                                  true,
+                                  /*use_smem_staging=*/true>;
+  __shared__ __align__(16) uint8_t stage[rle_stream_t::smem_stage_size];
+  __shared__ cuda::pipeline_shared_state<cuda::thread_scope_block, 2> pipe_state;
+  auto pipe = cuda::make_pipeline(block, &pipe_state);
+
+  // Get the level decode buffers for this page
+  auto* const def = reinterpret_cast<level_t*>(pp->lvl_decode_buf[level_type::DEFINITION]);
+  auto* const rep = reinterpret_cast<level_t*>(pp->lvl_decode_buf[level_type::REPETITION]);
 
   // Determine how many values need to be decoded
   size_t const num_to_decode =
     precompute_page_num_values_in_range(*pp, chunks[pp->chunk_idx], min_row, num_rows);
   if (num_to_decode == 0) { return; }
 
-  // Skip if this block's stream is absent for this page.
+  // Initialize the stream decoders
   bool const process_nulls = should_process_nulls(s);
-  if (stream_id == level_type::REPETITION && !has_repetition) { return; }
-  if (stream_id == level_type::DEFINITION && !process_nulls) { return; }
+  if ((has_repetition && s->stream.abs_lvl_end[level_type::REPETITION] <
+                           s->stream.abs_lvl_start[level_type::REPETITION]) ||
+      (process_nulls && s->stream.abs_lvl_end[level_type::DEFINITION] <
+                          s->stream.abs_lvl_start[level_type::DEFINITION])) {
+    if (t == 0) {
+      set_error(static_cast<kernel_error::value_type>(decode_error::LEVEL_STREAM_OVERRUN),
+                error_code);
+    }
+    return;
+  }
+  if (has_repetition) {
+    decoders[level_type::REPETITION].init(block,
+                                          s->setup.col.level_bits[level_type::REPETITION],
+                                          s->stream.abs_lvl_start[level_type::REPETITION],
+                                          s->stream.abs_lvl_end[level_type::REPETITION],
+                                          rep,
+                                          num_to_decode,
+                                          stage,
+                                          nullptr,
+                                          rle_stream_t::smem_stage_size);
+    decoders[level_type::REPETITION].set_pipeline(pipe);
+    decoders[level_type::REPETITION].decode_next(t, num_to_decode);
+  }
 
-  // Dispatch to the level stream this block owns.
-  auto* const out = reinterpret_cast<level_t*>(pp->lvl_decode_buf[stream_id]);
-
-  decoder_stream_t decoder{};
-  cg::invoke_one(block, [&]() { init(&copy_barrier, block.size()); });
+  // Decode levels for this page up to the last row needed.
+  // If skipping the first rows, we still need to decode their levels.
+  // This is because we need to determine the number of non-null values we skipped.
+  // Note that for lists we haven't computed skipped_leaf_values yet; this is used as input for
+  // that.
+  // Must sync as shared variables in decode_next() are shared between decoders!!
   block.sync();
-  decoder.init(block,
-               s->setup.col.level_bits[stream_id],
-               s->stream.abs_lvl_start[stream_id],
-               s->stream.abs_lvl_end[stream_id],
-               out,
-               num_to_decode,
-               stage,
-               &copy_barrier,
-               decoder_stream_t::smem_stage_size);
-  copy_barrier.arrive_and_wait();
-  decoder.decode_next(t, num_to_decode);
+
+  if (process_nulls) {
+    decoders[level_type::DEFINITION].init(block,
+                                          s->setup.col.level_bits[level_type::DEFINITION],
+                                          s->stream.abs_lvl_start[level_type::DEFINITION],
+                                          s->stream.abs_lvl_end[level_type::DEFINITION],
+                                          def,
+                                          num_to_decode,
+                                          stage,
+                                          nullptr,
+                                          rle_stream_t::smem_stage_size);
+    decoders[level_type::DEFINITION].set_pipeline(pipe);
+    decoders[level_type::DEFINITION].decode_next(t, num_to_decode);
+  }
 }
 
 }  // anonymous namespace
@@ -504,6 +548,7 @@ void preprocess_levels(cudf::detail::hostdevice_span<PageInfo> pages,
                        size_t min_row,
                        size_t num_rows,
                        int level_type_size,
+                       kernel_error::pointer error_code,
                        cuda::stream_ref stream)
 {
   CUDF_FUNC_RANGE();
@@ -511,17 +556,17 @@ void preprocess_levels(cudf::detail::hostdevice_span<PageInfo> pages,
   if (pages.size() == 0) { return; }
 
   dim3 dim_block(level_decode_block_size, 1);
-  dim3 dim_grid(pages.size(), 2);  // 2 threadblocks per page: one per level stream
+  dim3 dim_grid(pages.size(), 1);  // 1 threadblock per page
 
   if (level_type_size == 1) {
     preprocess_levels_kernel<uint8_t, level_decode_block_size>
       <<<dim_grid, dim_block, 0, stream.get()>>>(
-        pages.device_ptr(), chunks, page_mask, min_row, num_rows);
+        pages.device_ptr(), chunks, page_mask, min_row, num_rows, error_code);
     CUDF_CUDA_TRY(cudaGetLastError());
   } else {
     preprocess_levels_kernel<uint16_t, level_decode_block_size>
       <<<dim_grid, dim_block, 0, stream.get()>>>(
-        pages.device_ptr(), chunks, page_mask, min_row, num_rows);
+        pages.device_ptr(), chunks, page_mask, min_row, num_rows, error_code);
     CUDF_CUDA_TRY(cudaGetLastError());
   }
 }

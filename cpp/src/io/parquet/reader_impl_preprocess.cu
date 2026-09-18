@@ -734,13 +734,18 @@ void reader_impl::preprocess_subpass_pages(read_mode mode, size_t chunk_read_lim
   // Decode definition and repetition levels for all subpass pages
   // so they're available to compute_page_sizes and decode kernels.
   // We can't determine subpass skip_rows & num_rows yet, so we use the pass values.
+  kernel_error error_code(_stream);
   detail::preprocess_levels(subpass.pages,
                             pass.chunks,
                             subpass_page_mask_span(),
                             pass.skip_rows,
                             pass.num_rows,
                             pass.level_type_size,
+                            error_code.data(),
                             _stream);
+  if (auto const error = error_code.value_sync(_stream); error != 0) {
+    CUDF_FAIL("Parquet level preprocessing failed with code(s) " + kernel_error::to_string(error));
+  }
 
   // iterate over all input columns and determine if they contain lists.
   // TODO: we could do this once at the file level instead of every time we get in here. the set of

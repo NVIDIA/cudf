@@ -1121,6 +1121,7 @@ void preprocess_string_offsets(cudf::detail::hostdevice_span<PageInfo> pages,
  * @param[in] min_row Minimum row index to read
  * @param[in] num_rows Number of rows to read starting from min_row
  * @param[in] level_type_size Size in bytes of the type for level decoding (1 or 2)
+ * @param[in] error_code Device pointer to the error bitmask
  * @param[in] stream CUDA stream to use
  */
 void preprocess_levels(cudf::detail::hostdevice_span<PageInfo> pages,
@@ -1129,6 +1130,7 @@ void preprocess_levels(cudf::detail::hostdevice_span<PageInfo> pages,
                        size_t min_row,
                        size_t num_rows,
                        int level_type_size,
+                       kernel_error::pointer error_code,
                        cuda::stream_ref stream);
 
 /**

@@ -31,6 +31,7 @@
 #include <limits>
 #include <random>
 #include <span>
+#include <type_traits>
 #include <vector>
 
 // NOTE: each test in this file must be run twice - once with the AST Interpreter executor
@@ -79,6 +80,28 @@ struct executor_transform_program {
     return std::move(program.run(table, stream, mr)->release().front());
   }
 };
+
+template <typename Executor>
+std::vector<std::unique_ptr<cudf::column>> compute_columns(
+  cudf::table_view const& table,
+  std::span<std::reference_wrapper<cudf::ast::expression const> const> expressions,
+  cuda::stream_ref stream           = cudf::get_default_stream(),
+  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref())
+{
+  if constexpr (std::is_same_v<Executor, executor_ast>) {
+    std::vector<std::unique_ptr<cudf::column>> results;
+    results.reserve(expressions.size());
+    for (auto const& expression : expressions) {
+      results.push_back(Executor::compute_column(table, expression, stream, mr));
+    }
+    return results;
+  } else if constexpr (std::is_same_v<Executor, executor_jit>) {
+    return cudf::compute_table_jit(table, expressions, stream, mr)->release();
+  } else {
+    cudf::transform_program program{table, expressions, stream, mr};
+    return program.run(table, stream, mr)->release();
+  }
+}
 
 using Executors = cudf::test::Types<executor_ast, executor_jit, executor_transform_program>;
 
@@ -777,18 +800,19 @@ TYPED_TEST(TransformTest, UnaryTrigonometry)
 
   auto expected_sin   = column_wrapper<double>{0.0, std::sqrt(2) / 2, std::sqrt(3.0) / 2.0};
   auto expression_sin = cudf::ast::operation(cudf::ast::ast_operator::SIN, col_ref_0);
-  auto result_sin     = Executor::compute_column(table, expression_sin);
-  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(expected_sin, result_sin->view(), verbosity);
 
   auto expected_cos   = column_wrapper<double>{1.0, std::sqrt(2) / 2, 0.5};
   auto expression_cos = cudf::ast::operation(cudf::ast::ast_operator::COS, col_ref_0);
-  auto result_cos     = Executor::compute_column(table, expression_cos);
-  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(expected_cos, result_cos->view(), verbosity);
 
   auto expected_tan   = column_wrapper<double>{0.0, 1.0, std::sqrt(3.0)};
   auto expression_tan = cudf::ast::operation(cudf::ast::ast_operator::TAN, col_ref_0);
-  auto result_tan     = Executor::compute_column(table, expression_tan);
-  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(expected_tan, result_tan->view(), verbosity);
+
+  std::array<std::reference_wrapper<cudf::ast::expression const>, 3> expressions{
+    expression_sin, expression_cos, expression_tan};
+  auto results = compute_columns<Executor>(table, expressions);
+  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(expected_sin, results[0]->view(), verbosity);
+  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(expected_cos, results[1]->view(), verbosity);
+  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(expected_tan, results[2]->view(), verbosity);
 }
 
 TYPED_TEST(TransformTest, ArityCheckFailure)
@@ -1265,17 +1289,19 @@ TYPED_TEST(TransformTest, FloorDivIntegerNegativeOperands)
   auto divisor_pos       = cudf::ast::literal(divisor_value_pos);
   auto floor_div_pos =
     cudf::ast::operation(cudf::ast::ast_operator::FLOOR_DIV, col_ref, divisor_pos);
-  auto result_pos   = Executor::compute_column(table, floor_div_pos);
   auto expected_pos = column_wrapper<int64_t>{-4, 3, -3, 3};
-  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_pos, result_pos->view(), verbosity);
 
   auto divisor_value_neg = cudf::numeric_scalar<int64_t>(-2);
   auto divisor_neg       = cudf::ast::literal(divisor_value_neg);
   auto floor_div_neg =
     cudf::ast::operation(cudf::ast::ast_operator::FLOOR_DIV, col_ref, divisor_neg);
-  auto result_neg   = Executor::compute_column(table, floor_div_neg);
   auto expected_neg = column_wrapper<int64_t>{3, -4, 3, -3};
-  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_neg, result_neg->view(), verbosity);
+
+  std::array<std::reference_wrapper<cudf::ast::expression const>, 2> expressions{floor_div_pos,
+                                                                                 floor_div_neg};
+  auto results = compute_columns<Executor>(table, expressions);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_pos, results[0]->view(), verbosity);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_neg, results[1]->view(), verbosity);
 }
 
 TYPED_TEST(TransformTest, PowIntegerEqualComparison)
@@ -1471,22 +1497,16 @@ TYPED_TEST(DecimalTests, DecimalComparator)
   auto literal1  = cudf::ast::literal(value1);
   auto col_ref_1 = cudf::ast::column_reference(1);
 
-  {
-    cudf::ast::tree tree{};
-    auto const& expr =
-      tree.push(cudf::ast::operation(cudf::ast::ast_operator::LESS, literal0, col_ref_0));
-    auto expected = cudf::test::fixed_width_column_wrapper<bool>({0, 1, 1, 1});
-    auto result   = Executor::compute_column(table, expr);
-    CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, result->view());
-  }
-  {
-    cudf::ast::tree tree{};
-    auto const& expr =
-      tree.push(cudf::ast::operation(cudf::ast::ast_operator::GREATER, literal1, col_ref_1));
-    auto expected = cudf::test::fixed_width_column_wrapper<bool>({1, 1, 1, 0});
-    auto result   = Executor::compute_column(table, expr);
-    CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, result->view());
-  }
+  auto less_expr     = cudf::ast::operation(cudf::ast::ast_operator::LESS, literal0, col_ref_0);
+  auto greater_expr  = cudf::ast::operation(cudf::ast::ast_operator::GREATER, literal1, col_ref_1);
+  auto expected_less = cudf::test::fixed_width_column_wrapper<bool>({0, 1, 1, 1});
+  auto expected_greater = cudf::test::fixed_width_column_wrapper<bool>({1, 1, 1, 0});
+
+  std::array<std::reference_wrapper<cudf::ast::expression const>, 2> expressions{less_expr,
+                                                                                 greater_expr};
+  auto results = compute_columns<Executor>(table, expressions);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_less, results[0]->view());
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_greater, results[1]->view());
 }
 
 TYPED_TEST(DecimalTests, DecimalDifferentScales)
@@ -1504,32 +1524,21 @@ TYPED_TEST(DecimalTests, DecimalDifferentScales)
   auto table     = cudf::table_view({c_0});
   auto col_ref_0 = cudf::ast::column_reference(0);
 
-  {
-    cudf::ast::tree tree{};
-    auto const& expr =
-      tree.push(cudf::ast::operation(cudf::ast::ast_operator::EQUAL, col_ref_0, literal0));
-    auto expected = cudf::test::fixed_width_column_wrapper<bool>({0, 1, 0, 0, 0});
-    auto result   = Executor::compute_column(table, expr);
-    CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, result->view());
-  }
-  {
-    cudf::ast::tree tree{};
-    auto const& expr =
-      tree.push(cudf::ast::operation(cudf::ast::ast_operator::DIV, col_ref_0, literal0));
-    auto expected =
-      cudf::test::fixed_point_column_wrapper<RepType>({50, 100, 200, 300, 400}, scale2);
-    auto result = Executor::compute_column(table, expr);
-    CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, result->view());
-  }
-  {
-    cudf::ast::tree tree{};
-    auto const& expr =
-      tree.push(cudf::ast::operation(cudf::ast::ast_operator::SUB, col_ref_0, literal0));
-    auto expected =
-      cudf::test::fixed_point_column_wrapper<RepType>({-500, 0, 1000, 2000, 3000}, scale2);
-    auto result = Executor::compute_column(table, expr);
-    CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, result->view());
-  }
+  auto equal_expr     = cudf::ast::operation(cudf::ast::ast_operator::EQUAL, col_ref_0, literal0);
+  auto div_expr       = cudf::ast::operation(cudf::ast::ast_operator::DIV, col_ref_0, literal0);
+  auto sub_expr       = cudf::ast::operation(cudf::ast::ast_operator::SUB, col_ref_0, literal0);
+  auto expected_equal = cudf::test::fixed_width_column_wrapper<bool>({0, 1, 0, 0, 0});
+  auto expected_div =
+    cudf::test::fixed_point_column_wrapper<RepType>({50, 100, 200, 300, 400}, scale2);
+  auto expected_sub =
+    cudf::test::fixed_point_column_wrapper<RepType>({-500, 0, 1000, 2000, 3000}, scale2);
+
+  std::array<std::reference_wrapper<cudf::ast::expression const>, 3> expressions{
+    equal_expr, div_expr, sub_expr};
+  auto results = compute_columns<Executor>(table, expressions);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_equal, results[0]->view());
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_div, results[1]->view());
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_sub, results[2]->view());
 }
 
 TYPED_TEST(DecimalTests, LessConsumesMulOfDecimals)

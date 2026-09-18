@@ -14,7 +14,6 @@
 #include <cuda/std/array>
 #include <cuda/std/bit>
 #include <cuda/std/cstddef>
-#include <cuda/std/cstdint>
 #include <cuda/std/type_traits>
 
 #include <vector_types.h>

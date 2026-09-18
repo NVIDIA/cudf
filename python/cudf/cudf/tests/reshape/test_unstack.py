@@ -105,3 +105,41 @@ def test_unstack_index_invalid():
         ),
     ):
         gdf.unstack()
+
+
+@pytest.mark.parametrize("level", [-1, 0, 1, "foo", "bar"])
+@pytest.mark.parametrize("name", [None, "quux"])
+def test_series_unstack_multiindex(level, name):
+    index = pd.MultiIndex.from_tuples(
+        [
+            ("one", "a"),
+            ("one", "b"),
+            ("two", "a"),
+            ("two", "b"),
+        ],
+        names=["foo", "bar"],
+    )
+    ps = pd.Series([1, 2, 3, 4], index=index, name=name)
+    gs = cudf.from_pandas(ps)
+    assert_eq(ps.unstack(level=level), gs.unstack(level=level))
+
+
+def test_series_unstack_index_invalid():
+    gs = cudf.Series([1, 2, 3], index=["a", "b", "c"])
+    with pytest.raises(
+        ValueError,
+        match=re.escape(
+            "index must be a MultiIndex to unstack, "
+            "<class 'cudf.core.index.Index'> was passed"
+        ),
+    ):
+        gs.unstack()
+
+
+def test_series_unstack_empty_level_is_a_noop():
+    index = pd.MultiIndex.from_tuples(
+        [("one", "a"), ("one", "b"), ("two", "a"), ("two", "b")]
+    )
+    ps = pd.Series([1, 2, 3, 4], index=index, name="v")
+    gs = cudf.from_pandas(ps)
+    assert_eq(ps.unstack(level=[]), gs.unstack(level=[]))

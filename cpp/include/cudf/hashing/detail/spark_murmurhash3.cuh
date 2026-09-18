@@ -95,6 +95,7 @@ struct Spark_MurmurHash3_x86_32 {
     auto const nblocks = length / BLOCK_SIZE;
     uint32_t h         = m_seed;
 
+    // Process all four-byte chunks.
     for (std::size_t i = 0; i < nblocks; ++i) {
       h = mix_block(extract_block(i), h);
     }

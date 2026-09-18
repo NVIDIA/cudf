@@ -54,12 +54,16 @@ enum class unary_operator : int32_t {
   BIT_INVERT,  ///< Bitwise Not (~)
   NOT,         ///< Logical Not (!)
   NEGATE,      ///< Unary negation (-), only for signed numeric and duration types.
+  NEG_OVERFLOW, ///< Negation with overflow detection
+  ABS_OVERFLOW  ///< Absolute value with overflow detection
 };
 
 /**
  * @brief Performs unary op on all values in column
  *
  * Note: For `decimal32` and `decimal64`, only `ABS`, `CEIL` and `FLOOR` are supported.
+ * Checked operators use error_policy::PROPAGATE; use the policy-aware overload to nullify
+ * errors.
  *
  * @param input A `column_view` as input
  * @param op operation to perform
@@ -71,6 +75,26 @@ enum class unary_operator : int32_t {
 std::unique_ptr<cudf::column> unary_operation(
   cudf::column_view const& input,
   cudf::unary_operator op,
+  cuda::stream_ref stream           = cudf::get_default_stream(),
+  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+
+/**
+ * @brief Performs a checked unary operation on all values in a column.
+ *
+ * `PROPAGATE` throws `cudf::evaluation_error` when any row fails; `NULLIFY` makes failing rows
+ * null.
+ *
+ * @param input Input column
+ * @param op Checked unary operator
+ * @param policy Error handling policy
+ * @param stream CUDA stream used for device memory operations and kernel launches
+ * @param mr Device memory resource used to allocate the returned column
+ * @return Output column
+ */
+std::unique_ptr<cudf::column> unary_operation(
+  cudf::column_view const& input,
+  cudf::unary_operator op,
+  cudf::error_policy policy,
   cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 

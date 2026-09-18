@@ -76,10 +76,40 @@ CUDF_AST_OPERATOR_MAP(NOT, logical_not, 1)
 CUDF_AST_OPERATOR_MAP(CAST_TO_INT64, cast_to_int64, 1)
 CUDF_AST_OPERATOR_MAP(CAST_TO_UINT64, cast_to_uint64, 1)
 CUDF_AST_OPERATOR_MAP(CAST_TO_FLOAT64, cast_to_float64, 1)
+CUDF_AST_OPERATOR_MAP(CAST_TO_BOOL8, cast_to_bool8, 1)
+CUDF_AST_OPERATOR_MAP(CAST_TO_INT8, cast_to_int8, 1)
+CUDF_AST_OPERATOR_MAP(CAST_TO_INT16, cast_to_int16, 1)
+CUDF_AST_OPERATOR_MAP(CAST_TO_INT32, cast_to_int32, 1)
+CUDF_AST_OPERATOR_MAP(CAST_TO_UINT8, cast_to_uint8, 1)
+CUDF_AST_OPERATOR_MAP(CAST_TO_UINT16, cast_to_uint16, 1)
+CUDF_AST_OPERATOR_MAP(CAST_TO_UINT32, cast_to_uint32, 1)
+CUDF_AST_OPERATOR_MAP(CAST_TO_FLOAT32, cast_to_float32, 1)
+CUDF_AST_OPERATOR_MAP(CAST_TO_DECIMAL32, cast_to_decimal32, 1)
+CUDF_AST_OPERATOR_MAP(CAST_TO_DECIMAL64, cast_to_decimal64, 1)
+CUDF_AST_OPERATOR_MAP(CAST_TO_DECIMAL128, cast_to_decimal128, 1)
 CUDF_AST_OPERATOR_MAP(IS_NULL, is_null, 1)
 CUDF_AST_OPERATOR_MAP(NULL_EQUAL, null_equal, 2)
 CUDF_AST_OPERATOR_MAP(NULL_LOGICAL_AND, null_logical_and, 2)
 CUDF_AST_OPERATOR_MAP(NULL_LOGICAL_OR, null_logical_or, 2)
+
+template <>
+struct operator_invoker<ast_operator::RESCALE> {
+  static constexpr auto arity = 1;
+
+  template <typename T>
+  __device__ static inline T eval(T a)
+    requires(cudf::is_fixed_point<T>())
+  {
+    return a;
+  }
+
+  template <typename T>
+  __device__ static inline auto eval(T a, int32_t target_scale)
+    -> decltype(cudf::detail::ops::rescale(a, target_scale))
+  {
+    return cudf::detail::ops::rescale(a, target_scale);
+  }
+};
 
 #undef CUDF_AST_OPERATOR_MAP
 
@@ -127,6 +157,25 @@ struct operator_functor {
         return result_t{};
       }
     }
+  }
+
+  template <typename T>
+  __device__ inline auto operator()(T a, int32_t target_scale)
+    requires(op == ast_operator::RESCALE && !cudf::detail::ops::nullable<T> &&
+             requires { operator_invoker<op>::eval(a, target_scale); })
+  {
+    return operator_invoker<op>::eval(a, target_scale);
+  }
+
+  template <typename T>
+  __device__ inline auto operator()(T a, int32_t target_scale)
+    requires(op == ast_operator::RESCALE && cudf::detail::ops::nullable<T> &&
+             requires { operator_invoker<op>::eval(a.value(), target_scale); })
+  {
+    using result_t =
+      cuda::std::optional<decltype(operator_invoker<op>::eval(a.value(), target_scale))>;
+    return a.has_value() ? result_t{operator_invoker<op>::eval(a.value(), target_scale)}
+                         : result_t{};
   }
 
   template <typename T>

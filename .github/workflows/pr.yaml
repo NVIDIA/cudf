@@ -9,6 +9,7 @@ concurrency:
 permissions: {}
 jobs:
   # Please keep pr-builder as the top job here
+  # CI evaluation marker: exercise every broad changed-files path.
   pr-builder:
     needs:
       - build-details

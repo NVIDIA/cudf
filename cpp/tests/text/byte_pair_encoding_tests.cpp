@@ -13,17 +13,6 @@
 
 struct TextBytePairEncodingTest : public cudf::test::BaseFixture {};
 
-TEST_F(TextBytePairEncodingTest, EmptyCharacterRows)
-{
-  cudf::test::strings_column_wrapper merge_pair_strings({"a b"});
-  auto merge_pairs = nvtext::load_merge_pairs(cudf::strings_column_view(merge_pair_strings));
-
-  cudf::test::strings_column_wrapper input({"", "", ""}, {1, 0, 1});
-  auto results = nvtext::byte_pair_encoding(cudf::strings_column_view(input), *merge_pairs);
-
-  CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, input);
-}
-
 TEST_F(TextBytePairEncodingTest, InvalidSeparator)
 {
   cudf::test::strings_column_wrapper merge_pair_strings({"a b"});

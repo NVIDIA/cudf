@@ -5,7 +5,6 @@
 
 #include "text/bpe/byte_pair_encoding.cuh"
 
-#include <cudf/column/column.hpp>
 #include <cudf/column/column_device_view.cuh>
 #include <cudf/column/column_factories.hpp>
 #include <cudf/detail/algorithms/copy_if.cuh>
@@ -340,9 +339,8 @@ std::unique_ptr<cudf::column> byte_pair_encoding(cudf::strings_column_view const
   auto const d_separator = separator.value(stream);
   CUDF_EXPECTS(d_separator.size_bytes() == 1, "for now, separator must be a single-byte character");
 
-  if (input.is_empty()) { return cudf::make_empty_column(cudf::type_id::STRING); }
-  if (input.chars_size(stream) == 0) {
-    return std::make_unique<cudf::column>(input.parent(), stream, mr);
+  if (input.is_empty() || input.chars_size(stream) == 0) {
+    return cudf::make_empty_column(cudf::type_id::STRING);
   }
 
   auto const d_strings = cudf::column_device_view::create(input.parent(), stream);

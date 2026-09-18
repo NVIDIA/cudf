@@ -7,15 +7,30 @@
 
 #include "sort.hpp"
 
-#include <cudf/column/column_device_view.cuh>
+#include <cudf/column/column.hpp>
+#include <cudf/column/column_device_view_base.cuh>
 #include <cudf/column/column_factories.hpp>
+#include <cudf/column/column_view.hpp>
 #include <cudf/detail/row_operator/lexicographic.cuh>
+#include <cudf/detail/row_operator/primitive_lexicographic.cuh>
+#include <cudf/detail/row_operator/primitive_row_operators.cuh>
+#include <cudf/table/table_view.hpp>
+#include <cudf/types.hpp>
+#include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
+#include <cudf/utilities/traits.hpp>
+#include <cudf/utilities/type_dispatcher.hpp>
 
 #include <rmm/exec_policy.hpp>
+#include <rmm/resource_ref.hpp>
 
+#include <cuda/stream>
 #include <thrust/sequence.h>
 #include <thrust/sort.h>
+
+#include <cstddef>
+#include <memory>
+#include <vector>
 
 namespace cudf {
 namespace detail {
@@ -82,14 +97,20 @@ std::unique_ptr<column> sorted_order(table_view input,
     }
   };
 
-  auto const comp =
-    cudf::detail::row::lexicographic::self_comparator(input, column_order, null_precedence, stream);
-  if (cudf::detail::has_nested_columns(input)) {
-    auto const comparator = comp.less<true>(nullate::DYNAMIC{has_nested_nulls(input)});
-    do_sort(comparator);
+  if (is_primitive_row_op_compatible(input)) {
+    auto const comp =
+      row::primitive::lexicographic_comparator(input, column_order, null_precedence, stream);
+    do_sort(comp.less(nullate::DYNAMIC{has_nulls(input)}));
   } else {
-    auto const comparator = comp.less<false>(nullate::DYNAMIC{has_nested_nulls(input)});
-    do_sort(comparator);
+    auto const comp =
+      row::lexicographic::self_comparator(input, column_order, null_precedence, stream);
+    if (cudf::detail::has_nested_columns(input)) {
+      auto const comparator = comp.less<true>(nullate::DYNAMIC{has_nested_nulls(input)});
+      do_sort(comparator);
+    } else {
+      auto const comparator = comp.less<false>(nullate::DYNAMIC{has_nested_nulls(input)});
+      do_sort(comparator);
+    }
   }
 
   return sorted_indices;

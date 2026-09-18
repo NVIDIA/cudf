@@ -6,6 +6,7 @@
 #pragma once
 
 #include <cudf/column/column.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 
 #include <rmm/device_uvector.hpp>
 
@@ -181,12 +182,14 @@ struct dremel_data {
  * @param output_as_byte_array if `true`, then any nested list level that has a child of type
  * `uint8_t` will be considered as the last level
  * @param stream CUDA stream used for device memory operations and kernel launches.
+ * @param mr Device memory resources used to allocate the returned and temporary data
  * @return A struct containing dremel data
  */
 dremel_data get_dremel_data(column_view input,
                             std::vector<uint8_t> nullability,
                             bool output_as_byte_array,
-                            cuda::stream_ref stream);
+                            cuda::stream_ref stream,
+                            memory_resources mr);
 
 /**
  * @brief Get Dremel offsets, repetition levels, and modified definition levels to be used for
@@ -199,11 +202,13 @@ dremel_data get_dremel_data(column_view input,
  * @param output_as_byte_array if `true`, then any nested list level that has a child of type
  * `uint8_t` will be considered as the last level
  * @param stream CUDA stream used for device memory operations and kernel launches.
+ * @param mr Device memory resources used to allocate the returned and temporary data
  * @return A struct containing dremel data
  */
 dremel_data get_comparator_data(column_view input,
                                 std::vector<uint8_t> nullability,
                                 bool output_as_byte_array,
-                                cuda::stream_ref stream);
+                                cuda::stream_ref stream,
+                                memory_resources mr);
 }  // namespace detail
 }  // namespace cudf

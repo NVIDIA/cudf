@@ -1545,6 +1545,32 @@ __device__ void zero_fill_null_positions_shared(
     }
   };
 
+  // Dense and sparse nulls want opposite work assignments, and neither is tolerable in the
+  // other's regime.
+  //
+  // One thread per validity word (the `process_block_sequential` path above) issues exactly one
+  // store per null, and covers warp_size times as many values per step as any per-value scheme --
+  // ideal when nulls are rare. But consecutive threads then write addresses
+  // `bits_per_mask * dtype_len` apart, so nothing coalesces: at high null rates it degenerates
+  // into a serialized stream of single-element transactions. Measured on a
+  // DELTA_LENGTH_BYTE_ARRAY page at 90% nulls it was 42.45 ms of a 45.19 ms kernel, against
+  // 2.43 ms for the offset scan and 1.22 ms for the value decode.
+  //
+  // One thread per *value* writes consecutive addresses instead, so a run of nulls coalesces. It
+  // costs more loop iterations when nulls are rare, which is why this is a branch and not a
+  // replacement. The threshold is well above the crossover (the two paths issue the same number
+  // of stores at any density; only loop overhead versus coalescing separates them), and
+  // `null_count` is uniform across the block so the branch never diverges.
+  if (ni.null_count > (num_values / 8)) {
+    for (int i = t; i < num_values; i += block_size) {
+      if (not cudf::bit_is_set(ni.valid_map, start_bit_idx + i)) {
+        cuda::std::memset(data_out + (static_cast<size_t>(i) * dtype_len), 0, dtype_len);
+      }
+    }
+    __syncthreads();
+    return;
+  }
+
   // Phase 1: Assign specific blocks to warps for warp-parallel processing
   if (warp_id == 0) {
     // Warp 0: Process first block

@@ -1294,6 +1294,20 @@ class DataFrame(IndexedFrame, GetAttrGetItemMixin):
             )
         elif isinstance(data, Mapping):
             # Note: We excluded ColumnAccessor already above
+            if columns is not None:
+                # Only selected columns contribute to index inference and
+                # value-length validation. Missing columns are added below.
+                # Match full labels, including NaNs, without changing dict keys.
+                selected = pd.Index(list(data), tupleize_cols=False).isin(
+                    columns
+                )
+                data = {
+                    key: value
+                    for (key, value), keep in zip(
+                        data.items(), selected, strict=True
+                    )
+                    if keep
+                }
             result = _mapping_to_column_accessor(
                 data,
                 index,

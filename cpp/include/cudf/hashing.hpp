@@ -84,7 +84,7 @@ std::unique_ptr<column> murmurhash3_x86_32(
  * @param input The table of columns to hash
  * @param seed Optional initial seed value, interpreted as unsigned. Defaults to `DEFAULT_HASH_SEED`
  *             (`0`), matching other libcudf hash functions and cudf-spark-jni. Pass `42` explicitly
- *             to match Spark's SQL `hash()`.
+ *             to match Spark's SQL `hash()`. Negative Spark seeds are passed as unsigned.
  * @param stream CUDA stream used for device memory operations and kernel launches
  * @param mr Device memory resource used to allocate the returned column device memory
  *

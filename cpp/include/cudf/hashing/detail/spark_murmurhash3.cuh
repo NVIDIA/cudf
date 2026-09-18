@@ -26,6 +26,15 @@ namespace cudf::hashing::detail {
 template <typename Key>
   requires(not cudf::is_nested<Key>())
 struct Spark_MurmurHash3_x86_32 {
+ private:
+  static constexpr std::size_t BLOCK_SIZE = 4;
+  static constexpr uint32_t c1            = 0xcc9e2d51;
+  static constexpr uint32_t c2            = 0x1b873593;
+  static constexpr uint32_t c3            = 0xe6546b64;
+  static constexpr uint32_t rot_c1        = 15;
+  static constexpr uint32_t rot_c2        = 13;
+
+ public:
   // Unsigned internally, like every other cudf hasher, so the seed and the running hash share one
   // type. `spark_murmurhash3_x86_32` converts back to `int32_t` for its output column, matching
   // Spark's signed `Int` result.
@@ -110,7 +119,7 @@ struct Spark_MurmurHash3_x86_32 {
   }
 
   template <typename T>
-    requires(sizeof(T) % Spark_MurmurHash3_x86_32::BLOCK_SIZE == 0)
+    requires(sizeof(T) % BLOCK_SIZE == 0)
   uint32_t __device__ inline compute(T const& key) const
   {
     // A whole number of four-byte blocks with no tail. Mix the words directly in the
@@ -148,12 +157,6 @@ struct Spark_MurmurHash3_x86_32 {
 
  private:
   uint32_t m_seed;
-  static constexpr std::size_t BLOCK_SIZE = 4;
-  static constexpr uint32_t c1            = 0xcc9e2d51;
-  static constexpr uint32_t c2            = 0x1b873593;
-  static constexpr uint32_t c3            = 0xe6546b64;
-  static constexpr uint32_t rot_c1        = 15;
-  static constexpr uint32_t rot_c2        = 13;
 };
 
 template <>

@@ -99,6 +99,7 @@ struct Spark_MurmurHash3_x86_32 {
     for (std::size_t i = 0; i < nblocks; ++i) {
       h = mix_block(extract_block(i), h);
     }
+
     // Process remaining bytes that do not fill a four-byte chunk using Spark's approach
     // (does not conform to normal MurmurHash3).
     for (std::size_t i = nblocks * BLOCK_SIZE; i < length; ++i) {

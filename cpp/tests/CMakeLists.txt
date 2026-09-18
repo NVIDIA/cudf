@@ -646,6 +646,7 @@ ConfigureTest(STRUCTS_TEST structs/structs_column_tests.cpp structs/utilities_te
 # * nvtext test -----------------------------------------------------------------------------------
 ConfigureTest(
   TEXT_TEST
+  text/byte_pair_encoding_tests.cpp
   text/deduplicate_tests.cpp
   text/edit_distance_tests.cpp
   text/jaccard_tests.cpp

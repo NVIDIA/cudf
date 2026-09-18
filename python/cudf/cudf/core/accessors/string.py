@@ -33,6 +33,7 @@ if TYPE_CHECKING:
 
     from cudf._typing import ColumnLike
     from cudf.core.column.string import StringColumn
+    from cudf.core.dataframe import DataFrame
     from cudf.core.index import Index
     from cudf.core.series import Series
 
@@ -576,7 +577,7 @@ class StringMethods(BaseAccessor):
 
     def extract(
         self, pat: str, flags: int = 0, expand: bool = True
-    ) -> Series | Index:
+    ) -> DataFrame | Series | Index:
         r"""
         Extract capture groups in the regex `pat` as columns in a DataFrame.
 
@@ -642,25 +643,32 @@ class StringMethods(BaseAccessor):
             )
 
         compiled = re.compile(pat)
-        group_names = list(compiled.groupindex.keys())
-        if len(group_names) > 0:
+        if compiled.groups == 0:
+            raise ValueError("pattern contains no capture groups")
+        if (
+            isinstance(self._parent, cudf.Index)
+            and not expand
+            and compiled.groups > 1
+        ):
+            raise ValueError("only one regex group is supported with Index")
+        group_names = {
+            position - 1: name
+            for name, position in compiled.groupindex.items()
+        }
+        if group_names:
             pat = re.sub(r"\(\?P<([A-Za-z_][A-Za-z0-9_]*)>", "(", pat)
         data = self._column.extract(pat, flags)
-        result_name = None
-        if len(data) == 1 and expand is False:
-            _, data = data.popitem()  # type: ignore[assignment]
-            if len(group_names) > 0:
-                result_name = group_names[0]
-        elif expand is False and len(data) > 1:
-            expand = True
-        if len(group_names) == len(data):
-            named_data = {}
-            for key, value in data.items():
-                named_data[group_names[key]] = value
-            data = named_data  # type: ignore[assignment]
-        return self._return_or_inplace(
-            data, expand=expand, replace_name=result_name
-        )
+        if len(data) == 1 and not expand:
+            return self._return_or_inplace(
+                data[0], replace_name=group_names.get(0)
+            )
+        named_data = {
+            group_names.get(position, position): column
+            for position, column in data.items()
+        }
+        if isinstance(self._parent, cudf.Index):
+            return cudf.DataFrame(named_data)
+        return self._return_or_inplace(named_data, expand=True)
 
     def _remove_named_capture_groups(self, pat: str) -> str:
         r"""

@@ -12,6 +12,8 @@
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/traits.hpp>
 
+#include <optional>
+
 namespace cudf::io::parquet::detail {
 
 namespace {
@@ -43,73 +45,50 @@ namespace {
 
 }  // namespace
 
-stats_columns_collector::stats_columns_collector(std::span<cudf::data_type const> output_dtypes)
-  : _output_dtypes(output_dtypes)
-{
-  _columns_mask.resize(_output_dtypes.size(), false);
-}
-
 stats_columns_collector::stats_columns_collector(ast::expression const& expr,
                                                  std::span<cudf::data_type const> output_dtypes)
-  : stats_columns_collector(output_dtypes)
+  : parquet_expression_simplifier{output_dtypes}
 {
-  expr.accept(*this);
+  _columns_mask.resize(_output_dtypes.size(), false);
+  std::ignore = simplify_expr(expr);
 }
 
-std::reference_wrapper<ast::expression const> stats_columns_collector::visit(
-  ast::literal const& expr)
+simplified_expression_opt stats_columns_collector::simplify_comparison(
+  ast::ast_operator op, ast::column_reference const& col_ref, ast::literal const&)
 {
-  return expr;
+  auto const col_index = col_ref.get_column_index();
+  if (not is_prunable_comparison(op, _output_dtypes[col_index])) { return std::nullopt; }
+  _columns_mask[col_index] = true;
+  return placeholder_expr();
 }
 
-std::reference_wrapper<ast::expression const> stats_columns_collector::visit(
-  ast::column_reference const& expr)
+simplified_expression_opt stats_columns_collector::simplify_unary_op(
+  ast::ast_operator op, ast::column_reference const& col_ref)
 {
-  CUDF_EXPECTS(expr.get_table_source() == ast::table_reference::LEFT,
-               "Statistics AST supports only left table");
-  CUDF_EXPECTS(static_cast<size_t>(expr.get_column_index()) < _output_dtypes.size(),
-               "Column index cannot be more than number of columns in the table");
-  return expr;
+  if (op != ast::ast_operator::IS_NULL) { return std::nullopt; }
+  _columns_mask[col_ref.get_column_index()] = true;
+  return placeholder_expr();
 }
 
-std::reference_wrapper<ast::expression const> stats_columns_collector::visit(
-  ast::column_name_reference const& expr)
+simplified_expression_opt stats_columns_collector::simplify_negated_unary_op(
+  ast::ast_operator op, ast::column_reference const& col_ref)
 {
-  CUDF_FAIL("Column name reference is not supported in statistics AST");
+  if (op != ast::ast_operator::IS_NULL) { return std::nullopt; }
+  _columns_mask[col_ref.get_column_index()] = true;
+
+  return placeholder_expr();
 }
 
-std::reference_wrapper<ast::expression const> stats_columns_collector::visit(
-  ast::operation const& expr)
+simplified_expression_opt stats_columns_collector::simplify_negated_comparison(
+  ast::ast_operator op, ast::column_reference const& col_ref, ast::literal const& literal)
 {
-  using cudf::ast::ast_operator;
+  // A comparison cannot be complemented when the column may hold a `NaN`: IEEE-754 makes every
+  // ordered comparison with a NaN false, so `NOT(col < val)` is true where `col >= val` is not.
+  if (cudf::is_floating_point(_output_dtypes[col_ref.get_column_index()])) { return std::nullopt; }
 
-  auto const input_op       = expr.get_operator();
-  auto const operator_arity = cudf::ast::detail::ast_operator_arity(input_op);
-
-  if (operator_arity == 1) {
-    auto const [kind, col_ref] = extract_unary_operand(expr);
-
-    if (kind == operand_kind::COLUMN_REF) {
-      col_ref->accept(*this);
-      if (input_op == ast_operator::IS_NULL) { _columns_mask[col_ref->get_column_index()] = true; }
-    } else {
-      std::ignore = visit_operands(expr.get_operands());
-    }
-    return expr;
-  }
-
-  // Binary operation
-  auto const [op, lhs_kind, rhs_kind, col_ref, _] = extract_binary_operands(expr);
-
-  if (lhs_kind == operand_kind::COLUMN_REF and rhs_kind == operand_kind::LITERAL) {
-    col_ref->accept(*this);
-    auto const col_index = col_ref->get_column_index();
-    if (is_prunable_comparison(op, _output_dtypes[col_index])) { _columns_mask[col_index] = true; }
-  } else {
-    // Visit the operands and ignore any output as we only want to build the column mask
-    std::ignore = visit_operands(expr.get_operands());
-  }
-  return expr;
+  auto const negated_op = transform_operator<operator_transform::NEGATE>(op);
+  if (not negated_op.has_value()) { return std::nullopt; }
+  return simplify_comparison(*negated_op, col_ref, literal);
 }
 
 thrust::host_vector<bool> stats_columns_collector::get_stats_columns_mask() &&

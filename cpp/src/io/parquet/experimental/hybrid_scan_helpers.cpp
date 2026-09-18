@@ -413,13 +413,13 @@ aggregate_reader_metadata::bloom_filters_byte_ranges(
   std::reference_wrapper<ast::expression const> filter)
 {
   // Collect equality literals for each input table column
-  auto const literals =
-    equality_literals_collector{
-      filter.get(),
-      host_span<data_type const>{output_dtypes.data(), output_dtypes.size()},
-      host_span<cudf::size_type const>{output_column_schemas.data(), output_column_schemas.size()},
-      per_file_metadata[0].schema}
-      .get_literals();
+  auto literals_collector = equality_literals_collector{
+    filter.get(), output_dtypes, output_column_schemas, per_file_metadata[0].schema};
+
+  // Return early if bloom filters cannot prune any row groups with this filter
+  if (not literals_collector.can_filter()) { return {}; }
+
+  auto const literals = std::move(literals_collector).get_literals();
 
   // Collect schema indices of columns with equality predicate(s)
   std::vector<cudf::size_type> bloom_filter_col_schemas;
@@ -429,9 +429,6 @@ aggregate_reader_metadata::bloom_filters_byte_ranges(
                   literals.begin(),
                   std::back_inserter(bloom_filter_col_schemas),
                   [](auto& bloom_filter_literals) { return not bloom_filter_literals.empty(); });
-
-  // No equality literals found, return empty pair
-  if (bloom_filter_col_schemas.empty()) { return {}; }
 
   // Compute total number of input row groups
   auto const total_row_groups = compute_total_row_groups(row_group_indices);
@@ -489,7 +486,12 @@ aggregate_reader_metadata::dictionary_pages_byte_ranges(
   std::reference_wrapper<ast::expression const> filter)
 {
   // Collect (in)equality literals for each input table column
-  auto const literals = dictionary_literals_collector{filter.get(), output_dtypes}.get_literals();
+  auto literals_collector = dictionary_literals_collector{filter.get(), output_dtypes};
+
+  // Return early if dictionary pages cannot prune any row groups with this filter
+  if (not literals_collector.can_filter()) { return {}; }
+
+  auto const literals = std::move(literals_collector).get_literals();
 
   // Collect schema indices of columns with equality predicate(s)
   std::vector<cudf::size_type> dictionary_col_schemas;
@@ -499,9 +501,6 @@ aggregate_reader_metadata::dictionary_pages_byte_ranges(
                   literals.begin(),
                   std::back_inserter(dictionary_col_schemas),
                   [](auto& dict_literals) { return not dict_literals.empty(); });
-
-  // No (in)equality literals found, return empty vectors
-  if (dictionary_col_schemas.empty()) { return {}; }
 
   // Compute total number of input row groups
   auto const total_row_groups = compute_total_row_groups(row_group_indices);
@@ -649,13 +648,13 @@ aggregate_reader_metadata::filter_row_groups_with_bloom_filters(
   cuda::stream_ref stream) const
 {
   // Collect equality literals for each input table column
-  auto const literals =
-    equality_literals_collector{
-      filter.get(),
-      host_span<data_type const>{output_dtypes.data(), output_dtypes.size()},
-      host_span<cudf::size_type const>{output_column_schemas.data(), output_column_schemas.size()},
-      per_file_metadata[0].schema}
-      .get_literals();
+  auto literals_collector = equality_literals_collector{
+    filter.get(), output_dtypes, output_column_schemas, per_file_metadata[0].schema};
+
+  // Return early if bloom filters cannot prune any row groups with this filter
+  if (not literals_collector.can_filter()) { return all_row_group_indices(row_group_indices); }
+
+  auto const literals = std::move(literals_collector).get_literals();
 
   // Collect schema indices of columns with equality predicate(s)
   std::vector<cudf::size_type> bloom_filter_col_schemas;
@@ -665,9 +664,6 @@ aggregate_reader_metadata::filter_row_groups_with_bloom_filters(
                   literals.begin(),
                   std::back_inserter(bloom_filter_col_schemas),
                   [](auto& eq_literals) { return not eq_literals.empty(); });
-
-  // Return all row groups if no column with equality predicate(s)
-  if (bloom_filter_col_schemas.empty()) { return all_row_group_indices(row_group_indices); }
 
   // Compute total number of input row groups
   auto const total_row_groups = compute_total_row_groups(row_group_indices);

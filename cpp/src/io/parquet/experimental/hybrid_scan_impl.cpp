@@ -422,16 +422,15 @@ hybrid_scan_reader_impl::filter_row_groups_with_dictionary_pages(
   auto [expr_conv, output_dtypes] = prepare_filter_and_output_types(options);
 
   // Collect literal and operator pairs for each input column with an (in)equality predicate
-  auto const [literals, operators] =
-    dictionary_literals_collector{expr_conv.get_converted_expr().value().get(), output_dtypes}
-      .get_literals_and_operators();
+  auto literals_collector =
+    dictionary_literals_collector{expr_conv.get_converted_expr().value().get(), output_dtypes};
 
-  // Return all row groups if no dictionary page filtering is needed
-  if (literals.empty() or std::all_of(literals.begin(), literals.end(), [](auto& col_literals) {
-        return col_literals.empty();
-      })) {
+  // Return early if dictionary pages cannot prune any row groups with this filter
+  if (not literals_collector.can_filter()) {
     return std::vector<std::vector<size_type>>(row_group_indices.begin(), row_group_indices.end());
   }
+
+  auto const [literals, operators] = std::move(literals_collector).get_literals_and_operators();
 
   // Collect schema indices of input columns with a non-empty (in)equality literal/operator vector
   std::vector<cudf::size_type> dictionary_col_schemas;

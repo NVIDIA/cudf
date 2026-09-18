@@ -3194,7 +3194,7 @@ TEST_F(ParquetReaderTest, FilterErrors)
     auto expr        = cudf::ast::operation(cudf::ast::ast_operator::LESS, filter_col1, low_lot);
 
     auto builder = cudf::io::parquet_reader_options::builder(si).filter(expr);
-    EXPECT_THROW(cudf::io::read_parquet(builder), cudf::logic_error);
+    EXPECT_THROW(cudf::io::read_parquet(builder), std::out_of_range);
   }
 
   // Filtering AST - invalid column name

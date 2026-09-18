@@ -522,6 +522,11 @@ void parquet_expression_simplifier::validate_column_reference(
                std::out_of_range);
 }
 
+ast::expression const& parquet_expression_simplifier::placeholder_expr()
+{
+  return _tree.push(ast::column_reference{0});
+}
+
 void parquet_expression_simplifier::validate_operands(ast::expression const& expr) const
 {
   // Validate column references and traverse operations. Literals don't really need validation.

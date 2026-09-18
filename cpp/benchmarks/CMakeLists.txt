@@ -486,6 +486,9 @@ ConfigureNVBench(
 # ##################################################################################################
 # * strings experimental benchmark ---------------------------------------------------
 ConfigureNVBench(STRINGS_EXPERIMENTAL_NVBENCH string/experimental/stringview_compare.cu)
+
+# skewed row-length distributions for contains()
+ConfigureNVBench(STRINGS_FIND_SKEWED_NVBENCH string/find_skewed.cpp)
 target_link_libraries(STRINGS_EXPERIMENTAL_NVBENCH PRIVATE nanoarrow::nanoarrow)
 
 # ##################################################################################################

@@ -12,6 +12,7 @@
 #include <cudf/column/column_factories.hpp>
 #include <cudf/detail/iterator.cuh>
 #include <cudf/detail/nvtx/ranges.hpp>
+#include <cudf/strings/detail/split.hpp>
 #include <cudf/strings/detail/strings_column_factories.cuh>
 #include <cudf/strings/split/split_re.hpp>
 #include <cudf/strings/string_view.cuh>
@@ -207,6 +208,15 @@ std::unique_ptr<table> split_re(strings_column_view const& input,
 {
   CUDF_EXPECTS(!prog.pattern().empty(), "Parameter pattern must not be empty");
 
+  // Fast-path: literal-only patterns bypass the regex engine entirely
+  auto const [fp, literal] = prog.get_literal_fast_path();
+  if (fp == literal_fast_path::LITERAL_ONLY) {
+    auto const delim = string_scalar(literal, true, stream);
+    return direction == split_direction::FORWARD
+             ? cudf::strings::detail::split(input, delim, maxsplit, stream, mr)
+             : cudf::strings::detail::rsplit(input, delim, maxsplit, stream, mr);
+  }
+
   auto const strings_count = input.size();
 
   std::vector<std::unique_ptr<column>> results;
@@ -270,6 +280,15 @@ std::unique_ptr<column> split_record_re(strings_column_view const& input,
                                         rmm::device_async_resource_ref mr)
 {
   CUDF_EXPECTS(!prog.pattern().empty(), "Parameter pattern must not be empty");
+
+  // Fast-path: literal-only patterns bypass the regex engine entirely
+  auto const [fp, literal] = prog.get_literal_fast_path();
+  if (fp == literal_fast_path::LITERAL_ONLY) {
+    auto const delim = string_scalar(literal, true, stream);
+    return direction == split_direction::FORWARD
+             ? cudf::strings::detail::split_record(input, delim, maxsplit, stream, mr)
+             : cudf::strings::detail::rsplit_record(input, delim, maxsplit, stream, mr);
+  }
 
   auto const strings_count = input.size();
   auto d_strings           = column_device_view::create(input.parent(), stream);

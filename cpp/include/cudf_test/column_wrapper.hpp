@@ -852,6 +852,7 @@ class strings_column_wrapper : public detail::column_wrapper {
       0);
     wrapped =
       cudf::make_strings_column(num_strings, std::move(d_offsets), d_chars.release(), 0, {});
+    stream.sync();
   }
 
   /**
@@ -1890,6 +1891,7 @@ class lists_column_wrapper : public detail::column_wrapper {
     // construct the list column
     wrapped = make_lists_column(
       cols.size(), std::move(offsets), std::move(data), null_count, std::move(null_mask));
+    stream.sync();
   }
 
   /**

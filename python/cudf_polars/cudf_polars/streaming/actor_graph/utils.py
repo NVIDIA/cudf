@@ -352,7 +352,13 @@ async def shutdown_on_error(
                 )
                 is not None
             ):
-                custom_attributes = []
+                custom_attributes = [
+                    cudf_polars.quent._types.StatisticsAttribute(
+                        key="wall_time_ns",
+                        value_type="U64",
+                        value=stop - start,
+                    )
+                ]
                 if tracer is not None and tracer.chunk_count is not None:
                     custom_attributes.append(
                         cudf_polars.quent._types.StatisticsAttribute(

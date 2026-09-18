@@ -272,6 +272,28 @@ def test_plan_declare_serialization(
     assert len(decl["edges"]) == 1
 
 
+def test_query_group_declare_serialization() -> None:
+    engine = Engine(id=uuid.uuid4())
+    group_id = uuid.uuid4()
+
+    # An explicit instance_name is serialized as-is.
+    named_group = cudf_polars.quent.QueryGroup(id=group_id, instance_name="my-group")
+    decl = named_group._declare(engine=engine, timestamp=12345).to_dict()["data"][
+        "QueryGroup"
+    ]["Declaration"]
+    assert decl["instance_name"] == "my-group"
+    assert decl["engine_id"] == str(engine.id)
+
+    # No instance_name falls back to the id's short hex rather than emitting
+    # null, which the quent schema's non-nullable `instance_name: String`
+    # rejects.
+    default_group = cudf_polars.quent.QueryGroup(id=group_id)
+    decl = default_group._declare(engine=engine, timestamp=12345).to_dict()["data"][
+        "QueryGroup"
+    ]["Declaration"]
+    assert decl["instance_name"] == group_id.hex[:8]
+
+
 def test_operator_declare_serialization(
     ir_and_config: tuple[IR, ConfigOptions[StreamingExecutor]],
 ) -> None:

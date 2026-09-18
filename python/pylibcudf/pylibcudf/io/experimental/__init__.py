@@ -4,6 +4,7 @@
 from pylibcudf.io.experimental.hybrid_scan import (
     HybridScanMetadata,
     HybridScanReader,
+    ReadColumnsMode,
     UseDataPageMask,
 )
 from pylibcudf.io.experimental.hybrid_scan_multifile import HybridScanMultiFile
@@ -14,5 +15,6 @@ __all__ = [
     "HybridScanMetadata",
     "HybridScanMultiFile",
     "HybridScanReader",
+    "ReadColumnsMode",
     "UseDataPageMask",
 ]

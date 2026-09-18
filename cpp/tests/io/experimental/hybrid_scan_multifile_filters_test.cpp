@@ -315,7 +315,8 @@ TEST_F(HybridScanMultifileFiltersTest, EmptySource)
   EXPECT_FALSE(page_index_byte_ranges.front().is_empty());
   EXPECT_TRUE(page_index_byte_ranges.back().is_empty());
 
-  auto const passes = reader->construct_row_group_passes(all_rgs, 1);
+  auto const passes = reader->construct_row_group_passes(
+    cudf::io::parquet::experimental::read_columns_mode::ALL_COLUMNS, all_rgs, 1, options);
   ASSERT_EQ(passes.size(), all_rgs.front().size());
   for (auto const& pass : passes) {
     ASSERT_EQ(pass.size(), num_sources);
@@ -354,22 +355,29 @@ TEST_F(HybridScanMultifileFiltersTest, RowGroupPasses)
   {
     auto invalid_rgs = all_rgs;
     invalid_rgs.pop_back();
-    EXPECT_THROW(static_cast<void>(reader->construct_row_group_passes(invalid_rgs, 0)),
-                 std::invalid_argument);
+    EXPECT_THROW(
+      static_cast<void>(reader->construct_row_group_passes(
+        cudf::io::parquet::experimental::read_columns_mode::ALL_COLUMNS, invalid_rgs, 0, options)),
+      std::invalid_argument);
   }
 
   // Empty row group indices => throw error
   {
     auto const empty_rgs = std::vector<std::vector<cudf::size_type>>(num_sources);
-    EXPECT_THROW(static_cast<void>(reader->construct_row_group_passes(empty_rgs, 0)),
-                 std::invalid_argument);
-    EXPECT_THROW(static_cast<void>(reader->construct_row_group_passes(empty_rgs, 1)),
-                 std::invalid_argument);
+    EXPECT_THROW(
+      static_cast<void>(reader->construct_row_group_passes(
+        cudf::io::parquet::experimental::read_columns_mode::ALL_COLUMNS, empty_rgs, 0, options)),
+      std::invalid_argument);
+    EXPECT_THROW(
+      static_cast<void>(reader->construct_row_group_passes(
+        cudf::io::parquet::experimental::read_columns_mode::ALL_COLUMNS, empty_rgs, 1, options)),
+      std::invalid_argument);
   }
 
   // Zero pass read limit => single pass with all row groups
   {
-    auto const passes = reader->construct_row_group_passes(all_rgs, 0);
+    auto const passes = reader->construct_row_group_passes(
+      cudf::io::parquet::experimental::read_columns_mode::ALL_COLUMNS, all_rgs, 0, options);
     ASSERT_EQ(passes.size(), 1);
     ASSERT_EQ(passes.front().size(), num_sources);
     EXPECT_EQ(passes.front(), all_rgs);
@@ -377,7 +385,8 @@ TEST_F(HybridScanMultifileFiltersTest, RowGroupPasses)
 
   // Small pass read limit => each row group in its own pass
   {
-    auto const passes = reader->construct_row_group_passes(all_rgs, 1);
+    auto const passes = reader->construct_row_group_passes(
+      cudf::io::parquet::experimental::read_columns_mode::ALL_COLUMNS, all_rgs, 1, options);
     ASSERT_EQ(passes.size(), num_sources * all_rgs.front().size());
     for (auto const& pass : passes) {
       ASSERT_EQ(pass.size(), num_sources);
@@ -391,7 +400,8 @@ TEST_F(HybridScanMultifileFiltersTest, RowGroupPasses)
 
   // Large pass read limit => multiple passes
   {
-    auto const passes = reader->construct_row_group_passes(all_rgs, 10'000);
+    auto const passes = reader->construct_row_group_passes(
+      cudf::io::parquet::experimental::read_columns_mode::ALL_COLUMNS, all_rgs, 10'000, options);
     ASSERT_GT(passes.size(), 1);
     auto const pass_num_row_groups = [](auto const& pass) {
       return std::accumulate(
@@ -449,10 +459,16 @@ TEST_F(HybridScanMultifileFiltersTest, RowGroupPassesSingleSourceParity)
   auto const all_rgs = multifile_reader->all_row_groups(options);
   ASSERT_EQ(all_rgs.size(), 1);
   auto constexpr pass_read_limit = std::size_t{10'000};
-  auto const multifile_passes =
-    multifile_reader->construct_row_group_passes(all_rgs, pass_read_limit);
-  auto const single_file_passes =
-    single_file_reader->construct_row_group_passes(all_rgs.front(), pass_read_limit);
+  auto const multifile_passes    = multifile_reader->construct_row_group_passes(
+    cudf::io::parquet::experimental::read_columns_mode::ALL_COLUMNS,
+    all_rgs,
+    pass_read_limit,
+    options);
+  auto const single_file_passes = single_file_reader->construct_row_group_passes(
+    cudf::io::parquet::experimental::read_columns_mode::ALL_COLUMNS,
+    all_rgs.front(),
+    pass_read_limit,
+    options);
 
   auto projected_passes = std::vector<std::vector<cudf::size_type>>{};
   projected_passes.reserve(multifile_passes.size());

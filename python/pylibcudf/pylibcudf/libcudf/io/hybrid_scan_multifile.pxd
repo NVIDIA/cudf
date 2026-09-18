@@ -3,12 +3,14 @@
 
 from libcpp cimport bool
 from libcpp.pair cimport pair
+from libcpp.span cimport span as std_span
 from libcpp.vector cimport vector
 from pylibcudf.exception_handler cimport libcudf_exception_handler
 from pylibcudf.libcudf.column.column_view cimport column_view
 from pylibcudf.libcudf.io.hybrid_scan cimport (
     const_device_span_const_uint8_t,
     const_uint8_t,
+    read_columns_mode,
 )
 from pylibcudf.libcudf.io.parquet cimport parquet_reader_options
 from pylibcudf.libcudf.io.parquet_metadata cimport const_FileMetaData
@@ -69,8 +71,10 @@ cdef extern from "cudf/io/experimental/hybrid_scan_multifile.hpp" \
         ) except +libcudf_exception_handler
 
         vector[vector[vector[size_type]]] construct_row_group_passes(
-            host_span[const_vector_size_type] row_group_indices,
+            read_columns_mode read_columns_mode,
+            std_span[const_vector_size_type] row_group_indices,
             size_t pass_read_limit,
+            const parquet_reader_options& options,
         ) except +libcudf_exception_handler
 
         bool has_next_table_chunk() except +libcudf_exception_handler

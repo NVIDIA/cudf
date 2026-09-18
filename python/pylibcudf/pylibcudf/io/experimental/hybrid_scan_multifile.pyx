@@ -6,6 +6,7 @@ from libc.stddef cimport size_t
 from libcpp cimport bool
 from libcpp.memory cimport make_unique
 from libcpp.pair cimport pair
+from libcpp.span cimport span as std_span
 from libcpp.utility cimport move
 from libcpp.vector cimport vector
 
@@ -19,7 +20,10 @@ from pylibcudf.io.parquet_metadata cimport FileMetaData as c_FileMetaData
 from pylibcudf.io.text cimport ByteRangeInfo
 from pylibcudf.io.types cimport TableWithMetadata
 from pylibcudf.libcudf.column.column_view cimport column_view
-from pylibcudf.libcudf.io.hybrid_scan cimport const_device_span_const_uint8_t
+from pylibcudf.libcudf.io.hybrid_scan cimport (
+    const_device_span_const_uint8_t,
+    read_columns_mode as cpp_read_columns_mode,
+)
 from pylibcudf.libcudf.io.hybrid_scan_multifile cimport (
     const_host_span_const_uint8_t,
     const_uint8_t,
@@ -42,6 +46,10 @@ if TYPE_CHECKING:
     from pylibcudf.typing import CudaStreamLike
 
 from pylibcudf.io.parquet_metadata import FileMetaData
+
+import pylibcudf.libcudf.io.hybrid_scan
+
+ReadColumnsMode = pylibcudf.libcudf.io.hybrid_scan.read_columns_mode
 
 __all__ = ["HybridScanMultiFile"]
 
@@ -355,11 +363,13 @@ cdef class HybridScanMultiFile:
 
     def construct_row_group_passes(
         self,
+        cpp_read_columns_mode read_columns_mode,
         list row_group_indices: list[list[int]],
         size_t pass_read_limit,
+        ParquetReaderOptions options,
     ) -> list[list[list[int]]]:
         """Partition row groups into passes such that the GPU memory required to
-        materialize a pass is bounded by the specified limit.
+        materialize a pass for selected columns is bounded by the specified limit.
 
         Note that ``pass_read_limit`` is a hint, not an absolute limit. i.e. if
         a row group cannot fit within the limit, it will still constitute a valid
@@ -367,16 +377,20 @@ cdef class HybridScanMultiFile:
 
         Parameters
         ----------
+        read_columns_mode : ReadColumnsMode
+            Columns to consider for pass memory estimation.
         row_group_indices : list[list[int]]
-            Input row group indices, one list per source
+            Input row group indices, one list per source.
         pass_read_limit : int
-            Limit on the amount of memory used for reading and decompressing data
-            or 0 if there is no limit
+            Limit on the amount of memory used for reading and decompressing
+            data, or 0 if there is no limit.
+        options : ParquetReaderOptions
+            Parquet reader options used to select columns.
 
         Returns
         -------
         list[list[list[int]]]
-            Per-source row group indices, one list per pass
+            Per-source row group indices, one list per pass.
 
         Raises
         ------
@@ -388,12 +402,16 @@ cdef class HybridScanMultiFile:
         )
         cdef vector[vector[vector[size_type]]] passes
         with nogil:
-            passes = move(self.c_obj.get()[0].construct_row_group_passes(
-                host_span[const_vector_size_type](
-                    <const_vector_size_type*>indices.data(), indices.size()
-                ),
-                pass_read_limit
-            ))
+            passes = move(
+                self.c_obj.get()[0].construct_row_group_passes(
+                    read_columns_mode,
+                    std_span[const_vector_size_type](
+                        <const_vector_size_type*>indices.data(), indices.size()
+                    ),
+                    pass_read_limit,
+                    options.c_obj
+                )
+            )
         return passes
 
     def has_next_table_chunk(self) -> bool:

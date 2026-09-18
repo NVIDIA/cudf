@@ -323,23 +323,22 @@ class hybrid_scan_reader_impl : public parquet::detail::reader_impl {
   [[nodiscard]] table_with_metadata materialize_all_columns_chunk();
 
   /**
-   * @brief Partition per-source row groups into read passes
+   * @brief Partition per-source row groups into read passes for the specified column selection
    *
-   * @throws std::invalid_argument if @p row_group_indices.size() is all empty or not equal to the
-   * number of input datasources
-   *
+   * @param read_columns_mode Column selection to consider for pass memory estimation
    * @param row_group_indices Span of vectors of input row group indices, one per source
    * @param total_row_groups Total number of row groups across all sources
-   * @param pass_read_limit Memory limit to read and decompress row
-   * group data
-   *
-   * @return Pair of a vector of flattened row group passes and a source index map. The source index
-   * map is empty for single source input
+   * @param pass_read_limit Memory limit to read and decompress pass column chunks
+   * @param options Parquet reader options
+   * @return A pair of per-pass row group indices and source index map. Source indices map is empty
+   * for single source input
    */
   [[nodiscard]] std::pair<std::vector<std::vector<cudf::size_type>>, std::vector<cudf::size_type>>
-  construct_row_group_passes(cudf::host_span<std::vector<size_type> const> row_group_indices,
+  construct_row_group_passes(read_columns_mode read_columns_mode,
+                             std::span<std::vector<size_type> const> row_group_indices,
                              std::size_t total_row_groups,
-                             std::size_t pass_read_limit) const;
+                             std::size_t pass_read_limit,
+                             parquet_reader_options const& options);
 
   /**
    * @copydoc cudf::io::parquet::experimental::hybrid_scan_multifile::has_next_table_chunk
@@ -347,11 +346,6 @@ class hybrid_scan_reader_impl : public parquet::detail::reader_impl {
   [[nodiscard]] bool has_next_table_chunk();
 
  private:
-  /**
-   * @brief Enum indicating whether we are reading the filter, payload, or all columns
-   */
-  enum class read_columns_mode { FILTER_COLUMNS, PAYLOAD_COLUMNS, ALL_COLUMNS };
-
   /**
    * @brief Populate the reader's `_options` config (and related members) from the user options.
    *

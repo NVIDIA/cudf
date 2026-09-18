@@ -61,6 +61,22 @@ public class HybridScanReader implements AutoCloseable {
     NativeDepsLoader.loadNativeDeps();
   }
 
+  /** Column selection used when constructing row-group passes. */
+  public enum ReadColumnsMode {
+    /** Select filter columns. */
+    FILTER_COLUMNS(0),
+    /** Select payload columns. */
+    PAYLOAD_COLUMNS(1),
+    /** Select all selected columns. */
+    ALL_COLUMNS(2);
+
+    private final int nativeId;
+
+    ReadColumnsMode(int nativeId) {
+      this.nativeId = nativeId;
+    }
+  }
+
   /**
    * The result of a combined row-mask-build + filter-column-materialization call.
    *
@@ -460,8 +476,9 @@ public class HybridScanReader implements AutoCloseable {
    *                               parameter only bounds the subpass (decode) working set;
    *                               it does not repartition row groups. To split row groups
    *                               across multiple passes up front, call
-   *                               {@link #constructRowGroupPasses(int[], long)} first and
-   *                               issue a separate chunked run per returned partition.
+   *                               {@link #constructRowGroupPasses(ReadColumnsMode, int[], long)}
+   *                               with {@link ReadColumnsMode#FILTER_COLUMNS} first and issue a
+   *                               separate chunked run per returned partition.
    * @param rowGroupIndices        row groups to read
    * @param usePageLevelPruning    seed the row mask from page-index stats and enable the
    *                               data page mask; requires prior
@@ -531,8 +548,9 @@ public class HybridScanReader implements AutoCloseable {
    *                         number of row-group passes to 1, so this parameter only bounds
    *                         the subpass (decode) working set; it does not repartition row
    *                         groups. To split row groups across multiple passes up front,
-   *                         call {@link #constructRowGroupPasses(int[], long)} first and
-   *                         issue a separate chunked run per returned partition.
+   *                         call {@link #constructRowGroupPasses(ReadColumnsMode, int[], long)}
+   *                         with {@link ReadColumnsMode#PAYLOAD_COLUMNS} first and issue a
+   *                         separate chunked run per returned partition.
    * @param rowGroupIndices  row groups to read
    * @param rowMask          row mask (read-only)
    * @param usePageLevelPruning  enable the data page mask to skip decode of pages the row
@@ -579,8 +597,9 @@ public class HybridScanReader implements AutoCloseable {
    *                         number of row-group passes to 1, so this parameter only bounds
    *                         the subpass (decode) working set; it does not repartition row
    *                         groups. To split row groups across multiple passes up front,
-   *                         call {@link #constructRowGroupPasses(int[], long)} first and
-   *                         issue a separate chunked run per returned partition.
+   *                         call {@link #constructRowGroupPasses(ReadColumnsMode, int[], long)}
+   *                         with {@link ReadColumnsMode#ALL_COLUMNS} first
+   *                         and issue a separate chunked run per returned partition.
    * @param rowGroupIndices  row groups to read
    * @param columnChunkData  device buffers holding all column chunks, in the order returned
    *                         by {@link #allColumnChunksByteRanges(int[])}
@@ -611,21 +630,27 @@ public class HybridScanReader implements AutoCloseable {
   }
 
   /**
-   * Partition the supplied row groups into passes whose total uncompressed size respects the
-   * given limit. The returned array contains one inner array per pass.
+   * Partition the supplied row groups into passes whose estimated uncompressed size over the
+   * selected columns respects the given limit. The returned array contains one inner array per
+   * pass.
    *
+   * @param readColumnsMode columns used to estimate each pass
    * @param rowGroupIndices row groups to partition
    * @param passReadLimit   limit on the memory used by a single pass, or 0 for no limit.
    *                        Each returned pass can then be fed to a
-   *                        {@code setupChunkingFor*} call, which will further stream that
-   *                        pass in subpass-sized chunks bounded by its own
+   *                        {@code setupChunkingFor*} call, which will further stream that pass in
+   *                        subpass-sized chunks bounded by its own
    *                        {@code passReadLimit} argument.
    * @return an array of arrays of row group indices, one per pass
    */
-  public int[][] constructRowGroupPasses(int[] rowGroupIndices, long passReadLimit) {
+  public int[][] constructRowGroupPasses(ReadColumnsMode readColumnsMode,
+                                         int[] rowGroupIndices,
+                                         long passReadLimit) {
     assertNotClosed();
+    requireNonNullReadColumnsMode(readColumnsMode);
     requireNonNullRowGroups(rowGroupIndices);
-    return constructRowGroupPasses(cleaner.nativeHandle, rowGroupIndices, passReadLimit);
+    return constructRowGroupPasses(
+        cleaner.nativeHandle, readColumnsMode.nativeId, rowGroupIndices, passReadLimit);
   }
 
   // ----------------------------------------------------------------------
@@ -655,6 +680,12 @@ public class HybridScanReader implements AutoCloseable {
   private static void requireNonNullRowGroups(int[] rowGroupIndices) {
     if (rowGroupIndices == null) {
       throw new IllegalArgumentException("rowGroupIndices must not be null");
+    }
+  }
+
+  private static void requireNonNullReadColumnsMode(ReadColumnsMode readColumnsMode) {
+    if (readColumnsMode == null) {
+      throw new IllegalArgumentException("readColumnsMode must not be null");
     }
   }
 
@@ -792,6 +823,7 @@ public class HybridScanReader implements AutoCloseable {
   private static native long[] materializeAllColumnsChunk(long handle);
   private static native boolean hasNextTableChunk(long handle);
   private static native int[][] constructRowGroupPasses(long handle,
-                                                        int[] rowGroupIndices,
-                                                        long passReadLimit);
+                                                         int readColumnsMode,
+                                                         int[] rowGroupIndices,
+                                                         long passReadLimit);
 }

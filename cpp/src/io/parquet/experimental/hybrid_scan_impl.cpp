@@ -236,6 +236,12 @@ void hybrid_scan_reader_impl::setup_page_indexes(
 void hybrid_scan_reader_impl::select_columns(read_columns_mode read_columns_mode,
                                              parquet_reader_options const& options)
 {
+  CUDF_EXPECTS(read_columns_mode == read_columns_mode::FILTER_COLUMNS ||
+                 read_columns_mode == read_columns_mode::PAYLOAD_COLUMNS ||
+                 read_columns_mode == read_columns_mode::ALL_COLUMNS,
+               "Invalid read columns mode",
+               std::invalid_argument);
+
   // Initialize reader configuration.
   initialize_reader_config(options);
 
@@ -280,6 +286,11 @@ void hybrid_scan_reader_impl::select_columns(read_columns_mode read_columns_mode
   } else {
     if (_is_payload_columns_selected) { return; }
 
+    // Ensure filter columns are already selected to be excluded from payload columns
+    if (not _filter_columns_names.has_value() and options.get_filter().has_value()) {
+      _filter_columns_names = cudf::io::parquet::detail::get_column_names_in_expression(
+        options.get_filter(), {}, options, _extended_metadata->get_schema_tree());
+    }
     auto select_column_names = get_column_projection(options);
     std::tie(_input_columns, _output_buffers, _output_column_schemas) =
       _extended_metadata->select_payload_columns(
@@ -292,6 +303,9 @@ void hybrid_scan_reader_impl::select_columns(read_columns_mode read_columns_mode
 
   // Reset the materialization step flag
   _output_chunk_produced = false;
+
+  // Reset the file preprocessed flag
+  _file_preprocessed = false;
 
   CUDF_EXPECTS(_input_columns.size() > 0 and _output_buffers.size() > 0, "No columns selected");
 
@@ -325,6 +339,7 @@ void hybrid_scan_reader_impl::reset_column_selection()
   _is_all_columns_selected     = false;
   _is_filter_columns_selected  = false;
   _is_payload_columns_selected = false;
+  _filter_columns_names.reset();
 }
 
 std::pair<parquet_filter_normalizer, std::vector<cudf::data_type>>
@@ -1024,9 +1039,11 @@ table_with_metadata hybrid_scan_reader_impl::materialize_all_columns_chunk()
 
 std::pair<std::vector<std::vector<cudf::size_type>>, std::vector<cudf::size_type>>
 hybrid_scan_reader_impl::construct_row_group_passes(
-  cudf::host_span<std::vector<size_type> const> row_group_indices,
+  read_columns_mode read_columns_mode,
+  std::span<std::vector<size_type> const> row_group_indices,
   std::size_t total_row_groups,
-  std::size_t pass_read_limit) const
+  std::size_t pass_read_limit,
+  parquet_reader_options const& options)
 {
   CUDF_EXPECTS(
     total_row_groups > 0, "Empty input row group indices encountered", std::invalid_argument);
@@ -1035,6 +1052,8 @@ hybrid_scan_reader_impl::construct_row_group_passes(
                "Mismatch in the number of row group indices vectors and the number of input "
                "datasources",
                std::invalid_argument);
+
+  select_columns(read_columns_mode, options);
 
   if (pass_read_limit == 0) {
     return {
@@ -1055,10 +1074,8 @@ hybrid_scan_reader_impl::construct_row_group_passes(
                 [&](auto const source_index) {
                   for (auto const rg_index : row_group_indices[source_index]) {
                     row_group_ids.emplace_back(rg_index, source_index);
-                    // TODO(mh): Compute the row group size information over the selected columns
-                    // instead
                     row_group_sizes.push_back(_extended_metadata->get_row_group_size_info(
-                      rg_index, source_index, std::nullopt));
+                      rg_index, source_index, _input_columns));
                   }
                 });
 

@@ -23,6 +23,11 @@ class UseDataPageMask(IntEnum):
     YES = 1
     NO = 0
 
+class ReadColumnsMode(IntEnum):
+    FILTER_COLUMNS = 0
+    PAYLOAD_COLUMNS = 1
+    ALL_COLUMNS = 2
+
 class HybridScanMetadata:
     @staticmethod
     def from_footer_bytes(
@@ -161,7 +166,9 @@ class HybridScanReader:
     ) -> TableWithMetadata: ...
     def construct_row_group_passes(
         self,
+        read_columns_mode: ReadColumnsMode,
         row_group_indices: list[int],
         pass_read_limit: int,
+        options: ParquetReaderOptions,
     ) -> list[list[int]]: ...
     def has_next_table_chunk(self) -> bool: ...

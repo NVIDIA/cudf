@@ -198,10 +198,10 @@ std::unique_ptr<column> zfill_by_widths(strings_column_view const& input,
                                         cuda::stream_ref stream,
                                         rmm::device_async_resource_ref mr)
 {
-  if (input.is_empty()) { return make_empty_column(type_id::STRING); }
   CUDF_EXPECTS(widths.size() == input.size(),
                "widths column must be the same size as the input column",
                std::invalid_argument);
+  if (input.is_empty()) { return make_empty_column(type_id::STRING); }
 
   auto d_strings = column_device_view::create(input.parent(), stream);
   auto d_widths  = column_device_view::create(widths, stream);

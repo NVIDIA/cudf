@@ -199,6 +199,11 @@ TEST_F(StringsPadTest, ZFillError)
   auto sv     = cudf::strings_column_view(input);
   auto widths = cudf::test::fixed_width_column_wrapper<cudf::size_type>({6, 5, 4, 3, 2});
   EXPECT_THROW(cudf::strings::zfill_by_widths(sv, widths), std::invalid_argument);
+
+  auto empty_input = cudf::make_empty_column(cudf::type_id::STRING);
+  auto empty_sv    = cudf::strings_column_view(empty_input->view());
+  auto one_width   = cudf::test::fixed_width_column_wrapper<cudf::size_type>({1});
+  EXPECT_THROW(cudf::strings::zfill_by_widths(empty_sv, one_width), std::invalid_argument);
 }
 
 TEST_F(StringsPadTest, Wrap1)

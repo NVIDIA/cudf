@@ -22,10 +22,13 @@ from cudf_streaming.table_chunk import (
 from pylibcudf.contiguous_split import pack
 from rapidsmpf.memory.memory_reservation import opaque_memory_usage
 from rapidsmpf.streaming.coll.sparse_alltoall import SparseAlltoall
-from rapidsmpf.streaming.core.memory_reserve_or_wait import reserve_memory
 from rapidsmpf.streaming.core.message import Message
 
 from cudf_polars.containers import DataFrame, DataType
+from cudf_polars.streaming.actor_graph.memory import (
+    MemoryReservationPurpose,
+    reserve_memory_traced,
+)
 from cudf_polars.streaming.actor_graph.utils import (
     ChunkStore,
     concat_batch,
@@ -324,6 +327,8 @@ async def _unpack_remote_partition(
     context: Context,
     packed: PackedData,
     stream: Stream,
+    ir_context: IRExecutionContext,
+    partition_id: int,
 ) -> TableChunk:
     """Unpack one remote output-partition payload."""
     br = context.br()
@@ -332,10 +337,13 @@ async def _unpack_remote_partition(
     # host-resident partitions to device. The packed inputs stay live
     # until the concat finishes and are released after, so the net
     # change is about zero.
-    reservation = await reserve_memory(
+    reservation = await reserve_memory_traced(
         context,
         unpack_and_concat_cost(partitions),
         net_memory_delta=0,
+        ir_context=ir_context,
+        purpose=MemoryReservationPurpose.ORDERING_UNPACK_REMOTE,
+        sequence_number=partition_id,
     )
     return TableChunk.from_pylibcudf_table(
         unpack_and_concat(partitions, stream=stream, br=br, reservation=reservation),
@@ -693,7 +701,9 @@ async def _adjust_ordering_impl(
                 exchange.extract(source_rank),
                 strict=True,
             ):
-                chunk = await _unpack_remote_partition(context, packed, stream)
+                chunk = await _unpack_remote_partition(
+                    context, packed, stream, ir_context, pid
+                )
                 if chunk.table_view().num_rows() > 0:
                     _store_chunk(context, remote_pieces, pid, chunk)
             pieces_by_source[source_rank] = remote_pieces

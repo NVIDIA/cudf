@@ -32,7 +32,6 @@ from rapidsmpf.shuffler import PartitionAssignment
 from rapidsmpf.streaming.coll.shuffler import ShufflerAsync
 from rapidsmpf.streaming.core.actor import define_actor
 from rapidsmpf.streaming.core.context import Context
-from rapidsmpf.streaming.core.memory_reserve_or_wait import reserve_memory
 from rapidsmpf.streaming.core.message import Message
 
 from cudf_polars.containers import DataFrame
@@ -41,6 +40,10 @@ from cudf_polars.dsl.traversal import traversal
 from cudf_polars.streaming.actor_graph.dispatch import (
     generate_ir_sub_network,
     ir_context_for_node,
+)
+from cudf_polars.streaming.actor_graph.memory import (
+    MemoryReservationPurpose,
+    reserve_memory_traced,
 )
 from cudf_polars.streaming.actor_graph.nodes import shutdown_on_error
 from cudf_polars.streaming.actor_graph.tracing import (
@@ -87,6 +90,9 @@ class ShuffleManager:
         How to assign partition IDs to ranks: ROUND_ROBIN (default) or
         CONTIGUOUS. Use CONTIGUOUS for sort so each rank gets adjacent
         partition IDs and concatenation order matches global order.
+    ir_context, optional
+        The execution context for the IR node this shuffle is performed for.
+        Attributes the manager's memory reservations to that node's operator.
     """
 
     class Inserter:
@@ -110,12 +116,14 @@ class ShuffleManager:
         ) -> None:
             """Partition chunk by hash and insert into the shuffler."""
             br = self._manager.context.br()
-            reservation = await reserve_memory(
+            reservation = await reserve_memory_traced(
                 self._manager.context,
                 py_partition_and_pack_cost(chunk.table_view(), chunk.stream, br),
                 # The chunk's data moves into shuffler-owned packed buffers,
                 # nothing lasting is added.
                 net_memory_delta=0,
+                ir_context=self._manager.ir_context,
+                purpose=MemoryReservationPurpose.SHUFFLE_INSERT_HASH,
             )
             self._manager.shuffler.insert(
                 py_partition_and_pack(
@@ -140,12 +148,14 @@ class ShuffleManager:
             # bound. A key expression that expands its input evaluates to more
             # than the chunk's packed size and under-reserves.
             chunk_nbytes = py_split_and_pack_cost(chunk.table_view(), chunk.stream, br)
-            reservation = await reserve_memory(
+            reservation = await reserve_memory_traced(
                 self._manager.context,
                 3 * chunk_nbytes,
                 # The chunk's data moves into shuffler-owned packed buffers,
                 # nothing lasting is added.
                 net_memory_delta=0,
+                ir_context=self._manager.ir_context,
+                purpose=MemoryReservationPurpose.SHUFFLE_INSERT_HASH_KEYS,
             )
             with opaque_memory_usage(reservation.split(chunk_nbytes)):
                 key_table = _evaluate_key_table(chunk, keys, schema)
@@ -170,12 +180,14 @@ class ShuffleManager:
         async def insert_split(self, chunk: TableChunk, splits: list[int]) -> None:
             """Split chunk at the given indices and insert into the shuffler."""
             br = self._manager.context.br()
-            reservation = await reserve_memory(
+            reservation = await reserve_memory_traced(
                 self._manager.context,
                 py_split_and_pack_cost(chunk.table_view(), chunk.stream, br),
                 # The chunk's data moves into shuffler-owned packed buffers,
                 # nothing lasting is added.
                 net_memory_delta=0,
+                ir_context=self._manager.ir_context,
+                purpose=MemoryReservationPurpose.SHUFFLE_INSERT_SPLIT,
             )
             self._manager.shuffler.insert(
                 py_split_and_pack(
@@ -205,12 +217,14 @@ class ShuffleManager:
             """
             br = self._manager.context.br()
             # As in `insert_hash_keys`, this covers the reorder plus the pack.
-            reservation = await reserve_memory(
+            reservation = await reserve_memory_traced(
                 self._manager.context,
                 py_partition_and_pack_cost(chunk.table_view(), chunk.stream, br),
                 # The chunk's data moves into shuffler-owned packed buffers,
                 # nothing lasting is added.
                 net_memory_delta=0,
+                ir_context=self._manager.ir_context,
+                purpose=MemoryReservationPurpose.SHUFFLE_INSERT_INDEX,
             )
             reorder_nbytes = py_split_and_pack_cost(
                 chunk.table_view(), chunk.stream, br
@@ -254,11 +268,13 @@ class ShuffleManager:
         collective_id: int,
         *,
         partition_assignment: PartitionAssignment = PartitionAssignment.ROUND_ROBIN,
+        ir_context: IRExecutionContext | None = None,
     ):
         self.context = context
         self.comm = comm
         self.num_partitions = num_partitions
         self.collective_id = collective_id
+        self.ir_context = ir_context
         self.shuffler = ShufflerAsync(
             context,
             comm,
@@ -291,12 +307,15 @@ class ShuffleManager:
         The extracted table.
         """
         partitions = self.shuffler.extract(partition_id)
-        reservation = await reserve_memory(
+        reservation = await reserve_memory_traced(
             self.context,
             py_unpack_and_concat_cost(partitions),
             # Representation change: the packed input is consumed as the
             # unpacked table is produced, at roughly the same size.
             net_memory_delta=0,
+            ir_context=self.ir_context,
+            purpose=MemoryReservationPurpose.SHUFFLE_EXTRACT,
+            sequence_number=partition_id,
         )
         return py_unpack_and_concat(
             partitions=partitions,
@@ -346,6 +365,7 @@ class LocalRepartitioner:
             local_comm,
             local_count,
             shuffle.collective_id,
+            ir_context=shuffle.ir_context,
         )
 
     async def _iter_chunks(self, stream: Stream) -> AsyncGenerator[plc.Table, None]:
@@ -353,12 +373,15 @@ class LocalRepartitioner:
             for piece in self._global_shuffle.extract_pieces(partition_id):
                 # TODO: batch pieces up to target_partition_size before unpacking
                 pieces = [piece]
-                reservation = await reserve_memory(
+                reservation = await reserve_memory_traced(
                     self._global_shuffle.context,
                     py_unpack_and_concat_cost(pieces),
                     # Representation change: the packed input is consumed as the
                     # unpacked table is produced, at roughly the same size.
                     net_memory_delta=0,
+                    ir_context=self._global_shuffle.ir_context,
+                    purpose=MemoryReservationPurpose.REPARTITION_EXTRACT,
+                    sequence_number=partition_id,
                 )
                 table = py_unpack_and_concat(
                     pieces, stream=stream, br=self._br, reservation=reservation
@@ -545,7 +568,9 @@ async def _global_shuffle(
     # Other ranks still participate in the shuffle protocol.
     skip_insert = metadata_in.duplicated and comm.rank != 0
 
-    shuffle = ShuffleManager(context, comm, num_partitions, collective_id)
+    shuffle = ShuffleManager(
+        context, comm, num_partitions, collective_id, ir_context=ir_context
+    )
     async with shuffle.inserting() as inserter:
         while (msg := await ch_in.recv(context)) is not None:
             if not skip_insert:

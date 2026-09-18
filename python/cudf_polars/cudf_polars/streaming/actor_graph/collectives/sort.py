@@ -583,6 +583,7 @@ async def _insert_chunks_into_shuffle(
         num_partitions,
         collective_ids.pop(),
         partition_assignment=PartitionAssignment.CONTIGUOUS,
+        ir_context=ir_context,
     )
     async with shuffle.inserting() as inserter:
         while (msg := await ch_in.recv(context)) is not None:

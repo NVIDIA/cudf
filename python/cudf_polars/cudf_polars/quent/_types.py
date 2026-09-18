@@ -881,6 +881,98 @@ class Processor:
         )
 
 
+class MemoryReservationPurpose(enum.StrEnum):
+    """
+    Why an operator reserved memory.
+
+    Operators that make more than one reservation use distinct values so a
+    trace can tell the reservations apart. Values are the strings written into
+    Quent ``Allocating`` attributes.
+    """
+
+    PYTHON_SCAN = "python-scan"
+    SCAN = "scan"
+    BROADCAST_JOIN = "broadcast-join"
+    JOIN = "join"
+    ALLGATHER_EXTRACT = "allgather-extract"
+    ORDERING_UNPACK_REMOTE = "ordering-unpack-remote"
+    SHUFFLE_INSERT_HASH = "shuffle-insert-hash"
+    SHUFFLE_INSERT_HASH_KEYS = "shuffle-insert-hash-keys"
+    SHUFFLE_INSERT_SPLIT = "shuffle-insert-split"
+    SHUFFLE_INSERT_INDEX = "shuffle-insert-index"
+    SHUFFLE_EXTRACT = "shuffle-extract"
+    REPARTITION_EXTRACT = "repartition-extract"
+
+
+@dataclasses.dataclass(frozen=True, slots=True, kw_only=True)
+class MemoryReservationRequest:
+    """
+    A request to reserve memory, recorded on a Quent Task.
+
+    cudf-polars reserves (but does not necessarily allocate) device or host
+    memory before operations that grow their memory footprint. A reservation
+    is not always satisfiable right away, which gives the runtime a chance to
+    apply backpressure or spill rather than run out of memory.
+
+    Parameters
+    ----------
+    purpose
+        What the memory is reserved for. Distinguishes reservations made by a
+        single operator.
+    size_bytes
+        The number of bytes requested.
+    mem_type
+        The memory tier reserved from (e.g. ``"DEVICE"``).
+    net_memory_delta
+        The expected lasting change in memory usage, which is smaller than
+        ``size_bytes`` for operations whose peak usage is transient.
+    allow_overbooking
+        Whether the runtime may hand out a reservation it cannot back,
+        or ``None`` to use the rapidsmpf default.
+    sequence_number
+        The sequence number of the chunk this reservation is for, if any.
+    granted
+        Whether the reservation was satisfied. A failed reservation still
+        took time, so it is worth recording.
+
+    Notes
+    -----
+    Reservations are recorded as the ``Allocating`` state of a Quent
+    :class:`Task`, so the time spent in that state is the time it took to
+    satisfy the request. See
+    :meth:`~cudf_polars.quent._context.QuentContext._emit_memory_reservation_events`.
+    """
+
+    purpose: MemoryReservationPurpose
+    size_bytes: int
+    mem_type: str
+    net_memory_delta: int | None = None
+    allow_overbooking: bool | None = None
+    sequence_number: int | None = None
+    granted: bool = True
+
+    @property
+    def label(self) -> str:
+        """A compact description, e.g. ``scan-256.0MiB-device``."""
+        return f"{self.purpose.value}-{self.mem_type.lower()}"
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize to the flat attribute layout used by Quent FSM states."""
+        attributes: dict[str, Any] = {
+            "purpose": self.purpose.value,
+            "size_bytes": self.size_bytes,
+            "mem_type": self.mem_type,
+            "granted": self.granted,
+        }
+        if self.net_memory_delta is not None:
+            attributes["net_memory_delta"] = self.net_memory_delta
+        if self.allow_overbooking is not None:
+            attributes["allow_overbooking"] = self.allow_overbooking
+        if self.sequence_number is not None:
+            attributes["sequence_number"] = self.sequence_number
+        return attributes
+
+
 @dataclasses.dataclass(frozen=True, slots=True, kw_only=True)
 class Task:
     """A Quent Task representing a unit of work on an operator."""
@@ -921,6 +1013,43 @@ class Task:
             operator_id=quent_ir_execution_context.quent_operator.id,
         )
 
+    @classmethod
+    def for_memory_reservation(
+        cls,
+        request: MemoryReservationRequest,
+        quent_ir_execution_context: QuentIRExecutionContext,
+    ) -> Self:
+        """
+        Build an operator-scoped Quent Task recording a memory reservation.
+
+        Parameters
+        ----------
+        request
+            The reservation being made. Its :attr:`MemoryReservationRequest.label`
+            goes into the task's instance name, so the size and memory tier are
+            legible without reading the task's attributes.
+        quent_ir_execution_context
+            The Quent IR execution context, which is used to get the operator
+            the reservation is made on behalf of.
+
+        Returns
+        -------
+        The operator-scoped Quent Task.
+        """
+        operator = quent_ir_execution_context.quent_operator
+        # Reservations for a single chunk are already distinguished by their
+        # sequence number. Fall back to a token for the reservations that
+        # aren't per-chunk (e.g. gathering a whole collective's output).
+        suffix = (
+            uuid.uuid4().hex[:8]
+            if request.sequence_number is None
+            else request.sequence_number
+        )
+        return cls(
+            instance_name=f"reserve-{request.label}-{operator.id.hex[:8]}-{suffix}",
+            operator_id=operator.id,
+        )
+
     def queueing(self, timestamp: int | None = None) -> Event:
         """Build a Quent Task Queueing event."""
         return Event(
@@ -943,22 +1072,37 @@ class Task:
         self,
         resource_id: uuid.UUID,
         timestamp: int | None = None,
+        *,
+        reservation: MemoryReservationRequest | None = None,
     ) -> Event:
-        """Build a Quent Task Allocating event."""
+        """
+        Build a Quent Task Allocating event.
+
+        Parameters
+        ----------
+        resource_id
+            The Quent Processor (thread) doing the allocation.
+        timestamp
+            The event timestamp, defaulting to now.
+        reservation
+            The memory reservation being waited on, when this transition
+            represents a call into rapidsmpf's memory admission control.
+        """
+        allocating_data: dict[str, Any] = {
+            "use_thread": {
+                "resource_id": str(resource_id),
+                "capacity": None,
+            }
+        }
+        if reservation is not None:
+            allocating_data.update(reservation.to_dict())
         return Event(
             id=self.id,
             timestamp=timestamp if timestamp is not None else time.time_ns(),
             data={
                 EventName.TASK.value: {
                     "seq": next(self._seq),
-                    "state": {
-                        "Allocating": {
-                            "use_thread": {
-                                "resource_id": str(resource_id),
-                                "capacity": None,
-                            }
-                        }
-                    },
+                    "state": {"Allocating": allocating_data},
                 }
             },
         )

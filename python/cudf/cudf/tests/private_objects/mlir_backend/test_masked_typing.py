@@ -41,16 +41,47 @@ def test_masked_type_unliterals_value():
     assert not isinstance(masked.value_type, types.Literal)
 
 
-def test_masked_type_unsupported_value_becomes_poison():
+@pytest.mark.parametrize(
+    "value",
+    [
+        types.unicode_type,
+        types.float16,  # not a valid cuDF column dtype
+        types.complex64,
+        types.complex128,
+    ],
+)
+def test_masked_type_unsupported_value_becomes_poison(value):
     """Unsupported value types are wrapped in Poison (not raised here).
 
     The typing pass may try to construct ``MaskedType`` for unsupported
     column dtypes; we want that to succeed at construction so a
     descriptive error can surface later when the user actually performs
-    an op on the value. The poison sentinel is the carrier.
+    an op on the value. The poison sentinel is the carrier. ``float16`` and
+    complex are numba ``Number`` s but are not valid cuDF column dtypes, so they
+    are unsupported too.
     """
-    masked = MaskedType(types.unicode_type)
+    masked = MaskedType(value)
     assert isinstance(masked.value_type, types.Poison)
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        types.int8,
+        types.int64,
+        types.uint32,
+        types.float32,
+        types.float64,
+        types.boolean,
+    ],
+)
+def test_masked_numeric_value_not_poisoned(value):
+    """Integers, float32/float64, and boolean are supported MaskedType value
+    types (the numeric dtypes a cuDF column can be).
+    """
+    masked = MaskedType(value)
+    assert masked.value_type == value
+    assert not isinstance(masked.value_type, types.Poison)
 
 
 @pytest.mark.parametrize("unit", ["ns", "us", "ms", "s"])

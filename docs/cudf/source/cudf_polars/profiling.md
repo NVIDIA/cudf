@@ -202,28 +202,30 @@ The different scopes have different schemas. Fields in **bold** are required / a
 | **overhead_duration**   | int    | The overhead, in nanoseconds, added by tracing |
 | `count_frames_{phase}` | int | The number of dataframes for the input / output `phase`. This metric can be disabled by setting `CUDF_POLARS_LOG_TRACES_DATAFRAMES=0`. |
 | `frames_{phase}` | `list[dict]` | A list with dictionaries with "shape" and "size" fields, one per input dataframe, for the input / output `phase`. This metric can be disabled by setting `CUDF_POLARS_LOG_TRACES_DATAFRAMES=0`. |
-| `total_bytes_{phase}` | int | The sum of the size (in bytes) of the dataframes for the input / output `phase`. This metric can be disabled by setting `CUDF_POLARS_LOG_TRACES_MEMORY=0`. |
-| `rmm_current_bytes_{phase}` | int | The current number of bytes allocated by RMM Memory Resource used by cudf-polars for the input / output `phase`. This metric can be disabled by setting `CUDF_POLARS_LOG_TRACES_MEMORY=0`. |
-| `rmm_current_count_{phase}` | int | The current number of allocations made by RMM Memory Resource used by cudf-polars for the input / output `phase`. This metric can be disabled by setting `CUDF_POLARS_LOG_TRACES_MEMORY=0`. |
-| `rmm_peak_bytes_{phase}` | int | The peak number of bytes allocated by RMM Memory Resource used by cudf-polars for the input / output `phase`. This metric can be disabled by setting `CUDF_POLARS_LOG_TRACES_MEMORY=0`. |
-| `rmm_peak_count_{phase}` | int | The peak number of allocations made by RMM Memory Resource used by cudf-polars for the input / output `phase`. This metric can be disabled by setting `CUDF_POLARS_LOG_TRACES_MEMORY=0`. |
-| `rmm_total_bytes_{phase}` | int | The total number of bytes allocated by RMM Memory Resource used by cudf-polars for the input / output `phase`. This metric can be disabled by setting `CUDF_POLARS_LOG_TRACES_MEMORY=0`. |
-| `rmm_total_count_{phase}` | int | The total number of allocations made by RMM Memory Resource used by cudf-polars for the input / output `phase`. This metric can be disabled by setting `CUDF_POLARS_LOG_TRACES_MEMORY=0`. |
-| `nvml_current_bytes_{phase}` | int | The device memory usage of this process, as reported by NVML, for the input / output `phase`. This metric can be disabled by setting `CUDF_POLARS_LOG_TRACES_MEMORY=0`. |
+| `total_bytes_{phase}` | int | The sum of the size (in bytes) of the dataframes for the input / output `phase`. This metric can be disabled by setting `CUDF_POLARS_LOG_TRACES_DATAFRAMES=0`. |
+| `rmm_current_bytes_{phase}` | int | The current number of bytes allocated by RMM Memory Resource used by cudf-polars for the input / output `phase`. This metric can be enabled by setting `CUDF_POLARS_LOG_TRACES_MEMORY=1`. |
+| `rmm_current_count_{phase}` | int | The current number of allocations made by RMM Memory Resource used by cudf-polars for the input / output `phase`. This metric can be enabled by setting `CUDF_POLARS_LOG_TRACES_MEMORY=1`. |
+| `rmm_peak_bytes_{phase}` | int | The peak number of bytes allocated by RMM Memory Resource used by cudf-polars for the input / output `phase`. This metric can be enabled by setting `CUDF_POLARS_LOG_TRACES_MEMORY=1`. |
+| `rmm_peak_count_{phase}` | int | The peak number of allocations made by RMM Memory Resource used by cudf-polars for the input / output `phase`. This metric can be enabled by setting `CUDF_POLARS_LOG_TRACES_MEMORY=1`. |
+| `rmm_total_bytes_{phase}` | int | The total number of bytes allocated by RMM Memory Resource used by cudf-polars for the input / output `phase`. This metric can be enabled by setting `CUDF_POLARS_LOG_TRACES_MEMORY=1`. |
+| `rmm_total_count_{phase}` | int | The total number of allocations made by RMM Memory Resource used by cudf-polars for the input / output `phase`. This metric can be enabled by setting `CUDF_POLARS_LOG_TRACES_MEMORY=1`. |
+| `nvml_current_bytes_{phase}` | int | The device memory usage of this process, as reported by NVML, for the input / output `phase`. This metric can be enabled by setting `CUDF_POLARS_LOG_TRACES_MEMORY=1`. |
 | actor_ir_id   | int    | A unique identifier for the parent actor (streaming engines only). |
 
-Setting `CUDF_POLARS_LOG_TRACES=1` enables all the metrics. Depending on the query, the overhead
-from collecting the memory or dataframe metrics can be measurable. You can disable some metrics
-through additional environment variables. For example, to disable the memory-related metrics, set:
+Setting `CUDF_POLARS_LOG_TRACES=1` enables basic metrics including the type and
+duration of tasks, and the shape of input and output dataframes. Memory related
+metrics are disabled by default. You can enable or disable some metrics through
+additional environment variables. For example, to enable the memory-related
+metrics, set:
 
 ```bash
-CUDF_POLARS_LOG_TRACES=1 CUDF_POLARS_LOG_TRACES_MEMORY=0
+CUDF_POLARS_LOG_TRACES=1 CUDF_POLARS_LOG_TRACES_MEMORY=1
 ```
 
 And to disable the memory and dataframe metrics, which essentially leaves just the duration
 metrics, set
 ```bash
-CUDF_POLARS_LOG_TRACES=1 CUDF_POLARS_LOG_TRACES_MEMORY=0 CUDF_POLARS_LOG_TRACES_DATAFRAMES=0
+CUDF_POLARS_LOG_TRACES=1 CUDF_POLARS_LOG_TRACES_DATAFRAMES=0
 ```
 
 Note that tracing still needs to be enabled with `CUDF_POLARS_LOG_TRACES=1`.

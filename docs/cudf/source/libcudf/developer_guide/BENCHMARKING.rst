@@ -4,5 +4,5 @@
 Unit Benchmarking in libcudf
 ============================
 
-.. flatdoxygenpage:: md_doxygen_developer_guide_BENCHMARKING
+.. flatdoxygenpage:: md_doxygen_2developer__guide_2BENCHMARKING
    :project: libcudf

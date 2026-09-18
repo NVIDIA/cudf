@@ -1124,6 +1124,63 @@ public class TableTest extends CudfTestBase {
   }
 
   @Test
+  void testReadCSVWhitespaceAfterQuotes() throws IOException {
+    Schema schema = Schema.builder().column(DType.STRING, "a").column(DType.STRING, "b").build();
+    byte[] data = ("\"A\" \t,\"B\" \t\n" +
+        " \"C\" \t,D \t\n" +
+        "\" E \" \t,\"F\"\"G\" \t\n" +
+        "NULL,\"\" \t\n" +
+        " \t,\"\"\n" +
+        "\"missing\" \t,\"raw\" \t\n" +
+        " \"\" \t, \t\n" +
+        ",\"\" \t\n").getBytes(StandardCharsets.UTF_8);
+    try (TempFile temp = TempFile.create("csvWhitespaceAfterQuotes", ".csv");
+         HostMemoryBuffer buffer = hostMemoryAllocator.allocate(data.length)) {
+      Files.write(temp.getFile().toPath(), data);
+      buffer.setBytes(0, data, 0, data.length);
+      // An empty null-token list disables NA filtering in the Java reader. The other policies
+      // test a custom token alone, then empty strings and quoted custom/raw tokens as well.
+      for (int nullPolicy = 0; nullPolicy < 3; nullPolicy++) {
+        for (Boolean enabled : new Boolean[]{null, false, true}) {
+          CSVOptions.Builder builder = CSVOptions.builder();
+          if (nullPolicy > 0) {
+            builder.withNullValue("NULL");
+          }
+          if (nullPolicy == 2) {
+            builder.withNullValue("", "\"missing\"", "\"raw\" \t");
+          }
+          if (enabled != null) {
+            builder.withDetectWhitespaceAfterQuotes(enabled);
+          }
+          CSVOptions options = builder.build();
+          boolean detect = Boolean.TRUE.equals(enabled);
+          boolean emptyNA = nullPolicy == 2;
+          assertEquals(detect, options.getDetectWhitespaceAfterQuotes());
+          String paddedEmpty = detect ? (emptyNA ? null : "") : "\"\" \t";
+          String[] a = {
+              detect ? "A" : "\"A\" \t", " \"C\" \t", detect ? " E " : "\" E \" \t",
+              nullPolicy > 0 ? null : "NULL", " \t",
+              detect ? (emptyNA ? null : "missing") : "\"missing\" \t",
+              " \"\" \t", emptyNA ? null : ""};
+          String[] b = {
+              detect ? "B" : "\"B\" \t", "D \t", detect ? "F\"G" : "\"F\"\"G\" \t",
+              paddedEmpty, emptyNA ? null : "",
+              emptyNA ? null : (detect ? "raw" : "\"raw\" \t"), " \t", paddedEmpty};
+          try (Table expected = new Table.TestBuilder().column(a).column(b).build();
+               MultiBufferDataSource source = sourceFrom(data);
+               Table fromFile = Table.readCSV(schema, options, temp.getFile());
+               Table fromBuffer = Table.readCSV(schema, options, buffer, 0, data.length);
+               Table fromSource = Table.readCSV(schema, options, source)) {
+            assertTablesAreEqual(expected, fromFile);
+            assertTablesAreEqual(expected, fromBuffer);
+            assertTablesAreEqual(expected, fromSource);
+          }
+        }
+      }
+    }
+  }
+
+  @Test
   void testReadCSVBufferMultiBuffer() {
     CSVOptions opts = CSVOptions.builder()
             .includeColumn("A")

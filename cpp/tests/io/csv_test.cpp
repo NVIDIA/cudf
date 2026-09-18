@@ -35,6 +35,7 @@
 #include <numeric>
 #include <sstream>
 #include <string>
+#include <tuple>
 #include <vector>
 
 using cudf::data_type;
@@ -1064,6 +1065,248 @@ TEST_F(CsvReaderTest, StringsQuotesWhitespace)
     view.column(0));
   expect_column_data_equal(std::vector<std::string>{"a", "b", "c", "d", "e", "f", "g", "h", "i"},
                            view.column(1));
+}
+
+// Preserve the original Spark issue fixture, including leading spaces and extra delimiters.
+TEST_F(CsvReaderTest, StringsWhitespaceAfterQuotesOriginalFixture)
+{
+  std::string const buffer =
+    "\"number\"\n1\n 2\n 3,\n4 \n5 ,\n\"6\"\n \"7\"\n"
+    "\"8\" \n\"9\" ,\n 10 \n  11\n  12  \n \"13\" ,\n"
+    "             \"14\"                  ,\n15\n";
+  auto const options = cudf::io::csv_reader_options::builder(
+                         cudf::io::source_info{cudf::host_span<std::byte const>{
+                           reinterpret_cast<std::byte const*>(buffer.data()), buffer.size()}})
+                         .names({"number"})
+                         .dtypes({dtype<cudf::string_view>()})
+                         .header(0)
+                         .detect_whitespace_after_quotes(true)
+                         .build();
+  auto const result = cudf::io::read_csv(options);
+  ASSERT_EQ(1, result.tbl->num_columns());
+  expect_column_data_equal(std::vector<std::string>{"1",
+                                                    " 2",
+                                                    " 3",
+                                                    "4 ",
+                                                    "5 ",
+                                                    "6",
+                                                    " \"7\"",
+                                                    "8",
+                                                    "9",
+                                                    " 10 ",
+                                                    "  11",
+                                                    "  12  ",
+                                                    " \"13\" ",
+                                                    "             \"14\"                  ",
+                                                    "15"},
+                           result.tbl->view().column(0));
+}
+
+// The default and explicit false must agree. Exercise both positions in the row and both
+// doublequote modes with the same quoted, unquoted, empty, and null fields.
+class CsvWhitespaceAfterQuotesTest
+  : public CsvReaderTest,
+    public ::testing::WithParamInterface<std::tuple<int, bool, char>> {};
+
+TEST_P(CsvWhitespaceAfterQuotesTest, StringFields)
+{
+  auto const [mode, doublequote, quote] = GetParam();
+  std::vector<std::string> fields{"\"A\" \t",
+                                  " \"B\" \t",
+                                  "C \t",
+                                  "\" D \" \t",
+                                  " \t",
+                                  "\"\" \t",
+                                  "NULL",
+                                  "\"\"",
+                                  "",
+                                  "\"E\"\"F\" \t",
+                                  "\"NULL\" \t"};
+  std::string buffer;
+  for (auto field : fields) {
+    std::replace(field.begin(), field.end(), '"', quote);
+    buffer += "row," + field + "," + field + "\n";
+  }
+  auto builder =
+    cudf::io::csv_reader_options::builder(
+      cudf::io::source_info{cudf::host_span<std::byte const>{
+        reinterpret_cast<std::byte const*>(buffer.data()), buffer.size()}})
+      .names({"id", "middle", "last"})
+      .dtypes({dtype<cudf::string_view>(), dtype<cudf::string_view>(), dtype<cudf::string_view>()})
+      .header(-1)
+      .quotechar(quote)
+      .doublequote(doublequote)
+      .keep_default_na(false)
+      .na_values({"NULL", ""});
+  if (mode >= 0) { builder.detect_whitespace_after_quotes(mode == 1); }
+  auto const options = builder.build();
+  EXPECT_EQ(mode == 1, options.is_enabled_detect_whitespace_after_quotes());
+  auto const result = cudf::io::read_csv(options);
+
+  std::vector<std::string> expected = mode == 1
+                                        ? std::vector<std::string>{"A",
+                                                                   " \"B\" \t",
+                                                                   "C \t",
+                                                                   " D ",
+                                                                   " \t",
+                                                                   "",
+                                                                   "",
+                                                                   "",
+                                                                   "",
+                                                                   doublequote ? "E\"F" : "E\"\"F",
+                                                                   "NULL"}
+                                        : std::vector<std::string>{"\"A\" \t",
+                                                                   " \"B\" \t",
+                                                                   "C \t",
+                                                                   "\" D \" \t",
+                                                                   " \t",
+                                                                   "\"\" \t",
+                                                                   "",
+                                                                   "",
+                                                                   "",
+                                                                   "\"E\"\"F\" \t",
+                                                                   "\"NULL\" \t"};
+  for (auto& field : expected) {
+    std::replace(field.begin(), field.end(), '"', quote);
+  }
+  // With detection enabled, padded quoted empty strings match the empty NA token just like
+  // unpadded quoted empty strings. Quoted NULL does not match an unquoted NULL token.
+  std::vector<bool> const valid{
+    true, true, true, true, true, mode != 1, false, false, false, true, true};
+  cudf::test::strings_column_wrapper const expected_column(
+    expected.begin(), expected.end(), valid.begin());
+  ASSERT_EQ(3, result.tbl->num_columns());
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_column, result.tbl->view().column(1));
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_column, result.tbl->view().column(2));
+}
+
+INSTANTIATE_TEST_SUITE_P(CsvReaderTest,
+                         CsvWhitespaceAfterQuotesTest,
+                         ::testing::Combine(::testing::Values(-1, 0, 1),
+                                            ::testing::Bool(),
+                                            ::testing::Values('"', '`')));
+
+class CsvWhitespaceAfterQuotesNATest
+  : public CsvReaderTest,
+    public ::testing::WithParamInterface<std::tuple<bool, bool, bool>> {};
+
+TEST_P(CsvWhitespaceAfterQuotesNATest, EmptyAndCustomNullValues)
+{
+  auto const [detect, na_filter, empty_na] = GetParam();
+  std::string const buffer =
+    "row,\"\" \t\nrow,\"\"\nrow,\nrow, \"\" \t\nrow, \t\n"
+    "row,\"missing\" \t\nrow,\"raw\" \t\nrow,NULL\nrow,\"NULL\" \t\n";
+  // A quoted token tests normalized matching; a padded token tests that raw matching survives.
+  std::vector<std::string> null_values{"NULL", "\"missing\"", "\"raw\" \t"};
+  if (empty_na) { null_values.emplace_back(""); }
+  auto const options =
+    cudf::io::csv_reader_options::builder(
+      cudf::io::source_info{cudf::host_span<std::byte const>{
+        reinterpret_cast<std::byte const*>(buffer.data()), buffer.size()}})
+      .names({"id", "value"})
+      .dtypes(std::vector<data_type>{dtype<cudf::string_view>(), dtype<cudf::string_view>()})
+      .header(-1)
+      .keep_default_na(false)
+      .na_values(null_values)
+      .na_filter(na_filter)
+      .detect_whitespace_after_quotes(detect)
+      .build();
+  auto const result = cudf::io::read_csv(options);
+  std::vector<std::string> const expected =
+    detect
+      ? std::vector<std::string>{"", "", "", " \"\" \t", " \t", "missing", "raw", "NULL", "NULL"}
+      : std::vector<std::string>{"\"\" \t",
+                                 "",
+                                 "",
+                                 " \"\" \t",
+                                 " \t",
+                                 "\"missing\" \t",
+                                 "\"raw\" \t",
+                                 "NULL",
+                                 "\"NULL\" \t"};
+  std::vector<bool> const valid{!(detect && na_filter && empty_na),
+                                !(na_filter && empty_na),
+                                !(na_filter && empty_na),
+                                true,
+                                true,
+                                !(detect && na_filter),
+                                !na_filter,
+                                !na_filter,
+                                true};
+  auto const expected_column =
+    na_filter ? cudf::test::strings_column_wrapper(expected.begin(), expected.end(), valid.begin())
+              : cudf::test::strings_column_wrapper(expected.begin(), expected.end());
+  ASSERT_EQ(2, result.tbl->num_columns());
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_column, result.tbl->view().column(1));
+}
+
+INSTANTIATE_TEST_SUITE_P(CsvReaderTest,
+                         CsvWhitespaceAfterQuotesNATest,
+                         ::testing::Combine(::testing::Bool(),
+                                            ::testing::Bool(),
+                                            ::testing::Bool()));
+
+TEST_F(CsvReaderTest, StringsWhitespaceAfterQuotesPreservesAroundQuotes)
+{
+  std::string const buffer = " \"A\" \t,\" B \" \t\n\"\" \t, \"\" \t\n";
+  for (bool const after_quotes : {false, true}) {
+    auto const options =
+      cudf::io::csv_reader_options::builder(
+        cudf::io::source_info{cudf::host_span<std::byte const>{
+          reinterpret_cast<std::byte const*>(buffer.data()), buffer.size()}})
+        .names({"a", "b"})
+        .dtypes(std::vector<data_type>{dtype<cudf::string_view>(), dtype<cudf::string_view>()})
+        .header(-1)
+        .doublequote(false)
+        .detect_whitespace_around_quotes(true)
+        .detect_whitespace_after_quotes(after_quotes)
+        .build();
+    auto const result = cudf::io::read_csv(options);
+    ASSERT_EQ(2, result.tbl->num_columns());
+    expect_column_data_equal(std::vector<std::string>{"A", ""}, result.tbl->view().column(0));
+    expect_column_data_equal(std::vector<std::string>{" B ", ""}, result.tbl->view().column(1));
+  }
+}
+
+TEST_F(CsvReaderTest, StringsWhitespaceAfterQuotesDisabledQuoting)
+{
+  std::string const buffer = "\"A\" \t, \"B\" \t\n";
+  for (bool const null_quote : {false, true}) {
+    auto const options =
+      cudf::io::csv_reader_options::builder(
+        cudf::io::source_info{cudf::host_span<std::byte const>{
+          reinterpret_cast<std::byte const*>(buffer.data()), buffer.size()}})
+        .names({"a", "b"})
+        .dtypes(std::vector<data_type>{dtype<cudf::string_view>(), dtype<cudf::string_view>()})
+        .header(-1)
+        .quotechar(null_quote ? '\0' : '"')
+        .quoting(null_quote ? cudf::io::quote_style::MINIMAL : cudf::io::quote_style::NONE)
+        .detect_whitespace_after_quotes(true)
+        .build();
+    auto const result = cudf::io::read_csv(options);
+    ASSERT_EQ(2, result.tbl->num_columns());
+    expect_column_data_equal(std::vector<std::string>{"\"A\" \t"}, result.tbl->view().column(0));
+    expect_column_data_equal(std::vector<std::string>{" \"B\" \t"}, result.tbl->view().column(1));
+  }
+}
+
+TEST_F(CsvReaderTest, StringsWhitespaceAfterQuotesLoneQuote)
+{
+  // An opening quote at EOF has no closing pair to strip.
+  for (std::string const buffer : {"\"", "\"unterminated \t"}) {
+    auto const options = cudf::io::csv_reader_options::builder(
+                           cudf::io::source_info{cudf::host_span<std::byte const>{
+                             reinterpret_cast<std::byte const*>(buffer.data()), buffer.size()}})
+                           .names({"value"})
+                           .dtypes({dtype<cudf::string_view>()})
+                           .header(-1)
+                           .na_filter(false)
+                           .detect_whitespace_after_quotes(true)
+                           .build();
+    auto const result = cudf::io::read_csv(options);
+    ASSERT_EQ(1, result.tbl->num_columns());
+    expect_column_data_equal(std::vector<std::string>{buffer}, result.tbl->view().column(0));
+  }
 }
 
 TEST_F(CsvReaderTest, SkiprowsNrows)

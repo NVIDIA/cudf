@@ -29,9 +29,10 @@ namespace cudf::detail {
  * each entry records how many output rows the corresponding input contributes:
  * - INNER_JOIN: `output_counts` is indexed per input pair; entry `i` is `1` if the predicate
  *   passes and `0` otherwise.
- * - FULL_JOIN: `output_counts` is indexed per input pair; entry `i` is `1` for a preserved pair
- *   (predicate passes or the pair already contains a `JoinNoMatch`) and `2` for a failed valid
- *   pair (which splits into `(left, JoinNoMatch)` and `(JoinNoMatch, right)`).
+ * - FULL_JOIN: `output_counts` contains one entry per left row followed by one per right row.
+ *   The kernel counts passing valid pairs for each left row and marks matched right rows.
+ *   The host floors left counts to `1` and converts right markers to unmatched indicators.
+ *   The buffer must be zero-initialized before the launch.
  * - LEFT_JOIN: `output_counts` is indexed per left row; the kernel atomically accumulates the
  *   number of passing pairs for each left row. Left rows with no passing pair are floored to `1`
  *   by the host afterwards to account for the synthetic `(left, JoinNoMatch)` entry. The buffer
@@ -82,7 +83,14 @@ CUDF_KERNEL __launch_bounds__(DEFAULT_JOIN_BLOCK_SIZE) void filter_join_indices_
     switch (join_kind) {
       case cudf::join_kind::INNER_JOIN: output_counts[i] = predicate_pass ? 1 : 0; break;
       case cudf::join_kind::FULL_JOIN:
-        output_counts[i] = (both_valid && !predicate_pass) ? 2 : 1;
+        if (both_valid && predicate_pass) {
+          cuda::atomic_ref<cudf::size_type, cuda::thread_scope_device>{
+            output_counts[left_row_index]}
+            .fetch_add(1, cuda::memory_order_relaxed);
+          cuda::atomic_ref<cudf::size_type, cuda::thread_scope_device>{
+            output_counts[static_cast<std::size_t>(left_table.num_rows()) + right_row_index]}
+            .store(1, cuda::memory_order_relaxed);
+        }
         break;
       case cudf::join_kind::LEFT_JOIN:
         if (predicate_pass && left_row_index >= 0 && left_row_index < left_table.num_rows()) {

@@ -6,7 +6,9 @@ from __future__ import annotations
 
 import contextlib
 import os
+import time
 import uuid
+import warnings
 from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING, Any, cast
 
@@ -78,6 +80,9 @@ if TYPE_CHECKING:
     from cudf_polars.engine.persisted_result import PersistedQueryResult
     from cudf_polars.streaming.parallel import ConfigOptions
     from cudf_polars.utils.config import StreamingExecutor
+
+
+ACTOR_SHUTDOWN_TIMEOUT_SECONDS: float = 10.0
 
 
 class RayPersistedBackend(PersistedBackend):
@@ -1183,6 +1188,12 @@ class RayEngine(StreamingEngine):
         ------
         ExceptionGroup
             If one or more actors raise an unexpected exception during shutdown.
+
+        Warns
+        -----
+        RuntimeWarning
+            If actor cleanup cannot run before the shutdown deadline and the
+            affected actors must be forcefully terminated.
         """
         if self._rank_actors is None:
             return  # already shut down; idempotent
@@ -1198,8 +1209,43 @@ class RayEngine(StreamingEngine):
             if not ray.is_initialized():
                 return
 
-            exit_refs = [a._exit.remote() for a in self._rank_actors]
-            for ref in exit_refs:
+            deadline = time.monotonic() + ACTOR_SHUTDOWN_TIMEOUT_SECONDS
+
+            def wait_for_actor_calls(
+                calls: list[tuple[ActorHandle[RankActor], ObjectRef]],
+                operation: str,
+            ) -> list[tuple[ActorHandle[RankActor], ObjectRef]]:
+                """Wait until the shared deadline, then kill blocked actors."""
+                if not calls:
+                    return []
+                actor_by_ref = {ref: actor for actor, ref in calls}
+                ready, pending = ray.wait(
+                    list(actor_by_ref),
+                    num_returns=len(calls),
+                    timeout=max(0.0, deadline - time.monotonic()),
+                )
+                if pending:
+                    warnings.warn(
+                        f"Ray actor {operation} did not complete before the "
+                        f"{ACTOR_SHUTDOWN_TIMEOUT_SECONDS}s shutdown deadline; "
+                        "force-killing "
+                        f"{len(pending)} unresponsive Ray actor(s)",
+                        RuntimeWarning,
+                        stacklevel=2,
+                    )
+                    for ref in pending:
+                        try:
+                            ray.kill(actor_by_ref[ref], no_restart=True)
+                        except ray.exceptions.RayActorError:
+                            pass
+                        except Exception as e:
+                            exceptions.append(e)
+                ready_set = set(ready)
+                return [(actor, ref) for actor, ref in calls if ref in ready_set]
+
+            exit_calls = [(actor, actor._exit.remote()) for actor in self._rank_actors]
+            ready_exit_calls = wait_for_actor_calls(exit_calls, "_exit")
+            for _, ref in ready_exit_calls:
                 try:
                     exit_events = ray.get(ref)
                 except ray.exceptions.RayActorError:
@@ -1209,8 +1255,11 @@ class RayEngine(StreamingEngine):
                 else:
                     self._quent_events_raw.extend(exit_events)
 
-            refs = [a.shutdown.remote() for a in self._rank_actors]
-            for ref in refs:
+            shutdown_calls = [
+                (actor, actor.shutdown.remote()) for actor, _ in ready_exit_calls
+            ]
+            ready_shutdown_calls = wait_for_actor_calls(shutdown_calls, "shutdown")
+            for _, ref in ready_shutdown_calls:
                 try:
                     ray.get(ref)
                 except ray.exceptions.RayActorError:

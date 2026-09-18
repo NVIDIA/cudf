@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import os
+import time
 from typing import TYPE_CHECKING, Any
 from unittest.mock import patch
 
@@ -18,6 +19,8 @@ from cudf_polars.engine.hardware_binding import HardwareBindingPolicy
 from cudf_polars.utils.config import RayContext
 
 ray = pytest.importorskip("ray")
+from ray.util.queue import Queue  # noqa: E402
+
 from cudf_polars.engine.ray import RayEngine  # noqa: E402
 
 if TYPE_CHECKING:
@@ -30,6 +33,12 @@ pytestmark = [
         reason="RayEngine must not be created from within an rrun cluster",
     ),
 ]
+
+
+def _signal_then_sleep(started: Queue, seconds: float) -> None:
+    """Tell the driver this actor task is running, then keep its queue occupied."""
+    started.put(item=True)
+    time.sleep(seconds)
 
 
 # ---------------------------------------------------------------------------
@@ -257,6 +266,52 @@ def test_shutdown_skips_when_ray_not_initialized(
         # actors are released so the next test's fixture isn't blocked.
         if engine._rank_actors is not None:
             engine.shutdown()
+
+
+def test_shutdown_kills_actor_blocked_by_running_task(
+    ray_init_options: dict[str, Any],
+    timeout_seconds: int,
+) -> None:
+    """Shutdown is bounded when control calls queue behind a running actor task."""
+    started_ray = not ray.is_initialized()
+    if started_ray:
+        ray.init(**ray_init_options)
+
+    engine = RayEngine(
+        executor_options={"max_rows_per_partition": 10},
+        engine_options={"allow_gpu_sharing": True},
+        num_ranks=1,
+        ray_init_options=ray_init_options,
+    )
+    started = Queue(maxsize=1)
+    sleep_seconds = 5.0
+    task_ref = engine.rank_actors[0]._run.remote(
+        _signal_then_sleep, started, sleep_seconds
+    )
+    assert started.get(timeout=timeout_seconds) is True
+
+    try:
+        before = time.monotonic()
+        with (
+            patch(
+                "cudf_polars.engine.ray.ACTOR_SHUTDOWN_TIMEOUT_SECONDS",
+                0.1,
+            ),
+            pytest.warns(
+                RuntimeWarning,
+                match="force-killing 1 unresponsive Ray actor",
+            ),
+        ):
+            engine.shutdown()
+        assert time.monotonic() - before < sleep_seconds
+        with pytest.raises(ray.exceptions.RayActorError):
+            ray.get(task_ref)
+    finally:
+        engine.shutdown()
+        if ray.is_initialized():
+            started.shutdown()
+        if started_ray:
+            ray.shutdown()
 
 
 def test_gathers_are_in_rank_order(ray_init_options: dict[str, Any]) -> None:

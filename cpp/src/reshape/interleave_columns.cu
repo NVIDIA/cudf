@@ -119,7 +119,7 @@ struct interleave_columns_impl<T, std::enable_if_t<std::is_same_v<T, cudf::struc
                                     cuda::counting_iterator<size_type>{output_size},
                                     validity_fn,
                                     stream,
-                                    mr);
+                                    cudf::memory_resources{mr, mr});
     };
 
     // Only create null mask if at least one input structs column is nullable.
@@ -223,7 +223,8 @@ struct interleave_columns_impl<T, std::enable_if_t<cudf::is_fixed_width<T>()>> {
                          func_value,
                          func_validity);
 
-    auto [mask, null_count] = valid_if(index_begin, index_end, func_validity, stream, mr);
+    auto [mask, null_count] =
+      valid_if(index_begin, index_end, func_validity, stream, cudf::memory_resources{mr, mr});
 
     output->set_null_mask(std::move(mask), null_count);
 

@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from pylibcudf.io.experimental.hybrid_scan cimport (
+    DictionaryPageRange,
     FileMetaData,
     HybridScanReader,
 )

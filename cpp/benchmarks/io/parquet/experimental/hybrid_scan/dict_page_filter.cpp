@@ -85,8 +85,8 @@ void BM_filter_string_row_groups_with_dicts_common(nvbench::state& state,
       timer.start();
 
       // Get dictionary page byte ranges
-      dict_page_byte_ranges =
-        reader->dictionary_pages_byte_ranges(input_row_group_indices, read_opts);
+      dict_page_byte_ranges = cudf::io::parquet::experimental::dictionary_page_byte_ranges_to_read(
+        reader->dictionary_pages_byte_ranges(input_row_group_indices, read_opts));
       CUDF_EXPECTS(not dict_page_byte_ranges.empty(), "No dictionary page byte ranges found");
 
       // Fetch dictionary page data

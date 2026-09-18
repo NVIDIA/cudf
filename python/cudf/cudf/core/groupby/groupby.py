@@ -4614,7 +4614,7 @@ class _Grouping(Serializable):
     def _handle_grouper(self, by):
         if by.freq:
             self._handle_frequency_grouper(by)
-        elif by.key:
+        elif by.key is not None:
             self._handle_label(by.key)
         else:
             self._handle_level(by.level)

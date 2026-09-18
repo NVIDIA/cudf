@@ -362,6 +362,7 @@ public final class Table implements AutoCloseable {
    * @param precisions      precision list containing all the precisions of the decimal types in
    *                        the columns
    * @param isMapValues     true if a column is a map
+   * @param writerTimezone  timezone that the written timestamps are relative to
    * @param filename        local output path
    * @return a handle that is used in later calls to writeORCChunk and writeORCEnd.
    */
@@ -375,6 +376,7 @@ public final class Table implements AutoCloseable {
                                                int[] precisions,
                                                boolean[] isMapValues,
                                                int stripeSizeRows,
+                                               String writerTimezone,
                                                String filename) throws CudfException;
 
   /**
@@ -389,6 +391,7 @@ public final class Table implements AutoCloseable {
    * @param precisions      precision list containing all the precisions of the decimal types in
    *                        the columns
    * @param isMapValues     true if a column is a map
+   * @param writerTimezone  timezone that the written timestamps are relative to
    * @param consumer        consumer of host buffers produced.
    * @return a handle that is used in later calls to writeORCChunk and writeORCEnd.
    */
@@ -402,6 +405,7 @@ public final class Table implements AutoCloseable {
                                                  int[] precisions,
                                                  boolean[] isMapValues,
                                                  int stripeSizeRows,
+                                                 String writerTimezone,
                                                  HostBufferConsumer consumer,
                                                  HostMemoryAllocator hostMemoryAllocator
                                                  ) throws CudfException;
@@ -1678,6 +1682,7 @@ public final class Table implements AutoCloseable {
           options.getFlatPrecision(),
           options.getFlatIsMap(),
           options.getStripeSizeRows(),
+          options.getWriterTimezone(),
           outputFile.getAbsolutePath()));
       this.consumer = null;
     }
@@ -1694,6 +1699,7 @@ public final class Table implements AutoCloseable {
           options.getFlatPrecision(),
           options.getFlatIsMap(),
           options.getStripeSizeRows(),
+          options.getWriterTimezone(),
           consumer, hostMemoryAllocator));
       this.consumer = consumer;
     }

@@ -4,10 +4,13 @@
  */
 #pragma once
 
+#include <cudf/types.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/export.hpp>
 #include <cudf/utilities/memory_resource.hpp>
+#include <cudf/wrappers/durations.hpp>
 
+#include <cuda/std/chrono>
 #include <cuda/stream>
 
 #include <memory>
@@ -22,6 +25,20 @@ static constexpr int32_t solar_cycle_years = 400;
 // Number of future entries in the timezone transition table:
 // Two entries per year, over the length of the Gregorian calendar's solar cycle
 static constexpr uint32_t solar_cycle_entry_count = 2 * solar_cycle_years;
+/**
+ * @brief Returns the length of the Gregorian calendar's solar cycle.
+ *
+ * A function rather than a variable because device code cannot use a namespace-scope `constexpr`
+ * object of a class type.
+ *
+ * @return Length of the solar cycle, in seconds
+ */
+CUDF_HOST_DEVICE constexpr duration_s solar_cycle_duration()
+{
+  return cuda::std::chrono::duration_cast<duration_s>(
+    cuda::std::chrono::sys_days{cuda::std::chrono::year{1970 + solar_cycle_years} / 1 / 1} -
+    cuda::std::chrono::sys_days{cuda::std::chrono::year{1970} / 1 / 1});
+}
 
 /**
  * @brief Creates a transition table to convert ORC timestamps to UTC.

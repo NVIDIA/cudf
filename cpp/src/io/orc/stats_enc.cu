@@ -412,7 +412,11 @@ CUDF_KERNEL void __launch_bounds__(encode_threads_per_block)
             auto const [max_ms, max_ns_remainder] =
               split_nanosecond_timestamp(s->chunk.max_value.i_val);
 
-            // minimum/maximum are the same as minimumUtc/maximumUtc as we always write files in UTC
+            // Both pairs hold the writer timezone's wall clock: the values a reader materializes
+            // from the re-based data stream. The shift is applied to each timestamp before the
+            // extrema are reduced, in `gather_statistic_blobs`. Apache serializes only the UTC
+            // pair, and its reader prefers that pair when both are present, so the legacy pair is
+            // here for pre-ORC-135 readers.
             cur = pb_put_int(cur, 1, min_ms);  // minimum
             cur = pb_put_int(cur, 2, max_ms);  // maximum
             cur = pb_put_int(cur, 3, min_ms);  // minimumUtc

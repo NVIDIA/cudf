@@ -128,7 +128,7 @@ struct Spark_MurmurHash3_x86_32 {
     return hash_blocks(
       length,
       [=](std::size_t i) { return getblock32(data, i * BLOCK_SIZE); },
-      // Java preserves the sign when widening byte to int.
+      // Preserve the sign for later widening, like Java does.
       [=](std::size_t i) { return cuda::std::to_integer<int8_t>(data[i]); });
   }
 
@@ -145,6 +145,7 @@ struct Spark_MurmurHash3_x86_32 {
     return hash_blocks(
       length,
       [=](std::size_t i) { return static_cast<uint32_t>(value >> (32 * i)); },
+      // Preserve the sign for later widening, like Java does.
       [=](std::size_t i) { return static_cast<int8_t>(value >> (8 * i)); });
   }
 

@@ -1632,19 +1632,13 @@ class StringColumn(ColumnBase, Scannable):
     ) -> Self:
         with self.access(mode="read", scope="internal"):
             if isinstance(start, ColumnBase) and isinstance(stop, ColumnBase):
-                plc_start: plc.Column | plc.Scalar = start.plc_column
-                plc_stop: plc.Column | plc.Scalar = stop.plc_column
-                plc_step: plc.Scalar | None = None
+                plc_start: plc.Column | int | None = start.plc_column
+                plc_stop: plc.Column | int | None = stop.plc_column
+                plc_step: int | None = None
             elif all(isinstance(x, int) or x is None for x in (start, stop)):
-                plc_start = plc.Scalar.from_py(
-                    start, dtype=plc.DataType(plc.TypeId.INT32)
-                )
-                plc_stop = plc.Scalar.from_py(
-                    stop, dtype=plc.DataType(plc.TypeId.INT32)
-                )
-                plc_step = plc.Scalar.from_py(
-                    step, dtype=plc.DataType(plc.TypeId.INT32)
-                )
+                plc_start = cast("int | None", start)
+                plc_stop = cast("int | None", stop)
+                plc_step = step
             else:
                 raise ValueError("Invalid start and stop types")
             plc_result = plc.strings.slice.slice_strings(

@@ -423,15 +423,7 @@ struct scalar_optional_accessor : public scalar_value_accessor<Element> {
   {
     if (has_nulls && !super_t::dscalar.is_valid()) { return value_type{cuda::std::nullopt}; }
 
-    if constexpr (cudf::is_fixed_point<Element>()) {
-      using namespace numeric;
-      using rep        = typename Element::rep;
-      auto const value = super_t::dscalar.rep();
-      auto const scale = scale_type{super_t::dscalar.type().scale()};
-      return Element{scaled_integer<rep>{value, scale}};
-    } else {
-      return Element{super_t::dscalar.value()};
-    }
+    return Element{super_t::dscalar.value()};
   }
 
   Nullate has_nulls{};

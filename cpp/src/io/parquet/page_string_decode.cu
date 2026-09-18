@@ -1088,22 +1088,50 @@ inline __device__ bool prefetch_string_data(int t,
   if (total_bytes_to_copy <= 0) { return false; }  // No data left to copy
   buffer_end = buffer_base + total_bytes_to_copy;
 
-  // Nominally, each thread will copy an equal number of bytes; this rounds up.
-  auto const nominal_thread_bytes_to_copy =
-    cudf::util::div_rounding_up_unsafe<int32_t>(total_bytes_to_copy, block_size);
-  int32_t const thread_offset = nominal_thread_bytes_to_copy * t;
+  // Copy in word-sized units, interleaved across the threads: thread `t` writes the shared
+  // words t, t + block_size, ... A word index maps to the bank of the same number, so every
+  // lane in a warp writes a distinct bank and the stores are conflict free. The reads feeding
+  // them are contiguous across the warp, so they coalesce as well.
+  //
+  // Handing each thread a contiguous run instead -- thread `t` copying the bytes
+  // [t * run, (t + 1) * run) -- is the obvious split, but it places consecutive lanes `run`
+  // bytes apart. For a 1024-byte buffer and a warp-sized block that is 32 bytes, which is only
+  // four distinct banks for 32 lanes: an eight-way conflict on every byte stored, on top of
+  // reads scattered over the whole window rather than coalescing.
+  constexpr int32_t bytes_per_word = sizeof(uint32_t);
+  static_assert(prefetch_size % bytes_per_word == 0,
+                "the prefetch buffer must hold a whole number of words");
 
-  if (thread_offset < total_bytes_to_copy) {
-    // Guard against the end of the data stream
-    int32_t const thread_bytes_to_copy =
-      cuda::std::min(nominal_thread_bytes_to_copy, total_bytes_to_copy - thread_offset);
+  auto* const dst_words    = reinterpret_cast<uint32_t*>(prefetch_buffer);
+  uint8_t const* const src = cur + buffer_base;
 
-    if (thread_bytes_to_copy > 0) {
-      int32_t const thread_copy_from_index = buffer_base + thread_offset;
-      cuda::std::memcpy(reinterpret_cast<void*>(&prefetch_buffer[thread_offset]),
-                        reinterpret_cast<void const*>(&cur[thread_copy_from_index]),
-                        thread_bytes_to_copy);
+  // Rounded up: the final word may reach past the copied data. That is harmless, as
+  // prefetch_size is a whole number of words, so the store still lands inside the buffer.
+  int32_t const num_words =
+    cudf::util::div_rounding_up_unsafe<int32_t>(total_bytes_to_copy, bytes_per_word);
+
+  // Warp uniform: every thread derives the same source pointer, so this never diverges.
+  bool const src_is_word_aligned = (reinterpret_cast<uintptr_t>(src) % bytes_per_word) == 0;
+
+  for (int32_t w = t; w < num_words; w += block_size) {
+    int32_t const byte_offset = w * bytes_per_word;
+    uint32_t packed           = 0;
+
+    if (src_is_word_aligned and (byte_offset + bytes_per_word <= total_bytes_to_copy)) {
+      packed = reinterpret_cast<uint32_t const*>(src)[w];
+    } else {
+      // Either the source is unaligned -- the offset into the stream is data dependent, so it
+      // only lands on a word boundary by chance -- or this is a partial word at the end of the
+      // data. Assemble the bytes that are actually there; the rest stay zero and are never read,
+      // because the scan stops at buffer_end.
+      int32_t const valid_bytes =
+        cuda::std::min(bytes_per_word, total_bytes_to_copy - byte_offset);
+      for (int32_t b = 0; b < valid_bytes; ++b) {
+        packed |= static_cast<uint32_t>(src[byte_offset + b]) << (CHAR_BIT * b);
+      }
     }
+
+    dst_words[w] = packed;
   }
   return true;
 }

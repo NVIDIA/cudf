@@ -82,7 +82,7 @@ def test_slice(np_array, s):
     assert result == np_array.view("u1")[s].tolist()
 
 
-@pytest.mark.parametrize("stream", [None, 0, 42])
+@pytest.mark.parametrize("stream", [None, rmm.pylibrmm.stream.Stream()])
 def test_slice_preserves_stream(stream):
     class CudaArray:
         def __init__(self, stream):
@@ -100,7 +100,7 @@ def test_slice_preserves_stream(stream):
 
     assert ("stream" in sliced_cai) == (stream is not None)
     if stream is not None:
-        assert sliced_cai["stream"] == stream
+        assert sliced_cai["stream"] is stream
 
 
 def test_slice_fails(np_array):

@@ -18,8 +18,9 @@ cdef gpumemoryview _slice(gpumemoryview parent, uintptr_t ptr, uint64_t nbytes):
     v.nbytes = nbytes
     v.obj = parent
     # always returns a raw byte view regardless of the source dtype.
-    # TODO: Need to propagate stream from parent.cai if present
     v.cai = {"data": (ptr, parent.cai["data"][1]), "shape": (nbytes,), "typestr": "|u1", "version": 3}
+    if "stream" in parent.cai:
+        v.cai["stream"] = parent.cai["stream"]
     return v
 
 

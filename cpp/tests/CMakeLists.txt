@@ -211,7 +211,10 @@ ConfigureTest(
 # ##################################################################################################
 # * partitioning tests ----------------------------------------------------------------------------
 ConfigureTest(
-  PARTITIONING_TEST partitioning/hash_partition_test.cpp partitioning/round_robin_test.cpp
+  PARTITIONING_TEST
+  partitioning/fixed_width_hash_partition_test.cpp
+  partitioning/hash_partition_test.cpp
+  partitioning/round_robin_test.cpp
   partitioning/partition_test.cpp
   GPUS 1
   PERCENT 70

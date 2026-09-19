@@ -13,9 +13,10 @@
 #include <cudf/scalar/scalar.hpp>
 #include <cudf/utilities/error.hpp>
 
-#include <rmm/cuda_stream.hpp>
+#include <rmm/cuda_device.hpp>
 #include <rmm/mr/callback_memory_resource.hpp>
 
+#include <cuda/stream>
 #include <cuda_runtime_api.h>
 
 #include <algorithm>
@@ -110,13 +111,13 @@ TYPED_TEST(TypedScalarTestWithoutFixedPoint, SetValue)
 
 TEST_F(ScalarTest, AsyncSetValueOwnsHostSource)
 {
-  rmm::cuda_stream stream;
-  auto const stream_ref = cuda::stream_ref{stream.value()};
+  cuda::stream stream{cuda::device_ref{rmm::get_current_cuda_device().value()}};
+  auto const stream_ref = cuda::stream_ref{stream.get()};
   int32_t source        = 42;
   lifetime_test_scalar scalar{0, true, stream_ref};
   host_func_gate gate;
   CUDF_CUDA_TRY(cudaLaunchHostFunc(
-    stream.value(), [](void* data) { static_cast<host_func_gate*>(data)->wait(); }, &gate));
+    stream.get(), [](void* data) { static_cast<host_func_gate*>(data)->wait(); }, &gate));
 
   scalar.set_data_async(source, stream_ref);
   source = -1;
@@ -128,8 +129,8 @@ TEST_F(ScalarTest, AsyncSetValueOwnsHostSource)
 
 TEST_F(ScalarTest, AsyncStringConstructionOwnsHostSource)
 {
-  rmm::cuda_stream stream;
-  auto const stream_ref = cuda::stream_ref{stream.value()};
+  cuda::stream stream{cuda::device_ref{rmm::get_current_cuda_device().value()}};
+  auto const stream_ref = cuda::stream_ref{stream.get()};
   host_func_gate gate;
   auto upstream = cudf::get_current_device_resource_ref();
   int allocations{0};

@@ -25,7 +25,9 @@
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream.hpp>
+#include <rmm/cuda_device.hpp>
+
+#include <cuda/stream>
 
 #include <numeric>
 #include <random>
@@ -642,8 +644,9 @@ struct RebindStreamColumnTest : public cudf::test::BaseFixture {};
 
 TEST_F(RebindStreamColumnTest, RebindStreamPreservesNestedStructData)
 {
-  rmm::cuda_stream stream_a{};
-  rmm::cuda_stream stream_b{};
+  auto const device = cuda::device_ref{rmm::get_current_cuda_device().value()};
+  cuda::stream stream_a{device};
+  cuda::stream stream_b{device};
 
   constexpr cudf::size_type num_rows{4};
   std::vector<int32_t> h_ints(static_cast<std::size_t>(num_rows));
@@ -654,7 +657,7 @@ TEST_F(RebindStreamColumnTest, RebindStreamPreservesNestedStructData)
   auto null_mask = cudf::create_null_mask(
     num_rows, cudf::mask_state::ALL_VALID, stream_a, cudf::get_current_device_resource_ref());
 
-  stream_a.synchronize();
+  stream_a.sync();
 
   std::vector<std::unique_ptr<cudf::column>> children;
   children.push_back(std::make_unique<cudf::column>(std::move(d_ints), std::move(null_mask), 0));

@@ -21,9 +21,10 @@
 #include <cudf/table/table_view.hpp>
 #include <cudf/transform.hpp>
 
-#include <rmm/cuda_stream.hpp>
+#include <rmm/cuda_device.hpp>
 
 #include <cuda/iterator>
+#include <cuda/stream>
 
 #include <algorithm>
 #include <array>
@@ -1629,7 +1630,7 @@ TYPED_TEST(TransformTest, NonDefaultStream)
 
   using Executor = TypeParam;
 
-  rmm::cuda_stream stream;
+  cuda::stream stream{cuda::device_ref{rmm::get_current_cuda_device().value()}};
 
   auto c_0   = column_wrapper<int32_t>{3, 20, 1, 50};
   auto c_1   = column_wrapper<int32_t>{10, 7, 20, 0};
@@ -1641,7 +1642,7 @@ TYPED_TEST(TransformTest, NonDefaultStream)
 
   auto expected = column_wrapper<int32_t>{13, 27, 21, 50};
   auto result   = Executor::compute_column(table, expression, stream);
-  stream.synchronize();
+  stream.sync();
 
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, result->view(), verbosity);
 }

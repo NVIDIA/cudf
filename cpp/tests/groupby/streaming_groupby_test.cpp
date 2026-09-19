@@ -20,8 +20,9 @@
 #include <cudf/utilities/traits.hpp>
 
 #include <rmm/cuda_device.hpp>
-#include <rmm/cuda_stream.hpp>
 #include <rmm/mr/statistics_resource_adaptor.hpp>
+
+#include <cuda/stream>
 
 #include <atomic>
 #include <thread>
@@ -353,16 +354,17 @@ TEST_F(StreamingGroupbyTest, ConcurrentAggregate)
     batches.push_back(cudf::table_view{{keys[i], vals[i]}});
   }
 
-  std::vector<std::unique_ptr<rmm::cuda_stream>> streams;
+  auto const device        = rmm::get_current_cuda_device();
+  auto const stream_device = cuda::device_ref{device.value()};
+  std::vector<std::unique_ptr<cuda::stream>> streams;
   streams.reserve(num_batches);
   for (int i = 0; i < num_batches; ++i) {
-    streams.push_back(std::make_unique<rmm::cuda_stream>());
+    streams.push_back(std::make_unique<cuda::stream>(stream_device));
   }
 
   auto reqs = single_agg_req(1, cudf::make_sum_aggregation<cudf::groupby_aggregation>());
   cudf::groupby::streaming_groupby streaming_agg(KEY_COL, reqs, DEFAULT_MAX_DISTINCT_KEYS);
 
-  auto const device = rmm::get_current_cuda_device();
   std::vector<std::thread> threads;
   std::vector<std::exception_ptr> errors(num_batches);
   // `ready` lets the main thread wait until every worker is spinning, and `start` then releases
@@ -395,7 +397,7 @@ TEST_F(StreamingGroupbyTest, ConcurrentAggregate)
     EXPECT_FALSE(error);
   }
   for (auto const& stream : streams) {
-    stream->synchronize();
+    stream->sync();
   }
 
   auto [out_keys, results] = streaming_agg.finalize();

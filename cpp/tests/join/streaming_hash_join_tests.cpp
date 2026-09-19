@@ -25,7 +25,6 @@
 #include <cudf/utilities/span.hpp>
 
 #include <rmm/cuda_device.hpp>
-#include <rmm/cuda_stream.hpp>
 #include <rmm/mr/statistics_resource_adaptor.hpp>
 
 #include <cuda/stream>
@@ -120,16 +119,18 @@ TEST_F(StreamingHashJoinTest, ConcurrentInsert)
   auto const right_partitions = cudf::slice(right_view, slice_indices);
   column_wrapper<int32_t> left(values.begin(), values.end());
 
-  std::vector<std::unique_ptr<rmm::cuda_stream>> streams;
+  auto const device        = rmm::get_current_cuda_device();
+  auto const stream_device = cuda::device_ref{device.value()};
+  std::vector<std::unique_ptr<cuda::stream>> streams;
   streams.reserve(num_batches);
   for (size_type i = 0; i < num_batches; ++i) {
-    streams.push_back(std::make_unique<rmm::cuda_stream>());
+    streams.push_back(std::make_unique<cuda::stream>(stream_device));
   }
 
   std::vector<size_type> const keys{0};
   // Construct on a stream of its own so the inserts below run on different streams than the
   // hash table was built on, then synchronize it as the `insert()` docs require.
-  rmm::cuda_stream const build_stream;
+  cuda::stream const build_stream{stream_device};
   cudf::streaming_hash_join joiner{right_view,
                                    keys,
                                    /*total_right_rows=*/num_batches,
@@ -138,9 +139,7 @@ TEST_F(StreamingHashJoinTest, ConcurrentInsert)
                                    cudf::null_equality::EQUAL,
                                    /*load_factor=*/0.5,
                                    build_stream};
-  build_stream.synchronize();
-
-  auto const device = rmm::get_current_cuda_device();
+  build_stream.sync();
   std::vector<std::thread> threads;
   std::vector<std::exception_ptr> errors(num_batches);
   // `ready` lets the main thread wait until every worker is spawned and spinning, and `start`
@@ -174,7 +173,7 @@ TEST_F(StreamingHashJoinTest, ConcurrentInsert)
     EXPECT_FALSE(error);
   }
   for (auto const& insert_stream : streams) {
-    insert_stream->synchronize();
+    insert_stream->sync();
   }
 
   auto [left_indices, right_indices] = joiner.inner_join(cudf::table_view{{left}}, {}, stream);

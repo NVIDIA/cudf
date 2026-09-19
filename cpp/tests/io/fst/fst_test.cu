@@ -16,7 +16,7 @@
 #include <cudf/strings/repeat_strings.hpp>
 #include <cudf/types.hpp>
 
-#include <rmm/cuda_stream.hpp>
+#include <rmm/cuda_device.hpp>
 #include <rmm/device_buffer.hpp>
 #include <rmm/device_uvector.hpp>
 
@@ -122,8 +122,8 @@ TEST_F(FstTest, GroundTruth)
   using SymbolOffsetT = uint32_t;
 
   // Prepare cuda stream for data transfers & kernels
-  rmm::cuda_stream stream{};
-  cuda::stream_ref stream_view{stream.value()};
+  cuda::stream stream{cuda::device_ref{rmm::get_current_cuda_device().value()}};
+  cuda::stream_ref stream_view{stream.get()};
 
   // Test input
   std::string input = R"(  {)"
@@ -171,7 +171,7 @@ TEST_F(FstTest, GroundTruth)
                    out_indexes_gpu.device_ptr(),
                    output_gpu_size.device_ptr(),
                    start_state,
-                   stream.value());
+                   stream.get());
 
   // Async copy results from device to host
   output_gpu.device_to_host_async(stream_view);
@@ -195,7 +195,7 @@ TEST_F(FstTest, GroundTruth)
                std::back_inserter(out_index_cpu));
 
   // Make sure results have been copied back to host
-  stream.synchronize();
+  stream.sync();
 
   // Verify results
   ASSERT_EQ(output_gpu_size[0], output_cpu.size());

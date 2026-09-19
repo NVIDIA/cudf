@@ -54,7 +54,7 @@ if TYPE_CHECKING:
 
 _HAS_ROLLING_FUNCTION = hasattr(plrs._expr_nodes, "RollingFunction")
 
-_ARRAY_PASSTHROUGH_ERROR = "Only pass-through of Array columns is supported"
+_ARRAY_OPERATION_ERROR = "Array columns are not supported for this operation"
 
 __all__ = ["Translator", "translate_named_expr"]
 
@@ -85,11 +85,32 @@ def _align_decimal_float_for_comparison(
     return operands
 
 
-def _contains_array_input(expression: expr.Expr) -> bool:
-    """Return whether an expression consumes an Array-typed input."""
-    return any(
-        _contains_array(node.dtype.polars_type) for node in traversal([expression])
+def _is_supported_array_consumer(expression: expr.Expr) -> bool:
+    """Return whether an expression supports its direct Array input."""
+    return (
+        isinstance(expression, expr.BooleanFunction)
+        and expression.name
+        in (
+            expr.BooleanFunction.Name.IsNull,
+            expr.BooleanFunction.Name.IsNotNull,
+        )
+        and len(expression.children) == 1
+        and isinstance(expression.children[0], expr.Col)
+        and isinstance(expression.children[0].dtype.polars_type, pl.Array)
     )
+
+
+def _contains_unsupported_array_input(expression: expr.Expr) -> bool:
+    """Return whether an expression contains an unsupported Array consumer."""
+    pending = [expression]
+    while pending:
+        node = pending.pop()
+        if _is_supported_array_consumer(node):
+            continue
+        if _contains_array(node.dtype.polars_type):
+            return True
+        pending.extend(node.children)
+    return False
 
 
 def _strip_file_uri(path: str) -> str:
@@ -341,7 +362,7 @@ class Translator:
             and isinstance(node, plrs._expr_nodes.Column)
         )
         if isinstance(dtype.polars_type, pl.Array) and not is_array_passthrough:
-            error = NotImplementedError(_ARRAY_PASSTHROUGH_ERROR)
+            error = NotImplementedError(_ARRAY_OPERATION_ERROR)
             self.errors.append(error)
             return expr.ErrorExpr(dtype, str(error))
         try:
@@ -349,8 +370,8 @@ class Translator:
         except Exception as e:
             self.errors.append(e)
             return expr.ErrorExpr(dtype, str(e))
-        if not is_array_passthrough and _contains_array_input(translated):
-            error = NotImplementedError(_ARRAY_PASSTHROUGH_ERROR)
+        if not is_array_passthrough and _contains_unsupported_array_input(translated):
+            error = NotImplementedError(_ARRAY_OPERATION_ERROR)
             self.errors.append(error)
             return expr.ErrorExpr(dtype, str(error))
         return translated
@@ -776,13 +797,14 @@ def _(
 
 @_translate_ir.register
 def _(node: plrs._ir_nodes.Distinct, translator: Translator, schema: Schema) -> ir.IR:
+    """Translate a Polars distinct IR node."""
     (keep, subset, maintain_order, zlice) = node.options
     keep = ir.Distinct._KEEP_MAP[keep]
     subset = frozenset(subset) if subset is not None else None
     inp = translator.translate_ir(n=node.input)
     keys = inp.schema if subset is None else subset
     if any(_contains_array(inp.schema[name].polars_type) for name in keys):
-        raise NotImplementedError(_ARRAY_PASSTHROUGH_ERROR)
+        raise NotImplementedError(_ARRAY_OPERATION_ERROR)
     return ir.Distinct(
         schema,
         keep,
@@ -908,6 +930,7 @@ def _(node: plrs._ir_nodes.HConcat, translator: Translator, schema: Schema) -> i
 
 @_translate_ir.register
 def _(node: plrs._ir_nodes.Sink, translator: Translator, schema: Schema) -> ir.IR:
+    """Translate a Polars file-sink IR node."""
     payload = json.loads(node.payload)
     try:
         file = payload["File"]
@@ -953,7 +976,7 @@ def _(node: plrs._ir_nodes.Sink, translator: Translator, schema: Schema) -> ir.I
 
     df = translator.translate_ir(n=node.input)
     if any(_contains_array(dtype.polars_type) for dtype in df.schema.values()):
-        raise NotImplementedError(_ARRAY_PASSTHROUGH_ERROR)
+        raise NotImplementedError(_ARRAY_OPERATION_ERROR)
 
     return ir.Sink(
         schema=schema,
@@ -1035,6 +1058,7 @@ def _(
     dtype: DataType,
     schema: Schema,
 ) -> expr.Expr:
+    """Translate a Polars function expression."""
     name, *options = node.function_data
     options = tuple(options)
     if isinstance(name, plrs._expr_nodes.StringFunction):
@@ -1087,11 +1111,22 @@ def _(
                 expr.BinOp(dtype, lop, column, lo),
                 expr.BinOp(dtype, rop, column, hi),
             )
+        allow_array_passthrough = name in (
+            plrs._expr_nodes.BooleanFunction.IsNull,
+            plrs._expr_nodes.BooleanFunction.IsNotNull,
+        )
         return expr.BooleanFunction(
             dtype,
             expr.BooleanFunction.Name.from_polars(name),
             options,
-            *(translator.translate_expr(n=n, schema=schema) for n in node.input),
+            *(
+                translator.translate_expr(
+                    n=n,
+                    schema=schema,
+                    allow_array_passthrough=allow_array_passthrough,
+                )
+                for n in node.input
+            ),
         )
     elif isinstance(name, plrs._expr_nodes.TemporalFunction):
         # functions for which evaluation of the expression may not return

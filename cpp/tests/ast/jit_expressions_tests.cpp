@@ -18,6 +18,7 @@
 #include <cudf/table/table.hpp>
 #include <cudf/table/table_view.hpp>
 #include <cudf/transform.hpp>
+#include <cudf/utilities/type_dispatcher.hpp>
 
 #include <rmm/cuda_stream.hpp>
 
@@ -27,6 +28,7 @@
 #include <functional>
 #include <limits>
 #include <memory>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -58,21 +60,23 @@ TYPED_TEST_SUITE(JITIntegerArithmeticTest, cudf::test::IntegralTypesNotBool);
 TYPED_TEST_SUITE(JITSignedIntegerArithmeticTest, SignedIntegralTypesNotBool);
 TYPED_TEST_SUITE(JITDecimalArithmeticTest, cudf::test::FixedPointTypes);
 
-template <typename Expected, typename ExpectedFail>
 void expect_overflow_results(cudf::table_view const& table,
                              cudf::ast::expression const& success,
                              cudf::ast::expression const& throwing,
                              cudf::ast::expression const& nullified,
-                             Expected const& expected,
-                             ExpectedFail const& expected_fail)
+                             cudf::column_view expected,
+                             cudf::column_view expected_fail)
 {
-  std::array<std::reference_wrapper<cudf::ast::expression const>, 2> expressions{success,
-                                                                                 nullified};
+  // Successful and NULLIFY expressions can share one JIT kernel. The throwing path must be
+  // evaluated independently to verify its error policy without discarding the successful outputs.
+  auto expressions =
+    std::to_array<std::reference_wrapper<cudf::ast::expression const>>({success, nullified});
   auto result = cudf::compute_table_jit(table, expressions);
 
+  ASSERT_EQ(result->num_columns(), static_cast<cudf::size_type>(expressions.size()));
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, result->view().column(0), VERBOSITY);
-  EXPECT_THROW(cudf::compute_column_jit(table, throwing), cudf::evaluation_error);
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_fail, result->view().column(1), VERBOSITY);
+  EXPECT_THROW(cudf::compute_column_jit(table, throwing), cudf::evaluation_error);
 }
 
 TEST_F(JITExpressionTest, Coalesce)
@@ -528,10 +532,12 @@ struct cast_test<cudf::test::Types<To...>, cudf::test::Types<From...>> {
     (columns.push_back(make_cast_input<From>(values)), ...);
     auto table = cudf::table{std::move(columns)};
 
-    auto refs = []<std::size_t... I>(std::index_sequence<I...>) {
-      return std::array{cudf::ast::column_reference(I)...};
-    }(std::index_sequence_for<From...>{});
-    auto tree        = cudf::ast::tree{};
+    auto tree = cudf::ast::tree{};
+    auto refs = std::vector<std::reference_wrapper<cudf::ast::expression const>>{};
+    refs.reserve(table.num_columns());
+    for (cudf::size_type i = 0; i < table.num_columns(); ++i) {
+      refs.emplace_back(tree.push(cudf::ast::column_reference(i)));
+    }
     auto expressions = std::vector<std::reference_wrapper<cudf::ast::expression const>>{};
     expressions.reserve(sizeof...(To) * sizeof...(From));
     (append_expressions<To>(tree, refs, expressions), ...);
@@ -546,7 +552,7 @@ struct cast_test<cudf::test::Types<To...>, cudf::test::Types<From...>> {
   template <typename ToType>
   static void append_expressions(
     cudf::ast::tree& tree,
-    std::array<cudf::ast::column_reference, sizeof...(From)> const& refs,
+    std::vector<std::reference_wrapper<cudf::ast::expression const>> const& refs,
     std::vector<std::reference_wrapper<cudf::ast::expression const>>& expressions)
   {
     auto const op = get_cast_op<ToType>();
@@ -560,10 +566,12 @@ struct cast_test<cudf::test::Types<To...>, cudf::test::Types<From...>> {
                              Values const& values,
                              cudf::size_type& output_index)
   {
-    auto expected = make_cast_input<ToType>(values);
+    static auto const from_names =
+      std::array{cudf::type_to_name(cudf::data_type{cudf::type_to_id<From>()})...};
+    static auto const to_name = cudf::type_to_name(cudf::data_type{cudf::type_to_id<ToType>()});
+    auto expected             = make_cast_input<ToType>(values);
     for (std::size_t i = 0; i < sizeof...(From); ++i) {
-      SCOPED_TRACE(i);
-      SCOPED_TRACE(output_index);
+      SCOPED_TRACE(std::to_string(output_index) + ": " + from_names[i] + " -> " + to_name);
       CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected->view(), result.column(output_index), VERBOSITY);
       ++output_index;
     }

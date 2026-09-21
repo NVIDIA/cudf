@@ -1192,6 +1192,9 @@ class Series(SingleColumnFrame, IndexedFrame):
         one  1  2
         two  3  4
         """
+        if not is_scalar(level) and len(level) == 0:
+            # pandas returns the Series unchanged when no level is selected.
+            return self.copy(deep=False)
         if not isinstance(self.index, cudf.MultiIndex):
             raise ValueError(
                 "index must be a MultiIndex to unstack, "
@@ -1200,10 +1203,6 @@ class Series(SingleColumnFrame, IndexedFrame):
         result = self.to_frame().unstack(
             level=level, fill_value=fill_value, sort=sort
         )
-        if result.columns.nlevels == 1:
-            # No level was actually unstacked (e.g. level=[]); pandas
-            # returns the original Series unchanged in that case.
-            return self.copy(deep=False)
         result.columns = result.columns.droplevel(0)
         return result
 

@@ -136,10 +136,12 @@ def test_series_unstack_index_invalid():
         gs.unstack()
 
 
-def test_series_unstack_empty_level_is_a_noop():
+@pytest.mark.parametrize("level", [[], ()])
+@pytest.mark.parametrize("name", [None, "v", ("x", "y")])
+def test_series_unstack_empty_level_is_a_noop(level, name):
     index = pd.MultiIndex.from_tuples(
         [("one", "a"), ("one", "b"), ("two", "a"), ("two", "b")]
     )
-    ps = pd.Series([1, 2, 3, 4], index=index, name="v")
+    ps = pd.Series([1, 2, 3, 4], index=index, name=name)
     gs = cudf.from_pandas(ps)
-    assert_eq(ps.unstack(level=[]), gs.unstack(level=[]))
+    assert_eq(ps.unstack(level=level), gs.unstack(level=level))

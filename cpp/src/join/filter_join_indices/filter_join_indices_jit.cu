@@ -36,7 +36,6 @@
 #include <jit/helpers.hpp>
 #include <jit/parser.hpp>
 #include <jit/row_ir.hpp>
-#include <jit/span.cuh>
 
 #include <memory>
 #include <utility>
@@ -153,7 +152,7 @@ void launch_join_filter_kernel(kernel const& kernel,
   auto [handles, device_views] =
     cudf::jit::column_views_to_device<column_device_view, column_view>(column_views, stream, mr);
 
-  // Set up kernel parameters - use JIT-compatible span type
+  // Match the pointer parameters of the JIT kernel entry point.
   cudf::size_type num_rows                         = left_indices.size();
   cudf::size_type const* left_indices_ptr          = left_indices.data();
   cudf::size_type const* right_indices_ptr         = right_indices.data();

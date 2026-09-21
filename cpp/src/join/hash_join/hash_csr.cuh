@@ -12,6 +12,7 @@
 #include <cuda/atomic>
 #include <cuda/cmath>
 #include <cuda/std/cstdint>
+#include <cuda/std/limits>
 #include <cuda/std/utility>
 
 namespace cudf::detail {
@@ -48,7 +49,7 @@ struct hash_table_ref {
     for (cuda::std::uint32_t step = 0; step < capacity; ++step) {
       auto slot_ref =
         cuda::atomic_ref<hash_table_slot_type, cuda::thread_scope_device>{slots[slot]};
-      auto old = hash_table_slot_type{-1};
+      auto old = cuda::std::numeric_limits<hash_table_slot_type>::max();
       if (slot_ref.compare_exchange_strong(old, desired, cuda::memory_order_relaxed)) {
         return key.second;
       }
@@ -65,7 +66,9 @@ struct hash_table_ref {
     auto slot = key.first % modulo;
     for (cuda::std::uint32_t step = 0; step < capacity; ++step) {
       auto const current = slots[slot];
-      if (current == hash_table_slot_type{-1}) { return CUDF_SIZE_TYPE_SENTINEL; }
+      if (current == cuda::std::numeric_limits<hash_table_slot_type>::max()) {
+        return CUDF_SIZE_TYPE_SENTINEL;
+      }
       // Under null_equality::UNEQUAL a nested row containing nulls need not equal itself.
       // The fill pass must still find the row that claimed this slot during construction.
       if constexpr (IsBuild) {

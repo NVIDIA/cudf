@@ -44,8 +44,8 @@ public class FilteredJoinTest {
          Table second = new Table.TestBuilder().column(7, 10).build();
          GatherMap map1 = first.leftSemiJoinGatherMap(filter);
          GatherMap map2 = second.leftSemiJoinGatherMap(filter)) {
-      assertGatherMapEqualsUnordered(map1, 0, 1, 3);
-      assertGatherMapEqualsUnordered(map2, 0);
+      assertGatherMapEqualsUnordered(new int[]{0, 1, 3}, map1);
+      assertGatherMapEqualsUnordered(new int[]{0}, map2);
     }
   }
 
@@ -57,8 +57,8 @@ public class FilteredJoinTest {
          Table second = new Table.TestBuilder().column(7, 10).build();
          GatherMap map1 = first.leftAntiJoinGatherMap(filter);
          GatherMap map2 = second.leftAntiJoinGatherMap(filter)) {
-      assertGatherMapEqualsUnordered(map1, 2);
-      assertGatherMapEqualsUnordered(map2, 1);
+      assertGatherMapEqualsUnordered(new int[]{2}, map1);
+      assertGatherMapEqualsUnordered(new int[]{1}, map2);
     }
   }
 
@@ -72,8 +72,8 @@ public class FilteredJoinTest {
          Table probe = new Table.TestBuilder().column("b", "c", "a").build();
          GatherMap semi = probe.leftSemiJoinGatherMap(filter);
          GatherMap anti = probe.leftAntiJoinGatherMap(filter)) {
-      assertGatherMapEqualsUnordered(semi, 0, 2);
-      assertGatherMapEqualsUnordered(anti, 1);
+      assertGatherMapEqualsUnordered(new int[]{0, 2}, semi);
+      assertGatherMapEqualsUnordered(new int[]{1}, anti);
     }
   }
 
@@ -83,10 +83,10 @@ public class FilteredJoinTest {
          Table probe = new Table.TestBuilder().column(7, 8).build()) {
       try (FilteredJoin filter = new FilteredJoin(build, false);
            GatherMap map = probe.leftSemiJoinGatherMap(filter)) {
-        assertGatherMapEqualsUnordered(map, 0);
+        assertGatherMapEqualsUnordered(new int[]{0}, map);
       }
       try (GatherMap map = probe.leftSemiJoinGatherMap(build, false)) {
-        assertGatherMapEqualsUnordered(map, 0);
+        assertGatherMapEqualsUnordered(new int[]{0}, map);
       }
     }
   }
@@ -102,11 +102,11 @@ public class FilteredJoinTest {
          GatherMap semi = probe.leftSemiJoinGatherMap(filter);
          GatherMap anti = probe.leftAntiJoinGatherMap(filter)) {
       if (compareNullsEqual) {
-        assertGatherMapEqualsUnordered(semi, 0, 1, 2);
-        assertGatherMapEqualsUnordered(anti, 3, 4);
+        assertGatherMapEqualsUnordered(new int[]{0, 1, 2}, semi);
+        assertGatherMapEqualsUnordered(new int[]{3, 4}, anti);
       } else {
-        assertGatherMapEqualsUnordered(semi, 0);
-        assertGatherMapEqualsUnordered(anti, 1, 2, 3, 4);
+        assertGatherMapEqualsUnordered(new int[]{0}, semi);
+        assertGatherMapEqualsUnordered(new int[]{1, 2, 3, 4}, anti);
       }
     }
   }
@@ -123,11 +123,11 @@ public class FilteredJoinTest {
          GatherMap emptyAnti = empty.leftAntiJoinGatherMap(filter);
          GatherMap semi = probe.leftSemiJoinGatherMap(filter);
          GatherMap anti = probe.leftAntiJoinGatherMap(filter)) {
-      assertGatherMapEqualsUnordered(emptySemi);
-      assertGatherMapEqualsUnordered(emptyAnti);
+      assertGatherMapEqualsUnordered(new int[0], emptySemi);
+      assertGatherMapEqualsUnordered(new int[0], emptyAnti);
       // Empty probes must leave the lookup usable for later nonempty batches.
-      assertGatherMapEqualsUnordered(semi, emptyBuild ? new int[0] : new int[]{0, 1});
-      assertGatherMapEqualsUnordered(anti, emptyBuild ? new int[]{0, 1, 2} : new int[]{2});
+      assertGatherMapEqualsUnordered(emptyBuild ? new int[0] : new int[]{0, 1}, semi);
+      assertGatherMapEqualsUnordered(emptyBuild ? new int[]{0, 1, 2} : new int[]{2}, anti);
     }
   }
 
@@ -142,7 +142,7 @@ public class FilteredJoinTest {
   }
 
   @Test
-  void testClosedFilter() {
+  void testClosedFilteredJoin() {
     try (Table build = new Table.TestBuilder().column(7, 9).build();
          Table probe = new Table.TestBuilder().column(7, 8).build()) {
       FilteredJoin filter = new FilteredJoin(build, false);

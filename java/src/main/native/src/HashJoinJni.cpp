@@ -33,8 +33,6 @@ JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_HashJoin_create(JNIEnv* env,
 
 JNIEXPORT void JNICALL Java_ai_rapids_cudf_HashJoin_destroy(JNIEnv* env, jclass, jlong j_handle)
 {
-  JNI_NULL_CHECK(env, j_handle, "hash join handle is null", );
-
   JNI_TRY
   {
     cudf::jni::auto_set_device(env);

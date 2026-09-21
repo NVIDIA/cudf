@@ -22,7 +22,7 @@ public class FilteredJoin implements AutoCloseable {
   private static final Logger log = LoggerFactory.getLogger(FilteredJoin.class);
 
   private static class FilteredJoinCleaner extends MemoryCleaner.Cleaner {
-    private Table buildKeys;
+    private volatile Table buildKeys;
     private long nativeHandle;
 
     FilteredJoinCleaner(Table buildKeys) {
@@ -35,9 +35,7 @@ public class FilteredJoin implements AutoCloseable {
       if (neededCleanup) {
         long origAddress = nativeHandle;
         try (Table toClose = buildKeys) {
-          if (nativeHandle != 0) {
-            destroy(nativeHandle);
-          }
+          destroy(nativeHandle);
         } finally {
           nativeHandle = 0;
           buildKeys = null;

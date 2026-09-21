@@ -21,7 +21,7 @@ public class DistinctHashJoin implements AutoCloseable {
   private static final Logger log = LoggerFactory.getLogger(DistinctHashJoin.class);
 
   private static class DistinctHashJoinCleaner extends MemoryCleaner.Cleaner {
-    private Table buildKeys;
+    private volatile Table buildKeys;
     private long nativeHandle;
 
     DistinctHashJoinCleaner(Table buildKeys) {
@@ -34,9 +34,7 @@ public class DistinctHashJoin implements AutoCloseable {
       if (neededCleanup) {
         long origAddress = nativeHandle;
         try (Table toClose = buildKeys) {
-          if (nativeHandle != 0) {
-            destroy(nativeHandle);
-          }
+          destroy(nativeHandle);
         } finally {
           nativeHandle = 0;
           buildKeys = null;

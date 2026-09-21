@@ -47,10 +47,10 @@ public class AssertUtils {
   /**
    * Checks gather-map indices without regard to order, preserving duplicate counts.
    * The caller retains ownership of the gather map.
-   * @param gatherMap actual gather map
    * @param expectedIndices expected indices
+   * @param gatherMap actual gather map
    */
-  public static void assertGatherMapEqualsUnordered(GatherMap gatherMap, int... expectedIndices) {
+  public static void assertGatherMapEqualsUnordered(int[] expectedIndices, GatherMap gatherMap) {
     try (ColumnVector expected = ColumnVector.fromInts(expectedIndices)) {
       assertGatherMapEqualsUnordered(expected, gatherMap);
     }

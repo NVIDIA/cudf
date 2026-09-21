@@ -26,7 +26,7 @@ public class HashJoin implements AutoCloseable {
   private static final Logger log = LoggerFactory.getLogger(HashJoin.class);
 
   private static class HashJoinCleaner extends MemoryCleaner.Cleaner {
-    private Table buildKeys;
+    private volatile Table buildKeys;
     private long nativeHandle;
 
     HashJoinCleaner(Table buildKeys) {
@@ -39,9 +39,7 @@ public class HashJoin implements AutoCloseable {
       if (neededCleanup) {
         long origAddress = nativeHandle;
         try (Table toClose = buildKeys) {
-          if (nativeHandle != 0) {
-            destroy(nativeHandle);
-          }
+          destroy(nativeHandle);
         } finally {
           nativeHandle = 0;
           buildKeys = null;

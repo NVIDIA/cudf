@@ -75,7 +75,17 @@ public class DistinctHashJoinTest {
   }
 
   @Test
-  void testClosedHashJoin() {
+  void testColumnCountMismatch() {
+    try (Table build = new Table.TestBuilder().column(7, 9).build();
+         DistinctHashJoin hashJoin = new DistinctHashJoin(build, false);
+         Table probe = new Table.TestBuilder().column(7, 8).column(1, 2).build()) {
+      assertThrows(IllegalArgumentException.class, () -> probe.leftDistinctJoinGatherMap(hashJoin));
+      assertThrows(IllegalArgumentException.class, () -> probe.innerDistinctJoinGatherMaps(hashJoin));
+    }
+  }
+
+  @Test
+  void testClosedDistinctHashJoin() {
     try (Table build = new Table.TestBuilder().column(7, 9).build();
          Table probe = new Table.TestBuilder().column(7, 8).build()) {
       DistinctHashJoin hashJoin = new DistinctHashJoin(build, false);

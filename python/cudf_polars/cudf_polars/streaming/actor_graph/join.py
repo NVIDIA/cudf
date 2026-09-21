@@ -54,7 +54,6 @@ from cudf_polars.streaming.actor_graph.prefilter import (
 from cudf_polars.streaming.actor_graph.tracing import (
     LOG_TRACES,
     send_chunk,
-    trace_channel,
 )
 from cudf_polars.streaming.actor_graph.utils import (
     CUDF_ROW_LIMIT,
@@ -262,15 +261,11 @@ async def broadcast_join_actor(
     """
     async with shutdown_on_error(
         context,
-        ch_out,
-        ch_left,
-        ch_right,
+        chs_in=(ch_left, ch_right),
+        chs_out=(ch_out,),
         trace_ir=ir,
         ir_context=ir_context,
     ) as tracer:
-        ch_left = trace_channel(ch_left, tracer)
-        ch_right = trace_channel(ch_right, tracer)
-        ch_out = trace_channel(ch_out, tracer)
         ir_context = replace(ir_context, tracer=tracer)
         await broadcast_join(
             context,
@@ -950,8 +945,7 @@ async def _shuffle_join(
     # note: this is an actor inside of an actor. How should we log that in our traces?
     async with shutdown_on_error(
         context,
-        ch_left_shuffle,
-        ch_right_shuffle,
+        chs_aux=(ch_left_shuffle, ch_right_shuffle),
         trace_ir=ir,
         ir_context=ir_context,
     ):
@@ -1112,8 +1106,7 @@ async def _ordered_join(
     ch_right_adjusted = context.create_channel()
     async with shutdown_on_error(
         context,
-        ch_left_adjusted,
-        ch_right_adjusted,
+        chs_aux=(ch_left_adjusted, ch_right_adjusted),
         trace_ir=ir,
         ir_context=ir_context,
     ):
@@ -1698,16 +1691,12 @@ async def join_actor(
     """
     async with shutdown_on_error(
         context,
-        ch_out,
-        ch_left,
-        ch_right,
-        *ch_prefilter_domains,
+        chs_in=(ch_left, ch_right),
+        chs_out=(ch_out,),
+        chs_aux=ch_prefilter_domains,
         trace_ir=ir,
         ir_context=ir_context,
     ) as tracer:
-        ch_left = trace_channel(ch_left, tracer)
-        ch_right = trace_channel(ch_right, tracer)
-        ch_out = trace_channel(ch_out, tracer)
         ir_context = replace(ir_context, tracer=tracer)
         (
             left_metadata,
@@ -1768,9 +1757,7 @@ async def join_actor(
         )
         async with shutdown_on_error(
             context,
-            ch_left_replay,
-            ch_right_replay,
-            *prefilter_execution.channels,
+            chs_aux=(ch_left_replay, ch_right_replay, *prefilter_execution.channels),
             trace_ir=ir,
             ir_context=ir_context,
         ):

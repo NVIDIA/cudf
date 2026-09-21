@@ -144,6 +144,20 @@ remove_from_toctrees = ["cudf/api_docs/api/*"]
 
 # Preprocess doxygen xml for compatibility with latest Breathe
 def clean_definitions(root):
+    # Doxygen 1.18 associates a namespace with each group declared inside it.
+    # Breathe renders inner namespaces recursively, duplicating the namespace
+    # contents in every group.
+    for compound in root.findall("./compounddef[@kind='group']"):
+        for namespace in compound.findall("./innernamespace"):
+            compound.remove(namespace)
+
+    # Breathe checks whether an initializer starts with "=" before deciding
+    # whether to add one. Doxygen 1.18 may align that token with leading
+    # whitespace, which makes Breathe emit a duplicate "=".
+    for initializer in root.findall(".//initializer"):
+        if initializer.text and initializer.text.lstrip().startswith("="):
+            initializer.text = initializer.text.lstrip()
+
     # Breathe can't handle SFINAE properly:
     # https://github.com/breathe-doc/breathe/issues/624
     seen_ids = set()
@@ -192,6 +206,23 @@ def clean_definitions(root):
                 node.text = node.text.replace(string, "")
             if node.tail is not None:
                 node.tail = node.tail.replace(string, "")
+
+    # Doxygen 1.18 may wrap one of the removed macros in a ref element. Once
+    # the macro text is stripped, Breathe renders the empty ref as an empty
+    # pending_xref node, which crashes Sphinx's ReferencesResolver. Remove
+    # only refs that became empty, preserving any text that follows them.
+    for parent in root.iter():
+        for ref in list(parent):
+            if ref.tag != "ref" or "".join(ref.itertext()).strip():
+                continue
+
+            index = list(parent).index(ref)
+            if index == 0:
+                parent.text = (parent.text or "") + (ref.tail or "")
+            else:
+                previous = parent[index - 1]
+                previous.tail = (previous.tail or "") + (ref.tail or "")
+            parent.remove(ref)
 
 
 def clean_all_xml_files(path):
@@ -529,6 +560,7 @@ _names_to_skip_in_cpp = {
     # kafka objects
     "python_callable_type",
     "kafka_oauth_callback_wrapper_type",
+    "jit_compilation_error",
     # Template types
     "Radix",
     # Unsupported by Breathe
@@ -541,6 +573,15 @@ _names_to_skip_in_cpp = {
     # host_span defines member typedefs via its underlying cuda::std::span alias
     "span_type",
 }
+
+# Doxygen emits references to these internal or non-rendered targets from
+# otherwise public documentation. Preserve their visible text when Sphinx
+# cannot resolve them instead of treating them as broken documentation links.
+_doxygen_targets_to_skip = (
+    "structcudf_1_1dictionary__element",
+    "structcudf_1_1groupby__host__udf",
+    "namespacenvtext",
+)
 
 _domain_objects = None
 _prefixed_domain_objects = None
@@ -618,6 +659,10 @@ def on_missing_reference(app, env, node, contnode):
                 _prefixed_domain_objects[f"{prefix}{name}"] = name
 
     reftarget = node.get("reftarget")
+    if node["refdomain"] == "std" and reftarget.startswith(
+        _doxygen_targets_to_skip
+    ):
+        return contnode
     if "namespacecudf" in reftarget:
         node["reftarget"] = "cudf"
         return contnode

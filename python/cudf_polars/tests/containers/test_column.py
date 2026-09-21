@@ -406,3 +406,4 @@ def test_astype_wraps_without_check_overflow():
     )
     result = col.astype(DataType(pl.UInt32()), stream=stream)
     assert result.obj.type().id() == plc.TypeId.UINT32
+    assert result.obj_scalar(stream=stream).to_py(stream=stream) == 1

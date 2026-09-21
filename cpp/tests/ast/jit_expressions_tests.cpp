@@ -60,23 +60,27 @@ TYPED_TEST_SUITE(JITIntegerArithmeticTest, cudf::test::IntegralTypesNotBool);
 TYPED_TEST_SUITE(JITSignedIntegerArithmeticTest, SignedIntegralTypesNotBool);
 TYPED_TEST_SUITE(JITDecimalArithmeticTest, cudf::test::FixedPointTypes);
 
+struct overflow_expressions {
+  cudf::ast::expression const& success;
+  cudf::ast::expression const& throwing;
+  cudf::ast::expression const& nullified;
+};
+
 void expect_overflow_results(cudf::table_view const& table,
-                             cudf::ast::expression const& success,
-                             cudf::ast::expression const& throwing,
-                             cudf::ast::expression const& nullified,
+                             overflow_expressions ops,
                              cudf::column_view expected,
                              cudf::column_view expected_fail)
 {
   // Successful and NULLIFY expressions can share one JIT kernel. The throwing path must be
   // evaluated independently to verify its error policy without discarding the successful outputs.
-  auto expressions =
-    std::to_array<std::reference_wrapper<cudf::ast::expression const>>({success, nullified});
+  auto expressions = std::to_array<std::reference_wrapper<cudf::ast::expression const>>(
+    {ops.success, ops.nullified});
   auto result = cudf::compute_table_jit(table, expressions);
 
   ASSERT_EQ(result->num_columns(), static_cast<cudf::size_type>(expressions.size()));
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, result->view().column(0), VERBOSITY);
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_fail, result->view().column(1), VERBOSITY);
-  EXPECT_THROW(cudf::compute_column_jit(table, throwing), cudf::evaluation_error);
+  EXPECT_THROW(cudf::compute_column_jit(table, ops.throwing), cudf::evaluation_error);
 }
 
 TEST_F(JITExpressionTest, Coalesce)
@@ -113,7 +117,10 @@ TYPED_TEST(JITIntegerArithmeticTest, AddOverflow)
     cudf::ast::jit::operation(tree, cudf::ast::jit::op::ADD_OVERFLOW, {a_ref, b_fail_ref});
   auto& try_add_fail = cudf::ast::jit::operation(
     tree, cudf::ast::jit::op::ADD_OVERFLOW, {a_ref, b_fail_ref}, cudf::error_policy::NULLIFY);
-  expect_overflow_results(table, add, add_fail, try_add_fail, expected, expected_fail);
+  expect_overflow_results(table,
+                          {.success = add, .throwing = add_fail, .nullified = try_add_fail},
+                          expected,
+                          expected_fail);
 }
 
 TYPED_TEST(JITDecimalArithmeticTest, AddOverflow)
@@ -136,7 +143,10 @@ TYPED_TEST(JITDecimalArithmeticTest, AddOverflow)
     cudf::ast::jit::operation(tree, cudf::ast::jit::op::ADD_OVERFLOW, {a_ref, b_fail_ref});
   auto& try_add_fail = cudf::ast::jit::operation(
     tree, cudf::ast::jit::op::ADD_OVERFLOW, {a_ref, b_fail_ref}, cudf::error_policy::NULLIFY);
-  expect_overflow_results(table, add, add_fail, try_add_fail, expected, expected_fail);
+  expect_overflow_results(table,
+                          {.success = add, .throwing = add_fail, .nullified = try_add_fail},
+                          expected,
+                          expected_fail);
 }
 
 TYPED_TEST(JITSignedIntegerArithmeticTest, SubOverflow)
@@ -158,7 +168,10 @@ TYPED_TEST(JITSignedIntegerArithmeticTest, SubOverflow)
   auto& try_sub_fail = cudf::ast::jit::operation(
     tree, cudf::ast::jit::op::SUB_OVERFLOW, {a_ref, b_fail_ref}, cudf::error_policy::NULLIFY);
 
-  expect_overflow_results(table, sub, sub_fail, try_sub_fail, expected, expected_fail);
+  expect_overflow_results(table,
+                          {.success = sub, .throwing = sub_fail, .nullified = try_sub_fail},
+                          expected,
+                          expected_fail);
 }
 
 TYPED_TEST(JITDecimalArithmeticTest, SubOverflow)
@@ -182,7 +195,10 @@ TYPED_TEST(JITDecimalArithmeticTest, SubOverflow)
     cudf::ast::jit::operation(tree, cudf::ast::jit::op::SUB_OVERFLOW, {a_ref, b_fail_ref});
   auto& try_sub_fail = cudf::ast::jit::operation(
     tree, cudf::ast::jit::op::SUB_OVERFLOW, {a_ref, b_fail_ref}, cudf::error_policy::NULLIFY);
-  expect_overflow_results(table, sub, sub_fail, try_sub_fail, expected, expected_fail);
+  expect_overflow_results(table,
+                          {.success = sub, .throwing = sub_fail, .nullified = try_sub_fail},
+                          expected,
+                          expected_fail);
 }
 
 TYPED_TEST(JITIntegerArithmeticTest, MulOverflow)
@@ -203,7 +219,10 @@ TYPED_TEST(JITIntegerArithmeticTest, MulOverflow)
     cudf::ast::jit::operation(tree, cudf::ast::jit::op::MUL_OVERFLOW, {a_ref, b_fail_ref});
   auto& try_mul_fail = cudf::ast::jit::operation(
     tree, cudf::ast::jit::op::MUL_OVERFLOW, {a_ref, b_fail_ref}, cudf::error_policy::NULLIFY);
-  expect_overflow_results(table, mul, mul_fail, try_mul_fail, expected, expected_fail);
+  expect_overflow_results(table,
+                          {.success = mul, .throwing = mul_fail, .nullified = try_mul_fail},
+                          expected,
+                          expected_fail);
 }
 
 TYPED_TEST(JITDecimalArithmeticTest, MulOverflow)
@@ -240,7 +259,10 @@ TYPED_TEST(JITDecimalArithmeticTest, MulOverflow)
     }
   }
 
-  expect_overflow_results(table, mul, mul_fail, try_mul_fail, expected, expected_fail);
+  expect_overflow_results(table,
+                          {.success = mul, .throwing = mul_fail, .nullified = try_mul_fail},
+                          expected,
+                          expected_fail);
 }
 
 TYPED_TEST(JITIntegerArithmeticTest, DivOverflow)
@@ -261,7 +283,10 @@ TYPED_TEST(JITIntegerArithmeticTest, DivOverflow)
     cudf::ast::jit::operation(tree, cudf::ast::jit::op::DIV_OVERFLOW, {a_ref, b_fail_ref});
   auto& try_div_fail = cudf::ast::jit::operation(
     tree, cudf::ast::jit::op::DIV_OVERFLOW, {a_ref, b_fail_ref}, cudf::error_policy::NULLIFY);
-  expect_overflow_results(table, div, div_fail, try_div_fail, expected, expected_fail);
+  expect_overflow_results(table,
+                          {.success = div, .throwing = div_fail, .nullified = try_div_fail},
+                          expected,
+                          expected_fail);
 }
 
 TYPED_TEST(JITDecimalArithmeticTest, DivOverflow)
@@ -283,7 +308,10 @@ TYPED_TEST(JITDecimalArithmeticTest, DivOverflow)
     cudf::ast::jit::operation(tree, cudf::ast::jit::op::DIV_OVERFLOW, {a_ref, b_fail_ref});
   auto& try_div_fail = cudf::ast::jit::operation(
     tree, cudf::ast::jit::op::DIV_OVERFLOW, {a_ref, b_fail_ref}, cudf::error_policy::NULLIFY);
-  expect_overflow_results(table, div, div_fail, try_div_fail, expected, expected_fail);
+  expect_overflow_results(table,
+                          {.success = div, .throwing = div_fail, .nullified = try_div_fail},
+                          expected,
+                          expected_fail);
 }
 
 TYPED_TEST(JITIntegerArithmeticTest, ModOverflow)
@@ -304,7 +332,10 @@ TYPED_TEST(JITIntegerArithmeticTest, ModOverflow)
     cudf::ast::jit::operation(tree, cudf::ast::jit::op::MOD_OVERFLOW, {a_ref, b_fail_ref});
   auto& try_mod_fail = cudf::ast::jit::operation(
     tree, cudf::ast::jit::op::MOD_OVERFLOW, {a_ref, b_fail_ref}, cudf::error_policy::NULLIFY);
-  expect_overflow_results(table, mod, mod_fail, try_mod_fail, expected, expected_fail);
+  expect_overflow_results(table,
+                          {.success = mod, .throwing = mod_fail, .nullified = try_mod_fail},
+                          expected,
+                          expected_fail);
 }
 
 TYPED_TEST(JITDecimalArithmeticTest, ModOverflow)
@@ -326,7 +357,10 @@ TYPED_TEST(JITDecimalArithmeticTest, ModOverflow)
     cudf::ast::jit::operation(tree, cudf::ast::jit::op::MOD_OVERFLOW, {a_ref, b_fail_ref});
   auto& try_mod_fail = cudf::ast::jit::operation(
     tree, cudf::ast::jit::op::MOD_OVERFLOW, {a_ref, b_fail_ref}, cudf::error_policy::NULLIFY);
-  expect_overflow_results(table, mod, mod_fail, try_mod_fail, expected, expected_fail);
+  expect_overflow_results(table,
+                          {.success = mod, .throwing = mod_fail, .nullified = try_mod_fail},
+                          expected,
+                          expected_fail);
 }
 
 TYPED_TEST(JITSignedIntegerArithmeticTest, AbsOverflow)
@@ -345,7 +379,10 @@ TYPED_TEST(JITSignedIntegerArithmeticTest, AbsOverflow)
   auto& abs_fail = cudf::ast::jit::operation(tree, cudf::ast::jit::op::ABS_OVERFLOW, {a_fail_ref});
   auto& try_abs_fail = cudf::ast::jit::operation(
     tree, cudf::ast::jit::op::ABS_OVERFLOW, {a_fail_ref}, cudf::error_policy::NULLIFY);
-  expect_overflow_results(table, abs, abs_fail, try_abs_fail, expected, expected_fail);
+  expect_overflow_results(table,
+                          {.success = abs, .throwing = abs_fail, .nullified = try_abs_fail},
+                          expected,
+                          expected_fail);
 }
 
 TYPED_TEST(JITDecimalArithmeticTest, AbsOverflow)
@@ -369,7 +406,10 @@ TYPED_TEST(JITDecimalArithmeticTest, AbsOverflow)
   auto& abs_fail  = cudf::ast::jit::operation(tree, cudf::ast::jit::op::ABS_OVERFLOW, {a_fail_ref});
   auto& try_abs_fail = cudf::ast::jit::operation(
     tree, cudf::ast::jit::op::ABS_OVERFLOW, {a_fail_ref}, cudf::error_policy::NULLIFY);
-  expect_overflow_results(table, abs, abs_fail, try_abs_fail, expected, expected_fail);
+  expect_overflow_results(table,
+                          {.success = abs, .throwing = abs_fail, .nullified = try_abs_fail},
+                          expected,
+                          expected_fail);
 }
 
 TYPED_TEST(JITSignedIntegerArithmeticTest, NegOverflow)
@@ -387,7 +427,10 @@ TYPED_TEST(JITSignedIntegerArithmeticTest, NegOverflow)
   auto& neg_fail = cudf::ast::jit::operation(tree, cudf::ast::jit::op::NEG_OVERFLOW, {a_fail_ref});
   auto& try_neg_fail = cudf::ast::jit::operation(
     tree, cudf::ast::jit::op::NEG_OVERFLOW, {a_fail_ref}, cudf::error_policy::NULLIFY);
-  expect_overflow_results(table, neg, neg_fail, try_neg_fail, expected, expected_fail);
+  expect_overflow_results(table,
+                          {.success = neg, .throwing = neg_fail, .nullified = try_neg_fail},
+                          expected,
+                          expected_fail);
 }
 
 TYPED_TEST(JITDecimalArithmeticTest, NegOverflow)
@@ -410,7 +453,10 @@ TYPED_TEST(JITDecimalArithmeticTest, NegOverflow)
   auto& neg_fail  = cudf::ast::jit::operation(tree, cudf::ast::jit::op::NEG_OVERFLOW, {a_fail_ref});
   auto& try_neg_fail = cudf::ast::jit::operation(
     tree, cudf::ast::jit::op::NEG_OVERFLOW, {a_fail_ref}, cudf::error_policy::NULLIFY);
-  expect_overflow_results(table, neg, neg_fail, try_neg_fail, expected, expected_fail);
+  expect_overflow_results(table,
+                          {.success = neg, .throwing = neg_fail, .nullified = try_neg_fail},
+                          expected,
+                          expected_fail);
 }
 
 TYPED_TEST(JITDecimalArithmeticTest, CheckPrecision)
@@ -435,8 +481,12 @@ TYPED_TEST(JITDecimalArithmeticTest, CheckPrecision)
                                                         cudf::ast::jit::op::CHECK_PRECISION,
                                                         {a_fail_ref, precision},
                                                         cudf::error_policy::NULLIFY);
-  expect_overflow_results(
-    table, check_precision, check_precision_fail, try_check_precision, expected, expected_fail);
+  expect_overflow_results(table,
+                          {.success   = check_precision,
+                           .throwing  = check_precision_fail,
+                           .nullified = try_check_precision},
+                          expected,
+                          expected_fail);
 }
 
 TEST_F(JITExpressionTest, BitShiftLeft)
@@ -570,8 +620,8 @@ struct cast_test<cudf::test::Types<To...>, cudf::test::Types<From...>> {
       std::array{cudf::type_to_name(cudf::data_type{cudf::type_to_id<From>()})...};
     static auto const to_name = cudf::type_to_name(cudf::data_type{cudf::type_to_id<ToType>()});
     auto expected             = make_cast_input<ToType>(values);
-    for (std::size_t i = 0; i < sizeof...(From); ++i) {
-      SCOPED_TRACE(std::to_string(output_index) + ": " + from_names[i] + " -> " + to_name);
+    for (auto const& from_name : from_names) {
+      SCOPED_TRACE(std::to_string(output_index) + ": " + from_name + " -> " + to_name);
       CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected->view(), result.column(output_index), VERBOSITY);
       ++output_index;
     }

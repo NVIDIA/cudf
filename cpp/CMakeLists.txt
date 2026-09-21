@@ -178,6 +178,7 @@ if(BUILD_TESTS AND NOT CUDF_BUILD_TESTUTIL)
 endif()
 
 set(CUDF_CXX_FLAGS "")
+set(CUDF_CXX_TEST_FLAGS "")
 set(CUDF_CUDA_FLAGS "")
 set(CUDF_CXX_DEFINITIONS "")
 set(CUDF_CUDA_DEFINITIONS "")
@@ -792,6 +793,7 @@ add_library(
   src/hash/md5_hash.cu
   src/hash/murmurhash3_x86_32.cu
   src/hash/murmurhash3_x64_128.cu
+  src/hash/spark_murmurhash3_x86_32.cu
   src/hash/sha1_hash.cu
   src/hash/sha224_hash.cu
   src/hash/sha256_hash.cu
@@ -871,6 +873,7 @@ add_library(
   src/io/parquet/experimental/hybrid_scan_preprocess.cu
   src/io/parquet/experimental/page_index_filter.cu
   src/io/parquet/experimental/page_index_filter_utils.cu
+  src/io/parquet/experimental/parquet_footer.cpp
   src/io/parquet/experimental/variant_extract.cu
   src/io/parquet/experimental/variant_path.cpp
   src/io/parquet/expression_transform_helpers.cpp
@@ -1544,8 +1547,10 @@ if(CUDF_BUILD_TESTUTIL)
   )
 
   target_compile_options(
-    cudftestutil INTERFACE "$<BUILD_INTERFACE:$<$<COMPILE_LANGUAGE:CXX>:${CUDF_CXX_FLAGS}>>"
-                           "$<BUILD_INTERFACE:$<$<COMPILE_LANGUAGE:CUDA>:${CUDF_CUDA_FLAGS}>>"
+    cudftestutil
+    INTERFACE
+      "$<BUILD_INTERFACE:$<$<COMPILE_LANGUAGE:CXX>:${CUDF_CXX_FLAGS};${CUDF_CXX_TEST_FLAGS}>>"
+      "$<BUILD_INTERFACE:$<$<COMPILE_LANGUAGE:CUDA>:${CUDF_CUDA_FLAGS}>>"
   )
 
   target_link_libraries(

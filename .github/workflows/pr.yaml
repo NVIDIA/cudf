@@ -99,7 +99,7 @@ jobs:
           - 'cpp/libcudf_kafka/include/**'
           - 'ci/build_docs.sh'
           - 'python/**'
-        test_cpp:
+        test_cpp_common:
           - 'conda/recipes/libcudf/**'
           - 'RAPIDS_BRANCH'
           - 'build.sh'
@@ -107,11 +107,20 @@ jobs:
           - 'ci/build_cpp.sh'
           - 'ci/test_cpp.sh'
           - 'ci/test_cpp_common.sh'
-          - 'ci/run_cudf_ctests.sh'
-          - 'ci/run_cudf_examples.sh'
-          - 'ci/run_cudf_kafka_ctests.sh'
-          - 'ci/run_cudf_streaming_ctests.sh'
           - '.github/workflows/pr.yaml'
+        test_cpp_libcudf:
+          - 'ci/run_cudf_ctests.sh'
+          - 'cpp/tests/**'
+        test_cpp_examples:
+          - 'ci/run_cudf_examples.sh'
+          - 'cpp/examples/**'
+        test_cpp_kafka:
+          - 'ci/run_cudf_kafka_ctests.sh'
+          - 'cpp/libcudf_kafka/tests/**'
+        test_cpp_streaming:
+          - 'ci/run_cudf_streaming_ctests.sh'
+          - 'cpp/libcudf_streaming/examples/**'
+          - 'cpp/libcudf_streaming/tests/**'
         cpp_test_files:
           - 'cpp/examples/**'
           - 'cpp/libcudf_kafka/tests/**'
@@ -231,6 +240,7 @@ jobs:
         test_python_cudf_polars_polars:
           - 'ci/test_cudf_polars_polars_tests.sh'
           - 'ci/run_cudf_polars_polars_tests.sh'
+          - 'ci/cudf_polars/polars_test_deselections*.txt'
         test_python_cudf_polars_runner:
           - 'ci/run_cudf_polars_pytests.sh'
         test_cudf_pandas_third_party_integration:
@@ -325,11 +335,20 @@ jobs:
     uses: rapidsai/shared-workflows/.github/workflows/conda-cpp-tests.yaml@main
     if: >
       fromJSON(needs.changed-files.outputs.changed_file_groups).cpp_build_inputs ||
-      fromJSON(needs.changed-files.outputs.changed_file_groups).cpp_test_files ||
-      fromJSON(needs.changed-files.outputs.changed_file_groups).test_cpp
+      fromJSON(needs.changed-files.outputs.changed_file_groups).test_cpp_common ||
+      fromJSON(needs.changed-files.outputs.changed_file_groups).test_cpp_libcudf ||
+      fromJSON(needs.changed-files.outputs.changed_file_groups).test_cpp_examples ||
+      fromJSON(needs.changed-files.outputs.changed_file_groups).test_cpp_kafka ||
+      fromJSON(needs.changed-files.outputs.changed_file_groups).test_cpp_streaming
     with:
       build_type: pull-request
-      script: ci/test_cpp.sh
+      script: >-
+        env
+        RUN_LIBCUDF_TESTS=${{ fromJSON(needs.changed-files.outputs.changed_file_groups).cpp_build_inputs || fromJSON(needs.changed-files.outputs.changed_file_groups).test_cpp_common || fromJSON(needs.changed-files.outputs.changed_file_groups).test_cpp_libcudf }}
+        RUN_EXAMPLES_TESTS=${{ fromJSON(needs.changed-files.outputs.changed_file_groups).cpp_build_inputs || fromJSON(needs.changed-files.outputs.changed_file_groups).test_cpp_common || fromJSON(needs.changed-files.outputs.changed_file_groups).test_cpp_examples }}
+        RUN_LIBCUDF_KAFKA_TESTS=${{ fromJSON(needs.changed-files.outputs.changed_file_groups).cpp_build_inputs || fromJSON(needs.changed-files.outputs.changed_file_groups).test_cpp_common || fromJSON(needs.changed-files.outputs.changed_file_groups).test_cpp_kafka }}
+        RUN_LIBCUDF_STREAMING_TESTS=${{ fromJSON(needs.changed-files.outputs.changed_file_groups).cpp_build_inputs || fromJSON(needs.changed-files.outputs.changed_file_groups).test_cpp_common || fromJSON(needs.changed-files.outputs.changed_file_groups).test_cpp_streaming }}
+        ci/test_cpp.sh
       cache-paths: .cache/libcudf
       cache-key-prefix: libcudf-rtcx-v2
       # Caches are immutable. Re-key when the embedded JIT runtime or its tests change so a
@@ -376,7 +395,7 @@ jobs:
       # Build a conda package for each CUDA x ARCH x minimum supported Python version
       matrix_filter: group_by({CUDA_VER, ARCH}) | map(min_by(.PY_VER | split(".") | map(tonumber)))
   conda-python-build-noarch:
-    needs: [build-details]
+    needs: [build-details, checks]
     permissions:
       actions: read
       contents: read
@@ -404,20 +423,18 @@ jobs:
       fromJSON(needs.changed-files.outputs.changed_file_groups).cpp_build_inputs ||
       fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_all ||
       fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_cudf ||
-      fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_cudf_benchmarks ||
       fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_conda_builds ||
       fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_conda_common ||
       fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_conda_cudf ||
       fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_conda_pylibcudf ||
-      fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_conda_cudf_tests ||
-      fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_conda_cudf_benchmarks
+      fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_conda_cudf_tests
     with:
       build_type: pull-request
       script: >-
         env
         RUN_PYLIBCUDF_TESTS=${{ fromJSON(needs.changed-files.outputs.changed_file_groups).cpp_build_inputs || fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_all || fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_conda_builds || fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_conda_common || fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_conda_cudf || fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_conda_pylibcudf }}
         RUN_CUDF_TESTS=${{ fromJSON(needs.changed-files.outputs.changed_file_groups).cpp_build_inputs || fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_all || fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_cudf || fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_conda_builds || fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_conda_common || fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_conda_cudf || fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_conda_cudf_tests }}
-        RUN_CUDF_BENCHMARK_TESTS=${{ fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_all || fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_cudf_benchmarks || fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_conda_builds || fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_conda_common || fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_conda_cudf || fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_conda_cudf_benchmarks }}
+        RUN_CUDF_BENCHMARK_TESTS=false
         ci/test_python_cudf.sh
       # https://github.com/NVIDIA/cudf/issues/23498
       matrix_filter: map(select(.GPU != "gb300" and .GPU != "gh200"))
@@ -599,7 +616,6 @@ jobs:
     with:
       docs-projects: cudf,dask-cudf,libcudf
       dry-run: true
-      version-map: ${{ vars.VERSION_MAP }}
   wheel-build:
     needs: [build-details, checks]
     permissions:
@@ -689,18 +705,12 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - engine: in-memory
-            shard_id: 0
-            num_shards: 1
           - engine: spmd
             shard_id: 0
-            num_shards: 3
+            num_shards: 2
           - engine: spmd
             shard_id: 1
-            num_shards: 3
-          - engine: spmd
-            shard_id: 2
-            num_shards: 3
+            num_shards: 2
     permissions:
       actions: read
       contents: read
@@ -708,7 +718,7 @@ jobs:
       packages: read
       pull-requests: read
     secrets: inherit # zizmor: ignore[secrets-inherit]
-    uses: rapidsai/shared-workflows/.github/workflows/wheels-test.yaml@main
+    uses: rapidsai/shared-workflows/.github/workflows/custom-job.yaml@main
     if: >
       fromJSON(needs.changed-files.outputs.changed_file_groups).cpp_build_inputs ||
       fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_all ||
@@ -717,11 +727,16 @@ jobs:
       fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_wheel_cudf_polars ||
       fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_cudf_polars_polars
     with:
-      # This selects "ARCH=amd64 + the latest supported Python + CUDA".
-      matrix_filter: map(select(.ARCH == "amd64")) | group_by(.CUDA_VER|split(".")|map(tonumber)|.[0]) | map(max_by([(.PY_VER|split(".")|map(tonumber)), (.CUDA_VER|split(".")|map(tonumber))]))
       build_type: pull-request
+      branch: ${{ inputs.branch }}
+      date: ${{ inputs.date }}
+      sha: ${{ inputs.sha }}
+      arch: amd64
+      node_type: gpu-rtxpro6000-latest-1
+      container_image: rapidsai/citestwheel:26.12-latest
       script: >-
         ci/test_cudf_polars_polars_tests.sh --engine ${{ matrix.engine }}
+        --inject-gpu-engine-blocksize default
         --cudf-polars-shard-id ${{ matrix.shard_id }}
         --cudf-polars-num-shards ${{ matrix.num_shards }}
   wheel-tests-dask-cudf:

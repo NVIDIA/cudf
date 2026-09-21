@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import warnings
@@ -12,6 +12,7 @@ from numba.np import numpy_support
 from numba.types import CPointer, Poison, Tuple, boolean, int64, void
 
 from cudf.api.types import is_scalar
+from cudf.core.dtype.validators import is_dtype_obj_string
 from cudf.core.udf.masked_typing import MaskedType
 from cudf.core.udf.nrt_utils import CaptureNRTUsage, nrt_enabled
 from cudf.core.udf.strings_typing import str_view_arg_handler
@@ -174,10 +175,31 @@ class ApplyKernelBase(ABC):
                 )
                 kernel = cuda.jit(
                     self.sig,
-                    link=[UDF_SHIM_FILE],
+                    link=self._get_link_files(nrt),
                     extensions=[str_view_arg_handler],
                 )(_kernel)
         return kernel
+
+    def _get_link_files(self, nrt):
+        """Return device libraries required by this generated kernel.
+
+        ``shim.fatbin`` supplies the device functions used by string UDFs and
+        the managed-string NRT destructor. Because generated UDF source is
+        opaque here, conservatively link it for every string input, even when
+        the UDF does not access that column. Linking it into numeric apply
+        kernels adds device-link work without providing any symbols they use.
+        """
+        if nrt or self._has_string_input():
+            return [UDF_SHIM_FILE]
+        return []
+
+    def _has_string_input(self):
+        """Whether an apply input needs the string UDF device library."""
+        if hasattr(self.frame, "_dtypes"):
+            return any(
+                is_dtype_obj_string(dtype) for _, dtype in self.frame._dtypes
+            )
+        return is_dtype_obj_string(self.frame.dtype)
 
     def get_kernel(self):
         return self._compile_or_get_kernel()

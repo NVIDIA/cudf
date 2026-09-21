@@ -29,6 +29,7 @@ from cudf_polars.dsl.ir import (
 )
 from cudf_polars.dsl.tracing import CUDF_POLARS_NVTX_DOMAIN
 from cudf_polars.dsl.translate import Translator
+from cudf_polars.testing.fallback import record_fallback
 from cudf_polars.utils.config import (
     MemoryResourceConfig,
     _env_get_int,
@@ -372,6 +373,7 @@ def execute_with_cudf(
                 warnings.warn(error_message, PerformanceWarning, stacklevel=2)
             if translator.config_options.raise_on_fail:
                 raise exception
+            record_fallback()
         else:
             nt.set_udf(
                 partial(

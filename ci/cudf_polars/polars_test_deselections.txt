@@ -1,0 +1,45 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# This file contains a list of pytest node IDs that are skipped by when running the upstream polars
+# tests with the `run_cudf_polars_polars_tests.sh` test runner.
+
+# Relies on a polars build created in place.
+tests/unit/meta/test_polars_import.py::test_polars_import
+
+# Relies on polars built in debug mode.
+tests/unit/streaming/test_streaming_sort.py::test_streaming_sort[True]
+
+# The CI image does not contain the dot binary.
+tests/docs/test_user_guide.py
+
+# Fails on some systems. See https://github.com/pola-rs/polars/issues/19870.
+tests/unit/operations/test_join.py::test_join_4_columns_with_validity
+
+# Fails in Rocky Linux 8 due to SSL CA issues.
+tests/unit/io/test_csv.py::test_read_web_file
+
+# TODO: Debug and re-enable the following tests.
+# SQLite in CI does not support FULL OUTER JOIN.
+tests/unit/sql/test_distinct.py::test_distinct_with_full_outer_join
+tests/unit/sql/test_distinct.py::test_distinct_basic_single_column
+tests/unit/sql/test_distinct.py::test_distinct_basic_multiple_columns
+tests/unit/sql/test_distinct.py::test_distinct_basic_all_columns
+tests/unit/sql/test_distinct.py::test_distinct_with_left_join_nulls
+tests/unit/sql/test_distinct.py::test_distinct_with_nulls_handling
+tests/unit/sql/test_window_functions.py::test_window_function_with_nulls
+
+# KvikIO file creation errors in CI.
+tests/unit/io/test_sink.py::test_mkdir[in-memory-scan_parquet-sink_parquet]
+tests/unit/io/test_sink.py::test_mkdir[in-memory-scan_csv-sink_csv]
+tests/unit/io/test_sink.py::test_mkdir[in-memory-scan_ndjson-sink_ndjson]
+tests/unit/io/test_sink.py::test_mkdir[streaming-scan_parquet-sink_parquet]
+tests/unit/io/test_sink.py::test_mkdir[streaming-scan_csv-sink_csv]
+tests/unit/io/test_sink.py::test_mkdir[streaming-scan_ndjson-sink_ndjson]
+tests/unit/io/test_write.py::test_write_async[read_parquet-<lambda>]
+tests/unit/io/test_write.py::test_write_async[<lambda>-<lambda>0]
+tests/unit/io/test_write.py::test_write_async[<lambda>-<lambda>2]
+
+# Polars decompresses the entire stream instead of stopping at the slice limit.
+# See https://github.com/pola-rs/polars/issues/28954.
+tests/unit/io/test_scan.py::test_scan_ndjson_streaming_decompression[schema0]
+tests/unit/io/test_scan.py::test_scan_ndjson_streaming_decompression[None]

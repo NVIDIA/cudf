@@ -10,7 +10,7 @@ and runs on the CPU.
 ## Install
 
 Follow the [NVIDIA CUDA-X installation
-guide](https://docs.rapids.ai/install/#install-rapids)
+guide](https://docs.nvidia.com/datascience/install/#install-rapids)
 and pick the `cudf-polars` package for your CUDA and Python versions. For
 example, with conda:
 

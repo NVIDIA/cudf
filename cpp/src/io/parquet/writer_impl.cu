@@ -2854,15 +2854,17 @@ std::unique_ptr<std::vector<uint8_t>> writer::merge_row_group_metadata(
 
   md.row_groups.reserve(metadata_list.size());
   for (auto const& blob : metadata_list) {
-    CompactProtocolReader cpreader(
-      blob.get()->data(),
-      std::max<size_t>(blob.get()->size(), sizeof(file_ender_s)) - sizeof(file_ender_s));
-    cpreader.skip_bytes(sizeof(file_header_s));  // Skip over file header
+    // The blob is header + thrift metadata + ender; parse the metadata span and reject overreads.
+    auto const& md_blob = *blob.get();
+    CUDF_EXPECTS(md_blob.size() >= sizeof(file_header_s) + sizeof(file_ender_s),
+                 "Parquet row-group metadata blob is too small");
+    auto const begin = md_blob.data() + sizeof(file_header_s);
+    auto const len   = md_blob.size() - sizeof(file_header_s) - sizeof(file_ender_s);
     if (md.num_rows == 0) {
-      cpreader.read(&md);
+      decode_footer_bytes({begin, len}, &md);
     } else {
       FileMetaData tmp;
-      cpreader.read(&tmp);
+      decode_footer_bytes({begin, len}, &tmp);
       md.row_groups.insert(md.row_groups.end(),
                            std::make_move_iterator(tmp.row_groups.begin()),
                            std::make_move_iterator(tmp.row_groups.end()));

@@ -26,18 +26,16 @@ public class HashJoin implements AutoCloseable {
   private static final Logger log = LoggerFactory.getLogger(HashJoin.class);
 
   private static class HashJoinCleaner extends MemoryCleaner.Cleaner {
-    private Table buildKeys;
+    private volatile Table buildKeys;
     private long nativeHandle;
 
-    HashJoinCleaner(Table buildKeys, long nativeHandle) {
-      this.buildKeys = buildKeys;
-      this.nativeHandle = nativeHandle;
-      addRef();
+    HashJoinCleaner(Table buildKeys) {
+      this.buildKeys = new Table(buildKeys.getColumns());
     }
 
     @Override
     protected synchronized boolean cleanImpl(boolean logErrorIfNotClean) {
-      boolean neededCleanup = nativeHandle != 0;
+      boolean neededCleanup = buildKeys != null;
       if (neededCleanup) {
         long origAddress = nativeHandle;
         try (Table toClose = buildKeys) {
@@ -55,11 +53,12 @@ public class HashJoin implements AutoCloseable {
 
     @Override
     public boolean isClean() {
-      return nativeHandle == 0;
+      return buildKeys == null;
     }
   }
 
   private final HashJoinCleaner cleaner;
+  private final long numberOfColumns;
   private final boolean compareNullsEqual;
   private boolean isClosed = false;
 
@@ -72,15 +71,16 @@ public class HashJoin implements AutoCloseable {
    * @param compareNullsEqual true if null key values should match otherwise false
    */
   public HashJoin(Table buildKeys, boolean compareNullsEqual) {
+    this.numberOfColumns = buildKeys.getNumberOfColumns();
     this.compareNullsEqual = compareNullsEqual;
-    Table buildTable = new Table(buildKeys.getColumns());
+    this.cleaner = new HashJoinCleaner(buildKeys);
     try {
-      long handle = create(buildTable.getNativeView(), compareNullsEqual);
-      this.cleaner = new HashJoinCleaner(buildTable, handle);
+      cleaner.addRef();
+      cleaner.nativeHandle = create(cleaner.buildKeys.getNativeView(), compareNullsEqual);
       MemoryCleaner.register(this, cleaner);
     } catch (Throwable t) {
       try {
-        buildTable.close();
+        cleaner.clean(false);
       } catch (Throwable t2) {
         t.addSuppressed(t2);
       }
@@ -90,18 +90,18 @@ public class HashJoin implements AutoCloseable {
 
   @Override
   public synchronized void close() {
-    cleaner.delRef();
     if (isClosed) {
       cleaner.logRefCountDebug("double free " + this);
       throw new IllegalStateException("Close called too many times " + this);
     }
-    cleaner.clean(false);
+    cleaner.delRef();
     isClosed = true;
+    cleaner.clean(false);
   }
 
   /** Get the number of join key columns for the table used to generate the hash table. */
   public long getNumberOfColumns() {
-    return cleaner.buildKeys.getNumberOfColumns();
+    return numberOfColumns;
   }
 
   /** Returns true if the hash table was built to match on nulls otherwise false. */
@@ -120,6 +120,9 @@ public class HashJoin implements AutoCloseable {
   }
 
   long getNativeView() {
+    if (isClosed) {
+      throw new IllegalStateException("HashJoin is already closed");
+    }
     return cleaner.nativeHandle;
   }
 

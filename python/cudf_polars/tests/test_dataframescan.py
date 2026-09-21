@@ -9,11 +9,13 @@ import pytest
 
 import polars as pl
 
+from cudf_polars.containers import DataFrame
+from cudf_polars.dsl.ir import Select
 from cudf_polars.testing.asserts import (
     assert_gpu_result_equal,
     assert_ir_translation_raises,
 )
-from cudf_polars.utils.versions import POLARS_VERSION_LT_138
+from cudf_polars.utils.versions import POLARS_VERSION_LT_138, POLARS_VERSION_LT_143
 
 
 @pytest.mark.parametrize(
@@ -234,3 +236,81 @@ def test_struct_literal_not_supported(engine: pl.GPUEngine):
     dtype = pl.Struct([pl.Field("a", pl.Int64), pl.Field("b", pl.String)])
     q = pl.LazyFrame().select(pl.lit(None, dtype=pl.Null).cast(dtype, strict=True))
     assert_ir_translation_raises(q, engine, NotImplementedError)
+
+
+@pytest.mark.skipif(
+    POLARS_VERSION_LT_143,
+    reason="Polars < 1.43 does not push len() below the union",
+)
+def test_len_does_not_materialize_dataframescan(
+    in_memory_engine: pl.GPUEngine, monkeypatch: pytest.MonkeyPatch
+):
+    # Using the same frame twice puts a Cache node between each Select(len)
+    # and the DataFrameScan, and keeps every column in the scan's projection,
+    # so the scan is not zero-width. The row count is known from the polars
+    # frame and must not require copying the frame to the GPU.
+    df = pl.LazyFrame({"a": [1, 2, 3], "b": [4, 5, 6]})
+    q = pl.concat([df, df]).select(pl.len())
+
+    def fail(*args, **kwargs):
+        raise AssertionError("DataFrameScan was materialized to count its rows")
+
+    monkeypatch.setattr(DataFrame, "from_polars", fail)
+    assert_gpu_result_equal(q, engine=in_memory_engine)
+
+
+@pytest.mark.parametrize("len_first", [True, False])
+def test_len_and_data_share_dataframescan_cache(
+    in_memory_engine: pl.GPUEngine, monkeypatch: pytest.MonkeyPatch, *, len_first
+):
+    # One consumer of the shared cache only needs the row count, the other
+    # needs the data. Whichever is evaluated first, both must be correct. If
+    # the data consumer runs first the frame is already cached, so the count
+    # must come from the cached frame rather than the fast path.
+    df = pl.LazyFrame({"a": [1, 2, 3], "b": [4, 5, 6]})
+    count = df.select(pl.len().alias("x"))
+    total = df.select(pl.col("a").sum().cast(pl.UInt32).alias("x"))
+    q = pl.concat([count, total] if len_first else [total, count])
+
+    fast_path_calls = []
+    len_frame = Select._len_frame
+
+    def spy(self, count, context):
+        fast_path_calls.append(count)
+        return len_frame(self, count, context)
+
+    monkeypatch.setattr(Select, "_len_frame", spy)
+    assert_gpu_result_equal(q, engine=in_memory_engine, check_row_order=False)
+    if not POLARS_VERSION_LT_143:
+        # Polars < 1.43 plans a projection between the len and the Cache, so
+        # the fast path is not reached there; results are still checked above.
+        assert len(fast_path_calls) == (1 if len_first else 0)
+
+
+def _virtual_frame(n: int) -> pl.LazyFrame:
+    # A polars frame of n rows that is never materialized on the CPU either.
+    return pl.Series([{}], dtype=pl.Struct({})).new_from_index(0, n).to_frame().lazy()
+
+
+def test_len_of_dataframescan_beyond_size_type(in_memory_engine: pl.GPUEngine):
+    # More rows than cudf::size_type can hold; the count must not need the rows.
+    n = 2**31 + 1
+    q = _virtual_frame(n).select(pl.len())
+    assert q.collect(engine=in_memory_engine).item() == n
+
+
+@pytest.mark.skipif(
+    POLARS_VERSION_LT_143,
+    reason="Polars < 1.43 does not push len() below the union",
+)
+def test_len_of_union_exceeding_index_dtype_raises(in_memory_engine: pl.GPUEngine):
+    if pl.get_index_type() != pl.UInt32:
+        pytest.skip("requires a 32-bit polars index type")
+    # Each branch fits the index dtype, their combined length does not. Polars
+    # sums in UInt128 and raises when narrowing back; wrapping would be silent.
+    lf = _virtual_frame(2**32 - 2)
+    q = pl.concat([lf, lf]).select(pl.len())
+    with pytest.raises(
+        pl.exceptions.InvalidOperationError, match=r"conversion.*failed"
+    ):
+        q.collect(engine=in_memory_engine)

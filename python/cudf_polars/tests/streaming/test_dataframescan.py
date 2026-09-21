@@ -11,12 +11,15 @@ import pytest
 import polars as pl
 
 from cudf_polars import Translator
+from cudf_polars.dsl.expr import LiteralColumn
+from cudf_polars.dsl.ir import DataFrameScan, Select
 from cudf_polars.dsl.traversal import traversal
 from cudf_polars.engine.options import StreamingOptions
 from cudf_polars.streaming.parallel import lower_ir_graph
 from cudf_polars.streaming.statistics import collect_statistics
 from cudf_polars.testing.asserts import assert_gpu_result_equal
 from cudf_polars.utils.config import ConfigOptions
+from cudf_polars.utils.versions import POLARS_VERSION_LT_143
 
 if TYPE_CHECKING:
     import concurrent.futures
@@ -172,3 +175,57 @@ def test_dataframescan_pickle(
     assert type(unpickled_ir) is type(ir)
     assert unpickled_ir.schema == ir.schema
     _assert_stable_ids_match(ir, unpickled_ir)
+
+
+def _lower(q: pl.LazyFrame, parquet_stats_executor):
+    _engine = pl.GPUEngine(
+        raise_on_fail=True,
+        executor="streaming",
+        executor_options={"max_rows_per_partition": 2},
+    )
+    qir = Translator(q._ldf.visit(), _engine).translate_ir()
+    assert any(isinstance(node, DataFrameScan) for node in traversal([qir]))
+    config_options = ConfigOptions.from_polars_engine(_engine)
+    lowering = lower_ir_graph(
+        qir,
+        config_options,
+        collect_statistics(qir, config_options, parquet_stats_executor),
+    )
+    return lowering.lowered
+
+
+@pytest.mark.skipif(
+    POLARS_VERSION_LT_143,
+    reason="Polars < 1.43 does not push len() below the union",
+)
+def test_len_over_unmaterializable_dataframescan_is_lowered_to_a_literal(
+    parquet_stats_executor: concurrent.futures.ThreadPoolExecutor,
+):
+    # More rows than cudf::size_type can hold: the frame can never be evaluated,
+    # but its row count is known when lowering.
+    lf = pl.Series([{}], dtype=pl.Struct({})).new_from_index(0, 2**31).to_frame().lazy()
+    lowered = _lower(pl.concat([lf, lf]).select(pl.len()), parquet_stats_executor)
+    nodes = list(traversal([lowered]))
+    assert not any(isinstance(node, DataFrameScan) for node in nodes)
+    counts = {
+        e.value.value.item()
+        for node in nodes
+        if isinstance(node, Select)
+        for e in node.exprs
+        if isinstance(e.value, LiteralColumn)
+    }
+    assert counts == {2**31}
+
+
+@pytest.mark.skipif(
+    POLARS_VERSION_LT_143,
+    reason="Polars < 1.43 does not push len() below the union",
+)
+@pytest.mark.parametrize("n", [3, 2**31 - 1])
+def test_len_over_materializable_dataframescan_is_still_evaluated(
+    parquet_stats_executor: concurrent.futures.ThreadPoolExecutor, n
+):
+    # Up to and including the maximum size of a cudf column, the frame fits.
+    lf = pl.Series([{}], dtype=pl.Struct({})).new_from_index(0, n).to_frame().lazy()
+    lowered = _lower(pl.concat([lf, lf]).select(pl.len()), parquet_stats_executor)
+    assert any(isinstance(node, DataFrameScan) for node in traversal([lowered]))

@@ -1286,6 +1286,16 @@ def test_csv_reader_index_col_position_with_explicit_header():
     assert_eq(cu_df.index, pd_df.index)
 
 
+def test_csv_reader_index_col_name_is_not_a_position():
+    # A str is a Sequence too, and iterating it yields characters, so the
+    # position branch does not match it and it resolves by name as before.
+    buffer = "a,b,c\n3,4,5\n6,7,8"
+
+    cu_df = read_csv(StringIO(buffer), index_col="a")
+    pd_df = pd.read_csv(StringIO(buffer), index_col="a")
+    assert_eq(cu_df, pd_df)
+
+
 @pytest.mark.parametrize("index_name", [None, "custom name", 124])
 @pytest.mark.parametrize("index_col", [None, 0, "a"])
 def test_csv_reader_index_names(index_name, index_col):

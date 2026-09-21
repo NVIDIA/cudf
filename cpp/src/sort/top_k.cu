@@ -277,11 +277,11 @@ rmm::device_uvector<size_type> select_top_k_rows(column_view const& col,
   auto const compact  = [&](size_type* out, bool want_valid) {
     row_validity_is const pred{mask, offset, want_valid};
     size_t temp_bytes = 0;
-    cub::DeviceSelect::If(
-      nullptr, temp_bytes, rows, out, d_num_selected.data(), size, pred, stream.get());
+    CUDF_CUDA_TRY(cub::DeviceSelect::If(
+      nullptr, temp_bytes, rows, out, d_num_selected.data(), size, pred, stream.get()));
     auto temp = cuda::device_buffer<std::byte>(stream, temp_mr, temp_bytes, cuda::no_init);
-    cub::DeviceSelect::If(
-      temp.data(), temp_bytes, rows, out, d_num_selected.data(), size, pred, stream.get());
+    CUDF_CUDA_TRY(cub::DeviceSelect::If(
+      temp.data(), temp_bytes, rows, out, d_num_selected.data(), size, pred, stream.get()));
   };
 
   // Compacted only when some nulls are wanted: for a null placement that puts them at the far end,

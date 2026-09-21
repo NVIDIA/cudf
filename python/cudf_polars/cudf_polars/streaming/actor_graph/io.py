@@ -32,10 +32,7 @@ from cudf_polars.streaming.actor_graph.dispatch import (
     ir_context_for_node,
 )
 from cudf_polars.streaming.actor_graph.nodes import define_actor, shutdown_on_error
-from cudf_polars.streaming.actor_graph.tracing import (
-    send_chunk,
-    trace_channel,
-)
+from cudf_polars.streaming.actor_graph.tracing import send_chunk
 from cudf_polars.streaming.actor_graph.utils import (
     ChannelManager,
     chunk_to_frame,
@@ -202,9 +199,11 @@ async def dataframescan_node(
         ``Cluster.SPMD`` mode.
     """
     async with shutdown_on_error(
-        context, ch_out, trace_ir=ir, ir_context=ir_context
+        context,
+        chs_out=(ch_out,),
+        trace_ir=ir,
+        ir_context=ir_context,
     ) as tracer:
-        ch_out = trace_channel(ch_out, tracer)
         # Find local partition count.
         nrows = ir.df.shape()[0]
         global_count = math.ceil(nrows / rows_per_partition) if nrows > 0 else 0
@@ -227,26 +226,31 @@ async def dataframescan_node(
 
         # Build list of IR slices to read
         ir_slices = []
-        # Partial workaround for
-        # https://github.com/pola-rs/polars/issues/23214 If a struct column
-        # has nulls and is sliced then polars exports invalid validity
-        # buffers. We can't detect this exact state because we can't know
-        # when the column is sliced.
-        copy_slice = any(
-            isinstance(dt, pl.Struct)
-            for dt in pl.datatypes.unpack_dtypes(ir.df.dtypes(), include_compound=True)
-        )
+        # Partial workarounds for sliced nested columns. Polars exports invalid
+        # validity buffers for struct columns with nulls
+        # (https://github.com/pola-rs/polars/issues/23214), and double-counts
+        # offsets for Array columns with outer nulls
+        # (https://github.com/pola-rs/polars/pull/28602).
+        dtypes = ir.df.dtypes()
+        has_struct = False
+        array_columns = []
+        for name, dtype in zip(ir.df.columns(), dtypes, strict=True):
+            has_struct = has_struct or any(
+                isinstance(dt, pl.Struct)
+                for dt in pl.datatypes.unpack_dtypes(dtype, include_compound=True)
+            )
+            if isinstance(dtype, pl.Array):
+                array_columns.append(name)
 
         for seq_num in range(local_count):
             offset = local_offset * rows_per_partition + seq_num * rows_per_partition
             if offset >= nrows:
                 break
             sliced = ir.df.slice(offset, rows_per_partition)
-            if copy_slice:
-                # OK, we have structs that might have nulls, and we're
-                # slicing. So let's copy to contiguous storage. This is
-                # hacky and doesn't handle the case where we didn't slice
-                # but the user sliced the input.
+            if has_struct or any(
+                sliced.get_column(name).null_count() > 0 for name in array_columns
+            ):
+                # Copy the affected slice to contiguous storage before Arrow export.
                 f = io.BytesIO()
                 sliced.serialize_binary(f)
                 f.seek(0)
@@ -308,7 +312,10 @@ async def dataframescan_node(
 
         async with (
             shutdown_on_error(
-                context, *lineariser.input_channels, trace_ir=ir, ir_context=ir_context
+                context,
+                chs_aux=lineariser.input_channels,
+                trace_ir=ir,
+                ir_context=ir_context,
             ),
         ):
             await gather_in_task_group(
@@ -448,9 +455,11 @@ async def python_scan_node(
         The output Channel[TableChunk].
     """
     async with shutdown_on_error(
-        context, ch_out, trace_ir=ir, ir_context=ir_context
+        context,
+        chs_out=(ch_out,),
+        trace_ir=ir,
+        ir_context=ir_context,
     ) as tracer:
-        ch_out = trace_channel(ch_out, tracer)
         rank_aware_source = _find_rank_aware_source(ir.options[0])
         if rank_aware_source is None and comm.nranks > 1 and comm.rank != 0:
             # A plain (rank-unaware) source runs on rank 0 only; other ranks
@@ -645,9 +654,11 @@ async def scan_node(
     tasks: Sequence[ScanTask] = ir.tasks
 
     async with shutdown_on_error(
-        context, ch_out, trace_ir=ir, ir_context=ir_context
+        context,
+        chs_out=(ch_out,),
+        trace_ir=ir,
+        ir_context=ir_context,
     ) as tracer:
-        ch_out = trace_channel(ch_out, tracer)
         # Send basic metadata
         ir_context = dataclasses.replace(ir_context, tracer=tracer)
         await send_metadata(
@@ -705,7 +716,10 @@ async def scan_node(
 
         async with (
             shutdown_on_error(
-                context, *lineariser.input_channels, trace_ir=ir, ir_context=ir_context
+                context,
+                chs_aux=lineariser.input_channels,
+                trace_ir=ir,
+                ir_context=ir_context,
             ),
         ):
             await gather_in_task_group(
@@ -790,10 +804,12 @@ async def sink_node(
     # with other files.
 
     async with shutdown_on_error(
-        context, ch_in, ch_out, ir_context=ir_context, trace_ir=ir
-    ) as tracer:
-        ch_in = trace_channel(ch_in, tracer)
-        ch_out = trace_channel(ch_out, tracer)
+        context,
+        chs_in=(ch_in,),
+        chs_out=(ch_out,),
+        ir_context=ir_context,
+        trace_ir=ir,
+    ):
         metadata = await recv_metadata(ch_in, context)
         await send_metadata(
             ch_out, context, ChannelMetadata(local_count=1, duplicated=True)

@@ -20,6 +20,7 @@
 #include <initializer_list>
 #include <memory>
 #include <optional>
+#include <variant>
 #include <vector>
 
 /**
@@ -120,6 +121,7 @@ struct [[nodiscard]] expression {
                                                table_view const& right,
                                                cuda::stream_ref stream) const = 0;
 
+  /// @brief Destroy the expression object
   virtual ~expression() {}
 };
 

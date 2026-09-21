@@ -9,6 +9,11 @@ cd "$(dirname "$(realpath "${BASH_SOURCE[0]}")")"/../
 
 source ./ci/test_cpp_common.sh
 
+RUN_LIBCUDF_TESTS="${RUN_LIBCUDF_TESTS:-true}"
+RUN_EXAMPLES_TESTS="${RUN_EXAMPLES_TESTS:-true}"
+RUN_LIBCUDF_KAFKA_TESTS="${RUN_LIBCUDF_KAFKA_TESTS:-true}"
+RUN_LIBCUDF_STREAMING_TESTS="${RUN_LIBCUDF_STREAMING_TESTS:-true}"
+
 EXITCODE=0
 trap "EXITCODE=1" ERR
 set +e
@@ -16,28 +21,39 @@ set +e
 # Run gtests from the libcudf-tests and libcudf-streaming-tests packages
 export GTEST_OUTPUT=xml:${RAPIDS_TESTS_DIR}/
 
-rapids-logger "Run libcudf gtests"
-timeout 30m ./ci/run_cudf_ctests.sh -j20
-SUITEERROR=$?
+SUITEERROR=0
 
-if (( SUITEERROR == 0 )); then
+if [[ "${RUN_LIBCUDF_TESTS}" == "true" ]]; then
+    rapids-logger "Run libcudf gtests"
+    timeout 30m ./ci/run_cudf_ctests.sh -j20
+    SUITEERROR=$?
+fi
+
+if (( SUITEERROR == 0 )) && [[ "${RUN_EXAMPLES_TESTS}" == "true" ]]; then
     rapids-logger "Run libcudf examples"
     timeout 30m ./ci/run_cudf_examples.sh
     SUITEERROR=$?
 fi
 
-if (( SUITEERROR == 0 )); then
+if (( SUITEERROR == 0 )) && [[ "${RUN_LIBCUDF_KAFKA_TESTS}" == "true" ]]; then
     rapids-logger "Run libcudf_kafka gtests"
     timeout 30m ./ci/run_cudf_kafka_ctests.sh -j20
     SUITEERROR=$?
 fi
 
-if (( SUITEERROR == 0 )); then
+if (( SUITEERROR == 0 )) && [[ "${RUN_LIBCUDF_STREAMING_TESTS}" == "true" ]]; then
     rapids-logger "Run libcudf_streaming gtests"
     # cudf_streaming contains distributed tests, and running tests in
     # parallel results in resource starvation CI env.
+    # Multiple MPI ranks execute the same GTest binary concurrently. GTest's
+    # directory-mode XML output chooses file names without interprocess
+    # synchronization, so ranks can corrupt a shared report. Keep XML reports
+    # enabled for the non-distributed suites above, but disable them here.
+    saved_gtest_output="${GTEST_OUTPUT}"
+    unset GTEST_OUTPUT
     timeout 5m ./ci/run_cudf_streaming_ctests.sh -j1
     SUITEERROR=$?
+    export GTEST_OUTPUT="${saved_gtest_output}"
 fi
 
 rapids-logger "Test script exiting with value: $EXITCODE"

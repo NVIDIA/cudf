@@ -11,7 +11,7 @@ Please visit [the official documentation page](https://docs.nvidia.com/dask-cudf
 
 ## Installation
 
-See the [RAPIDS install page](https://docs.rapids.ai/install/) for the most up-to-date information and commands for installing Dask cuDF and other RAPIDS packages.
+See the [RAPIDS install page](https://docs.nvidia.com/datascience/install/) for the most up-to-date information and commands for installing Dask cuDF and other RAPIDS packages.
 
 ## Resources
 
@@ -20,7 +20,7 @@ See the [RAPIDS install page](https://docs.rapids.ai/install/) for the most up-t
 - [cuDF documentation](https://docs.nvidia.com/cudf/)
 - [10 Minutes to cuDF and Dask cuDF](https://docs.nvidia.com/cudf/latest/cudf/10min/)
 - [Dask-CUDA documentation](https://docs.nvidia.com/dask-cuda/)
-- [Deployment](https://docs.rapids.ai/deployment/stable/)
+- [Deployment](https://docs.nvidia.com/datascience/deployment/latest/)
 - [RAPIDS Community](https://rapids.ai/learn-more/#get-involved): Get help, contribute, and collaborate.
 
 ### Quick-start example
@@ -61,4 +61,4 @@ if __name__ == "__main__":
 
 If you do not have multiple GPUs available, using `LocalCUDACluster` is optional. However, it is still a good idea to [enable cuDF spilling](https://docs.nvidia.com/cudf/latest/cudf/developer_guide/library_design/#spilling-to-host-memory).
 
-If you wish to scale across multiple nodes, you will need to use a different mechanism to deploy your Dask-CUDA workers. Please see [the RAPIDS deployment documentation](https://docs.rapids.ai/deployment/stable/) for more instructions.
+If you wish to scale across multiple nodes, you will need to use a different mechanism to deploy your Dask-CUDA workers. Please see [the RAPIDS deployment documentation](https://docs.nvidia.com/datascience/deployment/latest/) for more instructions.

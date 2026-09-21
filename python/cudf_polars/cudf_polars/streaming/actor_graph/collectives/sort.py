@@ -40,10 +40,7 @@ from cudf_polars.streaming.actor_graph.nodes import (
     default_node_single,
     shutdown_on_error,
 )
-from cudf_polars.streaming.actor_graph.tracing import (
-    send_chunk,
-    trace_channel,
-)
+from cudf_polars.streaming.actor_graph.tracing import send_chunk
 from cudf_polars.streaming.actor_graph.utils import (
     ChannelManager,
     ChunkStore,
@@ -819,15 +816,12 @@ async def sort_actor(
     ch_chunk_store = context.create_channel()
     async with shutdown_on_error(
         context,
-        ch_in,
-        ch_out,
-        ch_sample_replay,
-        ch_chunk_store,
+        chs_in=(ch_in,),
+        chs_out=(ch_out,),
+        chs_aux=(ch_sample_replay, ch_chunk_store),
         trace_ir=ir,
         ir_context=ir_context,
     ) as tracer:
-        ch_in = trace_channel(ch_in, tracer)
-        ch_out = trace_channel(ch_out, tracer)
         # TODO: Skip sort if OrderScheme metadata is present and compatible.
         metadata_in = await recv_metadata(ch_in, context)
 

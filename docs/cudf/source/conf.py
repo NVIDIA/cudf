@@ -140,6 +140,8 @@ extensions = [
     "myst_nb",
 ]
 
+# cudf doc builds run notebooks that use GPU resources parallel builds and can have
+# CUDA context initialization failures and MyST-NB warnings
 llms_txt_build_parallel = False
 
 remove_from_toctrees = ["cudf/api_docs/api/*"]

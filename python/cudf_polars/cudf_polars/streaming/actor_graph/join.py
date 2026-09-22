@@ -305,12 +305,6 @@ async def _collect_small_side_for_broadcast(
         size += chunks[-1].data_alloc_size()
     row_count = sum(c.shape[0] for c in chunks)
 
-    can_concatenate = row_count <= CUDF_ROW_LIMIT
-    if must_concatenate and not can_concatenate:
-        raise RuntimeError(
-            "Broadcast join selected but broadcast side cannot be constructed"
-        )
-
     dfs: list[DataFrame] = []
     if need_allgather:
         allgather = AllGatherManager(context, comm, collective_id)
@@ -338,6 +332,11 @@ async def _collect_small_side_for_broadcast(
             )
         ]
     elif chunks:
+        can_concatenate = row_count <= CUDF_ROW_LIMIT
+        if must_concatenate and not can_concatenate:
+            raise RuntimeError(
+                "Broadcast join selected but broadcast side cannot be constructed"
+            )
         if can_concatenate:
             chunks, extra = await make_table_chunks_available_or_wait(
                 context,

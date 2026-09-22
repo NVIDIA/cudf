@@ -102,6 +102,60 @@ def test_init_from_series_align(dict_of_series):
     assert_eq(pdf, gdf)
 
 
+@pytest.mark.parametrize("datetime_index", [False, True])
+@pytest.mark.parametrize("columns", [None, ["full"], ["subset"], []])
+@pytest.mark.parametrize("explicit_index", [False, True])
+def test_init_from_series_align_selected_columns(
+    datetime_index, columns, explicit_index
+):
+    if datetime_index:
+        index = pd.DatetimeIndex(
+            ["2024-01-01", "2024-01-02", "2024-01-04", "2024-01-07"],
+            name="rows",
+        )
+    else:
+        index = pd.Index([1, 2, 3, 4], name="rows")
+    data = {
+        "full": pd.Series([1.0, 2.0, 3.0, 4.0], index=index),
+        "subset": pd.Series([10.0, 30.0], index=index[[0, 2]]),
+    }
+    selected_index = index[[1, 3]] if explicit_index else None
+    if columns is not None:
+        columns = pd.Index(columns, dtype="str")
+    expected = pd.DataFrame(data, columns=columns, index=selected_index)
+
+    for input_data in (
+        data,
+        {key: cudf.from_pandas(value) for key, value in data.items()},
+    ):
+        result = cudf.DataFrame(
+            input_data, columns=columns, index=selected_index
+        )
+        assert_eq(expected, result)
+
+
+@pytest.mark.parametrize("excluded", [[3, 4, 5], object()])
+def test_init_dict_selected_columns_ignore_unselected_data(excluded):
+    data = {"keep": [1, 2], "drop": excluded}
+    expected = pd.DataFrame(data, columns=["keep"])
+    result = cudf.DataFrame(data, columns=["keep"])
+
+    assert_eq(expected, result)
+
+
+@pytest.mark.parametrize(
+    "label", [np.nan, None, pd.NA, ("a", "b"), ("a", np.nan)]
+)
+def test_init_dict_selected_columns_preserve_labels(label):
+    excluded_label = ("drop", "key") if isinstance(label, tuple) else "drop"
+    data = {label: [1, 2], excluded_label: [3, 4]}
+    columns = pd.Index([label], tupleize_cols=False)
+    expected = pd.DataFrame(data, columns=columns)
+    result = cudf.DataFrame(data, columns=columns)
+
+    assert_eq(expected, result)
+
+
 @pytest.mark.parametrize(
     ("dict_of_series", "expectation"),
     [

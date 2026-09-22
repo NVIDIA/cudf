@@ -838,12 +838,12 @@ class StringMethods(BaseAccessor):
                 input_column = self._column
             result_col = input_column.str_contains(col_pat)  # type: ignore[arg-type]
         if (
-            na is no_default
-            and self._column._PANDAS_NA_VALUE in {np.nan, None}
+            (na is no_default or pd.isna(na))
+            and self._column._PANDAS_NA_VALUE is np.nan
             and self._column.has_nulls()
         ):
             result_col = result_col.fillna(False)
-        if na is not no_default:
+        elif na is not no_default:
             result_col = result_col.fillna(na)
         return self._return_or_inplace(result_col)
 

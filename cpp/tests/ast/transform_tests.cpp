@@ -20,11 +20,11 @@
 #include <cudf/scalar/scalar.hpp>
 #include <cudf/table/table_view.hpp>
 #include <cudf/transform.hpp>
-
-#include <rmm/cuda_device.hpp>
+#include <cudf/utilities/error.hpp>
 
 #include <cuda/iterator>
 #include <cuda/stream>
+#include <cuda_runtime_api.h>
 
 #include <algorithm>
 #include <array>
@@ -1630,7 +1630,9 @@ TYPED_TEST(TransformTest, NonDefaultStream)
 
   using Executor = TypeParam;
 
-  cuda::stream stream{cuda::device_ref{rmm::get_current_cuda_device().value()}};
+  int device{};
+  CUDF_CUDA_TRY(cudaGetDevice(&device));
+  cuda::stream stream{cuda::device_ref{device}};
 
   auto c_0   = column_wrapper<int32_t>{3, 20, 1, 50};
   auto c_1   = column_wrapper<int32_t>{10, 7, 20, 0};

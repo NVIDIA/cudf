@@ -9,11 +9,12 @@
 #include <cudf_test/testing_main.hpp>
 
 #include <cudf/types.hpp>
+#include <cudf/utilities/error.hpp>
 
-#include <rmm/cuda_device.hpp>
 #include <rmm/device_uvector.hpp>
 
 #include <cuda/stream>
+#include <cuda_runtime_api.h>
 
 #include <src/io/fst/logical_stack.cuh>
 
@@ -25,6 +26,13 @@
 
 namespace {
 namespace fst = cudf::io::fst;
+
+cuda::stream make_stream()
+{
+  int device{};
+  CUDF_CUDA_TRY(cudaGetDevice(&device));
+  return cuda::stream{cuda::device_ref{device}};
+}
 
 /**
  * @brief Generates the sparse representation of stack operations to feed into the logical
@@ -153,7 +161,7 @@ TEST_F(LogicalStackTest, GroundTruth)
   constexpr SymbolT read_symbol = 'x';
 
   // Prepare cuda stream for data transfers & kernels
-  cuda::stream stream{cuda::device_ref{rmm::get_current_cuda_device().value()}};
+  auto stream = make_stream();
   cuda::stream_ref stream_view{stream.get()};
 
   // Test input,

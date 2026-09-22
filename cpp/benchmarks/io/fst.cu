@@ -14,12 +14,12 @@
 #include <cudf/types.hpp>
 #include <cudf/utilities/error.hpp>
 
-#include <rmm/cuda_device.hpp>
 #include <rmm/device_buffer.hpp>
 #include <rmm/device_uvector.hpp>
 
 #include <cuda/iterator>
 #include <cuda/stream>
+#include <cuda_runtime_api.h>
 
 #include <nvbench/nvbench.cuh>
 
@@ -28,7 +28,9 @@
 namespace {
 cuda::stream make_stream()
 {
-  return cuda::stream{cuda::device_ref{rmm::get_current_cuda_device().value()}};
+  int device{};
+  CUDF_CUDA_TRY(cudaGetDevice(&device));
+  return cuda::stream{cuda::device_ref{device}};
 }
 
 auto make_test_json_data(nvbench::state& state)

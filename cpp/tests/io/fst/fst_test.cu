@@ -15,17 +15,25 @@
 #include <cudf/scalar/scalar_factories.hpp>
 #include <cudf/strings/repeat_strings.hpp>
 #include <cudf/types.hpp>
+#include <cudf/utilities/error.hpp>
 
-#include <rmm/cuda_device.hpp>
 #include <rmm/device_buffer.hpp>
 #include <rmm/device_uvector.hpp>
 
 #include <cuda/stream>
+#include <cuda_runtime_api.h>
 
 #include <cstdlib>
 #include <vector>
 
 namespace {
+
+cuda::stream make_stream()
+{
+  int device{};
+  CUDF_CUDA_TRY(cudaGetDevice(&device));
+  return cuda::stream{cuda::device_ref{device}};
+}
 
 //------------------------------------------------------------------------------
 // CPU-BASED IMPLEMENTATIONS FOR VERIFICATION
@@ -122,7 +130,7 @@ TEST_F(FstTest, GroundTruth)
   using SymbolOffsetT = uint32_t;
 
   // Prepare cuda stream for data transfers & kernels
-  cuda::stream stream{cuda::device_ref{rmm::get_current_cuda_device().value()}};
+  auto stream = make_stream();
   cuda::stream_ref stream_view{stream.get()};
 
   // Test input

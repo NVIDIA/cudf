@@ -22,12 +22,13 @@
 #include <cudf/join/streaming_hash_join.hpp>
 #include <cudf/table/table_view.hpp>
 #include <cudf/types.hpp>
+#include <cudf/utilities/error.hpp>
 #include <cudf/utilities/span.hpp>
 
-#include <rmm/cuda_device.hpp>
 #include <rmm/mr/statistics_resource_adaptor.hpp>
 
 #include <cuda/stream>
+#include <cuda_runtime_api.h>
 
 #include <algorithm>
 #include <atomic>
@@ -119,8 +120,9 @@ TEST_F(StreamingHashJoinTest, ConcurrentInsert)
   auto const right_partitions = cudf::slice(right_view, slice_indices);
   column_wrapper<int32_t> left(values.begin(), values.end());
 
-  auto const device        = rmm::get_current_cuda_device();
-  auto const stream_device = cuda::device_ref{device.value()};
+  int device{};
+  CUDF_CUDA_TRY(cudaGetDevice(&device));
+  auto const stream_device = cuda::device_ref{device};
   std::vector<std::unique_ptr<cuda::stream>> streams;
   streams.reserve(num_batches);
   for (size_type i = 0; i < num_batches; ++i) {
@@ -150,7 +152,7 @@ TEST_F(StreamingHashJoinTest, ConcurrentInsert)
   threads.reserve(num_batches);
   for (size_type i = 0; i < num_batches; ++i) {
     threads.emplace_back([&, i] {
-      rmm::cuda_set_device_raii const device_guard{device};
+      CUDF_CUDA_TRY(cudaSetDevice(device));
       ready.fetch_add(1, std::memory_order_relaxed);
       while (!start.load(std::memory_order_acquire)) {
         std::this_thread::yield();

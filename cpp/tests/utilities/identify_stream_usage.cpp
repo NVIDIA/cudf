@@ -4,8 +4,7 @@
  */
 
 #include <cudf/detail/utilities/stream_pool.hpp>
-
-#include <rmm/cuda_device.hpp>
+#include <cudf/utilities/error.hpp>
 
 #include <cuda/stream>
 #include <cuda_runtime.h>
@@ -50,8 +49,12 @@ namespace test {
 
 cuda::stream_ref const get_default_stream()
 {
-  static cuda::stream stream{cuda::device_ref{rmm::get_current_cuda_device().value()}};
-  return stream;
+  static auto* stream = new cuda::stream{[] {
+    int device{};
+    CUDF_CUDA_TRY(cudaGetDevice(&device));
+    return cuda::device_ref{device};
+  }()};
+  return *stream;
 }
 
 #ifdef STREAM_MODE_TESTING

@@ -25,9 +25,8 @@
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_device.hpp>
-
 #include <cuda/stream>
+#include <cuda_runtime_api.h>
 
 #include <numeric>
 #include <random>
@@ -644,7 +643,9 @@ struct RebindStreamColumnTest : public cudf::test::BaseFixture {};
 
 TEST_F(RebindStreamColumnTest, RebindStreamPreservesNestedStructData)
 {
-  auto const device = cuda::device_ref{rmm::get_current_cuda_device().value()};
+  int device_id{};
+  CUDF_CUDA_TRY(cudaGetDevice(&device_id));
+  auto const device = cuda::device_ref{device_id};
   cuda::stream stream_a{device};
   cuda::stream stream_b{device};
 

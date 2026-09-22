@@ -13,7 +13,6 @@
 #include <cudf/scalar/scalar.hpp>
 #include <cudf/utilities/error.hpp>
 
-#include <rmm/cuda_device.hpp>
 #include <rmm/mr/callback_memory_resource.hpp>
 
 #include <cuda/stream>
@@ -67,6 +66,13 @@ class lifetime_test_scalar : public cudf::numeric_scalar<int32_t> {
   }
 };
 
+cuda::stream make_stream()
+{
+  int device{};
+  CUDF_CUDA_TRY(cudaGetDevice(&device));
+  return cuda::stream{cuda::device_ref{device}};
+}
+
 }  // namespace
 
 template <typename T>
@@ -111,7 +117,7 @@ TYPED_TEST(TypedScalarTestWithoutFixedPoint, SetValue)
 
 TEST_F(ScalarTest, AsyncSetValueOwnsHostSource)
 {
-  cuda::stream stream{cuda::device_ref{rmm::get_current_cuda_device().value()}};
+  auto stream           = make_stream();
   auto const stream_ref = cuda::stream_ref{stream.get()};
   int32_t source        = 42;
   lifetime_test_scalar scalar{0, true, stream_ref};
@@ -129,7 +135,7 @@ TEST_F(ScalarTest, AsyncSetValueOwnsHostSource)
 
 TEST_F(ScalarTest, AsyncStringConstructionOwnsHostSource)
 {
-  cuda::stream stream{cuda::device_ref{rmm::get_current_cuda_device().value()}};
+  auto stream           = make_stream();
   auto const stream_ref = cuda::stream_ref{stream.get()};
   host_func_gate gate;
   auto upstream = cudf::get_current_device_resource_ref();

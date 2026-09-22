@@ -374,7 +374,7 @@ async def _collect_small_side_for_broadcast(
                 group, extra = await make_table_chunks_available_or_wait(  # noqa: PLW2901
                     context,
                     group,
-                    reserve_extra=group_size,
+                    reserve_extra=0 if len(group) == 1 else group_size,
                     net_memory_delta=0,
                 )
                 with opaque_memory_usage(extra):

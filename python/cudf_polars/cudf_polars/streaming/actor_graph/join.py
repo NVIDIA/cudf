@@ -341,7 +341,7 @@ async def _collect_small_side_for_broadcast(
             chunks, extra = await make_table_chunks_available_or_wait(
                 context,
                 chunks,
-                reserve_extra=size,
+                reserve_extra=0 if len(chunks) == 1 else size,
                 net_memory_delta=0,
             )
             with opaque_memory_usage(extra):

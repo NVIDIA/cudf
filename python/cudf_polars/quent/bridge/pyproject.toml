@@ -1,0 +1,17 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+[build-system]
+requires = ["maturin>=1.9,<2"]
+build-backend = "maturin"
+
+[project]
+name = "cudf-polars-quent"
+version = "0.1.0"
+requires-python = ">=3.11"
+license = "Apache-2.0"
+
+[tool.maturin]
+module-name = "cudf_polars._quent"
+python-source = "../.."
+features = ["pyo3/extension-module"]

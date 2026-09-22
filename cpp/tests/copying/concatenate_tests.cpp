@@ -1314,35 +1314,46 @@ TEST_F(ListsColumnTest, SlicedColumns)
   }
 
   {
-    auto const empty = decltype(LCW::nested({})){};
-    auto const a0 =
-      LCW::nested({{{1, 1, 1}, {2, 2}}, {{3, 3}}, {{10, 9, 16}, {8, 7, 1}, {6, 8, 2}}});
-    auto const a1 = LCW::nested({empty, LCW::nested({empty}), {{6, 6}, {2}}});
-    auto const a2 = LCW::nested({{empty, empty}});
-    auto const a3 = LCW::nested({empty, empty, {{10, 10, 10}, {11, 11}, {12, 12}}, empty});
-    LCW a({a0, a1, a2, a3});
+    LCW a{{{{1, 1, 1}, {2, 2}}, {{3, 3}}, {{10, 9, 16}, {8, 7, 1}, {6, 8, 2}}},
+          {{}, {{}}, {{6, 6}, {2}}},
+          {{}, {}},
+          {{}, {}, {{10, 10, 10}, {11, 11}, {12, 12}}, {}}};
     auto split_a = cudf::split(a, {2});
 
-    auto const b0 = LCW::nested({LCW::nested({empty})});
-    auto const b1 = LCW::nested({empty, LCW::nested({empty})});
-    auto const b2 = LCW::nested({{{1, 2, 9}, empty}, {{5, 6, 7, 8, 9}, {0}, {15, 17}}});
-    auto const b3 = LCW::nested({LCW::nested({empty})});
-    LCW b({b0, b1, b2, b3});
+    LCW b{
+      {{{}}},
+      {{}, {{}}},
+      {{{1, 2, 9}, {}}, {{5, 6, 7, 8, 9}, {0}, {15, 17}}},
+      {{{}}},
+    };
     auto split_b = cudf::split(b, {2});
 
-    LCW expected0({a0, a1, b0, b1});
+    LCW expected0{{{{1, 1, 1}, {2, 2}}, {{3, 3}}, {{10, 9, 16}, {8, 7, 1}, {6, 8, 2}}},
+                  {{}, {{}}, {{6, 6}, {2}}},
+                  {{{}}},
+                  {{}, {{}}}};
     auto result0 = cudf::concatenate(std::vector<column_view>({split_a[0], split_b[0]}));
     CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(*result0, expected0);
 
-    LCW expected1({a0, a1, b2, b3});
+    LCW expected1{
+      {{{1, 1, 1}, {2, 2}}, {{3, 3}}, {{10, 9, 16}, {8, 7, 1}, {6, 8, 2}}},
+      {{}, {{}}, {{6, 6}, {2}}},
+      {{{1, 2, 9}, {}}, {{5, 6, 7, 8, 9}, {0}, {15, 17}}},
+      {{{}}},
+    };
     auto result1 = cudf::concatenate(std::vector<column_view>({split_a[0], split_b[1]}));
     CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(*result1, expected1);
 
-    LCW expected2({a2, a3, b0, b1});
+    LCW expected2{{{}, {}}, {{}, {}, {{10, 10, 10}, {11, 11}, {12, 12}}, {}}, {{{}}}, {{}, {{}}}};
     auto result2 = cudf::concatenate(std::vector<column_view>({split_a[1], split_b[0]}));
     CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(*result2, expected2);
 
-    LCW expected3({a2, a3, b2, b3});
+    LCW expected3{
+      {{}, {}},
+      {{}, {}, {{10, 10, 10}, {11, 11}, {12, 12}}, {}},
+      {{{1, 2, 9}, {}}, {{5, 6, 7, 8, 9}, {0}, {15, 17}}},
+      {{{}}},
+    };
     auto result3 = cudf::concatenate(std::vector<column_view>({split_a[1], split_b[1]}));
     CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(*result3, expected3);
   }
@@ -1355,71 +1366,101 @@ TEST_F(ListsColumnTest, SlicedColumnsWithNulls)
   auto valids = cudf::test::iterators::valids_at_multiples_of(2);
 
   {
-    auto const a0 = LCW::nested({{{1, 1, 1}, valids}, {2, 2}, {{3, 3}, valids}});
-    auto const a1 = LCW::nested({{4, 4, 4}, {{5, 5}, valids}, {6, 6}}, valids);
-    auto const a2 = LCW::nested({{7, 7, 7}, {8, 8}, {9, 9}});
-    auto const a3 = LCW::nested({{10, 10, 10}, {11, 11}, {{12, 12}, valids}}, valids);
-    LCW a({a0, a1, a2, a3});
+    LCW a{{{{1, 1, 1}, valids}, {2, 2}, {{3, 3}, valids}},
+          {{{4, 4, 4}, {{5, 5}, valids}, {6, 6}}, valids},
+          {{7, 7, 7}, {8, 8}, {9, 9}},
+          {{{10, 10, 10}, {11, 11}, {{12, 12}, valids}}, valids}};
     auto split_a = cudf::split(a, {3});
 
-    auto const b0 = LCW::nested({{{-1, -1, -1, -1}, valids}, {-2}}, valids);
-    auto const b1 = LCW::nested({{{-3, -3, -3, -3}, valids}, {-4}}, valids);
-    auto const b2 = LCW::nested({{{-5, -5, -5, -5}, valids}, {-6}}, valids);
-    auto const b3 = LCW::nested({{{-7, -7, -7, -7}, valids}, {-8}}, valids);
-    LCW b({b0, b1, b2, b3});
+    LCW b{{{{{-1, -1, -1, -1}, valids}, {-2}}, valids},
+          {{{{-3, -3, -3, -3}, valids}, {-4}}, valids},
+          {{{{-5, -5, -5, -5}, valids}, {-6}}, valids},
+          {{{{-7, -7, -7, -7}, valids}, {-8}}, valids}};
     auto split_b = cudf::split(b, {3});
 
-    LCW expected0({a0, a1, a2, b0, b1, b2});
+    LCW expected0{{{{1, 1, 1}, valids}, {2, 2}, {{3, 3}, valids}},
+                  {{{4, 4, 4}, {{5, 5}, valids}, {6, 6}}, valids},
+                  {{7, 7, 7}, {8, 8}, {9, 9}},
+                  {{{{-1, -1, -1, -1}, valids}, {-2}}, valids},
+                  {{{{-3, -3, -3, -3}, valids}, {-4}}, valids},
+                  {{{{-5, -5, -5, -5}, valids}, {-6}}, valids}};
     auto result0 = cudf::concatenate(std::vector<column_view>({split_a[0], split_b[0]}));
     CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(*result0, expected0);
 
-    LCW expected1({a0, a1, a2, b3});
+    LCW expected1{{{{1, 1, 1}, valids}, {2, 2}, {{3, 3}, valids}},
+                  {{{4, 4, 4}, {{5, 5}, valids}, {6, 6}}, valids},
+                  {{7, 7, 7}, {8, 8}, {9, 9}},
+                  {{{{-7, -7, -7, -7}, valids}, {-8}}, valids}};
     auto result1 = cudf::concatenate(std::vector<column_view>({split_a[0], split_b[1]}));
     CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(*result1, expected1);
 
-    LCW expected2({a3, b0, b1, b2});
+    LCW expected2{{{{10, 10, 10}, {11, 11}, {{12, 12}, valids}}, valids},
+                  {{{{-1, -1, -1, -1}, valids}, {-2}}, valids},
+                  {{{{-3, -3, -3, -3}, valids}, {-4}}, valids},
+                  {{{{-5, -5, -5, -5}, valids}, {-6}}, valids}};
     auto result2 = cudf::concatenate(std::vector<column_view>({split_a[1], split_b[0]}));
     CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(*result2, expected2);
 
-    LCW expected3({a3, b3});
+    LCW expected3{{{{10, 10, 10}, {11, 11}, {{12, 12}, valids}}, valids},
+                  {{{{-7, -7, -7, -7}, valids}, {-8}}, valids}};
     auto result3 = cudf::concatenate(std::vector<column_view>({split_a[1], split_b[1]}));
     CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(*result3, expected3);
   }
 
   {
-    auto const a0 =
-      LCW::nested({LCW::nested({{{1, 1, 1}, valids}, {2, 2}}),
-                   LCW::nested({{3, 3}}, valids),
-                   LCW::nested({{{10, 9, 16}, valids}, {8, 7, 1}, {{6, 8, 2}, valids}})});
-    auto const a1 =
-      LCW::nested({{}, LCW::nested({{}}, valids), LCW::nested({{6, 6}, {2}})}, valids);
-    auto const a2 = LCW::nested({LCW::nested({{}, {}}, valids)});
-    auto const a3 =
-      LCW::nested({{}, {}, LCW::nested({{10, 10, 10}, {{11, 11}, valids}, {12, 12}}, valids), {}});
-    LCW a({a0, a1, a2, a3});
+    LCW a{{{{{1, 1, 1}, valids}, {2, 2}},
+           {{{3, 3}}, valids},
+           {{{10, 9, 16}, valids}, {8, 7, 1}, {{6, 8, 2}, valids}}},
+          {{{}, LCW::nested({{}}, valids), {{6, 6}, {2}}}, valids},
+          {LCW::nested({{}, {}}, valids)},
+          {{}, {}, {{{10, 10, 10}, {{11, 11}, valids}, {12, 12}}, valids}, {}}};
     auto split_a = cudf::split(a, {3});
 
-    auto const b0 = LCW::nested({LCW::nested({{}}, valids)});
-    auto const b1 = LCW::nested({{}, LCW::nested({{}}, valids)}, valids);
-    auto const b2 = LCW::nested(
-      {LCW::nested({{1, 2, 9}, {}}), LCW::nested({{5, 6, 7, 8, 9}, {0}, {15, 17}})}, valids);
-    auto const b3 = LCW::nested({{}});
-    LCW b({b0, b1, b2, b3});
+    LCW b{
+      {LCW::nested({{}}, valids)},
+      {{{}, LCW::nested({{}}, valids)}, valids},
+      {{{{1, 2, 9}, {}}, {{5, 6, 7, 8, 9}, {0}, {15, 17}}}, valids},
+      {{{}}},
+    };
     auto split_b = cudf::split(b, {3});
 
-    LCW expected0({a0, a1, a2, b0, b1, b2});
+    LCW expected0{
+      {{{{1, 1, 1}, valids}, {2, 2}},
+       {{{3, 3}}, valids},
+       {{{10, 9, 16}, valids}, {8, 7, 1}, {{6, 8, 2}, valids}}},
+      {{{}, LCW::nested({{}}, valids), {{6, 6}, {2}}}, valids},
+      {LCW::nested({{}, {}}, valids)},
+      {LCW::nested({{}}, valids)},
+      {{{}, LCW::nested({{}}, valids)}, valids},
+      {{{{1, 2, 9}, {}}, {{5, 6, 7, 8, 9}, {0}, {15, 17}}}, valids},
+    };
     auto result0 = cudf::concatenate(std::vector<column_view>({split_a[0], split_b[0]}));
     CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(*result0, expected0);
 
-    LCW expected1({a0, a1, a2, b3});
+    LCW expected1{
+      {{{{1, 1, 1}, valids}, {2, 2}},
+       {{{3, 3}}, valids},
+       {{{10, 9, 16}, valids}, {8, 7, 1}, {{6, 8, 2}, valids}}},
+      {{{}, LCW::nested({{}}, valids), {{6, 6}, {2}}}, valids},
+      {LCW::nested({{}, {}}, valids)},
+      {{{}}},
+    };
     auto result1 = cudf::concatenate(std::vector<column_view>({split_a[0], split_b[1]}));
     CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(*result1, expected1);
 
-    LCW expected2({a3, b0, b1, b2});
+    LCW expected2{
+      {{}, {}, {{{10, 10, 10}, {{11, 11}, valids}, {12, 12}}, valids}, {}},
+      {LCW::nested({{}}, valids)},
+      {{{}, LCW::nested({{}}, valids)}, valids},
+      {{{{1, 2, 9}, {}}, {{5, 6, 7, 8, 9}, {0}, {15, 17}}}, valids},
+    };
     auto result2 = cudf::concatenate(std::vector<column_view>({split_a[1], split_b[0]}));
     CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(*result2, expected2);
 
-    LCW expected3({a3, b3});
+    LCW expected3{
+      {{}, {}, {{{10, 10, 10}, {{11, 11}, valids}, {12, 12}}, valids}, {}},
+      {{{}}},
+    };
     auto result3 = cudf::concatenate(std::vector<column_view>({split_a[1], split_b[1]}));
     CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(*result3, expected3);
   }

@@ -23,12 +23,6 @@ using IntCol      = cudf::test::fixed_width_column_wrapper<int32_t>;
 constexpr cudf::test::debug_output_level verbosity{cudf::test::debug_output_level::FIRST_ERROR};
 constexpr int32_t null{0};
 
-template <class T, class... Ts>
-auto build_lists_init(T const& list, Ts const&... lists)
-{
-  return T::nested({list, lists...});
-}
-
 }  // namespace
 
 struct ConcatenateListElementsTest : public cudf::test::BaseFixture {};
@@ -60,10 +54,7 @@ TYPED_TEST(ConcatenateListElementsTypedTest, SimpleInputNoNull)
 {
   using ListsCol = cudf::test::lists_column_wrapper<TypeParam>;
 
-  auto row0           = ListsCol::nested({{1, 2}, {3}, {4, 5, 6}});
-  auto row1           = ListsCol::nested({{}});
-  auto row2           = ListsCol::nested({{7, 8}, {9, 10}});
-  auto const col      = ListsCol(build_lists_init(row0, row1, row2));
+  auto const col      = ListsCol{{{1, 2}, {3}, {4, 5, 6}}, {{}}, {{7, 8}, {9, 10}}};
   auto const results  = cudf::lists::concatenate_list_elements(col);
   auto const expected = ListsCol({{1, 2, 3, 4, 5, 6}, {}, {7, 8, 9, 10}});
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, *results, verbosity);
@@ -73,22 +64,9 @@ TYPED_TEST(ConcatenateListElementsTypedTest, SimpleInputNestedManyLevelsNoNull)
 {
   using ListsCol = cudf::test::lists_column_wrapper<TypeParam>;
 
-  auto row00 = ListsCol::nested({{1, 2}, {3}, {4, 5, 6}});
-  auto row01 = ListsCol::nested({{}});
-  auto row02 = ListsCol::nested({{7, 8}, {9, 10}});
-  auto row0  = build_lists_init(row00, row01, row02);
-
-  auto row10 = ListsCol::nested({{1, 2}, {3}, {4, 5, 6}});
-  auto row11 = ListsCol::nested({{}});
-  auto row12 = ListsCol::nested({{7, 8}, {9, 10}});
-  auto row1  = build_lists_init(row10, row11, row12);
-
-  auto row20 = ListsCol::nested({{1, 2}, {3}, {4, 5, 6}});
-  auto row21 = ListsCol::nested({{}});
-  auto row22 = ListsCol::nested({{7, 8}, {9, 10}});
-  auto row2  = build_lists_init(row20, row21, row22);
-
-  auto const col      = ListsCol(build_lists_init(row0, row1, row2));
+  auto const col      = ListsCol{{{{1, 2}, {3}, {4, 5, 6}}, {{}}, {{7, 8}, {9, 10}}},
+                                 {{{1, 2}, {3}, {4, 5, 6}}, {{}}, {{7, 8}, {9, 10}}},
+                                 {{{1, 2}, {3}, {4, 5, 6}}, {{}}, {{7, 8}, {9, 10}}}};
   auto const results  = cudf::lists::concatenate_list_elements(col);
   auto const expected = ListsCol({{{1, 2}, {3}, {4, 5, 6}, {}, {7, 8}, {9, 10}},
                                   {{1, 2}, {3}, {4, 5, 6}, {}, {7, 8}, {9, 10}},
@@ -98,10 +76,9 @@ TYPED_TEST(ConcatenateListElementsTypedTest, SimpleInputNestedManyLevelsNoNull)
 
 TEST_F(ConcatenateListElementsTest, SimpleInputStringsColumnNoNull)
 {
-  auto row0           = StrListsCol::nested({{"Tomato", "Apple"}, {"Orange"}});
-  auto row1           = StrListsCol::nested({{"Banana", "Kiwi", "Cherry"}, {"Lemon", "Peach"}});
-  auto row2           = StrListsCol::nested({{"Coconut"}, {}});
-  auto const col      = StrListsCol(build_lists_init(row0, row1, row2));
+  auto const col      = StrListsCol{{{"Tomato", "Apple"}, {"Orange"}},
+                                    {{"Banana", "Kiwi", "Cherry"}, {"Lemon", "Peach"}},
+                                    {{"Coconut"}, {}}};
   auto const results  = cudf::lists::concatenate_list_elements(col);
   auto const expected = StrListsCol(
     {{"Tomato", "Apple", "Orange"}, {"Banana", "Kiwi", "Cherry", "Lemon", "Peach"}, {"Coconut"}});
@@ -111,22 +88,19 @@ TEST_F(ConcatenateListElementsTest, SimpleInputStringsColumnNoNull)
 TYPED_TEST(ConcatenateListElementsTypedTest, SimpleInputWithNulls)
 {
   using ListsCol = cudf::test::lists_column_wrapper<TypeParam>;
-  auto row0      = ListsCol::nested(
-    {{{1, null, 3, 4}, null_at(1)}, {{10, 11, 12, null}, null_at(3)}, {} /*NULL*/}, null_at(2));
-  auto row1 = ListsCol::nested({{{null, 2, 3, 4}, null_at(0)},
-                                {{13, 14, 15, 16, 17, null}, null_at(5)},
-                                {{20, null}, null_at(1)}});
-  auto row2 = ListsCol::nested(
-    {{{null, 2, 3, 4}, null_at(0)}, {} /*NULL*/, {{null, 21, null, null}, nulls_at({0, 2, 3})}},
-    null_at(1));
-  auto row3 = ListsCol::nested({{} /*NULL*/, {{null, 18}, null_at(0)}}, null_at(0));
-  auto row4 = ListsCol::nested(
-    {{{1, 2, null, 4}, null_at(2)}, {{19, 20, null}, null_at(2)}, {22, 23, 24, 25}});
-  auto row5      = ListsCol::nested({{{1, 2, 3, null}, null_at(3)},
-                                     {{null}, null_at(0)},
-                                     {{null, null, null, null, null}, all_nulls()}});
-  auto row6      = ListsCol::nested({{} /*NULL*/, {} /*NULL*/, {} /*NULL*/}, all_nulls());
-  auto const col = ListsCol(build_lists_init(row0, row1, row2, row3, row4, row5, row6));
+  auto const col = ListsCol{
+    {{{{1, null, 3, 4}, null_at(1)}, {{10, 11, 12, null}, null_at(3)}, {} /*NULL*/}, null_at(2)},
+    {{{null, 2, 3, 4}, null_at(0)},
+     {{13, 14, 15, 16, 17, null}, null_at(5)},
+     {{20, null}, null_at(1)}},
+    {{{{null, 2, 3, 4}, null_at(0)}, {} /*NULL*/, {{null, 21, null, null}, nulls_at({0, 2, 3})}},
+     null_at(1)},
+    {{{} /*NULL*/, {{null, 18}, null_at(0)}}, null_at(0)},
+    {{{1, 2, null, 4}, null_at(2)}, {{19, 20, null}, null_at(2)}, {22, 23, 24, 25}},
+    {{{1, 2, 3, null}, null_at(3)},
+     {{null}, null_at(0)},
+     {{null, null, null, null, null}, all_nulls()}},
+    ListsCol::nested({{} /*NULL*/, {} /*NULL*/, {} /*NULL*/}, all_nulls())};
 
   // Ignore null list elements.
   {
@@ -164,22 +138,10 @@ TYPED_TEST(ConcatenateListElementsTypedTest, SimpleInputNestedManyLevelsWithNull
 {
   using ListsCol = cudf::test::lists_column_wrapper<TypeParam>;
 
-  auto row00 = ListsCol::nested({{1, 2}, {3}, {4, 5, 6}});
-  auto row01 = ListsCol::nested({{}}); /*NULL*/
-  auto row02 = ListsCol::nested({{7, 8}, {9, 10}});
-  auto row0  = ListsCol::nested({std::move(row00), std::move(row01), std::move(row02)}, null_at(1));
-
-  auto row10 = ListsCol::nested({{1, 2}, {3}, {4, 5, 6} /*NULL*/}, null_at(2));
-  auto row11 = ListsCol::nested({{}});
-  auto row12 = ListsCol::nested({{7, 8}, {9, 10}});
-  auto row1  = build_lists_init(row10, row11, row12);
-
-  auto row20 = ListsCol::nested({{1, 2}, {3}, {4, 5, 6}});
-  auto row21 = ListsCol::nested({{}});
-  auto row22 = ListsCol::nested({{{null, 8}, null_at(0)}, {9, 10}});
-  auto row2  = build_lists_init(row20, row21, row22);
-
-  auto const col = ListsCol(build_lists_init(row0, row1, row2));
+  auto const col =
+    ListsCol{{{{{1, 2}, {3}, {4, 5, 6}}, {{}} /*NULL*/, {{7, 8}, {9, 10}}}, null_at(1)},
+             {{{{1, 2}, {3}, {4, 5, 6} /*NULL*/}, null_at(2)}, {{}}, {{7, 8}, {9, 10}}},
+             {{{1, 2}, {3}, {4, 5, 6}}, {{}}, {{{null, 8}, null_at(0)}, {9, 10}}}};
 
   // Ignore null list elements.
   {
@@ -205,14 +167,12 @@ TYPED_TEST(ConcatenateListElementsTypedTest, SimpleInputNestedManyLevelsWithNull
 
 TEST_F(ConcatenateListElementsTest, SimpleInputStringsColumnWithNulls)
 {
-  auto row0 = StrListsCol::nested(
+  auto const col = StrListsCol{
     {{{"Tomato", "Bear" /*NULL*/, "Apple"}, null_at(1)},
-     {{"Orange", "Dog" /*NULL*/, "Fox" /*NULL*/, "Duck" /*NULL*/}, nulls_at({1, 2, 3})}});
-  auto row1 = StrListsCol::nested(
+     {{"Orange", "Dog" /*NULL*/, "Fox" /*NULL*/, "Duck" /*NULL*/}, nulls_at({1, 2, 3})}},
     {{{"Banana", "Pig" /*NULL*/, "Kiwi", "Cherry", "Whale" /*NULL*/}, nulls_at({1, 4})},
-     {"Lemon", "Peach"}});
-  auto row2      = StrListsCol::nested({{"Coconut"}, {} /*NULL*/}, null_at(1));
-  auto const col = StrListsCol(build_lists_init(row0, row1, row2));
+     {"Lemon", "Peach"}},
+    StrListsCol::nested({{"Coconut"}, {} /*NULL*/}, null_at(1))};
 
   // Ignore null list elements.
   {
@@ -241,12 +201,10 @@ TEST_F(ConcatenateListElementsTest, SimpleInputStringsColumnWithNulls)
 }
 TEST_F(ConcatenateListElementsTest, SimpleInputStringsColumnWithEmptyStringsAndNulls)
 {
-  auto row0 = StrListsCol::nested(
-    {{"", "", ""}, {{"Orange", "" /*NULL*/, "" /*NULL*/, "" /*NULL*/}, nulls_at({1, 2, 3})}});
-  auto row1 = StrListsCol::nested(
-    {{{"Banana", "" /*NULL*/, "Kiwi", "Cherry", "" /*NULL*/}, nulls_at({1, 4})}, {""}});
-  auto row2      = StrListsCol::nested({{"Coconut"}, {} /*NULL*/}, null_at(1));
-  auto const col = StrListsCol(build_lists_init(row0, row1, row2));
+  auto const col = StrListsCol{
+    {{"", "", ""}, {{"Orange", "" /*NULL*/, "" /*NULL*/, "" /*NULL*/}, nulls_at({1, 2, 3})}},
+    {{{"Banana", "" /*NULL*/, "Kiwi", "Cherry", "" /*NULL*/}, nulls_at({1, 4})}, {""}},
+    StrListsCol::nested({{"Coconut"}, {} /*NULL*/}, null_at(1))};
 
   // Ignore null list elements.
   {
@@ -313,16 +271,15 @@ TYPED_TEST(ConcatenateListElementsTypedTest, SlicedColumnsInputWithNulls)
 {
   using ListsCol = cudf::test::lists_column_wrapper<TypeParam>;
 
-  auto row0               = ListsCol::nested({{{null, 2, 3}, null_at(0)}, {2, 3}});
-  auto row1               = ListsCol::nested({{{3, null, null, 6}, nulls_at({1, 2})},
-                                              {{5, 6, null}, null_at(2)},
-                                              {},
-                                              {{7, null}, null_at(1)}});
-  auto row2               = ListsCol::nested({{7, 7, 7}, {{7, 8, null, 0}, null_at(2)}, {1}});
-  auto row3               = ListsCol::nested({{9, 10, 11}});
-  auto row4               = ListsCol::nested({{}});
-  auto row5               = ListsCol::nested({{{12, null, 14, 15}, null_at(1)}, {16}, {17}});
-  auto const col_original = ListsCol(build_lists_init(row0, row1, row2, row3, row4, row5));
+  auto const col_original = ListsCol{{{{null, 2, 3}, null_at(0)}, {2, 3}},
+                                     {{{3, null, null, 6}, nulls_at({1, 2})},
+                                      {{5, 6, null}, null_at(2)},
+                                      {},
+                                      {{7, null}, null_at(1)}},
+                                     {{7, 7, 7}, {{7, 8, null, 0}, null_at(2)}, {1}},
+                                     {{9, 10, 11}},
+                                     {{}},
+                                     {{{12, null, 14, 15}, null_at(1)}, {16}, {17}}};
 
   {
     auto const col     = cudf::slice(col_original, {0, 3})[0];
@@ -358,24 +315,20 @@ TYPED_TEST(ConcatenateListElementsTypedTest, SlicedColumnsInputWithNulls)
 
 TEST_F(ConcatenateListElementsTest, SlicedStringsColumnsInputWithNulls)
 {
-  auto row0 = StrListsCol::nested(
+  auto const col_original = StrListsCol{
     {{{"Tomato", "Bear" /*NULL*/, "Apple"}, null_at(1)},
      {{"Banana", "Pig" /*NULL*/, "Kiwi", "Cherry", "Whale" /*NULL*/}, nulls_at({1, 4})},
-     {"Coconut"}});
-  auto row1 = StrListsCol::nested(
+     {"Coconut"}},
     {{{"Banana", "Pig" /*NULL*/, "Kiwi", "Cherry", "Whale" /*NULL*/}, nulls_at({1, 4})},
      {"Coconut"},
-     {{"Orange", "Dog" /*NULL*/, "Fox" /*NULL*/, "Duck" /*NULL*/}, nulls_at({1, 2, 3})}});
-  auto row2 = StrListsCol::nested(
+     {{"Orange", "Dog" /*NULL*/, "Fox" /*NULL*/, "Duck" /*NULL*/}, nulls_at({1, 2, 3})}},
     {{"Coconut"},
      {{"Orange", "Dog" /*NULL*/, "Fox" /*NULL*/, "Duck" /*NULL*/}, nulls_at({1, 2, 3})},
-     {"Lemon", "Peach"}});
-  auto row3 = StrListsCol::nested(
-    {{{"Orange", "Dog" /*NULL*/, "Fox" /*NULL*/, "Duck" /*NULL*/}, nulls_at({1, 2, 3})},
-     {"Lemon", "Peach"},
-     {} /*NULL*/},
-    null_at(2));
-  auto const col_original = StrListsCol(build_lists_init(row0, row1, row2, row3));
+     {"Lemon", "Peach"}},
+    {{{{"Orange", "Dog" /*NULL*/, "Fox" /*NULL*/, "Duck" /*NULL*/}, nulls_at({1, 2, 3})},
+      {"Lemon", "Peach"},
+      {} /*NULL*/},
+     null_at(2)}};
 
   {
     auto const col      = cudf::slice(col_original, {0, 2})[0];
@@ -789,10 +742,9 @@ TEST_F(ConcatenateListElementsTest, EmptyInnerListColumnChildSizeOne)
 {
   // list<list<int32>> with 1 outer row containing 1 empty inner list: [[]]
   // child.size() == 1; the new guard does not apply here.
-  // Use build_lists_init to create a proper list<list<int32>> (2-level nesting).
-  auto inner = IntListsCol::nested({{}});  // list<int32> with 1 empty row
-  auto const col =
-    IntListsCol(build_lists_init(inner));  // list<list<int32>> with 1 outer row: [[]]
+  // Use brace nesting to create a proper list<list<int32>> (2-level nesting).
+  // The child is a list<int32> with 1 empty row.
+  auto const col      = IntListsCol{{{}}};  // list<list<int32>> with 1 outer row: [[]]
   auto const results  = cudf::lists::concatenate_list_elements(col);
   auto const expected = IntListsCol{{}};  // list<int32> with 1 empty row: [[]] → []
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, *results, verbosity);

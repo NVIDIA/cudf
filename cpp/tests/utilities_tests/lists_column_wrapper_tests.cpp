@@ -688,8 +688,7 @@ TYPED_TEST(ListColumnWrapperTestTyped, IncompleteHierarchies)
   using T = TypeParam;
 
   // Use nested() to disambiguate between {} == 0 and {} == List{0}.
-  using LCW        = cudf::test::lists_column_wrapper<T, int32_t>;
-  auto const empty = decltype(LCW::nested({})){};
+  using LCW = cudf::test::lists_column_wrapper<T, int32_t>;
 
   // List<List<List<T>>>:
   // Length : 3
@@ -704,7 +703,7 @@ TYPED_TEST(ListColumnWrapperTestTyped, IncompleteHierarchies)
   //      Offsets : 0, 0
   //      Children :
   {
-    LCW list({LCW::nested({LCW::nested({empty})}), LCW::nested({empty}), empty});
+    LCW list{{{{}}}, {{}}, {}};
 
     cudf::lists_column_view lcv(list);
     EXPECT_EQ(lcv.size(), 3);
@@ -749,7 +748,7 @@ TYPED_TEST(ListColumnWrapperTestTyped, IncompleteHierarchies)
   //       Offsets : 0, 0
   //       Children :
   {
-    LCW list({empty, LCW::nested({empty}), LCW::nested({LCW::nested({empty})})});
+    LCW list{{}, {{}}, {{{}}}};
 
     cudf::lists_column_view lcv(list);
     EXPECT_EQ(lcv.size(), 3);
@@ -796,7 +795,7 @@ TYPED_TEST(ListColumnWrapperTestTyped, IncompleteHierarchies)
   //         1, 2, 3
   {
     // { {}, {{{1,2,3}}}, {{}} }
-    LCW list({empty, LCW::nested({LCW::nested({{1, 2, 3}})}), LCW::nested({empty})});
+    LCW list{{}, {{{1, 2, 3}}}, {{}}};
 
     cudf::lists_column_view lcv(list);
     EXPECT_EQ(lcv.size(), 3);
@@ -847,7 +846,7 @@ TYPED_TEST(ListColumnWrapperTestTyped, IncompleteHierarchies)
   {
     // { {{{}}}, {{}}, null }
     std::vector<bool> valids{true, true, false};
-    LCW list({LCW::nested({LCW::nested({empty})}), LCW::nested({empty}), empty}, valids.begin());
+    LCW list({{{{}}}, {{}}, {}}, valids.begin());
 
     cudf::lists_column_view lcv(list);
     EXPECT_EQ(lcv.size(), 3);
@@ -894,7 +893,7 @@ TYPED_TEST(ListColumnWrapperTestTyped, IncompleteHierarchies)
   {
     // { {{{}}}, null, {} }
     std::vector<bool> valids{true, false, true};
-    LCW list({LCW::nested({LCW::nested({empty})}), LCW::nested({empty}), empty}, valids.begin());
+    LCW list({{{{}}}, {{}}, {}}, valids.begin());
 
     cudf::lists_column_view lcv(list);
     EXPECT_EQ(lcv.size(), 3);
@@ -937,7 +936,7 @@ TYPED_TEST(ListColumnWrapperTestTyped, IncompleteHierarchies)
   {
     // { null, {{}}, {} }
     std::vector<bool> valids{false, true, true};
-    LCW list({LCW::nested({}), LCW::nested({empty}), LCW::nested({})}, valids.begin());
+    LCW list({{{{}}}, {{}}, {}}, valids.begin());
 
     cudf::lists_column_view lcv(list);
     EXPECT_EQ(lcv.size(), 3);
@@ -971,7 +970,7 @@ TYPED_TEST(ListColumnWrapperTestTyped, IncompleteHierarchies)
   {
     // { null, null, null }
     std::vector<bool> valids{false, false, false};
-    LCW list({LCW::nested({}), LCW::nested({}), LCW::nested({})}, valids.begin());
+    LCW list({{{{}}}, {{}}, {}}, valids.begin());
 
     cudf::lists_column_view lcv(list);
     EXPECT_EQ(lcv.size(), 3);
@@ -1000,7 +999,7 @@ TYPED_TEST(ListColumnWrapperTestTyped, IncompleteHierarchies)
   {
     // { null, null, null }
     std::vector<bool> valids{false, false, false};
-    LCW list({LCW::nested({}), LCW::nested({}), LCW::nested({})}, valids.begin());
+    LCW list({{}, {{{}}}, {{}}}, valids.begin());
 
     cudf::lists_column_view lcv(list);
     EXPECT_EQ(lcv.size(), 3);
@@ -1033,8 +1032,7 @@ TYPED_TEST(ListColumnWrapperTestTyped, IncompleteHierarchies)
   {
     // { {null}, {{}}, {} }
     std::vector<bool> valids{false};
-    auto const null_row = LCW::nested({LCW::nested({})}, valids.begin());
-    LCW list({null_row, LCW::nested({LCW::nested({})}), LCW::nested({})});
+    LCW list{LCW::nested({{{}}}, valids.begin()), {{}}, {}};
 
     cudf::lists_column_view lcv(list);
     EXPECT_EQ(lcv.size(), 3);
@@ -1076,10 +1074,7 @@ TYPED_TEST(ListColumnWrapperTestTyped, IncompleteHierarchies)
 
   {
     // { {{{1, 2, 3}, {4, 5}}}, {{}, {{}}}, {}, {{}, {}} }
-    LCW list({LCW::nested({{{1, 2, 3}, {4, 5}}}),
-              {LCW::nested({}), LCW::nested({empty})},
-              LCW::nested({}),
-              {LCW::nested({}), LCW::nested({})}});
+    LCW list{{{{1, 2, 3}, {4, 5}}}, {{}, {{}}}, {}, {{}, {}}};
     cudf::lists_column_view lcv(list);
     EXPECT_EQ(lcv.size(), 4);
 

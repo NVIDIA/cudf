@@ -691,11 +691,12 @@ class parquet_reader_options {
   /**
    * @brief Sets the dictionary representation policy for reader output.
    *
-   * PRESERVE currently supports flat STRING columns whose selected data pages are all
+   * PRESERVE supports flat STRING and DECIMAL32/64/128 columns whose selected data pages are all
    * dictionary encoded and eligible for direct transcode. Other columns remain ordinary
    * columns. Filters, custom row bounds, and chunked/multi-pass reads disable direct transcode;
-   * materialized strings are returned without re-encoding. Nested and decimal columns are not
-   * supported by direct transcode. Output types may therefore vary between reads.
+   * materialized columns are returned without re-encoding. Decimal dictionaries support INT32,
+   * INT64 and FIXED_LEN_BYTE_ARRAY (1 to 16 bytes) storage; variable BYTE_ARRAY decimals and
+   * nested columns remain ordinary columns. Output types may therefore vary between reads.
    *
    * ENCODE retains the existing output_dict_columns(true) behavior. DECODE is equivalent to
    * output_dict_columns(false). When both setters are used, the last setting wins.

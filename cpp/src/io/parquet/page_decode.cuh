@@ -1302,6 +1302,10 @@ inline __device__ bool setup_local_page_info(auto* const s,
                 // if this is a string column, then dtype_len is a lie. data will be offsets rather
                 // than (ptr,len) tuples.
                 if (is_string_col(s->setup.col)) { len = sizeof(cudf::size_type); }
+                // Dictionary preservation writes row indices, regardless of decimal value width.
+                if (s->setup.page.kernel_mask == decode_kernel_mask::DICT_INT32) {
+                  len = sizeof(int32_t);
+                }
                 nesting_info->data_out += (output_offset * len);
               }
               if (nesting_info->string_out != nullptr) {

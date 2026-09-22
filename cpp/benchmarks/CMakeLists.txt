@@ -296,8 +296,12 @@ ConfigureNVBench(
 # ##################################################################################################
 # * parquet reader benchmark ----------------------------------------------------------------------
 ConfigureNVBench(
-  PARQUET_READER_NVBENCH io/parquet/parquet_reader_input.cpp io/parquet/parquet_reader_encoding.cpp
-  io/parquet/parquet_reader_options.cpp io/parquet/reader_common.cpp
+  PARQUET_READER_NVBENCH
+  io/parquet/parquet_reader_input.cpp
+  io/parquet/parquet_reader_encoding.cpp
+  io/parquet/parquet_reader_options.cpp
+  io/parquet/parquet_reader_preserve_dictionary.cpp
+  io/parquet/reader_common.cpp
 )
 
 # ##################################################################################################

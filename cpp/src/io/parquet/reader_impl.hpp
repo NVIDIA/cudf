@@ -603,6 +603,8 @@ class reader_impl {
   // Per-input-column flag indicating whether that column was selected for direct
   // Parquet-dict → DICTIONARY32 transcode.
   std::vector<bool> _dict_transcode_eligible;
+  // Original key type and scale, before the decode buffer becomes an INT32 index column.
+  std::vector<data_type> _dict_transcode_key_types;
 };
 
 }  // namespace cudf::io::parquet::detail

@@ -134,7 +134,7 @@ __device__ void decode_dict_indices_as_int32(
       }();
 
       auto* dst           = reinterpret_cast<int32_t*>(data_out) + dst_pos;
-      auto const num_keys = static_cast<uint32_t>(s->stream.dict_size / sizeof(string_index_pair));
+      auto const num_keys = static_cast<uint32_t>(s->setup.col.dict_page->num_input_values);
       auto const idx      = sb->dict_idx[rolling_index<state_buf::dict_buf_size>(src_pos)];
       if (idx >= num_keys) {
         s->set_error_code(decode_error::DATA_STREAM_OVERRUN);

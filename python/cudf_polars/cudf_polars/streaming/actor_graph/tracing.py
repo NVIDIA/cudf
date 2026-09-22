@@ -5,14 +5,17 @@
 from __future__ import annotations
 
 import dataclasses
-from typing import TYPE_CHECKING, Any, Generic, TypeVar, cast
+from typing import TYPE_CHECKING, Any
 
+from rapidsmpf.memory.buffer import MemoryType
 from rapidsmpf.streaming.core.message import Message
 
 from cudf_polars.dsl.tracing import LOG_TRACES, Scope
 from cudf_polars.streaming.explain import SerializablePlan
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from cudf_streaming.table_chunk import TableChunk
     from rapidsmpf.streaming.core.channel import Channel
     from rapidsmpf.streaming.core.context import Context
@@ -20,7 +23,9 @@ if TYPE_CHECKING:
     from cudf_polars.dsl.ir import IR
     from cudf_polars.utils.config import ConfigOptions
 
-T = TypeVar("T")
+
+def _zero_bytes_by_tier() -> dict[MemoryType, int]:
+    return dict.fromkeys(MemoryType, 0)
 
 
 @dataclasses.dataclass(slots=True)
@@ -41,6 +46,10 @@ class ActorTracer:
         None if row counting is not available for this node.
     chunk_count
         Total chunk count produced by this node during execution.
+    input_bytes
+        Bytes received on boundary input channels, stratified by memory tier.
+    output_bytes
+        Bytes sent on the boundary output channel, stratified by memory tier.
     decision
         The algorithm decision made at runtime for this node
         (e.g., "broadcast_left", "shuffle", "tree", etc.).
@@ -53,8 +62,12 @@ class ActorTracer:
     ir_type: str | None = None
     row_count: int | None = None
     chunk_count: int = 0
-    input_bytes: int = 0
-    output_bytes: int = 0
+    input_bytes: dict[MemoryType, int] = dataclasses.field(
+        default_factory=_zero_bytes_by_tier
+    )
+    output_bytes: dict[MemoryType, int] = dataclasses.field(
+        default_factory=_zero_bytes_by_tier
+    )
     decision: str | None = None
     duplicated: bool = False
     extra: dict[str, Any] = dataclasses.field(default_factory=dict)
@@ -89,69 +102,30 @@ class ActorTracer:
         self.extra[key] = value
 
 
-class TracingChannel(Generic[T]):
+def record_channel_metrics(
+    tracer: ActorTracer,
+    *,
+    chs_in: Sequence[Channel[Any]],
+    chs_out: Sequence[Channel[Any]],
+) -> None:
     """
-    Channel proxy that records the bytes an actor reads and writes.
+    Record boundary channel byte volumes on an actor tracer.
 
-    Wrap an actor's channels to attribute ``input_bytes`` (from ``recv``) and
-    ``output_bytes`` (from ``send``) to that actor.
-
-    Internal channels an actor creates for its own sub-network are left
-    unwrapped so intermediate traffic is not counted.
+    Parameters
+    ----------
+    tracer
+        The actor tracer to update.
+    chs_in
+        Input boundary channels. ``recv_bytes`` are summed per memory tier.
+    chs_out
+        Output boundary channels. ``send_bytes`` are summed per memory tier.
     """
-
-    def __init__(self, channel: Channel[T], tracer: ActorTracer | None) -> None:
-        self._channel = channel
-        self._tracer = tracer
-
-    async def recv(self, context: Context) -> Message[T] | None:
-        """Wrapper around ``Channel.recv`` that records the input bytes."""
-        message = await self._channel.recv(context)
-        if message is not None and self._tracer is not None:
-            self._tracer.input_bytes += _message_size(message)
-        return message
-
-    async def send(self, context: Context, message: Message[T]) -> None:
-        """Wrapper around ``Channel.send`` that records the output bytes."""
-        if self._tracer is not None:
-            self._tracer.output_bytes += _message_size(message)
-        await self._channel.send(context, message)
-
-    # Implement the rest of the Channel interface.
-
-    async def drain(self, context: Context) -> None:
-        """Passthrough to ``Channel.drain``."""
-        await self._channel.drain(context)
-
-    async def drain_metadata(self, context: Context) -> None:
-        """Passthrough to ``Channel.drain_metadata``."""
-        await self._channel.drain_metadata(context)
-
-    async def shutdown(self, context: Context) -> None:
-        """Passthrough to ``Channel.shutdown``."""
-        await self._channel.shutdown(context)
-
-    async def shutdown_metadata(self, context: Context) -> None:
-        """Passthrough to ``Channel.shutdown_metadata``."""
-        await self._channel.shutdown_metadata(context)
-
-    async def recv_metadata(self, context: Context) -> Message[Any] | None:
-        """Passthrough to ``Channel.recv_metadata``."""
-        return await self._channel.recv_metadata(context)
-
-    async def send_metadata(self, context: Context, message: Message[Any]) -> None:
-        """Passthrough to ``Channel.send_metadata``."""
-        await self._channel.send_metadata(context, message)
-
-
-def _message_size(message: Message[Any]) -> int:
-    """Return the total data allocation size described by a message."""
-    return sum(message.get_content_description().content_sizes.values())
-
-
-def trace_channel(channel: Channel[T], tracer: ActorTracer | None) -> Channel[T]:
-    """Wrap one of an actor's boundary channels to record the bytes crossing it."""
-    return cast("Channel[T]", TracingChannel(channel, tracer))
+    for ch in chs_in:
+        for mem_type, nbytes in ch.metrics().recv_bytes.items():
+            tracer.input_bytes[mem_type] += nbytes
+    for ch in chs_out:
+        for mem_type, nbytes in ch.metrics().send_bytes.items():
+            tracer.output_bytes[mem_type] += nbytes
 
 
 async def send_chunk(

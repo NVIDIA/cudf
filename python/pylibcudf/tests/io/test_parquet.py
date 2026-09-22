@@ -715,6 +715,84 @@ def test_file_metadata_wrappers_not_directly_constructible() -> None:
         ValueError, match="RowGroup cannot be constructed directly"
     ):
         plc.io.parquet_metadata.RowGroup()
+    with pytest.raises(
+        ValueError, match="SchemaElement cannot be constructed directly"
+    ):
+        plc.io.parquet_metadata.SchemaElement()
+
+
+def test_file_metadata_schema_field_ids() -> None:
+    schema = pa.schema(
+        [
+            pa.field("a", pa.int64(), metadata={b"PARQUET:field_id": b"10"}),
+            pa.field(
+                "s",
+                pa.struct(
+                    [
+                        pa.field(
+                            "x",
+                            pa.int32(),
+                            metadata={b"PARQUET:field_id": b"21"},
+                        ),
+                        pa.field(
+                            "y",
+                            pa.string(),
+                            metadata={b"PARQUET:field_id": b"22"},
+                        ),
+                    ]
+                ),
+                metadata={b"PARQUET:field_id": b"20"},
+            ),
+        ]
+    )
+    table = pa.table(
+        [
+            pa.array([1, 2, 3], type=pa.int64()),
+            pa.array(
+                [{"x": 1, "y": "a"}, {"x": 2, "y": "b"}, {"x": 3, "y": "c"}],
+                type=schema.field("s").type,
+            ),
+        ],
+        schema=schema,
+    )
+    sink = io.BytesIO()
+    write_table(table, sink)
+    sink.seek(0)
+
+    file_metadata = plc.io.parquet_metadata.read_parquet_footers(
+        plc.io.SourceInfo([sink])
+    )[0]
+
+    result = [
+        (element.name, element.field_id, element.num_children)
+        for element in file_metadata.schema
+    ]
+    # Depth-first, root first.
+    assert result == [
+        ("schema", None, 2),
+        ("a", 10, 0),
+        ("s", 20, 2),
+        ("x", 21, 0),
+        ("y", 22, 0),
+    ]
+
+
+def test_file_metadata_schema_without_field_ids() -> None:
+    table = pa.table({"a": [1, 2, 3], "b": ["x", "y", "z"]})
+    sink = io.BytesIO()
+    write_table(table, sink)
+    sink.seek(0)
+
+    file_metadata = plc.io.parquet_metadata.read_parquet_footers(
+        plc.io.SourceInfo([sink])
+    )[0]
+
+    assert [element.name for element in file_metadata.schema] == [
+        "schema",
+        "a",
+        "b",
+    ]
+    assert all(element.field_id is None for element in file_metadata.schema)
 
 
 def test_file_metadata_row_group_sorting_columns(tmp_path) -> None:

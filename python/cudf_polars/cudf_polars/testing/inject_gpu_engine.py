@@ -19,10 +19,11 @@ from cudf_polars.testing.engine_utils import (
     SMALL_MAX_ROWS_PER_PARTITION,
     SMALL_TARGET_PARTITION_SIZE,
 )
+from cudf_polars.testing.fallback import fallback_used
 from cudf_polars.utils.config import StreamingFallbackMode
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Generator, Mapping
 
 
 def nonnegative_int(value: str) -> int:
@@ -168,6 +169,16 @@ def pytest_configure(config: pytest.Config) -> None:
     )
 
 
+@pytest.hookimpl(hookwrapper=True, tryfirst=True)
+def pytest_runtest_protocol(
+    item: pytest.Item, nextitem: pytest.Item | None
+) -> Generator[None, None, None]:
+    """Give each injected-engine pytest item an isolated fallback signal."""
+    token = fallback_used.set(False)
+    yield
+    fallback_used.reset(token)
+
+
 def _verify_collect_patch(engine: object) -> None:
     """
     Raise if ``polars.LazyFrame.collect`` is not the partialmethod we installed.
@@ -216,9 +227,9 @@ def pytest_report_header(config: pytest.Config) -> str:
 
 EXPECTED_FAILURES: dict[str, str] = {
     "tests/unit/io/test_csv.py::test_read_csv_only_loads_selected_columns": "Memory usage won't be correct due to GPU",
-    "tests/unit/io/test_delta.py::test_scan_delta_version": "Need to expose hive partitioning",
-    "tests/unit/io/test_delta.py::test_scan_delta_relative": "Need to expose hive partitioning",
-    "tests/unit/io/test_delta.py::test_scan_delta_schema_evolution_nested_struct_field_19915": "Need to expose hive partitioning",
+    "tests/unit/io/test_delta.py::test_scan_delta_version": "Delta schema evolution not yet implemented in cudf-polars: the table's files have differing column counts",
+    "tests/unit/io/test_delta.py::test_scan_delta_relative": "Delta schema evolution not yet implemented in cudf-polars: the table's files have differing column counts",
+    "tests/unit/io/test_delta.py::test_scan_delta_schema_evolution_nested_struct_field_19915": "Delta schema evolution not yet implemented in cudf-polars: the table's files have differing column counts",
     "tests/unit/io/test_delta.py::test_scan_delta_nanosecond_timestamp": "polars generates the wrong schema: https://github.com/pola-rs/polars/issues/23949",
     "tests/unit/io/test_delta.py::test_scan_delta_nanosecond_timestamp_nested": "polars generates the wrong schema: https://github.com/pola-rs/polars/issues/23949",
     "tests/unit/io/test_iceberg.py::test_scan_iceberg_row_index_renamed": "Iceberg support not yet implemented in cudf-polars",
@@ -502,6 +513,7 @@ STREAMING_ENGINE_TESTS_TO_SKIP_SMALL_BLOCKSIZE: Mapping[str, str] = {
     "tests/benchmark/test_join_where.py::test_non_strict_inequalities": "Too slow with --inject-gpu-engine-blocksize=small",
     "tests/benchmark/test_join_where.py::test_strict_inequalities": "Too slow with --inject-gpu-engine-blocksize=small",
     "tests/unit/io/test_lazy_parquet.py::test_parquet_many_row_groups_12297": "Too slow with --inject-gpu-engine-blocksize=small",
+    "tests/unit/io/test_hive.py::test_hive_write_multiple_files": "Too slow with --inject-gpu-engine-blocksize=small",
     "tests/unit/io/test_scan.py::test_scan[single-parquet-async]": "Too slow with --inject-gpu-engine-blocksize=small",
     "tests/unit/io/test_scan.py::test_scan[single-parquet-sync]": "Too slow with --inject-gpu-engine-blocksize=small",
     "tests/unit/io/test_scan.py::test_scan_with_filter[glob-parquet-async]": "Too slow with --inject-gpu-engine-blocksize=small",

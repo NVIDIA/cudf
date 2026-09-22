@@ -26,6 +26,7 @@ from cudf.core.udf.templates import (
 )
 from cudf.core.udf.udf_kernel_base import ApplyKernelBase
 from cudf.core.udf.utils import (
+    UDF_SHIM_FILE,
     UDFError,
     _all_dtypes_from_frame,
     _get_extensionty_size,
@@ -241,3 +242,7 @@ class GroupByApplyKernel(ApplyKernelBase):
 
     def _construct_signature(self, return_type):
         return None
+
+    def _get_link_files(self, nrt):
+        """GroupBy JIT reductions are implemented in ``shim.fatbin``."""
+        return [UDF_SHIM_FILE]

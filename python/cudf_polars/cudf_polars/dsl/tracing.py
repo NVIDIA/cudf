@@ -31,8 +31,9 @@ else:  # pragma: no cover; requires structlog
 LOG_TRACES = _HAS_STRUCTLOG and _bool_converter(
     os.environ.get("CUDF_POLARS_LOG_TRACES", "0")
 )
+# memory tracing is expensive, and so disabled by default.
 LOG_MEMORY = LOG_TRACES and _bool_converter(
-    os.environ.get("CUDF_POLARS_LOG_TRACES_MEMORY", "1")
+    os.environ.get("CUDF_POLARS_LOG_TRACES_MEMORY", "0")
 )
 LOG_DATAFRAMES = LOG_TRACES and _bool_converter(
     os.environ.get("CUDF_POLARS_LOG_TRACES_DATAFRAMES", "1")

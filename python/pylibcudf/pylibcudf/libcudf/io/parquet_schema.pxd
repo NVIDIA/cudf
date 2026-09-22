@@ -54,9 +54,15 @@ cdef extern from "cudf/io/parquet_schema.hpp" namespace "cudf::io::parquet" nogi
         optional[int64_t] total_compressed_size
         optional[int16_t] ordinal
 
+    cdef cppclass SchemaElement:
+        string name
+        int32_t num_children
+        optional[int32_t] field_id
+
     cdef cppclass FileMetaData:
         FileMetaData() except +libcudf_exception_handler
         int32_t version
+        vector[SchemaElement] schema
         int64_t num_rows
         vector[RowGroup] row_groups
         string created_by

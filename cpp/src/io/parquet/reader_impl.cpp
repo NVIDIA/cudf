@@ -533,14 +533,15 @@ reader_impl::reader_impl(std::size_t chunk_read_limit,
              options.is_enabled_case_sensitive_names(),
              options.is_enabled_prepend_source_index_column(),
              options.is_enabled_prepend_row_index_column(),
-             options.is_enabled_output_dict_columns()},
+             options.get_dictionary_output_policy()},
     _sources{std::move(sources)},
     _output_chunk_read_limit{chunk_read_limit},
     _input_pass_read_limit{pass_read_limit}
 {
   // The direct parquet-dict → DICTIONARY32 transcode fast path only supports single-pass,
   // non-chunked reads.
-  if (_options.output_dict_columns and (chunk_read_limit != 0 or pass_read_limit != 0)) {
+  if (_options.dict_output_policy == dictionary_output_policy::ENCODE and
+      (chunk_read_limit != 0 or pass_read_limit != 0)) {
     CUDF_LOG_WARN(
       "output_dict_columns: the direct parquet-dict transcode fast path is disabled for chunked / "
       "multi-pass reads (non-zero chunk_read_limit or pass_read_limit); falling back to encoding "
@@ -954,7 +955,7 @@ table_with_metadata reader_impl::finalize_output(read_mode mode,
   // and the dictionary is built over only the surviving rows.
   auto const encode_output_dict_columns =
     [&](std::unique_ptr<table> tbl) -> std::unique_ptr<table> {
-    if (not _options.output_dict_columns) { return tbl; }
+    if (_options.dict_output_policy != dictionary_output_policy::ENCODE) { return tbl; }
     auto columns = tbl->release();
     for (auto& col : columns) {
       if (col and col->type().id() == type_id::STRING) {

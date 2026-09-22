@@ -536,8 +536,8 @@ class reader_impl {
     bool prepend_source_index_column = false;
     // Whether to prepend the file-local row index column to the output
     bool prepend_row_index_column = false;
-    // Whether to try outputting DICTIONARY32 columns for fully dict-encoded string columns
-    bool output_dict_columns = false;
+    // Whether to decode, encode, or preserve dictionary output
+    dictionary_output_policy dict_output_policy = dictionary_output_policy::DECODE;
   } _options;
 
   // Converts the input filter to AST output filter.

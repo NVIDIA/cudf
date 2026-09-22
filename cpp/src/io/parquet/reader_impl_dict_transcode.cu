@@ -222,19 +222,19 @@ void reader_impl::prepare_dict_transcode(read_mode mode)
 
   _dict_transcode_eligible.assign(_input_columns.size(), false);
 
-  if (not _options.output_dict_columns) { return; }
+  if (_options.dict_output_policy == dictionary_output_policy::DECODE) { return; }
 
   // The fast path requires the whole column to live in a single subpass. For chunked / multi-pass
-  // reads (non-zero chunk or pass read limit) we skip it and let `finalize_output` produce the
-  // DICTIONARY32 columns via a post-hoc `dictionary::detail::encode` instead.
+  // reads (non-zero chunk or pass read limit) we skip it. ENCODE builds dictionaries at
+  // finalize_output; PRESERVE leaves the materialized columns unchanged.
   if (_output_chunk_read_limit != 0 or _input_pass_read_limit != 0) { return; }
 
   // Skip the fast path if custom row bounds are in effect.
   if (uses_custom_row_bounds(mode)) { return; }
 
   // AST/JIT filters evaluate predicates on materialized STRING columns, so the direct transcode
-  // fast path cannot run under a filter. Skip it and let `finalize_output` encode the filtered
-  // STRING result to DICTIONARY32 via the post-hoc `dictionary::detail::encode` fallback.
+  // fast path cannot run under a filter. ENCODE re-encodes the filtered result at finalize_output;
+  // PRESERVE returns the materialized STRING result.
   if (_expr_conv.get_converted_expr().has_value()) { return; }
 
   auto& pass    = *_pass_itm_data;

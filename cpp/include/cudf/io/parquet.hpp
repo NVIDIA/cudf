@@ -62,6 +62,18 @@ constexpr size_type default_max_page_fragment_size     = 5000;  ///< 5000 rows p
  */
 [[nodiscard]] bool is_supported_write_parquet(compression_type compression);
 
+/**
+ * @brief Controls dictionary representation of Parquet reader output.
+ *
+ * This policy is independent of the writer's dictionary_policy. PRESERVE never creates a
+ * dictionary from materialized values; it may merge existing dictionaries and remap indices.
+ */
+enum class dictionary_output_policy {
+  DECODE,   ///< Return ordinary columns (the default).
+  ENCODE,   ///< Return flat strings as dictionaries, encoding materialized strings if needed.
+  PRESERVE  ///< Keep eligible existing dictionaries; otherwise return ordinary columns.
+};
+
 class parquet_reader_options_builder;
 
 /**
@@ -110,8 +122,8 @@ class parquet_reader_options {
   type_id _decimal_width{type_id::EMPTY};
   // Whether to use JIT compilation for filtering
   bool _use_jit_filter = false;
-  // Whether to output flat string columns as DICT32 encoded columns
-  bool _output_dict_columns = false;
+  // Dictionary representation of output columns
+  dictionary_output_policy _dictionary_output_policy = dictionary_output_policy::DECODE;
   // Whether column name matching is case sensitive. In case of multiple
   // case-insensitive matches, the first matched column is selected
   bool _case_sensitive_names = true;
@@ -352,9 +364,24 @@ class parquet_reader_options {
    * String columns are materialized, then operated on by the filter. The filtered results are then
    * encoded as DICTIONARY32 columns.
    *
+   * @note This compatibility getter is true only for dictionary_output_policy::ENCODE.
+   * Use get_dictionary_output_policy() to distinguish PRESERVE from DECODE.
+   *
    * @return `true` if the reader returns flat string columns as DICTIONARY32 encoded columns
    */
-  [[nodiscard]] bool is_enabled_output_dict_columns() const { return _output_dict_columns; }
+  [[nodiscard]] bool is_enabled_output_dict_columns() const
+  {
+    return _dictionary_output_policy == dictionary_output_policy::ENCODE;
+  }
+
+  /**
+   * @brief Returns the dictionary representation policy for reader output.
+   * @return The output policy
+   */
+  [[nodiscard]] dictionary_output_policy get_dictionary_output_policy() const
+  {
+    return _dictionary_output_policy;
+  }
 
   /**
    * @brief Set a new source location
@@ -655,7 +682,30 @@ class parquet_reader_options {
    *
    * @param val Boolean indicating whether to output DICTIONARY32 columns for flat string columns
    */
-  void enable_output_dict_columns(bool val) { _output_dict_columns = val; }
+  void enable_output_dict_columns(bool val)
+  {
+    _dictionary_output_policy =
+      val ? dictionary_output_policy::ENCODE : dictionary_output_policy::DECODE;
+  }
+
+  /**
+   * @brief Sets the dictionary representation policy for reader output.
+   *
+   * PRESERVE currently supports flat STRING columns whose selected data pages are all
+   * dictionary encoded and eligible for direct transcode. Other columns remain ordinary
+   * columns. Filters, custom row bounds, and chunked/multi-pass reads disable direct transcode;
+   * materialized strings are returned without re-encoding. Nested and decimal columns are not
+   * supported by direct transcode. Output types may therefore vary between reads.
+   *
+   * ENCODE retains the existing output_dict_columns(true) behavior. DECODE is equivalent to
+   * output_dict_columns(false). When both setters are used, the last setting wins.
+   *
+   * @param policy The output policy
+   */
+  void set_dictionary_output_policy(dictionary_output_policy policy)
+  {
+    _dictionary_output_policy = policy;
+  }
 };
 
 /**
@@ -968,6 +1018,22 @@ class parquet_reader_options_builder {
   parquet_reader_options_builder& output_dict_columns(bool val)
   {
     options.enable_output_dict_columns(val);
+    return *this;
+  }
+
+  /**
+   * @brief Selects dictionary output behavior without forcing ordinary strings into dictionaries.
+   *
+   * See parquet_reader_options::set_dictionary_output_policy for eligibility and fallback.
+   * This and output_dict_columns set the same policy; the last setting wins.
+   *
+   * @param policy The output policy
+   * @return this for chaining
+   */
+  parquet_reader_options_builder& dictionary_output_policy(
+    cudf::io::dictionary_output_policy policy)
+  {
+    options.set_dictionary_output_policy(policy);
     return *this;
   }
 

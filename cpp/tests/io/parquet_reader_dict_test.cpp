@@ -599,3 +599,175 @@ TEST_F(ParquetReaderDictTest, NullRowGroupDictTranscode)
   auto const decoded = cudf::dictionary::decode(dict_view);
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(input_col, decoded->view());
 }
+
+// PRESERVE never creates a dictionary from materialized strings.
+TEST_F(ParquetReaderDictTest, PreserveFlatStringDictionary)
+{
+  auto input_col = make_low_cardinality_strings();
+
+  auto const input_tbl = cudf::table_view{{input_col}};
+  auto const filepath  = temp_env->get_temp_filepath("PreserveFlatStringDictionary.parquet");
+  write_parquet(input_tbl, filepath);
+
+  auto const dict_input      = cudf::dictionary::encode(input_col);
+  auto const dict_input_view = cudf::dictionary_column_view(dict_input->view());
+  auto const decoded_input   = cudf::dictionary::decode(dict_input_view);
+
+  auto const read_table =
+    cudf::io::read_parquet(
+      cudf::io::parquet_reader_options::builder(cudf::io::source_info{filepath})
+        .dictionary_output_policy(cudf::io::dictionary_output_policy::PRESERVE)
+        .build())
+      .tbl;
+  ASSERT_EQ(read_table->num_rows(), num_rows);
+  ASSERT_EQ(read_table->num_columns(), 1);
+
+  auto const read_col = read_table->view().column(0);
+  ASSERT_EQ(read_col.type().id(), cudf::type_id::DICTIONARY32)
+    << "Expected the reader to produce a DICTIONARY32 column when output_dict_columns is on";
+
+  cudf::dictionary_column_view dict_read_view(read_col);
+  auto const decoded_read = cudf::dictionary::decode(dict_read_view);
+
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(input_col, decoded_read->view());
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(decoded_input->view(), decoded_read->view());
+}
+
+TEST_F(ParquetReaderDictTest, PreserveMixedPagesReturnsStrings)
+{
+  auto input_col = make_mixed_encoding_strings();
+
+  auto const input_tbl = cudf::table_view{{input_col}};
+  auto const filepath  = temp_env->get_temp_filepath("PreserveMixedPagesReturnsStrings.parquet");
+  write_parquet_adaptive(input_tbl, filepath, /*max_dict_size=*/4 * 1024);
+
+  auto const read_table =
+    cudf::io::read_parquet(
+      cudf::io::parquet_reader_options::builder(cudf::io::source_info{filepath})
+        .dictionary_output_policy(cudf::io::dictionary_output_policy::PRESERVE)
+        .build())
+      .tbl;
+  ASSERT_EQ(read_table->num_rows(), num_rows);
+  ASSERT_EQ(read_table->num_columns(), 1);
+
+  auto const read_col = read_table->view().column(0);
+  ASSERT_EQ(read_col.type().id(), cudf::type_id::STRING);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(input_col, read_col);
+}
+
+TEST_F(ParquetReaderDictTest, PreserveFilterReturnsStrings)
+{
+  auto key_col = make_int_key_column();
+  auto str_col = make_low_cardinality_strings();
+
+  auto const input_tbl = cudf::table_view{{key_col, str_col}};
+  auto const filepath  = temp_env->get_temp_filepath("PreserveFilterReturnsStrings.parquet");
+  write_parquet(input_tbl, filepath);
+
+  // Filter: key column (col 0) >= num_rows / 2.
+  auto literal_value = cudf::numeric_scalar<int32_t>(num_rows / 2);
+  auto literal       = cudf::ast::literal(literal_value);
+  auto col_ref       = cudf::ast::column_reference(0);
+  auto filter_expr = cudf::ast::operation(cudf::ast::ast_operator::GREATER_EQUAL, col_ref, literal);
+
+  // Expected result: apply the same predicate to the input table on host-visible data.
+  auto const predicate = cudf::compute_column(input_tbl, filter_expr);
+  auto const expected  = cudf::apply_retention_mask(input_tbl, predicate->view());
+  ASSERT_LT(expected->num_rows(), num_rows) << "filter must remove some rows to be meaningful";
+
+  auto const read_opts = cudf::io::parquet_reader_options::builder(cudf::io::source_info{filepath})
+                           .dictionary_output_policy(cudf::io::dictionary_output_policy::PRESERVE)
+                           .filter(filter_expr)
+                           .build();
+  auto const read_table = cudf::io::read_parquet(read_opts).tbl;
+  ASSERT_EQ(read_table->num_columns(), 2);
+  ASSERT_EQ(read_table->num_rows(), expected->num_rows());
+
+  // Key column: unchanged INT32.
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected->view().column(0), read_table->view().column(0));
+
+  auto const read_str = read_table->view().column(1);
+  ASSERT_EQ(read_str.type().id(), cudf::type_id::STRING);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected->view().column(1), read_str);
+}
+
+TEST_F(ParquetReaderDictTest, PreservePlainInputDoesNotEncode)
+{
+  auto input_col      = make_low_cardinality_strings();
+  auto const input    = cudf::table_view{{input_col}};
+  auto const filepath = temp_env->get_temp_filepath("PreservePlainInputDoesNotEncode.parquet");
+  cudf::io::write_parquet(
+    cudf::io::parquet_writer_options::builder(cudf::io::sink_info{filepath}, input)
+      .dictionary_policy(cudf::io::dictionary_policy::NEVER)
+      .build());
+  auto const result = cudf::io::read_parquet(
+    cudf::io::parquet_reader_options::builder(cudf::io::source_info{filepath})
+      .dictionary_output_policy(cudf::io::dictionary_output_policy::PRESERVE)
+      .build());
+  ASSERT_EQ(result.tbl->view().column(0).type().id(), cudf::type_id::STRING);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(input_col, result.tbl->view().column(0));
+}
+
+TEST_F(ParquetReaderDictTest, DictionaryOutputPolicyCompatibility)
+{
+  using policy = cudf::io::dictionary_output_policy;
+  auto options = cudf::io::parquet_reader_options::builder().build();
+  EXPECT_EQ(options.get_dictionary_output_policy(), policy::DECODE);
+  EXPECT_FALSE(options.is_enabled_output_dict_columns());
+  options.set_dictionary_output_policy(policy::PRESERVE);
+  EXPECT_FALSE(options.is_enabled_output_dict_columns());
+  options.enable_output_dict_columns(true);
+  EXPECT_EQ(options.get_dictionary_output_policy(), policy::ENCODE);
+  EXPECT_TRUE(options.is_enabled_output_dict_columns());
+  options.enable_output_dict_columns(false);
+  EXPECT_EQ(options.get_dictionary_output_policy(), policy::DECODE);
+  auto const preserve = cudf::io::parquet_reader_options::builder()
+                          .output_dict_columns(true)
+                          .dictionary_output_policy(policy::PRESERVE)
+                          .build();
+  EXPECT_EQ(preserve.get_dictionary_output_policy(), policy::PRESERVE);
+  auto const encode = cudf::io::parquet_reader_options::builder()
+                        .dictionary_output_policy(policy::PRESERVE)
+                        .output_dict_columns(true)
+                        .build();
+  EXPECT_EQ(encode.get_dictionary_output_policy(), policy::ENCODE);
+}
+
+TEST_F(ParquetReaderDictTest, PreserveChunkedReadReturnsStrings)
+{
+  auto input_col = make_low_cardinality_strings();
+
+  auto const input_tbl = cudf::table_view{{input_col}};
+  auto const filepath  = temp_env->get_temp_filepath("PreserveChunkedReadReturnsStrings.parquet");
+  write_parquet(input_tbl, filepath);
+
+  auto const read_opts = cudf::io::parquet_reader_options::builder(cudf::io::source_info{filepath})
+                           .dictionary_output_policy(cudf::io::dictionary_output_policy::PRESERVE)
+                           .build();
+  // Small byte limit so the read is split across multiple output chunks.
+  auto reader = cudf::io::chunked_parquet_reader(/*chunk_read_limit=*/16 * 1024, read_opts);
+
+  std::vector<std::unique_ptr<cudf::column>> decoded_chunks;
+  cudf::size_type total_rows = 0;
+  int num_chunks             = 0;
+  while (reader.has_next()) {
+    auto chunk = reader.read_chunk();
+    ASSERT_EQ(chunk.tbl->num_columns(), 1);
+    auto const read_col = chunk.tbl->view().column(0);
+    if (read_col.size() == 0) { continue; }
+    ASSERT_EQ(read_col.type().id(), cudf::type_id::STRING);
+    decoded_chunks.push_back(std::move(chunk.tbl->release()[0]));
+    total_rows += read_col.size();
+    ++num_chunks;
+  }
+  ASSERT_EQ(total_rows, num_rows);
+  EXPECT_GT(num_chunks, 1) << "byte limit should split the read into multiple chunks";
+
+  std::vector<cudf::column_view> views;
+  views.reserve(decoded_chunks.size());
+  for (auto const& c : decoded_chunks) {
+    views.push_back(c->view());
+  }
+  auto const combined = cudf::concatenate(views);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(input_col, combined->view());
+}

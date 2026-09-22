@@ -6,7 +6,6 @@
 #include <cudf_test/base_fixture.hpp>
 #include <cudf_test/column_wrapper.hpp>
 #include <cudf_test/default_stream.hpp>
-#include <cudf_test/lists_column_wrapper.hpp>
 
 #include <cudf/strings/combine.hpp>
 #include <cudf/strings/repeat_strings.hpp>

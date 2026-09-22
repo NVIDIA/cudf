@@ -207,6 +207,8 @@ def test_numeric_alpha_value_counts():
         "UInt32",
         "UInt64",
         "boolean",
+        "string[python]",
+        "string[pyarrow]",
     ],
 )
 def test_value_counts_empty_pandas_nullable(dtype, normalize, dropna):
@@ -221,7 +223,14 @@ def test_value_counts_empty_pandas_nullable(dtype, normalize, dropna):
 
 @pytest.mark.parametrize(
     "dtype",
-    ["Float64", "Int64", "UInt32", "boolean"],
+    [
+        "Float64",
+        "Int64",
+        "UInt32",
+        "boolean",
+        "string[python]",
+        "string[pyarrow]",
+    ],
 )
 def test_value_counts_all_null_pandas_nullable(dtype, normalize, dropna):
     psr = pd.Series([pd.NA, pd.NA, pd.NA], dtype=dtype)
@@ -236,6 +245,17 @@ def test_value_counts_all_null_pandas_nullable(dtype, normalize, dropna):
         check_dtype=True,
         check_index_type=True,
     )
+
+
+@pytest.mark.parametrize("dtype", ["string[python]", "string[pyarrow]"])
+def test_value_counts_pandas_nullable_string(dtype, normalize, dropna):
+    psr = pd.Series(["a", "a", "b", pd.NA], dtype=dtype, name="values")
+    gsr = cudf.from_pandas(psr)
+
+    expected = psr.value_counts(dropna=dropna, normalize=normalize)
+    got = gsr.value_counts(dropna=dropna, normalize=normalize)
+
+    assert_eq(expected, got, check_dtype=True, check_index_type=True)
 
 
 def test_value_counts_first_appearance_order(sort):

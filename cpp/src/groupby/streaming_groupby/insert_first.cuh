@@ -70,10 +70,10 @@ size_type streaming_groupby::impl::probe_and_insert_first_batch(
                                  sizeof(batch_self_eq)},
     h_batch_self_eq_span,
     stream);
-  auto const hasher       = offset_cache_hasher{batch_hash_cache, _max_distinct_keys};
+  auto const hasher       = offset_cache_hasher{batch_hash_cache, _capacity};
   auto const set_ref_base = _key_set->ref(cuco::op::insert_and_find).rebind_hash_function(hasher);
   auto const first_batch_cmp = first_batch_comparator{
-    indirect_row_equality<decltype(batch_self_eq)>{d_batch_self_eq_ptr}, _max_distinct_keys};
+    indirect_row_equality<decltype(batch_self_eq)>{d_batch_self_eq_ptr}, _capacity};
   auto* const base = _key_set->data();
 
   auto const out_end =
@@ -83,7 +83,7 @@ size_type streaming_groupby::impl::probe_and_insert_first_batch(
                     batch_local_indices,
                     insert_and_check_fn{set_ref_base.rebind_key_eq(first_batch_cmp),
                                         batch_bitmask,
-                                        _max_distinct_keys,
+                                        _capacity,
                                         base,
                                         target_indices,
                                         slot_offsets});

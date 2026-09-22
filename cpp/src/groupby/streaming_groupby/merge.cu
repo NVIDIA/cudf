@@ -91,7 +91,7 @@ struct merge_single_pass_aggs_fn {
 
 void streaming_groupby::impl::do_merge(impl const& other, cuda::stream_ref stream)
 {
-  // `other` is only read from, so a single lock on this object's insertion state is enough.
+  // `other` is only read from, so a single lock on this object's state is enough.
   std::lock_guard const lock{_insert_mutex};
 
   ensure_not_invalidated();
@@ -103,10 +103,6 @@ void streaming_groupby::impl::do_merge(impl const& other, cuda::stream_ref strea
   CUDF_EXPECTS(_initialized,
                "Cannot merge into an uninitialized streaming_groupby. "
                "Call aggregate() at least once before merge().");
-  CUDF_EXPECTS(other_distinct_keys <= _max_distinct_keys,
-               "Merge source distinct keys (" + std::to_string(other_distinct_keys) +
-                 ") exceeds max_distinct_keys (" + std::to_string(_max_distinct_keys) + ").",
-               std::invalid_argument);
   CUDF_EXPECTS(other._agg_kinds == _agg_kinds,
                "Cannot merge streaming_groupby objects with different aggregation schemas.",
                std::invalid_argument);
@@ -127,6 +123,7 @@ void streaming_groupby::impl::do_merge(impl const& other, cuda::stream_ref strea
   if (!_key_set) { create_key_set(stream); }
 
   _insert_done.wait(stream);
+  ensure_room(other_distinct_keys, stream);
   auto result = probe_and_insert(other_key_view, stream);
   _insert_done.record(stream);
 
@@ -143,6 +140,7 @@ void streaming_groupby::impl::do_merge(impl const& other, cuda::stream_ref strea
     static_cast<int64_t>(other_distinct_keys) * num_agg_cols,
     merge_single_pass_aggs_fn{
       result.target_indices.begin(), _d_agg_kinds->data(), *d_source, *_d_agg_results});
+  record_aggregation(stream);
 }
 
 }  // namespace cudf::groupby

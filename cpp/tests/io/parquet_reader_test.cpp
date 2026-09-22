@@ -4549,6 +4549,64 @@ TEST_F(ParquetMetadataReaderTest, Nested)
   EXPECT_EQ(out_float_col.name(), "float_field");
   EXPECT_EQ(out_float_col.type(), cudf::io::parquet::Type::FLOAT);
 }
+
+TEST_F(ParquetMetadataReaderTest, FieldIds)
+{
+  auto const num_rows = 4;
+
+  auto ints          = random_values<int32_t>(num_rows);
+  auto floats        = random_values<float>(num_rows);
+  auto struct_ints   = random_values<int32_t>(num_rows);
+  auto struct_floats = random_values<float>(num_rows);
+  column_wrapper<int32_t> int_col(ints.begin(), ints.end());
+  column_wrapper<float> float_col(floats.begin(), floats.end());
+  column_wrapper<int32_t> struct_int_col(struct_ints.begin(), struct_ints.end());
+  column_wrapper<float> struct_float_col(struct_floats.begin(), struct_floats.end());
+  auto struct_col = cudf::test::structs_column_wrapper{{struct_int_col, struct_float_col}};
+
+  table_view expected({int_col, float_col, struct_col});
+
+  // Set field ids on some columns and deliberately omit them on others, at both the top level
+  // and inside the struct, so we can assert both the populated and the std::nullopt cases.
+  cudf::io::table_input_metadata expected_metadata(expected);
+  expected_metadata.column_metadata[0].set_name("int_col").set_parquet_field_id(1);
+  expected_metadata.column_metadata[1].set_name("float_col");  // field id omitted
+  expected_metadata.column_metadata[2].set_name("struct_col").set_parquet_field_id(3);
+  expected_metadata.column_metadata[2].child(0).set_name("struct_int").set_parquet_field_id(10);
+  expected_metadata.column_metadata[2].child(1).set_name("struct_float");  // field id omitted
+
+  auto filepath = temp_env->get_temp_filepath("MetadataTestFieldIds.parquet");
+  cudf::io::parquet_writer_options out_opts =
+    cudf::io::parquet_writer_options::builder(cudf::io::sink_info{filepath}, expected)
+      .metadata(std::move(expected_metadata));
+  cudf::io::write_parquet(out_opts);
+
+  auto meta               = read_parquet_metadata(cudf::io::source_info{filepath});
+  auto const& schema_root = meta.schema().root();
+
+  // The root schema element carries no field id.
+  EXPECT_EQ(schema_root.field_id(), std::nullopt);
+  ASSERT_EQ(schema_root.num_children(), 3);
+
+  // Top-level column with a field id.
+  EXPECT_EQ(schema_root.child(0).name(), "int_col");
+  EXPECT_EQ(schema_root.child(0).field_id(), 1);
+
+  // Top-level column whose field id was omitted by the writer.
+  EXPECT_EQ(schema_root.child(1).name(), "float_col");
+  EXPECT_EQ(schema_root.child(1).field_id(), std::nullopt);
+
+  // Struct column with a field id, plus nested children (one with, one without a field id).
+  auto const& out_struct_col = schema_root.child(2);
+  EXPECT_EQ(out_struct_col.name(), "struct_col");
+  EXPECT_EQ(out_struct_col.field_id(), 3);
+  ASSERT_EQ(out_struct_col.num_children(), 2);
+  EXPECT_EQ(out_struct_col.child(0).name(), "struct_int");
+  EXPECT_EQ(out_struct_col.child(0).field_id(), 10);
+  EXPECT_EQ(out_struct_col.child(1).name(), "struct_float");
+  EXPECT_EQ(out_struct_col.child(1).field_id(), std::nullopt);
+}
+
 TEST_F(ParquetMetadataReaderTest, CudfTypes)
 {
   auto const num_rows = 4;

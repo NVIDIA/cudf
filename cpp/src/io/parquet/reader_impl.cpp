@@ -1218,7 +1218,7 @@ parquet_column_schema walk_schema(aggregate_reader_metadata const* mt, int idx)
   auto const cudf_type = to_data_type(type_id, sch);
 
   return parquet_column_schema{
-    sch.name, static_cast<parquet::Type>(sch.type), std::move(children), cudf_type};
+    sch.name, static_cast<parquet::Type>(sch.type), std::move(children), cudf_type, sch.field_id};
 }
 }  // namespace
 

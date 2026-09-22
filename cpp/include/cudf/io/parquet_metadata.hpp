@@ -19,6 +19,7 @@
 #include <cudf/utilities/memory_resource.hpp>
 
 #include <memory>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -53,12 +54,18 @@ struct parquet_column_schema {
    * @param type parquet type
    * @param children child columns (empty for non-nested types)
    * @param cudf_type cudf data type
+   * @param field_id Parquet field id, or std::nullopt when absent
    */
   parquet_column_schema(std::string_view name,
                         Type type,
                         std::vector<parquet_column_schema>&& children,
-                        data_type cudf_type)
-    : _name{name}, _type{type}, _children{std::move(children)}, _cudf_type{cudf_type}
+                        data_type cudf_type,
+                        std::optional<int32_t> field_id = std::nullopt)
+    : _name{name},
+      _type{type},
+      _children{std::move(children)},
+      _cudf_type{cudf_type},
+      _field_id{field_id}
   {
   }
 
@@ -120,12 +127,21 @@ struct parquet_column_schema {
    */
   [[nodiscard]] auto cudf_type() const { return _cudf_type; }
 
+  /**
+   * @brief Returns the Parquet field id of the column, if present
+   *
+   * @return The field id from the Parquet schema, or std::nullopt when the writer
+   *         omitted it
+   */
+  [[nodiscard]] std::optional<int32_t> field_id() const { return _field_id; }
+
  private:
   std::string _name;
   // 3 types available: Physical, Converted, Logical
   Type _type;  // Physical type
   std::vector<parquet_column_schema> _children;
   data_type _cudf_type;
+  std::optional<int32_t> _field_id;
 };
 
 /**

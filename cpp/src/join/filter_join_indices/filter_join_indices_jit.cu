@@ -437,7 +437,7 @@ filter_join_indices_jit(cudf::table_view const& left,
                             predicate_results.data(),
                             std::nullopt,  // no user data for now
                             stream,
-                            mr);
+                            cudf::get_current_device_resource_ref());
 
   // Apply same join semantics as AST version
   return apply_join_semantics(
@@ -475,8 +475,13 @@ filter_join_indices_jit(cudf::table_view const& left,
   }
 
   // Convert AST predicate to JIT code
-  auto filter_result = row_ir::ast_converter::filter(
-    row_ir::target::CUDA, predicate, left, right, "filter_operation", stream, mr);
+  auto filter_result = row_ir::ast_converter::filter(row_ir::target::CUDA,
+                                                     predicate,
+                                                     left,
+                                                     right,
+                                                     "filter_operation",
+                                                     stream,
+                                                     cudf::get_current_device_resource_ref());
 
   auto template_args =
     build_join_filter_template_params(filter_result.inputs,
@@ -500,7 +505,7 @@ filter_join_indices_jit(cudf::table_view const& left,
                             predicate_results.data(),
                             filter_result.user_data,
                             stream,
-                            mr);
+                            cudf::get_current_device_resource_ref());
 
   return apply_join_semantics(
     left, right, left_indices, right_indices, predicate_results, join_kind, stream, mr);

@@ -972,6 +972,7 @@ dependencies:
           # if no matching matrix selectors passed, list the CUDA 13 requirement
           # (just as a source of documentation, as this populates pyproject.toml in source control)
           - matrix:
+              use_cuda_wheels: "true"
             packages:
               - cuda-toolkit[nvrtc]==13.*
               - *nvjitlink_cu13
@@ -992,7 +993,7 @@ dependencies:
           - identify>=2.5.20
       - output_types: conda
         packages:
-          - &doxygen doxygen=1.9.1 # pre-commit hook needs a specific version.
+          - &doxygen doxygen=1.18.0 # pre-commit hook needs a specific version.
   clang:
     common:
       - output_types: conda

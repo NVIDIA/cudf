@@ -525,10 +525,7 @@ metadata::metadata(FileMetaData&& other) : FileMetaData(std::move(other))
 metadata::metadata(datasource* source, bool read_page_indexes)
 {
   auto const buffer = cudf::io::parquet::fetch_footer_to_host(*source);
-  CompactProtocolReader cp(buffer->data(), buffer->size());
-  cp.read(this);
-  auto const is_schema_initialized = cp.InitSchema(this);
-  CUDF_EXPECTS(is_schema_initialized, "Cannot initialize schema");
+  decode_footer_and_init_schema({buffer->data(), buffer->size()}, this);
 
   // Reading the page indexes is somewhat expensive, so skip if there are no byte array columns.
   // Currently the indexes are only used for the string size calculations.

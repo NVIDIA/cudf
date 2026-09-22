@@ -3595,6 +3595,21 @@ JNIEXPORT jlongArray JNICALL Java_ai_rapids_cudf_Table_leftSemiJoinGatherMap(
     });
 }
 
+JNIEXPORT jlongArray JNICALL Java_ai_rapids_cudf_Table_leftSemiFilteredJoinGatherMap(
+  JNIEnv* env, jclass, jlong j_left_keys, jlong j_right_filtered_join)
+{
+  JNI_NULL_CHECK(env, j_left_keys, "left keys table is null", NULL);
+  JNI_NULL_CHECK(env, j_right_filtered_join, "right filtered join is null", NULL);
+  JNI_TRY
+  {
+    cudf::jni::auto_set_device(env);
+    auto const left_keys     = reinterpret_cast<cudf::table_view const*>(j_left_keys);
+    auto const filtered_join = reinterpret_cast<cudf::filtered_join const*>(j_right_filtered_join);
+    return cudf::jni::gather_map_to_java(env, filtered_join->semi_join(*left_keys));
+  }
+  JNI_CATCH(env, NULL);
+}
+
 JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_Table_conditionalLeftSemiJoinRowCount(
   JNIEnv* env, jclass, jlong j_left_table, jlong j_right_table, jlong j_condition)
 {
@@ -3693,6 +3708,21 @@ JNIEXPORT jlongArray JNICALL Java_ai_rapids_cudf_Table_leftAntiJoinGatherMap(
       cudf::filtered_join obj(right, nulleq, load_factor, cudf::get_default_stream());
       return obj.anti_join(left);
     });
+}
+
+JNIEXPORT jlongArray JNICALL Java_ai_rapids_cudf_Table_leftAntiFilteredJoinGatherMap(
+  JNIEnv* env, jclass, jlong j_left_keys, jlong j_right_filtered_join)
+{
+  JNI_NULL_CHECK(env, j_left_keys, "left keys table is null", NULL);
+  JNI_NULL_CHECK(env, j_right_filtered_join, "right filtered join is null", NULL);
+  JNI_TRY
+  {
+    cudf::jni::auto_set_device(env);
+    auto const left_keys     = reinterpret_cast<cudf::table_view const*>(j_left_keys);
+    auto const filtered_join = reinterpret_cast<cudf::filtered_join const*>(j_right_filtered_join);
+    return cudf::jni::gather_map_to_java(env, filtered_join->anti_join(*left_keys));
+  }
+  JNI_CATCH(env, NULL);
 }
 
 JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_Table_conditionalLeftAntiJoinRowCount(

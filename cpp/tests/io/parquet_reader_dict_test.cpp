@@ -970,9 +970,10 @@ TEST_F(ParquetReaderDictTest, PreserveDecimalFixedByteWidths)
     0x69, 0x6f, 0x6e, 0x20, 0x32, 0x31, 0x2e, 0x30, 0x2e, 0x30, 0x19, 0x3c, 0x1c, 0x00, 0x00, 0x1c,
     0x00, 0x00, 0x1c, 0x00, 0x00, 0x00, 0x04, 0x02, 0x00, 0x00, 0x50, 0x41, 0x52, 0x31,
   };
-  auto const source = cudf::io::source_info{parquet.data(), parquet.size()};
-  auto options      = cudf::io::parquet_reader_options::builder(source).build();
-  auto const plain  = cudf::io::read_parquet(options);
+  auto const source =
+    cudf::io::source_info{cudf::host_span<uint8_t const>{parquet.data(), parquet.size()}};
+  auto options     = cudf::io::parquet_reader_options::builder(source).build();
+  auto const plain = cudf::io::read_parquet(options);
   options.set_dictionary_output_policy(cudf::io::dictionary_output_policy::PRESERVE);
   auto const preserved = cudf::io::read_parquet(options);
   ASSERT_EQ(preserved.tbl->num_columns(), 3);

@@ -104,6 +104,24 @@ function(ConfigureNVBench CMAKE_BENCH_NAME)
 endfunction()
 
 # ##################################################################################################
+# * benchmark utility tests -----------------------------------------------------------------------
+if(BUILD_TESTS)
+  add_executable(MEMORY_STATS_LOGGER_TEST common/memory_stats_logger_test.cpp)
+  target_compile_features(MEMORY_STATS_LOGGER_TEST PRIVATE cxx_std_20)
+  target_link_libraries(
+    MEMORY_STATS_LOGGER_TEST PRIVATE cudf::cudftestutil_objects nvtx3::nvtx3-cpp
+                                     $<TARGET_NAME_IF_EXISTS:conda_env>
+  )
+  rapids_cuda_set_runtime(MEMORY_STATS_LOGGER_TEST USE_STATIC ON)
+  rapids_test_add(
+    NAME MEMORY_STATS_LOGGER_TEST
+    COMMAND MEMORY_STATS_LOGGER_TEST
+    GPUS 1
+    PERCENT 100
+  )
+endif()
+
+# ##################################################################################################
 # * copying benchmarks ----------------------------------------------------------------------------
 ConfigureNVBench(
   COPYING_NVBENCH copying/concatenate.cpp copying/copy_if_else.cpp copying/gather.cpp

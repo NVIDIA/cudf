@@ -19,6 +19,8 @@
 namespace cudf::io::detail {
 
 // Declare after buffer owners so failures drain work before releasing its inputs.
+// Cleanup uses RMM's noexcept policy (Debug assertion, unchecked result in Release), not the
+// reader adapter's terminate-on-drain-error policy. Explicit wait() still propagates CUDA errors.
 class staging_stream_drain {
  public:
   explicit staging_stream_drain(cuda::stream_ref stream) : stream_{stream} {}

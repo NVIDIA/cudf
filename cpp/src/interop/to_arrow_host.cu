@@ -77,6 +77,8 @@ void enable_hugepage(ArrowBuffer* buffer)
 
 // Keep async D2H destinations alive when an error prevents ownership from being transferred.
 // ArrowArrayMove clears release, so successful transfers do not synchronize here.
+// Cleanup follows RMM's noexcept policy: drain in all builds, assert on failure only in Debug.
+// Release builds preserve the original exception rather than throwing or terminating on drain errors.
 class unique_host_array : public nanoarrow::UniqueArray {
  public:
   explicit unique_host_array(cuda::stream_ref stream) : stream_{stream} {}

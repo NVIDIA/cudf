@@ -19,7 +19,6 @@ target_link_libraries(
 )
 
 add_executable(NDSH_VORTEX_IO_TEST EXCLUDE_FROM_ALL vortex_io_test.cpp)
-
 target_compile_options(NDSH_VORTEX_IO_TEST PRIVATE ${CUDF_CXX_FLAGS})
 set_target_properties(
   NDSH_VORTEX_IO_TEST PROPERTIES RUNTIME_OUTPUT_DIRECTORY
@@ -44,23 +43,14 @@ if(BUILD_TESTS)
     NDSH_VORTEX_WRITER_TEST PROPERTIES RUNTIME_OUTPUT_DIRECTORY
                                        "$<BUILD_INTERFACE:${CUDF_BINARY_DIR}/benchmarks>"
   )
-  rapids_test_add(
-    NAME NDSH_VORTEX_WRITER_TEST
-    COMMAND NDSH_VORTEX_WRITER_TEST
-    GPUS 1
-    PERCENT 100
-  )
-  set_tests_properties(
-    NDSH_VORTEX_WRITER_TEST PROPERTIES TIMEOUT 600 RUN_SERIAL TRUE LABELS "ndsh;vortex;smoke"
-  )
   set_target_properties(NDSH_VORTEX_IO_TEST PROPERTIES EXCLUDE_FROM_ALL FALSE)
-  rapids_test_add(
-    NAME NDSH_VORTEX_IO_TEST
-    COMMAND NDSH_VORTEX_IO_TEST
-    GPUS 1
-    PERCENT 100
-  )
-  set_tests_properties(
-    NDSH_VORTEX_IO_TEST PROPERTIES TIMEOUT 600 RUN_SERIAL TRUE LABELS "ndsh;vortex;smoke"
-  )
+  foreach(test IN ITEMS NDSH_VORTEX_WRITER_TEST NDSH_VORTEX_IO_TEST)
+    rapids_test_add(
+      NAME ${test}
+      COMMAND ${test}
+      GPUS 1
+      PERCENT 100
+    )
+    set_tests_properties(${test} PROPERTIES TIMEOUT 600 RUN_SERIAL TRUE LABELS "ndsh;vortex;smoke")
+  endforeach()
 endif()

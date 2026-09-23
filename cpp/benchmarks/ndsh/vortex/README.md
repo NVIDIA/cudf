@@ -1,12 +1,10 @@
 # Vortex NDS-H comparisons
 
-Optional local-file comparisons for Q1, Q5, Q6, Q9, and Q10. Both the GPU reader
-and CPU writer are benchmark-private. `writer.hpp`/`writer.cpp` define
-`ndsh::write_vortex`; the existing `vortex_io.hpp`/`vortex_io.cpp` adapter delegates
-writes to it. This branch provides no installed `cudf::io::write_vortex` API or
-`<cudf/io/vortex.hpp>` header. The adapter and benchmark wiring live in cuDF;
-Vortex is fetched as a library dependency. Shared comparison support lives in
-`../local_io.hpp`, and format-independent CPU references live in `../reference/`.
+Optional local-file comparisons for Q1, Q5, Q6, Q9, and Q10. The GPU reader and
+CPU writer are benchmark-private, not installed libcudf APIs. `vortex_io` delegates
+writing to `ndsh::write_vortex` in `writer.hpp`/`writer.cpp`; Vortex is fetched as
+a library dependency. Shared comparison support lives in `../local_io.hpp`, and
+independent CPU references live in `../reference/`.
 The existing NDS-H/TPC-H disclaimer in the [parent README](../README.md) applies.
 
 ## Build and run
@@ -83,10 +81,6 @@ rules in either mode.
 
 ### Benchmark-private writer
 
-The private writer in `writer.hpp`/`writer.cpp` uses the `ndsh` namespace and is
-built with the benchmark adapter, not exported or installed with libcudf. The
-public writer proposal is preserved separately; it is not an API on this branch.
-
 The private writer requires current device 0 and one local-file sink. It writes
 flat integers, floats, booleans, strings, decimals and day-resolution timestamps,
 including nullable, sliced and zero-row inputs. Other timestamp units, durations,
@@ -106,9 +100,8 @@ the GPU reader's build-tree `.so` dependency.
 covering options, unsupported inputs, file finalization, slices, types and
 explicit staging resources. It is separate from `NDSH_VORTEX_IO_TEST`, whose
 `vortex_io_test.cpp` has a custom `main` and checks decoded round trips through
-the existing adapter and private writer. Do not combine their test entry points.
-The writer GTest requires `BUILD_TESTS`, `BUILD_BENCHMARKS`, and
-`CUDF_WITH_VORTEX`; it is not a public libcudf I/O test.
+the adapter and private writer. The writer GTest requires `BUILD_TESTS`,
+`BUILD_BENCHMARKS`, and `CUDF_WITH_VORTEX`.
 
 ### Automated correctness smoke tests
 
@@ -157,11 +150,8 @@ projected-scan, bitmap-correctness, embedding, and pipelined-read prerequisites.
 The immutable pin keeps builds reproducible; it is not a release or a claim of
 build/runtime validation of this cuDF branch.
 
-The cuDF Arrow host-transfer cleanup fix remains a prerequisite: export failure
-paths must drain outstanding transfers before releasing host buffers. Moving the
-writer into benchmarks does not remove this requirement. Keep this prerequisite
-separate from the public writer proposal; neither the proposal nor its installed
-API is part of this benchmark integration.
+The cuDF Arrow host-transfer cleanup fix is a prerequisite: export failure paths
+must drain outstanding transfers before releasing host buffers.
 
 Local comparisons use layout-derived scan batches (`batch_rows=0`). At this
 revision, nonzero scan sizes specify fixed row ranges rather than layout-preserving

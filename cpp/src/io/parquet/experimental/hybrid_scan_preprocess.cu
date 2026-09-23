@@ -78,16 +78,33 @@ void decode_dictionary_page_headers(
               parquet::kernel_error::to_string(error));
   }
 
-  // Setup dictionary page for each chunk. One page per column chunk, zeroed out struct if a column
-  // is not fully dictionary encoded.
+  // Point each chunk at its dictionary page. A chunk whose span is empty keeps a zeroed page and is
+  // not pruned with; a chunk whose span holds something other than a dictionary page is reset to
+  // match.
   thrust::for_each(
     rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
     cuda::counting_iterator<cuda::std::size_t>(0),
     cuda::counting_iterator<cuda::std::size_t>(chunks.size()),
     [chunks = chunks.device_begin(), pages = pages.device_begin()] __device__(auto chunk_idx) {
-      auto const& page = pages[chunk_idx];
+      auto& page  = pages[chunk_idx];
+      auto& chunk = chunks[chunk_idx];
       if (page.flags & parquet::detail::PAGEINFO_FLAGS_DICTIONARY) {
-        chunks[chunk_idx].dict_page = &page;
+        chunk.dict_page = &page;
+      } else if (chunk.compressed_size > 0) {
+        // The span does not begin with a dictionary page. This happens if a caller passes an
+        // untrimmed `upper_bound_if_present` range for a chunk that claims dictionary encoding but
+        // has no dictionary page, so the span begins with a data page instead. Reset the chunk to
+        // avoid invalid reads and so it is not pruned.
+        auto const src_col_schema = page.src_col_schema;
+        page                      = PageInfo{};
+        page.chunk_idx            = static_cast<int32_t>(chunk_idx);
+        page.src_col_schema       = src_col_schema;
+        page.skipped_values       = -1;
+        page.is_compressed        = true;
+        page.kernel_mask          = parquet::detail::decode_kernel_mask::NONE;
+        chunk.compressed_data     = nullptr;
+        chunk.compressed_size     = 0;
+        chunk.num_dict_pages      = 0;
       }
     });
 

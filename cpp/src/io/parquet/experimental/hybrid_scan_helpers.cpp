@@ -481,13 +481,18 @@ aggregate_reader_metadata::bloom_filters_byte_ranges(
   return {std::move(bloom_filter_bytes), std::move(bloom_filter_source_map)};
 }
 
-std::pair<std::vector<byte_range_info>, std::vector<cudf::size_type>>
-aggregate_reader_metadata::dictionary_pages_byte_ranges(
+template <bool include_unbounded>
+std::pair<
+  std::vector<std::conditional_t<include_unbounded, dictionary_byte_range, byte_range_info>>,
+  std::vector<cudf::size_type>>
+aggregate_reader_metadata::dictionary_pages_byte_ranges_impl(
   std::span<std::vector<cudf::size_type> const> row_group_indices,
   std::span<data_type const> output_dtypes,
   std::span<cudf::size_type const> output_column_schemas,
   std::reference_wrapper<ast::expression const> filter)
 {
+  using range_type = std::conditional_t<include_unbounded, dictionary_byte_range, byte_range_info>;
+
   // Collect (in)equality literals for each input table column
   auto const literals = dictionary_literals_collector{filter.get(), output_dtypes}.get_literals();
 
@@ -510,7 +515,7 @@ aggregate_reader_metadata::dictionary_pages_byte_ranges(
   auto const num_dictionary_columns = dictionary_col_schemas.size();
   auto const num_chunks             = total_row_groups * num_dictionary_columns;
 
-  std::vector<byte_range_info> dictionary_page_bytes;
+  std::vector<range_type> dictionary_page_bytes;
   dictionary_page_bytes.reserve(num_chunks);
 
   // Flag to check if we have at least one valid dictionary page
@@ -550,10 +555,33 @@ aggregate_reader_metadata::dictionary_pages_byte_ranges(
                         // Make sure that all column chunk pages are dictionary encoded
                         auto const only_dict_encoded_pages = [&]() {
                           if (not col_meta.encoding_stats.has_value()) {
-                            CUDF_LOG_WARN(
-                              "Skipping the column chunk because it does not have encoding stats "
-                              "needed to determine if all pages are dictionary encoded");
-                            return false;
+                            // Without per-page encoding stats, the chunk's encoding list is all
+                            // that is left to rule out a page that fell back to a non-dictionary
+                            // encoding. PLAIN_DICTIONARY says at least one page was dictionary
+                            // encoded with the v1 encodings, among which RLE and BIT_PACKED only
+                            // ever encode levels, so a list holding nothing besides those says
+                            // every data page was dictionary encoded. A chunk written with the v2
+                            // encodings lists RLE_DICTIONARY for both dictionary-encoded and
+                            // fallback pages, which only the per-page stats tell apart.
+                            auto const& encodings        = col_meta.encodings;
+                            auto const has_v1_dictionary = std::find(encodings.cbegin(),
+                                                                     encodings.cend(),
+                                                                     Encoding::PLAIN_DICTIONARY) !=
+                                                           encodings.cend();
+                            auto const only_dictionary_or_levels =
+                              std::all_of(encodings.cbegin(), encodings.cend(), [](auto encoding) {
+                                return encoding == Encoding::PLAIN_DICTIONARY or
+                                       encoding == Encoding::RLE or
+                                       encoding == Encoding::BIT_PACKED;
+                              });
+                            if (not(has_v1_dictionary and only_dictionary_or_levels)) {
+                              CUDF_LOG_WARN(
+                                "Skipping the column chunk because it has no encoding stats, and "
+                                "its encoding list does not show that all pages are dictionary "
+                                "encoded");
+                              return false;
+                            }
+                            return true;
                           }
 
                           return std::all_of(
@@ -568,6 +596,7 @@ aggregate_reader_metadata::dictionary_pages_byte_ranges(
 
                         auto dictionary_offset = int64_t{0};
                         auto dictionary_size   = int64_t{0};
+                        [[maybe_unused]] auto dictionary_extent = dictionary_page_extent::exact;
 
                         if (only_dict_encoded_pages) {
                           // There is a bug in older versions of parquet-mr where the first data
@@ -593,11 +622,27 @@ aggregate_reader_metadata::dictionary_pages_byte_ranges(
                               dictionary_size =
                                 offset_index->page_locations[0].offset - col_meta.data_page_offset;
                               have_dictionary_pages = true;
+                            } else if constexpr (include_unbounded) {
+                              if (num_pages == 0) {
+                                // Nothing left says where the dictionary page ends, or whether the
+                                // chunk holds one at all. Such a page would start where the chunk
+                                // starts, so hand back the chunk as a bound on it.
+                                dictionary_offset = col_meta.data_page_offset;
+                                dictionary_size   = col_meta.total_compressed_size;
+                                dictionary_extent = dictionary_page_extent::upper_bound_if_present;
+                                have_dictionary_pages = true;
+                              }
                             }
                           }
                         }
 
-                        dictionary_page_bytes.emplace_back(dictionary_offset, dictionary_size);
+                        if constexpr (include_unbounded) {
+                          dictionary_page_bytes.push_back(
+                            {byte_range_info{dictionary_offset, dictionary_size},
+                             dictionary_extent});
+                        } else {
+                          dictionary_page_bytes.emplace_back(dictionary_offset, dictionary_size);
+                        }
                         dictionary_page_source_map.emplace_back(static_cast<size_type>(src_index));
                       });
                   });
@@ -606,6 +651,28 @@ aggregate_reader_metadata::dictionary_pages_byte_ranges(
   if (not have_dictionary_pages) { return {}; }
 
   return {std::move(dictionary_page_bytes), std::move(dictionary_page_source_map)};
+}
+
+std::pair<std::vector<byte_range_info>, std::vector<cudf::size_type>>
+aggregate_reader_metadata::dictionary_pages_byte_ranges(
+  std::span<std::vector<cudf::size_type> const> row_group_indices,
+  std::span<data_type const> output_dtypes,
+  std::span<cudf::size_type const> output_column_schemas,
+  std::reference_wrapper<ast::expression const> filter)
+{
+  return dictionary_pages_byte_ranges_impl<false>(
+    row_group_indices, output_dtypes, output_column_schemas, filter);
+}
+
+std::pair<std::vector<dictionary_byte_range>, std::vector<cudf::size_type>>
+aggregate_reader_metadata::dictionary_pages_byte_ranges_include_unbounded(
+  std::span<std::vector<cudf::size_type> const> row_group_indices,
+  std::span<data_type const> output_dtypes,
+  std::span<cudf::size_type const> output_column_schemas,
+  std::reference_wrapper<ast::expression const> filter)
+{
+  return dictionary_pages_byte_ranges_impl<true>(
+    row_group_indices, output_dtypes, output_column_schemas, filter);
 }
 
 std::vector<std::vector<cudf::size_type>>

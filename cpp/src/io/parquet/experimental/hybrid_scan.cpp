@@ -3,6 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+#include "../compact_protocol_reader.hpp"
 #include "hybrid_scan_impl.hpp"
 
 #include <cudf/detail/nvtx/ranges.hpp>
@@ -11,7 +12,38 @@
 
 #include <thrust/host_vector.h>
 
+#include <exception>
+#include <optional>
+#include <utility>
+
 namespace cudf::io::parquet::experimental {
+
+std::optional<int64_t> dictionary_page_length(cudf::host_span<uint8_t const> page_bytes)
+{
+  auto header = PageHeader{};
+  auto reader = parquet::detail::CompactProtocolReader{page_bytes.data(), page_bytes.size()};
+
+  // Nothing says these bytes are a page header at all, so a parse that gives up on them means there
+  // is no dictionary page here rather than that the file is corrupt.
+  try {
+    reader.read(&header);
+  } catch (std::exception const&) {
+    return std::nullopt;
+  }
+
+  // A chunk that claims dictionary encoding may have been written without a dictionary page, in
+  // which case these bytes are the chunk's first data page.
+  if (header.type != PageType::DICTIONARY_PAGE or header.compressed_page_size <= 0) {
+    return std::nullopt;
+  }
+
+  // A header cut off by the end of what was read stops parsing without complaint, and a page longer
+  // than what was read cannot be pruned with either way.
+  auto const page_length = static_cast<int64_t>(reader.bytecount()) + header.compressed_page_size;
+  if (std::cmp_greater(page_length, page_bytes.size())) { return std::nullopt; }
+
+  return page_length;
+}
 
 hybrid_scan_metadata::hybrid_scan_metadata(cudf::host_span<uint8_t const> footer_bytes,
                                            parquet_reader_options const& options)
@@ -142,6 +174,20 @@ std::vector<text::byte_range_info> hybrid_scan_reader::dictionary_pages_byte_ran
     std::vector<std::vector<size_type>>{{row_group_indices.begin(), row_group_indices.end()}};
 
   return _impl->dictionary_pages_byte_ranges(input_row_group_indices, options).first;
+}
+
+std::vector<dictionary_byte_range>
+hybrid_scan_reader::dictionary_pages_byte_ranges_include_unbounded(
+  std::span<size_type const> row_group_indices, parquet_reader_options const& options) const
+{
+  CUDF_FUNC_RANGE();
+
+  // Temporary vector with row group indices from the first source
+  auto const input_row_group_indices =
+    std::vector<std::vector<size_type>>{{row_group_indices.begin(), row_group_indices.end()}};
+
+  return _impl->dictionary_pages_byte_ranges_include_unbounded(input_row_group_indices, options)
+    .first;
 }
 
 std::vector<cudf::size_type> hybrid_scan_reader::filter_row_groups_with_dictionary_pages(

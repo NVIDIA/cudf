@@ -43,9 +43,9 @@ TEST_F(ListRankScanTest, DeepList)
     {{1, 2, 3}, {}, {4, 5}, {0, 6, 0}},
     {{7, 8}, {}},
     {{}, {}, {}},
-    lcw::nested({{}}),
-    lcw::nested({{}}),
-    lcw::nested({{}}),
+    {{}},
+    {{}},
+    {{}},
     {{}, {}, {}},
     {{}, {}, {}},
     lcw::nested({{10}}),
@@ -53,7 +53,7 @@ TEST_F(ListRankScanTest, DeepList)
     {{13, 14}, {15}},
     {{13, 14}, {16}},
     {},
-    lcw::nested({{}}),
+    {{}},
   };
 
   {  // Non-sliced

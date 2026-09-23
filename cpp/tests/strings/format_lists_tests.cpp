@@ -29,7 +29,7 @@ TEST_F(StringsFormatListsTest, EmptyNestedList)
 {
   using STR_LISTS = cudf::test::lists_column_wrapper<cudf::string_view>;
 
-  auto const input = STR_LISTS{{{}, {}}, STR_LISTS::nested({{}})};
+  auto const input = STR_LISTS{{{}, {}}, {{}}};
   auto const view  = cudf::lists_column_view(input);
 
   auto results  = cudf::strings::format_list_column(view);

@@ -501,9 +501,7 @@ TYPED_TEST(SegmentedGatherTest, GatherNestedWithEmpties)
   auto const mr     = this->resources();
 
   LCW<T> list{
-    LCW<T>::nested({{{2, 3}, {}}, {{6, 7, 8}, {9, 10, 11}, {12, 13, 14}}, LCW<T>::nested({{}})}),
-    stream,
-    mr};
+    LCW<T>::nested({{{2, 3}, {}}, {{6, 7, 8}, {9, 10, 11}, {12, 13, 14}}, {{}}}), stream, mr};
   // Per-row singleton lists: {{0},{0},{0}} flattens to one list of three.
   LCW<int> gather_map({{0}, {0}, {0}}, stream, mr);
   auto results = cudf::lists::segmented_gather(cudf::lists_column_view{list},
@@ -511,11 +509,9 @@ TYPED_TEST(SegmentedGatherTest, GatherNestedWithEmpties)
                                                cudf::out_of_bounds_policy::DONT_CHECK,
                                                stream,
                                                mr.get_output_mr());
-  LCW<T> expected{
-    LCW<T>::nested(
-      {{{2, 3}}, {{6, 7, 8}}, LCW<T>::nested({{}})}),  // skip one null, gather one null.
-    stream,
-    mr};
+  LCW<T> expected{LCW<T>::nested({{{2, 3}}, {{6, 7, 8}}, {{}}}),  // skip one null, gather one null.
+                  stream,
+                  mr};
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(
     results->view(), expected, cudf::test::debug_output_level::FIRST_ERROR, stream, mr);
 }

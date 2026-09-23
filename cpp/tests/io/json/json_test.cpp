@@ -2523,12 +2523,12 @@ TEST_F(JsonReaderTest, MixedTypes)
   // so, even if mixed types are present, their row offset will be correct.
 
   LCWS expected_list({LCWS::nested({{"1", "2", "3"}, {"4", "5", "6"}}),
-                      LCWS::nested({{}}),
-                      LCWS::nested({{}}),  // null
-                      LCWS::nested({{}}),  // null
+                      {{}},
+                      {{}},  // null
+                      {{}},  // null
                       LCWS::nested({{"{\"c\": -1}"}, {"5"}}),
                       LCWS::nested({{"7"}, {"8", "9"}}),
-                      LCWS::nested({{}})},  // null
+                      {{}}},  // null
                      valid_t{1, 1, 0, 0, 1, 1, 0}.begin());
   test_fn(R"(
 {"b": [ [1, 2, 3], [ 4, 5, 6] ]}

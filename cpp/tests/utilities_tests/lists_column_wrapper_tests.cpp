@@ -569,7 +569,6 @@ TYPED_TEST(ListColumnWrapperTestTyped, EmptyListsWithValidity)
   using T = TypeParam;
 
   // Use nested() to disambiguate between {} == 0 and {} == List{0}.
-  using LCW = cudf::test::lists_column_wrapper<T, int32_t>;
 
   auto valids = cudf::test::iterators::valids_at_multiples_of(2);
 
@@ -656,7 +655,7 @@ TYPED_TEST(ListColumnWrapperTestTyped, EmptyListsWithValidity)
   {
     // equivalent to  { {{}}, NULL, {{}, {5, 6, 7, 8}, {}} }
     cudf::test::lists_column_wrapper<T, int32_t> list{
-      {LCW::nested({{}}), {{1, 2}, {}, {3, 4}}, {{}, {5, 6, 7, 8}, {}}}, valids};
+      {{{}}, {{1, 2}, {}, {3, 4}}, {{}, {5, 6, 7, 8}, {}}}, valids};
 
     cudf::lists_column_view lcv(list);
     EXPECT_EQ(lcv.size(), 3);

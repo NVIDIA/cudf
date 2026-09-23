@@ -153,7 +153,7 @@ std::vector<std::unique_ptr<cudf::column>> generate_lists(bool include_validity)
                                                 LCW::nested({{6}}),
                                                 {{{7, 8}, {{9, 10, 11}, valids}, {}}, valids},
                                                 {{{}, {-1, -2, -3, -4, -5}}, valids},
-                                                LCW::nested({{}}),
+                                                {{}},
                                                 {{-10}, {-100, -200}},
                                                 {{-10, -200}, {}, {8, 9}},
                                                 {{8}, {}, {9}, {5, 6}}};
@@ -172,7 +172,7 @@ std::vector<std::unique_ptr<cudf::column>> generate_lists(bool include_validity)
                                               LCW::nested({{6}}),
                                               {{7, 8}, {9, 10, 11}, {}},
                                               {{}, {-1, -2, -3, -4, -5}},
-                                              LCW::nested({{}}),
+                                              {{}},
                                               {{-10}, {-100, -200}},
                                               {{-10, -200}, {}, {8, 9}},
                                               {{8}, {}, {9}, {5, 6}}};
@@ -240,10 +240,10 @@ std::vector<std::unique_ptr<cudf::column>> generate_struct_of_list()
   cudf::test::lists_column_wrapper<cudf::string_view> list(
     {{{"abc", "d", "edf"}, {"jjj"}},
      {{"dgaer", "-7"}, {}},
-     LCW::nested({{}}),
+     {{}},
      {{"qwerty"}, {"ral", "ort", "tal"}, {"five", "six"}},
      {{}, {}, {"eight", "nine"}},
-     LCW::nested({{}}),
+     {{}},
      {{"fun"}, {"a", "bc", "def", "ghij", "klmno", "pqrstu"}},
      {{"seven", "zz"}, {}, {"xyzzy"}},
      LCW::nested({{"negative 3", "  ", "cleveland"}})},
@@ -513,14 +513,12 @@ TEST_F(PackUnpackTest, NestedSliced)
   {
     auto valids = cudf::test::iterators::valids_at_multiples_of(2);
 
-    using LCW = cudf::test::lists_column_wrapper<int>;
-
     cudf::test::lists_column_wrapper<int> col0{{{{1, 2, 3}, valids}, {4, 5}},
                                                {{{}, {}, {7, 8}, {}}, valids},
                                                {{6, 12}},
                                                {{{7, 8}, {{9, 10, 11}, valids}, {}}, valids},
                                                {{{}, {-1, -2, -3, -4, -5}}, valids},
-                                               LCW::nested({{}}),
+                                               {{}},
                                                {{-10}, {-100, -200}}};
 
     cudf::test::strings_column_wrapper col1{

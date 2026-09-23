@@ -1150,7 +1150,6 @@ TEST_F(ListsColumnTest, ConcatenateNestedEmptyLists)
   // to disambiguate between {} == 0 and {} == List{0}
   // Also, see note about compiler issues when declaring nested
   // empty lists in lists_column_wrapper documentation
-  using LCW = cudf::test::lists_column_wrapper<T>;
   {
     cudf::test::lists_column_wrapper<T> a{{{}}, {{0, 1}, {2, 3}}};
     cudf::test::lists_column_wrapper<int> b{{{6, 7}}, {{}, {11, 12}}};
@@ -1165,23 +1164,23 @@ TEST_F(ListsColumnTest, ConcatenateNestedEmptyLists)
   {
     cudf::test::lists_column_wrapper<int> a{
       {{{0, 1, 2}, {}}, {{5}, {6, 7}}, {{8, 9}}},
-      {LCW::nested({{}}), {{17, 18}, {19, 20}}},
-      {LCW::nested({{}})},
+      {{{}}, {{17, 18}, {19, 20}}},
+      {{{}}},
       {{{50}, {51, 52}}, {{53, 54}, {55, 16, 17}}, {{59, 60}}}};
 
     cudf::test::lists_column_wrapper<int> b{
       {{{21, 22}, {23, 24}}, {{}, {26, 27}}, {{28, 29, 30}}},
       {{{31, 32}, {33, 34}}, {{35, 36}, {37, 38}, {1, 2}}, {{39, 40}}},
-      {LCW::nested({{}})}};
+      {{{}}}};
 
     cudf::test::lists_column_wrapper<int> expected{
       {{{0, 1, 2}, {}}, {{5}, {6, 7}}, {{8, 9}}},
-      {LCW::nested({{}}), {{17, 18}, {19, 20}}},
-      {LCW::nested({{}})},
+      {{{}}, {{17, 18}, {19, 20}}},
+      {{{}}},
       {{{50}, {51, 52}}, {{53, 54}, {55, 16, 17}}, {{59, 60}}},
       {{{21, 22}, {23, 24}}, {{}, {26, 27}}, {{28, 29, 30}}},
       {{{31, 32}, {33, 34}}, {{35, 36}, {37, 38}, {1, 2}}, {{39, 40}}},
-      {LCW::nested({{}})}};
+      {{{}}}};
 
     auto result = cudf::concatenate(std::vector<column_view>({a, b}));
 
@@ -1226,10 +1225,9 @@ TEST_F(ListsColumnTest, ConcatenateMismatchedHierarchies)
   // to disambiguate between {} == 0 and {} == List{0}
   // Also, see note about compiler issues when declaring nested
   // empty lists in lists_column_wrapper documentation
-  using LCW = cudf::test::lists_column_wrapper<int>;
   {
-    cudf::test::lists_column_wrapper<int> a{{{LCW::nested({{}})}}};
-    cudf::test::lists_column_wrapper<int> b{{LCW::nested({{}})}};
+    cudf::test::lists_column_wrapper<int> a{{{{{}}}}};
+    cudf::test::lists_column_wrapper<int> b{{{{}}}};
     cudf::test::lists_column_wrapper<int> c{{{}}};
 
     EXPECT_THROW(cudf::concatenate(std::vector<column_view>({a, b, c})), cudf::data_type_error);
@@ -1237,15 +1235,15 @@ TEST_F(ListsColumnTest, ConcatenateMismatchedHierarchies)
 
   {
     std::vector<bool> valids{false};
-    cudf::test::lists_column_wrapper<int> a{{{{LCW::nested({{}})}}, valids.begin()}};
-    cudf::test::lists_column_wrapper<int> b{{LCW::nested({{}})}};
+    cudf::test::lists_column_wrapper<int> a{{{{{{}}}}, valids.begin()}};
+    cudf::test::lists_column_wrapper<int> b{{{{}}}};
     cudf::test::lists_column_wrapper<int> c{{{}}};
 
     EXPECT_THROW(cudf::concatenate(std::vector<column_view>({a, b, c})), cudf::data_type_error);
   }
 
   {
-    cudf::test::lists_column_wrapper<int> a{{{LCW::nested({{}})}}};
+    cudf::test::lists_column_wrapper<int> a{{{{{}}}}};
     cudf::test::lists_column_wrapper<int> b{1, 2, 3};
     cudf::test::lists_column_wrapper<int> c{{3, 4, 5}};
 

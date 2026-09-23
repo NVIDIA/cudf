@@ -68,7 +68,7 @@ TYPED_TEST(ListsElementsNumericsTest, CountElementsNestedLists)
   std::vector<int32_t> validity{1, 0, 1, 1};
   using LCW = cudf::test::lists_column_wrapper<TypeParam>;
   LCW list({{{2, 3}, {4, 5}},
-            LCW::nested({{}}),
+            {{}},
             {{6, 7, 8}, {9, 10, 11}, {{12, 13, 14}, validity.begin()}},
             {{15, 16}, {17, 18}, {19, 20}, {21, 22}, {23, 24}}},
            validity.begin());

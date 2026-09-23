@@ -255,7 +255,7 @@ TYPED_TEST(GroupbyMergeListsTypedTest, InputHasListsOfLists)
   };
   auto const lists3 = lists_col{
     {{14}, {15, 16, 17, 18}},             // key = 2
-    lists_col::nested({{}}),              // key = 3
+    {{}},                                 // key = 3
     {{17, 18, 19, 20, 21}, {18, 19, 20}}  // key = 4
   };
 

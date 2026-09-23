@@ -512,7 +512,7 @@ TEST_F(ListConcatenateRowsNestedTypesTest, ListWithNulls)
 
   // col 0
   StrListsCol l0({{{{"whee", "yay", "bananas"}, nulls_at({1})}, {}},
-                  StrListsCol::nested({{}}),
+                  {{}},
                   {{{"abc"}, {"def", "g", "xyw", "ijk"}, {"x", "y", "", "column"}},
                    nulls_at({0, 2})},
                   {{"f", "tesla"}},
@@ -520,14 +520,14 @@ TEST_F(ListConcatenateRowsNestedTypesTest, ListWithNulls)
                  nulls_at({3, 4}));
 
   // col1
-  StrListsCol l1({StrListsCol::nested({{}}),
+  StrListsCol l1({{{}},
                   {{"arg"}, {"mno", "ampere"}, {"gpu"}, {"def"}},
                   {{{{"", "hhh"}, nulls_at({0})}, {"www"}}, nulls_at({1})},
                   {{"warp", "donuts", "parking"},
                    {"", "apply", "twelve", "mouse", "bbb"},
                    {"bbb", "pom"},
                    {}},
-                  StrListsCol::nested({{}})},
+                  {{}}},
                  nulls_at({4}));
 
   // col2
@@ -563,7 +563,7 @@ TEST_F(ListConcatenateRowsNestedTypesTest, ListWithNulls)
                            {},
                            {"ram", "cpu", "disk"},
                            {}},
-                          StrListsCol::nested({{}})},
+                          {{}}},
                          nulls_at({4}));
 
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(*result, expected);
@@ -576,7 +576,7 @@ TEST_F(ListConcatenateRowsNestedTypesTest, ListWithNulls)
     auto result = cudf::lists::concatenate_rows(t, cudf::lists::concatenate_null_policy::NULLIFY_OUTPUT_ROW);
 
     // expected
-    StrListsCol expected({StrListsCol::nested({{}}),
+    StrListsCol expected({{{}},
                           {{}, {"arg"}, {"mno", "ampere"}, {"gpu"}, {"def"}, {"spurs", "garlic"}, {"onion", "shallot", "carrot"}},
                           {{{"abc"},
                             {"def", "g", "xyw", "ijk"},
@@ -587,8 +587,8 @@ TEST_F(ListConcatenateRowsNestedTypesTest, ListWithNulls)
                             {"abc"},
                             {"mno", "pqr"}},
                            nulls_at({0, 2, 4})},
-                          StrListsCol::nested({{}}),
-                          StrListsCol::nested({{}})},
+                          {{}},
+                          {{}}},
                          nulls_at({0, 3, 4}));
 
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(*result, expected);

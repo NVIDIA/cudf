@@ -784,7 +784,7 @@ void split_lists(SplitFunc Split, CompareFunc Compare, bool split = true)
                                              LCW::nested({{6}}),
                                              {{7, 8}, {9, 10, 11}, {}},
                                              {{}, {-1, -2, -3, -4, -5}},
-                                             LCW::nested({{}}),
+                                             {{}},
                                              {{-10}, {-100, -200}}};
 
     if (split) {
@@ -794,7 +794,7 @@ void split_lists(SplitFunc Split, CompareFunc Compare, bool split = true)
       expected.push_back(LCW{{{1, 2, 3}, {4, 5}}});
       expected.push_back(LCW{{{}, {}, {7, 8}, {}}, LCW::nested({{6}})});
       expected.push_back(LCW{{{7, 8}, {9, 10, 11}, {}}});
-      expected.push_back(LCW{{{}, {-1, -2, -3, -4, -5}}, LCW::nested({{}}), {{-10}, {-100, -200}}});
+      expected.push_back(LCW{{{}, {-1, -2, -3, -4, -5}}, {{}}, {{-10}, {-100, -200}}});
 
       auto result = Split(list, splits);
       EXPECT_EQ(expected.size(), result.size());
@@ -860,7 +860,7 @@ void split_lists_with_nulls(SplitFunc Split, CompareFunc Compare, bool split = t
                                              LCW::nested({{6}}),
                                              {{{7, 8}, {{9, 10, 11}, valids}, {}}, valids},
                                              {{{}, {-1, -2, -3, -4, -5}}, valids},
-                                             LCW::nested({{}}),
+                                             {{}},
                                              {{-10}, {-100, -200}}};
 
     if (split) {
@@ -870,8 +870,7 @@ void split_lists_with_nulls(SplitFunc Split, CompareFunc Compare, bool split = t
       expected.push_back(LCW{{{{1, 2, 3}, valids}, {4, 5}}});
       expected.push_back(LCW{{{{}, {}, {7, 8}, {}}, valids}, LCW::nested({{6}})});
       expected.push_back(LCW{{{{7, 8}, {{9, 10, 11}, valids}, {}}, valids}});
-      expected.push_back(
-        LCW{{{{}, {-1, -2, -3, -4, -5}}, valids}, LCW::nested({{}}), {{-10}, {-100, -200}}});
+      expected.push_back(LCW{{{{}, {-1, -2, -3, -4, -5}}, valids}, {{}}, {{-10}, {-100, -200}}});
 
       auto result = Split(list, splits);
       EXPECT_EQ(expected.size(), result.size());
@@ -2178,7 +2177,7 @@ TEST_F(ContiguousSplitTableCornerCases, PreSplitTable)
                                              LCW::nested({{6}}),
                                              {{{7, 8}, {}, {{9, 10, 11}, valids}}, valids},
                                              {{{-1, -2, -3, -4, -5}, {}}, valids},
-                                             LCW::nested({{}}),
+                                             {{}},
                                              {{-10}, {-100, -200}}};
 
   cudf::test::strings_column_wrapper col1{

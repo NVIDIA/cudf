@@ -193,15 +193,14 @@ TEST_F(SliceListTest, Lists)
                                                LCW::nested({{6}}),
                                                {{7, 8}, {9, 10, 11}, {}},
                                                {{}, {-1, -2, -3, -4, -5}},
-                                               LCW::nested({{}}),
+                                               {{}},
                                                {{-10}, {-100, -200}}};
 
     std::vector<cudf::size_type> indices{1, 3, 3, 6};
 
     std::vector<cudf::test::lists_column_wrapper<int>> expected;
     expected.push_back(LCW{{{}, {}, {7, 8}, {}}, LCW::nested({{6}})});
-    expected.push_back(
-      LCW{{{7, 8}, {9, 10, 11}, {}}, {{}, {-1, -2, -3, -4, -5}}, LCW::nested({{}})});
+    expected.push_back(LCW{{{7, 8}, {9, 10, 11}, {}}, {{}, {-1, -2, -3, -4, -5}}, {{}}});
 
     std::vector<cudf::column_view> result = cudf::slice(list, indices);
     EXPECT_EQ(expected.size(), result.size());
@@ -252,16 +251,15 @@ TEST_F(SliceListTest, ListsWithNulls)
                                                LCW::nested({{6}}),
                                                {{{7, 8}, {{9, 10, 11}, valids}, {}}, valids},
                                                {{{}, {-1, -2, -3, -4, -5}}, valids},
-                                               LCW::nested({{}}),
+                                               {{}},
                                                {{-10}, {-100, -200}}};
 
     std::vector<cudf::size_type> indices{1, 3, 3, 6};
 
     std::vector<cudf::test::lists_column_wrapper<int>> expected;
     expected.push_back(LCW{{{{}, {}, {7, 8}, {}}, valids}, LCW::nested({{6}})});
-    expected.push_back(LCW{{{{7, 8}, {{9, 10, 11}, valids}, {}}, valids},
-                           {{{}, {-1, -2, -3, -4, -5}}, valids},
-                           LCW::nested({{}})});
+    expected.push_back(LCW{
+      {{{7, 8}, {{9, 10, 11}, valids}, {}}, valids}, {{{}, {-1, -2, -3, -4, -5}}, valids}, {{}}});
 
     std::vector<cudf::column_view> result = cudf::slice(list, indices);
     EXPECT_EQ(expected.size(), result.size());

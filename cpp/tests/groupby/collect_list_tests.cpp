@@ -117,7 +117,7 @@ TYPED_TEST(groupby_collect_list_test, CollectListsWithNullExclusion)
 
   cudf::test::fixed_width_column_wrapper<K, int32_t> expect_keys{1, 2, 3, 4};
 
-  LCW expect_vals{{{1, 2}}, LCW::nested({{}}), {{9, 10}, {11}}, {}};
+  LCW expect_vals{{{1, 2}}, {{}}, {{9, 10}, {11}}, {}};
 
   auto agg =
     cudf::make_collect_list_aggregation<cudf::groupby_aggregation>(cudf::null_policy::EXCLUDE);

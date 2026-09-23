@@ -156,7 +156,7 @@ TYPED_TEST(ConcatenateListElementsTypedTest, SimpleInputNestedManyLevelsWithNull
   {
     auto const results = cudf::lists::concatenate_list_elements(
       col, cudf::lists::concatenate_null_policy::NULLIFY_OUTPUT_ROW);
-    auto const expected = ListsCol({ListsCol::nested({{}}), /*NULL*/
+    auto const expected = ListsCol({{{}}, /*NULL*/
                                     {{{1, 2}, {3}, {} /*NULL*/, {}, {7, 8}, {9, 10}}, null_at(2)},
                                     {{1, 2}, {3}, {4, 5, 6}, {}, {{null, 8}, null_at(0)}, {9, 10}}},
                                    null_at(0));

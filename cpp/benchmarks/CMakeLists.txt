@@ -78,9 +78,11 @@ add_custom_command(
 )
 
 # This function takes in a benchmark name and benchmark source for nvbench benchmarks and handles
-# setting all of the associated properties and linking to build the benchmark
+# setting all of the associated properties and linking to build the benchmark. The optional
+# NO_INSTALL flag restricts a benchmark to the build tree.
 function(ConfigureNVBench CMAKE_BENCH_NAME)
-  add_executable(${CMAKE_BENCH_NAME} ${ARGN} fixture/nvbench_main.cpp)
+  cmake_parse_arguments(PARSE_ARGV 1 NVBENCH "NO_INSTALL" "" "")
+  add_executable(${CMAKE_BENCH_NAME} ${NVBENCH_UNPARSED_ARGUMENTS} fixture/nvbench_main.cpp)
   set_target_properties(
     ${CMAKE_BENCH_NAME}
     PROPERTIES RUNTIME_OUTPUT_DIRECTORY "$<BUILD_INTERFACE:${CUDF_BINARY_DIR}/benchmarks>"
@@ -91,12 +93,14 @@ function(ConfigureNVBench CMAKE_BENCH_NAME)
     PRIVATE cudf_benchmark_common ndsh_data_generator cudf_datagen nvbench::nvbench
             $<TARGET_NAME_IF_EXISTS:conda_env> cudf::cudftestutil_objects
   )
-  install(
-    TARGETS ${CMAKE_BENCH_NAME}
-    COMPONENT testing
-    DESTINATION bin/benchmarks/libcudf
-    EXCLUDE_FROM_ALL
-  )
+  if(NOT NVBENCH_NO_INSTALL)
+    install(
+      TARGETS ${CMAKE_BENCH_NAME}
+      COMPONENT testing
+      DESTINATION bin/benchmarks/libcudf
+      EXCLUDE_FROM_ALL
+    )
+  endif()
 endfunction()
 
 # ##################################################################################################
@@ -124,13 +128,57 @@ ConfigureNVBench(TRANSPOSE_NVBENCH transpose/transpose.cpp)
 
 # ##################################################################################################
 # * nds-h benchmark --------------------------------------------------------------------------------
+if(BUILD_TESTS)
+  add_executable(NDSH_FIXTURE_CACHE_TEST ndsh/fixture_cache_test.cpp)
+  target_compile_features(NDSH_FIXTURE_CACHE_TEST PRIVATE cxx_std_20)
+  target_link_libraries(NDSH_FIXTURE_CACHE_TEST PRIVATE GTest::gtest_main)
+  rapids_test_add(NAME NDSH_FIXTURE_CACHE_TEST COMMAND NDSH_FIXTURE_CACHE_TEST)
+endif()
+
+set(ndsh_benchmark_options)
+if(CUDF_WITH_VORTEX)
+  # Pinned Vortex loads CUB/nvcomp libraries from absolute Cargo build paths.
+  set(ndsh_benchmark_options NO_INSTALL)
+endif()
 foreach(query IN ITEMS 01 05 06 09 10)
   ConfigureNVBench(
-    NDSH_Q${query}_NVBENCH ndsh/q${query}.cpp ndsh/utilities.cpp ndsh/parquet/parquet_io.cpp
+    NDSH_Q${query}_NVBENCH ${ndsh_benchmark_options} ndsh/q${query}.cpp ndsh/utilities.cpp
+    ndsh/parquet/parquet_io.cpp
   )
 endforeach()
+unset(ndsh_benchmark_options)
 if(CUDF_WITH_VORTEX)
   add_subdirectory(ndsh/vortex)
+
+  foreach(query IN ITEMS 01 05 06 09 10)
+    target_link_libraries(NDSH_Q${query}_NVBENCH PRIVATE NDSH_VORTEX_IO kvikio::kvikio)
+    target_compile_definitions(NDSH_Q${query}_NVBENCH PRIVATE CUDF_WITH_VORTEX=1)
+
+    if(BUILD_TESTS)
+      string(REGEX REPLACE "^0" "" query_number "${query}")
+      set(ndsh_smoke_options)
+      if(query STREQUAL "09")
+        list(APPEND ndsh_smoke_options --axis "engine=[binaryop,ast,transform]")
+      endif()
+      rapids_test_add(
+        NAME NDSH_Q${query}_VORTEX_SMOKE
+        COMMAND
+          NDSH_Q${query}_NVBENCH --benchmark ndsh_q${query_number}_local --devices 0 --axis
+          scale_factor=0.01 --axis "format=[parquet,vortex]" --axis workload=q${query_number} --axis
+          cache=warm --axis io=buffered ${ndsh_smoke_options}
+        GPUS 1
+        PERCENT 100
+      )
+      # NVBench may report failed or skipped states without a nonzero exit status.
+      set_tests_properties(
+        NDSH_Q${query}_VORTEX_SMOKE
+        PROPERTIES TIMEOUT 600 RUN_SERIAL TRUE LABELS "ndsh;vortex;smoke" FAIL_REGULAR_EXPRESSION
+                   "Fail:;Skip:"
+      )
+      unset(ndsh_smoke_options)
+      unset(query_number)
+    endif()
+  endforeach()
 endif()
 
 # ##################################################################################################

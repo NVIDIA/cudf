@@ -18,6 +18,26 @@
 
 #include <nvbench/nvbench.cuh>
 
+#ifdef CUDF_WITH_VORTEX
+#include "local_io.hpp"
+#include "parquet/parquet_fixture.hpp"
+#include "reference/q6_reference.hpp"
+#include "vortex/vortex_io.hpp"
+
+#include <cudf_test/column_wrapper.hpp>
+
+#include <cudf/copying.hpp>
+#include <cudf/utilities/error.hpp>
+
+#include <rmm/cuda_device.hpp>
+#include <rmm/mr/managed_memory_resource.hpp>
+#include <rmm/mr/pool_memory_resource.hpp>
+
+#include <cmath>
+#include <map>
+#include <optional>
+#endif
+
 namespace {
 std::vector<std::string> const q6_columns{
   "l_extendedprice", "l_discount", "l_shipdate", "l_quantity"};
@@ -156,3 +176,205 @@ void ndsh_q6(nvbench::state& state)
 }
 
 NVBENCH_BENCH(ndsh_q6).set_name("ndsh_q6").add_float64_axis("scale_factor", {0.01, 0.1, 1});
+
+#ifdef CUDF_WITH_VORTEX
+namespace {
+
+std::optional<double> revenue_value(table_with_names const& result)
+{
+  CUDF_EXPECTS(result.table().num_rows() == 1 && result.table().num_columns() == 1 &&
+                 result.column_names() == std::vector<std::string>{"revenue"},
+               "Q6 result must have one row and one revenue column");
+  CUDF_EXPECTS(result.table().column(0).type() == cudf::data_type{cudf::type_id::FLOAT64},
+               "Q6 revenue must be FLOAT64");
+  auto value = cudf::get_element(result.column("revenue"), 0);
+  if (!value->is_valid()) { return std::nullopt; }
+  return static_cast<cudf::numeric_scalar<double> const&>(*value).value();
+}
+
+void check_q6_result(ndsh::q6_reference_result const& expected, table_with_names const& result)
+{
+  auto const value = revenue_value(result);
+  if (expected.matched == 0) {
+    CUDF_EXPECTS(!value, "Q6 SUM over no matching rows must be null");
+  } else {
+    CUDF_EXPECTS(value && ndsh::detail::reference_equal(*value, expected.revenue),
+                 "Q6 GPU revenue differs from CPU reference");
+  }
+}
+
+void check_q6_result_schema()
+{
+  cudf::test::fixed_width_column_wrapper<double> revenue{{18.0}};
+  cudf::test::fixed_width_column_wrapper<double> extra_rows{{18.0, 999.0}};
+  cudf::test::fixed_width_column_wrapper<double> null_rows{{0.0, 999.0}, {false, true}};
+  cudf::test::fixed_width_column_wrapper<int64_t> wrong_type{{18}};
+  auto reject = [](cudf::table_view view, std::vector<std::string> names) {
+    table_with_names result{std::make_unique<cudf::table>(view), std::move(names)};
+    bool rejected = false;
+    try {
+      (void)revenue_value(result);
+    } catch (cudf::logic_error const&) {
+      rejected = true;
+    }
+    CUDF_EXPECTS(rejected, "Q6 validator accepted an invalid result schema");
+  };
+  reject(cudf::table_view{{extra_rows}}, {"revenue"});
+  reject(cudf::table_view{{null_rows}}, {"revenue"});
+  reject(cudf::table_view{{revenue, revenue}}, {"revenue", "extra"});
+  reject(cudf::table_view{{wrong_type}}, {"revenue"});
+  reject(cudf::table_view{{revenue}}, {"wrong_name"});
+  reject(cudf::slice(cudf::table_view{{revenue}}, {0, 0}).front(), {"revenue"});
+
+  table_with_names valid{std::make_unique<cudf::table>(cudf::table_view{{revenue}}), {"revenue"}};
+  check_q6_result({1, 18.0}, valid);
+  table_with_names empty_sum{
+    std::make_unique<cudf::table>(cudf::slice(cudf::table_view{{null_rows}}, {0, 1}).front()),
+    {"revenue"}};
+  check_q6_result({}, empty_sum);
+}
+
+void check_q6_reference_boundaries()
+{
+  using cudf::test::fixed_width_column_wrapper;
+  cuda::stream_ref const stream = cudf::get_default_stream();
+  // Exclude a matching sentinel; near-boundary doubles qualify only after the float32 cast.
+  fixed_width_column_wrapper<double> price{{1000, 100, 100, 100, 100, 100, 100, 100, 100}};
+  fixed_width_column_wrapper<double> discount{
+    {0.06, 0.06, 0.05 - 1e-10, 0.07 + 1e-10, 0.06, 0.06, 0.049, 0.071, 0.06}};
+  fixed_width_column_wrapper<cudf::timestamp_D, int32_t> shipdate{
+    {8766, 8766, 8766, 9130, 8765, 9131, 8766, 8766, 8766}};
+  fixed_width_column_wrapper<int8_t> quantity{{23, 23, 23, 23, 23, 23, 23, 23, 24}};
+  CUDF_CUDA_TRY(cudaDeviceSynchronize());
+  auto const input = cudf::table_view{{price, discount, shipdate, quantity}};
+  for (auto const& projected : cudf::slice(input, {1, 9, 4, 6, 1, 1}, stream)) {
+    auto const expected =
+      projected.num_rows() == 8 ? ndsh::q6_reference_result{3, 18.0} : ndsh::q6_reference_result{};
+    auto const cpu = ndsh::q6_cpu_reference(projected, stream);
+    CUDF_EXPECTS(
+      cpu.matched == expected.matched && std::abs(cpu.revenue - expected.revenue) < 1e-12,
+      "Q6 CPU reference boundary/slice regression");
+    for (bool filter_shipdate : {true, false}) {
+      auto result = execute_q6(
+        [&](auto const& columns, auto const& predicate) {
+          if (!filter_shipdate) {
+            return ndsh::read_parquet_fixture(projected, columns, predicate);
+          }
+          return std::make_unique<table_with_names>(std::make_unique<cudf::table>(projected),
+                                                    columns);
+        },
+        filter_shipdate,
+        ndsh::take_result);
+      check_q6_result(expected, *result);
+    }
+  }
+}
+
+void check_q6_boundaries()
+{
+  cudf::test::fixed_width_column_wrapper<double> price{
+    {100, 100, 100, 100, 100, 100, 100, 100, 100}};
+  cudf::test::fixed_width_column_wrapper<double> discount{
+    {0.06, 0.05, 0.07, 0.06, 0.049, 0.071, 0.06, 0.06, 0.06},
+    {true, true, true, true, true, true, true, true, false}};
+  // Epoch days: 1993-12-31, 1994-01-01, 1994-12-31, 1995-01-01.
+  cudf::test::fixed_width_column_wrapper<cudf::timestamp_D, int32_t> shipdate{
+    {8765, 8766, 9130, 9131, 8766, 8766, 8766, 8766, 8766}};
+  cudf::test::fixed_width_column_wrapper<double> quantity{{23, 23, 23, 23, 23, 23, 24, 23, 23}};
+  CUDF_CUDA_TRY(cudaDeviceSynchronize());
+  auto const input = cudf::table_view{{price, discount, shipdate, quantity}};
+  for (bool filter_shipdate : {true, false}) {
+    auto result = execute_q6(
+      [&](auto const& columns, auto const& predicate) {
+        if (!filter_shipdate) { return ndsh::read_parquet_fixture(input, columns, predicate); }
+        return std::make_unique<table_with_names>(std::make_unique<cudf::table>(input), columns);
+      },
+      filter_shipdate,
+      ndsh::take_result);
+    auto value = revenue_value(*result);
+    CUDF_EXPECTS(value && std::abs(*value - 18.0) < 1e-8, "Q6 boundary/null regression");
+  }
+}
+
+struct q6_files {
+  ndsh::local_table_files tables;
+  ndsh::q6_reference_result reference;
+
+  explicit q6_files(double scale_factor)
+  {
+    check_q6_result_schema();
+    check_q6_boundaries();
+    check_q6_reference_boundaries();
+    ndsh::vortex_io io{cuda::stream_ref{cudf::get_default_stream()}.get()};
+    rmm::mr::pool_memory_resource managed_pool_mr{rmm::mr::managed_memory_resource{},
+                                                  rmm::percent_of_free_device_memory(50)};
+    auto generated = generate_lineitem(scale_factor, managed_pool_mr);
+    tables.write("lineitem", *generated, io);
+    reference = ndsh::q6_cpu_reference(generated->select(q6_columns), cudf::get_default_stream());
+    CUDF_EXPECTS(std::isfinite(reference.revenue), "Q6 CPU reference revenue must be finite");
+    for (bool use_vortex : {false, true}) {
+      auto input =
+        ndsh::read_local_file(tables.path("lineitem", use_vortex), use_vortex, io, q6_columns);
+      ndsh::check_projection(generated->select(q6_columns), *input, q6_columns);
+      auto result = execute_q6(
+        [&](auto const&, auto const&) { return std::move(input); }, true, ndsh::take_result);
+      check_q6_result(reference, *result);
+    }
+    CUDF_CUDA_TRY(cudaDeviceSynchronize());
+  }
+};
+
+void ndsh_q6_local(nvbench::state& state)
+{
+  auto const [use_vortex, read_only, cold, direct_io] = ndsh::local_options{state, 6};
+  if (direct_io && !use_vortex) {
+    state.skip("io=direct is supported only for Vortex");
+    return;
+  }
+  auto const& files             = ndsh::local_fixture<q6_files>(state.get_float64("scale_factor"));
+  cuda::stream_ref const stream = cudf::get_default_stream();
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.get()));
+  auto memory = cudf::memory_stats_logger();
+  ndsh::vortex_io io{stream.get()};
+  auto read = [&](auto const&...) {
+    return ndsh::read_local_file(
+      files.tables.path("lineitem", use_vortex), use_vortex, io, q6_columns, direct_io);
+  };
+  {
+    auto input = read();
+    ndsh::check_local_projection(
+      files.tables.path("lineitem", use_vortex), use_vortex, io, q6_columns, *input);
+    auto result = execute_q6(
+      [&](auto const&, auto const&) { return std::move(input); }, true, ndsh::take_result);
+    check_q6_result(files.reference, *result);
+    CUDF_CUDA_TRY(cudaDeviceSynchronize());
+  }
+  ndsh::warm_local_inputs(cold, read);
+  CUDF_CUDA_TRY(cudaDeviceSynchronize());
+  memory.reset_counters();
+  ndsh::exec_local_benchmark(state, files.tables, use_vortex, cold, [&] {
+    auto result = read_only ? read() : execute_q6(read, true, ndsh::take_result);
+    CUDF_CUDA_TRY(cudaStreamSynchronize(stream.get()));
+  });
+  state.add_buffer_size(files.tables.bytes(use_vortex), "file_size", "File size");
+  state.add_buffer_size(memory.peak_memory_usage(), "rmm_peak", "RMM peak (excludes Vortex)");
+  auto& summary = state.add_summary("ndsh/q6/revenue");
+  summary.set_string("name", "Verified revenue");
+  if (files.reference.matched == 0) {
+    summary.set_string("value", "NULL");
+  } else {
+    summary.set_float64("value", files.reference.revenue);
+  }
+  ndsh::add_count(state, "ndsh/q6/matched_rows", "Q6 matched rows", files.reference.matched);
+}
+
+}  // namespace
+
+NVBENCH_BENCH(ndsh_q6_local)
+  .set_name("ndsh_q6_local")
+  .add_float64_axis("scale_factor", {0.01, 0.1, 1, 10})
+  .add_string_axis("format", {"parquet", "vortex"})
+  .add_string_axis("workload", {"read", "q6"})
+  .add_string_axis("cache", {"warm", "cold"})
+  .add_string_axis("io", {"buffered"});
+#endif

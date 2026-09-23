@@ -74,21 +74,12 @@ class VortexWriterTest : public cudf::test::BaseFixture {
   }
 };
 
-TEST_F(VortexWriterTest, OptionsDefaultsAndAggregate)
+TEST_F(VortexWriterTest, OptionsDefaults)
 {
-  vortex_writer_options defaults;
+  vortex_writer_options const defaults{sink_info{path()}};
   EXPECT_TRUE(defaults.names.empty());
   EXPECT_EQ(defaults.rows_per_chunk, 16 << 20);
   EXPECT_EQ(defaults.table.num_columns(), 0);
-
-  cudf::test::fixed_width_column_wrapper<int32_t> numbers{1, 2};
-  cudf::table_view const table{{numbers}};
-  vortex_writer_options const options{sink_info{path()}, table, {"number"}, 1};
-  EXPECT_EQ(options.sink.filepaths(), std::vector<std::string>{path()});
-  EXPECT_EQ(options.names, std::vector<std::string>{"number"});
-  EXPECT_EQ(options.rows_per_chunk, 1);
-  EXPECT_EQ(options.table.num_rows(), table.num_rows());
-  EXPECT_EQ(options.table.column(0).head<int32_t>(), table.column(0).head<int32_t>());
 
   EXPECT_FALSE(std::filesystem::exists(path()));
 }

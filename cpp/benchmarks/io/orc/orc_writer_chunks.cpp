@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -13,7 +13,7 @@
 #include <cudf/table/table.hpp>
 #include <cudf/utilities/default_stream.hpp>
 
-#include <thrust/iterator/transform_iterator.h>
+#include <cuda/iterator>
 
 #include <nvbench/nvbench.cuh>
 
@@ -46,7 +46,7 @@ void nvbench_orc_write(nvbench::state& state)
 
   size_t encoded_file_size = 0;
 
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().value()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().get()));
   state.exec(nvbench::exec_tag::timer | nvbench::exec_tag::sync,
              [&](nvbench::launch& launch, auto& timer) {
                cuio_source_sink_pair source_sink(io_type::VOID);
@@ -63,9 +63,10 @@ void nvbench_orc_write(nvbench::state& state)
                encoded_file_size = source_sink.size();
              });
 
-  state.add_buffer_size(mem_stats_logger.peak_memory_usage(), "pmu", "Peak Memory Usage");
-  state.add_buffer_size(encoded_file_size, "efs", "Encoded File Size");
-  state.add_element_count(view.num_rows(), "Total Rows");
+  state.add_buffer_size(
+    mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
+  state.add_buffer_size(encoded_file_size, "encoded_file_size", "encoded_file_size");
+  state.add_element_count(view.num_rows(), "total_rows");
 }
 
 void nvbench_orc_chunked_write(nvbench::state& state)
@@ -91,10 +92,10 @@ void nvbench_orc_chunked_write(nvbench::state& state)
 
   auto mem_stats_logger = cudf::memory_stats_logger();
 
-  auto size_iter = thrust::make_transform_iterator(
+  auto size_iter = cuda::transform_iterator(
     tables.begin(), [](auto const& i) { return i->num_columns() * i->num_rows(); });
   auto row_count_iter =
-    thrust::make_transform_iterator(tables.begin(), [](auto const& i) { return i->num_rows(); });
+    cuda::transform_iterator(tables.begin(), [](auto const& i) { return i->num_rows(); });
   auto total_elements = std::accumulate(size_iter, size_iter + num_tables, 0);
   auto total_rows     = std::accumulate(row_count_iter, row_count_iter + num_tables, 0);
 
@@ -103,7 +104,7 @@ void nvbench_orc_chunked_write(nvbench::state& state)
 
   size_t encoded_file_size = 0;
 
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().value()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().get()));
   state.exec(
     nvbench::exec_tag::timer | nvbench::exec_tag::sync, [&](nvbench::launch& launch, auto& timer) {
       cuio_source_sink_pair source_sink(io_type::VOID);
@@ -123,9 +124,10 @@ void nvbench_orc_chunked_write(nvbench::state& state)
       encoded_file_size = source_sink.size();
     });
 
-  state.add_buffer_size(mem_stats_logger.peak_memory_usage(), "pmu", "Peak Memory Usage");
-  state.add_buffer_size(encoded_file_size, "efs", "Encoded File Size");
-  state.add_element_count(total_rows, "Total Rows");
+  state.add_buffer_size(
+    mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
+  state.add_buffer_size(encoded_file_size, "encoded_file_size", "encoded_file_size");
+  state.add_element_count(total_rows, "total_rows");
 }
 
 NVBENCH_BENCH(nvbench_orc_write)

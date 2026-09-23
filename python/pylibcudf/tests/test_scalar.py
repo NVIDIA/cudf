@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import datetime
 import decimal
@@ -88,6 +88,10 @@ def test_to_py(py_scalar):
         (1, TypeId.DURATION_SECONDS),
         (1.0, TypeId.FLOAT32),
         (1.5, TypeId.FLOAT64),
+        (float("inf"), TypeId.FLOAT32),
+        (float("-inf"), TypeId.FLOAT32),
+        (float("inf"), TypeId.FLOAT64),
+        (float("-inf"), TypeId.FLOAT64),
         ("str", TypeId.STRING),
         (True, TypeId.BOOL8),
         (0, TypeId.BOOL8),
@@ -105,6 +109,45 @@ def test_from_py_with_dtype(val, tid):
     result = plc.Scalar.from_py(val, dtype)
     expected = pa.scalar(val).cast(dtype.to_arrow())
     assert result.to_arrow().equals(expected)
+
+
+@pytest.mark.parametrize(
+    "tid", [TypeId.DECIMAL32, TypeId.DECIMAL64, TypeId.DECIMAL128]
+)
+@pytest.mark.parametrize("scale", [0, -2, -30])
+@pytest.mark.parametrize("val", [0, 1, -5, 42])
+def test_from_py_int_with_decimal_dtype(val, tid, scale):
+    dtype = DataType(tid, scale)
+    result = plc.Scalar.from_py(val, dtype)
+    assert result.to_py() == decimal.Decimal(val)
+    assert result.type().id() == TypeId.DECIMAL128
+    assert result.type().scale() == scale
+
+
+@pytest.mark.parametrize(
+    "val,expected", [(0, 0), (42, 0), (150, 100), (-250, -200)]
+)
+def test_from_py_int_with_positive_scale_decimal_dtype(val, expected):
+    result = plc.Scalar.from_py(val, DataType(TypeId.DECIMAL128, 2))
+    assert result.to_py() == decimal.Decimal(expected)
+    assert result.type().scale() == 2
+
+
+@pytest.mark.parametrize("scale", [0, -2])
+def test_from_py_int_with_max_precision_decimal_dtype(scale):
+    val = int("9" * (38 + scale))
+    result = plc.Scalar.from_py(val, DataType(TypeId.DECIMAL128, scale))
+    assert result.to_arrow().as_py() == decimal.Decimal(val)
+    assert result.type().scale() == scale
+
+
+@pytest.mark.parametrize(
+    "val", [decimal.Decimal("9" * 38), decimal.Decimal("9." + "9" * 37)]
+)
+def test_from_py_max_precision_decimal(val):
+    result = plc.Scalar.from_py(val)
+    assert result.to_arrow().as_py() == val
+    assert result.type().scale() == val.as_tuple().exponent
 
 
 @pytest.mark.parametrize(

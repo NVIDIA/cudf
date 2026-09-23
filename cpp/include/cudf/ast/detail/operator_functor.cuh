@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -45,9 +45,9 @@ CUDF_AST_OPERATOR_MAP(LESS, less, 2)
 CUDF_AST_OPERATOR_MAP(GREATER, greater, 2)
 CUDF_AST_OPERATOR_MAP(LESS_EQUAL, less_equal, 2)
 CUDF_AST_OPERATOR_MAP(GREATER_EQUAL, greater_equal, 2)
-CUDF_AST_OPERATOR_MAP(BITWISE_AND, bit_and, 2)
-CUDF_AST_OPERATOR_MAP(BITWISE_OR, bit_or, 2)
-CUDF_AST_OPERATOR_MAP(BITWISE_XOR, bit_xor, 2)
+CUDF_AST_OPERATOR_MAP(BITWISE_AND, bitwise_and, 2)
+CUDF_AST_OPERATOR_MAP(BITWISE_OR, bitwise_or, 2)
+CUDF_AST_OPERATOR_MAP(BITWISE_XOR, bitwise_xor, 2)
 CUDF_AST_OPERATOR_MAP(LOGICAL_AND, logical_and, 2)
 CUDF_AST_OPERATOR_MAP(LOGICAL_OR, logical_or, 2)
 CUDF_AST_OPERATOR_MAP(IDENTITY, identity, 1)
@@ -71,11 +71,11 @@ CUDF_AST_OPERATOR_MAP(CEIL, ceil, 1)
 CUDF_AST_OPERATOR_MAP(FLOOR, floor, 1)
 CUDF_AST_OPERATOR_MAP(ABS, abs, 1)
 CUDF_AST_OPERATOR_MAP(RINT, rint, 1)
-CUDF_AST_OPERATOR_MAP(BIT_INVERT, bit_invert, 1)
+CUDF_AST_OPERATOR_MAP(BIT_INVERT, bitwise_invert, 1)
 CUDF_AST_OPERATOR_MAP(NOT, logical_not, 1)
-CUDF_AST_OPERATOR_MAP(CAST_TO_INT64, cast_to_i64, 1)
-CUDF_AST_OPERATOR_MAP(CAST_TO_UINT64, cast_to_u64, 1)
-CUDF_AST_OPERATOR_MAP(CAST_TO_FLOAT64, cast_to_f64, 1)
+CUDF_AST_OPERATOR_MAP(CAST_TO_INT64, cast_to_int64, 1)
+CUDF_AST_OPERATOR_MAP(CAST_TO_UINT64, cast_to_uint64, 1)
+CUDF_AST_OPERATOR_MAP(CAST_TO_FLOAT64, cast_to_float64, 1)
 CUDF_AST_OPERATOR_MAP(IS_NULL, is_null, 1)
 CUDF_AST_OPERATOR_MAP(NULL_EQUAL, null_equal, 2)
 CUDF_AST_OPERATOR_MAP(NULL_LOGICAL_AND, null_logical_and, 2)
@@ -162,6 +162,9 @@ struct operator_functor {
     requires(op == ast_operator::ADD || op == ast_operator::SUB || op == ast_operator::MUL ||
              op == ast_operator::DIV || op == ast_operator::MOD || op == ast_operator::PYMOD)
   {
+    // this implementation must be kept in sync with the implementation of
+    // `cudf::detail::row_ir::get_op_output_scale`
+    // (https://github.com/lamarrr/cudf/blob/a3a81058ba6288cf8d5dec995925690ef7f28d69/cpp/src/jit/row_ir.cpp#L39)
     if constexpr (op == ast_operator::ADD || op == ast_operator::SUB) {
       return cuda::std::min(a, b);
     } else if constexpr (op == ast_operator::MUL) {

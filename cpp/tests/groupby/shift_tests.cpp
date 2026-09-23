@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -403,7 +403,7 @@ template <typename K>
 void test_groupby_shift_multi(cudf::test::fixed_width_column_wrapper<K> const& key,
                               cudf::table_view const& value,
                               std::vector<cudf::size_type> offsets,
-                              std::vector<std::reference_wrapper<const cudf::scalar>> fill_values,
+                              std::vector<std::reference_wrapper<cudf::scalar const>> fill_values,
                               cudf::table_view const& expected)
 {
   cudf::groupby::groupby gb_obj(cudf::table_view({key}));
@@ -428,7 +428,7 @@ TYPED_TEST(groupby_shift_mixed_test, NoFill)
   std::vector<cudf::size_type> offset{2, 1};
   auto slr1 = cudf::make_default_constructed_scalar(cudf::column_view(v1).type());
   auto slr2 = cudf::make_default_constructed_scalar(cudf::column_view(v2).type());
-  std::vector<std::reference_wrapper<const cudf::scalar>> fill_values{*slr1, *slr2};
+  std::vector<std::reference_wrapper<cudf::scalar const>> fill_values{*slr1, *slr2};
 
   test_groupby_shift_multi(key, value, offset, fill_values, expected);
 }
@@ -450,7 +450,7 @@ TYPED_TEST(groupby_shift_mixed_test, Fill)
   auto slr1 = cudf::make_string_scalar("42");
   auto slr2 =
     cudf::scalar_type_t<TypeParam>(cudf::test::make_type_param_scalar<TypeParam>(42), true);
-  std::vector<std::reference_wrapper<const cudf::scalar>> fill_values{*slr1, slr2};
+  std::vector<std::reference_wrapper<cudf::scalar const>> fill_values{*slr1, slr2};
 
   test_groupby_shift_multi(key, value, offset, fill_values, expected);
 }
@@ -470,7 +470,7 @@ TEST_F(groupby_shift_fixed_point_type_test, Matching)
   std::vector<cudf::size_type> offset{-3, 1};
   auto slr1 = cudf::make_fixed_point_scalar<numeric::decimal32>(-42, numeric::scale_type{-1});
   auto slr2 = cudf::make_fixed_point_scalar<numeric::decimal64>(42, numeric::scale_type{3});
-  std::vector<std::reference_wrapper<const cudf::scalar>> fill_values{*slr1, *slr2};
+  std::vector<std::reference_wrapper<cudf::scalar const>> fill_values{*slr1, *slr2};
 
   cudf::test::fixed_point_column_wrapper<int32_t> e1{{-42, -42, -42, -42, -42, -42, -42, -42},
                                                      numeric::scale_type{-1}};

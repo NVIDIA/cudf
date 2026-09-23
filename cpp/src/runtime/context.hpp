@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -9,7 +9,7 @@
 #include <cudf/utilities/export.hpp>
 
 #include <memory>
-#include <mutex>
+#include <optional>
 
 namespace rtcx {
 struct cache_t;
@@ -35,7 +35,6 @@ struct [[nodiscard]] context_config {
   bool dump_jit_time_profile : 1      = false;
   std::string rtcx_cache_dir          = {};
   std::string jit_bundle_dir          = {};
-  std::string jit_pch_dir             = {};
   std::string jit_tmp_dir             = {};
   uint32_t kernel_cache_limit_process = 0;
 };
@@ -45,19 +44,29 @@ struct [[nodiscard]] context_config {
 /// objects/state across translation units.
 class context {
  public:
+  struct device_properties {
+    int32_t driver_version     = 0;
+    int32_t runtime_version    = 0;
+    int32_t compute_capability = 0;
+  };
+
  private:
   context_config _config;
-  std::once_flag _jit_cache_init_flag;
   std::unique_ptr<rtcx::cache_t> _rtcx_cache;
   std::unique_ptr<jit_bundle_t> _jit_bundle;
+  device_properties _device_properties;
+  std::optional<int32_t> _nvrtc_version;
+  std::optional<int32_t> _nvjitlink_version;
 
  private:
-  void ensure_nvcomp_loaded();
+  void preload_nvcomp();
 
-  void ensure_jit_cache_initialized();
+  void initialize_jit();
+
+  void initialize_components(detail::init_flags flags);
 
  public:
-  context(context_config cfg = {}, init_flags flags = init_flags::DEFAULT);
+  context(context_config cfg = {}, detail::init_flags flags = detail::init_flags::DEFAULT);
   context(context const&)            = delete;
   context& operator=(context const&) = delete;
   context(context&&)                 = delete;
@@ -72,16 +81,16 @@ class context {
 
   [[nodiscard]] bool use_jit() const;
 
-  [[nodiscard]] context_config const& config() const { return _config; }
+  [[nodiscard]] context_config const& config() const;
 
-  [[nodiscard]] std::string const& get_jit_pch_dir() const;
+  [[nodiscard]] device_properties const& get_device_properties() const;
 
-  /// @brief Initialize additional components based on the provided flags
-  /// @param flags The initialization flags to process
-  void initialize_components(init_flags flags);
+  [[nodiscard]] std::optional<int32_t> nvrtc_version() const;
+
+  [[nodiscard]] std::optional<int32_t> nvjitlink_version() const;
 };
 
 /// @brief Get the cuDF global context
-context& get_context();
+context& get_context(detail::init_flags flags = detail::init_flags::DEFAULT);
 
 }  // namespace cudf

@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 from cython.operator cimport dereference
 from libcpp.memory cimport unique_ptr
@@ -6,6 +6,7 @@ from libcpp.string cimport string
 from libcpp.utility cimport move
 from pylibcudf.column cimport Column
 from pylibcudf.libcudf.column.column cimport column
+from pylibcudf.libcudf.column.column_view cimport column_view
 from pylibcudf.libcudf.scalar.scalar cimport string_scalar
 from pylibcudf.libcudf.scalar.scalar_factories cimport (
     make_string_scalar as cpp_make_string_scalar,
@@ -15,6 +16,10 @@ from pylibcudf.libcudf.types cimport size_type
 from pylibcudf.scalar cimport Scalar
 from pylibcudf.strings.regex_program cimport RegexProgram
 from pylibcudf.utils cimport _get_stream, _get_memory_resource
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pylibcudf.typing import CudaStreamLike
 from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 from rmm.pylibrmm.stream cimport Stream
 from cuda.bindings.cyruntime cimport cudaStream_t
@@ -26,7 +31,7 @@ cpdef Column replace_re(
     RegexProgram pattern,
     Scalar replacement=None,
     size_type max_replace_count=-1,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """
@@ -55,17 +60,19 @@ cpdef Column replace_re(
     """
     cdef unique_ptr[column] c_result
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
+    cdef column_view c_input
 
     if replacement is None:
         replacement = Scalar.from_libcudf(
-            cpp_make_string_scalar("".encode(), _stream.view().value(), mr.get_mr())
+            cpp_make_string_scalar("".encode(), _stream.view().get(), mr.get_mr())
         )
+    c_input = input.view()
     with nogil:
         c_result = move(
             cpp_replace_re.replace_re(
-                input.view(),
+                c_input,
                 pattern.c_obj.get()[0],
                 dereference(<string_scalar*>(replacement.get())),
                 max_replace_count,
@@ -80,7 +87,7 @@ cpdef Column replace_with_backrefs(
     Column input,
     RegexProgram prog,
     str replacement,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """
@@ -107,13 +114,14 @@ cpdef Column replace_with_backrefs(
     """
     cdef unique_ptr[column] c_result
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
     cdef string c_replacement = replacement.encode()
 
+    cdef column_view c_input = input.view()
     with nogil:
         c_result = cpp_replace_re.replace_with_backrefs(
-            input.view(),
+            c_input,
             prog.c_obj.get()[0],
             c_replacement,
             _cs,

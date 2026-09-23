@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -65,7 +65,7 @@ struct corresponding_operator<aggregation::SUM> {
   using type = DeviceSum;
 };
 template <>
-struct corresponding_operator<aggregation::SUM_WITH_OVERFLOW> {
+struct corresponding_operator<aggregation::SUM_OVERFLOW> {
   using type = DeviceSum;
 };
 template <>

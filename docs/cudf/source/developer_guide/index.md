@@ -2,7 +2,7 @@
 
 This section contains developer documentation for the cuDF project.
 For general contribution guidelines, see the
-[contributing guide](https://github.com/rapidsai/cudf/blob/main/CONTRIBUTING.md).
+[contributing guide](https://github.com/NVIDIA/cudf/blob/main/CONTRIBUTING.md).
 
 Each sub-project maintains its own developer documentation:
 

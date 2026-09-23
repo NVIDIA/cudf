@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 
@@ -26,6 +26,7 @@ from cudf.core.udf.templates import (
 )
 from cudf.core.udf.udf_kernel_base import ApplyKernelBase
 from cudf.core.udf.utils import (
+    UDF_SHIM_FILE,
     UDFError,
     _all_dtypes_from_frame,
     _get_extensionty_size,
@@ -147,7 +148,7 @@ def jit_groupby_apply(offsets, grouped_values, function, *args):
     # Dispatcher is specialized, so there's only one definition - get
     # it so we can get the cufunc from the code library
     (kern_def,) = specialized.overloads.values()
-    grid, tpb = ctx.get_max_potential_block_size(
+    _grid, tpb = ctx.get_max_potential_block_size(
         func=kern_def._codelibrary.get_cufunc(),
         b2d_func=0,
         memsize=0,
@@ -241,3 +242,7 @@ class GroupByApplyKernel(ApplyKernelBase):
 
     def _construct_signature(self, return_type):
         return None
+
+    def _get_link_files(self, nrt):
+        """GroupBy JIT reductions are implemented in ``shim.fatbin``."""
+        return [UDF_SHIM_FILE]

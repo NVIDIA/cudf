@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import numpy as np
@@ -58,6 +58,8 @@ def plc_tbl_data(request):
 @pytest.mark.parametrize("q", [[], [0], [0.5], [0.1, 0.5, 0.7, 0.9]])
 @pytest.mark.parametrize("exact", [True, False])
 def test_quantile(col_data, interp_opt, q, exact):
+    if interp_opt == plc.types.Interpolation.NEAREST_HALF_UP:
+        pytest.skip("pyarrow has no half-up rounding equivalent")
     pa_col_data, plc_col_data = col_data
     ordered_indices = plc.Column.from_arrow(
         pc.cast(pc.sort_indices(pa_col_data), pa.int32())
@@ -128,17 +130,26 @@ def _pyarrow_quantiles(
                     "Having varying null precendences is not implemented!"
                 )
 
-            pa_tbl_data = pa_tbl_data.sort_by(
-                [
-                    (name, order_mapper[order])
-                    for name, order in zip(
-                        pa_tbl_data.column_names, column_order, strict=True
-                    )
-                ],
-                null_placement="at_start"
+            null_placement = (
+                "at_start"
                 if null_precedence[0] == plc.types.NullOrder.BEFORE
-                else "at_end",
+                else "at_end"
             )
+            sort_keys = [
+                (name, order_mapper[order])
+                for name, order in zip(
+                    pa_tbl_data.column_names, column_order, strict=True
+                )
+            ]
+            if int(pa.__version__.split(".", 1)[0]) >= 25:
+                sort_keys = [
+                    (*sort_key, null_placement) for sort_key in sort_keys
+                ]
+                pa_tbl_data = pa_tbl_data.sort_by(sort_keys)
+            else:
+                pa_tbl_data = pa_tbl_data.sort_by(
+                    sort_keys, null_placement=null_placement
+                )
         row_idxs = pc.quantile(
             np.arange(0, len(pa_tbl_data)), q=q, interpolation=pa_interp_opt
         )
@@ -174,6 +185,8 @@ def test_quantiles(
         pytest.skip(
             "interp cannot be an arithmetic interpolation strategy for quantiles"
         )
+    if interp_opt == plc.types.Interpolation.NEAREST_HALF_UP:
+        pytest.skip("pyarrow has no half-up rounding equivalent")
 
     pa_tbl_data = plc_tbl_data.to_arrow(["a", "b"])
 
@@ -191,6 +204,28 @@ def test_quantiles(
     )
 
     assert_table_eq(expect, got)
+
+
+def test_quantile_nearest_half_up():
+    pa_array = pa.array(
+        [10, 20, 30, 40, 50, 60, 70, 80, 90, 100], type=pa.int64()
+    )
+    plc_col = plc.Column.from_arrow(pa_array)
+    ordered_indices = plc.Column.from_arrow(
+        pc.cast(pc.sort_indices(pa_array), pa.int32())
+    )
+    nearest = plc.quantiles.quantile(
+        plc_col, [0.5], plc.types.Interpolation.NEAREST, ordered_indices, False
+    )
+    half_up = plc.quantiles.quantile(
+        plc_col,
+        [0.5],
+        plc.types.Interpolation.NEAREST_HALF_UP,
+        ordered_indices,
+        False,
+    )
+    assert_column_eq(pa.array([50], type=pa.int64()), nearest)
+    assert_column_eq(pa.array([60], type=pa.int64()), half_up)
 
 
 @pytest.mark.parametrize(

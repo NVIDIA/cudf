@@ -54,9 +54,10 @@ def make_partitioned_source(
             case "ndjson":
                 part.write_ndjson(file_path, **write_kwargs)
             case "parquet" | "chunked_parquet":
+                part_row_group_size = max(row_group_size or (len(part) // 2), 1)
                 part.write_parquet(
                     file_path,
-                    row_group_size=row_group_size or (len(part) // 2),
+                    row_group_size=part_row_group_size,
                     **write_kwargs,
                 )
             case _:

@@ -11,7 +11,7 @@ assignees: ''
 A clear and concise description of what the bug is.
 
 **Steps/Code to reproduce bug**
-Follow this guide http://matthewrocklin.com/blog/work/2018/02/28/minimal-bug-reports to craft a minimal bug report. This helps us reproduce the issue you're having and resolve the issue more quickly.
+Follow this guide https://matthewrocklin.com/blog/work/2018/02/28/minimal-bug-reports to craft a minimal bug report. This helps us reproduce the issue you're having and resolve the issue more quickly.
 
 **Expected behavior**
 A clear and concise description of what you expected to happen.

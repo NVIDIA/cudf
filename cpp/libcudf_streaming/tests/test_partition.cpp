@@ -1,6 +1,6 @@
 /**
- * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights
- * reserved. SPDX-License-Identifier: Apache-2.0
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
  */
 
 #include "utils.hpp"
@@ -14,17 +14,20 @@
 #include <cudf/contiguous_split.hpp>
 #include <cudf/utilities/traits.hpp>
 
-#include <cudf_streaming/integrations/partition.hpp>
-#include <cudf_streaming/integrations/utils.hpp>
+#include <cudf_streaming/partition_utils.hpp>
+#include <cudf_streaming/utils.hpp>
+
 #include <rapidsmpf/memory/buffer.hpp>
 #include <rapidsmpf/memory/buffer_resource.hpp>
 #include <rapidsmpf/memory/packed_data.hpp>
+#include <rapidsmpf/memory/spill.hpp>
 #include <rapidsmpf/shuffler/shuffler.hpp>
 #include <rapidsmpf/utils/misc.hpp>
 
 #include <memory>
+#include <tuple>
 
-using namespace cudf_streaming::integrations;
+using namespace cudf_streaming;
 
 class NumOfPartitions : public cudf::test::BaseFixtureWithParam<std::tuple<int, int>> {};
 
@@ -62,6 +65,134 @@ TEST_P(NumOfPartitions, partition_and_pack)
   CUDF_TEST_EXPECT_TABLES_EQUIVALENT(sort_table(expect), sort_table(result));
 }
 
+TEST_P(NumOfPartitions, round_trip_with_reservations)
+{
+  int const num_partitions    = std::get<0>(GetParam());
+  int const num_rows          = std::get<1>(GetParam());
+  std::int64_t const seed     = 42;
+  cudf::hash_id const hash_fn = cudf::hash_id::HASH_MURMUR3;
+  auto stream                 = cudf::get_default_stream();
+  auto br                     = rapidsmpf::BufferResource::create(mr());
+
+  cudf::table expect = random_table_with_index(seed, static_cast<std::size_t>(num_rows), 0, 10);
+
+  // Each reservation is sized by the matching cost function and must come back empty,
+  // having been consumed as the allocations landed.
+  auto pack_res = br->reserve_or_fail(partition_and_pack_cost(expect, stream, br->device_mr()),
+                                      rapidsmpf::MemoryType::DEVICE);
+  auto packed   = partition_and_pack(expect, {1}, num_partitions, hash_fn, seed, stream, pack_res);
+  EXPECT_EQ(packed.size(), num_partitions);
+  EXPECT_EQ(pack_res.size(), 0);
+
+  std::vector<cudf::size_type> splits;
+  for (int i = 1; i < num_partitions; ++i) {
+    splits.emplace_back(i * num_rows / num_partitions);
+  }
+  auto split_res = br->reserve_or_fail(split_and_pack_cost(expect, stream, br->device_mr()),
+                                       rapidsmpf::MemoryType::DEVICE);
+  auto split     = split_and_pack(expect, splits, stream, split_res);
+  EXPECT_EQ(split.size(), num_partitions);
+  EXPECT_EQ(split_res.size(), 0);
+
+  for (auto* chunks : {&packed, &split}) {
+    auto chunks_vector = rapidsmpf::to_vector(std::move(*chunks));
+    auto concat_res =
+      br->reserve_or_fail(unpack_and_concat_cost(chunks_vector), rapidsmpf::MemoryType::DEVICE);
+    auto result = unpack_and_concat(std::move(chunks_vector), stream, concat_res);
+    EXPECT_EQ(concat_res.size(), 0);
+    // `to_vector()` does not preserve partition order, so compare sorted by the index.
+    CUDF_TEST_EXPECT_TABLES_EQUIVALENT(sort_table(expect), sort_table(result));
+  }
+}
+
+class PartitionReservation : public cudf::test::BaseFixture {};
+
+TEST_F(PartitionReservation, rejects_invalid_reservations)
+{
+  auto stream     = cudf::get_default_stream();
+  auto br         = rapidsmpf::BufferResource::create(mr());
+  auto table      = random_table_with_index(42, 100, 0, 10);
+  auto const cost = partition_and_pack_cost(table, stream, br->device_mr());
+  ASSERT_GT(cost, 1);
+
+  auto const pack = [&](rapidsmpf::MemoryReservation& res) {
+    return partition_and_pack(table, {1}, 4, cudf::hash_id::HASH_MURMUR3, 42, stream, res);
+  };
+
+  auto host = br->reserve_or_fail(cost, rapidsmpf::MemoryType::HOST);
+  EXPECT_THROW(std::ignore = pack(host), std::invalid_argument);
+
+  auto too_small = br->reserve_or_fail(cost - 1, rapidsmpf::MemoryType::DEVICE);
+  EXPECT_THROW(std::ignore = pack(too_small), rapidsmpf::reservation_error);
+  // The reorder and the pack are split off separately, so the total is checked before
+  // either. Nothing was taken, leaving the caller free to reserve more and retry.
+  EXPECT_EQ(too_small.size(), cost - 1);
+}
+
+TEST_F(PartitionReservation, empty_table)
+{
+  auto stream = cudf::get_default_stream();
+  auto br     = rapidsmpf::BufferResource::create(mr());
+  auto table  = random_table_with_index(42, 0, 0, 10);
+
+  // An empty table skips the reorder, so the cost is the packed size alone.
+  auto reservation = br->reserve_or_fail(partition_and_pack_cost(table, stream, br->device_mr()),
+                                         rapidsmpf::MemoryType::DEVICE);
+  auto packed =
+    partition_and_pack(table, {1}, 4, cudf::hash_id::HASH_MURMUR3, 42, stream, reservation);
+  EXPECT_EQ(packed.size(), 4);
+  EXPECT_EQ(reservation.size(), 0);
+}
+
+TEST_F(PartitionReservation, cost_rejects_unusable_partitions)
+{
+  auto stream = cudf::get_default_stream();
+  auto br     = rapidsmpf::BufferResource::create(mr());
+  auto table  = random_table_with_index(42, 100, 0, 10);
+  auto chunks = rapidsmpf::to_vector(
+    partition_and_pack(table, {1}, 4, cudf::hash_id::HASH_MURMUR3, 42, stream, br.get()));
+
+  std::vector<rapidsmpf::PackedData const*> null_partition{nullptr};
+  EXPECT_THROW(std::ignore = unpack_and_concat_cost(null_partition), std::invalid_argument);
+
+  // Moving a partition away leaves the source with null members.
+  auto const moved_away = std::move(chunks.at(0));
+  std::vector<rapidsmpf::PackedData const*> consumed{&chunks.at(0)};
+  EXPECT_THROW(std::ignore = unpack_and_concat_cost(consumed), std::invalid_argument);
+}
+
+TEST_F(PartitionReservation, unspill_reservation)
+{
+  auto stream = cudf::get_default_stream();
+  auto br     = rapidsmpf::BufferResource::create(mr());
+  auto table  = random_table_with_index(42, 100, 0, 10);
+
+  auto chunks = rapidsmpf::to_vector(
+    partition_and_pack(table, {1}, 4, cudf::hash_id::HASH_MURMUR3, 42, stream, br.get()));
+  auto const device_cost = unpack_and_concat_cost(chunks);
+
+  // Spill the partitions so the unspill actually allocates. The unspill is the one part
+  // of `unpack_and_concat()` whose reservation is consumed by the buffer resource rather
+  // than merely accounted for, so its share must be exact.
+  chunks          = rapidsmpf::spill_partitions(std::move(chunks), br.get());
+  auto const cost = unpack_and_concat_cost(chunks);
+  ASSERT_EQ(cost, 2 * device_cost);  // Every partition now needs unspilling.
+  ASSERT_GT(cost, 1);
+
+  // The unspill and the concatenation are split off separately, so the total is checked
+  // before either. Without that the first split would have consumed the reservation.
+  auto too_small = br->reserve_or_fail(cost - 1, rapidsmpf::MemoryType::DEVICE);
+  EXPECT_THROW(std::ignore = unpack_and_concat(std::move(chunks), stream, too_small),
+               rapidsmpf::reservation_error);
+  EXPECT_EQ(too_small.size(), cost - 1);
+
+  // Nothing was consumed, so reserving more and retrying works.
+  auto reservation = br->reserve_or_fail(cost, rapidsmpf::MemoryType::DEVICE);
+  auto result      = unpack_and_concat(std::move(chunks), stream, reservation);
+  EXPECT_EQ(reservation.size(), 0);
+  CUDF_TEST_EXPECT_TABLES_EQUIVALENT(sort_table(table), sort_table(result));
+}
+
 TEST_P(NumOfPartitions, split_and_pack)
 {
   int const num_partitions = std::get<0>(GetParam());
@@ -90,43 +221,4 @@ TEST_P(NumOfPartitions, split_and_pack)
 
   // Compare the input table with the result.
   CUDF_TEST_EXPECT_TABLES_EQUIVALENT(expect, *result);
-}
-
-class SpillingTest : public ::testing::Test {
- protected:
-  void SetUp() override
-  {
-    br     = rapidsmpf::BufferResource::create(cudf::get_current_device_resource_ref());
-    stream = cudf::get_default_stream();
-  }
-
-  std::shared_ptr<rapidsmpf::BufferResource> br;
-  rmm::cuda_stream_view stream;
-};
-
-TEST_F(SpillingTest, SpillUnspillRoundtripPreservesDataAndMetadata)
-{
-  std::vector<std::uint8_t> metadata{42, 99};
-  std::vector<std::uint8_t> payload{10, 20, 30};
-
-  // Create device input.
-  std::vector<rapidsmpf::PackedData> input;
-  input.push_back(create_packed_data(metadata, payload, stream, br.get()));
-
-  // Device -> Device (moves data)
-  auto on_gpu = unspill_partitions(std::move(input), br.get(), rapidsmpf::AllowOverbooking::YES);
-  ASSERT_EQ(on_gpu.size(), 1);
-  EXPECT_EQ(on_gpu[0].data->mem_type(), rapidsmpf::MemoryType::DEVICE);
-  EXPECT_EQ(*on_gpu[0].metadata, metadata);
-
-  // Device -> Host
-  auto back_on_host = spill_partitions(std::move(on_gpu), br.get());
-  ASSERT_EQ(back_on_host.size(), 1);
-  EXPECT_EQ(back_on_host[0].data->mem_type(), rapidsmpf::MemoryType::HOST);
-  EXPECT_EQ(*back_on_host[0].metadata, metadata);
-
-  // Check that contents match original
-  auto res    = br->reserve_or_fail(back_on_host[0].data->size, rapidsmpf::MemoryType::HOST);
-  auto actual = br->move_to_host_buffer(std::move(back_on_host[0].data), res);
-  EXPECT_EQ(actual->copy_to_uint8_vector(), payload);
 }

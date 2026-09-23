@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -14,9 +14,13 @@
 #include <cudf/io/parquet_schema.hpp>
 #include <cudf/table/table.hpp>
 #include <cudf/table/table_view.hpp>
+#include <cudf/utilities/span.hpp>
 
 #include <random>
+#include <string>
+#include <string_view>
 #include <type_traits>
+#include <vector>
 
 template <typename T, typename SourceElementT = T>
 using column_wrapper =
@@ -29,6 +33,13 @@ using table_view = cudf::table_view;
 
 // Global environment for temporary files
 extern cudf::test::TempDirTestEnvironment* const temp_env;
+
+// Writes `tbl` to a temp Parquet file. If `column_names` is non-empty, it sets the top-level
+// column names in the file metadata.
+[[nodiscard]] std::string write_parquet_temp_file(cudf::table_view const& tbl,
+                                                  std::string_view const filename,
+                                                  std::vector<std::string> column_names = {},
+                                                  std::vector<int> field_ids            = {});
 
 // TODO: Replace with `NumericTypes` when unsigned support is added. Issue #5352
 using SupportedTypes = cudf::test::Types<int8_t, int16_t, int32_t, int64_t, bool, float, double>;
@@ -154,6 +165,33 @@ std::unique_ptr<cudf::column> make_parquet_string_list_col(std::mt19937& engine,
 
 template <typename T>
 std::pair<cudf::table, std::string> create_parquet_typed_with_stats(std::string const& filename);
+
+// A source for row-group output ordering tests: a parquet file plus the in-memory ground-truth
+// table used for slicing. The single int32 column is laid out so each row group holds a disjoint
+// value range (value = file_id * 10000 + rg_idx * rows_per_row_group + row), so any reorder by the
+// reader is detectable via table equality on the concatenated output.
+struct ordered_rg_source {
+  std::unique_ptr<cudf::table> table;
+  std::string filepath;
+  cudf::size_type num_row_groups;
+  cudf::size_type rows_per_row_group;
+};
+
+// write a parquet file with num_row_groups row groups of rows_per_row_group int32 rows each,
+// emitting row-group-level statistics so predicate pushdown can prune.
+ordered_rg_source make_ordered_rg_source(int file_id,
+                                         cudf::size_type num_row_groups,
+                                         cudf::size_type rows_per_row_group = 100);
+
+// return a view over the rows of row group rg_idx in src.table.
+cudf::table_view get_row_group_slice(ordered_rg_source const& src, cudf::size_type rg_idx);
+
+// build the expected reader output for a per-source row-group selection: source-major, and in the
+// given order within each source (repeated indices kept, an empty inner vector contributes
+// nothing). sources[i] pairs with rg_selection[i]; pointers must be non-null.
+std::unique_ptr<cudf::table> build_expected_ordered_table(
+  cudf::host_span<ordered_rg_source const* const> sources,
+  cudf::host_span<std::vector<cudf::size_type> const> rg_selection);
 
 int32_t compare_binary(std::vector<uint8_t> const& v1,
                        std::vector<uint8_t> const& v2,

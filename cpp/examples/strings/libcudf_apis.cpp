@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -38,7 +38,8 @@ std::unique_ptr<cudf::column> redact_strings(cudf::column_view const& names,
   auto const first_last   = cudf::strings::split(redacted->view());
   auto const first        = first_last->view().column(0);
   auto const last         = first_last->view().column(1);
-  auto const last_initial = cudf::strings::slice_strings(last, 0, 1);
+  auto const last_initial = cudf::strings::slice_strings(
+    last, std::optional<cudf::size_type>(0), std::optional<cudf::size_type>(1));
 
   auto const last_initial_first = cudf::table_view({last_initial->view(), first});
 

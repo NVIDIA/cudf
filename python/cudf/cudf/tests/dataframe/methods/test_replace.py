@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import numpy as np
@@ -175,9 +175,35 @@ def test_replace_multiple_rows(datadir):
 
     # pandas 3 reads nullable parquet columns as Float64; cast to float64 to
     # match cudf's representation before comparing.
-    # TODO: Remove this cast after https://github.com/rapidsai/cudf/issues/22018 is resolved.
+    # TODO: Remove this cast after https://github.com/NVIDIA/cudf/issues/22018 is resolved.
     pdf = pdf.astype(
         {c: "float64" for c, d in pdf.dtypes.items() if d == pd.Float64Dtype()}
     )
 
     assert_eq(pdf, gdf, check_dtype=False)
+
+
+def test_dataframe_replace_inf_does_not_remap_categorical_codes():
+    categories = [f"cat_{i}" for i in range(20)]
+    cat_dtype = cudf.CategoricalDtype(
+        categories=sorted(categories),
+        ordered=False,
+    )
+    gdf = cudf.DataFrame(
+        {
+            "cat_col": ["cat_6", "cat_19", "cat_14", "cat_10", "cat_7"],
+            "num_col": [1.0, np.inf, np.inf, 4.0, 5.0],
+        }
+    )
+    gdf["cat_col"] = gdf["cat_col"].astype(cat_dtype)
+
+    before = gdf["cat_col"].copy()
+    before_codes = gdf["cat_col"].cat.codes.copy()
+
+    result = gdf.replace([np.inf, -np.inf], np.nan)
+
+    assert_eq(result["cat_col"], before)
+    assert_eq(result["cat_col"].cat.codes, before_codes)
+
+    expected_num = cudf.Series([1.0, np.nan, np.nan, 4.0, 5.0], name="num_col")
+    assert_eq(result["num_col"], expected_num)

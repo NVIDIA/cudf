@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -12,17 +12,23 @@
 #include <cudf/utilities/export.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_uvector.hpp>
 
+#include <cuda/stream>
+
 #include <utility>
+
+/**
+ * @file
+ * @brief Class definition for distinct hash join, a hash join optimized for tables with unique
+ * keys.
+ */
 
 namespace CUDF_EXPORT cudf {
 
 /**
  * @addtogroup column_join
  * @{
- * @file
  */
 
 namespace detail {
@@ -63,11 +69,14 @@ class distinct_hash_join {
    * in range (0,1]. For example, 0.5 indicates a target of 50% occupancy. Note that the actual
    * occupancy achieved may be slightly lower than the specified value.
    * @param stream CUDA stream used for device memory operations and kernel launches
+   * @param mr Device memory resource used to allocate the internal hash table
    */
   distinct_hash_join(cudf::table_view const& right,
-                     null_equality compare_nulls  = null_equality::EQUAL,
-                     double load_factor           = 0.5,
-                     rmm::cuda_stream_view stream = cudf::get_default_stream());
+                     null_equality compare_nulls = null_equality::EQUAL,
+                     double load_factor          = 0.5,
+                     cuda::stream_ref stream     = cudf::get_default_stream(),
+                     cuda::mr::any_resource<cuda::mr::device_accessible> mr =
+                       cudf::get_current_device_resource_ref());
 
   /**
    * @brief Returns the row indices that can be used to construct the result of performing
@@ -84,7 +93,7 @@ class distinct_hash_join {
   [[nodiscard]] std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
                           std::unique_ptr<rmm::device_uvector<size_type>>>
   inner_join(cudf::table_view const& left,
-             rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+             cuda::stream_ref stream           = cudf::get_default_stream(),
              rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref()) const;
 
   /**
@@ -106,7 +115,7 @@ class distinct_hash_join {
    */
   [[nodiscard]] std::unique_ptr<rmm::device_uvector<size_type>> left_join(
     cudf::table_view const& left,
-    rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+    cuda::stream_ref stream           = cudf::get_default_stream(),
     rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref()) const;
 
  private:

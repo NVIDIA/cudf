@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from cudf_polars.testing.asserts import (
     assert_gpu_result_equal,
     assert_ir_translation_raises,
 )
-from cudf_polars.utils.versions import POLARS_VERSION_LT_140
+from cudf_polars.utils.versions import POLARS_VERSION_LT_140, POLARS_VERSION_LT_142
 
 dtypes = [
     pl.Int8,
@@ -166,4 +166,7 @@ def test_fused_arithmetic(engine: pl.GPUEngine, expr: pl.Expr) -> None:
     # fms: fused multiply subtract
     df = pl.LazyFrame({"a": [1, 2, 3], "b": [10, 20, 30], "c": [5, 5, 5]})
     q = df.select(expr)
-    assert_ir_translation_raises(q, engine, NotImplementedError)
+    if POLARS_VERSION_LT_142:
+        assert_ir_translation_raises(q, engine, NotImplementedError)
+    else:
+        assert_gpu_result_equal(q, engine=engine)

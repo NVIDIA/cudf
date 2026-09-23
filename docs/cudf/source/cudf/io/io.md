@@ -117,6 +117,29 @@ Note that:
 For more information about error handling, compatibility mode, and
 tuning parameters in KvikIO see: <https://github.com/rapidsai/kvikio>
 
+### Remote file sizes and HEAD requests
+
+When reading remote files (for example `s3://...` URLs) via `pylibcudf.io.SourceInfo`, KvikIO
+may send HEAD requests at open time to probe connectivity and query file size. To skip those
+requests when the file size is already known (for example from object-store metadata), pass a
+`pylibcudf.io.FilepathSource` with the `size` argument set:
+
+```python
+import pylibcudf as plc
+
+content_length = ...  # from external metadata
+sources = plc.io.SourceInfo([
+    plc.io.FilepathSource("s3://bucket/object.parquet", size=content_length),
+])
+table = plc.io.parquet.read_parquet(
+    plc.io.parquet.ParquetReaderOptions.builder(sources).build()
+)
+```
+
+Providing an incorrect size avoids the extra HEAD requests but will break footer reads and other
+operations that depend on the true file length. Plain string paths in `SourceInfo` preserve the
+previous behavior (size queried via KvikIO).
+
 Operations that support the use of GPUDirect Storage:
 
 - {py:func}`cudf.read_avro`
@@ -166,7 +189,7 @@ If no value is set, behavior will be the same as the "STABLE" option.
     +-----------------------+--------+--------+--------------+--------------+---------+--------+--------------+--------------+--------------+
     | LZ4                   | ❌     | ❌     | Stable       | Stable       | ❌      | ❌     | Stable       | Stable       | ❌           |
     +-----------------------+--------+--------+--------------+--------------+---------+--------+--------------+--------------+--------------+
-    | GZIP                  | ❌     | ❌     | ❌           | Experimental | ❌      | ❌     | ❌           | ❌           | ❌           |
+    | GZIP                  | ❌     | ❌     | Stable       | Experimental | ❌      | ❌     | ❌           | ❌           | ❌           |
     +-----------------------+--------+--------+--------------+--------------+---------+--------+--------------+--------------+--------------+
 
 ```
@@ -177,6 +200,6 @@ By default, cuDF's parquet and json readers will try to read the entire file in 
 
 To better support low memory systems, cuDF provides a "low-memory" reader for parquet and json files. This low memory reader processes data in chunks, leading to lower peak memory usage due to the smaller size of intermediate allocations.
 
-To read a parquet or json file in low memory mode, there are [cuDF options](https://docs.rapids.ai/api/cudf/nightly/cudf/api_docs/options/#api-options) that must be set globally prior to calling the reader. To set those options, call:
+To read a parquet or json file in low memory mode, there are {doc}`cuDF options <../api_docs/options>` that must be set globally prior to calling the reader. To set those options, call:
 - `cudf.set_option("io.parquet.low_memory", True)` for parquet files, or
 - `cudf.set_option("io.json.low_memory", True)` for json files.

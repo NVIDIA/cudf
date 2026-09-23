@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -252,7 +252,7 @@ TEST_F(MurmurHashTest, ListOfStruct)
                                                         true,
                                                         true}};
 
-  auto offsets = cudf::test::fixed_width_column_wrapper<cudf::size_type>{
+  auto offsets = cudf::test::fixed_width_column_wrapper<int32_t>{
     0, 0, 0, 0, 0, 2, 3, 4, 5, 6, 8, 10, 12, 14, 15, 16, 17, 18};
 
   auto list_nullmask = std::vector<bool>{true,
@@ -343,8 +343,8 @@ TEST_F(MurmurHashTest, ListOfEmptyStruct)
     cudf::test::detail::make_null_mask(struct_validity.begin(), struct_validity.end());
   auto struct_col = cudf::make_structs_column(14, {}, null_count, std::move(null_mask));
 
-  auto offsets = cudf::test::fixed_width_column_wrapper<cudf::size_type>{
-    0, 0, 0, 0, 0, 2, 4, 6, 7, 8, 9, 10, 12, 14};
+  auto offsets =
+    cudf::test::fixed_width_column_wrapper<int32_t>{0, 0, 0, 0, 0, 2, 4, 6, 7, 8, 9, 10, 12, 14};
   auto list_nullmask = std::vector<bool>{
     true, true, false, false, true, true, true, true, true, true, true, true, true};
   std::tie(null_mask, null_count) =
@@ -381,7 +381,7 @@ TEST_F(MurmurHashTest, EmptyDeepList)
   // Internal empty list
   auto list1 = cudf::test::lists_column_wrapper<int>{};
 
-  auto offsets       = cudf::test::fixed_width_column_wrapper<cudf::size_type>{0, 0, 0, 0, 0};
+  auto offsets       = cudf::test::fixed_width_column_wrapper<int32_t>{0, 0, 0, 0, 0};
   auto list_nullmask = std::vector<bool>{true, true, false, false};
   auto [null_mask, null_count] =
     cudf::test::detail::make_null_mask(list_nullmask.begin(), list_nullmask.end());
@@ -461,6 +461,14 @@ TYPED_TEST(MurmurHashTestFloatTyped, TestExtremes)
 
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*hash_col, *hash_col_neg_zero, verbosity);
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*hash_col, *hash_col_neg_nan, verbosity);
+}
+
+TEST_F(MurmurHashTest, ZeroColumns)
+{
+  auto const input  = cudf::table_view{std::vector<cudf::column_view>{}, 5};
+  auto const output = cudf::hashing::murmurhash3_x86_32(input, 42);
+  cudf::test::fixed_width_column_wrapper<uint32_t> const expected({42, 42, 42, 42, 42});
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(output->view(), expected);
 }
 
 CUDF_TEST_PROGRAM_MAIN()

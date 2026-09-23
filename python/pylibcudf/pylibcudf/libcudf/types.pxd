@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 from libc.stddef cimport size_t
 from libc.stdint cimport int32_t, uint32_t, int8_t, uint8_t
@@ -12,7 +12,7 @@ cdef extern from "cudf/types.hpp" namespace "cudf" nogil:
     ctypedef uint32_t char_utf8
 
     # A Hack to let cython compile with __int128_t symbol
-    # https://stackoverflow.com/a/27609033
+    # https://stackoverflow.com/questions/27582001/how-to-use-128-bit-integers-in-cython/27609033#27609033
     ctypedef int int128 "__int128_t"
 
     cpdef enum class mask_state(int32_t):
@@ -113,5 +113,6 @@ cdef extern from "cudf/types.hpp" namespace "cudf" nogil:
         HIGHER
         MIDPOINT
         NEAREST
+        NEAREST_HALF_UP
 
     cdef size_t size_of(data_type t) except +libcudf_exception_handler

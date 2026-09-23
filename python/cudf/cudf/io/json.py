@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 from __future__ import annotations
 
@@ -329,6 +329,7 @@ def _plc_write_json(
     include_nulls: bool = True,
     lines: bool = False,
     rows_per_chunk: int = 1024 * 64,  # 64K rows
+    force_ascii: bool = True,
 ) -> None:
     with access_columns(*table._columns, mode="read", scope="internal"):
         try:
@@ -346,6 +347,7 @@ def _plc_write_json(
                 .include_nulls(include_nulls)
                 .lines(lines)
                 .compression(_to_plc_compression(compression))
+                .utf8_escaped(force_ascii)
                 .build()
             )
             if rows_per_chunk != np.iinfo(np.int32).max:
@@ -403,7 +405,7 @@ def to_json(
                 _plc_write_json(
                     cudf_val,
                     colnames,
-                    path_or_buf,
+                    file_obj,
                     compression,
                     *args,
                     **kwargs,

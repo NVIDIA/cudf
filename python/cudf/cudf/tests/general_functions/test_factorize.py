@@ -1,9 +1,10 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import cupy as cp
 import numpy as np
 import pandas as pd
+import pytest
 
 import cudf
 from cudf.testing import assert_eq
@@ -86,3 +87,30 @@ def test_factorize_rangeindex_preserves_class():
         assert isinstance(cats, cudf.RangeIndex)
         assert_eq(cats, p_cats, exact=True)
         np.testing.assert_array_equal(labels.get(), p_labels)
+
+
+@pytest.mark.parametrize("sort", [False, True])
+def test_factorize_multiindex(sort):
+    # The uniques are the distinct rows (without level names), matching
+    # pandas.
+    pmi = pd.MultiIndex.from_arrays(
+        [["bar", "baz", "foo", "bar"], [2, 3, 1, 2]], names=["a", "b"]
+    )
+    gmi = cudf.Index(pmi)
+
+    expected_codes, expected_uniques = pmi.factorize(sort=sort)
+    codes, uniques = gmi.factorize(sort=sort)
+
+    np.testing.assert_array_equal(codes.get(), expected_codes)
+    assert_eq(uniques, expected_uniques)
+
+
+def test_factorize_multiindex_empty():
+    pmi = pd.MultiIndex.from_arrays(
+        [pd.Index([], dtype=object), pd.Index([], dtype="f4")]
+    )
+    gmi = cudf.Index(pmi)
+
+    codes, uniques = gmi.factorize()
+    assert len(codes) == 0
+    assert_eq(uniques, gmi[:0])

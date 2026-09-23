@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -175,15 +175,15 @@ static void bench_multibyte_split(nvbench::state& state,
   cudf::io::text::parse_options options{range, strip_delimiters};
   std::unique_ptr<cudf::column> output;
 
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().value()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().get()));
   state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
     drop_page_cache_if_enabled({file_name});
     output = cudf::io::text::multibyte_split(*source, delim, options);
   });
 
-  state.add_buffer_size(mem_stats_logger.peak_memory_usage(), "pmu", "Peak Memory Usage");
-  // TODO adapt to consistent naming scheme once established
-  state.add_buffer_size(range_size, "efs", "Encoded file size");
+  state.add_buffer_size(
+    mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
+  state.add_buffer_size(range_size, "encoded_file_size", "encoded_file_size");
 }
 
 using source_type_list = nvbench::enum_type_list<data_chunk_source_type::device,

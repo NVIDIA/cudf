@@ -2,7 +2,7 @@
 
 The strings column currently supports only UTF-8 characters internally.
 For functions that require character testing (e.g. cudf::strings::all_characters_of_type()) or
-case conversion (e.g. cudf::strings::capitalize(), etc) only the 16-bit [Unicode 13.0](http://www.unicode.org/versions/Unicode13.0.0)
+case conversion (e.g. cudf::strings::capitalize(), etc) only the 16-bit [Unicode 13.0](https://www.unicode.org/versions/Unicode13.0.0/)
 character code-points (0-65535) values are supported.
 Case conversion and character testing on characters above code-point 65535 are not supported.
 

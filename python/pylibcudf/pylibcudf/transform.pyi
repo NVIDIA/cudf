@@ -1,5 +1,7 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+from collections.abc import Sequence
+
 from rmm.pylibrmm.memory_resource import DeviceMemoryResource
 
 from pylibcudf.column import Column
@@ -44,7 +46,7 @@ def mask_to_bools(
     mr: DeviceMemoryResource | None = None,
 ) -> Column: ...
 def transform(
-    inputs: list[Column],
+    inputs: Sequence[Column],
     transform_udf: str,
     output_type: DataType,
     is_ptx: bool,

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -10,13 +10,17 @@
 #include <cstdint>
 #include <vector>
 
+/**
+ * @file
+ * @brief Class and helper functions for specifying a byte range within a data source.
+ */
+
 namespace CUDF_EXPORT cudf {
 namespace io {
 namespace text {
 /**
  * @addtogroup io_readers
  * @{
- * @file
  */
 
 /**

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -61,7 +61,7 @@ TYPED_TEST(MergeStringTest, Merge1StringKeyColumns)
 
   cudf::column_view const& a_left_tbl_cview{static_cast<cudf::column_view const&>(leftColWrap1)};
   cudf::column_view const& a_right_tbl_cview{static_cast<cudf::column_view const&>(rightColWrap1)};
-  const cudf::size_type outputRows = a_left_tbl_cview.size() + a_right_tbl_cview.size();
+  cudf::size_type const outputRows = a_left_tbl_cview.size() + a_right_tbl_cview.size();
 
   strings_column_wrapper expectedDataWrap1({"ab",
                                             "ac",
@@ -152,7 +152,7 @@ TYPED_TEST(MergeStringTest, Merge2StringKeyColumns)
 
   cudf::column_view const& a_left_tbl_cview{static_cast<cudf::column_view const&>(leftColWrap1)};
   cudf::column_view const& a_right_tbl_cview{static_cast<cudf::column_view const&>(rightColWrap1)};
-  const cudf::size_type outputRows = a_left_tbl_cview.size() + a_right_tbl_cview.size();
+  cudf::size_type const outputRows = a_left_tbl_cview.size() + a_right_tbl_cview.size();
   strings_column_wrapper expectedDataWrap1({"ab",
                                             "ac",
                                             "bc",
@@ -244,7 +244,7 @@ TYPED_TEST(MergeStringTest, Merge1StringKeyNullColumns)
 
   cudf::column_view const& a_left_tbl_cview{static_cast<cudf::column_view const&>(leftColWrap1)};
   cudf::column_view const& a_right_tbl_cview{static_cast<cudf::column_view const&>(rightColWrap1)};
-  const cudf::size_type outputRows = a_left_tbl_cview.size() + a_right_tbl_cview.size();
+  cudf::size_type const outputRows = a_left_tbl_cview.size() + a_right_tbl_cview.size();
 
   // data: "ab", "ac", "bc", "bd", "cd", "ce", "de", "df" | valid: 1 1 1 1 1 1 0 0
   strings_column_wrapper expectedDataWrap1({"ab",
@@ -352,7 +352,7 @@ TYPED_TEST(MergeStringTest, Merge2StringKeyNullColumns)
 
   cudf::column_view const& a_left_tbl_cview{static_cast<cudf::column_view const&>(leftColWrap1)};
   cudf::column_view const& a_right_tbl_cview{static_cast<cudf::column_view const&>(rightColWrap1)};
-  const cudf::size_type outputRows = a_left_tbl_cview.size() + a_right_tbl_cview.size();
+  cudf::size_type const outputRows = a_left_tbl_cview.size() + a_right_tbl_cview.size();
   strings_column_wrapper expectedDataWrap1({"ab",
                                             "ac",
                                             "bc",

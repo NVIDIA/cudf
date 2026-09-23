@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from __future__ import annotations
@@ -10,12 +10,12 @@ import numpy as np
 import pylibcudf as plc
 import pytest
 
-from cudf_streaming.integrations.partition import (
+from cudf_streaming.partition_utils import (
     packed_data_from_cudf_packed_columns,
     unpack_and_concat,
 )
+from cudf_streaming.testing import assert_eq
 from rapidsmpf.streaming.coll.sparse_alltoall import SparseAlltoall
-from rapidsmpf.testing import assert_eq
 
 if TYPE_CHECKING:
     from rapidsmpf.communicator.communicator import Communicator
@@ -24,7 +24,7 @@ if TYPE_CHECKING:
 
 
 def make_packed_data(context: Context, values: np.ndarray) -> PackedData:
-    stream = context.get_stream_from_pool()
+    stream = context.br().stream_pool.get_stream()
     table = plc.Table([plc.Column.from_array(values, stream=stream)])
     return packed_data_from_cudf_packed_columns(
         plc.contiguous_split.pack(table, stream=stream),
@@ -34,7 +34,7 @@ def make_packed_data(context: Context, values: np.ndarray) -> PackedData:
 
 
 def unpack_table(context: Context, packed_data: PackedData) -> plc.Table:
-    stream = context.get_stream_from_pool()
+    stream = context.br().stream_pool.get_stream()
     return unpack_and_concat([packed_data], stream, context.br())
 
 
@@ -75,7 +75,7 @@ def test_sparse_alltoall_non_participating_ranks(
     if comm.rank == 1:
         results = exchange.extract(0)
         assert len(results) == 2
-        stream = context.get_stream_from_pool()
+        stream = context.br().stream_pool.get_stream()
         assert_eq(
             unpack_table(context, results[0]),
             plc.Table(

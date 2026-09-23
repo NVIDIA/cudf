@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import cupy as cp
@@ -101,7 +101,7 @@ def test_unique_fails_value_error():
     df = pd.DataFrame({"foo": [1, 2, 3]})
     with pytest.raises(
         ValueError,
-        match="Must pass cudf.Series, cudf.Index, or cupy.ndarray object",
+        match=r"Must pass cudf.Series, cudf.Index, or cupy.ndarray object",
     ):
         cudf.unique(cudf.DataFrame(df))
 
@@ -110,6 +110,6 @@ def test_unique_fails_not_implemented_error():
     ser = cudf.Series(["foo", "foo"], dtype="category")
     with cudf.option_context("mode.pandas_compatible", True):
         with pytest.raises(
-            NotImplementedError, match="cudf.Categorical is not implemented"
+            NotImplementedError, match=r"cudf.Categorical is not implemented"
         ):
             cudf.unique(ser)

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -17,7 +17,7 @@
 #include <cudf/strings/string_view.hpp>
 #include <cudf/types.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
+#include <cuda/stream>
 
 #include <cstdint>
 
@@ -88,6 +88,7 @@ struct statistics_chunk {
   statistics_val sum{};        //!< sum of chunk
   uint8_t has_minmax{};        //!< Nonzero if min_value and max_values are valid
   uint8_t has_sum{};           //!< Nonzero if sum is valid
+  uint8_t has_nan{};           //!< Nonzero if a NaN was seen (floating point only)
 };
 
 struct statistics_group {
@@ -117,7 +118,7 @@ __device__ T get_element(column_device_view const& col, uint32_t row)
 {
   using et              = typename T::element_type;
   size_type const index = row + col.offset();  // account for this view's _offset
-  auto const* d_offsets = col.child(lists_column_view::offsets_column_index).data<size_type>();
+  auto const* d_offsets = col.child(lists_column_view::offsets_column_index).data<int32_t>();
   auto const* d_data    = col.child(lists_column_view::child_column_index).data<et>();
   auto const offset     = d_offsets[index];
   return T(d_data + offset, d_offsets[index + 1] - offset);

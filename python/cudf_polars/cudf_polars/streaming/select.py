@@ -1,9 +1,10 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 """Parallel Select Logic."""
 
 from __future__ import annotations
 
+import dataclasses
 from collections import defaultdict
 from typing import TYPE_CHECKING
 
@@ -404,7 +405,7 @@ def _(
         [e.value for e in ir.exprs]
     ):
         return _lower_ir_fallback(
-            ir.reconstruct([child]),
+            ir,
             rec,
             msg=(
                 "fill_null with strategy other than 'zero' or 'one' is not supported "
@@ -431,8 +432,20 @@ def _(
 
     if scan_child and scan_child.predicate is None and scan_child.typ == "parquet":
         # Special Case: Fast count.
+        # We can't use prefetched file metadata here, because we're in lowering,
+        # not execution, so we don't have an IRExecutionContext with the prefetched
+        # file metadata yet. Hybrid scan requires prefetched file metadata,
+        # so disable that as well.
         count = Scan._get_parquet_row_count_from_metadata(
-            scan_child.paths, scan_child.skip_rows, scan_child.n_rows
+            scan_child.paths,
+            scan_child.skip_rows,
+            scan_child.n_rows,
+            dataclasses.replace(
+                scan_child.parquet_options,
+                prefetch_file_metadata=False,
+                use_hybrid_scan=False,
+            ),
+            None,
         )
         dtype = ir.exprs[0].value.dtype
 

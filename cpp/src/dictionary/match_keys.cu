@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -19,13 +19,13 @@
 #include <cudf/utilities/traits.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/exec_policy.hpp>
 #include <rmm/mr/polymorphic_allocator.hpp>
 
 #include <cuco/static_set.cuh>
 #include <cuda/iterator>
 #include <cuda/std/iterator>
+#include <cuda/stream>
 
 #include <algorithm>
 #include <iterator>
@@ -39,7 +39,7 @@ namespace {
 struct unique_keys_dispatch_fn {
   template <typename T>
   std::unique_ptr<cudf::column> operator()(cudf::column_view const& all_keys,
-                                           rmm::cuda_stream_view stream,
+                                           cuda::stream_ref stream,
                                            rmm::device_async_resource_ref mr)
     requires(cudf::is_dictionary_key<T>())
   {
@@ -50,23 +50,24 @@ struct unique_keys_dispatch_fn {
 
     auto const has_nulls  = nullate::DYNAMIC{false};
     auto const keys_tv    = table_view({all_keys});
-    auto const row_hash   = cudf::detail::row::hash::row_hasher(keys_tv, stream);
-    auto const row_equal  = cudf::detail::row::equality::self_comparator(keys_tv, stream);
+    auto const temp_mr    = cudf::get_current_device_resource_ref();
+    auto const row_hash   = cudf::detail::row::hash::row_hasher(keys_tv, stream, temp_mr);
+    auto const row_equal  = cudf::detail::row::equality::self_comparator(keys_tv, stream, temp_mr);
     auto const comparator = cudf::detail::row::equality::nan_equal_physical_equality_comparator{};
     auto const d_equal    = row_equal.equal_to<false>(has_nulls, null_equality::EQUAL, comparator);
     auto const empty_key  = cuco::empty_key{cudf::detail::CUDF_SIZE_TYPE_SENTINEL};
     auto probe            = probe_t{row_hash.device_hasher(has_nulls)};
-    auto allocator        = rmm::mr::polymorphic_allocator<char>{};
+    auto allocator        = rmm::mr::polymorphic_allocator<char>{temp_mr};
     auto set              = cuco::static_set{
-      all_keys.size(), 0.5, empty_key, d_equal, probe, {}, {}, allocator, stream.value()};
+      all_keys.size(), 0.5, empty_key, d_equal, probe, {}, {}, allocator, stream.get()};
 
     // use a static_set to find the unique elements of all_keys
     auto const iter = cuda::counting_iterator<cudf::size_type>{0};
-    set.insert_async(iter, iter + all_keys.size(), stream.value());
+    set.insert_async(iter, iter + all_keys.size(), stream.get());
 
     // retrieve the indices of all the unique keys
-    auto keys_indices = rmm::device_uvector<size_type>(all_keys.size(), stream);
-    auto keys_end     = set.retrieve_all(keys_indices.begin(), stream.value());
+    auto keys_indices = rmm::device_uvector<size_type>(all_keys.size(), stream, temp_mr);
+    auto keys_end     = set.retrieve_all(keys_indices.begin(), stream.get());
     keys_indices.resize(cuda::std::distance(keys_indices.begin(), keys_end), stream);
 
     // gather the unique keys using the keys_indices
@@ -81,7 +82,7 @@ struct unique_keys_dispatch_fn {
 
   template <typename T>
   std::unique_ptr<cudf::column> operator()(cudf::column_view const&,
-                                           rmm::cuda_stream_view,
+                                           cuda::stream_ref,
                                            rmm::device_async_resource_ref)
     requires(not cudf::is_dictionary_key<T>())
   {
@@ -91,8 +92,8 @@ struct unique_keys_dispatch_fn {
 }  // namespace
 
 std::vector<std::unique_ptr<column>> match_dictionaries(
-  cudf::host_span<dictionary_column_view const> input,
-  rmm::cuda_stream_view stream,
+  std::span<dictionary_column_view const> input,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr)
 {
   CUDF_EXPECTS(not input.empty(), "expect at least one dictionary", std::invalid_argument);
@@ -114,7 +115,7 @@ std::vector<std::unique_ptr<column>> match_dictionaries(
 }
 
 std::pair<std::vector<std::unique_ptr<column>>, std::vector<table_view>> match_dictionaries(
-  std::vector<table_view> tables, rmm::cuda_stream_view stream, rmm::device_async_resource_ref mr)
+  std::vector<table_view> tables, cuda::stream_ref stream, rmm::device_async_resource_ref mr)
 {
   // Make a copy of all the column views from each table_view
   std::vector<std::vector<column_view>> updated_columns;
@@ -158,13 +159,85 @@ std::pair<std::vector<std::unique_ptr<column>>, std::vector<table_view>> match_d
   return {std::move(dictionary_columns), std::move(updated_tables)};
 }
 
+std::vector<std::unique_ptr<column>> match_dictionaries_to_indices(
+  std::span<dictionary_column_view const> input,
+  cuda::stream_ref stream,
+  rmm::device_async_resource_ref mr)
+{
+  CUDF_EXPECTS(not input.empty(), "expect at least one dictionary", std::invalid_argument);
+
+  auto temp_mr = cudf::get_current_device_resource_ref();
+  std::vector<cudf::column_view> keys(input.size());
+  std::transform(input.begin(), input.end(), keys.begin(), [](auto& col) { return col.keys(); });
+  auto all_keys = cudf::detail::concatenate(keys, stream, temp_mr);
+
+  auto new_keys = cudf::type_dispatcher(
+    keys.front().type(), unique_keys_dispatch_fn{}, all_keys->view(), stream, temp_mr);
+  auto keys_view = new_keys->view();
+
+  std::vector<std::unique_ptr<column>> result(input.size());
+  std::transform(input.begin(), input.end(), result.begin(), [keys_view, mr, stream](auto& col) {
+    return remap_indices(col, keys_view, stream, mr);
+  });
+  return result;
+}
+
+std::pair<std::vector<std::unique_ptr<column>>, std::vector<table_view>>
+match_dictionaries_to_indices(std::vector<table_view> tables,
+                              cuda::stream_ref stream,
+                              rmm::device_async_resource_ref mr)
+{
+  CUDF_EXPECTS(not tables.empty(), "expect at least one table", std::invalid_argument);
+
+  // Make a copy of all the column views from each table_view
+  std::vector<std::vector<column_view>> updated_columns;
+  std::transform(tables.begin(), tables.end(), std::back_inserter(updated_columns), [](auto& t) {
+    return std::vector<column_view>(t.begin(), t.end());
+  });
+
+  // Each column in a table must match in type.
+  // Once a dictionary column is found, all the corresponding column_views in the
+  // other table_views are matched. The matched column_views then replace the originals.
+  std::vector<std::unique_ptr<column>> index_columns;
+  auto first_table = tables.front();
+  for (size_type col_idx = 0; col_idx < first_table.num_columns(); ++col_idx) {
+    auto col = first_table.column(col_idx);
+    if (col.type().id() == type_id::DICTIONARY32) {
+      std::vector<dictionary_column_view> dict_views;  // hold all column_views at col_idx
+      std::transform(
+        tables.begin(), tables.end(), std::back_inserter(dict_views), [col_idx](auto& t) {
+          return dictionary_column_view(t.column(col_idx));
+        });
+      // now match the keys and return index columns
+      auto idx_cols = dictionary::detail::match_dictionaries_to_indices(dict_views, stream, mr);
+      // replace the updated_columns vector entries for the set of columns at col_idx
+      auto dict_col_idx = 0;
+      for (auto& v : updated_columns)
+        v[col_idx] = idx_cols[dict_col_idx++]->view();
+      // move the updated index columns into the main output vector
+      std::move(idx_cols.begin(), idx_cols.end(), std::back_inserter(index_columns));
+    }
+  }
+  // All the new column_views are now included in updated_columns
+
+  // Rebuild the table_views from the column_views
+  std::vector<table_view> updated_tables;
+  std::transform(updated_columns.begin(),
+                 updated_columns.end(),
+                 std::back_inserter(updated_tables),
+                 [](auto& v) { return table_view{v}; });
+
+  // Return the new index columns and table_views
+  return {std::move(index_columns), std::move(updated_tables)};
+}
+
 }  // namespace detail
 
 // external API
 
 std::vector<std::unique_ptr<column>> match_dictionaries(
-  cudf::host_span<dictionary_column_view const> input,
-  rmm::cuda_stream_view stream,
+  std::span<dictionary_column_view const> input,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();

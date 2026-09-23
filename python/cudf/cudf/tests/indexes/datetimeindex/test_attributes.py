@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import numpy as np
@@ -71,6 +71,25 @@ def test_dt_index(field):
     )
     gdf_data = cudf.DatetimeIndex(data)
     assert_eq(getattr(gdf_data, field), getattr(data, field), exact=False)
+
+
+def test_dti_microsecond_includes_milliseconds():
+    # DatetimeIndex.microsecond must include the whole-millisecond component
+    # like pandas: 0.001002s -> 1002 microseconds (not 2). Values >= 1000
+    # exercise the millisecond fold that plain sub-millisecond data misses.
+    data = [
+        "2010-01-01 00:00:00.001002",
+        "2010-01-01 00:00:00.123456",
+        "2010-01-01 00:00:00.000999",
+        "2010-01-01 00:00:00.000000",
+    ]
+    pidx = pd.DatetimeIndex(data)
+    gidx = cudf.from_pandas(pidx)
+
+    expect = pidx.microsecond
+    got = gidx.microsecond
+    assert_eq(expect, got)
+    assert got.dtype == np.dtype("int32")
 
 
 @pytest.mark.parametrize(

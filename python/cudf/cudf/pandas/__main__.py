@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2023-2025, NVIDIA CORPORATION & AFFILIATES.  All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 """
@@ -13,10 +13,37 @@ import code
 import runpy
 import sys
 import tempfile
+import types
 from contextlib import contextmanager
 
 from . import install
 from .profiler import Profiler, lines_with_profiling
+
+
+def _run_instrumented_as_main(code_path, file_path):
+    """Execute the script at ``code_path`` as ``__main__``, exposing
+    ``file_path`` as ``__file__``.
+
+    The line profiler runs an *instrumented copy* of the user's script written
+    to a temporary file. Compiling with ``code_path`` as the code object's
+    filename keeps per-line profiling output and tracebacks pointed at that
+    instrumented source, while ``__file__`` (and ``sys.argv[0]``, set by the
+    caller) continue to refer to the original script. This lets scripts that
+    locate sibling files relative to ``__file__`` work under ``--line-profile``
+    just as they do without it (GH #23010).
+    """
+    with open(code_path) as f:
+        code_obj = compile(f.read(), code_path, "exec")
+    main_module = types.ModuleType("__main__")
+    main_module.__file__ = file_path
+    main_module.__loader__ = None
+    main_module.__spec__ = None
+    saved_main = sys.modules["__main__"]
+    sys.modules["__main__"] = main_module
+    try:
+        exec(code_obj, main_module.__dict__)
+    finally:
+        sys.modules["__main__"] = saved_main
 
 
 @contextmanager
@@ -100,7 +127,14 @@ def main():
         elif len(args.args) >= 1:
             # Remove ourself from argv and continue
             sys.argv[:] = args.args
-            runpy.run_path(args.args[0], run_name="__main__")
+            if args.line_profile and script_name is not None:
+                # ``fn`` (args.args[0]) is an instrumented copy of the script in
+                # a temporary file. Run it so that ``__file__`` and
+                # ``sys.argv[0]`` still refer to the original script.
+                sys.argv[0] = script_name
+                _run_instrumented_as_main(args.args[0], script_name)
+            else:
+                runpy.run_path(args.args[0], run_name="__main__")
         else:
             if sys.stdin.isatty():
                 banner = f"Python {sys.version} on {sys.platform}"

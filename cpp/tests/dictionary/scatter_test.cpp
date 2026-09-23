@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -59,10 +59,10 @@ TEST_F(DictionaryScatterTest, ScatterScalar)
   cudf::test::strings_column_wrapper strings_target{
     "eee", "aaa", "ddd", "ccc", "ccc", "ccc", "eee", "aaa"};
   auto target = cudf::dictionary::encode(strings_target);
-  std::vector<std::reference_wrapper<const cudf::scalar>> source;
+  std::vector<std::reference_wrapper<cudf::scalar const>> source;
 
-  const cudf::string_scalar source_scalar                       = cudf::string_scalar("bbb");
-  std::reference_wrapper<const cudf::string_scalar> slr_wrapper = std::ref(source_scalar);
+  cudf::string_scalar const source_scalar                       = cudf::string_scalar("bbb");
+  std::reference_wrapper<cudf::string_scalar const> slr_wrapper = std::ref(source_scalar);
   source.emplace_back(slr_wrapper);
   cudf::test::fixed_width_column_wrapper<int32_t> scatter_map{0, 2, 3, 7};
 
@@ -104,9 +104,9 @@ TEST_F(DictionaryScatterTest, ScalarWithNulls)
   cudf::test::fixed_width_column_wrapper<int64_t> data_target{
     {1, 5, 5, 3, 7, 1, 4, 2}, {false, true, false, true, true, true, true, true}};
   auto target = cudf::dictionary::encode(data_target);
-  std::vector<std::reference_wrapper<const cudf::scalar>> source;
-  const cudf::numeric_scalar<int64_t> source_slr = cudf::test::make_type_param_scalar<int64_t>(100);
-  std::reference_wrapper<const cudf::numeric_scalar<int64_t>> slr_wrapper = std::ref(source_slr);
+  std::vector<std::reference_wrapper<cudf::scalar const>> source;
+  cudf::numeric_scalar<int64_t> const source_slr = cudf::test::make_type_param_scalar<int64_t>(100);
+  std::reference_wrapper<cudf::numeric_scalar<int64_t> const> slr_wrapper = std::ref(source_slr);
   source.emplace_back(slr_wrapper);
 
   cudf::test::fixed_width_column_wrapper<int32_t> scatter_map{7, 2, 3, 1, -3};

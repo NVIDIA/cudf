@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -10,11 +10,11 @@
 #include <cudf/detail/row_operator/hashing.cuh>
 #include <cudf/detail/row_operator/primitive_row_operators.cuh>
 #include <cudf/join/join.hpp>
+#include <cudf/reduction/bloom_filter.cuh>
 #include <cudf/table/table_view.hpp>
 #include <cudf/types.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_uvector.hpp>
 #include <rmm/mr/polymorphic_allocator.hpp>
 
@@ -26,6 +26,7 @@
 #include <cuco/probing_scheme.cuh>
 #include <cuco/types.cuh>
 #include <cuda/std/limits>
+#include <cuda/stream>
 
 #include <memory>
 
@@ -78,7 +79,7 @@ template <typename T, typename Hasher>
 struct masked_key_fn {
   CUDF_HOST_DEVICE constexpr masked_key_fn(Hasher const& hasher) : _hasher{hasher} {}
 
-  __device__ __forceinline__ auto operator()(size_type i) const noexcept
+  __device__ __forceinline__ cuco::pair<hash_value_type, T> operator()(size_type i) const noexcept
   {
     return cuco::pair{unset_mark(_hasher(i)), T{i}};
   }
@@ -104,7 +105,8 @@ template <typename IndexType>
 struct hash_pair_fn {
   CUDF_HOST_DEVICE constexpr hash_pair_fn(hash_value_type const* hashes) : _hashes{hashes} {}
 
-  __device__ __forceinline__ auto operator()(size_type i) const noexcept
+  __device__ __forceinline__ cuco::pair<hash_value_type, IndexType> operator()(
+    size_type i) const noexcept
   {
     return cuco::pair{_hashes[i], IndexType{i}};
   }
@@ -166,7 +168,7 @@ using storage_ref_type =
 using right_key_type = cuco::pair<hash_value_type, rhs_index_type>;
 
 using bloom_filter_policy_type =
-  cuco::default_filter_policy<cuco::detail::identity_hash<hash_value_type>, hash_value_type, 2U>;
+  cudf::arrow_bloom_filter_policy<hash_value_type, cuco::xxhash_64<hash_value_type>>;
 using bloom_filter_allocator_type = rmm::mr::polymorphic_allocator<cuda::std::byte>;
 using bloom_filter_type           = cuco::bloom_filter<hash_value_type,
                                                        cuco::extent<std::size_t>,
@@ -184,13 +186,14 @@ class mark_join {
             cudf::null_equality compare_nulls,
             double load_factor,
             cudf::join_prefilter prefilter,
-            rmm::cuda_stream_view stream);
+            cuda::stream_ref stream,
+            cuda::mr::any_resource<cuda::mr::device_accessible> mr);
 
   std::unique_ptr<rmm::device_uvector<cudf::size_type>> semi_join(
-    cudf::table_view const& right, rmm::cuda_stream_view stream, rmm::device_async_resource_ref mr);
+    cudf::table_view const& right, cuda::stream_ref stream, rmm::device_async_resource_ref mr);
 
   std::unique_ptr<rmm::device_uvector<cudf::size_type>> anti_join(
-    cudf::table_view const& right, rmm::cuda_stream_view stream, rmm::device_async_resource_ref mr);
+    cudf::table_view const& right, cuda::stream_ref stream, rmm::device_async_resource_ref mr);
 
  private:
   using primitive_row_hasher =
@@ -212,7 +215,7 @@ class mark_join {
   std::unique_ptr<rmm::device_uvector<cudf::size_type>> semi_anti_join(
     cudf::table_view const& right,
     join_kind kind,
-    rmm::cuda_stream_view stream,
+    cuda::stream_ref stream,
     rmm::device_async_resource_ref mr);
 
   template <typename Comparator>
@@ -221,7 +224,7 @@ class mark_join {
                                                right_key_type const* right_rows,
                                                cudf::size_type num_right_rows,
                                                bitmask_type const* right_row_bitmask,
-                                               rmm::cuda_stream_view stream);
+                                               cuda::stream_ref stream);
 
   template <typename Comparator>
   cudf::size_type mark_probe_with_prefilter(storage_ref_type storage_ref,
@@ -229,7 +232,7 @@ class mark_join {
                                             right_key_type const* right_rows,
                                             cudf::size_type num_right_rows,
                                             bitmask_type const* right_row_bitmask,
-                                            rmm::cuda_stream_view stream,
+                                            cuda::stream_ref stream,
                                             rmm::device_async_resource_ref mr);
 
   template <typename Comparator>
@@ -238,10 +241,10 @@ class mark_join {
     std::shared_ptr<cudf::detail::row::equality::preprocessed_table> preprocessed_right,
     join_kind kind,
     Comparator comparator,
-    rmm::cuda_stream_view stream,
+    cuda::stream_ref stream,
     rmm::device_async_resource_ref mr);
 
-  void clear_marks(rmm::cuda_stream_view stream);
+  void clear_marks(cuda::stream_ref stream);
 };
 
 }  // namespace cudf::detail

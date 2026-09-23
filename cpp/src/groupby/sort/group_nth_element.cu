@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -15,12 +15,11 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/functional>
 #include <cuda/iterator>
-#include <thrust/iterator/transform_iterator.h>
+#include <cuda/stream>
 #include <thrust/scan.h>
 #include <thrust/scatter.h>
 #include <thrust/transform.h>
@@ -36,7 +35,7 @@ std::unique_ptr<column> group_nth_element(column_view const& values,
                                           size_type num_groups,
                                           size_type n,
                                           null_policy null_handling,
-                                          rmm::cuda_stream_view stream,
+                                          cuda::stream_ref stream,
                                           rmm::device_async_resource_ref mr)
 {
   CUDF_EXPECTS(static_cast<size_t>(values.size()) == group_labels.size(),
@@ -72,10 +71,9 @@ std::unique_ptr<column> group_nth_element(column_view const& values,
     // Returns index of nth value.
     auto values_view = column_device_view::create(values, stream);
     auto bitmask_iterator =
-      thrust::make_transform_iterator(cudf::detail::make_validity_iterator(*values_view),
-                                      cuda::proclaim_return_type<size_type>([] __device__(auto b) {
-                                        return static_cast<size_type>(b);
-                                      }));
+      cuda::transform_iterator(cudf::detail::make_validity_iterator(*values_view),
+                               cuda::proclaim_return_type<size_type>(
+                                 [] __device__(auto b) { return static_cast<size_type>(b); }));
     rmm::device_uvector<size_type> intra_group_index(values.size(), stream);
     // intra group index for valids only.
     thrust::exclusive_scan_by_key(

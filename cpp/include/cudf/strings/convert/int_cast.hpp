@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -11,12 +11,16 @@
 
 #include <optional>
 
+/**
+ * @file
+ * @brief Strings column APIs for casting short strings to/from an integer bit representation.
+ */
+
 namespace CUDF_EXPORT cudf {
 namespace strings {
 /**
  * @addtogroup strings_convert
  * @{
- * @file
  */
 
 /**
@@ -67,7 +71,7 @@ std::unique_ptr<column> cast_to_integer(
   strings_column_view const& input,
   data_type output_type,
   endian swap                       = endian::LITTLE,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -102,7 +106,7 @@ std::unique_ptr<column> cast_to_integer(
 std::unique_ptr<column> cast_from_integer(
   column_view const& integers,
   endian swap                       = endian::LITTLE,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -116,7 +120,7 @@ std::unique_ptr<column> cast_from_integer(
  * if the input column is not castable to an integer.
  */
 std::optional<cudf::data_type> integer_cast_type(
-  strings_column_view const& input, rmm::cuda_stream_view stream = cudf::get_default_stream());
+  strings_column_view const& input, cuda::stream_ref stream = cudf::get_default_stream());
 
 /** @} */  // end of doxygen group
 }  // namespace strings

@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 """Query 50."""
@@ -139,7 +139,7 @@ def polars_impl(run_config: RunConfig) -> QueryResult:
         "s_state",
         "s_zip",
     ]
-    sort_by = {col: False for col in group_cols}
+    sort_by = dict.fromkeys(group_cols, False)
     limit = 100
     diff = pl.col("sr_returned_date_sk") - pl.col("ss_sold_date_sk")
 

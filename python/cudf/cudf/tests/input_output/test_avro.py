@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 from __future__ import annotations
 
@@ -190,7 +190,7 @@ def test_can_parse_no_data(avro_type_params):
     reason="cudf avro reader is unable to parse zero-field metadata."
 )
 def test_can_parse_no_fields(avro_type_params):
-    avro_type, expected_dtype = avro_type_params
+    _avro_type, _expected_dtype = avro_type_params
     schema_root = {
         "name": "root",
         "type": "record",
@@ -228,7 +228,7 @@ def test_avro_decompression(set_decomp_env_vars, rows, codec):
 
     # N.B. rand_dataframe() is brutally slow for some reason.  Switching to
     #      np.random() speeds things up by a factor of 10.
-    #      See also: https://github.com/rapidsai/cudf/issues/13128
+    #      See also: https://github.com/NVIDIA/cudf/issues/13128
     df = rand_dataframe(
         [
             {"dtype": "int32", "null_frequency": 0, "cardinality": 1000},
@@ -361,7 +361,7 @@ def test_alltypes_plain_avro():
     # added simply to verify we fixed the problematic code path that was
     # causing CUDA kernel crashes.
     #
-    # See https://github.com/rapidsai/cudf/pull/12788#issuecomment-1468822875
+    # See https://github.com/NVIDIA/cudf/pull/12788#issuecomment-1468822875
     # for more information.
     relpath = "../../../../java/src/test/resources/alltypes_plain.avro"
     path = pathlib.Path(__file__).parent.parent.joinpath(relpath).resolve()
@@ -594,7 +594,7 @@ def test_avro_reader_multiblock(
         # We don't use rand_dataframe() here, because it increases the
         # execution time of each test by a factor of 10 or more (it appears
         # to use a very costly approach to generating random data).
-        # See also: https://github.com/rapidsai/cudf/issues/13128
+        # See also: https://github.com/NVIDIA/cudf/issues/13128
         values = rng.random(total_rows).astype(dtype)
         bytes_per_row = values.dtype.itemsize
 

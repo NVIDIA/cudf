@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -20,7 +20,7 @@ std::unique_ptr<cudf::column> single_scalar_scatter(cudf::column_view const& tar
                                                     cudf::scalar const& slr,
                                                     cudf::column_view const& scatter_map)
 {
-  std::vector<std::reference_wrapper<const cudf::scalar>> slrs{slr};
+  std::vector<std::reference_wrapper<cudf::scalar const>> slrs{slr};
   cudf::table_view targets{{target}};
   auto result = cudf::scatter(slrs, scatter_map, targets);
   return std::move(result->release()[0]);

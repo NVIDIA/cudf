@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -94,21 +94,21 @@ __device__ inline void block_excl_sum(size_type* arr, size_type length, size_typ
  * @brief Converts string sizes to offsets if this is not a large string column.
  */
 template <int block_size, bool has_lists>
-__device__ void convert_small_string_lengths_to_offsets(page_state_s const* const state)
+__device__ void convert_small_string_lengths_to_offsets(auto const* const state)
 {
   // If this is a large string column. In the
   // latter case, offsets will be computed during string column creation.
-  auto& ni        = state->nesting_info[state->col.max_nesting_depth - 1];
+  auto& ni        = state->nesting.nesting_info[state->setup.col.max_nesting_depth - 1];
   int value_count = ni.value_count;
 
   // if no repetition we haven't calculated start/end bounds and instead just skipped
   // values until we reach first_row. account for that here.
-  if constexpr (not has_lists) { value_count -= state->first_row; }
+  if constexpr (not has_lists) { value_count -= state->setup.first_row; }
 
   // Convert the array of lengths into offsets
   if (value_count > 0) {
     auto const offptr        = reinterpret_cast<size_type*>(ni.data_out);
-    auto const initial_value = state->page.str_offset;
+    auto const initial_value = state->setup.page.str_offset;
     block_excl_sum<block_size>(offptr, value_count, initial_value);
   }
 }
@@ -118,73 +118,23 @@ __device__ void convert_small_string_lengths_to_offsets(page_state_s const* cons
  * construction
  */
 template <bool has_lists>
-inline __device__ void compute_initial_large_strings_offset(page_state_s const* const state,
+inline __device__ void compute_initial_large_strings_offset(auto const* const state,
                                                             size_t& initial_str_offset)
 {
   // Values decoded by this page.
-  int value_count = state->nesting_info[state->col.max_nesting_depth - 1].value_count;
+  int value_count = state->nesting.nesting_info[state->setup.col.max_nesting_depth - 1].value_count;
 
   // if no repetition we haven't calculated start/end bounds and instead just skipped
   // values until we reach first_row. account for that here.
-  if constexpr (not has_lists) { value_count -= state->first_row; }
+  if constexpr (not has_lists) { value_count -= state->setup.first_row; }
 
   // Atomically update the initial string offset if this is a large string column. This initial
   // offset will be used to compute (64-bit) offsets during large string column construction.
   if (value_count > 0 and threadIdx.x == 0) {
-    auto const initial_value = state->page.str_offset;
+    auto const initial_value = state->setup.page.str_offset;
     cuda::atomic_ref<size_t, cuda::std::thread_scope_device> initial_str_offsets_ref{
       initial_str_offset};
     initial_str_offsets_ref.fetch_min(initial_value, cuda::std::memory_order_relaxed);
-  }
-}
-
-/**
- * @brief Update offsets with either zeros if this is a large string column, `initial_value`
- *        otherwise.
- *
- * For large string columns, fill zeros (sizes) at all offsets and atomically update the initial
- * string offset. Otherwise, fill `initial_value` at all offsets.
- *
- * @tparam block_size Thread block size
- * @tparam has_lists Whether the column is a list column
- * @param[in,out] state page state
- * @param[out] initial_str_offsets Initial string offsets
- * @param[in] page Page information
- */
-template <int block_size, bool has_lists>
-__device__ void update_string_offsets_for_pruned_pages(
-  page_state_s* state, cudf::device_span<size_t> initial_str_offsets, PageInfo const& page)
-{
-  namespace cg = cooperative_groups;
-
-  // Initial string offset
-  auto const initial_value = page.str_offset;
-  // The value count is either the leaf-level batch size in case of lists or the number of
-  // effective rows being read by this page
-  auto const value_count =
-    has_lists ? page.nesting[state->col.max_nesting_depth - 1].batch_size : state->num_rows;
-  auto const tid = cg::this_thread_block().thread_rank();
-
-  // Offsets pointer contains string sizes in case of large strings and actual offsets
-  // otherwise
-  auto& ni    = state->nesting_info[state->col.max_nesting_depth - 1];
-  auto offptr = reinterpret_cast<size_type*>(ni.data_out);
-  // For large strings, update the initial string buffer offset to be used during large string
-  // column construction. Otherwise, convert string sizes to final offsets
-  if (state->col.is_large_string_col) {
-    // Write zero string sizes
-    for (int idx = tid; idx < value_count; idx += block_size) {
-      offptr[idx] = 0;
-    }
-    // page.chunk_idx are ordered by input_col_idx and row_group_idx respectively
-    auto const chunks_per_rowgroup = initial_str_offsets.size();
-    auto const input_col_idx       = page.chunk_idx % chunks_per_rowgroup;
-    compute_initial_large_strings_offset<has_lists>(state, initial_str_offsets[input_col_idx]);
-  } else {
-    // Write the initial offset at all positions to indicate zero sized strings
-    for (int idx = tid; idx < value_count; idx += block_size) {
-      offptr[idx] = initial_value;
-    }
   }
 }
 
@@ -240,7 +190,7 @@ template <int block_size,
           bool split_decode_t,
           copy_mode copy_mode_t,
           typename state_buf>
-__device__ size_t decode_strings(page_state_s* s,
+__device__ size_t decode_strings(auto* s,
                                  state_buf* const sb,
                                  int start,
                                  int end,
@@ -249,10 +199,10 @@ __device__ size_t decode_strings(page_state_s* s,
                                  size_t string_output_offset)
 {
   // nesting level that is storing actual leaf values
-  int const leaf_level_index    = s->col.max_nesting_depth - 1;
-  int const skipped_leaf_values = s->page.skipped_leaf_values;
+  int const leaf_level_index    = s->setup.col.max_nesting_depth - 1;
+  int const skipped_leaf_values = s->setup.page.skipped_leaf_values;
 
-  auto const& ni = s->nesting_info[leaf_level_index];
+  auto const& ni = s->nesting.nesting_info[leaf_level_index];
 
   // decode values
   int pos = start;
@@ -265,10 +215,10 @@ __device__ size_t decode_strings(page_state_s* s,
     // Index from value buffer (doesn't include nulls) to final array (has gaps for nulls)
     int const dst_pos = [&]() {
       if constexpr (copy_mode_t == copy_mode::DIRECT) {
-        return thread_pos - s->first_row;
+        return thread_pos - s->setup.first_row;
       } else {
         int dst_pos = sb->nz_idx[rolling_index<state_buf::nz_buf_size>(thread_pos)];
-        if constexpr (!has_lists_t) { dst_pos -= s->first_row; }
+        if constexpr (!has_lists_t) { dst_pos -= s->setup.first_row; }
         return dst_pos;
       }
     }();
@@ -293,9 +243,9 @@ __device__ size_t decode_strings(page_state_s* s,
       } else {
         int input_thread_string_offset;
         int string_length;
-        if (s->col.physical_type == Type::FIXED_LEN_BYTE_ARRAY) {
-          input_thread_string_offset = src_pos * s->dtype_len_in;
-          string_length              = s->dtype_len_in;
+        if (s->setup.col.physical_type == Type::FIXED_LEN_BYTE_ARRAY) {
+          input_thread_string_offset = src_pos * s->output_cvt.dtype_len_in;
+          string_length              = s->output_cvt.dtype_len_in;
         } else {
           input_thread_string_offset = str_offsets[src_pos];
           int const next_offset      = str_offsets[src_pos + 1];
@@ -306,11 +256,11 @@ __device__ size_t decode_strings(page_state_s* s,
                             ? 0
                             : next_offset - input_thread_string_offset - sizeof(int32_t);
         }
-        if (input_thread_string_offset >= static_cast<uint32_t>(s->dict_size)) {
+        if (input_thread_string_offset >= static_cast<uint32_t>(s->stream.dict_size)) {
           return string_index_pair{nullptr, 0};
         }
         auto const thread_input_string =
-          reinterpret_cast<char const*>(s->data_start + input_thread_string_offset);
+          reinterpret_cast<char const*>(s->stream.data_start + input_thread_string_offset);
         return string_index_pair{thread_input_string, string_length};
       }
     }();
@@ -338,11 +288,11 @@ __device__ size_t decode_strings(page_state_s* s,
 
     if constexpr (split_decode_t) {
       if (in_range) {
-        auto const split_string_length = s->dtype_len_in;
-        auto const stream_length       = s->page.str_bytes / split_string_length;
+        auto const split_string_length = s->output_cvt.dtype_len_in;
+        auto const stream_length       = s->setup.page.str_bytes / split_string_length;
 
         for (int ii = 0; ii < split_string_length; ii++) {
-          thread_output_string[ii] = s->data_start[src_pos + ii * stream_length];
+          thread_output_string[ii] = s->stream.data_start[src_pos + ii * stream_length];
         }
       }
     } else {

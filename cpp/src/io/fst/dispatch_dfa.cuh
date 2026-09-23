@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -462,6 +462,7 @@ struct DispatchFSM : DeviceFSMPolicy {
       uint32_t num_fst_init_blocks    = cuda::ceil_div(num_blocks, FST_INIT_TPB);
       initialization_pass_kernel<<<num_fst_init_blocks, FST_INIT_TPB, 0, stream>>>(
         fst_offset_tile_state, num_blocks);
+      CUDF_CUDA_TRY(cudaGetLastError());
     }
 
     //------------------------------------------------------------------------------
@@ -477,6 +478,7 @@ struct DispatchFSM : DeviceFSMPolicy {
       uint32_t num_stv_init_blocks    = cuda::ceil_div(num_blocks, STV_INIT_TPB);
       initialization_pass_kernel<<<num_stv_init_blocks, STV_INIT_TPB, 0, stream>>>(stv_tile_state,
                                                                                    num_blocks);
+      CUDF_CUDA_TRY(cudaGetLastError());
     } else {
       // Compute state-transition vectors
       // TODO tag dispatch or constexpr if depending on single-pass config to avoid superfluous

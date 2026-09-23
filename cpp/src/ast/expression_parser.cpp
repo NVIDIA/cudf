@@ -1,16 +1,17 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #include <cudf/ast/detail/expression_parser.hpp>
 #include <cudf/ast/detail/operators.hpp>
 #include <cudf/ast/expressions.hpp>
+#include <cudf/detail/utilities/cuda.hpp>
 #include <cudf/detail/utilities/integer_utils.hpp>
 #include <cudf/types.hpp>
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/traits.hpp>
 
-#include <thrust/iterator/transform_iterator.h>
+#include <cuda/iterator>
 
 #include <algorithm>
 #include <functional>
@@ -54,7 +55,7 @@ expression_parser::expression_parser(
   cudf::table_view const& left,
   std::optional<std::reference_wrapper<cudf::table_view const>> right,
   bool has_nulls,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr)
   : _left{left},
     _right{right},
@@ -75,14 +76,13 @@ expression_parser::expression_parser(
 expression_parser::expression_parser(expression const& expr,
                                      cudf::table_view const& table,
                                      bool has_nulls,
-                                     rmm::cuda_stream_view stream,
+                                     cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr)
   : expression_parser(expr, table, {}, has_nulls, stream, mr)
 {
 }
 
-void expression_parser::move_to_device(rmm::cuda_stream_view stream,
-                                       rmm::device_async_resource_ref mr)
+void expression_parser::move_to_device(cuda::stream_ref stream, rmm::device_async_resource_ref mr)
 {
   std::vector<cudf::size_type> sizes;
   std::vector<void const*> data_pointers;
@@ -114,7 +114,7 @@ void expression_parser::move_to_device(rmm::cuda_stream_view stream,
   }
 
   _device_data_buffer = rmm::device_buffer(host_data_buffer.data(), buffer_size, stream, mr);
-  stream.synchronize();
+  cudf::detail::sync_stream(stream);
 
   // Create device pointers to components of plan
   auto device_data_buffer_ptr            = static_cast<char const*>(_device_data_buffer.data());
@@ -223,7 +223,7 @@ cudf::size_type expression_parser::visit(operation const& expr)
   auto const operand_data_ref_indices = visit_operands(expr.get_operands());
   // Resolve operand types
   auto data_ref = [this](auto const& index) { return _data_references[index].data_type; };
-  auto begin    = thrust::make_transform_iterator(operand_data_ref_indices.cbegin(), data_ref);
+  auto begin    = cuda::transform_iterator(operand_data_ref_indices.cbegin(), data_ref);
   auto end      = begin + operand_data_ref_indices.size();
   auto const operand_types = std::vector<cudf::data_type>(begin, end);
 
@@ -234,6 +234,16 @@ cudf::size_type expression_parser::visit(operation const& expr)
           return dt1.id() != dt2.id();
         }) != operand_types.cend()) {
     CUDF_FAIL("An AST expression was provided non-matching operand types.");
+  }
+
+  // For decimal128, only comparison operators are supported. All other binary operators
+  // (e.g. ADD/SUB/MUL/DIV/MOD/PYMOD) return a decimal128 result whose 16-byte rep exceeds
+  // the IntermediateDataType limit and has no GPU kernel support.
+  auto const op = expr.get_operator();
+  if (operand_types.size() == 2 && operand_types[0].id() == cudf::type_id::DECIMAL128 &&
+      !cudf::ast::detail::is_comparison_operator(op)) {
+    CUDF_FAIL("decimal128 is not supported for non-comparison binary AST operations.",
+              cudf::data_type_error);
   }
 
   // Give back intermediate storage locations that are consumed by this operation
@@ -248,7 +258,6 @@ cudf::size_type expression_parser::visit(operation const& expr)
       }
     });
   // Resolve expression type
-  auto const op        = expr.get_operator();
   auto const data_type = cudf::ast::detail::ast_operator_return_type(op, operand_types);
   _operators.push_back(op);
   _operator_arities.push_back(cudf::ast::detail::ast_operator_arity(op));
@@ -256,6 +265,9 @@ cudf::size_type expression_parser::visit(operation const& expr)
   auto const output = [&]() {
     if (expression_index == 0) {
       // This expression is the root. Output should be directed to the output column.
+      CUDF_EXPECTS(data_type.id() != cudf::type_id::DECIMAL128,
+                   "decimal128 is not supported as an AST expression output.",
+                   cudf::data_type_error);
       return detail::device_data_reference(
         detail::device_data_reference_type::COLUMN, data_type, 0, table_reference::OUTPUT);
     } else {

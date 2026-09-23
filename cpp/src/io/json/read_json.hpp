@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -12,7 +12,7 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
+#include <cuda/stream>
 
 #include <memory>
 
@@ -43,7 +43,7 @@ device_span<char> ingest_raw_input(device_span<char> buffer,
                                    size_t range_offset,
                                    size_t range_size,
                                    char delimiter,
-                                   rmm::cuda_stream_view stream);
+                                   cuda::stream_ref stream);
 
 /**
  * @brief Reads and returns the entire data set in batches.
@@ -57,7 +57,7 @@ device_span<char> ingest_raw_input(device_span<char> buffer,
  */
 table_with_metadata read_json(host_span<std::unique_ptr<datasource>> sources,
                               json_reader_options const& reader_opts,
-                              rmm::cuda_stream_view stream,
+                              cuda::stream_ref stream,
                               rmm::device_async_resource_ref mr);
 
 }  // namespace io::json::detail

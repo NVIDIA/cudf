@@ -1,6 +1,8 @@
+# SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 ---
 # Refer to the following link for the explanation of each params:
-#   http://releases.llvm.org/8.0.0/tools/clang/docs/ClangFormatStyleOptions.html
+#   https://releases.llvm.org/8.0.0/tools/clang/docs/ClangFormatStyleOptions.html
 Language: Cpp
 # BasedOnStyle: Google
 AccessModifierOffset: -1
@@ -56,7 +58,7 @@ BreakConstructorInitializers: BeforeColon
 BreakInheritanceList: BeforeColon
 BreakStringLiterals: true
 ColumnLimit: 100
-CommentPragmas: '^ IWYU pragma:'
+CommentPragmas: '(IWYU pragma:|SPDX-)'
 CompactNamespaces: false
 ConstructorInitializerAllOnOneLineOrOnePerLine: true
 # Kept the below 2 to be the same as `IndentWidth` to keep everything uniform
@@ -81,7 +83,7 @@ IncludeCategories:
     Priority:        3
   - Regex:           '^<cudf/' # cuDF includes
     Priority:        4
-  - Regex:           '^<(nvtext|cudf_kafka)' # other libcudf includes
+  - Regex:           '^<(nvtext|cudf_kafka|cudf_streaming)' # other libcudf includes
     Priority:        5
   - Regex:           '^<(cugraph|cuml|raft|kvikio)' # Other RAPIDS includes
     Priority:        6
@@ -119,6 +121,7 @@ PenaltyBreakTemplateDeclaration: 10
 PenaltyExcessCharacter: 1000000
 PenaltyReturnTypeOnItsOwnLine: 200
 PointerAlignment: Left
+QualifierAlignment: Right
 RawStringFormats:
   - Language: Cpp
     Delimiters:

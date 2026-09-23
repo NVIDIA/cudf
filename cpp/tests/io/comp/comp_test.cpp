@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -11,6 +11,7 @@
 #include <cudf_test/base_fixture.hpp>
 #include <cudf_test/testing_main.hpp>
 
+#include <cudf/io/detail/codec.hpp>
 #include <cudf/io/types.hpp>
 #include <cudf/utilities/default_stream.hpp>
 
@@ -21,6 +22,8 @@
 
 #include <src/io/comp/nvcomp_adapter.hpp>
 
+#include <algorithm>
+#include <array>
 #include <vector>
 
 using cudf::device_span;
@@ -89,7 +92,7 @@ struct DecompressTest
 
     static_cast<Decompressor*>(this)->device_dispatch(inf_in, inf_out, inf_stat);
     CUDF_CUDA_TRY(cudaMemcpyAsync(
-      decompressed.data(), dst.data(), dst.size(), cudaMemcpyDefault, stream.value()));
+      decompressed.data(), dst.data(), dst.size(), cudaMemcpyDefault, stream.get()));
     inf_stat.device_to_host(stream);
     CUDF_EXPECTS(inf_stat[0].status == codec_status::SUCCESS, "Failure in device decompression");
 
@@ -373,6 +376,16 @@ TEST_F(NvcompConfigTest, Compression)
   EXPECT_FALSE(comp_disabled(compression_type::SNAPPY, {false, true}));
   // stable integrations enabled required
   EXPECT_TRUE(comp_disabled(compression_type::SNAPPY, {false, false}));
+
+  // GZIP compression is only available with nvCOMP 5.3 and later
+  if (cudf::io::detail::is_device_compression_supported(cudf::io::compression_type::GZIP)) {
+    EXPECT_FALSE(comp_disabled(compression_type::GZIP, {true, true}));
+    EXPECT_FALSE(comp_disabled(compression_type::GZIP, {false, true}));
+    // stable integrations enabled required
+    EXPECT_TRUE(comp_disabled(compression_type::GZIP, {false, false}));
+  } else {
+    EXPECT_TRUE(comp_disabled(compression_type::GZIP, {true, true}));
+  }
 }
 
 TEST_F(NvcompConfigTest, Decompression)
@@ -409,16 +422,28 @@ void roundtrip_test(cudf::io::compression_type compression)
       // Keep adding to the test data
       expected.insert(expected.end(), num_string.begin(), num_string.end());
     }
-    if (cudf::io::detail::compress_max_allowed_chunk_size(compression)
-          .value_or(std::numeric_limits<size_t>::max()) < expected.size()) {
-      // Skip if the data is too large for the compressor
-      return;
-    }
+  }
+
+  auto const test_sizes     = std::array{size_t{1},
+                                     size_t{2},
+                                     size_t{4},
+                                     size_t{8},
+                                     size_t{22},
+                                     size_t{54},
+                                     size_t{1 << 10},
+                                     size_t{1 << 20},
+                                     expected.size()};
+  auto const max_input_size = cudf::io::detail::compress_max_allowed_chunk_size(compression)
+                                .value_or(std::numeric_limits<size_t>::max());
+  for (auto const test_size : test_sizes) {
+    if (test_size > max_input_size) { continue; }
+
+    auto const test_input = cudf::host_span<uint8_t const>{expected.data(), test_size};
 
     auto d_comp = rmm::device_uvector<uint8_t>(
-      cudf::io::detail::max_compressed_size(compression, expected.size()), stream, mr);
+      cudf::io::detail::max_compressed_size(compression, test_input.size()), stream, mr);
     {
-      auto const d_orig = cudf::detail::make_device_uvector_async(expected, stream, mr);
+      auto const d_orig = cudf::detail::make_device_uvector_async(test_input, stream, mr);
       auto hd_srcs      = cudf::detail::hostdevice_vector<device_span<uint8_t const>>(1, stream);
       hd_srcs[0]        = d_orig;
       hd_srcs.host_to_device_async(stream);
@@ -437,7 +462,7 @@ void roundtrip_test(cudf::io::compression_type compression)
       d_comp.resize(hd_stats[0].bytes_written, stream);
     }
 
-    auto d_got = rmm::device_uvector<uint8_t>(expected.size(), stream);
+    auto d_got = rmm::device_uvector<uint8_t>(test_input.size(), stream, mr);
     {
       auto hd_srcs = cudf::detail::hostdevice_vector<device_span<uint8_t const>>(1, stream);
       hd_srcs[0]   = d_comp;
@@ -452,14 +477,14 @@ void roundtrip_test(cudf::io::compression_type compression)
       hd_stats.host_to_device_async(stream);
 
       cudf::io::detail::decompress(
-        compression, hd_srcs, hd_dsts, hd_stats, expected.size(), expected.size(), stream);
+        compression, hd_srcs, hd_dsts, hd_stats, test_input.size(), test_input.size(), stream);
       hd_stats.device_to_host(stream);
       ASSERT_EQ(hd_stats[0].status, codec_status::SUCCESS);
     }
 
     auto const got = cudf::detail::make_std_vector(d_got, stream);
 
-    EXPECT_EQ(expected, got);
+    EXPECT_TRUE(std::equal(test_input.begin(), test_input.end(), got.begin(), got.end()));
   }
 }
 

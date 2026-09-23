@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import decimal
 import itertools
@@ -201,12 +201,41 @@ def test_series_groupby_agg(groupby_reduction_methods):
     assert_groupby_results_equal(sg, gg)
 
 
+def test_groupby_namedagg_mean_decimal128_keeps_columns():
+    df = cudf.DataFrame(
+        {
+            "g": [0, 0, 1, 1],
+            "qty": cudf.Series(
+                [1, 3, 5, 7], dtype=cudf.Decimal128Dtype(15, 2)
+            ),
+            "price": cudf.Series(
+                [10, 30, 50, 70], dtype=cudf.Decimal128Dtype(15, 2)
+            ),
+        }
+    )
+    out = df.groupby("g", as_index=False).agg(
+        sum_qty=cudf.NamedAgg(column="qty", aggfunc="sum"),
+        avg_qty=cudf.NamedAgg(column="qty", aggfunc="mean"),
+        avg_price=cudf.NamedAgg(column="price", aggfunc="mean"),
+    )
+    expected = cudf.DataFrame(
+        {
+            "g": [0, 1],
+            "sum_qty": cudf.Series([4, 12], dtype=cudf.Decimal128Dtype(38, 2)),
+            "avg_qty": [2.0, 6.0],
+            "avg_price": [20.0, 60.0],
+        }
+    )
+    assert out["sum_qty"].dtype == expected["sum_qty"].dtype
+    assert_eq(out, expected, check_dtype=False)
+
+
 def test_groupby_agg_decimal(groupby_reduction_methods, request):
     request.applymarker(
         pytest.mark.xfail(
-            groupby_reduction_methods in ["prod", "mean"],
+            groupby_reduction_methods == "prod",
             raises=pd.errors.DataError,
-            reason=f"{groupby_reduction_methods} not supported with Decimals in pandas",
+            reason="prod not supported with Decimals in pandas",
         )
     )
     rng = np.random.default_rng(seed=0)
@@ -222,7 +251,7 @@ def test_groupby_agg_decimal(groupby_reduction_methods, request):
 
     # The unique is necessary because otherwise if there are duplicates idxmin
     # and idxmax may return different results than pandas (see
-    # https://github.com/rapidsai/cudf/issues/7756). This is not relevant to
+    # https://github.com/NVIDIA/cudf/issues/7756). This is not relevant to
     # the current version of the test, because idxmin and idxmax simply don't
     # work with pandas Series composed of Decimal objects (see
     # https://github.com/pandas-dev/pandas/issues/40685). However, if that is
@@ -254,10 +283,32 @@ def test_groupby_agg_decimal(groupby_reduction_methods, request):
         }
     )
 
-    expect_df = pdf.groupby("idx", sort=True).agg(groupby_reduction_methods)
     got_df = gdf.groupby("idx", sort=True).agg(groupby_reduction_methods)
-    assert_eq(expect_df["x"], got_df["x"], check_dtype=False)
-    assert_eq(expect_df["y"], got_df["y"], check_dtype=False)
+    if groupby_reduction_methods == "mean":
+        # pandas object-Decimal mean is lossy; compare to float64 reference
+        expect_df = (
+            pd.DataFrame({"idx": idx_col, "x": x, "y": y})
+            .groupby("idx", sort=True)
+            .agg("mean")
+        )
+        assert_eq(
+            got_df["x"].astype("float64"),
+            expect_df["x"],
+            check_dtype=False,
+            atol=1e-2,
+        )
+        assert_eq(
+            got_df["y"].astype("float64"),
+            expect_df["y"],
+            check_dtype=False,
+            atol=1e-2,
+        )
+    else:
+        expect_df = pdf.groupby("idx", sort=True).agg(
+            groupby_reduction_methods
+        )
+        assert_eq(expect_df["x"], got_df["x"], check_dtype=False)
+        assert_eq(expect_df["y"], got_df["y"], check_dtype=False)
 
 
 def test_groupby_use_agg_column_as_index():
@@ -769,3 +820,67 @@ def test_sliced_child_dtype_accuracy():
     col = result["b"]._column
     child = col._get_sliced_child()
     assert child.dtype == col.dtype.element_type
+
+
+@pytest.mark.parametrize("op", ["idxmin", "idxmax"])
+@pytest.mark.parametrize(
+    "index", [[10, 20, 30, 40], ["w", "x", "y", "z"], None]
+)
+def test_groupby_idxminmax_returns_index_labels(op, index):
+    # pandas returns the row's index *label* (with the index dtype), not
+    # the positional row number, from agg/transform/the direct method
+    pdf = pd.DataFrame(
+        {"key": [1, 1, 2, 2], "val": [4.0, 3.0, 5.0, 6.0]}, index=index
+    )
+    gdf = cudf.DataFrame(pdf)
+
+    assert_groupby_results_equal(
+        getattr(pdf.groupby("key"), op)(), getattr(gdf.groupby("key"), op)()
+    )
+    assert_groupby_results_equal(
+        pdf.groupby("key").agg(op), gdf.groupby("key").agg(op)
+    )
+    assert_eq(
+        pdf.groupby("key")["val"].transform(op),
+        gdf.groupby("key")["val"].transform(op),
+    )
+
+
+@pytest.mark.parametrize("op", ["idxmin", "idxmax"])
+def test_groupby_idxminmax_all_na_group_raises(op):
+    pdf = pd.DataFrame({"key": [1, 1, 2, 2], "val": [4.0, 3.0, None, None]})
+    gdf = cudf.DataFrame(pdf)
+
+    with pytest.raises(ValueError):
+        getattr(pdf.groupby("key"), op)()
+    with pytest.raises(ValueError):
+        getattr(gdf.groupby("key"), op)()
+
+
+def test_agg_multiindex_columns_preserved():
+    # aggregating a MultiIndex-column frame keeps hierarchical columns
+    pdf = pd.DataFrame(
+        [[1, 2, 3], [1, 5, 6], [2, 8, 9]],
+        columns=pd.MultiIndex.from_tuples(
+            [("k", ""), ("x", "a"), ("x", "b")], names=["l0", "l1"]
+        ),
+    )
+    gdf = cudf.DataFrame(pdf)
+
+    expect = pdf.groupby(("k", "")).agg("sum")
+    got = gdf.groupby(("k", "")).agg("sum")
+    assert_eq(expect, got)
+
+
+def test_agg_relabel_flat_columns_from_multiindex():
+    # relabeling aggregations emit new flat labels; the source's
+    # multi-level column metadata must not be attached to them
+    pdf = pd.DataFrame(
+        [[1, 2], [1, 5], [2, 8]],
+        columns=pd.MultiIndex.from_tuples([("k", ""), ("x", "a")]),
+    )
+    gdf = cudf.DataFrame(pdf)
+
+    expect = pdf.groupby(("k", "")).agg(total=(("x", "a"), "sum"))
+    got = gdf.groupby(("k", "")).agg(total=(("x", "a"), "sum"))
+    assert_eq(expect, got)

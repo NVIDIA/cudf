@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -16,6 +16,7 @@ namespace CUDF_EXPORT nvtext {
  * @addtogroup nvtext_replace
  * @{
  * @file
+ * @brief APIs for replacing tokens within strings columns.
  */
 
 /**
@@ -78,7 +79,7 @@ std::unique_ptr<cudf::column> replace_tokens(
   cudf::strings_column_view const& targets,
   cudf::strings_column_view const& replacements,
   cudf::string_scalar const& delimiter = cudf::string_scalar{""},
-  rmm::cuda_stream_view stream         = cudf::get_default_stream(),
+  cuda::stream_ref stream              = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr    = cudf::get_current_device_resource_ref());
 
 /**
@@ -127,7 +128,7 @@ std::unique_ptr<cudf::column> filter_tokens(
   cudf::size_type min_token_length,
   cudf::string_scalar const& replacement = cudf::string_scalar{""},
   cudf::string_scalar const& delimiter   = cudf::string_scalar{""},
-  rmm::cuda_stream_view stream           = cudf::get_default_stream(),
+  cuda::stream_ref stream                = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr      = cudf::get_current_device_resource_ref());
 
 /** @} */  // end of group

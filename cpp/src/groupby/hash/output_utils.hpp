@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -12,8 +12,9 @@
 #include <cudf/types.hpp>
 #include <cudf/utilities/span.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_uvector.hpp>
+
+#include <cuda/stream>
 
 #include <cstdint>
 #include <memory>
@@ -42,7 +43,7 @@ std::unique_ptr<table> create_results_table(size_type output_size,
                                             table_view const& values,
                                             host_span<aggregation::Kind const> agg_kinds,
                                             std::span<int8_t const> is_agg_intermediate,
-                                            rmm::cuda_stream_view stream,
+                                            cuda::stream_ref stream,
                                             rmm::device_async_resource_ref mr);
 
 /**
@@ -59,7 +60,7 @@ std::unique_ptr<table> create_results_table(size_type output_size,
 template <typename SetType>
 rmm::device_uvector<size_type> extract_populated_keys(SetType const& key_set,
                                                       size_type num_total_keys,
-                                                      rmm::cuda_stream_view stream,
+                                                      cuda::stream_ref stream,
                                                       rmm::device_async_resource_ref mr);
 
 /**
@@ -78,7 +79,7 @@ rmm::device_uvector<size_type> extract_populated_keys(SetType const& key_set,
 rmm::device_uvector<size_type> compute_key_transform_map(
   size_type num_total_keys,
   device_span<size_type const> unique_key_indices,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr);
 
 /**
@@ -96,7 +97,7 @@ rmm::device_uvector<size_type> compute_key_transform_map(
  */
 rmm::device_uvector<size_type> compute_target_indices(device_span<size_type const> input,
                                                       device_span<size_type const> transform_map,
-                                                      rmm::cuda_stream_view stream,
+                                                      cuda::stream_ref stream,
                                                       rmm::device_async_resource_ref mr);
 
 /**
@@ -113,6 +114,6 @@ void finalize_output(table_view const& values,
                      std::vector<std::unique_ptr<aggregation>> const& aggregations,
                      std::unique_ptr<table>& agg_results,
                      cudf::detail::result_cache* cache,
-                     rmm::cuda_stream_view stream);
+                     cuda::stream_ref stream);
 
 }  // namespace cudf::groupby::detail::hash

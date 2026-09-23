@@ -1,10 +1,10 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#include <cudf/ast/detail/operator_functor.cuh>
 #include <cudf/column/column_device_view_base.cuh>
+#include <cudf/detail/row_ir/opcode.hpp>
 #include <cudf/detail/utilities/grid_1d.cuh>
 #include <cudf/types.hpp>
 
@@ -13,7 +13,6 @@
 #include <cuda/std/tuple>
 
 #include <jit/column_accessor.cuh>
-#include <jit/span.cuh>
 #include <jit/type_list.cuh>
 
 #pragma nv_hdrstop  // The above headers are used by the kernel below and need to be included before
@@ -39,10 +38,10 @@ __device__ void execute_predicate_op(void* user_data,
                                      cuda::std::tuple<T...> args)
 {
   if constexpr (has_user_data) {
-    cuda::std::apply([&](auto&&... args) { GENERIC_JOIN_FILTER_OP(user_data, row_index, args...); },
-                     args);
+    cuda::std::apply(
+      [&](auto&&... args) { (void)GENERIC_JOIN_FILTER_OP(user_data, row_index, args...); }, args);
   } else {
-    cuda::std::apply([&](auto&&... args) { GENERIC_JOIN_FILTER_OP(args...); }, args);
+    cuda::std::apply([&](auto&&... args) { (void)GENERIC_JOIN_FILTER_OP(args...); }, args);
   }
 }
 

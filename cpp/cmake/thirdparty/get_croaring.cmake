@@ -1,16 +1,16 @@
 # =============================================================================
 # cmake-format: off
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 # cmake-format: on
 # =============================================================================
 
-# Use CPM to clone CRoaring and set up the necessary targets and include directories.
+# Find or build the CRoaring library needed for libcudf tests and benchmarks.
 function(find_and_configure_roaring VERSION EXCLUDE_FROM_ALL)
 
   rapids_cpm_find(
     roaring ${VERSION}
-    GLOBAL_TARGETS roaring
+    GLOBAL_TARGETS roaring::roaring
     CPM_ARGS
     GIT_REPOSITORY https://github.com/RoaringBitmap/CRoaring.git
     GIT_TAG v${VERSION}
@@ -27,6 +27,10 @@ function(find_and_configure_roaring VERSION EXCLUDE_FROM_ALL)
   )
   if(roaring_ADDED)
     set_target_properties(roaring PROPERTIES POSITION_INDEPENDENT_CODE ON)
+  elseif(NOT TARGET roaring AND TARGET roaring::roaring)
+    # When found via find_package (e.g. conda), the target is namespaced. Create an alias so
+    # consumers can use the non-namespaced name.
+    add_library(roaring ALIAS roaring::roaring)
   endif()
 
   if(DEFINED roaring_SOURCE_DIR)
@@ -38,5 +42,5 @@ function(find_and_configure_roaring VERSION EXCLUDE_FROM_ALL)
 
 endfunction()
 
-set(roaring_VERSION_cudf "4.3.11")
+set(roaring_VERSION_cudf "4.4.2")
 find_and_configure_roaring(${roaring_VERSION_cudf} ${CUDF_EXCLUDE_DEPS_FROM_ALL})

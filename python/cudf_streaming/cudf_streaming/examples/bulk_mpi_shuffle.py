@@ -1,5 +1,6 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+
 """Bulk-synchronous MPI shuffle."""
 
 from __future__ import annotations
@@ -16,16 +17,15 @@ from mpi4py import MPI
 import rapidsmpf.bootstrap
 import rapidsmpf.communicator.mpi
 import rmm.mr
-from cudf_streaming.integrations.partition import (
+from cudf_streaming.partition_utils import (
     partition_and_pack,
     unpack_and_concat,
-    unspill_partitions,
 )
 from rapidsmpf.config import Options, get_environment_variables
 from rapidsmpf.memory.buffer import MemoryType
 from rapidsmpf.memory.buffer_resource import BufferResource
+from rapidsmpf.memory.spill import unspill_partitions
 from rapidsmpf.progress_thread import ProgressThread
-from rapidsmpf.rmm_resource_adaptor import RmmResourceAdaptor
 from rapidsmpf.shuffler import Shuffler
 from rapidsmpf.statistics import Statistics
 from rapidsmpf.utils.string import format_bytes, parse_bytes
@@ -313,15 +313,13 @@ def setup_and_run(args: argparse.Namespace) -> None:
     """
     options = Options(get_environment_variables())
 
-    # Create a RMM stack with both a device pool and statistics.
-    mr = RmmResourceAdaptor(
-        rmm.mr.PoolMemoryResource(
-            rmm.mr.CudaMemoryResource(),
-            initial_pool_size=args.rmm_pool_size,
-            maximum_pool_size=args.rmm_pool_size,
-        )
+    # Create a device pool memory resource. `BufferResource` wraps it in an
+    # internal tracking `RmmResourceAdaptor` exposed via `device_mr_adaptor()`.
+    base_mr = rmm.mr.PoolMemoryResource(
+        rmm.mr.CudaMemoryResource(),
+        initial_pool_size=args.rmm_pool_size,
+        maximum_pool_size=args.rmm_pool_size,
     )
-    rmm.mr.set_current_device_resource(mr)
 
     # Create a buffer resource that limits device memory if `--spill-device`
     # is not None.
@@ -330,7 +328,11 @@ def setup_and_run(args: argparse.Namespace) -> None:
         if args.spill_device is None
         else {MemoryType.DEVICE: args.spill_device}
     )
-    br = BufferResource(mr, memory_limits=memory_limits)
+    br = BufferResource(base_mr, memory_limits=memory_limits)
+    mr = br.device_mr_adaptor()
+    # Install the tracking adaptor as the current device resource so libcudf
+    # temporary allocations are also tracked.
+    rmm.mr.set_current_device_resource(mr)
 
     stats = Statistics(enable=args.statistics)
 

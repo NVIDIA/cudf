@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2018-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2018-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -38,14 +38,6 @@
  * @brief Type declarations for libcudf.
  */
 
-// Forward declarations
-/// @cond
-namespace rmm {
-class device_buffer;
-/// @endcond
-
-}  // namespace rmm
-
 namespace CUDF_EXPORT cudf {
 // Forward declaration
 class column;
@@ -79,7 +71,6 @@ class mutable_table_view;
 /**
  * @addtogroup utility_types
  * @{
- * @file
  */
 
 using size_type         = int32_t;   ///< Row index type for columns and tables
@@ -180,11 +171,12 @@ enum class mask_state : int32_t {
  * two data points i and j
  */
 enum class interpolation : int32_t {
-  LINEAR,    ///< Linear interpolation between i and j
-  LOWER,     ///< Lower data point (i)
-  HIGHER,    ///< Higher data point (j)
-  MIDPOINT,  ///< (i + j)/2
-  NEAREST    ///< i or j, whichever is nearest
+  LINEAR,          ///< Linear interpolation between i and j
+  LOWER,           ///< Lower data point (i)
+  HIGHER,          ///< Higher data point (j)
+  MIDPOINT,        ///< (i + j)/2
+  NEAREST,         ///< i or j, whichever is nearest (half-to-even rounding)
+  NEAREST_HALF_UP  ///< i or j, whichever is nearest (half-away-from-zero rounding)
 };
 
 /**
@@ -259,6 +251,15 @@ enum class output_nullability : uint8_t {
   PRESERVE  = 0,  ///< A null-mask may be produced if needed
   ALL_VALID = 1   ///< A null-mask is not produced and all values are considered valid even if
                   ///< null values are produced
+};
+
+/**
+ * @brief Indicates whether a function nullifies its output on error.
+ *
+ */
+enum class error_policy : uint8_t {
+  PROPAGATE = 0,  ///< The function propagates errors
+  NULLIFY   = 1   ///< The function nullifies its output on error
 };
 
 /**

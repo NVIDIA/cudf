@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -31,7 +31,7 @@ std::vector<cudf::io::table_with_metadata> split_byte_range_reading(
   cudf::io::json_reader_options const& reader_opts,
   cudf::io::json_reader_options const& creader_opts,
   IndexType chunk_size,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr)
 {
   auto total_source_size = [&sources]() {
@@ -108,7 +108,7 @@ template std::vector<cudf::io::table_with_metadata> split_byte_range_reading<std
   cudf::io::json_reader_options const& reader_opts,
   cudf::io::json_reader_options const& creader_opts,
   std::int32_t chunk_size,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr);
 
 template std::vector<cudf::io::table_with_metadata> split_byte_range_reading<std::int64_t>(
@@ -117,11 +117,11 @@ template std::vector<cudf::io::table_with_metadata> split_byte_range_reading<std
   cudf::io::json_reader_options const& reader_opts,
   cudf::io::json_reader_options const& creader_opts,
   std::int64_t chunk_size,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr);
 
 rmm::device_uvector<cudf::size_type> string_offset_to_length(
-  cudf::strings_column_view const& column, rmm::cuda_stream_view stream)
+  cudf::strings_column_view const& column, cuda::stream_ref stream)
 {
   rmm::device_uvector<cudf::size_type> svs_length(column.size(), stream);
   auto itr =

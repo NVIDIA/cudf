@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2018-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2018-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import decimal
 import itertools
@@ -57,18 +57,16 @@ from cudf.testing import assert_eq
         ),
         lambda: pd.Index([True, False] * 5),
         lambda: pd.CategoricalIndex(["a", "b", "a", "b"], ["a", "b", "c"]),
-        lambda: (
-            cudf.DataFrame(
-                {
-                    "a": [1, 2, 3],
-                    "b": ["c", "e", "g"],
-                    "d": [True, False, True],
-                },
-                index=cudf.MultiIndex.from_tuples(
-                    [("i1", "i2"), ("i3", "i4"), ("i5", "i6")],
-                    names=["foo", "bar"],
-                ),
-            )
+        lambda: cudf.DataFrame(
+            {
+                "a": [1, 2, 3],
+                "b": ["c", "e", "g"],
+                "d": [True, False, True],
+            },
+            index=cudf.MultiIndex.from_tuples(
+                [("i1", "i2"), ("i3", "i4"), ("i5", "i6")],
+                names=["foo", "bar"],
+            ),
         ),
         lambda: cudf.Index(
             cudf.date_range(start="2011-01-01", end="2012-01-01", periods=13)
@@ -386,7 +384,7 @@ def test_serialize_string_check_buffer_sizes():
 
 
 def test_serialize_sliced_string():
-    # https://github.com/rapidsai/cudf/issues/7735
+    # https://github.com/NVIDIA/cudf/issues/7735
     data = ["hi", "hello", None]
     pd_series = pd.Series(data, dtype=pd.StringDtype())
     gd_series = cudf.Series(data, dtype=pd_series.dtype)

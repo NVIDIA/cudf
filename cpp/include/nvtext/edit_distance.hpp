@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -16,6 +16,7 @@ namespace CUDF_EXPORT nvtext {
  * @addtogroup nvtext_edit_distance
  * @{
  * @file
+ * @brief APIs for computing the Levenshtein edit distance between strings.
  */
 
 /**
@@ -23,7 +24,7 @@ namespace CUDF_EXPORT nvtext {
  *
  * The `output[i]` is the edit distance between `input[i]` and `targets[i]`.
  * This edit distance calculation uses the Levenshtein algorithm as documented here:
- * https://www.cuelogic.com/blog/the-levenshtein-algorithm
+ * https://en.wikipedia.org/wiki/Levenshtein_distance
  *
  * @code{.pseudo}
  * Example:
@@ -51,7 +52,7 @@ namespace CUDF_EXPORT nvtext {
 std::unique_ptr<cudf::column> edit_distance(
   cudf::strings_column_view const& input,
   cudf::strings_column_view const& targets,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /** @} */  // end of group

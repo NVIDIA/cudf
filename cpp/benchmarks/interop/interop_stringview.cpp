@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -45,7 +45,7 @@ void BM_from_arrow_host_stringview(nvbench::state& state)
   state.add_element_count(num_rows, "num_rows");
   state.add_global_memory_reads(total_size);
   state.add_global_memory_writes(total_size);
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.value()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.get()));
 
   ArrowSchema schema;
   NANOARROW_THROW_NOT_OK(ArrowSchemaInitFromType(&schema, NANOARROW_TYPE_STRING_VIEW));

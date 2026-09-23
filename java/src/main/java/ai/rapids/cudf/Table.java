@@ -1,6 +1,6 @@
 /*
  *
- *  SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ *  SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  *  SPDX-License-Identifier: Apache-2.0
  *
  */
@@ -327,98 +327,6 @@ public final class Table implements AutoCloseable {
                                                       long dataSourceHandle) throws CudfException;
 
   /**
-   * Setup everything to write parquet formatted data to a file.
-   * @param columnNames       names that correspond to the table columns
-   * @param numChildren       Children of the top level
-   * @param flatNumChildren   flattened list of children per column
-   * @param nullable          true if the column can have nulls else false
-   * @param metadataKeys      Metadata key names to place in the Parquet file
-   * @param metadataValues    Metadata values corresponding to metadataKeys
-   * @param compression       native compression codec ID
-   * @param rowGroupSizeRows  max #rows in a row group
-   * @param rowGroupSizeBytes max #bytes in a row group
-   * @param statsFreq         native statistics frequency ID
-   * @param isInt96           true if timestamp type is int96
-   * @param precisions        precision list containing all the precisions of the decimal types in
-   *                          the columns
-   * @param isMapValues       true if a column is a map
-   * @param isBinaryValues    true if a column is a binary
-   * @param filename          local output path
-   * @return a handle that is used in later calls to writeParquetChunk and writeParquetEnd.
-   */
-  private static native long writeParquetFileBegin(String[] columnNames,
-                                                   int numChildren,
-                                                   int[] flatNumChildren,
-                                                   boolean[] nullable,
-                                                   String[] metadataKeys,
-                                                   String[] metadataValues,
-                                                   int compression,
-                                                   int rowGroupSizeRows,
-                                                   long rowGroupSizeBytes,
-                                                   int statsFreq,
-                                                   boolean[] isInt96,
-                                                   int[] precisions,
-                                                   boolean[] isMapValues,
-                                                   boolean[] isBinaryValues,
-                                                   boolean[] hasParquetFieldIds,
-                                                   int[] parquetFieldIds,
-                                                   String filename) throws CudfException;
-
-  /**
-   * Setup everything to write parquet formatted data to a buffer.
-   * @param columnNames       names that correspond to the table columns
-   * @param numChildren       Children of the top level
-   * @param flatNumChildren   flattened list of children per column
-   * @param nullable          true if the column can have nulls else false
-   * @param metadataKeys      Metadata key names to place in the Parquet file
-   * @param metadataValues    Metadata values corresponding to metadataKeys
-   * @param compression       native compression codec ID
-   * @param rowGroupSizeRows  max #rows in a row group
-   * @param rowGroupSizeBytes max #bytes in a row group
-   * @param statsFreq         native statistics frequency ID
-   * @param isInt96           true if timestamp type is int96
-   * @param precisions        precision list containing all the precisions of the decimal types in
-   *                          the columns
-   * @param isMapValues       true if a column is a map
-   * @param isBinaryValues    true if a column is a binary
-   * @param consumer          consumer of host buffers produced.
-   * @return a handle that is used in later calls to writeParquetChunk and writeParquetEnd.
-   */
-  private static native long writeParquetBufferBegin(String[] columnNames,
-                                                     int numChildren,
-                                                     int[] flatNumChildren,
-                                                     boolean[] nullable,
-                                                     String[] metadataKeys,
-                                                     String[] metadataValues,
-                                                     int compression,
-                                                     int rowGroupSizeRows,
-                                                     long rowGroupSizeBytes,
-                                                     int statsFreq,
-                                                     boolean[] isInt96,
-                                                     int[] precisions,
-                                                     boolean[] isMapValues,
-                                                     boolean[] isBinaryValues,
-                                                     boolean[] hasParquetFieldIds,
-                                                     int[] parquetFieldIds,
-                                                     HostBufferConsumer consumer,
-                                                     HostMemoryAllocator hostMemoryAllocator
-                                                     ) throws CudfException;
-
-  /**
-   * Write out a table to an open handle.
-   * @param handle the handle to the writer.
-   * @param table the table to write out.
-   * @param tableMemSize the size of the table in bytes to help with memory allocation.
-   */
-  private static native void writeParquetChunk(long handle, long table, long tableMemSize);
-
-  /**
-   * Finish writing out parquet.
-   * @param handle the handle.  Do not use again once this returns.
-   */
-  private static native void writeParquetEnd(long handle);
-
-  /**
    * Read in ORC formatted data.
    * @param filterColumnNames name of the columns to read, or an empty array if we want to read
    *                          all of them
@@ -628,10 +536,21 @@ public final class Table implements AutoCloseable {
       boolean[] unboundedFollowing,
       boolean ignoreNullKeys) throws CudfException;
 
-  private static native long[] rangeRollingWindowAggregate(long inputTable, int[] keyIndices, int[] orderByIndices, boolean[] isOrderByAscending,
-                                                           int[] aggColumnsIndices, long[] aggInstances, int[] minPeriods,
-                                                           long[] preceding, long[] following, int[] precedingRangeExtent, int[] followingRangeExtent,
-                                                           boolean ignoreNullKeys) throws CudfException;
+  private static native long[] rangeRollingWindowAggregate(
+      long inputTable,
+      int[] keyIndices,
+      int[] orderByIndices,
+      boolean[] isOrderByAscending,
+      boolean[] isOrderByNullsFirst,
+      int[] orderByOffsets,
+      int[] aggColumnsIndices,
+      long[] aggInstances,
+      int[] minPeriods,
+      long[] preceding,
+      long[] following,
+      int[] precedingRangeExtent,
+      int[] followingRangeExtent,
+      boolean ignoreNullKeys) throws CudfException;
 
   private static native long sortOrder(long inputTable, long[] sortKeys, boolean[] isDescending,
       boolean[] areNullsSmallest) throws CudfException;
@@ -648,6 +567,9 @@ public final class Table implements AutoCloseable {
   private static native long[] leftDistinctJoinGatherMap(long leftKeys, long rightKeys,
                                                          boolean compareNullsEqual) throws CudfException;
 
+  private static native long[] leftDistinctHashJoinGatherMap(long leftTable,
+                                                             long rightDistinctHashJoin) throws CudfException;
+
   private static native long leftJoinRowCount(long leftTable, long rightHashJoin) throws CudfException;
 
   private static native long[] leftHashJoinGatherMaps(long leftTable, long rightHashJoin) throws CudfException;
@@ -660,6 +582,9 @@ public final class Table implements AutoCloseable {
 
   private static native long[] innerDistinctJoinGatherMaps(long leftKeys, long rightKeys,
                                                            boolean compareNullsEqual) throws CudfException;
+
+  private static native long[] innerDistinctHashJoinGatherMaps(long table,
+                                                               long distinctHashJoin) throws CudfException;
 
   private static native long innerJoinRowCount(long table, long hashJoin) throws CudfException;
 
@@ -681,8 +606,14 @@ public final class Table implements AutoCloseable {
   private static native long[] leftSemiJoinGatherMap(long leftKeys, long rightKeys,
                                                      boolean compareNullsEqual) throws CudfException;
 
+  private static native long[] leftSemiFilteredJoinGatherMap(long leftKeys,
+                                                            long rightFilteredJoin);
+
   private static native long[] leftAntiJoinGatherMap(long leftKeys, long rightKeys,
                                                      boolean compareNullsEqual) throws CudfException;
+
+  private static native long[] leftAntiFilteredJoinGatherMap(long leftKeys,
+                                                            long rightFilteredJoin);
 
   private static native long conditionalLeftJoinRowCount(long leftTable, long rightTable,
                                                          long condition) throws CudfException;
@@ -1659,80 +1590,14 @@ public final class Table implements AutoCloseable {
     }
   }
 
-  private static class ParquetTableWriter extends TableWriter {
-    HostBufferConsumer consumer;
-
-    private ParquetTableWriter(ParquetWriterOptions options, File outputFile) {
-      super(writeParquetFileBegin(options.getFlatColumnNames(),
-          options.getTopLevelChildren(),
-          options.getFlatNumChildren(),
-          options.getFlatIsNullable(),
-          options.getMetadataKeys(),
-          options.getMetadataValues(),
-          options.getCompressionType().nativeId,
-          options.getRowGroupSizeRows(),
-          options.getRowGroupSizeBytes(),
-          options.getStatisticsFrequency().nativeId,
-          options.getFlatIsTimeTypeInt96(),
-          options.getFlatPrecision(),
-          options.getFlatIsMap(),
-          options.getFlatIsBinary(),
-          options.getFlatHasParquetFieldId(),
-          options.getFlatParquetFieldId(),
-          outputFile.getAbsolutePath()));
-      this.consumer = null;
-    }
-
-    private ParquetTableWriter(ParquetWriterOptions options, HostBufferConsumer consumer,
-        HostMemoryAllocator hostMemoryAllocator) {
-      super(writeParquetBufferBegin(options.getFlatColumnNames(),
-          options.getTopLevelChildren(),
-          options.getFlatNumChildren(),
-          options.getFlatIsNullable(),
-          options.getMetadataKeys(),
-          options.getMetadataValues(),
-          options.getCompressionType().nativeId,
-          options.getRowGroupSizeRows(),
-          options.getRowGroupSizeBytes(),
-          options.getStatisticsFrequency().nativeId,
-          options.getFlatIsTimeTypeInt96(),
-          options.getFlatPrecision(),
-          options.getFlatIsMap(),
-          options.getFlatIsBinary(),
-          options.getFlatHasParquetFieldId(),
-          options.getFlatParquetFieldId(),
-          consumer, hostMemoryAllocator));
-      this.consumer = consumer;
-    }
-
-    @Override
-    public void write(Table table) {
-      if (writerHandle == 0) {
-        throw new IllegalStateException("Writer was already closed");
-      }
-      writeParquetChunk(writerHandle, table.nativeHandle, table.getDeviceMemorySize());
-    }
-
-    @Override
-    public void close() throws CudfException {
-      if (writerHandle != 0) {
-        writeParquetEnd(writerHandle);
-      }
-      writerHandle = 0;
-      if (consumer != null) {
-        consumer.done();
-        consumer = null;
-      }
-    }
-  }
-
   /**
    * Get a table writer to write parquet data to a file.
    * @param options the parquet writer options.
    * @param outputFile where to write the file.
-   * @return a table writer to use for writing out multiple tables.
+   * @return a Parquet table writer to use for writing out multiple tables.
    */
-  public static TableWriter writeParquetChunked(ParquetWriterOptions options, File outputFile) {
+  public static ParquetTableWriter writeParquetChunked(ParquetWriterOptions options,
+                                                       File outputFile) {
     return new ParquetTableWriter(options, outputFile);
   }
 
@@ -1742,16 +1607,16 @@ public final class Table implements AutoCloseable {
    * @param consumer a class that will be called when host buffers are ready with parquet
    *                 formatted data in them.
    * @param hostMemoryAllocator allocator for host memory buffers
-   * @return a table writer to use for writing out multiple tables.
+   * @return a Parquet table writer to use for writing out multiple tables.
    */
-  public static TableWriter writeParquetChunked(ParquetWriterOptions options,
-                                                HostBufferConsumer consumer,
-                                                HostMemoryAllocator hostMemoryAllocator) {
+  public static ParquetTableWriter writeParquetChunked(ParquetWriterOptions options,
+                                                       HostBufferConsumer consumer,
+                                                       HostMemoryAllocator hostMemoryAllocator) {
     return new ParquetTableWriter(options, consumer, hostMemoryAllocator);
   }
 
-  public static TableWriter writeParquetChunked(ParquetWriterOptions options,
-                                                HostBufferConsumer consumer) {
+  public static ParquetTableWriter writeParquetChunked(ParquetWriterOptions options,
+                                                       HostBufferConsumer consumer) {
     return writeParquetChunked(options, consumer, DefaultHostMemoryAllocator.get());
   }
 
@@ -1792,7 +1657,7 @@ public final class Table implements AutoCloseable {
         for (ColumnView cv : columnViews) {
           total += cv.getDeviceMemorySize();
         }
-        writeParquetChunk(writer.writerHandle, nativeHandle, total);
+        writer.write(nativeHandle, total);
       }
     } finally {
       deleteCudfTable(nativeHandle);
@@ -2959,6 +2824,33 @@ public final class Table implements AutoCloseable {
   }
 
   /**
+   * Computes a gather map that can be used to manifest the result of a left equi-join between
+   * two tables where the right table is guaranteed not to contain any duplicated join keys.
+   * The left table can be used as-is to produce the left table columns resulting from the join,
+   * i.e.: left table ordering is preserved in the join result, so no gather map is required for
+   * the left table. The resulting gather map can be applied to the right table to produce the
+   * right table columns resulting from the join. It is assumed this table instance holds the
+   * key columns from the left table, and the {@link DistinctHashJoin} argument has been
+   * constructed from the key columns from the right table. A {@link GatherMap} instance will be
+   * returned that can be used to gather the right table and that result combined with the left
+   * table to produce a left outer join result.
+   *
+   * It is the responsibility of the caller to close the resulting gather map instance.
+   *
+   * @param rightHash hash table built from distinct join key columns from the right table
+   * @return right table gather map
+   */
+  public GatherMap leftDistinctJoinGatherMap(DistinctHashJoin rightHash) {
+    if (getNumberOfColumns() != rightHash.getNumberOfColumns()) {
+      throw new IllegalArgumentException("Column count mismatch, this: " + getNumberOfColumns() +
+          "rightKeys: " + rightHash.getNumberOfColumns());
+    }
+    long[] gatherMapData =
+        leftDistinctHashJoinGatherMap(getNativeView(), rightHash.getNativeView());
+    return buildSingleJoinGatherMap(gatherMapData);
+  }
+
+  /**
    * Computes the number of rows resulting from a left equi-join between two tables.
    * It is assumed this table instance holds the key columns from the left table, and the
    * {@link HashJoin} argument has been constructed from the key columns from the right table.
@@ -3004,10 +2896,11 @@ public final class Table implements AutoCloseable {
    * It is the responsibility of the caller to close the resulting gather map instances.
    *
    * This interface allows passing an output row count that was previously computed from
-   * {@link #leftJoinRowCount(HashJoin)}.
+   * {@link #leftJoinRowCount(HashJoin)}. Doing so no longer avoids any work: the output size is
+   * always computed internally and the supplied count is only validated against it. Prefer
+   * {@link #leftJoinGatherMaps(HashJoin)}; this overload will be deprecated in a future release.
    *
-   * WARNING: Passing a row count that is smaller than the actual row count will result
-   * in undefined behavior.
+   * @throws CudfException if outputRowCount does not equal the actual output row count
    *
    * @param rightHash hash table built from join key columns from the right table
    * @param outputRowCount number of output rows in the join result
@@ -3227,6 +3120,29 @@ public final class Table implements AutoCloseable {
   }
 
   /**
+   * Computes the gather maps that can be used to manifest the result of an inner equi-join between
+   * two tables where the right table is guaranteed not to contain any duplicated join keys. It is
+   * assumed this table instance holds the key columns from the left table, and the
+   * {@link DistinctHashJoin} argument has been constructed from the key columns from the right
+   * table. Two {@link GatherMap} instances will be returned that can be used to gather the left
+   * and right tables, respectively, to produce the result of the inner join.
+   *
+   * It is the responsibility of the caller to close the resulting gather map instances.
+   *
+   * @param rightHash hash table built from distinct join key columns from the right table
+   * @return left and right table gather maps
+   */
+  public GatherMap[] innerDistinctJoinGatherMaps(DistinctHashJoin rightHash) {
+    if (getNumberOfColumns() != rightHash.getNumberOfColumns()) {
+      throw new IllegalArgumentException("Column count mismatch, this: " + getNumberOfColumns() +
+          "rightKeys: " + rightHash.getNumberOfColumns());
+    }
+    long[] gatherMapData =
+        innerDistinctHashJoinGatherMaps(getNativeView(), rightHash.getNativeView());
+    return buildJoinGatherMaps(gatherMapData);
+  }
+
+  /**
    * Computes the number of rows resulting from an inner equi-join between two tables.
    * @param otherHash hash table built from join key columns from the other table
    * @return row count of the join result
@@ -3270,10 +3186,11 @@ public final class Table implements AutoCloseable {
    * It is the responsibility of the caller to close the resulting gather map instances.
    *
    * This interface allows passing an output row count that was previously computed from
-   * {@link #innerJoinRowCount(HashJoin)}.
+   * {@link #innerJoinRowCount(HashJoin)}. Doing so no longer avoids any work: the output size is
+   * always computed internally and the supplied count is only validated against it. Prefer
+   * {@link #innerJoinGatherMaps(HashJoin)}; this overload will be deprecated in a future release.
    *
-   * WARNING: Passing a row count that is smaller than the actual row count will result
-   * in undefined behavior.
+   * @throws CudfException if outputRowCount does not equal the actual output row count
    *
    * @param rightHash hash table built from join key columns from the right table
    * @param outputRowCount number of output rows in the join result
@@ -3473,9 +3390,9 @@ public final class Table implements AutoCloseable {
    * Computes the number of rows resulting from a full equi-join between two tables.
    * It is assumed this table instance holds the key columns from the left table, and the
    * {@link HashJoin} argument has been constructed from the key columns from the right table.
-   * Note that unlike {@link #leftJoinRowCount(HashJoin)} and {@link #innerJoinRowCount(HashJoin),
-   * this will perform some redundant calculations compared to
-   * {@link #fullJoinGatherMaps(HashJoin, long)}.
+   * Like {@link #leftJoinRowCount(HashJoin)} and {@link #innerJoinRowCount(HashJoin)}, this
+   * repeats work that {@link #fullJoinGatherMaps(HashJoin)} performs anyway, so only call it when
+   * the row count is needed before manifesting the gather maps.
    * @param rightHash hash table built from join key columns from the right table
    * @return row count of the join result
    */
@@ -3518,9 +3435,11 @@ public final class Table implements AutoCloseable {
    * It is the responsibility of the caller to close the resulting gather map instances.
    *
    * This interface allows passing an output row count that was previously computed from
-   * {@link #fullJoinRowCount(HashJoin)}.
-   * WARNING: Passing a row count that is smaller than the actual row count will result
-   * in undefined behavior.
+   * {@link #fullJoinRowCount(HashJoin)}. Doing so no longer avoids any work: the output size is
+   * always computed internally and the supplied count is only validated against it. Prefer
+   * {@link #fullJoinGatherMaps(HashJoin)}; this overload will be deprecated in a future release.
+   *
+   * @throws CudfException if outputRowCount does not equal the actual output row count
    * @param rightHash hash table built from join key columns from the right table
    * @param outputRowCount number of output rows in the join result
    * @return left and right table gather maps
@@ -3610,6 +3529,26 @@ public final class Table implements AutoCloseable {
     }
     long[] gatherMapData =
         leftSemiJoinGatherMap(getNativeView(), rightKeys.getNativeView(), compareNullsEqual);
+    return buildSingleJoinGatherMap(gatherMapData);
+  }
+
+  /**
+   * Computes the gather map that can be used to manifest the result of a left semi-join between
+   * two tables. It is assumed this table instance holds the key columns from the left table, and
+   * the {@link FilteredJoin} argument represents a reusable lookup built from the key columns
+   * from the right table. The {@link GatherMap} instance returned can be used to gather the left
+   * table to produce the result of the left semi-join.
+   * It is the responsibility of the caller to close the resulting gather map instance.
+   * @param rightFilter reusable lookup built from join key columns from the right table
+   * @return left table gather map
+   */
+  public GatherMap leftSemiJoinGatherMap(FilteredJoin rightFilter) {
+    if (getNumberOfColumns() != rightFilter.getNumberOfColumns()) {
+      throw new IllegalArgumentException("Column count mismatch, this: " + getNumberOfColumns() +
+          " rightKeys: " + rightFilter.getNumberOfColumns());
+    }
+    long[] gatherMapData =
+        leftSemiFilteredJoinGatherMap(getNativeView(), rightFilter.getNativeView());
     return buildSingleJoinGatherMap(gatherMapData);
   }
 
@@ -3718,6 +3657,26 @@ public final class Table implements AutoCloseable {
     }
     long[] gatherMapData =
         leftAntiJoinGatherMap(getNativeView(), rightKeys.getNativeView(), compareNullsEqual);
+    return buildSingleJoinGatherMap(gatherMapData);
+  }
+
+  /**
+   * Computes the gather map that can be used to manifest the result of a left anti-join between
+   * two tables. It is assumed this table instance holds the key columns from the left table, and
+   * the {@link FilteredJoin} argument represents a reusable lookup built from the key columns
+   * from the right table. The {@link GatherMap} instance returned can be used to gather the left
+   * table to produce the result of the left anti-join.
+   * It is the responsibility of the caller to close the resulting gather map instance.
+   * @param rightFilter reusable lookup built from join key columns from the right table
+   * @return left table gather map
+   */
+  public GatherMap leftAntiJoinGatherMap(FilteredJoin rightFilter) {
+    if (getNumberOfColumns() != rightFilter.getNumberOfColumns()) {
+      throw new IllegalArgumentException("Column count mismatch, this: " + getNumberOfColumns() +
+          " rightKeys: " + rightFilter.getNumberOfColumns());
+    }
+    long[] gatherMapData =
+        leftAntiFilteredJoinGatherMap(getNativeView(), rightFilter.getNativeView());
     return buildSingleJoinGatherMap(gatherMapData);
   }
 
@@ -4250,31 +4209,40 @@ public final class Table implements AutoCloseable {
               + agg.getWindowOptions().getFrameType());
         }
 
-        DType orderByType = operation.table.getColumn(agg.getWindowOptions().getOrderByColumnIndex()).getType();
-        switch (orderByType.getTypeId()) {
-          case INT8:
-          case INT16:
-          case INT32:
-          case INT64:
-          case UINT8:
-          case UINT16:
-          case UINT32:
-          case UINT64:
-          case FLOAT32:
-          case FLOAT64:
-          case TIMESTAMP_MILLISECONDS:
-          case TIMESTAMP_SECONDS:
-          case TIMESTAMP_DAYS:
-          case TIMESTAMP_NANOSECONDS:
-          case TIMESTAMP_MICROSECONDS:
-          case DECIMAL32:
-          case DECIMAL64:
-          case DECIMAL128:
-          case STRING:
-            break;
-          default:
-            throw new IllegalArgumentException("Expected range-based window orderBy's " +
-                "type: integral (Boolean-exclusive), decimal, timestamp, and string");
+        // Validate the type of every order-by column (one for single-column RANGE, more for
+        // multi-column RANGE).
+        int columnCount = operation.table.getNumberOfColumns();
+        for (int orderByIndex : agg.getWindowOptions().getOrderByColumnIndices()) {
+          if (orderByIndex < 0 || orderByIndex >= columnCount) {
+            throw new IllegalArgumentException("Range window order-by column index is out of " +
+                "range: " + orderByIndex + " (column count: " + columnCount + ")");
+          }
+          DType orderByType = operation.table.getColumn(orderByIndex).getType();
+          switch (orderByType.getTypeId()) {
+            case INT8:
+            case INT16:
+            case INT32:
+            case INT64:
+            case UINT8:
+            case UINT16:
+            case UINT32:
+            case UINT64:
+            case FLOAT32:
+            case FLOAT64:
+            case TIMESTAMP_MILLISECONDS:
+            case TIMESTAMP_SECONDS:
+            case TIMESTAMP_DAYS:
+            case TIMESTAMP_NANOSECONDS:
+            case TIMESTAMP_MICROSECONDS:
+            case DECIMAL32:
+            case DECIMAL64:
+            case DECIMAL128:
+            case STRING:
+              break;
+            default:
+              throw new IllegalArgumentException("Expected range-based window orderBy's " +
+                  "type: integral (Boolean-exclusive), decimal, timestamp, and string");
+          }
         }
 
         ColumnWindowOps ops = groupedOps.computeIfAbsent(agg.getColumnIndex(), (idx) -> new ColumnWindowOps());
@@ -4282,8 +4250,12 @@ public final class Table implements AutoCloseable {
       }
 
       int[] aggColumnIndexes = new int[totalOps];
-      int[] orderByColumnIndexes = new int[totalOps];
-      boolean[] isOrderByOrderAscending = new boolean[totalOps];
+      // Per-operation order-by metadata is flattened across operations: op k owns the slice
+      // [orderByOffsets[k], orderByOffsets[k+1]) of the index/ascending/nulls-first arrays.
+      int[] orderByOffsets = new int[totalOps + 1];
+      ArrayList<Integer> orderByColumnIndexesList = new ArrayList<>();
+      ArrayList<Boolean> isOrderByOrderAscendingList = new ArrayList<>();
+      ArrayList<Boolean> isOrderByNullsFirstList = new ArrayList<>();
       long[] aggInstances = new long[totalOps];
       long[] aggPrecedingWindows = new long[totalOps];
       long[] aggFollowingWindows = new long[totalOps];
@@ -4312,8 +4284,25 @@ public final class Table implements AutoCloseable {
             aggFollowingWindowsExtent[opIndex] = windowOptions.getFollowingBoundsExtent().nominalValue;
             aggMinPeriods[opIndex] = op.getWindowOptions().getMinPeriods();
             assert (op.getWindowOptions().getFrameType() == WindowOptions.FrameType.RANGE);
-            orderByColumnIndexes[opIndex] = op.getWindowOptions().getOrderByColumnIndex();
-            isOrderByOrderAscending[opIndex] = op.getWindowOptions().isOrderByOrderAscending();
+
+            // Flatten this operation's order-by columns.
+            int[] obIndices = windowOptions.getOrderByColumnIndices();
+            boolean[] obAscending = windowOptions.getOrderByAscending();
+            boolean[] obNullsFirst = windowOptions.getOrderByNullsFirst();
+            // Multi-column RANGE supports only peer-frame bounds; reject bounded scalar ranges.
+            if (obIndices.length > 1 &&
+                (windowOptions.getPrecedingBoundsExtent() == WindowOptions.RangeExtentType.BOUNDED ||
+                 windowOptions.getFollowingBoundsExtent() == WindowOptions.RangeExtentType.BOUNDED)) {
+              throw new IllegalArgumentException("Multi-column RANGE windows support only " +
+                  "UNBOUNDED and CURRENT ROW bounds, not bounded scalar ranges");
+            }
+            orderByOffsets[opIndex] = orderByColumnIndexesList.size();
+            for (int j = 0; j < obIndices.length; j++) {
+              orderByColumnIndexesList.add(obIndices[j]);
+              isOrderByOrderAscendingList.add(obAscending[j]);
+              isOrderByNullsFirstList.add(obNullsFirst[j]);
+            }
+
             if (op.getDefaultOutput() != 0) {
               throw new IllegalArgumentException("Operations with a default output are not " +
                   "supported on time based rolling windows");
@@ -4323,12 +4312,24 @@ public final class Table implements AutoCloseable {
           }
         }
         assert opIndex == totalOps : opIndex + " == " + totalOps;
+        orderByOffsets[totalOps] = orderByColumnIndexesList.size();
+
+        int[] orderByColumnIndexes = new int[orderByColumnIndexesList.size()];
+        boolean[] isOrderByOrderAscending = new boolean[isOrderByOrderAscendingList.size()];
+        boolean[] isOrderByNullsFirst = new boolean[isOrderByNullsFirstList.size()];
+        for (int j = 0; j < orderByColumnIndexes.length; j++) {
+          orderByColumnIndexes[j] = orderByColumnIndexesList.get(j);
+          isOrderByOrderAscending[j] = isOrderByOrderAscendingList.get(j);
+          isOrderByNullsFirst[j] = isOrderByNullsFirstList.get(j);
+        }
 
         try (Table aggregate = new Table(rangeRollingWindowAggregate(
             operation.table.nativeHandle,
             operation.indices,
             orderByColumnIndexes,
             isOrderByOrderAscending,
+            isOrderByNullsFirst,
+            orderByOffsets,
             aggColumnIndexes,
             aggInstances, aggMinPeriods, aggPrecedingWindows, aggFollowingWindows,
             aggPrecedingWindowsExtent, aggFollowingWindowsExtent,

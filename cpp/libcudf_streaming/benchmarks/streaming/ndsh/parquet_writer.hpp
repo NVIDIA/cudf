@@ -1,6 +1,6 @@
 /**
- * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights
- * reserved. SPDX-License-Identifier: Apache-2.0
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
  */
 
 #pragma once
@@ -19,7 +19,7 @@ namespace rapidsmpf::ndsh {
  * @brief Write chunks in a channel to an output sink
  *
  * @param ctx Streaming context
- * @param ch_in Input channel of `TableChunk`s
+ * @param ch_in Input channel of `table_chunk`s
  * @param sink Sink to write into
  * @param column_names Names of the columns to add to the parquet metadata
  *

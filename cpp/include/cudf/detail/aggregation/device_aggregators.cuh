@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -133,7 +133,7 @@ template <typename Source>
     (cudf::is_integral_not_bool<Source>() && cudf::is_signed<Source>()) ||
     (cudf::is_fixed_point<Source>() && cudf::has_atomic_support<device_storage_type_t<Source>>()) ||
     cuda::std::is_same_v<Source, numeric::decimal128>)
-struct update_target_element<Source, aggregation::SUM_WITH_OVERFLOW> {
+struct update_target_element<Source, aggregation::SUM_OVERFLOW> {
   using DeviceType = device_storage_type_t<Source>;
 
   __device__ void operator()(mutable_column_device_view target,

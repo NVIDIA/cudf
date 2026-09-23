@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -22,6 +22,7 @@
 
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/iterator>
 #include <cuda/std/tuple>
 
 #include <algorithm>
@@ -62,7 +63,7 @@ TEST_F(JSONTypeCastTest, String)
 
   auto str_col = cudf::io::json::detail::parse_data(
     column.chars_begin(stream),
-    thrust::make_zip_iterator(
+    cuda::make_zip_iterator(
       cuda::std::make_tuple(column.offsets().begin<cudf::size_type>(), svs_length.begin())),
     column.size(),
     type,
@@ -95,7 +96,7 @@ TEST_F(JSONTypeCastTest, Int)
 
   auto col = cudf::io::json::detail::parse_data(
     column.chars_begin(stream),
-    thrust::make_zip_iterator(
+    cuda::make_zip_iterator(
       cuda::std::make_tuple(column.offsets().begin<cudf::size_type>(), svs_length.begin())),
     column.size(),
     type,
@@ -136,7 +137,7 @@ TEST_F(JSONTypeCastTest, StringEscapes)
 
   auto col = cudf::io::json::detail::parse_data(
     column.chars_begin(stream),
-    thrust::make_zip_iterator(
+    cuda::make_zip_iterator(
       cuda::std::make_tuple(column.offsets().begin<cudf::size_type>(), svs_length.begin())),
     column.size(),
     type,
@@ -206,7 +207,7 @@ TEST_F(JSONTypeCastTest, ErrorNulls)
 
     auto str_col = cudf::io::json::detail::parse_data(
       column.chars_begin(stream),
-      thrust::make_zip_iterator(
+      cuda::make_zip_iterator(
         cuda::std::make_tuple(column.offsets().begin<cudf::size_type>(), svs_length.begin())),
       column.size(),
       type,

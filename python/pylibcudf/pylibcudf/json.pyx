@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from cython.operator cimport dereference
@@ -8,6 +8,7 @@ from libcpp.utility cimport move
 from pylibcudf.column cimport Column
 from pylibcudf.libcudf cimport json as cpp_json
 from pylibcudf.libcudf.column.column cimport column
+from pylibcudf.libcudf.column.column_view cimport column_view
 from pylibcudf.libcudf.scalar.scalar cimport string_scalar
 from pylibcudf.scalar cimport Scalar
 
@@ -15,6 +16,10 @@ from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 from rmm.pylibrmm.stream cimport Stream
 
 from .utils cimport _get_stream, _get_memory_resource
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pylibcudf.typing import CudaStreamLike
 from cuda.bindings.cyruntime cimport cudaStream_t
 
 __all__ = ["GetJsonObjectOptions", "get_json_object"]
@@ -24,9 +29,9 @@ cdef class GetJsonObjectOptions:
     def __init__(
         self,
         *,
-        allow_single_quotes=False,
-        strip_quotes_from_single_strings=True,
-        missing_fields_as_nulls=False
+        allow_single_quotes: bool = False,
+        strip_quotes_from_single_strings: bool = True,
+        missing_fields_as_nulls: bool = False,
     ):
         self.set_allow_single_quotes(allow_single_quotes)
         self.set_strip_quotes_from_single_strings(
@@ -36,7 +41,7 @@ cdef class GetJsonObjectOptions:
 
     __hash__ = None
 
-    def get_allow_single_quotes(self):
+    def get_allow_single_quotes(self) -> bool:
         """
         Returns true/false depending on whether single-quotes for representing strings
         are allowed.
@@ -48,7 +53,7 @@ cdef class GetJsonObjectOptions:
         """
         return self.options.get_allow_single_quotes()
 
-    def get_strip_quotes_from_single_strings(self):
+    def get_strip_quotes_from_single_strings(self) -> bool:
         """
         Returns true/false depending on whether individually returned string values have
         their quotes stripped.
@@ -60,7 +65,7 @@ cdef class GetJsonObjectOptions:
         """
         return self.options.get_strip_quotes_from_single_strings()
 
-    def get_missing_fields_as_nulls(self):
+    def get_missing_fields_as_nulls(self) -> bool:
         """
         Whether a field not contained by an object is to be interpreted as null.
 
@@ -71,7 +76,7 @@ cdef class GetJsonObjectOptions:
         """
         return self.options.get_missing_fields_as_nulls()
 
-    def set_allow_single_quotes(self, bool val):
+    def set_allow_single_quotes(self, bool val) -> None:
         """
         Set whether single-quotes for strings are allowed.
 
@@ -86,7 +91,7 @@ cdef class GetJsonObjectOptions:
         """
         self.options.set_allow_single_quotes(val)
 
-    def set_strip_quotes_from_single_strings(self, bool val):
+    def set_strip_quotes_from_single_strings(self, bool val) -> None:
         """
         Set whether individually returned string values have their quotes stripped.
 
@@ -101,7 +106,7 @@ cdef class GetJsonObjectOptions:
         """
         self.options.set_strip_quotes_from_single_strings(val)
 
-    def set_missing_fields_as_nulls(self, bool val):
+    def set_missing_fields_as_nulls(self, bool val) -> None:
         """
         Set whether missing fields are interpreted as null.
 
@@ -121,7 +126,7 @@ cpdef Column get_json_object(
     Column col,
     Scalar json_path,
     GetJsonObjectOptions options=None,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """
@@ -149,6 +154,8 @@ cpdef Column get_json_object(
         New strings column containing the retrieved json object strings.
     """
     cdef unique_ptr[column] c_result
+    cdef column_view c_col
+
     cdef string_scalar* c_json_path = <string_scalar*>(
         json_path.c_obj.get()
     )
@@ -157,12 +164,13 @@ cpdef Column get_json_object(
 
     cdef cpp_json.get_json_object_options c_options = options.options
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
 
+    c_col = col.view()
     with nogil:
         c_result = cpp_json.get_json_object(
-            col.view(),
+            c_col,
             dereference(c_json_path),
             c_options,
             _cs,

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -15,9 +15,8 @@
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
-
 #include <cuda/iterator>
+#include <cuda/stream>
 #include <thrust/transform.h>
 
 namespace cudf {
@@ -63,7 +62,7 @@ struct ipv4_to_integers_fn {
 
 // Convert strings column of IPv4 addresses to integers column
 std::unique_ptr<column> ipv4_to_integers(strings_column_view const& input,
-                                         rmm::cuda_stream_view stream,
+                                         cuda::stream_ref stream,
                                          rmm::device_async_resource_ref mr)
 {
   size_type strings_count = input.size();
@@ -95,7 +94,7 @@ std::unique_ptr<column> ipv4_to_integers(strings_column_view const& input,
 
 // external API
 std::unique_ptr<column> ipv4_to_integers(strings_column_view const& input,
-                                         rmm::cuda_stream_view stream,
+                                         cuda::stream_ref stream,
                                          rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
@@ -149,7 +148,7 @@ struct integers_to_ipv4_fn {
 
 // Convert integers into IPv4 addresses
 std::unique_ptr<column> integers_to_ipv4(column_view const& integers,
-                                         rmm::cuda_stream_view stream,
+                                         cuda::stream_ref stream,
                                          rmm::device_async_resource_ref mr)
 {
   if (integers.is_empty()) return make_empty_column(type_id::STRING);
@@ -168,7 +167,7 @@ std::unique_ptr<column> integers_to_ipv4(column_view const& integers,
 }
 
 std::unique_ptr<column> is_ipv4(strings_column_view const& input,
-                                rmm::cuda_stream_view stream,
+                                cuda::stream_ref stream,
                                 rmm::device_async_resource_ref mr)
 {
   auto strings_column = column_device_view::create(input.parent(), stream);
@@ -217,7 +216,7 @@ std::unique_ptr<column> is_ipv4(strings_column_view const& input,
 // external API
 
 std::unique_ptr<column> integers_to_ipv4(column_view const& integers,
-                                         rmm::cuda_stream_view stream,
+                                         cuda::stream_ref stream,
                                          rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
@@ -225,7 +224,7 @@ std::unique_ptr<column> integers_to_ipv4(column_view const& integers,
 }
 
 std::unique_ptr<column> is_ipv4(strings_column_view const& input,
-                                rmm::cuda_stream_view stream,
+                                cuda::stream_ref stream,
                                 rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();

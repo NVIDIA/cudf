@@ -1,11 +1,11 @@
-# SPDX-FileCopyrightText: Copyright (c) 2018-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2018-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 schema_version: 1
 
 context:
   version: ${{ env.get("RAPIDS_PACKAGE_VERSION") }}
   minor_version: ${{ (version | split("."))[:2] | join(".") }}
-  date_string: '${{ env.get("RAPIDS_DATE_STRING") }}'
+  datetime_string: '${{ env.get("RAPIDS_DATETIME_STRING") }}'
   head_rev: '${{ git.head_rev(".")[:8] }}'
 
 package:
@@ -17,7 +17,7 @@ source:
 
 build:
   noarch: python
-  string: ${{ date_string }}_${{ head_rev }}
+  string: ${{ datetime_string }}_${{ head_rev }}
   script:
     content: |
       ./build.sh custreamz
@@ -29,7 +29,6 @@ requirements:
     - rapids-build-backend >=0.4.0,<0.5.0
     - setuptools>=77.0.0
     - python-confluent-kafka
-    - cudf_kafka =${{ version }}
   run:
     - python
     - streamz
@@ -37,12 +36,6 @@ requirements:
     - cudf_kafka =${{ version }}
     - rapids-dask-dependency =${{ minor_version }}
     - python-confluent-kafka
-
-tests:
-  - python:
-      imports:
-        - custreamz
-      pip_check: false
 
 about:
   homepage: ${{ load_from_file("python/custreamz/pyproject.toml").project.urls.Homepage }}

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -78,7 +78,7 @@ struct subpass_intermediate_data {
   subpass_intermediate_data& operator=(subpass_intermediate_data const&) = delete;
   subpass_intermediate_data(subpass_intermediate_data&&)                 = default;
   subpass_intermediate_data& operator=(subpass_intermediate_data&&)      = default;
-  subpass_intermediate_data(rmm::cuda_stream_view stream)
+  subpass_intermediate_data(cuda::stream_ref stream)
     : decomp_page_data(0, stream),
       level_decode_data(0, stream),
       page_buf(0, stream),
@@ -148,7 +148,7 @@ struct pass_intermediate_data {
   pass_intermediate_data& operator=(pass_intermediate_data const&) = delete;
   pass_intermediate_data(pass_intermediate_data&&)                 = default;
   pass_intermediate_data& operator=(pass_intermediate_data&&)      = default;
-  pass_intermediate_data(rmm::cuda_stream_view stream)
+  pass_intermediate_data(cuda::stream_ref stream)
     : raw_page_data{},
       row_groups{},
       chunks(0, stream),

@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import functools
 
@@ -519,7 +519,7 @@ def _translate_arg(arg):
 #      separate tasks.
 #  (2) We need to work around missing `observed=False`
 #      support:
-#      https://github.com/rapidsai/cudf/issues/15173
+#      https://github.com/NVIDIA/cudf/issues/15173
 
 
 class GroupBy(DXGroupBy):

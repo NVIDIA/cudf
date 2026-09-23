@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import numpy as np
@@ -62,7 +62,9 @@ def test_diff_decimal_dtypes(precision, scale, dtype):
 
 def test_diff_invalid_axis():
     gdf = cudf.DataFrame(np.array([1.123, 2.343, 5.890, 0.0]))
-    with pytest.raises(NotImplementedError, match="Only axis=0 is supported."):
+    with pytest.raises(
+        NotImplementedError, match=r"Only axis=0 is supported."
+    ):
         gdf.diff(periods=1, axis=1)
 
 

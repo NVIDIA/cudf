@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -13,12 +13,12 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_buffer.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cub/device/device_reduce.cuh>
 #include <cuda/std/iterator>
+#include <cuda/stream>
 #include <thrust/for_each.h>
 
 #include <optional>
@@ -48,7 +48,7 @@ std::unique_ptr<scalar> reduce(InputIterator d_in,
                                cudf::size_type num_items,
                                op::simple_op<Op> op,
                                std::optional<OutputType> init,
-                               rmm::cuda_stream_view stream,
+                               cuda::stream_ref stream,
                                rmm::device_async_resource_ref mr)
   requires(is_fixed_width<OutputType>() && not cudf::is_fixed_point<OutputType>())
 {
@@ -67,7 +67,7 @@ std::unique_ptr<scalar> reduce(InputIterator d_in,
                             num_items,
                             binary_op,
                             initial_value,
-                            stream.value());
+                            stream.get());
   d_temp_storage = rmm::device_buffer{temp_storage_bytes, stream};
 
   // Run reduction
@@ -78,7 +78,7 @@ std::unique_ptr<scalar> reduce(InputIterator d_in,
                             num_items,
                             binary_op,
                             initial_value,
-                            stream.value());
+                            stream.get());
   return result;
 }
 
@@ -89,7 +89,7 @@ std::unique_ptr<scalar> reduce(InputIterator d_in,
                                cudf::size_type num_items,
                                op::simple_op<Op> op,
                                std::optional<OutputType> init,
-                               rmm::cuda_stream_view stream,
+                               cuda::stream_ref stream,
                                rmm::device_async_resource_ref mr)
   requires(is_fixed_point<OutputType>())
 {
@@ -106,7 +106,7 @@ std::unique_ptr<scalar> reduce(InputIterator d_in,
                                cudf::size_type num_items,
                                op::simple_op<Op> op,
                                std::optional<OutputType> init,
-                               rmm::cuda_stream_view stream,
+                               cuda::stream_ref stream,
                                rmm::device_async_resource_ref mr)
   requires(std::is_same_v<OutputType, string_view>)
 {
@@ -125,7 +125,7 @@ std::unique_ptr<scalar> reduce(InputIterator d_in,
                             num_items,
                             binary_op,
                             initial_value,
-                            stream.value());
+                            stream.get());
   d_temp_storage =
     rmm::device_buffer{temp_storage_bytes, stream, cudf::get_current_device_resource_ref()};
 
@@ -137,9 +137,9 @@ std::unique_ptr<scalar> reduce(InputIterator d_in,
                             num_items,
                             binary_op,
                             initial_value,
-                            stream.value());
+                            stream.get());
 
-  return std::make_unique<cudf::string_scalar>(dev_result, true, stream, mr);
+  return std::make_unique<cudf::string_scalar>(dev_result.value(stream), true, stream, mr);
 }
 
 /**
@@ -171,7 +171,7 @@ std::unique_ptr<scalar> reduce(InputIterator d_in,
                                op::compound_op<Op> op,
                                cudf::size_type valid_count,
                                cudf::size_type ddof,
-                               rmm::cuda_stream_view stream,
+                               cuda::stream_ref stream,
                                rmm::device_async_resource_ref mr)
 {
   auto const binary_op     = cudf::detail::cast_functor<IntermediateType>(op.get_binary_op());
@@ -190,7 +190,7 @@ std::unique_ptr<scalar> reduce(InputIterator d_in,
                             num_items,
                             binary_op,
                             initial_value,
-                            stream.value());
+                            stream.get());
   d_temp_storage =
     rmm::device_buffer{temp_storage_bytes, stream, cudf::get_current_device_resource_ref()};
 
@@ -202,7 +202,7 @@ std::unique_ptr<scalar> reduce(InputIterator d_in,
                             num_items,
                             binary_op,
                             initial_value,
-                            stream.value());
+                            stream.get());
 
   // compute the result value from intermediate value in device
   using ScalarType = cudf::scalar_type_t<OutputType>;

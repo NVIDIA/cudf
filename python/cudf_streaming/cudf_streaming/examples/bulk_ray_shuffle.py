@@ -1,5 +1,6 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+
 """Example running a Bulk RapidsMPF Shuffle operation using Ray and UCXX communication."""
 
 from __future__ import annotations
@@ -15,15 +16,14 @@ import pylibcudf as plc
 import ray
 
 import rmm.mr
-from cudf_streaming.integrations.partition import (
+from cudf_streaming.partition_utils import (
     partition_and_pack,
     unpack_and_concat,
-    unspill_partitions,
 )
 from rapidsmpf.integrations.ray import RapidsMPFActor, setup_ray_ucxx_cluster
 from rapidsmpf.memory.buffer import MemoryType
 from rapidsmpf.memory.buffer_resource import BufferResource
-from rapidsmpf.rmm_resource_adaptor import RmmResourceAdaptor
+from rapidsmpf.memory.spill import unspill_partitions
 from rapidsmpf.shuffler import Shuffler
 from rapidsmpf.statistics import Statistics
 from rapidsmpf.utils.cudf import pylibcudf_to_cudf_dataframe
@@ -77,22 +77,25 @@ class BulkRayShufflerActor(RapidsMPFActor):
         self.rmm_pool_size = rmm_pool_size
         self.spill_device = spill_device
 
-        # Initialize actor-local resources (statistics, memory resource)
-        self.mr = RmmResourceAdaptor(
-            rmm.mr.PoolMemoryResource(
-                rmm.mr.CudaMemoryResource(),
-                initial_pool_size=self.rmm_pool_size,
-                maximum_pool_size=self.rmm_pool_size,
-            )
+        # Initialize actor-local resources (statistics, memory resource).
+        # `BufferResource` wraps the base device MR in an internal tracking
+        # `RmmResourceAdaptor`, exposed via `device_mr_adaptor()`.
+        base_mr = rmm.mr.PoolMemoryResource(
+            rmm.mr.CudaMemoryResource(),
+            initial_pool_size=self.rmm_pool_size,
+            maximum_pool_size=self.rmm_pool_size,
         )
-        rmm.mr.set_current_device_resource(self.mr)
         # Create a buffer resource that limits device memory if `--spill-device`
         memory_limits = (
             None
             if self.spill_device is None
             else {MemoryType.DEVICE: self.spill_device}
         )
-        br = BufferResource(self.mr, memory_limits=memory_limits)
+        br = BufferResource(base_mr, memory_limits=memory_limits)
+        self.mr = br.device_mr_adaptor()
+        # Install the tracking adaptor as the current device resource so
+        # libcudf temp allocations are tracked too.
+        rmm.mr.set_current_device_resource(self.mr)
         self.br = br
         super().__init__(nranks, Statistics(enable=enable_statistics))
 

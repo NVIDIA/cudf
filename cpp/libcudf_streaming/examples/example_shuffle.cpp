@@ -1,15 +1,18 @@
 /**
- * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights
- * reserved. SPDX-License-Identifier: Apache-2.0
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
  */
 
 #include "../benchmarks/utils/random_data.hpp"
 
-#include <cudf_streaming/integrations/partition.hpp>
+#include <cudf_streaming/partition_utils.hpp>
+
 #include <mpi.h>
+#include <rapidsmpf/communicator/logger.hpp>
 #include <rapidsmpf/communicator/mpi.hpp>
 #include <rapidsmpf/error.hpp>
 #include <rapidsmpf/memory/packed_data.hpp>
+#include <rapidsmpf/memory/spill.hpp>
 #include <rapidsmpf/shuffler/shuffler.hpp>
 #include <rapidsmpf/statistics.hpp>
 #include <unistd.h>
@@ -33,17 +36,16 @@ int main(int argc, char** argv)
   // single progress thread may be used by multiple shufflers simultaneously.
   auto progress_thread = std::make_shared<rapidsmpf::ProgressThread>(stats);
 
+  auto log = rapidsmpf::Logger::from_options(options);
+
   // Now we have to create a Communicator, which we will use throughout the
   // example. Multiple concurrent shuffles are possible on the same communicator by
   // providing differentiating "OpID" arguments.
   std::shared_ptr<rapidsmpf::Communicator> comm =
-    std::make_shared<rapidsmpf::MPI>(MPI_COMM_WORLD, options, progress_thread);
-
-  // The Communicator provides a logger.
-  auto& log = comm->logger();
+    std::make_shared<rapidsmpf::MPI>(MPI_COMM_WORLD, progress_thread, log);
 
   // We will use the same stream, memory, and buffer resource throughout the example.
-  rmm::cuda_stream_view stream      = cudf::get_default_stream();
+  cuda::stream_ref stream           = cudf::get_default_stream();
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref();
   auto br                           = rapidsmpf::BufferResource::create(mr);
 
@@ -74,13 +76,13 @@ int main(int argc, char** argv)
   // each partition. The result is a mapping of `PartID`, globally unique partition
   // identifiers, to their packed partitions.
   std::unordered_map<rapidsmpf::shuffler::PartID, rapidsmpf::PackedData> packed_inputs =
-    cudf_streaming::integrations::partition_and_pack(local_input,
-                                                     {0},  // columns_to_hash
-                                                     static_cast<int>(total_num_partitions),
-                                                     cudf::hash_id::HASH_MURMUR3,
-                                                     cudf::DEFAULT_HASH_SEED,
-                                                     stream,
-                                                     br.get());
+    cudf_streaming::partition_and_pack(local_input,
+                                       {0},  // columns_to_hash
+                                       static_cast<int>(total_num_partitions),
+                                       cudf::hash_id::HASH_MURMUR3,
+                                       cudf::DEFAULT_HASH_SEED,
+                                       stream,
+                                       br.get());
 
   // Now, we can insert the packed partitions into the shuffler. This operation is
   // non-blocking and we can continue inserting new input partitions. E.g., a pipeline
@@ -105,8 +107,8 @@ int main(int argc, char** argv)
 
     // Unpack (deserialize) and concatenate the chunks into a single table using a
     // convenience function.
-    local_outputs.push_back(cudf_streaming::integrations::unpack_and_concat(
-      cudf_streaming::integrations::unspill_partitions(
+    local_outputs.push_back(cudf_streaming::unpack_and_concat(
+      rapidsmpf::unspill_partitions(
         std::move(packed_chunks), br.get(), rapidsmpf::AllowOverbooking::YES),
       stream,
       br.get()));

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -9,12 +9,12 @@
 #include <cudf/table/equality.hpp>
 #include <cudf/table/table_view.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/mr/cuda_async_memory_resource.hpp>
 #include <rmm/mr/cuda_memory_resource.hpp>
 #include <rmm/mr/pool_memory_resource.hpp>
 
 #include <cuda/iterator>
+#include <cuda/stream>
 
 #include <filesystem>
 #include <string>
@@ -66,7 +66,7 @@ std::unique_ptr<cudf::table> combine_tables(std::unique_ptr<cudf::table> filter_
 
 void check_tables_equal(cudf::table_view const& lhs_table,
                         cudf::table_view const& rhs_table,
-                        rmm::cuda_stream_view stream)
+                        cuda::stream_ref stream)
 {
   auto const tables_equal =
     cudf::tables_equal(lhs_table, rhs_table, cudf::null_equality::EQUAL, stream);
@@ -78,7 +78,7 @@ std::vector<io_source> extract_input_sources(std::string const& paths,
                                              int32_t input_multiplier,
                                              int32_t thread_count,
                                              io_source_type io_source_type,
-                                             rmm::cuda_stream_view stream)
+                                             cuda::stream_ref stream)
 {
   // Get the delimited paths to directory and/or files.
   std::vector<std::string> const delimited_paths = [&]() {
@@ -147,6 +147,6 @@ std::vector<io_source> extract_input_sources(std::string const& paths,
     parquet_files.end(),
     std::back_inserter(input_sources),
     [&](auto const& file_name) { return io_source{file_name, io_source_type, stream}; });
-  stream.synchronize();
+  stream.sync();
   return input_sources;
 }

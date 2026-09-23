@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 from __future__ import annotations
 
@@ -143,7 +143,7 @@ def sort_by_key(
     na_position: Iterable[Literal["first", "last"]],
     *,
     stable: bool,
-) -> list[plc.Column]:
+) -> tuple[plc.Column, ...]:
     """
     Sort a table by given keys
 
@@ -165,8 +165,8 @@ def sort_by_key(
 
     Returns
     -------
-    list[Column]
-        list of value columns sorted by keys
+    tuple[Column, ...]
+        value columns sorted by keys
     """
     column_order, null_precedence = ordering(ascending, na_position)
     func = (

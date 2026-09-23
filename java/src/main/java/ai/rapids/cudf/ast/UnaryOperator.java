@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2023, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -43,8 +43,7 @@ public enum UnaryOperator {
   private final byte nativeId;
 
   UnaryOperator(int nativeId) {
-    this.nativeId = (byte) nativeId;
-    assert this.nativeId == nativeId;
+    this.nativeId = AstUtils.checkByte(nativeId);
   }
   /** Get the size in bytes to serialize this operator */
   int getSerializedSize() {

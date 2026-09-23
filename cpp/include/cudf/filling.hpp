@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -12,12 +12,15 @@
 
 #include <memory>
 
+/**
+ * @file
+ * @brief Column APIs for fill, repeat, and sequence
+ */
+
 namespace CUDF_EXPORT cudf {
 /**
  * @addtogroup transformation_fill
  * @{
- * @file
- * @brief Column APIs for fill, repeat, and sequence
  */
 
 /**
@@ -50,7 +53,7 @@ void fill_in_place(mutable_column_view& destination,
                    size_type begin,
                    size_type end,
                    scalar const& value,
-                   rmm::cuda_stream_view stream = cudf::get_default_stream());
+                   cuda::stream_ref stream = cudf::get_default_stream());
 
 /**
  * @brief Fills a range of elements in a column out-of-place with a scalar
@@ -80,7 +83,7 @@ std::unique_ptr<column> fill(
   size_type begin,
   size_type end,
   scalar const& value,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -114,7 +117,7 @@ std::unique_ptr<column> fill(
 std::unique_ptr<table> repeat(
   table_view const& input_table,
   column_view const& count,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -139,7 +142,7 @@ std::unique_ptr<table> repeat(
 std::unique_ptr<table> repeat(
   table_view const& input_table,
   size_type count,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -171,7 +174,7 @@ std::unique_ptr<column> sequence(
   size_type size,
   scalar const& init,
   scalar const& step,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -199,7 +202,7 @@ std::unique_ptr<column> sequence(
 std::unique_ptr<column> sequence(
   size_type size,
   scalar const& init,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -230,7 +233,7 @@ std::unique_ptr<cudf::column> calendrical_month_sequence(
   size_type size,
   scalar const& init,
   size_type months,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /** @} */  // end of group

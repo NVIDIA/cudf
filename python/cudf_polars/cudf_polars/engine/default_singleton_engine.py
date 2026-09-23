@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 """Single-GPU, single-instance specialization of :class:`~cudf_polars.engine.spmd.SPMDEngine`."""
 
@@ -15,6 +15,7 @@ from rapidsmpf.communicator.single import (
     new_communicator as single_communicator,
 )
 from rapidsmpf.progress_thread import ProgressThread
+from rapidsmpf.statistics import Statistics
 
 from cudf_polars.engine.core import (
     resolve_rapidsmpf_options,
@@ -141,9 +142,11 @@ def _build_engine() -> DefaultSingletonEngine:
     """
     with _state.lock:
         try:
+            options = resolve_rapidsmpf_options(None)
+            statistics = Statistics.from_options(options)
             comm = single_communicator(
-                progress_thread=ProgressThread(),
-                options=resolve_rapidsmpf_options(None),
+                progress_thread=ProgressThread(statistics),
+                options=options,
             )
             instance = DefaultSingletonEngine(comm=comm)
             assert instance.nranks == 1

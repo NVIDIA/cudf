@@ -1,21 +1,21 @@
 /**
- * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights
- * reserved. SPDX-License-Identifier: Apache-2.0
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
  */
 
 #include <cudf_test/base_fixture.hpp>
 #include <cudf_test/column_wrapper.hpp>
 #include <cudf_test/cudf_gtest.hpp>
 
-#include <cudf_streaming/integrations/utils.hpp>
+#include <cudf_streaming/utils.hpp>
 
-using namespace cudf_streaming::integrations;
+using namespace cudf_streaming;
 
 class BaseEstimatedMemoryUsageTest : public ::testing::Test {
  protected:
   void SetUp() override { stream = cudf::get_default_stream(); }
 
-  rmm::cuda_stream_view stream;
+  cuda::stream_ref stream{cudaStream_t{cudaStreamDefault}};
 };
 
 /**
@@ -45,8 +45,7 @@ TYPED_TEST(EstimatedMemoryUsageTest, FixedWidthColumnMemoryUsage)
     auto column = wrapper.release();
 
     std::size_t exp = column->alloc_size();
-    std::size_t est =
-      cudf_streaming::integrations::estimated_memory_usage(column->view(), this->stream);
+    std::size_t est = cudf_streaming::estimated_memory_usage(column->view(), this->stream);
 
     EXPECT_EQ(exp, est);
   }
@@ -67,13 +66,13 @@ TEST_F(BaseEstimatedMemoryUsageTest, StringType)
     std::vector<std::string>(100, "repeated string")                      // Many repeated strings
   };
 
-  for (const auto& data : test_cases) {
+  for (auto const& data : test_cases) {
     // Create a string column
     cudf::test::strings_column_wrapper wrapper(data.begin(), data.end());
     auto column = wrapper.release();
 
     std::size_t exp = column->alloc_size();
-    std::size_t est = cudf_streaming::integrations::estimated_memory_usage(column->view(), stream);
+    std::size_t est = cudf_streaming::estimated_memory_usage(column->view(), stream);
 
     EXPECT_EQ(exp, est);
   }
@@ -93,13 +92,13 @@ TEST_F(BaseEstimatedMemoryUsageTest, ListType)
     std::vector<std::int32_t>(100, 42)  // Many repeated values
   };
 
-  for (const auto& data : test_cases) {
+  for (auto const& data : test_cases) {
     // Create a list column
     cudf::test::lists_column_wrapper<std::int32_t> wrapper(data.begin(), data.end());
     auto column = wrapper.release();
 
     std::size_t exp = column->alloc_size();
-    std::size_t est = cudf_streaming::integrations::estimated_memory_usage(column->view(), stream);
+    std::size_t est = cudf_streaming::estimated_memory_usage(column->view(), stream);
 
     EXPECT_EQ(exp, est);
   }
@@ -122,12 +121,12 @@ TEST_F(BaseEstimatedMemoryUsageTest, StructType)
       50, std::make_pair(42, "repeated"))  // Many repeated structs
   };
 
-  for (const auto& data : test_cases) {
+  for (auto const& data : test_cases) {
     // Create struct columns for each field
     std::vector<std::int32_t> int_data;
     std::vector<std::string> string_data;
 
-    for (const auto& item : data) {
+    for (auto const& item : data) {
       int_data.push_back(item.first);
       string_data.push_back(item.second);
     }
@@ -144,7 +143,7 @@ TEST_F(BaseEstimatedMemoryUsageTest, StructType)
     auto column = wrapper.release();
 
     std::size_t exp = column->alloc_size();
-    std::size_t est = cudf_streaming::integrations::estimated_memory_usage(column->view(), stream);
+    std::size_t est = cudf_streaming::estimated_memory_usage(column->view(), stream);
 
     EXPECT_EQ(exp, est);
   }
@@ -164,13 +163,13 @@ TEST_F(BaseEstimatedMemoryUsageTest, DictionaryType)
     std::vector<std::string>(100, "repeated")                         // Many repeated values
   };
 
-  for (const auto& data : test_cases) {
+  for (auto const& data : test_cases) {
     // Create a dictionary column
     cudf::test::dictionary_column_wrapper<std::string> wrapper(data.begin(), data.end());
     auto column = wrapper.release();
 
     std::size_t exp = column->alloc_size();
-    std::size_t est = cudf_streaming::integrations::estimated_memory_usage(column->view(), stream);
+    std::size_t est = cudf_streaming::estimated_memory_usage(column->view(), stream);
 
     EXPECT_EQ(exp, est);
   }

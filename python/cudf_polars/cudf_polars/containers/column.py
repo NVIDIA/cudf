@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 """A column, with some properties."""
@@ -353,6 +353,53 @@ class Column:
                 dtype=dtype,
                 name=self.name,
             ).sorted_like(self)
+        elif plc.traits.is_integral_not_bool(plc_dtype) and plc.traits.is_duration(
+            self.obj.type()
+        ):
+            # A duration is stored as an integer tick count, so casting to that
+            # integer type is a no-op reinterpret of the same bytes. Relabel the
+            # column instead of launching a cast kernel.
+            rep = plc.DataType(
+                plc.TypeId.INT32
+                if self.obj.type().id() == plc.TypeId.DURATION_DAYS
+                else plc.TypeId.INT64
+            )
+            plc_col = plc.column.Column(
+                rep,
+                self.obj.size(),
+                self.obj.data(),
+                self.obj.null_mask(),
+                self.obj.null_count(),
+                self.obj.offset(),
+                self.obj.children(),
+            )
+            if rep.id() != plc_dtype.id():
+                plc_col = plc.unary.cast(plc_col, plc_dtype, stream=stream)
+            return Column(plc_col, dtype=dtype, name=self.name).sorted_like(self)
+        elif plc.traits.is_floating_point(plc_dtype) and (
+            plc.traits.is_timestamp(self.obj.type())
+            or plc.traits.is_duration(self.obj.type())
+        ):
+            phys = plc.DataType(
+                plc.TypeId.INT32
+                if self.obj.type().id()
+                in {plc.TypeId.TIMESTAMP_DAYS, plc.TypeId.DURATION_DAYS}
+                else plc.TypeId.INT64
+            )
+            plc_col = plc.column.Column(
+                phys,
+                self.obj.size(),
+                self.obj.data(),
+                self.obj.null_mask(),
+                self.obj.null_count(),
+                self.obj.offset(),
+                self.obj.children(),
+            )
+            return Column(
+                plc.unary.cast(plc_col, plc_dtype, stream=stream),
+                dtype=dtype,
+                name=self.name,
+            ).sorted_like(self)
         elif plc.traits.is_floating_point(
             self.obj.type()
         ) and plc.traits.is_fixed_point(plc_dtype):
@@ -557,7 +604,7 @@ class Column:
         """
         result: int
         if self.size > 0 and plc.traits.is_floating_point(self.obj.type()):
-            # See https://github.com/rapidsai/cudf/issues/20202 for we type ignore
+            # See https://github.com/NVIDIA/cudf/issues/20202 for we type ignore
             result = plc.reduce.reduce(  # type: ignore[assignment]
                 plc.unary.is_nan(self.obj, stream=stream),
                 plc.aggregation.sum(),

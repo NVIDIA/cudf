@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2018-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2018-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 from __future__ import annotations
 
@@ -133,7 +133,7 @@ class IntervalColumn(ColumnBase):
         )
 
     def _binaryop(self, other: ColumnBinaryOperand, op: str) -> ColumnBase:
-        reflect, op = self._check_reflected_op(op)
+        _reflect, op = self._check_reflected_op(op)
         if not isinstance(other, type(self)):
             return NotImplemented
         if op in {"__eq__", "__ne__", "NULL_EQUALS", "NULL_NOT_EQUALS"}:

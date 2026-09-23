@@ -11,7 +11,6 @@ from rapidsmpf.communicator import COMMUNICATORS
 from rapidsmpf.config import Options, get_environment_variables
 from rapidsmpf.memory.buffer_resource import BufferResource
 from rapidsmpf.progress_thread import ProgressThread
-from rapidsmpf.rmm_resource_adaptor import RmmResourceAdaptor
 from rapidsmpf.streaming.core.context import Context
 from rmm.pylibrmm.stream import DEFAULT_STREAM
 
@@ -96,8 +95,7 @@ def stream() -> Stream:
 def context(comm: Communicator) -> Generator[Context, None, None]:
     """Streaming context backed by a fresh memory resource."""
     options = Options(get_environment_variables())
-    mr = RmmResourceAdaptor(rmm.mr.CudaMemoryResource())
-    br = BufferResource(mr)
+    br = BufferResource(rmm.mr.CudaMemoryResource())
 
     with Context(comm.logger, br, options) as ctx:
         yield ctx

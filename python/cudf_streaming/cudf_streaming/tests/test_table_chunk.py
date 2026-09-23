@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from __future__ import annotations
@@ -9,13 +9,14 @@ import cupy
 import pylibcudf as plc
 import pytest
 
-from cudf_streaming.integrations.partition import (
+from cudf_streaming.partition_utils import (
     packed_data_from_cudf_packed_columns,
 )
-from cudf_streaming.streaming.table_chunk import (
+from cudf_streaming.table_chunk import (
     TableChunk,
     make_table_chunks_available_or_wait,
 )
+from cudf_streaming.testing import assert_eq
 from rapidsmpf.cuda_stream import is_equal_streams
 from rapidsmpf.memory.buffer import MemoryType
 from rapidsmpf.memory.content_description import ContentDescription
@@ -23,7 +24,6 @@ from rapidsmpf.memory.packed_data import PackedData
 from rapidsmpf.streaming.core.actor import define_actor, run_actor_network
 from rapidsmpf.streaming.core.message import Message
 from rapidsmpf.streaming.core.spillable_messages import SpillableMessages
-from rapidsmpf.testing import assert_eq
 
 if TYPE_CHECKING:
     from rapidsmpf.streaming.core.context import Context
@@ -457,8 +457,16 @@ def test_into_packed_data(
         )
     assert chunk.is_available()
 
-    result = chunk.into_packed_data(context.br())
+    # Already-packed data is moved out, so only the unpacked case allocates.
+    cost = chunk.into_packed_data_cost()
+    assert cost == 0 if from_pack else cost > 0
+
+    res, _ = context.br().reserve(
+        MemoryType.DEVICE, cost, allow_overbooking=False
+    )
+    result = chunk.into_packed_data(res)
     assert isinstance(result, PackedData)
+    assert res.size == 0
 
     # Wrap the PackedData back into a TableChunk and verify contents.
     result_chunk = TableChunk.from_packed_data(result, br=context.br())

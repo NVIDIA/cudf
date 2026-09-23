@@ -1,45 +1,65 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
 #include <cudf/column/column_factories.hpp>
 #include <cudf/detail/concatenate.hpp>
+#include <cudf/detail/cuco_helpers.hpp>
+#include <cudf/detail/gather.hpp>
 #include <cudf/detail/indexalator.cuh>
 #include <cudf/detail/iterator.cuh>
-#include <cudf/detail/sorting.hpp>
-#include <cudf/detail/stream_compaction.hpp>
+#include <cudf/detail/row_operator/equality.cuh>
+#include <cudf/detail/row_operator/hashing.cuh>
+#include <cudf/detail/unary.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/dictionary/detail/concatenate.hpp>
+#include <cudf/dictionary/detail/encode.hpp>
 #include <cudf/dictionary/dictionary_column_view.hpp>
 #include <cudf/dictionary/dictionary_factories.hpp>
 #include <cudf/table/table.hpp>
 #include <cudf/table/table_view.hpp>
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
+#include <cudf/utilities/traits.hpp>
 #include <cudf/utilities/type_checks.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
+#include <rmm/mr/polymorphic_allocator.hpp>
 
+#include <cuco/static_set.cuh>
 #include <cuda/functional>
 #include <cuda/iterator>
 #include <cuda/std/utility>
+#include <cuda/stream>
 #include <thrust/binary_search.h>
 #include <thrust/execution_policy.h>
-#include <thrust/iterator/permutation_iterator.h>
-#include <thrust/iterator/transform_iterator.h>
+#include <thrust/gather.h>
 #include <thrust/transform.h>
 #include <thrust/transform_scan.h>
 
 #include <algorithm>
+#include <numeric>
 #include <vector>
 
 namespace cudf {
 namespace dictionary {
 namespace detail {
 namespace {
+
+/**
+ * @brief Functor for inserting keys into the set and recording the resulting index.
+ */
+template <typename SetRef>
+struct insert_keys_fn {
+  SetRef set_ref;
+  column_device_view d_keys;
+  __device__ size_type operator()(size_type idx)
+  {
+    return *cuda::std::get<0>(set_ref.insert_and_find(idx));
+  }
+};
 
 /**
  * @brief Keys and indices offsets values.
@@ -87,9 +107,11 @@ struct compute_children_offsets_fn {
    * are used to create the offsets.
    *
    * @param stream Stream used for allocating the output rmm::device_uvector.
+   * @param mr Device memory resource used to allocate the returned device vector.
    * @return Vector of offsets_pair objects for keys and indices.
    */
-  rmm::device_uvector<offsets_pair> create_children_offsets(rmm::cuda_stream_view stream)
+  rmm::device_uvector<offsets_pair> create_children_offsets(cuda::stream_ref stream,
+                                                            rmm::device_async_resource_ref mr)
   {
     auto offsets = cudf::detail::make_host_vector<offsets_pair>(columns_ptrs.size(), stream);
     thrust::transform_exclusive_scan(
@@ -105,8 +127,7 @@ struct compute_children_offsets_fn {
       [](auto lhs, auto rhs) {
         return offsets_pair{lhs.first + rhs.first, lhs.second + rhs.second};
       });
-    return cudf::detail::make_device_uvector(
-      offsets, stream, cudf::get_current_device_resource_ref());
+    return cudf::detail::make_device_uvector(offsets, stream, mr);
   }
 
  private:
@@ -114,72 +135,35 @@ struct compute_children_offsets_fn {
 };
 
 /**
- * @brief Type-dispatch functor for remapping the old indices to new values based
- * on the new key-set.
+ * @brief Functor for mapping the old indices values to the new indices values
+ *        based on the new keys arrangement after concatenation
  *
- * The dispatch is based on the key type.
- * The output column is the updated indices child for the new dictionary column.
+ * Indices are read through an indexalator, so any integral indices type is
+ * remapped without type dispatch.
  */
-struct dispatch_compute_indices {
-  template <typename Element>
-  std::unique_ptr<column> operator()(column_view const& all_keys,
-                                     column_view const& all_indices,
-                                     column_view const& new_keys,
-                                     offsets_pair const* d_offsets,
-                                     size_type const* d_map_to_keys,
-                                     rmm::cuda_stream_view stream,
-                                     rmm::device_async_resource_ref mr)
-    requires(cudf::is_dictionary_key<Element>())
+struct map_indices_fn {
+  cuda::std::span<offsets_pair const> d_offsets;
+  cuda::std::span<size_type const> d_keys_remap;
+  column_device_view d_indices;  // for null checks only
+  cudf::detail::input_indexalator d_input;
+
+  __device__ size_type operator()(size_type idx) const
   {
-    auto keys_view     = column_device_view::create(all_keys, stream);
-    auto indices_view  = column_device_view::create(all_indices, stream);
-    auto d_all_indices = *indices_view;
-
-    auto indices_itr = cudf::detail::indexalator_factory::make_input_iterator(all_indices);
-    // map the concatenated indices to the concatenated keys
-    auto all_itr = thrust::make_permutation_iterator(
-      keys_view->begin<Element>(),
-      thrust::make_transform_iterator(
-        cuda::counting_iterator<size_type>{0},
-        cuda::proclaim_return_type<size_type>(
-          [d_offsets, d_map_to_keys, d_all_indices, indices_itr] __device__(size_type idx) {
-            if (d_all_indices.is_null(idx)) return 0;
-            return indices_itr[idx] + d_offsets[d_map_to_keys[idx]].first;
-          })));
-
-    auto new_keys_view = column_device_view::create(new_keys, stream);
-
-    auto begin = new_keys_view->begin<Element>();
-    auto end   = new_keys_view->end<Element>();
-
-    // create the indices output column
-    auto result = make_numeric_column(
-      all_indices.type(), all_indices.size(), mask_state::UNALLOCATED, stream, mr);
-    auto result_itr =
-      cudf::detail::indexalator_factory::make_output_iterator(result->mutable_view());
-    // new indices values are computed by matching the concatenated keys to the new key set
-    thrust::lower_bound(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-                        begin,
-                        end,
-                        all_itr,
-                        all_itr + all_indices.size(),
-                        result_itr,
-                        cuda::std::less<Element>());
-    return result;
-  }
-
-  template <typename Element, typename... Args>
-  std::unique_ptr<column> operator()(Args&&...)
-    requires(not cudf::is_dictionary_key<Element>())
-  {
-    CUDF_FAIL("dictionary concatenate not supported for this column type");
+    if (d_indices.is_null(idx)) { return 0; }
+    auto cmp = [] __device__(auto const& lhs, auto const& rhs) { return lhs.second < rhs.second; };
+    auto col_iter = thrust::upper_bound(
+                      thrust::seq, d_offsets.begin(), d_offsets.end(), offsets_pair{0, idx}, cmp) -
+                    1;
+    auto col_idx    = cuda::std::distance(d_offsets.begin(), col_iter);
+    auto key_offset = d_offsets[col_idx].first;
+    return d_keys_remap[key_offset + d_input[idx]];
   }
 };
 
 }  // namespace
 
 std::unique_ptr<column> concatenate(host_span<column_view const> columns,
-                                    rmm::cuda_stream_view stream,
+                                    cuda::stream_ref stream,
                                     rmm::device_async_resource_ref mr)
 {
   // exception here is the same behavior as in cudf::concatenate
@@ -199,66 +183,99 @@ std::unique_ptr<column> concatenate(host_span<column_view const> columns,
                  cudf::data_type_error);
     return keys;
   });
-  auto all_keys =
-    cudf::detail::concatenate(keys_views, stream, cudf::get_current_device_resource_ref());
 
-  // sort keys and remove duplicates;
-  // this becomes the keys child for the output dictionary column
-  auto table_keys  = cudf::detail::distinct(table_view{{all_keys->view()}},
-                                           std::vector<size_type>{0},
-                                           duplicate_keep_option::KEEP_ANY,
-                                           null_equality::EQUAL,
-                                           nan_equality::ALL_EQUAL,
-                                           stream,
-                                           mr);
-  auto sorted_keys = cudf::detail::sort(table_keys->view(),
-                                        std::vector<order>{order::ASCENDING},
-                                        std::vector<null_order>{null_order::BEFORE},
-                                        stream,
-                                        mr)
-                       ->release();
-  std::unique_ptr<column> keys_column(std::move(sorted_keys.front()));
+  auto const temp_mr = cudf::get_current_device_resource_ref();
 
-  // next, concatenate the indices
+  // TODO: Overload function to accept multiple vectors to do the concatenate at once, with a 2D
+  // kernel. The keys concatenate below and the indices concatenate further down are two separate
+  // launches over the same set of input columns and could be fused into a single batched call.
+  // first, concatenate all the keys
+  auto all_keys = cudf::detail::concatenate(keys_views, stream, temp_mr);
+  // compute the unique set of keys to better help map the new indices values
+  using encode_probe_t = cuco::linear_probing<
+    1,
+    cudf::detail::row::hash::device_row_hasher<cudf::hashing::detail::default_hash,
+                                               cudf::nullate::NO>>;
+  auto const tv         = cudf::table_view({all_keys->view()});
+  auto const row_hash   = cudf::detail::row::hash::row_hasher(tv, stream, temp_mr);
+  auto const row_equal  = cudf::detail::row::equality::self_comparator(tv, stream, temp_mr);
+  auto const comparator = cudf::detail::row::equality::nan_equal_physical_equality_comparator{};
+  auto const d_equal =
+    row_equal.equal_to<false>(cudf::nullate::NO{}, null_equality::EQUAL, comparator);
+  auto const empty_key = cuco::empty_key{cudf::detail::CUDF_SIZE_TYPE_SENTINEL};
+  auto probe           = encode_probe_t{row_hash.device_hasher(cudf::nullate::NO{})};
+  auto allocator       = rmm::mr::polymorphic_allocator<char>(temp_mr);
+  auto set             = cuco::static_set{
+    all_keys->size(), 0.5, empty_key, d_equal, probe, {}, {}, allocator, stream.get()};
+  auto set_ref    = set.ref(cuco::insert_and_find);
+  using set_ref_t = decltype(set_ref);
+
+  auto policy = rmm::exec_policy_nosync(stream, temp_mr);
+  auto iota   = cuda::counting_iterator<size_type>{0};
+
+  auto d_indices  = rmm::device_uvector<size_type>(all_keys->size(), stream, temp_mr);
+  auto d_all_keys = column_device_view::create(all_keys->view(), stream, temp_mr);
+  thrust::transform(
+    policy, iota, iota + all_keys->size(), d_indices.begin(), insert_keys_fn{set_ref, *d_all_keys});
+  auto keys_indices = rmm::device_uvector<size_type>(all_keys->size(), stream, temp_mr);
+  auto keys_end     = set.retrieve_all(keys_indices.begin(), stream.get());
+  keys_indices.resize(cuda::std::distance(keys_indices.begin(), keys_end), stream);
+
+  // use keys_indices to retrieve the keys (gather)
+  auto const oob_policy   = cudf::out_of_bounds_policy::DONT_CHECK;
+  auto const index_policy = cudf::negative_index_policy::NOT_ALLOWED;
+  auto keys_column =
+    std::move(cudf::detail::gather(tv, keys_indices, oob_policy, index_policy, stream, mr)
+                ->release()
+                .front());
+
+  // build an all_keys_remap: abs position in all_keys to new key index
+  // use scatter to assign new index values: all_keys_remap[keys_indices[i]] = i
+  auto all_keys_remap = rmm::device_uvector<size_type>(all_keys->size(), stream, temp_mr);
+  thrust::scatter(
+    policy, iota, iota + keys_indices.size(), keys_indices.begin(), all_keys_remap.begin());
+  // use gather to propagate new indices values to all duplicate positions
+  auto final_remap = rmm::device_uvector<size_type>(all_keys->size(), stream, temp_mr);
+  thrust::gather(
+    policy, d_indices.begin(), d_indices.end(), all_keys_remap.begin(), final_remap.begin());
+
+  // next, concatenate the indices.
+  // The output indices type is the widest of the input indices types, widened further if the
+  // concatenated keys no longer fit in it (e.g. two INT8 dictionaries with 200 distinct keys).
+  auto indices_type = std::accumulate(
+    columns.begin(), columns.end(), data_type{type_id::INT8}, [](data_type widest, auto cv) {
+      // an empty dictionary column may carry no children at all, but a sliced-to-empty
+      // view still has an indices child whose type participates in the selection
+      if (cv.num_children() == 0) { return widest; }
+      auto const t = dictionary_column_view(cv).indices().type();
+      return cudf::size_of(t) > cudf::size_of(widest) ? t : widest;
+    });
+  auto const needed_type = get_indices_type_for_size(keys_column->size());
+  if (cudf::size_of(needed_type) > cudf::size_of(indices_type)) { indices_type = needed_type; }
+
+  std::vector<std::unique_ptr<column>> widened_indices;  // keeps casted indices alive
   std::vector<column_view> indices_views(columns.size());
-  std::transform(columns.begin(), columns.end(), indices_views.begin(), [](auto cv) {
-    auto dict_view = dictionary_column_view(cv);
-    if (dict_view.is_empty()) {
-      return column_view{data_type{type_id::INT32}, 0, nullptr, nullptr, 0};
-    }
-    return dict_view.get_indices_annotated();  // nicely includes validity mask and view offset
-  });
-  auto all_indices        = cudf::detail::concatenate(indices_views, stream, mr);
-  auto const indices_size = all_indices->size();
+  std::transform(
+    columns.begin(), columns.end(), indices_views.begin(), [&](auto cv) -> column_view {
+      auto dict_view = dictionary_column_view(cv);
+      if (dict_view.is_empty()) { return column_view{indices_type, 0, nullptr, nullptr, 0}; }
+      auto indices = dict_view.get_indices_annotated();  // includes validity mask and view offset
+      if (indices.type() == indices_type) { return indices; }
+      widened_indices.emplace_back(cudf::detail::cast(indices, indices_type, stream, temp_mr));
+      return widened_indices.back()->view();
+    });
+  auto all_indices = cudf::detail::concatenate(indices_views, stream, mr);
 
-  // build a vector of values to map the old indices to the concatenated keys
-  auto children_offsets = child_offsets_fn.create_children_offsets(stream);
-  rmm::device_uvector<size_type> map_to_keys(indices_size, stream);
-  auto indices_itr = cudf::detail::make_counting_transform_iterator(
-    1, cuda::proclaim_return_type<offsets_pair>([] __device__(size_type idx) {
-      return offsets_pair{0, idx};
-    }));
-  // the indices offsets (pair.second) are for building the map
-  thrust::lower_bound(
-    rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-    children_offsets.begin() + 1,
-    children_offsets.end(),
-    indices_itr,
-    indices_itr + indices_size,
-    map_to_keys.begin(),
-    [] __device__(auto const& lhs, auto const& rhs) { return lhs.second < rhs.second; });
-
-  // now recompute the indices values for the new keys_column;
-  // the keys offsets (pair.first) are for mapping to the input keys
-  auto indices_column = type_dispatcher(expected_keys.type(),
-                                        dispatch_compute_indices{},
-                                        all_keys->view(),     // old keys
-                                        all_indices->view(),  // old indices
-                                        keys_column->view(),  // new keys
-                                        children_offsets.data(),
-                                        map_to_keys.data(),
-                                        stream,
-                                        mr);
+  // remap the input indices values to the new indices for the new keys order
+  auto indices_column = make_numeric_column(
+    all_indices->type(), all_indices->size(), mask_state::UNALLOCATED, stream, mr);
+  auto input_view = column_device_view::create(all_indices->view(), stream, temp_mr);
+  auto d_input    = cudf::detail::indexalator_factory::make_input_iterator(all_indices->view());
+  auto d_output =
+    cudf::detail::indexalator_factory::make_output_iterator(indices_column->mutable_view());
+  auto children_offsets = child_offsets_fn.create_children_offsets(stream, temp_mr);
+  auto map_fn           = map_indices_fn{children_offsets, final_remap, *input_view, d_input};
+  thrust::transform(policy, iota, iota + all_indices->size(), d_output, map_fn);
 
   // remove the bitmask from the all_indices
   auto null_count = all_indices->null_count();  // get before release()

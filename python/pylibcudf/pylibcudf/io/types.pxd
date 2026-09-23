@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 from libc.stdint cimport uint8_t, int32_t
 
@@ -14,6 +14,7 @@ from pylibcudf.libcudf.io.types cimport (
     column_name_info,
     compression_type,
     dictionary_policy,
+    filepath_source,
     io_type,
     partition_info,
     quote_style,
@@ -87,6 +88,10 @@ cdef class TableWithMetadata:
     cdef TableWithMetadata from_libcudf(
         table_with_metadata& tbl, object stream, DeviceMemoryResource mr
     )
+
+cdef class FilepathSource:
+    cdef public object path
+    cdef public object size
 
 cdef class SourceInfo:
     cdef source_info c_obj

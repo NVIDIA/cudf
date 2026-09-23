@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -29,6 +29,7 @@ auto constexpr bucket_size =
   1;  ///< Number of concurrent slots (set for best performance) handled by each thread.
 auto constexpr occupancy_factor = 1.43f;  ///< cuCollections suggests using a hash map of size
                                           ///< N * (1/0.7) = 1.43 to target a 70% occupancy factor.
+auto constexpr dict_encode_block_size = 256;  ///< Thread block size of hash map kernels.
 
 auto constexpr KEY_SENTINEL   = key_type{-1};
 auto constexpr VALUE_SENTINEL = mapped_type{-1};
@@ -73,7 +74,7 @@ inline size_type __device__ row_to_value_idx(size_type idx,
       idx += col.offset();
       col = col.child(0);
     } else {
-      auto list_col = cudf::detail::lists_column_device_view(col);
+      auto list_col = cudf::lists_column_device_view(col);
       auto child    = list_col.child();
       if (parquet_col.output_as_byte_array && child.type().id() == type_id::UINT8) { break; }
       idx = list_col.offset_at(idx);
@@ -92,7 +93,7 @@ inline size_type __device__ row_to_value_idx(size_type idx,
  */
 void populate_chunk_hash_maps(device_span<slot_type> const map_storage,
                               cudf::detail::device_2dspan<PageFragment> frags,
-                              rmm::cuda_stream_view stream);
+                              cuda::stream_ref stream);
 
 /**
  * @brief Compact dictionary hash map entries into chunk.dict_data
@@ -108,7 +109,7 @@ void populate_chunk_hash_maps(device_span<slot_type> const map_storage,
 void collect_map_entries(device_span<slot_type> const map_storage,
                          device_span<EncColumnChunk> chunks,
                          cudf::detail::device_2dspan<PageFragment const> frags,
-                         rmm::cuda_stream_view stream);
+                         cuda::stream_ref stream);
 
 /**
  * @brief Get the Dictionary Indices for each row
@@ -125,7 +126,7 @@ void collect_map_entries(device_span<slot_type> const map_storage,
  */
 void get_dictionary_indices(device_span<slot_type> const map_storage,
                             cudf::detail::device_2dspan<PageFragment const> frags,
-                            rmm::cuda_stream_view stream);
+                            cuda::stream_ref stream);
 
 /**
  * @brief Compute the minimum width required for the dictionary indices for each data page
@@ -133,6 +134,6 @@ void get_dictionary_indices(device_span<slot_type> const map_storage,
  * @param pages Device span of encoder pages
  * @param stream CUDA stream to use
  */
-void compute_per_page_dict_bits(device_span<EncPage> pages, rmm::cuda_stream_view stream);
+void compute_per_page_dict_bits(device_span<EncPage> pages, cuda::stream_ref stream);
 
 }  // namespace cudf::io::parquet::detail

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -19,7 +19,7 @@
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
+#include <cuda/stream>
 
 #include <stdexcept>
 
@@ -32,7 +32,7 @@ struct get_element_functor {
   template <typename T, std::enable_if_t<is_fixed_width<T>() && !is_fixed_point<T>()>* p = nullptr>
   std::unique_ptr<scalar> operator()(column_view const& input,
                                      size_type index,
-                                     rmm::cuda_stream_view stream,
+                                     cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr)
   {
     auto s = make_fixed_width_scalar(data_type(type_to_id<T>()), stream, mr);
@@ -55,13 +55,14 @@ struct get_element_functor {
   template <typename T, std::enable_if_t<std::is_same_v<T, string_view>>* p = nullptr>
   std::unique_ptr<scalar> operator()(column_view const& input,
                                      size_type index,
-                                     rmm::cuda_stream_view stream,
+                                     cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr)
   {
     auto device_col = column_device_view::create(input, stream);
 
-    rmm::device_scalar<string_view> temp_data(stream, mr);
-    cudf::detail::device_scalar<bool> temp_valid(stream, mr);
+    auto const temp_mr = cudf::get_current_device_resource_ref();
+    cudf::detail::device_scalar<string_view> temp_data(stream, temp_mr);
+    cudf::detail::device_scalar<bool> temp_valid(stream, temp_mr);
 
     device_single_thread(
       [buffer   = temp_data.data(),
@@ -73,13 +74,14 @@ struct get_element_functor {
       },
       stream);
 
-    return std::make_unique<string_scalar>(temp_data, temp_valid.value(stream), stream, mr);
+    return std::make_unique<string_scalar>(
+      temp_data.value(stream), temp_valid.value(stream), stream, mr);
   }
 
   template <typename T, std::enable_if_t<std::is_same_v<T, dictionary32>>* p = nullptr>
   std::unique_ptr<scalar> operator()(column_view const& input,
                                      size_type index,
-                                     rmm::cuda_stream_view stream,
+                                     cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr)
   {
     auto dict_view    = dictionary_column_view(input);
@@ -113,7 +115,7 @@ struct get_element_functor {
   template <typename T, std::enable_if_t<std::is_same_v<T, list_view>>* p = nullptr>
   std::unique_ptr<scalar> operator()(column_view const& input,
                                      size_type index,
-                                     rmm::cuda_stream_view stream,
+                                     cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr)
   {
     bool valid               = is_element_valid_sync(input, index, stream);
@@ -137,7 +139,7 @@ struct get_element_functor {
   template <typename T, std::enable_if_t<cudf::is_fixed_point<T>()>* p = nullptr>
   std::unique_ptr<scalar> operator()(column_view const& input,
                                      size_type index,
-                                     rmm::cuda_stream_view stream,
+                                     cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr)
   {
     using Type = typename T::rep;
@@ -163,7 +165,7 @@ struct get_element_functor {
   template <typename T, std::enable_if_t<std::is_same_v<T, struct_view>>* p = nullptr>
   std::unique_ptr<scalar> operator()(column_view const& input,
                                      size_type index,
-                                     rmm::cuda_stream_view stream,
+                                     cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr)
   {
     bool valid = is_element_valid_sync(input, index, stream);
@@ -178,7 +180,7 @@ struct get_element_functor {
 
 std::unique_ptr<scalar> get_element(column_view const& input,
                                     size_type index,
-                                    rmm::cuda_stream_view stream,
+                                    cuda::stream_ref stream,
                                     rmm::device_async_resource_ref mr)
 {
   CUDF_EXPECTS(index >= 0 and index < input.size(), "Index out of bounds", std::out_of_range);
@@ -189,7 +191,7 @@ std::unique_ptr<scalar> get_element(column_view const& input,
 
 std::unique_ptr<scalar> get_element(column_view const& input,
                                     size_type index,
-                                    rmm::cuda_stream_view stream,
+                                    cuda::stream_ref stream,
                                     rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();

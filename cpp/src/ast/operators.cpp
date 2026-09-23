@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #include <cudf/ast/detail/operators.cuh>
@@ -273,6 +273,13 @@ cudf::data_type ast_operator_return_type(ast_operator op,
     default: CUDF_FAIL("Unsupported operator return type."); break;
   }
   return result;
+}
+
+bool is_comparison_operator(ast_operator op)
+{
+  return op == ast_operator::EQUAL || op == ast_operator::NULL_EQUAL ||
+         op == ast_operator::NOT_EQUAL || op == ast_operator::LESS || op == ast_operator::GREATER ||
+         op == ast_operator::LESS_EQUAL || op == ast_operator::GREATER_EQUAL;
 }
 
 cudf::size_type ast_operator_arity(ast_operator op)

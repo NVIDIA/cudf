@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -46,7 +46,7 @@ void bench_groupby_nunique(nvbench::state& state, nvbench::type_list<Type>)
       data_profile_builder()
         .cardinality(cardinality)
         .distribution(cudf::type_to_id<Type>(), distribution_id::UNIFORM, 0, size);
-    if (const auto null_freq = state.get_float64("null_probability"); null_freq > 0) {
+    if (auto const null_freq = state.get_float64("null_probability"); null_freq > 0) {
       profile.set_null_probability(null_freq);
     } else {
       profile.set_null_probability(std::nullopt);
@@ -57,7 +57,7 @@ void bench_groupby_nunique(nvbench::state& state, nvbench::type_list<Type>)
   auto const requests = make_aggregation_request_vector(
     *vals, cudf::make_nunique_aggregation<cudf::groupby_aggregation>());
 
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().value()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().get()));
   auto const mem_stats_logger = cudf::memory_stats_logger();
   state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
     auto gb_obj =

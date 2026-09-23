@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 from __future__ import annotations
 
@@ -115,7 +115,7 @@ def test_over_mapping_strategy(
             .over(
                 pl.col("a"),
                 mapping_strategy=cast(
-                    Literal["group_to_rows", "join", "explode"], mapping_strategy
+                    "Literal['group_to_rows', 'join', 'explode']", mapping_strategy
                 ),
             )
         ]
@@ -173,7 +173,7 @@ def test_rolling_closed(engine: pl.GPUEngine, request, df: pl.LazyFrame, closed:
             .rolling(
                 period="2d",
                 index_column="date",
-                closed=cast(Literal["left", "right", "both", "none"], closed),
+                closed=cast("Literal['left', 'right', 'both', 'none']", closed),
             )
         ]
     )

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -29,6 +29,17 @@ template <typename T>
 class GatherTest : public cudf::test::BaseFixture {};
 
 TYPED_TEST_SUITE(GatherTest, cudf::test::NumericTypes);
+
+struct GatherZeroColumnTest : public cudf::test::BaseFixture {};
+
+TEST_F(GatherZeroColumnTest, PreservesRowCount)
+{
+  cudf::table_view source{std::vector<cudf::column_view>{}, 5};
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> gather_map{{0, 2, 4, 1}};
+  auto result = cudf::gather(source, gather_map);
+  EXPECT_EQ(result->num_columns(), 0);
+  EXPECT_EQ(result->num_rows(), 4);
+}
 
 TYPED_TEST(GatherTest, IdentityTest)
 {

@@ -1,5 +1,7 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+
+import re
 
 import pytest
 
@@ -73,3 +75,17 @@ def test_struct_for_field(key, expect, expect_name):
     expect = cudf.Series(expect, name=expect_name)
     got = sr.struct.field(key)
     assert_eq(expect, got)
+
+
+def test_struct_accessor_invalid_dtype_message():
+    # The .struct accessor error message names the required 'struct[pyarrow]'
+    # dtype and reports the offending dtype, matching pandas.
+    gs = cudf.Series([1, 2, 3])
+    with pytest.raises(
+        AttributeError,
+        match=re.escape(
+            "Can only use the '.struct' accessor with 'struct[pyarrow]' "
+            "dtype, not int64."
+        ),
+    ):
+        gs.struct

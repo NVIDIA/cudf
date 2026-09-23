@@ -1,6 +1,6 @@
 /**
- * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights
- * reserved. SPDX-License-Identifier: Apache-2.0
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
  */
 
 #include "parquet_writer.hpp"
@@ -8,7 +8,8 @@
 #include <cudf/io/parquet.hpp>
 #include <cudf/io/types.hpp>
 
-#include <cudf_streaming/streaming/table_chunk.hpp>
+#include <cudf_streaming/table_chunk.hpp>
+
 #include <rapidsmpf/cuda_stream.hpp>
 #include <rapidsmpf/streaming/core/channel.hpp>
 #include <rapidsmpf/streaming/core/context.hpp>
@@ -29,7 +30,7 @@ rapidsmpf::streaming::Actor write_parquet(std::shared_ptr<rapidsmpf::streaming::
   auto builder = cudf::io::chunked_parquet_writer_options::builder(sink);
   auto msg     = co_await ch_in->receive();
   RAPIDSMPF_EXPECTS(!msg.empty(), "Writing from empty channel not supported");
-  auto chunk    = co_await msg.release<cudf_streaming::streaming::TableChunk>().make_available(ctx);
+  auto chunk    = co_await msg.release<cudf_streaming::table_chunk>().make_available(ctx);
   auto table    = chunk.table_view();
   auto metadata = cudf::io::table_input_metadata(table);
   CudaEvent event;
@@ -46,13 +47,13 @@ rapidsmpf::streaming::Actor write_parquet(std::shared_ptr<rapidsmpf::streaming::
   while (true) {
     msg = co_await ch_in->receive();
     if (msg.empty()) { break; }
-    chunk = co_await msg.release<cudf_streaming::streaming::TableChunk>().make_available(ctx);
+    chunk = co_await msg.release<cudf_streaming::table_chunk>().make_available(ctx);
     table = chunk.table_view();
     RAPIDSMPF_EXPECTS(static_cast<std::size_t>(table.num_columns()) == column_names.size(),
                       "Mismatching number of column names and chunk columns");
-    cuda_stream_join(write_stream, chunk.stream(), &event);
+    rapidsmpf::cuda_stream_join(write_stream, chunk.stream(), &event);
     writer.write(table);
-    cuda_stream_join(chunk.stream(), write_stream, &event);
+    rapidsmpf::cuda_stream_join(chunk.stream(), write_stream, &event);
   }
   writer.close();
 }

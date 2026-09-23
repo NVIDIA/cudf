@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -17,11 +17,11 @@
 #include <rmm/exec_policy.hpp>
 
 #include <cub/cub.cuh>
+#include <cuda/iterator>
 #include <cuda/std/functional>
 #include <thrust/device_ptr.h>
 #include <thrust/execution_policy.h>
 #include <thrust/fill.h>
-#include <thrust/iterator/transform_output_iterator.h>
 #include <thrust/scatter.h>
 
 #include <algorithm>
@@ -306,7 +306,7 @@ void sparse_stack_op_to_top_of_stack(StackSymbolItT d_symbols,
                                      StackSymbolT const empty_stack_symbol,
                                      StackSymbolT const read_symbol,
                                      std::size_t const num_symbols_out,
-                                     rmm::cuda_stream_view stream)
+                                     cuda::stream_ref stream)
 {
   rmm::device_buffer temp_storage{};
 
@@ -324,7 +324,7 @@ void sparse_stack_op_to_top_of_stack(StackSymbolItT d_symbols,
   using StackSymbolToStackOpT = detail::StackSymbolToStackOp<StackOpT, StackSymbolToStackOpTypeT>;
 
   // transform_iterator converting stack symbols to stack operations
-  using TransformInputItT = thrust::transform_iterator<StackSymbolToStackOpT, StackSymbolItT>;
+  using TransformInputItT = cuda::transform_iterator<StackSymbolToStackOpT, StackSymbolItT>;
 
   constexpr bool supports_reset_op = SupportResetOperation == stack_op_support::WITH_RESET_SUPPORT;
 
@@ -355,7 +355,7 @@ void sparse_stack_op_to_top_of_stack(StackSymbolItT d_symbols,
   // with the empty_stack_symbol
   StackOpT const empty_stack{0, empty_stack_symbol};
 
-  thrust::transform_iterator<detail::RemapEmptyStack<StackOpT>, StackOpT*> kv_ops_scan_in(
+  cuda::transform_iterator<detail::RemapEmptyStack<StackOpT>, StackOpT*> kv_ops_scan_in(
     nullptr, detail::RemapEmptyStack<StackOpT>{empty_stack});
   StackOpT* kv_ops_scan_out = nullptr;
 
@@ -368,7 +368,7 @@ void sparse_stack_op_to_top_of_stack(StackSymbolItT d_symbols,
   // operation
   if constexpr (supports_reset_op) {
     // Iterator that returns `1` for every symbol that corresponds to a `reset` operation
-    auto reset_segments_it = thrust::make_transform_iterator(
+    auto reset_segments_it = cuda::transform_iterator(
       d_symbols,
       detail::NewlineToResetStackSegmentOp<StackSymbolToStackOpTypeT>{symbol_to_stack_op});
 
@@ -379,10 +379,10 @@ void sparse_stack_op_to_top_of_stack(StackSymbolItT d_symbols,
       nullptr,
       gen_segments_scan_bytes,
       reset_segments_it,
-      thrust::make_transform_output_iterator(fake_key_segment_it,
-                                             detail::ModToTargetTypeOpT<StackSegmentT>{}),
+      cuda::make_transform_output_iterator(fake_key_segment_it,
+                                           detail::ModToTargetTypeOpT<StackSegmentT>{}),
       num_symbols_in,
-      stream));
+      stream.get()));
     CUDF_CUDA_TRY(cub::DeviceScan::InclusiveScanByKey(
       nullptr,
       scan_by_key_bytes,
@@ -392,7 +392,7 @@ void sparse_stack_op_to_top_of_stack(StackSymbolItT d_symbols,
       detail::AddStackLevelFromStackOp<StackSymbolToStackOpTypeT>{symbol_to_stack_op},
       num_symbols_in,
       cuda::std::equal_to{},
-      stream));
+      stream.get()));
     stack_level_scan_bytes = std::max(gen_segments_scan_bytes, scan_by_key_bytes);
   } else {
     CUDF_CUDA_TRY(cub::DeviceScan::InclusiveScan(
@@ -402,7 +402,7 @@ void sparse_stack_op_to_top_of_stack(StackSymbolItT d_symbols,
       d_kv_operations.Current(),
       detail::AddStackLevelFromStackOp<StackSymbolToStackOpTypeT>{symbol_to_stack_op},
       num_symbols_in,
-      stream));
+      stream.get()));
   }
 
   // Getting temporary storage requirements for the stable radix sort (sorting by stack level of the
@@ -414,7 +414,7 @@ void sparse_stack_op_to_top_of_stack(StackSymbolItT d_symbols,
                                                 num_symbols_in,
                                                 begin_bit,
                                                 end_bit,
-                                                stream));
+                                                stream.get()));
 
   // Getting temporary storage requirements for the scan to match pop operations with the latest
   // push of the same level
@@ -425,7 +425,7 @@ void sparse_stack_op_to_top_of_stack(StackSymbolItT d_symbols,
     kv_ops_scan_out,
     detail::PopulatePopWithPush<StackSymbolToStackOpTypeT>{symbol_to_stack_op},
     num_symbols_in,
-    stream));
+    stream.get()));
 
   // Getting temporary storage requirements for the scan to propagate top-of-stack for spots that
   // didn't push or pop
@@ -437,7 +437,7 @@ void sparse_stack_op_to_top_of_stack(StackSymbolItT d_symbols,
                                    detail::PropagateLastWrite<StackSymbolT>{read_symbol},
                                    empty_stack_symbol,
                                    num_symbols_out,
-                                   stream));
+                                   stream.get()));
 
   // Scratch memory required by the algorithms
   auto total_temp_storage_bytes = std::max({stack_level_scan_bytes,
@@ -469,7 +469,7 @@ void sparse_stack_op_to_top_of_stack(StackSymbolItT d_symbols,
   // Compute prefix sum of the stack level after each operation
   if constexpr (supports_reset_op) {
     // Iterator that returns `1` for every symbol that corresponds to a `reset` operation
-    auto reset_segments_it = thrust::make_transform_iterator(
+    auto reset_segments_it = cuda::transform_iterator(
       d_symbols,
       detail::NewlineToResetStackSegmentOp<StackSymbolToStackOpTypeT>{symbol_to_stack_op});
 
@@ -478,10 +478,10 @@ void sparse_stack_op_to_top_of_stack(StackSymbolItT d_symbols,
       temp_storage.data(),
       total_temp_storage_bytes,
       reset_segments_it,
-      thrust::make_transform_output_iterator(key_segments.data(),
-                                             detail::ModToTargetTypeOpT<StackSegmentT>{}),
+      cuda::make_transform_output_iterator(key_segments.data(),
+                                           detail::ModToTargetTypeOpT<StackSegmentT>{}),
       num_symbols_in,
-      stream));
+      stream.get()));
     CUDF_CUDA_TRY(cub::DeviceScan::InclusiveScanByKey(
       temp_storage.data(),
       total_temp_storage_bytes,
@@ -491,7 +491,7 @@ void sparse_stack_op_to_top_of_stack(StackSymbolItT d_symbols,
       detail::AddStackLevelFromStackOp<StackSymbolToStackOpTypeT>{symbol_to_stack_op},
       num_symbols_in,
       cuda::std::equal_to{},
-      stream));
+      stream.get()));
   } else {
     CUDF_CUDA_TRY(cub::DeviceScan::InclusiveScan(
       temp_storage.data(),
@@ -500,7 +500,7 @@ void sparse_stack_op_to_top_of_stack(StackSymbolItT d_symbols,
       d_kv_operations.Current(),
       detail::AddStackLevelFromStackOp<StackSymbolToStackOpTypeT>{symbol_to_stack_op},
       num_symbols_in,
-      stream));
+      stream.get()));
   }
 
   // Check if the last element of d_kv_operations is 0. If not, then we have a problem.
@@ -520,7 +520,7 @@ void sparse_stack_op_to_top_of_stack(StackSymbolItT d_symbols,
                                                 num_symbols_in,
                                                 begin_bit,
                                                 end_bit,
-                                                stream));
+                                                stream.get()));
 
   // transform_iterator that remaps all operations on stack level 0 to the empty stack symbol
   kv_ops_scan_in  = {reinterpret_cast<StackOpT*>(d_kv_operations_unsigned.Current()),
@@ -535,7 +535,7 @@ void sparse_stack_op_to_top_of_stack(StackSymbolItT d_symbols,
     kv_ops_scan_out,
     detail::PopulatePopWithPush<StackSymbolToStackOpTypeT>{symbol_to_stack_op},
     num_symbols_in,
-    stream));
+    stream.get()));
 
   // Fill the output tape with read-symbol
   thrust::fill(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
@@ -544,7 +544,7 @@ void sparse_stack_op_to_top_of_stack(StackSymbolItT d_symbols,
                read_symbol);
 
   // transform_iterator the stack operations to the stack symbol they represent
-  thrust::transform_iterator<detail::StackOpToStackSymbol, StackOpT*> kv_op_to_stack_sym_it(
+  cuda::transform_iterator<detail::StackOpToStackSymbol, StackOpT*> kv_op_to_stack_sym_it(
     kv_ops_scan_out, detail::StackOpToStackSymbol{});
 
   // Scatter the stack symbols to the output tape (spots that are not scattered to have been
@@ -566,7 +566,7 @@ void sparse_stack_op_to_top_of_stack(StackSymbolItT d_symbols,
                                    detail::PropagateLastWrite<StackSymbolT>{read_symbol},
                                    empty_stack_symbol,
                                    num_symbols_out,
-                                   stream));
+                                   stream.get()));
 }
 
 }  // namespace cudf::io::fst

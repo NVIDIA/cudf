@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -38,7 +38,7 @@ static void bench_slice(nvbench::state& state)
     cudf::test::fixed_width_column_wrapper<cudf::size_type>(stops_itr, stops_itr + num_rows);
 
   auto stream = cudf::get_default_stream();
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.value()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.get()));
   // gather some throughput statistics as well
   auto const data_size = column->alloc_size();
   state.add_global_memory_reads<nvbench::int8_t>(data_size);  // all bytes are read
@@ -52,7 +52,11 @@ static void bench_slice(nvbench::state& state)
     });
   } else {
     state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
-      cudf::strings::slice_strings(input, row_width / 4, row_width / 3, 1, stream);
+      cudf::strings::slice_strings(input,
+                                   std::optional<cudf::size_type>(row_width / 4),
+                                   std::optional<cudf::size_type>(row_width / 3),
+                                   std::optional<cudf::size_type>(1),
+                                   stream);
     });
   }
   state.add_buffer_size(

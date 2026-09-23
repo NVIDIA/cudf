@@ -12,9 +12,9 @@ rapids-logger "Configuring conda strict channel priority"
 conda config --set channel_priority strict
 
 rapids-logger "Downloading artifacts from previous jobs"
-CPP_CHANNEL=$(rapids-download-conda-from-github cpp)
-PYTHON_CHANNEL=$(rapids-download-from-github "$(rapids-package-name conda_python cudf --stable --cuda)")
-PYTHON_NOARCH_CHANNEL=$(rapids-download-from-github "$(rapids-package-name conda_python cudf --pure --cuda "${RAPIDS_CUDA_VERSION}")")
+CPP_CHANNEL=$(rapids-download-from-github "$(rapids-artifact-name conda_cpp libcudf cudf --cuda "$RAPIDS_CUDA_VERSION")")
+PYTHON_CHANNEL=$(rapids-download-from-github "$(rapids-artifact-name conda_python cudf cudf --stable --cuda "$RAPIDS_CUDA_VERSION")")
+PYTHON_NOARCH_CHANNEL=$(rapids-download-from-github "$(rapids-artifact-name conda_python cudf cudf --pure --arch any --cuda "$RAPIDS_CUDA_VERSION")")
 
 rapids-logger "Generate Python testing dependencies"
 

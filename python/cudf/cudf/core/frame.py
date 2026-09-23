@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from __future__ import annotations
@@ -35,6 +35,7 @@ from cudf.core.dtype.validators import (
 )
 from cudf.core.mixins import BinaryOperand, Scannable
 from cudf.utils.dtypes import (
+    _is_dtypes_object_mixed_with_bool_with_numeric_or_datetime_with_timedelta,
     dtype_from_pylibcudf_column,
     find_common_type,
     is_pandas_nullable_extension_dtype,
@@ -249,7 +250,7 @@ class Frame(BinaryOperand, Scannable, Serializable):
         keys: list[int],
         keep: Literal["first", "last", False],
         nulls_are_equal: bool,
-    ) -> list[plc.Column]:
+    ) -> tuple[plc.Column, ...]:
         """Core stable_distinct implementation shared by Index and IndexedFrame."""
         _keep_options = {
             "first": plc.stream_compaction.DuplicateKeepOption.KEEP_FIRST,
@@ -277,7 +278,7 @@ class Frame(BinaryOperand, Scannable, Serializable):
         keys: list[int],
         how: Literal["any", "all"],
         thresh: int | None = None,
-    ) -> list[plc.Column]:
+    ) -> tuple[plc.Column, ...]:
         """Core drop_nulls implementation shared by Index and IndexedFrame."""
         if how not in {"any", "all"}:
             raise ValueError("how must be 'any' or 'all'")
@@ -705,10 +706,37 @@ class Frame(BinaryOperand, Scannable, Serializable):
         if dtype is None:
             if ncol == 1:
                 to_dtype = next(self._dtypes)[1]
+                if (na_value is no_default or na_value is None) and (
+                    isinstance(to_dtype, np.dtype)
+                    and to_dtype.kind in "iu"
+                    and self._columns[0].has_nulls()
+                ):
+                    # A single nullable integer column must be promoted to
+                    # float64 so its nulls can be represented as NaN, matching
+                    # Series.to_numpy()/.values and the multi-column path
+                    # below. ``na_value`` is left unset (``no_default`` for
+                    # ``to_numpy`` / ``None`` for ``to_cupy``), so the nulls
+                    # are not being filled and the integer output buffer would
+                    # otherwise store the null sentinel instead.
+                    to_dtype = np.dtype("float64")
             else:
-                to_dtype = find_common_type(
-                    [dtype for _, dtype in self._dtypes]
-                )
+                column_dtypes = [dtype for _, dtype in self._dtypes]
+                if (
+                    module is not cupy
+                    and cudf.get_option("mode.pandas_compatible")
+                    and _is_dtypes_object_mixed_with_bool_with_numeric_or_datetime_with_timedelta(
+                        column_dtypes
+                    )
+                ):
+                    # pandas coerces bool+numeric and datetime64+timedelta64
+                    # mixes to `object` rather than promoting them; match
+                    # that here instead of calling find_common_type (which
+                    # raises in this case so the cudf.pandas proxy can fall
+                    # back to pandas). GPU arrays can't hold objects, so this
+                    # fallback only applies to numpy output.
+                    to_dtype = np.dtype("object")
+                else:
+                    to_dtype = find_common_type(column_dtypes)
                 if to_dtype is not None and any(
                     col.has_nulls() for col in self._columns
                 ):
@@ -1556,7 +1584,7 @@ class Frame(BinaryOperand, Scannable, Serializable):
         0    1
         1    2
         2    0
-        dtype: int32
+        dtype: int64
         >>> s[s.argsort()]
         1    1
         2    2
@@ -1567,13 +1595,13 @@ class Frame(BinaryOperand, Scannable, Serializable):
         >>> import cudf
         >>> df = cudf.DataFrame({'foo': [3, 1, 2]})
         >>> df.argsort()
-        array([1, 2, 0], dtype=int32)
+        array([1, 2, 0])
 
         **Index**
         >>> import cudf
         >>> idx = cudf.Index([3, 1, 2])
         >>> idx.argsort()
-        array([1, 2, 0], dtype=int32)
+        array([1, 2, 0])
         """
         if na_position not in {"first", "last"}:
             raise ValueError(f"invalid na_position: {na_position}")
@@ -1590,9 +1618,11 @@ class Frame(BinaryOperand, Scannable, Serializable):
 
         if isinstance(by, str):
             by = [by]
+        # numpy and pandas return ``np.intp`` (int64) positional indexers;
+        # return the same so cuDF's ``argsort`` output dtype matches.
         return self._get_sorted_inds(
             by=by, ascending=ascending, na_position=na_position
-        ).values
+        ).values.astype(np.intp)
 
     @_performance_tracking
     def _get_sorted_inds(
@@ -1932,7 +1962,7 @@ class Frame(BinaryOperand, Scannable, Serializable):
         b    7
         dtype: int64
         >>> min_series.min()
-        1
+        np.int64(1)
 
         .. pandas-compat::
             :meth:`pandas.DataFrame.min`, :meth:`pandas.Series.min`

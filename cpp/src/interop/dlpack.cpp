@@ -1,10 +1,11 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #include <cudf/column/column_factories.hpp>
 #include <cudf/detail/interop.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
+#include <cudf/detail/utilities/cuda.hpp>
 #include <cudf/detail/utilities/cuda_memcpy.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/error.hpp>
@@ -12,7 +13,7 @@
 #include <cudf/utilities/type_checks.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
+#include <cuda/stream>
 
 #include <dlpack/dlpack.h>
 
@@ -123,7 +124,7 @@ struct dltensor_context {
 
 namespace detail {
 std::unique_ptr<table> from_dlpack(DLManagedTensor const* managed_tensor,
-                                   rmm::cuda_stream_view stream,
+                                   cuda::stream_ref stream,
                                    rmm::device_async_resource_ref mr)
 {
   CUDF_EXPECTS(nullptr != managed_tensor, "managed_tensor is null");
@@ -206,7 +207,7 @@ std::unique_ptr<table> from_dlpack(DLManagedTensor const* managed_tensor,
 }
 
 DLManagedTensor* to_dlpack(table_view const& input,
-                           rmm::cuda_stream_view stream,
+                           cuda::stream_ref stream,
                            rmm::device_async_resource_ref mr)
 {
   auto const num_rows = input.num_rows();
@@ -274,7 +275,7 @@ DLManagedTensor* to_dlpack(table_view const& input,
 
   // synchronize the stream because after the return the data may be accessed from the host before
   // the above async copies have completed (especially if pinned host memory is used).
-  stream.synchronize();
+  cudf::detail::sync_stream(stream);
 
   return managed_tensor.release();
 }
@@ -282,7 +283,7 @@ DLManagedTensor* to_dlpack(table_view const& input,
 }  // namespace detail
 
 std::unique_ptr<table> from_dlpack(DLManagedTensor const* managed_tensor,
-                                   rmm::cuda_stream_view stream,
+                                   cuda::stream_ref stream,
                                    rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
@@ -290,7 +291,7 @@ std::unique_ptr<table> from_dlpack(DLManagedTensor const* managed_tensor,
 }
 
 DLManagedTensor* to_dlpack(table_view const& input,
-                           rmm::cuda_stream_view stream,
+                           cuda::stream_ref stream,
                            rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();

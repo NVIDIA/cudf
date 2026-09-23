@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -16,7 +16,6 @@
 #include <cub/device/device_reduce.cuh>
 #include <cuda/iterator>
 #include <thrust/execution_policy.h>
-#include <thrust/iterator/transform_iterator.h>
 #include <thrust/reduce.h>
 
 #include <nvbench/nvbench.cuh>
@@ -116,7 +115,7 @@ void bench_iterator_cub_raw(nvbench::state& state)
     1, cudf::get_default_stream(), cudf::get_current_device_resource_ref());
 
   auto stream = cudf::get_default_stream();
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.value()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.get()));
 
   auto const data_size = column_size * sizeof(T);
   state.add_global_memory_reads<nvbench::int8_t>(data_size);
@@ -140,7 +139,7 @@ void bench_iterator_cub_iter(nvbench::state& state)
     1, cudf::get_default_stream(), cudf::get_current_device_resource_ref());
 
   auto stream = cudf::get_default_stream();
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.value()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.get()));
 
   auto const data_size = column_size * sizeof(T);
   state.add_global_memory_reads<nvbench::int8_t>(data_size);
@@ -164,7 +163,7 @@ void bench_iterator_thrust_raw(nvbench::state& state)
     1, cudf::get_default_stream(), cudf::get_current_device_resource_ref());
 
   auto stream = cudf::get_default_stream();
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.value()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.get()));
 
   auto const data_size = column_size * sizeof(T);
   state.add_global_memory_reads<nvbench::int8_t>(data_size);
@@ -188,7 +187,7 @@ void bench_iterator_thrust_iter(nvbench::state& state)
     1, cudf::get_default_stream(), cudf::get_current_device_resource_ref());
 
   auto stream = cudf::get_default_stream();
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.value()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.get()));
 
   auto const data_size = column_size * sizeof(T);
   state.add_global_memory_reads<nvbench::int8_t>(data_size);

@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from __future__ import annotations
@@ -10,15 +10,16 @@ import numpy as np
 import pylibcudf as plc
 import pytest
 
-from cudf_streaming.integrations.partition import (
-    split_and_pack,
-    unpack_and_concat,
-)
-from cudf_streaming.streaming.partition import (
+from cudf_streaming.partition import (
     partition_and_pack,
     unpack_and_concat as streaming_unpack_and_concat,
 )
-from cudf_streaming.streaming.table_chunk import TableChunk
+from cudf_streaming.partition_utils import (
+    split_and_pack,
+    unpack_and_concat,
+)
+from cudf_streaming.table_chunk import TableChunk
+from cudf_streaming.testing import assert_eq
 from rapidsmpf.shuffler import PartitionAssignment
 from rapidsmpf.streaming.coll.shuffler import (
     ShufflerAsync,
@@ -30,7 +31,6 @@ from rapidsmpf.streaming.core.leaf_actor import (
     push_to_channel,
 )
 from rapidsmpf.streaming.core.message import Message
-from rapidsmpf.testing import assert_eq
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable
@@ -135,7 +135,7 @@ async def generate_inputs(
     context: Context, ch: Channel[TableChunk], num_rows: int, num_chunks: int
 ) -> None:
     for i in range(num_chunks):
-        stream = context.get_stream_from_pool()
+        stream = context.br().stream_pool.get_stream()
         table = plc.Table(
             [
                 plc.Column.from_array(
@@ -185,7 +185,7 @@ async def do_shuffle(
     await shuffle.insert_finished(context)
     for pid in shuffle.local_partitions():
         data = shuffle.extract(pid)
-        stream = context.get_stream_from_pool()
+        stream = context.br().stream_pool.get_stream()
         unpacked = TableChunk.from_pylibcudf_table(
             unpack_and_concat(data, stream, context.br()),
             stream,

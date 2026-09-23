@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Self, cast
@@ -50,7 +50,7 @@ class GatherMap:
     def __init__(self, column: Any, nrows: int, *, nullify: bool):
         #: The gather map
         self.column = cast(
-            cudf.core.column.NumericalColumn,
+            "cudf.core.column.NumericalColumn",
             cudf.core.column.as_column(column),
         )
         self.nrows = nrows
@@ -138,7 +138,7 @@ class BooleanMask:
     def __init__(self, column: Any, nrows: int):
         #: The boolean mask
         self.column = cast(
-            cudf.core.column.NumericalColumn,
+            "cudf.core.column.NumericalColumn",
             cudf.core.column.as_column(column),
         )
         if self.column.dtype.kind != "b":

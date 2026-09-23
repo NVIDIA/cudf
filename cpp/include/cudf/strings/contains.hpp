@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -10,6 +10,11 @@
 #include <cudf/strings/strings_column_view.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
+/**
+ * @file strings/contains.hpp
+ * @brief Strings APIs for regex contains, count, matches, like
+ */
+
 namespace CUDF_EXPORT cudf {
 namespace strings {
 
@@ -18,8 +23,6 @@ struct regex_program;
 /**
  * @addtogroup strings_contains
  * @{
- * @file strings/contains.hpp
- * @brief Strings APIs for regex contains, count, matches, like
  */
 
 /**
@@ -47,7 +50,7 @@ struct regex_program;
 std::unique_ptr<column> contains_re(
   strings_column_view const& input,
   regex_program const& prog,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -75,7 +78,7 @@ std::unique_ptr<column> contains_re(
 std::unique_ptr<column> matches_re(
   strings_column_view const& input,
   regex_program const& prog,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -103,7 +106,7 @@ std::unique_ptr<column> matches_re(
 std::unique_ptr<column> count_re(
   strings_column_view const& input,
   regex_program const& prog,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -153,7 +156,7 @@ std::unique_ptr<column> like(
   strings_column_view const& input,
   std::string_view const& pattern,
   std::string_view const& escape_character = "",
-  rmm::cuda_stream_view stream             = cudf::get_default_stream(),
+  cuda::stream_ref stream                  = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr        = cudf::get_current_device_resource_ref());
 
 /**
@@ -193,7 +196,7 @@ std::unique_ptr<column> like(
   strings_column_view const& input,
   strings_column_view const& patterns,
   string_scalar const& escape_character = string_scalar(""),
-  rmm::cuda_stream_view stream          = cudf::get_default_stream(),
+  cuda::stream_ref stream               = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr     = cudf::get_current_device_resource_ref());
 
 /** @} */  // end of doxygen group

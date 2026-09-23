@@ -1,5 +1,5 @@
 #!/bin/bash
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 set -euo pipefail
@@ -9,21 +9,38 @@ source rapids-init-pip
 rapids-logger "Download wheels"
 
 RAPIDS_PY_CUDA_SUFFIX="$(rapids-wheel-ctk-name-gen "${RAPIDS_CUDA_VERSION}")"
-CUDF_POLARS_WHEELHOUSE=$(RAPIDS_PY_WHEEL_NAME="cudf_polars_${RAPIDS_PY_CUDA_SUFFIX}" RAPIDS_PY_WHEEL_PURE="1" rapids-download-wheels-from-github python)
-
-# Download libcudf and pylibcudf built in the previous step
-LIBCUDF_WHEELHOUSE=$(RAPIDS_PY_WHEEL_NAME="libcudf_${RAPIDS_PY_CUDA_SUFFIX}" rapids-download-wheels-from-github cpp)
-PYLIBCUDF_WHEELHOUSE=$(rapids-download-from-github "$(rapids-package-name "wheel_python" pylibcudf --stable --cuda "$RAPIDS_CUDA_VERSION")")
+LIBCUDF_WHEELHOUSE=$(rapids-download-from-github "$(rapids-artifact-name wheel_cpp libcudf cudf --cuda "$RAPIDS_CUDA_VERSION")")
+PYLIBCUDF_WHEELHOUSE=$(rapids-download-from-github "$(rapids-artifact-name wheel_python pylibcudf cudf --stable --cuda "$RAPIDS_CUDA_VERSION")")
+CUDF_POLARS_WHEELHOUSE=$(rapids-download-from-github "$(rapids-artifact-name wheel_python cudf-polars cudf --pure --arch any --cuda "$RAPIDS_CUDA_VERSION")")
 
 # Download libcudf_streaming and cudf_streaming built in the previous step
-LIBCUDF_STREAMING_WHEELHOUSE=$(RAPIDS_PY_WHEEL_NAME="libcudf_streaming_${RAPIDS_PY_CUDA_SUFFIX}" rapids-download-wheels-from-github cpp)
-CUDF_STREAMING_WHEELHOUSE=$(rapids-download-from-github "$(rapids-package-name "wheel_python" cudf_streaming --stable --cuda "$RAPIDS_CUDA_VERSION")")
+LIBCUDF_STREAMING_WHEELHOUSE=$(rapids-download-from-github "$(rapids-artifact-name wheel_cpp libcudf-streaming cudf --cuda "$RAPIDS_CUDA_VERSION")")
+CUDF_STREAMING_WHEELHOUSE=$(rapids-download-from-github "$(rapids-artifact-name wheel_python cudf-streaming cudf --stable --cuda "$RAPIDS_CUDA_VERSION")")
 
 # generate constraints (possibly pinning to oldest support versions of dependencies)
-rapids-generate-pip-constraints py_test_cudf_polars "${PIP_CONSTRAINT}"
+rapids-generate-pip-constraints py_test_cudf_polars "${PIP_CONSTRAINT}" constraints
 
 read -r -a VERSIONS <<< "$(python ci/utils/get_matrix_values.py dependencies.yaml test_cudf_polars_compat polars_compat_version)"
+
+if [[ "${POLARS_VERSIONS:-all}" == "endpoints" ]] && [[ ${#VERSIONS[@]} -ge 2 ]]; then
+    VERSIONS=("${VERSIONS[0]}" "${VERSIONS[-1]}")
+fi
+
 LATEST_VERSION="${VERSIONS[-1]}"
+
+if [[ "${POLARS_VERSIONS:-all}" == "endpoints" ]] && [[ ${#VERSIONS[@]} -eq 2 ]]; then
+    # Split the two endpoint versions across the two CUDA-major matrix entries so each
+    # entry tests one version in parallel, instead of both serially in a single job.
+    # LATEST_VERSION (set above) is left untouched, so coverage is still only enforced
+    # on whichever entry ends up testing it.
+    read -r -a CUDA_MAJORS <<< "$(python ci/utils/get_matrix_values.py dependencies.yaml all cuda | tr ' ' '\n' | cut -d. -f1 | sort -nu | tr '\n' ' ')"
+    THIS_CUDA_MAJOR="${RAPIDS_CUDA_VERSION%%.*}"
+    if [[ "${THIS_CUDA_MAJOR}" == "${CUDA_MAJORS[0]}" ]]; then
+        VERSIONS=("${VERSIONS[0]}")
+    else
+        VERSIONS=("${VERSIONS[-1]}")
+    fi
+fi
 
 # shellcheck disable=SC2317
 function set_exitcode()
@@ -86,13 +103,13 @@ for version in "${VERSIONS[@]}"; do
         COVERAGE_ARGS=(--no-cov)
     fi
 
+    # Fail fast (-x) rather than trying to continue because failed tests pollute the state
     ./ci/run_cudf_polars_pytests.sh \
-        -vv \
         "${COVERAGE_ARGS[@]}" \
-        --numprocesses=8 \
+        --numprocesses=4 \
         --dist=worksteal \
-        --durations 10 --durations-min 10 \
-        -ra \
+        --durations=50 --durations-min=1 \
+        -x \
         --junitxml="${RAPIDS_TESTS_DIR}/junit-cudf-polars-${version}.xml"
 
     test_exitcode=$?
@@ -103,6 +120,7 @@ for version in "${VERSIONS[@]}"; do
         EXITCODE=1
         FAILED+=("${version}")
         rapids-logger "Tests failed for polars ${version}.*"
+        break
     else
         PASSED+=("${version}")
         rapids-logger "Tests passed for polars ${version}.*"

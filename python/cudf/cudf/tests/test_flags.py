@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import operator
@@ -508,7 +508,7 @@ def test_iloc_raises_duplicate_label_error():
 @pytest.mark.parametrize("left_flag", [True, False])
 @pytest.mark.parametrize("right_flag", [True, False])
 def test_concat_flags_anded(frame_or_series, left_flag, right_flag):
-    cu_cls, pd_cls = frame_or_series
+    cu_cls, _pd_cls = frame_or_series
     if cu_cls is cudf.Series:
         cu_a = cudf.Series([1], index=["a"]).set_flags(
             allows_duplicate_labels=left_flag

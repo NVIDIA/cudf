@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -7,8 +7,13 @@
 #include "mixed_join_common_utils.cuh"
 
 #include <cudf/ast/detail/expression_evaluator.cuh>
+#include <cudf/types.hpp>
+
+#include <rmm/mr/polymorphic_allocator.hpp>
 
 #include <cuco/static_set.cuh>
+
+#include <cstddef>
 
 namespace cudf::detail {
 

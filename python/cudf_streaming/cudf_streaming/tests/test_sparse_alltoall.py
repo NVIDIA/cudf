@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 """Tests for SparseAlltoall functionality."""
 
@@ -10,13 +10,13 @@ import numpy as np
 import pylibcudf as plc
 import pytest
 
-from cudf_streaming.integrations.partition import (
+from cudf_streaming.partition_utils import (
     packed_data_from_cudf_packed_columns,
     unpack_and_concat,
 )
+from cudf_streaming.testing import assert_eq
 from rapidsmpf.coll.sparse_alltoall import SparseAlltoall
 from rapidsmpf.memory.buffer_resource import BufferResource
-from rapidsmpf.testing import assert_eq
 
 if TYPE_CHECKING:
     import rmm.mr

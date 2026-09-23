@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import contextlib
 import doctest
@@ -7,17 +7,8 @@ import io
 
 import numpy as np
 import pytest
-from packaging import version
 
 import cudf
-
-_SKIP_DOCTESTS = frozenset(
-    {
-        "register_dataframe_accessor",
-        "register_index_accessor",
-        "register_series_accessor",
-    }
-)
 
 # modules that will be searched for doctests
 tests = [
@@ -108,8 +99,20 @@ def _collect_doctests():
     mutable shared state.
     """
     results = []
+    seen = set()
     for mod in tests:
         for docstring in _find_doctests_in_obj(mod):
+            # The public API exposes many inherited and re-exported methods.
+            # Test each source docstring once, regardless of its public path.
+            key = (
+                docstring.name,
+                docstring.filename,
+                docstring.lineno,
+                docstring.docstring,
+            )
+            if key in seen:
+                continue
+            seen.add(key)
             if (mark := marks_for_doctests.get(docstring.name)) is not None:
                 doc = pytest.param(docstring, marks=mark)
             else:
@@ -122,16 +125,6 @@ _all_doctests = _collect_doctests()
 
 
 class TestDoctests:
-    @pytest.fixture(autouse=True)
-    def printoptions(cls):
-        # TODO: NumPy now prints scalars as `np.int8(1)`, etc. this should
-        #       be adapted evantually.
-        if version.parse(np.__version__) >= version.parse("2.0"):
-            with np.printoptions(legacy="1.25"):
-                yield
-        else:
-            yield
-
     @pytest.mark.parametrize(
         "docstring",
         _all_doctests,

@@ -1,17 +1,30 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
 #pragma once
 
+#include <cudf/io/parquet_schema.hpp>
+
 #include <cstddef>
+#include <span>
 #include <string>
 #include <string_view>
 #include <unordered_map>
 #include <unordered_set>
 
 namespace cudf::io::parquet::detail {
+
+/**
+ * @brief Gets the dot-separated path for a schema element.
+ *
+ * @param schema_tree The schema tree describing the file structure
+ * @param schema_idx Index of the schema element
+ * @return Dot-separated schema path from the root child to the schema element
+ */
+[[nodiscard]] std::string column_path_from_index(std::span<SchemaElement const> schema_tree,
+                                                 int schema_idx);
 
 /**
  * @brief Returns a normalized (lowercased) column name or path when case-insensitive matching is

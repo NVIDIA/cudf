@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -322,11 +322,11 @@ class device_row_comparator {
         }
         if (lcol.type().id() == type_id::STRUCT) {
           if (lcol.num_child_columns() == 0) { return true; }
-          lcol = detail::structs_column_device_view(lcol).get_sliced_child(0);
-          rcol = detail::structs_column_device_view(rcol).get_sliced_child(0);
+          lcol = structs_column_device_view(lcol).get_sliced_child(0);
+          rcol = structs_column_device_view(rcol).get_sliced_child(0);
         } else if (lcol.type().id() == type_id::LIST) {
-          auto l_list_col = detail::lists_column_device_view(lcol);
-          auto r_list_col = detail::lists_column_device_view(rcol);
+          auto l_list_col = lists_column_device_view(lcol);
+          auto r_list_col = lists_column_device_view(rcol);
 
           auto lsizes = make_list_size_iterator(l_list_col);
           auto rsizes = make_list_size_iterator(r_list_col);
@@ -407,9 +407,12 @@ class self_comparator {
    * @param t The table to compare
    * @param stream The stream to construct this object on. Not the stream that will be used for
    * comparisons using this object.
+   * @param temp_mr Device memory resource used for temporary allocations
    */
-  self_comparator(table_view const& t, rmm::cuda_stream_view stream)
-    : d_t(preprocessed_table::create(t, stream))
+  self_comparator(table_view const& t,
+                  cuda::stream_ref stream,
+                  rmm::device_async_resource_ref temp_mr)
+    : d_t(preprocessed_table::create(t, stream, temp_mr))
   {
   }
 
@@ -515,10 +518,12 @@ class two_table_comparator {
    * @param right The right table to compare.
    * @param stream The stream to construct this object on. Not the stream that will be used for
    * comparisons using this object.
+   * @param temp_mr Device memory resource used for temporary allocations
    */
   two_table_comparator(table_view const& left,
                        table_view const& right,
-                       rmm::cuda_stream_view stream);
+                       cuda::stream_ref stream,
+                       rmm::device_async_resource_ref temp_mr);
 
   /**
    * @brief Construct an owning object for performing equality comparisons between two rows from two

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -8,13 +8,17 @@
 
 #include <cuda/std/cstdint>
 
+/**
+ * @file
+ * @brief Enum defining the supported AST operators.
+ */
+
 namespace CUDF_EXPORT cudf {
 
 namespace ast {
 /**
  * @addtogroup expressions
  * @{
- * @file
  */
 
 /**
@@ -22,21 +26,22 @@ namespace ast {
  */
 enum class ast_operator : int32_t {
   // Binary operators
-  ADD,         ///< operator +
-  SUB,         ///< operator -
-  MUL,         ///< operator *
-  DIV,         ///< operator / using common type of lhs and rhs
-  TRUE_DIV,    ///< operator / after promoting type to floating point
-  FLOOR_DIV,   ///< operator / after promoting to the common type of lhs and rhs (integral or
-               ///< floating point), and then flooring the result
-  MOD,         ///< operator %
-  PYMOD,       ///< operator % using Python's sign rules for negatives
-  POW,         ///< lhs ^ rhs
-  EQUAL,       ///< operator ==
-  NULL_EQUAL,  ///< operator == with Spark rules: NULL_EQUAL(null, null) is true, NULL_EQUAL(null,
-               ///< valid) is false, and
-               ///< NULL_EQUAL(valid, valid) == EQUAL(valid, valid)
-  NOT_EQUAL,   ///< operator !=
+  ADD,        ///< operator +
+  SUB,        ///< operator -
+  MUL,        ///< operator *
+  DIV,        ///< operator / using common type of lhs and rhs
+  TRUE_DIV,   ///< operator / after promoting type to floating point
+  FLOOR_DIV,  ///< operator / after promoting to the common type of lhs and rhs (integral or
+              ///< floating point), and then flooring the result
+  MOD,        ///< operator %
+  PYMOD,      ///< operator % using Python's sign rules for negatives
+  POW,        ///< lhs ^ rhs
+  EQUAL,  ///< operator ==: returns NULL when either operand is NULL, otherwise returns whether they
+          ///< are equal
+  NULL_EQUAL,  ///< null-safe equality (result is never null): returns true if both operands are
+               ///< null, false if one is null, otherwise returns whether they are equal
+  NOT_EQUAL,   ///< operator !=: returns NULL when either operand is NULL, otherwise returns whether
+               ///< they are unequal
   LESS,        ///< operator <
   GREATER,     ///< operator >
   LESS_EQUAL,  ///< operator <=
@@ -44,16 +49,14 @@ enum class ast_operator : int32_t {
   BITWISE_AND,       ///< operator &
   BITWISE_OR,        ///< operator |
   BITWISE_XOR,       ///< operator ^
-  LOGICAL_AND,       ///< operator &&
-  NULL_LOGICAL_AND,  ///< operator && with Spark rules: NULL_LOGICAL_AND(null, null) is null,
-                     ///< NULL_LOGICAL_AND(null, true) is
-                     ///< null, NULL_LOGICAL_AND(null, false) is false, and NULL_LOGICAL_AND(valid,
-                     ///< valid) == LOGICAL_AND(valid, valid)
-  LOGICAL_OR,        ///< operator ||
-  NULL_LOGICAL_OR,   ///< operator || with Spark rules: NULL_LOGICAL_OR(null, null) is null,
-                     ///< NULL_LOGICAL_OR(null, true) is true,
-                     ///< NULL_LOGICAL_OR(null, false) is null, and NULL_LOGICAL_OR(valid, valid) ==
-                     ///< LOGICAL_OR(valid, valid)
+  LOGICAL_AND,       ///< operator &&: returns NULL when either operand is NULL, otherwise returns
+                     ///< true only if both operands are true
+  NULL_LOGICAL_AND,  ///< three-valued (Kleene) &&: if any operand is false, returns false; if both
+                     ///< operands are true, returns true; otherwise returns null
+  LOGICAL_OR,  ///< operator ||: returns NULL when either operand is NULL, otherwise returns true
+               ///< only if either or both operands are true
+  NULL_LOGICAL_OR,  ///< three-valued (Kleene) ||: if any operand is true, returns true; if both
+                    ///< operands are false, returns false; otherwise returns null
   // Unary operators
   IDENTITY,        ///< Identity function
   IS_NULL,         ///< Check if operand is null

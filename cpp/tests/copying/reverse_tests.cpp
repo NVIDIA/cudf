@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -25,6 +25,16 @@ template <typename T>
 class ReverseTypedTestFixture : public cudf::test::BaseFixture {};
 
 TYPED_TEST_SUITE(ReverseTypedTestFixture, cudf::test::AllTypes);
+
+struct ReverseZeroColumnTest : public cudf::test::BaseFixture {};
+
+TEST_F(ReverseZeroColumnTest, PreservesRowCount)
+{
+  cudf::table_view input{std::vector<cudf::column_view>{}, 6};
+  auto result = cudf::reverse(input);
+  EXPECT_EQ(result->num_columns(), 0);
+  EXPECT_EQ(result->num_rows(), 6);
+}
 TYPED_TEST(ReverseTypedTestFixture, ReverseTable)
 {
   using T = TypeParam;

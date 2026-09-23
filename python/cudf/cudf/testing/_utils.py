@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 from __future__ import annotations
 
@@ -78,6 +78,30 @@ def set_random_null_mask_inplace(series, null_probability=0.5):
     rng = np.random.default_rng(seed=0)
     mask = rng.choice([False, True], size=len(series), p=probs)
     series.iloc[mask] = None
+
+
+def gen_rand_ufunc_input(ufunc, rng, size, low=1, high=10):
+    """Generate random input appropriate for a ufunc's valid domain."""
+    name = ufunc.__name__
+    if name.startswith("bitwise") or name in (
+        "invert",
+        "left_shift",
+        "right_shift",
+        "gcd",
+        "lcm",
+        "ldexp",
+        "ceil",
+        "floor",
+        "trunc",
+        "fmod",
+        "remainder",
+    ):
+        return rng.integers(low=low, high=high, size=size)
+    if name == "arccosh":
+        return rng.uniform(low=0.9, high=10.0, size=size)
+    if name in ("log", "log2", "log10", "log1p", "sqrt", "float_power"):
+        return rng.uniform(low=0.0, high=10.0, size=size)
+    return rng.uniform(low=-1.1, high=1.1, size=size)
 
 
 def assert_exceptions_equal(

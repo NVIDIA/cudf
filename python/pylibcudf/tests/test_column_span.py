@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import pytest
@@ -136,7 +136,7 @@ def test_column_rejects_non_span_data():
 
     with pytest.raises(
         TypeError,
-        match="data must satisfy Span protocol.*got NotASpan",
+        match=r"data must satisfy Span protocol.*got NotASpan",
     ):
         plc.Column(
             data_type=plc.DataType(plc.TypeId.INT32),
@@ -157,7 +157,7 @@ def test_column_rejects_non_span_mask():
 
     with pytest.raises(
         TypeError,
-        match="mask must satisfy Span protocol.*got NotASpan",
+        match=r"mask must satisfy Span protocol.*got NotASpan",
     ):
         plc.Column(
             data_type=plc.DataType(plc.TypeId.INT32),

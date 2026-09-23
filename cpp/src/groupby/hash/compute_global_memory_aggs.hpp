@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -9,8 +9,9 @@
 #include <cudf/types.hpp>
 #include <cudf/utilities/span.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/resource_ref.hpp>
+
+#include <cuda/stream>
 
 #include <cstdint>
 #include <memory>
@@ -26,6 +27,6 @@ std::pair<std::unique_ptr<table>, rmm::device_uvector<size_type>> compute_global
   host_span<aggregation::Kind const> h_agg_kinds,
   device_span<aggregation::Kind const> d_agg_kinds,
   std::span<int8_t const> is_agg_intermediate,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr);
 }  // namespace cudf::groupby::detail::hash

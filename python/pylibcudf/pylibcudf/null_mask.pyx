@@ -1,10 +1,13 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+from collections.abc import Sequence
 from libc.stdint cimport uintptr_t
 from libcpp.memory cimport make_unique
 from libcpp.pair cimport pair
 from libcpp.utility cimport move
 from pylibcudf.libcudf cimport null_mask as cpp_null_mask
+from pylibcudf.libcudf.column.column_view cimport column_view
+from pylibcudf.libcudf.table.table_view cimport table_view
 from pylibcudf.libcudf.types cimport mask_state, size_type, bitmask_type
 
 from rmm.librmm.device_buffer cimport device_buffer
@@ -14,11 +17,15 @@ from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 
 from pylibcudf.libcudf.types import mask_state as MaskState  # no-cython-lint
 
-from .span import is_span as py_is_span
+from .span import Span, is_span as py_is_span
 
 from .column cimport Column
 from .table cimport Table
 from .utils cimport _get_stream, _get_memory_resource
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pylibcudf.typing import CudaStreamLike
 from cuda.bindings.cyruntime cimport cudaStream_t
 
 __all__ = [
@@ -41,7 +48,7 @@ cdef DeviceBuffer buffer_to_python(
 
 cpdef DeviceBuffer copy_bitmask(
     Column col,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None
 ):
     """Copies ``col``'s bitmask into a ``DeviceBuffer``.
@@ -65,20 +72,21 @@ cpdef DeviceBuffer copy_bitmask(
     """
     cdef device_buffer db
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
 
+    cdef column_view c_col = col.view()
     with nogil:
-        db = cpp_null_mask.copy_bitmask(col.view(), _cs, mr.get_mr())
+        db = cpp_null_mask.copy_bitmask(c_col, _cs, mr.get_mr())
 
     return buffer_to_python(move(db), _stream, mr)
 
 
 cpdef DeviceBuffer copy_bitmask_from_bitmask(
-    object bitmask,
+    object bitmask: Span,
     size_type begin_bit,
     size_type end_bit,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None
 ):
     """Copies a portion of a bitmask into a ``DeviceBuffer``.
@@ -111,7 +119,7 @@ cpdef DeviceBuffer copy_bitmask_from_bitmask(
         )
     cdef device_buffer db
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
     cdef uintptr_t ptr = bitmask.ptr
 
@@ -151,7 +159,7 @@ cpdef size_t bitmask_allocation_size_bytes(size_type number_of_bits):
 cpdef DeviceBuffer create_null_mask(
     size_type size,
     mask_state state = mask_state.UNINITIALIZED,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None
 ):
     """Creates a ``DeviceBuffer`` for use as a null value indicator bitmask of a
@@ -180,7 +188,7 @@ cpdef DeviceBuffer create_null_mask(
     """
     cdef device_buffer db
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
 
     with nogil:
@@ -189,15 +197,19 @@ cpdef DeviceBuffer create_null_mask(
     return buffer_to_python(move(db), _stream, mr)
 
 
-cpdef tuple bitmask_and(list columns, object stream=None, DeviceMemoryResource mr=None):
+cpdef tuple[DeviceBuffer, int] bitmask_and(
+    columns: Sequence[Column],
+    object stream: CudaStreamLike | None = None,
+    DeviceMemoryResource mr=None,
+):
     """Performs bitwise AND of the bitmasks of a list of columns.
 
     For details, see :cpp:func:`bitmask_and`.
 
     Parameters
     ----------
-    columns : list
-        The list of columns
+    columns : Sequence[Column]
+        The columns
     stream : Stream | None
         CUDA stream on which to perform the operation.
     mr : DeviceMemoryResource | None
@@ -211,26 +223,31 @@ cpdef tuple bitmask_and(list columns, object stream=None, DeviceMemoryResource m
     cdef Table c_table = Table(columns)
     cdef pair[device_buffer, size_type] c_result
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
 
+    cdef table_view c_input = c_table.view()
     with nogil:
         c_result = cpp_null_mask.bitmask_and(
-            c_table.view(), _cs, mr.get_mr()
+            c_input, _cs, mr.get_mr()
         )
 
     return buffer_to_python(move(c_result.first), _stream, mr), c_result.second
 
 
-cpdef tuple bitmask_or(list columns, object stream=None, DeviceMemoryResource mr=None):
+cpdef tuple[DeviceBuffer, int] bitmask_or(
+    columns: Sequence[Column],
+    object stream: CudaStreamLike | None = None,
+    DeviceMemoryResource mr=None,
+):
     """Performs bitwise OR of the bitmasks of a list of columns.
 
     For details, see :cpp:func:`bitmask_or`.
 
     Parameters
     ----------
-    columns : list
-        The list of columns
+    columns : Sequence[Column]
+        The columns
     stream : Stream | None
         CUDA stream on which to perform the operation.
     mr : DeviceMemoryResource | None
@@ -244,20 +261,21 @@ cpdef tuple bitmask_or(list columns, object stream=None, DeviceMemoryResource mr
     cdef Table c_table = Table(columns)
     cdef pair[device_buffer, size_type] c_result
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
 
+    cdef table_view c_input = c_table.view()
     with nogil:
-        c_result = cpp_null_mask.bitmask_or(c_table.view(), _cs, mr.get_mr())
+        c_result = cpp_null_mask.bitmask_or(c_input, _cs, mr.get_mr())
 
     return buffer_to_python(move(c_result.first), _stream, mr), c_result.second
 
 
 cpdef size_type null_count(
-    object bitmask,
+    object bitmask: Span,
     size_type start,
     size_type stop,
-    object stream=None
+    object stream: CudaStreamLike | None = None
 ):
     """Given a validity bitmask, counts the number of null elements.
 
@@ -286,7 +304,7 @@ cpdef size_type null_count(
         )
     cdef uintptr_t ptr = bitmask.ptr
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     with nogil:
         return cpp_null_mask.null_count(
             <bitmask_type*>ptr,
@@ -296,10 +314,10 @@ cpdef size_type null_count(
         )
 
 cpdef size_type index_of_first_set_bit(
-    object bitmask,
+    object bitmask: Span,
     size_type start,
     size_type stop,
-    object stream=None
+    object stream: CudaStreamLike | None = None
 ):
     """Given a validity bitmask, returns the index of the first valid element
     relative to ``start``.
@@ -329,7 +347,7 @@ cpdef size_type index_of_first_set_bit(
         )
     cdef uintptr_t ptr = bitmask.ptr
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     with nogil:
         return cpp_null_mask.index_of_first_set_bit(
             <bitmask_type*>ptr,

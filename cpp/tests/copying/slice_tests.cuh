@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -244,14 +244,17 @@ inline std::unique_ptr<cudf::column> make_long_offsets_and_chars_string_column()
   auto const block_size = 100 * 1024 * 1024;
   // memset a few blocks to known values, leave the rest uninitialized
   int64_t const block_a = 0;
-  cudaMemsetAsync(charp + block_a, 'a', block_size, cudf::get_default_stream());  // first 100 MB
+  cudaMemsetAsync(charp + block_a, 'a', block_size, cudf::get_default_stream().get());
+  // first 100 MB
   int64_t const block_b = block_size;
-  cudaMemsetAsync(charp + block_b, 'b', block_size, cudf::get_default_stream());  // second 100 MB
+  cudaMemsetAsync(charp + block_b, 'b', block_size, cudf::get_default_stream().get());
+  // second 100 MB
   int64_t const block_c = d_chars.size() - (block_size * 2);
-  cudaMemsetAsync(
-    charp + block_c, 'c', block_size, cudf::get_default_stream());  // second-to-last 100 MB
+  cudaMemsetAsync(charp + block_c, 'c', block_size, cudf::get_default_stream().get());
+  // second-to-last 100 MB
   int64_t const block_d = d_chars.size() - block_size;
-  cudaMemsetAsync(charp + block_d, 'd', block_size, cudf::get_default_stream());  // last 100 MB
+  cudaMemsetAsync(charp + block_d, 'd', block_size, cudf::get_default_stream().get());
+  // last 100 MB
 
   // choose some rows that span various boundaries of the blocks
   cudf::test::fixed_width_column_wrapper<int64_t> long_offsets{

@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 """Base class for Frame types that only have a single column."""
 
@@ -7,6 +7,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, Self
 
 import cupy as cp
+import numpy as np
 
 import cudf
 from cudf.api.extensions import no_default
@@ -120,6 +121,18 @@ class SingleColumnFrame(Frame, NotIterable):
         col = self._column
         if col.dtype.kind in {"i", "u", "f", "b"} and not col.has_nulls():
             return cp.asarray(col)
+        if not isinstance(col.dtype, np.dtype) and col.has_nulls():
+            # A pandas nullable/masked extension dtype with nulls cannot be
+            # represented as a plain numpy array without losing the NA. pandas
+            # keeps it as an ExtensionArray, so raise here and let cudf.pandas
+            # fall back to pandas ``.values`` instead of silently down-casting
+            # to a float array with NaN.
+            raise ValueError(
+                f"cannot convert to "
+                f"'{getattr(col.dtype, 'numpy_dtype', col.dtype)}'-dtype "
+                "NumPy array with missing values. Specify an appropriate "
+                "'na_value' for this dtype."
+            )
         return col.values
 
     @property
@@ -452,7 +465,7 @@ class SingleColumnFrame(Frame, NotIterable):
                     raise IndexError(
                         f"Boolean mask has wrong length: {bn} not {n}"
                     )
-                return self._column.apply_boolean_mask(arg)
+                return self._column.apply_retention_mask(arg)
             raise NotImplementedError(f"Unknown indexer {type(arg)}")
 
     @_performance_tracking

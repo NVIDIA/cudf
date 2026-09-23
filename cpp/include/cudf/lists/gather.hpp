@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -11,12 +11,16 @@
 #include <cudf/utilities/export.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
+/**
+ * @file
+ * @brief APIs for segmented gather of elements within each row of a list column
+ */
+
 namespace CUDF_EXPORT cudf {
 namespace lists {
 /**
  * @addtogroup lists_gather
  * @{
- * @file
  */
 
 /**
@@ -63,7 +67,7 @@ std::unique_ptr<column> segmented_gather(
   lists_column_view const& source_column,
   lists_column_view const& gather_map_list,
   out_of_bounds_policy bounds_policy = out_of_bounds_policy::DONT_CHECK,
-  rmm::cuda_stream_view stream       = cudf::get_default_stream(),
+  cuda::stream_ref stream            = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr  = cudf::get_current_device_resource_ref());
 
 /** @} */  // end of group

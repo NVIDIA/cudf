@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -10,12 +10,15 @@
 #include <cudf/utilities/export.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
+#include <cuda/stream>
+
 //! NVText APIs
 namespace CUDF_EXPORT nvtext {
 /**
  * @addtogroup nvtext_normalize
  * @{
  * @file
+ * @brief APIs for normalizing whitespace and characters within strings columns.
  */
 
 /**
@@ -43,7 +46,7 @@ namespace CUDF_EXPORT nvtext {
  */
 std::unique_ptr<cudf::column> normalize_spaces(
   cudf::strings_column_view const& input,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -93,7 +96,7 @@ struct character_normalizer {
    */
   character_normalizer(bool do_lower_case,
                        cudf::strings_column_view const& special_tokens,
-                       rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+                       cuda::stream_ref stream           = cudf::get_default_stream(),
                        rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
   ~character_normalizer();
 
@@ -122,7 +125,7 @@ std::unique_ptr<character_normalizer> create_character_normalizer(
   bool do_lower_case,
   cudf::strings_column_view const& special_tokens = cudf::strings_column_view(cudf::column_view{
     cudf::data_type{cudf::type_id::STRING}, 0, nullptr, nullptr, 0}),
-  rmm::cuda_stream_view stream                    = cudf::get_default_stream(),
+  cuda::stream_ref stream                         = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr               = cudf::get_current_device_resource_ref());
 
 /**
@@ -153,7 +156,7 @@ std::unique_ptr<character_normalizer> create_character_normalizer(
 std::unique_ptr<cudf::column> normalize_characters(
   cudf::strings_column_view const& input,
   character_normalizer const& normalizer,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /** @} */  // end of group

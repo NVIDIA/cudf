@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2018-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2018-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import glob
@@ -107,7 +107,7 @@ def test_read_orc_filtered(tmpdir, engine, predicate, expected_len):
 
 def test_read_orc_first_file_empty(tmpdir):
     # Write a 3-file dataset where the first file is empty
-    # See: https://github.com/rapidsai/cudf/issues/8011
+    # See: https://github.com/NVIDIA/cudf/issues/8011
     path = str(tmpdir)
     os.makedirs(path, exist_ok=True)
     df1 = cudf.DataFrame({"id": [1, 2], "float": [1.0, 2.0]})

@@ -1,10 +1,11 @@
 /*
- *  SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION
+ *  SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  *  SPDX-License-Identifier: Apache-2.0
  */
 
 #pragma once
 
+#include <cudf/detail/utilities/cuda.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/export.hpp>
@@ -26,7 +27,7 @@ namespace detail {
 /*! \p rmm_host_allocator is a CUDA-specific host memory allocator
  *  that employs \c a `cudf::host_async_resource_ref` for allocation.
  *
- *  \see https://en.cppreference.com/w/cpp/memory/allocator
+ *  \see https://en.cppreference.com/cpp/memory/allocator
  */
 template <typename T>
 class rmm_host_allocator;
@@ -34,7 +35,7 @@ class rmm_host_allocator;
 /*! \p rmm_host_allocator is a CUDA-specific host memory allocator
  *  that employs \c an `cudf::host_async_resource_ref` for allocation.
  *
- *  \see https://en.cppreference.com/w/cpp/memory/allocator
+ *  \see https://en.cppreference.com/cpp/memory/allocator
  */
 template <>
 class rmm_host_allocator<void> {
@@ -62,7 +63,7 @@ class rmm_host_allocator<void> {
  * this reference and therefore it is the user's responsibility to ensure its lifetime for the
  * duration of the lifetime of the \p rmm_host_allocator.
  *
- *  \see https://en.cppreference.com/w/cpp/memory/allocator
+ *  \see https://en.cppreference.com/cpp/memory/allocator
  */
 template <typename T>
 class rmm_host_allocator {
@@ -100,7 +101,7 @@ class rmm_host_allocator {
 #pragma nv_exec_check_disable
 #endif
   template <typename ResourceType>
-  rmm_host_allocator(ResourceType _mr, rmm::cuda_stream_view _stream)
+  rmm_host_allocator(ResourceType _mr, cuda::stream_ref _stream)
     : mr(std::move(_mr)),
       stream(std::move(_stream)),
       _is_device_accessible{
@@ -143,7 +144,7 @@ class rmm_host_allocator {
     auto const result = mr.allocate(stream, cnt * sizeof(value_type), alignof(value_type));
     // Synchronize to ensure the memory is allocated before thrust::host_vector initialization
     // TODO: replace thrust::host_vector with a type that does not require synchronization
-    stream.synchronize();
+    cudf::detail::sync_stream(stream);
     return static_cast<pointer>(result);
   }
 
@@ -199,7 +200,7 @@ class rmm_host_allocator {
 
  private:
   rmm::host_async_resource_ref mr;
-  rmm::cuda_stream_view stream;
+  cuda::stream_ref stream;
   bool _is_device_accessible;
 };
 

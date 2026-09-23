@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from libc.stddef cimport size_t
@@ -14,6 +14,7 @@ from pylibcudf.libcudf.reshape cimport (
     byte,
 )
 from pylibcudf.libcudf.table.table cimport table
+from pylibcudf.libcudf.table.table_view cimport table_view
 from pylibcudf.libcudf.types cimport size_type
 
 from pylibcudf.libcudf.utilities.span cimport device_span
@@ -24,12 +25,16 @@ from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 from .column cimport Column
 from .table cimport Table
 from .utils cimport _get_stream, _get_memory_resource
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pylibcudf.typing import CudaStreamLike
 from cuda.bindings.cyruntime cimport cudaStream_t
 
 __all__ = ["interleave_columns", "tile", "table_to_array"]
 
 cpdef Column interleave_columns(
-    Table source_table, object stream=None, DeviceMemoryResource mr=None
+    Table source_table, object stream: CudaStreamLike | None = None, DeviceMemoryResource mr=None
 ):
     """Interleave columns of a table into a single column.
 
@@ -57,12 +62,13 @@ cpdef Column interleave_columns(
     """
     cdef unique_ptr[column] c_result
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
 
+    cdef table_view c_source_table = source_table.view()
     with nogil:
         c_result = cpp_interleave_columns(
-            source_table.view(), _cs, mr.get_mr()
+            c_source_table, _cs, mr.get_mr()
         )
 
     return Column.from_libcudf(move(c_result), _stream, mr)
@@ -71,7 +77,7 @@ cpdef Column interleave_columns(
 cpdef Table tile(
     Table source_table,
     size_type count,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None
 ):
     """Repeats the rows from input table count times to form a new table.
@@ -96,12 +102,13 @@ cpdef Table tile(
     """
     cdef unique_ptr[table] c_result
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
 
+    cdef table_view c_source_table = source_table.view()
     with nogil:
         c_result = cpp_tile(
-            source_table.view(), count, _cs, mr.get_mr()
+            c_source_table, count, _cs, mr.get_mr()
         )
 
     return Table.from_libcudf(move(c_result), _stream, mr)
@@ -111,7 +118,7 @@ cpdef void table_to_array(
     Table input_table,
     uintptr_t ptr,
     size_t size,
-    object stream=None
+    object stream: CudaStreamLike | None = None
 ):
     """
     Copy a table into a preallocated column-major device array.
@@ -133,15 +140,16 @@ cpdef void table_to_array(
             "Size exceeds the size_t limit."
         )
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
 
     cdef device_span[byte] span = device_span[byte](
         <byte*> ptr, size
     )
+    cdef table_view c_input_table = input_table.view()
 
     with nogil:
         cpp_table_to_array(
-            input_table.view(),
+            c_input_table,
             span,
             _cs
         )

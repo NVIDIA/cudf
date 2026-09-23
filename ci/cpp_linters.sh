@@ -24,6 +24,14 @@ set +u
 conda activate clang_tidy
 set -u
 
+# clang-tidy parses the GCC compile command with clang. Newer conda compilers add
+# this GCC-only optimization flag, which clang reports as an error.
+for flags_var in CFLAGS CXXFLAGS; do
+  if [[ -n "${!flags_var:-}" ]]; then
+    export "${flags_var}=$(printf '%s' "${!flags_var}" | sed -E 's/(^|[[:space:]])-fno-merge-constants([[:space:]]|$)/ /g; s/[[:space:]]+/ /g; s/^ //; s/ $//')"
+  fi
+done
+
 export SCCACHE_S3_PREPROCESSOR_CACHE_KEY_PREFIX="cudf-cpp-linters-preprocessor-cache"
 export SCCACHE_S3_USE_PREPROCESSOR_CACHE_MODE=true
 

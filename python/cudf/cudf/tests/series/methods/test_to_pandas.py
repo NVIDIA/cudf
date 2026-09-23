@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import datetime
@@ -145,7 +145,7 @@ def test_series_to_pandas_nullable_dtypes(sr_data, expected_psr):
 def test_series_to_pandas_arrow_type_nullable_raises(scalar):
     pa_array = pa.array([scalar, None])
     ser = cudf.Series(pa_array)
-    with pytest.raises(ValueError, match=".* cannot both be set"):
+    with pytest.raises(ValueError, match=r".* cannot both be set"):
         ser.to_pandas(nullable=True, arrow_type=True)
 
 

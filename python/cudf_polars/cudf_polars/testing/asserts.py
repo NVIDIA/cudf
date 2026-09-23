@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 """Device-aware assertions."""
@@ -86,8 +86,8 @@ def assert_gpu_result_equal(
 
     # These keywords are correct, but mypy doesn't see that.
     # the 'misc' is for 'error: Keywords must be strings'
-    expect = lazydf.collect(**cpu_kwargs)  # type: ignore[misc, call-overload]
-    got = lazydf.collect(**gpu_kwargs, engine=engine)  # type: ignore[misc, call-overload]
+    expect = lazydf.collect(**cpu_kwargs)  # type: ignore[call-overload]  # (kwargs assembled dynamically)
+    got = lazydf.collect(**gpu_kwargs, engine=engine)  # type: ignore[call-overload]  # (kwargs assembled dynamically)
     # In multi-rank SPMD mode each rank holds only its local slice; gather the
     # full result on every rank so each rank can compare against the CPU result.
     if (

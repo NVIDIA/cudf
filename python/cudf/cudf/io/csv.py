@@ -1,10 +1,12 @@
-# SPDX-FileCopyrightText: Copyright (c) 2018-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2018-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 from __future__ import annotations
 
+import csv
 import itertools
+import os
 from collections.abc import Collection, Mapping
-from io import BytesIO, StringIO
+from io import BytesIO, StringIO, TextIOBase
 from typing import TYPE_CHECKING, cast
 
 import numpy as np
@@ -40,6 +42,50 @@ _CSV_HEX_TYPE_MAP: dict[str, np.dtype] = {
     "hex64": np.dtype("int64"),
     "hex32": np.dtype("int32"),
 }
+
+#: Compression formats ``pandas`` infers from a file extension but that
+#: libcudf cannot decompress. The reader does not reject them: it parses the
+#: container's raw bytes as CSV, so a tar quietly yields its header block as
+#: data -- ``data.csv\x00\x00...`` becomes a column name. They have to be
+#: caught here instead.
+_UNREADABLE_COMPRESSION_SUFFIXES: tuple[tuple[str, str], ...] = (
+    (".tar.gz", "tar"),
+    (".tar.bz2", "tar"),
+    (".tar.xz", "tar"),
+    (".tar.zst", "tar"),
+    (".tar", "tar"),
+    (".tgz", "tar"),
+    (".xz", "xz"),
+)
+
+#: What libcudf can actually decompress, keyed by the ``pandas`` spelling.
+_COMPRESSION_MAP = {
+    "infer": plc.io.types.CompressionType.AUTO,
+    "gzip": plc.io.types.CompressionType.GZIP,
+    "bz2": plc.io.types.CompressionType.BZIP2,
+    "zip": plc.io.types.CompressionType.ZIP,
+    "zstd": plc.io.types.CompressionType.ZSTD,
+}
+
+
+def _unreadable_compression(path_or_data) -> str | None:
+    """Name the compression format ``path_or_data`` implies, if cudf cannot read it."""
+    if isinstance(path_or_data, (list, tuple)):
+        path_or_data = path_or_data[0] if path_or_data else None
+    if not isinstance(path_or_data, (str, os.PathLike)):
+        return None
+    name = os.fspath(path_or_data).lower()
+    for suffix, fmt in _UNREADABLE_COMPRESSION_SUFFIXES:
+        if name.endswith(suffix):
+            return fmt
+    return None
+
+
+def _unsupported_compression_error(fmt: str) -> NotImplementedError:
+    return NotImplementedError(
+        f"cudf's CSV reader cannot decompress {fmt!r} data; libcudf supports "
+        f"{', '.join(sorted(set(_COMPRESSION_MAP) - {'infer'}))} only"
+    )
 
 
 @_performance_tracking
@@ -84,6 +130,20 @@ def read_csv(
     if bytes_per_thread is None:
         bytes_per_thread = ioutils._BYTES_PER_THREAD_DEFAULT
 
+    if compression is None:
+        c_compression = plc.io.types.CompressionType.NONE
+    elif compression not in _COMPRESSION_MAP:
+        raise _unsupported_compression_error(compression)
+    else:
+        c_compression = _COMPRESSION_MAP[compression]
+
+    # Refuse containers libcudf would silently misparse rather than reject.
+    # Checked before the source is resolved, while it is still a path.
+    if compression == "infer":
+        unreadable = _unreadable_compression(filepath_or_buffer)
+        if unreadable is not None:
+            raise _unsupported_compression_error(unreadable)
+
     filepath_or_buffer = ioutils.get_reader_filepath_or_buffer(
         path_or_data=filepath_or_buffer,
         iotypes=(BytesIO, StringIO),
@@ -116,17 +176,6 @@ def read_csv(
 
     if byte_range is None:
         byte_range = (0, 0)
-
-    if compression is None:
-        c_compression = plc.io.types.CompressionType.NONE
-    else:
-        compression_map = {
-            "infer": plc.io.types.CompressionType.AUTO,
-            "gzip": plc.io.types.CompressionType.GZIP,
-            "bz2": plc.io.types.CompressionType.BZIP2,
-            "zip": plc.io.types.CompressionType.ZIP,
-        }
-        c_compression = compression_map[compression]
 
     # We need this later when setting index cols
     orig_header = header
@@ -176,7 +225,9 @@ def read_csv(
             else:
                 dtype = cudf_dtype(dtype)
             cudf_dtypes = dtype
-            cast(list, plc_dtypes).append(_get_plc_data_type_from_dtype(dtype))
+            cast("list", plc_dtypes).append(
+                _get_plc_data_type_from_dtype(dtype)
+            )
         elif isinstance(dtype, Collection):
             for index, col_dtype in enumerate(dtype):
                 if (
@@ -187,8 +238,8 @@ def read_csv(
                     hex_cols.append(index)
                 else:
                     col_dtype = cudf_dtype(col_dtype)
-                cudf_dtypes.append(col_dtype)
-                plc_dtypes.append(_get_plc_data_type_from_dtype(col_dtype))
+                cudf_dtypes.append(col_dtype)  # type: ignore[union-attr]  # (collection branch keeps dtype accumulators as lists)
+                plc_dtypes.append(_get_plc_data_type_from_dtype(col_dtype))  # type: ignore[union-attr]  # (collection branch keeps dtype accumulators as lists)
         else:
             raise ValueError(
                 "dtype should be a scalar/str/list-like/dict-like"
@@ -271,7 +322,7 @@ def read_csv(
     table_w_meta = plc.io.csv.read_csv(options)
     df = DataFrame.from_pylibcudf(table_w_meta)
 
-    if get_option("mode.pandas_compatible") and df.empty:
+    if get_option("mode.pandas_compatible") and len(df._column_names) == 0:
         raise pd.errors.EmptyDataError("No columns to parse from file")
 
     # Cast result to categorical if specified in dtype=
@@ -351,11 +402,15 @@ def to_csv(
     index: bool = True,
     encoding=None,
     compression=None,
+    quoting: int | None = None,
     lineterminator: str = "\n",
     chunksize: int | None = None,
     storage_options=None,
 ):
     """{docstring}"""
+
+    if quoting is None:
+        quoting = csv.QUOTE_MINIMAL
 
     if not isinstance(sep, str):
         raise TypeError(f'"sep" must be string, not {type(sep).__name__}')
@@ -369,14 +424,48 @@ def to_csv(
         )
         raise NotImplementedError(error_msg)
 
-    if compression:
-        error_msg = "Writing compressed csv is not currently supported in cudf"
-        raise NotImplementedError(error_msg)
+    if compression and compression != "zstd":
+        raise NotImplementedError(
+            f"Compression {compression} is not supported. "
+            "Only 'zstd' is supported for CSV compression."
+        )
+
+    if quoting not in (csv.QUOTE_MINIMAL, csv.QUOTE_NONE):
+        raise NotImplementedError(
+            f"quoting={quoting} is not supported. "
+            "Only csv.QUOTE_MINIMAL (0) and csv.QUOTE_NONE (3) are supported."
+        )
+
+    if (
+        quoting == csv.QUOTE_NONE
+        and header
+        and index
+        and len(df) == 0
+        and len(df._column_names) == 0
+    ):
+        raise csv.Error("single empty field record must be quoted")
 
     return_as_string = False
     if path_or_buf is None:
+        # compressed output is binary, so it cannot be returned as a string
+        if compression:
+            raise ValueError(
+                f"Compression {compression} is not supported when returning "
+                "the CSV output as a string; please provide `path_or_buf`."
+            )
         path_or_buf = StringIO()
         return_as_string = True
+    elif (
+        compression
+        and isinstance(path_or_buf, TextIOBase)
+        and not hasattr(path_or_buf, "buffer")
+    ):
+        # a text sink with no underlying binary buffer decodes what it is given as
+        # UTF-8, which compressed output is not
+        raise ValueError(
+            f"Compression {compression} is not supported for text-mode sinks; "
+            "please pass a path or a binary file object."
+        )
 
     path_or_buf = ioutils.get_writer_filepath_or_buffer(
         path_or_data=path_or_buf, mode="w", storage_options=storage_options
@@ -400,7 +489,7 @@ def to_csv(
     # TODO: Need to typecast categorical columns to the underlying
     # categories dtype to write the actual data to csv. Remove this
     # workaround once following issue is fixed:
-    # https://github.com/rapidsai/cudf/issues/6661
+    # https://github.com/NVIDIA/cudf/issues/6661
     if any(
         isinstance(dtype, CategoricalDtype) for _, dtype in df._dtypes
     ) or isinstance(df.index, CategoricalIndex):
@@ -426,6 +515,8 @@ def to_csv(
                 lineterminator=lineterminator,
                 rows_per_chunk=rows_per_chunk,
                 index=index,
+                quoting=quoting,
+                compression=compression,
             )
     else:
         _plc_write_csv(
@@ -437,6 +528,8 @@ def to_csv(
             lineterminator=lineterminator,
             rows_per_chunk=rows_per_chunk,
             index=index,
+            quoting=quoting,
+            compression=compression,
         )
 
     if return_as_string:
@@ -453,6 +546,8 @@ def _plc_write_csv(
     lineterminator: str = "\n",
     rows_per_chunk: int = 8,
     index: bool = True,
+    quoting: int = csv.QUOTE_MINIMAL,
+    compression: str | None = None,
 ) -> None:
     iter_columns = (
         itertools.chain(table.index._columns, table._columns)
@@ -461,6 +556,12 @@ def _plc_write_csv(
     )
     # Materialize iterator to avoid consuming it during access context setup
     columns_list = list(iter_columns)
+
+    plc_compression = (
+        plc.io.types.CompressionType.ZSTD
+        if compression == "zstd"
+        else plc.io.types.CompressionType.NONE
+    )
 
     with access_columns(*columns_list, mode="read", scope="internal"):
         columns = [col.plc_column for col in columns_list]
@@ -483,6 +584,12 @@ def _plc_write_csv(
                 for name in all_names
             ]
         try:
+            # Map csv.QUOTE_* to QuoteStyle
+            quote_style = (
+                plc.io.types.QuoteStyle.NONE
+                if quoting == csv.QUOTE_NONE
+                else plc.io.types.QuoteStyle.MINIMAL
+            )
             plc.io.csv.write_csv(
                 (
                     plc.io.csv.CsvWriterOptions.builder(
@@ -496,6 +603,8 @@ def _plc_write_csv(
                     .inter_column_delimiter(str(sep))
                     .true_value("True")
                     .false_value("False")
+                    .quoting(quote_style)
+                    .compression(plc_compression)
                     .build()
                 )
             )
@@ -538,7 +647,7 @@ def _validate_args(
 def _get_plc_data_type_from_dtype(dtype: DtypeObj) -> plc.DataType:
     # TODO: Remove this work-around Dictionary types
     # in libcudf are fully mapped to categorical columns:
-    # https://github.com/rapidsai/cudf/issues/3960
+    # https://github.com/NVIDIA/cudf/issues/3960
     if isinstance(dtype, CategoricalDtype):
         # TODO: should we do this generally in dtype_to_pylibcudf_type?
         dtype = dtype.categories.dtype

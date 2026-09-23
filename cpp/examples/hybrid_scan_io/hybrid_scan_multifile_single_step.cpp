@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -16,6 +16,7 @@
 #include <rmm/cuda_stream_pool.hpp>
 #include <rmm/mr/statistics_resource_adaptor.hpp>
 
+#include <cassert>
 #include <ranges>
 #include <stdexcept>
 #include <string>
@@ -60,7 +61,8 @@ struct hybrid_scan_single_step_fn {
           input_sources[source_idx], {}, filters, false, stream, mr);
       }
     }
-    stream.synchronize_no_throw();
+    [[maybe_unused]] auto const status = cudaStreamSynchronize(stream.get());
+    assert(status == cudaSuccess);
     if (verbose) {
       std::cout << "Thread " << tid << " ";
       timer.print_elapsed_millis();
@@ -153,7 +155,7 @@ int main(int argc, char const** argv)
     try {
       return extract_input_sources(
         input_paths, input_multiplier, num_threads, io_source_type, default_stream);
-    } catch (const std::exception& e) {
+    } catch (std::exception const& e) {
       print_usage();
       throw std::runtime_error(e.what());
     }

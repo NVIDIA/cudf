@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -88,7 +88,7 @@ struct calculate_group_statistics_functor {
              (IO != detail::io_file_format::PARQUET or !std::is_same_v<T, list_view>))
   {
     // Temporarily disable stats writing for int96 timestamps
-    // TODO: https://github.com/rapidsai/cudf/issues/10438
+    // TODO: https://github.com/NVIDIA/cudf/issues/10438
     if constexpr (cudf::is_timestamp<T>() and IO == detail::io_file_format::PARQUET and
                   INT96 == detail::is_int96_timestamp::YES) {
       return;
@@ -202,6 +202,12 @@ struct merge_group_statistics_functor {
 
     chunk = block_reduce(chunk, storage);
 
+    // PARQUET-1246: if a float/double column contains any NaN, min/max must be omitted,
+    // else a reader doing NaN predicate pushdown skips the row group. spark-rapids#15004.
+    if constexpr (IO == detail::io_file_format::PARQUET) {
+      if (chunk.has_nan) { chunk.has_minmax = false; }
+    }
+
     if (t == 0) { s.ck = get_untyped_chunk(chunk); }
   }
 
@@ -296,7 +302,7 @@ CUDF_KERNEL void __launch_bounds__(block_size, 1)
         threadIdx.x);
     }
     // Temporarily disable stats writing for int96 timestamps
-    // TODO: https://github.com/rapidsai/cudf/issues/10438
+    // TODO: https://github.com/NVIDIA/cudf/issues/10438
     else {
       type_dispatcher(
         state.col.leaf_column->type(),
@@ -332,12 +338,13 @@ template <detail::io_file_format IO>
 void calculate_group_statistics(statistics_chunk* chunks,
                                 statistics_group const* groups,
                                 uint32_t num_chunks,
-                                rmm::cuda_stream_view stream,
+                                cuda::stream_ref stream,
                                 bool const int96_timestamps = false)
 {
   constexpr int block_size = 256;
   gpu_calculate_group_statistics<block_size, IO>
-    <<<num_chunks, block_size, 0, stream.value()>>>(chunks, groups, int96_timestamps);
+    <<<num_chunks, block_size, 0, stream.get()>>>(chunks, groups, int96_timestamps);
+  CUDF_CUDA_TRY(cudaGetLastError());
 }
 
 /**
@@ -387,11 +394,12 @@ void merge_group_statistics(statistics_chunk* chunks_out,
                             statistics_chunk const* chunks_in,
                             statistics_merge_group const* groups,
                             uint32_t num_chunks,
-                            rmm::cuda_stream_view stream)
+                            cuda::stream_ref stream)
 {
   constexpr int block_size = 256;
   gpu_merge_group_statistics<block_size, IO>
-    <<<num_chunks, block_size, 0, stream.value()>>>(chunks_out, chunks_in, groups);
+    <<<num_chunks, block_size, 0, stream.get()>>>(chunks_out, chunks_in, groups);
+  CUDF_CUDA_TRY(cudaGetLastError());
 }
 
 }  // namespace detail

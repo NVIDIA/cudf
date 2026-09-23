@@ -1,6 +1,6 @@
 /*
  *
- *  SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
+ *  SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  *  SPDX-License-Identifier: Apache-2.0
  *
  */
@@ -76,11 +76,11 @@ public final class GroupByAggregation {
    * (DECIMAL32/64/128). The sum-child has the same type AND scale as the input
    * column -- e.g. a DECIMAL64 input at scale -4 produces a DECIMAL64 sum-child
    * at scale -4; cudf does not widen or rescale. On overflow the sum value is
-   * unspecified; the boolean flag is the source of truth. Only hash-based
-   * groupby is supported; sort-based groupby will throw.
+   * unspecified; the boolean flag is the source of truth. Both the hash-based
+   * and sort-based groupby paths are supported.
    */
-  public static GroupByAggregation sumWithOverflow() {
-    return new GroupByAggregation(Aggregation.sumWithOverflow());
+  public static GroupByAggregation sumOverflow() {
+    return new GroupByAggregation(Aggregation.sumOverflow());
   }
 
   /**

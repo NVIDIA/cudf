@@ -1,10 +1,9 @@
-# SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import numpy as np
 import pandas as pd
 import pyarrow as pa
 import pytest
-from packaging.version import parse
 
 import cudf
 from cudf.core.index import IntervalIndex, interval_range
@@ -121,14 +120,6 @@ def test_interval_range_periods_basic_dtype(start_t, end_t, periods_t):
     gindex = cudf.interval_range(
         start=start, end=end, periods=periods, closed="left"
     )
-    if (
-        parse(np.__version__) < parse("2")
-        and pindex.dtype.subtype != gindex.dtype.subtype
-    ):
-        # NEP 50 in numpy 2 changes pandas' subtype result to match cudf
-        pindex = pindex.astype(
-            pd.IntervalDtype(gindex.dtype.subtype, pindex.dtype.closed)
-        )
 
     assert_eq(pindex, gindex)
 
@@ -172,16 +163,6 @@ def test_interval_range_periods_freq_end_dtype(periods_t, freq_t, end_t):
     gindex = cudf.interval_range(
         end=end, freq=freq, periods=periods, closed="left"
     )
-    if (
-        parse(np.__version__) < parse("2")
-        and pindex.dtype.subtype != gindex.dtype.subtype
-    ):
-        # NEP 50 in numpy 2 changes pandas' subtype result to match cudf
-        pindex = pindex.astype(
-            pd.IntervalDtype(
-                subtype=gindex.dtype.subtype, closed=pindex.dtype.closed
-            )
-        )
     assert_eq(pindex, gindex)
 
 
@@ -211,16 +192,6 @@ def test_interval_range_periods_freq_start_dtype(periods_t, freq_t, start_t):
     gindex = cudf.interval_range(
         start=start, freq=freq, periods=periods, closed="left"
     )
-    if (
-        parse(np.__version__) < parse("2")
-        and pindex.dtype.subtype != gindex.dtype.subtype
-    ):
-        # NEP 50 in numpy 2 changes pandas' subtype result to match cudf
-        pindex = pindex.astype(
-            pd.IntervalDtype(
-                subtype=gindex.dtype.subtype, closed=pindex.dtype.closed
-            )
-        )
     assert_eq(pindex, gindex)
 
 

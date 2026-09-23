@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -15,6 +15,7 @@
 #include <cudf/interop.hpp>
 #include <cudf/lists/combine.hpp>
 #include <cudf/lists/filling.hpp>
+#include <cudf/null_mask.hpp>
 #include <cudf/reshape.hpp>
 #include <cudf/scalar/scalar_factories.hpp>
 #include <cudf/strings/combine.hpp>

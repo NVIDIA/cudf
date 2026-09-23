@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -43,6 +43,108 @@ TEST_F(TableTest, EmptyColumnedTable)
   cudf::size_type expected = 0;
 
   EXPECT_EQ(input.num_columns(), expected);
+}
+
+TEST_F(TableTest, ZeroColumnConstructors)
+{
+  // A zero-column table_view and owning table can carry an explicit row count.
+  TView view{std::vector<column_view>{}, 42};
+  EXPECT_EQ(view.num_columns(), 0);
+  EXPECT_EQ(view.num_rows(), 42);
+
+  Table owning(CVector{}, 7);
+  EXPECT_EQ(owning.num_columns(), 0);
+  EXPECT_EQ(owning.num_rows(), 7);
+
+  // With columns present, the explicit row count must match every column.
+  column_wrapper<int32_t> col{{1, 2, 3}};
+  std::vector<column_view> cols{col};
+  EXPECT_NO_THROW((TView{cols, 3}));
+  EXPECT_THROW((TView{cols, 4}), std::invalid_argument);
+  {
+    CVector owning_cols;
+    owning_cols.push_back(column_wrapper<int32_t>{1, 2, 3}.release());
+    EXPECT_NO_THROW(Table(std::move(owning_cols), 3));
+  }
+  {
+    CVector owning_cols;
+    owning_cols.push_back(column_wrapper<int32_t>{1, 2, 3}.release());
+    EXPECT_THROW(Table(std::move(owning_cols), 4), std::invalid_argument);
+  }
+
+  // A negative explicit row count is rejected by both.
+  EXPECT_THROW((TView{std::vector<column_view>{}, -1}), std::invalid_argument);
+  EXPECT_THROW(Table(CVector{}, -1), std::invalid_argument);
+
+  // mutable_table_view exposes the same explicit row-count overload.
+  using MView = cudf::mutable_table_view;
+  MView mview{std::vector<cudf::mutable_column_view>{}, 42};
+  EXPECT_EQ(mview.num_columns(), 0);
+  EXPECT_EQ(mview.num_rows(), 42);
+
+  auto owned = column_wrapper<int32_t>{1, 2, 3}.release();
+  std::vector<cudf::mutable_column_view> mcols{owned->mutable_view()};
+  EXPECT_NO_THROW((MView{mcols, 3}));
+  EXPECT_THROW((MView{mcols, 4}), std::invalid_argument);
+  EXPECT_THROW((MView{std::vector<cudf::mutable_column_view>{}, -1}), std::invalid_argument);
+}
+
+TEST_F(TableTest, ZeroColumnRowCountPropagation)
+{
+  // An owning table built from a zero-column view keeps its rows, and view() reports them.
+  Table owning(TView{std::vector<column_view>{}, 5});
+  EXPECT_EQ(owning.num_columns(), 0);
+  EXPECT_EQ(owning.num_rows(), 5);
+  EXPECT_EQ(owning.view().num_rows(), 5);
+
+  // Converting a zero-column mutable_table_view to a table_view keeps the rows.
+  cudf::table_view tv = owning.mutable_view();  // operator table_view()
+  EXPECT_EQ(tv.num_columns(), 0);
+  EXPECT_EQ(tv.num_rows(), 5);
+}
+
+TEST_F(TableTest, SelectEmptyPreservesRowCount)
+{
+  // Selecting no columns from an N-row table yields an (N, 0) view, not (0, 0).
+  CVector cols;
+  cols.push_back(column_wrapper<int32_t>{1, 2, 3, 4, 5}.release());
+  Table owning(std::move(cols));
+  ASSERT_EQ(owning.num_rows(), 5);
+
+  auto const owning_sel = owning.select(std::vector<cudf::size_type>{});
+  EXPECT_EQ(owning_sel.num_columns(), 0);
+  EXPECT_EQ(owning_sel.num_rows(), 5);
+
+  auto const view_sel = owning.view().select(std::vector<cudf::size_type>{});
+  EXPECT_EQ(view_sel.num_columns(), 0);
+  EXPECT_EQ(view_sel.num_rows(), 5);
+}
+
+TEST_F(TableTest, ZeroColumnViewConcatPreservesRowCount)
+{
+  // Horizontally concatenating zero-column views keeps the row count: (5, 0).
+  TView a{std::vector<column_view>{}, 5};
+  TView b{std::vector<column_view>{}, 5};
+  cudf::table_view combined{std::vector<cudf::table_view>{a, b}};
+  EXPECT_EQ(combined.num_columns(), 0);
+  EXPECT_EQ(combined.num_rows(), 5);
+}
+
+TEST_F(TableTest, ZeroColumnViewConcatRowCountMismatchThrows)
+{
+  // All zero-column views, differing row counts.
+  {
+    TView a{std::vector<column_view>{}, 5};
+    TView b{std::vector<column_view>{}, 3};
+    EXPECT_THROW((cudf::table_view{std::vector<cudf::table_view>{a, b}}), cudf::logic_error);
+  }
+  // Mixed: a zero-column view and a populated view with a different row count.
+  {
+    TView a{std::vector<column_view>{}, 5};
+    column_wrapper<int32_t> col{{1, 2, 3}};  // 3 rows
+    TView b{std::vector<column_view>{col}};
+    EXPECT_THROW((cudf::table_view{std::vector<cudf::table_view>{a, b}}), cudf::logic_error);
+  }
 }
 
 TEST_F(TableTest, ValidateConstructorTableViewToTable)

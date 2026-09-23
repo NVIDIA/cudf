@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -19,7 +19,7 @@ void segmented_update_validity(column& result,
                                device_span<size_type const> offsets,
                                null_policy null_handling,
                                std::optional<std::reference_wrapper<scalar const>> init,
-                               rmm::cuda_stream_view stream,
+                               cuda::stream_ref stream,
                                rmm::device_async_resource_ref mr)
 {
   auto [output_null_mask, output_null_count] = cudf::detail::segmented_null_mask_reduction(

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -69,8 +69,8 @@ TYPED_TEST(TypedDispatcherTest, DeviceDispatch)
 {
   auto result = cudf::detail::make_zeroed_device_uvector<bool>(
     1, cudf::get_default_stream(), cudf::get_current_device_resource_ref());
-  dispatch_test_kernel<<<1, 1, 0, cudf::get_default_stream().value()>>>(
-    cudf::type_to_id<TypeParam>(), result.data());
+  dispatch_test_kernel<<<1, 1, 0, cudf::get_default_stream().get()>>>(cudf::type_to_id<TypeParam>(),
+                                                                      result.data());
   CUDF_CUDA_TRY(cudaDeviceSynchronize());
   EXPECT_EQ(true, result.front_element(cudf::get_default_stream()));
 }
@@ -136,7 +136,7 @@ TYPED_TEST(TypedDoubleDispatcherTest, DeviceDoubleDispatch)
 {
   auto result = cudf::detail::make_zeroed_device_uvector<bool>(
     1, cudf::get_default_stream(), cudf::get_current_device_resource_ref());
-  double_dispatch_test_kernel<<<1, 1, 0, cudf::get_default_stream().value()>>>(
+  double_dispatch_test_kernel<<<1, 1, 0, cudf::get_default_stream().get()>>>(
     cudf::type_to_id<TypeParam>(), cudf::type_to_id<TypeParam>(), result.data());
   CUDF_CUDA_TRY(cudaDeviceSynchronize());
   EXPECT_EQ(true, result.front_element(cudf::get_default_stream()));

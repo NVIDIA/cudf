@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2021-2025, NVIDIA CORPORATION
+# SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 # This file is adapted from official sphinx tutorial for `todo` extension:
@@ -119,7 +119,7 @@ class PandasCompatListProcessor:
         self.config = app.config
         self.env = app.env
         self.domain = cast(
-            PandasCompatDomain, app.env.get_domain("pandascompat")
+            "PandasCompatDomain", app.env.get_domain("pandascompat")
         )
         self.document = new_document("")
         self.process(doctree, docname)

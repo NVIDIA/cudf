@@ -1,33 +1,41 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
 #include "error.hpp"
 #include "io/comp/common.hpp"
+#include "page_decode.cuh"
 #include "reader_impl.hpp"
 #include "reader_impl_chunking_utils.cuh"
 #include "reader_impl_preprocess_utils.cuh"
 
+#include <cudf/column/column_factories.hpp>
+#include <cudf/column/column_view.hpp>
 #include <cudf/detail/algorithms/reduce.cuh>
 #include <cudf/detail/iterator.cuh>
+#include <cudf/detail/labeling/label_segments.cuh>
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/utilities/batched_memset.hpp>
 #include <cudf/detail/utilities/integer_utils.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
+#include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
 #include <rmm/exec_policy.hpp>
 
+#include <cub/device/device_transform.cuh>
 #include <cuda/iterator>
+#include <thrust/binary_search.h>
+#include <thrust/execution_policy.h>
 #include <thrust/fill.h>
-#include <thrust/iterator/transform_iterator.h>
 #include <thrust/scan.h>
 #include <thrust/transform.h>
 
 #include <algorithm>
 #include <limits>
 #include <numeric>
+#include <utility>
 #include <vector>
 
 namespace cudf::io::parquet::detail {
@@ -44,7 +52,14 @@ inline bool is_treat_fixed_length_as_string(cuda::std::optional<LogicalType> con
 }
 
 struct set_str_bytes_all {
-  __device__ void operator()(PageInfo& p) { p.str_bytes_all = p.str_bytes; }
+  device_span<PageInfo> pages;
+  device_span<bool const> page_mask;
+
+  __device__ void operator()(size_type index) const
+  {
+    pages[index].str_bytes_all =
+      page_mask.empty() or page_mask[index] ? pages[index].str_bytes : int32_t{0};
+  }
 };
 
 }  // namespace
@@ -91,7 +106,8 @@ void reader_impl::build_string_dict_indices()
     rmm::exec_policy_nosync(_stream, cudf::get_current_device_resource_ref()),
     iter,
     iter + pass.chunks.size(),
-    set_str_dict_index_ptr{pass.str_dict_index.data(), str_dict_index_offsets, pass.chunks});
+    set_str_dict_index_ptr{
+      pass.str_dict_index.data(), str_dict_index_offsets, pass.chunks, _sparse_page_io});
 
   // compute the indices
   kernel_error error_code(_stream);
@@ -363,10 +379,6 @@ struct compute_page_offset_count {
             decode_kernel_mask::STRING_STREAM_SPLIT_NESTED,
             decode_kernel_mask::STRING_STREAM_SPLIT_LIST);
 
-    // Mask for pages with lists (repetition levels)
-    constexpr uint32_t STRINGS_WITH_LISTS_MASK =
-      BitOr(decode_kernel_mask::STRING_LIST, decode_kernel_mask::STRING_STREAM_SPLIT_LIST);
-
     auto const& page  = pages[page_idx];
     auto const& chunk = chunks[page.chunk_idx];
 
@@ -376,17 +388,13 @@ struct compute_page_offset_count {
     // Fixed length byte array: Offsets are fixed, no need to preprocess
     if (chunk.physical_type == Type::FIXED_LEN_BYTE_ARRAY) { return 0; }
 
-    auto const page_start_row    = chunk.start_row + page.chunk_row;
-    auto const page_end_row      = page_start_row + page.num_rows;
-    auto const subpass_start_row = skip_rows;
-    auto const subpass_end_row   = subpass_start_row + num_rows;
+    auto const page_start_row = chunk.start_row + page.chunk_row;
+    auto const page_end_row   = page_start_row + page.num_rows;
 
-    if ((page_end_row <= subpass_start_row) || (page_start_row >= subpass_end_row)) {
-      return 0;  // will skip the page
+    bool const is_list_col = chunk.max_level[level_type::REPETITION] > 0;
+    if (!page_has_rows_to_process(page, chunk.start_row, skip_rows, num_rows, is_list_col)) {
+      return 0;
     }
-
-    // Check if this column is a list type
-    bool const is_list_col = BitAnd(page.kernel_mask, STRINGS_WITH_LISTS_MASK) != 0;
 
     size_t page_num_values;
     if (is_list_col) {
@@ -397,7 +405,7 @@ struct compute_page_offset_count {
     } else {
       // For non-list columns, we don't know how many values we'll read, because we don't know
       // how many nulls we'll skip. So we have to read through the skipped rows on the page.
-      auto const read_end_row = min(page_end_row, subpass_end_row);
+      auto const read_end_row = min(page_end_row, skip_rows + num_rows);
       page_num_values         = read_end_row - page_start_row;
     }
 
@@ -463,19 +471,24 @@ void reader_impl::compute_page_string_offset_indices(size_t skip_rows, size_t nu
 
   // Transfer the updated chunks to device
   pass.chunks.host_to_device_async(_stream);
-  _stream.synchronize();
+  _stream.sync();
 
   // Pre-process string offsets for non-dictionary string columns
+  kernel_error error_code(_stream);
   detail::preprocess_string_offsets(subpass.pages,
                                     pass.chunks,
                                     subpass.page_string_offset_indices,
                                     subpass_page_mask_span(),
                                     skip_rows,
                                     num_rows,
+                                    error_code.data(),
                                     _stream);
 
   // Wait for string offset preprocessing to complete before launching decode kernels
-  _stream.synchronize();
+  if (auto const error = error_code.value_sync(_stream); error != 0) {
+    CUDF_FAIL("Parquet string offset preprocess failed with code(s) " +
+              kernel_error::to_string(error));
+  }
 }
 
 std::pair<bool, std::future<void>> reader_impl::read_column_chunks()
@@ -558,13 +571,17 @@ void reader_impl::read_compressed_data()
   read_chunks_tasks.get();
 
   // Process dataset chunk pages into output columns
-  auto const total_pages = _has_page_index ? count_page_headers_with_pgidx(chunks, _stream)
-                                           : count_page_headers(chunks, _stream);
+  auto const total_pages = _has_offset_index ? count_page_headers_with_pgidx(chunks, _stream)
+                                             : count_page_headers(chunks, _stream);
   if (total_pages <= 0) { return; }
-  rmm::device_uvector<PageInfo> unsorted_pages(total_pages, _stream);
+
+  // Zero out the vector before `decode_page_headers` as it may not write every byte of the buffer,
+  // and`sort_pages` copies `PageInfo` as whole objects.
+  auto unsorted_pages = cudf::detail::make_zeroed_device_uvector_async<PageInfo>(
+    total_pages, _stream, cudf::get_current_device_resource_ref());
 
   // decoding of column/page information
-  decode_page_headers(pass, unsorted_pages, _has_page_index, _stream);
+  decode_page_headers(pass, unsorted_pages, _has_offset_index, _stream);
   CUDF_EXPECTS(pass.page_offsets.size() - 1 == static_cast<size_t>(_input_columns.size()),
                "Encountered page_offsets / num_columns mismatch");
 }
@@ -608,7 +625,7 @@ void reader_impl::preprocess_file(read_mode mode)
     std::overflow_error);
 
   // Inclusive scan the number of rows per source
-  if (not _expr_conv.get_converted_expr().has_value() and mode == read_mode::CHUNKED_READ) {
+  if (mode == read_mode::CHUNKED_READ) {
     _file_itm_data.exclusive_sum_num_rows_per_source.resize(
       _file_itm_data.num_rows_per_source.size());
     thrust::inclusive_scan(_file_itm_data.num_rows_per_source.cbegin(),
@@ -616,10 +633,8 @@ void reader_impl::preprocess_file(read_mode mode)
                            _file_itm_data.exclusive_sum_num_rows_per_source.begin());
   }
 
-  // check for page indexes
-  _has_page_index = std::all_of(_file_itm_data.row_groups.cbegin(),
-                                _file_itm_data.row_groups.cend(),
-                                [](auto const& row_group) { return row_group.has_page_index(); });
+  // Check for offset indexes.
+  _has_offset_index = _metadata->has_offset_index(_file_itm_data.row_groups, _input_columns);
 
   if (_file_itm_data.global_num_rows > 0 && not _file_itm_data.row_groups.empty() &&
       not _input_columns.empty()) {
@@ -674,14 +689,14 @@ void reader_impl::generate_list_column_row_counts(is_estimate_row_counts is_esti
                      pass.pages.d_begin(),
                      pass.pages.d_end(),
                      set_list_row_count_estimate{pass.chunks});
-    auto key_input  = thrust::make_transform_iterator(pass.pages.d_begin(), get_page_chunk_idx{});
-    auto page_input = thrust::make_transform_iterator(pass.pages.d_begin(), get_page_num_rows{});
+    auto key_input  = cuda::transform_iterator(pass.pages.d_begin(), get_page_chunk_idx{});
+    auto page_input = cuda::transform_iterator(pass.pages.d_begin(), get_page_num_rows{});
     thrust::exclusive_scan_by_key(
       rmm::exec_policy_nosync(_stream, cudf::get_current_device_resource_ref()),
       key_input,
       key_input + pass.pages.size(),
       page_input,
-      chunk_row_output_iter{pass.pages.device_ptr()});
+      cuda::make_tabulate_output_iterator(set_chunk_row_fn{pass.pages.device_ptr()}));
 
     // To compensate for the list row size estimates, force the row count on the last page for each
     // column chunk (each rowgroup) such that it ends on the real known row count. this is so that
@@ -703,7 +718,7 @@ void reader_impl::generate_list_column_row_counts(is_estimate_row_counts is_esti
 
   pass.chunks.device_to_host_async(_stream);
   pass.pages.device_to_host_async(_stream);
-  _stream.synchronize();
+  _stream.sync();
 }
 
 void reader_impl::preprocess_subpass_pages(read_mode mode, size_t chunk_read_limit)
@@ -788,14 +803,26 @@ void reader_impl::preprocess_subpass_pages(read_mode mode, size_t chunk_read_lim
   // field in ColumnChunkDesc is the absolute row index for the whole file. chunk_row in PageInfo is
   // relative to the beginning of the chunk. so in the kernels, chunk.start_row + page.chunk_row
   // gives us the absolute row index
-  auto key_input  = thrust::make_transform_iterator(pass.pages.d_begin(), get_page_chunk_idx{});
-  auto page_input = thrust::make_transform_iterator(pass.pages.d_begin(), get_page_num_rows{});
+  auto key_input  = cuda::transform_iterator(pass.pages.d_begin(), get_page_chunk_idx{});
+  auto page_input = cuda::transform_iterator(pass.pages.d_begin(), get_page_num_rows{});
   thrust::exclusive_scan_by_key(
     rmm::exec_policy_nosync(_stream, cudf::get_current_device_resource_ref()),
     key_input,
     key_input + pass.pages.size(),
     page_input,
-    chunk_row_output_iter{pass.pages.device_ptr()});
+    cuda::make_tabulate_output_iterator(set_chunk_row_fn{pass.pages.device_ptr()}));
+
+  // Decoding a subpass gives real row counts for the pages it read, overwriting the estimates they
+  // held, and the scan above recomputes chunk_row from them. The count forced onto the last page of
+  // each chunk came from those estimates, so it has to be recomputed too, or it drifts until the
+  // page looks like it starts past the end of the pass and is never read at all. This condition is
+  // where setup_next_pass forced it: generate_list_column_row_counts(is_estimate_row_counts::YES).
+  if (pass.has_compressed_data and _input_pass_read_limit != 0 and not _has_offset_index) {
+    thrust::for_each(rmm::exec_policy_nosync(_stream, cudf::get_current_device_resource_ref()),
+                     iter,
+                     iter + pass.pages.size(),
+                     set_final_row_count{pass.pages, pass.chunks});
+  }
 
   // copy chunk_row into the subpass pages
   // only need to do this if we are not processing the whole pass in one subpass
@@ -825,7 +852,15 @@ void reader_impl::preprocess_subpass_pages(read_mode mode, size_t chunk_read_lim
                is_treat_fixed_length_as_string(chunk.logical_type);
       });
 
-    if (!_has_page_index || has_flba) {
+    // String pages with missing value info do not have the value counts or string byte sizes needed
+    // for chunking. Scan them so chunk boundaries and output allocations use their actual sizes.
+    auto const has_string_page_without_info =
+      std::any_of(subpass.pages.host_begin(), subpass.pages.host_end(), [](auto const& page) {
+        return (static_cast<uint32_t>(page.kernel_mask) & STRINGS_MASK) != 0 and
+               (page.flags & PAGEINFO_FLAGS_DICTIONARY) == 0 and not page.has_value_info;
+      });
+
+    if (has_string_page_without_info || has_flba) {
       constexpr bool compute_all_string_sizes = true;
       compute_page_string_sizes_pass1(subpass.pages,
                                       pass.chunks,
@@ -840,15 +875,15 @@ void reader_impl::preprocess_subpass_pages(read_mode mode, size_t chunk_read_lim
     }
     // set str_bytes_all
     thrust::for_each(rmm::exec_policy_nosync(_stream, cudf::get_current_device_resource_ref()),
-                     subpass.pages.device_begin(),
-                     subpass.pages.device_end(),
-                     set_str_bytes_all{});
+                     cuda::counting_iterator<size_type>(0),
+                     cuda::counting_iterator<size_type>(subpass.pages.size()),
+                     set_str_bytes_all{subpass.pages, subpass_page_mask_span()});
   }
 
   // retrieve pages back
   pass.pages.device_to_host_async(_stream);
   if (!subpass.single_subpass) { subpass.pages.device_to_host_async(_stream); }
-  _stream.synchronize();
+  _stream.sync();
 
   // at this point we have an accurate row count so we can compute how many rows we will actually be
   // able to decode for this pass. we will have selected a set of pages for each column in the
@@ -856,8 +891,11 @@ void reader_impl::preprocess_subpass_pages(read_mode mode, size_t chunk_read_lim
   // rows as the smallest batch (by column) we have decompressed.
   size_t first_page_index = 0;
   size_t max_row          = std::numeric_limits<size_t>::max();
-  auto const last_pass_row =
-    _file_itm_data.input_pass_start_row_count[_file_itm_data._current_input_pass + 1];
+  auto const pass_end     = pass.skip_rows + pass.num_rows;
+  // The row groups of this pass can hold more rows than the pass reads, in which case a page whose
+  // rows were capped at the end of the pass still is the last page of it.
+  auto const last_pass_row = std::min<size_t>(
+    _file_itm_data.input_pass_start_row_count[_file_itm_data._current_input_pass + 1], pass_end);
   // for each column
   for (size_t idx = 0; idx < subpass.column_page_count.size(); idx++) {
     // compute max row for this column in the subpass
@@ -875,7 +913,7 @@ void reader_impl::preprocess_subpass_pages(read_mode mode, size_t chunk_read_lim
     // corner case: only decode up to the second-to-last row, except if this is the last page in the
     // entire pass or if we have the page index. this handles the case where we only have 1 chunk, 1
     // page, and potentially even just 1 row.
-    if (is_list and std::cmp_less(max_col_row, last_pass_row) and not _has_page_index) {
+    if (is_list and std::cmp_less(max_col_row, last_pass_row) and not _has_offset_index) {
       // compute min row for this column in the subpass
       auto const& first_page  = subpass.pages[first_page_index];
       auto const& first_chunk = pass.chunks[first_page.chunk_idx];
@@ -891,9 +929,8 @@ void reader_impl::preprocess_subpass_pages(read_mode mode, size_t chunk_read_lim
 
     first_page_index += subpass.column_page_count[idx];
   }
-  subpass.skip_rows   = pass.skip_rows + pass.processed_rows;
-  auto const pass_end = pass.skip_rows + pass.num_rows;
-  max_row             = std::min<size_t>(max_row, pass_end);
+  subpass.skip_rows = pass.skip_rows + pass.processed_rows;
+  max_row           = std::min<size_t>(max_row, pass_end);
   CUDF_EXPECTS(max_row > subpass.skip_rows, "Unexpected short subpass", std::underflow_error);
   // Limit the number of rows to read in this subpass to the cudf's column size limit - 1 (for
   // lists). Only apply this limit when chunking is enabled.
@@ -925,13 +962,32 @@ void reader_impl::allocate_columns(read_mode mode, size_t skip_rows, size_t num_
   // Validity Buffer is a uint32_t pointer
   std::vector<cudf::device_span<cudf::bitmask_type>> nullmask_bufs;
 
-  for (const auto& input_col : _input_columns) {
+  // An optional ancestor leaves unwritten output slots until the next repeated level. So, for a
+  // non-nullable STRING (FIELD) with a nullable ancestor, the column is nullable and not all rows
+  // will be decoded. The decoder may not detect this because it may not have a validity map from
+  // the ancestor. To avoid this, zero-fill such STRING buffers here as their uninitialized lengths
+  // are converted to offsets. No handling needed here for nullable strings (zero-filled by decoder
+  // using their own validity bitmap), fixed-width (masked), LIST offsets (never have gaps), and
+  // dictionary indices (have no ancestors).
+  auto const compute_has_unwritten_slots = [](auto const& out_buf, bool has_nullable_ancestor) {
+    return has_nullable_ancestor and out_buf.type.id() == type_id::STRING and
+           not out_buf.is_nullable;
+  };
+  auto unwritten_bufs = cudf::detail::make_empty_pinned_vector<cudf::device_span<cuda::std::byte>>(
+    _input_columns.size(), _stream);
+
+  for (auto const& input_col : _input_columns) {
     size_t const max_depth = input_col.nesting_depth();
 
-    auto* cols = &_output_buffers;
+    auto* cols                 = &_output_buffers;
+    bool has_nullable_ancestor = false;
     for (size_t l_idx = 0; l_idx < max_depth; l_idx++) {
       auto& out_buf = (*cols)[input_col.nesting[l_idx]];
       cols          = &out_buf.children;
+
+      auto const has_unwritten_slots = compute_has_unwritten_slots(out_buf, has_nullable_ancestor);
+      has_nullable_ancestor =
+        out_buf.type.id() == type_id::LIST ? false : (has_nullable_ancestor or out_buf.is_nullable);
 
       // if this has a list parent, we have to get column sizes from the
       // data computed during compute_page_sizes
@@ -953,6 +1009,10 @@ void reader_impl::allocate_columns(read_mode mode, size_t skip_rows, size_t num_
           out_buf.null_mask(),
           cudf::util::round_up_safe(out_buf.null_mask_size(), sizeof(cudf::bitmask_type)) /
             sizeof(cudf::bitmask_type));
+        if (has_unwritten_slots and out_buf.data() != nullptr) {
+          unwritten_bufs.push_back(
+            {static_cast<cuda::std::byte*>(out_buf.data()), out_buf.data_size()});
+        }
       }
     }
   }
@@ -1014,7 +1074,7 @@ void reader_impl::allocate_columns(read_mode mode, size_t skip_rows, size_t num_
           d_cols_info.data(), max_depth, subpass.pages.size(), subpass.pages.device_begin()});
 
       // Manually create a size_t `key_start` compatible counting_transform_iterator.
-      auto const reduction_keys = thrust::make_transform_iterator(
+      auto const reduction_keys = cuda::transform_iterator(
         cuda::counting_iterator<std::size_t>{key_start}, get_reduction_key{subpass.pages.size()});
 
       // Find the size of each column
@@ -1045,10 +1105,19 @@ void reader_impl::allocate_columns(read_mode mode, size_t skip_rows, size_t num_
     for (size_type idx = 0; idx < static_cast<size_type>(_input_columns.size()); idx++) {
       auto const& input_col = _input_columns[idx];
       auto* cols            = &_output_buffers;
+      // See the identically named variable in the non-list allocation loop above
+      bool has_nullable_ancestor = false;
       for (size_type l_idx = 0; l_idx < static_cast<size_type>(input_col.nesting_depth());
            l_idx++) {
         auto& out_buf = (*cols)[input_col.nesting[l_idx]];
         cols          = &out_buf.children;
+
+        auto const has_unwritten_slots =
+          compute_has_unwritten_slots(out_buf, has_nullable_ancestor);
+        has_nullable_ancestor = out_buf.type.id() == type_id::LIST
+                                  ? false
+                                  : (has_nullable_ancestor or out_buf.is_nullable);
+
         // if this buffer is part of a list hierarchy, we need to determine it's
         // final size and allocate it here.
         //
@@ -1072,6 +1141,10 @@ void reader_impl::allocate_columns(read_mode mode, size_t skip_rows, size_t num_
             out_buf.null_mask(),
             cudf::util::round_up_safe(out_buf.null_mask_size(), sizeof(cudf::bitmask_type)) /
               sizeof(cudf::bitmask_type));
+          if (has_unwritten_slots and out_buf.data() != nullptr) {
+            unwritten_bufs.push_back(
+              {static_cast<cuda::std::byte*>(out_buf.data()), out_buf.data_size()});
+          }
         }
       }
     }
@@ -1082,6 +1155,37 @@ void reader_impl::allocate_columns(read_mode mode, size_t skip_rows, size_t num_
     cudf::host_span<cudf::device_span<cudf::bitmask_type> const>{nullmask_bufs}, _stream);
   cudf::detail::batched_memset<cudf::bitmask_type>(
     pinned_nullmask_bufs, std::numeric_limits<cudf::bitmask_type>::max(), _stream);
+
+  // Need to zero non-nullable string lengths with nullable ancestors
+  if (not unwritten_bufs.empty()) {
+    cudf::detail::batched_memset<cuda::std::byte>(
+      cudf::host_span<cudf::device_span<cuda::std::byte> const>{unwritten_bufs},
+      static_cast<cuda::std::byte>(0),
+      _stream);
+  }
+}
+
+void reader_impl::fill_pruned_offsets(size_t skip_rows,
+                                      size_t num_rows,
+                                      cudf::device_span<size_t> initial_str_offsets)
+{
+  // Return early if there are no pruned pages
+  auto const page_mask = subpass_page_mask_span();
+  if (page_mask.is_empty() or
+      std::all_of(page_mask.host_begin(), page_mask.host_end(), cuda::std::identity{})) {
+    return;
+  }
+
+  auto const& pass    = *_pass_itm_data;
+  auto const& subpass = *pass.subpass;
+  auto const pages    = device_span<PageInfo>{subpass.pages.device_ptr(), subpass.pages.size()};
+  auto const chunks =
+    device_span<ColumnChunkDesc const>{pass.chunks.device_ptr(), pass.chunks.size()};
+  auto const device_page_mask = static_cast<device_span<bool const>>(page_mask);
+
+  // Set offsets for pruned string and list pages.
+  parquet::detail::fill_pruned_offsets(
+    pages, chunks, device_page_mask, initial_str_offsets, skip_rows, num_rows, _stream);
 }
 
 cudf::detail::host_vector<size_t> reader_impl::calculate_page_string_offsets()
@@ -1094,8 +1198,8 @@ cudf::detail::host_vector<size_t> reader_impl::calculate_page_string_offsets()
   rmm::device_uvector<size_t> d_col_sizes(_input_columns.size(), _stream);
 
   // use page_index to fetch page string sizes in the proper order
-  auto val_iter = thrust::make_transform_iterator(subpass.pages.device_begin(),
-                                                  page_to_string_size{pass.chunks.d_begin()});
+  auto val_iter = cuda::transform_iterator(subpass.pages.device_begin(),
+                                           page_to_string_size{pass.chunks.d_begin()});
 
   // do scan by key to calculate string offsets for each page
   thrust::exclusive_scan_by_key(
@@ -1103,7 +1207,7 @@ cudf::detail::host_vector<size_t> reader_impl::calculate_page_string_offsets()
     page_keys,
     page_keys + subpass.pages.size(),
     val_iter,
-    page_offset_output_iter{subpass.pages.device_ptr()});
+    cuda::make_tabulate_output_iterator(set_str_offset_fn{subpass.pages.device_ptr()}));
 
   // now sum up page sizes
   rmm::device_uvector<int> reduce_keys(d_col_sizes.size(), _stream);

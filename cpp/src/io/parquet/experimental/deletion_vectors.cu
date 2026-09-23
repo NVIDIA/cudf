@@ -1,9 +1,10 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
 #include "deletion_vectors_helpers.hpp"
+#include "io/parquet/reader_impl_helpers.hpp"
 
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/stream_compaction.hpp>
@@ -11,7 +12,6 @@
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/roaring_bitmap.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_buffer.hpp>
 #include <rmm/exec_policy.hpp>
 #include <rmm/mr/polymorphic_allocator.hpp>
@@ -20,6 +20,7 @@
 #include <cuda/functional>
 #include <cuda/iterator>
 #include <cuda/std/tuple>
+#include <cuda/stream>
 
 #include <numeric>
 
@@ -36,7 +37,7 @@ namespace detail {
 
 [[nodiscard]] table_with_metadata read_parquet(parquet_reader_options const& options,
                                                deletion_vector_info const& deletion_vector_info,
-                                               rmm::cuda_stream_view stream,
+                                               cuda::stream_ref stream,
                                                rmm::device_async_resource_ref mr)
 {
   auto const& serialized_roaring_bitmaps = deletion_vector_info.serialized_roaring_bitmaps;
@@ -103,17 +104,21 @@ namespace detail {
                                           deletion_vector_row_counts,
                                           stream,
                                           cudf::get_current_device_resource_ref());
+
+  auto const mask_type = deletion_vector_info.are_retention_vectors
+                           ? cudf::detail::mask_type::RETENTION
+                           : cudf::detail::mask_type::DELETION;
+
   // Filter the table using the deletion vector
-  return table_with_metadata{
+  return cudf::io::table_with_metadata{
     // Supply user-provided mr to apply deletion mask to allocate output table's memory
-    cudf::detail::apply_mask(
-      table_with_index->view(), row_mask->view(), cudf::detail::mask_type::DELETION, stream, mr),
+    cudf::detail::apply_mask(table_with_index->view(), row_mask->view(), mask_type, stream, mr),
     std::move(metadata)};
 }
 
 [[nodiscard]] size_t compute_num_deleted_rows(deletion_vector_info const& deletion_vector_info,
                                               cudf::size_type max_chunk_rows,
-                                              rmm::cuda_stream_view stream)
+                                              cuda::stream_ref stream)
 {
   auto const& serialized_roaring_bitmaps = deletion_vector_info.serialized_roaring_bitmaps;
   auto const& deletion_vector_row_counts = deletion_vector_info.deletion_vector_row_counts;
@@ -160,7 +165,7 @@ namespace detail {
     dv_row_counts_queue.push(deletion_vector_row_counts[i]);
   }
 
-  size_t deleted_rows   = 0;
+  size_t matched_rows   = 0;
   size_t remaining_rows = num_rows;
   size_t start_row      = 0;
 
@@ -175,14 +180,15 @@ namespace detail {
                                        is_row_group_data_unspecified,
                                        stream,
                                        cudf::get_current_device_resource_ref());
-    deleted_rows += compute_partial_deleted_row_count(
+    matched_rows += compute_partial_deleted_row_count(
       row_index_column->view(), dv_queue, dv_row_counts_queue, stream);
 
     start_row += chunk_rows;
     remaining_rows -= chunk_rows;
   }
 
-  return deleted_rows;
+  // Bitmap hits are deleted rows for deletion vectors, retained rows for retention vectors
+  return deletion_vector_info.are_retention_vectors ? num_rows - matched_rows : matched_rows;
 }
 
 }  // namespace detail
@@ -195,10 +201,11 @@ chunked_parquet_reader::chunked_parquet_reader(std::size_t chunk_read_limit,
                                                std::size_t pass_read_limit,
                                                parquet_reader_options const& options,
                                                deletion_vector_info const& deletion_vector_info,
-                                               rmm::cuda_stream_view stream,
+                                               cuda::stream_ref stream,
                                                rmm::device_async_resource_ref mr)
   : _start_row{0},
     _is_unspecified_row_group_data{deletion_vector_info.row_group_offsets.empty()},
+    _are_retentions{deletion_vector_info.are_retention_vectors},
     _stream{stream},
     _mr{mr},
     // Use default mr for the internal chunked reader and row index column if we will
@@ -255,10 +262,14 @@ chunked_parquet_reader::chunked_parquet_reader(std::size_t chunk_read_limit,
 chunked_parquet_reader::chunked_parquet_reader(std::size_t chunk_read_limit,
                                                parquet_reader_options const& options,
                                                deletion_vector_info const& deletion_vector_info,
-                                               rmm::cuda_stream_view stream,
+                                               cuda::stream_ref stream,
                                                rmm::device_async_resource_ref mr)
-  : chunked_parquet_reader(
-      chunk_read_limit, std::size_t{0}, options, deletion_vector_info, stream, mr)
+  : chunked_parquet_reader(chunk_read_limit,
+                           parquet::detail::derive_pass_read_limit(chunk_read_limit),
+                           options,
+                           deletion_vector_info,
+                           stream,
+                           mr)
 {
 }
 
@@ -312,10 +323,11 @@ table_with_metadata chunked_parquet_reader::read_chunk()
                                                   _deletion_vector_row_counts,
                                                   _stream,
                                                   cudf::get_current_device_resource_ref());
-  return table_with_metadata{
+  auto const mask_type =
+    _are_retentions ? cudf::detail::mask_type::RETENTION : cudf::detail::mask_type::DELETION;
+  return cudf::io::table_with_metadata{
     // Supply user-provided mr to apply deletion mask to allocate output table's memory
-    cudf::detail::apply_mask(
-      table_with_index->view(), row_mask->view(), cudf::detail::mask_type::DELETION, _stream, _mr),
+    cudf::detail::apply_mask(table_with_index->view(), row_mask->view(), mask_type, _stream, _mr),
     std::move(metadata)};
 }
 
@@ -324,7 +336,7 @@ table_with_metadata chunked_parquet_reader::read_chunk()
  */
 table_with_metadata read_parquet(parquet_reader_options const& options,
                                  deletion_vector_info const& deletion_vector_info,
-                                 rmm::cuda_stream_view stream,
+                                 cuda::stream_ref stream,
                                  rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
@@ -336,7 +348,7 @@ table_with_metadata read_parquet(parquet_reader_options const& options,
  */
 size_t compute_num_deleted_rows(deletion_vector_info const& deletion_vector_info,
                                 cudf::size_type max_chunk_rows,
-                                rmm::cuda_stream_view stream)
+                                cuda::stream_ref stream)
 {
   CUDF_FUNC_RANGE();
   return detail::compute_num_deleted_rows(deletion_vector_info, max_chunk_rows, stream);

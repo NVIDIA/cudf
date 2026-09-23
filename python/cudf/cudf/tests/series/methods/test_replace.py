@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import re
@@ -500,4 +500,17 @@ def test_replace_timedelta_series():
         pd.Timedelta("2 days"), pd.Timedelta("10 days")
     )
 
+    assert_eq(pd_result, cudf_result)
+
+
+def test_replace_datetime_sub_resolution_value_is_noop():
+    # The to_replace value has sub-second precision that cannot exist in
+    # a seconds-resolution column; it must not be truncated into a match.
+    data = np.array(["2000-01-01"], dtype="datetime64[s]")
+    pd_result = pd.Series(data).replace(
+        pd.Timestamp("2000-01-01 00:00:00.5"), pd.Timestamp("1999-01-01")
+    )
+    cudf_result = cudf.Series(data).replace(
+        pd.Timestamp("2000-01-01 00:00:00.5"), pd.Timestamp("1999-01-01")
+    )
     assert_eq(pd_result, cudf_result)

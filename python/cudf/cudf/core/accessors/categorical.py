@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from __future__ import annotations
@@ -94,7 +94,10 @@ class CategoricalAccessor(BaseAccessor):
         index = (
             self._parent.index if isinstance(self._parent, Series) else None
         )
-        return Series._from_column(self._column.codes, index=index)
+        codes = self._column.codes.astype(
+            self._column.dtype._pandas_codes_dtype
+        )
+        return Series._from_column(codes, index=index)
 
     @property
     def ordered(self) -> bool | None:

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -39,7 +39,7 @@ struct unbound_list_view {
    */
   enum class label_type : bool { SOURCE, TARGET };
 
-  using lists_column_device_view = cudf::detail::lists_column_device_view;
+  using lists_column_device_view = cudf::lists_column_device_view;
   using list_device_view         = cudf::list_device_view;
 
   unbound_list_view()                                    = default;
@@ -56,7 +56,7 @@ struct unbound_list_view {
    * @param row_index Index of the row in lists_column that this instance represents
    */
   __device__ inline unbound_list_view(label_type scatter_source_label,
-                                      cudf::detail::lists_column_device_view const& lists_column,
+                                      cudf::lists_column_device_view const& lists_column,
                                       size_type const& row_index)
     : _label{scatter_source_label}, _row_index{row_index}
   {
@@ -125,7 +125,7 @@ std::unique_ptr<column> build_lists_child_column_recursive(
   cudf::column_view const& list_offsets,
   cudf::lists_column_view const& source_lists_column_view,
   cudf::lists_column_view const& target_lists_column_view,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr);
 
 }  // namespace detail

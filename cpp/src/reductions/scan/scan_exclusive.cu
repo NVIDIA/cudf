@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -14,10 +14,10 @@
 #include <cudf/null_mask.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/functional>
+#include <cuda/stream>
 #include <thrust/scan.h>
 
 namespace cudf {
@@ -45,7 +45,7 @@ struct scan_dispatcher {
   template <typename T>
   std::unique_ptr<column> operator()(column_view const& input,
                                      bitmask_type const*,
-                                     rmm::cuda_stream_view stream,
+                                     cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr)
     requires(cuda::std::is_arithmetic_v<T>)
   {
@@ -67,7 +67,7 @@ struct scan_dispatcher {
                            identity,
                            binary_op);
 
-    CUDF_CHECK_CUDA(stream.value());
+    CUDF_CHECK_CUDA(stream.get());
     return output_column;
   }
 
@@ -84,7 +84,7 @@ struct scan_dispatcher {
 std::unique_ptr<column> scan_exclusive(column_view const& input,
                                        scan_aggregation const& agg,
                                        null_policy null_handling,
-                                       rmm::cuda_stream_view stream,
+                                       cuda::stream_ref stream,
                                        rmm::device_async_resource_ref mr)
 {
   auto [mask, null_count] = [&] {

@@ -128,7 +128,7 @@ def create_null_indicators(df):
 
 def main():
     df = load_data()
-    report, group_nulls = analyze_nulls(df)
+    analyze_nulls(df)
     df_with_indicators = create_null_indicators(df)
     dropped = dropna_analysis(df)
     filled = fill_with_strategies(df)

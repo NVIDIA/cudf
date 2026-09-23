@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -14,7 +14,7 @@
 #include <cudf/strings/regex/regex_program.hpp>
 #include <cudf/strings/strings_column_view.hpp>
 
-#include <thrust/iterator/transform_iterator.h>
+#include <cuda/iterator>
 
 struct StringsFindallTests : public cudf::test::BaseFixture {};
 
@@ -216,6 +216,44 @@ TEST_F(StringsFindallTests, OneCaptureGroup)
   prog     = cudf::strings::regex_program::create(
     pattern, cudf::strings::regex_flags::DEFAULT, cudf::strings::capture_groups::NON_CAPTURE);
   results = cudf::strings::findall(sv, *prog);
+  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(results->view(), expected);
+}
+
+TEST_F(StringsFindallTests, AlternationPriorityFirstWins)
+{
+  // Leftmost-first (first-alternative-wins): "foo" is found instead of "foobar" when both
+  // alternatives start at the same position.
+  auto input =
+    cudf::test::strings_column_wrapper({"foo", "foobar", "foobarbaz", "bar", "xfoobar", ""});
+  auto sv   = cudf::strings_column_view(input);
+  auto prog = cudf::strings::regex_program::create(
+    "foo|foobar", cudf::strings::regex_flags::DEFAULT, cudf::strings::capture_groups::NON_CAPTURE);
+  auto results = cudf::strings::findall(sv, *prog);
+
+  using LCW = cudf::test::lists_column_wrapper<cudf::string_view>;
+  LCW expected({LCW{"foo"}, LCW{"foo"}, LCW{"foo"}, LCW{}, LCW{"foo"}, LCW{}});
+  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(results->view(), expected);
+}
+
+TEST_F(StringsFindallTests, EmptyMatch)
+{
+  auto input = cudf::test::strings_column_wrapper({" ", "hello world", "é\r\ny"});
+  auto sv    = cudf::strings_column_view(input);
+  using LCW  = cudf::test::lists_column_wrapper<cudf::string_view>;
+
+  auto expected = LCW({LCW{}, LCW{}, LCW{}});
+  auto prog     = cudf::strings::regex_program::create("^$", cudf::strings::regex_flags::MULTILINE);
+  auto results  = cudf::strings::findall(sv, *prog);
+  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(results->view(), expected);
+
+  expected = LCW({LCW{}, LCW{"", "", "", ""}, LCW{"", "", "", ""}});
+  prog     = cudf::strings::regex_program::create("\\b");
+  results  = cudf::strings::findall(sv, *prog);
+  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(results->view(), expected);
+
+  expected = LCW({LCW{}, LCW{"", "", "", ""}, LCW{"", "", "", ""}});
+  prog     = cudf::strings::regex_program::create("(\\b)");
+  results  = cudf::strings::findall(sv, *prog);
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(results->view(), expected);
 }
 

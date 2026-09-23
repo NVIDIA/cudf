@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from __future__ import annotations
@@ -9,6 +9,7 @@ import polars as pl
 from polars.testing import assert_frame_equal
 
 from cudf_polars.engine.options import StreamingOptions
+from cudf_polars.streaming.explain import explain_query
 from cudf_polars.testing.asserts import assert_gpu_result_equal
 from cudf_polars.testing.engine_utils import warns_on_spmd
 
@@ -51,6 +52,24 @@ def test_unique_select(df, streaming_engine_factory, maintain_order):
     )
     q = df.select(pl.col("y").unique(maintain_order=maintain_order))
     assert_gpu_result_equal(q, engine=engine, check_row_order=False)
+
+
+def test_unique_select_dynamic_planning_uses_dynamic_distinct(spmd_engine_factory):
+    df = pl.LazyFrame({"y": list(range(10)) * 2})
+    q = df.select(pl.col("y").unique())
+    engine = spmd_engine_factory(
+        StreamingOptions(
+            dynamic_planning={},
+            max_rows_per_partition=5,
+        )
+    )
+
+    assert_gpu_result_equal(q, engine=engine, check_row_order=False)
+
+    plan = explain_query(q, engine, physical=True)
+
+    assert "DISTINCT" in plan
+    assert "REPARTITION" not in plan
 
 
 @pytest.mark.parametrize("keep", ["first", "last", "any"])

@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from __future__ import annotations
@@ -57,7 +57,7 @@ def test_translation_assert_raises(engine: pl.GPUEngine):
 def test_sink_ir_translation_raises_bad_extension(engine: pl.GPUEngine):
     df = pl.LazyFrame({"a": [1, 2, 3]})
     # Should raise because ".foo" is not a recognized file extension
-    with pytest.raises(ValueError, match="Unsupported file format: .foo"):
+    with pytest.raises(ValueError, match=r"Unsupported file format: .foo"):
         assert_sink_ir_translation_raises(
             df, Path("out.foo"), engine, {}, NotImplementedError
         )
@@ -71,7 +71,7 @@ def test_sink_ir_translation_raises_sink_error_before_translation(
     # so the sink_* function fails before IR translation
     with pytest.raises(
         AssertionError,
-        match="Sink function raised an exception before translation: .*foo",
+        match=r"Sink function raised an exception before translation: .*foo",
     ):
         assert_sink_ir_translation_raises(
             df, tmp_path / "out.csv", engine, {"foo": True}, NotImplementedError
@@ -465,7 +465,7 @@ def test_assert_tpch_result_equal_sort_keys_raises_not_sorted() -> None:
 def test_assert_tpch_result_equal_grouped_float_sort(
     sort_by: list[tuple[str, bool]], drop_columns: list[str]
 ) -> None:
-    # https://github.com/rapidsai/cudf/issues/22129
+    # https://github.com/NVIDIA/cudf/issues/22129
     # Same non-float values with float values reordered inside each non-float group.
     left = pl.DataFrame({"a": [1, 1, 1], "b": [2, 2, 2], "c": [1.0, 2.0, 3.0]})
     right = pl.DataFrame({"a": [1, 1, 1], "b": [2, 2, 2], "c": [1.0, 2.999, 2.0]})

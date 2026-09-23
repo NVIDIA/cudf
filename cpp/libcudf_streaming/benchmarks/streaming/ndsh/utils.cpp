@@ -1,6 +1,6 @@
 /**
- * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights
- * reserved. SPDX-License-Identifier: Apache-2.0
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
  */
 
 #include "utils.hpp"
@@ -8,20 +8,18 @@
 #include <cudf/io/parquet.hpp>
 #include <cudf/io/parquet_metadata.hpp>
 
+#include <cudf_streaming/table_chunk.hpp>
+
 #include <rmm/aligned.hpp>
 #include <rmm/cuda_device.hpp>
 #include <rmm/mr/per_device_resource.hpp>
 
-#include <cudf_streaming/streaming/table_chunk.hpp>
 #include <getopt.h>
-#include <mpi.h>
 #include <rapidsmpf/bootstrap/bootstrap.hpp>
-#include <rapidsmpf/bootstrap/ucxx.hpp>
 #include <rapidsmpf/bootstrap/utils.hpp>
 #include <rapidsmpf/communicator/communicator.hpp>
-#include <rapidsmpf/communicator/mpi.hpp>
+#include <rapidsmpf/communicator/logger.hpp>
 #include <rapidsmpf/communicator/single.hpp>
-#include <rapidsmpf/communicator/ucxx_utils.hpp>
 #include <rapidsmpf/config.hpp>
 #include <rapidsmpf/error.hpp>
 #include <rapidsmpf/memory/buffer_resource.hpp>
@@ -34,8 +32,23 @@
 #include <filesystem>
 #include <map>
 #include <memory>
+#include <sstream>
 #include <stdexcept>
 #include <string_view>
+
+#ifdef CUDF_STREAMING_HAVE_MPI
+#include <mpi.h>
+#include <rapidsmpf/communicator/mpi.hpp>
+#endif
+
+#ifdef CUDF_STREAMING_HAVE_UCXX
+#include <rapidsmpf/bootstrap/ucxx.hpp>
+#include <rapidsmpf/communicator/ucxx.hpp>
+#endif
+
+#if defined(CUDF_STREAMING_HAVE_MPI) && defined(CUDF_STREAMING_HAVE_UCXX)
+#include <rapidsmpf/communicator/ucxx_utils.hpp>
+#endif
 
 namespace rapidsmpf::ndsh {
 namespace detail {
@@ -89,6 +102,49 @@ std::map<std::string, cudf::data_type> get_column_types(std::string const& input
 
 }  // namespace detail
 
+bool is_comm_type_available(CommType comm_type)
+{
+  switch (comm_type) {
+    case CommType::SINGLE: return true;
+    case CommType::MPI:
+#ifdef CUDF_STREAMING_HAVE_MPI
+      return true;
+#endif
+      break;
+    case CommType::UCXX:
+#ifdef CUDF_STREAMING_HAVE_UCXX
+      return true;
+#endif
+      break;
+    case CommType::MAX: break;
+  }
+  return false;
+}
+
+std::string available_comm_types()
+{
+  auto const names = comm_type_names();
+  std::stringstream out;
+  bool first = true;
+  for (std::size_t i = 0; i < static_cast<std::size_t>(CommType::MAX); ++i) {
+    auto const comm_type = static_cast<CommType>(i);
+    if (!is_comm_type_available(comm_type)) { continue; }
+    if (!first) { out << ", "; }
+    out << names[i];
+    first = false;
+  }
+  return out.str();
+}
+
+std::optional<CommType> parse_comm_type(std::string_view name)
+{
+  auto const names = comm_type_names();
+  for (std::size_t i = 0; i < names.size(); ++i) {
+    if (name == names[i]) { return static_cast<CommType>(i); }
+  }
+  return std::nullopt;
+}
+
 streaming::Actor sink_channel(std::shared_ptr<streaming::Context> ctx,
                               std::shared_ptr<streaming::Channel> ch)
 {
@@ -104,9 +160,8 @@ streaming::Actor consume_channel(std::shared_ptr<streaming::Context> ctx,
   while (true) {
     auto msg = co_await ch_in->receive();
     if (msg.empty()) { break; }
-    if (msg.holds<cudf_streaming::streaming::TableChunk>()) {
-      auto chunk =
-        co_await msg.release<cudf_streaming::streaming::TableChunk>().make_available(ctx);
+    if (msg.holds<cudf_streaming::table_chunk>()) {
+      auto chunk = co_await msg.release<cudf_streaming::table_chunk>().make_available(ctx);
       ctx->logger()->print("Consumed chunk with ",
                            chunk.table_view().num_rows(),
                            " rows and ",
@@ -140,45 +195,58 @@ std::pair<std::shared_ptr<streaming::Context>, std::shared_ptr<Communicator>> cr
     "noting that this may significantly degrade spilling performance.",
     std::invalid_argument);
 
+  auto pinned_pool_properties =
+    arguments.no_pinned_host_memory ? PinnedMemoryDisabled : PinnedPoolProperties{};
   auto br                              = BufferResource::create(std::move(mr),
-                                   arguments.no_pinned_host_memory
-                                                                  ? PinnedMemoryResource::Disabled
-                                                                  : PinnedMemoryResource::make_if_available(),
+                                   std::move(pinned_pool_properties),
                                    std::move(memory_limits),
                                    arguments.periodic_spill,
-                                   std::make_shared<rmm::cuda_stream_pool>(
-                                     arguments.num_streams, rmm::cuda_stream::flags::non_blocking),
+                                   std::make_shared<rapidsmpf::StreamPool>(arguments.num_streams),
                                    statistics);
   auto environment                     = config::get_environment_variables();
   environment["NUM_STREAMING_THREADS"] = std::to_string(arguments.num_streaming_threads);
   auto options                         = config::Options(environment);
+  auto log                             = Logger::from_options(options);
   auto progress_thread                 = std::make_shared<rapidsmpf::ProgressThread>(statistics);
   std::shared_ptr<Communicator> comm;
   switch (arguments.comm_type) {
     case CommType::MPI:
+#ifdef CUDF_STREAMING_HAVE_MPI
       RAPIDSMPF_EXPECTS(!bootstrap::is_running_with_rrun(), "Can't use MPI communicator with rrun");
       mpi::init(nullptr, nullptr);
 
-      comm = std::make_shared<MPI>(MPI_COMM_WORLD, options, progress_thread);
+      comm = std::make_shared<MPI>(MPI_COMM_WORLD, progress_thread, log);
+#else
+      RAPIDSMPF_FAIL("MPI communicator is not available in this build", std::invalid_argument);
+#endif
       break;
-    case CommType::SINGLE: comm = std::make_shared<Single>(options, progress_thread); break;
+    case CommType::SINGLE: comm = std::make_shared<Single>(progress_thread, log); break;
     case CommType::UCXX:
+#ifdef CUDF_STREAMING_HAVE_UCXX
       if (bootstrap::is_running_with_rrun()) {
-        comm = bootstrap::create_ucxx_comm(progress_thread, bootstrap::BackendType::AUTO, options);
+        comm =
+          bootstrap::create_ucxx_comm(progress_thread, bootstrap::BackendType::AUTO, options, log);
       } else {
+#ifdef CUDF_STREAMING_HAVE_MPI
         mpi::init(nullptr, nullptr);
-        comm = ucxx::init_using_mpi(MPI_COMM_WORLD, options, progress_thread);
+        comm = ucxx::init_using_mpi(MPI_COMM_WORLD, options, progress_thread, log);
+#else
+        RAPIDSMPF_FAIL("UCXX without MPI support requires bootstrap mode", std::invalid_argument);
+#endif
       }
+#else
+      RAPIDSMPF_FAIL("UCXX communicator is not available in this build", std::invalid_argument);
+#endif
       break;
     default: RAPIDSMPF_FAIL("Unknown communicator type");
   }
-  auto ctx = std::make_shared<streaming::Context>(options, comm->logger(), br);
+  auto ctx = std::make_shared<streaming::Context>(options, log, br);
   if (comm->rank() == 0) {
-    comm->logger()->print("Execution context on ",
-                          comm->nranks(),
-                          " ranks has ",
-                          ctx->executor()->num_streaming_threads(),
-                          " threads");
+    log->print("Execution context on ",
+               comm->nranks(),
+               " ranks has ",
+               ctx->executor()->num_streaming_threads(),
+               " threads");
   }
   return {ctx, comm};
 }
@@ -187,10 +255,9 @@ ProgramOptions parse_arguments(int argc, char** argv)
 {
   ProgramOptions options;
 
-  static constexpr std::array<std::string_view, static_cast<std::size_t>(CommType::MAX)> comm_names{
-    "single", "mpi", "ucxx"};
+  auto const comm_names = comm_type_names();
 
-  auto print_usage = [&argv, &options]() {
+  auto print_usage = [&argv, &comm_names, &options]() {
     std::cerr << "Usage: " << argv[0] << " [options]\n"
               << "Options:\n"
               << "  --num-streaming-threads <n>  Number of streaming threads (default: "
@@ -217,7 +284,8 @@ ProgramOptions parse_arguments(int argc, char** argv)
                     ? std::to_string(options.periodic_spill.value().count())
                     : "None")
               << ")\n"
-              << "  --comm-type <type>           Communicator type: single, mpi, ucxx "
+              << "  --comm-type <type>           Communicator type: " << available_comm_types()
+              << " "
                  "(default: "
               << comm_names[static_cast<std::size_t>(options.comm_type)] << ")\n"
               << "  --use-shuffle-join           Use shuffle join (default: "
@@ -318,14 +386,9 @@ ProgramOptions parse_arguments(int argc, char** argv)
         break;
       }
       case 10: {
-        std::string comm_type = optarg;
-        if (comm_type == "mpi") {
-          options.comm_type = CommType::MPI;
-        } else if (comm_type == "single") {
-          options.comm_type = CommType::SINGLE;
-        } else if (comm_type == "ucxx") {
-          options.comm_type = CommType::UCXX;
-        } else {
+        std::string_view comm_type = optarg;
+        auto parsed                = parse_comm_type(comm_type);
+        if (!parsed.has_value()) {
           std::cerr << "Error: Invalid value for --comm-type: " << optarg << " (must be one of "
                     << comm_names[0];
           for (std::size_t i = 1; i < comm_names.size(); ++i) {
@@ -335,6 +398,14 @@ ProgramOptions parse_arguments(int argc, char** argv)
           print_usage();
           std::exit(1);
         }
+        if (!is_comm_type_available(*parsed)) {
+          std::cerr << "Error: communicator '" << comm_type
+                    << "' is not available in this build (available: " << available_comm_types()
+                    << ")\n\n";
+          print_usage();
+          std::exit(1);
+        }
+        options.comm_type = *parsed;
         break;
       }
       case 11: {
@@ -369,5 +440,16 @@ ProgramOptions parse_arguments(int argc, char** argv)
   }
 
   return options;
+}
+
+FinalizeMPI::~FinalizeMPI() noexcept
+{
+#ifdef CUDF_STREAMING_HAVE_MPI
+  if (rapidsmpf::mpi::is_initialized()) {
+    int flag;
+    RAPIDSMPF_MPI(MPI_Finalized(&flag));
+    if (!flag) { RAPIDSMPF_MPI(MPI_Finalize()); }
+  }
+#endif
 }
 }  // namespace rapidsmpf::ndsh

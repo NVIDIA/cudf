@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -14,6 +14,7 @@
 #include <cudf/detail/row_operator/preprocessed_table.cuh>
 #include <cudf/detail/sorting.hpp>
 #include <cudf/detail/structs/utilities.hpp>
+#include <cudf/detail/utilities/cuda.hpp>
 #include <cudf/detail/utilities/linked_column.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/lists/lists_column_view.hpp>
@@ -22,7 +23,7 @@
 #include <cudf/utilities/type_checks.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
-#include <thrust/iterator/transform_iterator.h>
+#include <cuda/iterator>
 
 #include <functional>
 #include <stdexcept>
@@ -40,7 +41,7 @@ namespace {
 std::vector<column_view> unslice_children(column_view const& c)
 {
   if (c.type().id() == type_id::STRUCT) {
-    auto child_it = thrust::make_transform_iterator(c.child_begin(), [](auto const& child) {
+    auto child_it = cuda::transform_iterator(c.child_begin(), [](auto const& child) {
       return column_view(
         child.type(),
         child.offset() + child.size(),  // This is hacky, we don't know the actual unsliced size but
@@ -296,7 +297,7 @@ auto decompose_structs(table_view table,
  * This helper function generates dremel data for any list-type columns in a
  * table. This data is necessary for lexicographic comparisons.
  */
-auto list_lex_preprocess(table_view const& table, rmm::cuda_stream_view stream)
+auto list_lex_preprocess(table_view const& table, cuda::stream_ref stream)
 {
   std::vector<detail::dremel_data> dremel_data;
   auto const num_list_columns = std::count_if(
@@ -411,7 +412,7 @@ namespace {
 auto replace_child(column_view const& input,
                    column_view const& new_child,
                    std::vector<std::unique_ptr<column>>& out_cols,
-                   rmm::cuda_stream_view stream,
+                   cuda::stream_ref stream,
                    rmm::device_async_resource_ref mr)
 {
   auto const make_output = [&input](auto const& offsets_cv, auto const& child_cv) {
@@ -460,7 +461,7 @@ auto replace_child(column_view const& input,
  */
 auto compute_ranks(column_view const& input,
                    null_order column_null_order,
-                   rmm::cuda_stream_view stream,
+                   cuda::stream_ref stream,
                    rmm::device_async_resource_ref mr)
 {
   return cudf::detail::rank(input,
@@ -493,7 +494,7 @@ auto compute_ranks(column_view const& input,
 std::pair<column_view, std::vector<std::unique_ptr<column>>> transform_lists_of_structs(
   column_view const& input,
   null_order column_null_order,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr)
 {
   std::vector<std::unique_ptr<column>> out_cols;
@@ -560,7 +561,7 @@ std::tuple<column_view,
 transform_lists_of_structs(column_view const& lhs,
                            column_view const& rhs,
                            null_order column_null_order,
-                           rmm::cuda_stream_view stream,
+                           cuda::stream_ref stream,
                            rmm::device_async_resource_ref mr)
 {
   std::vector<std::unique_ptr<column>> out_cols_lhs;
@@ -637,7 +638,7 @@ std::shared_ptr<preprocessed_table> preprocessed_table::create(
   host_span<order const> column_order,
   host_span<null_order const> null_precedence,
   bool has_ranked_children,
-  rmm::cuda_stream_view stream)
+  cuda::stream_ref stream)
 {
   check_lex_compatibility(preprocessed_input);
 
@@ -648,6 +649,7 @@ std::shared_ptr<preprocessed_table> preprocessed_table::create(
     null_precedence, stream, cudf::get_current_device_resource_ref());
   auto d_depths = detail::make_device_uvector_async(
     verticalized_col_depths, stream, cudf::get_current_device_resource_ref());
+  cudf::detail::sync_stream(stream);
 
   if (detail::has_nested_columns(preprocessed_input)) {
     auto [dremel_data, d_dremel_device_view] = list_lex_preprocess(preprocessed_input, stream);
@@ -675,7 +677,7 @@ std::shared_ptr<preprocessed_table> preprocessed_table::create(
   table_view const& input,
   host_span<order const> column_order,
   host_span<null_order const> null_precedence,
-  rmm::cuda_stream_view stream)
+  cuda::stream_ref stream)
 {
   auto [decomposed_input, new_column_order, new_null_precedence, verticalized_col_depths] =
     decompose_structs(input, decompose_lists_column::NO, column_order, null_precedence);
@@ -719,7 +721,7 @@ preprocessed_table::create(table_view const& lhs,
                            table_view const& rhs,
                            host_span<order const> column_order,
                            host_span<null_order const> null_precedence,
-                           rmm::cuda_stream_view stream)
+                           cuda::stream_ref stream)
 {
   check_shape_compatibility(lhs, rhs);
 
@@ -753,7 +755,7 @@ preprocessed_table::create(table_view const& lhs,
         transform_lists_of_structs(
           lhs_col,
           rhs_col,
-          null_precedence.empty() ? null_order::BEFORE : null_precedence[col_idx],
+          null_precedence.empty() ? null_order::BEFORE : new_null_precedence_lhs[col_idx],
           stream,
           cudf::get_current_device_resource_ref());
 
@@ -832,7 +834,7 @@ two_table_comparator::two_table_comparator(table_view const& left,
                                            table_view const& right,
                                            host_span<order const> column_order,
                                            host_span<null_order const> null_precedence,
-                                           rmm::cuda_stream_view stream)
+                                           cuda::stream_ref stream)
 {
   std::tie(d_left_table, d_right_table) =
     preprocessed_table::create(left, right, column_order, null_precedence, stream);
@@ -842,27 +844,27 @@ two_table_comparator::two_table_comparator(table_view const& left,
 
 namespace equality {
 
-std::shared_ptr<preprocessed_table> preprocessed_table::create(table_view const& t,
-                                                               rmm::cuda_stream_view stream)
+std::shared_ptr<preprocessed_table> preprocessed_table::create(
+  table_view const& t, cuda::stream_ref stream, rmm::device_async_resource_ref temp_mr)
 {
   check_eq_compatibility(t);
 
-  auto [null_pushed_table, nullable_data] =
-    structs::detail::push_down_nulls(t, stream, cudf::get_current_device_resource_ref());
-  auto struct_offset_removed_table = remove_struct_child_offsets(null_pushed_table);
+  auto [null_pushed_table, nullable_data] = structs::detail::push_down_nulls(t, stream, temp_mr);
+  auto struct_offset_removed_table        = remove_struct_child_offsets(null_pushed_table);
   auto verticalized_t =
     std::get<0>(decompose_structs(struct_offset_removed_table, decompose_lists_column::YES));
 
-  auto d_t = table_device_view_owner(table_device_view::create(verticalized_t, stream));
+  auto d_t = table_device_view_owner(table_device_view::create(verticalized_t, stream, temp_mr));
   return std::shared_ptr<preprocessed_table>(new preprocessed_table(
     std::move(d_t), std::move(nullable_data.new_null_masks), std::move(nullable_data.new_columns)));
 }
 
 two_table_comparator::two_table_comparator(table_view const& left,
                                            table_view const& right,
-                                           rmm::cuda_stream_view stream)
-  : d_left_table{preprocessed_table::create(left, stream)},
-    d_right_table{preprocessed_table::create(right, stream)}
+                                           cuda::stream_ref stream,
+                                           rmm::device_async_resource_ref temp_mr)
+  : d_left_table{preprocessed_table::create(left, stream, temp_mr)},
+    d_right_table{preprocessed_table::create(right, stream, temp_mr)}
 {
   check_shape_compatibility(left, right);
 }

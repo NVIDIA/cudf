@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -39,7 +39,7 @@ static void nvbench_contains_table(nvbench::state& state, nvbench::type_list<Typ
   auto mem_stats_logger = cudf::memory_stats_logger();
 
   state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
-    auto const stream_view = rmm::cuda_stream_view{launch.get_stream()};
+    auto const stream_view = cuda::stream_ref{launch.get_stream()};
     [[maybe_unused]] auto const result =
       cudf::contains(haystack->view().column(0), needles->view().column(0), stream_view);
   });

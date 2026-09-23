@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 """Example running a RapidsMPF Shuffle operation using Ray and UCXX communication."""
 
@@ -12,15 +12,15 @@ import pylibcudf as plc
 import ray
 
 import rmm
-from cudf_streaming.integrations.partition import (
+from cudf_streaming.partition_utils import (
     partition_and_pack,
     unpack_and_concat,
-    unspill_partitions,
 )
+from cudf_streaming.testing import assert_eq
 from rapidsmpf.integrations.ray import RapidsMPFActor, setup_ray_ucxx_cluster
 from rapidsmpf.memory.buffer_resource import BufferResource
+from rapidsmpf.memory.spill import unspill_partitions
 from rapidsmpf.shuffler import Shuffler
-from rapidsmpf.testing import assert_eq
 
 
 class ShufflingActor(RapidsMPFActor):

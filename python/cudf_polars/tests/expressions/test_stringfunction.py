@@ -1,7 +1,8 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 from __future__ import annotations
 
+import string
 from functools import partial
 
 import pytest
@@ -157,9 +158,23 @@ def test_unsupported_stringfunction(engine: pl.GPUEngine, ldf):
     assert_ir_translation_raises(q, engine, NotImplementedError)
 
 
-def test_contains_re_non_strict_raises(engine: pl.GPUEngine, ldf):
+def test_contains_re_non_strict(engine: pl.GPUEngine, ldf):
     q = ldf.select(pl.col("a").str.contains(".", strict=False))
+    assert_gpu_result_equal(q, engine=engine)
 
+
+def test_contains_re_non_strict_invalid(engine: pl.GPUEngine, ldf):
+    q = ldf.select(pl.col("a").str.contains("[", strict=False))
+    assert_gpu_result_equal(q, engine=engine)
+
+
+def test_contains_empty_regex_with_null(engine: pl.GPUEngine):
+    q = pl.LazyFrame({"a": ["abc", None, ""]}).select(pl.col("a").str.contains(""))
+    assert_gpu_result_equal(q, engine=engine)
+
+
+def test_contains_re_non_strict_libcudf_unsupported(engine: pl.GPUEngine, ldf):
+    q = ldf.select(pl.col("a").str.contains("a{1000}", strict=False))
     assert_ir_translation_raises(q, engine, NotImplementedError)
 
 
@@ -230,6 +245,15 @@ def test_slice_column(engine: pl.GPUEngine, slice_column_data):
     else:
         q = slice_column_data.select(pl.col("a").str.slice(pl.col("start")))
     assert_ir_translation_raises(q, engine, NotImplementedError)
+
+
+@pytest.mark.parametrize("name", ["head", "tail"])
+def test_head_tail_expr_n(engine: pl.GPUEngine, name):
+    df = pl.LazyFrame(
+        {"a": ["abcdef", "hello", None, "xy", "abcd"], "n": [2, 0, 3, None, -1]}
+    )
+    q = df.select(getattr(pl.col("a").str, name)(pl.col("n")))
+    assert_gpu_result_equal(q, engine=engine)
 
 
 @pytest.fixture
@@ -465,7 +489,10 @@ def test_unsupported_regex_raises(engine: pl.GPUEngine, pattern):
     df = pl.LazyFrame({"a": ["abc"]})
 
     q = df.select(pl.col("a").str.contains(pattern, strict=True))
-    assert_ir_translation_raises(q, engine, NotImplementedError)
+    if pattern == "":
+        assert_gpu_result_equal(q, engine=engine)
+    else:
+        assert_ir_translation_raises(q, engine, NotImplementedError)
 
     q = df.select(pl.col("a").str.count_matches(pattern))
     assert_ir_translation_raises(q, engine, NotImplementedError)
@@ -476,6 +503,38 @@ def test_string_to_integer(engine: pl.GPUEngine, str_to_integer_data, integer_ty
     assert_gpu_result_equal(q, engine=engine)
 
 
+@pytest.mark.parametrize("strict", [True, False])
+def test_str_to_integer(engine: pl.GPUEngine, strict, integer_type):
+    df = pl.LazyFrame({"a": ["1", "2", "-3", None, "0"]})
+    q = df.select(pl.col("a").str.to_integer(dtype=integer_type, strict=strict))
+    assert_gpu_result_equal(q, engine=engine)
+
+
+def test_str_to_integer_non_strict_invalid_to_null(engine: pl.GPUEngine):
+    df = pl.LazyFrame({"a": ["1", "invalid", "", None, "999999999999999999999999"]})
+    q = df.select(pl.col("a").str.to_integer(dtype=pl.Int32, strict=False))
+    assert_gpu_result_equal(q, engine=engine)
+
+
+def test_str_to_integer_strict_raises(engine: pl.GPUEngine):
+    df = pl.LazyFrame({"a": ["1", "invalid"]})
+    q = df.select(pl.col("a").str.to_integer(strict=True))
+    with pytest.raises(pl.exceptions.ComputeError):
+        q.collect()
+    if is_streaming_engine(engine):
+        with pytest.RaisesGroup(pl.exceptions.InvalidOperationError):
+            q.collect(engine=engine)
+    else:
+        with pytest.raises(pl.exceptions.InvalidOperationError):
+            q.collect(engine=engine)
+
+
+def test_str_to_integer_base_unsupported(engine: pl.GPUEngine):
+    df = pl.LazyFrame({"a": ["110", "101"]})
+    q = df.select(pl.col("a").str.to_integer(base=2, strict=False))
+    assert_ir_translation_raises(q, engine, NotImplementedError)
+
+
 def test_string_from_integer(engine: pl.GPUEngine, str_from_integer_data):
     q = str_from_integer_data.select(pl.col("a").cast(pl.String))
     assert_gpu_result_equal(q, engine=engine)
@@ -483,6 +542,23 @@ def test_string_from_integer(engine: pl.GPUEngine, str_from_integer_data):
 
 def test_string_to_float(engine: pl.GPUEngine, str_to_float_data, floating_type):
     q = str_to_float_data.select(pl.col("a").cast(floating_type))
+    assert_gpu_result_equal(q, engine=engine)
+
+
+@pytest.mark.parametrize("scale", [0, 1, 2, 4])
+@pytest.mark.parametrize(
+    "values",
+    [
+        ["1.23", "-4.5", None, "0", "123456789.01", "abc", "1.234"],
+        [],
+        [None, None],
+        ["1.23"],
+    ],
+    ids=["mixed", "empty", "all-null", "single-row"],
+)
+def test_string_to_decimal(engine: pl.GPUEngine, scale, values):
+    ldf = pl.LazyFrame({"a": pl.Series(values, dtype=pl.String)})
+    q = ldf.select(pl.col("a").str.to_decimal(scale=scale))
     assert_gpu_result_equal(q, engine=engine)
 
 
@@ -595,6 +671,17 @@ def test_string_zfill_column(engine: pl.GPUEngine, fill):
         q.collect(engine=engine)
     else:
         assert_gpu_result_equal(q, engine=engine)
+
+
+def test_string_zfill_column_null_widths(engine: pl.GPUEngine):
+    df = pl.LazyFrame(
+        {
+            "s": ["1", "0", "123", None, "45", "6"],
+            "w": [3, None, 5, 3, None, 0],
+        }
+    )
+    q = df.select(pl.col("s").str.zfill(pl.col("w")))
+    assert_gpu_result_equal(q, engine=engine)
 
 
 def test_string_zfill_forbidden_chars(engine: pl.GPUEngine):
@@ -714,6 +801,43 @@ def test_string_head(engine: pl.GPUEngine, ldf, head):
     assert_gpu_result_equal(q, engine=engine)
 
 
+@pytest.mark.parametrize("operation", ["head", "tail"])
+@pytest.mark.parametrize("integer_type", [pl.Int32, pl.Int64])
+def test_string_head_tail_by_column(engine: pl.GPUEngine, operation, integer_type):
+    ldf = pl.LazyFrame(
+        {
+            "a": ["AbC", "de", "FGHI", None, "", "Wïth ünicode"],
+            "n": pl.Series([1, -1, 0, 2, None, 999], dtype=integer_type),
+        }
+    )
+    q = ldf.select(getattr(pl.col("a").str, operation)(pl.col("n")))
+    assert_gpu_result_equal(q, engine=engine)
+
+
+@pytest.mark.parametrize("operation", ["head", "tail"])
+@pytest.mark.parametrize(
+    "a,n",
+    [
+        (
+            pl.Series([], dtype=pl.String),
+            pl.Series([], dtype=pl.Int64),
+        ),
+        (
+            pl.Series([None, None], dtype=pl.String),
+            pl.Series([1, -1], dtype=pl.Int64),
+        ),
+        (
+            pl.Series(["abc", None], dtype=pl.String),
+            pl.Series([None, None], dtype=pl.Int64),
+        ),
+    ],
+)
+def test_string_head_tail_by_column_shortcuts(engine: pl.GPUEngine, operation, a, n):
+    ldf = pl.LazyFrame({"a": a, "n": n})
+    q = ldf.select(getattr(pl.col("a").str, operation)(pl.col("n")))
+    assert_gpu_result_equal(q, engine=engine)
+
+
 @pytest.mark.parametrize("ignore_nulls", [True, False])
 @pytest.mark.parametrize("separator", ["*", ""])
 def test_concat_horizontal(engine: pl.GPUEngine, ldf, ignore_nulls, separator):
@@ -747,8 +871,15 @@ def test_count_matches(engine: pl.GPUEngine, ldf):
     assert_gpu_result_equal(q, engine=engine)
 
 
-def test_count_matches_literal_unsupported(engine: pl.GPUEngine, ldf):
-    q = ldf.select(pl.col("a").str.count_matches("a", literal=True))
+@pytest.mark.parametrize("pattern", ["a", ".", "a+", "+", "L"])
+def test_count_matches_literal(engine: pl.GPUEngine, pattern):
+    df = pl.LazyFrame({"a": ["a.b.c", "a1b2", "...", "", None, "a+a+a", "kLm"]})
+    q = df.select(pl.col("a").str.count_matches(pattern, literal=True))
+    assert_gpu_result_equal(q, engine=engine)
+
+
+def test_count_matches_literal_empty_unsupported(engine: pl.GPUEngine, ldf):
+    q = ldf.select(pl.col("a").str.count_matches("", literal=True))
     assert_ir_translation_raises(q, engine, NotImplementedError)
 
 
@@ -830,8 +961,16 @@ def ldf_find():
     )
 
 
-def test_find_literal_false_strict_false_unsupported(engine: pl.GPUEngine, ldf_find):
-    q = ldf_find.select(pl.col("a").str.find("a", literal=False, strict=False))
+@pytest.mark.parametrize("pattern", ["a", "[", ""])
+def test_find_literal_false_strict_false(engine: pl.GPUEngine, ldf_find, pattern):
+    q = ldf_find.select(pl.col("a").str.find(pattern, literal=False, strict=False))
+    assert_gpu_result_equal(q, engine=engine)
+
+
+def test_find_literal_false_strict_false_libcudf_unsupported(
+    engine: pl.GPUEngine, ldf_find
+):
+    q = ldf_find.select(pl.col("a").str.find("a{1000}", literal=False, strict=False))
     assert_ir_translation_raises(q, engine, NotImplementedError)
 
 
@@ -852,15 +991,15 @@ def ldf_extract():
     return pl.LazyFrame({"a": ["?!. 123 foo", None]})
 
 
-@pytest.mark.parametrize("group_index", [1, 2])
+@pytest.mark.parametrize("group_index", [0, 1, 2])
 def test_extract(engine: pl.GPUEngine, ldf_extract, group_index):
     q = ldf_extract.select(pl.col("a").str.extract(r"(\S+) (\d+) (.+)", group_index))
     assert_gpu_result_equal(q, engine=engine)
 
 
-def test_extract_group_index_0_unsupported(engine: pl.GPUEngine, ldf_extract):
-    q = ldf_extract.select(pl.col("a").str.extract(r"(\S+) (\d+) (.+)", 0))
-    assert_ir_translation_raises(q, engine, NotImplementedError)
+def test_extract_group_index_0_no_capture_group(engine: pl.GPUEngine, ldf_extract):
+    q = ldf_extract.select(pl.col("a").str.extract(r"\d+", 0))
+    assert_gpu_result_equal(q, engine=engine)
 
 
 def test_extract_groups(engine: pl.GPUEngine, ldf_extract):
@@ -906,3 +1045,17 @@ def test_split_regex_not_supported(engine: pl.GPUEngine):
     q = lf.select(pl.col("a").str.split(r"\d+", literal=False))
 
     assert_ir_translation_raises(q, engine, NotImplementedError)
+
+
+@pytest.mark.parametrize(
+    "data",
+    [
+        ["a.b*c", "no_meta", "", None],
+        ["(x)|[y]{z}", "^start$ end+", "back\\slash", "~#&-"],
+        [string.printable],
+    ],
+)
+def test_escape_regex(engine: pl.GPUEngine, data):
+    lf = pl.LazyFrame({"a": pl.Series(data, dtype=pl.String)})
+    q = lf.select(pl.col("a").str.escape_regex())
+    assert_gpu_result_equal(q, engine=engine)

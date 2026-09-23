@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -109,23 +109,23 @@ int main(int argc, char const** argv)
   std::chrono::duration<double> elapsed_cold{};
   {
     // warmup pass
-    stream.synchronize();
+    stream.sync();
     auto start_cold = std::chrono::steady_clock::now();
     nvtxRangePush("transform cold");
     auto [result_cold, input_indices_cold] = transform(table_view);
-    stream.synchronize();
+    stream.sync();
     nvtxRangePop();
     elapsed_cold = std::chrono::steady_clock::now() - start_cold;
   }
 
-  stream.synchronize();
+  stream.sync();
 
   auto start = std::chrono::steady_clock::now();
   nvtxRangePush("transform warm");
   auto [result, input_indices] = transform(table_view);
 
   // ensure transform operation completes and the wall-time is only for the transform computation
-  stream.synchronize();
+  stream.sync();
   nvtxRangePop();
 
   std::chrono::duration<double> elapsed = std::chrono::steady_clock::now() - start;

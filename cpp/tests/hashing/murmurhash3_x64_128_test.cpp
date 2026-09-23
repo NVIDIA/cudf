@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -97,4 +97,16 @@ TEST_F(MurmurHash3_x64_128_Test, StringType)
                                                                8863578460974333747ul,
                                                                11176802453047055260ul});
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(output->view().column(0), expected);
+}
+
+TEST_F(MurmurHash3_x64_128_Test, ZeroColumns)
+{
+  auto const input  = cudf::table_view{std::vector<cudf::column_view>{}, 5};
+  auto const output = cudf::hashing::murmurhash3_x64_128(input, 42);
+
+  // With no columns to hash, every row's 128-bit result is the initial {seed, 0}.
+  cudf::test::fixed_width_column_wrapper<uint64_t> const expected1({42, 42, 42, 42, 42});
+  cudf::test::fixed_width_column_wrapper<uint64_t> const expected2({0, 0, 0, 0, 0});
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(output->view().column(0), expected1);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(output->view().column(1), expected2);
 }

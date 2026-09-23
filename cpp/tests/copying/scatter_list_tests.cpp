@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -84,12 +84,12 @@ TYPED_TEST(TypedScatterListsTest, EmptyListsOfFixedWidth)
   };
 
   // One null list row, and one row with nulls.
-  auto src_list_column = cudf::make_lists_column(
-    3,
-    cudf::test::fixed_width_column_wrapper<cudf::size_type>{0, 4, 7, 7}.release(),
-    src_child.release(),
-    0,
-    {});
+  auto src_list_column =
+    cudf::make_lists_column(3,
+                            cudf::test::fixed_width_column_wrapper<int32_t>{0, 4, 7, 7}.release(),
+                            src_child.release(),
+                            0,
+                            {});
 
   auto target_list_column = cudf::test::lists_column_wrapper<T, int32_t>{
     {0, 0}, {1, 1}, {2, 2}, {3, 3}, {4, 4}, {5, 5}, {6, 6}};
@@ -104,7 +104,7 @@ TYPED_TEST(TypedScatterListsTest, EmptyListsOfFixedWidth)
     {8, 8, 8, 1, 1, 9, 9, 9, 9, 3, 3, 4, 4, 6, 6}};
   auto expected_lists_column = cudf::make_lists_column(
     7,
-    cudf::test::fixed_width_column_wrapper<cudf::size_type>{0, 3, 5, 9, 11, 13, 13, 15}.release(),
+    cudf::test::fixed_width_column_wrapper<int32_t>{0, 3, 5, 9, 11, 13, 13, 15}.release(),
     expected_child_ints.release(),
     0,
     {});
@@ -120,12 +120,12 @@ TYPED_TEST(TypedScatterListsTest, EmptyListsOfNullableFixedWidth)
                                                                       {1, 1, 1, 0, 1, 1, 1}};
 
   // One null list row, and one row with nulls.
-  auto src_list_column = cudf::make_lists_column(
-    3,
-    cudf::test::fixed_width_column_wrapper<cudf::size_type>{0, 4, 7, 7}.release(),
-    src_child.release(),
-    0,
-    {});
+  auto src_list_column =
+    cudf::make_lists_column(3,
+                            cudf::test::fixed_width_column_wrapper<int32_t>{0, 4, 7, 7}.release(),
+                            src_child.release(),
+                            0,
+                            {});
 
   auto target_list_column = cudf::test::lists_column_wrapper<T, int32_t>{
     {0, 0}, {1, 1}, {2, 2}, {3, 3}, {4, 4}, {5, 5}, {6, 6}};
@@ -140,7 +140,7 @@ TYPED_TEST(TypedScatterListsTest, EmptyListsOfNullableFixedWidth)
     {8, 8, 8, 1, 1, 9, 9, 9, 9, 3, 3, 4, 4, 6, 6}, {1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1}};
   auto expected_lists_column = cudf::make_lists_column(
     7,
-    cudf::test::fixed_width_column_wrapper<cudf::size_type>{0, 3, 5, 9, 11, 13, 13, 15}.release(),
+    cudf::test::fixed_width_column_wrapper<int32_t>{0, 3, 5, 9, 11, 13, 13, 15}.release(),
     expected_child_ints.release(),
     0,
     {});
@@ -159,12 +159,12 @@ TYPED_TEST(TypedScatterListsTest, NullableListsOfNullableFixedWidth)
   auto [null_mask, null_count] =
     cudf::test::detail::make_null_mask(src_list_validity, src_list_validity + 3);
   // One null list row, and one row with nulls.
-  auto src_list_column = cudf::make_lists_column(
-    3,
-    cudf::test::fixed_width_column_wrapper<cudf::size_type>{0, 4, 7, 7}.release(),
-    src_child.release(),
-    null_count,
-    std::move(null_mask));
+  auto src_list_column =
+    cudf::make_lists_column(3,
+                            cudf::test::fixed_width_column_wrapper<int32_t>{0, 4, 7, 7}.release(),
+                            src_child.release(),
+                            null_count,
+                            std::move(null_mask));
 
   auto target_list_column = cudf::test::lists_column_wrapper<T, int32_t>{
     {0, 0}, {1, 1}, {2, 2}, {3, 3}, {4, 4}, {5, 5}, {6, 6}};
@@ -183,7 +183,7 @@ TYPED_TEST(TypedScatterListsTest, NullableListsOfNullableFixedWidth)
     cudf::test::detail::make_null_mask(expected_validity, expected_validity + 7);
   auto expected_lists_column = cudf::make_lists_column(
     7,
-    cudf::test::fixed_width_column_wrapper<cudf::size_type>{0, 3, 5, 9, 11, 13, 13, 15}.release(),
+    cudf::test::fixed_width_column_wrapper<int32_t>{0, 3, 5, 9, 11, 13, 13, 15}.release(),
     expected_child_ints.release(),
     null_count,
     std::move(null_mask));
@@ -223,12 +223,12 @@ TEST_F(ScatterListsTest, ListsOfNullableStrings)
     cudf::test::strings_column_wrapper{{"all", "the", "leaves", "", "brown", "", "dreaming"},
                                        {true, true, true, false, true, false, true}};
 
-  auto src_list_column = cudf::make_lists_column(
-    2,
-    cudf::test::fixed_width_column_wrapper<cudf::size_type>{0, 5, 7}.release(),
-    src_strings_column.release(),
-    0,
-    {});
+  auto src_list_column =
+    cudf::make_lists_column(2,
+                            cudf::test::fixed_width_column_wrapper<int32_t>{0, 5, 7}.release(),
+                            src_strings_column.release(),
+                            0,
+                            {});
 
   auto target_list_column = cudf::test::lists_column_wrapper<cudf::string_view>{{"zero"},
                                                                                 {"one", "one"},
@@ -263,7 +263,7 @@ TEST_F(ScatterListsTest, ListsOfNullableStrings)
 
   auto expected_lists = cudf::make_lists_column(
     6,
-    cudf::test::fixed_width_column_wrapper<cudf::size_type>{0, 2, 4, 9, 11, 13, 15}.release(),
+    cudf::test::fixed_width_column_wrapper<int32_t>{0, 2, 4, 9, 11, 13, 15}.release(),
     expected_strings.release(),
     0,
     {});
@@ -277,12 +277,12 @@ TEST_F(ScatterListsTest, EmptyListsOfNullableStrings)
     cudf::test::strings_column_wrapper{{"all", "the", "leaves", "", "brown", "", "dreaming"},
                                        {true, true, true, false, true, false, true}};
 
-  auto src_list_column = cudf::make_lists_column(
-    3,
-    cudf::test::fixed_width_column_wrapper<cudf::size_type>{0, 5, 5, 7}.release(),
-    src_strings_column.release(),
-    0,
-    {});
+  auto src_list_column =
+    cudf::make_lists_column(3,
+                            cudf::test::fixed_width_column_wrapper<int32_t>{0, 5, 5, 7}.release(),
+                            src_strings_column.release(),
+                            0,
+                            {});
 
   auto target_list_column = cudf::test::lists_column_wrapper<cudf::string_view>{{"zero"},
                                                                                 {"one", "one"},
@@ -315,7 +315,7 @@ TEST_F(ScatterListsTest, EmptyListsOfNullableStrings)
 
   auto expected_lists = cudf::make_lists_column(
     6,
-    cudf::test::fixed_width_column_wrapper<cudf::size_type>{0, 2, 4, 9, 11, 11, 13}.release(),
+    cudf::test::fixed_width_column_wrapper<int32_t>{0, 2, 4, 9, 11, 11, 13}.release(),
     expected_strings.release(),
     0,
     {});
@@ -331,12 +331,12 @@ TEST_F(ScatterListsTest, NullableListsOfNullableStrings)
 
   auto src_validity            = cudf::test::iterators::null_at(1);
   auto [null_mask, null_count] = cudf::test::detail::make_null_mask(src_validity, src_validity + 3);
-  auto src_list_column         = cudf::make_lists_column(
-    3,
-    cudf::test::fixed_width_column_wrapper<cudf::size_type>{0, 5, 5, 7}.release(),
-    src_strings_column.release(),
-    null_count,
-    std::move(null_mask));
+  auto src_list_column =
+    cudf::make_lists_column(3,
+                            cudf::test::fixed_width_column_wrapper<int32_t>{0, 5, 5, 7}.release(),
+                            src_strings_column.release(),
+                            null_count,
+                            std::move(null_mask));
 
   auto target_list_column = cudf::test::lists_column_wrapper<cudf::string_view>{{"zero"},
                                                                                 {"one", "one"},
@@ -372,7 +372,7 @@ TEST_F(ScatterListsTest, NullableListsOfNullableStrings)
     cudf::test::detail::make_null_mask(expected_validity, expected_validity + 6);
   auto expected_lists = cudf::make_lists_column(
     6,
-    cudf::test::fixed_width_column_wrapper<cudf::size_type>{0, 2, 4, 9, 11, 11, 13}.release(),
+    cudf::test::fixed_width_column_wrapper<int32_t>{0, 2, 4, 9, 11, 11, 13}.release(),
     expected_strings.release(),
     null_count,
     std::move(null_mask));

@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import operator
 
@@ -420,7 +420,7 @@ def test_df_sr_binop(psr, colnames, binary_op):
         operator.mod,
         operator.pow,
         # comparison ops will temporarily XFAIL
-        # see PR  https://github.com/rapidsai/cudf/pull/7491
+        # see PR  https://github.com/NVIDIA/cudf/pull/7491
         pytest.param(operator.eq, marks=pytest.mark.xfail),
         pytest.param(operator.lt, marks=pytest.mark.xfail),
         pytest.param(operator.le, marks=pytest.mark.xfail),
@@ -447,11 +447,7 @@ def test_df_sr_binop_col_order(op):
     assert_eq(expect, got)
 
 
-def test_different_shapes_and_columns(request, arithmetic_op):
-    if arithmetic_op is operator.pow:
-        msg = "TODO: Support `pow(1, NaN) == 1` and `pow(NaN, 0) == 1`"
-        request.applymarker(pytest.mark.xfail(reason=msg))
-
+def test_different_shapes_and_columns(arithmetic_op):
     # Empty frame on the right side
     pd_frame = arithmetic_op(pd.DataFrame({"x": [1, 2]}), pd.DataFrame({}))
     cd_frame = arithmetic_op(cudf.DataFrame({"x": [1, 2]}), cudf.DataFrame({}))
@@ -490,12 +486,10 @@ def test_different_shapes_and_same_columns(arithmetic_op):
     assert_eq(cd_frame, pd_frame)
 
 
-def test_different_shapes_and_columns_with_unaligned_indices(
-    request, arithmetic_op
-):
-    if arithmetic_op is operator.pow:
-        msg = "TODO: Support `pow(1, NaN) == 1` and `pow(NaN, 0) == 1`"
-        request.applymarker(pytest.mark.xfail(reason=msg))
+def test_different_shapes_and_columns_with_unaligned_indices(arithmetic_op):
+    # ``pow`` no longer overflows here: aligning the unaligned indices
+    # introduces missing rows, which now promote the integer operands to
+    # float64 (pandas semantics), so the pow is computed in float.
 
     # Test with a RangeIndex
     pdf1 = pd.DataFrame({"x": [4, 3, 2, 1], "y": [7, 3, 8, 6]})
@@ -640,6 +634,19 @@ def test_empty_column(binary_op, data, scalar):
     assert_eq(expected, got, check_dtype=False)
 
 
+DOT_OTHER_FACTORIES = [
+    lambda: cudf.DataFrame([[9, 10], [11, 12], [13, 14], [15, 16]]),
+    lambda: cudf.DataFrame(
+        [[9.4, 10.5], [11.6, 12.7], [13.8, 14.9], [15.1, 16.2]]
+    ),
+    lambda: cudf.Series([5, 6, 7, 8]),
+    lambda: cudf.Series([5.6, 6.7, 7.8, 8.9]),
+    lambda: np.array([5, 6, 7, 8]),
+    # rapids-pre-commit-hooks: disable-next-line
+    lambda: [25.5, 26.6, 27.7, 28.8],
+]
+
+
 @pytest.mark.parametrize(
     "df",
     [
@@ -658,30 +665,20 @@ def test_empty_column(binary_op, data, scalar):
         lambda: cudf.Series([14.15, 15.16, 16.17, 17.18]),
     ],
 )
-@pytest.mark.parametrize(
-    "other",
-    [
-        lambda: cudf.DataFrame([[9, 10], [11, 12], [13, 14], [15, 16]]),
-        lambda: cudf.DataFrame(
-            [[9.4, 10.5], [11.6, 12.7], [13.8, 14.9], [15.1, 16.2]]
-        ),
-        lambda: cudf.Series([5, 6, 7, 8]),
-        lambda: cudf.Series([5.6, 6.7, 7.8, 8.9]),
-        lambda: np.array([5, 6, 7, 8]),
-        # rapids-pre-commit-hooks: disable-next-line
-        lambda: [25.5, 26.6, 27.7, 28.8],
-    ],
-)
-def test_binops_dot(df, other):
+def test_binops_dot(df):
     df = df()
-    other = other()
     pdf = df.to_pandas()
-    host_other = other.to_pandas() if hasattr(other, "to_pandas") else other
 
-    expected = pdf @ host_other
-    got = df @ other
+    for other_factory in DOT_OTHER_FACTORIES:
+        other = other_factory()
+        host_other = (
+            other.to_pandas() if hasattr(other, "to_pandas") else other
+        )
 
-    assert_eq(expected, got)
+        expected = pdf @ host_other
+        got = df @ other
+
+        assert_eq(expected, got)
 
 
 def test_binop_dot_preserve_index():

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -8,6 +8,7 @@
 #include <cudf_test/column_wrapper.hpp>
 #include <cudf_test/type_lists.hpp>
 
+#include <cudf/column/column_factories.hpp>
 #include <cudf/lists/sorting.hpp>
 
 template <typename T>
@@ -175,14 +176,78 @@ TEST_F(SortListsInt, NullRows)
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(stable_sorted_lists->view(), l);
 }
 
-// Disabling this test.
-// Reason: After this exception "cudaErrorAssert device-side assert triggered", further tests fail
-TEST_F(SortListsInt, DISABLED_Depth)
+TEST_F(SortListsInt, NestedListElement)
 {
   using T = int;
-  LCW<T> l1{LCW<T>{{1, 2}, {3}}, LCW<T>{{4, 5}}};
-  // device exception
-  EXPECT_THROW(cudf::lists::sort_lists(cudf::lists_column_view{l1}, {}, {}), std::exception);
+  // Column of LIST<LIST<int>>: each row's inner lists are reordered as whole elements. The third
+  // row's inner lists tie on their first element, so ordering falls through to the second.
+  LCW<T> input{LCW<T>{{3, 1}, {2, 0}}, LCW<T>{{5, 5}, {4, 9}}, LCW<T>{{1, 3}, {1, 2}}};
+  {
+    // Ascending.
+    LCW<T> expected{LCW<T>{{2, 0}, {3, 1}}, LCW<T>{{4, 9}, {5, 5}}, LCW<T>{{1, 2}, {1, 3}}};
+    auto const [sorted_lists, stable_sorted_lists] = generate_sorted_lists(
+      cudf::lists_column_view{input}, cudf::order::ASCENDING, cudf::null_order::AFTER);
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(sorted_lists->view(), expected);
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(stable_sorted_lists->view(), expected);
+  }
+  {
+    // Descending reverses each row's ascending order.
+    LCW<T> expected{LCW<T>{{3, 1}, {2, 0}}, LCW<T>{{5, 5}, {4, 9}}, LCW<T>{{1, 3}, {1, 2}}};
+    auto const [sorted_lists, stable_sorted_lists] = generate_sorted_lists(
+      cudf::lists_column_view{input}, cudf::order::DESCENDING, cudf::null_order::AFTER);
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(sorted_lists->view(), expected);
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(stable_sorted_lists->view(), expected);
+  }
+}
+
+// E = LIST<STRUCT<int, int>>: a list-of-struct element type sorts; struct ranks are computed
+// internally before the lexicographic comparison.
+TEST_F(SortListsInt, ListOfStructElement)
+{
+  // One row with two elements [{3, 30}] and [{1, 10}]; ascending reorders to [{1, 10}], [{3, 30}].
+  cudf::test::fixed_width_column_wrapper<int> in_f0{3, 1};
+  cudf::test::fixed_width_column_wrapper<int> in_f1{30, 10};
+  cudf::test::structs_column_wrapper in_structs{{in_f0, in_f1}};
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> in_inner_off{0, 1, 2};
+  auto in_inner = cudf::make_lists_column(2, in_inner_off.release(), in_structs.release(), 0, {});
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> in_outer_off{0, 2};
+  auto in_outer = cudf::make_lists_column(1, in_outer_off.release(), std::move(in_inner), 0, {});
+
+  cudf::test::fixed_width_column_wrapper<int> ex_f0{1, 3};
+  cudf::test::fixed_width_column_wrapper<int> ex_f1{10, 30};
+  cudf::test::structs_column_wrapper ex_structs{{ex_f0, ex_f1}};
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> ex_inner_off{0, 1, 2};
+  auto ex_inner = cudf::make_lists_column(2, ex_inner_off.release(), ex_structs.release(), 0, {});
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> ex_outer_off{0, 2};
+  auto ex_outer = cudf::make_lists_column(1, ex_outer_off.release(), std::move(ex_inner), 0, {});
+
+  auto const [sorted_lists, stable_sorted_lists] =
+    generate_sorted_lists(cudf::lists_column_view{in_outer->view()}, {}, {});
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(sorted_lists->view(), ex_outer->view());
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(stable_sorted_lists->view(), ex_outer->view());
+}
+
+// E = STRUCT<int, LIST<int>>: a struct-with-list-field element type sorts.
+TEST_F(SortListsInt, StructOfListElement)
+{
+  // One row with two struct elements {2, [9, 0]} and {1, [8, 7]}; ascending reorders them to
+  // {1, [8, 7]}, {2, [9, 0]}.
+  cudf::test::fixed_width_column_wrapper<int> in_f0{2, 1};
+  cudf::test::lists_column_wrapper<int, int32_t> in_f1{{9, 0}, {8, 7}};
+  cudf::test::structs_column_wrapper in_structs{{in_f0, in_f1}};
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> in_off{0, 2};
+  auto in_list = cudf::make_lists_column(1, in_off.release(), in_structs.release(), 0, {});
+
+  cudf::test::fixed_width_column_wrapper<int> ex_f0{1, 2};
+  cudf::test::lists_column_wrapper<int, int32_t> ex_f1{{8, 7}, {9, 0}};
+  cudf::test::structs_column_wrapper ex_structs{{ex_f0, ex_f1}};
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> ex_off{0, 2};
+  auto ex_list = cudf::make_lists_column(1, ex_off.release(), ex_structs.release(), 0, {});
+
+  auto const [sorted_lists, stable_sorted_lists] =
+    generate_sorted_lists(cudf::lists_column_view{in_list->view()}, {}, {});
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(sorted_lists->view(), ex_list->view());
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(stable_sorted_lists->view(), ex_list->view());
 }
 
 TEST_F(SortListsInt, Sliced)

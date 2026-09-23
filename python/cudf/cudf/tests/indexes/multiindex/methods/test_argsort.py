@@ -1,6 +1,7 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+import numpy as np
 import pandas as pd
 import pytest
 
@@ -52,3 +53,14 @@ def test_multiindex_argsort(pdi, ascending, request):
     actual = gdi.argsort(ascending=ascending)
 
     assert_eq(expected, actual)
+
+
+def test_multiindex_argsort_returns_intp():
+    # argsort returns np.intp (int64) positional indexers, matching
+    # numpy/pandas.
+    pmi = pd.MultiIndex.from_arrays([[2, 1, 3], [1, 2, 3]])
+    gmi = cudf.from_pandas(pmi)
+
+    result = gmi.argsort()
+    assert result.dtype == np.dtype(np.intp)
+    assert_eq(result, pmi.argsort(), check_dtype=True)

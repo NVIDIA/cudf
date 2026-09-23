@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 
@@ -232,3 +232,12 @@ def test_dataframe_reindex_with_index_names(index_data, name):
     expected = pdf.reindex(index_data)
 
     assert_eq(actual, expected)
+
+
+@pytest.mark.parametrize("labels", [[4, 5], [4.0, 5.0]])
+def test_reindex_numeric_index_int_float(labels):
+    # Reindexing a float-labelled index with int labels (or vice versa)
+    # matches by numeric equality instead of bailing to an all-null frame.
+    pdf = pd.DataFrame({"a": range(5)}, index=[1.5, 2.0, 3.0, 4.0, 5.0])
+    gdf = cudf.from_pandas(pdf)
+    assert_eq(pdf.reindex(labels), gdf.reindex(labels), check_index_type=False)

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -14,11 +14,17 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
+#include <cuda/stream>
 
 #include <memory>
+#include <span>
 #include <utility>
 #include <vector>
+
+/**
+ * @file
+ * @brief Class definitions for grouping and aggregating values within groups of rows.
+ */
 
 namespace CUDF_EXPORT cudf {
 //! `groupby` APIs
@@ -33,7 +39,6 @@ struct sort_groupby_helper;
 /**
  * @addtogroup aggregation_groupby
  * @{
- * @file
  */
 
 /**
@@ -174,8 +179,8 @@ class groupby {
    * specified in `requests`.
    */
   std::pair<std::unique_ptr<table>, std::vector<aggregation_result>> aggregate(
-    host_span<aggregation_request const> requests,
-    rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+    std::span<aggregation_request const> requests,
+    cuda::stream_ref stream           = cudf::get_default_stream(),
     rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
   /**
    * @brief Performs grouped scans on the specified values.
@@ -230,8 +235,8 @@ class groupby {
    * specified in `requests`.
    */
   std::pair<std::unique_ptr<table>, std::vector<aggregation_result>> scan(
-    host_span<scan_request const> requests,
-    rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+    std::span<scan_request const> requests,
+    cuda::stream_ref stream           = cudf::get_default_stream(),
     rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
   /**
@@ -287,9 +292,9 @@ class groupby {
    */
   std::pair<std::unique_ptr<table>, std::unique_ptr<table>> shift(
     table_view const& values,
-    host_span<size_type const> offsets,
+    std::span<size_type const> offsets,
     std::vector<std::reference_wrapper<scalar const>> const& fill_values,
-    rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+    cuda::stream_ref stream           = cudf::get_default_stream(),
     rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
   /**
@@ -320,7 +325,7 @@ class groupby {
    * @return A `groups` object representing grouped keys and values
    */
   groups get_groups(cudf::table_view values           = {},
-                    rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+                    cuda::stream_ref stream           = cudf::get_default_stream(),
                     rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
   /**
@@ -361,8 +366,8 @@ class groupby {
    */
   std::pair<std::unique_ptr<table>, std::unique_ptr<table>> replace_nulls(
     table_view const& values,
-    host_span<cudf::replace_policy const> replace_policies,
-    rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+    std::span<cudf::replace_policy const> replace_policies,
+    cuda::stream_ref stream           = cudf::get_default_stream(),
     rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
  private:
@@ -392,19 +397,19 @@ class groupby {
    * aggregation requests.
    */
   std::pair<std::unique_ptr<table>, std::vector<aggregation_result>> dispatch_aggregation(
-    host_span<aggregation_request const> requests,
-    rmm::cuda_stream_view stream,
+    std::span<aggregation_request const> requests,
+    cuda::stream_ref stream,
     rmm::device_async_resource_ref mr);
 
   // Sort-based groupby
   std::pair<std::unique_ptr<table>, std::vector<aggregation_result>> sort_aggregate(
-    host_span<aggregation_request const> requests,
-    rmm::cuda_stream_view stream,
+    std::span<aggregation_request const> requests,
+    cuda::stream_ref stream,
     rmm::device_async_resource_ref mr);
 
   std::pair<std::unique_ptr<table>, std::vector<aggregation_result>> sort_scan(
-    host_span<scan_request const> requests,
-    rmm::cuda_stream_view stream,
+    std::span<scan_request const> requests,
+    cuda::stream_ref stream,
     rmm::device_async_resource_ref mr);
 };
 
@@ -495,6 +500,7 @@ class streaming_groupby {
    *        companion vectors, and aggregation results table are all sized to this
    *        capacity. Cumulative input rows are not bounded.
    * @param null_handling Indicates whether rows in keys that contain NULL values should be included
+   * @param mr Device memory resource used to allocate the persistent hash table
    *
    * @throws std::invalid_argument if `max_distinct_keys <= 0`
    * @throws std::invalid_argument if any requested aggregation kind is unsupported
@@ -502,7 +508,9 @@ class streaming_groupby {
   explicit streaming_groupby(host_span<size_type const> key_indices,
                              host_span<streaming_aggregation_request const> requests,
                              size_type max_distinct_keys,
-                             null_policy null_handling = null_policy::EXCLUDE);
+                             null_policy null_handling = null_policy::EXCLUDE,
+                             cuda::mr::any_resource<cuda::mr::device_accessible> mr =
+                               cudf::get_current_device_resource_ref());
 
   /**
    * @brief Feed a batch of data into the streaming aggregation.
@@ -511,19 +519,30 @@ class streaming_groupby {
    * are updated atomically. The input `data` table is not referenced after this
    * call returns.
    *
+   * This function may be called concurrently from multiple host threads on the same object,
+   * and each call may supply a different stream. Callers do not need to serialize the calls or
+   * synchronize between them. Key insertion is serialized internally, on the host and across
+   * streams, because a batch's newly discovered keys are held in a transient encoding that is
+   * only valid while that one insertion is in flight. The aggregation that follows each
+   * insertion updates every group atomically, so those phases overlap freely across streams.
+   *
    * @param data Table containing both key and value columns
    * @param stream CUDA stream used for device memory operations and kernel launches
    *
    * @throws std::invalid_argument if `data.num_rows()` exceeds `max_distinct_keys`
    * @throws cudf::logic_error if cumulative distinct keys exceed `max_distinct_keys`
    */
-  void aggregate(table_view const& data, rmm::cuda_stream_view stream = cudf::get_default_stream());
+  void aggregate(table_view const& data, cuda::stream_ref stream = cudf::get_default_stream());
 
   /**
    * @brief Merge another streaming_groupby's accumulated partial state into this one.
    *
    * Extracts the other object's accumulated intermediate state and merges it into this
    * object's persistent hash table. The other object is not modified.
+   *
+   * This function shares the insertion path with `aggregate()` and is serialized against it, so
+   * it is safe to call while other host threads are calling `aggregate()` on this object. The
+   * source object must not be mutated concurrently.
    * Both objects must have been constructed with compatible aggregation requests,
    * and this object must have had at least one `aggregate()` call.
    *
@@ -535,8 +554,7 @@ class streaming_groupby {
    * @throws cudf::logic_error if this object has not been initialized via `aggregate()`
    * @throws cudf::logic_error if distinct keys exceed `max_distinct_keys` after merge
    */
-  void merge(streaming_groupby const& other,
-             rmm::cuda_stream_view stream = cudf::get_default_stream());
+  void merge(streaming_groupby const& other, cuda::stream_ref stream = cudf::get_default_stream());
 
   /**
    * @brief Finalize the accumulated partial aggregates into final results.
@@ -554,7 +572,7 @@ class streaming_groupby {
    * @throws cudf::logic_error if no data has been accumulated
    */
   [[nodiscard]] std::pair<std::unique_ptr<table>, std::vector<aggregation_result>> finalize(
-    rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+    cuda::stream_ref stream           = cudf::get_default_stream(),
     rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref()) const;
 
   /**
@@ -570,10 +588,10 @@ class streaming_groupby {
   struct impl;
   std::unique_ptr<impl> _impl;
 
-  void do_aggregate(table_view const& data, rmm::cuda_stream_view stream);
-  void do_merge(streaming_groupby const& other, rmm::cuda_stream_view stream);
+  void do_aggregate(table_view const& data, cuda::stream_ref stream);
+  void do_merge(streaming_groupby const& other, cuda::stream_ref stream);
   [[nodiscard]] std::pair<std::unique_ptr<table>, std::vector<aggregation_result>> do_finalize(
-    rmm::cuda_stream_view stream, rmm::device_async_resource_ref mr) const;
+    cuda::stream_ref stream, rmm::device_async_resource_ref mr) const;
 };
 
 /**

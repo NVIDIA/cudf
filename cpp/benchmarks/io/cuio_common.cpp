@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -111,7 +111,7 @@ cudf::io::source_info cuio_source_sink_pair::make_source_info()
       auto const stream = cudf::get_default_stream();
       d_buffer.resize(h_buffer.size(), stream);
       CUDF_CUDA_TRY(cudaMemcpyAsync(
-        d_buffer.data(), h_buffer.data(), h_buffer.size(), cudaMemcpyDefault, stream.value()));
+        d_buffer.data(), h_buffer.data(), h_buffer.size(), cudaMemcpyDefault, stream.get()));
 
       return cudf::io::source_info(d_buffer);
     }
@@ -236,7 +236,7 @@ std::pair<bool, bool> parse_cache_dropping_env()
   if (env == nullptr) { return {is_drop_cache_enabled, is_file_scope}; }
 
   // Trim leading/trailing whitespace
-  std::regex const static pattern{R"(^\s+|\s+$)"};
+  std::regex static const pattern{R"(^\s+|\s+$)"};
   auto env_sanitized = std::regex_replace(env, pattern, "");
 
   // Convert to lowercase
@@ -284,7 +284,7 @@ void drop_page_cache_if_enabled(std::vector<std::string> const& file_paths)
     return;
   }
 
-  for (const auto& path : file_paths) {
+  for (auto const& path : file_paths) {
     if (path.empty()) { continue; }
     kvikio::drop_file_page_cache(path);
   }

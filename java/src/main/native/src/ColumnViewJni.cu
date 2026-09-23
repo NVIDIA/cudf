@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -33,13 +33,13 @@
 namespace cudf::jni {
 
 std::unique_ptr<cudf::column> generate_list_offsets(cudf::column_view const& list_length,
-                                                    rmm::cuda_stream_view stream)
+                                                    cuda::stream_ref stream)
 {
   CUDF_EXPECTS(list_length.type().id() == cudf::type_id::INT32,
                "Input column does not have type INT32.");
 
-  auto const begin_iter = list_length.template begin<cudf::size_type>();
-  auto const end_iter   = list_length.template end<cudf::size_type>();
+  auto const begin_iter = list_length.template begin<int32_t>();
+  auto const end_iter   = list_length.template end<int32_t>();
 
   auto offsets_column = make_numeric_column(
     data_type{type_id::INT32}, list_length.size() + 1, mask_state::UNALLOCATED, stream);
@@ -47,7 +47,7 @@ std::unique_ptr<cudf::column> generate_list_offsets(cudf::column_view const& lis
   auto d_offsets    = offsets_view.template begin<int32_t>();
 
   thrust::inclusive_scan(rmm::exec_policy_nosync(stream), begin_iter, end_iter, d_offsets + 1);
-  CUDF_CUDA_TRY(cudaMemsetAsync(d_offsets, 0, sizeof(int32_t), stream));
+  CUDF_CUDA_TRY(cudaMemsetAsync(d_offsets, 0, sizeof(int32_t), stream.get()));
 
   return offsets_column;
 }
@@ -73,7 +73,7 @@ __device__ bool list_has_nulls(list_device_view list)
 void post_process_list_overlap(cudf::column_view const& lhs,
                                cudf::column_view const& rhs,
                                std::unique_ptr<cudf::column> const& overlap_result,
-                               rmm::cuda_stream_view stream)
+                               cuda::stream_ref stream)
 {
   // If both of the input columns do not have nulls, we don't need to do anything here.
   if (!lists_column_view{lhs}.child().has_nulls() && !lists_column_view{rhs}.child().has_nulls()) {
@@ -91,8 +91,8 @@ void post_process_list_overlap(cudf::column_view const& lhs,
     rmm::exec_policy_nosync(stream),
     validity.begin(),
     validity.end(),
-    [lhs            = cudf::detail::lists_column_device_view{*lhs_cdv_ptr},
-     rhs            = cudf::detail::lists_column_device_view{*rhs_cdv_ptr},
+    [lhs            = cudf::lists_column_device_view{*lhs_cdv_ptr},
+     rhs            = cudf::lists_column_device_view{*rhs_cdv_ptr},
      overlap_result = *overlap_cdv_ptr] __device__(auto const idx) {
       if (overlap_result.is_null(idx) || overlap_result.template element<bool>(idx)) {
         return true;
@@ -143,7 +143,7 @@ void post_process_list_overlap(cudf::column_view const& lhs,
 }
 
 std::unique_ptr<cudf::column> lists_distinct_by_key(cudf::lists_column_view const& input,
-                                                    rmm::cuda_stream_view stream)
+                                                    cuda::stream_ref stream)
 {
   if (input.is_empty()) { return empty_like(input.parent()); }
 
@@ -179,8 +179,8 @@ std::unique_ptr<cudf::column> lists_distinct_by_key(cudf::lists_column_view cons
 
   // Assemble a lists column of structs<out_keys, out_vals>.
   auto out_offsets = make_numeric_column(
-    data_type{type_to_id<size_type>()}, input.size() + 1, mask_state::UNALLOCATED, stream);
-  auto const offsets_begin = out_offsets->mutable_view().template begin<size_type>();
+    data_type{type_id::INT32}, input.size() + 1, mask_state::UNALLOCATED, stream);
+  auto const offsets_begin = out_offsets->mutable_view().template begin<int32_t>();
   auto const labels_begin  = out_labels.template begin<size_type>();
   cudf::detail::labels_to_offsets(labels_begin,
                                   labels_begin + out_labels.size(),

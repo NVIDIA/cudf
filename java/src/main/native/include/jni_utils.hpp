@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -8,7 +8,10 @@
 #include "error.hpp"
 
 #include <algorithm>
+#include <cstring>
 #include <memory>
+#include <string>
+#include <string_view>
 #include <vector>
 
 namespace cudf::jni {
@@ -504,13 +507,65 @@ class native_jstring {
   jstring orig;
   mutable char const* cstr;
   mutable size_t cstr_length;
+  mutable bool converted = false;
+
+  // Rewrite the "modified UTF-8" (CESU-8) bytes returned by GetStringUTFChars into
+  // standard UTF-8. JNI encodes the NUL code point as the two bytes 0xC0 0x80, and code
+  // points above U+FFFF as a 6-byte UTF-16 surrogate pair rather than a 4-byte sequence;
+  // the rest of libcudf expects standard UTF-8, so re-encode just those two cases. Every
+  // other byte is already valid UTF-8 and is copied verbatim, and both rewrites only ever
+  // shrink the string, so the result never exceeds the input length. The replacement
+  // buffer is allocated lazily on the first byte that needs rewriting. Returns true iff a
+  // rewrite occurred, in which case cstr owns a new[] buffer and cstr_length is updated;
+  // otherwise cstr is left pointing at the buffer returned by JNI.
+  bool convert_cesu8() const
+  {
+    char* utf8_cstr    = nullptr;
+    char* utf8_current = nullptr;
+    auto* s            = reinterpret_cast<unsigned char const*>(cstr);
+    for (size_t i = 0; i < cstr_length; ++i) {
+      bool is_nul            = (i + 1 < cstr_length && s[i] == 0xC0 && s[i + 1] == 0x80);
+      bool is_surrogate_pair = (i + 5 < cstr_length && s[i] == 0xED && (s[i + 1] & 0xF0) == 0xA0 &&
+                                s[i + 3] == 0xED && (s[i + 4] & 0xF0) == 0xB0);
+      if (utf8_cstr == nullptr && (is_nul || is_surrogate_pair)) {
+        // First byte needing a rewrite: allocate the output buffer (never larger than
+        // the input) and copy the already-scanned, unmodified prefix.
+        utf8_cstr = new char[cstr_length + 1];
+        std::memcpy(utf8_cstr, cstr, i);
+        utf8_current = utf8_cstr + i;
+      }
+      if (utf8_current == nullptr) continue;  // no rewrite seen yet; keep scanning
+      if (is_nul) {
+        *utf8_current++ = '\x00';
+        ++i;  // consume the second byte of the 0xC0 0x80 pair
+      } else if (is_surrogate_pair) {
+        unsigned int hi        = (s[i + 1] & 0x0F) << 6 | (s[i + 2] & 0x3F);
+        unsigned int lo        = (s[i + 4] & 0x0F) << 6 | (s[i + 5] & 0x3F);
+        unsigned int codepoint = 0x10000 + (hi << 10 | lo);
+        *utf8_current++        = static_cast<char>(0xF0 | (codepoint >> 18 & 0x07));
+        *utf8_current++        = static_cast<char>(0x80 | (codepoint >> 12 & 0x3F));
+        *utf8_current++        = static_cast<char>(0x80 | (codepoint >> 6 & 0x3F));
+        *utf8_current++        = static_cast<char>(0x80 | (codepoint & 0x3F));
+        i += 5;  // consume the remaining 5 bytes of the surrogate pair
+      } else {
+        *utf8_current++ = cstr[i];
+      }
+    }
+    if (utf8_current == nullptr) return false;  // nothing was rewritten; keep JNI's buffer
+    cstr_length   = utf8_current - utf8_cstr;
+    *utf8_current = '\0';
+    env->ReleaseStringUTFChars(orig, cstr);
+    cstr = utf8_cstr;
+    return true;
+  }
 
   void init_cstr() const
   {
-    if (orig != NULL && cstr == NULL) {
+    if (orig != nullptr && cstr == nullptr) {
       cstr_length = env->GetStringUTFLength(orig);
       cstr        = env->GetStringUTFChars(orig, 0);
       check_java_exception(env);
+      converted = convert_cesu8();
     }
   }
 
@@ -519,27 +574,39 @@ class native_jstring {
   native_jstring& operator=(native_jstring const&) = delete;
 
   native_jstring(native_jstring&& other) noexcept
-    : env(other.env), orig(other.orig), cstr(other.cstr), cstr_length(other.cstr_length)
+    : env(other.env),
+      orig(other.orig),
+      cstr(other.cstr),
+      cstr_length(other.cstr_length),
+      converted(other.converted)
   {
-    other.cstr = NULL;
+    other.cstr = nullptr;
   }
 
-  native_jstring(JNIEnv* const env, jstring orig) : env(env), orig(orig), cstr(NULL), cstr_length(0)
+  native_jstring(JNIEnv* const env, jstring orig)
+    : env(env), orig(orig), cstr(nullptr), cstr_length(0), converted(false)
   {
   }
 
   native_jstring& operator=(native_jstring const&& other)
   {
-    if (orig != NULL && cstr != NULL) { env->ReleaseStringUTFChars(orig, cstr); }
+    if (orig != nullptr && cstr != nullptr) {
+      if (converted) {
+        delete[] cstr;
+      } else {
+        env->ReleaseStringUTFChars(orig, cstr);
+      }
+    }
     this->env         = other.env;
     this->orig        = other.orig;
     this->cstr        = other.cstr;
     this->cstr_length = other.cstr_length;
-    other.cstr        = NULL;
+    this->converted   = other.converted;
+    other.cstr        = nullptr;
     return *this;
   }
 
-  bool is_null() const noexcept { return orig == NULL; }
+  bool is_null() const noexcept { return orig == nullptr; }
 
   char const* get() const
   {
@@ -553,11 +620,26 @@ class native_jstring {
     return cstr_length;
   }
 
+  // Implicit conversions so a native_jstring can be passed directly wherever libcudf wants a
+  // std::string_view / std::string. Both use size_bytes() (not strlen), so embedded NULs survive.
+  // The string_view aliases this object's buffer and must not outlive the native_jstring.
+  operator std::string_view() const
+  {
+    init_cstr();
+    return std::string_view(cstr, cstr_length);
+  }
+
+  operator std::string() const
+  {
+    init_cstr();
+    return std::string(cstr, cstr_length);
+  }
+
   bool is_empty() const
   {
-    if (cstr != NULL) {
+    if (cstr != nullptr) {
       return cstr_length <= 0;
-    } else if (orig != NULL) {
+    } else if (orig != nullptr) {
       jsize len = env->GetStringLength(orig);
       check_java_exception(env);
       return len <= 0;
@@ -569,7 +651,13 @@ class native_jstring {
 
   ~native_jstring()
   {
-    if (orig != NULL && cstr != NULL) { env->ReleaseStringUTFChars(orig, cstr); }
+    if (orig != nullptr && cstr != nullptr) {
+      if (converted) {
+        delete[] cstr;
+      } else {
+        env->ReleaseStringUTFChars(orig, cstr);
+      }
+    }
   }
 };
 
@@ -662,7 +750,7 @@ class native_jstringArray {
       int size = this->size();
       cpp_cache.reserve(size);
       for (int i = 0; i < size; i++) {
-        cpp_cache.push_back(cache[i].get());
+        cpp_cache.push_back(cache[i]);
       }
     }
   }
@@ -673,7 +761,7 @@ class native_jstringArray {
       cache[index] = native_jstring(env, val);
       if (!c_cache.empty()) { c_cache[index] = cache[index].get(); }
 
-      if (!cpp_cache.empty()) { cpp_cache[index] = cache[index].get(); }
+      if (!cpp_cache.empty()) { cpp_cache[index] = cache[index]; }
     } else if (!c_cache.empty() || !cpp_cache.empty()) {
       // Illegal state
       throw std::logic_error("CACHING IS MESSED UP");

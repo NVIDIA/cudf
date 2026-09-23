@@ -63,7 +63,7 @@ public class KeyRemapping implements AutoCloseable {
    * Sentinel value for build-side rows with null keys (when nulls are not equal).
    * <p>
    * This constant is primarily exposed for testing purposes.
-   * It must be kept in sync with KEY_REMAP_BUILD_NULL in cudf/join/key_remapping.hpp.
+   * It must be kept in sync with KEY_REMAP_RIGHT_NULL in cudf/join/key_remapping.hpp.
    * </p>
    */
   public static final int BUILD_NULL_SENTINEL = -2;

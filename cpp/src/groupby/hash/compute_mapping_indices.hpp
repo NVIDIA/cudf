@@ -1,14 +1,13 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
 
 #include <cudf/types.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
-
 #include <cuda/std/atomic>
+#include <cuda/stream>
 
 namespace cudf::groupby::detail::hash {
 
@@ -28,5 +27,5 @@ void compute_mapping_indices(size_type grid_size,
                              size_type* global_mapping_index,
                              size_type* block_cardinality,
                              cuda::std::atomic_flag* needs_global_memory_fallback,
-                             rmm::cuda_stream_view stream);
+                             cuda::stream_ref stream);
 }  // namespace cudf::groupby::detail::hash

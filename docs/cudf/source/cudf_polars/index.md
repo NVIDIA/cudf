@@ -9,8 +9,10 @@ and runs on the CPU.
 
 ## Install
 
-Follow the [RAPIDS installation guide](https://docs.rapids.ai/install) and pick the
-`cudf-polars` package for your CUDA and Python versions. For example, with conda:
+Follow the [NVIDIA CUDA-X installation
+guide](https://docs.nvidia.com/datascience/install/#install-rapids)
+and pick the `cudf-polars` package for your CUDA and Python versions. For
+example, with conda:
 
 ```bash
 conda install -c rapidsai -c conda-forge -c nvidia cudf-polars
@@ -45,7 +47,8 @@ with RayEngine() as engine:
 
 See {doc}`usage` for the full tutorial, {doc}`engines` for a conceptual overview of the
 available engines, {doc}`options` for the
-{class}`~cudf_polars.engine.options.StreamingOptions` configuration, and
+{class}`~cudf_polars.engine.options.StreamingOptions` configuration,
+{doc}`execute` for keeping query results GPU-resident across chained queries, and
 {doc}`memory_errors` for guidance on out-of-memory errors and memory tuning.
 
 ## Benchmark
@@ -92,7 +95,8 @@ On a single GPU, you can run TB-scale workloads with significant speedups compar
           PDS-DS (SF3K)
 ```
 
-For more information on the benchmarks being run, see the PDS-DS queries in the [cuDF GitHub repository](https://github.com/rapidsai/cudf/tree/release/26.06/python/cudf_polars/cudf_polars/streaming/benchmarks).
+<!-- TODO: replace this link with {doc}`benchmarks` once the published results are reproducible using those instructions -->
+For more information on the benchmarks being run, see the PDS queries in the [cuDF GitHub repository](https://github.com/NVIDIA/cudf/tree/main/python/cudf_polars/cudf_polars/streaming/benchmarks).
 
 ## Learn More
 
@@ -106,9 +110,12 @@ To learn more, visit the [GPU Support page](https://docs.pola.rs/user-guide/gpu-
 usage
 engines
 options
+execute
+io_plugins
 profiling
 other_engines
 memory_errors
+benchmarks
 api
 developer_docs
 ```

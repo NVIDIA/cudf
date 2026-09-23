@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -15,6 +15,7 @@ namespace CUDF_EXPORT nvtext {
  * @addtogroup nvtext_ngrams
  * @{
  * @file
+ * @brief APIs for tokenizing strings and generating ngrams from the resulting tokens.
  */
 
 /**
@@ -71,7 +72,7 @@ std::unique_ptr<cudf::column> ngrams_tokenize(
   cudf::size_type ngrams,
   cudf::string_scalar const& delimiter,
   cudf::string_scalar const& separator,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /** @} */  // end of group

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -11,14 +11,18 @@
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/export.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
+#include <cuda/stream>
+
+/**
+ * @file
+ * @brief API for counting consecutive groups of equivalent rows in a column
+ */
 
 namespace CUDF_EXPORT cudf {
 
 /**
  * @addtogroup column_reduction
  * @{
- * @file
  */
 
 /**
@@ -40,7 +44,7 @@ namespace CUDF_EXPORT cudf {
 cudf::size_type unique_count(column_view const& input,
                              null_policy null_handling,
                              nan_policy nan_handling,
-                             rmm::cuda_stream_view stream = cudf::get_default_stream());
+                             cuda::stream_ref stream = cudf::get_default_stream());
 
 /**
  * @brief Count the number of consecutive groups of equivalent rows in a table.
@@ -53,8 +57,8 @@ cudf::size_type unique_count(column_view const& input,
  * @return number of consecutive groups of equivalent rows in the column
  */
 cudf::size_type unique_count(table_view const& input,
-                             null_equality nulls_equal    = null_equality::EQUAL,
-                             rmm::cuda_stream_view stream = cudf::get_default_stream());
+                             null_equality nulls_equal = null_equality::EQUAL,
+                             cuda::stream_ref stream   = cudf::get_default_stream());
 
 /** @} */
 

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -9,7 +9,7 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
+#include <cuda/stream>
 
 namespace cudf {
 namespace reduction {
@@ -20,7 +20,7 @@ struct nunique_scalar_fn {
   template <typename T>
     requires(cudf::is_numeric_not_bool<T>())
   std::unique_ptr<cudf::scalar> operator()(size_type count,
-                                           rmm::cuda_stream_view stream,
+                                           cuda::stream_ref stream,
                                            rmm::device_async_resource_ref mr) const
   {
     auto const value = static_cast<T>(count);
@@ -30,7 +30,7 @@ struct nunique_scalar_fn {
   template <typename T>
     requires(not cudf::is_numeric_not_bool<T>())
   std::unique_ptr<cudf::scalar> operator()(size_type,
-                                           rmm::cuda_stream_view,
+                                           cuda::stream_ref,
                                            rmm::device_async_resource_ref) const
   {
     CUDF_FAIL("NUNIQUE is not supported for boolean or non-numeric types", std::invalid_argument);
@@ -41,7 +41,7 @@ struct nunique_scalar_fn {
 std::unique_ptr<cudf::scalar> nunique(column_view const& col,
                                       cudf::null_policy null_handling,
                                       cudf::data_type const output_dtype,
-                                      rmm::cuda_stream_view stream,
+                                      cuda::stream_ref stream,
                                       rmm::device_async_resource_ref mr)
 {
   size_type count =

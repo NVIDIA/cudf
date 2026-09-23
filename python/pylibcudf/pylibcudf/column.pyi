@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from collections.abc import Iterable, Sequence
@@ -50,7 +50,7 @@ class Column:
         mask: Span | None,
         null_count: int,
         offset: int,
-        children: list[Column],
+        children: Iterable[Column],
         validate: bool = True,
     ) -> None: ...
     def type(self) -> DataType: ...
@@ -94,7 +94,10 @@ class Column:
     ) -> Column: ...
     @staticmethod
     def from_rmm_buffer(
-        buff: DeviceBuffer, dtype: DataType, size: int, children: list[Column]
+        buff: DeviceBuffer,
+        dtype: DataType,
+        size: int,
+        children: Iterable[Column],
     ) -> Column: ...
     def to_arrow(
         self,
@@ -136,6 +139,7 @@ class Column:
         dtype: DataType | None = None,
         stream: CudaStreamLike | None = None,
     ) -> Column: ...
+    def to_pylist(self) -> list: ...
 
 class ListsColumnView:
     def __init__(self, column: Column): ...
@@ -147,8 +151,6 @@ class ListsColumnView:
 
 class StructsColumnView:
     def __init__(self, column: Column): ...
-    def child(self) -> Column: ...
-    def offsets(self) -> Column: ...
     def get_sliced_child(
         self, index: int, stream: CudaStreamLike | None = None
     ) -> Column: ...

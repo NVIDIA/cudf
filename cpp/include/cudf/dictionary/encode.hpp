@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -9,13 +9,16 @@
 #include <cudf/dictionary/dictionary_column_view.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
+/**
+ * @file
+ * @brief Dictionary column encode and decode APIs
+ */
+
 namespace CUDF_EXPORT cudf {
 namespace dictionary {
 /**
  * @addtogroup dictionary_encode
  * @{
- * @file
- * @brief Dictionary column encode and decode APIs
  */
 
 /**
@@ -44,14 +47,13 @@ namespace dictionary {
  * @param column The column to dictionary encode
  * @param indices_type The integer type to use for the indices
  * @param stream CUDA stream used for device memory operations and kernel launches
- * @param mr Device memory resource used to allocate the returned column's device memory
+ * @param mr Memory resources used for temporary allocations and the returned column
  * @return Returns a dictionary column
  */
-std::unique_ptr<column> encode(
-  column_view const& column,
-  data_type indices_type            = data_type{type_id::INT32},
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+std::unique_ptr<column> encode(column_view const& column,
+                               data_type indices_type    = data_type{type_id::INT32},
+                               cuda::stream_ref stream   = cudf::get_default_stream(),
+                               cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Create a column by gathering the keys from the provided
@@ -65,13 +67,12 @@ std::unique_ptr<column> encode(
  *
  * @param dictionary_column Existing dictionary column
  * @param stream CUDA stream used for device memory operations and kernel launches
- * @param mr Device memory resource used to allocate the returned column's device memory
+ * @param mr Memory resources used for temporary allocations and the returned column
  * @return New column with type matching the dictionary_column's keys
  */
-std::unique_ptr<column> decode(
-  dictionary_column_view const& dictionary_column,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+std::unique_ptr<column> decode(dictionary_column_view const& dictionary_column,
+                               cuda::stream_ref stream   = cudf::get_default_stream(),
+                               cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /** @} */  // end of group
 }  // namespace dictionary

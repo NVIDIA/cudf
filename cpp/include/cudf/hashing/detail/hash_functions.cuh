@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2017-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2017-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -85,7 +85,7 @@ __device__ inline uint64_t swap_endian(uint64_t x)
  * https://johnnylee-sde.github.io/Fast-unsigned-integer-to-hex-string/
  * Copyright (c) 2015 Barry Clark
  * Licensed under the MIT license.
- * See file LICENSE for detail or copy at https://opensource.org/licenses/MIT
+ * See file LICENSE for detail or copy at https://opensource.org/license/MIT
  */
 __device__ inline void uint32ToLowercaseHexString(uint32_t num, char* destination)
 {

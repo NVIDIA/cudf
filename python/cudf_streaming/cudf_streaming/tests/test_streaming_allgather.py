@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from __future__ import annotations
@@ -10,11 +10,12 @@ import numpy as np
 import pylibcudf as plc
 import pytest
 
-from cudf_streaming.integrations.partition import (
+from cudf_streaming.partition_utils import (
     packed_data_from_cudf_packed_columns,
     unpack_and_concat,
 )
-from cudf_streaming.streaming.table_chunk import TableChunk
+from cudf_streaming.table_chunk import TableChunk
+from cudf_streaming.testing import assert_eq
 from rapidsmpf.streaming.chunks.packed_data import PackedDataChunk
 from rapidsmpf.streaming.coll.allgather import AllGather, allgather
 from rapidsmpf.streaming.core.actor import define_actor, run_actor_network
@@ -23,7 +24,6 @@ from rapidsmpf.streaming.core.leaf_actor import (
     push_to_channel,
 )
 from rapidsmpf.streaming.core.message import Message
-from rapidsmpf.testing import assert_eq
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable
@@ -40,7 +40,7 @@ def test_allgather_actor(context: Context, comm: Communicator) -> None:
 
     num_rows = 1000
     op_id = 0
-    stream = context.get_stream_from_pool()
+    stream = context.br().stream_pool.get_stream()
     input_tables = [
         plc.Table(
             [
@@ -101,7 +101,7 @@ async def generate_inputs(
     num_chunks: int,
 ) -> None:
     for i in range(num_chunks):
-        stream = context.get_stream_from_pool()
+        stream = context.br().stream_pool.get_stream()
         table = plc.Table(
             [
                 plc.Column.from_array(
@@ -145,7 +145,7 @@ async def allgather_and_concat(
     if not use_context_manager:
         gather.insert_finished()
     gathered = await gather.extract_all(context, ordered=True)
-    stream = context.get_stream_from_pool()
+    stream = context.br().stream_pool.get_stream()
     table = unpack_and_concat(gathered, stream, context.br())
     to_send = TableChunk.from_pylibcudf_table(
         table, stream, exclusive_view=True, br=context.br()

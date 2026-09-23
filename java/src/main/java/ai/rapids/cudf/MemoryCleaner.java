@@ -1,12 +1,13 @@
 /*
  *
- *  SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ *  SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  *  SPDX-License-Identifier: Apache-2.0
  *
  */
 
 package ai.rapids.cudf;
 
+import ai.rapids.cudf.ast.AstJitProgram;
 import ai.rapids.cudf.ast.CompiledExpression;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -367,11 +368,30 @@ public final class MemoryCleaner {
   }
 
   public static void register(CompiledExpression expr, Cleaner cleaner) {
-    all.put(cleaner.id, new CleanerWeakReference(expr, cleaner, collected, false));
+    // Both compilation modes retain device-backed literal values.
+    all.put(cleaner.id, new CleanerWeakReference(expr, cleaner, collected, true));
+  }
+
+  public static void register(AstJitProgram program, Cleaner cleaner) {
+    // AST programs retain copied literal columns across evaluations.
+    all.put(cleaner.id, new CleanerWeakReference(program, cleaner, collected, true));
+  }
+
+  static void register(HybridScanReader reader, Cleaner cleaner) {
+    // RMM blocker: wrapper can hold device memory (chunked_filter_row_mask).
+    all.put(cleaner.id, new CleanerWeakReference(reader, cleaner, collected, true));
   }
 
   static void register(HashJoin hashJoin, Cleaner cleaner) {
     all.put(cleaner.id, new CleanerWeakReference(hashJoin, cleaner, collected, true));
+  }
+
+  static void register(DistinctHashJoin hashJoin, Cleaner cleaner) {
+    all.put(cleaner.id, new CleanerWeakReference(hashJoin, cleaner, collected, true));
+  }
+
+  static void register(FilteredJoin filteredJoin, Cleaner cleaner) {
+    all.put(cleaner.id, new CleanerWeakReference(filteredJoin, cleaner, collected, true));
   }
 
   static void register(KeyRemapping keyRemapping, Cleaner cleaner) {

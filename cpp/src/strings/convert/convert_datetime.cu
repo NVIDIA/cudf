@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -24,13 +24,13 @@
 #include <cudf/utilities/type_dispatcher.hpp>
 #include <cudf/wrappers/timestamps.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_uvector.hpp>
 
 #include <cuda/iterator>
 #include <cuda/std/algorithm>
 #include <cuda/std/optional>
 #include <cuda/std/utility>
+#include <cuda/stream>
 #include <thrust/execution_policy.h>
 #include <thrust/logical.h>
 #include <thrust/transform.h>
@@ -101,7 +101,7 @@ struct format_compiler {
 
   // clang-format off
   // The specifiers are documented here (not all are supported):
-  // https://en.cppreference.com/w/cpp/chrono/system_clock/formatter
+  // https://en.cppreference.com/cpp/chrono/system_clock/formatter
   specifier_map specifiers = {
     {'Y', 4}, {'y', 2}, {'m', 2}, {'d', 2}, {'H', 2}, {'I', 2}, {'M', 2},
     {'S', 2}, {'f', 6}, {'z', 5}, {'Z', 3}, {'p', 2}, {'j', 3},
@@ -109,7 +109,7 @@ struct format_compiler {
   // clang-format on
 
   format_compiler(std::string_view fmt,
-                  rmm::cuda_stream_view stream,
+                  cuda::stream_ref stream,
                   specifier_map extra_specifiers = {})
     : format(fmt), d_items(0, stream)
   {
@@ -335,16 +335,16 @@ struct parse_datetime {
     auto const days = [timeparts, this] {
       // week and weekday prioritize over month/day
       if ((timeparts.week > 0) && (timeparts.weekday > 0)) {
-        auto const y = cuda::std::chrono::year{timeparts.year};
+        auto const y         = cuda::std::chrono::year{timeparts.year};
+        auto const first_day = static_cast<uint32_t>(format_contains('W'));
         // clang-format off
-        auto const start = format_contains('U')
+        auto const start = first_day==0
           ? cuda::std::chrono::sys_days{cuda::std::chrono::Sunday[1]/cuda::std::chrono::January/y}
           : cuda::std::chrono::sys_days{cuda::std::chrono::Monday[1]/cuda::std::chrono::January/y};
         // clang-format on
         auto const days =  // compute days from year, weeks and weekday
           start + cuda::std::chrono::weeks(timeparts.week - 1) - cuda::std::chrono::weeks{1} +
-          (cuda::std::chrono::weekday(timeparts.weekday) -
-           cuda::std::chrono::weekday{1});  // cuda::std::chrono::Monday causes compile error here
+          (cuda::std::chrono::weekday(timeparts.weekday) - cuda::std::chrono::weekday{first_day});
         return days.time_since_epoch().count();
       }
       auto const ymd =  // chrono class handles the leap year calculations for us
@@ -395,7 +395,7 @@ struct dispatch_to_timestamps_fn {
   void operator()(column_device_view const& d_strings,
                   std::string_view format,
                   mutable_column_view& results_view,
-                  rmm::cuda_stream_view stream) const
+                  cuda::stream_ref stream) const
     requires(cudf::is_timestamp<T>())
   {
     format_compiler compiler(format, stream);
@@ -410,7 +410,7 @@ struct dispatch_to_timestamps_fn {
   void operator()(column_device_view const&,
                   std::string_view,
                   mutable_column_view&,
-                  rmm::cuda_stream_view) const
+                  cuda::stream_ref) const
     requires(not cudf::is_timestamp<T>())
   {
     CUDF_FAIL("Only timestamps type are expected", std::invalid_argument);
@@ -423,7 +423,7 @@ struct dispatch_to_timestamps_fn {
 std::unique_ptr<cudf::column> to_timestamps(strings_column_view const& input,
                                             data_type timestamp_type,
                                             std::string_view format,
-                                            rmm::cuda_stream_view stream,
+                                            cuda::stream_ref stream,
                                             rmm::device_async_resource_ref mr)
 {
   if (input.is_empty()) { return make_empty_column(timestamp_type); }
@@ -515,7 +515,7 @@ struct check_datetime_format {
       // eliminate static character values first
       if (item.item_type == format_char_type::literal) {
         // check static character matches
-        if (*ptr != item.value) return cuda::std::nullopt;
+        if (length < item.length || *ptr != item.value) { return cuda::std::nullopt; }
         ptr += item.length;
         length -= item.length;
         continue;
@@ -661,7 +661,7 @@ struct check_datetime_format {
 
 std::unique_ptr<cudf::column> is_timestamp(strings_column_view const& input,
                                            std::string_view const& format,
-                                           rmm::cuda_stream_view stream,
+                                           cuda::stream_ref stream,
                                            rmm::device_async_resource_ref mr)
 {
   size_type strings_count = input.size();
@@ -697,7 +697,7 @@ std::unique_ptr<cudf::column> is_timestamp(strings_column_view const& input,
 std::unique_ptr<cudf::column> to_timestamps(strings_column_view const& input,
                                             data_type timestamp_type,
                                             std::string_view format,
-                                            rmm::cuda_stream_view stream,
+                                            cuda::stream_ref stream,
                                             rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
@@ -706,7 +706,7 @@ std::unique_ptr<cudf::column> to_timestamps(strings_column_view const& input,
 
 std::unique_ptr<cudf::column> is_timestamp(strings_column_view const& input,
                                            std::string_view format,
-                                           rmm::cuda_stream_view stream,
+                                           cuda::stream_ref stream,
                                            rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
@@ -787,7 +787,7 @@ struct datetime_formatter_fn {
     // and retrieving the hour, minute, second, and subsecond values from it
     // but it did not scale/modulo the components for negative timestamps
     // correctly -- it simply did an abs(timestamp) as documented here:
-    // https://en.cppreference.com/w/cpp/chrono/hh_mm_ss/hh_mm_ss
+    // https://en.cppreference.com/cpp/chrono/hh_mm_ss/hh_mm_ss
 
     if constexpr (not std::is_same_v<T, cudf::timestamp_s>) {
       int64_t constexpr base = T::period::type::den;  // 1000=ms, 1000000=us, etc
@@ -1093,7 +1093,7 @@ struct dispatch_from_timestamps_fn {
   strings_children operator()(column_device_view const& d_timestamps,
                               column_device_view const& d_format_names,
                               device_span<format_item const> d_format_items,
-                              rmm::cuda_stream_view stream,
+                              cuda::stream_ref stream,
                               rmm::device_async_resource_ref mr) const
     requires(cudf::is_timestamp<T>())
   {
@@ -1118,7 +1118,7 @@ struct dispatch_from_timestamps_fn {
 std::unique_ptr<column> from_timestamps(column_view const& timestamps,
                                         std::string_view format,
                                         strings_column_view const& names,
-                                        rmm::cuda_stream_view stream,
+                                        cuda::stream_ref stream,
                                         rmm::device_async_resource_ref mr)
 {
   if (timestamps.is_empty()) return make_empty_column(type_id::STRING);
@@ -1161,7 +1161,7 @@ std::unique_ptr<column> from_timestamps(column_view const& timestamps,
 std::unique_ptr<column> from_timestamps(column_view const& timestamps,
                                         std::string_view format,
                                         strings_column_view const& names,
-                                        rmm::cuda_stream_view stream,
+                                        cuda::stream_ref stream,
                                         rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();

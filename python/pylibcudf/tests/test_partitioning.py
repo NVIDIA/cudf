@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import pyarrow as pa
@@ -59,3 +59,13 @@ def test_round_robin_partition(partitioning_data):
     assert_table_eq(expect, got)
     # Should return num_partitions + 1 offsets: [0, 3] for 1 partition with 3 rows
     assert offsets == [0, 3]
+
+
+def test_round_robin_partition_zero_columns_preserves_num_rows():
+    result, offsets = plc.partitioning.round_robin_partition(
+        plc.Table([], num_rows=7), 3
+    )
+    assert result.num_columns() == 0
+    assert result.num_rows() == 7
+    # 7 rows over 3 partitions deals sizes {3, 2, 2}: boundaries hold with no columns.
+    assert offsets == [0, 3, 5, 7]

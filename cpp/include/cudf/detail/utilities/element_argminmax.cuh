@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -29,7 +29,7 @@ struct element_argminmax_fn {
 
   __device__ inline bool out_of_bounds_or_null(size_type idx) const
   {
-    // The extra bounds checking is due to issue github.com/rapidsai/cudf/9156 and
+    // The extra bounds checking is due to issue github.com/NVIDIA/cudf/9156 and
     // github.com/NVIDIA/thrust/issues/1525
     // where invalid random values may be passed here by thrust::reduce_by_key
     return idx < 0 || idx >= d_col.size() || (has_nulls && d_col.is_null_nocheck(idx));

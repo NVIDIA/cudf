@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -11,14 +11,20 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 
+#include <cuda/stream>
+
 #include <memory>
+#include <span>
+
+/**
+ * @file
+ * @brief Concatenate columns APIs
+ */
 
 namespace CUDF_EXPORT cudf {
 /**
  * @addtogroup copy_concatenate
  * @{
- * @file
- * @brief Concatenate columns APIs
  */
 
 /**
@@ -34,8 +40,8 @@ namespace CUDF_EXPORT cudf {
  * @return Bitmasks of all the column views in the views vector
  */
 rmm::device_buffer concatenate_masks(
-  host_span<column_view const> views,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  std::span<column_view const> views,
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -51,8 +57,8 @@ rmm::device_buffer concatenate_masks(
  * in the same order.
  */
 std::unique_ptr<column> concatenate(
-  host_span<column_view const> columns_to_concat,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  std::span<column_view const> columns_to_concat,
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -80,8 +86,8 @@ std::unique_ptr<column> concatenate(
  * `tables_to_concat` respectively in the same order.
  */
 std::unique_ptr<table> concatenate(
-  host_span<table_view const> tables_to_concat,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  std::span<table_view const> tables_to_concat,
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /** @} */  // end of group

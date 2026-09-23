@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from __future__ import annotations
@@ -45,6 +45,21 @@ if TYPE_CHECKING:
 class ListColumn(ColumnBase):
     _VALID_BINARY_OPERATIONS = {"__add__", "__radd__", "__eq__", "__ne__"}
 
+    def _plc_memory_usage(self, col: plc.Column) -> int:
+        n = self._plc_memory_usage_buffers(col)
+        if col.size() == 0 or col.num_children() == 0:
+            return n
+
+        offsets = col.list_view().offsets()
+        offsets_typestr: str = offsets.type().typestr  # type: ignore[assignment]
+        n += (col.size() + 1) * np.dtype(offsets_typestr).itemsize
+
+        sliced_child = col.list_view().get_sliced_child()
+        child = ColumnBase.create(
+            sliced_child, self.element_type, validate=False
+        )
+        return n + child._plc_memory_usage(sliced_child)
+
     def _get_sliced_child(self) -> ColumnBase:
         """Get a child column properly sliced to match the parent's view."""
         sliced_plc_col = self.plc_column.list_view().get_sliced_child()
@@ -77,7 +92,7 @@ class ListColumn(ColumnBase):
 
     def _binaryop(self, other: ColumnBinaryOperand, op: str) -> ColumnBase:
         # Lists only support __add__, which concatenates lists.
-        reflect, op = self._check_reflected_op(op)
+        _reflect, op = self._check_reflected_op(op)
         if not isinstance(other, type(self)):
             return NotImplemented
         if is_dtype_obj_list(other.dtype):

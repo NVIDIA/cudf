@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -8,7 +8,7 @@
 #include <cudf/sorting.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
+#include <cuda/stream>
 
 namespace cudf {
 namespace detail {
@@ -36,7 +36,7 @@ template <sort_method method>
 std::unique_ptr<column> sorted_order(column_view const& input,
                                      order column_order,
                                      null_order null_precedence,
-                                     rmm::cuda_stream_view stream,
+                                     cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr);
 
 }  // namespace detail

@@ -34,6 +34,7 @@
 ### Device Code Errors
 - Use of relaxed constexpr in device code — `--expt-relaxed-constexpr` is **not** enabled; every `constexpr` function callable from device code must be explicitly annotated `__device__` or `CUDF_HOST_DEVICE`
 - Using `std::` type traits, algorithms, or constexpr functions instead of `cuda::std::` in `__device__` / `CUDF_HOST_DEVICE` code and in templates instantiated in device code (e.g., must use `cuda::std::is_void_v<T>`, `cuda::std::min`, `cuda::std::numeric_limits<T>`)
+- Extended `__device__` lambdas passed to device algorithms should declare their return type, preferably with a trailing `-> T` (fall back to `cuda::proclaim_return_type<T>(...)`). Some host-side APIs (e.g. CUB `DeviceSelect`, transform iterators) query the return type in host code and fail to compile without it; declaring it uniformly avoids surprises as APIs change
 
 ### Resource Management
 - GPU memory leaks (device allocations, managed memory, pinned memory)
@@ -103,7 +104,7 @@
 - Deprecated CUDA API usage
 - Missing Doxygen `@param`, `@return`, `@throw`, `@tparam` tags on public API functions
 - Missing `static_assert` with clear message to prevent template misuse
-- Unnecessary includes in headers or incorrect bracket style (`<>` vs `""`)
+- Includes that violate "include what you use": a symbol used without directly including its header (relying on a transitive include), an unused header left behind, or incorrect bracket style (`<>` vs `""`)
 
 ## Best Practices to Encourage
 
@@ -216,6 +217,8 @@ Suggested fix:
 - Prefer `cudf::detail::make_pinned_vector{,_async}` over `make_host_vector{,_async}` for small H2D/D2H transfers
 - Prefer `span` versions of constructors for `make_pinned_vector{,_async}` and `make_host_vector{,_async}`
 - Use `host_span`/`device_span`; no owning vectors passed by copy/reference unless explicitly moved
+- Prefer span parameters over pointer + size/length pairs (e.g. `T const* data, size_t size`)
+- Prefer `std::span` over `host_span<T>` whenever no host-device communication is required
 
 **Stream Management**:
 - Stream and MR as last two parameters (stream before MR)

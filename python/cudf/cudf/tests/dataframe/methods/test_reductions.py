@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import numpy as np
@@ -86,6 +86,24 @@ def test_with_index():
     pdf_q = pdf.quantile(q, interpolation="nearest")
     gdf_q = gdf.quantile(q, interpolation="nearest", method="table")
 
+    assert_eq(pdf_q, gdf_q, check_index_type=False)
+
+
+@pytest.mark.parametrize("method", ["single", "table"])
+def test_quantile_columns_subset(method):
+    # The cudf-specific ``columns`` argument restricts the computation in
+    # both the per-column and the row-selecting table methods.
+    q = [0, 0.5, 1]
+
+    pdf = pd.DataFrame({"a": [4, 24, 13, 8, 7], "b": [1, 2, 3, 4, 5]})
+    gdf = cudf.from_pandas(pdf)
+
+    pdf_q = pdf[["a"]].quantile(q, interpolation="nearest")
+    gdf_q = gdf.quantile(
+        q, interpolation="nearest", method=method, columns=["a"]
+    )
+
+    assert list(gdf_q._column_names) == ["a"]
     assert_eq(pdf_q, gdf_q, check_index_type=False)
 
 
@@ -238,13 +256,13 @@ def test_empty_numeric_only():
 
 @pytest.mark.parametrize(
     "op",
-    ["count", "kurt", "kurtosis", "skew"],
+    ["kurt", "kurtosis", "skew"],
 )
 def test_dataframe_axis1_unsupported_ops(op):
     df = cudf.DataFrame({"a": [1, 2, 3], "b": [8, 9, 10]})
 
     with pytest.raises(
-        NotImplementedError, match="Only axis=0 is currently supported."
+        NotImplementedError, match=r"Only axis=0 is currently supported."
     ):
         getattr(df, op)(axis=1)
 
@@ -252,21 +270,50 @@ def test_dataframe_axis1_unsupported_ops(op):
 @pytest.mark.parametrize(
     "data",
     [
-        {
-            "x": [np.nan, 2, 3, 4, 100, np.nan],
-            "y": [4, 5, 6, 88, 99, np.nan],
-            "z": [7, 8, 9, 66, np.nan, 77],
-        },
-        {"x": [1, 2, 3], "y": [4, 5, 6], "z": [7, 8, 9]},
-        {
-            "x": [np.nan, np.nan, np.nan],
-            "y": [np.nan, np.nan, np.nan],
-            "z": [np.nan, np.nan, np.nan],
-        },
-        {"x": [], "y": [], "z": []},
-        {"x": []},
+        {"a": [1, 2, 3], "b": [8, 9, 10]},
+        {"a": [1.0, np.nan, 3.0], "b": ["x", None, "z"], "c": [1, 2, None]},
+        {"a": [None, None], "b": [None, "y"]},
+        {"a": [1, 2, 3]},
     ],
 )
+@pytest.mark.parametrize("numeric_only", [False, True])
+def test_dataframe_count_axis1(data, numeric_only):
+    gdf = cudf.DataFrame(data)
+    pdf = gdf.to_pandas()
+    assert_eq(
+        gdf.count(axis=1, numeric_only=numeric_only),
+        pdf.count(axis=1, numeric_only=numeric_only),
+    )
+
+
+_DATAFRAME_REDUCTION_DATA = [
+    {
+        "x": [np.nan, 2, 3, 4, 100, np.nan],
+        "y": [4, 5, 6, 88, 99, np.nan],
+        "z": [7, 8, 9, 66, np.nan, 77],
+    },
+    {"x": [1, 2, 3], "y": [4, 5, 6], "z": [7, 8, 9]},
+    {
+        "x": [np.nan, np.nan, np.nan],
+        "y": [np.nan, np.nan, np.nan],
+        "z": [np.nan, np.nan, np.nan],
+    },
+    {"x": [], "y": [], "z": []},
+    {"x": []},
+]
+
+
+@pytest.fixture(
+    scope="module",
+    params=list(enumerate(_DATAFRAME_REDUCTION_DATA)),
+    ids=[f"data{i}" for i in range(len(_DATAFRAME_REDUCTION_DATA))],
+)
+def dataframe_reduction_inputs(request):
+    data_id, data = request.param
+    pdf = pd.DataFrame(data=data)
+    return data_id, pdf, cudf.DataFrame(pdf, nan_as_null=False)
+
+
 @pytest.mark.parametrize("axis", [0, 1])
 @pytest.mark.parametrize(
     "func",
@@ -291,18 +338,19 @@ def test_dataframe_axis1_unsupported_ops(op):
         "any",
     ],
 )
-def test_dataframe_reductions(request, data, axis, func, skipna):
-    pdf = pd.DataFrame(data=data)
-    gdf = cudf.DataFrame(pdf, nan_as_null=False)
+def test_dataframe_reductions(
+    request, dataframe_reduction_inputs, axis, func, skipna
+):
+    data_id, pdf, gdf = dataframe_reduction_inputs
 
-    if request.node.callspec.id in {
-        "True-cumsum-1-data0",
-        "True-cumprod-1-data0",
-        "True-any-1-data2",
+    if (skipna, func, axis, data_id) in {
+        (True, "cumsum", 1, 0),
+        (True, "cumprod", 1, 0),
+        (True, "any", 1, 2),
     }:
         request.applymarker(
             pytest.mark.xfail(
-                reason="https://github.com/rapidsai/cudf/issues/20628"
+                reason="https://github.com/NVIDIA/cudf/issues/20628"
             )
         )
 
@@ -418,12 +466,11 @@ def test_decimal_quantile(q, interpolation, decimal_type):
     gdf["val"] = gdf["val"].astype(decimal_type(7, 2))
     pdf = gdf.to_pandas()
 
+    # Scalar q would require a Series result, which is not possible for
+    # this mix of float64 and decimal columns.
+    q = q if isinstance(q, list) else [q]
     got = gdf.quantile(q, numeric_only=False, interpolation=interpolation)
-    expected = pdf.quantile(
-        q if isinstance(q, list) else [q],
-        numeric_only=False,
-        interpolation=interpolation,
-    )
+    expected = pdf.quantile(q, numeric_only=False, interpolation=interpolation)
 
     assert_eq(got, expected)
 
@@ -436,6 +483,72 @@ def test_empty_quantile():
     expected = pdf.quantile()
 
     assert_eq(actual, expected)
+
+
+def test_quantile_q_scalar_datetime():
+    # For a scalar q, a Series is returned when the columns share a
+    # common dtype, matching pandas.
+    ts = pd.date_range("2018-08-24", periods=5, freq="D")
+    pdf = pd.DataFrame({"a": ts, "b": ts + pd.Timedelta(hours=1)})
+    gdf = cudf.DataFrame(pdf)
+
+    assert_eq(
+        pdf.quantile(0.5, numeric_only=False),
+        gdf.quantile(0.5, numeric_only=False),
+    )
+
+
+def test_quantile_q_scalar_mixed_dtypes_raises():
+    gdf = cudf.DataFrame(
+        {"a": [1.0, 2.0], "b": pd.to_datetime(["2010", "2011"])}
+    )
+    with pytest.raises(cudf.errors.MixedTypeError):
+        gdf.quantile(0.5, numeric_only=False)
+
+
+def test_quantile_table_method_tz_metadata():
+    dti = pd.date_range("2016-01-01", periods=3, tz="US/Pacific")
+    pdf = pd.DataFrame({"a": dti})
+    gdf = cudf.DataFrame(pdf)
+
+    assert_eq(
+        pdf.quantile(0.5, numeric_only=False, interpolation="nearest"),
+        gdf.quantile(0.5, interpolation="nearest", method="table"),
+    )
+
+
+def test_quantile_table_method_numeric_only():
+    pdf = pd.DataFrame(
+        {
+            "date": pd.date_range("2018-08-24", periods=3, freq="D"),
+            "val": [1, 2, 3],
+        }
+    )
+    gdf = cudf.DataFrame(pdf)
+
+    assert_eq(
+        pdf.quantile(0.5, numeric_only=True, interpolation="nearest"),
+        gdf.quantile(
+            0.5,
+            numeric_only=True,
+            interpolation="nearest",
+            method="table",
+        ),
+    )
+
+
+def test_quantile_table_method_empty():
+    pdf = pd.DataFrame({"x": [], "y": []})
+    gdf = cudf.DataFrame({"x": [], "y": []})
+
+    assert_eq(
+        pdf.quantile(0.5, interpolation="nearest"),
+        gdf.quantile(0.5, interpolation="nearest", method="table"),
+    )
+    assert_eq(
+        pdf.quantile([0.5], interpolation="nearest"),
+        gdf.quantile([0.5], interpolation="nearest", method="table"),
+    )
 
 
 @pytest.mark.parametrize(

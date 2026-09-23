@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -14,13 +14,17 @@
 #include <optional>
 #include <string_view>
 
+/**
+ * @file
+ * @brief APIs for splitting text data on multibyte delimiters.
+ */
+
 namespace CUDF_EXPORT cudf {
 namespace io {
 namespace text {
 /**
  * @addtogroup io_readers
  * @{
- * @file
  */
 
 /**
@@ -80,7 +84,7 @@ std::unique_ptr<cudf::column> multibyte_split(
   data_chunk_source const& source,
   std::string_view delimiter,
   parse_options options             = {},
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /** @} */  // end of group

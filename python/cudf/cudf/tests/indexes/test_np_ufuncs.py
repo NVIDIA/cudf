@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 
@@ -10,6 +10,7 @@ from packaging.version import parse
 
 import cudf
 from cudf.testing import assert_eq
+from cudf.testing._utils import gen_rand_ufunc_input
 
 
 def test_ufunc_index(request, numpy_ufunc):
@@ -17,8 +18,8 @@ def test_ufunc_index(request, numpy_ufunc):
     request.applymarker(
         pytest.mark.xfail(
             condition=numpy_ufunc in {np.ceil, np.floor, np.trunc}
-            and parse(np.__version__) >= parse("2.1")
-            and parse(cp.__version__) < parse("14"),
+            and parse(np.__version__) >= parse("2.0")
+            and parse(np.__version__) < parse("2.1"),
             reason="https://github.com/cupy/cupy/issues/9018",
         )
     )
@@ -36,7 +37,7 @@ def test_ufunc_index(request, numpy_ufunc):
     rng = np.random.default_rng(0)
     pandas_args = args = [
         cudf.Index(
-            rng.integers(low=1, high=10, size=N),
+            gen_rand_ufunc_input(numpy_ufunc, rng, N),
         )
         for _ in range(numpy_ufunc.nin)
     ]

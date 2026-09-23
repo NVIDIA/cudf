@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 from __future__ import annotations
 
@@ -52,7 +52,9 @@ if TYPE_CHECKING:
 
 
 # Maximum size of a string column is 2 GiB
-_STRINGS_UDF_DEFAULT_HEAP_SIZE = os.environ.get("STRINGS_UDF_HEAP_SIZE", 2**31)
+_STRINGS_UDF_DEFAULT_HEAP_SIZE = int(
+    os.environ.get("STRINGS_UDF_HEAP_SIZE", str(2**31))
+)
 _HEAP_SIZE = 0
 
 JIT_SUPPORTED_TYPES = (

@@ -1,21 +1,22 @@
-# <div align="left"><img src="img/rapids_logo.png" width="90px"/>&nbsp;cuDF - A GPU-accelerated DataFrame library for tabular data processing</div>
+# NVIDIA cuDF: A GPU-accelerated DataFrame library for tabular data processing
 
-cuDF (pronounced "KOO-dee-eff") is an [Apache 2.0 licensed](LICENSE), GPU-accelerated DataFrame library
-for tabular data processing. The cuDF library is one part of the [RAPIDS](https://rapids.ai/) GPU
-Accelerated Data Science suite of libraries.
+NVIDIA cuDF (pronounced "KOO-dee-eff") is an [Apache 2.0 licensed](LICENSE), GPU-accelerated DataFrame library
+for tabular data processing. The cuDF library is one part of the [NVIDIA
+CUDA-X](https://developer.nvidia.com/cuda/cuda-x-libraries) suite of GPU
+Accelerated libraries.
 
 ## About
 
 cuDF is composed of multiple libraries including:
 
-* [libcudf](https://docs.rapids.ai/api/cudf/stable/libcudf/): A CUDA C++ library with [Apache Arrow](https://arrow.apache.org/) compliant
+* [libcudf](https://docs.nvidia.com/cudf/latest/libcudf/): A CUDA C++ library with [Apache Arrow](https://arrow.apache.org/) compliant
 data structures and fundamental algorithms for tabular data.
-* [pylibcudf](https://docs.rapids.ai/api/cudf/stable/pylibcudf/): A Python library providing [Cython](https://cython.org/) bindings for libcudf.
-* [cudf](https://docs.rapids.ai/api/cudf/stable/cudf/): A Python library providing
+* [pylibcudf](https://docs.nvidia.com/cudf/latest/pylibcudf/): A Python library providing [Cython](https://cython.org/) bindings for libcudf.
+* [cudf](https://docs.nvidia.com/cudf/latest/cudf/): A Python library providing
     - A DataFrame library mirroring the [pandas](https://pandas.pydata.org/) API
-    - A zero-code change accelerator, [cudf.pandas](https://docs.rapids.ai/api/cudf/stable/cudf_pandas/), for existing pandas code.
-* [cudf-polars](https://docs.rapids.ai/api/cudf/stable/cudf_polars/): A Python library providing a GPU engine for [Polars](https://pola.rs/)
-* [dask-cudf](https://docs.rapids.ai/api/dask-cudf/stable/): A Python library providing a GPU backend for [Dask](https://www.dask.org/) DataFrames
+    - A zero-code change accelerator, [cudf.pandas](https://docs.nvidia.com/cudf/latest/cudf_pandas/), for existing pandas code.
+* [cudf-polars](https://docs.nvidia.com/cudf/latest/cudf_polars/): A Python library providing a GPU engine for [Polars](https://pola.rs/)
+* [dask-cudf](https://docs.nvidia.com/dask-cudf/latest/): A Python library providing a GPU backend for [Dask](https://www.dask.org/) DataFrames
 
 Notable projects that use cuDF include:
 
@@ -28,13 +29,13 @@ extension module to execute Velox plans on the GPU
 
 ### System Requirements
 
-Operating System, GPU driver, and supported CUDA version information can be found at the [RAPIDS Installation Guide](https://docs.rapids.ai/install/#system-req)
+Operating System, GPU driver, and supported CUDA version information can be found at the [RAPIDS Installation Guide](https://docs.nvidia.com/datascience/install/#system-req)
 
 ### pip
 
 A stable release of each cudf library is available on PyPI. You will need to match the major version number of your installed CUDA version with a `-cu##` suffix when installing from PyPI.
 
-A development version of each library is available as a nightly release by including the `-i https://pypi.anaconda.org/rapidsai-wheels-nightly/simple` index.
+A development version of each library is available as a nightly release by including the `-i https://pypi.anaconda.org/rapidsai-wheels-nightly/simple/` index.
 
 ```bash
 # CUDA 13
@@ -131,7 +132,7 @@ lf.drop_nulls().group_by(["A", "B"]).mean().collect(engine="gpu")
 
 ## Questions and Discussion
 
-For bug reports or feature requests, please [file an issue](https://github.com/rapidsai/cudf/issues/new/choose) on the GitHub issue tracker.
+For bug reports or feature requests, please [file an issue](https://github.com/NVIDIA/cudf/issues/new/choose) on the GitHub issue tracker.
 
 For questions or discussion about cuDF and GPU data processing, feel free to post in the [RAPIDS Slack](https://rapids.ai/slack-invite) workspace.
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES.  All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 # Run Pandas unit tests with cudf.pandas.
@@ -54,8 +54,7 @@ if [ ! -d "pandas-tests" ]; then
     # Vendored from pandas/pyproject.toml
     cat > pandas-tests/pyproject.toml << \EOF
 [tool.pytest.ini_options]
-# flaky xpasses tracked at https://github.com/rapidsai/cudf/issues/22681
-xfail_strict = false
+xfail_strict = true
 markers = [
   "single_cpu: tests that should run on a single cpu only",
   "slow: mark a test as slow",

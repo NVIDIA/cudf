@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 """Base class for IR nodes, and utilities."""
@@ -21,13 +21,26 @@ __all__: list[str] = ["Node"]
 T = TypeVar("T", bound="Node[Any]")
 
 
-def _expand_hashable(obj: Any) -> Any:
-    """Expand nested Node instances to their hashable form."""
+def _update_stable_hasher(hasher: Any, obj: Hashable) -> None:
+    """
+    Feed ``hasher`` a bottom-up structural digest of ``obj``.
+
+    Nested :class:`Node` instances contribute their full cached digest
+    rather than a truncated id or a full subtree expansion, so hashing an
+    entire DAG is linear in total local payload size while distinct child
+    subtrees remain distinguishable when composing parent digests.
+    """
     if isinstance(obj, Node):
-        return _expand_hashable(obj.get_hashable())
+        hasher.update(b"N")
+        hasher.update(obj._get_stable_digest())
     elif isinstance(obj, tuple):
-        return tuple(_expand_hashable(x) for x in obj)
-    return obj
+        hasher.update(b"T")
+        hasher.update(len(obj).to_bytes(4, "big"))
+        for x in obj:
+            _update_stable_hasher(hasher, x)
+    else:
+        hasher.update(b"L")
+        hasher.update(repr(obj).encode("utf-8"))
 
 
 class Node(Generic[T]):
@@ -49,11 +62,13 @@ class Node(Generic[T]):
     __slots__ = (
         "_hash_value",
         "_repr_value",
+        "_stable_digest",
         "_stable_hash_value",
         "_stable_plan_id",
         "children",
     )
     _hash_value: int
+    _stable_digest: bytes
     _stable_hash_value: int
     _stable_plan_id: uuid.UUID
     _repr_value: str
@@ -102,17 +117,23 @@ class Node(Generic[T]):
         """
         return (type(self), self._ctor_arguments(self.children))
 
+    def _get_stable_digest(self) -> bytes:
+        """Return the full MD5 digest for this node, computing it if needed."""
+        try:
+            return self._stable_digest
+        except AttributeError:
+            h = hashlib.md5(usedforsecurity=False)
+            _update_stable_hasher(h, self.get_hashable())
+            self._stable_digest = h.digest()
+            return self._stable_digest
+
     def get_stable_id(self) -> int:
         """
         Compute a stable identifier for Node.
 
-        Uses MD5 hash of the node's hashable representation for determinism
-        across process boundaries (Python's hash() uses PYTHONHASHSEED).
-
-        Parameters
-        ----------
-        ir_node
-            The IR node.
+        Digests :meth:`get_hashable` bottom-up with MD5 so the result is
+        deterministic across process boundaries (Python's ``hash()`` uses
+        ``PYTHONHASHSEED``).
 
         Returns
         -------
@@ -122,8 +143,10 @@ class Node(Generic[T]):
         try:
             return self._stable_hash_value
         except AttributeError:
-            content = repr(_expand_hashable(self)).encode("utf-8")
-            self._stable_hash_value = int(hashlib.md5(content).hexdigest()[:8], 16)
+            # First 4 digest bytes == int(hexdigest()[:8], 16).
+            self._stable_hash_value = int.from_bytes(
+                self._get_stable_digest()[:4], "big"
+            )
             return self._stable_hash_value
 
     def get_stable_plan_id(self) -> uuid.UUID:

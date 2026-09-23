@@ -1,6 +1,6 @@
 /**
- * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights
- * reserved. SPDX-License-Identifier: Apache-2.0
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
  */
 
 #include "sort.hpp"
@@ -8,7 +8,8 @@
 #include <cudf/sorting.hpp>
 #include <cudf/types.hpp>
 
-#include <cudf_streaming/streaming/table_chunk.hpp>
+#include <cudf_streaming/table_chunk.hpp>
+
 #include <rapidsmpf/streaming/core/channel.hpp>
 #include <rapidsmpf/streaming/core/context.hpp>
 
@@ -17,8 +18,8 @@
 #include <vector>
 
 namespace rapidsmpf::ndsh {
-using cudf_streaming::streaming::TableChunk;
-using cudf_streaming::streaming::to_message;
+using cudf_streaming::table_chunk;
+using cudf_streaming::to_message;
 
 rapidsmpf::streaming::Actor chunkwise_sort_by(std::shared_ptr<rapidsmpf::streaming::Context> ctx,
                                               std::shared_ptr<rapidsmpf::streaming::Channel> ch_in,
@@ -30,7 +31,7 @@ rapidsmpf::streaming::Actor chunkwise_sort_by(std::shared_ptr<rapidsmpf::streami
 {
   streaming::ShutdownAtExit c{ch_in, ch_out};
   co_await ctx->executor()->schedule();
-  auto make_table = [&](cudf_streaming::streaming::TableChunk& chunk) {
+  auto make_table = [&](cudf_streaming::table_chunk& chunk) {
     if (std::ranges::equal(keys, values)) {
       return cudf::sort(
         chunk.table_view().select(keys), order, null_order, chunk.stream(), ctx->br()->device_mr());
@@ -46,10 +47,10 @@ rapidsmpf::streaming::Actor chunkwise_sort_by(std::shared_ptr<rapidsmpf::streami
   while (!ch_out->is_shutdown()) {
     auto msg = co_await ch_in->receive();
     if (msg.empty()) { break; }
-    auto chunk = co_await msg.release<cudf_streaming::streaming::TableChunk>().make_available(ctx);
-    co_await ch_out->send(to_message(
-      msg.sequence_number(),
-      std::make_unique<cudf_streaming::streaming::TableChunk>(make_table(chunk), chunk.stream())));
+    auto chunk = co_await msg.release<cudf_streaming::table_chunk>().make_available(ctx);
+    co_await ch_out->send(
+      to_message(msg.sequence_number(),
+                 std::make_unique<cudf_streaming::table_chunk>(make_table(chunk), chunk.stream())));
   }
   co_await ch_out->drain(ctx->executor());
 }

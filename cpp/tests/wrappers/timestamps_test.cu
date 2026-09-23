@@ -1,11 +1,12 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
 #include <cudf_test/base_fixture.hpp>
 #include <cudf_test/column_utilities.hpp>
 #include <cudf_test/column_wrapper.hpp>
+#include <cudf_test/memory_resource_utilities.hpp>
 #include <cudf_test/testing_main.hpp>
 #include <cudf_test/timestamp_utilities.cuh>
 #include <cudf_test/type_lists.hpp>
@@ -19,7 +20,6 @@
 #include <cudf/wrappers/durations.hpp>
 #include <cudf/wrappers/timestamps.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
@@ -45,7 +45,7 @@ struct compare_chrono_elements_to_primitive_representation {
   }
 
   template <typename T = ChronoT, std::enable_if_t<cudf::is_timestamp<T>()>* = nullptr>
-  __host__ __device__ bool operator()(const int32_t element_index)
+  __host__ __device__ bool operator()(int32_t const element_index)
   {
     using Primitive = typename ChronoT::rep;
     auto primitive  = primitives.element<Primitive>(element_index);
@@ -54,7 +54,7 @@ struct compare_chrono_elements_to_primitive_representation {
   }
 
   template <typename T = ChronoT, std::enable_if_t<cudf::is_duration<T>()>* = nullptr>
-  __host__ __device__ bool operator()(const int32_t element_index)
+  __host__ __device__ bool operator()(int32_t const element_index)
   {
     using Primitive = typename ChronoT::rep;
     auto primitive  = primitives.element<Primitive>(element_index);
@@ -63,6 +63,27 @@ struct compare_chrono_elements_to_primitive_representation {
   }
 };
 }  // namespace
+
+template <bool Nullable>
+void expect_timestamp_output_uses_resource()
+{
+  using namespace cuda::std::chrono;
+
+  cudf::test::expect_output_uses_distinct_resources([](auto resources) {
+    return cudf::test::generate_timestamps<cudf::timestamp_ms, Nullable>(
+      100,
+      cudf::test::time_point_ms{milliseconds{-1000}},
+      cudf::test::time_point_ms{milliseconds{1000}},
+      cudf::test::get_default_stream(),
+      resources);
+  });
+}
+
+TEST(TimestampGeneratorMemoryResourceTest, DistinctOutputAndTemporaryResources)
+{
+  expect_timestamp_output_uses_resource<false>();
+  expect_timestamp_output_uses_resource<true>();
+}
 
 TYPED_TEST_SUITE(ChronoColumnTest, cudf::test::ChronoTypes);
 
@@ -109,7 +130,7 @@ struct compare_chrono_elements {
   {
   }
 
-  __host__ __device__ bool operator()(const int32_t element_index)
+  __host__ __device__ bool operator()(int32_t const element_index)
   {
     auto lhs_elt = lhs.element<ChronoT>(element_index);
     auto rhs_elt = rhs.element<ChronoT>(element_index);

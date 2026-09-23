@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 from __future__ import annotations
 
@@ -83,7 +83,7 @@ def _plc_write_parquet(
     table,
     filepaths_or_buffers,
     index: bool | None = None,
-    compression: Literal["snappy", "ZSTD", "ZLIB", "LZ4", None] = "snappy",
+    compression: Literal["snappy", "ZSTD", "LZ4", "GZIP", None] = "snappy",
     statistics: Literal["ROWGROUP", "PAGE", "COLUMN", "NONE"] = "ROWGROUP",
     metadata_file_path: str | None = None,
     int96_timestamps: bool = False,
@@ -252,7 +252,7 @@ def _plc_write_parquet(
 def _write_parquet(
     df,
     paths,
-    compression: Literal["snappy", "ZSTD", "ZLIB", "LZ4", None] = "snappy",
+    compression: Literal["snappy", "ZSTD", "LZ4", "GZIP", None] = "snappy",
     index: bool | None = None,
     statistics: Literal["ROWGROUP", "PAGE", "COLUMN", "NONE"] = "ROWGROUP",
     metadata_file_path: str | None = None,
@@ -288,14 +288,18 @@ def _write_parquet(
 ) -> np.ndarray | None:
     if is_list_like(paths) and len(paths) > 1:
         if partitions_info is None:
-            ValueError("partition info is required for multiple paths")
+            raise ValueError("partition info is required for multiple paths")
         elif not is_list_like(partitions_info):
-            ValueError("partition info must be list-like for multiple paths")
+            raise ValueError(
+                "partition info must be list-like for multiple paths"
+            )
         elif not len(paths) == len(partitions_info):
-            ValueError("partitions_info and paths must be of same size")
+            raise ValueError("partitions_info and paths must be of same size")
     if is_list_like(partitions_info) and len(partitions_info) > 1:
         if not is_list_like(paths):
-            ValueError("paths must be list-like when partitions_info provided")
+            raise ValueError(
+                "paths must be list-like when partitions_info provided"
+            )
 
     paths_or_bufs = [
         ioutils.get_writer_filepath_or_buffer(
@@ -348,7 +352,7 @@ def _write_parquet(
 def write_to_dataset(
     df,
     root_path,
-    compression: Literal["snappy", "ZSTD", "ZLIB", "LZ4", None] = "snappy",
+    compression: Literal["snappy", "ZSTD", "LZ4", "GZIP", None] = "snappy",
     filename=None,
     partition_cols=None,
     fs=None,
@@ -401,7 +405,7 @@ def write_to_dataset(
     df : cudf.DataFrame
     root_path : string,
         The root directory of the dataset
-    compression : {'snappy', 'ZSTD', None}, default 'snappy'
+    compression : {'snappy', 'ZSTD', 'LZ4', 'GZIP', None}, default 'snappy'
         Name of the compression to use. Use ``None`` for no compression.
     filename : string, default None
         The file name to use (within each partition directory). If None,
@@ -1419,13 +1423,13 @@ def _read_parquet(
             column_names = tbl_w_meta.column_names(include_children=False)
             child_names = tbl_w_meta.child_names
             per_file_user_data = tbl_w_meta.per_file_user_data
-            concatenated_columns = tbl_w_meta.tbl.columns()
+            concatenated_columns = tbl_w_meta.tbl.release()
 
             # save memory
             del tbl_w_meta
 
             while reader.has_next():
-                columns = reader.read_chunk().tbl.columns()
+                columns = reader.read_chunk().tbl.release()
                 # Iterate in reverse to avoid O(n²) cost from popping
                 for i in range(len(concatenated_columns) - 1, -1, -1):
                     concatenated_columns[i] = plc.concatenate.concatenate(
@@ -1516,7 +1520,7 @@ def to_parquet(
     df,
     path,
     engine="cudf",
-    compression: Literal["snappy", "ZSTD", "ZLIB", "LZ4", None] = "snappy",
+    compression: Literal["snappy", "ZSTD", "LZ4", "GZIP", None] = "snappy",
     index: bool | None = None,
     partition_cols=None,
     partition_file_name=None,
@@ -1670,6 +1674,7 @@ def to_parquet(
             pa_table,
             root_path=path,
             partition_cols=partition_cols,
+            compression=compression,
             *args,
             **kwargs,
         )
@@ -1782,7 +1787,7 @@ class ParquetWriter:
         If ``True``, include a dataframe's index(es) in the file output.
         If ``False``, they will not be written to the file. If ``None``,
         index(es) other than RangeIndex will be saved as columns.
-    compression : {'snappy', None}, default 'snappy'
+    compression : {'snappy', 'ZSTD', 'LZ4', 'GZIP', None}, default 'snappy'
         Name of the compression to use. Use ``None`` for no compression.
     statistics : {'ROWGROUP', 'PAGE', 'COLUMN', 'NONE'}, default 'ROWGROUP'
         Level at which column statistics should be included in file.
@@ -1819,7 +1824,7 @@ class ParquetWriter:
         self,
         filepath_or_buffer,
         index: bool | None = None,
-        compression: Literal["snappy", "ZSTD", "ZLIB", "LZ4", None] = "snappy",
+        compression: Literal["snappy", "ZSTD", "LZ4", "GZIP", None] = "snappy",
         statistics: Literal["ROWGROUP", "PAGE", "COLUMN", "NONE"] = "ROWGROUP",
         row_group_size_bytes: int = int(np.iinfo(np.uint64).max),
         row_group_size_rows: int = 1000000,
@@ -2037,7 +2042,7 @@ class ParquetDatasetWriter:
         If ``True``, include the dataframe's index(es) in the file output.
         If ``False``, they will not be written to the file. If ``None``,
         index(es) other than RangeIndex will be saved as columns.
-    compression : {'snappy', None}, default 'snappy'
+    compression : {'snappy', 'ZSTD', 'LZ4', 'GZIP', None}, default 'snappy'
         Name of the compression to use. Use ``None`` for no compression.
     statistics : {'ROWGROUP', 'PAGE', 'COLUMN', 'NONE'}, default 'ROWGROUP'
         Level at which column statistics should be included in file.
@@ -2096,7 +2101,7 @@ class ParquetDatasetWriter:
         path,
         partition_cols,
         index=None,
-        compression: Literal["snappy", "ZSTD", "ZLIB", "LZ4", None] = "snappy",
+        compression: Literal["snappy", "ZSTD", "LZ4", "GZIP", None] = "snappy",
         statistics: Literal["ROWGROUP", "PAGE", "COLUMN", "NONE"] = "ROWGROUP",
         max_file_size=None,
         file_name_prefix=None,

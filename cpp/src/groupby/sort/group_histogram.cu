@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -27,7 +27,7 @@ std::unique_ptr<column> build_histogram(column_view const& values,
                                         cudf::device_span<size_type const> group_labels,
                                         std::optional<column_view> const& partial_counts,
                                         size_type num_groups,
-                                        rmm::cuda_stream_view stream,
+                                        cuda::stream_ref stream,
                                         rmm::device_async_resource_ref mr)
 {
   CUDF_EXPECTS(static_cast<size_t>(values.size()) == group_labels.size(),
@@ -77,7 +77,7 @@ std::unique_ptr<column> build_histogram(column_view const& values,
 std::unique_ptr<column> group_histogram(column_view const& values,
                                         cudf::device_span<size_type const> group_labels,
                                         size_type num_groups,
-                                        rmm::cuda_stream_view stream,
+                                        cuda::stream_ref stream,
                                         rmm::device_async_resource_ref mr)
 {
   // Empty group should be handled before reaching here.
@@ -89,7 +89,7 @@ std::unique_ptr<column> group_histogram(column_view const& values,
 std::unique_ptr<column> group_merge_histogram(column_view const& values,
                                               cudf::device_span<size_type const> group_offsets,
                                               size_type num_groups,
-                                              rmm::cuda_stream_view stream,
+                                              cuda::stream_ref stream,
                                               rmm::device_async_resource_ref mr)
 {
   // Empty group should be handled before reaching here.

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2018-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2018-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -13,7 +13,7 @@
 #include <cudf/utilities/export.hpp>
 #include <cudf/utilities/span.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
+#include <cuda/stream>
 
 #include <optional>
 #include <string>
@@ -62,7 +62,7 @@ inline trie_view make_trie_view(optional_trie const& t)
  * @return A host vector of nodes representing the serialized trie
  */
 CUDF_EXPORT trie create_serialized_trie(std::vector<std::string> const& keys,
-                                        rmm::cuda_stream_view stream);
+                                        cuda::stream_ref stream);
 
 }  // namespace detail
 }  // namespace cudf

@@ -1,6 +1,6 @@
 /**
- * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights
- * reserved. SPDX-License-Identifier: Apache-2.0
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
 
@@ -11,10 +11,10 @@
 #include <cudf/table/table.hpp>
 #include <cudf/table/table_view.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/resource_ref.hpp>
 
 #include <cuda/memory_resource>
+#include <cuda/stream>
 
 #include <rapidsmpf/error.hpp>
 #include <rapidsmpf/memory/buffer_resource.hpp>
@@ -152,21 +152,6 @@ template <std::integral T = std::int64_t>
   return sort_table(table->view(), column_indices);
 }
 
-/// @brief Create a PackedData object from a host buffer
-[[nodiscard]] inline rapidsmpf::PackedData create_packed_data(
-  std::span<std::uint8_t const> metadata,
-  std::span<std::uint8_t const> data,
-  rmm::cuda_stream_view stream,
-  rapidsmpf::BufferResource* br)
-{
-  auto metadata_ptr = std::make_unique<std::vector<std::uint8_t>>(metadata.begin(), metadata.end());
-
-  auto reservation =
-    br->reserve(rapidsmpf::MemoryType::DEVICE, data.size(), rapidsmpf::AllowOverbooking::YES);
-  auto data_ptr = std::make_unique<rmm::device_buffer>(data.data(), data.size(), stream);
-  return rapidsmpf::PackedData{std::move(metadata_ptr), br->move(std::move(data_ptr), stream)};
-}
-
 /**
  * @brief Generate a packed data object with the given number of elements and offset.
  *
@@ -180,7 +165,7 @@ template <std::integral T = std::int64_t>
  */
 [[nodiscard]] inline rapidsmpf::PackedData generate_packed_data(int n_elements,
                                                                 int offset,
-                                                                rmm::cuda_stream_view stream,
+                                                                cuda::stream_ref stream,
                                                                 rapidsmpf::BufferResource& br)
 {
   auto values = iota_vector<int>(n_elements, offset);
@@ -206,7 +191,7 @@ template <std::integral T = std::int64_t>
 inline void validate_packed_data(rapidsmpf::PackedData&& packed_data,
                                  int n_elements,
                                  int offset,
-                                 rmm::cuda_stream_view stream,
+                                 cuda::stream_ref stream,
                                  rapidsmpf::BufferResource& br)
 {
   auto const& metadata = *packed_data.metadata;
@@ -222,7 +207,7 @@ inline void validate_packed_data(rapidsmpf::PackedData&& packed_data,
 
   auto res          = br.reserve_or_fail(packed_data.data->size, rapidsmpf::MemoryType::HOST);
   auto data_on_host = br.move_to_host_buffer(std::move(packed_data.data), res);
-  RAPIDSMPF_CUDA_TRY(cudaStreamSynchronize(stream));
+  stream.sync();
   EXPECT_EQ(metadata, data_on_host->copy_to_uint8_vector());
 }
 
@@ -252,19 +237,19 @@ class DelayedMemoryResource {
     RAPIDSMPF_FATAL("synchronous deallocation not supported");
   }
 
-  void* allocate(rmm::cuda_stream_view stream,
+  void* allocate(cuda::stream_ref stream,
                  std::size_t size,
                  std::size_t alignment = rmm::CUDA_ALLOCATION_ALIGNMENT)
   {
     void* ptr = upstream_.allocate(stream, size, alignment);
     if (size > 0) {
       RAPIDSMPF_CUDA_TRY(
-        cudaLaunchHostFunc(stream.value(), sleep_on_stream, new std::chrono::milliseconds(delay_)));
+        cudaLaunchHostFunc(stream.get(), sleep_on_stream, new std::chrono::milliseconds(delay_)));
     }
     return ptr;
   }
 
-  void deallocate(rmm::cuda_stream_view stream,
+  void deallocate(cuda::stream_ref stream,
                   void* ptr,
                   std::size_t size,
                   std::size_t alignment = rmm::CUDA_ALLOCATION_ALIGNMENT) noexcept

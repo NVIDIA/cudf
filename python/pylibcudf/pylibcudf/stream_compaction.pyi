@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from enum import IntEnum
@@ -28,6 +28,12 @@ def drop_nans(
     source_table: Table,
     keys: list[int],
     keep_threshold: int,
+    stream: CudaStreamLike | None = None,
+    mr: DeviceMemoryResource | None = None,
+) -> Table: ...
+def apply_retention_mask(
+    source_table: Table,
+    retention_mask: Column,
     stream: CudaStreamLike | None = None,
     mr: DeviceMemoryResource | None = None,
 ) -> Table: ...

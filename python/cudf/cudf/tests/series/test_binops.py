@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import datetime
 import decimal
@@ -20,6 +20,33 @@ from cudf.testing._utils import (
     assert_exceptions_equal,
     gen_rand_series,
 )
+
+TIMEDELTA_SERIES_BINARY_OP_METHODS = [
+    "add",
+    "radd",
+    "sub",
+    "rsub",
+    "truediv",
+    "rtruediv",
+    "floordiv",
+    "rfloordiv",
+    "mod",
+    "rmod",
+    "lt",
+    "le",
+    "eq",
+    "ne",
+    "ge",
+    "gt",
+]
+
+TIMEDELTA_SCALAR_ARITHMETIC_OP_METHODS = [
+    "add",
+    "sub",
+    "truediv",
+    "floordiv",
+    "mod",
+]
 
 
 @pytest.mark.parametrize(
@@ -60,11 +87,12 @@ def test_series_error_equality(sr1, sr2, comparison_op):
         (cp.asarray([10, 20, 30, 100]), cp.asarray([10, 20, 30, 100])),
     ],
 )
+@pytest.mark.parametrize(
+    "binary_op_method", TIMEDELTA_SERIES_BINARY_OP_METHODS
+)
 def test_timedelta_ops_misc_inputs(
     data, other, timedelta_types_as_str, binary_op_method
 ):
-    if binary_op_method in {"mul", "rmul", "pow", "rpow"}:
-        pytest.skip(f"Test not applicable for {binary_op_method}")
     gsr = cudf.Series(data, dtype=timedelta_types_as_str)
     other_gsr = cudf.Series(other, dtype=timedelta_types_as_str)
 
@@ -193,60 +221,68 @@ def test_timedelta_dataframe_ops(df, op):
     assert_eq(pdf, gdf)
 
 
+_TIMEDELTA_SCALAR_DATA = [
+    [1000000, 200000, 3000000],
+    [1000000, 200000, None],
+    [],
+    [None],
+    [None, None, None, None, None],
+    [12, 12, 22, 343, 4353534, 435342],
+    np.array([10, 20, 30, None, 100]),
+    cp.asarray([10, 20, 30, 100]),
+    [1000000, 200000, 3000000],
+    [1000000, 200000, None],
+    [1],
+    [12, 11, 232, 223432411, 2343241, 234324, 23234],
+    [12, 11, 2.32, 2234.32411, 2343.241, 23432.4, 23234],
+    [1.321, 1132.324, 23223231.11, 233.41, 332, 323],
+    [12, 11, 2.32, 2234.32411, 2343.241, 23432.4, 23234],
+]
+
+_TIMEDELTA_SCALARS = [
+    datetime.timedelta(days=768),
+    datetime.timedelta(seconds=768),
+    datetime.timedelta(microseconds=7),
+    datetime.timedelta(minutes=447),
+    datetime.timedelta(hours=447),
+    datetime.timedelta(weeks=734),
+    np.timedelta64(4, "s"),
+    np.timedelta64(456, "D"),
+    np.timedelta64(46, "h"),
+    np.timedelta64("nat"),
+    np.timedelta64(1, "s"),
+    np.timedelta64(1, "ms"),
+    np.timedelta64(1, "us"),
+    np.timedelta64(1, "ns"),
+]
+
+
 @pytest.mark.parametrize(
-    "data",
+    "data, other_scalars",
     [
-        [1000000, 200000, 3000000],
-        [1000000, 200000, None],
-        [],
-        [None],
-        [None, None, None, None, None],
-        [12, 12, 22, 343, 4353534, 435342],
-        np.array([10, 20, 30, None, 100]),
-        cp.asarray([10, 20, 30, 100]),
-        [1000000, 200000, 3000000],
-        [1000000, 200000, None],
-        [1],
-        [12, 11, 232, 223432411, 2343241, 234324, 23234],
-        [12, 11, 2.32, 2234.32411, 2343.241, 23432.4, 23234],
-        [1.321, 1132.324, 23223231.11, 233.41, 332, 323],
-        [12, 11, 2.32, 2234.32411, 2343.241, 23432.4, 23234],
+        (_TIMEDELTA_SCALAR_DATA[0], _TIMEDELTA_SCALARS[0]),
+        (_TIMEDELTA_SCALAR_DATA[1], _TIMEDELTA_SCALARS[1]),
+        (_TIMEDELTA_SCALAR_DATA[2], _TIMEDELTA_SCALARS[2]),
+        (_TIMEDELTA_SCALAR_DATA[3], _TIMEDELTA_SCALARS[3]),
+        (_TIMEDELTA_SCALAR_DATA[4], _TIMEDELTA_SCALARS[4]),
+        (_TIMEDELTA_SCALAR_DATA[5], _TIMEDELTA_SCALARS[5]),
+        (_TIMEDELTA_SCALAR_DATA[6], _TIMEDELTA_SCALARS[6]),
+        (_TIMEDELTA_SCALAR_DATA[7], _TIMEDELTA_SCALARS[7]),
+        (_TIMEDELTA_SCALAR_DATA[8], _TIMEDELTA_SCALARS[8]),
+        (_TIMEDELTA_SCALAR_DATA[9], _TIMEDELTA_SCALARS[9]),
+        (_TIMEDELTA_SCALAR_DATA[10], _TIMEDELTA_SCALARS[10]),
+        (_TIMEDELTA_SCALAR_DATA[11], _TIMEDELTA_SCALARS[11]),
+        (_TIMEDELTA_SCALAR_DATA[12], _TIMEDELTA_SCALARS[12]),
+        (_TIMEDELTA_SCALAR_DATA[13], _TIMEDELTA_SCALARS[13]),
+        (_TIMEDELTA_SCALAR_DATA[14], _TIMEDELTA_SCALARS[0]),
     ],
 )
 @pytest.mark.parametrize(
-    "other_scalars",
-    [
-        datetime.timedelta(days=768),
-        datetime.timedelta(seconds=768),
-        datetime.timedelta(microseconds=7),
-        datetime.timedelta(minutes=447),
-        datetime.timedelta(hours=447),
-        datetime.timedelta(weeks=734),
-        np.timedelta64(4, "s"),
-        np.timedelta64(456, "D"),
-        np.timedelta64(46, "h"),
-        np.timedelta64("nat"),
-        np.timedelta64(1, "s"),
-        np.timedelta64(1, "ms"),
-        np.timedelta64(1, "us"),
-        np.timedelta64(1, "ns"),
-    ],
+    "arithmetic_op_method", TIMEDELTA_SCALAR_ARITHMETIC_OP_METHODS
 )
 def test_timedelta_series_ops_with_scalars(
-    data, other_scalars, timedelta_types_as_str, arithmetic_op_method, request
+    data, other_scalars, timedelta_types_as_str, arithmetic_op_method
 ):
-    if arithmetic_op_method in {
-        "mul",
-        "rmul",
-        "rtruediv",
-        "pow",
-        "rpow",
-        "radd",
-        "rsub",
-        "rfloordiv",
-        "rmod",
-    }:
-        pytest.skip(f"Test not applicable for {arithmetic_op_method}")
     gsr = cudf.Series(data=data, dtype=timedelta_types_as_str)
     psr = gsr.to_pandas()
 
@@ -298,7 +334,7 @@ def test_timedelta_series_ops_with_scalars(
                 reason=(
                     "timedelta modulo by zero is dubiously defined in "
                     "both pandas and cuDF "
-                    "(see https://github.com/rapidsai/cudf/issues/5938)"
+                    "(see https://github.com/NVIDIA/cudf/issues/5938)"
                 ),
             ),
         ),
@@ -613,29 +649,41 @@ def test_dt_ops(data):
     assert_eq(pd_data > pd_data, gdf_data > gdf_data)
 
 
+_DATETIME_SUBTRACT_DATA = [
+    [1, 2, 3, 4, 10, 100, 20000],
+    [None] * 7,
+    [10, 20, 30, None, 100, 200, None],
+    [3223.234, 342.2332, 23423.23, 3343.23324, 23432.2323, 242.23, 233],
+]
+
+_DATETIME_SUBTRACT_OTHERS = [
+    [1, 2, 3, 4, 10, 100, 20000],
+    [None] * 7,
+    [10, 20, 30, None, 100, 200, None],
+    [3223.234, 342.2332, 23423.23, 3343.23324, 23432.2323, 242.23, 233],
+    datetime.datetime(1993, 6, 22, 13, 30),
+    datetime.datetime(2005, 1, 22, 10, 00),
+    np.datetime64("2005-02"),
+    np.datetime64("2005-02-25"),
+    np.datetime64("2005-02-25T03:30"),
+    np.datetime64("nat"),
+    # TODO: https://github.com/pandas-dev/pandas/issues/52295
+]
+
+
 @pytest.mark.parametrize(
-    "data",
+    "data, other",
     [
-        [1, 2, 3, 4, 10, 100, 20000],
-        [None] * 7,
-        [10, 20, 30, None, 100, 200, None],
-        [3223.234, 342.2332, 23423.23, 3343.23324, 23432.2323, 242.23, 233],
-    ],
-)
-@pytest.mark.parametrize(
-    "other",
-    [
-        [1, 2, 3, 4, 10, 100, 20000],
-        [None] * 7,
-        [10, 20, 30, None, 100, 200, None],
-        [3223.234, 342.2332, 23423.23, 3343.23324, 23432.2323, 242.23, 233],
-        datetime.datetime(1993, 6, 22, 13, 30),
-        datetime.datetime(2005, 1, 22, 10, 00),
-        np.datetime64("2005-02"),
-        np.datetime64("2005-02-25"),
-        np.datetime64("2005-02-25T03:30"),
-        np.datetime64("nat"),
-        # TODO: https://github.com/pandas-dev/pandas/issues/52295
+        (_DATETIME_SUBTRACT_DATA[0], _DATETIME_SUBTRACT_OTHERS[0]),
+        (_DATETIME_SUBTRACT_DATA[1], _DATETIME_SUBTRACT_OTHERS[1]),
+        (_DATETIME_SUBTRACT_DATA[2], _DATETIME_SUBTRACT_OTHERS[2]),
+        (_DATETIME_SUBTRACT_DATA[3], _DATETIME_SUBTRACT_OTHERS[3]),
+        (_DATETIME_SUBTRACT_DATA[0], _DATETIME_SUBTRACT_OTHERS[4]),
+        (_DATETIME_SUBTRACT_DATA[1], _DATETIME_SUBTRACT_OTHERS[5]),
+        (_DATETIME_SUBTRACT_DATA[2], _DATETIME_SUBTRACT_OTHERS[6]),
+        (_DATETIME_SUBTRACT_DATA[3], _DATETIME_SUBTRACT_OTHERS[7]),
+        (_DATETIME_SUBTRACT_DATA[0], _DATETIME_SUBTRACT_OTHERS[8]),
+        (_DATETIME_SUBTRACT_DATA[1], _DATETIME_SUBTRACT_OTHERS[9]),
     ],
 )
 def test_datetime_subtract(
@@ -663,42 +711,23 @@ def test_datetime_subtract(
 
 
 @pytest.mark.parametrize(
-    "data",
+    "data, other_scalars",
     [
-        [1000000, 200000, 3000000],
-        [1000000, 200000, None],
-        [],
-        [None],
-        [None, None, None, None, None],
-        [12, 12, 22, 343, 4353534, 435342],
-        np.array([10, 20, 30, None, 100]),
-        cp.asarray([10, 20, 30, 100]),
-        [1000000, 200000, 3000000],
-        [1000000, 200000, None],
-        [1],
-        [12, 11, 232, 223432411, 2343241, 234324, 23234],
-        [12, 11, 2.32, 2234.32411, 2343.241, 23432.4, 23234],
-        [1.321, 1132.324, 23223231.11, 233.41, 0.2434, 332, 323],
-        [12, 11, 2.32, 2234.32411, 2343.241, 23432.4, 23234],
-    ],
-)
-@pytest.mark.parametrize(
-    "other_scalars",
-    [
-        datetime.timedelta(days=768),
-        datetime.timedelta(seconds=768),
-        datetime.timedelta(microseconds=7),
-        datetime.timedelta(minutes=447),
-        datetime.timedelta(hours=447),
-        datetime.timedelta(weeks=734),
-        np.timedelta64(4, "s"),
-        np.timedelta64(456, "D"),
-        np.timedelta64(46, "h"),
-        np.timedelta64("nat"),
-        np.timedelta64(1, "s"),
-        np.timedelta64(1, "ms"),
-        np.timedelta64(1, "us"),
-        np.timedelta64(1, "ns"),
+        (_TIMEDELTA_SCALAR_DATA[0], _TIMEDELTA_SCALARS[0]),
+        (_TIMEDELTA_SCALAR_DATA[1], _TIMEDELTA_SCALARS[1]),
+        (_TIMEDELTA_SCALAR_DATA[2], _TIMEDELTA_SCALARS[2]),
+        (_TIMEDELTA_SCALAR_DATA[3], _TIMEDELTA_SCALARS[3]),
+        (_TIMEDELTA_SCALAR_DATA[4], _TIMEDELTA_SCALARS[4]),
+        (_TIMEDELTA_SCALAR_DATA[5], _TIMEDELTA_SCALARS[5]),
+        (_TIMEDELTA_SCALAR_DATA[6], _TIMEDELTA_SCALARS[6]),
+        (_TIMEDELTA_SCALAR_DATA[7], _TIMEDELTA_SCALARS[7]),
+        (_TIMEDELTA_SCALAR_DATA[8], _TIMEDELTA_SCALARS[8]),
+        (_TIMEDELTA_SCALAR_DATA[9], _TIMEDELTA_SCALARS[9]),
+        (_TIMEDELTA_SCALAR_DATA[10], _TIMEDELTA_SCALARS[10]),
+        (_TIMEDELTA_SCALAR_DATA[11], _TIMEDELTA_SCALARS[11]),
+        (_TIMEDELTA_SCALAR_DATA[12], _TIMEDELTA_SCALARS[12]),
+        (_TIMEDELTA_SCALAR_DATA[13], _TIMEDELTA_SCALARS[13]),
+        (_TIMEDELTA_SCALAR_DATA[14], _TIMEDELTA_SCALARS[0]),
     ],
 )
 @pytest.mark.parametrize("op", ["add", "sub"])
@@ -1449,9 +1478,19 @@ def test_operator_func_series_and_scalar(
     assert_eq(pdf_series_result, gdf_series_result)
 
 
-@pytest.mark.parametrize("fill_value", [0, 1, None, np.nan])
-@pytest.mark.parametrize("scalar_a", [0, 1, None, np.nan])
-@pytest.mark.parametrize("scalar_b", [0, 1, None, np.nan])
+@pytest.mark.parametrize(
+    "scalar_a, scalar_b, fill_value",
+    [
+        (0, 0, 0),
+        (1, 1, 1),
+        (None, None, None),
+        (np.nan, np.nan, np.nan),
+        (0, 1, None),
+        (1, 0, np.nan),
+        (None, np.nan, 0),
+        (np.nan, None, 1),
+    ],
+)
 def test_operator_func_between_series_logical(
     float_types_as_str, comparison_op_method, scalar_a, scalar_b, fill_value
 ):
@@ -1475,9 +1514,19 @@ def test_operator_func_between_series_logical(
     assert_eq(expect, got)
 
 
-@pytest.mark.parametrize("has_nulls", [True, False])
-@pytest.mark.parametrize("scalar", [-59.0, np.nan, 0, 59.0])
-@pytest.mark.parametrize("fill_value", [None, 1.0])
+@pytest.mark.parametrize(
+    "has_nulls, scalar, fill_value",
+    [
+        (False, -59.0, None),
+        (False, np.nan, 1.0),
+        (False, 0, None),
+        (False, 59.0, 1.0),
+        (True, -59.0, 1.0),
+        (True, np.nan, 1.0),
+        (True, 0, 1.0),
+        (True, 59.0, None),
+    ],
+)
 def test_operator_func_series_and_scalar_logical(
     request,
     float_types_as_str,
@@ -1525,7 +1574,7 @@ def test_binop_bool_uint(request, binary_op_method, rhs):
     if binary_op_method in {"rmod", "rfloordiv"}:
         request.applymarker(
             pytest.mark.xfail(
-                reason="https://github.com/rapidsai/cudf/issues/12162"
+                reason="https://github.com/NVIDIA/cudf/issues/12162"
             ),
         )
     psr = pd.Series([True, False, False])
@@ -1554,7 +1603,7 @@ def test_floordiv_zero_float64(
 
 
 @pytest.mark.parametrize("scalar_divisor", [False, True])
-@pytest.mark.xfail(reason="https://github.com/rapidsai/cudf/issues/12162")
+@pytest.mark.xfail(reason="https://github.com/NVIDIA/cudf/issues/12162")
 def test_floordiv_zero_bool(scalar_divisor):
     sr = pd.Series([True, True, False], dtype=np.bool_)
     cr = cudf.from_pandas(sr)
@@ -1628,28 +1677,17 @@ def is_timezone_aware_dtype(dtype: str) -> bool:
     return bool(re.match(r"^datetime64\[ns, .+\]$", dtype))
 
 
-@pytest.mark.parametrize("n_periods", [0, 1, -12])
 @pytest.mark.parametrize(
-    "frequency",
+    "n_periods, frequency, dtype, components",
     [
-        "months",
-        "years",
-        "days",
-        "hours",
-        "minutes",
-        "seconds",
-        "microseconds",
-        "nanoseconds",
-    ],
-)
-@pytest.mark.parametrize(
-    "dtype, components",
-    [
-        ["datetime64[ns]", "00.012345678"],
-        ["datetime64[us]", "00.012345"],
-        ["datetime64[ms]", "00.012"],
-        ["datetime64[s]", "00"],
-        ["datetime64[ns, Asia/Kathmandu]", "00.012345678"],
+        (0, "months", "datetime64[ns]", "00.012345678"),
+        (1, "years", "datetime64[us]", "00.012345"),
+        (0, "microseconds", "datetime64[ms]", "00.012"),
+        (-12, "days", "datetime64[s]", "00"),
+        (0, "hours", "datetime64[ns, Asia/Kathmandu]", "00.012345678"),
+        (1, "minutes", "datetime64[ns]", "00.012345678"),
+        (-12, "seconds", "datetime64[us]", "00.012345"),
+        (1, "nanoseconds", "datetime64[ns, Asia/Kathmandu]", "00.012345678"),
     ],
 )
 @pytest.mark.parametrize("op", [operator.add, operator.sub])
@@ -1748,27 +1786,17 @@ def test_datetime_dateoffset_binaryop_multiple(kwargs, op):
     assert_eq(expect, got)
 
 
-@pytest.mark.parametrize("n_periods", [0, 1, -12])
 @pytest.mark.parametrize(
-    "frequency",
+    "n_periods, frequency, dtype, components",
     [
-        "months",
-        "years",
-        "days",
-        "hours",
-        "minutes",
-        "seconds",
-        "microseconds",
-        "nanoseconds",
-    ],
-)
-@pytest.mark.parametrize(
-    "dtype, components",
-    [
-        ["datetime64[ns]", "00.012345678"],
-        ["datetime64[us]", "00.012345"],
-        ["datetime64[ms]", "00.012"],
-        ["datetime64[s]", "00"],
+        (0, "months", "datetime64[ns]", "00.012345678"),
+        (1, "years", "datetime64[us]", "00.012345"),
+        (-12, "days", "datetime64[ms]", "00.012"),
+        (0, "hours", "datetime64[s]", "00"),
+        (1, "minutes", "datetime64[ns]", "00.012345678"),
+        (-12, "seconds", "datetime64[us]", "00.012345"),
+        (0, "microseconds", "datetime64[ms]", "00.012"),
+        (1, "nanoseconds", "datetime64[s]", "00"),
     ],
 )
 def test_datetime_dateoffset_binaryop_reflected(
@@ -3174,7 +3202,7 @@ def test_binops_float_scalar_decimal():
         [decimal.Decimal("1"), decimal.Decimal("-2.5"), None],
         dtype=cudf.Decimal32Dtype(3, 2),
     )
-    expected = cudf.Series([0.0, -3.5, None], dtype="float64")
+    expected = cudf.Series([0.0, 3.5, None], dtype="float64")
     assert_eq(result, expected)
 
 

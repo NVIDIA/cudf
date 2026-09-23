@@ -1,7 +1,7 @@
 /*
  * SPDX-FileCopyrightText: Copyright 2013 Google Inc. All Rights Reserved.
  * SPDX-FileCopyrightText: Copyright(c) 2009, 2010, 2013 - 2016 by the Brotli Authors.
- * SPDX-FileCopyrightText: Copyright (c) 2018-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2018-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0 AND MIT
  */
 
@@ -13,7 +13,7 @@
 /* Copyright 2013 Google Inc. All Rights Reserved.
 
 Distributed under MIT license.
-See file LICENSE for detail or copy at https://opensource.org/licenses/MIT
+See file LICENSE for detail or copy at https://opensource.org/license/MIT
 */
 
 /*
@@ -45,7 +45,7 @@ THE SOFTWARE.
 
 namespace cudf {
 namespace io {
-static const brotli_dictionary_s g_dictionary = {
+static brotli_dictionary_s const g_dictionary = {
   // size_bits_by_length
   {0, 0, 0, 0, 10, 10, 11, 11, 10, 10, 10, 10, 10, 9, 9, 8,
    7, 7, 8, 7, 7,  6,  6,  5,  5,  0,  0,  0,  0,  0, 0, 0},

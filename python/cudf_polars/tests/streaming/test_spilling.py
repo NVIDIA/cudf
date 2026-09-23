@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 """Tests for RapidsMPF spilling functionality."""
@@ -13,7 +13,7 @@ import pytest
 import polars as pl
 
 import pylibcudf as plc
-from cudf_streaming.streaming.table_chunk import TableChunk
+from cudf_streaming.table_chunk import TableChunk
 from rapidsmpf.memory.buffer import MemoryType
 from rapidsmpf.memory.pinned_memory_resource import is_pinned_memory_resources_supported
 from rapidsmpf.streaming.core.message import Message
@@ -88,7 +88,7 @@ def test_make_spill_function(
     message_ids: dict[int, list[int]] = {}
 
     # Populate buffers with messages
-    stream = context.get_stream_from_pool()
+    stream = context.br().stream_pool.get_stream()
     for buffer_idx, (sm, count) in enumerate(
         zip(buffers, messages_per_buffer, strict=False)
     ):

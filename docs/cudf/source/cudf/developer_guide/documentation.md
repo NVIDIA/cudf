@@ -95,7 +95,7 @@ Section name
 ```
 
 Each listed will automatically have its docstring rendered into a separate page.
-This layout comes from [PyData Sphinx Theme](https://pydata-sphinx-theme.readthedocs.io/en/stable/index.html).
+This layout comes from [NVIDIA Sphinx Theme](https://pypi.org/project/nvidia-sphinx-theme/).
 
 ````{note}
 Autosummary generates stub pages that look like this (using `cudf.concat` as an example):
@@ -122,7 +122,7 @@ When adding a new API, include the API name to the appropriate page.
 Python classes and the Sphinx plugins used in RAPIDS interact in nontrivial ways.
 `autosummary`'s default page generated for a class uses [`autodoc`](https://www.sphinx-doc.org/en/master/usage/extensions/autodoc.html) to automatically detect and document all methods of a class.
 That means that in addition to the manually created `autosummary` pages where class methods are grouped into sections of related features, there is another page for each class where all the methods of that class are automatically summarized in a table for quick access.
-However, we also use the [`numpydoc`](https://numpydoc.readthedocs.io/) extension, which offers the same feature.
+However, we also use the [`numpydoc`](https://numpydoc.readthedocs.io/en/latest/) extension, which offers the same feature.
 We use both in order to match the contents and style of the pandas documentation as closely as possible.
 
 pandas is also particular about what information is included in a class's documentation.
@@ -130,7 +130,7 @@ While the documentation pages for the major user-facing classes like `DataFrame`
 For example, {py:class}`cudf.CategoricalIndex` only includes `codes` and `categories` on its page, not the entire set of `Index` functionality.
 
 To accommodate these requirements, we take the following approach:
-1. The default `autosummary` template for classes is overridden with a [simpler template that does not generate method or attribute documentation](https://github.com/rapidsai/cudf/blob/main/docs/cudf/source/_templates/autosummary/class.rst). In other words, we disable `autosummary`'s generation of Methods and Attributes lists.
+1. The default `autosummary` template for classes is overridden with a [simpler template that does not generate method or attribute documentation](https://github.com/NVIDIA/cudf/blob/main/docs/cudf/source/_templates/autosummary/class.rst). In other words, we disable `autosummary`'s generation of Methods and Attributes lists.
 2. We rely on `numpydoc` entirely for the classes that need their entire APIs listed (`DataFrame`/`Series`/etc). `numpydoc` will automatically populate Methods and Attributes section if (and only if) they are not already defined in the class's docstring.
 3. For classes that should only include a subset of APIs, we include those explicitly in the class's documentation. When those lists exist, `numpydoc` will not override them. If either the Methods or Attributes section should be empty, that section must still be included but should simply contain "None". For example, the class documentation for `CategoricalIndex` could include something like the following:
 
@@ -187,8 +187,8 @@ The following are required to build the documentation:
 - A RAPIDS-compatible GPU. This is necessary because the documentation execute code.
 - A working copy of cudf in the same build environment.
   If you are only making changes to documentation we recommend following the
-  [Documentation contributions guide](https://github.com/rapidsai/cudf/blob/main/CONTRIBUTING.md#documentation-contributions) otherwise follow the
-  [build instructions](https://github.com/rapidsai/cudf/blob/main/CONTRIBUTING.md#setting-up-your-build-environment).
+  [Documentation contributions guide](https://github.com/NVIDIA/cudf/blob/main/CONTRIBUTING.md#documentation-contributions) otherwise follow the
+  [build instructions](https://github.com/NVIDIA/cudf/blob/main/CONTRIBUTING.md#setting-up-your-build-environment).
 - Sphinx, numpydoc, and MyST-NB.
   Assuming you follow the instructions in the previous step, these should automatically be installed into your environment.
 

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -17,203 +17,6 @@
 #include <cudf/interop.hpp>
 #include <cudf/table/table.hpp>
 #include <cudf/types.hpp>
-
-std::tuple<std::unique_ptr<cudf::table>, nanoarrow::UniqueSchema, generated_test_data>
-get_nanoarrow_cudf_table(cudf::size_type length)
-{
-  generated_test_data test_data(length);
-
-  std::vector<std::unique_ptr<cudf::column>> columns;
-
-  columns.emplace_back(cudf::test::fixed_width_column_wrapper<int64_t>(test_data.int64_data.begin(),
-                                                                       test_data.int64_data.end(),
-                                                                       test_data.validity.begin())
-                         .release());
-  columns.emplace_back(cudf::test::strings_column_wrapper(test_data.string_data.begin(),
-                                                          test_data.string_data.end(),
-                                                          test_data.validity.begin())
-                         .release());
-  auto col4 = cudf::test::fixed_width_column_wrapper<int64_t>(
-    test_data.int64_data.begin(), test_data.int64_data.end(), test_data.validity.begin());
-  columns.emplace_back(cudf::dictionary::encode(col4));
-  columns.emplace_back(cudf::test::fixed_width_column_wrapper<bool>(test_data.bool_data.begin(),
-                                                                    test_data.bool_data.end(),
-                                                                    test_data.bool_validity.begin())
-                         .release());
-  auto list_child_column =
-    cudf::test::fixed_width_column_wrapper<int64_t>(test_data.list_int64_data.begin(),
-                                                    test_data.list_int64_data.end(),
-                                                    test_data.list_int64_data_validity.begin());
-  auto list_offsets_column = cudf::test::fixed_width_column_wrapper<int32_t>(
-    test_data.list_offsets.begin(), test_data.list_offsets.end());
-  auto [list_mask, list_nulls] = cudf::bools_to_mask(cudf::test::fixed_width_column_wrapper<bool>(
-    test_data.list_validity.begin(), test_data.list_validity.end()));
-  columns.emplace_back(cudf::make_lists_column(length,
-                                               list_offsets_column.release(),
-                                               list_child_column.release(),
-                                               list_nulls,
-                                               std::move(*list_mask)));
-  auto int_column =
-    cudf::test::fixed_width_column_wrapper<int64_t>(
-      test_data.int64_data.begin(), test_data.int64_data.end(), test_data.validity.begin())
-      .release();
-  auto str_column =
-    cudf::test::strings_column_wrapper(
-      test_data.string_data.begin(), test_data.string_data.end(), test_data.validity.begin())
-      .release();
-  vector_of_columns cols;
-  cols.push_back(std::move(int_column));
-  cols.push_back(std::move(str_column));
-  auto [null_mask, null_count] = cudf::bools_to_mask(cudf::test::fixed_width_column_wrapper<bool>(
-    test_data.bool_data_validity.begin(), test_data.bool_data_validity.end()));
-  columns.emplace_back(
-    cudf::make_structs_column(length, std::move(cols), null_count, std::move(*null_mask)));
-
-  nanoarrow::UniqueSchema schema;
-  ArrowSchemaInit(schema.get());
-  NANOARROW_THROW_NOT_OK(ArrowSchemaSetTypeStruct(schema.get(), 6));
-
-  NANOARROW_THROW_NOT_OK(ArrowSchemaInitFromType(schema->children[0], NANOARROW_TYPE_INT64));
-  NANOARROW_THROW_NOT_OK(ArrowSchemaSetName(schema->children[0], "a"));
-  if (columns[0]->null_count() > 0) {
-    schema->children[0]->flags |= ARROW_FLAG_NULLABLE;
-  } else {
-    schema->children[0]->flags = 0;
-  }
-
-  NANOARROW_THROW_NOT_OK(ArrowSchemaInitFromType(schema->children[1], NANOARROW_TYPE_STRING));
-  NANOARROW_THROW_NOT_OK(ArrowSchemaSetName(schema->children[1], "b"));
-  if (columns[1]->null_count() > 0) {
-    schema->children[1]->flags |= ARROW_FLAG_NULLABLE;
-  } else {
-    schema->children[1]->flags = 0;
-  }
-
-  NANOARROW_THROW_NOT_OK(ArrowSchemaInitFromType(schema->children[2], NANOARROW_TYPE_INT32));
-  NANOARROW_THROW_NOT_OK(ArrowSchemaAllocateDictionary(schema->children[2]));
-  NANOARROW_THROW_NOT_OK(
-    ArrowSchemaInitFromType(schema->children[2]->dictionary, NANOARROW_TYPE_INT64));
-  NANOARROW_THROW_NOT_OK(ArrowSchemaSetName(schema->children[2], "c"));
-  if (columns[2]->null_count() > 0) {
-    schema->children[2]->flags |= ARROW_FLAG_NULLABLE;
-  } else {
-    schema->children[2]->flags = 0;
-  }
-
-  NANOARROW_THROW_NOT_OK(ArrowSchemaInitFromType(schema->children[3], NANOARROW_TYPE_BOOL));
-  NANOARROW_THROW_NOT_OK(ArrowSchemaSetName(schema->children[3], "d"));
-  if (columns[3]->null_count() > 0) {
-    schema->children[3]->flags |= ARROW_FLAG_NULLABLE;
-  } else {
-    schema->children[3]->flags = 0;
-  }
-
-  NANOARROW_THROW_NOT_OK(ArrowSchemaInitFromType(schema->children[4], NANOARROW_TYPE_LIST));
-  NANOARROW_THROW_NOT_OK(
-    ArrowSchemaInitFromType(schema->children[4]->children[0], NANOARROW_TYPE_INT64));
-  NANOARROW_THROW_NOT_OK(ArrowSchemaSetName(schema->children[4]->children[0], "element"));
-  if (columns[4]->child(1).null_count() > 0) {
-    schema->children[4]->children[0]->flags |= ARROW_FLAG_NULLABLE;
-  } else {
-    schema->children[4]->children[0]->flags = 0;
-  }
-
-  NANOARROW_THROW_NOT_OK(ArrowSchemaSetName(schema->children[4], "e"));
-  if (columns[4]->has_nulls()) {
-    schema->children[4]->flags |= ARROW_FLAG_NULLABLE;
-  } else {
-    schema->children[4]->flags = 0;
-  }
-
-  ArrowSchemaInit(schema->children[5]);
-  NANOARROW_THROW_NOT_OK(ArrowSchemaSetTypeStruct(schema->children[5], 2));
-  NANOARROW_THROW_NOT_OK(
-    ArrowSchemaInitFromType(schema->children[5]->children[0], NANOARROW_TYPE_INT64));
-  NANOARROW_THROW_NOT_OK(ArrowSchemaSetName(schema->children[5]->children[0], "integral"));
-  if (columns[5]->child(0).has_nulls()) {
-    schema->children[5]->children[0]->flags |= ARROW_FLAG_NULLABLE;
-  } else {
-    schema->children[5]->children[0]->flags = 0;
-  }
-
-  NANOARROW_THROW_NOT_OK(
-    ArrowSchemaInitFromType(schema->children[5]->children[1], NANOARROW_TYPE_STRING));
-  NANOARROW_THROW_NOT_OK(ArrowSchemaSetName(schema->children[5]->children[1], "string"));
-  if (columns[5]->child(1).has_nulls()) {
-    schema->children[5]->children[1]->flags |= ARROW_FLAG_NULLABLE;
-  } else {
-    schema->children[5]->children[1]->flags = 0;
-  }
-
-  NANOARROW_THROW_NOT_OK(ArrowSchemaSetName(schema->children[5], "f"));
-  if (columns[5]->has_nulls()) {
-    schema->children[5]->flags |= ARROW_FLAG_NULLABLE;
-  } else {
-    schema->children[5]->flags = 0;
-  }
-
-  return std::make_tuple(
-    std::make_unique<cudf::table>(std::move(columns)), std::move(schema), std::move(test_data));
-}
-
-std::tuple<std::unique_ptr<cudf::table>, nanoarrow::UniqueSchema, nanoarrow::UniqueArray>
-get_nanoarrow_tables(cudf::size_type length)
-{
-  auto [table, schema, test_data] = get_nanoarrow_cudf_table(length);
-
-  nanoarrow::UniqueArray arrow;
-  NANOARROW_THROW_NOT_OK(ArrowArrayInitFromSchema(arrow.get(), schema.get(), nullptr));
-  arrow->length = length;
-
-  populate_from_col<int64_t>(arrow->children[0], table->get_column(0).view());
-  populate_from_col<cudf::string_view>(arrow->children[1], table->get_column(1).view());
-  populate_dict_from_col<int64_t, int32_t>(
-    arrow->children[2], cudf::dictionary_column_view(table->get_column(2).view()));
-
-  populate_from_col<bool>(arrow->children[3], table->get_column(3).view());
-  cudf::lists_column_view list_view{table->get_column(4).view()};
-  populate_list_from_col(arrow->children[4], list_view);
-  populate_from_col<int64_t>(arrow->children[4]->children[0], list_view.child());
-
-  cudf::structs_column_view struct_view{table->get_column(5).view()};
-  populate_from_col<int64_t>(arrow->children[5]->children[0], struct_view.child(0));
-  populate_from_col<cudf::string_view>(arrow->children[5]->children[1], struct_view.child(1));
-  arrow->children[5]->length     = struct_view.size();
-  arrow->children[5]->null_count = struct_view.null_count();
-  NANOARROW_THROW_NOT_OK(
-    ArrowBufferSetAllocator(ArrowArrayBuffer(arrow->children[5], 0), noop_alloc));
-  ArrowArrayValidityBitmap(arrow->children[5])->buffer.size_bytes =
-    cudf::bitmask_allocation_size_bytes(struct_view.size());
-  ArrowArrayValidityBitmap(arrow->children[5])->buffer.data =
-    const_cast<uint8_t*>(reinterpret_cast<uint8_t const*>(struct_view.null_mask()));
-
-  ArrowError error;
-  if (ArrowArrayFinishBuilding(arrow.get(), NANOARROW_VALIDATION_LEVEL_MINIMAL, &error) !=
-      NANOARROW_OK) {
-    std::cerr << ArrowErrorMessage(&error) << std::endl;
-    CUDF_FAIL("failed to build example arrays");
-  }
-
-  return std::make_tuple(std::move(table), std::move(schema), std::move(arrow));
-}
-
-// populate an ArrowArray list array from device buffers using a no-op
-// allocator so that the ArrowArray doesn't have ownership of the buffers
-void populate_list_from_col(ArrowArray* arr, cudf::lists_column_view view)
-{
-  arr->length     = view.size();
-  arr->null_count = view.null_count();
-
-  NANOARROW_THROW_NOT_OK(ArrowBufferSetAllocator(ArrowArrayBuffer(arr, 0), noop_alloc));
-  ArrowArrayValidityBitmap(arr)->buffer.size_bytes =
-    cudf::bitmask_allocation_size_bytes(view.size());
-  ArrowArrayValidityBitmap(arr)->buffer.data =
-    const_cast<uint8_t*>(reinterpret_cast<uint8_t const*>(view.null_mask()));
-
-  NANOARROW_THROW_NOT_OK(ArrowBufferSetAllocator(ArrowArrayBuffer(arr, 1), noop_alloc));
-  ArrowArrayBuffer(arr, 1)->size_bytes = sizeof(int32_t) * view.offsets().size();
-  ArrowArrayBuffer(arr, 1)->data       = const_cast<uint8_t*>(view.offsets().data<uint8_t>());
-}
 
 struct BaseArrowFixture : public cudf::test::BaseFixture {
   void compare_schemas(ArrowSchema const* expected, ArrowSchema const* actual)
@@ -242,7 +45,7 @@ struct BaseArrowFixture : public cudf::test::BaseFixture {
     }
   }
 
-  void compare_device_buffers(const size_t nbytes,
+  void compare_device_buffers(size_t const nbytes,
                               int const buffer_idx,
                               ArrowArray const* expected,
                               ArrowArray const* actual)
@@ -269,10 +72,10 @@ struct BaseArrowFixture : public cudf::test::BaseFixture {
     if (expected->length > 0) {
       EXPECT_EQ(expected->buffers[0], actual->buffers[0]);
       if (schema_view.type == NANOARROW_TYPE_BOOL) {
-        const size_t nbytes = (expected->length + 7) >> 3;
+        size_t const nbytes = (expected->length + 7) >> 3;
         compare_device_buffers(nbytes, 1, expected, actual);
       } else if (schema_view.type == NANOARROW_TYPE_DECIMAL128) {
-        const size_t nbytes = (expected->length * sizeof(__int128_t));
+        size_t const nbytes = (expected->length * sizeof(__int128_t));
         compare_device_buffers(nbytes, 1, expected, actual);
       } else {
         for (int i = 1; i < expected->n_buffers; ++i) {
@@ -432,7 +235,7 @@ TYPED_TEST(ToArrowDeviceTestDurationsTest, DurationTable)
   NANOARROW_THROW_NOT_OK(ArrowSchemaSetTypeStruct(expected_schema.get(), 1));
 
   ArrowSchemaInit(expected_schema->children[0]);
-  const ArrowTimeUnit arrow_unit = [&] {
+  ArrowTimeUnit const arrow_unit = [&] {
     switch (cudf::type_to_id<TypeParam>()) {
       case cudf::type_id::DURATION_SECONDS: return NANOARROW_TIME_UNIT_SECOND;
       case cudf::type_id::DURATION_MILLISECONDS: return NANOARROW_TIME_UNIT_MILLI;

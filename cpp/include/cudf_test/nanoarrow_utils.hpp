@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -13,12 +13,18 @@
 #include <cudf/strings/strings_column_view.hpp>
 #include <cudf/transform.hpp>
 #include <cudf/types.hpp>
+#include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/error.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/traits.hpp>
 #include <cudf/wrappers/durations.hpp>
 
+#include <cuda/stream>
+
 #include <nanoarrow/nanoarrow.hpp>
 #include <nanoarrow/nanoarrow_device.h>
+
+#include <concepts>
 
 struct generated_test_data {
   generated_test_data(cudf::size_type length)
@@ -68,6 +74,69 @@ struct generated_test_data {
   std::vector<uint8_t> list_validity;
 };
 
+// Build a struct schema carrying a single fixed_size_list<int64>[width] child named "a".
+// ArrowSchemaInitFromType cannot initialize a fixed-size-list schema, and
+// ArrowSchemaSetTypeFixedSize leaves the allocated child type unset.
+inline nanoarrow::UniqueSchema make_struct_fixed_size_list_int64_schema(int32_t width,
+                                                                        bool nullable = false)
+{
+  nanoarrow::UniqueSchema schema;
+  ArrowSchemaInit(schema.get());
+  NANOARROW_THROW_NOT_OK(ArrowSchemaSetTypeStruct(schema.get(), 1));
+
+  NANOARROW_THROW_NOT_OK(
+    ArrowSchemaSetTypeFixedSize(schema->children[0], NANOARROW_TYPE_FIXED_SIZE_LIST, width));
+  NANOARROW_THROW_NOT_OK(ArrowSchemaSetName(schema->children[0], "a"));
+  schema->children[0]->flags = nullable ? ARROW_FLAG_NULLABLE : 0;
+
+  NANOARROW_THROW_NOT_OK(
+    ArrowSchemaSetType(schema->children[0]->children[0], NANOARROW_TYPE_INT64));
+  NANOARROW_THROW_NOT_OK(ArrowSchemaSetName(schema->children[0]->children[0], "element"));
+  schema->children[0]->children[0]->flags = 0;
+
+  return schema;
+}
+
+// Build an array matching make_struct_fixed_size_list_int64_schema. Fixed-size-list arrays
+// carry no offsets buffer; validity belongs to the list child of the outer struct.
+inline nanoarrow::UniqueArray make_struct_fixed_size_list_int64_array(
+  ArrowSchema* schema,
+  std::vector<int64_t> const& values,
+  int64_t num_rows,
+  std::vector<uint8_t> const& validity = {})
+{
+  nanoarrow::UniqueArray array;
+  NANOARROW_THROW_NOT_OK(ArrowArrayInitFromSchema(array.get(), schema, nullptr));
+  array->length     = num_rows;
+  array->null_count = 0;
+
+  auto* list_array       = array->children[0];
+  list_array->length     = num_rows;
+  list_array->null_count = 0;
+  if (!validity.empty()) {
+    ArrowBitmap bitmap;
+    ArrowBitmapInit(&bitmap);
+    NANOARROW_THROW_NOT_OK(ArrowBitmapReserve(&bitmap, validity.size()));
+    ArrowBitmapAppendInt8Unsafe(
+      &bitmap, reinterpret_cast<int8_t const*>(validity.data()), validity.size());
+    ArrowArraySetValidityBitmap(list_array, &bitmap);
+    list_array->null_count =
+      num_rows -
+      ArrowBitCountSet(ArrowArrayValidityBitmap(list_array)->buffer.data, 0, validity.size());
+  }
+
+  auto* values_array = list_array->children[0];
+  NANOARROW_THROW_NOT_OK(ArrowBufferAppend(ArrowArrayBuffer(values_array, 1),
+                                           reinterpret_cast<void const*>(values.data()),
+                                           values.size() * sizeof(int64_t)));
+  values_array->length     = values.size();
+  values_array->null_count = 0;
+
+  NANOARROW_THROW_NOT_OK(
+    ArrowArrayFinishBuilding(array.get(), NANOARROW_VALIDATION_LEVEL_NONE, nullptr));
+  return array;
+}
+
 // no-op allocator/deallocator to set into ArrowArray buffers that we don't
 // want to own their buffers.
 static ArrowBufferAllocator noop_alloc = (struct ArrowBufferAllocator){
@@ -81,8 +150,12 @@ static ArrowBufferAllocator noop_alloc = (struct ArrowBufferAllocator){
 // populate an ArrowArray with pointers to the raw device buffers of a cudf::column_view
 // and use the no-op alloc so that the ArrowArray doesn't presume ownership of the data
 template <typename T>
-std::enable_if_t<cudf::is_fixed_width<T>() and !std::is_same_v<T, bool>, void> populate_from_col(
-  ArrowArray* arr, cudf::column_view view)
+void populate_from_col(
+  ArrowArray* arr,
+  cudf::column_view view,
+  [[maybe_unused]] cuda::stream_ref stream   = cudf::get_default_stream(),
+  [[maybe_unused]] cudf::memory_resources mr = cudf::get_current_device_resource_ref())
+  requires(cudf::is_fixed_width<T>() && !cudf::is_boolean<T>())
 {
   arr->length     = view.size();
   arr->null_count = view.null_count();
@@ -100,8 +173,11 @@ std::enable_if_t<cudf::is_fixed_width<T>() and !std::is_same_v<T, bool>, void> p
 // still represent boolean arrays differently, we have to use bools_to_mask
 // and give the ArrowArray object ownership of the device data.
 template <typename T>
-std::enable_if_t<std::is_same_v<T, bool>, void> populate_from_col(ArrowArray* arr,
-                                                                  cudf::column_view view)
+void populate_from_col(ArrowArray* arr,
+                       cudf::column_view view,
+                       cuda::stream_ref stream   = cudf::get_default_stream(),
+                       cudf::memory_resources mr = cudf::get_current_device_resource_ref())
+  requires(cudf::is_boolean<T>())
 {
   arr->length     = view.size();
   arr->null_count = view.null_count();
@@ -112,7 +188,7 @@ std::enable_if_t<std::is_same_v<T, bool>, void> populate_from_col(ArrowArray* ar
   ArrowArrayValidityBitmap(arr)->buffer.data =
     const_cast<uint8_t*>(reinterpret_cast<uint8_t const*>(view.null_mask()));
 
-  auto bitmask = cudf::bools_to_mask(view);
+  auto bitmask = cudf::bools_to_mask(view, stream, mr.get_output_mr());
   auto ptr     = reinterpret_cast<uint8_t*>(bitmask.first->data());
   NANOARROW_THROW_NOT_OK(ArrowBufferSetAllocator(
     ArrowArrayBuffer(arr, 1),
@@ -130,8 +206,11 @@ std::enable_if_t<std::is_same_v<T, bool>, void> populate_from_col(ArrowArray* ar
 // using no-op allocator so the ArrowArray knows it doesn't have ownership
 // of the device buffers.
 template <typename T>
-std::enable_if_t<std::is_same_v<T, cudf::string_view>, void> populate_from_col(
-  ArrowArray* arr, cudf::column_view view)
+void populate_from_col(ArrowArray* arr,
+                       cudf::column_view view,
+                       cuda::stream_ref stream   = cudf::get_default_stream(),
+                       cudf::memory_resources mr = cudf::get_current_device_resource_ref())
+  requires(std::same_as<T, cudf::string_view>)
 {
   arr->length     = view.size();
   arr->null_count = view.null_count();
@@ -148,17 +227,20 @@ std::enable_if_t<std::is_same_v<T, cudf::string_view>, void> populate_from_col(
     ArrowArrayBuffer(arr, 1)->size_bytes = sizeof(int32_t) * sview.offsets().size();
     ArrowArrayBuffer(arr, 1)->data       = const_cast<uint8_t*>(sview.offsets().data<uint8_t>());
     NANOARROW_THROW_NOT_OK(ArrowBufferSetAllocator(ArrowArrayBuffer(arr, 2), noop_alloc));
-    ArrowArrayBuffer(arr, 2)->size_bytes = sview.chars_size(cudf::get_default_stream());
+    ArrowArrayBuffer(arr, 2)->size_bytes = sview.chars_size(stream);
     ArrowArrayBuffer(arr, 2)->data       = const_cast<uint8_t*>(view.data<uint8_t>());
   } else {
-    auto zero          = cudf::detail::device_scalar<int32_t>(0, cudf::get_default_stream());
+    auto zero          = cudf::detail::device_scalar<int32_t>(0, stream, mr.get_output_mr());
     uint8_t const* ptr = reinterpret_cast<uint8_t*>(zero.data());
     nanoarrow::BufferInitWrapped(ArrowArrayBuffer(arr, 1), std::move(zero), ptr, 4);
   }
 }
 
 template <typename KEY_TYPE, typename IND_TYPE>
-void populate_dict_from_col(ArrowArray* arr, cudf::dictionary_column_view dview)
+void populate_dict_from_col(ArrowArray* arr,
+                            cudf::dictionary_column_view dview,
+                            cuda::stream_ref stream   = cudf::get_default_stream(),
+                            cudf::memory_resources mr = cudf::get_current_device_resource_ref())
 {
   arr->length     = dview.size();
   arr->null_count = dview.null_count();
@@ -172,17 +254,25 @@ void populate_dict_from_col(ArrowArray* arr, cudf::dictionary_column_view dview)
   ArrowArrayBuffer(arr, 1)->size_bytes = sizeof(IND_TYPE) * dview.indices().size();
   ArrowArrayBuffer(arr, 1)->data       = const_cast<uint8_t*>(dview.indices().data<uint8_t>());
 
-  populate_from_col<KEY_TYPE>(arr->dictionary, dview.keys());
+  populate_from_col<KEY_TYPE>(arr->dictionary, dview.keys(), stream, mr);
 }
 
 using vector_of_columns = std::vector<std::unique_ptr<cudf::column>>;
 
+/**
+ * @brief Create equivalent cuDF and device-backed nanoarrow tables.
+ *
+ * @param length Number of rows to generate
+ * @param stream CUDA stream used for device memory operations and kernel launches
+ * @param mr Memory resources used for returned device allocations and helper temporaries
+ * @return cuDF table, Arrow schema, and Arrow array
+ */
 std::tuple<std::unique_ptr<cudf::table>, nanoarrow::UniqueSchema, nanoarrow::UniqueArray>
-get_nanoarrow_tables(cudf::size_type length = 10000);
+get_nanoarrow_tables(cudf::size_type length    = 10000,
+                     cuda::stream_ref stream   = cudf::get_default_stream(),
+                     cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 void populate_list_from_col(ArrowArray* arr, cudf::lists_column_view view);
-
-std::unique_ptr<cudf::table> get_cudf_table();
 
 template <typename T>
 struct nanoarrow_storage_type {};
@@ -229,8 +319,9 @@ struct nanoarrow_decimal_type<__int128_t> {
 };
 
 template <typename T>
-std::enable_if_t<cudf::is_fixed_width<T>() and !std::is_same_v<T, bool>, nanoarrow::UniqueArray>
-get_nanoarrow_array(std::vector<T> const& data, std::vector<uint8_t> const& mask = {})
+nanoarrow::UniqueArray get_nanoarrow_array(std::vector<T> const& data,
+                                           std::vector<uint8_t> const& mask = {})
+  requires(cudf::is_fixed_width<T>() && !cudf::is_boolean<T>())
 {
   nanoarrow::UniqueArray tmp;
   NANOARROW_THROW_NOT_OK(ArrowArrayInitFromType(tmp.get(), nanoarrow_storage_type<T>::type));
@@ -259,8 +350,9 @@ get_nanoarrow_array(std::vector<T> const& data, std::vector<uint8_t> const& mask
 }
 
 template <typename T>
-std::enable_if_t<std::is_same_v<T, bool>, nanoarrow::UniqueArray> get_nanoarrow_array(
-  std::vector<bool> const& data, std::vector<bool> const& mask = {})
+nanoarrow::UniqueArray get_nanoarrow_array(std::vector<bool> const& data,
+                                           std::vector<bool> const& mask = {})
+  requires(cudf::is_boolean<T>())
 {
   nanoarrow::UniqueArray tmp;
   NANOARROW_THROW_NOT_OK(ArrowArrayInitFromType(tmp.get(), NANOARROW_TYPE_BOOL));
@@ -305,8 +397,9 @@ nanoarrow::UniqueArray get_nanoarrow_array(std::initializer_list<T> elements,
 }
 
 template <typename T>
-std::enable_if_t<std::is_same_v<T, cudf::string_view>, nanoarrow::UniqueArray> get_nanoarrow_array(
-  std::vector<std::string> const& data, std::vector<uint8_t> const& mask = {})
+nanoarrow::UniqueArray get_nanoarrow_array(std::vector<std::string> const& data,
+                                           std::vector<uint8_t> const& mask = {})
+  requires(std::same_as<T, cudf::string_view>)
 {
   nanoarrow::UniqueArray tmp;
   NANOARROW_THROW_NOT_OK(ArrowArrayInitFromType(tmp.get(), NANOARROW_TYPE_STRING));
@@ -388,20 +481,37 @@ nanoarrow::UniqueArray get_nanoarrow_list_array(std::initializer_list<T> data,
   return get_nanoarrow_list_array<T>(data_vector, offset, data_mask, list_mask);
 }
 
+/**
+ * @brief Create a cuDF table, matching Arrow schema, and source host data.
+ *
+ * @param length Number of rows to generate
+ * @param stream CUDA stream used for device memory operations and kernel launches
+ * @param mr Memory resources used for returned table allocations and helper temporaries
+ * @return cuDF table, Arrow schema, and generated host data
+ */
 std::tuple<std::unique_ptr<cudf::table>, nanoarrow::UniqueSchema, generated_test_data>
-get_nanoarrow_cudf_table(cudf::size_type length);
+get_nanoarrow_cudf_table(cudf::size_type length,
+                         cuda::stream_ref stream   = cudf::get_default_stream(),
+                         cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
+/**
+ * @brief Create equivalent cuDF and host-backed nanoarrow tables.
+ *
+ * @param length Number of rows to generate
+ * @param stream CUDA stream used for device memory operations and kernel launches
+ * @param mr Memory resources used for returned table allocations and helper temporaries
+ * @return cuDF table, Arrow schema, and Arrow array
+ */
 std::tuple<std::unique_ptr<cudf::table>, nanoarrow::UniqueSchema, nanoarrow::UniqueArray>
-get_nanoarrow_host_tables(cudf::size_type length);
+get_nanoarrow_host_tables(cudf::size_type length,
+                          cuda::stream_ref stream   = cudf::get_default_stream(),
+                          cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 void slice_host_nanoarrow(ArrowArray* arr, int64_t start, int64_t end);
 
 template <typename T>
-std::enable_if_t<std::disjunction_v<std::is_same<T, int32_t>,
-                                    std::is_same<T, int64_t>,
-                                    std::is_same<T, __int128_t>>,
-                 std::size_t>
-get_decimal_precision()
+std::size_t get_decimal_precision()
+  requires(std::same_as<T, int32_t> || std::same_as<T, int64_t> || std::same_as<T, __int128_t>)
 {
   return std::numeric_limits<T>::digits10;
 }
@@ -430,7 +540,7 @@ struct VectorOfArrays {
     return 0;
   }
 
-  static const char* get_last_error(ArrowArrayStream* stream) { return nullptr; }
+  static char const* get_last_error(ArrowArrayStream* stream) { return nullptr; }
 
   static void release(ArrowArrayStream* stream)
   {
@@ -442,5 +552,15 @@ void makeStreamFromArrays(std::vector<nanoarrow::UniqueArray> arrays,
                           nanoarrow::UniqueSchema schema,
                           ArrowArrayStream* out);
 
-std::tuple<std::unique_ptr<cudf::table>, nanoarrow::UniqueSchema, ArrowArrayStream>
-get_nanoarrow_stream(int num_copies);
+/**
+ * @brief Create a cuDF table and equivalent nanoarrow stream.
+ *
+ * @param num_copies Number of record batches in the stream
+ * @param stream CUDA stream used for device memory operations and kernel launches
+ * @param mr Memory resources used for returned table allocations and helper temporaries
+ * @return Concatenated cuDF table and Arrow stream
+ */
+std::pair<std::unique_ptr<cudf::table>, ArrowArrayStream> get_nanoarrow_stream(
+  int num_copies,
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());

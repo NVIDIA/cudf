@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -12,20 +12,24 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/resource_ref.hpp>
 
 #include <cuda/std/cstddef>
+#include <cuda/stream>
 
 #include <memory>
+#include <span>
+
+/**
+ * @file
+ * @brief Roaring bitmap APIs
+ */
 
 namespace CUDF_EXPORT cudf {
 
 /**
  * @addtogroup utility_roaring_bitmap
  * @{
- * @file
- * @brief Roaring bitmap APIs
  */
 
 /**
@@ -65,7 +69,7 @@ class roaring_bitmap {
    * @throw std::invalid_argument if the serialized bitmap data is empty
    */
   explicit roaring_bitmap(roaring_bitmap_type type,
-                          cudf::host_span<cuda::std::byte const> serialized_bitmap_data);
+                          std::span<cuda::std::byte const> serialized_bitmap_data);
 
   /**
    * @brief Destructor for the roaring bitmap class
@@ -98,7 +102,7 @@ class roaring_bitmap {
    *
    * @param stream CUDA stream used for device memory operations and kernel launches
    */
-  void materialize(rmm::cuda_stream_view stream = cudf::get_default_stream()) const;
+  void materialize(cuda::stream_ref stream = cudf::get_default_stream()) const;
 
   /**
    * @brief Returns the roaring bitmap type
@@ -143,7 +147,7 @@ class roaring_bitmap {
    */
   [[nodiscard]] std::unique_ptr<cudf::column> contains_async(
     cudf::column_view const& keys,
-    rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+    cuda::stream_ref stream           = cudf::get_default_stream(),
     rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref()) const;
 
   /**
@@ -161,7 +165,7 @@ class roaring_bitmap {
    */
   void contains_async(cudf::column_view const& keys,
                       cudf::mutable_column_view const& output,
-                      rmm::cuda_stream_view stream) const;
+                      cuda::stream_ref stream) const;
 
  private:
   //! Forward declaration of the opaque wrapper of cuco's roaring bitmap

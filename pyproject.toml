@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 [tool.mypy]
@@ -103,7 +103,7 @@ select = [
     # overload-with-docstring
     "D418",
     # flake8-type-checking
-    "TCH",
+    "TC",
     # flake8-future-annotations
     "FA",
     # non-pep585-annotation
@@ -138,10 +138,15 @@ ignore = [
     # Mutable class attributes should be annotated with
     # `typing.ClassVar`
     "RUF012",
+    # import not at top of file (deferred/conditional imports are intentional)
+    "PLC0415",
 ]
 fixable = ["ALL"]
 exclude = [
     "cpp/scripts/gdb-pretty-printers.py",
+    # .pyi stubs use PEP 695 (Python 3.12+) syntax; pylibcudf's own config
+    # sets target-version = "py312" for these
+    "*.pyi",
 ]
 extend-unsafe-fixes = [
     # zip-without-explicit-strict's autofix sets strict to False, but we want to enforce True
@@ -162,3 +167,6 @@ extend-unsafe-fixes = [
 "ci/*" = ["T201"]
 "docs/*" = ["T201"]
 "cpp/*" = ["T201"]
+
+[tool.cython-lint]
+max-line-length = 120

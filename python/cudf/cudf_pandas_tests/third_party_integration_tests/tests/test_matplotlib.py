@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2023-2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import matplotlib.pyplot as plt
 import numpy as np
@@ -36,7 +36,7 @@ pytestmark = pytest.mark.assert_eq(fn=assert_plots_equal)
 
 def test_line():
     df = pd.DataFrame({"x": [1, 2, 3, 4, 5], "y": [2, 4, 6, 8, 10]})
-    (data,) = plt.plot(df["x"], df["y"], marker="o", linestyle="-")
+    (_data,) = plt.plot(df["x"], df["y"], marker="o", linestyle="-")
 
     return plt.gca()
 
@@ -50,7 +50,7 @@ def test_bar():
 def test_scatter():
     df = pd.DataFrame({"x": [1, 2, 3, 4, 5], "y": [5, 4, 3, 2, 1]})
 
-    fig, ax = plt.subplots(figsize=(8, 6))
+    _fig, ax = plt.subplots(figsize=(8, 6))
     ax.scatter(df["x"], df["y"])
 
     return plt.gca()

@@ -31,4 +31,4 @@ default_singleton_engine
 in_memory_engine
 ```
 
-[dask]: https://distributed.dask.org/
+[dask]: https://distributed.dask.org/en/stable/

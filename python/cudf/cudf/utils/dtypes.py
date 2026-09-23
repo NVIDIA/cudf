@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ from cudf.core._internals.timezones import get_compatible_timezone
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
-    from cudf._typing import DtypeObj
+    from cudf._typing import DtypeObj, ScalarLike
     from cudf.core.dtypes import DecimalDtype
 
 DEFAULT_STRING_DTYPE = pd.StringDtype(na_value=np.nan)
@@ -269,26 +269,53 @@ def is_mixed_with_object_dtype(lhs, rhs):
     )
 
 
-def _get_nan_for_dtype(dtype: DtypeObj) -> np.generic:
+def _get_nan_for_dtype(dtype: DtypeObj) -> ScalarLike:
     """Return the appropriate NaN/NaT value for the given dtype.
 
-    Returns a numpy scalar (np.generic subclass) representing the
-    null value for the dtype (e.g., np.float64('nan'), np.datetime64('NaT')).
+    Returns the null value for the dtype (e.g., np.float64('nan'),
+    pd.NaT, or the dtype's ``na_value`` for pandas nullable extension
+    dtypes).
     """
     if dtype.kind in "mM":
-        time_unit, _ = np.datetime_data(dtype)
-        return dtype.type("nat", time_unit)
+        # pandas datetime/timedelta reductions return the pd.NaT
+        # singleton for null results, and callers rely on identity
+        # (``result is pd.NaT``), not a unit-qualified
+        # np.datetime64/np.timedelta64 "NaT".
+        return pd.NaT
     elif dtype.kind == "f":
         if is_pandas_nullable_extension_dtype(dtype):
             return dtype.na_value
         return dtype.type("nan")
     else:
-        if (
+        if isinstance(dtype, pd.StringDtype) or (
             is_pandas_nullable_extension_dtype(dtype)
-            and getattr(dtype, "kind", "c") in "biu"
+            and getattr(dtype, "kind", "c") in "biuU"
         ):
+            # dtype.na_value is pd.NA for masked, "string", and arrow
+            # string (kind "U") dtypes, and the np.nan float singleton
+            # for "str" dtypes (pandas>=3). Reductions like
+            # min/max(skipna=False) must return exactly that object so
+            # that ``result is dtype.na_value`` holds. Kind "O" extension
+            # dtypes other than StringDtype (e.g. categorical, arrow
+            # decimal/binary) are excluded: pandas coerces their
+            # skew/cov/corr results to a float NaN, which the fallback
+            # below matches.
             return dtype.na_value
         return np.float64("nan")
+
+
+def _is_dtypes_object_mixed_with_bool_with_numeric_or_datetime_with_timedelta(
+    dtypes: Iterable[DtypeObj],
+) -> bool:
+    """
+    Whether ``dtypes`` mixes bool with numeric, or datetime64 with
+    timedelta64. Pandas coerces these combinations to ``object`` rather
+    than promoting via NumPy's type promotion rules.
+    """
+    kinds = {dtype.kind for dtype in dtypes if isinstance(dtype, np.dtype)}
+    return ("b" in kinds and bool(kinds & set("iuf"))) or (
+        "M" in kinds and "m" in kinds
+    )
 
 
 def find_common_type(dtypes: Iterable[DtypeObj]) -> DtypeObj:
@@ -385,24 +412,23 @@ def find_common_type(dtypes: Iterable[DtypeObj]) -> DtypeObj:
             "not supported"
         )
 
-    if pandas_compatible:
+    if (
+        pandas_compatible
+        and _is_dtypes_object_mixed_with_bool_with_numeric_or_datetime_with_timedelta(
+            dtypes
+        )
+    ):
         # cudf follows NumPy promotion: bool+int->int, bool+float->float,
         # datetime64+timedelta64->datetime64. Pandas returns `object` for
         # these mixes. Raise so that, when used as the cudf.pandas fast path
         # for `pandas.core.dtypes.cast.find_common_type`, we fall back to
         # pandas' implementation rather than silently producing a different
         # answer.
-        kinds = {dtype.kind for dtype in dtypes if isinstance(dtype, np.dtype)}
-        if "b" in kinds and kinds & set("iuf"):
-            raise NotImplementedError(
-                "Common type of bool with numeric dtypes is not supported "
-                "in pandas-compatible mode."
-            )
-        if "M" in kinds and "m" in kinds:
-            raise NotImplementedError(
-                "Common type of datetime64 with timedelta64 is not supported "
-                "in pandas-compatible mode."
-            )
+        raise NotImplementedError(
+            "Common type of bool with numeric, or datetime64 with "
+            "timedelta64, dtypes is not supported in pandas-compatible "
+            "mode."
+        )
 
     try:
         common_dtype = np.result_type(*dtypes)  # noqa: TID251

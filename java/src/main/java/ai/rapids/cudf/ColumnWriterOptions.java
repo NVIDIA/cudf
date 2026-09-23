@@ -1,6 +1,6 @@
 /*
  *
- *  SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
+ *  SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  *  SPDX-License-Identifier: Apache-2.0
  *
  */
@@ -77,9 +77,9 @@ public class ColumnWriterOptions {
   // This child is needed as the first child of a List column meta due to how cudf has been
   // implemented. Cudf drops the first child from the meta if a column is a LIST. This is done
   // this way due to some complications in the parquet reader. There was change to fix this here:
-  // https://github.com/rapidsai/cudf/pull/7461/commits/5ce33b40abb87cc7b76b5efeb0a3a0215f9ef6fb
+  // https://github.com/NVIDIA/cudf/pull/7461/commits/5ce33b40abb87cc7b76b5efeb0a3a0215f9ef6fb
   // but it was reverted later on here:
-  // https://github.com/rapidsai/cudf/pull/7461/commits/f248eb7265de995a95f998d46d897fb0ae47f53e
+  // https://github.com/NVIDIA/cudf/pull/7461/commits/f248eb7265de995a95f998d46d897fb0ae47f53e
   static ColumnWriterOptions DUMMY_CHILD = new ColumnWriterOptions("DUMMY");
 
   public static abstract class NestedBuilder<T extends NestedBuilder, V extends ColumnWriterOptions> {

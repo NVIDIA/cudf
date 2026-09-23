@@ -1,7 +1,7 @@
 /*
  * SPDX-FileCopyrightText: Copyright 2018-2019 BlazingDB, Inc.
  * SPDX-FileCopyrightText: Copyright 2018 Christian Noboa Mardini <christian@blazingdb.com>
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 /*
@@ -39,9 +39,8 @@
 #include <cudf/utilities/traits.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
-
 #include <cuda/std/optional>
+#include <cuda/stream>
 
 #include <string>
 
@@ -59,7 +58,7 @@ bool is_supported_operation(data_type out, data_type lhs, data_type rhs, binary_
 std::pair<rmm::device_buffer, size_type> scalar_col_valid_mask_and(
   column_view const& col,
   scalar const& s,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr)
 {
   if (col.is_empty()) return std::pair(rmm::device_buffer{0, stream, mr}, 0);
@@ -141,7 +140,7 @@ void binary_operation(mutable_column_view& out,
                       column_view const& lhs,
                       column_view const& rhs,
                       std::string const& ptx,
-                      rmm::cuda_stream_view stream)
+                      cuda::stream_ref stream)
 {
   std::string const output_type_name = cudf::type_to_name(out.type());
 
@@ -204,9 +203,16 @@ std::unique_ptr<column> binary_operation(LhsType const& lhs,
                                          RhsType const& rhs,
                                          binary_operator op,
                                          data_type output_type,
-                                         rmm::cuda_stream_view stream,
+                                         cuda::stream_ref stream,
                                          rmm::device_async_resource_ref mr)
 {
+  CUDF_EXPECTS(not cudf::is_dictionary(lhs.type()) and not cudf::is_dictionary(rhs.type()),
+               "Dictionary operands are not supported",
+               cudf::data_type_error);
+  CUDF_EXPECTS(not cudf::is_dictionary(output_type),
+               "Dictionary output type is not supported",
+               cudf::data_type_error);
+
   if constexpr (std::is_same_v<LhsType, column_view> and std::is_same_v<RhsType, column_view>)
     CUDF_EXPECTS(lhs.size() == rhs.size(), "Column sizes don't match", std::invalid_argument);
 
@@ -265,7 +271,7 @@ std::unique_ptr<column> make_fixed_width_column_for_output(scalar const& lhs,
                                                            column_view const& rhs,
                                                            binary_operator op,
                                                            data_type output_type,
-                                                           rmm::cuda_stream_view stream,
+                                                           cuda::stream_ref stream,
                                                            rmm::device_async_resource_ref mr)
 {
   if (binops::is_null_dependent(op)) {
@@ -292,7 +298,7 @@ std::unique_ptr<column> make_fixed_width_column_for_output(column_view const& lh
                                                            scalar const& rhs,
                                                            binary_operator op,
                                                            data_type output_type,
-                                                           rmm::cuda_stream_view stream,
+                                                           cuda::stream_ref stream,
                                                            rmm::device_async_resource_ref mr)
 {
   if (binops::is_null_dependent(op)) {
@@ -319,7 +325,7 @@ std::unique_ptr<column> make_fixed_width_column_for_output(column_view const& lh
                                                            column_view const& rhs,
                                                            binary_operator op,
                                                            data_type output_type,
-                                                           rmm::cuda_stream_view stream,
+                                                           cuda::stream_ref stream,
                                                            rmm::device_async_resource_ref mr)
 {
   if (binops::is_null_dependent(op)) {
@@ -335,7 +341,7 @@ std::unique_ptr<column> binary_operation(scalar const& lhs,
                                          column_view const& rhs,
                                          binary_operator op,
                                          data_type output_type,
-                                         rmm::cuda_stream_view stream,
+                                         cuda::stream_ref stream,
                                          rmm::device_async_resource_ref mr)
 {
   return binops::compiled::binary_operation<scalar, column_view>(
@@ -345,7 +351,7 @@ std::unique_ptr<column> binary_operation(column_view const& lhs,
                                          scalar const& rhs,
                                          binary_operator op,
                                          data_type output_type,
-                                         rmm::cuda_stream_view stream,
+                                         cuda::stream_ref stream,
                                          rmm::device_async_resource_ref mr)
 {
   return binops::compiled::binary_operation<column_view, scalar>(
@@ -355,7 +361,7 @@ std::unique_ptr<column> binary_operation(column_view const& lhs,
                                          column_view const& rhs,
                                          binary_operator op,
                                          data_type output_type,
-                                         rmm::cuda_stream_view stream,
+                                         cuda::stream_ref stream,
                                          rmm::device_async_resource_ref mr)
 {
   return binops::compiled::binary_operation<column_view, column_view>(
@@ -366,7 +372,7 @@ std::unique_ptr<column> binary_operation(column_view const& lhs,
                                          column_view const& rhs,
                                          std::string const& ptx,
                                          data_type output_type,
-                                         rmm::cuda_stream_view stream,
+                                         cuda::stream_ref stream,
                                          rmm::device_async_resource_ref mr)
 {
   // Check for datatype
@@ -420,7 +426,7 @@ std::unique_ptr<column> binary_operation(scalar const& lhs,
                                          column_view const& rhs,
                                          binary_operator op,
                                          data_type output_type,
-                                         rmm::cuda_stream_view stream,
+                                         cuda::stream_ref stream,
                                          rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
@@ -430,7 +436,7 @@ std::unique_ptr<column> binary_operation(column_view const& lhs,
                                          scalar const& rhs,
                                          binary_operator op,
                                          data_type output_type,
-                                         rmm::cuda_stream_view stream,
+                                         cuda::stream_ref stream,
                                          rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
@@ -440,7 +446,7 @@ std::unique_ptr<column> binary_operation(column_view const& lhs,
                                          column_view const& rhs,
                                          binary_operator op,
                                          data_type output_type,
-                                         rmm::cuda_stream_view stream,
+                                         cuda::stream_ref stream,
                                          rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
@@ -451,7 +457,7 @@ std::unique_ptr<column> binary_operation(column_view const& lhs,
                                          column_view const& rhs,
                                          std::string const& ptx,
                                          data_type output_type,
-                                         rmm::cuda_stream_view stream,
+                                         cuda::stream_ref stream,
                                          rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();

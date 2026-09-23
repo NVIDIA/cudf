@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -20,7 +20,7 @@ namespace ops {
  * @param b Right operand.
  */
 template <integer A, integer B>
-__device__ auto bit_and(A a, B b) -> decltype(a & b)
+__device__ auto bitwise_and(A a, B b) -> decltype(a & b)
 {
   return a & b;
 }
@@ -32,7 +32,7 @@ __device__ auto bit_and(A a, B b) -> decltype(a & b)
  * @param a Input value.
  */
 template <integer T>
-__device__ auto bit_invert(T a) -> decltype(~a)
+__device__ auto bitwise_invert(T a) -> decltype(~a)
 {
   return ~a;
 }
@@ -46,7 +46,7 @@ __device__ auto bit_invert(T a) -> decltype(~a)
  * @param b Right operand.
  */
 template <integer A, integer B>
-__device__ auto bit_or(A a, B b) -> decltype(a | b)
+__device__ auto bitwise_or(A a, B b) -> decltype(a | b)
 {
   return a | b;
 }
@@ -60,7 +60,7 @@ __device__ auto bit_or(A a, B b) -> decltype(a | b)
  * @param b Right operand.
  */
 template <integer A, integer B>
-__device__ auto bit_xor(A a, B b) -> decltype(a ^ b)
+__device__ auto bitwise_xor(A a, B b) -> decltype(a ^ b)
 {
   return a ^ b;
 }
@@ -74,7 +74,7 @@ __device__ auto bit_xor(A a, B b) -> decltype(a ^ b)
  * @param b Shift count.
  */
 template <integer A, integer B>
-__device__ auto bit_shift_left(A a, B b) -> decltype(a << b)
+__device__ auto bitwise_shift_left(A a, B b) -> decltype(a << b)
 {
   return a << b;
 }
@@ -88,7 +88,7 @@ __device__ auto bit_shift_left(A a, B b) -> decltype(a << b)
  * @param b Shift count.
  */
 template <integer A, integer B>
-__device__ auto bit_shift_right(A a, B b) -> decltype(a >> b)
+__device__ auto bitwise_shift_right(A a, B b) -> decltype(a >> b)
 {
   return a >> b;
 }

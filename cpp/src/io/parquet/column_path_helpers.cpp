@@ -1,18 +1,36 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
 #include "column_path_helpers.hpp"
 
+#include <cudf/io/parquet_schema.hpp>
+
 #include <algorithm>
 #include <cctype>
 #include <cstddef>
 #include <functional>
+#include <numeric>
 #include <string>
 #include <string_view>
+#include <utility>
+#include <vector>
 
 namespace cudf::io::parquet::detail {
+
+std::string column_path_from_index(std::span<SchemaElement const> schema_tree, int schema_idx)
+{
+  std::vector<std::string> path;
+  for (auto idx = schema_idx; idx > 0; idx = schema_tree[idx].parent_idx) {
+    path.push_back(schema_tree[idx].name);
+  }
+
+  return std::accumulate(
+    path.rbegin() + 1, path.rend(), path.back(), [](auto path_so_far, auto const& elem_name) {
+      return std::move(path_so_far) + "." + elem_name;
+    });
+}
 
 std::string normalize_column_path(std::string_view col_path, bool case_sensitive_names)
 {

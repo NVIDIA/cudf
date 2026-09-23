@@ -1,5 +1,5 @@
 #!/bin/bash
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 set -euo pipefail
@@ -25,5 +25,10 @@ else
     echo "  - ${buildsh_test_location}" >&2
     exit 1
 fi
+
+# OpenMPI specific options (CI runs as root)
+export OMPI_ALLOW_RUN_AS_ROOT=1
+export OMPI_ALLOW_RUN_AS_ROOT_CONFIRM=1
+export OMPI_MCA_opal_cuda_support=1
 
 ctest --output-on-failure --no-tests=error "$@"

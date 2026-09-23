@@ -1,0 +1,415 @@
+# SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+from __future__ import annotations
+
+import operator
+
+from numba_cuda_mlir import models, types
+from numba_cuda_mlir.extending import typing_registry
+from numba_cuda_mlir.models import register_model
+from numba_cuda_mlir.numba_cuda import types as nb_types
+from numba_cuda_mlir.numba_cuda.extending import typeof_impl
+from numba_cuda_mlir.numba_cuda.types.misc import unliteral
+from numba_cuda_mlir.numba_cuda.typing.templates import (
+    AbstractTemplate,
+    AttributeTemplate,
+    ConcreteTemplate,
+    Signature,
+)
+from numba_cuda_mlir.typing import signature as nb_signature
+
+from cudf.core.missing import NA
+from cudf.core.udf._ops import (
+    arith_ops,
+    bitwise_ops,
+    comparison_ops,
+    unary_ops,
+)
+from cudf.core.udf.api import Masked, pack_return
+
+# Datetime / timedelta resolutions cudf UDFs support. Mirrors the units
+# used by the column dtypes flowing into the kernels.
+_units = ("ns", "us", "ms", "s")
+
+# Value-type classes a MaskedType may hold. Floats are handled separately via
+# ``nb_types.real_domain`` (``float32``/``float64``) rather than ``types.Float``
+# so that ``float16`` -- which is not a valid cuDF column dtype -- is excluded;
+# ``types.Number`` would likewise wrongly admit ``float16`` and complex types.
+_SUPPORTED_MASKED_VALUE_TYPE_CLASSES = (
+    types.Integer,
+    types.Boolean,
+    types.NPDatetime,
+    types.NPTimedelta,
+)
+
+
+_supported_value_type_instances = (
+    nb_types.integer_domain
+    | nb_types.real_domain
+    | {nb_types.boolean}
+    | {nb_types.NPDatetime(u) for u in _units}
+    | {nb_types.NPTimedelta(u) for u in _units}
+)
+
+
+def _is_supported_scalar_value_type(ty: types.Type) -> bool:
+    """Whether ``ty`` is a bare scalar value type cuDF UDFs support: an integer,
+    ``float32``/``float64``, or boolean.
+
+    Floats are matched via ``nb_types.real_domain`` (``float32``/``float64``)
+    rather than ``types.Float`` so ``float16`` is excluded, and ``types.Number``
+    is avoided so complex types are excluded -- neither is a valid cuDF column
+    dtype.
+    """
+    return (
+        isinstance(ty, (types.Integer, types.Boolean))
+        or ty in nb_types.real_domain
+    )
+
+
+class MaskedType(types.Type):
+    """Logical struct type used for propagation of nulls. Semantically carries
+    the column value and corresponding validity bit from the columns bitmask.
+    Operations over this type such as arithmetic are implemented to be sensitive
+    to the nullity of the output value.
+
+    Instances are parameterized by value type mapping to the type of the source
+    column.
+    """
+
+    def __init__(self, value: types.Type) -> None:
+        if isinstance(value, types.Literal):
+            value = unliteral(value)
+        if (
+            isinstance(value, _SUPPORTED_MASKED_VALUE_TYPE_CLASSES)
+            or value in nb_types.real_domain
+        ):
+            self.value_type = value
+        else:
+            self.value_type = types.Poison(value)
+        super().__init__(name=f"Masked({self.value_type})")
+
+    def __hash__(self) -> int:
+        # Two MaskedType instances compare equal (and hash equal) iff their
+        # parameter ``value_type`` matches, so numba can cache them by repr.
+        return hash(repr(self))
+
+    def unify(self, context, other):
+        """Pick a common type when branches return different shapes.
+
+        ``return x if cond else cudf.NA`` unifies ``MaskedType`` and
+        ``NAType``; ``return x if cond else 5`` unifies ``MaskedType``
+        and a scalar; two branches returning different ``Masked``
+        widths unify their inner value types. Returning ``None``
+        signals "no unifier" and lets numba fall through.
+        See https://numba.pydata.org/numba-doc/dev/user/troubleshoot.html#my-code-has-a-type-unification-problem
+        """
+        if isinstance(other, NAType):
+            return self
+        other_value_type = (
+            other.value_type if isinstance(other, MaskedType) else other
+        )
+        unified = context.unify_pairs(self.value_type, other_value_type)
+        return MaskedType(unified) if unified is not None else None
+
+
+class NAType(types.Type):
+    """Type for ``cudf.NA`` -- the missing-value sentinel that can flow
+    through a UDF branch and unify into a ``MaskedType``.
+    """
+
+    def __init__(self):
+        super().__init__(name="NA")
+
+    def unify(self, context, other):
+        # See https://numba.pydata.org/numba-doc/dev/user/troubleshoot.html#my-code-has-a-type-unification-problem
+        # NA + Masked is delegated to MaskedType.unify (see above) so we
+        # only need to handle NA + (NA | scalar) here.
+        if isinstance(other, MaskedType):
+            return None
+        if isinstance(other, NAType):
+            return self
+        return MaskedType(other)
+
+
+na_type = NAType()
+
+
+@typeof_impl.register(type(NA))
+def _typeof_na(val, c):
+    return na_type
+
+
+# NAType has no payload; OpaqueModel is the right data model.
+register_model(NAType)(models.OpaqueModel)
+
+
+# ``Masked(value, valid)`` constructor: produces a ``Masked(value_ty)``.
+class MaskedConstructor(ConcreteTemplate):
+    key = Masked
+    cases = [
+        nb_signature(MaskedType(t), t, types.boolean)
+        for t in _supported_value_type_instances
+    ]
+
+
+# ``m.value`` -> inner value type; ``m.valid`` -> boolean. ``AttributeTemplate``
+# dispatches ``resolve_<attr>`` methods automatically.
+class MaskedTypeAttrs(AttributeTemplate):
+    key = MaskedType
+
+    def resolve_value(self, typ: MaskedType) -> types.Type:
+        return typ.value_type
+
+    def resolve_valid(self, typ: MaskedType) -> types.Type:
+        return types.boolean
+
+
+# ``is``/``is not`` between a ``MaskedType`` and ``NA`` (either operand order)
+# both type to boolean; the is/is-not distinction is handled in lowering, so a
+# single template serves both operators.
+class MaskedNAComparison(AbstractTemplate):
+    def generic(self, args, kws):
+        if len(args) != 2 or kws:
+            return None
+        lhs, rhs = args
+        if {type(lhs), type(rhs)} == {MaskedType, NAType}:
+            return nb_signature(types.boolean, lhs, rhs)
+        return None
+
+
+class MaskedScalarArithOp(AbstractTemplate):
+    """``Masked <op> Masked``: resolve the underlying scalar op on the two
+    value types, then wrap the result back in a ``MaskedType``.
+    """
+
+    def generic(
+        self, args: tuple[types.Type, ...], kws: dict
+    ) -> Signature | None:
+        if isinstance(args[0], MaskedType) and isinstance(args[1], MaskedType):
+            return_type = self.context.resolve_function_type(
+                self.key, (args[0].value_type, args[1].value_type), kws
+            ).return_type
+            return nb_signature(MaskedType(return_type), args[0], args[1])
+        return None
+
+
+class MaskedScalarScalarOp(AbstractTemplate):
+    """``Masked <op> scalar`` and ``scalar <op> Masked`` (scalar may be a
+    ``Literal``, e.g. ``row['a'] == 1``).
+    """
+
+    def generic(
+        self, args: tuple[types.Type, ...], kws: dict
+    ) -> Signature | None:
+        if isinstance(args[0], MaskedType) and _is_supported_scalar_value_type(
+            args[1]
+        ):
+            return_type = self.context.resolve_function_type(
+                self.key, (args[0].value_type, args[1]), kws
+            ).return_type
+            return nb_signature(MaskedType(return_type), args[0], args[1])
+        if isinstance(args[0], MaskedType) and isinstance(
+            args[1], types.Literal
+        ):
+            scalar_ty = unliteral(args[1])
+            return_type = self.context.resolve_function_type(
+                self.key, (args[0].value_type, scalar_ty), kws
+            ).return_type
+            return nb_signature(MaskedType(return_type), args[0], args[1])
+        if _is_supported_scalar_value_type(args[0]) and isinstance(
+            args[1], MaskedType
+        ):
+            return_type = self.context.resolve_function_type(
+                self.key, (args[0], args[1].value_type), kws
+            ).return_type
+            return nb_signature(MaskedType(return_type), args[0], args[1])
+        if isinstance(args[0], types.Literal) and isinstance(
+            args[1], MaskedType
+        ):
+            scalar_ty = unliteral(args[0])
+            return_type = self.context.resolve_function_type(
+                self.key, (scalar_ty, args[1].value_type), kws
+            ).return_type
+            return nb_signature(MaskedType(return_type), args[0], args[1])
+        return None
+
+
+class MaskedScalarNullOp(AbstractTemplate):
+    """``Masked <op> NA`` / ``NA <op> Masked``: result type is the Masked
+    operand's type; the lowering produces an invalid (poisoned) value.
+    """
+
+    def generic(
+        self, args: tuple[types.Type, ...], kws: dict
+    ) -> Signature | None:
+        if isinstance(args[0], MaskedType) and isinstance(args[1], NAType):
+            return nb_signature(args[0], args[0], na_type)
+        if isinstance(args[0], NAType) and isinstance(args[1], MaskedType):
+            return nb_signature(args[1], na_type, args[1])
+        return None
+
+
+class MaskedScalarUnaryOp(AbstractTemplate):
+    """``<op>(Masked)``: resolve the underlying scalar op on the value type
+    and wrap the result back in a ``MaskedType``.
+    """
+
+    def generic(
+        self, args: tuple[types.Type, ...], kws: dict
+    ) -> Signature | None:
+        if len(args) == 1 and isinstance(args[0], MaskedType):
+            return_type = self.context.resolve_function_type(
+                self.key, (args[0].value_type,), kws
+            ).return_type
+            return nb_signature(MaskedType(return_type), args[0])
+        return None
+
+
+class MaskedScalarTruth(AbstractTemplate):
+    """Masked -> plain boolean for the truth-testing unary ops.
+
+    Covers ``bool(m)`` / ``operator.truth(m)`` and ``not m`` /
+    ``operator.not_(m)``. The *type* is always a plain boolean (used directly
+    in ``if`` conditions); the runtime result differs per op and is handled in
+    lowering.
+    """
+
+    def generic(
+        self, args: tuple[types.Type, ...], kws: dict
+    ) -> Signature | None:
+        if len(args) == 1 and isinstance(args[0], MaskedType):
+            return nb_signature(types.boolean, args[0])
+        return None
+
+
+class MaskedScalarFloatCast(AbstractTemplate):
+    """``float(m)`` -> ``Masked(float64)``."""
+
+    def generic(
+        self, args: tuple[types.Type, ...], kws: dict
+    ) -> Signature | None:
+        if len(args) == 1 and isinstance(args[0], MaskedType):
+            return nb_signature(MaskedType(types.float64), args[0])
+        return None
+
+
+class MaskedScalarIntCast(AbstractTemplate):
+    """``int(m)`` -> ``Masked(int64)``."""
+
+    def generic(
+        self, args: tuple[types.Type, ...], kws: dict
+    ) -> Signature | None:
+        if len(args) == 1 and isinstance(args[0], MaskedType):
+            return nb_signature(MaskedType(types.int64), args[0])
+        return None
+
+
+class MaskedScalarAbsoluteValue(AbstractTemplate):
+    """``abs(m)`` -> ``Masked(result)``."""
+
+    def generic(
+        self, args: tuple[types.Type, ...], kws: dict
+    ) -> Signature | None:
+        if len(args) == 1 and isinstance(args[0], MaskedType):
+            return_type = self.context.resolve_function_type(
+                self.key, (args[0].value_type,), kws
+            ).return_type
+            return nb_signature(MaskedType(return_type), args[0])
+        return None
+
+
+def _is_masked_membership_item(ty: types.Type) -> bool:
+    """Whether ``ty`` is a Masked scalar eligible as the item in a membership
+    test (a ``MaskedType`` with a supported, non-poison value type).
+    """
+    return isinstance(ty, MaskedType) and not isinstance(
+        ty.value_type, types.Poison
+    )
+
+
+class MaskedSequenceContainsTemplate(AbstractTemplate):
+    """``value in (a, b, ...)`` membership -> ``Masked(boolean)``.
+
+    ``value`` is a Masked scalar; the container is a literal ``Tuple`` of
+    constants or a homogeneous ``UniTuple``. (String membership -- ``substr in
+    str`` -- arrives with the string value type in a later PR.)
+    """
+
+    def generic(
+        self, args: tuple[types.Type, ...], kws: dict
+    ) -> Signature | None:
+        if len(args) != 2 or kws:
+            return None
+        container, item = args
+        if not _is_masked_membership_item(item):
+            return None
+        if isinstance(container, types.Tuple) and all(
+            isinstance(x, types.Literal) for x in container.types
+        ):
+            return nb_signature(MaskedType(types.boolean), container, item)
+        if isinstance(container, types.UniTuple):
+            return nb_signature(MaskedType(types.boolean), container, item)
+        return None
+
+
+class PackReturnTemplate(AbstractTemplate):
+    """``pack_return(x)`` -> ``Masked``.
+
+    Identity for a Masked input; a bare scalar is wrapped with ``valid=True``.
+    Used by the apply-kernel templates to normalize a UDF's return value (which
+    may be a Masked or a plain scalar).
+
+    Only the scalar types with a ``pack_return`` lowering are accepted --
+    integers, ``float32``/``float64``, and ``boolean``. ``float16`` and complex
+    types are rejected here (typing) rather than being accepted and then failing
+    later at lowering.
+    """
+
+    def generic(
+        self, args: tuple[types.Type, ...], kws: dict
+    ) -> Signature | None:
+        if isinstance(args[0], MaskedType):
+            return nb_signature(args[0], args[0])
+        # Accept exactly the scalar types that have a pack_return lowering:
+        # integers, float32/float64, and boolean. float16/complex are not valid
+        # cuDF column dtypes and have no lowering, so they are rejected here.
+        if _is_supported_scalar_value_type(args[0]):
+            return nb_signature(MaskedType(args[0]), args[0])
+        return None
+
+
+def _register() -> None:
+    """Register typing for ``Masked`` and ``MaskedType`` attributes with
+    ``numba_cuda_mlir``. Called once at module import.
+    """
+    typing_registry.register_global(Masked, types.Function(MaskedConstructor))
+    typing_registry.register_attr(MaskedTypeAttrs)
+    typing_registry.register_global(operator.is_)(MaskedNAComparison)
+    typing_registry.register_global(operator.is_not)(MaskedNAComparison)
+
+    for binary_op in arith_ops + bitwise_ops + comparison_ops:
+        typing_registry.register_global(binary_op)(MaskedScalarArithOp)
+        typing_registry.register_global(binary_op)(MaskedScalarNullOp)
+        typing_registry.register_global(binary_op)(MaskedScalarScalarOp)
+
+    for unary_op in unary_ops:
+        # not_ is logical negation: it returns a plain boolean, not a Masked.
+        if unary_op is operator.not_:
+            continue
+        typing_registry.register_global(unary_op)(MaskedScalarUnaryOp)
+    typing_registry.register_global(operator.truth)(MaskedScalarTruth)
+    typing_registry.register_global(bool)(MaskedScalarTruth)
+    typing_registry.register_global(operator.not_)(MaskedScalarTruth)
+    typing_registry.register_global(float)(MaskedScalarFloatCast)
+    typing_registry.register_global(int)(MaskedScalarIntCast)
+    typing_registry.register_global(abs)(MaskedScalarAbsoluteValue)
+
+    typing_registry.register_global(operator.contains)(
+        MaskedSequenceContainsTemplate
+    )
+
+    typing_registry.register_global(pack_return)(PackReturnTemplate)
+
+
+_register()

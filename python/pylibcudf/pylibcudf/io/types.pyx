@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 from cpython.buffer cimport PyBUF_READ
 from cpython.memoryview cimport PyMemoryView_FromMemory
@@ -22,6 +22,7 @@ from pylibcudf.libcudf.io.types cimport (
     column_encoding,
     column_in_metadata,
     column_name_info,
+    filepath_source,
     partition_info,
     source_info,
     table_input_metadata,
@@ -34,11 +35,13 @@ from pylibcudf.span import is_span
 
 from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 
+from collections.abc import Mapping, Sequence
 import codecs
 import errno
 import io
 import os
 import re
+from typing import TYPE_CHECKING, Any, TypeAlias
 
 from pylibcudf.libcudf.io.json import \
     json_recovery_mode_t as JSONRecoveryMode  # no-cython-lint
@@ -50,11 +53,16 @@ from pylibcudf.libcudf.io.types import (
     statistics_freq as StatisticsFreq,  # no-cython-lint
 )
 
+if TYPE_CHECKING:
+    from pylibcudf.column import Column
+    from pylibcudf.span import Span
+
 __all__ = [
     "ColumnEncoding",
     "ColumnInMetadata",
     "CompressionType",
     "DictionaryPolicy",
+    "FilepathSource",
     "JSONRecoveryMode",
     "PartitionInfo",
     "QuoteStyle",
@@ -64,6 +72,9 @@ __all__ = [
     "TableInputMetadata",
     "TableWithMetadata",
 ]
+
+ColumnNameSpec: TypeAlias = tuple[str, list["ColumnNameSpec"]]
+ChildNameSpec: TypeAlias = Mapping[str, "ChildNameSpec"]
 
 cdef class PartitionInfo:
     """
@@ -122,7 +133,7 @@ cdef class ColumnInMetadata:
 
         Returns
         -------
-        Self
+        ColumnInMetadata
         """
         dereference(self.c_obj).set_name(name.encode())
         return self
@@ -138,7 +149,7 @@ cdef class ColumnInMetadata:
 
         Returns
         -------
-        Self
+        ColumnInMetadata
         """
         dereference(self.c_obj).set_nullability(nullable)
         return self
@@ -150,7 +161,7 @@ cdef class ColumnInMetadata:
 
         Returns
         -------
-        Self
+        ColumnInMetadata
         """
         dereference(self.c_obj).set_list_column_as_map()
         return self
@@ -167,7 +178,7 @@ cdef class ColumnInMetadata:
 
         Returns
         -------
-        Self
+        ColumnInMetadata
         """
         dereference(self.c_obj).set_int96_timestamps(req)
         return self
@@ -184,7 +195,7 @@ cdef class ColumnInMetadata:
 
         Returns
         -------
-        Self
+        ColumnInMetadata
         """
         dereference(self.c_obj).set_decimal_precision(precision)
         return self
@@ -216,7 +227,7 @@ cdef class ColumnInMetadata:
 
         Returns
         -------
-        Self
+        ColumnInMetadata
         """
         dereference(self.c_obj).set_output_as_binary(binary)
         return self
@@ -232,7 +243,7 @@ cdef class ColumnInMetadata:
 
         Returns
         -------
-        Self
+        ColumnInMetadata
         """
         dereference(self.c_obj).set_type_length(type_length)
         return self
@@ -249,7 +260,7 @@ cdef class ColumnInMetadata:
 
         Returns
         -------
-        Self
+        ColumnInMetadata
         """
         dereference(self.c_obj).set_skip_compression(skip)
         return self
@@ -296,7 +307,7 @@ cdef class TableInputMetadata:
         self.c_obj = table_input_metadata(table.view())
 
     @property
-    def column_metadata(self):
+    def column_metadata(self) -> list[ColumnInMetadata]:
         return [
             ColumnInMetadata.from_libcudf(&self.c_obj.column_metadata[i], self)
             for i in range(self.c_obj.column_metadata.size())
@@ -320,7 +331,9 @@ cdef class TableWithMetadata:
         [("id", []), ("name", [("first", []), ("last", [])])]
 
     """
-    def __init__(self, Table tbl, list column_names):
+    def __init__(
+        self, Table tbl, list column_names: list[ColumnNameSpec]
+    ):
         self.tbl = tbl
 
         self.metadata.schema_info = self._make_column_info(column_names)
@@ -345,9 +358,9 @@ cdef class TableWithMetadata:
         return col_name_infos
 
     @property
-    def columns(self):
+    def columns(self) -> tuple[Column, ...]:
         """
-        Return a list containing the columns of the table
+        Return a tuple containing the columns of the table
         """
         return self.tbl.columns()
 
@@ -358,7 +371,9 @@ cdef class TableWithMetadata:
             names.append((child, grandchildren))
         return names
 
-    def column_names(self, include_children=False):
+    def column_names(
+        self, include_children: bool = False
+    ) -> list[str] | list[ColumnNameSpec]:
         """
         Return a list containing the column names of the table
         """
@@ -375,7 +390,7 @@ cdef class TableWithMetadata:
         return names
 
     @property
-    def child_names(self):
+    def child_names(self) -> ChildNameSpec:
         """
         Return a dictionary mapping the names of columns with children
         to the names of their child columns. Columns without children
@@ -407,7 +422,7 @@ cdef class TableWithMetadata:
         return out
 
     @property
-    def per_file_user_data(self):
+    def per_file_user_data(self) -> list[Mapping[bytes, bytes]]:
         """
         Returns a list containing a dict
         containing file-format specific metadata,
@@ -416,7 +431,7 @@ cdef class TableWithMetadata:
         return self.metadata.per_file_user_data
 
     @property
-    def num_rows_per_source(self):
+    def num_rows_per_source(self) -> list[int]:
         """
         Returns a list containing the number
         of rows for each file being read in.
@@ -425,7 +440,7 @@ cdef class TableWithMetadata:
 
     # The following functions are currently only for Parquet reader
     @property
-    def num_input_row_groups(self):
+    def num_input_row_groups(self) -> int:
         """
         Returns the total number of input
         Parquet row groups across all data sources.
@@ -433,7 +448,7 @@ cdef class TableWithMetadata:
         return self.metadata.num_input_row_groups
 
     @property
-    def num_row_groups_after_stats_filter(self):
+    def num_row_groups_after_stats_filter(self) -> int | None:
         """
         Returns the number of remaining Parquet row groups
         after stats filter. None if no filtering done.
@@ -443,7 +458,7 @@ cdef class TableWithMetadata:
         return None
 
     @property
-    def num_row_groups_after_bloom_filter(self):
+    def num_row_groups_after_bloom_filter(self) -> int | None:
         """
         Returns the number of remaining Parquet row groups
         after bloom filter. None if no filtering done.
@@ -451,6 +466,27 @@ cdef class TableWithMetadata:
         if self.metadata.num_row_groups_after_bloom_filter.has_value():
             return self.metadata.num_row_groups_after_bloom_filter.value()
         return None
+
+
+cdef class FilepathSource:
+    """
+    A file path or URL with an optional known size in bytes.
+
+    When ``size`` is set for a remote URL, libcudf passes it to KvikIO at open
+    time so the remote server is not queried for file size (avoiding HEAD
+    requests). An incorrect size will cause read failures.
+
+    Parameters
+    ----------
+    path : str or os.PathLike
+        Path or URL of the input file.
+    size : int, optional
+        Known file size in bytes. Omit to query size via KvikIO (HEAD for remote URLs).
+    """
+
+    def __init__(self, path: str | os.PathLike[Any], size: int | None = None):
+        self.path = os.fspath(path)
+        self.size = size
 
 
 cdef class SourceInfo:
@@ -464,6 +500,7 @@ cdef class SourceInfo:
     sources : List[Union[
         str,
         os.PathLike,
+        FilepathSource,
         bytes,
         io.BytesIO,
         DataSource,
@@ -474,15 +511,48 @@ cdef class SourceInfo:
         If an empty list, constructs an empty SourceInfo.
     """
 
-    def __init__(self, sources):
+    def __init__(
+        self,
+        sources: (
+            Sequence[str]
+            | Sequence[os.PathLike[Any]]
+            | Sequence[FilepathSource]
+            | Sequence[Datasource]
+            | Sequence[io.StringIO]
+            | Sequence[bytes]
+            | Sequence[io.BytesIO]
+            | Sequence[Span]
+        ),
+    ):
         if not sources:
             self.c_obj = move(source_info())
             return
 
         cdef vector[string] c_files
+        cdef vector[filepath_source] c_filepath_sources
         cdef vector[datasource*] c_datasources
+        cdef filepath_source fs
 
-        if isinstance(sources[0], (os.PathLike, str)):
+        if isinstance(sources[0], FilepathSource):
+            c_filepath_sources.reserve(len(sources))
+
+            for src in sources:
+                if not isinstance(src, FilepathSource):
+                    raise ValueError("All sources must be of the same type!")
+                if not (
+                    os.path.isfile(src.path) or SourceInfo._is_remote_uri(src.path)
+                ):
+                    raise FileNotFoundError(
+                        errno.ENOENT, os.strerror(errno.ENOENT), src.path
+                    )
+                fs = filepath_source(<string> str(src.path).encode())
+                if src.size is not None:
+                    fs.size = <size_t> src.size
+                c_filepath_sources.push_back(fs)
+
+            self.c_obj = move(source_info(c_filepath_sources))
+            return
+        elif isinstance(sources[0], (os.PathLike, str)):
             c_files.reserve(len(sources))
 
             for src in sources:
@@ -537,7 +607,7 @@ cdef class SourceInfo:
             self.c_obj = move(source_info(host_span[device_span[const_byte]](d_spans)))
             return
         else:
-            raise ValueError("Sources must be a list of str/paths, "
+            raise ValueError("Sources must be a list of str/paths, FilepathSource, "
                              "bytes, io.BytesIO, io.StringIO, or a Datasource")
 
         self.c_obj = source_info(host_span[host_span[const_byte]](self._hspans))
@@ -617,7 +687,14 @@ cdef class SinkInfo:
         (that are not all io.IOBase instances) will raise a ValueError.
     """
 
-    def __init__(self, list sinks):
+    def __init__(
+        self,
+        list sinks: (
+            list[str]
+            | list[os.PathLike[Any]]
+            | list[io.IOBase]
+        ),
+    ):
         cdef vector[data_sink *] data_sinks
         cdef vector[string] paths
 

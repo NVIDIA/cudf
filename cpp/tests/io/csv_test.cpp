@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -13,6 +13,7 @@
 #include <cudf_test/type_lists.hpp>
 
 #include <cudf/aggregation.hpp>
+#include <cudf/copying.hpp>
 #include <cudf/detail/iterator.cuh>
 #include <cudf/io/csv.hpp>
 #include <cudf/io/datasource.hpp>
@@ -362,7 +363,7 @@ TYPED_TEST(CsvFixedPointWriterTest, SingleColumnNegativeScale)
                   reference_strings.end(),
                   cuda::counting_iterator<std::size_t>{0},
                   std::back_inserter(valid_reference_strings),
-                  validity.functor());
+                  [](std::size_t i) { return (i % 2) == 0; });
   reference_strings = valid_reference_strings;
 
   using DecimalType = TypeParam;
@@ -408,7 +409,7 @@ TYPED_TEST(CsvFixedPointWriterTest, SingleColumnPositiveScale)
                   reference_strings.end(),
                   cuda::counting_iterator<std::size_t>{0},
                   std::back_inserter(valid_reference_strings),
-                  validity.functor());
+                  [](std::size_t i) { return (i % 2) == 0; });
   reference_strings = valid_reference_strings;
 
   using DecimalType = TypeParam;
@@ -944,6 +945,24 @@ TEST_F(CsvReaderTest, Strings)
   expect_column_data_equal(
     std::vector<std::string>{"abc def ghi", "\"jkl mno pqr\"", R"(stu ""vwx"" yz)"},
     view.column(1));
+}
+
+TEST_F(CsvReaderTest, WindowsLineTerminators)
+{
+  std::string const buffer{"1,alpha\r\n2,beta\r\n"};
+  auto options =
+    cudf::io::csv_reader_options::builder(
+      cudf::io::source_info{cudf::host_span<std::byte const>{
+        reinterpret_cast<std::byte const*>(buffer.data()), buffer.size()}})
+      .dtypes(std::vector<data_type>{data_type{type_id::INT64}, data_type{type_id::STRING}})
+      .header(-1);
+
+  auto const result = cudf::io::read_csv(options);
+
+  cudf::test::fixed_width_column_wrapper<int64_t> const expected_values{1, 2};
+  cudf::test::strings_column_wrapper const expected_names{"alpha", "beta"};
+  table_view const expected{{expected_values, expected_names}};
+  CUDF_TEST_EXPECT_TABLES_EQUIVALENT(expected, result.tbl->view());
 }
 
 TEST_F(CsvReaderTest, StringsQuotes)
@@ -2472,9 +2491,9 @@ TEST_F(CsvReaderTest, CsvDefaultOptionsWriteReadMatch)
 
 TEST_F(CsvReaderTest, UseColsValidation)
 {
-  const std::string buffer = "1,2,3";
+  std::string const buffer = "1,2,3";
 
-  const cudf::io::csv_reader_options idx_cnt_options =
+  cudf::io::csv_reader_options const idx_cnt_options =
     cudf::io::csv_reader_options::builder(
       cudf::io::source_info{cudf::host_span<std::byte const>{
         reinterpret_cast<std::byte const*>(buffer.c_str()), buffer.size()}})
@@ -2504,7 +2523,7 @@ TEST_F(CsvReaderTest, UseColsValidation)
 
 TEST_F(CsvReaderTest, CropColumns)
 {
-  const std::string csv_in{"12,9., 10\n34,8., 20\n56,7., 30"};
+  std::string const csv_in{"12,9., 10\n34,8., 20\n56,7., 30"};
 
   cudf::io::csv_reader_options in_opts =
     cudf::io::csv_reader_options::builder(
@@ -2943,6 +2962,219 @@ TEST_F(CsvReaderTest, CommentLinesWithQuotedStrings)
   auto const expected_col1 = cudf::test::strings_column_wrapper({"hello\"world", "test"});
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(result.tbl->view().column(0), expected_col0);
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(result.tbl->view().column(1), expected_col1);
+}
+
+namespace {
+// Writer settings a round trip varies; the reader side follows from them
+struct csv_roundtrip_settings {
+  cudf::io::compression_type compression        = cudf::io::compression_type::NONE;
+  std::optional<cudf::size_type> rows_per_chunk = std::nullopt;
+  size_t compression_block_size                 = cudf::io::default_csv_compression_block_size;
+  bool include_header                           = true;
+};
+
+// Writes `table` with the given settings and reads the output back
+std::unique_ptr<cudf::table> roundtrip_csv(cudf::table_view const& table,
+                                           std::vector<std::string> const& names,
+                                           csv_roundtrip_settings const& settings)
+{
+  std::vector<char> buffer;
+  auto write_builder = cudf::io::csv_writer_options::builder(cudf::io::sink_info(&buffer), table)
+                         .include_header(settings.include_header)
+                         .names(names)
+                         .compression(settings.compression)
+                         .compression_block_size(settings.compression_block_size);
+  if (settings.rows_per_chunk.has_value()) {
+    write_builder.rows_per_chunk(settings.rows_per_chunk.value());
+  }
+  cudf::io::csv_writer_options write_opts = write_builder;
+  cudf::io::write_csv(write_opts);
+  EXPECT_GT(buffer.size(), 0);
+
+  auto read_builder = cudf::io::csv_reader_options::builder(
+                        cudf::io::source_info(cudf::host_span<char>(buffer.data(), buffer.size())))
+                        .compression(settings.compression);
+  if (not settings.include_header) { read_builder.header(-1); }
+  return cudf::io::read_csv(read_builder.build()).tbl;
+}
+}  // namespace
+
+TEST_F(CsvWriterTest, ZstdCompression)
+{
+  auto int_col = column_wrapper<int32_t>{1, 2, 3, 4, 5};
+  auto str_col = column_wrapper<cudf::string_view>{"a", "b", "c", "d", "e"};
+  cudf::table_view input_table(std::vector<cudf::column_view>{int_col, str_col});
+  auto const names = std::vector<std::string>{"int_col", "str_col"};
+
+  auto const expected = roundtrip_csv(input_table, names, {});
+  auto const result =
+    roundtrip_csv(input_table, names, {.compression = cudf::io::compression_type::ZSTD});
+
+  CUDF_TEST_EXPECT_TABLES_EQUAL(expected->view(), result->view());
+}
+
+TEST_F(CsvWriterTest, ZstdCompressionChunked)
+{
+  // ZSTD supports concatenated frames, so each chunk can be compressed independently
+  auto const num_rows = 100;
+  auto sequence       = cudf::detail::make_counting_transform_iterator(0, [](auto i) { return i; });
+  auto int_col        = column_wrapper<int32_t>(sequence, sequence + num_rows);
+
+  std::vector<std::string> strings(num_rows);
+  std::generate(
+    strings.begin(), strings.end(), [i = 0]() mutable { return "row_" + std::to_string(i++); });
+  cudf::test::strings_column_wrapper str_col(strings.begin(), strings.end());
+
+  cudf::table_view input_table(std::vector<cudf::column_view>{int_col, str_col});
+  auto const names = std::vector<std::string>{"value", "name"};
+
+  // the uncompressed output is the reference; chunking must not corrupt row separators
+  auto const expected = roundtrip_csv(input_table, names, {.rows_per_chunk = 10});
+  auto const result   = roundtrip_csv(
+    input_table, names, {.compression = cudf::io::compression_type::ZSTD, .rows_per_chunk = 10});
+
+  EXPECT_EQ(result->num_rows(), num_rows);
+  CUDF_TEST_EXPECT_TABLES_EQUAL(expected->view(), result->view());
+}
+
+TEST_F(CsvWriterTest, ZstdCompressionNoRows)
+{
+  // only the header is written, so the output is a single ZSTD frame
+  auto int_col = column_wrapper<int32_t>{};
+  cudf::table_view input_table(std::vector<cudf::column_view>{int_col});
+  auto const names = std::vector<std::string>{"value"};
+
+  auto const expected = roundtrip_csv(input_table, names, {.rows_per_chunk = 8});
+  auto const result   = roundtrip_csv(
+    input_table, names, {.compression = cudf::io::compression_type::ZSTD, .rows_per_chunk = 8});
+
+  EXPECT_EQ(result->num_rows(), 0);
+  CUDF_TEST_EXPECT_TABLES_EQUAL(expected->view(), result->view());
+}
+
+TEST_F(CsvWriterTest, ZstdCompressionNoHeader)
+{
+  auto const num_rows = 20;
+  auto sequence       = cudf::detail::make_counting_transform_iterator(0, [](auto i) { return i; });
+  auto int_col        = column_wrapper<int32_t>(sequence, sequence + num_rows);
+  cudf::table_view input_table(std::vector<cudf::column_view>{int_col});
+  auto const names = std::vector<std::string>{"value"};
+
+  // the header is compressed into its own frame ahead of the data, so this is
+  // the only case where the first frame in the output is a data chunk
+  auto const expected =
+    roundtrip_csv(input_table, names, {.rows_per_chunk = 8, .include_header = false});
+  auto const result = roundtrip_csv(input_table,
+                                    names,
+                                    {.compression    = cudf::io::compression_type::ZSTD,
+                                     .rows_per_chunk = 8,
+                                     .include_header = false});
+
+  EXPECT_EQ(result->num_rows(), num_rows);
+  CUDF_TEST_EXPECT_TABLES_EQUAL(expected->view(), result->view());
+}
+
+TEST_F(CsvWriterTest, ZstdCompressionNullsAndUnicode)
+{
+  auto const nulls = cudf::test::iterators::nulls_at({1, 3});
+  auto int_col     = column_wrapper<int32_t>{{1, 2, 3, 4, 5}, nulls};
+  auto null_col    = column_wrapper<int32_t>{{0, 0, 0, 0, 0}, cudf::test::iterators::all_nulls()};
+  auto str_col =
+    cudf::test::strings_column_wrapper{{"ascii é", "nulled", "", "nulled", "mixed 混合 🙂"}, nulls};
+
+  cudf::table_view input_table(std::vector<cudf::column_view>{int_col, null_col, str_col});
+  auto const names = std::vector<std::string>{"int_col", "null_col", "str_col"};
+
+  // a block size below the row width splits the output inside multi-byte characters
+  auto const expected = roundtrip_csv(input_table, names, {});
+  auto const result =
+    roundtrip_csv(input_table,
+                  names,
+                  {.compression = cudf::io::compression_type::ZSTD, .compression_block_size = 16});
+
+  CUDF_TEST_EXPECT_TABLES_EQUAL(expected->view(), result->view());
+}
+
+TEST_F(CsvWriterTest, ZstdCompressionSlicedInput)
+{
+  auto const num_rows = 500;
+  auto sequence       = cudf::detail::make_counting_transform_iterator(0, [](auto i) { return i; });
+  auto int_col        = column_wrapper<int32_t>(
+    sequence, sequence + num_rows, cudf::test::iterators::nulls_at({7, 300}));
+
+  std::vector<std::string> strings(num_rows);
+  std::generate(
+    strings.begin(), strings.end(), [i = 0]() mutable { return "rów_" + std::to_string(i++); });
+  auto str_col = cudf::test::strings_column_wrapper(strings.begin(), strings.end());
+
+  cudf::table_view input_table(std::vector<cudf::column_view>{int_col, str_col});
+  auto const sliced = cudf::slice(input_table, {37, 452}).front();
+  auto const names  = std::vector<std::string>{"int_col", "str_col"};
+
+  auto const expected = roundtrip_csv(sliced, names, {.rows_per_chunk = 64});
+  auto const result   = roundtrip_csv(sliced,
+                                    names,
+                                      {.compression            = cudf::io::compression_type::ZSTD,
+                                       .rows_per_chunk         = 64,
+                                       .compression_block_size = 512});
+
+  EXPECT_EQ(result->num_rows(), 452 - 37);
+  CUDF_TEST_EXPECT_TABLES_EQUAL(expected->view(), result->view());
+}
+
+TEST_F(CsvWriterTest, UnsupportedCompression)
+{
+  std::vector<char> buffer;
+  auto int_col = column_wrapper<int32_t>{1, 2, 3};
+  cudf::table_view input_table(std::vector<cudf::column_view>{int_col});
+
+  EXPECT_THROW(cudf::io::csv_writer_options::builder(cudf::io::sink_info(&buffer), input_table)
+                 .compression(cudf::io::compression_type::SNAPPY),
+               cudf::logic_error);
+}
+
+TEST_F(CsvWriterTest, ZstdCompressionBlockSize)
+{
+  // enough rows that a small block size splits the output into many blocks
+  auto const num_rows = 20'000;
+  auto sequence       = cudf::detail::make_counting_transform_iterator(0, [](auto i) { return i; });
+  auto int_col        = column_wrapper<int32_t>(sequence, sequence + num_rows);
+
+  std::vector<std::string> strings(num_rows);
+  std::generate(strings.begin(), strings.end(), [i = 0]() mutable {
+    return "row_value_" + std::to_string(i++);
+  });
+  auto str_col = column_wrapper<cudf::string_view>(strings.begin(), strings.end());
+  cudf::table_view input_table(std::vector<cudf::column_view>{int_col, str_col});
+  auto const names = std::vector<std::string>{"int_col", "str_col"};
+
+  auto const expected = roundtrip_csv(input_table, names, {});
+
+  // the block size is independent of the chunk size, so all combinations must produce the same
+  // table, whether a chunk spans many blocks or a block spans many chunks
+  for (auto const block_size :
+       {size_t{1}, size_t{4095}, size_t{4096}, size_t{64} * 1024, size_t{1} << 30}) {
+    for (auto const rows_per_chunk :
+         {std::optional<cudf::size_type>{}, std::optional<cudf::size_type>{1'000}}) {
+      auto const result = roundtrip_csv(input_table,
+                                        names,
+                                        {.compression            = cudf::io::compression_type::ZSTD,
+                                         .rows_per_chunk         = rows_per_chunk,
+                                         .compression_block_size = block_size});
+      CUDF_TEST_EXPECT_TABLES_EQUAL(expected->view(), result->view());
+    }
+  }
+}
+
+TEST_F(CsvWriterTest, InvalidCompressionBlockSize)
+{
+  std::vector<char> buffer;
+  auto int_col = column_wrapper<int32_t>{1, 2, 3};
+  cudf::table_view input_table(std::vector<cudf::column_view>{int_col});
+
+  EXPECT_THROW(cudf::io::csv_writer_options::builder(cudf::io::sink_info(&buffer), input_table)
+                 .compression_block_size(0),
+               cudf::logic_error);
 }
 
 CUDF_TEST_PROGRAM_MAIN()

@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import numpy as np
@@ -94,3 +94,32 @@ def test_pivot_table_scalar_index_columns(index, columns):
         values="D", index=index, columns=columns, aggfunc="sum"
     )
     assert_eq(result, expected)
+
+
+@pytest.mark.parametrize("aggfunc", ["sum", "min", "max"])
+@pytest.mark.parametrize("fill_value", [None, 0])
+def test_pivot_table_sparse_int_fill_value(aggfunc, fill_value):
+    # pandas promotes integer values to float64 when the reshape leaves
+    # missing cells unfilled (fill_value=None), and keeps the integer
+    # dtype when they are filled
+    data = {
+        "i": ["r1", "r1", "r2"],
+        "c": ["a", "b", "a"],
+        "v": [1, 2, 3],
+    }
+    with cudf.option_context("mode.pandas_compatible", True):
+        result = cudf.DataFrame(data).pivot_table(
+            index="i",
+            columns="c",
+            values="v",
+            aggfunc=aggfunc,
+            fill_value=fill_value,
+        )
+    expected = pd.DataFrame(data).pivot_table(
+        index="i",
+        columns="c",
+        values="v",
+        aggfunc=aggfunc,
+        fill_value=fill_value,
+    )
+    assert_eq(expected, result)

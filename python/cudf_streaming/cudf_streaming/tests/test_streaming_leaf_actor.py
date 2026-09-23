@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from __future__ import annotations
@@ -7,14 +7,14 @@ from typing import TYPE_CHECKING
 
 import pylibcudf as plc
 
-from cudf_streaming.streaming.table_chunk import TableChunk
+from cudf_streaming.table_chunk import TableChunk
+from cudf_streaming.testing import assert_eq
 from rapidsmpf.streaming.core.actor import run_actor_network
 from rapidsmpf.streaming.core.leaf_actor import (
     pull_from_channel,
     push_to_channel,
 )
 from rapidsmpf.streaming.core.message import Message
-from rapidsmpf.testing import assert_eq
 
 if TYPE_CHECKING:
     from rapidsmpf.streaming.core.channel import Channel

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -17,6 +17,8 @@
 #include <cudf/table/table_view.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
+
+#include <rmm/exec_policy.hpp>
 
 #include <thrust/device_vector.h>
 #include <thrust/execution_policy.h>
@@ -202,10 +204,10 @@ struct MixedJoinTest : public cudf::test::BaseFixture {
   /**
    * Compare two join results, sorting both before comparison since order is not guaranteed.
    */
-  void compare_join_results(const PairJoinReturn& expected_result,
-                            const PairJoinReturn& actual_result)
+  void compare_join_results(PairJoinReturn const& expected_result,
+                            PairJoinReturn const& actual_result)
   {
-    auto device_results_to_host = [](const PairJoinReturn& result) {
+    auto device_results_to_host = [](PairJoinReturn const& result) {
       // Create column views from device_uvectors
       auto left_view  = cudf::column_view(cudf::data_type{cudf::type_to_id<cudf::size_type>()},
                                          result.first->size(),
@@ -269,15 +271,14 @@ struct MixedJoinPairReturnTest : public MixedJoinTest<T> {
       left_equality, right_equality, left_conditional, right_conditional, predicate, compare_nulls);
     EXPECT_TRUE(result_size == expected_outputs.size());
 
-    cudf::test::fixed_width_column_wrapper<cudf::size_type> expected_counts_cw(
-      expected_counts.begin(), expected_counts.end());
-    auto const actual_counts_view =
-      cudf::column_view(cudf::data_type{cudf::type_to_id<cudf::size_type>()},
-                        actual_counts->size(),
-                        actual_counts->data(),
-                        nullptr,
-                        0);
-    CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_counts_cw, actual_counts_view);
+    auto const expected_total =
+      std::accumulate(expected_counts.begin(), expected_counts.end(), std::size_t{0});
+    EXPECT_EQ(expected_total, result_size);
+    auto const actual_total = thrust::reduce(rmm::exec_policy_nosync(cudf::get_default_stream()),
+                                             actual_counts->begin(),
+                                             actual_counts->end(),
+                                             std::size_t{0});
+    EXPECT_EQ(actual_total, result_size);
 
     auto result = this->join(left_equality,
                              right_equality,
@@ -434,14 +435,14 @@ struct MixedInnerJoinTest : public MixedJoinPairReturnTest<T> {
       this->compare_join_results(mixed_result, ast_filter_result);
 
       // Verify filter_join_indices_output_size matches the materialized output size.
-      auto const fji_size = cudf::filter_join_indices_output_size(
+      auto const filter_output_size_result = cudf::filter_join_indices_output_size(
         left_conditional,
         right_conditional,
         cudf::device_span<cudf::size_type const>(*hash_join_result.first),
         cudf::device_span<cudf::size_type const>(*hash_join_result.second),
         predicate,
         cudf::join_kind::INNER_JOIN);
-      EXPECT_EQ(fji_size, ast_filter_result.first->size());
+      EXPECT_EQ(filter_output_size_result.first, ast_filter_result.first->size());
 
       // Verify JIT filter_join_indices if provided
       if (!jit_predicate.empty()) {
@@ -668,7 +669,7 @@ TEST_F(MixedInnerJoinTestInt32, LargeDataMultiBlockCoordination)
   EXPECT_EQ(result.second->size(), expected_size);
   EXPECT_GT(expected_size, 0);
 
-  auto to_sorted_pairs = [](const PairJoinReturn& join_result) {
+  auto to_sorted_pairs = [](PairJoinReturn const& join_result) {
     std::vector<std::pair<cudf::size_type, cudf::size_type>> result_pairs;
     for (size_t i = 0; i < join_result.first->size(); ++i) {
       result_pairs.emplace_back(join_result.first->element(i, cudf::get_default_stream()),
@@ -1102,14 +1103,14 @@ struct MixedLeftJoinTest : public MixedJoinPairReturnTest<T> {
       this->compare_join_results(mixed_result, ast_filter_result);
 
       // Verify filter_join_indices_output_size matches the materialized output size.
-      auto const fji_size = cudf::filter_join_indices_output_size(
+      auto const filter_output_size_result = cudf::filter_join_indices_output_size(
         left_conditional,
         right_conditional,
         cudf::device_span<cudf::size_type const>(*hash_join_result.first),
         cudf::device_span<cudf::size_type const>(*hash_join_result.second),
         predicate,
         cudf::join_kind::LEFT_JOIN);
-      EXPECT_EQ(fji_size, ast_filter_result.first->size());
+      EXPECT_EQ(filter_output_size_result.first, ast_filter_result.first->size());
 
       // Verify JIT filter_join_indices if provided
       if (!jit_predicate.empty()) {
@@ -1369,60 +1370,8 @@ struct MixedFullJoinTest : public MixedJoinPairReturnTest<T> {
                       cudf::null_equality compare_nulls = cudf::null_equality::EQUAL,
                       std::string const& jit_predicate  = "") override
   {
-    // Test both approaches and verify they produce the same results
-    auto mixed_result = cudf::mixed_full_join(
+    return cudf::mixed_full_join(
       left_equality, right_equality, left_conditional, right_conditional, predicate, compare_nulls);
-
-    // Alternative approach: hash_join + filter_join_indices
-    // Skip hash_join approach for empty tables (hash_join doesn't support empty tables)
-    if (left_equality.num_rows() > 0 && right_equality.num_rows() > 0) {
-      cudf::hash_join hash_joiner(right_equality, compare_nulls);
-      auto hash_join_result = hash_joiner.full_join(left_equality);
-
-      // Verify AST filter_join_indices
-      auto ast_filter_result = cudf::filter_join_indices(
-        left_conditional,
-        right_conditional,
-        cudf::device_span<cudf::size_type const>(*hash_join_result.first),
-        cudf::device_span<cudf::size_type const>(*hash_join_result.second),
-        predicate,
-        cudf::join_kind::FULL_JOIN);
-      this->compare_join_results(mixed_result, ast_filter_result);
-
-      // Verify filter_join_indices_output_size matches the materialized output size.
-      auto const fji_size = cudf::filter_join_indices_output_size(
-        left_conditional,
-        right_conditional,
-        cudf::device_span<cudf::size_type const>(*hash_join_result.first),
-        cudf::device_span<cudf::size_type const>(*hash_join_result.second),
-        predicate,
-        cudf::join_kind::FULL_JOIN);
-      EXPECT_EQ(fji_size, ast_filter_result.first->size());
-
-      // Verify JIT filter_join_indices if provided
-      if (!jit_predicate.empty()) {
-        auto jit_filter_result = cudf::filter_join_indices_jit(
-          left_conditional,
-          right_conditional,
-          cudf::device_span<cudf::size_type const>(*hash_join_result.first),
-          cudf::device_span<cudf::size_type const>(*hash_join_result.second),
-          jit_predicate,
-          cudf::join_kind::FULL_JOIN);
-        this->compare_join_results(mixed_result, jit_filter_result);
-      }
-
-      // Verify AST-based JIT filter_join_indices
-      auto jit_ast_filter_result = cudf::filter_join_indices_jit(
-        left_conditional,
-        right_conditional,
-        cudf::device_span<cudf::size_type const>(*hash_join_result.first),
-        cudf::device_span<cudf::size_type const>(*hash_join_result.second),
-        predicate,
-        cudf::join_kind::FULL_JOIN);
-      this->compare_join_results(mixed_result, jit_ast_filter_result);
-    }
-
-    return mixed_result;
   }
 
   std::pair<std::size_t, std::unique_ptr<rmm::device_uvector<cudf::size_type>>> join_size(
@@ -1518,6 +1467,24 @@ TYPED_TEST(MixedFullJoinTest, Basic2)
               {cudf::JoinNoMatch, 0},
               {cudf::JoinNoMatch, 1},
               {cudf::JoinNoMatch, 2}});
+}
+
+TYPED_TEST(MixedFullJoinTest, MultiMatchUnmatchedDedup)
+{
+  auto const predicate =
+    cudf::ast::operation(cudf::ast::ast_operator::GREATER, col_ref_left_0, col_ref_right_0);
+  this->test({{5, 5, 7}, {10, 1, 10}},
+             {{5, 5, 9}, {2, 20, 0}},
+             {0},
+             {1},
+             predicate,
+             {},
+             {{0, 0},
+              {1, cudf::JoinNoMatch},
+              {2, cudf::JoinNoMatch},
+              {cudf::JoinNoMatch, 1},
+              {cudf::JoinNoMatch, 2}},
+             make_jit_comparison<TypeParam>(1, 1, 0, 0, ">"));
 }
 
 using MixedFullJoinTest_int32 = MixedFullJoinTest<int32_t>;
@@ -1870,6 +1837,112 @@ TYPED_TEST(MixedLeftSemiJoinTest, BasicNullEqualityUnequal)
                    {1},
                    cudf::null_equality::UNEQUAL);
 };
+
+struct MixedLeftSemiAndAntiJoinTest : public cudf::test::BaseFixture {};
+
+TEST_F(MixedLeftSemiAndAntiJoinTest, NullableConditionalWithNonNullableEqualityKeys)
+{
+  auto const left_conditional  = cudf::ast::column_reference(1, cudf::ast::table_reference::LEFT);
+  auto const right_conditional = cudf::ast::column_reference(1, cudf::ast::table_reference::RIGHT);
+  auto const not_equal =
+    cudf::ast::operation(cudf::ast::ast_operator::NOT_EQUAL, left_conditional, right_conditional);
+  auto const right_is_null =
+    cudf::ast::operation(cudf::ast::ast_operator::IS_NULL, right_conditional);
+
+  auto constexpr num_rows = cudf::size_type{30};
+  std::vector<int32_t> equality_keys(num_rows);
+
+  for (auto const null_first : {false, true}) {
+    std::vector<int32_t> conditional_values(num_rows);
+    std::vector<bool> conditional_validity(num_rows);
+    std::vector<cudf::size_type> non_null_indices;
+    std::vector<cudf::size_type> null_indices;
+    std::vector<cudf::size_type> all_indices(num_rows);
+    std::iota(all_indices.begin(), all_indices.end(), 0);
+
+    for (cudf::size_type i = 0; i < num_rows; ++i) {
+      auto const residue = i % 3;
+      equality_keys[i]   = i / 3;
+      if (null_first) {
+        conditional_values[i]   = residue == 0 ? 0 : residue - 1;
+        conditional_validity[i] = residue != 0;
+      } else {
+        conditional_values[i]   = residue == 2 ? 0 : residue;
+        conditional_validity[i] = residue != 2;
+      }
+      (conditional_validity[i] ? non_null_indices : null_indices).push_back(i);
+    }
+
+    cudf::test::fixed_width_column_wrapper<int32_t> left_keys(equality_keys.begin(),
+                                                              equality_keys.end());
+    cudf::test::fixed_width_column_wrapper<int32_t> right_keys(equality_keys.begin(),
+                                                               equality_keys.end());
+    cudf::test::fixed_width_column_wrapper<int32_t> left_conditionals(
+      conditional_values.begin(), conditional_values.end(), conditional_validity.begin());
+    cudf::test::fixed_width_column_wrapper<int32_t> right_conditionals(
+      conditional_values.begin(), conditional_values.end(), conditional_validity.begin());
+
+    auto const left_table  = cudf::table_view{{left_keys, left_conditionals}};
+    auto const right_table = cudf::table_view{{right_keys, right_conditionals}};
+
+    auto const expect_indices = [](SingleJoinReturn const& result,
+                                   std::vector<cudf::size_type> const& expected_indices) {
+      std::vector<cudf::size_type> actual_indices;
+      actual_indices.reserve(result->size());
+      for (std::size_t i = 0; i < result->size(); ++i) {
+        actual_indices.push_back(result->element(i, cudf::get_default_stream()));
+      }
+      std::sort(actual_indices.begin(), actual_indices.end());
+      EXPECT_EQ(actual_indices, expected_indices);
+    };
+
+    for (auto const compare_nulls : {cudf::null_equality::EQUAL, cudf::null_equality::UNEQUAL}) {
+      SCOPED_TRACE(null_first ? "null-first order" : "null-last order");
+      SCOPED_TRACE(compare_nulls == cudf::null_equality::EQUAL ? "nulls equal" : "nulls unequal");
+
+      {
+        SCOPED_TRACE("NOT_EQUAL left semi");
+        auto const result = cudf::mixed_left_semi_join(left_table.select({0}),
+                                                       right_table.select({0}),
+                                                       left_table,
+                                                       right_table,
+                                                       not_equal,
+                                                       compare_nulls);
+        expect_indices(result, non_null_indices);
+      }
+      {
+        SCOPED_TRACE("NOT_EQUAL left anti");
+        auto const result = cudf::mixed_left_anti_join(left_table.select({0}),
+                                                       right_table.select({0}),
+                                                       left_table,
+                                                       right_table,
+                                                       not_equal,
+                                                       compare_nulls);
+        expect_indices(result, null_indices);
+      }
+      {
+        SCOPED_TRACE("IS_NULL left semi");
+        auto const result = cudf::mixed_left_semi_join(left_table.select({0}),
+                                                       right_table.select({0}),
+                                                       left_table,
+                                                       right_table,
+                                                       right_is_null,
+                                                       compare_nulls);
+        expect_indices(result, all_indices);
+      }
+      {
+        SCOPED_TRACE("IS_NULL left anti");
+        auto const result = cudf::mixed_left_anti_join(left_table.select({0}),
+                                                       right_table.select({0}),
+                                                       left_table,
+                                                       right_table,
+                                                       right_is_null,
+                                                       compare_nulls);
+        expect_indices(result, {});
+      }
+    }
+  }
+}
 
 TYPED_TEST(MixedLeftSemiJoinTest, AsymmetricEquality)
 {

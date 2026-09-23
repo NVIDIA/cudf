@@ -1,6 +1,6 @@
 /**
- * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights
- * reserved. SPDX-License-Identifier: Apache-2.0
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
  */
 
 #pragma once
@@ -30,8 +30,8 @@ struct groupby_request {
  * @note Grouped chunks are not further grouped together.
  *
  * @param ctx Streaming context.
- * @param ch_in `TableChunk`s to aggregate
- * @param ch_out Output channel of grouped `TableChunk`s
+ * @param ch_in `table_chunk`s to aggregate
+ * @param ch_out Output channel of grouped `table_chunk`s
  * @param keys Column indices of the key columns in the input channel.
  * @param requests Vector of aggregation requests referencing columns in the input
  * channel.

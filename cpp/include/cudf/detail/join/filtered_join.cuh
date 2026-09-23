@@ -1,28 +1,35 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
 
-#include <cudf/detail/cuco_helpers.hpp>
-#include <cudf/detail/join/join.hpp>
-#include <cudf/detail/row_operator/equality.cuh>
-#include <cudf/detail/row_operator/hashing.cuh>
-#include <cudf/detail/row_operator/primitive_row_operators.cuh>
+#include <cudf/detail/row_operator/common_utils.cuh>
+#include <cudf/hashing.hpp>
 #include <cudf/join/join.hpp>
 #include <cudf/table/table_view.hpp>
-#include <cudf/utilities/default_stream.hpp>
-#include <cudf/utilities/memory_resource.hpp>
+#include <cudf/types.hpp>
+#include <cudf/utilities/span.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
+#include <rmm/device_uvector.hpp>
 #include <rmm/mr/polymorphic_allocator.hpp>
 #include <rmm/resource_ref.hpp>
 
 #include <cuco/bucket_storage.cuh>
 #include <cuco/extent.cuh>
-#include <cuco/static_set_ref.cuh>
+#include <cuco/pair.cuh>
+#include <cuco/probing_scheme.cuh>
 #include <cuco/types.cuh>
-#include <cuda/std/type_traits>
+#include <cuda/stream>
+
+#include <cstddef>
+#include <cstdint>
+#include <limits>
+#include <memory>
+
+namespace cudf::detail::row::equality {
+struct preprocessed_table;
+}
 
 namespace cudf {
 namespace detail {
@@ -31,20 +38,13 @@ using cudf::detail::row::lhs_index_type;
 using cudf::detail::row::rhs_index_type;
 
 /**
- * @brief Base class providing common functionality for filtered join operations.
+ * @brief Implementation of filtered join using set hash tables.
  *
- * This abstract class implements the core components needed for hash-based semi
- * and anti join operations.
+ * Implements hash-based semi and anti joins using set semantics, where duplicate
+ * keys are not stored in the hash table.
  */
 class filtered_join {
  public:
-  /**
-   * @brief Properties of the right table used in the join operation
-   */
-  struct right_properties {
-    bool has_nested_columns;  ///< True if the right table contains nested columns
-  };
-
   /**
    * @brief Adapter for insertion operations in the hash table
    *
@@ -89,7 +89,7 @@ class filtered_join {
   struct key_pair_fn {
     CUDF_HOST_DEVICE constexpr key_pair_fn(Hasher const& hasher) : _hasher{hasher} {}
 
-    __device__ __forceinline__ auto operator()(size_type i) const noexcept
+    __device__ __forceinline__ cuco::pair<hash_value_type, T> operator()(size_type i) const noexcept
     {
       return cuco::pair{_hasher(i), T{i}};
     }
@@ -122,7 +122,7 @@ class filtered_join {
   };
 
   /**
-   * @brief Constructor for filtered_join base class
+   * @brief Constructor for filtered_join
    *
    * Initializes the hash table with the right table and prepares it for join operations.
    *
@@ -130,34 +130,61 @@ class filtered_join {
    * @param compare_nulls How null values should be compared
    * @param load_factor Target load factor for the hash table
    * @param stream CUDA stream on which to perform operations
+   * @param mr Device memory resource used to allocate the internal hash table
    */
   filtered_join(cudf::table_view const& right,
                 cudf::null_equality compare_nulls,
                 double load_factor,
-                rmm::cuda_stream_view stream);
+                cuda::stream_ref stream,
+                cuda::mr::any_resource<cuda::mr::device_accessible> mr);
 
   /**
-   * Virtual semi join function overridden in derived classes
+   * @brief Returns indices of left table rows that have matching keys in the right table
    */
-  virtual std::unique_ptr<rmm::device_uvector<cudf::size_type>> semi_join(
+  std::unique_ptr<rmm::device_uvector<cudf::size_type>> semi_join(
+    cudf::table_view const& left, cuda::stream_ref stream, rmm::device_async_resource_ref mr);
+
+  /**
+   * @brief Returns indices of left table rows that do not have matching keys in the right table
+   */
+  std::unique_ptr<rmm::device_uvector<cudf::size_type>> anti_join(
+    cudf::table_view const& left, cuda::stream_ref stream, rmm::device_async_resource_ref mr);
+
+ private:
+  std::unique_ptr<rmm::device_uvector<cudf::size_type>> semi_anti_join(
     cudf::table_view const& left,
-    rmm::cuda_stream_view stream,
-    rmm::device_async_resource_ref mr) = 0;
+    join_kind kind,
+    cuda::stream_ref stream,
+    rmm::device_async_resource_ref mr);
 
-  /**
-   * Virtual anti join function overridden in derived classes
-   */
-  virtual std::unique_ptr<rmm::device_uvector<cudf::size_type>> anti_join(
+  // Queries the hash table for every left row and writes the matches to contains_map.
+  template <int32_t CGSize, typename Iterator, typename Ref>
+  void query_right_table(cudf::table_view const& left,
+                         Iterator left_iter,
+                         Ref query_ref,
+                         cudf::device_span<bool> contains_map,
+                         cuda::stream_ref stream);
+
+  void query_right_table_primitive(
     cudf::table_view const& left,
-    rmm::cuda_stream_view stream,
-    rmm::device_async_resource_ref mr) = 0;
+    std::shared_ptr<cudf::detail::row::equality::preprocessed_table> const& preprocessed_left,
+    cudf::device_span<bool> contains_map,
+    cuda::stream_ref stream);
 
-  /**
-   * Virtual abstract base class destructor
-   */
-  virtual ~filtered_join() = default;
+  void query_right_table_flat(
+    cudf::table_view const& left,
+    std::shared_ptr<cudf::detail::row::equality::preprocessed_table> const& preprocessed_left,
+    cudf::device_span<bool> contains_map,
+    cuda::stream_ref stream);
 
- protected:
+  void query_right_table_nested(
+    cudf::table_view const& left,
+    std::shared_ptr<cudf::detail::row::equality::preprocessed_table> const& preprocessed_left,
+    cudf::device_span<bool> contains_map,
+    cuda::stream_ref stream);
+
+  enum class row_operator_mode : uint8_t { PRIMITIVE, FLAT, NESTED };
+
   // Key type used in the hash table
   using key = cuco::pair<hash_value_type, lhs_index_type>;
 
@@ -168,61 +195,47 @@ class filtered_join {
                          cuco::extent<std::size_t>,
                          rmm::mr::polymorphic_allocator<char>>;
 
-  // Hasher for primitive row types
-  using primitive_row_hasher =
-    cudf::detail::row::primitive::row_hasher<cudf::hashing::detail::default_hash>;
-  // Linear probing scheme with bucket size 1 for primitive types
-  using primitive_probing_scheme = cuco::linear_probing<1, hash_extract_fn>;
-  // Equality comparator for primitive rows
-  using primitive_row_comparator = cudf::detail::row::primitive::row_equality_comparator;
-
-  // Hasher for complex row types with compile-time null handling
-  using row_hasher =
-    cudf::detail::row::hash::device_row_hasher<cudf::hashing::detail::default_hash, nullate::YES>;
-  // Linear probing scheme with bucket size 4 for nested data structures
+  using single_probing_scheme = cuco::linear_probing<1, hash_extract_fn>;
+  // Nested rows use four cooperating threads per probe.
   using nested_probing_scheme = cuco::linear_probing<4, hash_extract_fn>;
-  // Linear probing scheme with bucket size 1 for simple data
-  using simple_probing_scheme = cuco::linear_probing<1, hash_extract_fn>;
-  // Equality comparator for complex rows with null handling and NaN comparison
-  using row_comparator = cudf::detail::row::equality::device_row_comparator<
-    true,
-    cudf::nullate::YES,
-    cudf::detail::row::equality::nan_equal_physical_equality_comparator>;
 
+  row_operator_mode const _right_mode;
   storage_type _bucket_storage;  ///< Storage for hash table buckets
 
   // Empty sentinel key used to mark empty slots in the hash table
   static constexpr auto empty_sentinel_key = cuco::empty_key{
     cuco::pair{std::numeric_limits<hash_value_type>::max(), lhs_index_type{cudf::JoinNoMatch}}};
-  right_properties _right_props;           ///< Properties of the right table
   cudf::table_view _right;                 ///< input table used to build the hash map
   cudf::null_equality const _nulls_equal;  ///< whether to consider nulls as equal
   std::shared_ptr<cudf::detail::row::equality::preprocessed_table>
     _preprocessed_right;  ///< input table preprocessed for row operators
 
-  /**
-   * @brief Populates the hash table with the right table
-   *
-   * @tparam CGSize CUDA cooperative group size
-   * @tparam Ref Reference type for the hash table
-   * @param insert_ref Reference to the hash table for insertion
-   * @param stream CUDA stream on which to perform operations
-   */
-  template <int32_t CGSize, typename Ref>
-  void insert_right_table(Ref const& insert_ref, rmm::cuda_stream_view stream);
+  // Build and probe row operators must use matching nullate modes. Since probe nullability is
+  // unknown at build time, primitive paths use DYNAMIC true and other paths use YES.
+  void insert_right_table_primitive(cuda::stream_ref stream);
+  // Populates the hash table from the right-row iterator.
+  template <int32_t CGSize, typename Iterator, typename Ref>
+  void insert_right_table(Iterator right_iter, Ref const& insert_ref, cuda::stream_ref stream);
 
- private:
+  void insert_right_table_flat(cuda::stream_ref stream);
+  void insert_right_table_nested(cuda::stream_ref stream);
+
   /**
    * @brief Calculates the required storage size for the hash table
    *
    * Computes the appropriate size for the bucket storage based on the input
    * table size and desired load factor.
    *
-   * @param tbl Table for which to calculate storage
+   * @param num_rows Number of rows to store
    * @param load_factor Target load factor for the hash table
+   * @param mode Row-operator mode used by the hash table
    * @return Calculated bucket storage size
    */
-  auto compute_bucket_storage_size(cudf::table_view tbl, double load_factor);
+  static std::size_t compute_bucket_storage_size(cudf::size_type num_rows,
+                                                 double load_factor,
+                                                 row_operator_mode mode);
+
+  static row_operator_mode select_row_operator_mode(cudf::table_view const& table);
 };
 
 }  // namespace detail

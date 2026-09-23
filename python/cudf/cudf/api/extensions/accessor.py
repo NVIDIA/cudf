@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import warnings
@@ -60,7 +60,7 @@ _dataframe_example = """
 
         >>> df = cudf.DataFrame({'x': [1,2,3,4,5,6], 'y':[7,6,5,4,3,2]})
         >>> df.point.bounding_box
-        (1, 2, 6, 7)
+        (np.int64(1), np.int64(2), np.int64(6), np.int64(7))
 
 """
 
@@ -79,11 +79,11 @@ _index_example = """
 
         >>> gs = cudf.Index(list(range(0, 50)))
         >>> gs.odd[1]
-        1
+        np.int64(1)
         >>> gs.odd[2]
-        3
+        np.int64(3)
         >>> gs.odd[3]
-        5
+        np.int64(5)
 
 """
 
@@ -102,11 +102,11 @@ _series_example = """
 
         >>> gs = cudf.Series(list(range(0, 50)))
         >>> gs.odd[1]
-        1
+        np.int64(1)
         >>> gs.odd[2]
-        3
+        np.int64(3)
         >>> gs.odd[3]
-        5
+        np.int64(5)
 
 """
 

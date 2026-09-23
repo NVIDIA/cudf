@@ -1,6 +1,6 @@
 /**
- * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights
- * reserved. SPDX-License-Identifier: Apache-2.0
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
  */
 
 #pragma once
@@ -10,15 +10,13 @@
 #include <cudf/utilities/error.hpp>
 #include <cudf/wrappers/timestamps.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
+#include <cudf_streaming/parquet.hpp>
+#include <cudf_streaming/table_chunk.hpp>
 
 #include <cuda/memory_resource>
+#include <cuda/stream>
 
-#include <cudf_streaming/streaming/parquet.hpp>
-#include <cudf_streaming/streaming/table_chunk.hpp>
-#include <mpi.h>
 #include <rapidsmpf/communicator/communicator.hpp>
-#include <rapidsmpf/communicator/mpi.hpp>
 #include <rapidsmpf/memory/buffer_resource.hpp>
 #include <rapidsmpf/owning_wrapper.hpp>
 #include <rapidsmpf/streaming/core/actor.hpp>
@@ -26,10 +24,13 @@
 #include <rapidsmpf/streaming/core/context.hpp>
 
 #include <any>
+#include <array>
 #include <chrono>
 #include <map>
 #include <memory>
+#include <optional>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -93,11 +94,10 @@ namespace detail {
  * @return Filter expression with proper lifetime management
  */
 template <typename timestamp_type>
-std::unique_ptr<cudf_streaming::streaming::Filter> make_date_filter(
-  rmm::cuda_stream_view stream,
-  cuda::std::chrono::year_month_day date,
-  std::string const& column_name,
-  cudf::ast::ast_operator op)
+std::unique_ptr<cudf_streaming::filter> make_date_filter(cuda::stream_ref stream,
+                                                         cuda::std::chrono::year_month_day date,
+                                                         std::string const& column_name,
+                                                         cudf::ast::ast_operator op)
 {
   auto owner    = new std::vector<std::any>;
   auto sys_days = cuda::std::chrono::sys_days(date);
@@ -110,7 +110,7 @@ std::unique_ptr<cudf_streaming::streaming::Filter> make_date_filter(
     op,
     *std::any_cast<std::shared_ptr<cudf::ast::column_name_reference>>(owner->at(2)),
     *std::any_cast<std::shared_ptr<cudf::ast::literal>>(owner->at(1))));
-  return std::make_unique<cudf_streaming::streaming::Filter>(
+  return std::make_unique<cudf_streaming::filter>(
     stream,
     *std::any_cast<std::shared_ptr<cudf::ast::operation>>(owner->back()),
     OwningWrapper(static_cast<void*>(owner),
@@ -133,8 +133,8 @@ std::unique_ptr<cudf_streaming::streaming::Filter> make_date_filter(
  * @return Filter expression with proper lifetime management
  */
 template <typename timestamp_type>
-std::unique_ptr<cudf_streaming::streaming::Filter> make_date_range_filter(
-  rmm::cuda_stream_view stream,
+std::unique_ptr<cudf_streaming::filter> make_date_range_filter(
+  cuda::stream_ref stream,
   cuda::std::chrono::year_month_day start_date,
   cuda::std::chrono::year_month_day end_date,
   std::string const& column_name)
@@ -174,7 +174,7 @@ std::unique_ptr<cudf_streaming::streaming::Filter> make_date_range_filter(
     *std::any_cast<std::shared_ptr<cudf::ast::operation>>(owner->at(5)),
     *std::any_cast<std::shared_ptr<cudf::ast::operation>>(owner->at(6))));
 
-  return std::make_unique<cudf_streaming::streaming::Filter>(
+  return std::make_unique<cudf_streaming::filter>(
     stream,
     *std::any_cast<std::shared_ptr<cudf::ast::operation>>(owner->back()),
     OwningWrapper(static_cast<void*>(owner),
@@ -198,7 +198,7 @@ std::unique_ptr<cudf_streaming::streaming::Filter> make_date_range_filter(
  * @param ctx Streaming context
  * @param ch Channel to consume messages from.
  *
- * @note If the channel contains `TableChunk`s, moves them to device and prints small
+ * @note If the channel contains `table_chunk`s, moves them to device and prints small
  * amount of detail about them (row and column count).
  *
  * @return Coroutine representing consuming and discarding messages in channel.
@@ -214,12 +214,30 @@ enum class CommType : std::uint8_t {
   MAX,     ///< Max value
 };
 
+[[nodiscard]] constexpr std::array<std::string_view, static_cast<std::size_t>(CommType::MAX)>
+comm_type_names()
+{
+  return {"single", "mpi", "ucxx"};
+}
+
+[[nodiscard]] bool is_comm_type_available(CommType comm_type);
+
+[[nodiscard]] std::string available_comm_types();
+
+[[nodiscard]] std::optional<CommType> parse_comm_type(std::string_view name);
+
 ///< @brief Configuration options for the query
 struct ProgramOptions {
-  int num_streaming_threads{1};        ///< Number of streaming threads to use
-  int num_iterations{2};               ///< Number of iterations of query to run
-  int num_streams{16};                 ///< Number of streams in stream pool
+  int num_streaming_threads{1};  ///< Number of streaming threads to use
+  int num_iterations{2};         ///< Number of iterations of query to run
+  int num_streams{16};           ///< Number of streams in stream pool
+#ifdef CUDF_STREAMING_HAVE_UCXX
   CommType comm_type{CommType::UCXX};  ///< Type of communicator to create
+#elif defined(CUDF_STREAMING_HAVE_MPI)
+  CommType comm_type{CommType::MPI};  ///< Type of communicator to create
+#else
+  CommType comm_type{CommType::SINGLE};  ///< Type of communicator to create
+#endif
   std::optional<std::chrono::milliseconds>
     periodic_spill;  ///< Duration between background periodic spilling checks
   cudf::size_type num_rows_per_chunk{100'000'000};  ///< Number of rows to produce per chunk read
@@ -255,13 +273,6 @@ std::pair<std::shared_ptr<streaming::Context>, std::shared_ptr<Communicator>> cr
  * @brief Finalize MPI when going out of scope.
  */
 struct FinalizeMPI {
-  ~FinalizeMPI() noexcept
-  {
-    if (rapidsmpf::mpi::is_initialized()) {
-      int flag;
-      RAPIDSMPF_MPI(MPI_Finalized(&flag));
-      if (!flag) { RAPIDSMPF_MPI(MPI_Finalize()); }
-    }
-  }
+  ~FinalizeMPI() noexcept;
 };
 }  // namespace rapidsmpf::ndsh

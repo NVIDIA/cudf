@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -68,7 +68,7 @@
 [[nodiscard]] std::unique_ptr<cudf::column> calculate_revenue(
   cudf::column_view const& extendedprice,
   cudf::column_view const& discount,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref())
 {
   auto const one = cudf::numeric_scalar<double>(1);
@@ -160,7 +160,7 @@ void ndsh_q10(nvbench::state& state)
     scale_factor, {"customer", "orders", "lineitem", "nation"}, sources);
 
   auto stream = cudf::get_default_stream();
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.value()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.get()));
   auto const mem_stats_logger = cudf::memory_stats_logger();
   state.exec(nvbench::exec_tag::sync,
              [&](nvbench::launch& launch) { run_ndsh_q10(state, sources); });

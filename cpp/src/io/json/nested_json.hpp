@@ -1,11 +1,12 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
 #pragma once
 
 #include <cudf/io/detail/tokenize_json.hpp>
+#include <cudf/io/json.hpp>
 #include <cudf/io/types.hpp>
 #include <cudf/types.hpp>
 #include <cudf/utilities/export.hpp>
@@ -56,6 +57,8 @@ enum class stack_behavior_t : char {
 // Default name for a list's child column
 constexpr auto list_child_name{"element"};
 
+using schema_mismatch_rows = cudf::io::json_reader_row_diagnostics::schema_mismatch_rows;
+
 /**
  * @brief Intermediate representation of data from a nested JSON input
  */
@@ -69,8 +72,8 @@ struct json_column {
   std::vector<row_offset_t> string_offsets;
   std::vector<row_offset_t> string_lengths;
 
-  // Row offsets
-  std::vector<row_offset_t> child_offsets;
+  // Row offsets (LIST offsets child data; always 32-bit)
+  std::vector<int32_t> child_offsets;
 
   // Validity bitmap
   std::vector<bitmask_type> validity;
@@ -145,8 +148,8 @@ struct device_json_column {
   rmm::device_uvector<row_offset_t> string_offsets;
   rmm::device_uvector<row_offset_t> string_lengths;
 
-  // Row offsets
-  rmm::device_uvector<row_offset_t> child_offsets;
+  // Row offsets (LIST offsets child data; always 32-bit)
+  rmm::device_uvector<int32_t> child_offsets;
 
   // Validity bitmap
   rmm::device_buffer validity;
@@ -170,6 +173,9 @@ struct device_json_column {
   // O(1) and naturally deduplicates names.
   std::unordered_set<std::string> schema_mismatch_column_names;
 
+  // Row-level schema mismatch diagnostics, stored only on the root column.
+  std::vector<schema_mismatch_rows> rows_with_schema_mismatch;
+
   /**
    * @brief Construct a new d json column object
    *
@@ -179,7 +185,7 @@ struct device_json_column {
    * @param stream The CUDA stream to which kernels are dispatched
    * @param mr Optional, resource with which to allocate
    */
-  device_json_column(rmm::cuda_stream_view stream, rmm::device_async_resource_ref mr)
+  device_json_column(cuda::stream_ref stream, rmm::device_async_resource_ref mr)
     : string_offsets(0, stream),
       string_lengths(0, stream),
       child_offsets(0, stream, mr),
@@ -232,7 +238,7 @@ std::tuple<compressed_sparse_row, column_tree_properties> reduce_to_column_tree(
   device_span<size_type const> row_offsets,
   bool is_array_of_arrays,
   NodeIndexT row_array_parent_col_id,
-  rmm::cuda_stream_view stream);
+  cuda::stream_ref stream);
 
 }  // namespace detail
 }  // namespace experimental
@@ -260,7 +266,7 @@ void get_stack_context(device_span<SymbolT const> json_in,
                        SymbolT* d_top_of_stack,
                        stack_behavior_t stack_behavior,
                        SymbolT delimiter,
-                       rmm::cuda_stream_view stream);
+                       cuda::stream_ref stream);
 
 /**
  * @brief Post-processes a token stream that may contain tokens from invalid lines. Expects that the
@@ -275,7 +281,7 @@ CUDF_EXPORT
 std::pair<rmm::device_uvector<PdaTokenT>, rmm::device_uvector<SymbolOffsetT>> process_token_stream(
   device_span<PdaTokenT const> tokens,
   device_span<SymbolOffsetT const> token_indices,
-  rmm::cuda_stream_view stream);
+  cuda::stream_ref stream);
 
 /**
  * @brief Validate the tokens conforming to behavior given in options.
@@ -291,7 +297,7 @@ void validate_token_stream(device_span<char const> d_input,
                            device_span<PdaTokenT> tokens,
                            device_span<SymbolOffsetT> token_indices,
                            cudf::io::json_reader_options const& options,
-                           rmm::cuda_stream_view stream);
+                           cuda::stream_ref stream);
 
 /**
  * @brief Parses the given JSON string and generates a tree representation of the given input.
@@ -308,7 +314,7 @@ CUDF_EXPORT
 tree_meta_t get_tree_representation(device_span<PdaTokenT const> tokens,
                                     device_span<SymbolOffsetT const> token_indices,
                                     bool is_strict_nested_boundaries,
-                                    rmm::cuda_stream_view stream,
+                                    cuda::stream_ref stream,
                                     rmm::device_async_resource_ref mr);
 
 /**
@@ -333,7 +339,7 @@ records_orient_tree_traversal(device_span<SymbolT const> d_input,
                               bool is_array_of_arrays,
                               bool is_enabled_lines,
                               bool is_enabled_experimental,
-                              rmm::cuda_stream_view stream,
+                              cuda::stream_ref stream,
                               rmm::device_async_resource_ref mr);
 
 /**
@@ -354,7 +360,7 @@ std::pair<rmm::device_uvector<NodeIndexT>, rmm::device_uvector<NodeIndexT>>
 get_array_children_indices(TreeDepthT row_array_children_level,
                            device_span<TreeDepthT const> node_levels,
                            device_span<NodeIndexT const> parent_node_ids,
-                           rmm::cuda_stream_view stream);
+                           cuda::stream_ref stream);
 
 /**
  * @brief Reduces node tree representation to column tree representation.
@@ -379,7 +385,7 @@ reduce_to_column_tree(tree_meta_t const& tree,
                       device_span<size_type const> row_offsets,
                       bool is_array_of_arrays,
                       NodeIndexT const row_array_parent_col_id,
-                      rmm::cuda_stream_view stream);
+                      cuda::stream_ref stream);
 /**
  * @brief Constructs `d_json_column` from node tree representation
  * Newly constructed columns are insert into `root`'s children.
@@ -391,6 +397,7 @@ reduce_to_column_tree(tree_meta_t const& tree,
  * @param row_offsets Row offsets of the nodes in the tree
  * @param root Root node of the `d_json_column` tree
  * @param is_array_of_arrays Whether the tree is an array of arrays
+ * @param collect_schema_mismatch_rows Whether to collect row-level schema mismatch diagnostics
  * @param options Parsing options specifying the parsing behaviour
  * options affecting behaviour are
  *   is_enabled_lines: Whether the input is a line-delimited JSON
@@ -405,8 +412,9 @@ void make_device_json_column(device_span<SymbolT const> input,
                              device_span<size_type const> row_offsets,
                              device_json_column& root,
                              bool is_array_of_arrays,
+                             bool collect_schema_mismatch_rows,
                              cudf::io::json_reader_options const& options,
-                             rmm::cuda_stream_view stream,
+                             cuda::stream_ref stream,
                              rmm::device_async_resource_ref mr);
 
 /**
@@ -417,7 +425,7 @@ void make_device_json_column(device_span<SymbolT const> input,
  * @param stream The CUDA stream to which kernels are dispatched
  */
 cudf::io::parse_options parsing_options(cudf::io::json_reader_options const& options,
-                                        rmm::cuda_stream_view stream);
+                                        cuda::stream_ref stream);
 
 /**
  * @brief Parses the given JSON string and generates table from the given input.
@@ -433,7 +441,7 @@ cudf::io::parse_options parsing_options(cudf::io::json_reader_options const& opt
 CUDF_EXPORT
 table_with_metadata device_parse_nested_json(device_span<SymbolT const> input,
                                              cudf::io::json_reader_options const& options,
-                                             rmm::cuda_stream_view stream,
+                                             cuda::stream_ref stream,
                                              rmm::device_async_resource_ref mr);
 
 /**
@@ -442,6 +450,7 @@ table_with_metadata device_parse_nested_json(device_span<SymbolT const> input,
 struct device_parse_nested_json_result {
   table_with_metadata data;
   std::vector<std::string> top_level_columns_with_schema_mismatch;
+  std::vector<schema_mismatch_rows> top_level_columns_with_schema_mismatch_rows;
 };
 
 /**
@@ -451,6 +460,7 @@ struct device_parse_nested_json_result {
  *
  * @param input The JSON input
  * @param options Parsing options specifying the parsing behaviour
+ * @param collect_schema_mismatch_rows Whether to collect row-level schema mismatch diagnostics
  * @param stream The CUDA stream to which kernels are dispatched
  * @param mr Optional, resource with which to allocate
  * @return The parsed data plus the list of mismatched top-level column names
@@ -459,7 +469,8 @@ CUDF_EXPORT
 device_parse_nested_json_result device_parse_nested_json_with_diagnostics(
   device_span<SymbolT const> input,
   cudf::io::json_reader_options const& options,
-  rmm::cuda_stream_view stream,
+  bool collect_schema_mismatch_rows,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr);
 
 /**
@@ -471,7 +482,7 @@ device_parse_nested_json_result device_parse_nested_json_with_diagnostics(
  * @return The empty column
  */
 std::unique_ptr<column> make_empty_column(schema_element const& schema,
-                                          rmm::cuda_stream_view stream,
+                                          cuda::stream_ref stream,
                                           rmm::device_async_resource_ref mr);
 
 /**
@@ -485,7 +496,7 @@ std::unique_ptr<column> make_empty_column(schema_element const& schema,
  */
 std::unique_ptr<column> make_all_nulls_column(schema_element const& schema,
                                               size_type num_rows,
-                                              rmm::cuda_stream_view stream,
+                                              cuda::stream_ref stream,
                                               rmm::device_async_resource_ref mr);
 
 /**

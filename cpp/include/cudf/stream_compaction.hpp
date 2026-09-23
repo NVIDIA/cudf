@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -17,12 +17,15 @@
 #include <variant>
 #include <vector>
 
+/**
+ * @file
+ * @brief Column APIs for filtering rows
+ */
+
 namespace CUDF_EXPORT cudf {
 /**
  * @addtogroup reorder_compact
  * @{
- * @file
- * @brief Column APIs for filtering rows
  */
 
 namespace ast {
@@ -71,7 +74,7 @@ std::unique_ptr<table> drop_nulls(
   table_view const& input,
   std::vector<size_type> const& keys,
   cudf::size_type keep_threshold,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -104,7 +107,7 @@ std::unique_ptr<table> drop_nulls(
 std::unique_ptr<table> drop_nulls(
   table_view const& input,
   std::vector<size_type> const& keys,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -149,7 +152,7 @@ std::unique_ptr<table> drop_nans(
   table_view const& input,
   std::vector<size_type> const& keys,
   cudf::size_type keep_threshold,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -183,35 +186,54 @@ std::unique_ptr<table> drop_nans(
 std::unique_ptr<table> drop_nans(
   table_view const& input,
   std::vector<size_type> const& keys,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
- * @brief Filters `input` using `boolean_mask` of boolean values as a mask.
+ * @brief Filters `input` using `retention_mask` of boolean values as a mask.
  *
  * Given an input `table_view` and a mask `column_view`, an element `i` from
  * each column_view of the `input` is copied to the corresponding output column
  * if the corresponding element `i` in the mask is non-null and `true`.
  * This operation is stable: the input order is preserved.
  *
- * @note if @p input.num_rows() is zero, there is no error, and an empty table
- * is returned.
+ * @note If @p retention_mask is empty, or @p input has zero rows, an empty table is returned.
  *
- * @throws cudf::logic_error if `input.num_rows() != boolean_mask.size()`.
- * @throws cudf::logic_error if `boolean_mask` is not `type_id::BOOL8` type.
+ * @throws cudf::logic_error if non-empty @p input has different number of rows than @p
+ * retention_mask.
+ * @throws cudf::logic_error if @p retention_mask is not `type_id::BOOL8` type.
  *
  * @param[in] input The input table_view to filter
- * @param[in] boolean_mask A nullable column_view of type type_id::BOOL8 used
+ * @param[in] retention_mask A nullable column_view of type type_id::BOOL8 used
  * as a mask to filter the `input`.
  * @param[in] stream CUDA stream used for device memory operations and kernel launches
  * @param[in] mr Device memory resource used to allocate the returned table's device memory
- * @return Table containing copy of all rows of @p input passing
- * the filter defined by @p boolean_mask.
+ * @return Table containing copy of all rows of @p input passing the filter defined by
+ * @p retention_mask.
  */
-std::unique_ptr<table> apply_boolean_mask(
+std::unique_ptr<table> apply_retention_mask(
+  table_view const& input,
+  column_view const& retention_mask,
+  cuda::stream_ref stream           = cudf::get_default_stream(),
+  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+
+/**
+ * @brief Filters `input` using `boolean_mask` of boolean values as a mask.
+ *
+ * @deprecated in release 26.10. Use `apply_retention_mask` instead.
+ *
+ * @param[in] input The input table_view to filter.
+ * @param[in] boolean_mask A nullable column_view of type type_id::BOOL8 used
+ * as a mask to filter `input`.
+ * @param[in] stream CUDA stream used for device memory operations and kernel launches.
+ * @param[in] mr Device memory resource used to allocate the returned table's device memory.
+ * @return Table containing copies of all rows of @p input passing the filter defined by
+ * @p boolean_mask.
+ */
+[[deprecated("Use apply_retention_mask() instead")]] std::unique_ptr<table> apply_boolean_mask(
   table_view const& input,
   column_view const& boolean_mask,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -222,24 +244,25 @@ std::unique_ptr<table> apply_boolean_mask(
  * if the corresponding element `i` in the mask is non-null and `false`.
  * This operation is stable: the input order is preserved.
  *
- * @note if @p input.num_rows() is zero, there is no error, and an empty table
- * is returned.
+ * @note If @p deletion_mask is empty, a copy of @p input is returned. If @p input has zero rows,
+ * an empty table is returned.
  *
- * @throws cudf::logic_error if `input.num_rows() != deletion_mask.size()`.
- * @throws cudf::logic_error if `deletion_mask` is not `type_id::BOOL8` type.
+ * @throws cudf::logic_error if non-empty @p input has different number of rows than @p
+ * deletion_mask.
+ * @throws cudf::logic_error if @p deletion_mask is not `type_id::BOOL8` type.
  *
  * @param[in] input The input table_view to filter
  * @param[in] deletion_mask A nullable column_view of type type_id::BOOL8 used
  * as a mask to filter the `input`.
  * @param[in] stream CUDA stream used for device memory operations and kernel launches
  * @param[in] mr Device memory resource used to allocate the returned table's device memory
- * @return Table containing copy of all rows of @p input that are not marked
- * for deletion by @p deletion_mask.
+ * @return Table containing copy of all rows of @p input that are not marked for deletion
+ * by @p deletion_mask.
  */
 std::unique_ptr<table> apply_deletion_mask(
   table_view const& input,
   column_view const& deletion_mask,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -267,6 +290,9 @@ enum class duplicate_keep_option {
  * Performance hint: if the input is pre-sorted, `cudf::unique` can produce an equivalent result
  * (i.e., same set of output rows) but with less running time than `cudf::distinct`.
  *
+ * A zero-column `input` is treated as empty, producing an empty table even when `input` has a
+ * non-zero row count.
+ *
  * @throws cudf::logic_error if the `keys` column indices are out of bounds in the `input` table.
  *
  * @param[in] input           input table_view to copy only unique rows
@@ -285,7 +311,7 @@ std::unique_ptr<table> unique(
   std::vector<size_type> const& keys,
   duplicate_keep_option keep,
   null_equality nulls_equal         = null_equality::EQUAL,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -299,6 +325,9 @@ std::unique_ptr<table> unique(
  * Performance hint: if the input is pre-sorted, `cudf::unique` can produce an equivalent result
  * (i.e., same set of output rows) but with less running time than `cudf::distinct`.
  *
+ * A zero-column `input` is treated as empty, producing an empty table even when `input` has a
+ * non-zero row count.
+ *
  * @param input The input table
  * @param keys Vector of indices indicating key columns in the `input` table
  * @param keep Copy any, first, last, or none of the found duplicates
@@ -306,6 +335,7 @@ std::unique_ptr<table> unique(
  * @param nans_equal Flag to specify whether NaN elements should be considered as equal
  * @param stream CUDA stream used for device memory operations and kernel launches
  * @param mr Device memory resource used to allocate the returned table
+ *
  * @return Table with distinct rows in an unspecified order
  */
 std::unique_ptr<table> distinct(
@@ -314,7 +344,7 @@ std::unique_ptr<table> distinct(
   duplicate_keep_option keep        = duplicate_keep_option::KEEP_ANY,
   null_equality nulls_equal         = null_equality::EQUAL,
   nan_equality nans_equal           = nan_equality::ALL_EQUAL,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -323,12 +353,16 @@ std::unique_ptr<table> distinct(
  * Given an `input` table_view, an output vector of all row indices of the distinct rows is
  * generated. If there are duplicate rows, which index is kept depends on the `keep` parameter.
  *
+ * A zero-column `input` is treated as empty, producing an empty column even when `input` has a
+ * non-zero row count.
+ *
  * @param input The input table
  * @param keep Get index of any, first, last, or none of the found duplicates
  * @param nulls_equal Flag to specify whether null elements should be considered as equal
  * @param nans_equal Flag to specify whether NaN elements should be considered as equal
  * @param stream CUDA stream used for device memory operations and kernel launches
  * @param mr Device memory resource used to allocate the returned vector
+ *
  * @return Column containing the result indices
  */
 std::unique_ptr<column> distinct_indices(
@@ -336,7 +370,7 @@ std::unique_ptr<column> distinct_indices(
   duplicate_keep_option keep        = duplicate_keep_option::KEEP_ANY,
   null_equality nulls_equal         = null_equality::EQUAL,
   nan_equality nans_equal           = nan_equality::ALL_EQUAL,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -353,6 +387,9 @@ std::unique_ptr<column> distinct_indices(
  * with another values column `3, 4, 5`, the result could contain values `3, 4` or `4, 5` but not
  * `4, 3` or `5, 4`.
  *
+ * A zero-column `input` is treated as empty, producing an empty table even when `input` has a
+ * non-zero row count.
+ *
  * @param input The input table
  * @param keys Vector of indices indicating key columns in the `input` table
  * @param keep Copy any, first, last, or none of the found duplicates
@@ -360,6 +397,7 @@ std::unique_ptr<column> distinct_indices(
  * @param nans_equal Flag to specify whether NaN elements should be considered as equal
  * @param stream CUDA stream used for device memory operations and kernel launches.
  * @param mr Device memory resource used to allocate the returned table
+ *
  * @return Table with distinct rows, preserving input order
  */
 std::unique_ptr<table> stable_distinct(
@@ -368,7 +406,7 @@ std::unique_ptr<table> stable_distinct(
   duplicate_keep_option keep        = duplicate_keep_option::KEEP_ANY,
   null_equality nulls_equal         = null_equality::EQUAL,
   nan_equality nans_equal           = nan_equality::ALL_EQUAL,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -383,6 +421,8 @@ std::unique_ptr<table> stable_distinct(
  * Note that for every scalar in `columns` (columns of size 1), `columns[i] ==
  * input[0]`
  *
+ * @deprecated in release 26.12. Use `cudf::transform` to compute a boolean mask, then use
+ * `cudf::apply_retention_mask` or `cudf::apply_deletion_mask` to filter the input.
  *
  * @throws std::invalid_argument if any of the input columns have different sizes (except scalars of
  * size 1)
@@ -405,16 +445,18 @@ std::unique_ptr<table> stable_distinct(
  * @param mr Device memory resource used to allocate the returned column's device memory
  * @return The filtered target columns
  */
-[[deprecated("Use filter_extended instead")]] std::vector<std::unique_ptr<column>> filter(
-  std::vector<column_view> const& predicate_columns,
-  std::string const& predicate_udf,
-  std::vector<column_view> const& filter_columns,
-  bool is_ptx,
-  std::optional<void*> user_data           = std::nullopt,
-  null_aware is_null_aware                 = null_aware::NO,
-  output_nullability predicate_nullability = output_nullability::PRESERVE,
-  rmm::cuda_stream_view stream             = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr        = cudf::get_current_device_resource_ref());
+[[deprecated(
+  "Use cudf::transform() followed by cudf::apply_retention_mask() or "
+  "cudf::apply_deletion_mask() instead.")]] std::vector<std::unique_ptr<column>>
+filter(std::vector<column_view> const& predicate_columns,
+       std::string const& predicate_udf,
+       std::vector<column_view> const& filter_columns,
+       bool is_ptx,
+       std::optional<void*> user_data           = std::nullopt,
+       null_aware is_null_aware                 = null_aware::NO,
+       output_nullability predicate_nullability = output_nullability::PRESERVE,
+       cuda::stream_ref stream                  = cudf::get_default_stream(),
+       rmm::device_async_resource_ref mr        = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Typedef for inputs to the filter function. Each input can be either a column or a
@@ -434,6 +476,8 @@ using filter_input = std::variant<column_view, scalar_column_view>;
  * Note that for every scalar in `columns` (columns of size 1), `columns[i] ==
  * input[0]`
  *
+ * @deprecated in release 26.12. Use `cudf::transform` to compute a boolean mask, then use
+ * `cudf::apply_retention_mask` or `cudf::apply_deletion_mask` to filter the input.
  *
  * @throws std::invalid_argument if any of the input columns have different sizes (except scalars of
  * size 1)
@@ -456,16 +500,18 @@ using filter_input = std::variant<column_view, scalar_column_view>;
  * @param mr Device memory resource used to allocate the returned column's device memory
  * @return The filtered target columns
  */
-std::vector<std::unique_ptr<column>> filter_extended(
-  std::span<std::variant<column_view, scalar_column_view> const> predicate_inputs,
-  std::string const& predicate_udf,
-  std::vector<column_view> const& filter_columns,
-  cudf::udf_source_type source_type,
-  std::optional<void*> user_data           = std::nullopt,
-  null_aware is_null_aware                 = null_aware::NO,
-  output_nullability predicate_nullability = output_nullability::PRESERVE,
-  rmm::cuda_stream_view stream             = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr        = cudf::get_current_device_resource_ref());
+[[deprecated(
+  "Use cudf::transform() followed by cudf::apply_retention_mask() or "
+  "cudf::apply_deletion_mask() instead.")]] std::vector<std::unique_ptr<column>>
+filter_extended(std::span<std::variant<column_view, scalar_column_view> const> predicate_inputs,
+                std::string const& predicate_udf,
+                std::vector<column_view> const& filter_columns,
+                cudf::udf_source_type source_type,
+                std::optional<void*> user_data           = std::nullopt,
+                null_aware is_null_aware                 = null_aware::NO,
+                output_nullability predicate_nullability = output_nullability::PRESERVE,
+                cuda::stream_ref stream                  = cudf::get_default_stream(),
+                rmm::device_async_resource_ref mr        = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Creates new table by applying a filter function against every
@@ -475,6 +521,9 @@ std::vector<std::unique_ptr<column>> filter_extended(
  *
  * Computes:
  * `out[i]... = predicate(columns[i]... ) ? (columns[i]...): not-applied`.
+ *
+ * @deprecated in release 26.12. Use `cudf::compute_column` to compute a boolean mask, then use
+ * `cudf::apply_retention_mask` or `cudf::apply_deletion_mask` to filter the input.
  *
  * @throws std::invalid_argument if the output or any of the inputs are not fixed-width or string
  * types
@@ -487,12 +536,14 @@ std::vector<std::unique_ptr<column>> filter_extended(
  * @param mr Device memory resource used to allocate the returned column's device memory
  * @return The filtered table
  */
-std::unique_ptr<table> filter(
-  table_view const& predicate_table,
-  ast::expression const& predicate_expr,
-  table_view const& filter_table,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+[[deprecated(
+  "Use cudf::compute_column() followed by cudf::apply_retention_mask() or "
+  "cudf::apply_deletion_mask() instead.")]] std::unique_ptr<table>
+filter(table_view const& predicate_table,
+       ast::expression const& predicate_expr,
+       table_view const& filter_table,
+       cuda::stream_ref stream           = cudf::get_default_stream(),
+       rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /** @} */
 }  // namespace CUDF_EXPORT cudf

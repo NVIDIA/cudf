@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import decimal
@@ -275,7 +275,7 @@ def test_cudf_arrow_array_error():
 
     with pytest.raises(
         TypeError,
-        match="Implicit conversion to a host PyArrow object via "
+        match=r"Implicit conversion to a host PyArrow object via "
         "__arrow_array__ is not allowed. Consider using .to_arrow()",
     ):
         df.__arrow_array__()
@@ -284,7 +284,7 @@ def test_cudf_arrow_array_error():
 
     with pytest.raises(
         TypeError,
-        match="Implicit conversion to a host PyArrow object via "
+        match=r"Implicit conversion to a host PyArrow object via "
         "__arrow_array__ is not allowed. Consider using .to_arrow()",
     ):
         sr.__arrow_array__()
@@ -292,7 +292,7 @@ def test_cudf_arrow_array_error():
     sr = cudf.Series(["a", "b", "c"])
     with pytest.raises(
         TypeError,
-        match="Implicit conversion to a host PyArrow object via "
+        match=r"Implicit conversion to a host PyArrow object via "
         "__arrow_array__ is not allowed. Consider using .to_arrow()",
     ):
         sr.__arrow_array__()

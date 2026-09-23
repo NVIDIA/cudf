@@ -1,5 +1,5 @@
 #!/bin/bash
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 set -euo pipefail
@@ -9,14 +9,14 @@ source rapids-init-pip
 rapids-logger "Download wheels"
 
 RAPIDS_PY_CUDA_SUFFIX="$(rapids-wheel-ctk-name-gen "${RAPIDS_CUDA_VERSION}")"
-CUDF_POLARS_WHEELHOUSE=$(RAPIDS_PY_WHEEL_NAME="cudf_polars_${RAPIDS_PY_CUDA_SUFFIX}" RAPIDS_PY_WHEEL_PURE="1" rapids-download-wheels-from-github python)
-LIBCUDF_WHEELHOUSE=$(RAPIDS_PY_WHEEL_NAME="libcudf_${RAPIDS_PY_CUDA_SUFFIX}" rapids-download-wheels-from-github cpp)
-PYLIBCUDF_WHEELHOUSE=$(rapids-download-from-github "$(rapids-package-name "wheel_python" pylibcudf --stable --cuda "$RAPIDS_CUDA_VERSION")")
-LIBCUDF_STREAMING_WHEELHOUSE=$(RAPIDS_PY_WHEEL_NAME="libcudf_streaming_${RAPIDS_PY_CUDA_SUFFIX}" rapids-download-wheels-from-github cpp)
-CUDF_STREAMING_WHEELHOUSE=$(rapids-download-from-github "$(rapids-package-name "wheel_python" cudf_streaming --stable --cuda "$RAPIDS_CUDA_VERSION")")
+LIBCUDF_WHEELHOUSE=$(rapids-download-from-github "$(rapids-artifact-name wheel_cpp libcudf cudf --cuda "$RAPIDS_CUDA_VERSION")")
+PYLIBCUDF_WHEELHOUSE=$(rapids-download-from-github "$(rapids-artifact-name wheel_python pylibcudf cudf --stable --cuda "$RAPIDS_CUDA_VERSION")")
+LIBCUDF_STREAMING_WHEELHOUSE=$(rapids-download-from-github "$(rapids-artifact-name wheel_cpp libcudf-streaming cudf --cuda "$RAPIDS_CUDA_VERSION")")
+CUDF_STREAMING_WHEELHOUSE=$(rapids-download-from-github "$(rapids-artifact-name wheel_python cudf-streaming cudf --stable --cuda "$RAPIDS_CUDA_VERSION")")
+CUDF_POLARS_WHEELHOUSE=$(rapids-download-from-github "$(rapids-artifact-name wheel_python cudf-polars cudf --pure --arch any --cuda "$RAPIDS_CUDA_VERSION")")
 
 # generate constraints (possibly pinning to oldest support versions of dependencies)
-rapids-generate-pip-constraints py_test_cudf_polars "${PIP_CONSTRAINT}"
+rapids-generate-pip-constraints py_test_cudf_polars "${PIP_CONSTRAINT}" constraints
 
 rapids-logger "Install libcudf, pylibcudf and cudf_polars"
 
@@ -43,6 +43,8 @@ git clone https://github.com/pola-rs/polars.git --branch "${TAG}" --depth 1
 rapids-logger "Install polars test requirements"
 # We don't need to pick up dependencies from polars-cloud, so we remove it.
 sed -i '/^polars-cloud$/d' polars/py-polars/requirements-dev.txt
+# Pin pyarrow to avoid FutureWarning https://github.com/pola-rs/polars/pull/28323.
+sed -i 's/^pyarrow$/pyarrow<25/' polars/py-polars/requirements-dev.txt
 
 # notes:
 #
@@ -66,7 +68,7 @@ trap set_exitcode ERR
 set +e
 
 rapids-logger "Run polars tests"
-./ci/run_cudf_polars_polars_tests.sh
+./ci/run_cudf_polars_polars_tests.sh "$@"
 
 trap ERR
 set -e

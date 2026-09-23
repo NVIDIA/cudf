@@ -1,22 +1,28 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 """Tests for SPMD execution mode."""
 
 from __future__ import annotations
 
 import os
+import uuid
+from itertools import pairwise
+from pathlib import Path
 from typing import TYPE_CHECKING
 from unittest.mock import patch
 
 import pytest
 
 import polars as pl
+from polars import polars as plrs  # type: ignore[attr-defined]
+from polars.testing import assert_frame_equal
 
 import rmm.mr
 from rapidsmpf.bootstrap import is_running_with_rrun
 from rapidsmpf.rmm_resource_adaptor import RmmResourceAdaptor
 
-from cudf_polars.engine.core import _find_memory_error
+import cudf_polars.quent
+from cudf_polars.engine.core import _find_memory_error, all_gather_host_data
 from cudf_polars.engine.hardware_binding import HardwareBindingPolicy
 from cudf_polars.engine.options import StreamingOptions
 from cudf_polars.engine.spmd import (
@@ -25,6 +31,7 @@ from cudf_polars.engine.spmd import (
 )
 from cudf_polars.streaming.actor_graph.collectives.common import reserve_op_id
 from cudf_polars.testing.asserts import assert_gpu_result_equal
+from cudf_polars.testing.io import make_partitioned_source
 from cudf_polars.utils.config import MemoryResourceConfig
 
 if TYPE_CHECKING:
@@ -315,6 +322,65 @@ def test_sort_slice_over_union_of_duplicated_streams(
     assert_gpu_result_equal(lf, engine=spmd_engine, check_row_order=False)
 
 
+def test_execute_duplicated_result_present_on_all_ranks(
+    spmd_engine: SPMDEngine,
+) -> None:
+    """A duplicated (broadcast) execute() result must be whole on every rank."""
+
+    lf1 = (
+        pl.LazyFrame({"name": ["alice"], "score": [1.0]})
+        .group_by("name")
+        .agg(pl.col("score").sum())
+    )
+    lf2 = (
+        pl.LazyFrame({"name": ["bob"], "score": [2.0]})
+        .group_by("name")
+        .agg(pl.col("score").sum())
+    )
+    lf = pl.concat([lf1, lf2]).sort("score").head(10)
+
+    result = spmd_engine.execute(lf)
+    local = result.lazy().collect(engine=spmd_engine).sort("name")
+
+    # The full duplicated output is present on this rank, whatever its index.
+    assert local["name"].to_list() == ["alice", "bob"]
+    assert local["score"].to_list() == [1.0, 2.0]
+
+
+def test_execute_duplicated_result_chained_into_distributed_agg(
+    spmd_engine: SPMDEngine,
+) -> None:
+    """Chaining a duplicated execute() result into a distributed aggregate must
+    not double-count the duplicates.
+
+    The persisted result is duplicated (identical on every rank), so a re-scan
+    must re-advertise ``duplicated`` for the downstream global sum. Without that,
+    every rank contributes its copy and the total is inflated by ``nranks``.
+    """
+    lf1 = (
+        pl.LazyFrame({"name": ["alice"], "score": [1.0]})
+        .group_by("name")
+        .agg(pl.col("score").sum())
+    )
+    lf2 = (
+        pl.LazyFrame({"name": ["bob"], "score": [2.0]})
+        .group_by("name")
+        .agg(pl.col("score").sum())
+    )
+    duplicated = pl.concat([lf1, lf2]).sort("score").head(10)
+
+    result = spmd_engine.execute(duplicated)
+    total = (
+        result.lazy()
+        .select(pl.col("score").sum().alias("total"))
+        .collect(engine=spmd_engine)
+    )
+
+    # 1.0 + 2.0 = 3.0, independent of nranks (would be 3.0 * nranks if the
+    # duplicated partitions were treated as distinct).
+    assert total["total"].to_list() == [3.0]
+
+
 def test_reset_keeps_comm_alive(comm: Communicator) -> None:
     """``_reset`` must not rebuild the communicator."""
     with SPMDEngine(
@@ -393,6 +459,30 @@ def test_reset_rejects_construction_time_engine_options(
             engine._reset(engine_options={"memory_resource_config": None})
 
 
+def test_quent_context_user_provided(spmd_engine: SPMDEngine) -> None:
+    # Ensure that the user-provided quent context is used if provided
+    quent_context = cudf_polars.quent.QuentContext(
+        engine=cudf_polars.quent.Engine(
+            id=uuid.uuid4(),
+            implementation=cudf_polars.quent.Implementation(
+                name="test_implementation", version="0.0.0"
+            ),
+        ),
+        query_group=cudf_polars.quent.QueryGroup(instance_name="test_query_group"),
+        query=cudf_polars.quent.Query(instance_name="test_query"),
+    )
+
+    with SPMDEngine(
+        comm=spmd_engine.comm, executor_options={"quent_context": quent_context}
+    ) as engine:
+        assert engine.config["executor_options"]["quent_context"] == quent_context
+
+
+def test_quent_context_default(spmd_engine: SPMDEngine) -> None:
+    with SPMDEngine(comm=spmd_engine.comm) as engine:
+        assert engine.config["executor_options"].get("quent_context") is None
+
+
 # Group keys probed with num_partitions=2, nranks=2, ROUND_ROBIN:
 #   _SAME_RANK_KEYS[r] hashes to partition r: data stays on its origin rank.
 #   _CROSS_RANK_KEYS[r] hashes to partition 1-r: data is fully shuffled away.
@@ -409,12 +499,31 @@ _CROSS_RANK_KEYS = [
 
 
 @pytest.mark.parametrize(
-    "expr,is_scalar",
+    "expr,expected",
     [
-        (pl.col("x").sum().over("g").alias("result"), True),
-        (pl.col("x").rank(method="dense").over("g").alias("result"), False),
+        (pl.col("x").sum().over("g").alias("result"), "sum"),
+        (pl.col("x").rank(method="dense").over("g").alias("result"), "rank"),
+        (pl.col("x").diff().over("g", order_by="x").alias("result"), "diff"),
+        (pl.col("x").shift(1).over("g", order_by="x").alias("result"), "shift"),
+        pytest.param(
+            pl.col("x")
+            .rolling_mean(window_size=2)
+            .over("g", order_by="x")
+            .alias("result"),
+            "rolling",
+            marks=pytest.mark.skipif(
+                not hasattr(plrs._expr_nodes, "RollingFunction"),
+                reason="RollingFunction not available in this polars version",
+            ),
+        ),
     ],
-    ids=["scalar_sum", "nonscalar_rank"],
+    ids=[
+        "scalar_sum",
+        "nonscalar_rank",
+        "nonscalar_diff",
+        "nonscalar_shift",
+        "nonscalar_rolling",
+    ],
 )
 @pytest.mark.parametrize(
     "cross_rank",
@@ -422,10 +531,9 @@ _CROSS_RANK_KEYS = [
     ids=["same_rank", "cross_rank"],
 )
 def test_over_multirank(
-    request: pytest.FixtureRequest,
     comm: Communicator,
     expr: pl.Expr,
-    is_scalar: bool,  # noqa: FBT001
+    expected: str,
     cross_rank: bool,  # noqa: FBT001
 ) -> None:
     """over() correctness in multi-rank SPMD mode, same-rank and cross-rank cases.
@@ -445,11 +553,7 @@ def test_over_multirank(
         rank = engine.rank
         nranks = engine.nranks
         if nranks != 2:
-            request.applymarker(
-                pytest.mark.skip(
-                    reason="key assignments are probed for exactly 2 ranks"
-                )
-            )
+            pytest.skip("key assignments are probed for exactly 2 ranks")
         keys = _CROSS_RANK_KEYS if cross_rank else _SAME_RANK_KEYS
         g = keys[rank]
         xs = [rank * 3 + 1, rank * 3 + 2, rank * 3 + 3]
@@ -474,14 +578,173 @@ def test_over_multirank(
             assert grp.shape == (3, 3), f"rank {r} group has wrong row count"
             expected_xs = [r * 3 + 1, r * 3 + 2, r * 3 + 3]
             assert grp["x"].to_list() == expected_xs
-            if is_scalar:
+            if expected == "sum":
                 assert grp["result"].to_list() == [sum(expected_xs)] * 3
-            else:
+            elif expected == "rank":
                 assert grp["result"].to_list() == [1, 2, 3]
+            elif expected == "diff":
+                assert grp["result"].to_list() == [None, 1, 1]
+            elif expected == "shift":
+                assert grp["result"].to_list() == [None, *expected_xs[:-1]]
+            else:
+                assert grp["result"].to_list() == [
+                    None,
+                    *((left + right) / 2 for left, right in pairwise(expected_xs)),
+                ]
+
+
+@pytest.mark.parametrize(
+    "expr,expected",
+    [
+        (pl.col("x").shift(1).over("g").alias("result"), "shift"),
+        (pl.col("x").diff().over("g").alias("result"), "diff"),
+        (pl.col("x").diff(n=2).over("g").alias("result"), "diff_n2"),
+        (pl.col("x").diff(n=-1).over("g").alias("result"), "diff_nneg1"),
+        (pl.col("x").cum_sum().over("g").alias("result"), "cum_sum"),
+        pytest.param(
+            pl.col("x").rolling_mean(window_size=2).over("g").alias("result"),
+            "rolling",
+            marks=pytest.mark.skipif(
+                not hasattr(plrs._expr_nodes, "RollingFunction"),
+                reason="RollingFunction not available in this polars version",
+            ),
+        ),
+        pytest.param(
+            pl.col("x")
+            .rolling_mean(window_size=2)
+            .over("g", order_by="t")
+            .alias("result"),
+            "rolling_ordered",
+            marks=pytest.mark.skipif(
+                not hasattr(plrs._expr_nodes, "RollingFunction"),
+                reason="RollingFunction not available in this polars version",
+            ),
+        ),
+    ],
+    ids=[
+        "shift",
+        "diff",
+        "diff_n2",
+        "diff_nneg1",
+        "cum_sum",
+        "fixed_rolling",
+        "fixed_rolling_ordered",
+    ],
+)
+def test_over_shared_group_ordering_multirank(
+    comm: Communicator,
+    expr: pl.Expr,
+    expected: str,
+) -> None:
+    with SPMDEngine(
+        comm=comm,
+        executor_options={
+            "max_rows_per_partition": 2,
+            "dynamic_planning": {},
+            "fallback_mode": "raise",
+        },
+    ) as engine:
+        if engine.nranks < 2:
+            pytest.skip("requires multiple ranks")
+
+        rank = engine.rank
+        nranks = engine.nranks
+        local_xs = [rank * 3 + 1, rank * 3 + 2, rank * 3 + 3]
+        local_ts = [3 * nranks - rank, rank + 1, 2 * nranks - rank]
+        lf = pl.LazyFrame(
+            {
+                "g": [0, 0, 0],
+                "t": local_ts,
+                "x": local_xs,
+            }
+        )
+        local_result = lf.select(pl.col("x"), expr).collect(engine=engine)
+        assert local_result["x"].to_list() == local_xs
+
+        with reserve_op_id() as op_id:
+            global_result = allgather_polars_dataframe(
+                engine=engine, local_df=local_result, op_id=op_id
+            ).sort("x")
+
+        xs = list(range(1, 3 * engine.nranks + 1))
+        assert global_result["x"].to_list() == xs
+        expected_values: list[float | int | None]
+        if expected == "shift":
+            expected_values = [None, *xs[:-1]]
+        elif expected == "diff":
+            expected_values = [None, *([1] * (len(xs) - 1))]
+        elif expected == "diff_n2":
+            expected_values = [None, None, *([2] * (len(xs) - 2))]
+        elif expected == "diff_nneg1":
+            expected_values = [*([-1] * (len(xs) - 1)), None]
+        elif expected == "cum_sum":
+            total = 0
+            expected_values = []
+            for x in xs:
+                total += x
+                expected_values.append(total)
+        elif expected == "rolling_ordered":
+            ordered_xs = [
+                *(3 * r + 2 for r in range(engine.nranks)),
+                *(3 * r + 3 for r in reversed(range(engine.nranks))),
+                *(3 * r + 1 for r in reversed(range(engine.nranks))),
+            ]
+            values_by_x = dict(
+                zip(
+                    ordered_xs,
+                    [
+                        None,
+                        *((left + right) / 2 for left, right in pairwise(ordered_xs)),
+                    ],
+                    strict=True,
+                )
+            )
+            expected_values = [values_by_x[x] for x in xs]
+        else:
+            expected_values = [None]
+            expected_values.extend((left + right) / 2 for left, right in pairwise(xs))
+        assert global_result["result"].to_list() == expected_values
+
+
+def test_over_preserves_input_order_within_source_chunk(
+    comm: Communicator, tmp_path: Path
+) -> None:
+    n_rows = 64
+    make_partitioned_source(
+        pl.DataFrame(
+            {
+                "g": [0] * n_rows,
+                "x": list(range(n_rows)),
+            }
+        ),
+        tmp_path,
+        "parquet",
+        row_group_size=2,
+    )
+
+    with SPMDEngine(
+        comm=comm,
+        executor_options={
+            "max_rows_per_partition": 2,
+            "dynamic_planning": {},
+            "fallback_mode": "raise",
+        },
+    ) as engine:
+        if engine.nranks != 1:
+            pytest.skip("expected values are defined for exactly 1 rank")
+
+        q = (
+            pl.scan_parquet(tmp_path)
+            .sort("x")
+            .select(
+                "x",
+                pl.col("x").cum_sum().over("g").alias("result"),
+            )
+        )
+        assert_gpu_result_equal(q, engine=engine)
 
 
 def test_over_nonscalar_duplicated_input(
-    request: pytest.FixtureRequest,
     comm: Communicator,
 ) -> None:
     """Non-scalar over() on duplicated=True input produces correct row count and values.
@@ -501,11 +764,7 @@ def test_over_nonscalar_duplicated_input(
         rank = engine.rank
         nranks = engine.nranks
         if nranks != 2:
-            request.applymarker(
-                pytest.mark.skip(
-                    reason="key assignments are probed for exactly 2 ranks"
-                )
-            )
+            pytest.skip("key assignments are probed for exactly 2 ranks")
 
         coarse_g = _SAME_RANK_KEYS[rank]
         fine_gs = [rank * 3 + 1, rank * 3 + 2, rank * 3 + 3]
@@ -534,6 +793,64 @@ def test_over_nonscalar_duplicated_input(
                 f"coarse_g={cg}: expected dense ranks [1, 2, 3] "
                 f"but got {grp['rank_x'].to_list()}"
             )
+
+
+def test_groupby_sort_by_first_last_multirank(
+    comm: Communicator, tmp_path: Path
+) -> None:
+    with SPMDEngine(
+        comm=comm,
+        executor_options={
+            "max_rows_per_partition": 2,
+            "dynamic_planning": {},
+            "fallback_mode": "raise",
+        },
+    ) as engine:
+        source_path = tmp_path / "groupby-sort-by.parquet"
+        if engine.rank == 0:
+            make_partitioned_source(
+                pl.DataFrame(
+                    {
+                        "g": ["B", "A", "C", "A", "B", "C", "A", "B"],
+                        "idx": [2, 3, 2, 1, 1, 1, 2, 3],
+                        "tie": [1, 1, 1, 1, 1, 1, 1, 1],
+                        "val": [40, 30, 60, 10, 30, 50, 20, 50],
+                    }
+                ),
+                source_path,
+                "parquet",
+                row_group_size=2,
+            )
+            data = str(source_path).encode()
+        else:
+            data = b""
+
+        with reserve_op_id() as op_id:
+            source_paths = all_gather_host_data(
+                engine.comm, engine.context.br(), op_id, data
+            )
+        source_path = Path(source_paths[0].decode())
+
+        q = (
+            pl.scan_parquet(source_path)
+            .group_by("g")
+            .agg(
+                pl.col("val").sum().alias("volume"),
+                pl.col("val").sort_by("idx").first().alias("open"),
+                pl.col("val").sort_by("idx").last().alias("close"),
+                pl.col("val")
+                .sort_by("tie", maintain_order=True)
+                .first()
+                .alias("first_tie"),
+                pl.col("val")
+                .sort_by("tie", maintain_order=True)
+                .last()
+                .alias("last_tie"),
+            )
+        )
+        expected = q.collect()
+        got = q.collect(engine=engine)
+        assert_frame_equal(expected, got, check_row_order=False)
 
 
 def test_find_memory_error() -> None:

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -46,6 +46,7 @@ struct regex_program {
   regex_program()                                = delete;
   regex_program(regex_program const&)            = delete;
   regex_program& operator=(regex_program const&) = delete;
+  ~regex_program();
 
   /**
    * @brief Move constructor
@@ -105,7 +106,12 @@ struct regex_program {
    */
   [[nodiscard]] std::size_t compute_working_memory_size(int32_t num_strings) const;
 
-  ~regex_program();
+  /**
+   * @brief Returns literal string if specific fast-path is possible
+   *
+   * @return Which fast-path is available and the associate literal string
+   */
+  [[nodiscard]] std::pair<literal_fast_path, std::string> get_literal_fast_path() const;
 
  private:
   std::string _pattern;

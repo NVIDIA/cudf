@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -14,7 +14,7 @@
 #include <cudf/strings/replace_re.hpp>
 #include <cudf/strings/strings_column_view.hpp>
 
-#include <thrust/iterator/transform_iterator.h>
+#include <cuda/iterator>
 
 #include <ranges>
 #include <span>
@@ -379,7 +379,7 @@ TEST_F(StringsReplaceRegexTest, ReplaceBackrefsWithEmptyCapture)
   cudf::test::strings_column_wrapper input({"one\ntwo", "three\n\n", "four\r\n"});
   auto sv = cudf::strings_column_view(input);
 
-  // https://github.com/rapidsai/cudf/issues/13404
+  // https://github.com/NVIDIA/cudf/issues/13404
   auto pattern       = std::string("(\r\n|\r)?$");
   auto repl_template = std::string("[\\1]");
   auto expected =
@@ -388,7 +388,7 @@ TEST_F(StringsReplaceRegexTest, ReplaceBackrefsWithEmptyCapture)
   auto results = cudf::strings::replace_with_backrefs(sv, *prog, repl_template);
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(*results, expected);
 
-  // https://github.com/rapidsai/cudf/issues/22707
+  // https://github.com/NVIDIA/cudf/issues/22707
   pattern  = std::string("^(a?)");
   expected = cudf::test::strings_column_wrapper({"[]one\ntwo", "[]three\n\n", "[]four\r\n"});
   prog     = cudf::strings::regex_program::create(pattern);
@@ -424,9 +424,9 @@ TEST_F(StringsReplaceRegexTest, MediumReplaceRegex)
     "12345678901234567890",
     "abcdefghijklmnopqrstuvwxyz"};
   cudf::test::strings_column_wrapper strings(
-    h_strings.begin(),
-    h_strings.end(),
-    thrust::make_transform_iterator(h_strings.begin(), [](auto str) { return str != nullptr; }));
+    h_strings.begin(), h_strings.end(), cuda::transform_iterator(h_strings.begin(), [](auto str) {
+      return str != nullptr;
+    }));
 
   auto strings_view = cudf::strings_column_view(strings);
   auto results      = cudf::strings::replace_re(strings_view, *prog);
@@ -435,7 +435,7 @@ TEST_F(StringsReplaceRegexTest, MediumReplaceRegex)
   cudf::test::strings_column_wrapper expected(
     h_expected.begin(),
     h_expected.end(),
-    thrust::make_transform_iterator(h_expected.begin(), [](auto str) { return str != nullptr; }));
+    cuda::transform_iterator(h_expected.begin(), [](auto str) { return str != nullptr; }));
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
 }
 
@@ -453,9 +453,9 @@ TEST_F(StringsReplaceRegexTest, LargeReplaceRegex)
     "12345678901234567890",
     "abcdefghijklmnopqrstuvwxyz"};
   cudf::test::strings_column_wrapper strings(
-    h_strings.begin(),
-    h_strings.end(),
-    thrust::make_transform_iterator(h_strings.begin(), [](auto str) { return str != nullptr; }));
+    h_strings.begin(), h_strings.end(), cuda::transform_iterator(h_strings.begin(), [](auto str) {
+      return str != nullptr;
+    }));
 
   auto strings_view = cudf::strings_column_view(strings);
   auto results      = cudf::strings::replace_re(strings_view, *prog);
@@ -464,7 +464,7 @@ TEST_F(StringsReplaceRegexTest, LargeReplaceRegex)
   cudf::test::strings_column_wrapper expected(
     h_expected.begin(),
     h_expected.end(),
-    thrust::make_transform_iterator(h_expected.begin(), [](auto str) { return str != nullptr; }));
+    cuda::transform_iterator(h_expected.begin(), [](auto str) { return str != nullptr; }));
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
 }
 
@@ -533,5 +533,32 @@ TEST_F(StringsReplaceRegexTest, CrlfEdgeCasesExtNewline)
     auto p = cudf::strings::regex_program::create("(abc)$", EXT);
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(*cudf::strings::replace_with_backrefs(view, *p, "[\\1]"),
                                    str_col(&edge_case::exp_abc_backref));
+  }
+}
+
+TEST_F(StringsReplaceRegexTest, AlternationPriorityFirstWins)
+{
+  // Leftmost-first (first-alternative-wins): when a shorter first alternative is a prefix of a
+  // longer second, the shorter match is consumed and the remainder is left for the next search.
+  auto repl = cudf::string_scalar("X");
+
+  {
+    // "foo" wins over "foobar": "foobar" becomes "Xbar".
+    auto input =
+      cudf::test::strings_column_wrapper({"foo", "foobar", "foobarbaz", "bar", "xfoobar", ""});
+    auto sv      = cudf::strings_column_view(input);
+    auto prog    = cudf::strings::regex_program::create("foo|foobar");
+    auto results = cudf::strings::replace_re(sv, *prog, repl);
+    cudf::test::strings_column_wrapper expected({"X", "Xbar", "Xbarbaz", "bar", "xXbar", ""});
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
+  }
+  {
+    // "cat" wins over "catch": "catch" becomes "Xch".
+    auto input   = cudf::test::strings_column_wrapper({"cat", "catch", "catfish", "dog", ""});
+    auto sv      = cudf::strings_column_view(input);
+    auto prog    = cudf::strings::regex_program::create("cat|catch");
+    auto results = cudf::strings::replace_re(sv, *prog, repl);
+    cudf::test::strings_column_wrapper expected({"X", "Xch", "Xfish", "dog", ""});
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
   }
 }

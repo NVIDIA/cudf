@@ -1,6 +1,6 @@
 /**
- * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights
- * reserved. SPDX-License-Identifier: Apache-2.0
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
  */
 
 #pragma once
@@ -22,7 +22,7 @@ enum class ConcatOrder : bool {
  * @brief Concatenate all table chunks from an input channel.
  *
  * @param ctx Streaming context.
- * @param ch_in Input channel of `TableChunk`s.
+ * @param ch_in Input channel of `table_chunk`s.
  * @param ch_out Output channel of concatenated chunks, contains at most one message.
  * @param order Do we care about maintaining the input ordering?
  *

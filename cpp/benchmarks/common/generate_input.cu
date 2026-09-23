@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -42,9 +42,6 @@
 #include <thrust/fill.h>
 #include <thrust/for_each.h>
 #include <thrust/gather.h>
-#include <thrust/iterator/transform_iterator.h>
-#include <thrust/iterator/transform_output_iterator.h>
-#include <thrust/iterator/zip_iterator.h>
 #include <thrust/random/uniform_int_distribution.h>
 #include <thrust/random/uniform_real_distribution.h>
 #include <thrust/scan.h>
@@ -242,6 +239,11 @@ struct bool_generator {
   __device__ bool operator()(size_t n)
   {
     engine.discard(n);
+    // Short-circuit the degenerate endpoints so that probability_true == 1.0 (null_probability ==
+    // 0) always yields all-valid and probability_true == 0.0 always yields all-null, independent of
+    // the float distribution's endpoint behavior (which can return exactly 1.0f).
+    if (probability_true >= 1.0) return true;
+    if (probability_true <= 0.0) return false;
     return dist(engine) < probability_true;
   }
 };
@@ -416,7 +418,7 @@ rmm::device_uvector<cudf::size_type> sample_indices_with_run_length(cudf::size_t
       thrust::device, run_lens.begin(), run_lens.end(), run_lens.begin(), cuda::std::plus<int>{});
     auto const samples_indices = sample_dist(engine, approx_run_len + 1);
     // This is gather.
-    auto avg_repeated_sample_indices_iterator = thrust::make_transform_iterator(
+    auto avg_repeated_sample_indices_iterator = cuda::transform_iterator(
       cuda::counting_iterator<cudf::size_type>{0},
       cuda::proclaim_return_type<cudf::size_type>(
         [rb              = run_lens.begin(),
@@ -437,14 +439,6 @@ rmm::device_uvector<cudf::size_type> sample_indices_with_run_length(cudf::size_t
     return sample_dist(engine, num_rows);
   }
 }
-
-struct valid_or_zero {
-  template <typename T>
-  __device__ T operator()(cuda::std::tuple<T, bool> len_valid) const
-  {
-    return cuda::std::get<1>(len_valid) ? cuda::std::get<0>(len_valid) : T{0};
-  }
-};
 
 enum class string_encoding {
   ASCII,
@@ -508,18 +502,14 @@ std::unique_ptr<cudf::column> create_random_utf8_string_column(data_profile cons
     lengths.begin(),
     cuda::proclaim_return_type<cudf::size_type>([] __device__(auto) { return 0; }),
     cuda::std::logical_not<bool>{});
-  auto valid_lengths = thrust::make_transform_iterator(
-    thrust::make_zip_iterator(cuda::std::make_tuple(lengths.begin(), null_mask.begin())),
-    valid_or_zero{});
-
   // offsets are created as INT32 or INT64 as appropriate
   auto [offsets, chars_length] = cudf::strings::detail::make_offsets_child_column(
-    valid_lengths, valid_lengths + num_rows, stream, mr);
+    lengths.begin(), lengths.begin() + num_rows, stream, mr);
   // use the offsetalator to normalize the offset values for use by the string_generator
   auto offsets_itr = cudf::detail::offsetalator_factory::make_input_iterator(offsets->view());
   rmm::device_uvector<char> chars(chars_length, cudf::get_default_stream());
   thrust::for_each_n(thrust::device,
-                     thrust::make_zip_iterator(cuda::std::make_tuple(offsets_itr, offsets_itr + 1)),
+                     cuda::make_zip_iterator(cuda::std::make_tuple(offsets_itr, offsets_itr + 1)),
                      num_rows,
                      string_generator<Encoding>{chars.data(), engine});
 
@@ -788,7 +778,7 @@ std::unique_ptr<cudf::column> create_random_column<cudf::list_view>(data_profile
     auto offsets = len_dist(engine, current_num_rows + 1);
     auto valids  = valid_dist(engine, current_num_rows);
     // to ensure these values <= current_child_column->size()
-    auto output_offsets = thrust::make_transform_output_iterator(
+    auto output_offsets = cuda::make_transform_output_iterator(
       offsets.begin(), clamp_down{current_child_column->size()});
 
     thrust::exclusive_scan(thrust::device, offsets.begin(), offsets.end(), output_offsets);
@@ -1061,14 +1051,16 @@ std::unique_ptr<cudf::column> create_string_column(cudf::size_type num_rows,
   auto gather_table =
     create_random_table({cudf::type_id::INT32}, row_count{num_rows}, gather_profile);
 
-  // Create scatter map by placing 0-index values throughout the gather-map
-  auto scatter_data = cudf::sequence(num_matches,
-                                     cudf::numeric_scalar<int32_t>(0),
-                                     cudf::numeric_scalar<int32_t>(num_rows / num_matches));
-  auto zero_scalar  = cudf::numeric_scalar<int32_t>(0);
-  auto table        = cudf::scatter({zero_scalar}, scatter_data->view(), gather_table->view());
-  auto gather_map   = table->view().column(0);
-  table             = cudf::gather(cudf::table_view({data_view}), gather_map);
+  if (num_matches > 0) {  // guard against division by zero
+    // Create scatter map by placing 0-index values throughout the gather-map
+    auto zero_scalar  = cudf::numeric_scalar<int32_t>(0);
+    auto scatter_data = cudf::sequence(
+      num_matches, zero_scalar, cudf::numeric_scalar<int32_t>(num_rows / num_matches));
+    gather_table = cudf::scatter({zero_scalar}, scatter_data->view(), gather_table->view());
+  }
+
+  auto gather_map = gather_table->view().column(0);
+  auto table      = cudf::gather(cudf::table_view({data_view}), gather_map);
 
   return std::move(table->release().front());
 }
@@ -1094,7 +1086,7 @@ std::pair<rmm::device_buffer, cudf::size_type> create_random_null_mask(
 
 std::unique_ptr<cudf::column> create_ascii_string_column(data_profile const& profile,
                                                          cudf::size_type num_rows,
-                                                         unsigned seed = 1)
+                                                         unsigned seed)
 {
   auto engine = deterministic_engine(seed);
   return create_random_utf8_string_column<string_encoding::ASCII>(profile, engine, num_rows);
@@ -1146,4 +1138,125 @@ std::vector<cudf::type_id> get_type_or_group(std::vector<int32_t> const& ids)
     all_type_ids.insert(std::end(all_type_ids), std::cbegin(type_ids), std::cend(type_ids));
   }
   return all_type_ids;
+}
+
+void data_profile::set_bool_probability_true(double p)
+{
+  CUDF_EXPECTS(p >= 0. and p <= 1., "probability must be in range [0...1]");
+  bool_probability_true = p;
+}
+
+void data_profile::set_null_probability(std::optional<double> p)
+{
+  CUDF_EXPECTS(p.value_or(0.) >= 0. and p.value_or(0.) <= 1.,
+               "probability must be in range [0...1]");
+  null_probability = p;
+}
+
+void data_profile::set_list_depth(cudf::size_type max_depth)
+{
+  CUDF_EXPECTS(max_depth > 0, "List depth must be positive");
+  list_dist_desc.max_depth = max_depth;
+}
+
+void data_profile::set_struct_depth(cudf::size_type max_depth)
+{
+  CUDF_EXPECTS(max_depth > 0, "Struct depth must be positive");
+  struct_dist_desc.max_depth = max_depth;
+}
+
+void data_profile::set_struct_types(cudf::host_span<cudf::type_id const> types)
+{
+  CUDF_EXPECTS(
+    std::none_of(
+      types.begin(), types.end(), [](auto& type) { return type == cudf::type_id::STRUCT; }),
+    "Cannot include STRUCT as its own subtype");
+  struct_dist_desc.leaf_types.assign(types.begin(), types.end());
+}
+
+void data_profile::set_string_char_range(unsigned char lower, unsigned char upper)
+{
+  CUDF_EXPECTS(lower <= upper, "Lower bound must be <= upper bound");
+  string_dist_desc.char_lower = lower;
+  string_dist_desc.char_upper = upper;
+}
+
+template <typename T, std::enable_if_t<!std::is_same_v<T, bool> && cuda::std::is_integral_v<T>, T>*>
+distribution_params<T> data_profile::get_distribution_params() const
+{
+  auto it = int_params.find(cudf::type_to_id<T>());
+  if (it == int_params.end()) {
+    auto const range = default_range<T>();
+    return distribution_params<T>{default_distribution_id<T>(), range.first, range.second};
+  } else {
+    auto& desc = it->second;
+    return {desc.id, static_cast<T>(desc.lower_bound), static_cast<T>(desc.upper_bound)};
+  }
+}
+
+template <typename T, std::enable_if_t<std::is_floating_point_v<T>, T>*>
+distribution_params<T> data_profile::get_distribution_params() const
+{
+  auto it = float_params.find(cudf::type_to_id<T>());
+  if (it == float_params.end()) {
+    auto const range = default_range<T>();
+    return distribution_params<T>{default_distribution_id<T>(), range.first, range.second};
+  } else {
+    auto& desc = it->second;
+    return {desc.id, static_cast<T>(desc.lower_bound), static_cast<T>(desc.upper_bound)};
+  }
+}
+
+template <typename T, std::enable_if_t<std::is_same_v<T, bool>>*>
+distribution_params<T> data_profile::get_distribution_params() const
+{
+  return distribution_params<T>{bool_probability_true};
+}
+
+template <typename T, std::enable_if_t<cudf::is_chrono<T>()>*>
+distribution_params<T> data_profile::get_distribution_params() const
+{
+  auto it = int_params.find(cudf::type_to_id<T>());
+  if (it == int_params.end()) {
+    auto const range = default_range<T>();
+    return distribution_params<T>{default_distribution_id<T>(), range.first, range.second};
+  } else {
+    auto& desc = it->second;
+    return {
+      desc.id, static_cast<int64_t>(desc.lower_bound), static_cast<int64_t>(desc.upper_bound)};
+  }
+}
+
+template <typename T, std::enable_if_t<std::is_same_v<T, cudf::string_view>>*>
+distribution_params<T> data_profile::get_distribution_params() const
+{
+  return string_dist_desc;
+}
+
+template <typename T, std::enable_if_t<std::is_same_v<T, cudf::list_view>>*>
+distribution_params<T> data_profile::get_distribution_params() const
+{
+  return list_dist_desc;
+}
+
+template <typename T, std::enable_if_t<std::is_same_v<T, cudf::struct_view>>*>
+distribution_params<T> data_profile::get_distribution_params() const
+{
+  return struct_dist_desc;
+}
+
+template <typename T, std::enable_if_t<cudf::is_fixed_point<T>()>*>
+distribution_params<T> data_profile::get_distribution_params() const
+{
+  using rep = typename T::rep;
+  auto it   = decimal_params.find(cudf::type_to_id<T>());
+  if (it == decimal_params.end()) {
+    auto const range = default_range<rep>();
+    auto const scale = std::optional<numeric::scale_type>{};
+    return distribution_params<T>{default_distribution_id<rep>(), range.first, range.second, scale};
+  } else {
+    auto& desc = it->second;
+    return {
+      desc.id, static_cast<rep>(desc.lower_bound), static_cast<rep>(desc.upper_bound), desc.scale};
+  }
 }

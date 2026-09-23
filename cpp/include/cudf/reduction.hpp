@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -12,11 +12,15 @@
 
 #include <optional>
 
+/**
+ * @file
+ * @brief APIs for computing reductions and scans over columns.
+ */
+
 namespace CUDF_EXPORT cudf {
 /**
  * @addtogroup aggregation_reduction
  * @{
- * @file
  */
 
 /**
@@ -28,11 +32,11 @@ enum class scan_type : bool { INCLUSIVE, EXCLUSIVE };
 /**
  * @brief  Computes the reduction of the values in all rows of a column.
  *
- * This function does not detect overflows in reductions except for the `SUM_WITH_OVERFLOW`
+ * This function does not detect overflows in reductions except for the `SUM_OVERFLOW`
  * aggregation. When `output_type` does not match the `col.type()`, their values may be promoted to
  * `int64_t` or `double` for computing aggregations and then cast to `output_type` before returning.
  *
- * The `SUM_WITH_OVERFLOW` aggregation is a special case that detects integer
+ * The `SUM_OVERFLOW` aggregation is a special case that detects integer
  * overflow during summation of signed integer or decimal values and returns a struct
  * containing both the sum result and an overflow flag. On overflow the sum value
  * is unspecified; the boolean flag is the source of truth.
@@ -54,7 +58,7 @@ enum class scan_type : bool { INCLUSIVE, EXCLUSIVE };
  * | Aggregation | Output Type | Init Value | Empty Input | Comments |
  * | :---------: | ----------- | :--------: | ----------- | -------- |
  * | SUM/PRODUCT | output_type | yes | NA | Input accumulated into output_type variable |
- * | SUM_WITH_OVERFLOW | STRUCT{col.type,BOOL8} | yes | {null,false} | {sum, overflow_flag}, input must be signed integer or decimal |
+ * | SUM_OVERFLOW | STRUCT{col.type,BOOL8} | yes | {null,false} | {sum, overflow_flag}, input must be signed integer or decimal |
  * | SUM_OF_SQUARES | output_type | no | NA | Input accumulated into output_type variable |
  * | MIN/MAX | col.type | yes | NA | Supports arithmetic, timestamp, duration, string types only |
  * | ANY/ALL | BOOL8 | yes | True for ALL only | Checks for non-zero elements |
@@ -78,7 +82,7 @@ enum class scan_type : bool { INCLUSIVE, EXCLUSIVE };
  * @throw std::invalid_argument if `any` or `all` reduction is called and the output type is not BOOL8.
  * @throw std::invalid_argument if `mean`, `var`, or `std` reduction is called and
  * the `output_type` is not floating point.
- * @throw std::invalid_argument if `sum_with_overflow` reduction is called and the
+ * @throw std::invalid_argument if `sum_overflow` reduction is called and the
  * input column type is not a signed integer or decimal, or the `output_type` is not `STRUCT`.
  *
  * @param col Input column view
@@ -92,22 +96,22 @@ std::unique_ptr<scalar> reduce(
   column_view const& col,
   reduce_aggregation const& agg,
   data_type output_type,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream      = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 // clang-format on
 
 /**
  * @brief  Computes the reduction of the values in all rows of a column with an initial value
  *
- * Only `sum`, `product`, `min`, `max`, `any`, `all`, and `sum_with_overflow` reductions are
- * supported. For `sum_with_overflow`, the initial value is added to the sum and overflow
+ * Only `sum`, `product`, `min`, `max`, `any`, `all`, and `sum_overflow` reductions are
+ * supported. For `sum_overflow`, the initial value is added to the sum and overflow
  * detection is performed throughout the entire computation.
  *
  * @see cudf::reduce(column_view const&,reduce_aggregation
- * const&,data_type,rmm::cuda_stream_view,rmm::device_async_resource_ref) for more details
+ * const&,data_type,cuda::stream_ref,rmm::device_async_resource_ref) for more details
  *
  * @throw std::invalid_argument if reduction is not `sum`, `product`, `min`, `max`, `any`, `all`,
- * or `sum_with_overflow` and `init` is specified.
+ * or `sum_overflow` and `init` is specified.
  *
  * @param col Input column view
  * @param agg Aggregation operator applied by the reduction
@@ -122,7 +126,7 @@ std::unique_ptr<scalar> reduce(
   reduce_aggregation const& agg,
   data_type output_type,
   std::optional<std::reference_wrapper<scalar const>> init,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -174,7 +178,7 @@ std::unique_ptr<column> segmented_reduce(
   segmented_reduce_aggregation const& agg,
   data_type output_type,
   null_policy null_handling,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -201,7 +205,7 @@ std::unique_ptr<column> segmented_reduce(
   data_type output_type,
   null_policy null_handling,
   std::optional<std::reference_wrapper<scalar const>> init,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -227,7 +231,7 @@ std::unique_ptr<column> scan(
   scan_aggregation const& agg,
   scan_type inclusive,
   null_policy null_handling         = null_policy::EXCLUDE,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -242,7 +246,7 @@ std::unique_ptr<column> scan(
  */
 std::pair<std::unique_ptr<scalar>, std::unique_ptr<scalar>> minmax(
   column_view const& col,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**

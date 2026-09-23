@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 """Tests for CSE HStack handling in the streaming executor."""
 
@@ -150,14 +150,16 @@ def test_cse_agg_shared_decomposition(
     assert len(inner_hstacks) == (1 if comm_subexpr_elim else 0)
 
     config_options = ConfigOptions.from_polars_engine(engine)
-    lowered, _ = lower_ir_graph(
+    lowering = lower_ir_graph(
         ir,
         config_options,
         collect_statistics(ir, config_options, parquet_stats_executor),
     )
 
     # Both paths must lower to a single Repartition computing one aggregation.
-    repartitions = [n for n in traversal([lowered]) if isinstance(n, Repartition)]
+    repartitions = [
+        n for n in traversal([lowering.lowered]) if isinstance(n, Repartition)
+    ]
     assert len(repartitions) == 1
     assert len(repartitions[0].children[0].exprs) == 1  # type: ignore[attr-defined]
     assert_gpu_result_equal(q, engine=engine, collect_kwargs={"optimizations": opts})

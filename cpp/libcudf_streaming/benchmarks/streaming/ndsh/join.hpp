@@ -1,6 +1,6 @@
 /**
- * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights
- * reserved. SPDX-License-Identifier: Apache-2.0
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
  */
 
 #pragma once
@@ -30,7 +30,7 @@ enum class KeepKeys : bool {
  *
  * @param ctx Streaming context
  * @param comm Communicator for the collective operation.
- * @param ch_in Input channel of `TableChunk`s
+ * @param ch_in Input channel of `table_chunk`s
  * @param tag Disambiguating tag for allgather
  * @param ordered Should the concatenated output be ordered
  *
@@ -51,8 +51,8 @@ enum class KeepKeys : bool {
  *
  * @param ctx Streaming context
  * @param comm Communicator for the collective operation.
- * @param ch_in Input channel of `TableChunk`s
- * @param ch_out Input channel of a single `TableChunk`
+ * @param ch_in Input channel of `table_chunk`s
+ * @param ch_out Input channel of a single `table_chunk`
  * @param tag Disambiguating tag for allgather
  * @param ordered Should the concatenated output be ordered
  *
@@ -74,9 +74,9 @@ enum class KeepKeys : bool {
  *
  * @param ctx Streaming context.
  * @param comm Communicator for the collective operation.
- * @param left Channel of `TableChunk`s used as the broadcasted build side.
- * @param right Channel of `TableChunk`s joined in turn against the build side.
- * @param ch_out Output channel of `TableChunk`s.
+ * @param left Channel of `table_chunk`s used as the broadcasted build side.
+ * @param right Channel of `table_chunk`s joined in turn against the build side.
+ * @param ch_out Output channel of `table_chunk`s.
  * @param left_on Column indices of the keys in the left table.
  * @param right_on Column indices of the keys in the right table.
  * @param tag Disambiguating tag for the broadcast of the left table.
@@ -104,9 +104,9 @@ enum class KeepKeys : bool {
  *
  * @param ctx Streaming context.
  * @param comm Communicator for the collective operation.
- * @param left Channel of `TableChunk`s in hash-partitioned order.
- * @param right Channel of `TableChunk`s in matching hash-partitioned order.
- * @param ch_out Output channel of `TableChunk`s.
+ * @param left Channel of `table_chunk`s in hash-partitioned order.
+ * @param right Channel of `table_chunk`s in matching hash-partitioned order.
+ * @param ch_out Output channel of `table_chunk`s.
  * @param left_on Column indices of the keys in the left table.
  * @param right_on Column indices of the keys in the right table.
  * @param keep_keys Does the result contain the key columns, or only "carrier" value
@@ -133,9 +133,9 @@ enum class KeepKeys : bool {
  *
  * @param ctx Streaming context.
  * @param comm Communicator for the collective operation.
- * @param left Channel of `TableChunk`s.
- * @param right Channel of `TableChunk`s in hash-partitioned order (shuffled).
- * @param ch_out Output channel of `TableChunk`s.
+ * @param left Channel of `table_chunk`s.
+ * @param right Channel of `table_chunk`s in hash-partitioned order (shuffled).
+ * @param ch_out Output channel of `table_chunk`s.
  * @param left_on Column indices of the keys in the left table.
  * @param right_on Column indices of the keys in the right table.
  * @param tag Disambiguating tag for the broadcast of the left table.
@@ -164,9 +164,9 @@ streaming::Actor left_semi_join_broadcast_left(
  *
  * @param ctx Streaming context.
  * @param comm Communicator for the collective operation.
- * @param left Channel of `TableChunk`s in hash-partitioned order.
- * @param right Channel of `TableChunk`s in matching hash-partitioned order.
- * @param ch_out Output channel of `TableChunk`s.
+ * @param left Channel of `table_chunk`s in hash-partitioned order.
+ * @param right Channel of `table_chunk`s in matching hash-partitioned order.
+ * @param ch_out Output channel of `table_chunk`s.
  * @param left_on Column indices of the keys in the left table.
  * @param right_on Column indices of the keys in the right table.
  * @param tag Disambiguating tag for the broadcast of the left table.
@@ -190,8 +190,8 @@ streaming::Actor left_semi_join_shuffle(std::shared_ptr<streaming::Context> ctx,
  *
  * @param ctx Streaming context.
  * @param comm Communicator for the collective operation.
- * @param ch_in Channel of `TableChunk`s to shuffle.
- * @param ch_out Channel of shuffled `TableChunk`s.
+ * @param ch_in Channel of `table_chunk`s to shuffle.
+ * @param ch_out Channel of shuffled `table_chunk`s.
  * @param keys Indices of key columns to shuffle on.
  * @param num_partitions Number of output partitions of the shuffle.
  * @param tag Disambiguating tag for the shuffle.

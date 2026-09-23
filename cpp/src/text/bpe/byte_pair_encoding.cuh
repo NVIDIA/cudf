@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -14,13 +14,13 @@
 
 #include <nvtext/byte_pair_encoding.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_uvector.hpp>
 #include <rmm/mr/polymorphic_allocator.hpp>
 
 #include <cuco/static_map.cuh>
 #include <cuda/std/iterator>
 #include <cuda/std/utility>
+#include <cuda/stream>
 #include <thrust/execution_policy.h>
 #include <thrust/find.h>
 
@@ -163,7 +163,8 @@ using mp_table_map_type = cuco::static_map<cudf::size_type,
 // std::unique_ptr<column_device_view> this helper simplifies the return type for us
 using col_device_view = std::invoke_result_t<decltype(&cudf::column_device_view::create),
                                              cudf::column_view,
-                                             rmm::cuda_stream_view>;
+                                             cuda::stream_ref,
+                                             rmm::device_async_resource_ref>;
 
 struct bpe_merge_pairs::bpe_merge_pairs_impl {
   std::unique_ptr<cudf::column> const merge_pairs;

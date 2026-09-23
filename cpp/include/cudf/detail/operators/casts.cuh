@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -22,8 +22,8 @@ namespace ops {
  * @param a Input value.
  */
 template <typename T>
-__device__ bool cast_to_b8(T a)
-  requires(!nullable<T> && cuda::std::convertible_to<T, bool>)
+__device__ bool cast_to_bool8(T a)
+  requires(!nullable<T> && requires { static_cast<bool>(a); })
 {
   return static_cast<bool>(a);
 }
@@ -35,8 +35,8 @@ __device__ bool cast_to_b8(T a)
  * @param a Input value.
  */
 template <typename T>
-__device__ int8_t cast_to_i8(T a)
-  requires(!nullable<T> && cuda::std::convertible_to<T, int8_t>)
+__device__ int8_t cast_to_int8(T a)
+  requires(!nullable<T> && requires { static_cast<int8_t>(a); })
 {
   return static_cast<int8_t>(a);
 }
@@ -48,8 +48,8 @@ __device__ int8_t cast_to_i8(T a)
  * @param a Input value.
  */
 template <typename T>
-__device__ int16_t cast_to_i16(T a)
-  requires(!nullable<T> && cuda::std::convertible_to<T, int16_t>)
+__device__ int16_t cast_to_int16(T a)
+  requires(!nullable<T> && requires { static_cast<int16_t>(a); })
 {
   return static_cast<int16_t>(a);
 }
@@ -61,8 +61,8 @@ __device__ int16_t cast_to_i16(T a)
  * @param a Input value.
  */
 template <typename T>
-__device__ int32_t cast_to_i32(T a)
-  requires(!nullable<T> && cuda::std::convertible_to<T, int32_t>)
+__device__ int32_t cast_to_int32(T a)
+  requires(!nullable<T> && requires { static_cast<int32_t>(a); })
 {
   return static_cast<int32_t>(a);
 }
@@ -74,8 +74,8 @@ __device__ int32_t cast_to_i32(T a)
  * @param a Input value.
  */
 template <typename T>
-__device__ int64_t cast_to_i64(T a)
-  requires(!nullable<T> && cuda::std::convertible_to<T, int64_t>)
+__device__ int64_t cast_to_int64(T a)
+  requires(!nullable<T> && requires { static_cast<int64_t>(a); })
 {
   return static_cast<int64_t>(a);
 }
@@ -87,8 +87,8 @@ __device__ int64_t cast_to_i64(T a)
  * @param a Input value.
  */
 template <typename T>
-__device__ uint8_t cast_to_u8(T a)
-  requires(!nullable<T> && cuda::std::convertible_to<T, uint8_t>)
+__device__ uint8_t cast_to_uint8(T a)
+  requires(!nullable<T> && requires { static_cast<uint8_t>(a); })
 {
   return static_cast<uint8_t>(a);
 }
@@ -100,8 +100,8 @@ __device__ uint8_t cast_to_u8(T a)
  * @param a Input value.
  */
 template <typename T>
-__device__ uint16_t cast_to_u16(T a)
-  requires(!nullable<T> && cuda::std::convertible_to<T, uint16_t>)
+__device__ uint16_t cast_to_uint16(T a)
+  requires(!nullable<T> && requires { static_cast<uint16_t>(a); })
 {
   return static_cast<uint16_t>(a);
 }
@@ -113,8 +113,8 @@ __device__ uint16_t cast_to_u16(T a)
  * @param a Input value.
  */
 template <typename T>
-__device__ uint32_t cast_to_u32(T a)
-  requires(!nullable<T> && cuda::std::convertible_to<T, uint32_t>)
+__device__ uint32_t cast_to_uint32(T a)
+  requires(!nullable<T> && requires { static_cast<uint32_t>(a); })
 {
   return static_cast<uint32_t>(a);
 }
@@ -126,8 +126,8 @@ __device__ uint32_t cast_to_u32(T a)
  * @param a Input value.
  */
 template <typename T>
-__device__ uint64_t cast_to_u64(T a)
-  requires(!nullable<T> && cuda::std::convertible_to<T, uint64_t>)
+__device__ uint64_t cast_to_uint64(T a)
+  requires(!nullable<T> && requires { static_cast<uint64_t>(a); })
 {
   return static_cast<uint64_t>(a);
 }
@@ -139,14 +139,14 @@ __device__ uint64_t cast_to_u64(T a)
  * @param a Input value.
  */
 template <typename T>
-__device__ float cast_to_f32(T a)
+__device__ float cast_to_float32(T a)
   requires(cuda::std::is_integral_v<T> || cuda::std::is_floating_point_v<T>)
 {
   return static_cast<float>(a);
 }
 
 template <typename R>
-__device__ float cast_to_f32(numeric::decimal<R> a)
+__device__ float cast_to_float32(numeric::decimal<R> a)
 {
   return convert_fixed_to_floating<float>(a);
 }
@@ -158,14 +158,14 @@ __device__ float cast_to_f32(numeric::decimal<R> a)
  * @param a Input value.
  */
 template <typename T>
-__device__ double cast_to_f64(T a)
+__device__ double cast_to_float64(T a)
   requires(cuda::std::is_integral_v<T> || floating_point<T> || fixed_point<T>)
 {
   return static_cast<double>(a);
 }
 
 template <typename R>
-__device__ double cast_to_f64(numeric::decimal<R> a)
+__device__ double cast_to_float64(numeric::decimal<R> a)
 {
   return convert_fixed_to_floating<double>(a);
 }
@@ -195,9 +195,9 @@ __device__ numeric::decimal<To> decimal_cast(numeric::decimal<From> a)
  * @param a Input value.
  */
 template <typename R>
-__device__ numeric::decimal32 cast_to_dec32(numeric::decimal<R> a)
+__device__ numeric::decimal32 cast_to_decimal32(numeric::decimal<R> a)
 {
-  return detail::decimal_cast<numeric::decimal32>(a);
+  return detail::decimal_cast<int32_t>(a);
 }
 
 /**
@@ -207,9 +207,9 @@ __device__ numeric::decimal32 cast_to_dec32(numeric::decimal<R> a)
  * @param a Input value.
  */
 template <typename R>
-__device__ numeric::decimal64 cast_to_dec64(numeric::decimal<R> a)
+__device__ numeric::decimal64 cast_to_decimal64(numeric::decimal<R> a)
 {
-  return detail::decimal_cast<numeric::decimal64>(a);
+  return detail::decimal_cast<int64_t>(a);
 }
 
 /**
@@ -219,9 +219,9 @@ __device__ numeric::decimal64 cast_to_dec64(numeric::decimal<R> a)
  * @param a Input value.
  */
 template <typename R>
-__device__ numeric::decimal128 cast_to_dec128(numeric::decimal<R> a)
+__device__ numeric::decimal128 cast_to_decimal128(numeric::decimal<R> a)
 {
-  return detail::decimal_cast<numeric::decimal128>(a);
+  return detail::decimal_cast<__int128_t>(a);
 }
 
 /**
@@ -231,10 +231,11 @@ __device__ numeric::decimal128 cast_to_dec128(numeric::decimal<R> a)
  * @param a Input value.
  * @param new_scale Target decimal scale.
  */
-template <typename R>
-__device__ numeric::decimal<R> rescale(numeric::decimal<R> a, int32_t new_scale)
+template <typename R, signed_integer Scale>
+__device__ numeric::decimal<R> rescale(numeric::decimal<R> a, Scale new_scale)
+  requires(sizeof(Scale) <= sizeof(int32_t))
 {
-  return a.rescaled(numeric::scale_type{new_scale});
+  return a.rescaled(numeric::scale_type{static_cast<int32_t>(new_scale)});
 }
 
 }  // namespace ops

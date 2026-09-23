@@ -1,12 +1,21 @@
 # =============================================================================
 # cmake-format: off
-# SPDX-FileCopyrightText: Copyright (c) 2018-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2018-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 # cmake-format: on
 # =============================================================================
 
 if(CMAKE_COMPILER_IS_GNUCXX)
-  list(APPEND CUDF_CXX_FLAGS -Wall -Werror -Wno-unknown-pragmas -Wno-error=deprecated-declarations)
+  list(APPEND CUDF_CXX_FLAGS -Wall -Werror -Wno-unknown-pragmas)
+endif()
+
+# On aarch64, GCC >= 10 emits informational -Wpsabi notes about std::pair/small-struct
+# calling-convention changes when such types are passed/returned by value under C++17. These only
+# matter when linking objects built by different major GCC versions, which our single-toolchain
+# build never does, so they're noise. They show up only in gtest/nvbench test and benchmark code, so
+# they're suppressed there and not for the libcudf.so target itself.
+if(CMAKE_COMPILER_IS_GNUCXX AND CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm")
+  list(APPEND CUDF_CXX_TEST_FLAGS -Wno-psabi)
 endif()
 
 list(APPEND CUDF_CUDA_FLAGS --expt-extended-lambda)
@@ -17,7 +26,7 @@ if(CUDA_WARNINGS_AS_ERRORS)
 else()
   list(APPEND CUDF_CUDA_FLAGS -Werror=cross-execution-space-call)
 endif()
-list(APPEND CUDF_CUDA_FLAGS -Xcompiler=-Wall,-Werror,-Wno-error=deprecated-declarations)
+list(APPEND CUDF_CUDA_FLAGS -Xcompiler=-Wall,-Werror)
 # This warning needs to be suppressed because some parts of cudf instantiate templated CCCL
 # functions in contexts where the resulting instantiations would have internal linkage (e.g. in
 # anonymous namespaces). In such contexts, the visibility attribute on the template is ignored, and

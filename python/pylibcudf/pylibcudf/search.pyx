@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from libcpp.memory cimport unique_ptr
@@ -6,6 +6,8 @@ from libcpp.utility cimport move
 from libcpp.vector cimport vector
 from pylibcudf.libcudf cimport search as cpp_search
 from pylibcudf.libcudf.column.column cimport column
+from pylibcudf.libcudf.column.column_view cimport column_view
+from pylibcudf.libcudf.table.table_view cimport table_view
 from pylibcudf.libcudf.types cimport null_order, order
 from rmm.pylibrmm.stream cimport Stream
 from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
@@ -15,14 +17,20 @@ from .table cimport Table
 from .utils cimport _get_stream, _get_memory_resource
 from cuda.bindings.cyruntime cimport cudaStream_t
 
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pylibcudf.types import NullOrder, Order
+    from pylibcudf.typing import CudaStreamLike
+
 __all__ = ["contains", "lower_bound", "upper_bound"]
 
 cpdef Column lower_bound(
     Table haystack,
     Table needles,
-    list column_order,
-    list null_precedence,
-    object stream=None,
+    list column_order: list[Order],
+    list null_precedence: list[NullOrder],
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """Find smallest indices in haystack where needles may be inserted to retain order.
@@ -54,13 +62,15 @@ cpdef Column lower_bound(
     cdef vector[null_order] c_null_precedence = null_precedence
 
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
 
+    cdef table_view c_haystack = haystack.view()
+    cdef table_view c_needles = needles.view()
     with nogil:
         c_result = cpp_search.lower_bound(
-            haystack.view(),
-            needles.view(),
+            c_haystack,
+            c_needles,
             c_orders,
             c_null_precedence,
             _cs,
@@ -72,9 +82,9 @@ cpdef Column lower_bound(
 cpdef Column upper_bound(
     Table haystack,
     Table needles,
-    list column_order,
-    list null_precedence,
-    object stream=None,
+    list column_order: list[Order],
+    list null_precedence: list[NullOrder],
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """Find largest indices in haystack where needles may be inserted to retain order.
@@ -106,13 +116,15 @@ cpdef Column upper_bound(
     cdef vector[null_order] c_null_precedence = null_precedence
 
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
 
+    cdef table_view c_haystack = haystack.view()
+    cdef table_view c_needles = needles.view()
     with nogil:
         c_result = cpp_search.upper_bound(
-            haystack.view(),
-            needles.view(),
+            c_haystack,
+            c_needles,
             c_orders,
             c_null_precedence,
             _cs,
@@ -122,7 +134,7 @@ cpdef Column upper_bound(
 
 
 cpdef Column contains(
-    Column haystack, Column needles, object stream=None, DeviceMemoryResource mr=None
+    Column haystack, Column needles, object stream: CudaStreamLike | None = None, DeviceMemoryResource mr=None
 ):
     """Check whether needles are present in haystack.
 
@@ -147,13 +159,15 @@ cpdef Column contains(
     cdef unique_ptr[column] c_result
 
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
 
+    cdef column_view c_haystack = haystack.view()
+    cdef column_view c_needles = needles.view()
     with nogil:
         c_result = cpp_search.contains(
-            haystack.view(),
-            needles.view(),
+            c_haystack,
+            c_needles,
             _cs,
             mr.get_mr()
         )

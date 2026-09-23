@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -10,12 +10,16 @@
 #include <cudf/types.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
+/**
+ * @file
+ * @brief APIs for set operations (overlap, intersection, union, difference) on list columns
+ */
+
 namespace CUDF_EXPORT cudf {
 namespace lists {
 /**
  * @addtogroup set_operations
  * @{
- * @file
  */
 
 /**
@@ -50,7 +54,7 @@ std::unique_ptr<column> have_overlap(
   lists_column_view const& rhs,
   null_equality nulls_equal         = null_equality::EQUAL,
   nan_equality nans_equal           = nan_equality::ALL_EQUAL,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -87,7 +91,7 @@ std::unique_ptr<column> intersect_distinct(
   lists_column_view const& rhs,
   null_equality nulls_equal         = null_equality::EQUAL,
   nan_equality nans_equal           = nan_equality::ALL_EQUAL,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -124,7 +128,7 @@ std::unique_ptr<column> union_distinct(
   lists_column_view const& rhs,
   null_equality nulls_equal         = null_equality::EQUAL,
   nan_equality nans_equal           = nan_equality::ALL_EQUAL,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -161,7 +165,7 @@ std::unique_ptr<column> difference_distinct(
   lists_column_view const& rhs,
   null_equality nulls_equal         = null_equality::EQUAL,
   nan_equality nans_equal           = nan_equality::ALL_EQUAL,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /** @} */  // end of group

@@ -14,4 +14,5 @@ license = "Apache-2.0"
 [tool.maturin]
 module-name = "cudf_polars._quent"
 python-source = "../.."
+python-packages = []
 features = ["pyo3/extension-module"]

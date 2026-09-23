@@ -781,7 +781,7 @@ void split_lists(SplitFunc Split, CompareFunc Compare, bool split = true)
   {
     cudf::test::lists_column_wrapper<T> list{{{1, 2, 3}, {4, 5}},
                                              {{}, {}, {7, 8}, {}},
-                                             LCW::nested({{6}}),
+                                             {{6}},
                                              {{7, 8}, {9, 10, 11}, {}},
                                              {{}, {-1, -2, -3, -4, -5}},
                                              {{}},
@@ -792,7 +792,7 @@ void split_lists(SplitFunc Split, CompareFunc Compare, bool split = true)
 
       std::vector<cudf::test::lists_column_wrapper<T>> expected;
       expected.push_back(LCW{{{1, 2, 3}, {4, 5}}});
-      expected.push_back(LCW{{{}, {}, {7, 8}, {}}, LCW::nested({{6}})});
+      expected.push_back(LCW{{{}, {}, {7, 8}, {}}, {{6}}});
       expected.push_back(LCW{{{7, 8}, {9, 10, 11}, {}}});
       expected.push_back(LCW{{{}, {-1, -2, -3, -4, -5}}, {{}}, {{-10}, {-100, -200}}});
 
@@ -857,7 +857,7 @@ void split_lists_with_nulls(SplitFunc Split, CompareFunc Compare, bool split = t
   {
     cudf::test::lists_column_wrapper<T> list{{{{1, 2, 3}, valids}, {4, 5}},
                                              {{{}, {}, {7, 8}, {}}, valids},
-                                             LCW::nested({{6}}),
+                                             {{6}},
                                              {{{7, 8}, {{9, 10, 11}, valids}, {}}, valids},
                                              {{{}, {-1, -2, -3, -4, -5}}, valids},
                                              {{}},
@@ -868,7 +868,7 @@ void split_lists_with_nulls(SplitFunc Split, CompareFunc Compare, bool split = t
 
       std::vector<cudf::test::lists_column_wrapper<T>> expected;
       expected.push_back(LCW{{{{1, 2, 3}, valids}, {4, 5}}});
-      expected.push_back(LCW{{{{}, {}, {7, 8}, {}}, valids}, LCW::nested({{6}})});
+      expected.push_back(LCW{{{{}, {}, {7, 8}, {}}, valids}, {{6}}});
       expected.push_back(LCW{{{{7, 8}, {{9, 10, 11}, valids}, {}}, valids}});
       expected.push_back(LCW{{{{}, {-1, -2, -3, -4, -5}}, valids}, {{}}, {{-10}, {-100, -200}}});
 
@@ -1082,7 +1082,7 @@ void split_nested_struct_of_list(SplitFunc Split, CompareFunc Compare, bool spli
                                                 {},
                                                 {{8}, {10, 9, 8, 7, 6, 5}},
                                                 {{5, 6}, {}, {8}},
-                                                LCW::nested({{-3, 4, -5}})},
+                                                {{-3, 4, -5}}},
                                                list_validity.begin());
 
   // Assemble struct column.
@@ -1107,7 +1107,7 @@ void split_nested_struct_of_list(SplitFunc Split, CompareFunc Compare, bool spli
                                   {{8}, {10, 9, 8, 7, 6, 5}},
                                   {{5, 6}, {}, {8}}},
                                  ex_v.begin()));
-    expected_lists.push_back(LCW({LCW::nested({{-3, 4, -5}})}));
+    expected_lists.push_back(LCW({{{-3, 4, -5}}}));
 
     auto expected_struct_validity = create_expected_validity(splits, struct_validity);
     EXPECT_EQ(expected_names.size(), result.size());
@@ -2170,11 +2170,9 @@ TEST_F(ContiguousSplitTableCornerCases, PreSplitTable)
 {
   auto valids = cudf::test::iterators::valids_at_multiples_of(2);
 
-  using LCW = cudf::test::lists_column_wrapper<int>;
-
   cudf::test::lists_column_wrapper<int> col0{{{1, 2, 3}, {4, 5}},
                                              {{{}, {}, {7, 8}, {}}, valids},
-                                             LCW::nested({{6}}),
+                                             {{6}},
                                              {{{7, 8}, {}, {{9, 10, 11}, valids}}, valids},
                                              {{{-1, -2, -3, -4, -5}, {}}, valids},
                                              {{}},

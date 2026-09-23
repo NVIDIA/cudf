@@ -2522,12 +2522,12 @@ TEST_F(JsonReaderTest, MixedTypes)
   // max_rowoffsets is generated based on parent col id,
   // so, even if mixed types are present, their row offset will be correct.
 
-  LCWS expected_list({LCWS::nested({{"1", "2", "3"}, {"4", "5", "6"}}),
+  LCWS expected_list({{{"1", "2", "3"}, {"4", "5", "6"}},
                       {{}},
                       {{}},  // null
                       {{}},  // null
                       LCWS::nested({{"{\"c\": -1}"}, {"5"}}),
-                      LCWS::nested({{"7"}, {"8", "9"}}),
+                      {{"7"}, {"8", "9"}},
                       {{}}},  // null
                      valid_t{1, 1, 0, 0, 1, 1, 0}.begin());
   test_fn(R"(

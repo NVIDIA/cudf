@@ -336,7 +336,7 @@ TEST_P(ParquetV2Test, SlicedTable)
             {{}},
             {{}},
             {{}, {}, {}},
-            lcw::nested({{10}}),
+            {{10}},
             {{13, 14}, {15}}};
 
   auto struct_1 = cudf::test::structs_column_wrapper{land, flats};

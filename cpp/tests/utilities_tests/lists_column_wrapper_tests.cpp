@@ -1030,7 +1030,7 @@ TYPED_TEST(ListColumnWrapperTestTyped, IncompleteHierarchies)
   {
     // { {null}, {{}}, {} }
     std::vector<bool> valids{false};
-    LCW list{LCW::nested({{{}}}, valids.begin()), {{}}, {}};
+    LCW list{{{{{}}}, valids.begin()}, {{}}, {}};
 
     cudf::lists_column_view lcv(list);
     EXPECT_EQ(lcv.size(), 3);

@@ -3280,8 +3280,7 @@ TEST_F(ListReductionTest, NestedListReductionNthElement)
   // test without nulls
   auto validity = std::vector<bool>{true, false, false, true, true};
   auto nested_list =
-    LCW({{{}, {2, 3, 4}}, {}, {{5}, {6}, {7, 8}}, LCW::nested({{9, 10}}), {{11}, {12, 13}}},
-        validity.begin());
+    LCW({{{}, {2, 3, 4}}, {}, {{5}, {6}, {7, 8}}, {{9, 10}}, {{11}, {12, 13}}}, validity.begin());
   this->reduction_test(
     nested_list,
     LCW{{}, {2, 3, 4}},  // expected_value,

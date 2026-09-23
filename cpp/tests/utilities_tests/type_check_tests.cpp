@@ -47,10 +47,10 @@ TEST_F(ColumnTypeCheckTest, SameList)
   LCW lhs2{{1, 2, 3}}, rhs2{{4, 5}};
   EXPECT_TRUE(cudf::have_same_types(lhs2, rhs2));
 
-  LCW lhs3{{{1}, {2, 3}}}, rhs3{LCW::nested({{4, 5}})};
+  LCW lhs3{{{1}, {2, 3}}}, rhs3{{{4, 5}}};
   EXPECT_TRUE(cudf::have_same_types(lhs3, rhs3));
 
-  LCW lhs4{{{1}, {}, {2, 3}}}, rhs4{LCW::nested({{4, 5}, {}})};
+  LCW lhs4{{{1}, {}, {2, 3}}}, rhs4{{{4, 5}, {}}};
   EXPECT_TRUE(cudf::have_same_types(lhs4, rhs4));
 }
 
@@ -74,7 +74,7 @@ TEST_F(ColumnTypeCheckTest, SameStruct)
 
   FCW lf1{1, 2, 3}, rf1{0, 1};
   StringCW lf2{"a", "bb", ""}, rf2{"cc", "d"};
-  LCW lf3({{1, 2}, {}, {4}}), rf3(LCW::nested({{1}, {2}}));
+  LCW lf3({{1, 2}, {}, {4}}), rf3({{1}, {2}});
   DCW lf4{5, 5, 5}, rf4{9, 9};
 
   SCW lhs{lf1, lf2, lf3, lf4}, rhs{rf1, rf2, rf3, rf4};
@@ -168,7 +168,7 @@ TEST_F(ColumnTypeCheckTest, DifferentLists)
 
   // Different nested level
   LCW_i lhs1{{1, 1, 2, 3}, {}, {42, 42}};
-  LCW_i rhs1{{{8, 8, 8}, {9, 9}}, LCW_i::nested({{42, 42}})};
+  LCW_i rhs1{{{8, 8, 8}, {9, 9}}, {{42, 42}}};
 
   EXPECT_FALSE(cudf::have_same_types(lhs1, rhs1));
 

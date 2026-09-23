@@ -190,7 +190,7 @@ TYPED_TEST(ScatterListOfListScalarTest, Basic)
   LCW col({{{{88, 88}, {}, {9, 9, 9}}, mask_vector{1, 0, 1}.begin()},
            {{66}, {}, {{77, 77, 77, 77}, mask_vector{1, 0, 0, 1}.begin()}},
            {{55, 55}, {}, {10, 10, 10}},
-           LCW::nested({{44, 44}})});
+           {{44, 44}}});
 
   size_column scatter_map{1, 2, 3};
 
@@ -211,7 +211,7 @@ TYPED_TEST(ScatterListOfListScalarTest, EmptyValidScalar)
   LCW col({{{{88, 88}, {}, {9, 9, 9}}, mask_vector{1, 0, 1}.begin()},
            {{66}, {}, {{77, 77, 77, 77}, mask_vector{1, 0, 0, 1}.begin()}},
            {{55, 55}, {}, {10, 10, 10}},
-           LCW::nested({{44, 44}})});
+           {{44, 44}}});
 
   size_column scatter_map{3, 0};
 
@@ -231,11 +231,11 @@ TYPED_TEST(ScatterListOfListScalarTest, NullScalar)
   auto slr = std::make_unique<cudf::list_scalar>(LCW{}, false);
   LCW col({{{{88, 88}, {}, {9, 9, 9}}, mask_vector{1, 0, 1}.begin()},
            {{66}, {}, {{77, 77, 77, 77}, mask_vector{1, 0, 0, 1}.begin()}},
-           LCW::nested({{44, 44}})});
+           {{44, 44}}});
 
   size_column scatter_map{1, 0};
 
-  LCW expected({{}, {}, LCW::nested({{44, 44}})}, mask_vector{0, 0, 1}.begin());
+  LCW expected({{}, {}, {{44, 44}}}, mask_vector{0, 0, 1}.begin());
 
   auto result = single_scalar_scatter(col, *slr, scatter_map);
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(*result, expected);
@@ -250,14 +250,14 @@ TYPED_TEST(ScatterListOfListScalarTest, NullableTargetRows)
 
   LCW col({{{{88, 88}, {}, {9, 9, 9}}, mask_vector{1, 0, 1}.begin()},
            {{66}, {}, {{77, 77, 77, 77}, mask_vector{1, 0, 0, 1}.begin()}},
-           LCW::nested({{44, 44}})},
+           {{44, 44}}},
           mask_vector{1, 0, 1}.begin());
 
   size_column scatter_map{1};
 
   LCW expected({{{{88, 88}, {}, {9, 9, 9}}, mask_vector{1, 0, 1}.begin()},
                 {{{1, 1, 1}, {3, 3}, {}, {4}}, mask_vector{1, 1, 0, 1}.begin()},
-                LCW::nested({{44, 44}})},
+                {{44, 44}}},
                mask_vector{1, 1, 1}.begin());
 
   auto result = single_scalar_scatter(col, *slr, scatter_map);

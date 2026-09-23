@@ -743,7 +743,7 @@ TYPED_TEST(Sort, WithListColumn)
           {{7, 8}, {}},
           {{}, {}, {}},
           {{}},
-          lcw::nested({{10}}),
+          {{10}},
           {}};
 
   auto expect = cudf::test::fixed_width_column_wrapper<cudf::size_type>{8, 6, 5, 3, 0, 1, 2, 4, 7};
@@ -785,7 +785,7 @@ TYPED_TEST(Sort, WithNullableListColumn)
     {{7, 8}, {}},                                             // 5
     {{}, {}, {}},                                             // 6
     {{}},                                                     // 7
-    lcw::nested({{10}}),                                      // 8
+    {{10}},                                                   // 8
     {},                                                       // 9
     {{1, 2}, {3}, {4, 5}, {{0, 6, 0}, nulls_at({0, 2})}},     // 10
     {{1, 2}, {3}, {4, 5}, {{0, 7}, nulls_at({0})}},           // 11
@@ -814,8 +814,8 @@ TYPED_TEST(Sort, MoreLists)
     ]
     */
     lcw col{
-      {{{0}, nulls_at({0})}, {-21827}},          // 0
-      lcw::nested({{{0, 0}, nulls_at({0, 1})}})  // 1
+      {{{0}, nulls_at({0})}, {-21827}},  // 0
+      {{{0, 0}, nulls_at({0, 1})}}       // 1
     };
     cudf::test::fixed_width_column_wrapper<int32_t> expected{{0, 1}};
     auto result = cudf::sorted_order(cudf::table_view({col}));
@@ -925,7 +925,7 @@ TYPED_TEST(Sort, WithSlicedListColumn)
     {{7, 8}, {}},                                             // 4
     {{}, {}, {}},                                             // 5
     {{}},                                                     // 6
-    lcw::nested({{10}}),                                      // 7
+    {{10}},                                                   // 7
     {},                                                       // 8
     {{1, 2}, {3}, {4, 5}, {{0, 6, 0}, nulls_at({0, 2})}},     // 9
     {{1, 2}, {3}, {4, 5}, {{0, 7}, nulls_at({0})}},           //

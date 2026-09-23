@@ -875,25 +875,16 @@ TEST_F(MergeTest, Lists)
 
 TEST_F(MergeTest, NestedListsWithNulls)
 {
-  auto col1 = lcw{{lcw::nested({{1}}), lcw::nested({{3}}), lcw::nested({{5}}), lcw::nested({{7}})},
-                  null_at(3)};
-  auto col2 = lcw{{lcw::nested({{2}}), lcw::nested({{4}}), lcw::nested({{6}}), lcw::nested({{8}})},
-                  null_at(3)};
+  auto col1 = lcw{{{{1}}, {{3}}, {{5}}, {{7}}}, null_at(3)};
+  auto col2 = lcw{{{{2}}, {{4}}, {{6}}, {{8}}}, null_at(3)};
 
   auto tbl1 = cudf::table_view{{col1}};
   auto tbl2 = cudf::table_view{{col2}};
 
   auto result = cudf::merge({tbl1, tbl2}, {0}, {cudf::order::ASCENDING}, {cudf::null_order::AFTER});
 
-  auto expected_col = lcw{{lcw::nested({{1}}),
-                           lcw::nested({{2}}),
-                           lcw::nested({{3}}),
-                           lcw::nested({{4}}),
-                           lcw::nested({{5}}),
-                           lcw::nested({{6}}),
-                           lcw::nested({{7}}),
-                           lcw::nested({{8}})},
-                          nulls_at({6, 7})};
+  auto expected_col =
+    lcw{{{{1}}, {{2}}, {{3}}, {{4}}, {{5}}, {{6}}, {{7}}, {{8}}}, nulls_at({6, 7})};
   auto expected_tbl = cudf::table_view{{expected_col}};
 
   CUDF_TEST_EXPECT_TABLES_EQUIVALENT(expected_tbl, *result);

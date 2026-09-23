@@ -536,7 +536,7 @@ TEST_F(FromArrowDeviceTest, StructColumn)
     cudf::test::fixed_width_column_wrapper<int32_t, int32_t>{{12, 24, 47}, {1, 0, 1}}.release();
   auto bool_col = cudf::test::fixed_width_column_wrapper<bool>{{true, true, false}}.release();
   using LCW     = cudf::test::lists_column_wrapper<int64_t>;
-  auto list_col = LCW{{{1, 2}, {3, 4}, {5}}, LCW::nested({{6}}), {{7}, {8, 9}}}.release();
+  auto list_col = LCW{{{1, 2}, {3, 4}, {5}}, {{6}}, {{7}, {8, 9}}}.release();
   vector_of_columns cols2;
   cols2.push_back(std::move(str_col2));
   cols2.push_back(std::move(int_col2));

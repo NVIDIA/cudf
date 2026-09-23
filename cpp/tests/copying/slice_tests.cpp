@@ -190,7 +190,7 @@ TEST_F(SliceListTest, Lists)
   {
     cudf::test::lists_column_wrapper<int> list{{{1, 2, 3}, {4, 5}},
                                                {{}, {}, {7, 8}, {}},
-                                               LCW::nested({{6}}),
+                                               {{6}},
                                                {{7, 8}, {9, 10, 11}, {}},
                                                {{}, {-1, -2, -3, -4, -5}},
                                                {{}},
@@ -199,7 +199,7 @@ TEST_F(SliceListTest, Lists)
     std::vector<cudf::size_type> indices{1, 3, 3, 6};
 
     std::vector<cudf::test::lists_column_wrapper<int>> expected;
-    expected.push_back(LCW{{{}, {}, {7, 8}, {}}, LCW::nested({{6}})});
+    expected.push_back(LCW{{{}, {}, {7, 8}, {}}, {{6}}});
     expected.push_back(LCW{{{7, 8}, {9, 10, 11}, {}}, {{}, {-1, -2, -3, -4, -5}}, {{}}});
 
     std::vector<cudf::column_view> result = cudf::slice(list, indices);
@@ -248,7 +248,7 @@ TEST_F(SliceListTest, ListsWithNulls)
   {
     cudf::test::lists_column_wrapper<int> list{{{{1, 2, 3}, valids}, {4, 5}},
                                                {{{}, {}, {7, 8}, {}}, valids},
-                                               LCW::nested({{6}}),
+                                               {{6}},
                                                {{{7, 8}, {{9, 10, 11}, valids}, {}}, valids},
                                                {{{}, {-1, -2, -3, -4, -5}}, valids},
                                                {{}},
@@ -257,7 +257,7 @@ TEST_F(SliceListTest, ListsWithNulls)
     std::vector<cudf::size_type> indices{1, 3, 3, 6};
 
     std::vector<cudf::test::lists_column_wrapper<int>> expected;
-    expected.push_back(LCW{{{{}, {}, {7, 8}, {}}, valids}, LCW::nested({{6}})});
+    expected.push_back(LCW{{{{}, {}, {7, 8}, {}}, valids}, {{6}}});
     expected.push_back(LCW{
       {{{7, 8}, {{9, 10, 11}, valids}, {}}, valids}, {{{}, {-1, -2, -3, -4, -5}}, valids}, {{}}});
 

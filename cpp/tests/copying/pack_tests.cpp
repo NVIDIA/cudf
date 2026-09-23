@@ -134,8 +134,6 @@ TEST_F(PackUnpackTest, EmptyColumns)
 
 std::vector<std::unique_ptr<cudf::column>> generate_lists(bool include_validity)
 {
-  using LCW = cudf::test::lists_column_wrapper<int>;
-
   if (include_validity) {
     auto valids = cudf::test::iterators::valids_at_multiples_of(2);
     cudf::test::lists_column_wrapper<int> list0{{1, 2, 3},
@@ -150,7 +148,7 @@ std::vector<std::unique_ptr<cudf::column>> generate_lists(bool include_validity)
 
     cudf::test::lists_column_wrapper<int> list1{{{{1, 2, 3}, valids}, {4, 5}},
                                                 {{{}, {}, {7, 8}, {}}, valids},
-                                                LCW::nested({{6}}),
+                                                {{6}},
                                                 {{{7, 8}, {{9, 10, 11}, valids}, {}}, valids},
                                                 {{{}, {-1, -2, -3, -4, -5}}, valids},
                                                 {{}},
@@ -169,7 +167,7 @@ std::vector<std::unique_ptr<cudf::column>> generate_lists(bool include_validity)
 
   cudf::test::lists_column_wrapper<int> list1{{{1, 2, 3}, {4, 5}},
                                               {{}, {}, {7, 8}, {}},
-                                              LCW::nested({{6}}),
+                                              {{6}},
                                               {{7, 8}, {9, 10, 11}, {}},
                                               {{}, {-1, -2, -3, -4, -5}},
                                               {{}},
@@ -235,7 +233,6 @@ std::vector<std::unique_ptr<cudf::column>> generate_struct_of_list()
     cudf::test::fixed_width_column_wrapper<int>(ages.begin(), ages.end(), ages_validity.begin());
 
   // 3. List column
-  using LCW = cudf::test::lists_column_wrapper<cudf::string_view>;
   std::vector<bool> list_validity{true, true, true, true, true, false, true, false, true};
   cudf::test::lists_column_wrapper<cudf::string_view> list(
     {{{"abc", "d", "edf"}, {"jjj"}},
@@ -246,7 +243,7 @@ std::vector<std::unique_ptr<cudf::column>> generate_struct_of_list()
      {{}},
      {{"fun"}, {"a", "bc", "def", "ghij", "klmno", "pqrstu"}},
      {{"seven", "zz"}, {}, {"xyzzy"}},
-     LCW::nested({{"negative 3", "  ", "cleveland"}})},
+     {{"negative 3", "  ", "cleveland"}}},
     list_validity.begin());
 
   // Assemble struct column.

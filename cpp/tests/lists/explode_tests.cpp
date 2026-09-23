@@ -188,7 +188,7 @@ TEST_F(ExplodeTest, Nested)
   //    [[5, 6]]               200
   //    [[0, 3],[],[5],[2, 1]] 300
 
-  LCW a{{{1, 2}, {7, 6, 5}}, LCW::nested({{5, 6}}), {{0, 3}, {}, {5}, {2, 1}}};
+  LCW a{{{1, 2}, {7, 6, 5}}, {{5, 6}}, {{0, 3}, {}, {5}, {2, 1}}};
   FCW b{100, 200, 300};
 
   LCW expected_a{{1, 2}, {7, 6, 5}, {5, 6}, {0, 3}, {}, {5}, {2, 1}};
@@ -220,7 +220,7 @@ TEST_F(ExplodeTest, NestedNulls)
   auto valids       = cudf::test::iterators::valids_at_multiples_of(2);
   auto always_valid = cudf::test::iterators::no_nulls();
 
-  LCW a({{{1, 2}, {7, 6, 5}}, LCW::nested({{null}}), {{0, 3}, {5}, {2, 1}}}, valids);
+  LCW a({{{1, 2}, {7, 6, 5}}, {{null}}, {{0, 3}, {5}, {2, 1}}}, valids);
   FCW b({100, null, 300}, valids);
 
   LCW expected_a{{1, 2}, {7, 6, 5}, {0, 3}, {5}, {2, 1}};
@@ -251,8 +251,7 @@ TEST_F(ExplodeTest, NullsInNested)
 
   auto valids = cudf::test::iterators::valids_at_multiples_of(2);
 
-  LCW a(
-    {{{{1, null}, valids}, {7, 6, 5}}, LCW::nested({{5, 6}}), {{0, 3}, {5}, {{2, null}, valids}}});
+  LCW a({{{{1, null}, valids}, {7, 6, 5}}, {{5, 6}}, {{0, 3}, {5}, {{2, null}, valids}}});
   FCW b({100, 200, 300});
 
   LCW expected_a{{{1, null}, valids}, {7, 6, 5}, {5, 6}, {0, 3}, {5}, {{2, null}, valids}};
@@ -283,9 +282,7 @@ TEST_F(ExplodeTest, NullsInNestedDoubleExplode)
 
   auto valids = cudf::test::iterators::valids_at_multiples_of(2);
 
-  LCW a{{{{1, null}, valids}, {}, {7, 6, 5}},
-        LCW::nested({{5, 6}}),
-        {{0, 3}, {5}, {{2, null}, valids}}};
+  LCW a{{{{1, null}, valids}, {}, {7, 6, 5}}, {{5, 6}}, {{0, 3}, {5}, {{2, null}, valids}}};
   FCW b{100, 200, 300};
 
   FCW expected_a({1, null, 7, 6, 5, 5, 6, 0, 3, 5, 2, null},
@@ -318,8 +315,7 @@ TEST_F(ExplodeTest, NestedStructs)
 
   auto valids = cudf::test::iterators::valids_at_multiples_of(2);
 
-  LCW a(
-    {{{{1, null}, valids}, {7, 6, 5}}, LCW::nested({{5, 6}}), {{0, 3}, {5}, {{2, null}, valids}}});
+  LCW a({{{{1, null}, valids}, {7, 6, 5}}, {{5, 6}}, {{0, 3}, {5}, {{2, null}, valids}}});
   FCW b1({100, 200, 300});
   cudf::test::strings_column_wrapper b2{"100", "200", "300"};
   cudf::test::structs_column_wrapper b({b1, b2});
@@ -484,7 +480,7 @@ TEST_F(ExplodeTest, SlicedList)
   auto valids = cudf::test::iterators::valids_at_multiples_of(2);
 
   LCW a({{{{1, 2}, valids}, {7, 6, 5}},
-         LCW::nested({{5, 6}}),
+         {{5, 6}},
          {{0, 3}, {5}, {{2, 1}, valids}},
          {{8, 3}, {}, {{4, 3, 1, 2}, valids}},
          {{2, 3, 4}, {9, 8}}});
@@ -819,7 +815,7 @@ TEST_F(ExplodeOuterTest, Nested)
   //    [[5, 6]]               200
   //    [[0, 3],[],[5],[2, 1]] 300
 
-  LCW a{{{1, 2}, {7, 6, 5}}, LCW::nested({{5, 6}}), {{0, 3}, {}, {5}, {2, 1}}};
+  LCW a{{{1, 2}, {7, 6, 5}}, {{5, 6}}, {{0, 3}, {}, {5}, {2, 1}}};
   FCW b{100, 200, 300};
 
   LCW expected_a{{1, 2}, {7, 6, 5}, {5, 6}, {0, 3}, {}, {5}, {2, 1}};
@@ -850,7 +846,7 @@ TEST_F(ExplodeOuterTest, NestedNulls)
 
   auto valids = cudf::test::iterators::valids_at_multiples_of(2);
 
-  LCW a({{{1, 2}, {7, 6, 5}}, LCW::nested({{null}}), {{0, 3}, {5}, {2, 1}}}, valids);
+  LCW a({{{1, 2}, {7, 6, 5}}, {{null}}, {{0, 3}, {5}, {2, 1}}}, valids);
   FCW b({100, 200, 300});
 
   auto expected_valids = cudf::test::iterators::null_at(2);
@@ -880,8 +876,7 @@ TEST_F(ExplodeOuterTest, NullsInNested)
 
   auto valids = cudf::test::iterators::valids_at_multiples_of(2);
 
-  LCW a(
-    {{{{1, null}, valids}, {7, 6, 5}}, LCW::nested({{5, 6}}), {{0, 3}, {5}, {{2, null}, valids}}});
+  LCW a({{{{1, null}, valids}, {7, 6, 5}}, {{5, 6}}, {{0, 3}, {5}, {{2, null}, valids}}});
   FCW b({100, 200, 300});
 
   LCW expected_a{{{1, null}, valids}, {7, 6, 5}, {5, 6}, {0, 3}, {5}, {{2, null}, valids}};
@@ -912,9 +907,7 @@ TEST_F(ExplodeOuterTest, NullsInNestedDoubleExplode)
 
   auto valids = cudf::test::iterators::valids_at_multiples_of(2);
 
-  LCW a{{{{1, null}, valids}, {}, {7, 6, 5}},
-        LCW::nested({{5, 6}}),
-        {{0, 3}, {5}, {{2, null}, valids}}};
+  LCW a{{{{1, null}, valids}, {}, {7, 6, 5}}, {{5, 6}}, {{0, 3}, {5}, {{2, null}, valids}}};
   FCW b{100, 200, 300};
 
   FCW expected_a({1, null, null, 7, 6, 5, 5, 6, 0, 3, 5, 2, null},
@@ -949,8 +942,7 @@ TEST_F(ExplodeOuterTest, NestedStructs)
 
   auto valids = cudf::test::iterators::valids_at_multiples_of(2);
 
-  LCW a(
-    {{{{1, null}, valids}, {7, 6, 5}}, LCW::nested({{5, 6}}), {{0, 3}, {5}, {{2, null}, valids}}});
+  LCW a({{{{1, null}, valids}, {7, 6, 5}}, {{5, 6}}, {{0, 3}, {5}, {{2, null}, valids}}});
   FCW b1({100, 200, 300});
   cudf::test::strings_column_wrapper b2{"100", "200", "300"};
   cudf::test::structs_column_wrapper b({b1, b2});
@@ -1117,7 +1109,7 @@ TEST_F(ExplodeOuterTest, SlicedList)
   auto valids = cudf::test::iterators::valids_at_multiples_of(2);
 
   LCW a({{{{1, null}, valids}, {7, 6, 5}},
-         LCW::nested({{5, 6}}),
+         {{5, 6}},
          {{0, 3}, {5}, {{2, null}, valids}},
          {{8, 3}, {}, {{4, null, 1, null}, valids}},
          {{2, 3, 4}, {9, 8}}});

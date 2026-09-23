@@ -531,10 +531,10 @@ TEST_F(ListConcatenateRowsNestedTypesTest, ListWithNulls)
                  nulls_at({4}));
 
   // col2
-  StrListsCol l2({StrListsCol::nested({{"monitor", "sugar"}}),
-                  StrListsCol::nested({{"spurs", "garlic"}, {"onion", "shallot", "carrot"}}),
-                  StrListsCol::nested({{"cars", "trucks", "planes"}, {"abc"}, {"mno", "pqr"}}),
-                  StrListsCol::nested({{}, {"ram", "cpu", "disk"}, {}}),
+  StrListsCol l2({{{"monitor", "sugar"}},
+                  {{"spurs", "garlic"}, {"onion", "shallot", "carrot"}},
+                  {{"cars", "trucks", "planes"}, {"abc"}, {"mno", "pqr"}},
+                  {{}, {"ram", "cpu", "disk"}, {}},
                   StrListsCol::nested({{"round"}, {"square"}})},
                  nulls_at({0, 4}));
 

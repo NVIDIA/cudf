@@ -171,7 +171,7 @@ TEST_F(ConcatenateListElementsTest, SimpleInputStringsColumnWithNulls)
      {{"Orange", "Dog" /*NULL*/, "Fox" /*NULL*/, "Duck" /*NULL*/}, nulls_at({1, 2, 3})}},
     {{{"Banana", "Pig" /*NULL*/, "Kiwi", "Cherry", "Whale" /*NULL*/}, nulls_at({1, 4})},
      {"Lemon", "Peach"}},
-    StrListsCol::nested({{"Coconut"}, {} /*NULL*/}, null_at(1))};
+    {{{"Coconut"}, {} /*NULL*/}, null_at(1)}};
 
   // Ignore null list elements.
   {
@@ -203,7 +203,7 @@ TEST_F(ConcatenateListElementsTest, SimpleInputStringsColumnWithEmptyStringsAndN
   auto const col = StrListsCol{
     {{"", "", ""}, {{"Orange", "" /*NULL*/, "" /*NULL*/, "" /*NULL*/}, nulls_at({1, 2, 3})}},
     {{{"Banana", "" /*NULL*/, "Kiwi", "Cherry", "" /*NULL*/}, nulls_at({1, 4})}, {""}},
-    StrListsCol::nested({{"Coconut"}, {} /*NULL*/}, null_at(1))};
+    {{{"Coconut"}, {} /*NULL*/}, null_at(1)}};
 
   // Ignore null list elements.
   {

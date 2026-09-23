@@ -233,8 +233,8 @@ TYPED_TEST(ListGetFixedWidthValueTest, NestedGetNonNullNonEmpty)
   LCW col{
     {{1, 2}, {34}},
     {},
-    LCW::nested({{1}}),
-    LCW::nested({{42}, {10}})
+    {{1}},
+    {{42}, {10}}
   };
   // clang-format on
   LCW expected_data({{42}, {10}});
@@ -257,8 +257,8 @@ TYPED_TEST(ListGetFixedWidthValueTest, NestedGetNonNullNonEmptyPreserveNull)
   LCW col{
     {{1, 2}, {34}},
     {},
-    LCW::nested({{1}}),
-    LCW::nested({{42}, {10}, {{1, 3, 2}, this->nth_valid(1)}}, valid.begin())
+    {{1}},
+    {{{42}, {10}, {{1, 3, 2}, this->nth_valid(1)}}, valid.begin()}
   };
   // clang-format on
   LCW expected_data({{42}, {10}, {{1, 3, 2}, this->nth_valid(1)}}, valid.begin());
@@ -279,8 +279,8 @@ TYPED_TEST(ListGetFixedWidthValueTest, NestedGetNonNullEmpty)
   LCW col{
     {{1, 2}, {34}},
     {},
-    LCW::nested({{1}}),
-    LCW::nested({{42}, {10}})
+    {{1}},
+    {{42}, {10}}
   };
   // clang-format on
   LCW expected_data{};
@@ -303,10 +303,10 @@ TYPED_TEST(ListGetFixedWidthValueTest, NestedGetNull)
   // clang-format off
   LCW col(
     {
-      LCW::nested({{1, 2}, {34}}),
+      {{1, 2}, {34}},
       {},
-      LCW::nested({{1}}),
-      LCW::nested({{42}, {10}})
+      {{1}},
+      {{42}, {10}}
     }, valid.begin());
   // clang-format on
   cudf::size_type index = 1;
@@ -384,7 +384,7 @@ TEST_F(ListGetStringValueTest, NestedGetNonNullNonEmpty)
   LCW col{
     {{"aaa", "Héllo"}},
     {},
-    LCW::nested({{""}, {{"string", "str2", "xyz"}, this->nth_valid(0)}}),
+    {{""}, {{"string", "str2", "xyz"}, this->nth_valid(0)}},
     LCW::nested({{"42"}, {"21"}})
   };
   // clang-format on
@@ -407,7 +407,7 @@ TEST_F(ListGetStringValueTest, NestedGetNonNullNonEmptyPreserveNull)
   LCW col{
     {{"aaa", "Héllo"}},
     {},
-    LCW::nested({{""}, {"cc"}, {{"string", "str2", "xyz"}, this->nth_valid(0)}}, valid.begin()),
+    {{{""}, {"cc"}, {{"string", "str2", "xyz"}, this->nth_valid(0)}}, valid.begin()},
     LCW::nested({{"42"}, {"21"}})
   };
   // clang-format on
@@ -455,7 +455,7 @@ TEST_F(ListGetStringValueTest, NestedGetNull)
   // clang-format off
   LCW col(
     {
-      LCW::nested({{"aaa", "Héllo"}}),
+      {{"aaa", "Héllo"}},
       LCW::nested({{""}}),
       LCW::nested({{"42"}, {"21"}}),
       {}

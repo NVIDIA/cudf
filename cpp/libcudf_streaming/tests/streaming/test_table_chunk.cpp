@@ -352,6 +352,52 @@ TEST_P(StreamingTableChunk, DeviceToHostRoundTripCopy)
   }
 }
 
+TEST_P(StreamingTableChunk, SpillTrackingOnHostCopy)
+{
+  auto const spill_mem_type = GetParam();
+  if (spill_mem_type == rapidsmpf::MemoryType::PINNED_HOST &&
+      !rapidsmpf::is_pinned_memory_resources_supported()) {
+    GTEST_SKIP() << "MemoryType::PINNED_HOST isn't supported on the system.";
+  }
+
+  // The fixture's resource has statistics disabled, and `buffer-spilled-time` is the
+  // only way to observe that a spill token was handed to the host buffer.
+  auto stats      = rapidsmpf::Statistics::create();
+  auto tracked_br = rapidsmpf::BufferResource::create(
+    mr_cuda,
+    rapidsmpf::is_pinned_memory_resources_supported()
+      ? std::optional<rapidsmpf::PinnedPoolProperties>{rapidsmpf::PinnedPoolProperties{}}
+      : rapidsmpf::PinnedMemoryDisabled,
+    std::unordered_map<rapidsmpf::MemoryType, std::int64_t>{},
+    std::nullopt,
+    std::make_shared<rapidsmpf::StreamPool>(16),
+    stats);
+
+  auto samples = [&stats] {
+    return stats->has_stat("buffer-spilled-time") ? stats->get_stat("buffer-spilled-time").count()
+                                                  : 0UL;
+  };
+
+  auto round_trip = [&](cudf::table table) {
+    table_chunk dev{std::make_unique<cudf::table>(std::move(table)), stream};
+    auto host_res = tracked_br->reserve_or_fail(dev.data_alloc_size(rapidsmpf::MemoryType::DEVICE),
+                                                spill_mem_type);
+    auto host     = dev.copy(host_res);
+    auto dev_res  = tracked_br->reserve_or_fail(host.data_alloc_size(spill_mem_type),
+                                               rapidsmpf::MemoryType::DEVICE);
+    return host.make_available(dev_res);
+  };
+
+  // An empty table packs to a device buffer that never left the device, so it carries
+  // no token and must not be reported as a spill.
+  std::ignore = round_trip(random_table_with_index(2025, 0, 0, 5));
+  EXPECT_EQ(samples(), 0UL);
+
+  // A non-empty one does leave the device, so the round trip is recorded once.
+  std::ignore = round_trip(random_table_with_index(2025, 64, 0, 5));
+  EXPECT_EQ(samples(), 1UL);
+}
+
 TEST_F(StreamingTableChunk, ToMessageRoundTrip)
 {
   constexpr unsigned int num_rows = 64;

@@ -191,7 +191,14 @@ table_chunk table_chunk::copy(rapidsmpf::MemoryReservation& reservation) const
                                       std::move(timing));
         // update the provided `reservation`
         br->release(reservation, nbytes);
-        auto host_buffer = br->move(std::move(packed_pinned.gpu_data), stream());
+        // The data leaves device memory here rather than through `BufferResource`, so
+        // the spill is opened by hand and the token handed to the buffer.
+        auto host_buffer =
+          br->move(std::move(packed_pinned.gpu_data),
+                   stream(),
+                   // An empty table packs to a default-constructed `device_buffer`,
+                   // which ignores the resource and frees nothing, so it gets no token.
+                   nbytes > 0 ? std::make_shared<rapidsmpf::SpillTrackToken>() : nullptr);
         return table_chunk(std::make_unique<rapidsmpf::PackedData>(
           std::move(packed_pinned.metadata), std::move(host_buffer)));
       }

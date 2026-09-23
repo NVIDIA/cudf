@@ -1721,7 +1721,7 @@ formats commonly used in data analytics, including CSV, Parquet, ORC, Avro, and 
 
 Here are some tools that can help with debugging libcudf (besides printf of course):
 1. `cuda-gdb`\
-   Follow the instructions in the [Contributor to cuDF guide](../../../CONTRIBUTING.md#debugging-cudf) to build
+   Follow the instructions in the [Contributor to cuDF guide](https://github.com/NVIDIA/cudf/blob/main/CONTRIBUTING.md#debugging-cudf) to build
    and run libcudf with debug symbols.
 2. `compute-sanitizer`\
    The [CUDA Compute Sanitizer](https://docs.nvidia.com/compute-sanitizer/ComputeSanitizer/index.html)

@@ -52,8 +52,13 @@ void BM_parquet_read_data(nvbench::state& state,
 {
   auto const cardinality = static_cast<cudf::size_type>(state.get_int64("cardinality"));
   auto const run_length  = static_cast<cudf::size_type>(state.get_int64("run_length"));
-  BM_parquet_read_data_common<DataType>(
-    state, data_profile_builder().cardinality(cardinality).avg_run_length(run_length), type_list);
+  auto const null_prob   = null_probability_from_percent(state.get_int64("null_percent"));
+  BM_parquet_read_data_common<DataType>(state,
+                                        data_profile_builder()
+                                          .cardinality(cardinality)
+                                          .avg_run_length(run_length)
+                                          .null_probability(null_prob),
+                                        type_list);
 }
 
 template <data_type DataType>
@@ -160,7 +165,10 @@ NVBENCH_BENCH_TYPES(BM_parquet_read_data, NVBENCH_TYPE_AXES(d_type_list))
   .add_int64_axis("run_length", {1, 32})
   .add_int64_axis("data_size", {512 << 20})
   .add_int64_axis("row_group_size_bytes", {0})
-  .add_int64_axis("row_group_size_rows", {0});
+  .add_int64_axis("row_group_size_rows", {0})
+  // Defaults to a low null rate so the default sweep's cost is unchanged. Pass e.g.
+  // `-a null_percent=90` to reach the dense-null regime; -1 writes no validity mask at all.
+  .add_int64_axis("null_percent", {1});
 
 NVBENCH_BENCH(BM_parquet_read_flat_nullable_pages)
   .set_name("parquet_read_flat_nullable_pages")

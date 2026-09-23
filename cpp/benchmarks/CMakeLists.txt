@@ -160,6 +160,8 @@ endif()
 
 set(ndsh_benchmark_options)
 if(CUDF_WITH_VORTEX)
+  include(${CUDF_SOURCE_DIR}/cmake/thirdparty/get_vortex.cmake)
+  add_subdirectory(ndsh/vortex)
   # Pinned Vortex loads CUB/nvcomp libraries from absolute Cargo build paths.
   set(ndsh_benchmark_options NO_INSTALL)
 endif()
@@ -168,42 +170,38 @@ foreach(query IN ITEMS 01 05 06 09 10)
     NDSH_Q${query}_NVBENCH ${ndsh_benchmark_options} ndsh/q${query}.cpp ndsh/utilities.cpp
     ndsh/parquet/parquet_io.cpp
   )
+  if(NOT CUDF_WITH_VORTEX)
+    continue()
+  endif()
+
+  target_link_libraries(NDSH_Q${query}_NVBENCH PRIVATE NDSH_VORTEX_IO kvikio::kvikio)
+  target_compile_definitions(NDSH_Q${query}_NVBENCH PRIVATE CUDF_WITH_VORTEX=1)
+
+  if(BUILD_TESTS)
+    string(REGEX REPLACE "^0" "" query_number "${query}")
+    set(ndsh_smoke_options)
+    if(query STREQUAL "09")
+      list(APPEND ndsh_smoke_options --axis "engine=[binaryop,ast,transform]")
+    endif()
+    rapids_test_add(
+      NAME NDSH_Q${query}_VORTEX_SMOKE
+      COMMAND
+        NDSH_Q${query}_NVBENCH --benchmark ndsh_q${query_number}_local --devices 0 --axis
+        scale_factor=0.01 --axis "format=[parquet,vortex]" --axis workload=q${query_number} --axis
+        cache=warm --axis io=buffered ${ndsh_smoke_options}
+      GPUS 1
+      PERCENT 100
+    )
+    # NVBench may report failed or skipped states without a nonzero exit status.
+    set_tests_properties(
+      NDSH_Q${query}_VORTEX_SMOKE PROPERTIES TIMEOUT 600 RUN_SERIAL TRUE LABELS "ndsh;vortex;smoke"
+                                             FAIL_REGULAR_EXPRESSION "Fail:;Skip:"
+    )
+    unset(ndsh_smoke_options)
+    unset(query_number)
+  endif()
 endforeach()
 unset(ndsh_benchmark_options)
-if(CUDF_WITH_VORTEX)
-  include(${CUDF_SOURCE_DIR}/cmake/thirdparty/get_vortex.cmake)
-  add_subdirectory(ndsh/vortex)
-
-  foreach(query IN ITEMS 01 05 06 09 10)
-    target_link_libraries(NDSH_Q${query}_NVBENCH PRIVATE NDSH_VORTEX_IO kvikio::kvikio)
-    target_compile_definitions(NDSH_Q${query}_NVBENCH PRIVATE CUDF_WITH_VORTEX=1)
-
-    if(BUILD_TESTS)
-      string(REGEX REPLACE "^0" "" query_number "${query}")
-      set(ndsh_smoke_options)
-      if(query STREQUAL "09")
-        list(APPEND ndsh_smoke_options --axis "engine=[binaryop,ast,transform]")
-      endif()
-      rapids_test_add(
-        NAME NDSH_Q${query}_VORTEX_SMOKE
-        COMMAND
-          NDSH_Q${query}_NVBENCH --benchmark ndsh_q${query_number}_local --devices 0 --axis
-          scale_factor=0.01 --axis "format=[parquet,vortex]" --axis workload=q${query_number} --axis
-          cache=warm --axis io=buffered ${ndsh_smoke_options}
-        GPUS 1
-        PERCENT 100
-      )
-      # NVBench may report failed or skipped states without a nonzero exit status.
-      set_tests_properties(
-        NDSH_Q${query}_VORTEX_SMOKE
-        PROPERTIES TIMEOUT 600 RUN_SERIAL TRUE LABELS "ndsh;vortex;smoke" FAIL_REGULAR_EXPRESSION
-                   "Fail:;Skip:"
-      )
-      unset(ndsh_smoke_options)
-      unset(query_number)
-    endif()
-  endforeach()
-endif()
 
 # ##################################################################################################
 # * filter benchmark -------------------------------------------------------------------

@@ -10,22 +10,13 @@ publish = false
 name = "_quent"
 crate-type = ["cdylib"]
 
-[features]
-default = ["collector"]
-collector = ["quent-instrumentation/io-collector", "quent-io/collector"]
-
 [dependencies]
 pyo3 = { version = "0.29", features = ["abi3-py311"] }
-quent-collector = { git = "https://github.com/rapidsai/quent", rev = "7aab75e18b862bee9ed82910ef9da33581c8cca2" }
-quent-collector-proto = { git = "https://github.com/rapidsai/quent", rev = "7aab75e18b862bee9ed82910ef9da33581c8cca2" }
 quent-dynamic-attributes = { git = "https://github.com/rapidsai/quent", rev = "7aab75e18b862bee9ed82910ef9da33581c8cca2" }
 quent-instrumentation = { git = "https://github.com/rapidsai/quent", rev = "7aab75e18b862bee9ed82910ef9da33581c8cca2", features = ["serde", "io-ndjson"] }
 quent-io = { git = "https://github.com/rapidsai/quent", rev = "7aab75e18b862bee9ed82910ef9da33581c8cca2", default-features = false, features = ["ndjson"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-tokio = { version = "1", features = ["rt-multi-thread", "sync"] }
-tokio-stream = { version = "0.1", features = ["net"] }
-tonic = "0.14"
 
 [build-dependencies]
 quent-build-info = { git = "https://github.com/rapidsai/quent", rev = "7aab75e18b862bee9ed82910ef9da33581c8cca2" }

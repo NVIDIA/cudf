@@ -21,7 +21,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             umbrella_event: true,
             analyzer_package: Some("cudf-polars-quent-analyzer".to_owned()),
             record_derives: &["Clone"],
-            collector_sink: true,
             ..Default::default()
         },
     )?;
@@ -34,7 +33,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         instrumentation_path: "crate".to_owned(),
         exporters: quent_schema_codegen_python::Exporters {
             ndjson: true,
-            collector: true,
             ..Default::default()
         },
         ..Default::default()

@@ -83,8 +83,6 @@ class ExporterOptions:
     """Exporter configuration for a telemetry context."""
     @staticmethod
     def ndjson(output_dir: str | PathLike[str]) -> ExporterOptions: ...
-    @staticmethod
-    def collector(address: str) -> ExporterOptions: ...
 
 class ImplementationDict(TypedDict):
     name: str

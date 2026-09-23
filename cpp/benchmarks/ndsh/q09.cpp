@@ -615,12 +615,13 @@ void ndsh_q9_local(nvbench::state& state)
 
 }  // namespace
 
+// NVBench varies the first axis fastest; keep scale last to reuse the one-scale fixture cache.
 NVBENCH_BENCH(ndsh_q9_local)
   .set_name("ndsh_q9_local")
-  .add_float64_axis("scale_factor", {0.01, 0.1, 1, 10})
   .add_string_axis("format", {"parquet", "vortex"})
   .add_string_axis("workload", {"read", "q9"})
   .add_string_axis("engine", {"binaryop", "ast", "transform"})
   .add_string_axis("cache", {"warm", "cold"})
-  .add_string_axis("io", {"buffered"});
+  .add_string_axis("io", {"buffered"})
+  .add_float64_axis("scale_factor", {0.01, 0.1, 1, 10});
 #endif

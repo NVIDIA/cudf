@@ -320,6 +320,10 @@ ConfigureTest(
 ConfigureTest(COMPRESSION_TEST io/comp/comp_test.cpp)
 ConfigureTest(ROW_SELECTION_TEST io/row_selection_test.cpp)
 ConfigureTest(FILEPATH_SOURCE_TEST io/filepath_source_test.cpp)
+ConfigureTest(VORTEX_WRITER_TEST io/vortex_writer_test.cpp)
+if(CUDF_WITH_VORTEX)
+  target_compile_definitions(VORTEX_WRITER_TEST PRIVATE CUDF_WITH_VORTEX=1)
+endif()
 
 ConfigureTest(
   CSV_TEST io/csv_test.cpp

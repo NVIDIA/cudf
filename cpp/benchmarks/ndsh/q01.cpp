@@ -246,24 +246,35 @@ void check_q1_boundaries()
   auto sliced_expected  = expected;
   sliced_expected.groups.at({"R", "O"}) = {8, 200, 100, 120, 8, 200, 0.5, 1};
   sliced_expected.matched               = 4;
-  // Full/sliced input, rejected/null dates, and empty input; exercise both reader contracts.
-  for (auto const& slice : cudf::slice(input, {0, 7, 1, 7, 5, 7, 0, 0})) {
-    for (bool filter_shipdate : {true, false}) {
-      auto result = execute_q1(
-        [&](auto const& columns, auto const& predicate) {
-          if (!filter_shipdate) { return ndsh::read_parquet_fixture(slice, columns, predicate); }
-          return std::make_unique<table_with_names>(std::make_unique<cudf::table>(slice), columns);
-        },
-        filter_shipdate,
-        ndsh::take_result);
-      ndsh::check_q1_result(slice.num_rows() == 7   ? expected
-                            : slice.num_rows() == 6 ? sliced_expected
-                                                    : ndsh::q1_reference_result{},
-                            *result,
-                            stream);
-      if (slice.num_rows() >= 6) {
-        ndsh::check_q1_result(slice.num_rows() == 7 ? cpu : sliced_cpu, *result, stream);
+  struct boundary_case {
+    char const* name;
+    cudf::table_view input;
+    ndsh::q1_reference_result expected;
+    ndsh::q1_reference_result const* cpu;
+  };
+  boundary_case const cases[]{
+    {"full", input, expected, &cpu},
+    {"offset", cudf::slice(input, {1, 7}).front(), sliced_expected, &sliced_cpu},
+    {"rejected/null dates", cudf::slice(input, {5, 7}).front(), {}, nullptr},
+    {"empty", cudf::slice(input, {0, 0}).front(), {}, nullptr}};
+  for (auto const& test : cases) {
+    try {
+      for (bool filter_shipdate : {true, false}) {
+        auto result = execute_q1(
+          [&](auto const& columns, auto const& predicate) {
+            if (!filter_shipdate) {
+              return ndsh::read_parquet_fixture(test.input, columns, predicate);
+            }
+            return std::make_unique<table_with_names>(std::make_unique<cudf::table>(test.input),
+                                                      columns);
+          },
+          filter_shipdate,
+          ndsh::take_result);
+        ndsh::check_q1_result(test.expected, *result, stream);
+        if (test.cpu) { ndsh::check_q1_result(*test.cpu, *result, stream); }
       }
+    } catch (cudf::logic_error const& error) {
+      CUDF_FAIL(std::string{"Q1 case "} + test.name + ": " + error.what());
     }
   }
   CUDF_CUDA_TRY(cudaDeviceSynchronize());

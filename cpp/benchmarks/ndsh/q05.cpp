@@ -268,34 +268,50 @@ void check_q5_boundaries()
   // Five lines match; order 10 has a supplier from the wrong customer nation.
   ndsh::q5_reference_result const expected{{{"ALPHA", 150.0}, {"ZULU", 250.0}}, 5};
   cuda::stream_ref const stream = cudf::get_default_stream();
-  // Full input, only rejected orders, and no orders. The CPU oracle accepts no nulls.
-  auto const non_null_orders = cudf::slice(input.at("orders"), {0, 13}, stream).front();
-  for (auto const& orders : cudf::slice(input.at("orders"), {0, 14, 3, 12, 0, 0}, stream)) {
-    auto const want = orders.num_rows() == 14 ? expected : ndsh::q5_reference_result{};
-    ndsh::q5_reference_builder builder;
-    for (auto const& name : {"region", "nation", "supplier", "customer", "orders", "lineitem"}) {
-      builder.add_table(name,
-                        std::string{name} == "orders"
-                          ? (orders.num_rows() == 14 ? non_null_orders : orders)
-                          : input.at(name),
-                        stream);
-    }
-    auto const cpu = builder.finish();
-    CUDF_EXPECTS(cpu.matched == want.matched && cpu.revenue == want.revenue,
-                 "Q5 CPU reference boundary/join regression");
-    for (bool filter_predicates : {true, false}) {
-      auto result = execute_q5(
-        [&](std::string const& name,
-            std::vector<std::string> const& columns,
-            std::unique_ptr<cudf::ast::operation> const& predicate) {
-          CUDF_EXPECTS(columns == q5_projections.at(name), "Q5 projection mismatch");
-          auto const source = name == "orders" ? orders : input.at(name);
-          if (!filter_predicates) { return ndsh::read_parquet_fixture(source, columns, predicate); }
-          return std::make_unique<table_with_names>(std::make_unique<cudf::table>(source), columns);
-        },
-        filter_predicates,
-        ndsh::take_result);
-      ndsh::check_q5_result(want, *result, stream);
+  // The CPU oracle accepts no nulls.
+  struct boundary_case {
+    char const* name;
+    cudf::table_view orders;
+    cudf::table_view cpu_orders;
+    ndsh::q5_reference_result expected;
+  };
+  auto const rejected_orders = cudf::slice(input.at("orders"), {3, 12}, stream).front();
+  auto const empty_orders    = cudf::slice(input.at("orders"), {0, 0}, stream).front();
+  boundary_case const cases[]{{"full",
+                               input.at("orders"),
+                               cudf::slice(input.at("orders"), {0, 13}, stream).front(),
+                               expected},
+                              {"rejected orders", rejected_orders, rejected_orders, {}},
+                              {"empty orders", empty_orders, empty_orders, {}}};
+  for (auto const& test : cases) {
+    try {
+      ndsh::q5_reference_builder builder;
+      for (auto const& name : {"region", "nation", "supplier", "customer", "orders", "lineitem"}) {
+        builder.add_table(
+          name, std::string{name} == "orders" ? test.cpu_orders : input.at(name), stream);
+      }
+      auto const cpu = builder.finish();
+      CUDF_EXPECTS(cpu.matched == test.expected.matched && cpu.revenue == test.expected.revenue,
+                   "Q5 CPU reference boundary/join regression");
+      for (bool filter_predicates : {true, false}) {
+        auto result = execute_q5(
+          [&](std::string const& name,
+              std::vector<std::string> const& columns,
+              std::unique_ptr<cudf::ast::operation> const& predicate) {
+            CUDF_EXPECTS(columns == q5_projections.at(name), "Q5 projection mismatch");
+            auto const source = name == "orders" ? test.orders : input.at(name);
+            if (!filter_predicates) {
+              return ndsh::read_parquet_fixture(source, columns, predicate);
+            }
+            return std::make_unique<table_with_names>(std::make_unique<cudf::table>(source),
+                                                      columns);
+          },
+          filter_predicates,
+          ndsh::take_result);
+        ndsh::check_q5_result(test.expected, *result, stream);
+      }
+    } catch (cudf::logic_error const& error) {
+      CUDF_FAIL(std::string{"Q5 case "} + test.name + ": " + error.what());
     }
   }
   CUDF_CUDA_TRY(cudaDeviceSynchronize());

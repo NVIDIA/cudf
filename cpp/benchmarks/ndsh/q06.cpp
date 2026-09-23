@@ -242,25 +242,36 @@ void check_q6_reference_boundaries()
   fixed_width_column_wrapper<int8_t> quantity{{23, 23, 23, 23, 23, 23, 23, 23, 24}};
   CUDF_CUDA_TRY(cudaDeviceSynchronize());
   auto const input = cudf::table_view{{price, discount, shipdate, quantity}};
-  for (auto const& projected : cudf::slice(input, {1, 9, 4, 6, 1, 1}, stream)) {
-    auto const expected =
-      projected.num_rows() == 8 ? ndsh::q6_reference_result{3, 18.0} : ndsh::q6_reference_result{};
-    auto const cpu = ndsh::q6_cpu_reference(projected, stream);
-    CUDF_EXPECTS(
-      cpu.matched == expected.matched && std::abs(cpu.revenue - expected.revenue) < 1e-12,
-      "Q6 CPU reference boundary/slice regression");
-    for (bool filter_shipdate : {true, false}) {
-      auto result = execute_q6(
-        [&](auto const& columns, auto const& predicate) {
-          if (!filter_shipdate) {
-            return ndsh::read_parquet_fixture(projected, columns, predicate);
-          }
-          return std::make_unique<table_with_names>(std::make_unique<cudf::table>(projected),
-                                                    columns);
-        },
-        filter_shipdate,
-        ndsh::take_result);
-      check_q6_result(expected, *result);
+  struct boundary_case {
+    char const* name;
+    cudf::table_view input;
+    ndsh::q6_reference_result expected;
+  };
+  boundary_case const cases[]{
+    {"offset/float32 boundaries", cudf::slice(input, {1, 9}, stream).front(), {3, 18.0}},
+    {"rejected dates", cudf::slice(input, {4, 6}, stream).front(), {}},
+    {"empty offset", cudf::slice(input, {1, 1}, stream).front(), {}}};
+  for (auto const& test : cases) {
+    try {
+      auto const cpu = ndsh::q6_cpu_reference(test.input, stream);
+      CUDF_EXPECTS(cpu.matched == test.expected.matched &&
+                     std::abs(cpu.revenue - test.expected.revenue) < 1e-12,
+                   "Q6 CPU reference boundary/slice regression");
+      for (bool filter_shipdate : {true, false}) {
+        auto result = execute_q6(
+          [&](auto const& columns, auto const& predicate) {
+            if (!filter_shipdate) {
+              return ndsh::read_parquet_fixture(test.input, columns, predicate);
+            }
+            return std::make_unique<table_with_names>(std::make_unique<cudf::table>(test.input),
+                                                      columns);
+          },
+          filter_shipdate,
+          ndsh::take_result);
+        check_q6_result(test.expected, *result);
+      }
+    } catch (cudf::logic_error const& error) {
+      CUDF_FAIL(std::string{"Q6 case "} + test.name + ": " + error.what());
     }
   }
 }

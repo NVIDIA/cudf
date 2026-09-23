@@ -482,23 +482,38 @@ void check_q9_cases()
   duplicate_expected.sum_profit[{"ZULU", 1995}]  = 130.0;
   duplicate_expected.matched                     = 7;
   cuda::stream_ref const stream                  = cudf::get_default_stream();
-  for (auto const& partsupp : cudf::slice(input.at("partsupp"), {0, 5, 0, 9}, stream)) {
-    // Full input, only rows rejected by filters/joins, and no rows, with and without duplicates.
-    for (auto const& lines : cudf::slice(input.at("lineitem"), {0, 12, 4, 12, 0, 0}, stream)) {
-      auto const want       = lines.num_rows() == 12
-                                ? (partsupp.num_rows() == 5 ? expected : duplicate_expected)
-                                : ndsh::q9_reference_result{};
+  struct query_case {
+    char const* name;
+    cudf::table_view partsupp;
+    cudf::table_view lineitem;
+    ndsh::q9_reference_result expected;
+  };
+  auto const unique_partsupp    = cudf::slice(input.at("partsupp"), {0, 5}, stream).front();
+  auto const duplicate_partsupp = input.at("partsupp");
+  auto const full_lines         = input.at("lineitem");
+  auto const rejected_lines     = cudf::slice(full_lines, {4, 12}, stream).front();
+  auto const empty_lines        = cudf::slice(full_lines, {0, 0}, stream).front();
+  query_case const cases[]{
+    {"full/unique partsupp", unique_partsupp, full_lines, expected},
+    {"rejected/unique partsupp", unique_partsupp, rejected_lines, {}},
+    {"empty/unique partsupp", unique_partsupp, empty_lines, {}},
+    {"full/duplicate partsupp", duplicate_partsupp, full_lines, duplicate_expected},
+    {"rejected/duplicate partsupp", duplicate_partsupp, rejected_lines, {}},
+    {"empty/duplicate partsupp", duplicate_partsupp, empty_lines, {}}};
+  for (auto const& test : cases) {
+    try {
       auto tables           = input;
-      tables.at("partsupp") = partsupp;
-      tables.at("lineitem") = lines;
+      tables.at("partsupp") = test.partsupp;
+      tables.at("lineitem") = test.lineitem;
       ndsh::q9_reference_builder builder;
       for (auto const& name : {"nation", "supplier", "partsupp", "orders", "part", "lineitem"}) {
         builder.add_table(name, tables.at(name), stream);
       }
       auto const cpu = builder.finish();
-      CUDF_EXPECTS(cpu.matched == want.matched && cpu.sum_profit.size() == want.sum_profit.size(),
+      CUDF_EXPECTS(cpu.matched == test.expected.matched &&
+                     cpu.sum_profit.size() == test.expected.sum_profit.size(),
                    "Q9 CPU reference row/group regression");
-      for (auto const& [key, value] : want.sum_profit) {
+      for (auto const& [key, value] : test.expected.sum_profit) {
         auto const actual = cpu.sum_profit.find(key);
         CUDF_EXPECTS(
           actual != cpu.sum_profit.end() && ndsh::detail::reference_equal(actual->second, value),
@@ -511,8 +526,10 @@ void check_q9_cases()
             return std::make_unique<table_with_names>(
               std::make_unique<cudf::table>(tables.at(name)), columns);
           });
-        ndsh::check_q9_result(want, *result, stream);
+        ndsh::check_q9_result(test.expected, *result, stream);
       }
+    } catch (cudf::logic_error const& error) {
+      CUDF_FAIL(std::string{"Q9 case "} + test.name + ": " + error.what());
     }
   }
   CUDF_CUDA_TRY(cudaDeviceSynchronize());

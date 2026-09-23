@@ -271,51 +271,68 @@ void check_q10_cases()
     2, ndsh::q10_customer_result{"Bob", -20.0, "ZULU", "2 Main", "20-2", "second", 40.0});
   expected.matched              = 4;
   cuda::stream_ref const stream = cudf::get_default_stream();
-  auto const order_cases        = cudf::slice(input.at("orders"), {0, 9, 3, 9, 0, 0}, stream);
-  auto const cpu_order_cases    = cudf::slice(input.at("orders"), {0, 8, 3, 8, 0, 0}, stream);
   auto const cpu_lineitem       = cudf::slice(input.at("lineitem"), {0, 12}, stream).front();
-  // Full input, only rows rejected by predicates/joins, and no orders.
-  for (std::size_t case_index = 0; case_index < order_cases.size(); ++case_index) {
-    auto const& orders     = order_cases[case_index];
-    auto const& cpu_orders = cpu_order_cases[case_index];
-    auto const want        = case_index == 0 ? expected : ndsh::q10_reference_result{};
-    ndsh::q10_reference_builder builder;
-    for (auto const& name : {"nation", "customer", "orders", "lineitem"}) {
-      auto const source = std::string{name} == "orders"     ? cpu_orders
-                          : std::string{name} == "lineitem" ? cpu_lineitem
-                                                            : input.at(name);
-      builder.add_table(name, source, stream);
-    }
-    auto const cpu = builder.finish();
-    CUDF_EXPECTS(cpu.matched == want.matched && cpu.customers.size() == want.customers.size(),
-                 "Q10 CPU reference row/customer regression");
-    for (auto const& [key, expected_customer] : want.customers) {
-      auto const customer = cpu.customers.find(key);
-      CUDF_EXPECTS(customer != cpu.customers.end(), "Missing Q10 CPU reference customer");
-      auto const& actual_customer = customer->second;
-      CUDF_EXPECTS(
-        actual_customer.name == expected_customer.name &&
-          actual_customer.account_balance == expected_customer.account_balance &&
-          actual_customer.nation == expected_customer.nation &&
-          actual_customer.address == expected_customer.address &&
-          actual_customer.phone == expected_customer.phone &&
-          actual_customer.comment == expected_customer.comment &&
-          ndsh::detail::reference_equal(actual_customer.revenue, expected_customer.revenue),
-        "Q10 CPU reference predicate/join/revenue regression");
-    }
-    for (bool post_read_filters : {true, false}) {
-      auto result = execute_q10(
-        [&](std::string const& name,
-            std::vector<std::string> const& columns,
-            std::unique_ptr<cudf::ast::operation> const& predicate) {
-          CUDF_EXPECTS(columns == q10_projections.at(name), "Q10 projection mismatch");
-          auto const source = name == "orders" ? orders : input.at(name);
-          if (!post_read_filters) { return ndsh::read_parquet_fixture(source, columns, predicate); }
-          return std::make_unique<table_with_names>(std::make_unique<cudf::table>(source), columns);
-        },
-        post_read_filters,
-        ndsh::take_result);
-      ndsh::check_q10_result(want, *result, stream);
+  // Keep null predicate rows on the GPU, but exclude them from the CPU oracle.
+  struct query_case {
+    char const* name;
+    cudf::table_view orders;
+    cudf::table_view cpu_orders;
+    ndsh::q10_reference_result expected;
+  };
+  auto const empty_orders = cudf::slice(input.at("orders"), {0, 0}, stream).front();
+  query_case const cases[]{
+    {"full", input.at("orders"), cudf::slice(input.at("orders"), {0, 8}, stream).front(), expected},
+    {"rejected orders",
+     cudf::slice(input.at("orders"), {3, 9}, stream).front(),
+     cudf::slice(input.at("orders"), {3, 8}, stream).front(),
+     {}},
+    {"empty orders", empty_orders, empty_orders, {}}};
+  for (auto const& test : cases) {
+    try {
+      ndsh::q10_reference_builder builder;
+      for (auto const& name : {"nation", "customer", "orders", "lineitem"}) {
+        auto const source = std::string{name} == "orders"     ? test.cpu_orders
+                            : std::string{name} == "lineitem" ? cpu_lineitem
+                                                              : input.at(name);
+        builder.add_table(name, source, stream);
+      }
+      auto const cpu = builder.finish();
+      CUDF_EXPECTS(cpu.matched == test.expected.matched &&
+                     cpu.customers.size() == test.expected.customers.size(),
+                   "Q10 CPU reference row/customer regression");
+      for (auto const& [key, expected_customer] : test.expected.customers) {
+        auto const customer = cpu.customers.find(key);
+        CUDF_EXPECTS(customer != cpu.customers.end(), "Missing Q10 CPU reference customer");
+        auto const& actual_customer = customer->second;
+        CUDF_EXPECTS(
+          actual_customer.name == expected_customer.name &&
+            actual_customer.account_balance == expected_customer.account_balance &&
+            actual_customer.nation == expected_customer.nation &&
+            actual_customer.address == expected_customer.address &&
+            actual_customer.phone == expected_customer.phone &&
+            actual_customer.comment == expected_customer.comment &&
+            ndsh::detail::reference_equal(actual_customer.revenue, expected_customer.revenue),
+          "Q10 CPU reference predicate/join/revenue regression");
+      }
+      for (bool post_read_filters : {true, false}) {
+        auto result = execute_q10(
+          [&](std::string const& name,
+              std::vector<std::string> const& columns,
+              std::unique_ptr<cudf::ast::operation> const& predicate) {
+            CUDF_EXPECTS(columns == q10_projections.at(name), "Q10 projection mismatch");
+            auto const source = name == "orders" ? test.orders : input.at(name);
+            if (!post_read_filters) {
+              return ndsh::read_parquet_fixture(source, columns, predicate);
+            }
+            return std::make_unique<table_with_names>(std::make_unique<cudf::table>(source),
+                                                      columns);
+          },
+          post_read_filters,
+          ndsh::take_result);
+        ndsh::check_q10_result(test.expected, *result, stream);
+      }
+    } catch (cudf::logic_error const& error) {
+      CUDF_FAIL(std::string{"Q10 case "} + test.name + ": " + error.what());
     }
   }
   CUDF_CUDA_TRY(cudaDeviceSynchronize());

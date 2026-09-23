@@ -542,30 +542,19 @@ struct q9_files {
 
 void ndsh_q9_local(nvbench::state& state)
 {
-  auto const engine = engine_from_string(state.get_string("engine"));
-  auto const [use_vortex, read_only, cold, direct_io] = ndsh::local_options{state, 9};
-  if (direct_io && !use_vortex) {
-    state.skip("io=direct is supported only for Vortex");
-    return;
-  }
-  auto const& files             = ndsh::local_fixture<q9_files>(state.get_float64("scale_factor"));
-  cuda::stream_ref const stream = cudf::get_default_stream();
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.get()));
-  auto memory = cudf::memory_stats_logger();
-  ndsh::vortex_io io{stream.get()};
-  auto read = [&](
-                std::string const& name, std::vector<std::string> const& columns, auto const&...) {
-    return ndsh::read_local_file(
-      files.tables.path(name, use_vortex), use_vortex, io, columns, direct_io);
+  auto const engine  = engine_from_string(state.get_string("engine"));
+  auto const options = ndsh::local_options{state, 9};
+  if (!options.supported(state)) { return; }
+  auto const& files = ndsh::local_fixture<q9_files>(state.get_float64("scale_factor"));
+  ndsh::local_benchmark benchmark{state, files.tables, options};
+  auto read = [&](auto const& name, auto const& columns, auto const&...) {
+    return benchmark.read(name, columns);
   };
   auto load_inputs = [&](bool verify = false) {
-    if (!use_vortex) {
+    if (!options.use_vortex) {
       return load_data([&](std::string const& name, std::vector<std::string> const& columns) {
         auto input = read(name, columns);
-        if (verify) {
-          ndsh::check_local_projection(
-            files.tables.path(name, use_vortex), use_vortex, io, columns, *input);
-        }
+        if (verify) { benchmark.check_projection(name, columns, *input); }
         return input;
       });
     }
@@ -574,40 +563,24 @@ void ndsh_q9_local(nvbench::state& state)
       auto const index =
         std::distance(q9_tables.begin(), std::find(q9_tables.begin(), q9_tables.end(), name));
       if (verify) {
-        ndsh::check_local_projection(files.tables.path(name, use_vortex),
-                                     use_vortex,
-                                     io,
-                                     columns,
-                                     *inputs.at(index),
-                                     direct_io);
+        benchmark.check_projection(name, columns, *inputs.at(index), options.direct_io);
       }
       return std::move(inputs.at(index));
     });
   };
   auto query = [&] {
     auto inputs = load_inputs();
-    return compute_profit(engine, inputs, stream, cudf::get_current_device_resource_ref());
+    return compute_profit(
+      engine, inputs, benchmark.stream, cudf::get_current_device_resource_ref());
   };
   {
     auto inputs = load_inputs(true);
-    auto result = compute_profit(engine, inputs, stream, cudf::get_current_device_resource_ref());
-    ndsh::check_q9_result(files.reference, *result, stream);
+    auto result =
+      compute_profit(engine, inputs, benchmark.stream, cudf::get_current_device_resource_ref());
+    ndsh::check_q9_result(files.reference, *result, benchmark.stream);
     CUDF_CUDA_TRY(cudaDeviceSynchronize());
   }
-  ndsh::warm_local_inputs(cold, [&] { return load_inputs(); });
-  CUDF_CUDA_TRY(cudaDeviceSynchronize());
-  memory.reset_counters();
-  ndsh::exec_local_benchmark(state, files.tables, use_vortex, cold, [&] {
-    if (read_only) {
-      auto inputs = load_inputs();
-      CUDF_CUDA_TRY(cudaStreamSynchronize(stream.get()));
-    } else {
-      auto result = query();
-      CUDF_CUDA_TRY(cudaStreamSynchronize(stream.get()));
-    }
-  });
-  state.add_buffer_size(files.tables.bytes(use_vortex), "file_size", "Total file size");
-  state.add_buffer_size(memory.peak_memory_usage(), "rmm_peak", "RMM peak (excludes Vortex)");
+  benchmark.exec(load_inputs, query);
   ndsh::add_count(state, "ndsh/q9/matched_rows", "Q9 matched rows", files.reference.matched);
   ndsh::add_count(
     state, "ndsh/q9/groups", "Q9 nation/year groups", files.reference.sum_profit.size());

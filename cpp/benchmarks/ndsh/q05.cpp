@@ -297,27 +297,18 @@ struct q5_files {
 
 void ndsh_q5_local(nvbench::state& state)
 {
-  auto const [use_vortex, read_only, cold, direct_io] = ndsh::local_options{state, 5};
-  if (direct_io && !use_vortex) {
-    state.skip("io=direct is supported only for Vortex");
-    return;
-  }
-  auto const& files             = ndsh::local_fixture<q5_files>(state.get_float64("scale_factor"));
-  cuda::stream_ref const stream = cudf::get_default_stream();
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.get()));
-  auto memory = cudf::memory_stats_logger();
-  ndsh::vortex_io io{stream.get()};
-  auto read = [&](std::string const& name,
-                  std::vector<std::string> const& columns,
-                  std::unique_ptr<cudf::ast::operation> const&) {
-    return ndsh::read_local_file(
-      files.tables.path(name, use_vortex), use_vortex, io, columns, direct_io);
+  auto const options = ndsh::local_options{state, 5};
+  if (!options.supported(state)) { return; }
+  auto const& files = ndsh::local_fixture<q5_files>(state.get_float64("scale_factor"));
+  ndsh::local_benchmark benchmark{state, files.tables, options};
+  auto read = [&](auto const& name, auto const& columns, auto const&) {
+    return benchmark.read(name, columns);
   };
   auto read_inputs = [&] {
-    return ndsh::read_local_tables(q5_tables, q5_projections, read, use_vortex);
+    return ndsh::read_local_tables(q5_tables, q5_projections, read, options.use_vortex);
   };
   auto query = [&] {
-    if (!use_vortex) { return execute_q5(read, true, ndsh::take_result); }
+    if (!options.use_vortex) { return execute_q5(read, true, ndsh::take_result); }
     auto inputs = read_inputs();
     return execute_q5(
       [&](std::string const& name, auto const&...) {
@@ -333,33 +324,15 @@ void ndsh_q5_local(nvbench::state& state)
       auto inputs = read_inputs();
       for (std::size_t i = 0; i < q5_tables.size(); ++i) {
         auto const& name = q5_tables[i];
-        ndsh::check_local_projection(files.tables.path(name, use_vortex),
-                                     use_vortex,
-                                     io,
-                                     q5_projections.at(name),
-                                     *inputs[i],
-                                     direct_io);
+        benchmark.check_projection(name, q5_projections.at(name), *inputs[i], options.direct_io);
       }
-      CUDF_CUDA_TRY(cudaStreamSynchronize(stream.get()));
+      CUDF_CUDA_TRY(cudaStreamSynchronize(benchmark.stream.get()));
     }
     auto result = query();
-    ndsh::check_q5_result(files.reference, *result, stream);
+    ndsh::check_q5_result(files.reference, *result, benchmark.stream);
     CUDF_CUDA_TRY(cudaDeviceSynchronize());
   }
-  ndsh::warm_local_inputs(cold, read_inputs);
-  CUDF_CUDA_TRY(cudaDeviceSynchronize());
-  memory.reset_counters();
-  ndsh::exec_local_benchmark(state, files.tables, use_vortex, cold, [&] {
-    if (read_only) {
-      auto inputs = read_inputs();
-      CUDF_CUDA_TRY(cudaStreamSynchronize(stream.get()));
-    } else {
-      auto result = query();
-      CUDF_CUDA_TRY(cudaStreamSynchronize(stream.get()));
-    }
-  });
-  state.add_buffer_size(files.tables.bytes(use_vortex), "file_size", "Total file size");
-  state.add_buffer_size(memory.peak_memory_usage(), "rmm_peak", "RMM peak (excludes Vortex)");
+  benchmark.exec(read_inputs, query);
   ndsh::add_count(state, "ndsh/q5/matched_rows", "Q5 matched rows", files.reference.matched);
   ndsh::add_count(state, "ndsh/q5/countries", "Q5 countries", files.reference.revenue.size());
 }

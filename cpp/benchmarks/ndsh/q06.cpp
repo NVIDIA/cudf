@@ -306,38 +306,20 @@ struct q6_files {
 
 void ndsh_q6_local(nvbench::state& state)
 {
-  auto const [use_vortex, read_only, cold, direct_io] = ndsh::local_options{state, 6};
-  if (direct_io && !use_vortex) {
-    state.skip("io=direct is supported only for Vortex");
-    return;
-  }
-  auto const& files             = ndsh::local_fixture<q6_files>(state.get_float64("scale_factor"));
-  cuda::stream_ref const stream = cudf::get_default_stream();
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.get()));
-  auto memory = cudf::memory_stats_logger();
-  ndsh::vortex_io io{stream.get()};
-  auto read = [&](auto const&...) {
-    return ndsh::read_local_file(
-      files.tables.path("lineitem", use_vortex), use_vortex, io, q6_columns, direct_io);
-  };
+  auto const options = ndsh::local_options{state, 6};
+  if (!options.supported(state)) { return; }
+  auto const& files = ndsh::local_fixture<q6_files>(state.get_float64("scale_factor"));
+  ndsh::local_benchmark benchmark{state, files.tables, options};
+  auto read = [&](auto const&...) { return benchmark.read("lineitem", q6_columns); };
   {
     auto input = read();
-    ndsh::check_local_projection(
-      files.tables.path("lineitem", use_vortex), use_vortex, io, q6_columns, *input);
+    benchmark.check_projection("lineitem", q6_columns, *input);
     auto result = execute_q6(
       [&](auto const&, auto const&) { return std::move(input); }, true, ndsh::take_result);
     check_q6_result(files.reference, *result);
     CUDF_CUDA_TRY(cudaDeviceSynchronize());
   }
-  ndsh::warm_local_inputs(cold, read);
-  CUDF_CUDA_TRY(cudaDeviceSynchronize());
-  memory.reset_counters();
-  ndsh::exec_local_benchmark(state, files.tables, use_vortex, cold, [&] {
-    auto result = read_only ? read() : execute_q6(read, true, ndsh::take_result);
-    CUDF_CUDA_TRY(cudaStreamSynchronize(stream.get()));
-  });
-  state.add_buffer_size(files.tables.bytes(use_vortex), "file_size", "File size");
-  state.add_buffer_size(memory.peak_memory_usage(), "rmm_peak", "RMM peak (excludes Vortex)");
+  benchmark.exec(read, [&] { return execute_q6(read, true, ndsh::take_result); }, "File size");
   auto& summary = state.add_summary("ndsh/q6/revenue");
   summary.set_string("name", "Verified revenue");
   if (files.reference.matched == 0) {

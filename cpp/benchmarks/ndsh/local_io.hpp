@@ -10,6 +10,9 @@
 #include "utilities.hpp"
 #include "vortex/vortex_io.hpp"
 
+#include <benchmarks/common/memory_stats.hpp>
+#include <benchmarks/common/nvtx_ranges.hpp>
+
 #include <cudf/aggregation.hpp>
 #include <cudf/ast/expressions.hpp>
 #include <cudf/binaryop.hpp>
@@ -25,8 +28,8 @@
 #include <future>
 #include <map>
 #include <memory>
+#include <optional>
 #include <string>
-#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -146,6 +149,13 @@ struct local_options {
     cold       = cache == "cold";
     direct_io  = io == "direct";
   }
+
+  bool supported(nvbench::state& state) const
+  {
+    if (!direct_io || use_vortex) { return true; }
+    state.skip("io=direct is supported only for Vortex");
+    return false;
+  }
 };
 
 inline void add_count(nvbench::state& state, char const* key, char const* name, int64_t value)
@@ -170,34 +180,6 @@ inline void evict_file_pages(std::vector<std::string> const& paths)
     auto const resident_pages = kvikio::get_page_cache_info(path).first;
     CUDF_EXPECTS(resident_pages == 0, "Input pages remain cached after eviction: " + path);
   }
-}
-
-template <typename ReadAll>
-void warm_local_inputs(bool cold, ReadAll&& read_all)
-{
-  if (!cold) {
-    auto inputs = read_all();
-    CUDF_CUDA_TRY(cudaDeviceSynchronize());
-  }
-}
-
-// The callback keeps owners alive through consumer-stream synchronization, then releases them.
-// The final device sync includes cleanup on independent Vortex producer streams, for both formats.
-template <typename Run>
-void exec_local_benchmark(
-  nvbench::state& state, local_table_files const& files, bool use_vortex, bool cold, Run&& run)
-{
-  static_assert(std::is_void_v<std::invoke_result_t<Run&>>,
-                "The timed callback must release its owners before returning");
-  state.add_element_count(files.rows, "Rows");
-  state.exec(nvbench::exec_tag::sync | nvbench::exec_tag::timer,
-             [&](nvbench::launch&, auto& timer) {
-               if (cold) { evict_file_pages(files.paths(use_vortex)); }
-               timer.start();
-               run();
-               CUDF_CUDA_TRY(cudaDeviceSynchronize());
-               timer.stop();
-             });
 }
 
 inline void check_projection(cudf::table_view expected,
@@ -241,6 +223,80 @@ inline void check_local_projection(std::string const& path,
     check_projection(expected->table(), actual, columns);
   }
 }
+
+// Construct after fixture generation; the logger must outlive the I/O context that borrows it.
+class local_benchmark {
+ public:
+  local_benchmark(nvbench::state& state, local_table_files const& files, local_options options)
+    : state_{state}, files_{files}, options_{options}
+  {
+    state_.set_cuda_stream(nvbench::make_cuda_stream_view(stream.get()));
+  }
+
+  cuda::stream_ref const stream = cudf::get_default_stream();
+
+  auto read(std::string const& name, std::vector<std::string> const& columns) const
+  {
+    return read_local_file(files_.path(name, options_.use_vortex),
+                           options_.use_vortex,
+                           io_,
+                           columns,
+                           options_.direct_io);
+  }
+
+  void check_projection(std::string const& name,
+                        std::vector<std::string> const& columns,
+                        table_with_names const& actual,
+                        bool direct_io = false) const
+  {
+    check_local_projection(
+      files_.path(name, options_.use_vortex), options_.use_vortex, io_, columns, actual, direct_io);
+  }
+
+  // Both callbacks return owners. Keep them alive through consumer synchronization, then release
+  // them before the device sync that drains cleanup on independent Vortex producer streams.
+  template <typename Read, typename Query>
+  void exec(Read&& read,
+            Query&& query,
+            char const* file_description = "Total file size",
+            char const* range_name       = nullptr)
+  {
+    if (!options_.cold) {
+      auto inputs = read();
+      CUDF_CUDA_TRY(cudaDeviceSynchronize());
+    }
+    CUDF_CUDA_TRY(cudaDeviceSynchronize());
+    memory_.reset_counters();
+    state_.add_element_count(files_.rows, "Rows");
+    state_.exec(nvbench::exec_tag::sync | nvbench::exec_tag::timer,
+                [&](nvbench::launch&, auto& timer) {
+                  if (options_.cold) { evict_file_pages(files_.paths(options_.use_vortex)); }
+                  timer.start();
+                  {
+                    std::optional<cudf::benchmark::scoped_range> range;
+                    if (range_name) { range.emplace(range_name); }
+                    if (options_.read_only) {
+                      auto inputs = read();
+                      CUDF_CUDA_TRY(cudaStreamSynchronize(stream.get()));
+                    } else {
+                      auto result = query();
+                      CUDF_CUDA_TRY(cudaStreamSynchronize(stream.get()));
+                    }
+                  }
+                  CUDF_CUDA_TRY(cudaDeviceSynchronize());
+                  timer.stop();
+                });
+    state_.add_buffer_size(files_.bytes(options_.use_vortex), "file_size", file_description);
+    state_.add_buffer_size(memory_.peak_memory_usage(), "rmm_peak", "RMM peak (excludes Vortex)");
+  }
+
+ private:
+  nvbench::state& state_;
+  local_table_files const& files_;
+  local_options const options_;
+  cudf::memory_stats_logger memory_;
+  vortex_io io_{stream.get()};
+};
 
 inline void check_file_projections(local_table_files const& files,
                                    std::string const& name,

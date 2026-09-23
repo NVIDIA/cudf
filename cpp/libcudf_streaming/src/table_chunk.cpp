@@ -168,10 +168,9 @@ table_chunk table_chunk::copy(rapidsmpf::MemoryReservation& reservation) const
       // Move the empty data buffer to the requested memory type without
       // recording a copy that transferred no bytes.
       auto packed_columns = cudf::pack(table_view(), stream(), br->device_mr());
-      auto data           = br->move(std::move(packed_columns.gpu_data), stream());
-      data                = br->move(std::move(data), reservation);
-      return table_chunk(std::make_unique<rapidsmpf::PackedData>(std::move(packed_columns.metadata),
-                                                                 std::move(data)));
+      RAPIDSMPF_EXPECTS(packed_columns.gpu_data->size() == 0, "packed data size must be zero");
+      return table_chunk(std::make_unique<rapidsmpf::PackedData>(
+        std::move(packed_columns.metadata), br->make_buffer(0, stream(), reservation)));
     }
 
     switch (reservation.mem_type()) {

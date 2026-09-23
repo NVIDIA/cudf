@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -561,12 +561,24 @@ TEST_F(SetUnionTest, InputListsOfNestedStructsHaveNull)
       return structs_col{{child1}};
     };
 
-    auto const lhs = cudf::make_lists_column(
-      3, int32s_col{0, 8, 16, 24}.release(), get_structs_lhs().release(), 0, {});
-    auto const rhs = cudf::make_lists_column(
-      3, int32s_col{0, 8, 16, 24}.release(), get_structs_rhs().release(), 0, {});
-    auto const expected = cudf::make_lists_column(
-      3, int32s_col{0, 8, 19, 32}.release(), get_structs_expected().release(), 0, {});
+    auto const lhs =
+      cudf::make_lists_column(3,
+                              int32s_col{0, 8, 16, 24}.release(),
+                              get_structs_lhs().release(),
+                              0,
+                              cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
+    auto const rhs =
+      cudf::make_lists_column(3,
+                              int32s_col{0, 8, 16, 24}.release(),
+                              get_structs_rhs().release(),
+                              0,
+                              cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
+    auto const expected =
+      cudf::make_lists_column(3,
+                              int32s_col{0, 8, 19, 32}.release(),
+                              get_structs_expected().release(),
+                              0,
+                              cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
     auto const results_sorted = set_union_sorted(*lhs, *rhs, NULL_EQUAL);
     CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(*expected, *results_sorted);
@@ -598,12 +610,24 @@ TEST_F(SetUnionTest, InputListsOfNestedStructsHaveNull)
       return structs_col{{child1}};
     };
 
-    auto const lhs = cudf::make_lists_column(
-      3, int32s_col{0, 8, 16, 24}.release(), get_structs_lhs().release(), 0, {});
-    auto const rhs = cudf::make_lists_column(
-      3, int32s_col{0, 8, 16, 24}.release(), get_structs_rhs().release(), 0, {});
-    auto const expected = cudf::make_lists_column(
-      3, int32s_col{0, 14, 26, 41}.release(), get_structs_expected().release(), 0, {});
+    auto const lhs =
+      cudf::make_lists_column(3,
+                              int32s_col{0, 8, 16, 24}.release(),
+                              get_structs_lhs().release(),
+                              0,
+                              cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
+    auto const rhs =
+      cudf::make_lists_column(3,
+                              int32s_col{0, 8, 16, 24}.release(),
+                              get_structs_rhs().release(),
+                              0,
+                              cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
+    auto const expected =
+      cudf::make_lists_column(3,
+                              int32s_col{0, 14, 26, 41}.release(),
+                              get_structs_expected().release(),
+                              0,
+                              cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
     auto const results_sorted = set_union_sorted(*lhs, *rhs, NULL_UNEQUAL);
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(*expected, *results_sorted);

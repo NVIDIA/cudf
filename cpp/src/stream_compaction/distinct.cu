@@ -191,7 +191,8 @@ std::unique_ptr<column> distinct_indices(table_view const& input,
 {
   CUDF_FUNC_RANGE();
   auto indices = detail::distinct_indices(input, keep, nulls_equal, nans_equal, stream, mr);
-  return std::make_unique<column>(std::move(indices), rmm::device_buffer{}, 0);
+  return std::make_unique<column>(
+    std::move(indices), cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED), 0);
 }
 
 }  // namespace cudf

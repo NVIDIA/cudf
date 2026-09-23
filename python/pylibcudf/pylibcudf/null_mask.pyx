@@ -2,16 +2,15 @@
 # SPDX-License-Identifier: Apache-2.0
 from collections.abc import Sequence
 from libc.stdint cimport uintptr_t
-from libcpp.memory cimport make_unique
+from libcpp.memory cimport unique_ptr
 from libcpp.pair cimport pair
 from libcpp.utility cimport move
 from pylibcudf.libcudf cimport null_mask as cpp_null_mask
 from pylibcudf.libcudf.column.column_view cimport column_view
 from pylibcudf.libcudf.table.table_view cimport table_view
 from pylibcudf.libcudf.types cimport mask_state, size_type, bitmask_type
+from pylibcudf.libcudf.utilities.device_buffer cimport byte, device_buffer
 
-from rmm.librmm.device_buffer cimport device_buffer
-from rmm.pylibrmm.device_buffer cimport DeviceBuffer
 from rmm.pylibrmm.stream cimport Stream
 from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 
@@ -20,6 +19,7 @@ from pylibcudf.libcudf.types import mask_state as MaskState  # no-cython-lint
 from .span import Span, is_span as py_is_span
 
 from .column cimport Column
+from .gpumemoryview cimport gpumemoryview, _from_cuda_device_buffer
 from .table cimport Table
 from .utils cimport _get_stream, _get_memory_resource
 from typing import TYPE_CHECKING
@@ -38,20 +38,12 @@ __all__ = [
     "index_of_first_set_bit",
 ]
 
-cdef DeviceBuffer buffer_to_python(
-    device_buffer buf, object stream, DeviceMemoryResource mr
-):
-    return DeviceBuffer.c_from_unique_ptr(
-        make_unique[device_buffer](move(buf)), stream, mr
-    )
-
-
-cpdef DeviceBuffer copy_bitmask(
+cpdef gpumemoryview copy_bitmask(
     Column col,
     object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None
 ):
-    """Copies ``col``'s bitmask into a ``DeviceBuffer``.
+    """Copies ``col``'s bitmask into a ``gpumemoryview``.
 
     For details, see :cpp:func:`copy_bitmask`.
 
@@ -66,30 +58,30 @@ cpdef DeviceBuffer copy_bitmask(
 
     Returns
     -------
-    rmm.DeviceBuffer
-        A ``DeviceBuffer`` containing ``col``'s bitmask, or an empty
-        ``DeviceBuffer`` if ``col`` is not nullable
+    gpumemoryview
+        A view containing ``col``'s bitmask, or an empty view if ``col`` is
+        not nullable.
     """
-    cdef device_buffer db
+    cdef unique_ptr[device_buffer[byte]] db
     cdef Stream _stream = _get_stream(stream)
     cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
 
     cdef column_view c_col = col.view()
     with nogil:
-        db = cpp_null_mask.copy_bitmask(c_col, _cs, mr.get_mr())
+        db = cpp_null_mask.copy_bitmask_to_unique_ptr(c_col, _cs, mr.get_mr())
 
-    return buffer_to_python(move(db), _stream, mr)
+    return _from_cuda_device_buffer(move(db), _stream, mr)
 
 
-cpdef DeviceBuffer copy_bitmask_from_bitmask(
+cpdef gpumemoryview copy_bitmask_from_bitmask(
     object bitmask: Span,
     size_type begin_bit,
     size_type end_bit,
     object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None
 ):
-    """Copies a portion of a bitmask into a ``DeviceBuffer``.
+    """Copies a portion of a bitmask into a ``gpumemoryview``.
 
     For details, see :cpp:func:`copy_bitmask`.
 
@@ -108,23 +100,23 @@ cpdef DeviceBuffer copy_bitmask_from_bitmask(
 
     Returns
     -------
-    rmm.DeviceBuffer
-        A ``DeviceBuffer`` containing ``col``'s bitmask, or an empty
-        ``DeviceBuffer`` if ``col`` is not nullable
+    gpumemoryview
+        A view containing the copied bitmask, or an empty view if the input is
+        not nullable.
     """
     if not py_is_span(bitmask):
         raise TypeError(
             f"bitmask must satisfy Span protocol (have .ptr and .size), "
             f"got {type(bitmask).__name__}"
         )
-    cdef device_buffer db
+    cdef unique_ptr[device_buffer[byte]] db
     cdef Stream _stream = _get_stream(stream)
     cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
     cdef uintptr_t ptr = bitmask.ptr
 
     with nogil:
-        db = cpp_null_mask.copy_bitmask(
+        db = cpp_null_mask.copy_bitmask_to_unique_ptr(
             <bitmask_type*>ptr,
             begin_bit,
             end_bit,
@@ -132,7 +124,7 @@ cpdef DeviceBuffer copy_bitmask_from_bitmask(
             mr.get_mr()
         )
 
-    return buffer_to_python(move(db), _stream, mr)
+    return _from_cuda_device_buffer(move(db), _stream, mr)
 
 
 cpdef size_t bitmask_allocation_size_bytes(size_type number_of_bits):
@@ -156,13 +148,13 @@ cpdef size_t bitmask_allocation_size_bytes(size_type number_of_bits):
         return cpp_null_mask.bitmask_allocation_size_bytes(number_of_bits, 64)
 
 
-cpdef DeviceBuffer create_null_mask(
+cpdef gpumemoryview create_null_mask(
     size_type size,
     mask_state state = mask_state.UNINITIALIZED,
     object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None
 ):
-    """Creates a ``DeviceBuffer`` for use as a null value indicator bitmask of a
+    """Creates a ``gpumemoryview`` of a null value indicator bitmask for a
     ``Column``.
 
     For details, see :cpp:func:`create_null_mask`.
@@ -182,22 +174,23 @@ cpdef DeviceBuffer create_null_mask(
 
     Returns
     -------
-    rmm.DeviceBuffer
-        A ``DeviceBuffer`` for use as a null bitmask satisfying the desired size and
-        state
+    gpumemoryview
+        A view of a null bitmask satisfying the desired size and state.
     """
-    cdef device_buffer db
+    cdef unique_ptr[device_buffer[byte]] db
     cdef Stream _stream = _get_stream(stream)
     cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
 
     with nogil:
-        db = cpp_null_mask.create_null_mask(size, state, _cs, mr.get_mr())
+        db = cpp_null_mask.create_null_mask_unique_ptr(
+            size, state, _cs, mr.get_mr()
+        )
 
-    return buffer_to_python(move(db), _stream, mr)
+    return _from_cuda_device_buffer(move(db), _stream, mr)
 
 
-cpdef tuple[DeviceBuffer, int] bitmask_and(
+cpdef tuple[gpumemoryview, int] bitmask_and(
     columns: Sequence[Column],
     object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
@@ -217,25 +210,28 @@ cpdef tuple[DeviceBuffer, int] bitmask_and(
 
     Returns
     -------
-    tuple[DeviceBuffer, size_type]
+    tuple[gpumemoryview, size_type]
         A tuple of the resulting mask and count of unset bits
     """
     cdef Table c_table = Table(columns)
-    cdef pair[device_buffer, size_type] c_result
+    cdef pair[unique_ptr[device_buffer[byte]], size_type] c_result
     cdef Stream _stream = _get_stream(stream)
     cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
 
     cdef table_view c_input = c_table.view()
     with nogil:
-        c_result = cpp_null_mask.bitmask_and(
+        c_result = cpp_null_mask.bitmask_and_unique_ptr(
             c_input, _cs, mr.get_mr()
         )
 
-    return buffer_to_python(move(c_result.first), _stream, mr), c_result.second
+    return (
+        _from_cuda_device_buffer(move(c_result.first), _stream, mr),
+        c_result.second,
+    )
 
 
-cpdef tuple[DeviceBuffer, int] bitmask_or(
+cpdef tuple[gpumemoryview, int] bitmask_or(
     columns: Sequence[Column],
     object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
@@ -255,20 +251,25 @@ cpdef tuple[DeviceBuffer, int] bitmask_or(
 
     Returns
     -------
-    tuple[DeviceBuffer, size_type]
+    tuple[gpumemoryview, size_type]
         A tuple of the resulting mask and count of unset bits
     """
     cdef Table c_table = Table(columns)
-    cdef pair[device_buffer, size_type] c_result
+    cdef pair[unique_ptr[device_buffer[byte]], size_type] c_result
     cdef Stream _stream = _get_stream(stream)
     cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
 
     cdef table_view c_input = c_table.view()
     with nogil:
-        c_result = cpp_null_mask.bitmask_or(c_input, _cs, mr.get_mr())
+        c_result = cpp_null_mask.bitmask_or_unique_ptr(
+            c_input, _cs, mr.get_mr()
+        )
 
-    return buffer_to_python(move(c_result.first), _stream, mr), c_result.second
+    return (
+        _from_cuda_device_buffer(move(c_result.first), _stream, mr),
+        c_result.second,
+    )
 
 
 cpdef size_type null_count(

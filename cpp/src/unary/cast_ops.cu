@@ -284,8 +284,11 @@ struct dispatch_unary_cast_to {
     using DeviceT = device_storage_type_t<TargetT>;
 
     auto const size = input.size();
-    auto output     = std::make_unique<column>(
-      type, size, rmm::device_buffer{size * sizeof(DeviceT), stream, mr}, rmm::device_buffer{}, 0);
+    auto output     = std::make_unique<column>(type,
+                                           size,
+                                           rmm::device_buffer{size * sizeof(DeviceT), stream, mr},
+                                           cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
+                                           0);
 
     mutable_column_view output_mutable = *output;
 

@@ -614,7 +614,8 @@ std::unique_ptr<cudf::column> build_list_result(cudf::column_view const& input,
   auto const size = cudf::numeric_scalar<cudf::size_type>(
     seeds_size, true, stream, cudf::get_current_device_resource_ref());
   auto offsets = cudf::detail::sequence(input.size() + 1, zero, size, stream, mr);
-  hashes->set_null_mask(rmm::device_buffer{}, 0);  // children have no nulls
+  hashes->set_null_mask(cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
+                        0);  // children have no nulls
 
   // build the lists column from the offsets and the hashes
   auto result = make_lists_column(input.size(),

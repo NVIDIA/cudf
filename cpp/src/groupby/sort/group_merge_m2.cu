@@ -110,8 +110,12 @@ std::unique_ptr<column> merge_m2(column_view const& values,
   out_columns.emplace_back(std::move(result_counts));
   out_columns.emplace_back(std::move(result_means));
   out_columns.emplace_back(std::move(result_M2s));
-  return make_structs_column(
-    num_groups, std::move(out_columns), 0, rmm::device_buffer{0, stream, mr}, stream, mr);
+  return make_structs_column(num_groups,
+                             std::move(out_columns),
+                             0,
+                             cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED, stream, mr),
+                             stream,
+                             mr);
 }
 
 }  // namespace

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -9,6 +9,7 @@
 #include <cudf_test/iterator_utilities.hpp>
 #include <cudf_test/type_lists.hpp>
 
+#include <cudf/null_mask.hpp>
 #include <cudf/scalar/scalar.hpp>
 #include <cudf/search.hpp>
 #include <cudf/table/table_view.hpp>
@@ -303,7 +304,11 @@ TYPED_TEST(TypedListContainsTestColumnNeedles, ListsOfStructs)
     };
     // clang-format on
     auto child = structs_col{{data1, data2}};
-    return cudf::make_lists_column(5, offsets.release(), child.release(), 0, {});
+    return cudf::make_lists_column(5,
+                                   offsets.release(),
+                                   child.release(),
+                                   0,
+                                   cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
   }();
 
   auto const needles = [] {
@@ -323,7 +328,11 @@ TYPED_TEST(TypedListContainsTestColumnNeedles, ListsOfStructs)
     };
     // clang-format on
     auto child = structs_col{{data1, data2}};
-    return cudf::make_lists_column(5, offsets.release(), child.release(), 0, {});
+    return cudf::make_lists_column(5,
+                                   offsets.release(),
+                                   child.release(),
+                                   0,
+                                   cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
   }();
 
   auto const expected = bools_col{0, 1, 1, 0, 0};
@@ -432,7 +441,11 @@ TEST_F(ListBinarySearch, ListsOfStructs)
     };
     // clang-format on
     auto child = structs_col{{data1, data2}};
-    return cudf::make_lists_column(9, offsets.release(), child.release(), 0, {});
+    return cudf::make_lists_column(9,
+                                   offsets.release(),
+                                   child.release(),
+                                   0,
+                                   cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
   }();
 
   auto const needles = [] {
@@ -458,7 +471,11 @@ TEST_F(ListBinarySearch, ListsOfStructs)
     };
     // clang-format on
     auto child = structs_col{{data1, data2}};
-    return cudf::make_lists_column(8, offsets.release(), child.release(), 0, {});
+    return cudf::make_lists_column(8,
+                                   offsets.release(),
+                                   child.release(),
+                                   0,
+                                   cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
   }();
 
   auto const [result_lower_bound, result_upper_bound] = search_bounds(
@@ -497,7 +514,11 @@ TEST_F(ListBinarySearch, ListsOfEqualStructsInTwoTables)
     };
     // clang-format on
     auto child = structs_col{{data1, data2}};
-    return cudf::make_lists_column(9, offsets.release(), child.release(), 0, {});
+    return cudf::make_lists_column(9,
+                                   offsets.release(),
+                                   child.release(),
+                                   0,
+                                   cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
   }();
 
   auto const needles = [] {
@@ -525,7 +546,11 @@ TEST_F(ListBinarySearch, ListsOfEqualStructsInTwoTables)
     };
     // clang-format on
     auto child = structs_col{{data1, data2}};
-    return cudf::make_lists_column(9, offsets.release(), child.release(), 0, {});
+    return cudf::make_lists_column(9,
+                                   offsets.release(),
+                                   child.release(),
+                                   0,
+                                   cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
   }();
 
   // In this search, the two table have many equal structs.
@@ -570,28 +595,42 @@ TEST_F(ListBinarySearch, CrazyListTest)
       };
       // clang-format on
       auto child = structs_col{{data1, data2}};
-      return cudf::make_lists_column(9, offsets.release(), child.release(), 0, {});
+      return cudf::make_lists_column(9,
+                                     offsets.release(),
+                                     child.release(),
+                                     0,
+                                     cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
     }();
 
     auto struct_nested0 = [&] {
       std::vector<std::unique_ptr<cudf::column>> child_columns;
       child_columns.emplace_back(std::move(lists_of_structs_of_ints));
-      return cudf::make_structs_column(9, std::move(child_columns), 0, {});
+      return cudf::make_structs_column(
+        9, std::move(child_columns), 0, cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
     }();
 
     auto struct_nested1 = [&] {
       std::vector<std::unique_ptr<cudf::column>> child_columns;
       child_columns.emplace_back(std::move(struct_nested0));
-      return cudf::make_structs_column(9, std::move(child_columns), 0, {});
+      return cudf::make_structs_column(
+        9, std::move(child_columns), 0, cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
     }();
 
     auto list_nested0 = [&] {
       auto offsets = int32s_col{0, 3, 3, 4, 6, 9};
-      return cudf::make_lists_column(5, offsets.release(), std::move(struct_nested1), 0, {});
+      return cudf::make_lists_column(5,
+                                     offsets.release(),
+                                     std::move(struct_nested1),
+                                     0,
+                                     cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
     }();
 
     auto offsets = int32s_col{0, 0, 2, 4, 5, 5};
-    return cudf::make_lists_column(5, offsets.release(), std::move(list_nested0), 0, {});
+    return cudf::make_lists_column(5,
+                                   offsets.release(),
+                                   std::move(list_nested0),
+                                   0,
+                                   cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
   }();
 
   auto const needles = [] {
@@ -620,28 +659,42 @@ TEST_F(ListBinarySearch, CrazyListTest)
       };
       // clang-format on
       auto child = structs_col{{data1, data2}};
-      return cudf::make_lists_column(9, offsets.release(), child.release(), 0, {});
+      return cudf::make_lists_column(9,
+                                     offsets.release(),
+                                     child.release(),
+                                     0,
+                                     cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
     }();
 
     auto struct_nested0 = [&] {
       std::vector<std::unique_ptr<cudf::column>> child_columns;
       child_columns.emplace_back(std::move(lists_of_structs_of_ints));
-      return cudf::make_structs_column(9, std::move(child_columns), 0, {});
+      return cudf::make_structs_column(
+        9, std::move(child_columns), 0, cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
     }();
 
     auto struct_nested1 = [&] {
       std::vector<std::unique_ptr<cudf::column>> child_columns;
       child_columns.emplace_back(std::move(struct_nested0));
-      return cudf::make_structs_column(9, std::move(child_columns), 0, {});
+      return cudf::make_structs_column(
+        9, std::move(child_columns), 0, cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
     }();
 
     auto list_nested0 = [&] {
       auto offsets = int32s_col{0, 3, 3, 4, 6, 9};
-      return cudf::make_lists_column(5, offsets.release(), std::move(struct_nested1), 0, {});
+      return cudf::make_lists_column(5,
+                                     offsets.release(),
+                                     std::move(struct_nested1),
+                                     0,
+                                     cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
     }();
 
     auto offsets = int32s_col{0, 2, 2, 4, 4, 5};
-    return cudf::make_lists_column(5, offsets.release(), std::move(list_nested0), 0, {});
+    return cudf::make_lists_column(5,
+                                   offsets.release(),
+                                   std::move(list_nested0),
+                                   0,
+                                   cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
   }();
 
   // In this search, the two table have many equal structs.

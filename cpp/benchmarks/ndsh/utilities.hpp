@@ -63,6 +63,12 @@ class table_with_names {
    * @param col_names The names of the columns to select
    */
   [[nodiscard]] cudf::table_view select(std::vector<std::string> const& col_names) const;
+  /**
+   * @brief Write the table to a parquet file
+   *
+   * @param filepath The path to the parquet file
+   */
+  void to_parquet(std::string const& filepath) const;
 
  private:
   std::unique_ptr<cudf::table> tbl;

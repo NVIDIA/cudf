@@ -42,7 +42,7 @@ class local_table_files {
   {
     CUDF_EXPECTS(!files_.contains(name), "Duplicate fixture table: " + name);
     auto const base = directory_.path() + name;
-    write_parquet(table, base + ".parquet");
+    table.to_parquet(base + ".parquet");
     io.write_vortex(base + ".vortex", table.table(), table.column_names());
     files_.emplace(name, std::make_pair(base + ".parquet", base + ".vortex"));
     rows += table.table().num_rows();

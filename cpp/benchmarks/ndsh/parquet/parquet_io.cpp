@@ -23,15 +23,15 @@
 #include <unordered_set>
 #include <utility>
 
-void write_parquet(table_with_names const& table, std::string const& filepath)
+void table_with_names::to_parquet(std::string const& filepath) const
 {
   CUDF_BENCHMARK_RANGE();
   auto const sink_info = cudf::io::sink_info(filepath);
   cudf::io::table_metadata metadata;
-  metadata.schema_info = std::vector<cudf::io::column_name_info>(table.column_names().begin(),
-                                                                 table.column_names().end());
+  metadata.schema_info =
+    std::vector<cudf::io::column_name_info>(col_names.begin(), col_names.end());
   auto const table_input_metadata = cudf::io::table_input_metadata{metadata};
-  auto builder = cudf::io::parquet_writer_options::builder(sink_info, table.table());
+  auto builder = cudf::io::parquet_writer_options::builder(sink_info, tbl->view());
   builder.metadata(table_input_metadata);
   auto const options = builder.build();
   cudf::io::write_parquet(options);

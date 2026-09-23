@@ -28,14 +28,6 @@
   std::unique_ptr<cudf::ast::operation> const& predicate = nullptr);
 
 /**
- * @brief Write a named table to a parquet file
- *
- * @param table The table to write
- * @param filepath The path to the parquet file
- */
-void write_parquet(table_with_names const& table, std::string const& filepath);
-
-/**
  * @brief Write a `cudf::table` to a parquet cuio sink
  *
  * @param table The `cudf::table` to write

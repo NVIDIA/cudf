@@ -185,7 +185,7 @@ void run_ndsh_q1(nvbench::state& state, cudf::io::source_info const& source)
   execute_q1([&](auto const& columns,
                  auto const& predicate) { return read_parquet(source, columns, predicate); },
              false,
-             [](auto const& result) { write_parquet(*result, "q1.parquet"); });
+             [](auto const& result) { result->to_parquet("q1.parquet"); });
 }
 
 void ndsh_q1(nvbench::state& state)

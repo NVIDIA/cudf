@@ -134,7 +134,7 @@ void run_ndsh_q6(nvbench::state& state,
       return read_parquet(sources.at("lineitem").make_source_info(), columns, predicate);
     },
     false,
-    [](auto const& result) { write_parquet(*result, "q6.parquet"); });
+    [](auto const& result) { result->to_parquet("q6.parquet"); });
 }
 
 void ndsh_q6(nvbench::state& state)

@@ -160,7 +160,7 @@ void run_ndsh_q10(nvbench::state& state,
       return read_parquet(sources.at(name).make_source_info(), columns, predicate);
     },
     false,
-    [](auto const& result) { write_parquet(*result, "q10.parquet"); });
+    [](auto const& result) { result->to_parquet("q10.parquet"); });
 }
 
 void ndsh_q10(nvbench::state& state)

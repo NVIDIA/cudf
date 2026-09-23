@@ -342,7 +342,7 @@ void ndsh_q9(nvbench::state& state)
     q9_data const data = load_data(sources);
     auto const result  = compute_profit(
       engine, data, launch.get_stream().get_stream(), cudf::get_current_device_resource_ref());
-    write_parquet(*result, "q9.parquet");
+    result->to_parquet("q9.parquet");
   });
   state.add_buffer_size(
     mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
@@ -368,7 +368,7 @@ void ndsh_q9_noio(nvbench::state& state)
   state.add_buffer_size(
     mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
 
-  if (result) { write_parquet(*result, "q9_noio.parquet"); }
+  if (result) { result->to_parquet("q9_noio.parquet"); }
 }
 
 // unlike `ndsh_q9`, `ndsh_q9_amount` benchmarks only the amount calculation part of the benchmark

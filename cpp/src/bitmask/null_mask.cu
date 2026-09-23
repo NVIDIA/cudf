@@ -385,8 +385,8 @@ rmm::device_buffer copy_bitmask(column_view const& view,
 {
   rmm::device_buffer null_mask{0, stream, mr.get_output_mr()};
   if (view.nullable()) {
-    null_mask =
-      copy_bitmask(view.null_mask(), view.offset(), view.offset() + view.size(), stream, mr);
+    null_mask = detail::copy_bitmask(
+      view.null_mask(), view.offset(), view.offset() + view.size(), stream, mr);
   }
   return null_mask;
 }
@@ -753,7 +753,7 @@ void set_all_valid_null_masks(column_view const& input,
     output.set_null_mask(std::move(mask), 0);
 
     for (size_type i = 0; i < input.num_children(); ++i) {
-      set_all_valid_null_masks(input.child(i), output.child(i), stream, mr);
+      detail::set_all_valid_null_masks(input.child(i), output.child(i), stream, mr);
     }
   }
 }

@@ -28,6 +28,7 @@
 #include <cudf/utilities/traits.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
+#include <rmm/detail/error.hpp>
 #include <rmm/device_buffer.hpp>
 #include <rmm/exec_policy.hpp>
 
@@ -74,6 +75,23 @@ void enable_hugepage(ArrowBuffer* buffer)
 #endif
 }
 
+// Keep async D2H destinations alive when an error prevents ownership from being transferred.
+// ArrowArrayMove clears release, so successful transfers do not synchronize here.
+class unique_host_array : public nanoarrow::UniqueArray {
+ public:
+  explicit unique_host_array(cuda::stream_ref stream) : stream_{stream} {}
+
+  ~unique_host_array() noexcept
+  {
+    if (get()->release != nullptr) {
+      RMM_ASSERT_CUDA_SUCCESS(cudaStreamSynchronize(stream_.get()));
+    }
+  }
+
+ private:
+  cuda::stream_ref stream_;
+};
+
 struct dispatch_to_arrow_host {
   cudf::column_view column;
   cuda::stream_ref stream;
@@ -116,7 +134,7 @@ struct dispatch_to_arrow_host {
   template <typename T, CUDF_ENABLE_IF(is_rep_layout_compatible<T>() || is_fixed_point<T>())>
   int operator()(ArrowArray* out) const
   {
-    nanoarrow::UniqueArray tmp;
+    unique_host_array tmp{stream};
 
     auto const storage_type = id_to_arrow_storage_type(column.type().id());
     NANOARROW_RETURN_NOT_OK(initialize_array(tmp.get(), storage_type, column));
@@ -140,7 +158,7 @@ int get_column(cudf::column_view column,
 template <>
 int dispatch_to_arrow_host::operator()<bool>(ArrowArray* out) const
 {
-  nanoarrow::UniqueArray tmp;
+  unique_host_array tmp{stream};
   NANOARROW_RETURN_NOT_OK(initialize_array(tmp.get(), NANOARROW_TYPE_BOOL, column));
 
   NANOARROW_RETURN_NOT_OK(populate_validity_bitmap(ArrowArrayValidityBitmap(tmp.get())));
@@ -164,7 +182,7 @@ int dispatch_to_arrow_host::operator()<cudf::string_view>(ArrowArray* out) const
     nanoarrow_type = NANOARROW_TYPE_LARGE_STRING;
   }
 
-  nanoarrow::UniqueArray tmp;
+  unique_host_array tmp{stream};
   NANOARROW_RETURN_NOT_OK(initialize_array(tmp.get(), nanoarrow_type, column));
 
   if (column.size() == 0) {
@@ -206,7 +224,7 @@ int dispatch_to_arrow_host::operator()<cudf::string_view>(ArrowArray* out) const
 template <>
 int dispatch_to_arrow_host::operator()<cudf::list_view>(ArrowArray* out) const
 {
-  nanoarrow::UniqueArray tmp;
+  unique_host_array tmp{stream};
   NANOARROW_RETURN_NOT_OK(initialize_array(tmp.get(), NANOARROW_TYPE_LIST, column));
   NANOARROW_RETURN_NOT_OK(ArrowArrayAllocateChildren(tmp.get(), 1));
 
@@ -232,7 +250,7 @@ int dispatch_to_arrow_host::operator()<cudf::list_view>(ArrowArray* out) const
 template <>
 int dispatch_to_arrow_host::operator()<cudf::dictionary32>(ArrowArray* out) const
 {
-  nanoarrow::UniqueArray tmp;
+  unique_host_array tmp{stream};
 
   auto const dcv          = cudf::dictionary_column_view(column);
   auto const dict_indices = dcv.is_empty() ? cudf::make_empty_column(cudf::type_id::INT32)->view()
@@ -282,7 +300,7 @@ int dispatch_to_arrow_host::operator()<cudf::dictionary32>(ArrowArray* out) cons
 template <>
 int dispatch_to_arrow_host::operator()<cudf::struct_view>(ArrowArray* out) const
 {
-  nanoarrow::UniqueArray tmp;
+  unique_host_array tmp{stream};
 
   NANOARROW_RETURN_NOT_OK(initialize_array(tmp.get(), NANOARROW_TYPE_STRUCT, column));
   NANOARROW_RETURN_NOT_OK(ArrowArrayAllocateChildren(tmp.get(), column.num_children()));
@@ -336,7 +354,7 @@ unique_device_array_t to_arrow_host(cudf::table_view const& table,
                                     cuda::stream_ref stream,
                                     rmm::device_async_resource_ref mr)
 {
-  nanoarrow::UniqueArray tmp;
+  unique_host_array tmp{stream};
   NANOARROW_THROW_NOT_OK(ArrowArrayInitFromType(tmp.get(), NANOARROW_TYPE_STRUCT));
 
   NANOARROW_THROW_NOT_OK(ArrowArrayAllocateChildren(tmp.get(), table.num_columns()));
@@ -362,7 +380,7 @@ unique_device_array_t to_arrow_host(cudf::column_view const& col,
                                     cuda::stream_ref stream,
                                     rmm::device_async_resource_ref mr)
 {
-  nanoarrow::UniqueArray tmp;
+  unique_host_array tmp{stream};
 
   NANOARROW_THROW_NOT_OK(
     cudf::type_dispatcher(col.type(), detail::dispatch_to_arrow_host{col, stream, mr}, tmp.get()));
@@ -422,7 +440,7 @@ unique_device_array_t to_arrow_host_stringview(cudf::strings_column_view const& 
                                                cuda::stream_ref stream,
                                                rmm::device_async_resource_ref mr)
 {
-  nanoarrow::UniqueArray out;
+  unique_host_array out{stream};
   NANOARROW_THROW_NOT_OK(ArrowArrayInitFromType(out.get(), NANOARROW_TYPE_STRING_VIEW));
   NANOARROW_THROW_NOT_OK(ArrowArrayStartAppending(out.get()));
 

@@ -18,13 +18,22 @@
 #include <cudf/table/table.hpp>
 #include <cudf/table/table_view.hpp>
 #include <cudf/types.hpp>
+#include <cudf/utilities/default_stream.hpp>
+#include <cudf/utilities/error.hpp>
+
+#include <rmm/mr/callback_memory_resource.hpp>
 
 #include <cuda/iterator>
+#include <cuda/stream>
+#include <cuda_runtime_api.h>
 
 #include <array>
+#include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <numeric>
 #include <string_view>
+#include <thread>
 
 using vector_of_columns = std::vector<std::unique_ptr<cudf::column>>;
 
@@ -318,6 +327,71 @@ TEST_F(ToArrowHostDeviceTest, DirectArrowCConsumerTable)
   auto const string_chars = std::string_view{static_cast<char const*>(string_array->buffers[2]),
                                              static_cast<std::size_t>(expected_offsets.back())};
   EXPECT_EQ("fffaaaccc", string_chars);
+}
+
+TEST_F(ToArrowHostDeviceTest, AllocationFailureDrainsHostTransfers)
+{
+  constexpr cudf::size_type num_rows = 1 << 20;
+  auto const values                  = cuda::constant_iterator<int32_t>{42};
+  auto const bool_values             = cuda::constant_iterator<bool>{true};
+  auto const ints = cudf::test::fixed_width_column_wrapper<int32_t>(values, values + num_rows);
+  auto const bools =
+    cudf::test::fixed_width_column_wrapper<bool>(bool_values, bool_values + num_rows);
+  auto const table  = cudf::table_view{{ints, bools}};
+  auto const column = cudf::column_view{
+    cudf::data_type{cudf::type_id::STRUCT}, num_rows, nullptr, nullptr, 0, 0, {ints, bools}};
+  CUDF_CUDA_TRY(cudaStreamSynchronize(cudf::get_default_stream().get()));
+
+  int device{};
+  CUDF_CUDA_TRY(cudaGetDevice(&device));
+  auto stream           = cuda::stream{cuda::device_ref{device}};
+  auto const stream_ref = cuda::stream_ref{stream.get()};
+
+  // Exercise both the table owner and the nested struct dispatch owner.
+  for (bool const export_column : {false, true}) {
+    SCOPED_TRACE(export_column ? "column" : "table");
+    std::atomic<bool> completed{false};
+    int allocations{0};
+    rmm::mr::callback_memory_resource mr{
+      [&](std::size_t, cuda::stream_ref allocation_stream, void*) -> void* {
+        ++allocations;
+        EXPECT_EQ(stream.get(), allocation_stream.get());
+        // Numeric export has already queued its D2H copy. Keep work pending even if that
+        // copy completes quickly, then fail the boolean bitmask allocation.
+        CUDF_CUDA_TRY(cudaLaunchHostFunc(
+          allocation_stream.get(),
+          [](void* data) {
+            std::this_thread::sleep_for(std::chrono::milliseconds{100});
+            static_cast<std::atomic<bool>*>(data)->store(true);
+          },
+          &completed));
+        throw rmm::bad_alloc{"Injected boolean export allocation failure"};
+      },
+      [](void*, std::size_t, auto, void*) { ADD_FAILURE() << "No allocation should succeed"; }};
+
+    EXPECT_THROW(export_column
+                   ? cudf::to_arrow_host(column, stream_ref, rmm::device_async_resource_ref{mr})
+                   : cudf::to_arrow_host(table, stream_ref, rmm::device_async_resource_ref{mr}),
+                 rmm::bad_alloc);
+    EXPECT_EQ(1, allocations);
+    EXPECT_TRUE(completed.load());
+    EXPECT_EQ(cudaSuccess, cudaStreamQuery(stream.get()));
+    // Keep callback state alive even if the completion assertions fail.
+    CUDF_CUDA_TRY(cudaStreamSynchronize(stream.get()));
+
+    auto recovered = export_column ? cudf::to_arrow_host(column, stream_ref)
+                                   : cudf::to_arrow_host(table, stream_ref);
+    ASSERT_EQ(2, recovered->array.n_children);
+    auto const* numeric_data =
+      static_cast<int32_t const*>(recovered->array.children[0]->buffers[1]);
+    EXPECT_EQ(42, numeric_data[0]);
+    EXPECT_EQ(42, numeric_data[num_rows - 1]);
+    auto const* boolean_data =
+      static_cast<uint8_t const*>(recovered->array.children[1]->buffers[1]);
+    EXPECT_EQ(0xff, boolean_data[0]);
+    EXPECT_EQ(0xff, boolean_data[num_rows / 8 - 1]);
+    EXPECT_EQ(cudaSuccess, cudaStreamQuery(stream.get()));
+  }
 }
 
 TEST_F(ToArrowHostDeviceTest, Nullable)

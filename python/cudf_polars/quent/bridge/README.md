@@ -10,9 +10,6 @@ model. A Python instrumentation library is generated from this model definition
 The main cudf-polars package imports `cudf_polars._quent` extension only when
 telemetry collection is enabled.
 
-This package pairs with the custom [Quent Analyzer](../analyzer/README.md),
-which uses the same model definition.
-
 ## Local Development
 
 Install [maturin] into your cudf-polars development environment and build the
@@ -24,8 +21,8 @@ python -m maturin develop
 
 ## Updating Quent
 
-Quent is pinned by full Git commit SHA in both
-`bridge/Cargo.toml` and `../analyzer/Cargo.toml`. To update Quent:
+Quent is pinned by full Git commit SHA in both `bridge/Cargo.toml`. To update
+Quent:
 
 1. Replace every Quent dependency's `rev` in both manifests with the same full
    commit SHA. Do not use a branch, tag, abbreviated SHA, or different revision
@@ -37,12 +34,9 @@ Quent is pinned by full Git commit SHA in both
    ```sh
    # From python/cudf_polars/quent/bridge
    cargo update
-   # From python/cudf_polars/quent/analyzer
-   cargo update
    ```
 
-   Review the changes and then then commit the changes (including
-   `bridge/Cargo.lock` and `analyzer/Cargo.lock`).
+   Review the then commit the changes (including the lockfiles).
 3. Activate the cudf development environment and rebuild from
    `python/cudf_polars/quent/bridge`:
 
@@ -66,9 +60,8 @@ Quent is pinned by full Git commit SHA in both
    The generated output already includes the cudf-specific transformations
    made in `build.rs`. Review and commit the stub diff, then run mypy so stale
    handle names, event methods, and argument types are caught.
-4. From `../analyzer`, run `cargo check` and `cargo test`.
-5. Run the quent tests `python/cudf_polars/tests/quent`.
-6. Commit and push the analyzer changes to the Git remote recorded in the
+4. Run the checks at `ci/run_cudf_polars_quent_tests`.
+5. Commit and push the analyzer changes to the Git remote recorded in the
    bridge's build provenance. Rebuild the bridge after committing, then
    regenerate traces. `quent-open` checks out the analyzer package at the exact
    remote and commit embedded in `model.qmi`; a local-only commit or a trace

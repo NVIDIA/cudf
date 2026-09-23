@@ -3,6 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+#include "writer.hpp"
+
 #include <cudf_test/base_fixture.hpp>
 #include <cudf_test/column_wrapper.hpp>
 #include <cudf_test/default_stream.hpp>
@@ -13,7 +15,6 @@
 #include <cudf/column/column_factories.hpp>
 #include <cudf/copying.hpp>
 #include <cudf/io/data_sink.hpp>
-#include <cudf/io/vortex.hpp>
 #include <cudf/utilities/error.hpp>
 
 #include <cuda/stream>
@@ -30,8 +31,8 @@
 namespace {
 
 using cudf::io::sink_info;
-using cudf::io::vortex_writer_options;
-using cudf::io::write_vortex;
+using ndsh::vortex_writer_options;
+using ndsh::write_vortex;
 
 class VortexWriterTest : public cudf::test::BaseFixture {
  protected:
@@ -105,25 +106,6 @@ TEST_F(VortexWriterTest, OptionsDefaultsAndBuilder)
   EXPECT_FALSE(std::filesystem::exists(path()));
 }
 
-#ifndef CUDF_WITH_VORTEX
-
-TEST_F(VortexWriterTest, DisabledWriterRejectsDefaultOptions)
-{
-  EXPECT_THROW(write_vortex(vortex_writer_options{}), cudf::logic_error);
-}
-
-TEST_F(VortexWriterTest, DisabledWriterRejectsValidOptionsWithoutTouchingFile)
-{
-  cudf::test::fixed_width_column_wrapper<int32_t> numbers{1, 2, 3};
-  auto const options =
-    vortex_writer_options::builder(sink_info{path()}, cudf::table_view{{numbers}}).build();
-  expect_rejected_without_touching_files(options, {path()});
-  EXPECT_THROW(write_vortex(options, cudf::test::get_default_stream(), mr()), cudf::logic_error);
-  EXPECT_FALSE(std::filesystem::exists(path()));
-}
-
-#else
-
 class VortexWriterEnabledTest : public VortexWriterTest {
  protected:
   void SetUp() override
@@ -133,9 +115,8 @@ class VortexWriterEnabledTest : public VortexWriterTest {
     if (device != 0) { GTEST_SKIP() << "The Vortex writer currently requires CUDA device 0"; }
   }
 
-  // Library-only smoke checks, not a decoder or a table-equality assertion. The pinned Vortex
-  // revision d196f601 writes VTXF at both ends. No benchmark helpers or private FFI handles are
-  // used.
+  // Writer-only smoke checks, not a decoder or a table-equality assertion. The pinned Vortex
+  // revision d196f601 writes VTXF at both ends. No reader adapter or private FFI handles are used.
   void expect_finalized_file(std::string const& file)
   {
     ASSERT_TRUE(std::filesystem::is_regular_file(file));
@@ -343,7 +324,5 @@ TEST_F(VortexWriterEnabledTest, WritesSlicedNullableStringsAndNumbersOnNondefaul
   harness.expect_temporary_allocation_activity(stream);
   harness.expect_no_live_allocations(stream);
 }
-
-#endif
 
 }  // namespace

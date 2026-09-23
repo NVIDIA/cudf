@@ -35,8 +35,8 @@ class vortex_io {
   vortex_io& operator=(vortex_io const&) = delete;
 
   /**
-   * Delegate to cudf::io::write_vortex: write a CUDA-readable local file on CPU via host
-   * Arrow chunks. Requires positive chunk_rows and the public writer's supported types.
+   * Delegate to ndsh::write_vortex: write a CUDA-readable local file on CPU via host
+   * Arrow chunks. Requires positive chunk_rows and the private writer's supported types.
    * Names are unique and NUL-free, one per column (or empty for generated names). chunk_rows also
    * sets the physical CUDA-flat row-block size and disables byte coalescing/layout dictionaries.
    * Partial string slices are compacted on device. Finalizes before return; failed writes may leave

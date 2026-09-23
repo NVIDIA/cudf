@@ -37,7 +37,7 @@ rapids_cmake_write_version_file(include/cudf/version_config.hpp)
 option(USE_NVTX "Build with NVTX support" ON)
 option(BUILD_TESTS "Configure CMake to build tests" ON)
 option(BUILD_BENCHMARKS "Configure CMake to build benchmarks" OFF)
-option(CUDF_WITH_VORTEX "Enable Vortex IO and benchmark integration (shared libcudf only)" OFF)
+option(CUDF_WITH_VORTEX "Enable Vortex NDS-H benchmark integration" OFF)
 option(BUILD_SHARED_LIBS "Build cuDF shared libraries" ON)
 option(CUDF_BUILD_TESTUTIL "Whether to build the test utilities contained in libcudf" ON)
 mark_as_advanced(CUDF_BUILD_TESTUTIL)
@@ -110,17 +110,6 @@ option(
   "Enable remote IO (e.g. AWS S3) support through KvikIO. If disabled, cudf-python will still be able to do remote IO through fsspec."
   ON
 )
-
-# The pinned Vortex CMake only provides a build-tree Rust archive, not a relocatable install. A
-# static libcudf would leave consumers responsible for that archive and its native dependencies.
-if(CUDF_WITH_VORTEX AND NOT BUILD_SHARED_LIBS)
-  message(
-    FATAL_ERROR
-      "CUDF_WITH_VORTEX=ON requires BUILD_SHARED_LIBS=ON. Installing/exporting Vortex's Rust "
-      "archive and native link dependencies for static libcudf consumers is not supported. "
-      "Set BUILD_SHARED_LIBS=ON or CUDF_WITH_VORTEX=OFF."
-  )
-endif()
 
 message(VERBOSE "CUDF: Build with NVTX support: ${USE_NVTX}")
 message(VERBOSE "CUDF: Configure CMake to build tests: ${BUILD_TESTS}")
@@ -928,7 +917,6 @@ add_library(
   src/io/utilities/row_selection.cpp
   src/io/utilities/type_inference.cu
   src/io/utilities/trie.cu
-  src/io/vortex/writer.cpp
   src/jit/cache.cpp
   src/jit/helpers.cpp
   src/jit/parser.cpp
@@ -1510,17 +1498,6 @@ SECTIONS
 target_link_options(cudf PRIVATE "$<HOST_LINK:${CUDF_BINARY_DIR}/fatbin.ld>")
 
 add_library(cudf::cudf ALIAS cudf)
-
-if(CUDF_WITH_VORTEX)
-  include(cmake/thirdparty/get_vortex.cmake)
-  target_compile_definitions(cudf PRIVATE CUDF_WITH_VORTEX=1)
-  # Shared libcudf embeds the FFI without exposing Vortex headers or targets to consumers.
-  target_link_libraries(cudf PRIVATE Vortex::ffi_static)
-  # Hide all embedded FFI/Rust symbols, without hiding public symbols from other static deps.
-  target_link_options(
-    cudf PRIVATE "$<HOST_LINK:LINKER:--exclude-libs=$<TARGET_FILE_NAME:Vortex::ffi_static>>"
-  )
-endif()
 
 # ##################################################################################################
 # * tests and benchmarks --------------------------------------------------------------------------

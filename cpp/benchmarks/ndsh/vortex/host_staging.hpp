@@ -11,12 +11,12 @@
 
 #include <rmm/detail/error.hpp>
 
-#include <cuda/stream>
+#include <cuda/stream_ref>
 
 #include <memory>
 #include <vector>
 
-namespace cudf::io::detail {
+namespace ndsh::detail {
 
 // Declare after buffer owners so failures drain work before releasing its inputs.
 // Cleanup uses RMM's noexcept policy (Debug assertion, unchecked result in Release), not the
@@ -73,4 +73,4 @@ inline cudf::unique_device_array_t stage_host_chunk(cudf::table_view chunk,
   return host;
 }
 
-}  // namespace cudf::io::detail
+}  // namespace ndsh::detail

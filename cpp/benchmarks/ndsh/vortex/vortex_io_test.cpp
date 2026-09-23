@@ -3,18 +3,18 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#include "io/vortex/host_staging.hpp"
-#include "vortex/vortex_io.hpp"
+#include "host_staging.hpp"
+#include "vortex_io.hpp"
+#include "writer.hpp"
 
 #include <cudf/copying.hpp>
 #include <cudf/interop.hpp>
-#include <cudf/io/vortex.hpp>
 #include <cudf/types.hpp>
 
 #include <rmm/cuda_stream.hpp>
 #include <rmm/mr/cuda_async_memory_resource.hpp>
 
-#include <cuda/stream>
+#include <cuda/stream_ref>
 #include <cuda_runtime_api.h>
 
 #include <nanoarrow/nanoarrow.h>
@@ -509,7 +509,7 @@ void test_staged_string_bytes(cudaStream_t stream)
     auto input =
       cudf::slice(source->view(), {range[0], range[1]}, cuda::stream_ref{stream}).front();
     auto expected = make_fixture(range[0], range[1] - range[0]);
-    auto host     = cudf::io::detail::stage_host_chunk(
+    auto host     = ndsh::detail::stage_host_chunk(
       input, cuda::stream_ref{stream}, cudf::get_current_device_resource_ref());
     check_cuda(cudaStreamQuery(stream), "host staging must complete the consumer stream");
     require(host->device_type == ARROW_DEVICE_CPU, "Staging returned non-host data");
@@ -598,16 +598,16 @@ void test_invalid_files(temporary_directory const& directory, cudaStream_t strea
   }
 }
 
-void test_public_writer_defaults(temporary_directory const& directory, cudaStream_t stream)
+void test_writer_defaults(temporary_directory const& directory, cudaStream_t stream)
 {
   auto source     = make_source(stream, 0, 9);
-  auto const path = directory.file("public-writer-defaults.vortex");
+  auto const path = directory.file("writer-defaults.vortex");
   auto const options =
-    cudf::io::vortex_writer_options::builder(cudf::io::sink_info{path}, source->view())
+    ndsh::vortex_writer_options::builder(cudf::io::sink_info{path}, source->view())
       .rows_per_chunk(3)
       .build();
-  cudf::io::write_vortex(options, cuda::stream_ref{stream});
-  check_cuda(cudaStreamQuery(stream), "public write must complete the consumer stream");
+  ndsh::write_vortex(options, cuda::stream_ref{stream});
+  check_cuda(cudaStreamQuery(stream), "write must complete the consumer stream");
   ndsh::vortex_io io{stream};
   check_table(read_completed(io, path, stream, 0), make_fixture(0, 9), stream, {}, true);
   std::vector<std::size_t> const selected{11, 0};
@@ -697,8 +697,7 @@ int main()
     run("ordered projection and metadata", [&] { test_projection(directory, stream); });
     run("invalid projection and recovery", [&] { test_invalid_projection(directory, stream); });
     run("missing and truncated files and recovery", [&] { test_invalid_files(directory, stream); });
-    run("public writer default names and projection",
-        [&] { test_public_writer_defaults(directory, stream); });
+    run("writer default names and projection", [&] { test_writer_defaults(directory, stream); });
     run("writer failure and recovery", [&] { test_writer_failure(directory, stream); });
     run("concurrent shared-adapter reads", [&] { test_concurrent_reads(directory, stream); });
     std::cout << "vortex_io: " << passed << " tests passed on CUDA device 0 (non-default stream)\n";

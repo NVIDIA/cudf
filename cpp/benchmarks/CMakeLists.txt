@@ -171,6 +171,7 @@ foreach(query IN ITEMS 01 05 06 09 10)
 endforeach()
 unset(ndsh_benchmark_options)
 if(CUDF_WITH_VORTEX)
+  include(${CUDF_SOURCE_DIR}/cmake/thirdparty/get_vortex.cmake)
   add_subdirectory(ndsh/vortex)
 
   foreach(query IN ITEMS 01 05 06 09 10)

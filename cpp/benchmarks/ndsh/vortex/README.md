@@ -1,10 +1,12 @@
 # Vortex NDS-H comparisons
 
-Optional local-file comparisons for Q1, Q5, Q6, Q9, and Q10. The GPU reader remains
-benchmark-private; writes delegate to the public `cudf::io::write_vortex` API in
-`<cudf/io/vortex.hpp>`. The adapter and benchmark wiring live in cuDF; Vortex is fetched
-as a library dependency. Shared comparison support lives in `../local_io.hpp`, and format-independent
-CPU references live in `../reference/`.
+Optional local-file comparisons for Q1, Q5, Q6, Q9, and Q10. Both the GPU reader
+and CPU writer are benchmark-private. `writer.hpp`/`writer.cpp` define
+`ndsh::write_vortex`; the existing `vortex_io.hpp`/`vortex_io.cpp` adapter delegates
+writes to it. This branch provides no installed `cudf::io::write_vortex` API or
+`<cudf/io/vortex.hpp>` header. The adapter and benchmark wiring live in cuDF;
+Vortex is fetched as a library dependency. Shared comparison support lives in
+`../local_io.hpp`, and format-independent CPU references live in `../reference/`.
 The existing NDS-H/TPC-H disclaimer in the [parent README](../README.md) applies.
 
 ## Build and run
@@ -61,12 +63,13 @@ the default axes include SF10, which requires substantial memory and disk space.
 Run queries separately on device 0. Put temporary fixtures on disk, not tmpfs,
 for cold-I/O measurements; the fixture directory follows `TMPDIR` when set.
 
-`CUDF_WITH_VORTEX` defaults to `OFF`. Enabling it now configures the public writer
-in libcudf even with `BUILD_BENCHMARKS=OFF`; `BUILD_SHARED_LIBS=ON` is required.
-With Vortex disabled, `write_vortex` throws `cudf::logic_error` without opening the
-output. A local Vortex workspace can be selected
-with `-DFETCHCONTENT_SOURCE_DIR_VORTEX=/absolute/path/to/vortex`; it must contain
-the full workspace, not just `lang/cpp`.
+`CUDF_WITH_VORTEX` defaults to `OFF`. Vortex is fetched and configured only when
+both `BUILD_BENCHMARKS` and `CUDF_WITH_VORTEX` are `ON`; the integration imposes no
+`BUILD_SHARED_LIBS` restriction. With either option disabled, the private Vortex
+writer and adapter are not configured; there is no public feature-OFF writer stub.
+A local Vortex workspace can be selected with
+`-DFETCHCONTENT_SOURCE_DIR_VORTEX=/absolute/path/to/vortex`; it must contain the
+full workspace, not just `lang/cpp`.
 
 With `CUDF_WITH_VORTEX=ON`, the five `NDSH_Q*_NVBENCH` executables above are
 **build-tree-only** and have no install rules. The pinned Vortex revision loads
@@ -78,28 +81,13 @@ not just the local-file comparisons. With `CUDF_WITH_VORTEX=OFF`, the existing
 NDSH install rules remain available; unrelated benchmarks retain their install
 rules in either mode.
 
-### Public writer without benchmarks
+### Benchmark-private writer
 
-```sh
-cmake -S cpp -B build-vortex-writer -G Ninja \
-  -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=ON \
-  -DCUDF_WITH_VORTEX=ON -DBUILD_BENCHMARKS=OFF -DBUILD_TESTS=ON
-cmake --build build-vortex-writer --target VORTEX_WRITER_TEST
-ctest --test-dir build-vortex-writer -R '^VORTEX_WRITER_TEST$' --output-on-failure
-```
+The private writer in `writer.hpp`/`writer.cpp` uses the `ndsh` namespace and is
+built with the benchmark adapter, not exported or installed with libcudf. The
+public writer proposal is preserved separately; it is not an API on this branch.
 
-Clients include `<cudf/io/vortex.hpp>` and link `cudf::cudf`. For example:
-
-```cpp
-auto options = cudf::io::vortex_writer_options::builder(
-                 cudf::io::sink_info{"table.vortex"}, table.view())
-                 .names({"id", "value"})
-                 .rows_per_chunk(1 << 20)
-                 .build();
-cudf::io::write_vortex(options, stream, mr);
-```
-
-The public writer requires current device 0 and one local-file sink. It writes
+The private writer requires current device 0 and one local-file sink. It writes
 flat integers, floats, booleans, strings, decimals and day-resolution timestamps,
 including nullable, sliced and zero-row inputs. Other timestamp units, durations,
 nested/dictionary columns, buffer/custom sinks and remote URIs are rejected.
@@ -110,34 +98,44 @@ file finalization, not durable disk flush, and errors may leave a partial file.
 It does not change the CUDA memory-pool retention policy.
 
 The output uses Vortex's experimental CUDA-flat layout, whose cross-version
-compatibility is not guaranteed. The writer embeds the static FFI privately;
-installed clients need no Vortex headers or CMake targets. The host write path
-does not execute the GPU reader's CUB/nvcomp kernels, but installed-writer
-relocation has not yet been validated. Do not treat this as validated runtime
-packaging for the GPU reader or as a stable-format compatibility promise.
+compatibility is not guaranteed. The benchmark-private integration links the
+static Vortex FFI; this does not provide installed runtime packaging or remove
+the GPU reader's build-tree `.so` dependency.
 
-`VORTEX_WRITER_TEST` covers options, unsupported inputs, feature-OFF behavior,
-file finalization, slices, types and explicit staging resources. Decoded round-trip
-coverage remains in `NDSH_VORTEX_IO_TEST`, which now writes via the public API.
+`NDSH_VORTEX_WRITER_TEST` is a private GTest executable for `writer_test.cpp`,
+covering options, unsupported inputs, file finalization, slices, types and
+explicit staging resources. It is separate from `NDSH_VORTEX_IO_TEST`, whose
+`vortex_io_test.cpp` has a custom `main` and checks decoded round trips through
+the existing adapter and private writer. Do not combine their test entry points.
+The writer GTest requires `BUILD_TESTS`, `BUILD_BENCHMARKS`, and
+`CUDF_WITH_VORTEX`; it is not a public libcudf I/O test.
 
 ### Automated correctness smoke tests
 
 Enable `BUILD_TESTS`, `BUILD_BENCHMARKS`, and `CUDF_WITH_VORTEX` together to
-register the adapter test and all five local query smoke tests with CTest. In
-this mode the adapter test is included in the default build, alongside the query
-benchmarks. For example, from the repository root:
+register the private writer GTest, the adapter test, and all five local query
+smoke tests with CTest. In this mode the adapter test is included in the default
+build, alongside the query benchmarks. For example, from the repository root:
 
 ```sh
 cmake -S cpp -B build-vortex-tests -G Ninja \
   -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTS=ON \
   -DBUILD_BENCHMARKS=ON -DCUDF_WITH_VORTEX=ON
 cmake --build build-vortex-tests
+ctest --test-dir build-vortex-tests -R '^NDSH_VORTEX_WRITER_TEST$' --output-on-failure
 ctest --test-dir build-vortex-tests -L vortex --output-on-failure
+ctest --test-dir build-vortex-tests \
+  -R '^(MEMORY_STATS_LOGGER_TEST|NDSH_FIXTURE_CACHE_TEST)$' --output-on-failure
 ```
 
-The tests are `NDSH_VORTEX_IO_TEST` and `NDSH_Q{01,05,06,09,10}_VORTEX_SMOKE`.
-They carry the `ndsh`, `vortex`, and `smoke` labels, run serially, and each has a
-600-second timeout. RAPIDS CTest resource accounting reserves one whole GPU per
+`MEMORY_STATS_LOGGER_TEST` remains benchmark-local, alongside the existing
+`NDSH_FIXTURE_CACHE_TEST`. Both require `BUILD_BENCHMARKS` and `BUILD_TESTS`,
+but neither requires Vortex. The cache test checks fixture reuse and eviction;
+it does not validate OS page-cache behavior for cold-I/O measurements.
+
+The adapter/query smoke tests are `NDSH_VORTEX_IO_TEST` and
+`NDSH_Q{01,05,06,09,10}_VORTEX_SMOKE`. They carry the `ndsh`, `vortex`, and `smoke`
+labels, run serially, and each has a 600-second timeout. RAPIDS CTest resource accounting reserves one whole GPU per
 test and maps it to logical device 0; the tests remain build-tree-only. The query
 tests select device 0, SF0.01, both Parquet and
 Vortex, the corresponding query workload, warm cache, and `io=buffered` only. Q9 explicitly
@@ -158,6 +156,12 @@ Vortex `develop` commit fetched on 2026-09-23. This merged revision contains the
 projected-scan, bitmap-correctness, embedding, and pipelined-read prerequisites.
 The immutable pin keeps builds reproducible; it is not a release or a claim of
 build/runtime validation of this cuDF branch.
+
+The cuDF Arrow host-transfer cleanup fix remains a prerequisite: export failure
+paths must drain outstanding transfers before releasing host buffers. Moving the
+writer into benchmarks does not remove this requirement. Keep this prerequisite
+separate from the public writer proposal; neither the proposal nor its installed
+API is part of this benchmark integration.
 
 Local comparisons use layout-derived scan batches (`batch_rows=0`). At this
 revision, nonzero scan sizes specify fixed row ranges rather than layout-preserving

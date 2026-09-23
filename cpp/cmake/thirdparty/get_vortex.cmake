@@ -30,9 +30,9 @@ if(NOT EXISTS "${vortex_SOURCE_DIR}/lang/cpp/CMakeLists.txt")
   )
 endif()
 
-# Keep CUDA enabled for benchmark FFI reads; the host writer uses the same PIC archive. CUDA paths
-# still dlopen CUB/nvcomp from the Cargo build tree, so Vortex benchmarks must remain NO_INSTALL. Do
-# not expose these build-tree targets in libcudf's installed interface.
+# The benchmark reader and host writer share one FFI archive. CUDA paths still dlopen CUB/nvcomp
+# from the Cargo build tree, so Vortex benchmarks must remain NO_INSTALL. This dependency is only
+# configured for benchmarks and is not linked into libcudf or its installed interface.
 set(VORTEX_ENABLE_CUDA ON)
 set(VORTEX_BUILD_TESTS OFF)
 set(VORTEX_BUILD_EXAMPLES OFF)

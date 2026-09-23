@@ -3,14 +3,13 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#include <cudf/detail/nvtx/ranges.hpp>
-#include <cudf/io/vortex.hpp>
-#include <cudf/utilities/error.hpp>
+#include "writer.hpp"
 
-#ifdef CUDF_WITH_VORTEX
 #include "host_staging.hpp"
 
 #include <cudf/copying.hpp>
+#include <cudf/detail/nvtx/ranges.hpp>
+#include <cudf/utilities/error.hpp>
 
 #include <nanoarrow/nanoarrow.hpp>
 #include <nanoarrow/nanoarrow_device.hpp>
@@ -24,9 +23,14 @@ using FFI_ArrowArrayStream = ArrowArrayStream;
 #include <algorithm>
 #include <memory>
 #include <unordered_set>
-#endif
 
-namespace cudf::io {
+namespace ndsh {
+
+using cudf::size_type;
+using cudf::table_view;
+using cudf::type_id;
+using cudf::io::io_type;
+using cudf::io::sink_info;
 
 vortex_writer_options_builder vortex_writer_options::builder(sink_info const& sink,
                                                              table_view const& table)
@@ -34,7 +38,6 @@ vortex_writer_options_builder vortex_writer_options::builder(sink_info const& si
   return vortex_writer_options_builder{sink, table};
 }
 
-#ifdef CUDF_WITH_VORTEX
 namespace {
 
 using session_ptr = std::unique_ptr<vx_session, decltype(&vx_session_free)>;
@@ -132,7 +135,7 @@ void write(vortex_writer_options const& options,
     // Arrow import consumes both array and schema, so build a fresh schema for each chunk.
     // Derive it from the original table to keep nullability stable across slices.
     auto schema = cudf::to_arrow_schema(table, metadata);
-    auto host   = detail::stage_host_chunk(chunks.front(), stream, mr);
+    auto host   = ndsh::detail::stage_host_chunk(chunks.front(), stream, mr);
     CUDF_EXPECTS(host->device_type == ARROW_DEVICE_CPU,
                  operation + ": cuDF host export returned non-host data",
                  std::runtime_error);
@@ -157,18 +160,13 @@ void write(vortex_writer_options const& options,
 }
 
 }  // namespace
-#endif
 
 void write_vortex(vortex_writer_options const& options,
                   cuda::stream_ref stream,
                   rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
-#ifdef CUDF_WITH_VORTEX
   write(options, stream, mr);
-#else
-  CUDF_FAIL("Vortex support is disabled; rebuild libcudf with CUDF_WITH_VORTEX=ON");
-#endif
 }
 
-}  // namespace cudf::io
+}  // namespace ndsh

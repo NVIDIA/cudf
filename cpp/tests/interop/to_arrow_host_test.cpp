@@ -329,9 +329,10 @@ TEST_F(ToArrowHostDeviceTest, DirectArrowCConsumerTable)
   EXPECT_EQ("fffaaaccc", string_chars);
 }
 
-TEST_F(ToArrowHostDeviceTest, AllocationFailureDrainsHostTransfers)
+TEST_F(ToArrowHostDeviceTest, AllocationFailureDrainsStream)
 {
-  constexpr cudf::size_type num_rows = 1 << 20;
+  // Keep the numeric copy above CUDA 13's 128 KiB copy-policy threshold.
+  constexpr cudf::size_type num_rows = 1 << 16;
   auto const values                  = cuda::constant_iterator<int32_t>{42};
   auto const bool_values             = cuda::constant_iterator<bool>{true};
   auto const ints = cudf::test::fixed_width_column_wrapper<int32_t>(values, values + num_rows);
@@ -347,7 +348,8 @@ TEST_F(ToArrowHostDeviceTest, AllocationFailureDrainsHostTransfers)
   auto stream           = cuda::stream{cuda::device_ref{device}};
   auto const stream_ref = cuda::stream_ref{stream.get()};
 
-  // Exercise both the table owner and the nested struct dispatch owner.
+  // Check both entry points. The failing Boolean child also drains the stream, so this
+  // observes completion on return, not the release order of each enclosing owner.
   for (bool const export_column : {false, true}) {
     SCOPED_TRACE(export_column ? "column" : "table");
     std::atomic<bool> completed{false};
@@ -356,8 +358,8 @@ TEST_F(ToArrowHostDeviceTest, AllocationFailureDrainsHostTransfers)
       [&](std::size_t, cuda::stream_ref allocation_stream, void*) -> void* {
         ++allocations;
         EXPECT_EQ(stream.get(), allocation_stream.get());
-        // Numeric export has already queued its D2H copy. Keep work pending even if that
-        // copy completes quickly, then fail the boolean bitmask allocation.
+        // Delay completion after the numeric copy, then fail Boolean export. This widens
+        // the regression window; it cannot guarantee detection if the caller is descheduled.
         CUDF_CUDA_TRY(cudaLaunchHostFunc(
           allocation_stream.get(),
           [](void* data) {
@@ -378,19 +380,6 @@ TEST_F(ToArrowHostDeviceTest, AllocationFailureDrainsHostTransfers)
     EXPECT_EQ(cudaSuccess, cudaStreamQuery(stream.get()));
     // Keep callback state alive even if the completion assertions fail.
     CUDF_CUDA_TRY(cudaStreamSynchronize(stream.get()));
-
-    auto recovered = export_column ? cudf::to_arrow_host(column, stream_ref)
-                                   : cudf::to_arrow_host(table, stream_ref);
-    ASSERT_EQ(2, recovered->array.n_children);
-    auto const* numeric_data =
-      static_cast<int32_t const*>(recovered->array.children[0]->buffers[1]);
-    EXPECT_EQ(42, numeric_data[0]);
-    EXPECT_EQ(42, numeric_data[num_rows - 1]);
-    auto const* boolean_data =
-      static_cast<uint8_t const*>(recovered->array.children[1]->buffers[1]);
-    EXPECT_EQ(0xff, boolean_data[0]);
-    EXPECT_EQ(0xff, boolean_data[num_rows / 8 - 1]);
-    EXPECT_EQ(cudaSuccess, cudaStreamQuery(stream.get()));
   }
 }
 

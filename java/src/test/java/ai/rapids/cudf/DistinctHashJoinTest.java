@@ -7,9 +7,11 @@ package ai.rapids.cudf;
 
 import org.junit.jupiter.api.Test;
 
-import static ai.rapids.cudf.AssertUtils.assertColumnsAreEqual;
+import static ai.rapids.cudf.AssertUtils.assertGatherMapEquals;
+import static ai.rapids.cudf.AssertUtils.assertGatherMapsEqualUnordered;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 public class DistinctHashJoinTest {
@@ -44,17 +46,55 @@ public class DistinctHashJoinTest {
          ColumnVector probe2Keys = ColumnVector.fromInts(3, 0, 5);
          Table probe2Table = new Table(probe2Keys);
          ColumnVector expected1 = ColumnVector.fromInts(1, 2, inv);
-         ColumnVector expected2 = ColumnVector.fromInts(3, 0, inv)) {
-      assertGatherMapEquals(expected1, probe1Table.leftDistinctJoinGatherMap(hashJoin));
-      assertGatherMapEquals(expected2, probe2Table.leftDistinctJoinGatherMap(hashJoin));
+         ColumnVector expected2 = ColumnVector.fromInts(3, 0, inv);
+         GatherMap map1 = probe1Table.leftDistinctJoinGatherMap(hashJoin);
+         GatherMap map2 = probe2Table.leftDistinctJoinGatherMap(hashJoin)) {
+      assertGatherMapEquals(expected1, map1);
+      assertGatherMapEquals(expected2, map2);
     }
   }
 
-  private static void assertGatherMapEquals(ColumnView expected, GatherMap gatherMap) {
-    try (GatherMap map = gatherMap;
-         ColumnView actual = map.toColumnView(0, (int) map.getRowCount())) {
-      assertEquals(expected.getRowCount(), map.getRowCount());
-      assertColumnsAreEqual(expected, actual);
+  @Test
+  void testInnerDistinctJoinGatherMapsCanBeReusedAcrossProbeTables() {
+    try (ColumnVector buildKeys = ColumnVector.fromInts(0, 1, 2, 3);
+         Table buildTable = new Table(buildKeys);
+         DistinctHashJoin hashJoin = new DistinctHashJoin(buildTable, true);
+         ColumnVector probe1Keys = ColumnVector.fromInts(1, 2, 4);
+         Table probe1Table = new Table(probe1Keys);
+         ColumnVector probe2Keys = ColumnVector.fromInts(3, 0, 5);
+         Table probe2Table = new Table(probe2Keys);
+         Table expected1 = new Table.TestBuilder().column(0, 1).column(1, 2).build();
+         Table expected2 = new Table.TestBuilder().column(0, 1).column(3, 0).build();
+         CloseableArray<GatherMap> maps1 =
+             CloseableArray.wrap(probe1Table.innerDistinctJoinGatherMaps(hashJoin));
+         CloseableArray<GatherMap> maps2 =
+             CloseableArray.wrap(probe2Table.innerDistinctJoinGatherMaps(hashJoin))) {
+      assertGatherMapsEqualUnordered(expected1, maps1.getArray());
+      assertGatherMapsEqualUnordered(expected2, maps2.getArray());
+    }
+  }
+
+  @Test
+  void testColumnCountMismatch() {
+    try (Table build = new Table.TestBuilder().column(7, 9).build();
+         DistinctHashJoin hashJoin = new DistinctHashJoin(build, false);
+         Table probe = new Table.TestBuilder().column(7, 8).column(1, 2).build()) {
+      assertThrows(IllegalArgumentException.class, () -> probe.leftDistinctJoinGatherMap(hashJoin));
+      assertThrows(IllegalArgumentException.class, () -> probe.innerDistinctJoinGatherMaps(hashJoin));
+    }
+  }
+
+  @Test
+  void testClosedDistinctHashJoin() {
+    try (Table build = new Table.TestBuilder().column(7, 9).build();
+         Table probe = new Table.TestBuilder().column(7, 8).build()) {
+      DistinctHashJoin hashJoin = new DistinctHashJoin(build, false);
+      hashJoin.close();
+      assertEquals(1, hashJoin.getNumberOfColumns());
+      assertFalse(hashJoin.getCompareNullsEqual());
+      assertThrows(IllegalStateException.class, () -> probe.leftDistinctJoinGatherMap(hashJoin));
+      assertThrows(IllegalStateException.class, () -> probe.innerDistinctJoinGatherMaps(hashJoin));
+      assertThrows(IllegalStateException.class, hashJoin::close);
     }
   }
 }

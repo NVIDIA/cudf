@@ -11,8 +11,16 @@
 
 #include <cudf/io/parquet.hpp>
 #include <cudf/utilities/default_stream.hpp>
+#include <cudf/utilities/error.hpp>
 
 #include <nvbench/nvbench.cuh>
+
+std::optional<double> null_probability_from_percent(int64_t null_percent)
+{
+  if (null_percent < 0) { return std::nullopt; }
+  CUDF_EXPECTS(null_percent <= 100, "null_percent must be -1 or in [0, 100]");
+  return static_cast<double>(null_percent) / 100.0;
+}
 
 void parquet_read_common(cudf::size_type num_rows_to_read,
                          cudf::size_type num_cols_to_read,

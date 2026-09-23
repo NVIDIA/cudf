@@ -13,7 +13,6 @@
 #include <cuda/std/tuple>
 
 #include <jit/column_accessor.cuh>
-#include <jit/span.cuh>
 #include <jit/type_list.cuh>
 
 #pragma nv_hdrstop  // The above headers are used by the kernel below and need to be included before

@@ -13,11 +13,12 @@ from numba_cuda_mlir import (
     cuda,
     types,
 )
+from numba_cuda_mlir.numba_cuda.core.errors import TypingError
 
 import cudf.core.udf.mlir_backend.masked_lowering
 import cudf.core.udf.mlir_backend.masked_typing  # noqa: F401
 from cudf.core.missing import NA
-from cudf.core.udf.api import Masked
+from cudf.core.udf.api import Masked, pack_return
 from cudf.core.udf.utils import DEPRECATED_SM_REGEX
 
 from .utils import MLIRNumbaCudaConfig
@@ -1079,3 +1080,95 @@ def test_masked_in_tuple_invalid_propagates():
         cp.array([False], dtype=np.bool_),
     )
     assert bool(out_valid.get()[0]) is False
+
+
+#
+# ``pack_return`` is the bridge the apply-kernel templates call on a UDF's
+# return value. Calling it directly here exercises the two lowering paths in
+# isolation, well before the kernel templates that use it exist in the stack.
+
+
+@pytest.mark.parametrize("valid", [True, False])
+def test_pack_return_masked_is_identity(valid):
+    """``pack_return(masked)`` returns the Masked unchanged (value + validity)."""
+
+    @cuda.jit(
+        types.void(
+            types.int64[::1],
+            types.boolean[::1],
+            types.int64[::1],
+            types.boolean[::1],
+        )
+    )
+    def k(out_v, out_valid, a, av):
+        m = pack_return(Masked(a[0], av[0]))
+        out_v[0] = m.value
+        out_valid[0] = m.valid
+
+    out_v = cp.zeros(1, dtype=np.int64)
+    out_valid = cp.zeros(1, dtype=np.bool_)
+    _launch(
+        k,
+        out_v,
+        out_valid,
+        cp.array([42], dtype=np.int64),
+        cp.array([valid], dtype=np.bool_),
+    )
+    assert int(out_v.get()[0]) == 42
+    assert bool(out_valid.get()[0]) is valid
+
+
+@pytest.mark.parametrize("nb_ty,np_dtype,sample", _DTYPE_SAMPLES)
+def test_pack_return_scalar_wraps_valid(nb_ty, np_dtype, sample):
+    """``pack_return(scalar)`` wraps a bare scalar as a valid Masked."""
+
+    @cuda.jit(types.void(nb_ty[::1], types.boolean[::1], nb_ty[::1]))
+    def k(out_v, out_valid, a):
+        m = pack_return(a[0])
+        out_v[0] = m.value
+        out_valid[0] = m.valid
+
+    out_v = cp.zeros(1, dtype=np_dtype)
+    out_valid = cp.zeros(1, dtype=np.bool_)
+    _launch(k, out_v, out_valid, cp.array([sample], dtype=np_dtype))
+    assert out_v.get()[0] == sample
+    assert bool(out_valid.get()[0]) is True
+
+
+def test_pack_return_scalar_literal_constant():
+    """``pack_return(literal)`` wraps a compile-time constant as a valid Masked."""
+
+    @cuda.jit(types.void(types.int64[::1], types.boolean[::1]))
+    def k(out_v, out_valid):
+        m = pack_return(7)
+        out_v[0] = m.value
+        out_valid[0] = m.valid
+
+    out_v = cp.zeros(1, dtype=np.int64)
+    out_valid = cp.zeros(1, dtype=np.bool_)
+    _launch(k, out_v, out_valid)
+    assert int(out_v.get()[0]) == 7
+    assert bool(out_valid.get()[0]) is True
+
+
+@pytest.mark.parametrize(
+    "np_dtype", [np.float16, np.complex64], ids=["float16", "complex64"]
+)
+def test_pack_return_rejects_unlowered_scalar(np_dtype):
+    """pack_return rejects scalar types with no lowering (float16/complex) at
+    typing, rather than accepting them and failing later during lowering.
+    """
+
+    @cuda.jit
+    def k(out_v, out_valid, a):
+        m = pack_return(a[0])
+        out_v[0] = m.value
+        out_valid[0] = m.valid
+
+    with pytest.raises(TypingError):
+        _launch(
+            k,
+            cp.zeros(1, dtype=np_dtype),
+            cp.zeros(1, dtype=np.bool_),
+            cp.zeros(1, dtype=np_dtype),
+        )

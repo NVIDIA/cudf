@@ -30,7 +30,7 @@ namespace CUDF_EXPORT cudf {
 /**
  * @brief A container of nullable device data as a column of elements.
  *
- * @ingroup column_classes Column
+ * @ingroup column_classes
  * @{
  */
 

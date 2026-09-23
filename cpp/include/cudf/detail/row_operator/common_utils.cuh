@@ -1,10 +1,11 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
 #pragma once
 
+#include <cudf/strings/string_view.cuh>
 #include <cudf/types.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
@@ -138,6 +139,26 @@ __device__ weak_ordering compare_elements(Element lhs, Element rhs)
   } else if (rhs < lhs) {
     return weak_ordering::GREATER;
   }
+  return weak_ordering::EQUIVALENT;
+}
+
+/**
+ * @brief A specialization for `string_view` to compare the elements ordering with respect to `lhs`.
+ *
+ * The generic implementation resolves the ordering using two `<` comparisons and each one is a
+ * full character-by-character comparison for strings. Here `string_view::compare` already
+ * produces the 3-way result so only a single comparison pass is needed.
+ *
+ * @param lhs first element
+ * @param rhs second element
+ * @return Indicates the relationship between the elements in
+ * the `lhs` and `rhs` columns.
+ */
+__device__ inline weak_ordering compare_elements(string_view lhs, string_view rhs)
+{
+  auto const result = lhs.compare(rhs);
+  if (result < 0) { return weak_ordering::LESS; }
+  if (result > 0) { return weak_ordering::GREATER; }
   return weak_ordering::EQUIVALENT;
 }
 

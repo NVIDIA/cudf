@@ -335,7 +335,8 @@ void ndsh_q9(nvbench::state& state)
   auto const engine       = engine_from_string(state.get_string("engine"));
 
   std::unordered_map<std::string, cuio_source_sink_pair> sources;
-  generate_parquet_data_sources(scale_factor, q9_tables, sources);
+  generate_parquet_data_sources(
+    scale_factor, {"part", "supplier", "lineitem", "partsupp", "orders", "nation"}, sources);
 
   auto const mem_stats_logger = cudf::memory_stats_logger();
   state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
@@ -354,7 +355,8 @@ void ndsh_q9_noio(nvbench::state& state)
   auto const engine       = engine_from_string(state.get_string("engine"));
 
   std::unordered_map<std::string, cuio_source_sink_pair> sources;
-  generate_parquet_data_sources(scale_factor, q9_tables, sources);
+  generate_parquet_data_sources(
+    scale_factor, {"part", "supplier", "lineitem", "partsupp", "orders", "nation"}, sources);
 
   q9_data const data = load_data(sources);
 
@@ -378,7 +380,8 @@ void ndsh_q9_amount(nvbench::state& state)
   auto const engine       = engine_from_string(state.get_string("engine"));
 
   std::unordered_map<std::string, cuio_source_sink_pair> sources;
-  generate_parquet_data_sources(scale_factor, q9_tables, sources);
+  generate_parquet_data_sources(
+    scale_factor, {"part", "supplier", "lineitem", "partsupp", "orders", "nation"}, sources);
 
   q9_data const data      = load_data(sources);
   auto const joined_table = join_data(data);

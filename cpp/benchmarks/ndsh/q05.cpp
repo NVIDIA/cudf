@@ -10,6 +10,7 @@
 #include <benchmarks/common/memory_stats.hpp>
 
 #include <cudf/ast/expressions.hpp>
+#include <cudf/binaryop.hpp>
 #include <cudf/column/column.hpp>
 #include <cudf/scalar/scalar.hpp>
 #include <cudf/utilities/memory_resource.hpp>
@@ -79,6 +80,33 @@ std::map<std::string, std::vector<std::string>> const q5_projections{
  */
 
 /**
+ * @brief Calculate the revenue column
+ *
+ * @param extendedprice The extended price column
+ * @param discount The discount column
+ * @param stream The CUDA stream used for device memory operations and kernel launches.
+ * @param mr Device memory resource used to allocate the returned column's device memory.
+ */
+[[nodiscard]] std::unique_ptr<cudf::column> calculate_revenue(
+  cudf::column_view const& extendedprice,
+  cudf::column_view const& discount,
+  cuda::stream_ref stream           = cudf::get_default_stream(),
+  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref())
+{
+  auto const one = cudf::numeric_scalar<double>(1);
+  auto const one_minus_discount =
+    cudf::binary_operation(one, discount, cudf::binary_operator::SUB, discount.type(), stream, mr);
+  auto const revenue_type = cudf::data_type{cudf::type_id::FLOAT64};
+  auto revenue            = cudf::binary_operation(extendedprice,
+                                        one_minus_discount->view(),
+                                        cudf::binary_operator::MUL,
+                                        revenue_type,
+                                        stream,
+                                        mr);
+  return revenue;
+}
+
+/**
  * read returns owning projected tables, applying supplied predicates if filter_predicates is false.
  * Otherwise filtering happens here. consume receives the result owner by reference and may
  * move it out; its return value is forwarded. This helper adds no final stream synchronization.
@@ -133,8 +161,8 @@ auto execute_q5(Read&& read, bool filter_predicates, Consume&& consume)
     apply_inner_join(supplier, join_d, {"s_suppkey", "s_nationkey"}, {"l_suppkey", "n_nationkey"});
 
   // Calculate and append the `revenue` column
-  auto revenue = calculate_discounted_revenue(joined_table->column("l_extendedprice"),
-                                              joined_table->column("l_discount"));
+  auto revenue =
+    calculate_revenue(joined_table->column("l_extendedprice"), joined_table->column("l_discount"));
   (*joined_table).append(revenue, "revenue");
 
   // Perform the groupby operation

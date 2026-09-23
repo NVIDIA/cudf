@@ -58,6 +58,26 @@ std::vector<std::string> const q6_columns{
  */
 
 /**
+ * @brief Calculate the revenue column
+ *
+ * @param extendedprice The extended price column
+ * @param discount The discount column
+ * @param stream The CUDA stream used for device memory operations and kernel launches.
+ * @param mr Device memory resource used to allocate the returned column's device memory.
+ */
+[[nodiscard]] std::unique_ptr<cudf::column> calculate_revenue(
+  cudf::column_view const& extendedprice,
+  cudf::column_view const& discount,
+  cuda::stream_ref stream           = cudf::get_default_stream(),
+  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref())
+{
+  auto const revenue_type = cudf::data_type{cudf::type_id::FLOAT64};
+  auto revenue            = cudf::binary_operation(
+    extendedprice, discount, cudf::binary_operator::MUL, revenue_type, stream, mr);
+  return revenue;
+}
+
+/**
  * read returns an owning projected table, applying its predicate if filter_shipdate is false.
  * Otherwise filtering happens here. consume receives the result owner by reference and may
  * move it out; its return value is forwarded. This helper adds no final stream synchronization.
@@ -115,10 +135,8 @@ auto execute_q6(Read&& read, bool filter_shipdate, Consume&& consume)
   auto const filtered_table = apply_filter(lineitem, discount_quantity_pred);
 
   // Calculate the `revenue` column
-  auto revenue = cudf::binary_operation(filtered_table->column("l_extendedprice"),
-                                        filtered_table->column("l_discount"),
-                                        cudf::binary_operator::MUL,
-                                        cudf::data_type{cudf::type_id::FLOAT64});
+  auto revenue = calculate_revenue(filtered_table->column("l_extendedprice"),
+                                   filtered_table->column("l_discount"));
 
   // Sum the `revenue` column
   auto const revenue_view = revenue->view();

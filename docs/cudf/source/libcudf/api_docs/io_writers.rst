@@ -42,7 +42,7 @@ build-tree runtime libraries; this API does not provide an installed GPU reader.
 Installed-writer relocation must be validated before distribution.
 
 With ``BUILD_TESTS=ON``, ``VORTEX_WRITER_TEST`` exercises the public writer without
-requiring benchmarks.
+requiring benchmarks. Benchmark adapter tests additionally check decoded round trips.
 
 API reference
 -------------

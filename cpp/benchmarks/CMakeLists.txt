@@ -129,6 +129,9 @@ foreach(query IN ITEMS 01 05 06 09 10)
     NDSH_Q${query}_NVBENCH ndsh/q${query}.cpp ndsh/utilities.cpp ndsh/parquet/parquet_io.cpp
   )
 endforeach()
+if(CUDF_WITH_VORTEX)
+  add_subdirectory(ndsh/vortex)
+endif()
 
 # ##################################################################################################
 # * filter benchmark -------------------------------------------------------------------

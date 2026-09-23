@@ -60,3 +60,33 @@ projected-scan, bitmap-correctness, embedding, and pipelined-read prerequisites.
 The immutable pin keeps builds reproducible; it is not a release or a claim of
 build/runtime validation of this cuDF branch.
 
+
+## Benchmark-private GPU reader adapter
+
+Enable `BUILD_BENCHMARKS` and `CUDF_WITH_VORTEX` to build `NDSH_VORTEX_IO` and
+`NDSH_VORTEX_IO_TEST`. The adapter delegates writes to the public writer and
+supports local GPU reads on device 0, ordered projections, owning cuDF results,
+and explicit producer/consumer lifetime handling.
+
+```sh
+cmake -S cpp -B build-vortex -G Ninja \
+  -DCMAKE_BUILD_TYPE=Release -DBUILD_BENCHMARKS=ON \
+  -DCUDF_WITH_VORTEX=ON -DBUILD_TESTS=OFF
+cmake --build build-vortex --target NDSH_VORTEX_IO_TEST
+build-vortex/benchmarks/NDSH_VORTEX_IO_TEST
+```
+
+The adapter test covers sliced and empty tables, null/bitmap boundaries, ordered
+projection, default names, host staging, owning results, stream completion,
+failure/recovery and concurrent reads. With `BUILD_TESTS=ON` it is part of the
+default build and registered with RAPIDS CTest GPU accounting (one whole GPU,
+serial execution, 600-second timeout). Otherwise it is explicitly built.
+
+The reader is not installed as a public cuDF API. Its targets remain build-tree-only:
+the pinned Vortex revision loads CUB/nvcomp shared libraries from Cargo build paths.
+Retain those artifacts at their original locations. RMM does not account for
+Vortex allocations, and the adapter retains up to 8 GiB in CUDA's default memory pool.
+
+Use `batch_rows=0` for layout-derived splitting. Nonzero scan sizes request fixed
+row ranges; crossing physical blocks can require unsupported CUDA Chunked
+concatenation. Direct I/O is optional for data reads; metadata remains buffered.

@@ -1,4 +1,5 @@
 /*
+ * SPDX-FileCopyrightText: Copyright the Vortex contributors
  * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -22,6 +23,7 @@
 #include <nvbench/nvbench.cuh>
 
 #include <array>
+#include <map>
 #include <utility>
 
 enum class engine_type : int32_t { BINARYOP = 0, AST = 1, TRANSFORM = 2 };
@@ -47,6 +49,19 @@ struct q9_data {
   std::unique_ptr<table_with_names> partsupp;
   std::unique_ptr<table_with_names> supplier;
 };
+
+namespace {
+std::vector<std::string> const q9_tables{
+  "part", "supplier", "lineitem", "partsupp", "orders", "nation"};
+std::map<std::string, std::vector<std::string>> const q9_projections{
+  {"lineitem",
+   {"l_suppkey", "l_partkey", "l_orderkey", "l_extendedprice", "l_discount", "l_quantity"}},
+  {"nation", {"n_nationkey", "n_name"}},
+  {"orders", {"o_orderkey", "o_orderdate"}},
+  {"part", {"p_partkey", "p_name"}},
+  {"partsupp", {"ps_suppkey", "ps_partkey", "ps_supplycost"}},
+  {"supplier", {"s_suppkey", "s_nationkey"}}};
+}  // namespace
 
 /**
  * @file q09.cpp
@@ -226,25 +241,22 @@ struct q9_data {
   }
 }
 
+template <typename Read>
+q9_data load_data(Read&& read)
+{
+  return q9_data{read("lineitem", q9_projections.at("lineitem")),
+                 read("nation", q9_projections.at("nation")),
+                 read("orders", q9_projections.at("orders")),
+                 read("part", q9_projections.at("part")),
+                 read("partsupp", q9_projections.at("partsupp")),
+                 read("supplier", q9_projections.at("supplier"))};
+}
+
 q9_data load_data(std::unordered_map<std::string, cuio_source_sink_pair>& sources)
 {
-  auto lineitem = read_parquet(
-    sources.at("lineitem").make_source_info(),
-    {"l_suppkey", "l_partkey", "l_orderkey", "l_extendedprice", "l_discount", "l_quantity"});
-  auto nation = read_parquet(sources.at("nation").make_source_info(), {"n_nationkey", "n_name"});
-  auto orders =
-    read_parquet(sources.at("orders").make_source_info(), {"o_orderkey", "o_orderdate"});
-  auto part     = read_parquet(sources.at("part").make_source_info(), {"p_partkey", "p_name"});
-  auto partsupp = read_parquet(sources.at("partsupp").make_source_info(),
-                               {"ps_suppkey", "ps_partkey", "ps_supplycost"});
-  auto supplier =
-    read_parquet(sources.at("supplier").make_source_info(), {"s_suppkey", "s_nationkey"});
-  return q9_data{std::move(lineitem),
-                 std::move(nation),
-                 std::move(orders),
-                 std::move(part),
-                 std::move(partsupp),
-                 std::move(supplier)};
+  return load_data([&](std::string const& name, std::vector<std::string> const& columns) {
+    return read_parquet(sources.at(name).make_source_info(), columns);
+  });
 }
 
 std::unique_ptr<table_with_names> join_data(q9_data const& data)
@@ -267,7 +279,6 @@ std::unique_ptr<table_with_names> join_data(q9_data const& data)
 }
 
 std::unique_ptr<table_with_names> compute_profit(
-  nvbench::state& state,
   engine_type engine,
   q9_data const& data,
   cuda::stream_ref stream           = cudf::get_default_stream(),
@@ -314,17 +325,13 @@ void ndsh_q9(nvbench::state& state)
   auto const engine       = engine_from_string(state.get_string("engine"));
 
   std::unordered_map<std::string, cuio_source_sink_pair> sources;
-  generate_parquet_data_sources(
-    scale_factor, {"part", "supplier", "lineitem", "partsupp", "orders", "nation"}, sources);
+  generate_parquet_data_sources(scale_factor, q9_tables, sources);
 
   auto const mem_stats_logger = cudf::memory_stats_logger();
   state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
     q9_data const data = load_data(sources);
-    auto const result  = compute_profit(state,
-                                       engine,
-                                       data,
-                                       launch.get_stream().get_stream(),
-                                       cudf::get_current_device_resource_ref());
+    auto const result  = compute_profit(
+      engine, data, launch.get_stream().get_stream(), cudf::get_current_device_resource_ref());
     write_parquet(*result, "q9.parquet");
   });
   state.add_buffer_size(
@@ -337,8 +344,7 @@ void ndsh_q9_noio(nvbench::state& state)
   auto const engine       = engine_from_string(state.get_string("engine"));
 
   std::unordered_map<std::string, cuio_source_sink_pair> sources;
-  generate_parquet_data_sources(
-    scale_factor, {"part", "supplier", "lineitem", "partsupp", "orders", "nation"}, sources);
+  generate_parquet_data_sources(scale_factor, q9_tables, sources);
 
   q9_data const data = load_data(sources);
 
@@ -346,11 +352,8 @@ void ndsh_q9_noio(nvbench::state& state)
 
   auto const mem_stats_logger = cudf::memory_stats_logger();
   state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
-    result = compute_profit(state,
-                            engine,
-                            data,
-                            launch.get_stream().get_stream(),
-                            cudf::get_current_device_resource_ref());
+    result = compute_profit(
+      engine, data, launch.get_stream().get_stream(), cudf::get_current_device_resource_ref());
   });
   state.add_buffer_size(
     mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
@@ -365,8 +368,7 @@ void ndsh_q9_amount(nvbench::state& state)
   auto const engine       = engine_from_string(state.get_string("engine"));
 
   std::unordered_map<std::string, cuio_source_sink_pair> sources;
-  generate_parquet_data_sources(
-    scale_factor, {"part", "supplier", "lineitem", "partsupp", "orders", "nation"}, sources);
+  generate_parquet_data_sources(scale_factor, q9_tables, sources);
 
   q9_data const data      = load_data(sources);
   auto const joined_table = join_data(data);

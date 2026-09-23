@@ -1,4 +1,5 @@
 /*
+ * SPDX-FileCopyrightText: Copyright the Vortex contributors
  * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -16,6 +17,17 @@
 #include <cudf/utilities/memory_resource.hpp>
 
 #include <nvbench/nvbench.cuh>
+
+namespace {
+std::vector<std::string> const q1_columns{"l_returnflag",
+                                          "l_linestatus",
+                                          "l_quantity",
+                                          "l_extendedprice",
+                                          "l_discount",
+                                          "l_shipdate",
+                                          "l_orderkey",
+                                          "l_tax"};
+}  // namespace
 
 /**
  * @file q01.cpp
@@ -96,27 +108,24 @@
     disc_price, one_plus_tax->view(), cudf::binary_operator::MUL, tax.type(), stream, mr);
 }
 
-void run_ndsh_q1(nvbench::state& state, cudf::io::source_info const& source)
+/**
+ * read returns an owning projected table, applying its predicate if filter_shipdate is false.
+ * Otherwise filtering happens here. consume receives the result owner by reference and may
+ * move it out; its return value is forwarded. This helper adds no final stream synchronization.
+ */
+template <typename Read, typename Consume>
+auto execute_q1(Read&& read, bool filter_shipdate, Consume&& consume)
 {
-  // Define the column projections and filter predicate for `lineitem` table
-  std::vector<std::string> const lineitem_cols = {"l_returnflag",
-                                                  "l_linestatus",
-                                                  "l_quantity",
-                                                  "l_extendedprice",
-                                                  "l_discount",
-                                                  "l_shipdate",
-                                                  "l_orderkey",
-                                                  "l_tax"};
-  auto const shipdate_ref                      = cudf::ast::column_reference(std::distance(
-    lineitem_cols.begin(), std::find(lineitem_cols.begin(), lineitem_cols.end(), "l_shipdate")));
+  auto const shipdate_ref = cudf::ast::column_reference(std::distance(
+    q1_columns.begin(), std::find(q1_columns.begin(), q1_columns.end(), "l_shipdate")));
   auto shipdate_upper =
     cudf::timestamp_scalar<cudf::timestamp_D>(days_since_epoch(1998, 9, 2), true);
   auto const shipdate_upper_literal = cudf::ast::literal(shipdate_upper);
   auto const lineitem_pred          = std::make_unique<cudf::ast::operation>(
     cudf::ast::ast_operator::LESS_EQUAL, shipdate_ref, shipdate_upper_literal);
 
-  // Read out the `lineitem` table from parquet file
-  auto lineitem = read_parquet(source, lineitem_cols, std::move(lineitem_pred));
+  auto lineitem = read(q1_columns, lineitem_pred);
+  if (filter_shipdate) { lineitem = apply_filter(lineitem, *lineitem_pred); }
 
   // Calculate the discount price and charge columns and append to lineitem table
   auto disc_price =
@@ -149,12 +158,18 @@ void run_ndsh_q1(nvbench::state& state, cudf::io::source_info const& source)
       }});
 
   // Perform the order by operation
-  auto const orderedby_table = apply_orderby(groupedby_table,
-                                             {"l_returnflag", "l_linestatus"},
-                                             {cudf::order::ASCENDING, cudf::order::ASCENDING});
+  auto orderedby_table = apply_orderby(groupedby_table,
+                                       {"l_returnflag", "l_linestatus"},
+                                       {cudf::order::ASCENDING, cudf::order::ASCENDING});
+  return consume(orderedby_table);
+}
 
-  // Write query result to a parquet file
-  write_parquet(*orderedby_table, "q1.parquet");
+void run_ndsh_q1(nvbench::state& state, cudf::io::source_info const& source)
+{
+  execute_q1([&](auto const& columns,
+                 auto const& predicate) { return read_parquet(source, columns, predicate); },
+             false,
+             [](auto const& result) { write_parquet(*result, "q1.parquet"); });
 }
 
 void ndsh_q1(nvbench::state& state)

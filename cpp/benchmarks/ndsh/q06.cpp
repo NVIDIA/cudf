@@ -1,4 +1,5 @@
 /*
+ * SPDX-FileCopyrightText: Copyright the Vortex contributors
  * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -16,6 +17,11 @@
 #include <cudf/utilities/memory_resource.hpp>
 
 #include <nvbench/nvbench.cuh>
+
+namespace {
+std::vector<std::string> const q6_columns{
+  "l_extendedprice", "l_discount", "l_shipdate", "l_quantity"};
+}
 
 /**
  * @file q06.cpp
@@ -55,14 +61,16 @@
   return revenue;
 }
 
-void run_ndsh_q6(nvbench::state& state,
-                 std::unordered_map<std::string, cuio_source_sink_pair>& sources)
+/**
+ * read returns an owning projected table, applying its predicate if filter_shipdate is false.
+ * Otherwise filtering happens here. consume receives the result owner by reference and may
+ * move it out; its return value is forwarded. This helper adds no final stream synchronization.
+ */
+template <typename Read, typename Consume>
+auto execute_q6(Read&& read, bool filter_shipdate, Consume&& consume)
 {
-  // Read out the `lineitem` table from parquet file
-  std::vector<std::string> const lineitem_cols = {
-    "l_extendedprice", "l_discount", "l_shipdate", "l_quantity"};
   auto const shipdate_ref = cudf::ast::column_reference(std::distance(
-    lineitem_cols.begin(), std::find(lineitem_cols.begin(), lineitem_cols.end(), "l_shipdate")));
+    q6_columns.begin(), std::find(q6_columns.begin(), q6_columns.end(), "l_shipdate")));
   auto shipdate_lower =
     cudf::timestamp_scalar<cudf::timestamp_D>(days_since_epoch(1994, 1, 1), true);
   auto const shipdate_lower_literal = cudf::ast::literal(shipdate_lower);
@@ -75,8 +83,8 @@ void run_ndsh_q6(nvbench::state& state,
     cudf::ast::operation(cudf::ast::ast_operator::LESS, shipdate_ref, shipdate_upper_literal);
   auto const lineitem_pred = std::make_unique<cudf::ast::operation>(
     cudf::ast::ast_operator::LOGICAL_AND, shipdate_pred_a, shipdate_pred_b);
-  auto lineitem = read_parquet(
-    sources.at("lineitem").make_source_info(), lineitem_cols, std::move(lineitem_pred));
+  auto lineitem = read(q6_columns, lineitem_pred);
+  if (filter_shipdate) { lineitem = apply_filter(lineitem, *lineitem_pred); }
 
   // Cast the discount and quantity columns to float32 and append to lineitem table
   auto discout_float =
@@ -116,10 +124,19 @@ void run_ndsh_q6(nvbench::state& state,
 
   // Sum the `revenue` column
   auto const revenue_view = revenue->view();
-  auto const result_table = apply_reduction(revenue_view, cudf::aggregation::Kind::SUM, "revenue");
+  auto result_table       = apply_reduction(revenue_view, cudf::aggregation::Kind::SUM, "revenue");
+  return consume(result_table);
+}
 
-  // Write query result to a parquet file
-  write_parquet(*result_table, "q6.parquet");
+void run_ndsh_q6(nvbench::state& state,
+                 std::unordered_map<std::string, cuio_source_sink_pair>& sources)
+{
+  execute_q6(
+    [&](auto const& columns, auto const& predicate) {
+      return read_parquet(sources.at("lineitem").make_source_info(), columns, predicate);
+    },
+    false,
+    [](auto const& result) { write_parquet(*result, "q6.parquet"); });
 }
 
 void ndsh_q6(nvbench::state& state)

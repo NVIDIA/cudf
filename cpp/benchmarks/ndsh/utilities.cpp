@@ -5,6 +5,7 @@
 
 #include "utilities.hpp"
 
+#include <benchmarks/common/ndsh_data_generator/ndsh_data_generator.hpp>
 #include <benchmarks/common/nvtx_ranges.hpp>
 
 #include <cudf/column/column_factories.hpp>
@@ -20,12 +21,17 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 
+#include <rmm/cuda_device.hpp>
 #include <rmm/device_uvector.hpp>
+#include <rmm/mr/managed_memory_resource.hpp>
+#include <rmm/mr/pool_memory_resource.hpp>
 
 #include <algorithm>
 #include <cstdlib>
 #include <ctime>
 #include <iterator>
+#include <stdexcept>
+#include <unordered_set>
 
 namespace {
 
@@ -308,4 +314,62 @@ int32_t days_since_epoch(int year, int month, int day)
   std::time_t epoch_time = std::mktime(&epoch);
   double diff            = std::difftime(time, epoch_time) / (60 * 60 * 24);
   return static_cast<int32_t>(diff);
+}
+
+std::unique_ptr<table_with_names> generate_lineitem(double scale_factor,
+                                                    rmm::device_async_resource_ref mr)
+{
+  auto [orders, lineitem, part] =
+    cudf::datagen::generate_orders_lineitem_part(scale_factor, cudf::get_default_stream(), mr);
+  return std::make_unique<table_with_names>(std::move(lineitem), LINEITEM_SCHEMA);
+}
+
+void for_each_generated_table(
+  double scale_factor,
+  std::vector<std::string> const& table_names,
+  std::function<void(std::string const&, table_with_names const&)> const& consume)
+{
+  std::unordered_set<std::string> requested;
+  for (auto const& name : table_names) {
+    if (!SCHEMAS.count(name)) { throw std::invalid_argument("Unknown NDS-H table: " + name); }
+    if (!requested.insert(name).second) {
+      throw std::invalid_argument("Duplicate NDS-H table: " + name);
+    }
+  }
+  if (table_names.empty()) {
+    for (auto const& [name, schema] : SCHEMAS) {
+      requested.insert(name);
+    }
+  }
+
+  // Match legacy Parquet generation; all generated owners are destroyed before this pool.
+  rmm::mr::pool_memory_resource managed_pool_mr{rmm::mr::managed_memory_resource{},
+                                                rmm::percent_of_free_device_memory(50)};
+  auto const stream                       = cudf::get_default_stream();
+  rmm::device_async_resource_ref const mr = managed_pool_mr;
+  auto const emit = [&](std::string const& name, std::unique_ptr<cudf::table> table) {
+    table_with_names const named_table{std::move(table), SCHEMAS.at(name)};
+    consume(name, named_table);
+  };
+  if (requested.count("region")) { emit("region", cudf::datagen::generate_region(stream, mr)); }
+  if (requested.count("nation")) { emit("nation", cudf::datagen::generate_nation(stream, mr)); }
+  if (requested.count("supplier")) {
+    emit("supplier", cudf::datagen::generate_supplier(scale_factor, stream, mr));
+  }
+  if (requested.count("customer")) {
+    emit("customer", cudf::datagen::generate_customer(scale_factor, stream, mr));
+  }
+  if (requested.count("partsupp")) {
+    emit("partsupp", cudf::datagen::generate_partsupp(scale_factor, stream, mr));
+  }
+  if (requested.count("orders") or requested.count("part") or requested.count("lineitem")) {
+    auto [orders, lineitem, part] =
+      cudf::datagen::generate_orders_lineitem_part(scale_factor, stream, mr);
+    if (!requested.count("orders")) { orders.reset(); }
+    if (!requested.count("part")) { part.reset(); }
+    if (!requested.count("lineitem")) { lineitem.reset(); }
+    if (orders) { emit("orders", std::move(orders)); }
+    if (part) { emit("part", std::move(part)); }
+    if (lineitem) { emit("lineitem", std::move(lineitem)); }
+  }
 }

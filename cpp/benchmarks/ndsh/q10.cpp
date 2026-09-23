@@ -1,4 +1,5 @@
 /*
+ * SPDX-FileCopyrightText: Copyright the Vortex contributors
  * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -15,6 +16,18 @@
 #include <cudf/utilities/memory_resource.hpp>
 
 #include <nvbench/nvbench.cuh>
+
+#include <map>
+
+namespace {
+std::vector<std::string> const q10_tables{"customer", "orders", "lineitem", "nation"};
+std::map<std::string, std::vector<std::string>> const q10_projections{
+  {"customer",
+   {"c_custkey", "c_name", "c_nationkey", "c_acctbal", "c_address", "c_phone", "c_comment"}},
+  {"orders", {"o_custkey", "o_orderkey", "o_orderdate"}},
+  {"lineitem", {"l_extendedprice", "l_discount", "l_orderkey", "l_returnflag"}},
+  {"nation", {"n_name", "n_nationkey"}}};
+}  // namespace
 
 /**
  * @file q10.cpp
@@ -85,12 +98,17 @@
   return revenue;
 }
 
-void run_ndsh_q10(nvbench::state& state,
-                  std::unordered_map<std::string, cuio_source_sink_pair>& sources)
+/**
+ * read returns owning projected tables, applying supplied predicates if filter_predicates is false.
+ * Otherwise filtering happens here. consume receives the result owner by reference and may
+ * move it out; its return value is forwarded. This helper adds no final stream synchronization.
+ */
+template <typename Read, typename Consume>
+auto execute_q10(Read&& read, bool filter_predicates, Consume&& consume)
 {
   // Define the column projection and filter predicate for the `orders` table
-  std::vector<std::string> const orders_cols = {"o_custkey", "o_orderkey", "o_orderdate"};
-  auto const o_orderdate_ref                 = cudf::ast::column_reference(std::distance(
+  auto const& orders_cols    = q10_projections.at("orders");
+  auto const o_orderdate_ref = cudf::ast::column_reference(std::distance(
     orders_cols.begin(), std::find(orders_cols.begin(), orders_cols.end(), "o_orderdate")));
   auto o_orderdate_lower =
     cudf::timestamp_scalar<cudf::timestamp_D>(days_since_epoch(1993, 10, 1), true);
@@ -111,19 +129,15 @@ void run_ndsh_q10(nvbench::state& state,
   auto const lineitem_pred    = std::make_unique<cudf::ast::operation>(
     cudf::ast::ast_operator::EQUAL, l_returnflag_ref, r_literal);
 
-  // Read out the tables from parquet files
-  // while pushing down the column projections and filter predicates
-  auto const customer = read_parquet(
-    sources.at("customer").make_source_info(),
-    {"c_custkey", "c_name", "c_nationkey", "c_acctbal", "c_address", "c_phone", "c_comment"});
-  auto const orders =
-    read_parquet(sources.at("orders").make_source_info(), orders_cols, std::move(orders_pred));
-  auto const lineitem =
-    read_parquet(sources.at("lineitem").make_source_info(),
-                 {"l_extendedprice", "l_discount", "l_orderkey", "l_returnflag"},
-                 std::move(lineitem_pred));
-  auto const nation =
-    read_parquet(sources.at("nation").make_source_info(), {"n_name", "n_nationkey"});
+  std::unique_ptr<cudf::ast::operation> const no_predicate;
+  auto const customer = read("customer", q10_projections.at("customer"), no_predicate);
+  auto orders         = read("orders", orders_cols, orders_pred);
+  auto lineitem       = read("lineitem", q10_projections.at("lineitem"), lineitem_pred);
+  auto const nation   = read("nation", q10_projections.at("nation"), no_predicate);
+  if (filter_predicates) {
+    orders   = apply_filter(orders, *orders_pred);
+    lineitem = apply_filter(lineitem, *lineitem_pred);
+  }
 
   // Perform the joins
   auto const join_a       = apply_inner_join(customer, nation, {"c_nationkey"}, {"n_nationkey"});
@@ -145,11 +159,21 @@ void run_ndsh_q10(nvbench::state& state,
       }});
 
   // Perform the order by operation
-  auto const orderedby_table =
-    apply_orderby(groupedby_table, {"revenue"}, {cudf::order::DESCENDING});
+  auto orderedby_table = apply_orderby(groupedby_table, {"revenue"}, {cudf::order::DESCENDING});
+  return consume(orderedby_table);
+}
 
-  // Write query result to a parquet file
-  write_parquet(*orderedby_table, "q10.parquet");
+void run_ndsh_q10(nvbench::state& state,
+                  std::unordered_map<std::string, cuio_source_sink_pair>& sources)
+{
+  execute_q10(
+    [&](std::string const& name,
+        std::vector<std::string> const& columns,
+        std::unique_ptr<cudf::ast::operation> const& predicate) {
+      return read_parquet(sources.at(name).make_source_info(), columns, predicate);
+    },
+    false,
+    [](auto const& result) { write_parquet(*result, "q10.parquet"); });
 }
 
 void ndsh_q10(nvbench::state& state)
@@ -157,8 +181,7 @@ void ndsh_q10(nvbench::state& state)
   // Generate the required parquet files in device buffers
   double const scale_factor = state.get_float64("scale_factor");
   std::unordered_map<std::string, cuio_source_sink_pair> sources;
-  generate_parquet_data_sources(
-    scale_factor, {"customer", "orders", "lineitem", "nation"}, sources);
+  generate_parquet_data_sources(scale_factor, q10_tables, sources);
 
   auto stream = cudf::get_default_stream();
   state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.get()));

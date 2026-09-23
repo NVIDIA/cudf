@@ -12,9 +12,11 @@
 #include <cudf/table/table.hpp>
 #include <cudf/table/table_view.hpp>
 #include <cudf/types.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 
 #include <cstdint>
 #include <ctime>
+#include <functional>
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -186,3 +188,33 @@ int32_t days_since_epoch(int year, int month, int day);
  * @throws std::out_of_range If the table name is unknown
  */
 [[nodiscard]] std::vector<std::string> const& ndsh_schema(std::string const& table_name);
+
+/**
+ * @brief Generate one owning lineitem table for shared-format fixtures.
+ *
+ * @param scale_factor The scale factor of the table to generate
+ * @param mr Resource used for generation; the caller must keep it alive until the returned table
+ * is destroyed. Defaults to the current device resource.
+ */
+[[nodiscard]] std::unique_ptr<table_with_names> generate_lineitem(
+  double scale_factor, rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+
+/**
+ * @brief Generate full named NDS-H tables for benchmark fixture setup, without Parquet conversion.
+ *
+ * Invoke outside benchmark measurement. The callback borrows the name and table; references and
+ * table/column views are valid only during the callback. Each table is released after its callback.
+ * Generation uses a scoped managed pool that outlives all generated tables, without changing the
+ * current device resource. The callback must complete all uses of the borrowed table before
+ * returning. Requested tables are emitted in order: region, nation, supplier, customer, partsupp,
+ * orders, part, lineitem. The last three are generated together once if any is requested.
+ *
+ * @param scale_factor The scale factor of NDS-H tables to generate
+ * @param table_names The tables to generate; empty requests all eight tables
+ * @param consume The synchronous callback receiving each borrowed named table
+ * @throws std::invalid_argument For unknown or duplicate table names, before any generation.
+ */
+void for_each_generated_table(
+  double scale_factor,
+  std::vector<std::string> const& table_names,
+  std::function<void(std::string const&, table_with_names const&)> const& consume);

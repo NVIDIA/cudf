@@ -31,6 +31,8 @@ target_link_libraries(
 
 # This directory is only added for Vortex-enabled benchmark builds.
 if(BUILD_TESTS)
+  # Testing is already initialized in cpp/tests; only load the helpers in this directory.
+  include(rapids-test)
   set_target_properties(NDSH_VORTEX_IO_TEST PROPERTIES EXCLUDE_FROM_ALL FALSE)
   rapids_test_add(
     NAME NDSH_VORTEX_IO_TEST

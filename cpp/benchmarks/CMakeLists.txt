@@ -5,6 +5,11 @@
 # cmake-format: on
 # =============================================================================
 
+if(BUILD_TESTS)
+  # Testing is already initialized in cpp/tests; only load the helpers in this directory.
+  include(rapids-test)
+endif()
+
 find_package(Threads REQUIRED)
 
 add_library(

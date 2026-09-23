@@ -41,6 +41,7 @@
 #include <memory>
 #include <numeric>
 #include <string>
+#include <string_view>
 #include <type_traits>
 #include <utility>
 #include <vector>
@@ -1650,7 +1651,11 @@ concept iterator_like = requires(Iterator i) {
 
 template <typename Iterator>
 concept validity_iterator =
-  iterator_like<Iterator> && requires(Iterator i) { static_cast<bool>(*i); };
+  iterator_like<Iterator> && !std::is_convertible_v<Iterator, std::string_view> &&
+  requires(Iterator i) {
+    static_cast<bool>(*i);
+    requires(!std::is_convertible_v<decltype(*i), std::string_view>);
+  };
 
 /**
  * @brief Host-side recursive initializer tree for constructing list columns with an
@@ -1672,12 +1677,6 @@ class lists_column_initializer {
  public:
   using value_type = T;
 
-  struct string_element {
-    string_element(char const* value) : value_{value} {}
-    string_element(std::string value) : value_{std::move(value)} {}
-
-    std::string value_;
-  };
   /**
    * @brief Construct an empty leaf. Avoids ambiguity between the leaf and nested
    * empty `initializer_list` constructors.
@@ -1691,31 +1690,23 @@ class lists_column_initializer {
    */
   template <typename Element>
   lists_column_initializer(std::initializer_list<Element> values)
-    requires(!std::is_same_v<T, std::string> && std::is_convertible_v<Element, T>)
+    requires(std::is_convertible_v<Element, T>)
     : values_(values.begin(), values.end())
   {
   }
 
   template <typename First, typename... Rest>
   lists_column_initializer(First first, Rest... rest)
-    requires(sizeof...(Rest) > 0 && !std::is_same_v<T, std::string> &&
-             std::is_convertible_v<First, T> && (std::is_convertible_v<Rest, T> && ...))
+    requires(sizeof...(Rest) > 0 && std::is_convertible_v<First, T> &&
+             (std::is_convertible_v<Rest, T> && ...))
     : values_{static_cast<T>(first), static_cast<T>(rest)...}
   {
   }
 
-  lists_column_initializer(std::initializer_list<string_element> values)
-    requires(std::is_same_v<T, std::string>)
-  {
-    values_.reserve(values.size());
-    std::transform(
-      values.begin(), values.end(), std::back_inserter(values_), [](auto const& value) {
-        return value.value_;
-      });
-  }
-
   template <iterator_like InputIterator>
-  lists_column_initializer(InputIterator begin, InputIterator end) : values_(begin, end)
+  lists_column_initializer(InputIterator begin, InputIterator end)
+    requires(std::is_constructible_v<T, std::iter_reference_t<InputIterator>>)
+    : values_(begin, end)
   {
   }
 
@@ -1738,28 +1729,25 @@ class lists_column_initializer {
   }
 
   template <validity_iterator ValidityIterator>
-  lists_column_initializer(std::initializer_list<string_element> values, ValidityIterator v)
+  lists_column_initializer(lists_column_initializer values, ValidityIterator v)
     requires(std::is_same_v<T, std::string>)
-    : has_validity_{true}
+    : lists_column_initializer(std::move(values).with_validity(v))
   {
-    values_.reserve(values.size());
-    value_validity_.reserve(values.size());
-    for (auto const& value : values) {
-      values_.push_back(value.value_);
-      value_validity_.push_back(static_cast<bool>(*v++));
-    }
   }
 
-  lists_column_initializer(std::initializer_list<T> values, std::initializer_list<bool> validity)
-    requires(!std::is_same_v<T, std::string>)
+  template <typename Validity>
+  lists_column_initializer(std::initializer_list<T> values,
+                           std::initializer_list<Validity> validity)
+    requires(!std::is_same_v<T, std::string> && validity_iterator<Validity const*>)
     : lists_column_initializer(values, validity.begin())
   {
   }
 
-  lists_column_initializer(std::initializer_list<string_element> values,
-                           std::initializer_list<bool> validity)
-    requires(std::is_same_v<T, std::string>)
-    : lists_column_initializer(values, validity.begin())
+  template <typename Validity>
+  lists_column_initializer(lists_column_initializer values,
+                           std::initializer_list<Validity> validity)
+    requires(std::is_same_v<T, std::string> && validity_iterator<Validity const*>)
+    : lists_column_initializer(std::move(values), validity.begin())
   {
   }
 
@@ -1802,7 +1790,8 @@ class lists_column_initializer {
    */
   template <validity_iterator ValidityIterator, typename NestedInit = lists_column_initializer>
   lists_column_initializer(std::initializer_list<NestedInit> children, ValidityIterator v)
-    requires(std::is_same_v<NestedInit, lists_column_initializer>)
+    requires(!std::is_same_v<T, std::string> &&
+             std::is_same_v<NestedInit, lists_column_initializer>)
     : nested_{true}, has_validity_{true}
   {
     children_.reserve(children.size());
@@ -1812,10 +1801,12 @@ class lists_column_initializer {
     }
   }
 
-  template <typename NestedInit = lists_column_initializer>
+  template <typename Validity, typename NestedInit = lists_column_initializer>
   lists_column_initializer(std::initializer_list<NestedInit> children,
-                           std::initializer_list<bool> validity)
-    requires(std::is_same_v<NestedInit, lists_column_initializer>)
+                           std::initializer_list<Validity> validity)
+    requires(!std::is_same_v<T, std::string> &&
+             std::is_same_v<NestedInit, lists_column_initializer> &&
+             validity_iterator<Validity const*>)
     : lists_column_initializer(children, validity.begin())
   {
   }
@@ -1892,10 +1883,9 @@ class lists_column_initializer {
     } else {
       value_validity_.clear();
       value_validity_.reserve(values_.size());
-      std::transform(validity,
-                     validity + values_.size(),
-                     std::back_inserter(value_validity_),
-                     [](auto const& value) { return static_cast<bool>(value); });
+      for (std::size_t i = 0; i < values_.size(); ++i) {
+        value_validity_.push_back(static_cast<bool>(*validity++));
+      }
     }
     return std::move(*this);
   }
@@ -2046,7 +2036,7 @@ class lists_column_wrapper : public detail::column_wrapper {
    * @param stream CUDA stream used for device memory operations
    * @param mr Memory resources used to allocate the returned column
    */
-  template <typename Element, typename ValidityIterator>
+  template <typename Element, validity_iterator ValidityIterator>
   lists_column_wrapper(std::initializer_list<Element> elements,
                        ValidityIterator v,
                        cuda::stream_ref stream   = cudf::test::get_default_stream(),
@@ -2080,7 +2070,7 @@ class lists_column_wrapper : public detail::column_wrapper {
    * @param stream CUDA stream used for device memory operations
    * @param mr Memory resources used to allocate the returned column
    */
-  template <typename InputIterator, typename ValidityIterator>
+  template <typename InputIterator, validity_iterator ValidityIterator>
     requires requires(InputIterator i) {
       *i;
       ++i;
@@ -2136,7 +2126,7 @@ class lists_column_wrapper : public detail::column_wrapper {
    * @param stream CUDA stream used for device memory operations
    * @param mr Memory resources used to allocate the returned column
    */
-  template <typename Element, typename ValidityIterator>
+  template <typename Element, validity_iterator ValidityIterator>
   lists_column_wrapper(std::initializer_list<Element> elements,
                        ValidityIterator v,
                        cuda::stream_ref stream   = cudf::test::get_default_stream(),
@@ -2240,7 +2230,7 @@ class lists_column_wrapper : public detail::column_wrapper {
    * @param stream CUDA stream used for device memory operations
    * @param mr Memory resources used to allocate the returned column
    */
-  template <typename ValidityIterator>
+  template <validity_iterator ValidityIterator>
   lists_column_wrapper(std::initializer_list<initializer_type> elements,
                        ValidityIterator v,
                        cuda::stream_ref stream   = cudf::test::get_default_stream(),

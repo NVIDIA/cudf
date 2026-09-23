@@ -2526,7 +2526,7 @@ TEST_F(JsonReaderTest, MixedTypes)
                       {{}},
                       {{}},  // null
                       {{}},  // null
-                      LCWS::nested({{"{\"c\": -1}"}, {"5"}}),
+                      {{"{\"c\": -1}"}, {"5"}},
                       {{"7"}, {"8", "9"}},
                       {{}}},  // null
                      valid_t{1, 1, 0, 0, 1, 1, 0}.begin());

@@ -535,7 +535,7 @@ TEST_F(ListConcatenateRowsNestedTypesTest, ListWithNulls)
                   {{"spurs", "garlic"}, {"onion", "shallot", "carrot"}},
                   {{"cars", "trucks", "planes"}, {"abc"}, {"mno", "pqr"}},
                   {{}, {"ram", "cpu", "disk"}, {}},
-                  StrListsCol::nested({{"round"}, {"square"}})},
+                  {{"round"}, {"square"}}},
                  nulls_at({0, 4}));
 
   // concatenate_policy::IGNORE_NULLS

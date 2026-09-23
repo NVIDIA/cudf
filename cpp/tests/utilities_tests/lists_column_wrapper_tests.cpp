@@ -19,6 +19,10 @@
 
 #include <cuda/iterator>
 
+#include <forward_list>
+#include <string>
+#include <type_traits>
+
 struct ListColumnWrapperTest : public cudf::test::BaseFixture {};
 template <typename T>
 struct ListColumnWrapperTestTyped : public cudf::test::BaseFixture {
@@ -1174,6 +1178,93 @@ TEST_F(ListColumnWrapperTest, ListOfListOfStrings)
       {"one", "two", "three", "four", "five", "eight", "nine", "ten"});
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(e_child_data, child_data);
   }
+}
+
+TEST_F(ListColumnWrapperTest, SingletonStringLists)
+{
+  using LCW = cudf::test::lists_column_wrapper<cudf::string_view>;
+
+  LCW list{{{std::string{"first"}}}, {{"second"}, {std::string{"third"}}}, {{""}}, {}};
+  cudf::lists_column_view outer(list);
+  ASSERT_EQ(outer.child().type().id(), cudf::type_id::LIST);
+  cudf::test::fixed_width_column_wrapper<int32_t> outer_offsets{0, 1, 3, 4, 4};
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(outer.offsets(), outer_offsets);
+
+  cudf::lists_column_view inner(outer.child());
+  cudf::test::fixed_width_column_wrapper<int32_t> inner_offsets{0, 1, 2, 3, 4};
+  cudf::test::strings_column_wrapper values{"first", "second", "third", ""};
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(inner.offsets(), inner_offsets);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(inner.child(), values);
+}
+
+TEST_F(ListColumnWrapperTest, NullableSingletonStringLists)
+{
+  using LCW = cudf::test::lists_column_wrapper<cudf::string_view>;
+  using cudf::test::iterators::all_nulls;
+  using cudf::test::iterators::null_at;
+
+  LCW list{{{{"first"}, {"second"}}, null_at(1)}, {{{""}}, all_nulls()}};
+  cudf::lists_column_view outer(list);
+  ASSERT_EQ(outer.child().type().id(), cudf::type_id::LIST);
+  cudf::test::fixed_width_column_wrapper<int32_t> outer_offsets{0, 2, 3};
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(outer.offsets(), outer_offsets);
+
+  cudf::lists_column_view inner(outer.child());
+  LCW expected({{"first"}, {}, {}}, cudf::test::iterators::nulls_at({1, 2}));
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(inner.parent(), expected);
+}
+
+TEST_F(ListColumnWrapperTest, NullableSingletonStringLeaf)
+{
+  using LCW = cudf::test::lists_column_wrapper<cudf::string_view>;
+
+  LCW list{{{""}, cudf::test::iterators::all_nulls()}};
+  cudf::lists_column_view view(list);
+  cudf::test::fixed_width_column_wrapper<int32_t> offsets{0, 1};
+  cudf::test::strings_column_wrapper values({""}, {false});
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(view.offsets(), offsets);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(view.child(), values);
+}
+
+TEST_F(ListColumnWrapperTest, MixedStringRepresentationsWithValidity)
+{
+  using LCW = cudf::test::lists_column_wrapper<cudf::string_view>;
+
+  std::forward_list<bool> validity{false, true};
+  LCW list{{"first", std::string{"second"}},
+           {{std::string{"third"}, "fourth"}, validity.begin()},
+           {{"fifth", std::string{"sixth"}}, {true, false}},
+           {{std::string{"seventh"}, "eighth"}, {1, 0}},
+           {{}, validity.begin()},
+           {}};
+  cudf::lists_column_view view(list);
+  cudf::test::fixed_width_column_wrapper<int32_t> offsets{0, 2, 4, 6, 8, 8, 8};
+  cudf::test::strings_column_wrapper values{
+    {"first", "second", "third", "fourth", "fifth", "sixth", "seventh", "eighth"},
+    {true, true, false, true, true, false, true, false}};
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(view.offsets(), offsets);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(view.child(), values);
+}
+
+TEST_F(ListColumnWrapperTest, StringsAreNotValidity)
+{
+  using LCW            = cudf::test::lists_column_wrapper<cudf::string_view>;
+  using Init           = LCW::initializer_type;
+  using StringIterator = std::vector<std::string>::const_iterator;
+
+  EXPECT_TRUE(cudf::test::validity_iterator<bool const*>);
+  EXPECT_TRUE(cudf::test::validity_iterator<cudf::valid_type const*>);
+  EXPECT_TRUE(cudf::test::validity_iterator<std::vector<bool>::const_iterator>);
+  EXPECT_FALSE(cudf::test::validity_iterator<char const*>);
+  EXPECT_FALSE(cudf::test::validity_iterator<char const* const*>);
+  EXPECT_FALSE((std::is_constructible_v<Init, std::initializer_list<Init>, char const*>));
+  EXPECT_FALSE((std::is_constructible_v<Init, Init, std::initializer_list<char const*>>));
+  EXPECT_FALSE((std::is_constructible_v<Init,
+                                        std::initializer_list<Init>,
+                                        std::initializer_list<char const*>>));
+  EXPECT_FALSE((std::is_constructible_v<LCW, std::initializer_list<char const*>, char const*>));
+  EXPECT_FALSE((std::is_constructible_v<LCW, std::initializer_list<Init>, char const*>));
+  EXPECT_FALSE((std::is_constructible_v<LCW, StringIterator, StringIterator, char const*>));
 }
 
 TEST_F(ListColumnWrapperTest, ListOfBools)

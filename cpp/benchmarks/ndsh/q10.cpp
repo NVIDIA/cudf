@@ -230,19 +230,8 @@ void check_q10_cases()
   cudf::test::fixed_width_column_wrapper<cudf::timestamp_D, int32_t> order_date{
     {8674, 8765, 8705, 8766, 8673, 8705, 8705, 8705, 8674},
     {true, true, true, true, true, true, true, true, false}};
-  cudf::test::fixed_width_column_wrapper<double> price{{100.0,
-                                                        50.0,
-                                                        200.0,
-                                                        80.0,
-                                                        1000.0,
-                                                        1000.0,
-                                                        1000.0,
-                                                        1000.0,
-                                                        1000.0,
-                                                        1000.0,
-                                                        1000.0,
-                                                        1000.0,
-                                                        1000.0}};
+  cudf::test::fixed_width_column_wrapper<double> price{
+    {100, 50, 200, 80, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000}};
   cudf::test::fixed_width_column_wrapper<double> discount{
     {0.1, 0.2, 0.25, 0.5, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0}};
   cudf::test::fixed_width_column_wrapper<int32_t> line_order{

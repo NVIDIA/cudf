@@ -150,8 +150,8 @@ table_chunk table_chunk::copy(rapidsmpf::MemoryReservation& reservation) const
   //    into the reservation-specified memory type using libcudf:
   //    a. DEVICE       - cudf-copy table_view() into device memory.
   //    b. PINNED_HOST  - cudf::pack table_view() directly into pinned memory.
-  //    c. HOST         - cudf::pack table_view() into intermediate device
-  //                      memory and then copy to host memory.
+  //    c. HOST / DISK  - cudf::pack table_view() into intermediate device
+  //                      memory and then move to host or disk memory.
   //
   // 2. The chunk data is already packed (packed_data_ != nullptr).
   //    Use buffer_copy() to copy the packed data into the reservation-
@@ -163,6 +163,17 @@ table_chunk table_chunk::copy(rapidsmpf::MemoryReservation& reservation) const
   // copy the table in device memory, or pack it to pinned/ host memory. Else, fall
   // through to case 2 (ie. use buffer_copy).
   if (is_available() && packed_data_ == nullptr) {
+    if (data_alloc_size(rapidsmpf::MemoryType::DEVICE) == 0) {
+      // Packing still produces the metadata needed to reconstruct the table.
+      // Move the empty data buffer to the requested memory type without
+      // recording a copy that transferred no bytes.
+      auto packed_columns = cudf::pack(table_view(), stream(), br->device_mr());
+      auto data           = br->move(std::move(packed_columns.gpu_data), stream());
+      data                = br->move(std::move(data), reservation);
+      return table_chunk(std::make_unique<rapidsmpf::PackedData>(std::move(packed_columns.metadata),
+                                                                 std::move(data)));
+    }
+
     switch (reservation.mem_type()) {
       case rapidsmpf::MemoryType::DEVICE:  // Case 1a.
       {
@@ -193,20 +204,18 @@ table_chunk table_chunk::copy(rapidsmpf::MemoryReservation& reservation) const
         br->release(reservation, nbytes);
         // The data leaves device memory here rather than through `BufferResource`, so
         // the spill is opened by hand and the token handed to the buffer.
-        auto host_buffer =
-          br->move(std::move(packed_pinned.gpu_data),
-                   stream(),
-                   // An empty table packs to a default-constructed `device_buffer`,
-                   // which ignores the resource and frees nothing, so it gets no token.
-                   nbytes > 0 ? std::make_shared<rapidsmpf::SpillTrackToken>() : nullptr);
+        auto host_buffer = br->move(std::move(packed_pinned.gpu_data),
+                                    stream(),
+                                    std::make_shared<rapidsmpf::SpillTrackToken>());
         return table_chunk(std::make_unique<rapidsmpf::PackedData>(
           std::move(packed_pinned.metadata), std::move(host_buffer)));
       }
       case rapidsmpf::MemoryType::HOST:  // Case 1c.
+      case rapidsmpf::MemoryType::DISK:  // Case 1c.
       {
         // We use libcudf's pack() to serialize `table_view()` into a
         // packed_columns and then we move the packed_columns' gpu_data to a
-        // new host buffer.
+        // new host/disk buffer.
         // TODO: use `cudf::chunked_pack()` with a bounce buffer. Currently,
         // `cudf::pack()` allocates device memory we haven't reserved.
         auto packed_columns = cudf::pack(table_view(), stream(), br->device_mr());

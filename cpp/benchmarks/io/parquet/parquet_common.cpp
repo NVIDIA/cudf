@@ -70,8 +70,7 @@ cuio_source_sink_pair write_file_shape_parquet_file(cudf::type_id dtype,
   auto const view = tbl->view();
 
   auto const rows_per_page = num_rows / (num_row_groups * pages_per_row_group);
-  CUDF_EXPECTS(rows_per_page > 0,
-               "num_row_groups * pages_per_row_group must not exceed num_rows");
+  CUDF_EXPECTS(rows_per_page > 0, "num_row_groups * pages_per_row_group must not exceed num_rows");
 
   cudf::io::parquet_writer_options write_opts =
     cudf::io::parquet_writer_options::builder(source_sink.make_sink_info(), view)

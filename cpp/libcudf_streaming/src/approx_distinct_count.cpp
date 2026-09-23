@@ -40,7 +40,10 @@ constexpr auto nan_handling  = cudf::nan_policy::NAN_IS_VALID;
 rapidsmpf::streaming::Message to_message(std::uint64_t sequence_number,
                                          std::unique_ptr<cardinality_estimate> estimate)
 {
-  return {sequence_number, std::move(estimate), {}, {}};
+  return {sequence_number,
+          std::move(estimate),
+          rapidsmpf::ContentDescription{},
+          rapidsmpf::streaming::Message::Callbacks{}};
 }
 
 cardinality_estimator::cardinality_estimator(std::shared_ptr<rapidsmpf::streaming::Context> ctx,

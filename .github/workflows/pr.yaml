@@ -206,6 +206,7 @@ jobs:
           - 'python/cudf_polars/quent/model.yaml'
           - 'python/cudf_polars/cudf_polars/_quent.pyi'
           - 'ci/test_cudf_polars_quent.sh'
+          - 'ci/run_cudf_polars_quent_tests.sh'
         test_python_cudf_streaming:
           - 'python/cudf_streaming/**'
           - 'python/libcudf_streaming/**'

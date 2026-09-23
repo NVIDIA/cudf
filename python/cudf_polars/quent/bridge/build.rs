@@ -58,7 +58,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         if file.name.ends_with(".pyi") {
             file.content.insert_str(0, PREAMBLE);
         }
-
     }
     quent_schema_codegen_python::write_generated_files(&stubs, &out_dir)?;
     Ok(())

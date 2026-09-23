@@ -30,20 +30,5 @@ set -u
 
 rapids-print-env
 
-BRIDGE_DIR="${PWD}/python/cudf_polars/quent/bridge"
-
 rapids-logger "Check cudf-polars Quent bridge"
-pushd "${BRIDGE_DIR}"
-cargo fmt --all -- --check
-cargo clippy --locked --all-targets -- -D warnings
-cargo check --locked
-python -m maturin build --locked
-
-shopt -s nullglob
-generated_stubs=(target/*/build/cudf-polars-quent-*/out/_quent/__init__.pyi)
-shopt -u nullglob
-if ((${#generated_stubs[@]} == 0)); then
-  echo "No generated Quent stub found" >&2
-  exit 1
-fi
-popd
+exec ./ci/run_cudf_polars_quent_tests.sh

@@ -8,11 +8,13 @@
 #include <benchmarks/common/ndsh_data_generator/ndsh_data_generator.hpp>
 #include <benchmarks/common/nvtx_ranges.hpp>
 
+#include <cudf/binaryop.hpp>
 #include <cudf/column/column_factories.hpp>
 #include <cudf/copying.hpp>
 #include <cudf/groupby.hpp>
 #include <cudf/join/join.hpp>
 #include <cudf/reduction.hpp>
+#include <cudf/scalar/scalar.hpp>
 #include <cudf/sorting.hpp>
 #include <cudf/stream_compaction.hpp>
 #include <cudf/table/table.hpp>
@@ -316,12 +318,20 @@ int32_t days_since_epoch(int year, int month, int day)
   return static_cast<int32_t>(diff);
 }
 
-std::unique_ptr<table_with_names> generate_lineitem(double scale_factor,
-                                                    rmm::device_async_resource_ref mr)
+std::unique_ptr<cudf::column> calculate_discounted_revenue(cudf::column_view const& extendedprice,
+                                                           cudf::column_view const& discount,
+                                                           cuda::stream_ref stream,
+                                                           rmm::device_async_resource_ref mr)
 {
-  auto [orders, lineitem, part] =
-    cudf::datagen::generate_orders_lineitem_part(scale_factor, cudf::get_default_stream(), mr);
-  return std::make_unique<table_with_names>(std::move(lineitem), LINEITEM_SCHEMA);
+  auto const one = cudf::numeric_scalar<double>(1);
+  auto const one_minus_discount =
+    cudf::binary_operation(one, discount, cudf::binary_operator::SUB, discount.type(), stream, mr);
+  return cudf::binary_operation(extendedprice,
+                                one_minus_discount->view(),
+                                cudf::binary_operator::MUL,
+                                cudf::data_type{cudf::type_id::FLOAT64},
+                                stream,
+                                mr);
 }
 
 void for_each_generated_table(

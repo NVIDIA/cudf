@@ -30,10 +30,6 @@
 
 #include <cudf/copying.hpp>
 
-#include <rmm/cuda_device.hpp>
-#include <rmm/mr/managed_memory_resource.hpp>
-#include <rmm/mr/pool_memory_resource.hpp>
-
 #include <cstdint>
 #include <map>
 #endif
@@ -283,22 +279,21 @@ struct q1_files {
     check_q1_boundaries();
     cuda::stream_ref const stream = cudf::get_default_stream();
     ndsh::vortex_io io{stream.get()};
-    rmm::mr::pool_memory_resource managed_pool_mr{rmm::mr::managed_memory_resource{},
-                                                  rmm::percent_of_free_device_memory(50)};
-    auto generated = generate_lineitem(scale_factor, managed_pool_mr);
-    CUDF_EXPECTS(generated->table().num_columns() == 16, "Q1 fixture requires full lineitem");
-    tables.write("lineitem", *generated, io);
-    reference = ndsh::q1_cpu_reference(generated->select(q1_columns), stream);
-
-    for (bool use_vortex : {false, true}) {
-      auto input =
-        ndsh::read_local_file(tables.path("lineitem", use_vortex), use_vortex, io, q1_columns);
-      ndsh::check_projection(generated->select(q1_columns), *input, q1_columns);
-      auto result = execute_q1(
-        [&](auto const&, auto const&) { return std::move(input); }, true, ndsh::take_result);
-      ndsh::check_q1_result(reference, *result, stream);
-    }
-    generated.reset();
+    for_each_generated_table(
+      scale_factor, {"lineitem"}, [&](auto const& name, table_with_names const& generated) {
+        CUDF_EXPECTS(generated.table().num_columns() == 16, "Q1 fixture requires full lineitem");
+        tables.write(name, generated, io);
+        reference = ndsh::q1_cpu_reference(generated.select(q1_columns), stream);
+        for (bool use_vortex : {false, true}) {
+          auto input =
+            ndsh::read_local_file(tables.path(name, use_vortex), use_vortex, io, q1_columns);
+          ndsh::check_projection(generated.select(q1_columns), *input, q1_columns);
+          auto result = execute_q1(
+            [&](auto const&, auto const&) { return std::move(input); }, true, ndsh::take_result);
+          ndsh::check_q1_result(reference, *result, stream);
+        }
+        CUDF_CUDA_TRY(cudaDeviceSynchronize());
+      });
     CUDF_CUDA_TRY(cudaDeviceSynchronize());
   }
 };

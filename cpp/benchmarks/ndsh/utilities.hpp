@@ -189,15 +189,12 @@ int32_t days_since_epoch(int year, int month, int day);
  */
 [[nodiscard]] std::vector<std::string> const& ndsh_schema(std::string const& table_name);
 
-/**
- * @brief Generate one owning lineitem table for shared-format fixtures.
- *
- * @param scale_factor The scale factor of the table to generate
- * @param mr Resource used for generation; the caller must keep it alive until the returned table
- * is destroyed. Defaults to the current device resource.
- */
-[[nodiscard]] std::unique_ptr<table_with_names> generate_lineitem(
-  double scale_factor, rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+/** Calculate extendedprice * (1 - discount), with FLOAT64 output. */
+[[nodiscard]] std::unique_ptr<cudf::column> calculate_discounted_revenue(
+  cudf::column_view const& extendedprice,
+  cudf::column_view const& discount,
+  cuda::stream_ref stream           = cudf::get_default_stream(),
+  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Generate full named NDS-H tables for benchmark fixture setup, without Parquet conversion.

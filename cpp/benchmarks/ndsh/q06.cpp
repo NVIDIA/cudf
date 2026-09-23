@@ -29,10 +29,6 @@
 #include <cudf/copying.hpp>
 #include <cudf/utilities/error.hpp>
 
-#include <rmm/cuda_device.hpp>
-#include <rmm/mr/managed_memory_resource.hpp>
-#include <rmm/mr/pool_memory_resource.hpp>
-
 #include <cmath>
 #include <map>
 #include <optional>
@@ -60,26 +56,6 @@ std::vector<std::string> const q6_columns{
  *    and l_discount <= 0.07
  *    and l_quantity < 24;
  */
-
-/**
- * @brief Calculate the revenue column
- *
- * @param extendedprice The extended price column
- * @param discount The discount column
- * @param stream The CUDA stream used for device memory operations and kernel launches.
- * @param mr Device memory resource used to allocate the returned column's device memory.
- */
-[[nodiscard]] std::unique_ptr<cudf::column> calculate_revenue(
-  cudf::column_view const& extendedprice,
-  cudf::column_view const& discount,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref())
-{
-  auto const revenue_type = cudf::data_type{cudf::type_id::FLOAT64};
-  auto revenue            = cudf::binary_operation(
-    extendedprice, discount, cudf::binary_operator::MUL, revenue_type, stream, mr);
-  return revenue;
-}
 
 /**
  * read returns an owning projected table, applying its predicate if filter_shipdate is false.
@@ -139,8 +115,10 @@ auto execute_q6(Read&& read, bool filter_shipdate, Consume&& consume)
   auto const filtered_table = apply_filter(lineitem, discount_quantity_pred);
 
   // Calculate the `revenue` column
-  auto revenue = calculate_revenue(filtered_table->column("l_extendedprice"),
-                                   filtered_table->column("l_discount"));
+  auto revenue = cudf::binary_operation(filtered_table->column("l_extendedprice"),
+                                        filtered_table->column("l_discount"),
+                                        cudf::binary_operator::MUL,
+                                        cudf::data_type{cudf::type_id::FLOAT64});
 
   // Sum the `revenue` column
   auto const revenue_view = revenue->view();
@@ -306,20 +284,22 @@ struct q6_files {
     check_q6_boundaries();
     check_q6_reference_boundaries();
     ndsh::vortex_io io{cuda::stream_ref{cudf::get_default_stream()}.get()};
-    rmm::mr::pool_memory_resource managed_pool_mr{rmm::mr::managed_memory_resource{},
-                                                  rmm::percent_of_free_device_memory(50)};
-    auto generated = generate_lineitem(scale_factor, managed_pool_mr);
-    tables.write("lineitem", *generated, io);
-    reference = ndsh::q6_cpu_reference(generated->select(q6_columns), cudf::get_default_stream());
-    CUDF_EXPECTS(std::isfinite(reference.revenue), "Q6 CPU reference revenue must be finite");
-    for (bool use_vortex : {false, true}) {
-      auto input =
-        ndsh::read_local_file(tables.path("lineitem", use_vortex), use_vortex, io, q6_columns);
-      ndsh::check_projection(generated->select(q6_columns), *input, q6_columns);
-      auto result = execute_q6(
-        [&](auto const&, auto const&) { return std::move(input); }, true, ndsh::take_result);
-      check_q6_result(reference, *result);
-    }
+    for_each_generated_table(
+      scale_factor, {"lineitem"}, [&](auto const& name, table_with_names const& generated) {
+        tables.write(name, generated, io);
+        reference =
+          ndsh::q6_cpu_reference(generated.select(q6_columns), cudf::get_default_stream());
+        CUDF_EXPECTS(std::isfinite(reference.revenue), "Q6 CPU reference revenue must be finite");
+        for (bool use_vortex : {false, true}) {
+          auto input =
+            ndsh::read_local_file(tables.path(name, use_vortex), use_vortex, io, q6_columns);
+          ndsh::check_projection(generated.select(q6_columns), *input, q6_columns);
+          auto result = execute_q6(
+            [&](auto const&, auto const&) { return std::move(input); }, true, ndsh::take_result);
+          check_q6_result(reference, *result);
+        }
+        CUDF_CUDA_TRY(cudaDeviceSynchronize());
+      });
     CUDF_CUDA_TRY(cudaDeviceSynchronize());
   }
 };

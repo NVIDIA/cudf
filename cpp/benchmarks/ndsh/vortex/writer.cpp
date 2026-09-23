@@ -23,20 +23,14 @@ using FFI_ArrowArrayStream = ArrowArrayStream;
 #include <algorithm>
 #include <memory>
 #include <unordered_set>
+#include <utility>
 
 namespace ndsh {
 
 using cudf::size_type;
-using cudf::table_view;
+
 using cudf::type_id;
 using cudf::io::io_type;
-using cudf::io::sink_info;
-
-vortex_writer_options_builder vortex_writer_options::builder(sink_info const& sink,
-                                                             table_view const& table)
-{
-  return vortex_writer_options_builder{sink, table};
-}
 
 namespace {
 
@@ -78,36 +72,35 @@ bool supported_type(type_id id)
   }
 }
 
-void write(vortex_writer_options const& options,
-           cuda::stream_ref stream,
-           rmm::device_async_resource_ref mr)
+}  // namespace
+
+void write_vortex(vortex_writer_options const& options,
+                  cuda::stream_ref stream,
+                  rmm::device_async_resource_ref mr)
 {
-  auto const& sink_info = options.get_sink();
+  CUDF_FUNC_RANGE();
+  auto const& sink_info = options.sink;
   CUDF_EXPECTS(sink_info.type() == io_type::FILEPATH && sink_info.num_sinks() == 1,
                "write_vortex requires exactly one local-file sink");
   auto const& path = sink_info.filepaths().front();
   CUDF_EXPECTS(
     !path.empty() && path.find('\0') == std::string::npos && path.find("://") == std::string::npos,
     "write_vortex requires a nonempty local path without NUL bytes or a URI scheme");
-  auto const table      = options.get_table();
-  auto const chunk_rows = options.get_rows_per_chunk();
+  auto const table      = options.table;
+  auto const chunk_rows = options.rows_per_chunk;
   CUDF_EXPECTS(chunk_rows > 0, "write_vortex rows_per_chunk must be positive");
   CUDF_EXPECTS(table.num_columns() > 0, "write_vortex requires at least one column");
   for (auto const& column : table) {
     CUDF_EXPECTS(supported_type(column.type().id()), "write_vortex unsupported column type");
   }
-  auto names = options.get_names();
-  if (names.empty()) {
-    for (size_type i = 0; i < table.num_columns(); ++i) {
-      names.push_back("_col" + std::to_string(i));
-    }
-  }
-  CUDF_EXPECTS(names.size() == static_cast<std::size_t>(table.num_columns()),
+  auto const& names = options.names;
+  CUDF_EXPECTS(names.empty() || names.size() == static_cast<std::size_t>(table.num_columns()),
                "write_vortex requires one name per column");
   std::unordered_set<std::string> unique_names;
   std::vector<cudf::column_metadata> metadata;
-  metadata.reserve(names.size());
-  for (auto const& name : names) {
+  metadata.reserve(table.num_columns());
+  for (size_type i = 0; i < table.num_columns(); ++i) {
+    auto const name = names.empty() ? "_col" + std::to_string(i) : names[i];
     CUDF_EXPECTS(name.find('\0') == std::string::npos,
                  "write_vortex column names must not contain NUL bytes");
     CUDF_EXPECTS(unique_names.insert(name).second, "write_vortex column names must be unique");
@@ -157,16 +150,6 @@ void write(vortex_writer_options const& options,
   // close consumes the sink even on failure.
   vx_array_sink_close(sink.release(), &error);
   check_error(error, operation);
-}
-
-}  // namespace
-
-void write_vortex(vortex_writer_options const& options,
-                  cuda::stream_ref stream,
-                  rmm::device_async_resource_ref mr)
-{
-  CUDF_FUNC_RANGE();
-  write(options, stream, mr);
 }
 
 }  // namespace ndsh

@@ -195,11 +195,9 @@ void vortex_io::write_vortex(std::string const& path,
                              std::vector<std::string> const& column_names,
                              cudf::size_type chunk_rows) const
 {
-  auto const options = ndsh::vortex_writer_options::builder(cudf::io::sink_info{path}, table)
-                         .names(column_names)
-                         .rows_per_chunk(chunk_rows)
-                         .build();
-  ndsh::write_vortex(options, cuda::stream_ref{impl_->stream}, impl_->mr);
+  ndsh::write_vortex({cudf::io::sink_info{path}, table, column_names, chunk_rows},
+                     cuda::stream_ref{impl_->stream},
+                     impl_->mr);
 }
 
 cudf::io::table_with_metadata vortex_io::read_vortex(std::string const& path,

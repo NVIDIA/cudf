@@ -13,7 +13,6 @@
 #include <cuda/stream_ref>
 
 #include <string>
-#include <utility>
 #include <vector>
 
 namespace ndsh {
@@ -23,109 +22,20 @@ namespace ndsh {
  * @brief Private Vortex file writer for NDS-H benchmarks.
  */
 
-class vortex_writer_options_builder;
-
 /**
  * @brief Settings for `write_vortex()`.
  *
  * The table is borrowed and must remain valid until `write_vortex()` returns.
  * Only a single local-file sink is currently supported.
  */
-class vortex_writer_options {
-  cudf::io::sink_info _sink;
-  cudf::table_view _table;
-  std::vector<std::string> _names;
-  cudf::size_type _rows_per_chunk{16 << 20};
-
-  friend class vortex_writer_options_builder;
-
-  explicit vortex_writer_options(cudf::io::sink_info sink, cudf::table_view table)
-    : _sink{std::move(sink)}, _table{table}
-  {
-  }
-
- public:
-  /**
-   * @brief Construct empty options, to be populated before writing.
-   */
-  vortex_writer_options() = default;
-
-  /**
-   * @brief Create an options builder.
-   * @param sink Destination (one local file)
-   * @param table GPU-resident input table
-   * @return Options builder
-   */
-  static vortex_writer_options_builder builder(cudf::io::sink_info const& sink,
-                                               cudf::table_view const& table);
-
-  /// @brief Returns the destination. @return Destination information
-  [[nodiscard]] cudf::io::sink_info const& get_sink() const noexcept { return _sink; }
-  /// @brief Returns the borrowed input table. @return Input table
-  [[nodiscard]] cudf::table_view const& get_table() const noexcept { return _table; }
-  /// @brief Returns column names. @return Names, or empty for generated names
-  [[nodiscard]] std::vector<std::string> const& get_names() const noexcept { return _names; }
-  /// @brief Returns the row-block size. @return Maximum rows per staging chunk and physical block
-  [[nodiscard]] cudf::size_type get_rows_per_chunk() const noexcept { return _rows_per_chunk; }
-
-  /// @brief Set the destination. @param sink Destination information
-  void set_sink(cudf::io::sink_info sink) { _sink = std::move(sink); }
-  /// @brief Set the borrowed input table. @param table Input table
-  void set_table(cudf::table_view table) { _table = table; }
-  /**
-   * @brief Set unique, NUL-free column names.
-   * @param names One name per column, or empty to generate `_col0`, `_col1`, etc.
-   */
-  void set_names(std::vector<std::string> names) { _names = std::move(names); }
-  /**
-   * @brief Set maximum rows per host-staging chunk and physical Vortex row block.
-   *
-   * This is a row bound, not a byte or total-memory bound. The original GPU input remains resident.
-   * @param rows Positive row count (default: 16 Mi rows)
-   */
-  void set_rows_per_chunk(cudf::size_type rows) { _rows_per_chunk = rows; }
-};
-
-/** @brief Builder for `vortex_writer_options`. */
-class vortex_writer_options_builder {
-  vortex_writer_options _options;
-
- public:
-  /**
-   * @brief Construct a builder from a destination and input table.
-   * @param sink Destination information
-   * @param table Borrowed input table
-   */
-  explicit vortex_writer_options_builder(cudf::io::sink_info const& sink,
-                                         cudf::table_view const& table)
-    : _options{sink, table}
-  {
-  }
-
-  /**
-   * @brief Set column names.
-   * @param names One unique, NUL-free name per column, or empty for generated names
-   * @return This builder
-   */
-  vortex_writer_options_builder& names(std::vector<std::string> names)
-  {
-    _options.set_names(std::move(names));
-    return *this;
-  }
-
-  /**
-   * @brief Set staging and physical row-block size.
-   * @param rows Positive row count
-   * @return This builder
-   */
-  vortex_writer_options_builder& rows_per_chunk(cudf::size_type rows)
-  {
-    _options.set_rows_per_chunk(rows);
-    return *this;
-  }
-
-  /** @brief Build the writer options. @return Writer options */
-  [[nodiscard]] vortex_writer_options build() const { return _options; }
+struct vortex_writer_options {
+  cudf::io::sink_info sink;
+  cudf::table_view table;
+  /// One unique, NUL-free name per column, or empty to generate `_col0`, `_col1`, etc.
+  std::vector<std::string> names{};
+  /// Positive staging/physical-block row bound, not a byte or total-memory bound.
+  /// The original GPU input remains resident.
+  cudf::size_type rows_per_chunk{16 << 20};
 };
 
 /**

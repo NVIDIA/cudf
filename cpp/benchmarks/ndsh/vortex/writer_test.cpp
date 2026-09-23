@@ -74,35 +74,22 @@ class VortexWriterTest : public cudf::test::BaseFixture {
   }
 };
 
-TEST_F(VortexWriterTest, OptionsDefaultsAndBuilder)
+TEST_F(VortexWriterTest, OptionsDefaultsAndAggregate)
 {
   vortex_writer_options defaults;
-  EXPECT_TRUE(defaults.get_names().empty());
-  EXPECT_EQ(defaults.get_rows_per_chunk(), 16 << 20);
-  EXPECT_EQ(defaults.get_table().num_columns(), 0);
+  EXPECT_TRUE(defaults.names.empty());
+  EXPECT_EQ(defaults.rows_per_chunk, 16 << 20);
+  EXPECT_EQ(defaults.table.num_columns(), 0);
 
   cudf::test::fixed_width_column_wrapper<int32_t> numbers{1, 2};
   cudf::table_view const table{{numbers}};
-  auto const options = vortex_writer_options::builder(sink_info{path()}, table)
-                         .names({"number"})
-                         .rows_per_chunk(1)
-                         .build();
-  EXPECT_EQ(options.get_sink().filepaths(), std::vector<std::string>{path()});
-  EXPECT_EQ(options.get_names(), std::vector<std::string>{"number"});
-  EXPECT_EQ(options.get_rows_per_chunk(), 1);
-  EXPECT_EQ(options.get_table().num_rows(), table.num_rows());
-  EXPECT_EQ(options.get_table().column(0).head<int32_t>(), table.column(0).head<int32_t>());
+  vortex_writer_options const options{sink_info{path()}, table, {"number"}, 1};
+  EXPECT_EQ(options.sink.filepaths(), std::vector<std::string>{path()});
+  EXPECT_EQ(options.names, std::vector<std::string>{"number"});
+  EXPECT_EQ(options.rows_per_chunk, 1);
+  EXPECT_EQ(options.table.num_rows(), table.num_rows());
+  EXPECT_EQ(options.table.column(0).head<int32_t>(), table.column(0).head<int32_t>());
 
-  defaults.set_sink(options.get_sink());
-  defaults.set_table(table);
-  defaults.set_names({"renamed"});
-  defaults.set_rows_per_chunk(3);
-  EXPECT_EQ(defaults.get_sink().filepaths(), options.get_sink().filepaths());
-  EXPECT_EQ(defaults.get_table().num_columns(), 1);
-  EXPECT_EQ(defaults.get_names(), std::vector<std::string>{"renamed"});
-  EXPECT_EQ(defaults.get_rows_per_chunk(), 3);
-  defaults.set_names({});
-  EXPECT_TRUE(defaults.get_names().empty());
   EXPECT_FALSE(std::filesystem::exists(path()));
 }
 
@@ -137,13 +124,12 @@ class VortexWriterEnabledTest : public VortexWriterTest {
 TEST_F(VortexWriterEnabledTest, RejectsInvalidNamesBeforeOpeningFile)
 {
   cudf::test::fixed_width_column_wrapper<int32_t> numbers{1, 2};
-  auto options =
-    vortex_writer_options::builder(sink_info{path()}, cudf::table_view{{numbers, numbers}}).build();
+  vortex_writer_options options{sink_info{path()}, cudf::table_view{{numbers, numbers}}};
   std::vector<std::vector<std::string>> const invalid_names{
     {"only_one"}, {"a", "b", "extra"}, {"duplicate", "duplicate"}, {"a", std::string{"b\0c", 3}}};
   for (auto const& names : invalid_names) {
     SCOPED_TRACE(::testing::PrintToString(names));
-    options.set_names(names);
+    options.names = names;
     expect_rejected_without_touching_files(options, {path()});
   }
 }
@@ -153,49 +139,45 @@ TEST_F(VortexWriterEnabledTest, RejectsNonpositiveChunkSizeBeforeOpeningFile)
   cudf::test::fixed_width_column_wrapper<int32_t> numbers{1, 2};
   for (auto const rows : {0, -1}) {
     SCOPED_TRACE(rows);
-    auto const options =
-      vortex_writer_options::builder(sink_info{path()}, cudf::table_view{{numbers}})
-        .rows_per_chunk(rows)
-        .build();
+    vortex_writer_options const options{sink_info{path()}, cudf::table_view{{numbers}}, {}, rows};
     expect_rejected_without_touching_files(options, {path()});
   }
 }
 
 TEST_F(VortexWriterEnabledTest, RejectsZeroColumnsBeforeOpeningFile)
 {
-  auto const options =
-    vortex_writer_options::builder(sink_info{path()}, cudf::table_view{}).build();
+  vortex_writer_options const options{sink_info{path()}, cudf::table_view{}};
   expect_rejected_without_touching_files(options, {path()});
 }
 
 TEST_F(VortexWriterEnabledTest, RejectsUnsupportedSinks)
 {
   cudf::test::fixed_width_column_wrapper<int32_t> numbers{1, 2};
-  auto options = vortex_writer_options::builder(sink_info{}, cudf::table_view{{numbers}}).build();
+  vortex_writer_options options{sink_info{}, cudf::table_view{{numbers}}};
   for (auto const& sink : {sink_info{},
                            sink_info{std::vector<std::string>{}},
                            sink_info{std::string{}},
                            sink_info{std::string{"s3://bucket/table.vortex"}},
                            sink_info{std::string{"https://example.com/table.vortex"}}}) {
-    options.set_sink(sink);
+    options.sink = sink;
     EXPECT_THROW(write_vortex(options), cudf::logic_error);
   }
 
-  options.set_sink(sink_info{std::vector<std::string>{path("first"), path("second")}});
+  options.sink = sink_info{std::vector<std::string>{path("first"), path("second")}};
   expect_rejected_without_touching_files(options, {path("first"), path("second")});
 
   // A C-string conversion must not silently accept the prefix of a path containing NUL.
-  options.set_sink(sink_info{path() + std::string{"\0suffix", 7}});
+  options.sink = sink_info{path() + std::string{"\0suffix", 7}};
   expect_rejected_without_touching_files(options, {path()});
 
   std::vector<char> buffer{'k', 'e', 'e', 'p'};
   auto const original = buffer;
-  options.set_sink(sink_info{&buffer});
+  options.sink        = sink_info{&buffer};
   EXPECT_THROW(write_vortex(options), cudf::logic_error);
   EXPECT_EQ(buffer, original);
 
   auto custom_sink = cudf::io::data_sink::create(&buffer);
-  options.set_sink(sink_info{custom_sink.get()});
+  options.sink     = sink_info{custom_sink.get()};
   EXPECT_THROW(write_vortex(options), cudf::logic_error);
   EXPECT_EQ(buffer, original);
   EXPECT_EQ(custom_sink->bytes_written(), original.size());
@@ -209,9 +191,7 @@ TEST_F(VortexWriterEnabledTest, RejectsNestedAndDictionaryColumnsBeforeOpeningFi
   cudf::test::dictionary_column_wrapper<int32_t> dictionary{1, 2};
   for (auto const& column : std::vector<cudf::column_view>{lists, structs, dictionary}) {
     SCOPED_TRACE(static_cast<int>(column.type().id()));
-    auto const options =
-      vortex_writer_options::builder(sink_info{path()}, cudf::table_view{{numbers, column}})
-        .build();
+    vortex_writer_options const options{sink_info{path()}, cudf::table_view{{numbers, column}}};
     expect_rejected_without_touching_files(options, {path()});
   }
 }
@@ -229,8 +209,7 @@ TEST_F(VortexWriterEnabledTest, RejectsUnsupportedChronoTypesEvenWithZeroRows)
                           cudf::type_id::TIMESTAMP_NANOSECONDS}) {
     SCOPED_TRACE(static_cast<int>(type));
     auto column = cudf::make_empty_column(cudf::data_type{type});
-    auto const options =
-      vortex_writer_options::builder(sink_info{path()}, cudf::table_view{{column->view()}}).build();
+    vortex_writer_options const options{sink_info{path()}, cudf::table_view{{column->view()}}};
     expect_rejected_without_touching_files(options, {path()});
   }
 }
@@ -239,10 +218,8 @@ TEST_F(VortexWriterEnabledTest, CreatesZeroRowFileWithGeneratedNames)
 {
   cudf::test::fixed_width_column_wrapper<int32_t> numbers;
   cudf::test::strings_column_wrapper strings;
-  auto const options =
-    vortex_writer_options::builder(sink_info{path()}, cudf::table_view{{numbers, strings}})
-      .rows_per_chunk(1)
-      .build();
+  vortex_writer_options const options{
+    sink_info{path()}, cudf::table_view{{numbers, strings}}, {}, 1};
   ASSERT_NO_THROW(write_vortex(options));
   expect_finalized_file(path());
 }
@@ -254,10 +231,7 @@ TYPED_TEST_SUITE(VortexWriterNumericTest, cudf::test::NumericTypes);
 TYPED_TEST(VortexWriterNumericTest, WritesNullableNumericAndBooleanColumns)
 {
   cudf::test::fixed_width_column_wrapper<TypeParam> column{{0, 1, 1, 0}, {true, false, true, true}};
-  auto const options =
-    vortex_writer_options::builder(sink_info{this->path()}, cudf::table_view{{column}})
-      .rows_per_chunk(2)
-      .build();
+  vortex_writer_options const options{sink_info{this->path()}, cudf::table_view{{column}}, {}, 2};
   ASSERT_NO_THROW(write_vortex(options));
   this->expect_finalized_file(this->path());
 }
@@ -272,11 +246,8 @@ TYPED_TEST(VortexWriterDecimalTest, WritesNullableDecimals)
     SCOPED_TRACE(scale);
     cudf::test::fixed_point_column_wrapper<typename TypeParam::rep> column{
       {-1234, 0, 5678}, {true, false, true}, numeric::scale_type{scale}};
-    auto const options =
-      vortex_writer_options::builder(sink_info{this->path()}, cudf::table_view{{column}})
-        .names({"decimal"})
-        .rows_per_chunk(1)
-        .build();
+    vortex_writer_options const options{
+      sink_info{this->path()}, cudf::table_view{{column}}, {"decimal"}, 1};
     ASSERT_NO_THROW(write_vortex(options));
     this->expect_finalized_file(this->path());
   }
@@ -286,10 +257,7 @@ TEST_F(VortexWriterEnabledTest, WritesDayTimestamps)
 {
   cudf::test::fixed_width_column_wrapper<cudf::timestamp_D, int32_t> days{
     {-1, 0, 1, 20000}, {true, false, true, true}};
-  auto const options = vortex_writer_options::builder(sink_info{path()}, cudf::table_view{{days}})
-                         .names({"day"})
-                         .rows_per_chunk(2)
-                         .build();
+  vortex_writer_options const options{sink_info{path()}, cudf::table_view{{days}}, {"day"}, 2};
   ASSERT_NO_THROW(write_vortex(options));
   expect_finalized_file(path());
 }
@@ -311,10 +279,7 @@ TEST_F(VortexWriterEnabledTest, WritesSlicedNullableStringsAndNumbersOnNondefaul
   // Cover single-row chunks, a short final chunk, and a chunk larger than the slice.
   for (auto const chunk_rows : {1, 2, 4, 16}) {
     SCOPED_TRACE(chunk_rows);
-    auto const options = vortex_writer_options::builder(sink_info{path()}, sliced)
-                           .names({"number", "text"})
-                           .rows_per_chunk(chunk_rows)
-                           .build();
+    vortex_writer_options const options{sink_info{path()}, sliced, {"number", "text"}, chunk_rows};
     // The supplied resource owns staging buffers; slice/compaction scratch uses the current one.
     ASSERT_NO_THROW(write_vortex(options, stream, harness.temporary_mr()));
     EXPECT_EQ(cudaStreamQuery(stream.get()), cudaSuccess);

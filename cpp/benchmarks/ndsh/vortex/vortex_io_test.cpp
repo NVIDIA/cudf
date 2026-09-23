@@ -602,11 +602,7 @@ void test_writer_defaults(temporary_directory const& directory, cudaStream_t str
 {
   auto source     = make_source(stream, 0, 9);
   auto const path = directory.file("writer-defaults.vortex");
-  auto const options =
-    ndsh::vortex_writer_options::builder(cudf::io::sink_info{path}, source->view())
-      .rows_per_chunk(3)
-      .build();
-  ndsh::write_vortex(options, cuda::stream_ref{stream});
+  ndsh::write_vortex({cudf::io::sink_info{path}, source->view(), {}, 3}, cuda::stream_ref{stream});
   check_cuda(cudaStreamQuery(stream), "write must complete the consumer stream");
   ndsh::vortex_io io{stream};
   check_table(read_completed(io, path, stream, 0), make_fixture(0, 9), stream, {}, true);
@@ -638,7 +634,7 @@ void test_concurrent_reads(temporary_directory const& directory, cudaStream_t st
   write_source(io, first_path, stream, 0, 37, 0, 37);
   write_source(io, second_path, stream, 10000, 37, 0, 14);
   std::array<cudf::io::table_with_metadata, 2> results;
-  std::exception_ptr error;
+
   // Futures join even if a launch or get throws, before the captured adapter and result owners die.
   std::array<std::future<cudf::io::table_with_metadata>, 2> futures;
   futures[0] = std::async(std::launch::async, [&io, first_path] {
@@ -650,13 +646,8 @@ void test_concurrent_reads(temporary_directory const& directory, cudaStream_t st
     return io.read_vortex(second_path, 7);
   });
   for (std::size_t i = 0; i < futures.size(); ++i) {
-    try {
-      results[i] = futures[i].get();
-    } catch (...) {
-      if (!error) { error = std::current_exception(); }
-    }
+    results[i] = futures[i].get();
   }
-  if (error) { std::rethrow_exception(error); }
   // A worker cannot query completion while the other may still enqueue work on the shared stream.
   check_cuda(cudaStreamQuery(stream), "concurrent reads must complete the consumer stream");
   check_table(results[0], make_fixture(0, 37), stream);

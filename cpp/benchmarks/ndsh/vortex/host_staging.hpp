@@ -49,21 +49,18 @@ inline cudf::unique_device_array_t stage_host_chunk(cudf::table_view chunk,
   cudf::unique_device_array_t host{nullptr, nullptr};
   {
     std::vector<std::unique_ptr<cudf::column>> owned_strings;
-    std::vector<cudf::column_view> columns;
-    columns.reserve(chunk.num_columns());
+    std::vector<cudf::column_view> columns{chunk.begin(), chunk.end()};
     owned_strings.reserve(chunk.num_columns());
     staging_stream_drain drain{stream};
-    for (auto const& column : chunk) {
+    for (auto& column : columns) {
       if (column.type().id() == cudf::type_id::STRING && column.size() != 0) {
         auto const strings = cudf::strings_column_view{column};
         if (strings.offset() != 0 || strings.size() != strings.offsets().size() - 1) {
           // Host export otherwise copies the parent's entire chars buffer.
           owned_strings.push_back(std::make_unique<cudf::column>(column, stream, mr));
-          columns.push_back(owned_strings.back()->view());
-          continue;
+          column = owned_strings.back()->view();
         }
       }
-      columns.push_back(column);
     }
     host = cudf::to_arrow_host(cudf::table_view{columns}, stream, mr);
     drain.wait();

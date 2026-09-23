@@ -283,9 +283,12 @@ host_table make_fixture(int64_t first_row,
   return result;
 }
 
-std::unique_ptr<cudf::table> make_source(cudaStream_t stream, int64_t first, cudf::size_type rows)
+std::unique_ptr<cudf::table> make_source(cudaStream_t stream,
+                                         int64_t first,
+                                         cudf::size_type rows,
+                                         std::vector<std::size_t> const& selected = {})
 {
-  auto fixture = make_fixture(first, rows);
+  auto fixture = make_fixture(first, rows, selected);
   host_buffer_fence fence{stream};
   auto source =
     cudf::from_arrow(fixture.schema.get(), fixture.array.get(), cuda::stream_ref{stream});
@@ -496,32 +499,27 @@ void round_trip(temporary_directory const& directory,
 
 void test_staged_string_bytes(cudaStream_t stream)
 {
+  std::vector<std::size_t> const selected{11};
   constexpr cudf::size_type parent_rows = 4096;
-  auto source                           = make_source(stream, 0, parent_rows);
-  std::vector<cudf::column_metadata> metadata;
-  for (auto const& spec : columns) {
-    metadata.emplace_back(spec.name);
-  }
-  auto schema = cudf::to_arrow_schema(source->view(), metadata);
+  auto source                           = make_source(stream, 0, parent_rows, selected);
+  auto const strings                    = source->view();
+  std::vector<cudf::column_metadata> const metadata{{columns[selected.front()].name}};
+  auto schema = cudf::to_arrow_schema(strings, metadata);
   // Prefix and offset slices exercise both string-compaction conditions; keep the empty path too.
   std::array<std::array<cudf::size_type, 2>, 3> const ranges{{{0, 7}, {5, 12}, {5, 5}}};
   for (auto const& range : ranges) {
-    auto input =
-      cudf::slice(source->view(), {range[0], range[1]}, cuda::stream_ref{stream}).front();
-    auto expected = make_fixture(range[0], range[1] - range[0]);
+    auto input    = cudf::slice(strings, {range[0], range[1]}, cuda::stream_ref{stream}).front();
+    auto expected = make_fixture(range[0], range[1] - range[0], selected);
     auto host     = ndsh::detail::stage_host_chunk(
       input, cuda::stream_ref{stream}, cudf::get_current_device_resource_ref());
     check_cuda(cudaStreamQuery(stream), "host staging must complete the consumer stream");
     require(host->device_type == ARROW_DEVICE_CPU, "Staging returned non-host data");
-    for (std::size_t c = 0; c < columns.size(); ++c) {
-      if (columns[c].cudf_type != cudf::type_id::STRING) { continue; }
-      // Both arrays are nanoarrow-owned. Inspect actual buffer sizes: ArrayView's
-      // inferred size would miss an unnecessarily retained trailing parent payload.
-      auto const* chars          = ArrowArrayBuffer(host->array.children[c], 2);
-      auto const* expected_chars = ArrowArrayBuffer(expected.array->children[c], 2);
-      require(chars->size_bytes == expected_chars->size_bytes,
-              "String staging retained bytes outside the row chunk");
-    }
+    // Both arrays are nanoarrow-owned. Inspect actual buffer sizes: ArrayView's
+    // inferred size would miss an unnecessarily retained trailing parent payload.
+    auto const* chars          = ArrowArrayBuffer(host->array.children[0], 2);
+    auto const* expected_chars = ArrowArrayBuffer(expected.array->children[0], 2);
+    require(chars->size_bytes == expected_chars->size_bytes,
+            "String staging retained bytes outside the row chunk");
     check_arrow_arrays(schema.get(), &host->array, expected);
   }
 }

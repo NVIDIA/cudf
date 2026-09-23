@@ -407,7 +407,10 @@ hybrid_scan_reader_impl::dictionary_pages_byte_ranges_include_unbounded(
   auto [expr_conv, output_dtypes] = prepare_filter_and_output_types(options);
 
   return _extended_metadata->dictionary_pages_byte_ranges_include_unbounded(
-    row_group_indices, output_dtypes, _output_column_schemas, expr_conv.get_converted_expr().value());
+    row_group_indices,
+    output_dtypes,
+    _output_column_schemas,
+    expr_conv.get_converted_expr().value());
 }
 
 std::pair<std::vector<byte_range_info>, std::vector<size_type>>

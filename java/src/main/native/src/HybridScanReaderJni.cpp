@@ -233,9 +233,9 @@ Java_ai_rapids_cudf_HybridScanReader_dictionaryPagesByteRangesIncludeUnbounded(
     cudf::jni::auto_set_device(env);
     auto* wrapper = reinterpret_cast<hybrid_scan_reader_wrapper*>(handle);
     auto holder   = make_row_group_span(env, j_row_groups);
-    auto ranges   = wrapper->reader->dictionary_pages_byte_ranges_include_unbounded(
-      holder.span(), wrapper->options);
-    auto result = env->NewLongArray(static_cast<jsize>(ranges.size() * 3));
+    auto ranges   = wrapper->reader->dictionary_pages_byte_ranges_include_unbounded(holder.span(),
+                                                                                  wrapper->options);
+    auto result   = env->NewLongArray(static_cast<jsize>(ranges.size() * 3));
     if (result == nullptr) { return nullptr; }
     std::vector<jlong> data;
     data.reserve(ranges.size() * 3);
@@ -281,8 +281,8 @@ JNIEXPORT jlongArray JNICALL Java_ai_rapids_cudf_HybridScanReader_dictionaryPage
     auto result = env->NewLongArray(static_cast<jsize>(page_lengths.size()));
     if (result == nullptr) { return nullptr; }
     if (not page_lengths.empty()) {
-      env->SetLongArrayRegion(result, 0, static_cast<jsize>(page_lengths.size()),
-                              page_lengths.data());
+      env->SetLongArrayRegion(
+        result, 0, static_cast<jsize>(page_lengths.size()), page_lengths.data());
     }
     return result;
   }

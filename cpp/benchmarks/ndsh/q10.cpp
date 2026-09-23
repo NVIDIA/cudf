@@ -3,6 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+#include "parquet/parquet_io.hpp"
 #include "utilities.hpp"
 
 #include <benchmarks/common/memory_stats.hpp>
@@ -148,7 +149,7 @@ void run_ndsh_q10(nvbench::state& state,
     apply_orderby(groupedby_table, {"revenue"}, {cudf::order::DESCENDING});
 
   // Write query result to a parquet file
-  orderedby_table->to_parquet("q10.parquet");
+  write_parquet(*orderedby_table, "q10.parquet");
 }
 
 void ndsh_q10(nvbench::state& state)

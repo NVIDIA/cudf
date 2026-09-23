@@ -1,16 +1,25 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
 #pragma once
 
-#include "io/cuio_common.hpp"
+#include <cudf/aggregation.hpp>
+#include <cudf/ast/expressions.hpp>
+#include <cudf/column/column.hpp>
+#include <cudf/column/column_view.hpp>
+#include <cudf/table/table.hpp>
+#include <cudf/table/table_view.hpp>
+#include <cudf/types.hpp>
 
-#include <cudf/groupby.hpp>
-#include <cudf/io/parquet.hpp>
-
-#include <rmm/device_uvector.hpp>
+#include <cstdint>
+#include <ctime>
+#include <memory>
+#include <string>
+#include <unordered_map>
+#include <utility>
+#include <vector>
 
 /**
  * @brief A class to represent a table with column names attached
@@ -52,12 +61,6 @@ class table_with_names {
    * @param col_names The names of the columns to select
    */
   [[nodiscard]] cudf::table_view select(std::vector<std::string> const& col_names) const;
-  /**
-   * @brief Write the table to a parquet file
-   *
-   * @param filepath The path to the parquet file
-   */
-  void to_parquet(std::string const& filepath) const;
 
  private:
   std::unique_ptr<cudf::table> tbl;
@@ -158,18 +161,6 @@ struct groupby_context_t {
   std::string const& col_name);
 
 /**
- * @brief Read a parquet file into a table
- *
- * @param source_info The source of the parquet file
- * @param columns The columns to read
- * @param predicate The filter predicate to pushdown
- */
-[[nodiscard]] std::unique_ptr<table_with_names> read_parquet(
-  cudf::io::source_info const& source_info,
-  std::vector<std::string> const& columns                = {},
-  std::unique_ptr<cudf::ast::operation> const& predicate = nullptr);
-
-/**
  * @brief Generate the `std::tm` structure from year, month, and day
  *
  * @param year The year
@@ -188,23 +179,10 @@ std::tm make_tm(int year, int month, int day);
 int32_t days_since_epoch(int year, int month, int day);
 
 /**
- * @brief Write a `cudf::table` to a parquet cuio sink
+ * @brief Return the ordered column names of an NDS-H table.
  *
- * @param table The `cudf::table` to write
- * @param col_names The column names of the table
- * @param source The source sink pair to write the table to
+ * @param table_name The NDS-H table name
+ * @return A reference to the shared schema, valid for the lifetime of the program
+ * @throws std::out_of_range If the table name is unknown
  */
-void write_to_parquet_device_buffer(std::unique_ptr<cudf::table> const& table,
-                                    std::vector<std::string> const& col_names,
-                                    cuio_source_sink_pair& source);
-
-/**
- * @brief Generate NDS-H tables and write to parquet device buffers
- *
- * @param scale_factor The scale factor of NDS-H tables to generate
- * @param table_names The names of the tables to generate
- * @param sources The parquet data sources to populate
- */
-void generate_parquet_data_sources(double scale_factor,
-                                   std::vector<std::string> const& table_names,
-                                   std::unordered_map<std::string, cuio_source_sink_pair>& sources);
+[[nodiscard]] std::vector<std::string> const& ndsh_schema(std::string const& table_name);

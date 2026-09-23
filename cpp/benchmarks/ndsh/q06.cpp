@@ -3,6 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+#include "parquet/parquet_io.hpp"
 #include "utilities.hpp"
 
 #include <benchmarks/common/memory_stats.hpp>
@@ -118,7 +119,7 @@ void run_ndsh_q6(nvbench::state& state,
   auto const result_table = apply_reduction(revenue_view, cudf::aggregation::Kind::SUM, "revenue");
 
   // Write query result to a parquet file
-  result_table->to_parquet("q6.parquet");
+  write_parquet(*result_table, "q6.parquet");
 }
 
 void ndsh_q6(nvbench::state& state)

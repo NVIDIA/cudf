@@ -3,6 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+#include "parquet/parquet_io.hpp"
 #include "utilities.hpp"
 
 #include <benchmarks/common/memory_stats.hpp>
@@ -324,7 +325,7 @@ void ndsh_q9(nvbench::state& state)
                                        data,
                                        launch.get_stream().get_stream(),
                                        cudf::get_current_device_resource_ref());
-    result->to_parquet("q9.parquet");
+    write_parquet(*result, "q9.parquet");
   });
   state.add_buffer_size(
     mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
@@ -354,7 +355,7 @@ void ndsh_q9_noio(nvbench::state& state)
   state.add_buffer_size(
     mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
 
-  if (result) { result->to_parquet("q9_noio.parquet"); }
+  if (result) { write_parquet(*result, "q9_noio.parquet"); }
 }
 
 // unlike `ndsh_q9`, `ndsh_q9_amount` benchmarks only the amount calculation part of the benchmark

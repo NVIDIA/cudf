@@ -124,11 +124,11 @@ ConfigureNVBench(TRANSPOSE_NVBENCH transpose/transpose.cpp)
 
 # ##################################################################################################
 # * nds-h benchmark --------------------------------------------------------------------------------
-ConfigureNVBench(NDSH_Q01_NVBENCH ndsh/q01.cpp ndsh/utilities.cpp)
-ConfigureNVBench(NDSH_Q05_NVBENCH ndsh/q05.cpp ndsh/utilities.cpp)
-ConfigureNVBench(NDSH_Q06_NVBENCH ndsh/q06.cpp ndsh/utilities.cpp)
-ConfigureNVBench(NDSH_Q09_NVBENCH ndsh/q09.cpp ndsh/utilities.cpp)
-ConfigureNVBench(NDSH_Q10_NVBENCH ndsh/q10.cpp ndsh/utilities.cpp)
+foreach(query IN ITEMS 01 05 06 09 10)
+  ConfigureNVBench(
+    NDSH_Q${query}_NVBENCH ndsh/q${query}.cpp ndsh/utilities.cpp ndsh/parquet/parquet_io.cpp
+  )
+endforeach()
 
 # ##################################################################################################
 # * filter benchmark -------------------------------------------------------------------

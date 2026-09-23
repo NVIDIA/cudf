@@ -15,6 +15,8 @@
 
 #include <nvbench/nvbench.cuh>
 
+#include <limits>
+
 std::optional<double> null_probability_from_percent(int64_t null_percent)
 {
   if (null_percent < 0) { return std::nullopt; }
@@ -68,6 +70,8 @@ cuio_source_sink_pair write_file_shape_parquet_file(cudf::type_id dtype,
   auto const view = tbl->view();
 
   auto const rows_per_page = num_rows / (num_row_groups * pages_per_row_group);
+  CUDF_EXPECTS(rows_per_page > 0,
+               "num_row_groups * pages_per_row_group must not exceed num_rows");
 
   cudf::io::parquet_writer_options write_opts =
     cudf::io::parquet_writer_options::builder(source_sink.make_sink_info(), view)
@@ -77,9 +81,8 @@ cuio_source_sink_pair write_file_shape_parquet_file(cudf::type_id dtype,
       // Pages are assembled out of whole fragments, so without this the default 5000-row
       // fragment is a floor on page size and fewer rows per page cannot be honored
       .max_page_fragment_size(rows_per_page)
-      // Lift the default 512KB page limit so that it does not close pages before
-      // `max_page_size_rows` does
-      .max_page_size_bytes(1ul << 30)
+      // Use the largest page size to prevent pages from being closed by the byte limit
+      .max_page_size_bytes(static_cast<size_t>(std::numeric_limits<int32_t>::max()))
       .stats_level(write_page_index ? cudf::io::statistics_freq::STATISTICS_COLUMN
                                     : cudf::io::statistics_freq::STATISTICS_ROWGROUP);
   cudf::io::write_parquet(write_opts);

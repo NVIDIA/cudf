@@ -26,11 +26,10 @@
 namespace ndsh {
 
 /**
- * Device-0 I/O context reusing CUDA state and pinned staging.
- * Retains up to 8 GiB in CUDA's default memory pool between synchronized reads.
- * Caller stream/resource must outlive this context and returned tables.
- * Requires at least one flat, typed column; zero-row tables are supported.
- * Device 0 must be current for construction and I/O. Paths must be nonempty and NUL-free.
+ * Local-file I/O context; device 0 must be current for construction and I/O.
+ * Retains up to 8 GiB in CUDA's default memory pool. The caller's stream/resource must
+ * outlive this context and returned tables. Requires nonempty, NUL-free paths and at least
+ * one flat, typed column; zero-row tables are supported.
  */
 class vortex_io {
  public:
@@ -42,12 +41,9 @@ class vortex_io {
   vortex_io& operator=(vortex_io const&) = delete;
 
   /**
-   * Delegate to ndsh::write_vortex: write a CUDA-readable local file on CPU via host
-   * Arrow chunks. Requires positive chunk_rows and the private writer's supported types.
-   * Names are unique and NUL-free, one per column (or empty for generated names). chunk_rows also
-   * sets the physical CUDA-flat row-block size and disables byte coalescing/layout dictionaries.
-   * Partial string slices are compacted on device. Finalizes before return; failed writes may leave
-   * an invalid file.
+   * Delegate to ndsh::write_vortex; see its type, naming, and file-completion requirements.
+   * Positive chunk_rows sets the staging and physical CUDA-flat row-block size,
+   * with byte coalescing and layout dictionaries disabled.
    */
   void write_vortex(std::string const& path,
                     cudf::table_view table,
@@ -55,18 +51,17 @@ class vortex_io {
                     cudf::size_type chunk_rows = 16 << 20) const;
 
   /**
-   * GPU-read a local CUDA-compatible file into an owning cuDF table. An empty column
-   * list selects all; otherwise scan literal top-level names in order. Unknown or
-   * duplicate names are errors. Includes dictionary decode, Arrow Device import, one
-   * final owning copy/concatenation, and consumer-stream completion before releasing
-   * temporary inputs. On successful return, the consumer stream is idle, including
-   * async frees of cuDF import scratch. Vortex release cleanup may remain queued on producer
-   * streams. Zero batch_rows uses layout-derived splitting. Nonzero values request fixed row counts
-   * (except the final batch), not layout-preserving caps; ranges crossing physical blocks may
-   * require unsupported CUDA Chunked concatenation. Prefer zero for arbitrary files.
-   * direct_io bypasses the OS page cache for data-plane reads; metadata remains buffered.
-   * Peak memory includes retained Vortex batches
-   * plus the owning result. batch_rows and total result rows must fit cudf::size_type.
+   * GPU-read a local CUDA-compatible file into an owning cuDF table.
+   * An empty column list selects all; otherwise names are literal, ordered, unique top-level fields.
+   * Unknown names are errors. direct_io bypasses the data-page cache; metadata stays buffered.
+   *
+   * batch_rows=0 follows the file layout (recommended). Positive values request fixed row
+   * counts, except the final batch; cross-block ranges may require unsupported CUDA Chunked
+   * concatenation. Batch size and total rows must fit cudf::size_type.
+   *
+   * Decoded Arrow Device batches stay alive through materialization. On successful return,
+   * the consumer stream is idle, including cuDF scratch frees; Vortex producer cleanup may
+   * remain pending. Peak memory includes retained batches and the owning result.
    */
   [[nodiscard]] cudf::io::table_with_metadata read_vortex(
     std::string const& path,

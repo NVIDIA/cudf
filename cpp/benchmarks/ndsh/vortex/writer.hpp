@@ -23,10 +23,7 @@ namespace ndsh {
  */
 
 /**
- * @brief Settings for `write_vortex()`.
- *
- * The table is borrowed and must remain valid until `write_vortex()` returns.
- * Only a single local-file sink is currently supported.
+ * @brief Local-file sink, borrowed GPU table, and staging options for `write_vortex()`.
  */
 struct vortex_writer_options {
   cudf::io::sink_info sink;
@@ -39,28 +36,21 @@ struct vortex_writer_options {
 };
 
 /**
- * @brief Write a GPU-resident table to a local Vortex file.
+ * @brief Write a GPU table to a local Vortex file using CPU compression and encoding.
  *
- * Requires the optional NDS-H Vortex benchmark target on Linux.
- * The current implementation requires CUDA device 0 to be current and uses Vortex's experimental
- * CUDA-flat layout. Files are tied to the pinned Vortex revision; cross-version compatibility of
- * this layout is not guaranteed.
+ * Requires Linux, the private Vortex target, and current CUDA device 0. The experimental
+ * CUDA-flat layout has no cross-version compatibility guarantee.
  *
- * Supported columns are signed/unsigned integers, floating point, booleans, strings,
- * decimal32/64/128, and day-resolution timestamps. Nulls, slices and zero-row tables are supported;
- * at least one column is required. Nested, dictionary, duration and other timestamp types are not
- * supported. Only `cudf::io::sink_info` containing one nonempty, NUL-free local path is accepted;
- * buffers, custom sinks and remote URIs are not supported.
+ * Accepts only integers, floats, booleans, strings, decimal32/64/128, and day-resolution
+ * timestamps. Nulls, slices, and zero rows are supported; at least one column is required.
+ * The sink must be one nonempty, NUL-free local path, not a buffer, custom sink, or URI.
  *
- * Input is copied to host Arrow in row-bounded chunks (sliced strings are compacted on device),
- * then compressed and encoded on the CPU. This is not a GPU compression API. `stream` orders cuDF
- * staging work; `mr` controls cuDF device staging buffers, not host or Vortex allocations.
- * Scratch allocations inside cuDF slicing and string compaction use the current device resource.
- * No CUDA memory-pool retention policy is changed by this function.
+ * Stages row-bounded host Arrow chunks, compacting sliced strings on device. `stream` orders
+ * staging; `mr` controls device staging buffers, not host/Vortex allocations. Slicing and string
+ * compaction scratch use the current device resource. CUDA pool retention is unchanged.
  *
- * The function blocks until cuDF staging and file finalization complete. It overwrites an existing
- * file and does not guarantee durable storage (no fsync) or atomic replacement. A failed write can
- * leave a partial/invalid file. Input and the supplied resource must remain alive until return.
+ * Blocks through staging and file finalization; input and resource must outlive the call.
+ * Overwrites existing files without atomic replacement or fsync; errors may leave a partial file.
  *
  * @throws cudf::logic_error If options, types or the current device are unsupported
  * @throws cudf::cuda_error If a CUDA operation fails

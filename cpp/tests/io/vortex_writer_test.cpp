@@ -100,8 +100,8 @@ class VortexWriterEnabledTest : public VortexWriterTest {
     if (device != 0) { GTEST_SKIP() << "The Vortex writer currently requires CUDA device 0"; }
   }
 
-  // Writer-only smoke checks, not a decoder or a table-equality assertion. The pinned Vortex
-  // revision d196f601 writes VTXF at both ends. No reader adapter or private FFI handles are used.
+  // Check VTXF at both ends (Vortex d196f601), not decoded table equality.
+  // Uses no reader adapter or private FFI handles.
   void expect_finalized_file(std::string const& file)
   {
     ASSERT_TRUE(std::filesystem::is_regular_file(file));

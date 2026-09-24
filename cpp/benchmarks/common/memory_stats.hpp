@@ -25,11 +25,10 @@ class memory_stats_logger {
   }
 
   /**
-   * @brief Start a fresh measurement interval after all tracked allocations have been released.
+   * @brief Start a fresh measurement interval without replacing the tracked resource.
    *
-   * Callers must release all owners of tracked allocations and synchronize the relevant streams
-   * before calling this function. Keep the resource itself unchanged so clients that captured it
-   * still contribute statistics.
+   * First release all tracked allocation owners and synchronize the relevant streams.
+   * Clients that captured the resource continue contributing statistics.
    *
    * @throws cudf::logic_error if any tracked bytes or allocations remain live.
    */

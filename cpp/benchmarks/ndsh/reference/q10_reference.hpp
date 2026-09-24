@@ -42,9 +42,8 @@ struct q10_reference_result {
 };
 
 /**
- * Setup-only CPU oracle: add_table borrows one complete, non-null projected table per call
- * in generator order, computing on bounded host copies without retaining device views.
- * finish requires all four tables, including empty ones.
+ * add_table borrows one complete projected table per call in generator order, using bounded
+ * host copies without retaining device views. finish requires all four tables, even if empty.
  */
 class q10_reference_builder {
  public:

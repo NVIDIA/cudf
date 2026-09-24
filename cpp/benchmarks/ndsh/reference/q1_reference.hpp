@@ -32,7 +32,6 @@ struct q1_reference_result {
   cudf::size_type matched = 0;
 };
 
-/** CPU-only oracle for the eight projected, non-null generated Q1 columns; outside timed work. */
 inline q1_reference_result q1_cpu_reference(cudf::table_view projected, cuda::stream_ref stream)
 {
   using enum cudf::type_id;

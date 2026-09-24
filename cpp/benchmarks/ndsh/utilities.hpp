@@ -197,12 +197,11 @@ int32_t days_since_epoch(int year, int month, int day);
 /**
  * @brief Generate full named NDS-H tables for benchmark fixture setup, without Parquet conversion.
  *
- * Invoke outside benchmark measurement. The callback borrows the name and table; references and
- * table/column views are valid only during the callback. Each table is released after its callback.
- * Generation uses a scoped managed pool that outlives all generated tables, without changing the
- * current device resource. The callback must complete all uses of the borrowed table before
- * returning. Requested tables are emitted in order: region, nation, supplier, customer, partsupp,
- * orders, part, lineitem. The last three are generated together once if any is requested.
+ * Invoke outside benchmark measurement. The callback must finish all uses of the borrowed name,
+ * table, and derived views before returning; each table is then released. A scoped managed pool
+ * outlives all generated tables without changing the current device resource. Requested tables
+ * are emitted in order: region, nation, supplier, customer, partsupp, orders, part, lineitem.
+ * The last three are generated together once if any is requested.
  *
  * @param scale_factor The scale factor of NDS-H tables to generate
  * @param table_names The tables to generate; empty requests all eight tables

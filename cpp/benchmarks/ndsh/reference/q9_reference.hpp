@@ -49,10 +49,9 @@ inline uint64_t q9_partsupp_key(int32_t supplier, int32_t part)
 }  // namespace detail
 
 /**
- * Setup-only CPU oracle: add_table borrows one complete, non-null projected table per call
- * in generator order, computing on bounded host copies without retaining device views.
- * finish requires all six tables, including empty ones. Duplicate partsupp pairs retain
- * join multiplicity.
+ * add_table borrows one complete projected table per call in generator order, using bounded
+ * host copies without retaining device views. finish requires all six tables, including empty
+ * ones. Duplicate partsupp pairs retain join multiplicity.
  */
 class q9_reference_builder {
  public:

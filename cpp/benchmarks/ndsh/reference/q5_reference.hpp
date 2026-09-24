@@ -32,8 +32,8 @@ struct q5_reference_result {
 };
 
 /**
- * Setup-only CPU oracle: add_table borrows one complete, non-null projected table per call
- * in dependency order, retaining only CPU state. part and partsupp are ignored.
+ * add_table borrows one complete projected table per call in dependency order, retaining
+ * only CPU state. part and partsupp are ignored.
  * finish requires all six query tables, including empty ones.
  */
 class q5_reference_builder {

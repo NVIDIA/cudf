@@ -23,7 +23,6 @@ struct q6_reference_result {
   double revenue          = 0;
 };
 
-// Independent CPU reference for generated, non-null Q6 inputs; never part of timed execution.
 inline q6_reference_result q6_cpu_reference(cudf::table_view projected, cuda::stream_ref stream)
 {
   q6_reference_result result;

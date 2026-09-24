@@ -28,8 +28,9 @@
 
 namespace {
 
+using ndsh::q9::compute_profit;
 using ndsh::q9::engine_type;
-using ndsh::q9::execute_q9;
+using ndsh::q9::load_data;
 using ndsh::q9::q9_projections;
 
 class NdshQ9Test : public cudf::test::BaseFixture {};
@@ -123,12 +124,12 @@ TEST_F(NdshQ9Test, Cases)
       SCOPED_TRACE(::testing::Message{} << "engine=" << static_cast<int32_t>(engine));
       std::unique_ptr<table_with_names> result;
       ASSERT_NO_THROW(
-        result =
-          execute_q9(engine, [&](std::string const& name, std::vector<std::string> const& columns) {
+        result = compute_profit(
+          engine, load_data([&](std::string const& name, std::vector<std::string> const& columns) {
             CUDF_EXPECTS(columns == q9_projections.at(name), "Q9 projection mismatch");
             return std::make_unique<table_with_names>(
               std::make_unique<cudf::table>(tables.at(name)), columns);
-          }));
+          })));
       ASSERT_NO_THROW(ndsh::check_q9_result(test.expected, *result, stream));
     }
   }

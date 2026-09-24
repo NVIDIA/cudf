@@ -28,7 +28,6 @@
 using ndsh::q9::compute_amount;
 using ndsh::q9::compute_profit;
 using ndsh::q9::engine_type;
-using ndsh::q9::execute_q9;
 using ndsh::q9::join_data;
 using ndsh::q9::load_data;
 using ndsh::q9::q9_data;
@@ -210,7 +209,7 @@ struct q9_files {
       q9_tables,
       q9_projections,
       [&](auto&& read, cuda::stream_ref stream) {
-        auto result = execute_q9(engine_type::BINARYOP, read);
+        auto result = compute_profit(engine_type::BINARYOP, load_data(read));
         ndsh::check_q9_result(reference, *result, stream);
       });
   }

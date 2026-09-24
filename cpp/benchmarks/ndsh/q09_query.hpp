@@ -261,15 +261,4 @@ inline std::unique_ptr<table_with_names> compute_profit(
     groupedby_table, {"nation", "o_year"}, {cudf::order::ASCENDING, cudf::order::DESCENDING});
 }
 
-template <typename Read>
-std::unique_ptr<table_with_names> execute_q9(
-  engine_type engine,
-  Read&& read,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref())
-{
-  auto const data = load_data(std::forward<Read>(read));
-  return compute_profit(engine, data, stream, mr);
-}
-
 }  // namespace ndsh::q9

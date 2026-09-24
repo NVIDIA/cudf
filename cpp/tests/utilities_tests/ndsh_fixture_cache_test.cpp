@@ -3,6 +3,13 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+/**
+ * @file ndsh_fixture_cache_test.cpp
+ * @brief CPU-only tests of NDS-H fixture reuse, scale-change eviction, and failure cleanup.
+ *
+ * Fake fixture files verify lifetime and retry behavior, not operating-system cache behavior.
+ */
+
 #include <benchmarks/ndsh/fixture_cache.hpp>
 
 #include <cudf_test/cudf_gtest.hpp>

@@ -5,6 +5,9 @@
 # cmake-format: on
 # =============================================================================
 
+# Build the private reader/writer adapter shared by NDS-H benchmarks and Vortex unit tests.
+# This library has no installed API or runtime packaging.
+
 add_library(NDSH_VORTEX_IO STATIC EXCLUDE_FROM_ALL vortex_io.cpp writer.cpp)
 target_compile_features(NDSH_VORTEX_IO PUBLIC cxx_std_20)
 target_compile_options(NDSH_VORTEX_IO PRIVATE ${CUDF_CXX_FLAGS})

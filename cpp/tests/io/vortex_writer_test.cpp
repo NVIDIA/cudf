@@ -3,6 +3,13 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+/**
+ * @file vortex_writer_test.cpp
+ * @brief Verify Vortex writer validation, destination preservation, and file finalization.
+ *
+ * Smoke checks cover types, chunking, streams, and resources without decoding the output.
+ */
+
 #include <cudf_test/base_fixture.hpp>
 #include <cudf_test/column_wrapper.hpp>
 #include <cudf_test/default_stream.hpp>

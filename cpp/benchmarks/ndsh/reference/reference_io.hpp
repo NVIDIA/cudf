@@ -3,6 +3,12 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+/**
+ * @file reference_io.hpp
+ * @brief Batched device-to-host copies, schema checks, and numeric comparisons for
+ * independent CPU validation of decoded tables and query results outside timed execution.
+ */
+
 #pragma once
 
 #include "ndsh/utilities.hpp"

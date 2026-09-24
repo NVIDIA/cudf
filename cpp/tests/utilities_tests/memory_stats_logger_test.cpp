@@ -3,6 +3,13 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+/**
+ * @file memory_stats_logger_test.cpp
+ * @brief Verify memory-statistics resets preserve the captured resource and restart peak tracking.
+ *
+ * Checks rejection of live allocations, including zero-byte allocations, and upstream restoration.
+ */
+
 #include <benchmarks/common/memory_stats.hpp>
 
 #include <cudf_test/cudf_gtest.hpp>

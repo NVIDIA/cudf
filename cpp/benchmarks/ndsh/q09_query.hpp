@@ -3,6 +3,12 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+/**
+ * @file q09_query.hpp
+ * @brief Shared Q9 execution for benchmarks and integration tests, computing profit by
+ * nation and year with selectable binary-operation, AST, or transform evaluation.
+ */
+
 #pragma once
 
 #include "utilities.hpp"

@@ -3,6 +3,13 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+/**
+ * @file ndsh_q1_test.cpp
+ * @brief Verify NDS-H Q1 date filtering and grouped aggregates against reference results.
+ *
+ * Covers boundary, null, sliced, and empty inputs with post-read and Parquet predicate filtering.
+ */
+
 #include <cudf_test/base_fixture.hpp>
 #include <cudf_test/column_wrapper.hpp>
 #include <cudf_test/cudf_gtest.hpp>

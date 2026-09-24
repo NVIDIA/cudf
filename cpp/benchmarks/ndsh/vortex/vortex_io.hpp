@@ -2,6 +2,13 @@
  * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
+
+/**
+ * @file
+ * @brief Benchmark-private adapter between local Vortex files and owning cuDF tables.
+ * Reuses a GPU reader session and delegates fixture writes to the host-staged CPU writer.
+ */
+
 #pragma once
 
 #include <cudf/io/types.hpp>

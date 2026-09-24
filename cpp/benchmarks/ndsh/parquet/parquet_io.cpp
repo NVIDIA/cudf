@@ -3,6 +3,11 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+/**
+ * @file
+ * @brief Implement NDS-H Parquet projections, predicate pushdown, and fixture/output writes.
+ */
+
 #include "parquet_io.hpp"
 
 #include <benchmarks/common/ndsh_data_generator/ndsh_data_generator.hpp>

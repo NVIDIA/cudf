@@ -3,6 +3,12 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+/**
+ * @file
+ * @brief Reuse one scale factor's NDS-H fixtures across serial benchmark states.
+ * Replacing a scale releases its files and reference data before generating the next fixture.
+ */
+
 #pragma once
 
 #include <map>

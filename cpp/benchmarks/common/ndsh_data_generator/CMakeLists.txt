@@ -5,6 +5,8 @@
 # cmake-format: on
 # =============================================================================
 
+# Share NDS-H table-generation support between benchmarks and standalone query tests.
+
 add_library(
   ndsh_data_generator STATIC ndsh_data_generator.cpp table_helpers.cpp random_column_generator.cu
 )

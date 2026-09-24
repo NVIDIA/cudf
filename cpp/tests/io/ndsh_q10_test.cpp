@@ -3,6 +3,13 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+/**
+ * @file ndsh_q10_test.cpp
+ * @brief Verify NDS-H Q10 returned-item customer revenue and joins against reference results.
+ *
+ * Covers date and return-flag filtering, including nulls, via post-read and Parquet paths.
+ */
+
 #include <cudf_test/base_fixture.hpp>
 #include <cudf_test/column_wrapper.hpp>
 #include <cudf_test/cudf_gtest.hpp>

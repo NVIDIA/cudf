@@ -3,6 +3,13 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+/**
+ * @file ndsh_q5_test.cpp
+ * @brief Verify NDS-H Q5 regional revenue joins and date predicates against reference results.
+ *
+ * Exercises post-read and Parquet predicate filtering with matching, rejected, and empty inputs.
+ */
+
 #include <cudf_test/base_fixture.hpp>
 #include <cudf_test/column_wrapper.hpp>
 #include <cudf_test/cudf_gtest.hpp>

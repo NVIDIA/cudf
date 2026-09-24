@@ -3,6 +3,13 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+/**
+ * @file vortex_io_test.cpp
+ * @brief Verify Vortex/cuDF round trips, projections, metadata, and owning read results.
+ *
+ * Covers slices, chunking, bounded staging, stream completion, recovery, and concurrent reads.
+ */
+
 #include <cudf_test/base_fixture.hpp>
 #include <cudf_test/column_utilities.hpp>
 #include <cudf_test/file_utilities.hpp>

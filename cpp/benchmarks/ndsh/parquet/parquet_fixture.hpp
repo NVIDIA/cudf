@@ -3,6 +3,12 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+/**
+ * @file
+ * @brief Exercise Parquet predicate pushdown on synthetic NDS-H query inputs.
+ * Uses an in-memory encoded fixture so correctness checks need no persistent dataset.
+ */
+
 #pragma once
 
 #include "parquet_io.hpp"

@@ -3,6 +3,13 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+/**
+ * @file ndsh_q9_test.cpp
+ * @brief Verify NDS-H Q9 nation/year profit aggregation across expression engines.
+ *
+ * Checks reference results for unique and duplicate partsupp keys, rejected rows, and empty inputs.
+ */
+
 #include <cudf_test/base_fixture.hpp>
 #include <cudf_test/column_wrapper.hpp>
 #include <cudf_test/cudf_gtest.hpp>

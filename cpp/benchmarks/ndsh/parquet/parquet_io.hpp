@@ -3,6 +3,11 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+/**
+ * @file
+ * @brief Parquet I/O and generated data sources for NDS-H benchmarks and query tests.
+ */
+
 #pragma once
 
 #include "io/cuio_common.hpp"

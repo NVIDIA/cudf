@@ -3,6 +3,12 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+/**
+ * @file
+ * @brief Create local CUDA-flat Vortex fixtures from GPU tables using CPU encoding.
+ * Validates writer options, stages host Arrow chunks, and finalizes the file through Vortex's FFI.
+ */
+
 #include "writer.hpp"
 
 #include "../../common/nvtx_ranges.hpp"

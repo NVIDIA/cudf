@@ -3,6 +3,12 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+/**
+ * @file
+ * @brief Shared local-file setup and timing for Parquet/Vortex NDS-H comparisons.
+ * Provides paired fixtures, projected and concurrent reads, validation, and OS page-cache control.
+ */
+
 #pragma once
 
 #include "fixture_cache.hpp"

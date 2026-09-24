@@ -3,6 +3,12 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+/**
+ * @file q10_reference.hpp
+ * @brief Independent CPU joins and output checks for Q10 customer revenue and attributes,
+ * validating query results from generated, non-null inputs outside timed execution.
+ */
+
 #pragma once
 
 #include "reference_io.hpp"

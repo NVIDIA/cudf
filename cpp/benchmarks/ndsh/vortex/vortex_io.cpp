@@ -3,6 +3,12 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+/**
+ * @file
+ * @brief Materialize Vortex GPU scans as owning cuDF tables for NDS-H comparisons.
+ * Keeps imported Arrow Device batches alive through consumer-stream completion.
+ */
+
 #include "vortex_io.hpp"
 
 #include "../../common/nvtx_ranges.hpp"

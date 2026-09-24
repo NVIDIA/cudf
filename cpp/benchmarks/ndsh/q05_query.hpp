@@ -3,6 +3,12 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+/**
+ * @file q05_query.hpp
+ * @brief Shared Q5 execution for benchmarks and integration tests, computing revenue by
+ * nation for Asian suppliers with caller-supplied input and result handling.
+ */
+
 #pragma once
 
 #include "utilities.hpp"

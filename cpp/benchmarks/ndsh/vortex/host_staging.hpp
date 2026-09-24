@@ -3,6 +3,12 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+/**
+ * @file
+ * @brief Stage GPU table chunks as host Arrow input for the private Vortex CPU writer.
+ * Compacts sliced strings to avoid copying the parent column's entire character buffer.
+ */
+
 #pragma once
 
 #include <cudf/interop.hpp>

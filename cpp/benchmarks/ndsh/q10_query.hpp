@@ -3,6 +3,12 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+/**
+ * @file q10_query.hpp
+ * @brief Shared Q10 execution for benchmarks and integration tests, computing customer
+ * revenue from returned items with caller-supplied input and result handling.
+ */
+
 #pragma once
 
 #include "utilities.hpp"

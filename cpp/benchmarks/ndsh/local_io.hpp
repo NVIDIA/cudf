@@ -211,25 +211,6 @@ inline void check_projection(cudf::table_view expected,
   }
 }
 
-// Setup only: buffered fixture reads were checked against the generated projections.
-// For concurrent direct reads, also compare against a sequential read in the same mode.
-inline void check_local_projection(std::string const& path,
-                                   bool use_vortex,
-                                   vortex_io const& io,
-                                   std::vector<std::string> const& columns,
-                                   table_with_names const& actual,
-                                   bool direct_io = false)
-{
-  {
-    auto expected = read_local_file(path, use_vortex, io, columns, direct_io);
-    check_projection(expected->table(), actual, columns);
-  }
-  if (direct_io) {
-    auto expected = read_local_file(path, use_vortex, io, columns, false);
-    check_projection(expected->table(), actual, columns);
-  }
-}
-
 // Construct after fixture generation; the logger must outlive the I/O context that borrows it.
 class local_benchmark {
  public:
@@ -250,16 +231,20 @@ class local_benchmark {
                            options_.direct_io);
   }
 
+  // Compare concurrent reads with sequential reads in the same mode, and direct with buffered.
+  // Buffered fixture reads were checked against the generated projections during setup.
   void check_projection(std::string const& name,
                         std::vector<std::string> const& columns,
                         table_with_names const& actual) const
   {
-    check_local_projection(files_.path(name, options_.use_vortex),
-                           options_.use_vortex,
-                           io_,
-                           columns,
-                           actual,
-                           options_.direct_io);
+    {
+      auto expected = read(name, columns);
+      ndsh::check_projection(expected->table(), actual, columns);
+    }
+    if (options_.direct_io) {
+      auto expected = read_local_file(files_.path(name, true), true, io_, columns);
+      ndsh::check_projection(expected->table(), actual, columns);
+    }
   }
 
   // Both callbacks return owners. Keep them alive through consumer synchronization, then release
@@ -307,18 +292,6 @@ class local_benchmark {
   vortex_io io_{stream.get()};
 };
 
-inline void check_file_projections(local_table_files const& files,
-                                   std::string const& name,
-                                   cudf::table_view expected,
-                                   std::vector<std::string> const& columns,
-                                   vortex_io const& io)
-{
-  for (bool use_vortex : {false, true}) {
-    auto input = read_local_file(files.path(name, use_vortex), use_vortex, io, columns);
-    check_projection(expected, *input, columns);
-  }
-}
-
 // Setup only: the generator retains each full table until its callback has drained both readers.
 // Reference dimensions are released before reading query results, just as the generated owners are.
 template <typename Builder, typename Reference, typename Validate>
@@ -342,7 +315,10 @@ void make_reference_files(double scale_factor,
         tables.write(name, generated, io);
         auto const projected = generated.select(columns);
         builder.add_table(name, projected, stream);
-        check_file_projections(tables, name, projected, columns, io);
+        for (bool use_vortex : {false, true}) {
+          auto input = read_local_file(tables.path(name, use_vortex), use_vortex, io, columns);
+          check_projection(projected, *input, columns);
+        }
         CUDF_CUDA_TRY(cudaDeviceSynchronize());
       });
     reference = builder.finish();

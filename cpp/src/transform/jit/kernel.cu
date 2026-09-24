@@ -5,6 +5,7 @@
 
 #include <cudf/column/column_device_view_base.cuh>
 #include <cudf/detail/row_ir/opcode.hpp>
+#include <cudf/detail/utilities/cuda.cuh>
 #include <cudf/detail/utilities/grid_1d.cuh>
 #include <cudf/errc.hpp>
 #include <cudf/strings/string_view.cuh>
@@ -68,7 +69,12 @@ __device__ void transform_kernel(size_type row_size,
   auto stride       = detail::grid_1d::grid_stride();
   auto thread_error = errc::SUCCESS;
 
-  for (auto row = start; row < row_size; row += stride) {
+  // Keep every lane in a warp on the same loop iteration when writing validity.
+  auto const lane = threadIdx.x % cudf::detail::warp_size;
+  for (auto warp_row = start - lane; warp_row < row_size; warp_row += stride) {
+    auto const row         = warp_row + lane;
+    auto const active_mask = __ballot_sync(0xffff'ffffu, row < row_size);
+    if (row >= row_size) { continue; }
     auto operation = [&]<typename Args>(Args args) {
       // TODO: static assert invocable
       auto func = [&](auto... a) {
@@ -108,8 +114,6 @@ __device__ void transform_kernel(size_type row_size,
       thread_error = cuda::std::max(thread_error, row_error);
 
     } else {
-      auto active_mask = __ballot_sync(__activemask(), row < row_size);
-
       auto ins = InputAccessors::map(
         [&]<typename... A>() { return cuda::std::tuple{A::nullable_element(input_cols, row)...}; });
 

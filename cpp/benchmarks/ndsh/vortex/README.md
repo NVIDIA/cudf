@@ -77,10 +77,8 @@ With `CUDF_WITH_VORTEX=ON`, the five `NDSH_Q*_NVBENCH` executables above are
 CUB/nvcomp shared libraries (`.so` files) using absolute Cargo build paths, so
 these executables are not relocatable. Run them from the original build tree and
 retain the Vortex/Cargo build artifacts at their original paths. This restriction
-also applies to the legacy benchmark registrations that share these executables,
-not just the local-file comparisons. With `CUDF_WITH_VORTEX=OFF`, the existing
-NDSH install rules remain available; unrelated benchmarks retain their install
-rules in either mode.
+applies to all benchmark registrations in these executables. With
+`CUDF_WITH_VORTEX=OFF`, the NDS-H executables are installable.
 
 ### Benchmark-private writer
 
@@ -133,11 +131,9 @@ Both require only `BUILD_TESTS=ON`; neither requires benchmarks or Vortex.
 The cache test checks fixture reuse and eviction; it does not validate
 OS page-cache behavior for cold-I/O measurements.
 
-All four test targets retain their names and place executables under the build
-directory's `gtests/`, not `benchmarks/`. Their target definitions and all test
-registrations live in [`cpp/tests/CMakeLists.txt`](../../../tests/CMakeLists.txt).
-Existing benchmark libraries and executables are unchanged; query executables
-remain under `benchmarks/`.
+Test executables are built under `gtests/` and query benchmarks under `benchmarks/`.
+Test targets and CTest registrations are defined in
+[`cpp/tests/CMakeLists.txt`](../../../tests/CMakeLists.txt).
 
 The adapter/query smoke tests are `NDSH_VORTEX_IO_TEST` and
 `NDSH_Q{01,05,06,09,10}_VORTEX_SMOKE`. They carry the `ndsh`, `vortex`, and `smoke`
@@ -157,11 +153,9 @@ are not performance validation. The build-tree-only restriction still applies.
 
 ### Dependency pin
 
-The loader pins `d196f6010777ba55658133782ad77151307e733a`, the latest upstream
-Vortex `develop` commit fetched on 2026-09-23. This merged revision contains the
-projected-scan, bitmap-correctness, embedding, and pipelined-read prerequisites.
-The immutable pin keeps builds reproducible; it is not a release or a claim of
-build/runtime validation of this cuDF branch.
+The loader pins Vortex revision `d196f6010777ba55658133782ad77151307e733a` for
+reproducible builds. It provides projected scans, bitmap correctness, embedding
+support, and pipelined reads.
 
 Safe host-export failure handling requires a separate cuDF Arrow cleanup fix,
 not included in this integration. Without it, an export failure can release host
@@ -175,7 +169,32 @@ concatenation, so explicit-size adapter tests use compatible physical boundaries
 
 ## Comparison contract
 
-See the shared [Parquet/Vortex comparison contract](../README.md#comparison-contract).
+- Both formats use matched full-table fixtures and identical ordered projections.
+  Local query comparisons apply filters in cuDF after reading. Native
+  Parquet-pushdown/output benchmarks are separate measurements.
+- Q5/Q9/Q10 overlap independent Vortex table reads, join all workers before query
+  execution, and check against sequential reads during setup. Parquet table reads
+  remain sequential. This concurrency difference is part of the comparison.
+- Vortex reads include GPU decoding, Arrow Device import, and an owning cuDF
+  materialization. Writes use CPU compression via host Arrow, outside timing.
+- Cache state and I/O mode are independent axes. `cache=warm` performs a read-only
+  warmup; `cache=cold` evicts the selected files from the OS page cache and requires
+  zero resident pages before each timed iteration. This does not flush every cache.
+- `io=buffered` is the default for both formats, including cold states. Set
+  `KVIKIO_COMPAT_MODE=ON` for matched buffered comparisons: Parquet uses libcudf's
+  configurable KvikIO backend, which the `io` axis does not override.
+- Explicit `io=direct` runs support Vortex only; Parquet states are skipped before
+  fixture generation. Vortex direct I/O bypasses the OS page cache for data reads;
+  metadata remains buffered. `cache=warm,io=direct` still performs a warmup, but
+  does not make subsequent data reads page-cache hits. Report direct Vortex runs
+  separately from matched buffered comparisons.
+- Compare CPU wall times, including reads, optional query work, owner destruction,
+  and device synchronization. Generation, writes, correctness checks, and eviction
+  are outside timing. RMM statistics do not cover Vortex CUDA allocations.
+
+Fixtures retain only the current scale factor per query. Switching scale factors
+removes the preceding fixture's files and host reference results before generating
+the replacement; revisiting an evicted scale regenerates it outside timing.
 
 ## Correctness and limitations
 
@@ -184,12 +203,11 @@ projection, metadata, host string staging, owning results, and stream completion
 Query setup checks projected tables and independent CPU references, with synthetic
 boundary/null/duplicate-join cases. These checks are outside benchmark timing.
 
-The original cuDF data generator is unchanged. It can produce empty Q6/Q10 results
-and sparse low-scale joins; report match counts and do not treat empty queries as
-representative full-query performance. Generator corrections are a separate change.
+The cuDF data generator can produce empty Q6/Q10 results and sparse low-scale
+joins; report match counts and do not treat empty queries as representative
+full-query performance.
 
 The adapter currently supports local files, device 0, and flat typed columns. It
 retains up to 8 GiB in the CUDA default memory pool; peak memory also includes
 retained Vortex batches and the owning cuDF result. Concurrent reads increase the
-number of live tables. No performance results from the earlier external harness
-validate this upstream branch; fresh builds and GPU runs are still required.
+number of live tables.

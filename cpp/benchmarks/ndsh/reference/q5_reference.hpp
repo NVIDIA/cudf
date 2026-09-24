@@ -33,14 +33,13 @@ struct q5_reference_result {
 
 /**
  * add_table borrows one complete projected table per call in dependency order, retaining
- * only CPU state. part and partsupp are ignored.
+ * only CPU state.
  * finish requires all six query tables, including empty ones.
  */
 class q5_reference_builder {
  public:
   void add_table(std::string const& name, cudf::table_view projected, cuda::stream_ref stream)
   {
-    if (name == "part" || name == "partsupp") return;
     using enum cudf::type_id;
     detail::reference_input_schema(projected,
                                    name,

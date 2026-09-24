@@ -106,9 +106,8 @@ class q10_reference_builder {
           auto const order = orders_.find(orders[i]);
           if (order == orders_.end()) continue;
           ++result_.matched;
-          auto const customer = customers_.find(order->second);
-          CUDF_EXPECTS(customer != customers_.end(), "Missing Q10 customer for qualifying order");
-          auto [result, inserted] = result_.customers.try_emplace(order->second, customer->second);
+          auto [result, inserted] =
+            result_.customers.try_emplace(order->second, customers_.at(order->second));
           result->second.revenue += prices[i] * (1.0 - discounts[i]);
         }
       }

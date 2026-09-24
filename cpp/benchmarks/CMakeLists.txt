@@ -57,26 +57,26 @@ add_custom_command(
 # setting all of the associated properties and linking to build the benchmark. The optional
 # NO_INSTALL flag restricts a benchmark to the build tree.
 function(ConfigureNVBench CMAKE_BENCH_NAME)
-  cmake_parse_arguments(PARSE_ARGV 1 NVBENCH "NO_INSTALL" "" "")
-  add_executable(${CMAKE_BENCH_NAME} ${NVBENCH_UNPARSED_ARGUMENTS} fixture/nvbench_main.cpp)
-  set_target_properties(
+    cmake_parse_arguments(PARSE_ARGV 1 NVBENCH "NO_INSTALL" "" "")
+    add_executable(${CMAKE_BENCH_NAME} ${NVBENCH_UNPARSED_ARGUMENTS} fixture/nvbench_main.cpp)
+    set_target_properties(
     ${CMAKE_BENCH_NAME}
     PROPERTIES RUNTIME_OUTPUT_DIRECTORY "$<BUILD_INTERFACE:${CUDF_BINARY_DIR}/benchmarks>"
                INSTALL_RPATH "\$ORIGIN/../../../lib"
   )
-  target_link_libraries(
+    target_link_libraries(
     ${CMAKE_BENCH_NAME}
     PRIVATE cudf_benchmark_common ndsh_data_generator cudf_datagen nvbench::nvbench
             $<TARGET_NAME_IF_EXISTS:conda_env> cudf::cudftestutil_objects
   )
-  if(NOT NVBENCH_NO_INSTALL)
-    install(
+    if(NOT NVBENCH_NO_INSTALL)
+        install(
       TARGETS ${CMAKE_BENCH_NAME}
       COMPONENT testing
       DESTINATION bin/benchmarks/libcudf
       EXCLUDE_FROM_ALL
     )
-  endif()
+    endif()
 endfunction()
 
 # ##################################################################################################
@@ -107,20 +107,21 @@ ConfigureNVBench(TRANSPOSE_NVBENCH transpose/transpose.cpp)
 
 set(ndsh_benchmark_options)
 if(CUDF_WITH_VORTEX)
-  # Pinned Vortex loads CUB/nvcomp libraries from absolute Cargo build paths.
-  set(ndsh_benchmark_options NO_INSTALL)
+    # Pinned Vortex loads CUB/nvcomp libraries from absolute Cargo build paths.
+    set(ndsh_benchmark_options NO_INSTALL)
 endif()
+
 foreach(query IN ITEMS 01 05 06 09 10)
-  ConfigureNVBench(
+    ConfigureNVBench(
     NDSH_Q${query}_NVBENCH ${ndsh_benchmark_options} ndsh/q${query}.cpp ndsh/utilities.cpp
     ndsh/parquet/parquet_io.cpp
   )
-  if(NOT CUDF_WITH_VORTEX)
-    continue()
-  endif()
+    if(NOT CUDF_WITH_VORTEX)
+        continue()
+    endif()
 
-  target_link_libraries(NDSH_Q${query}_NVBENCH PRIVATE NDSH_VORTEX_IO kvikio::kvikio)
-  target_compile_definitions(NDSH_Q${query}_NVBENCH PRIVATE CUDF_WITH_VORTEX=1)
+    target_link_libraries(NDSH_Q${query}_NVBENCH PRIVATE NDSH_VORTEX_IO kvikio::kvikio)
+    target_compile_definitions(NDSH_Q${query}_NVBENCH PRIVATE CUDF_WITH_VORTEX=1)
 endforeach()
 unset(ndsh_benchmark_options)
 

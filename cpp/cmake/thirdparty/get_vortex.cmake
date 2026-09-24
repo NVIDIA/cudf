@@ -10,7 +10,7 @@
 # Only its C++/Rust FFI library is built; Vortex tests and examples are disabled.
 
 if(NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
-  message(FATAL_ERROR "CUDF_WITH_VORTEX requires Linux and a CUDA toolkit")
+    message(FATAL_ERROR "CUDF_WITH_VORTEX requires Linux and a CUDA toolkit")
 endif()
 
 block()

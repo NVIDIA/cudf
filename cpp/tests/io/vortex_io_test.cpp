@@ -140,16 +140,6 @@ struct host_table {
   nanoarrow::UniqueArray array;
 };
 
-int decimal_bitwidth(ArrowType type)
-{
-  switch (type) {
-    case NANOARROW_TYPE_DECIMAL32: return 32;
-    case NANOARROW_TYPE_DECIMAL64: return 64;
-    case NANOARROW_TYPE_DECIMAL128: return 128;
-    default: throw std::runtime_error("Not a supported decimal type");
-  }
-}
-
 template <typename T>
 int append_signed(ArrowArray* array, int64_t row)
 {
@@ -199,7 +189,10 @@ int append_fixture_value(ArrowArray* array, column_spec const& spec, int64_t row
     case NANOARROW_TYPE_DECIMAL64:
     case NANOARROW_TYPE_DECIMAL128: {
       ArrowDecimal value;
-      ArrowDecimalInit(&value, decimal_bitwidth(spec.arrow_type), spec.precision, spec.arrow_scale);
+      ArrowDecimalInit(&value,
+                       static_cast<int32_t>(8 * cudf::size_of(cudf::data_type{spec.cudf_type})),
+                       spec.precision,
+                       spec.arrow_scale);
       if (spec.arrow_type == NANOARROW_TYPE_DECIMAL128 && row % 7 < 2) {
         NANOARROW_THROW_NOT_OK(ArrowDecimalSetDigits(
           &value,
@@ -285,18 +278,6 @@ void check_table(cudf::io::table_with_metadata const& actual,
   ASSERT_EQ(actual.tbl->num_columns(), static_cast<cudf::size_type>(count));
   ASSERT_EQ(actual.metadata.schema_info.size(), count);
   auto const view = actual.tbl->view();
-  for (std::size_t c = 0; c < count; ++c) {
-    auto const& spec   = columns[selected.empty() ? c : selected[c]];
-    auto const& column = view.column(static_cast<cudf::size_type>(c));
-    SCOPED_TRACE(spec.name);
-    ASSERT_EQ(column.type().id(), spec.cudf_type);
-    if (spec.precision != 0) { EXPECT_EQ(column.type().scale(), -spec.arrow_scale); }
-    auto const name = generated_names ? "_col" + std::to_string(selected.empty() ? c : selected[c])
-                                      : std::string{spec.name};
-    EXPECT_EQ(actual.metadata.schema_info[c].name, name);
-    EXPECT_EQ(column.null_count(), expected.array->children[c]->null_count);
-  }
-
   host_buffer_fence fence{stream};
   auto expected_table =
     cudf::from_arrow(expected.schema.get(), expected.array.get(), cuda::stream_ref{stream});
@@ -313,9 +294,17 @@ void check_table(cudf::io::table_with_metadata const& actual,
                              {column.child_begin(), column.child_end()}};
   };
   for (cudf::size_type c = 0; c < view.num_columns(); ++c) {
-    SCOPED_TRACE(columns[selected.empty() ? c : selected[c]].name);
+    auto const& spec   = columns[selected.empty() ? c : selected[c]];
+    auto const& column = view.column(c);
+    SCOPED_TRACE(spec.name);
+    ASSERT_EQ(column.type().id(), spec.cudf_type);
+    if (spec.precision != 0) { EXPECT_EQ(column.type().scale(), -spec.arrow_scale); }
+    auto const name = generated_names ? "_col" + std::to_string(selected.empty() ? c : selected[c])
+                                      : std::string{spec.name};
+    EXPECT_EQ(actual.metadata.schema_info[c].name, name);
+    EXPECT_EQ(column.null_count(), expected.array->children[c]->null_count);
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(without_all_valid_mask(expected_table->view().column(c)),
-                                   without_all_valid_mask(view.column(c)),
+                                   without_all_valid_mask(column),
                                    cudf::test::debug_output_level::FIRST_ERROR,
                                    cuda::stream_ref{stream});
   }

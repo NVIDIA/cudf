@@ -155,6 +155,70 @@ TEST_P(JsonReaderTest, ReadCompleteFiles)
   CUDF_TEST_EXPECT_TABLES_EQUIVALENT(result.tbl->view(), expected_result->view());
 }
 
+TEST_P(JsonReaderTest, ByteRange_SingleSource_UTF8)
+{
+  cudf::io::compression_type const comptype = GetParam();
+
+  // Non-ASCII UTF-8 in string values and field names.
+  // Byte-range splits may land inside multi-byte UTF-8 sequences; the chunked reader
+  // must handle this correctly.
+  std::string const json_string = R"({"name": "résumé", "val": 1})"
+                                  "\n"
+                                  R"({"name": "日本語", "val": 2})"
+                                  "\n"
+                                  R"({"name": "emoji: 😀", "val": 3})"
+                                  "\n"
+                                  R"({"name": "café ☕ 𝄞", "val": 4})"
+                                  "\n";
+
+  std::vector<std::uint8_t> cdata;
+  if (comptype != cudf::io::compression_type::NONE) {
+    cdata = cudf::io::detail::compress(
+      comptype,
+      cudf::host_span<uint8_t const>(reinterpret_cast<uint8_t const*>(json_string.data()),
+                                     json_string.size()));
+  } else
+    cdata = std::vector<uint8_t>(
+      reinterpret_cast<uint8_t const*>(json_string.data()),
+      reinterpret_cast<uint8_t const*>(json_string.data()) + json_string.size());
+
+  cudf::io::json_reader_options json_lines_options =
+    cudf::io::json_reader_options::builder(
+      cudf::io::source_info{cudf::host_span<std::byte const>{
+        reinterpret_cast<std::byte const*>(json_string.c_str()), json_string.size()}})
+      .compression(cudf::io::compression_type::NONE)
+      .lines(true);
+  cudf::io::json_reader_options cjson_lines_options =
+    cudf::io::json_reader_options::builder(
+      cudf::io::source_info{cudf::host_span<uint8_t>(cdata.data(), cdata.size())})
+      .compression(comptype)
+      .lines(true);
+
+  cudf::io::table_with_metadata current_reader_table = cudf::io::read_json(cjson_lines_options);
+
+  auto datasources  = cudf::io::datasource::create(json_lines_options.get_source().host_buffers());
+  auto cdatasources = cudf::io::datasource::create(cjson_lines_options.get_source().host_buffers());
+
+  // Chunk sizes chosen to hit mid-character byte boundaries in multi-byte UTF-8 sequences
+  for (auto chunk_size : {7, 10, 15, 20, 30, 40, 50, 80, 100}) {
+    auto const tables = split_byte_range_reading(datasources,
+                                                 cdatasources,
+                                                 json_lines_options,
+                                                 cjson_lines_options,
+                                                 chunk_size,
+                                                 cudf::get_default_stream(),
+                                                 cudf::get_current_device_resource_ref());
+
+    auto table_views = std::vector<cudf::table_view>(tables.size());
+    std::transform(tables.begin(), tables.end(), table_views.begin(), [](auto& table) {
+      return table.tbl->view();
+    });
+    auto result = cudf::concatenate(table_views);
+
+    CUDF_TEST_EXPECT_TABLES_EQUIVALENT(current_reader_table.tbl->view(), result->view());
+  }
+}
+
 TEST_P(JsonReaderTest, ByteRange_MultiSource)
 {
   cudf::io::compression_type const comptype = GetParam();
@@ -229,6 +293,85 @@ TEST_P(JsonReaderTest, ByteRange_MultiSource)
 
     // Verify that the data read via chunked reader matches the data read via nested JSON reader
     // cannot use EQUAL due to concatenate removing null mask
+    CUDF_TEST_EXPECT_TABLES_EQUIVALENT(current_reader_table.tbl->view(), result->view());
+  }
+}
+
+TEST_P(JsonReaderTest, ByteRange_MultiSource_UTF8)
+{
+  cudf::io::compression_type const comptype = GetParam();
+
+  // Multi-source byte-range reading with non-ASCII UTF-8 content.
+  // Each source file contains the same UTF-8-rich JSON lines; byte-range splits
+  // across multiple sources may land inside multi-byte sequences.
+  std::string const json_string = R"({"città": "München", "id": 1})"
+                                  "\n"
+                                  R"({"città": "Zürich", "id": 2})"
+                                  "\n"
+                                  R"({"città": "東京", "id": 3})"
+                                  "\n"
+                                  R"({"città": "São Paulo", "id": 4})"
+                                  "\n";
+
+  std::vector<std::uint8_t> cdata;
+  if (comptype != cudf::io::compression_type::NONE) {
+    cdata = cudf::io::detail::compress(
+      comptype,
+      cudf::host_span<uint8_t const>(reinterpret_cast<uint8_t const*>(json_string.data()),
+                                     json_string.size()));
+  } else
+    cdata = std::vector<uint8_t>(
+      reinterpret_cast<uint8_t const*>(json_string.data()),
+      reinterpret_cast<uint8_t const*>(json_string.data()) + json_string.size());
+
+  auto cfilename = temp_env->get_temp_dir() + "cByteRangeMultiSourceUTF8.json";
+  {
+    std::ofstream outfile(cfilename, std::ofstream::out);
+    std::copy(cdata.begin(), cdata.end(), std::ostreambuf_iterator<char>(outfile));
+  }
+
+  constexpr int num_sources = 5;
+  std::vector<std::string> cfilepaths(num_sources, cfilename);
+  std::vector<cudf::host_span<char const>> hostbufs(
+    num_sources,
+    cudf::host_span<char const>(reinterpret_cast<char const*>(json_string.data()),
+                                json_string.size()));
+
+  cudf::io::json_reader_options json_lines_options =
+    cudf::io::json_reader_options::builder(
+      cudf::io::source_info{
+        cudf::host_span<cudf::host_span<char const>>(hostbufs.data(), hostbufs.size())})
+      .compression(cudf::io::compression_type::NONE)
+      .lines(true);
+  cudf::io::json_reader_options cjson_lines_options =
+    cudf::io::json_reader_options::builder(cudf::io::source_info{cfilepaths})
+      .lines(true)
+      .compression(comptype)
+      .recovery_mode(cudf::io::json_recovery_mode_t::FAIL);
+
+  cudf::io::table_with_metadata current_reader_table = cudf::io::read_json(cjson_lines_options);
+
+  std::vector<std::unique_ptr<cudf::io::datasource>> cdatasources;
+  for (auto& fp : cfilepaths) {
+    cdatasources.emplace_back(cudf::io::datasource::create(fp));
+  }
+  auto datasources = cudf::io::datasource::create(json_lines_options.get_source().host_buffers());
+
+  for (auto chunk_size : {7, 10, 15, 20, 40, 50, 100, 200, 500, 1000}) {
+    auto const tables = split_byte_range_reading(datasources,
+                                                 cdatasources,
+                                                 json_lines_options,
+                                                 cjson_lines_options,
+                                                 chunk_size,
+                                                 cudf::get_default_stream(),
+                                                 cudf::get_current_device_resource_ref());
+
+    auto table_views = std::vector<cudf::table_view>(tables.size());
+    std::transform(tables.begin(), tables.end(), table_views.begin(), [](auto& table) {
+      return table.tbl->view();
+    });
+    auto result = cudf::concatenate(table_views);
+
     CUDF_TEST_EXPECT_TABLES_EQUIVALENT(current_reader_table.tbl->view(), result->view());
   }
 }

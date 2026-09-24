@@ -5,13 +5,14 @@
 
 #include "vortex_io.hpp"
 
+#include "../../common/nvtx_ranges.hpp"
 #include "writer.hpp"
 
 #include <cudf/concatenate.hpp>
 #include <cudf/interop.hpp>
+#include <cudf/utilities/error.hpp>
 
 #include <cuda/stream_ref>
-#include <nvtx3/nvtx3.hpp>
 
 #include <nanoarrow/nanoarrow.hpp>
 #include <nanoarrow/nanoarrow_device.hpp>
@@ -36,17 +37,10 @@ namespace {
 
 using session_ptr = std::unique_ptr<vx_session, decltype(&vx_session_free)>;
 
-void check_cuda(cudaError_t status)
-{
-  if (status != cudaSuccess) {
-    throw std::runtime_error(std::string{"Vortex I/O CUDA error: "} + cudaGetErrorString(status));
-  }
-}
-
 void check_device()
 {
   int device = -1;
-  check_cuda(cudaGetDevice(&device));
+  CUDF_CUDA_TRY(cudaGetDevice(&device));
   if (device != 0) {
     throw std::invalid_argument("Vortex benchmark I/O currently requires CUDA device 0");
   }
@@ -56,8 +50,8 @@ void retain_vortex_cuda_pool_memory()
 {
   std::uint64_t release_threshold = 8ULL << 30;
   cudaMemPool_t pool{};
-  check_cuda(cudaDeviceGetMemPool(&pool, 0));
-  check_cuda(cudaMemPoolSetAttribute(pool, cudaMemPoolAttrReleaseThreshold, &release_threshold));
+  CUDF_CUDA_TRY(cudaDeviceGetMemPool(&pool, 0));
+  CUDF_CUDA_TRY(cudaMemPoolSetAttribute(pool, cudaMemPoolAttrReleaseThreshold, &release_threshold));
 }
 
 vx_view path_view(std::string const& path)
@@ -89,7 +83,7 @@ class stream_drain {
   }
   void wait()
   {
-    check_cuda(cudaStreamSynchronize(stream_));
+    CUDF_CUDA_TRY(cudaStreamSynchronize(stream_));
     pending_ = false;
   }
 
@@ -120,11 +114,6 @@ struct device_batch {
   device_batch& operator=(device_batch&&) = delete;
 };
 
-}  // namespace
-
-// Implementation details with external linkage for focused tests, not public adapter API.
-namespace detail {
-
 void check_flat_schema(ArrowSchema const& schema)
 {
   if (!schema.format || std::string_view{schema.format} != "+s" || schema.n_children < 0 ||
@@ -142,10 +131,6 @@ void check_flat_schema(ArrowSchema const& schema)
     }
   }
 }
-
-}  // namespace detail
-
-namespace {
 
 std::unique_ptr<cudf::table> empty_table(ArrowSchema const& schema,
                                          cudaStream_t stream,
@@ -175,7 +160,7 @@ struct vortex_io::impl {
     retain_vortex_cuda_pool_memory();
     // Validate the supplied consumer stream before creating Vortex's independent stream pool.
     unsigned int flags = 0;
-    check_cuda(cudaStreamGetFlags(stream, &flags));
+    CUDF_CUDA_TRY(cudaStreamGetFlags(stream, &flags));
     vx_error* error = nullptr;
     session.reset(vx_cuda_session_new(&error));
     check_error(error, "create Vortex CUDA session");
@@ -205,7 +190,7 @@ cudf::io::table_with_metadata vortex_io::read_vortex(std::string const& path,
                                                      std::vector<std::string> const& columns,
                                                      bool direct_io) const
 {
-  nvtx3::scoped_range read_range{"vortex.read"};
+  cudf::benchmark::scoped_range read_range{"vortex.read"};
   check_device();
   auto const file_path = path_view(path);
   if (batch_rows > static_cast<std::size_t>(std::numeric_limits<cudf::size_type>::max())) {
@@ -225,7 +210,7 @@ cudf::io::table_with_metadata vortex_io::read_vortex(std::string const& path,
   // FFI copies names during the call; neither the views nor their bytes escape.
   int status;
   {
-    nvtx3::scoped_range range{"vortex.scan_open"};
+    cudf::benchmark::scoped_range range{"vortex.scan_open"};
     status = vx_cuda_scan_path_arrow_device_stream_projected(impl_->session.get(),
                                                              file_path,
                                                              &options,
@@ -239,7 +224,7 @@ cudf::io::table_with_metadata vortex_io::read_vortex(std::string const& path,
 
   nanoarrow::UniqueSchema schema;
   input.check(input.value->get_schema(input.value.get(), schema.get()), operation);
-  detail::check_flat_schema(*schema.get());
+  check_flat_schema(*schema.get());
   cudf::io::table_with_metadata result;
   for (int64_t i = 0; i < schema->n_children; ++i) {
     auto& info        = result.metadata.schema_info.emplace_back();
@@ -255,7 +240,7 @@ cudf::io::table_with_metadata vortex_io::read_vortex(std::string const& path,
     batches.emplace_back();
     auto& batch = batches.back();
     {
-      nvtx3::scoped_range range{"vortex.get_next"};
+      cudf::benchmark::scoped_range range{"vortex.get_next"};
       input.check(input.value->get_next(input.value.get(), batch.value.get()), operation);
     }
     if (!batch.value->array.release) {
@@ -271,7 +256,7 @@ cudf::io::table_with_metadata vortex_io::read_vortex(std::string const& path,
     }
     rows += count;
     {
-      nvtx3::scoped_range range{"vortex.arrow_device_import"};
+      cudf::benchmark::scoped_range range{"vortex.arrow_device_import"};
       batch.view.emplace(cudf::from_arrow_device(
         schema.get(), batch.value.get(), cuda::stream_ref{impl_->stream}, impl_->mr));
     }
@@ -282,7 +267,7 @@ cudf::io::table_with_metadata vortex_io::read_vortex(std::string const& path,
     }
   }
   {
-    nvtx3::scoped_range range{"vortex.materialize"};
+    cudf::benchmark::scoped_range range{"vortex.materialize"};
     if (batches.empty()) {
       result.tbl = empty_table(*schema.get(), impl_->stream, impl_->mr);
     } else if (batches.size() == 1) {
@@ -298,13 +283,13 @@ cudf::io::table_with_metadata vortex_io::read_vortex(std::string const& path,
     }
   }
   {
-    nvtx3::scoped_range range{"vortex.consumer_sync"};
+    cudf::benchmark::scoped_range range{"vortex.consumer_sync"};
     drain.wait();
   }
   result.metadata.num_rows_per_source = {static_cast<std::size_t>(rows)};
   // Import scratch and Vortex buffers are released only after materialization completes.
   {
-    nvtx3::scoped_range range{"vortex.release_batches"};
+    cudf::benchmark::scoped_range range{"vortex.release_batches"};
     batches.clear();
     // Include async frees of cuDF import scratch in consumer-stream completion.
     drain.wait();

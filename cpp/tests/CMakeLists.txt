@@ -919,7 +919,10 @@ if(CUDF_WITH_VORTEX)
   )
   rapids_cuda_set_runtime(NDSH_VORTEX_WRITER_TEST USE_STATIC ON)
   add_executable(NDSH_VORTEX_IO_TEST io/vortex_io_test.cpp)
-  target_link_libraries(NDSH_VORTEX_IO_TEST PRIVATE CUDA::cudart nvtx3::nvtx3-cpp)
+  target_link_libraries(
+    NDSH_VORTEX_IO_TEST PRIVATE cudf::cudftestutil_objects CUDA::cudart nvtx3::nvtx3-cpp
+                                $<TARGET_NAME_IF_EXISTS:conda_env>
+  )
   foreach(test IN ITEMS NDSH_VORTEX_WRITER_TEST NDSH_VORTEX_IO_TEST)
     target_compile_options(${test} PRIVATE ${CUDF_CXX_FLAGS})
     target_link_libraries(${test} PRIVATE NDSH_VORTEX_IO nanoarrow::nanoarrow)

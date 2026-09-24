@@ -10,10 +10,13 @@ target_compile_features(NDSH_VORTEX_IO PUBLIC cxx_std_20)
 target_compile_options(NDSH_VORTEX_IO PRIVATE ${CUDF_CXX_FLAGS})
 # Consumers use vortex/... includes.
 target_include_directories(
-  NDSH_VORTEX_IO PUBLIC "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/..>"
+  NDSH_VORTEX_IO
+  PUBLIC "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/..>"
+  PRIVATE "${CUDF_SOURCE_DIR}"
 )
 target_link_libraries(
   NDSH_VORTEX_IO
   PUBLIC cudf::cudf
   PRIVATE Vortex::ffi_static nanoarrow::nanoarrow CUDA::cudart nvtx3::nvtx3-cpp
+          $<TARGET_NAME_IF_EXISTS:conda_env>
 )

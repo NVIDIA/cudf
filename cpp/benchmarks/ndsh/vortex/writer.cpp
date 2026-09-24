@@ -5,10 +5,10 @@
 
 #include "writer.hpp"
 
+#include "../../common/nvtx_ranges.hpp"
 #include "host_staging.hpp"
 
 #include <cudf/copying.hpp>
-#include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/utilities/error.hpp>
 
 #include <nanoarrow/nanoarrow.hpp>
@@ -78,7 +78,7 @@ void write_vortex(vortex_writer_options const& options,
                   cuda::stream_ref stream,
                   rmm::device_async_resource_ref mr)
 {
-  CUDF_FUNC_RANGE();
+  CUDF_BENCHMARK_RANGE();
   auto const& sink_info = options.sink;
   CUDF_EXPECTS(sink_info.type() == io_type::FILEPATH && sink_info.num_sinks() == 1,
                "write_vortex requires exactly one local-file sink");
@@ -103,7 +103,8 @@ void write_vortex(vortex_writer_options const& options,
     auto const name = names.empty() ? "_col" + std::to_string(i) : names[i];
     CUDF_EXPECTS(name.find('\0') == std::string::npos,
                  "write_vortex column names must not contain NUL bytes");
-    CUDF_EXPECTS(unique_names.insert(name).second, "write_vortex column names must be unique");
+    auto const inserted = unique_names.insert(name).second;
+    CUDF_EXPECTS(inserted, "write_vortex column names must be unique");
     metadata.emplace_back(name);
   }
 

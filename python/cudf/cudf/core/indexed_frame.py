@@ -1459,6 +1459,8 @@ class IndexedFrame(Frame):
         return self.iloc[-n:]
 
     def _find_valid_index(self, *, how: str) -> Hashable:
+        if self._num_columns == 0:
+            return None
         valid = self.notna()
         if valid.ndim == 2:
             valid = valid.any(axis=1)

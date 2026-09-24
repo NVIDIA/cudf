@@ -44,6 +44,7 @@ def test_series_first_last_valid_index_cupy_input():
         ({"A": [None, None, None], "B": [None, None, None]}, None),
         ({"A": [1, 2, 3], "B": [4, 5, 6]}, None),
         ({}, None),
+        ({}, [0, 1, 2, 3]),
         ({"A": [None, 1], "B": ["x", None]}, ["p", "q"]),
     ],
 )

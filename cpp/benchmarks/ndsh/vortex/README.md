@@ -163,8 +163,10 @@ projected-scan, bitmap-correctness, embedding, and pipelined-read prerequisites.
 The immutable pin keeps builds reproducible; it is not a release or a claim of
 build/runtime validation of this cuDF branch.
 
-The cuDF Arrow host-transfer cleanup fix is a prerequisite: export failure paths
-must drain outstanding transfers before releasing host buffers.
+Safe host-export failure handling requires a separate cuDF Arrow cleanup fix,
+not included in this integration. Without it, an export failure can release host
+buffers before queued DtoH transfers finish; the writer's outer stream drain
+cannot protect buffers already released inside the export.
 
 Local comparisons use layout-derived scan batches (`batch_rows=0`). At this
 revision, nonzero scan sizes specify fixed row ranges rather than layout-preserving

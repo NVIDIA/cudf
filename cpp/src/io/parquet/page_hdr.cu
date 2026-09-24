@@ -659,7 +659,7 @@ CUDF_KERNEL void __launch_bounds__(count_page_headers_block_size)
   count_page_headers_kernel(cudf::device_span<ColumnChunkDesc> chunks,
                             kernel_error::pointer error_code)
 {
-  auto constexpr num_warps_per_block = decode_page_headers_block_size / cudf::detail::warp_size;
+  auto constexpr num_warps_per_block = count_page_headers_block_size / cudf::detail::warp_size;
 
   auto const block = cg::this_thread_block();
   auto const warp  = cg::tiled_partition<cudf::detail::warp_size>(block);

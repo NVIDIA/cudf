@@ -870,6 +870,11 @@ ConfigureTest(
 # ##################################################################################################
 # * NDS-H support tests ---------------------------------------------------------------------------
 ConfigureTest(
+  MEMORY_STATS_LOGGER_TEST utilities_tests/memory_stats_logger_test.cpp
+  GPUS 1
+  PERCENT 100
+)
+ConfigureTest(
   NDSH_QUERY_TEST
   io/ndsh_q1_test.cpp
   io/ndsh_q5_test.cpp
@@ -886,31 +891,17 @@ ConfigureTest(
   PERCENT 100
 )
 
-# These exercise private helpers and remain build-tree-only.
-add_executable(MEMORY_STATS_LOGGER_TEST utilities_tests/memory_stats_logger_test.cpp)
-target_link_libraries(
-  MEMORY_STATS_LOGGER_TEST PRIVATE cudf::cudftestutil_objects nvtx3::nvtx3-cpp
-                                   $<TARGET_NAME_IF_EXISTS:conda_env>
-)
-rapids_cuda_set_runtime(MEMORY_STATS_LOGGER_TEST USE_STATIC ON)
-rapids_test_add(
-  NAME MEMORY_STATS_LOGGER_TEST
-  COMMAND MEMORY_STATS_LOGGER_TEST
-  GPUS 1
-  PERCENT 100
-)
-
 add_executable(NDSH_FIXTURE_CACHE_TEST utilities_tests/ndsh_fixture_cache_test.cpp)
-target_include_directories(NDSH_FIXTURE_CACHE_TEST PRIVATE "${CUDF_SOURCE_DIR}")
-target_link_libraries(NDSH_FIXTURE_CACHE_TEST PRIVATE GTest::gtest_main)
+target_include_directories(
+  NDSH_FIXTURE_CACHE_TEST PRIVATE "${CUDF_SOURCE_DIR}" "${CUDF_SOURCE_DIR}/include"
+)
+target_link_libraries(NDSH_FIXTURE_CACHE_TEST PRIVATE GTest::gtest_main GTest::gmock)
+target_compile_features(NDSH_FIXTURE_CACHE_TEST PRIVATE cxx_std_20)
+set_target_properties(
+  NDSH_FIXTURE_CACHE_TEST PROPERTIES RUNTIME_OUTPUT_DIRECTORY
+                                     "$<BUILD_INTERFACE:${CUDF_BINARY_DIR}/gtests>"
+)
 rapids_test_add(NAME NDSH_FIXTURE_CACHE_TEST COMMAND NDSH_FIXTURE_CACHE_TEST)
-
-foreach(test IN ITEMS MEMORY_STATS_LOGGER_TEST NDSH_FIXTURE_CACHE_TEST)
-  target_compile_features(${test} PRIVATE cxx_std_20)
-  set_target_properties(
-    ${test} PROPERTIES RUNTIME_OUTPUT_DIRECTORY "$<BUILD_INTERFACE:${CUDF_BINARY_DIR}/gtests>"
-  )
-endforeach()
 
 if(CUDF_WITH_VORTEX)
   add_executable(NDSH_VORTEX_WRITER_TEST io/vortex_writer_test.cpp)

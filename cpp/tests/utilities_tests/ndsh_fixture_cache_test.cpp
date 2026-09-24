@@ -5,7 +5,7 @@
 
 #include <benchmarks/ndsh/fixture_cache.hpp>
 
-#include <gtest/gtest.h>
+#include <cudf_test/cudf_gtest.hpp>
 
 #include <cstdlib>
 #include <filesystem>
@@ -15,6 +15,7 @@
 
 namespace {
 
+// Keep this CPU-only and use nonthrowing cleanup, including during constructor unwinding.
 class temporary_directory {
  public:
   temporary_directory()
@@ -47,6 +48,16 @@ struct fake_files {
   static inline bool old_directory_present = false;
   static inline std::filesystem::path previous_directory;
 
+  static void prepare_test()
+  {
+    fail_next = false;
+    // Replace any cached fixture from a previous gtest_repeat iteration before counting operations.
+    ndsh::local_fixture<fake_files>(0.0);
+    ndsh::local_fixture<fake_files>(1.0);
+    attempts = constructions = destructions = 0;
+    old_directory_present                   = false;
+  }
+
   static temporary_directory make_directory()
   {
     ++attempts;
@@ -77,7 +88,8 @@ struct fake_files {
 
 TEST(FixtureCacheTest, SameScaleReusesFiles)
 {
-  using files        = fake_files<0>;
+  using files = fake_files<0>;
+  files::prepare_test();
   auto const& first  = ndsh::local_fixture<files>(1.0);
   auto const marker  = first.marker();
   auto const& second = ndsh::local_fixture<files>(1.0);
@@ -85,14 +97,15 @@ TEST(FixtureCacheTest, SameScaleReusesFiles)
   EXPECT_EQ(&first, &second);
   EXPECT_EQ(second.marker(), marker);
   EXPECT_TRUE(std::filesystem::exists(marker));
-  EXPECT_EQ(files::attempts, 1);
-  EXPECT_EQ(files::constructions, 1);
+  EXPECT_EQ(files::attempts, 0);
+  EXPECT_EQ(files::constructions, 0);
   EXPECT_EQ(files::destructions, 0);
 }
 
 TEST(FixtureCacheTest, DeletesOldFilesBeforeReplacementConstruction)
 {
-  using files              = fake_files<1>;
+  using files = fake_files<1>;
+  files::prepare_test();
   auto const& first        = ndsh::local_fixture<files>(1.0);
   auto const old_directory = first.directory.path;
   auto const old_marker    = first.marker();
@@ -104,14 +117,15 @@ TEST(FixtureCacheTest, DeletesOldFilesBeforeReplacementConstruction)
   EXPECT_FALSE(std::filesystem::exists(old_directory));
   EXPECT_FALSE(std::filesystem::exists(old_marker));
   EXPECT_TRUE(std::filesystem::exists(replacement.marker()));
-  EXPECT_EQ(files::attempts, 2);
-  EXPECT_EQ(files::constructions, 2);
+  EXPECT_EQ(files::attempts, 1);
+  EXPECT_EQ(files::constructions, 1);
   EXPECT_EQ(files::destructions, 1);
 }
 
 TEST(FixtureCacheTest, RevisitedScaleRegeneratesFiles)
 {
-  using files                 = fake_files<2>;
+  using files = fake_files<2>;
+  files::prepare_test();
   auto const first_directory  = ndsh::local_fixture<files>(1.0).directory.path;
   auto const second_directory = ndsh::local_fixture<files>(2.0).directory.path;
   auto const& revisited       = ndsh::local_fixture<files>(1.0);
@@ -120,14 +134,15 @@ TEST(FixtureCacheTest, RevisitedScaleRegeneratesFiles)
   EXPECT_FALSE(std::filesystem::exists(first_directory));
   EXPECT_FALSE(std::filesystem::exists(second_directory));
   EXPECT_TRUE(std::filesystem::exists(revisited.marker()));
-  EXPECT_EQ(files::attempts, 3);
-  EXPECT_EQ(files::constructions, 3);
+  EXPECT_EQ(files::attempts, 2);
+  EXPECT_EQ(files::constructions, 2);
   EXPECT_EQ(files::destructions, 2);
 }
 
 TEST(FixtureCacheTest, FailedConstructionCleansPartialFilesAndAllowsRetry)
 {
-  using files              = fake_files<3>;
+  using files = fake_files<3>;
+  files::prepare_test();
   auto const old_directory = ndsh::local_fixture<files>(1.0).directory.path;
   files::fail_next         = true;
 
@@ -136,8 +151,8 @@ TEST(FixtureCacheTest, FailedConstructionCleansPartialFilesAndAllowsRetry)
   EXPECT_FALSE(files::old_directory_present);
   EXPECT_FALSE(std::filesystem::exists(old_directory));
   EXPECT_FALSE(std::filesystem::exists(partial_directory));
-  EXPECT_EQ(files::attempts, 2);
-  EXPECT_EQ(files::constructions, 1);
+  EXPECT_EQ(files::attempts, 1);
+  EXPECT_EQ(files::constructions, 0);
   EXPECT_EQ(files::destructions, 1);
 
   auto const& retried = ndsh::local_fixture<files>(2.0);
@@ -145,11 +160,11 @@ TEST(FixtureCacheTest, FailedConstructionCleansPartialFilesAndAllowsRetry)
   EXPECT_FALSE(files::old_directory_present);
   EXPECT_TRUE(std::filesystem::exists(retried.marker()));
   EXPECT_FALSE(std::filesystem::exists(partial_directory));
-  EXPECT_EQ(files::attempts, 3);
-  EXPECT_EQ(files::constructions, 2);
+  EXPECT_EQ(files::attempts, 2);
+  EXPECT_EQ(files::constructions, 1);
   EXPECT_EQ(files::destructions, 1);
   EXPECT_EQ(&ndsh::local_fixture<files>(2.0), &retried);
-  EXPECT_EQ(files::attempts, 3);
+  EXPECT_EQ(files::attempts, 2);
 }
 
 }  // namespace

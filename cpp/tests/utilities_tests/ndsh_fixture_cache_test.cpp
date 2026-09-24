@@ -12,7 +12,7 @@
 
 #include <benchmarks/ndsh/fixture_cache.hpp>
 
-#include <cudf_test/cudf_gtest.hpp>
+#include <gtest/gtest.h>
 
 #include <cstdlib>
 #include <filesystem>

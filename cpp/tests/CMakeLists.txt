@@ -892,10 +892,8 @@ ConfigureTest(
 )
 
 add_executable(NDSH_FIXTURE_CACHE_TEST utilities_tests/ndsh_fixture_cache_test.cpp)
-target_include_directories(
-  NDSH_FIXTURE_CACHE_TEST PRIVATE "${CUDF_SOURCE_DIR}" "${CUDF_SOURCE_DIR}/include"
-)
-target_link_libraries(NDSH_FIXTURE_CACHE_TEST PRIVATE GTest::gtest_main GTest::gmock)
+target_include_directories(NDSH_FIXTURE_CACHE_TEST PRIVATE "${CUDF_SOURCE_DIR}")
+target_link_libraries(NDSH_FIXTURE_CACHE_TEST PRIVATE GTest::gtest_main)
 target_compile_features(NDSH_FIXTURE_CACHE_TEST PRIVATE cxx_std_20)
 set_target_properties(
   NDSH_FIXTURE_CACHE_TEST PROPERTIES RUNTIME_OUTPUT_DIRECTORY

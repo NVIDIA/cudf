@@ -20,12 +20,12 @@ From the repository root, with any usual environment-specific CMake options:
 ```sh
 cmake -S cpp -B build-vortex -G Ninja \
   -DCMAKE_BUILD_TYPE=Release -DBUILD_BENCHMARKS=ON \
-  -DCUDF_WITH_VORTEX=ON -DBUILD_TESTS=OFF
+  -DCUDF_WITH_VORTEX=ON -DBUILD_TESTS=ON
 cmake --build build-vortex --target \
   NDSH_VORTEX_IO_TEST NDSH_Q01_NVBENCH NDSH_Q05_NVBENCH \
   NDSH_Q06_NVBENCH NDSH_Q09_NVBENCH NDSH_Q10_NVBENCH
 
-build-vortex/benchmarks/NDSH_VORTEX_IO_TEST
+build-vortex/gtests/NDSH_VORTEX_IO_TEST
 KVIKIO_COMPAT_MODE=ON build-vortex/benchmarks/NDSH_Q05_NVBENCH \
   --benchmark ndsh_q5_local --devices 0 --axis scale_factor=1 \
   --axis "format=[parquet,vortex]" --axis "workload=[read,q5]" \
@@ -52,19 +52,22 @@ a read-only warmup even for direct I/O, without making direct data reads page-ca
 hits. Neither mode flushes every storage cache. Do not mix these direct results
 with matched buffered format comparisons.
 
-The adapter test target is explicitly built above; with `BUILD_TESTS=OFF`, it is
-excluded from the default build and no Vortex CTest tests are registered. Other
-local benchmarks are named `ndsh_q1_local`, `ndsh_q6_local`,
+The adapter test target requires `BUILD_TESTS=ON` and `CUDF_WITH_VORTEX=ON`,
+independently of `BUILD_BENCHMARKS`. Other local benchmarks are named
+`ndsh_q1_local`, `ndsh_q6_local`,
 `ndsh_q9_local`, and `ndsh_q10_local`. Q9 additionally has
 `engine=[binaryop,ast,transform]`. Select a benchmark and scale factor explicitly:
 the default axes include SF10, which requires substantial memory and disk space.
 Run queries separately on device 0. Put temporary fixtures on disk, not tmpfs,
 for cold-I/O measurements; the fixture directory follows `TMPDIR` when set.
 
-`CUDF_WITH_VORTEX` defaults to `OFF`. Vortex is fetched and configured only when
-both `BUILD_BENCHMARKS` and `CUDF_WITH_VORTEX` are `ON`; the integration imposes no
-`BUILD_SHARED_LIBS` restriction. With either option disabled, the private Vortex
-writer and adapter are not configured; there is no public feature-OFF writer stub.
+`CUDF_WITH_VORTEX` defaults to `OFF`. The Vortex dependency and private library
+are configured when `CUDF_WITH_VORTEX=ON` and either `BUILD_TESTS=ON` or
+`BUILD_BENCHMARKS=ON`; the integration imposes no `BUILD_SHARED_LIBS` restriction.
+The root CMake configuration adds `benchmarks/ndsh/vortex` before `tests` and
+`benchmarks`. With Vortex disabled, or both tests and benchmarks disabled, the
+private Vortex writer and adapter are not configured; there is no public
+feature-OFF writer stub.
 A local Vortex workspace can be selected with
 `-DFETCHCONTENT_SOURCE_DIR_VORTEX=/absolute/path/to/vortex`; it must contain the
 full workspace, not just `lang/cpp`.
@@ -96,24 +99,26 @@ compatibility is not guaranteed. The benchmark-private integration links the
 static Vortex FFI; this does not provide installed runtime packaging or remove
 the GPU reader's build-tree `.so` dependency.
 
-`NDSH_VORTEX_WRITER_TEST` is a private GTest executable for `writer_test.cpp`,
+`NDSH_VORTEX_WRITER_TEST` is a private GTest executable for
+[`cpp/tests/io/vortex_writer_test.cpp`](../../../tests/io/vortex_writer_test.cpp),
 covering options, unsupported inputs, file finalization, slices, types and
 explicit staging resources. It is separate from `NDSH_VORTEX_IO_TEST`, whose
-`vortex_io_test.cpp` has a custom `main` and checks decoded round trips through
-the adapter and private writer. The writer GTest requires `BUILD_TESTS`,
-`BUILD_BENCHMARKS`, and `CUDF_WITH_VORTEX`.
+[`cpp/tests/io/vortex_io_test.cpp`](../../../tests/io/vortex_io_test.cpp) has a
+custom `main` and checks decoded round trips through the adapter and private
+writer. Both targets require `BUILD_TESTS=ON` and `CUDF_WITH_VORTEX=ON`,
+independently of `BUILD_BENCHMARKS`.
 
-### Automated correctness smoke tests
+### Automated correctness tests
 
-Enable `BUILD_TESTS`, `BUILD_BENCHMARKS`, and `CUDF_WITH_VORTEX` together to
-register the private writer GTest, the adapter test, and all five local query
-smoke tests with CTest. In this mode the adapter test is included in the default
-build, alongside the query benchmarks. For example, from the repository root:
+Enable `BUILD_TESTS` and `CUDF_WITH_VORTEX` to build and register the private
+writer GTest and adapter test with CTest, independently of `BUILD_BENCHMARKS`.
+Only the five local query smoke tests require all three options to be `ON`.
+For a unit-test-only build, from the repository root:
 
 ```sh
 cmake -S cpp -B build-vortex-tests -G Ninja \
   -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTS=ON \
-  -DBUILD_BENCHMARKS=ON -DCUDF_WITH_VORTEX=ON
+  -DBUILD_BENCHMARKS=OFF -DCUDF_WITH_VORTEX=ON
 cmake --build build-vortex-tests
 ctest --test-dir build-vortex-tests -R '^NDSH_VORTEX_WRITER_TEST$' --output-on-failure
 ctest --test-dir build-vortex-tests -L vortex --output-on-failure
@@ -121,10 +126,18 @@ ctest --test-dir build-vortex-tests \
   -R '^(MEMORY_STATS_LOGGER_TEST|NDSH_FIXTURE_CACHE_TEST)$' --output-on-failure
 ```
 
-`MEMORY_STATS_LOGGER_TEST` remains benchmark-local, alongside the existing
-`NDSH_FIXTURE_CACHE_TEST`. Both require `BUILD_BENCHMARKS` and `BUILD_TESTS`,
-but neither requires Vortex. The cache test checks fixture reuse and eviction;
-it does not validate OS page-cache behavior for cold-I/O measurements.
+`MEMORY_STATS_LOGGER_TEST` and `NDSH_FIXTURE_CACHE_TEST` use
+[`cpp/tests/utilities_tests/memory_stats_logger_test.cpp`](../../../tests/utilities_tests/memory_stats_logger_test.cpp)
+and [`cpp/tests/utilities_tests/ndsh_fixture_cache_test.cpp`](../../../tests/utilities_tests/ndsh_fixture_cache_test.cpp).
+Both require only `BUILD_TESTS=ON`; neither requires benchmarks or Vortex.
+The cache test checks fixture reuse and eviction; it does not validate
+OS page-cache behavior for cold-I/O measurements.
+
+All four test targets retain their names and place executables under the build
+directory's `gtests/`, not `benchmarks/`. Their target definitions and all test
+registrations live in [`cpp/tests/CMakeLists.txt`](../../../tests/CMakeLists.txt).
+Existing benchmark libraries and executables are unchanged; query executables
+remain under `benchmarks/`.
 
 The adapter/query smoke tests are `NDSH_VORTEX_IO_TEST` and
 `NDSH_Q{01,05,06,09,10}_VORTEX_SMOKE`. They carry the `ndsh`, `vortex`, and `smoke`

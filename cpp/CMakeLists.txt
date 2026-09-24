@@ -1654,6 +1654,12 @@ if(CUDF_BUILD_STREAMS_TEST_UTIL)
   endforeach()
 endif()
 
+# The private Vortex adapter is shared by unit tests and NDS-H benchmarks.
+if(CUDF_WITH_VORTEX AND (CUDF_BUILD_TESTS OR CUDF_BUILD_BENCHMARKS))
+  include(cmake/thirdparty/get_vortex.cmake)
+  add_subdirectory(benchmarks/ndsh/vortex)
+endif()
+
 # ##################################################################################################
 # * add tests -------------------------------------------------------------------------------------
 if(CUDF_BUILD_TESTS)

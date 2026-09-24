@@ -5,11 +5,6 @@
 # cmake-format: on
 # =============================================================================
 
-if(BUILD_TESTS)
-  # Testing is already initialized in cpp/tests; only load the helpers in this directory.
-  include(rapids-test)
-endif()
-
 find_package(Threads REQUIRED)
 
 add_library(
@@ -109,24 +104,6 @@ function(ConfigureNVBench CMAKE_BENCH_NAME)
 endfunction()
 
 # ##################################################################################################
-# * benchmark utility tests -----------------------------------------------------------------------
-if(BUILD_TESTS)
-  add_executable(MEMORY_STATS_LOGGER_TEST common/memory_stats_logger_test.cpp)
-  target_compile_features(MEMORY_STATS_LOGGER_TEST PRIVATE cxx_std_20)
-  target_link_libraries(
-    MEMORY_STATS_LOGGER_TEST PRIVATE cudf::cudftestutil_objects nvtx3::nvtx3-cpp
-                                     $<TARGET_NAME_IF_EXISTS:conda_env>
-  )
-  rapids_cuda_set_runtime(MEMORY_STATS_LOGGER_TEST USE_STATIC ON)
-  rapids_test_add(
-    NAME MEMORY_STATS_LOGGER_TEST
-    COMMAND MEMORY_STATS_LOGGER_TEST
-    GPUS 1
-    PERCENT 100
-  )
-endif()
-
-# ##################################################################################################
 # * copying benchmarks ----------------------------------------------------------------------------
 ConfigureNVBench(
   COPYING_NVBENCH copying/concatenate.cpp copying/copy_if_else.cpp copying/gather.cpp
@@ -151,17 +128,9 @@ ConfigureNVBench(TRANSPOSE_NVBENCH transpose/transpose.cpp)
 
 # ##################################################################################################
 # * nds-h benchmark --------------------------------------------------------------------------------
-if(BUILD_TESTS)
-  add_executable(NDSH_FIXTURE_CACHE_TEST ndsh/fixture_cache_test.cpp)
-  target_compile_features(NDSH_FIXTURE_CACHE_TEST PRIVATE cxx_std_20)
-  target_link_libraries(NDSH_FIXTURE_CACHE_TEST PRIVATE GTest::gtest_main)
-  rapids_test_add(NAME NDSH_FIXTURE_CACHE_TEST COMMAND NDSH_FIXTURE_CACHE_TEST)
-endif()
 
 set(ndsh_benchmark_options)
 if(CUDF_WITH_VORTEX)
-  include(${CUDF_SOURCE_DIR}/cmake/thirdparty/get_vortex.cmake)
-  add_subdirectory(ndsh/vortex)
   # Pinned Vortex loads CUB/nvcomp libraries from absolute Cargo build paths.
   set(ndsh_benchmark_options NO_INSTALL)
 endif()
@@ -176,30 +145,6 @@ foreach(query IN ITEMS 01 05 06 09 10)
 
   target_link_libraries(NDSH_Q${query}_NVBENCH PRIVATE NDSH_VORTEX_IO kvikio::kvikio)
   target_compile_definitions(NDSH_Q${query}_NVBENCH PRIVATE CUDF_WITH_VORTEX=1)
-
-  if(BUILD_TESTS)
-    string(REGEX REPLACE "^0" "" query_number "${query}")
-    set(ndsh_smoke_options)
-    if(query STREQUAL "09")
-      list(APPEND ndsh_smoke_options --axis "engine=[binaryop,ast,transform]")
-    endif()
-    rapids_test_add(
-      NAME NDSH_Q${query}_VORTEX_SMOKE
-      COMMAND
-        NDSH_Q${query}_NVBENCH --benchmark ndsh_q${query_number}_local --devices 0 --axis
-        scale_factor=0.01 --axis "format=[parquet,vortex]" --axis workload=q${query_number} --axis
-        cache=warm --axis io=buffered ${ndsh_smoke_options}
-      GPUS 1
-      PERCENT 100
-    )
-    # NVBench may report failed or skipped states without a nonzero exit status.
-    set_tests_properties(
-      NDSH_Q${query}_VORTEX_SMOKE PROPERTIES TIMEOUT 600 RUN_SERIAL TRUE LABELS "ndsh;vortex;smoke"
-                                             FAIL_REGULAR_EXPRESSION "Fail:;Skip:"
-    )
-    unset(ndsh_smoke_options)
-    unset(query_number)
-  endif()
 endforeach()
 unset(ndsh_benchmark_options)
 

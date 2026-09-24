@@ -18,8 +18,9 @@ For now, only Q1, Q5, Q6, Q9, and Q10 have been implemented
 - `parquet/parquet_io.hpp/.cpp`: Parquet reading, writing, and generated Parquet sources.
 - `vortex/vortex_io.hpp/.cpp`: optional benchmark-private Vortex adapter.
 - `vortex/writer.hpp` and `vortex/writer.cpp`: private CPU writer in the `ndsh`
-  namespace, used by the existing adapter; focused tests and build wiring live
-  alongside it.
+  namespace, used by the existing adapter; focused tests live in
+  [`cpp/tests/io`](../../tests/io), with test build wiring in
+  [`cpp/tests/CMakeLists.txt`](../../tests/CMakeLists.txt).
 - `local_io.hpp`: shared local-file fixtures, format dispatch, cache control, and timing.
 - `reference/`: format-independent CPU query references and validation support.
 
@@ -32,9 +33,11 @@ separately.
 
 Enable `CUDF_WITH_VORTEX` together with `BUILD_BENCHMARKS` for local Parquet/Vortex
 comparisons of all five queries, including concurrent Vortex table reads in
-Q5/Q9/Q10. Vortex is configured only when both options are enabled; there is no
-shared-lib requirement. See the [Vortex build instructions](vortex/README.md) for
-build-tree runtime restrictions, private writer and adapter tests, benchmark-local
+Q5/Q9/Q10. The Vortex dependency and private library are configured when
+`CUDF_WITH_VORTEX=ON` and either `BUILD_TESTS=ON` or `BUILD_BENCHMARKS=ON`;
+unit tests do not require benchmarks. There is no shared-lib requirement.
+See the [Vortex build instructions](vortex/README.md) for
+build-tree runtime restrictions, private writer and adapter tests,
 memory-statistics and fixture-cache tests, and the Arrow cleanup prerequisite.
 
 Fixtures retain only the current scale factor per query. Switching scale factors

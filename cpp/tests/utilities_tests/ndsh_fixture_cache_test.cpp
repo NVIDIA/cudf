@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#include "fixture_cache.hpp"
+#include <benchmarks/ndsh/fixture_cache.hpp>
 
 #include <gtest/gtest.h>
 

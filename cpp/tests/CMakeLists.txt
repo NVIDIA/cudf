@@ -868,6 +868,86 @@ ConfigureTest(
 )
 
 # ##################################################################################################
+# * NDS-H support tests ---------------------------------------------------------------------------
+# These exercise private helpers and remain build-tree-only.
+add_executable(MEMORY_STATS_LOGGER_TEST utilities_tests/memory_stats_logger_test.cpp)
+target_link_libraries(
+  MEMORY_STATS_LOGGER_TEST PRIVATE cudf::cudftestutil_objects nvtx3::nvtx3-cpp
+                                   $<TARGET_NAME_IF_EXISTS:conda_env>
+)
+rapids_cuda_set_runtime(MEMORY_STATS_LOGGER_TEST USE_STATIC ON)
+rapids_test_add(
+  NAME MEMORY_STATS_LOGGER_TEST
+  COMMAND MEMORY_STATS_LOGGER_TEST
+  GPUS 1
+  PERCENT 100
+)
+
+add_executable(NDSH_FIXTURE_CACHE_TEST utilities_tests/ndsh_fixture_cache_test.cpp)
+target_include_directories(NDSH_FIXTURE_CACHE_TEST PRIVATE "${CUDF_SOURCE_DIR}")
+target_link_libraries(NDSH_FIXTURE_CACHE_TEST PRIVATE GTest::gtest_main)
+rapids_test_add(NAME NDSH_FIXTURE_CACHE_TEST COMMAND NDSH_FIXTURE_CACHE_TEST)
+
+foreach(test IN ITEMS MEMORY_STATS_LOGGER_TEST NDSH_FIXTURE_CACHE_TEST)
+  target_compile_features(${test} PRIVATE cxx_std_20)
+  set_target_properties(
+    ${test} PROPERTIES RUNTIME_OUTPUT_DIRECTORY "$<BUILD_INTERFACE:${CUDF_BINARY_DIR}/gtests>"
+  )
+endforeach()
+
+if(CUDF_WITH_VORTEX)
+  add_executable(NDSH_VORTEX_WRITER_TEST io/vortex_writer_test.cpp)
+  target_link_libraries(
+    NDSH_VORTEX_WRITER_TEST PRIVATE cudf::cudftestutil_objects $<TARGET_NAME_IF_EXISTS:conda_env>
+  )
+  rapids_cuda_set_runtime(NDSH_VORTEX_WRITER_TEST USE_STATIC ON)
+  add_executable(NDSH_VORTEX_IO_TEST io/vortex_io_test.cpp)
+  target_link_libraries(NDSH_VORTEX_IO_TEST PRIVATE CUDA::cudart nvtx3::nvtx3-cpp)
+  foreach(test IN ITEMS NDSH_VORTEX_WRITER_TEST NDSH_VORTEX_IO_TEST)
+    target_compile_options(${test} PRIVATE ${CUDF_CXX_FLAGS})
+    target_link_libraries(${test} PRIVATE NDSH_VORTEX_IO nanoarrow::nanoarrow)
+    set_target_properties(
+      ${test} PROPERTIES RUNTIME_OUTPUT_DIRECTORY "$<BUILD_INTERFACE:${CUDF_BINARY_DIR}/gtests>"
+    )
+    rapids_test_add(
+      NAME ${test}
+      COMMAND ${test}
+      GPUS 1
+      PERCENT 100
+    )
+    set_tests_properties(${test} PROPERTIES TIMEOUT 600 RUN_SERIAL TRUE LABELS "ndsh;vortex;smoke")
+  endforeach()
+
+  if(CUDF_BUILD_BENCHMARKS)
+    foreach(query IN ITEMS 01 05 06 09 10)
+      string(REGEX REPLACE "^0" "" query_number "${query}")
+      set(ndsh_smoke_options)
+      if(query STREQUAL "09")
+        list(APPEND ndsh_smoke_options --axis "engine=[binaryop,ast,transform]")
+      endif()
+      # Benchmark targets are defined later; resolve their paths at generation time.
+      rapids_test_add(
+        NAME NDSH_Q${query}_VORTEX_SMOKE
+        COMMAND
+          $<TARGET_FILE:NDSH_Q${query}_NVBENCH> --benchmark ndsh_q${query_number}_local --devices 0
+          --axis scale_factor=0.01 --axis "format=[parquet,vortex]" --axis workload=q${query_number}
+          --axis cache=warm --axis io=buffered ${ndsh_smoke_options}
+        GPUS 1
+        PERCENT 100
+      )
+      # NVBench may report failed or skipped states without a nonzero exit status.
+      set_tests_properties(
+        NDSH_Q${query}_VORTEX_SMOKE
+        PROPERTIES TIMEOUT 600 RUN_SERIAL TRUE LABELS "ndsh;vortex;smoke" FAIL_REGULAR_EXPRESSION
+                   "Fail:;Skip:"
+      )
+    endforeach()
+    unset(ndsh_smoke_options)
+    unset(query_number)
+  endif()
+endif()
+
+# ##################################################################################################
 # Install tests ####################################################################################
 # ##################################################################################################
 rapids_test_install_relocatable(INSTALL_COMPONENT_SET testing DESTINATION bin/gtests/libcudf)

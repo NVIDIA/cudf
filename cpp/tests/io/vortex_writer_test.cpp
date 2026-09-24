@@ -3,8 +3,6 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#include "writer.hpp"
-
 #include <cudf_test/base_fixture.hpp>
 #include <cudf_test/column_wrapper.hpp>
 #include <cudf_test/default_stream.hpp>
@@ -19,6 +17,8 @@
 
 #include <cuda/stream>
 #include <cuda_runtime_api.h>
+
+#include <vortex/writer.hpp>
 
 #include <array>
 #include <cstdint>

@@ -3,10 +3,6 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#include "host_staging.hpp"
-#include "vortex_io.hpp"
-#include "writer.hpp"
-
 #include <cudf/copying.hpp>
 #include <cudf/interop.hpp>
 #include <cudf/types.hpp>
@@ -20,6 +16,9 @@
 #include <nanoarrow/nanoarrow.h>
 #include <nanoarrow/nanoarrow.hpp>
 #include <nanoarrow/nanoarrow_device.h>
+#include <vortex/host_staging.hpp>
+#include <vortex/vortex_io.hpp>
+#include <vortex/writer.hpp>
 
 #include <array>
 #include <cerrno>

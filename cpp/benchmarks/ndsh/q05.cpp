@@ -4,42 +4,30 @@
  */
 
 #include "parquet/parquet_io.hpp"
+#include "q05_query.hpp"
 #include "utilities.hpp"
 
 #include <benchmarks/common/memory_stats.hpp>
 
-#include <cudf/ast/expressions.hpp>
-#include <cudf/binaryop.hpp>
-#include <cudf/column/column.hpp>
-#include <cudf/scalar/scalar.hpp>
-#include <cudf/utilities/memory_resource.hpp>
-
 #include <nvbench/nvbench.cuh>
 
-#include <map>
+#include <algorithm>
+#include <cstddef>
+#include <iterator>
+#include <memory>
+#include <string>
+#include <unordered_map>
+#include <utility>
+#include <vector>
 
 #ifdef CUDF_WITH_VORTEX
 #include "local_io.hpp"
-#include "parquet/parquet_fixture.hpp"
 #include "reference/q5_reference.hpp"
 #include "vortex/vortex_io.hpp"
-
-#include <cudf_test/column_wrapper.hpp>
-
-#include <cudf/copying.hpp>
-
-#include <cstdint>
 #endif
 
-namespace {
-std::map<std::string, std::vector<std::string>> const q5_projections{
-  {"orders", {"o_custkey", "o_orderkey", "o_orderdate"}},
-  {"customer", {"c_custkey", "c_nationkey"}},
-  {"lineitem", {"l_orderkey", "l_suppkey", "l_extendedprice", "l_discount"}},
-  {"supplier", {"s_suppkey", "s_nationkey"}},
-  {"nation", {"n_nationkey", "n_regionkey", "n_name"}},
-  {"region", {"r_regionkey", "r_name"}}};
-}  // namespace
+using ndsh::q5::execute_q5;
+using ndsh::q5::q5_projections;
 
 /**
  * @file q05.cpp
@@ -77,105 +65,6 @@ std::map<std::string, std::vector<std::string>> const q5_projections{
  * order by
  *    revenue desc;
  */
-
-/**
- * @brief Calculate the revenue column
- *
- * @param extendedprice The extended price column
- * @param discount The discount column
- * @param stream The CUDA stream used for device memory operations and kernel launches.
- * @param mr Device memory resource used to allocate the returned column's device memory.
- */
-[[nodiscard]] std::unique_ptr<cudf::column> calculate_revenue(
-  cudf::column_view const& extendedprice,
-  cudf::column_view const& discount,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref())
-{
-  auto const one = cudf::numeric_scalar<double>(1);
-  auto const one_minus_discount =
-    cudf::binary_operation(one, discount, cudf::binary_operator::SUB, discount.type(), stream, mr);
-  auto const revenue_type = cudf::data_type{cudf::type_id::FLOAT64};
-  auto revenue            = cudf::binary_operation(extendedprice,
-                                        one_minus_discount->view(),
-                                        cudf::binary_operator::MUL,
-                                        revenue_type,
-                                        stream,
-                                        mr);
-  return revenue;
-}
-
-/**
- * read returns owning projected tables, applying supplied predicates if filter_predicates is false.
- * Otherwise filtering happens here. consume receives the result owner by reference and may
- * move it out; its return value is forwarded. This helper adds no final stream synchronization.
- */
-template <typename Read, typename Consume>
-auto execute_q5(Read&& read, bool filter_predicates, Consume&& consume)
-{
-  // Define the column projection and filter predicate for the `orders` table
-  auto const& orders_cols    = q5_projections.at("orders");
-  auto const o_orderdate_ref = cudf::ast::column_reference(std::distance(
-    orders_cols.begin(), std::find(orders_cols.begin(), orders_cols.end(), "o_orderdate")));
-  auto o_orderdate_lower =
-    cudf::timestamp_scalar<cudf::timestamp_D>(days_since_epoch(1994, 1, 1), true);
-  auto const o_orderdate_lower_limit = cudf::ast::literal(o_orderdate_lower);
-  auto const o_orderdate_pred_lower  = cudf::ast::operation(
-    cudf::ast::ast_operator::GREATER_EQUAL, o_orderdate_ref, o_orderdate_lower_limit);
-  auto o_orderdate_upper =
-    cudf::timestamp_scalar<cudf::timestamp_D>(days_since_epoch(1995, 1, 1), true);
-  auto const o_orderdate_upper_limit = cudf::ast::literal(o_orderdate_upper);
-  auto const o_orderdate_pred_upper =
-    cudf::ast::operation(cudf::ast::ast_operator::LESS, o_orderdate_ref, o_orderdate_upper_limit);
-  auto const orders_pred = std::make_unique<cudf::ast::operation>(
-    cudf::ast::ast_operator::LOGICAL_AND, o_orderdate_pred_lower, o_orderdate_pred_upper);
-
-  // Define the column projection and filter predicate for the `region` table
-  auto const& region_cols   = q5_projections.at("region");
-  auto const r_name_ref     = cudf::ast::column_reference(std::distance(
-    region_cols.begin(), std::find(region_cols.begin(), region_cols.end(), "r_name")));
-  auto r_name_value         = cudf::string_scalar("ASIA");
-  auto const r_name_literal = cudf::ast::literal(r_name_value);
-  auto const region_pred    = std::make_unique<cudf::ast::operation>(
-    cudf::ast::ast_operator::EQUAL, r_name_ref, r_name_literal);
-
-  std::unique_ptr<cudf::ast::operation> const no_predicate;
-  auto const customer = read("customer", q5_projections.at("customer"), no_predicate);
-  auto orders         = read("orders", orders_cols, orders_pred);
-  auto const lineitem = read("lineitem", q5_projections.at("lineitem"), no_predicate);
-  auto const supplier = read("supplier", q5_projections.at("supplier"), no_predicate);
-  auto const nation   = read("nation", q5_projections.at("nation"), no_predicate);
-  auto region         = read("region", region_cols, region_pred);
-  if (filter_predicates) {
-    orders = apply_filter(orders, *orders_pred);
-    region = apply_filter(region, *region_pred);
-  }
-
-  // Perform the joins
-  auto const join_a = apply_inner_join(region, nation, {"r_regionkey"}, {"n_regionkey"});
-  auto const join_b = apply_inner_join(join_a, customer, {"n_nationkey"}, {"c_nationkey"});
-  auto const join_c = apply_inner_join(join_b, orders, {"c_custkey"}, {"o_custkey"});
-  auto const join_d = apply_inner_join(join_c, lineitem, {"o_orderkey"}, {"l_orderkey"});
-  auto joined_table =
-    apply_inner_join(supplier, join_d, {"s_suppkey", "s_nationkey"}, {"l_suppkey", "n_nationkey"});
-
-  // Calculate and append the `revenue` column
-  auto revenue =
-    calculate_revenue(joined_table->column("l_extendedprice"), joined_table->column("l_discount"));
-  (*joined_table).append(revenue, "revenue");
-
-  // Perform the groupby operation
-  auto const groupedby_table =
-    apply_groupby(joined_table,
-                  groupby_context_t{{"n_name"},
-                                    {
-                                      {"revenue", {{cudf::aggregation::Kind::SUM, "revenue"}}},
-                                    }});
-
-  // Perform the order by operation
-  auto orderedby_table = apply_orderby(groupedby_table, {"revenue"}, {cudf::order::DESCENDING});
-  return consume(orderedby_table);
-}
 
 void run_ndsh_q5(nvbench::state& state,
                  std::unordered_map<std::string, cuio_source_sink_pair>& sources)
@@ -215,108 +104,18 @@ namespace {
 std::vector<std::string> const q5_tables{
   "customer", "orders", "lineitem", "supplier", "nation", "region"};
 
-void check_q5_boundaries()
-{
-  cudf::test::fixed_width_column_wrapper<int32_t> customer_key{{1, 2, 3, 4, 5, 6}};
-  cudf::test::fixed_width_column_wrapper<int8_t> customer_nation{{10, 20, 30, 40, 50, 99}};
-  cudf::test::fixed_width_column_wrapper<int32_t> order_customer{
-    {1, 1, 2, 1, 1, 3, 4, 999, 1, 1, 5, 6, 2, 1}};
-  cudf::test::fixed_width_column_wrapper<int32_t> order_key{
-    {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 14, 13}};
-  // Epoch days: 1993-12-31, 1994-01-01, 1994-12-31, 1995-01-01.
-  cudf::test::fixed_width_column_wrapper<cudf::timestamp_D, int32_t> order_date{
-    {8766, 9130, 8766, 8765, 9131, 8766, 8766, 8766, 8766, 8766, 8766, 8766, 9130, 8766},
-    {true, true, true, true, true, true, true, true, true, true, true, true, true, false}};
-  cudf::test::fixed_width_column_wrapper<int32_t> line_order{
-    {1, 1, 2, 3, 14, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 999}};
-  cudf::test::fixed_width_column_wrapper<int32_t> line_supplier{
-    {101, 101, 101, 102, 102, 101, 101, 103, 104, 101, 999, 102, 105, 106, 101, 101}};
-  cudf::test::fixed_width_column_wrapper<double> price{
-    {100, 40, 60, 200, 100, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000}};
-  cudf::test::fixed_width_column_wrapper<double> discount{
-    {0.1, 0.25, 0.5, 0.25, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0}};
-  cudf::test::fixed_width_column_wrapper<int32_t> supplier_key{{101, 102, 103, 104, 105, 106}};
-  cudf::test::fixed_width_column_wrapper<int8_t> supplier_nation{{10, 20, 30, 40, 50, 99}};
-  cudf::test::fixed_width_column_wrapper<int8_t> nation_key{{10, 20, 30, 40, 50}};
-  cudf::test::fixed_width_column_wrapper<int8_t> nation_region{{1, 1, 2, 3, 99}};
-  cudf::test::strings_column_wrapper nation_name{"ALPHA", "ZULU", "LOWER", "EUROPE", "NO_REGION"};
-  cudf::test::fixed_width_column_wrapper<int8_t> region_key{{1, 2, 3}};
-  cudf::test::strings_column_wrapper region_name{"ASIA", "asia", "EUROPE"};
-  CUDF_CUDA_TRY(cudaDeviceSynchronize());
-
-  std::map<std::string, cudf::table_view> const input{
-    {"customer", cudf::table_view{{customer_key, customer_nation}}},
-    {"orders", cudf::table_view{{order_customer, order_key, order_date}}},
-    {"lineitem", cudf::table_view{{line_order, line_supplier, price, discount}}},
-    {"supplier", cudf::table_view{{supplier_key, supplier_nation}}},
-    {"nation", cudf::table_view{{nation_key, nation_region, nation_name}}},
-    {"region", cudf::table_view{{region_key, region_name}}}};
-  // Five lines match; order 10 has a supplier from the wrong customer nation.
-  ndsh::q5_reference_result const expected{{{"ALPHA", 150.0}, {"ZULU", 250.0}}, 5};
-  cuda::stream_ref const stream = cudf::get_default_stream();
-  // The CPU oracle accepts no nulls.
-  struct boundary_case {
-    char const* name;
-    cudf::table_view orders;
-    cudf::table_view cpu_orders;
-    ndsh::q5_reference_result expected;
-  };
-  auto const rejected_orders = cudf::slice(input.at("orders"), {3, 12}, stream).front();
-  auto const empty_orders    = cudf::slice(input.at("orders"), {0, 0}, stream).front();
-  boundary_case const cases[]{{"full",
-                               input.at("orders"),
-                               cudf::slice(input.at("orders"), {0, 13}, stream).front(),
-                               expected},
-                              {"rejected orders", rejected_orders, rejected_orders, {}},
-                              {"empty orders", empty_orders, empty_orders, {}}};
-  for (auto const& test : cases) {
-    try {
-      ndsh::q5_reference_builder builder;
-      for (auto const& name : {"region", "nation", "supplier", "customer", "orders", "lineitem"}) {
-        builder.add_table(
-          name, std::string{name} == "orders" ? test.cpu_orders : input.at(name), stream);
-      }
-      auto const cpu = builder.finish();
-      CUDF_EXPECTS(cpu.matched == test.expected.matched && cpu.revenue == test.expected.revenue,
-                   "Q5 CPU reference boundary/join regression");
-      for (bool filter_predicates : {true, false}) {
-        auto result = execute_q5(
-          [&](std::string const& name,
-              std::vector<std::string> const& columns,
-              std::unique_ptr<cudf::ast::operation> const& predicate) {
-            CUDF_EXPECTS(columns == q5_projections.at(name), "Q5 projection mismatch");
-            auto const source = name == "orders" ? test.orders : input.at(name);
-            if (!filter_predicates) {
-              return ndsh::read_parquet_fixture(source, columns, predicate);
-            }
-            return std::make_unique<table_with_names>(std::make_unique<cudf::table>(source),
-                                                      columns);
-          },
-          filter_predicates,
-          ndsh::take_result);
-        ndsh::check_q5_result(test.expected, *result, stream);
-      }
-    } catch (cudf::logic_error const& error) {
-      CUDF_FAIL(std::string{"Q5 case "} + test.name + ": " + error.what());
-    }
-  }
-  CUDF_CUDA_TRY(cudaDeviceSynchronize());
-}
-
 struct q5_files {
   ndsh::local_table_files tables;
   ndsh::q5_reference_result reference;
 
   explicit q5_files(double scale_factor)
   {
-    check_q5_boundaries();
     ndsh::make_reference_files<ndsh::q5_reference_builder>(
       scale_factor,
       tables,
       reference,
       q5_tables,
       q5_projections,
-      false,
       [&](auto&& read, cuda::stream_ref stream) {
         auto result = execute_q5(read, true, ndsh::take_result);
         ndsh::check_q5_result(reference, *result, stream);
@@ -353,7 +152,7 @@ void ndsh_q5_local(nvbench::state& state)
       auto inputs = read_inputs();
       for (std::size_t i = 0; i < q5_tables.size(); ++i) {
         auto const& name = q5_tables[i];
-        benchmark.check_projection(name, q5_projections.at(name), *inputs[i], options.direct_io);
+        benchmark.check_projection(name, q5_projections.at(name), *inputs[i]);
       }
       CUDF_CUDA_TRY(cudaStreamSynchronize(benchmark.stream.get()));
     }

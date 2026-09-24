@@ -246,11 +246,14 @@ class local_benchmark {
 
   void check_projection(std::string const& name,
                         std::vector<std::string> const& columns,
-                        table_with_names const& actual,
-                        bool direct_io = false) const
+                        table_with_names const& actual) const
   {
-    check_local_projection(
-      files_.path(name, options_.use_vortex), options_.use_vortex, io_, columns, actual, direct_io);
+    check_local_projection(files_.path(name, options_.use_vortex),
+                           options_.use_vortex,
+                           io_,
+                           columns,
+                           actual,
+                           options_.direct_io);
   }
 
   // Both callbacks return owners. Keep them alive through consumer synchronization, then release
@@ -318,7 +321,6 @@ void make_reference_files(double scale_factor,
                           Reference& reference,
                           std::vector<std::string> const& names,
                           std::map<std::string, std::vector<std::string>> const& projections,
-                          bool require_full_tables,
                           Validate&& validate)
 {
   cuda::stream_ref const stream = cudf::get_default_stream();
@@ -328,11 +330,9 @@ void make_reference_files(double scale_factor,
     for_each_generated_table(
       scale_factor, names, [&](std::string const& name, table_with_names const& generated) {
         auto const& columns = projections.at(name);
-        if (require_full_tables) {
-          CUDF_EXPECTS(
-            generated.table().num_columns() > static_cast<cudf::size_type>(columns.size()),
-            "Fixture requires full generated table: " + name);
-        }
+        CUDF_EXPECTS(
+          generated.table().num_columns() == static_cast<cudf::size_type>(ndsh_schema(name).size()),
+          "Fixture requires full generated table: " + name);
         tables.write(name, generated, io);
         auto const projected = generated.select(columns);
         builder.add_table(name, projected, stream);

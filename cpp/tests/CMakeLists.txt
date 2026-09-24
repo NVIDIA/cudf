@@ -869,6 +869,23 @@ ConfigureTest(
 
 # ##################################################################################################
 # * NDS-H support tests ---------------------------------------------------------------------------
+ConfigureTest(
+  NDSH_QUERY_TEST
+  io/ndsh_q1_test.cpp
+  io/ndsh_q5_test.cpp
+  io/ndsh_q9_test.cpp
+  io/ndsh_q10_test.cpp
+  ../benchmarks/ndsh/utilities.cpp
+  ../benchmarks/ndsh/parquet/parquet_io.cpp
+  ../benchmarks/io/cuio_common.cpp
+  ../benchmarks/common/table_utilities.cpp
+  EXTRA_LIBS
+  ndsh_data_generator
+  kvikio::kvikio
+  GPUS 1
+  PERCENT 100
+)
+
 # These exercise private helpers and remain build-tree-only.
 add_executable(MEMORY_STATS_LOGGER_TEST utilities_tests/memory_stats_logger_test.cpp)
 target_link_libraries(

@@ -12,7 +12,6 @@
 #include <cudf/table/table.hpp>
 #include <cudf/table/table_view.hpp>
 #include <cudf/types.hpp>
-#include <cudf/utilities/memory_resource.hpp>
 
 #include <cstdint>
 #include <ctime>

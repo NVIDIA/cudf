@@ -7,7 +7,6 @@
 
 #include "reference_io.hpp"
 
-#include <cudf/utilities/error.hpp>
 #include <cudf/wrappers/timestamps.hpp>
 
 #include <cstdint>
@@ -21,9 +20,7 @@ struct q6_reference_result {
 // Independent CPU reference for generated, non-null Q6 inputs; never part of timed execution.
 inline q6_reference_result q6_cpu_reference(cudf::table_view projected, cuda::stream_ref stream)
 {
-  CUDF_EXPECTS(projected.num_columns() == 4, "Expected the four Q6 columns in projection order");
   q6_reference_result result;
-  if (projected.num_rows() == 0) return result;
   using enum cudf::type_id;
   detail::reference_schema(projected, {FLOAT64, FLOAT64, TIMESTAMP_DAYS, INT8});
   detail::for_reference_batches(projected, stream, [&](detail::reference_batch const& batch) {

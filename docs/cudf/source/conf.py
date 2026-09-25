@@ -162,6 +162,7 @@ extensions = [
     "sphinx.ext.autodoc",
     "sphinx.ext.autosummary",
     "sphinx_copybutton",
+    "sphinx_llm.txt",
     "sphinx_remove_toctrees",
     "sphinx.ext.linkcode",
     "numpydoc",
@@ -170,6 +171,10 @@ extensions = [
     "PandasCompat",
     "myst_nb",
 ]
+
+# cudf doc builds run notebooks that use GPU resources parallel builds and can have
+# CUDA context initialization failures and MyST-NB warnings
+llms_txt_build_parallel = False
 
 remove_from_toctrees = ["cudf/api_docs/api/*"]
 

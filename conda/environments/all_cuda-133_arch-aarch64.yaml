@@ -109,6 +109,7 @@ dependencies:
 - scipy
 - sphinx-autobuild
 - sphinx-copybutton
+- sphinx-llm>=1.1.0
 - sphinx-markdown-tables
 - sphinx-remove-toctrees
 - sphinx>=8.1.0

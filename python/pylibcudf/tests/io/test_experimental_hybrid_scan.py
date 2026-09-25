@@ -70,19 +70,15 @@ def simple_parquet_bytes(
 
 
 @pytest.fixture
-def simple_parquet_options(
-    simple_parquet_bytes: bytes,
-) -> plc.io.parquet.ParquetReaderOptions:
-    """Create basic ParquetReaderOptions for the simple parquet file.
+def simple_parquet_options() -> plc.io.parquet.ParquetReaderOptions:
+    """Create basic ParquetReaderOptions for the hybrid scan reader.
 
     Note: This is function-scoped (not module-scoped) because tests may
     modify the options (e.g., by setting filters), so each test needs
     its own independent copy.
     """
-    # SourceInfo doesn't accept BytesIO, but that's fine for this test.
-    # type: ignore[arg-type]
-    source = plc.io.SourceInfo([io.BytesIO(simple_parquet_bytes)])
-    return plc.io.parquet.ParquetReaderOptions.builder(source).build()
+    # Hybrid scan reader options do not need a source
+    return plc.io.parquet.ParquetReaderOptions()
 
 
 @pytest.fixture
@@ -1040,3 +1036,121 @@ def test_hybrid_scan_metadata_with_page_index(
     assert row_mask is not None
     assert row_mask.size() > 0
     assert row_mask.type().id() == plc.types.TypeId.BOOL8
+
+
+@pytest.mark.parametrize("total_rows", [1_000, 20_000])
+def test_hybrid_scan_page_index_stats_misaligned_pages(
+    total_rows: int,
+    simple_parquet_options: plc.io.parquet.ParquetReaderOptions,
+) -> None:
+    """Row mask from page stats of columns whose page boundaries don't align."""
+    # Different value widths with a small page size give each column a different number
+    # of rows per page, so their page boundaries don't line up.
+    buf = io.BytesIO()
+    pq.write_table(
+        pa.table(
+            {
+                "a": [f"{i:07d}" for i in range(total_rows)],
+                "b": [f"{i:011d}" for i in range(total_rows)],
+            }
+        ),
+        buf,
+        use_dictionary=False,
+        write_batch_size=1,
+        data_page_size=256,
+        write_page_index=True,
+    )
+    data = memoryview(buf.getvalue())
+
+    # Filter: a >= lo AND b < hi
+    lo, hi = total_rows // 3, 2 * total_rows // 3
+    filter_expression = Operation(
+        ASTOperator.LOGICAL_AND,
+        Operation(
+            ASTOperator.GREATER_EQUAL,
+            ColumnNameReference("a"),
+            Literal(plc.Scalar.from_arrow(pa.scalar(f"{lo:07d}"))),
+        ),
+        Operation(
+            ASTOperator.LESS,
+            ColumnNameReference("b"),
+            Literal(plc.Scalar.from_arrow(pa.scalar(f"{hi:011d}"))),
+        ),
+    )
+    simple_parquet_options.set_filter(filter_expression)
+
+    footer_size = int.from_bytes(data[-8:-4], byteorder="little")
+    reader = HybridScanReader(
+        data[-8 - footer_size : -8], simple_parquet_options
+    )
+    page_index = reader.page_index_byte_range()
+    reader.setup_page_index(
+        data[page_index.offset : page_index.offset + page_index.size]
+    )
+    row_mask = reader.build_row_mask_with_page_index_stats(
+        reader.all_row_groups(simple_parquet_options), simple_parquet_options
+    ).to_arrow()
+
+    # Every matching row must be kept, and pages outside the range must be pruned.
+    assert all(row_mask[lo:hi].to_pylist())
+    assert not all(row_mask.to_pylist())
+
+
+@pytest.mark.parametrize(
+    "filter_expression, expected_keep",
+    [
+        pytest.param(
+            Operation(
+                ASTOperator.GREATER,
+                ColumnNameReference("a"),
+                Literal(plc.Scalar.from_arrow(pa.scalar(0, pa.int32()))),
+            ),
+            False,
+            id="greater",
+        ),
+        pytest.param(
+            Operation(
+                ASTOperator.NOT,
+                Operation(ASTOperator.IS_NULL, ColumnNameReference("a")),
+            ),
+            False,
+            id="not_is_null",
+        ),
+        pytest.param(
+            Operation(ASTOperator.IS_NULL, ColumnNameReference("a")),
+            True,
+            id="is_null",
+        ),
+    ],
+)
+def test_hybrid_scan_page_index_stats_all_null_page(
+    filter_expression: Operation,
+    expected_keep: bool,
+    simple_parquet_options: plc.io.parquet.ParquetReaderOptions,
+) -> None:
+    """Row mask from page stats of a single, completely null page."""
+    # A completely null page has empty min and max values.
+    num_rows = 10
+    buf = io.BytesIO()
+    pq.write_table(
+        pa.table({"a": pa.array([None] * num_rows, pa.int32())}),
+        buf,
+        write_page_index=True,
+    )
+    data = memoryview(buf.getvalue())
+
+    simple_parquet_options.set_filter(filter_expression)
+
+    footer_size = int.from_bytes(data[-8:-4], byteorder="little")
+    reader = HybridScanReader(
+        data[-8 - footer_size : -8], simple_parquet_options
+    )
+    page_index = reader.page_index_byte_range()
+    reader.setup_page_index(
+        data[page_index.offset : page_index.offset + page_index.size]
+    )
+    row_mask = reader.build_row_mask_with_page_index_stats(
+        reader.all_row_groups(simple_parquet_options), simple_parquet_options
+    ).to_arrow()
+
+    assert row_mask.to_pylist() == [expected_keep] * num_rows

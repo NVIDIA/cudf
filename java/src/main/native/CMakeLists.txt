@@ -166,6 +166,7 @@ add_library(
   src/ColumnViewJni.cu
   src/CompiledExpression.cpp
   src/ContiguousTableJni.cpp
+  src/ProtobufJni.cpp
   src/DataSourceHelperJni.cpp
   src/DeletionVectorJni.cpp
   src/DistinctHashJoinJni.cpp

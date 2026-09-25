@@ -375,6 +375,11 @@ ConfigureTest(
   CROARING_COMPILER_SUPPORTS_AVX512=0
 )
 ConfigureTest(
+  PROTOBUF_TEST io/protobuf_test.cpp
+  GPUS 1
+  PERCENT 100
+)
+ConfigureTest(
   JSON_TEST io/json/json_chunked_reader.cpp io/json/json_test.cpp io/json/json_type_cast_test.cpp
   io/json/json_utils.cu
   GPUS 1

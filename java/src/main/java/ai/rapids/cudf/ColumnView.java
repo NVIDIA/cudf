@@ -3375,6 +3375,33 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
   }
 
   /**
+   * Decode serialized protobuf messages into a STRUCT column.
+   *
+   * Takes a LIST column (INT8 or UINT8 elements) where each row contains a serialized
+   * protobuf message and decodes it into a STRUCT column according to the provided schema.
+   *
+   * Supports nested messages (up to 10 levels), repeated fields (as LIST columns),
+   * enum-as-string conversion, default values, and required field checking.
+   *
+   * @param schema descriptor containing the flattened protobuf schema
+   * @param failOnErrors if true, throw on malformed messages; otherwise return nulls
+   * @return a STRUCT column with decoded protobuf fields
+   */
+  public final ColumnVector decodeProtobuf(ProtobufSchemaDescriptor schema,
+                                           boolean failOnErrors) {
+    if (!type.equals(DType.LIST)) {
+      throw new IllegalArgumentException("column type must be a LIST");
+    }
+    return new ColumnVector(decodeProtobuf(getNativeView(),
+        schema.fieldNumbers, schema.parentIndices, schema.depthLevels,
+        schema.wireTypes, schema.outputTypeIds, schema.encodings,
+        schema.isRepeated, schema.isRequired, schema.hasDefaultValue,
+        schema.defaultInts, schema.defaultFloats, schema.defaultBools,
+        schema.defaultStrings, schema.enumValidValues, schema.enumNames,
+        failOnErrors));
+  }
+
+  /**
    * Returns a new strings column where target string within each string is replaced with the specified
    * replacement string.
    * The replacement proceeds from the beginning of the string to the end, for example,
@@ -4658,6 +4685,14 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
 
 
   private static native long getJSONObject(long viewHandle, long scalarHandle, boolean allowSingleQuotes, boolean stripQuotesFromSingleStrings, boolean missingFieldsAsNulls) throws CudfException;
+
+  private static native long decodeProtobuf(long viewHandle,
+      int[] fieldNumbers, int[] parentIndices, int[] depthLevels,
+      int[] wireTypes, int[] outputTypeIds, int[] encodings,
+      boolean[] isRepeated, boolean[] isRequired, boolean[] hasDefaultValue,
+      long[] defaultInts, double[] defaultFloats, boolean[] defaultBools,
+      byte[][] defaultStrings, int[][] enumValidValues, byte[][][] enumNames,
+      boolean failOnErrors) throws CudfException;
 
   /**
    * Native method to parse and convert a timestamp column vector to string column vector. A unix

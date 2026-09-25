@@ -37,6 +37,7 @@ rapids_cmake_write_version_file(include/cudf/version_config.hpp)
 option(USE_NVTX "Build with NVTX support" ON)
 option(BUILD_TESTS "Configure CMake to build tests" ON)
 option(BUILD_BENCHMARKS "Configure CMake to build benchmarks" OFF)
+option(CUDF_WITH_VORTEX "Enable Vortex NDS-H benchmark integration" OFF)
 option(BUILD_SHARED_LIBS "Build cuDF shared libraries" ON)
 option(CUDF_BUILD_TESTUTIL "Whether to build the test utilities contained in libcudf" ON)
 mark_as_advanced(CUDF_BUILD_TESTUTIL)
@@ -1651,6 +1652,16 @@ if(CUDF_BUILD_STREAMS_TEST_UTIL)
       target_compile_definitions(${_tgt} PUBLIC STREAM_MODE_TESTING)
     endif()
   endforeach()
+endif()
+
+if(CUDF_BUILD_TESTS OR CUDF_BUILD_BENCHMARKS)
+  add_subdirectory(benchmarks/common/ndsh_data_generator)
+endif()
+
+# The private Vortex adapter is shared by unit tests and NDS-H benchmarks.
+if(CUDF_WITH_VORTEX AND (CUDF_BUILD_TESTS OR CUDF_BUILD_BENCHMARKS))
+  include(cmake/thirdparty/get_vortex.cmake)
+  add_subdirectory(benchmarks/ndsh/vortex)
 endif()
 
 # ##################################################################################################

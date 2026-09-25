@@ -31,30 +31,6 @@ target_include_directories(
          "$<BUILD_INTERFACE:${CUDF_SOURCE_DIR}/src>"
 )
 
-add_library(
-  ndsh_data_generator STATIC
-  common/ndsh_data_generator/ndsh_data_generator.cpp common/ndsh_data_generator/table_helpers.cpp
-  common/ndsh_data_generator/random_column_generator.cu
-)
-target_compile_features(ndsh_data_generator PUBLIC cxx_std_20 cuda_std_20)
-
-target_compile_options(
-  ndsh_data_generator PUBLIC "$<$<COMPILE_LANGUAGE:CXX>:${CUDF_CXX_FLAGS};${CUDF_CXX_TEST_FLAGS}>"
-                             "$<$<COMPILE_LANGUAGE:CUDA>:${CUDF_CUDA_FLAGS}>"
-)
-
-target_link_libraries(
-  ndsh_data_generator
-  PUBLIC cudf cudf::cudftestutil nvtx3::nvtx3-cpp
-  PRIVATE $<TARGET_NAME_IF_EXISTS:conda_env>
-)
-
-target_include_directories(
-  ndsh_data_generator
-  PUBLIC "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>" "$<BUILD_INTERFACE:${CUDF_SOURCE_DIR}>"
-         "$<BUILD_INTERFACE:${CUDF_SOURCE_DIR}/src>"
-)
-
 # ##################################################################################################
 # * compiler function -----------------------------------------------------------------------------
 
@@ -78,25 +54,29 @@ add_custom_command(
 )
 
 # This function takes in a benchmark name and benchmark source for nvbench benchmarks and handles
-# setting all of the associated properties and linking to build the benchmark
+# setting all of the associated properties and linking to build the benchmark. The optional
+# NO_INSTALL flag restricts a benchmark to the build tree.
 function(ConfigureNVBench CMAKE_BENCH_NAME)
-  add_executable(${CMAKE_BENCH_NAME} ${ARGN} fixture/nvbench_main.cpp)
-  set_target_properties(
+    cmake_parse_arguments(PARSE_ARGV 1 NVBENCH "NO_INSTALL" "" "")
+    add_executable(${CMAKE_BENCH_NAME} ${NVBENCH_UNPARSED_ARGUMENTS} fixture/nvbench_main.cpp)
+    set_target_properties(
     ${CMAKE_BENCH_NAME}
     PROPERTIES RUNTIME_OUTPUT_DIRECTORY "$<BUILD_INTERFACE:${CUDF_BINARY_DIR}/benchmarks>"
                INSTALL_RPATH "\$ORIGIN/../../../lib"
   )
-  target_link_libraries(
+    target_link_libraries(
     ${CMAKE_BENCH_NAME}
     PRIVATE cudf_benchmark_common ndsh_data_generator cudf_datagen nvbench::nvbench
             $<TARGET_NAME_IF_EXISTS:conda_env> cudf::cudftestutil_objects
   )
-  install(
-    TARGETS ${CMAKE_BENCH_NAME}
-    COMPONENT testing
-    DESTINATION bin/benchmarks/libcudf
-    EXCLUDE_FROM_ALL
-  )
+    if(NOT NVBENCH_NO_INSTALL)
+        install(
+      TARGETS ${CMAKE_BENCH_NAME}
+      COMPONENT testing
+      DESTINATION bin/benchmarks/libcudf
+      EXCLUDE_FROM_ALL
+    )
+    endif()
 endfunction()
 
 # ##################################################################################################
@@ -124,11 +104,26 @@ ConfigureNVBench(TRANSPOSE_NVBENCH transpose/transpose.cpp)
 
 # ##################################################################################################
 # * nds-h benchmark --------------------------------------------------------------------------------
-ConfigureNVBench(NDSH_Q01_NVBENCH ndsh/q01.cpp ndsh/utilities.cpp)
-ConfigureNVBench(NDSH_Q05_NVBENCH ndsh/q05.cpp ndsh/utilities.cpp)
-ConfigureNVBench(NDSH_Q06_NVBENCH ndsh/q06.cpp ndsh/utilities.cpp)
-ConfigureNVBench(NDSH_Q09_NVBENCH ndsh/q09.cpp ndsh/utilities.cpp)
-ConfigureNVBench(NDSH_Q10_NVBENCH ndsh/q10.cpp ndsh/utilities.cpp)
+
+set(ndsh_benchmark_options)
+if(CUDF_WITH_VORTEX)
+    # Pinned Vortex loads CUB/nvcomp libraries from absolute Cargo build paths.
+    set(ndsh_benchmark_options NO_INSTALL)
+endif()
+
+foreach(query IN ITEMS 01 05 06 09 10)
+    ConfigureNVBench(
+    NDSH_Q${query}_NVBENCH ${ndsh_benchmark_options} ndsh/q${query}.cpp ndsh/utilities.cpp
+    ndsh/parquet/parquet_io.cpp
+  )
+    if(NOT CUDF_WITH_VORTEX)
+        continue()
+    endif()
+
+    target_link_libraries(NDSH_Q${query}_NVBENCH PRIVATE NDSH_VORTEX_IO kvikio::kvikio)
+    target_compile_definitions(NDSH_Q${query}_NVBENCH PRIVATE CUDF_WITH_VORTEX=1)
+endforeach()
+unset(ndsh_benchmark_options)
 
 # ##################################################################################################
 # * filter benchmark -------------------------------------------------------------------

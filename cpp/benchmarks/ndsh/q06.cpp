@@ -3,6 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+#include "parquet/parquet_io.hpp"
 #include "utilities.hpp"
 
 #include <benchmarks/common/memory_stats.hpp>
@@ -15,6 +16,24 @@
 #include <cudf/utilities/memory_resource.hpp>
 
 #include <nvbench/nvbench.cuh>
+
+#ifdef CUDF_WITH_VORTEX
+#include "local_io.hpp"
+#include "reference/q6_reference.hpp"
+#include "vortex/vortex_io.hpp"
+
+#include <cudf_test/column_wrapper.hpp>
+
+#include <cudf/copying.hpp>
+#include <cudf/utilities/error.hpp>
+
+#include <cmath>
+#endif
+
+namespace {
+std::vector<std::string> const q6_columns{
+  "l_extendedprice", "l_discount", "l_shipdate", "l_quantity"};
+}
 
 /**
  * @file q06.cpp
@@ -54,14 +73,16 @@
   return revenue;
 }
 
-void run_ndsh_q6(nvbench::state& state,
-                 std::unordered_map<std::string, cuio_source_sink_pair>& sources)
+/**
+ * read returns an owning projected table, applying its predicate if filter_shipdate is false.
+ * Otherwise filtering happens here. consume receives the result owner by reference and may
+ * move it out; its return value is forwarded. This helper adds no final stream synchronization.
+ */
+template <typename Read, typename Consume>
+auto execute_q6(Read&& read, bool filter_shipdate, Consume&& consume)
 {
-  // Read out the `lineitem` table from parquet file
-  std::vector<std::string> const lineitem_cols = {
-    "l_extendedprice", "l_discount", "l_shipdate", "l_quantity"};
   auto const shipdate_ref = cudf::ast::column_reference(std::distance(
-    lineitem_cols.begin(), std::find(lineitem_cols.begin(), lineitem_cols.end(), "l_shipdate")));
+    q6_columns.begin(), std::find(q6_columns.begin(), q6_columns.end(), "l_shipdate")));
   auto shipdate_lower =
     cudf::timestamp_scalar<cudf::timestamp_D>(days_since_epoch(1994, 1, 1), true);
   auto const shipdate_lower_literal = cudf::ast::literal(shipdate_lower);
@@ -74,8 +95,8 @@ void run_ndsh_q6(nvbench::state& state,
     cudf::ast::operation(cudf::ast::ast_operator::LESS, shipdate_ref, shipdate_upper_literal);
   auto const lineitem_pred = std::make_unique<cudf::ast::operation>(
     cudf::ast::ast_operator::LOGICAL_AND, shipdate_pred_a, shipdate_pred_b);
-  auto lineitem = read_parquet(
-    sources.at("lineitem").make_source_info(), lineitem_cols, std::move(lineitem_pred));
+  auto lineitem = read(q6_columns, lineitem_pred);
+  if (filter_shipdate) { lineitem = apply_filter(lineitem, *lineitem_pred); }
 
   // Cast the discount and quantity columns to float32 and append to lineitem table
   auto discout_float =
@@ -115,10 +136,19 @@ void run_ndsh_q6(nvbench::state& state,
 
   // Sum the `revenue` column
   auto const revenue_view = revenue->view();
-  auto const result_table = apply_reduction(revenue_view, cudf::aggregation::Kind::SUM, "revenue");
+  auto result_table       = apply_reduction(revenue_view, cudf::aggregation::Kind::SUM, "revenue");
+  return consume(result_table);
+}
 
-  // Write query result to a parquet file
-  result_table->to_parquet("q6.parquet");
+void run_ndsh_q6(nvbench::state& state,
+                 std::unordered_map<std::string, cuio_source_sink_pair>& sources)
+{
+  execute_q6(
+    [&](auto const& columns, auto const& predicate) {
+      return read_parquet(sources.at("lineitem").make_source_info(), columns, predicate);
+    },
+    false,
+    [](auto const& result) { result->to_parquet("q6.parquet"); });
 }
 
 void ndsh_q6(nvbench::state& state)
@@ -138,3 +168,116 @@ void ndsh_q6(nvbench::state& state)
 }
 
 NVBENCH_BENCH(ndsh_q6).set_name("ndsh_q6").add_float64_axis("scale_factor", {0.01, 0.1, 1});
+
+#ifdef CUDF_WITH_VORTEX
+namespace {
+
+void check_q6_result(ndsh::q6_reference_result const& expected, table_with_names const& result)
+{
+  auto const table = result.table();
+  CUDF_EXPECTS(table.num_rows() == 1 && table.num_columns() == 1 &&
+                 result.column_names() == std::vector<std::string>{"revenue"},
+               "Q6 result must have one row and one revenue column");
+  CUDF_EXPECTS(table.column(0).type() == cudf::data_type{cudf::type_id::FLOAT64},
+               "Q6 revenue must be FLOAT64");
+  auto value = cudf::get_element(table.column(0), 0);
+  CUDF_EXPECTS(value->is_valid() == (expected.matched != 0),
+               "Q6 SUM validity differs from CPU reference");
+  if (value->is_valid()) {
+    CUDF_EXPECTS(
+      ndsh::detail::reference_equal(
+        static_cast<cudf::numeric_scalar<double> const&>(*value).value(), expected.revenue),
+      "Q6 GPU revenue differs from CPU reference");
+  }
+}
+
+// Generated data can yield an empty Q6 result; exercise a known nonempty result through both files.
+void check_q6_io(ndsh::vortex_io const& io)
+{
+  using cudf::test::fixed_width_column_wrapper;
+  fixed_width_column_wrapper<double> price{100, 200, 100, 100};
+  fixed_width_column_wrapper<double> discount{0.06, 0.05, 0.06, 0.06};
+  // The last two rows fail the date and quantity predicates, respectively.
+  fixed_width_column_wrapper<cudf::timestamp_D, int32_t> shipdate{8766, 9130, 9131, 8766};
+  fixed_width_column_wrapper<int8_t> quantity{23, 23, 23, 24};
+  table_with_names input{
+    std::make_unique<cudf::table>(cudf::table_view{{price, discount, shipdate, quantity}}),
+    q6_columns};
+  ndsh::local_table_files files;
+  files.write("lineitem", input, io);
+  for (bool use_vortex : {false, true}) {
+    auto read =
+      ndsh::read_local_file(files.path("lineitem", use_vortex), use_vortex, io, q6_columns);
+    ndsh::check_projection(input.table(), *read, q6_columns);
+    auto result = execute_q6(
+      [&](auto const&, auto const&) { return std::move(read); }, true, ndsh::take_result);
+    check_q6_result({2, 16.0}, *result);
+    CUDF_CUDA_TRY(cudaDeviceSynchronize());
+  }
+}
+
+struct q6_files {
+  ndsh::local_table_files tables;
+  ndsh::q6_reference_result reference;
+
+  explicit q6_files(double scale_factor)
+  {
+    ndsh::vortex_io io{cuda::stream_ref{cudf::get_default_stream()}.get()};
+    check_q6_io(io);
+    for_each_generated_table(
+      scale_factor, {"lineitem"}, [&](auto const& name, table_with_names const& generated) {
+        tables.write(name, generated, io);
+        reference =
+          ndsh::q6_cpu_reference(generated.select(q6_columns), cudf::get_default_stream());
+        CUDF_EXPECTS(std::isfinite(reference.revenue), "Q6 CPU reference revenue must be finite");
+        for (bool use_vortex : {false, true}) {
+          auto input =
+            ndsh::read_local_file(tables.path(name, use_vortex), use_vortex, io, q6_columns);
+          ndsh::check_projection(generated.select(q6_columns), *input, q6_columns);
+          auto result = execute_q6(
+            [&](auto const&, auto const&) { return std::move(input); }, true, ndsh::take_result);
+          check_q6_result(reference, *result);
+        }
+        CUDF_CUDA_TRY(cudaDeviceSynchronize());
+      });
+    CUDF_CUDA_TRY(cudaDeviceSynchronize());
+  }
+};
+
+void ndsh_q6_local(nvbench::state& state)
+{
+  auto const options = ndsh::local_options{state, 6};
+  if (!options.supported(state)) { return; }
+  auto const& files = ndsh::local_fixture<q6_files>(state.get_float64("scale_factor"));
+  ndsh::local_benchmark benchmark{state, files.tables, options};
+  auto read = [&](auto const&...) { return benchmark.read("lineitem", q6_columns); };
+  {
+    auto input = read();
+    benchmark.check_projection("lineitem", q6_columns, *input);
+    auto result = execute_q6(
+      [&](auto const&, auto const&) { return std::move(input); }, true, ndsh::take_result);
+    check_q6_result(files.reference, *result);
+    CUDF_CUDA_TRY(cudaDeviceSynchronize());
+  }
+  benchmark.exec(read, [&] { return execute_q6(read, true, ndsh::take_result); }, "File size");
+  auto& summary = state.add_summary("ndsh/q6/revenue");
+  summary.set_string("name", "Verified revenue");
+  if (files.reference.matched == 0) {
+    summary.set_string("value", "NULL");
+  } else {
+    summary.set_float64("value", files.reference.revenue);
+  }
+  ndsh::add_count(state, "ndsh/q6/matched_rows", "Q6 matched rows", files.reference.matched);
+}
+
+}  // namespace
+
+// NVBench varies the first axis fastest; keep scale last to reuse the one-scale fixture cache.
+NVBENCH_BENCH(ndsh_q6_local)
+  .set_name("ndsh_q6_local")
+  .add_string_axis("format", {"parquet", "vortex"})
+  .add_string_axis("workload", {"read", "q6"})
+  .add_string_axis("cache", {"warm", "cold"})
+  .add_string_axis("io", {"buffered"})
+  .add_float64_axis("scale_factor", {0.01, 0.1, 1, 10});
+#endif

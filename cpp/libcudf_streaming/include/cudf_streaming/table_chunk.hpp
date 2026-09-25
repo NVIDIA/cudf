@@ -236,10 +236,8 @@ class table_chunk {
    * In contrast, chunks constructed from non-exclusive `cudf::table_view` instances are
    * non-owning views of externally managed memory and therefore not spillable.
    *
-   * To spill a table chunk from device to host memory, first call `copy()` to create a
-   * host-side copy, then delete or overwrite the original device chunk. If
-   * `is_spillable() == true`, destroying the original device chunk will release the
-   * associated device memory.
+   * To spill a table chunk from device to host memory, call `move()`. If
+   * `is_spillable() == true`, this releases the associated device memory.
    *
    * @return `true` if the table chunk owns its memory and can be spilled; otherwise
    * `false`.
@@ -262,6 +260,27 @@ class table_chunk {
    * available reservation.
    */
   [[nodiscard]] table_chunk copy(rapidsmpf::MemoryReservation& reservation) const;
+
+  /**
+   * @brief Move the table chunk into the memory of a reservation.
+   *
+   * Like `copy()`, but consumes this chunk, so the memory it held is released unless it
+   * already resides in the reservation's memory type. Leaving device memory is recorded
+   * as a spill.
+   *
+   * @param reservation Memory reservation used to track and limit allocations.
+   * @return A new `table_chunk` holding the data in the reservation's memory type.
+   *
+   * @throws std::invalid_argument If `is_spillable() == false`, in which case this chunk
+   * is left untouched.
+   * @throws rapidsmpf::reservation_error If the total allocation size exceeds the
+   * available reservation.
+   *
+   * @note After this call, this object is in a moved-from state, even if the move
+   * throws for any reason other than `is_spillable() == false`. Only reassignment,
+   * movement, or destruction are valid.
+   */
+  [[nodiscard]] table_chunk move(rapidsmpf::MemoryReservation& reservation);
 
   /**
    * @brief Convert this table chunk to a `PackedData`, avoiding unnecessary copies.

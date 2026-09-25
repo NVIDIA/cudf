@@ -457,7 +457,7 @@ TEST_F(HybridScanTest, ConsecutivePrunedPageOffsets)
 
   auto const input = cudf::table_view{{col0, col1, *col2, *col3, *col4}};
 
-  std::string filepath = "ConsecutivePrunedPageOffsets.parquet";
+  auto const filepath = temp_env->get_temp_filepath("ConsecutivePrunedPageOffsets.parquet");
   {
     auto metadata = cudf::io::table_input_metadata(input);
     metadata.column_metadata[0].set_name("col0");
@@ -1395,7 +1395,11 @@ TEST_F(HybridScanTest, RowGroupPassesMatchesChunkedReader)
       *footer_buffer, options);
 
     auto const all_row_groups = reader->all_row_groups(options);
-    auto const passes         = reader->construct_row_group_passes(all_row_groups, pass_read_limit);
+    auto const passes         = reader->construct_row_group_passes(
+      cudf::io::parquet::experimental::read_columns_mode::ALL_COLUMNS,
+      all_row_groups,
+      pass_read_limit,
+      options);
 
     for (auto const& pass_row_groups : passes) {
       auto const chunk_byte_ranges =
@@ -1437,4 +1441,136 @@ TEST_F(HybridScanTest, RowGroupPassesMatchesChunkedReader)
     CUDF_TEST_EXPECT_TABLES_EQUIVALENT(cuda::std::get<0>(iter)->view(),
                                        cuda::std::get<1>(iter)->view());
   });
+}
+
+TEST_F(HybridScanTest, RowGroupPassesUseSelectedColumns)
+{
+  auto constexpr num_rg      = 4;
+  auto constexpr rows_per_rg = 100;
+
+  auto values = cuda::counting_iterator(0);
+  cudf::test::fixed_width_column_wrapper<int32_t> filter_col(values, values + rows_per_rg);
+  auto payload_iter = cuda::constant_iterator(std::string(1'024, 'x'));
+  auto payload_col  = cudf::test::strings_column_wrapper(payload_iter, payload_iter + rows_per_rg);
+  auto chunk_table  = cudf::table_view{{filter_col, payload_col}};
+
+  auto const parquet_filepath =
+    temp_env->get_temp_filepath("RowGroupPassesUseSelectedColumns.parquet");
+  {
+    auto full_table = cudf::concatenate(std::vector<cudf::table_view>(num_rg, chunk_table));
+    cudf::io::table_input_metadata metadata(full_table->view());
+    metadata.column_metadata[0].set_name("filter_col");
+    metadata.column_metadata[1].set_name("payload_col");
+    auto const opts = cudf::io::parquet_writer_options::builder(
+                        cudf::io::sink_info{parquet_filepath}, full_table->view())
+                        .metadata(std::move(metadata))
+                        .row_group_size_rows(rows_per_rg)
+                        .max_page_fragment_size(rows_per_rg)
+                        .compression(cudf::io::compression_type::NONE)
+                        .dictionary_policy(cudf::io::dictionary_policy::NEVER)
+                        .build();
+    cudf::io::write_parquet(opts);
+  }
+
+  auto literal_value     = cudf::numeric_scalar<int32_t>(0);
+  auto const literal     = cudf::ast::literal(literal_value);
+  auto const col_ref     = cudf::ast::column_name_reference("filter_col");
+  auto const filter_expr = cudf::ast::operation(cudf::ast::ast_operator::GREATER, col_ref, literal);
+  auto const options     = cudf::io::parquet_reader_options::builder().filter(filter_expr).build();
+
+  auto datasource          = cudf::io::datasource::create(parquet_filepath);
+  auto const footer_buffer = cudf::io::parquet::fetch_footer_to_host(*datasource);
+  auto reader =
+    std::make_unique<cudf::io::parquet::experimental::hybrid_scan_reader>(*footer_buffer, options);
+  auto const all_row_groups      = reader->all_row_groups(options);
+  auto constexpr pass_read_limit = 50'000;
+
+  auto const filter_passes = reader->construct_row_group_passes(
+    cudf::io::parquet::experimental::read_columns_mode::FILTER_COLUMNS,
+    all_row_groups,
+    pass_read_limit,
+    options);
+  auto const payload_passes = reader->construct_row_group_passes(
+    cudf::io::parquet::experimental::read_columns_mode::PAYLOAD_COLUMNS,
+    all_row_groups,
+    pass_read_limit,
+    options);
+  auto const all_passes = reader->construct_row_group_passes(
+    cudf::io::parquet::experimental::read_columns_mode::ALL_COLUMNS,
+    all_row_groups,
+    pass_read_limit,
+    options);
+
+  auto const expect_all_row_groups = [&](auto const& passes) {
+    auto flattened = std::vector<cudf::size_type>{};
+    for (auto const& pass : passes) {
+      ASSERT_FALSE(pass.empty());
+      flattened.insert(flattened.end(), pass.begin(), pass.end());
+    }
+    EXPECT_EQ(flattened, all_row_groups);
+  };
+  expect_all_row_groups(filter_passes);
+  expect_all_row_groups(payload_passes);
+  expect_all_row_groups(all_passes);
+
+  EXPECT_LT(filter_passes.size(), payload_passes.size());
+  EXPECT_LT(filter_passes.size(), all_passes.size());
+  EXPECT_LE(payload_passes.size(), all_passes.size());
+}
+
+TEST_F(HybridScanTest, MisusePassesThrows)
+{
+  auto constexpr num_rg      = 4;
+  auto constexpr rows_per_rg = 1'000;
+
+  auto values = cuda::counting_iterator(0);
+  cudf::test::fixed_width_column_wrapper<int32_t> col0(values, values + rows_per_rg);
+  cudf::test::fixed_width_column_wrapper<float> col1(values, values + rows_per_rg);
+  auto chunk_table = cudf::table_view{{col0, col1}};
+
+  auto const stream = cudf::get_default_stream();
+  auto const mr     = cudf::get_current_device_resource_ref();
+
+  auto const parquet_filepath = temp_env->get_temp_filepath("MisusePassesThrows.parquet");
+  {
+    auto full_table = cudf::concatenate(std::vector<cudf::table_view>(num_rg, chunk_table), stream);
+    cudf::io::table_input_metadata metadata(full_table->view());
+    metadata.column_metadata[0].set_name("col0");
+    metadata.column_metadata[1].set_name("col1");
+    auto opts = cudf::io::parquet_writer_options::builder(cudf::io::sink_info{parquet_filepath},
+                                                          full_table->view())
+                  .metadata(std::move(metadata))
+                  .row_group_size_rows(rows_per_rg)
+                  .max_page_fragment_size(rows_per_rg)
+                  .build();
+    cudf::io::write_parquet(opts, stream);
+    stream.sync();
+  }
+
+  // Filter so FILTER_COLUMNS has something to select
+  auto literal_value     = cudf::numeric_scalar<int32_t>(0, true, stream);
+  auto const literal     = cudf::ast::literal(literal_value);
+  auto const col_ref     = cudf::ast::column_name_reference("col0");
+  auto const filter_expr = cudf::ast::operation(cudf::ast::ast_operator::GREATER, col_ref, literal);
+  auto options           = cudf::io::parquet_reader_options::builder().filter(filter_expr).build();
+
+  auto datasource          = cudf::io::datasource::create(parquet_filepath);
+  auto const footer_buffer = cudf::io::parquet::fetch_footer_to_host(*datasource);
+  auto reader =
+    std::make_unique<cudf::io::parquet::experimental::hybrid_scan_reader>(*footer_buffer, options);
+
+  auto const all_row_groups       = reader->all_row_groups(options);
+  auto const chunk_ranges         = reader->all_column_chunks_byte_ranges(all_row_groups, options);
+  auto [buffers, col_data, tasks] = cudf::io::parquet::fetch_byte_ranges_to_device_async(
+    *datasource, chunk_ranges, cudf::io::parquet::io_submission_policy::SERIALIZE, stream, mr);
+  tasks.get();
+
+  reader->setup_chunking_for_all_columns(0, 0, all_row_groups, col_data, options, stream, mr);
+
+  // Construct passes for filter columns after chunking is set up.
+  std::ignore = reader->construct_row_group_passes(
+    cudf::io::parquet::experimental::read_columns_mode::FILTER_COLUMNS, all_row_groups, 1, options);
+
+  // All column materialization now throws as the column selection is now stale
+  EXPECT_THROW(std::ignore = reader->materialize_all_columns_chunk(), cudf::logic_error);
 }

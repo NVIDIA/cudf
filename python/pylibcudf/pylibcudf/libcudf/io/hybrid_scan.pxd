@@ -29,6 +29,11 @@ cdef extern from "cudf/io/experimental/hybrid_scan.hpp" \
         YES
         NO
 
+    cpdef enum class read_columns_mode:
+        FILTER_COLUMNS
+        PAYLOAD_COLUMNS
+        ALL_COLUMNS
+
     cdef cppclass hybrid_scan_metadata:
         hybrid_scan_metadata(
             host_span[const_uint8_t] footer_bytes,
@@ -192,8 +197,10 @@ cdef extern from "cudf/io/experimental/hybrid_scan.hpp" \
         ) except +libcudf_exception_handler
 
         vector[vector[size_type]] construct_row_group_passes(
+            read_columns_mode columns_mode,
             std_span[const_size_type] row_group_indices,
             size_t pass_read_limit,
+            const parquet_reader_options& options,
         ) except +libcudf_exception_handler
 
         bool has_next_table_chunk() except +libcudf_exception_handler

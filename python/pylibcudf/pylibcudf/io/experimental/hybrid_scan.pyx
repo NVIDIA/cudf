@@ -27,6 +27,7 @@ from pylibcudf.libcudf.io.hybrid_scan cimport (
     const_uint8_t,
     hybrid_scan_metadata as cpp_hybrid_scan_metadata,
     hybrid_scan_reader as cpp_hybrid_scan_reader,
+    read_columns_mode as cpp_read_columns_mode,
     use_data_page_mask as cpp_use_data_page_mask,
 )
 from pylibcudf.libcudf.io.parquet_schema cimport FileMetaData as cpp_FileMetaData
@@ -48,8 +49,15 @@ from pylibcudf.io.parquet_metadata import FileMetaData
 import pylibcudf.libcudf.io.hybrid_scan
 
 UseDataPageMask = pylibcudf.libcudf.io.hybrid_scan.use_data_page_mask
+ReadColumnsMode = pylibcudf.libcudf.io.hybrid_scan.read_columns_mode
 
-__all__ = ["FileMetaData", "HybridScanMetadata", "HybridScanReader", "UseDataPageMask"]
+__all__ = [
+    "FileMetaData",
+    "HybridScanMetadata",
+    "HybridScanReader",
+    "ReadColumnsMode",
+    "UseDataPageMask",
+]
 
 
 cdef device_span[const_uint8_t] _get_device_span(object obj) except *:
@@ -1015,11 +1023,13 @@ cdef class HybridScanReader:
 
     def construct_row_group_passes(
         self,
+        cpp_read_columns_mode columns_mode,
         list row_group_indices: list[int],
         size_t pass_read_limit,
+        ParquetReaderOptions options,
     ) -> list[list[int]]:
         """Partition row groups into passes such that the GPU memory required to
-        materialize a pass is bounded by the specified limit.
+        materialize a pass for selected columns is bounded by the specified limit.
 
         Note that ``pass_read_limit`` is a hint, not an absolute limit. i.e. if
         a row group cannot fit within the limit, it will still constitute a valid
@@ -1027,11 +1037,15 @@ cdef class HybridScanReader:
 
         Parameters
         ----------
+        columns_mode : ReadColumnsMode
+            Columns to consider for pass memory estimation.
         row_group_indices : list[int]
             Input row group indices
         pass_read_limit : int
-            Limit on the amount of memory used for reading and decompressing data
-        or 0 if there is no limit.
+            Limit on the amount of memory used for reading and decompressing
+            data, or 0 if there is no limit.
+        options : ParquetReaderOptions
+            Parquet reader options used to select columns.
 
         Returns
         -------
@@ -1046,12 +1060,16 @@ cdef class HybridScanReader:
         cdef vector[size_type] indices_vec = row_group_indices
         cdef vector[vector[size_type]] passes
         with nogil:
-            passes = move(self.c_obj.get()[0].construct_row_group_passes(
-                std_span[const_size_type](
-                    indices_vec.data(), indices_vec.size()
-                ),
-                pass_read_limit
-            ))
+            passes = move(
+                self.c_obj.get()[0].construct_row_group_passes(
+                    columns_mode,
+                    std_span[const_size_type](
+                        indices_vec.data(), indices_vec.size()
+                    ),
+                    pass_read_limit,
+                    options.c_obj
+                )
+            )
         return passes
 
     def has_next_table_chunk(self) -> bool:

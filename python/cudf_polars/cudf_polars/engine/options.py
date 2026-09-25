@@ -307,6 +307,16 @@ class StreamingOptions:
         ``CUDF_POLARS__EXECUTOR__JOIN_FILTER_PUSHDOWN__*``.
         Default: disabled.
         Category: executor.
+    sort_strategy
+        How multi-partition ``Sort`` nodes execute. ``"in-memory"`` buffers the
+        local input, range-shuffles it and sorts each received partition in
+        device memory. ``"external"`` streams the input into the (disk-spilling)
+        shuffler as it arrives and sorts each partition with an external merge
+        sort (sorted runs on disk under ``disk_spill_dir``), so neither the shard
+        nor a partition is ever resident whole.
+        Env: ``CUDF_POLARS__EXECUTOR__SORT_STRATEGY``.
+        Default: ``"in-memory"``.
+        Category: executor.
     sink_to_directory
         Whether multi-partition sink operations should write to a directory
         rather than a single file. The ``spmd``/``ray``/``dask`` engines
@@ -447,6 +457,9 @@ class StreamingOptions:
     ) = _opt("executor")
     sink_to_directory: bool | Unspecified = _opt(
         "executor", "CUDF_POLARS__EXECUTOR__SINK_TO_DIRECTORY", parse_boolean
+    )
+    sort_strategy: Literal["in-memory", "external"] | Unspecified = _opt(
+        "executor", "CUDF_POLARS__EXECUTOR__SORT_STRATEGY"
     )
     quent_context: QuentContext | Unspecified | None = _opt(
         "executor",
@@ -868,6 +881,17 @@ class StreamingOptions:
             help=textwrap.dedent("""\
                 Target IO partition size in bytes. 0 = auto.
                 Env: CUDF_POLARS__EXECUTOR__TARGET_PARTITION_SIZE. Built-in default: auto."""),
+        )
+        g.add_argument(
+            "--sort-strategy",
+            dest="sort_strategy",
+            default=None,
+            type=str,
+            choices=["in-memory", "external"],
+            help=textwrap.dedent("""\
+                Multi-partition Sort strategy: "in-memory" (default) or "external"
+                (stream into the shuffler; external merge sort per partition with
+                runs on disk). Env: CUDF_POLARS__EXECUTOR__SORT_STRATEGY."""),
         )
         g.add_argument(
             "--dynamic-planning",

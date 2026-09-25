@@ -490,21 +490,62 @@ def force_external_sort(monkeypatch):
     monkeypatch.setattr(external_sort, "merge_fanin", lambda: 2)
 
 
+@pytest.fixture
+def engine_external(streaming_engine_factory):
+    return streaming_engine_factory(
+        StreamingOptions(
+            max_rows_per_partition=3,
+            fallback_mode="raise",
+            raise_on_fail=True,
+            sort_strategy="external",
+        ),
+    )
+
+
+@pytest.fixture
+def engine_large_external(streaming_engine_factory):
+    return streaming_engine_factory(
+        StreamingOptions(
+            max_rows_per_partition=2_100,
+            fallback_mode="raise",
+            raise_on_fail=True,
+            sort_strategy="external",
+        ),
+    )
+
+
 @pytest.mark.parametrize("large_df,by,stable", list(large_frames()))
 @pytest.mark.parametrize(
     "nulls_last,descending", [(False, False), (True, True), (False, True)]
 )
 def test_large_sort_external(
-    large_df, by, engine_large, stable, nulls_last, descending, force_external_sort
+    large_df,
+    by,
+    engine_large_external,
+    stable,
+    nulls_last,
+    descending,
+    force_external_sort,
 ):
-    # Same queries as test_large_sort, but every owned partition is sorted via
-    # runs on disk and a multi-pass k-way merge (fan-in 2).
+    # Same queries as test_large_sort under sort_strategy="external", with every
+    # owned partition sorted via runs on disk and a multi-pass k-way merge
+    # (fan-in 2).
     q = large_df.sort(
         by, nulls_last=nulls_last, descending=descending, maintain_order=stable
     )
-    assert_gpu_result_equal(q, engine=engine_large)
+    assert_gpu_result_equal(q, engine=engine_large_external)
 
 
-def test_sort_external_small(df, engine, force_external_sort):
+@pytest.mark.parametrize("large_df,by,stable", list(large_frames()))
+def test_large_sort_external_in_memory_fast_path(
+    large_df, by, engine_large_external, stable
+):
+    # sort_strategy="external" with the default budget: partitions fit, so the
+    # streaming insertion is exercised but no runs are written.
+    q = large_df.sort(by, maintain_order=stable)
+    assert_gpu_result_equal(q, engine=engine_large_external)
+
+
+def test_sort_external_small(df, engine_external, force_external_sort):
     q = df.sort("y")
-    assert_gpu_result_equal(q, engine=engine)
+    assert_gpu_result_equal(q, engine=engine_external)

@@ -1095,6 +1095,12 @@ class StreamingExecutor:
         Whether multi-partition sink operations write to a directory rather
         than a single file. For the spmd, ray, and dask clusters this is
         always True; setting it to False raises a ValueError.
+    sort_strategy
+        How multi-partition Sort nodes execute: "in-memory" (default) buffers
+        the local input, range-shuffles it and sorts each received partition in
+        device memory; "external" streams the input into the disk-spilling
+        shuffler and sorts each partition with an external merge sort whose
+        runs live under rapidsmpf's ``disk_spill_dir``.
     dynamic_planning
         Options controlling dynamic shuffle planning. See
         :class:`~cudf_polars.utils.config.DynamicPlanningOptions` for more.
@@ -1257,6 +1263,11 @@ class StreamingExecutor:
             f"{_env_prefix}__SINK_TO_DIRECTORY", _bool_converter, default=None
         )
     )
+    sort_strategy: Literal["in-memory", "external"] = dataclasses.field(
+        default_factory=_make_default_factory(
+            f"{_env_prefix}__SORT_STRATEGY", str, default="in-memory"
+        )
+    )
     dynamic_planning: DynamicPlanningOptions | None = dataclasses.field(
         default_factory=DynamicPlanningOptions
     )
@@ -1321,6 +1332,13 @@ class StreamingExecutor:
         if self.cluster is None:
             object.__setattr__(self, "cluster", Cluster.DEFAULT_SINGLETON)
         assert self.cluster is not None, "Expected cluster to be set."
+
+        if not isinstance(self.sort_strategy, str):
+            raise TypeError("sort_strategy must be a str")
+        if self.sort_strategy not in ("in-memory", "external"):
+            raise ValueError(
+                f"sort_strategy must be 'in-memory' or 'external', got {self.sort_strategy!r}"
+            )
 
         # frozen dataclass, so use object.__setattr__
         object.__setattr__(

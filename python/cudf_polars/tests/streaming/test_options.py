@@ -509,3 +509,27 @@ def test_rapidsmpf_options_disk_spill_dir_cli(tmp_path) -> None:
         parser.parse_args(["--disk-spill-dir", str(tmp_path)])
     )
     assert opts.disk_spill_dir == str(tmp_path)
+
+
+def test_executor_options_sort_strategy() -> None:
+    opts = StreamingOptions(sort_strategy="external")
+    assert opts.to_executor_options()["sort_strategy"] == "external"
+    assert "sort_strategy" not in StreamingOptions().to_executor_options()
+
+
+def test_executor_options_sort_strategy_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("CUDF_POLARS__EXECUTOR__SORT_STRATEGY", "external")
+    assert StreamingOptions().to_executor_options()["sort_strategy"] == "external"
+
+
+def test_executor_options_sort_strategy_cli() -> None:
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    StreamingOptions._add_cli_args(parser)
+    opts = StreamingOptions._from_argparse(
+        parser.parse_args(["--sort-strategy", "external"])
+    )
+    assert opts.sort_strategy == "external"
+    with pytest.raises(SystemExit):
+        parser.parse_args(["--sort-strategy", "bogus"])

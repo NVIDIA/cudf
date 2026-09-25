@@ -35,6 +35,7 @@ if TYPE_CHECKING:
     from cudf_polars.dsl.ir import IR
     from cudf_polars.quent._logging import QuentLogger
     from cudf_polars.quent._types import (
+        MemoryReservationRequest,
         Operator,
         Plan,
         Port,
@@ -480,6 +481,62 @@ class QuentContext:
         # TODO: Figure out how to emit some chunk/task-level statistics.
         # We can't do it directly on the Task object, because that (seems to)
         # break operator-level aggregation like duration_s.
+
+    def _emit_memory_reservation_events(
+        self,
+        quent_task: Task,
+        quent_ir_execution_context: QuentIRExecutionContext,
+        request: MemoryReservationRequest,
+        *,
+        requested_at: int,
+        satisfied_at: int,
+    ) -> None:
+        """
+        Emit Quent events describing a single memory reservation.
+
+        The task enters ``Allocating`` when the reservation is requested and
+        exits once rapidsmpf satisfies it (or fails to), so the duration of
+        the ``Allocating`` state is how long the operator waited for memory.
+
+        Parameters
+        ----------
+        quent_task: Task
+            The reservation's Quent Task, from
+            :meth:`~cudf_polars.quent._types.Task.for_memory_reservation`.
+        quent_ir_execution_context: QuentIRExecutionContext
+            The Quent IR execution context, which binds the reservation to the
+            operator that made it.
+        request: MemoryReservationRequest
+            The size, memory tier and purpose of the reservation.
+        requested_at: int
+            Timestamp (unix nanoseconds) at which the reservation was requested.
+        satisfied_at: int
+            Timestamp (unix nanoseconds) at which the reservation was satisfied.
+
+        Notes
+        -----
+        This emits the following events:
+
+        - queueing
+        - allocating (with the Quent Processor for the current thread). By using
+          the current thread, we're assuming that the same thread that requested
+          the memory reservation also emitted the memory reservation events.
+        - exit
+        """
+        quent_processor = quent_ir_execution_context.get_or_declare_processor(
+            thread_ident=threading.get_ident(),
+        )
+        quent_ir_execution_context.logger.emit(
+            quent_task.queueing(timestamp=requested_at)
+        )
+        quent_ir_execution_context.logger.emit(
+            quent_task.allocating(
+                resource_id=quent_processor.id,
+                timestamp=requested_at,
+                reservation=request,
+            )
+        )
+        quent_ir_execution_context.logger.emit(quent_task.exit(timestamp=satisfied_at))
 
 
 @dataclasses.dataclass(kw_only=True)

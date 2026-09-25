@@ -484,3 +484,28 @@ def test_hardware_binding_cli_disabled() -> None:
     args = parser.parse_args(["--hardware-binding", '{"enabled": false}'])
     opts = StreamingOptions._from_argparse(args)
     assert opts.hardware_binding == HardwareBindingPolicy(enabled=False)
+
+
+def test_rapidsmpf_options_disk_spill_dir(tmp_path) -> None:
+    opts = StreamingOptions(disk_spill_dir=str(tmp_path))
+    strings = opts.to_rapidsmpf_options().get_strings()
+    assert strings["disk_spill_dir"] == str(tmp_path)
+
+
+def test_rapidsmpf_options_disk_spill_dir_env(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    monkeypatch.setenv("RAPIDSMPF_DISK_SPILL_DIR", str(tmp_path))
+    strings = StreamingOptions().to_rapidsmpf_options().get_strings()
+    assert strings["disk_spill_dir"] == str(tmp_path)
+
+
+def test_rapidsmpf_options_disk_spill_dir_cli(tmp_path) -> None:
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    StreamingOptions._add_cli_args(parser)
+    opts = StreamingOptions._from_argparse(
+        parser.parse_args(["--disk-spill-dir", str(tmp_path)])
+    )
+    assert opts.disk_spill_dir == str(tmp_path)

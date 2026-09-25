@@ -198,6 +198,12 @@ class StreamingOptions:
         Env: ``RAPIDSMPF_PERIODIC_SPILL_CHECK``.
         Default: ``"1ms"``.
         Category: rapidsmpf.
+    disk_spill_dir
+        Directory for spilling to disk. Enables the shuffler's disk tier and
+        is where the streaming sort keeps its external-merge run pages.
+        Env: ``RAPIDSMPF_DISK_SPILL_DIR``.
+        Default: disabled.
+        Category: rapidsmpf.
     unbounded_file_read_cache
         Cache file-read results in the Context's message storage.
         Accepts a memory type (``"host"``, ``"pinned"``, ``"device"``) or
@@ -377,6 +383,7 @@ class StreamingOptions:
     periodic_spill_check: str | Unspecified = _opt(
         "rapidsmpf", "RAPIDSMPF_PERIODIC_SPILL_CHECK"
     )
+    disk_spill_dir: str | Unspecified = _opt("rapidsmpf", "RAPIDSMPF_DISK_SPILL_DIR")
     unbounded_file_read_cache: str | Unspecified = _opt(
         "rapidsmpf", "RAPIDSMPF_UNBOUNDED_FILE_READ_CACHE"
     )
@@ -432,16 +439,16 @@ class StreamingOptions:
     target_partition_size: int | Unspecified = _opt(
         "executor", "CUDF_POLARS__EXECUTOR__TARGET_PARTITION_SIZE", int
     )
-    dynamic_planning: dict[str, Any] | DynamicPlanningOptions | None | Unspecified = (
+    dynamic_planning: dict[str, Any] | DynamicPlanningOptions | Unspecified | None = (
         _opt("executor")
     )
     join_filter_pushdown: (
-        dict[str, Any] | JoinFilterPushdownOptions | None | Unspecified
+        dict[str, Any] | JoinFilterPushdownOptions | Unspecified | None
     ) = _opt("executor")
     sink_to_directory: bool | Unspecified = _opt(
         "executor", "CUDF_POLARS__EXECUTOR__SINK_TO_DIRECTORY", parse_boolean
     )
-    quent_context: QuentContext | None | Unspecified = _opt(
+    quent_context: QuentContext | Unspecified | None = _opt(
         "executor",
     )
 
@@ -752,6 +759,16 @@ class StreamingOptions:
             help=textwrap.dedent("""\
                 Interval between periodic spill checks (e.g. "1ms").
                 Env: RAPIDSMPF_PERIODIC_SPILL_CHECK. Built-in default: 1ms."""),
+        )
+        g.add_argument(
+            "--disk-spill-dir",
+            dest="disk_spill_dir",
+            default=None,
+            type=str,
+            help=textwrap.dedent("""\
+                Directory for spilling to disk (shuffler disk tier and streaming
+                sort run pages). Env: RAPIDSMPF_DISK_SPILL_DIR. Built-in default:
+                disabled."""),
         )
         g.add_argument(
             "--unbounded-file-read-cache",

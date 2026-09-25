@@ -467,6 +467,15 @@ struct streaming_aggregation_request {
  * `is_streaming_groupby_supported()` to query a specific (value type, aggregation kind)
  * combination.
  *
+ * When every key column is an integer, boolean or chrono type and the key widths fit in eight
+ * bytes between them (one bit fewer per key with `null_policy::INCLUDE`), and every aggregation
+ * is a SUM, MIN, MAX, COUNT_VALID, COUNT_ALL, SUM_OF_SQUARES or MEAN over fixed-width numeric
+ * values, the state takes a faster form: the keys of a row are packed into one eight-byte word
+ * and the accumulators of a group are kept in one record beside it, so a batch is inserted and
+ * aggregated by a single kernel per chunk.  This path is chosen from the types of the first
+ * batch and gives the same results as the general one, except that floating-point MIN and MAX
+ * order a NaN above every number, and floating-point SUM accumulates in double precision.
+ *
  * Supported aggregation kinds:
  *   SUM, SUM_OF_SQUARES, PRODUCT, MIN, MAX, COUNT_VALID, COUNT_ALL,
  *   MEAN, M2, VARIANCE, STD

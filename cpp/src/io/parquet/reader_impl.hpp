@@ -603,6 +603,11 @@ class reader_impl {
   // Per-input-column flag indicating whether that column was selected for direct
   // Parquet-dict → DICTIONARY32 transcode.
   std::vector<bool> _dict_transcode_eligible;
+
+  // Snapshot of the internal LIBCUDF_PARQUET_LEVEL_PREPASS selector. This is fixed for the
+  // reader lifetime so every pass and output chunk agrees on which prepass consumer families
+  // may be selected.
+  bool _level_prepass_enabled{false};
 };
 
 }  // namespace cudf::io::parquet::detail

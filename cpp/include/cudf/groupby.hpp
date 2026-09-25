@@ -474,7 +474,11 @@ struct streaming_aggregation_request {
  * and the accumulators of a group are kept in one record beside it, so a batch is inserted and
  * aggregated by a single kernel per chunk.  This path is chosen from the types of the first
  * batch and gives the same results as the general one, except that floating-point MIN and MAX
- * order a NaN above every number, and floating-point SUM accumulates in double precision.
+ * order a NaN above every number, and floating-point SUM accumulates in double precision.  It
+ * also differs once distinct keys exceed `max_distinct_keys`: the bound is checked only after
+ * the batch or merge has gone in, so after the error `distinct_keys()` may exceed
+ * `max_distinct_keys` and `finalize()` returns the groups and aggregates of the rejected batch
+ * or merge too, where the general path returns only those from before it.
  *
  * Supported aggregation kinds:
  *   SUM, SUM_OF_SQUARES, PRODUCT, MIN, MAX, COUNT_VALID, COUNT_ALL,

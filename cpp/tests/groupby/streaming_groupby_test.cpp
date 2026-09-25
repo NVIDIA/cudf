@@ -933,13 +933,14 @@ TEST_F(StreamingGroupbyTest, ExceedsDistinctKeyCapacityThrows)
   EXPECT_THROW(streaming_agg.aggregate(cudf::table_view{{k2, v2}}), cudf::logic_error);
 
   // The object is now invalidated: even an empty batch is rejected, while finalize() still
-  // recovers the groups inserted before the failure.  (The packed-key path these keys take
-  // finds the bound crossed only after the batch has gone in, so its groups are there too.)
+  // recovers the groups.  The packed-key path these keys take finds the bound crossed only
+  // after the batch has gone in, so the rejected batch's group is there too.
+  EXPECT_EQ(streaming_agg.distinct_keys(), 5);
   cudf::test::fixed_width_column_wrapper<K> k_empty{};
   cudf::test::fixed_width_column_wrapper<V> v_empty{};
   EXPECT_THROW(streaming_agg.aggregate(cudf::table_view{{k_empty, v_empty}}), cudf::logic_error);
   auto [keys, results] = streaming_agg.finalize();
-  EXPECT_GE(keys->num_rows(), 4);
+  EXPECT_EQ(keys->num_rows(), 5);
 }
 
 // Test that sliced input columns with non-zero offsets work correctly.

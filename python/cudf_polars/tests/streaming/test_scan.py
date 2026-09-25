@@ -414,13 +414,14 @@ def _make_parquet_scan(
     paths: list[str],
     parquet_options: ParquetOptions | None = None,
     *,
+    schema: dict[str, DataType] | None = None,
     skip_rows: int = 0,
     n_rows: int = -1,
     row_index: tuple[str, int] | None = None,
 ) -> Scan:
     parquet_options = parquet_options or ParquetOptions()
     return Scan(
-        {"x": DataType(pl.Int64())},
+        schema or {"x": DataType(pl.Int64())},
         "parquet",
         {},
         None,

@@ -1607,6 +1607,7 @@ static __device__ const __constant__ uint32_t kTimestampNanoScale[8] = {
  * @param[in] chunks column_desc device array
  * @param[in] global_dictionary Global dictionary device array
  * @param[in] tz_table Timezone translation table
+ * @param[in] orc_base_epoch ORC epoch in the writer's timezone
  * @param[in] row_groups Optional row index data
  * @param[in] first_row Crop all rows below first_row
  * @param[in] rowidx_stride Row index stride
@@ -1618,6 +1619,7 @@ CUDF_KERNEL void __launch_bounds__(block_size)
   decode_column_data_kernel(column_desc* chunks,
                             dictionary_entry* global_dictionary,
                             table_device_view tz_table,
+                            duration_s orc_base_epoch,
                             device_2dspan<row_group> row_groups,
                             int64_t first_row,
                             size_type rowidx_stride,
@@ -1697,8 +1699,7 @@ CUDF_KERNEL void __launch_bounds__(block_size)
     }
     if (!is_dictionary(s->chunk.encoding_kind)) { s->chunk.dictionary_start = 0; }
 
-    static constexpr duration_s d_orc_utc_epoch = duration_s{orc_utc_epoch};
-    s->top.data.tz_epoch = d_orc_utc_epoch - get_ut_offset(tz_table, timestamp_s{d_orc_utc_epoch});
+    s->top.data.tz_epoch = orc_base_epoch;
 
     bytestream_init(&s->bs, s->chunk.streams[CI_DATA], s->chunk.strm_len[CI_DATA]);
     bytestream_init(&s->bs2, s->chunk.streams[CI_DATA2], s->chunk.strm_len[CI_DATA2]);
@@ -2052,8 +2053,12 @@ CUDF_KERNEL void __launch_bounds__(block_size)
               if (seconds.count() < 0 and nanos.count() >= 1'000'000) { seconds -= duration_s{1}; }
 
               // Convert to UTC after the adjustment above, because the adjustment must run in the
-              // writer's (stored seconds + writer epoch) frame
-              seconds += get_ut_offset(tz_table, timestamp_s{seconds});
+              // writer's (stored seconds + writer epoch) frame. Without a transition table the
+              // values stay on the wall clock the file declares, which is the writer's base offset
+              // away from the frame the borrow was decided in.
+              static constexpr duration_s d_orc_utc_epoch = duration_s{orc_utc_epoch};
+              seconds += tz_table.num_rows() == 0 ? d_orc_utc_epoch - orc_base_epoch
+                                                  : get_ut_offset(tz_table, timestamp_s{seconds});
 
               static_cast<int64_t*>(data_out)[row] = [&]() {
                 using cuda::std::chrono::duration_cast;
@@ -2171,6 +2176,7 @@ void __host__ decode_nulls_and_string_dictionaries(column_desc* chunks,
  * @param[in] num_stripes Number of stripes
  * @param[in] first_row Crop all rows below first_row
  * @param[in] tz_table Timezone translation table
+ * @param[in] orc_base_epoch ORC epoch in the writer's timezone
  * @param[in] num_rowgroups Number of row groups in row index data
  * @param[in] rowidx_stride Row index stride
  * @param[in] level nesting level being processed
@@ -2184,6 +2190,7 @@ void __host__ decode_column_data(column_desc* chunks,
                                  size_type num_stripes,
                                  int64_t first_row,
                                  table_device_view tz_table,
+                                 duration_s orc_base_epoch,
                                  int64_t num_rowgroups,
                                  size_type rowidx_stride,
                                  size_t level,
@@ -2191,8 +2198,16 @@ void __host__ decode_column_data(column_desc* chunks,
                                  cuda::stream_ref stream)
 {
   auto const num_blocks = num_columns * (num_rowgroups > 0 ? num_rowgroups : num_stripes);
-  decode_column_data_kernel<block_size><<<num_blocks, block_size, 0, stream.get()>>>(
-    chunks, global_dictionary, tz_table, row_groups, first_row, rowidx_stride, level, error_count);
+  decode_column_data_kernel<block_size>
+    <<<num_blocks, block_size, 0, stream.get()>>>(chunks,
+                                                  global_dictionary,
+                                                  tz_table,
+                                                  orc_base_epoch,
+                                                  row_groups,
+                                                  first_row,
+                                                  rowidx_stride,
+                                                  level,
+                                                  error_count);
   CUDF_CUDA_TRY(cudaGetLastError());
 }
 

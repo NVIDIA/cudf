@@ -214,9 +214,7 @@ struct writer_timezone {
   /**
    * @brief Resolves a timezone name into the epoch that timestamps are encoded relative to.
    *
-   * The offset is looked up at the ORC epoch as a UTC instant, matching how the reader derives its
-   * epoch in `decode_column_data`; the Apache writer resolves it as a local time, which differs
-   * only for a timezone with a transition inside that offset-wide window.
+   * Uses `base_epoch_in_timezone`, so the writer and the reader resolve the epoch the same way.
    *
    * @param timezone Timezone name
    *

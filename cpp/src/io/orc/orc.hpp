@@ -10,6 +10,7 @@
 #include <cudf/io/orc_metadata.hpp>
 #include <cudf/io/orc_types.hpp>
 #include <cudf/utilities/error.hpp>
+#include <cudf/wrappers/durations.hpp>
 
 #include <cuda/std/optional>
 
@@ -19,6 +20,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -55,6 +57,23 @@ static constexpr uint32_t cudf_writer_version = 7;
 // the maximum nanosecond remainder is 999,999 (nanoseconds in a millisecond - 1).
 static constexpr int32_t DEFAULT_MIN_NANOS = 0;
 static constexpr int32_t DEFAULT_MAX_NANOS = 999'999;
+
+/**
+ * @brief Returns the ORC epoch as it occurs in a timezone.
+ *
+ * ORC timestamps are wall-clock values, stored relative to this instant, so both the writer and
+ * the reader have to resolve it the same way. The offset is looked up at the ORC epoch as a UTC
+ * instant; the Apache writer resolves it as a local time, which differs only for a timezone with
+ * a transition inside that offset-wide window.
+ *
+ * @param timezone Timezone name; `"UTC"` and an empty name have no offset, so they give
+ * `orc_utc_epoch`
+ *
+ * @throw cudf::logic_error if `timezone` does not resolve to a TZif file
+ *
+ * @return Instant that encoded timestamps are stored relative to
+ */
+[[nodiscard]] duration_s base_epoch_in_timezone(std::string_view timezone);
 
 struct PostScript {
   uint64_t footerLength       = 0;        // the length of the footer section in bytes

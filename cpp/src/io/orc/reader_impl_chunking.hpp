@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -165,6 +165,9 @@ struct file_intermediate_data {
 
   // Table for converting timestamp columns from local to UTC time.
   std::unique_ptr<cudf::table> tz_table;
+
+  // The ORC epoch as it occurs in the writer's timezone, the frame the data stream is stored in.
+  duration_s orc_base_epoch{orc_utc_epoch};
 
   bool global_preprocessed{false};
 };

@@ -188,6 +188,8 @@ class orc_reader_options {
    * @brief Returns whether to ignore writer timezone in the stripe footer.
    *
    * @return `true` if the writer timezone in the stripe footer is ignored.
+   *
+   * @see enable_ignore_timezone_in_stripe_footer for what "ignored" covers
    */
   [[nodiscard]] bool get_ignore_timezone_in_stripe_footer() const
   {
@@ -291,6 +293,12 @@ class orc_reader_options {
 
   /**
    * @brief Sets whether to ignore writer timezone in the stripe footer.
+   *
+   * Timestamps are returned on the wall clock the file declares, without converting them to UTC.
+   * The writer timezone is still resolved through the timezone database, because ORC encodes
+   * negative timestamps relative to the ORC epoch as it occurs in that timezone. If the name does
+   * not resolve, a warning is logged and timestamps within the timezone's offset of 2015-01-01
+   * may be one second off.
    *
    * @param val Boolean value to enable/disable ignoring writer timezone
    */
@@ -422,6 +430,8 @@ class orc_reader_options_builder {
    *
    * @param ignore Boolean value to enable/disable ignoring writer timezone
    * @return this for chaining
+   *
+   * @see orc_reader_options::enable_ignore_timezone_in_stripe_footer for what "ignored" covers
    */
   orc_reader_options_builder& ignore_timezone_in_stripe_footer(bool ignore)
   {

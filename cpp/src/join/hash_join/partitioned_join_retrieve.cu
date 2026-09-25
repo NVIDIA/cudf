@@ -24,6 +24,8 @@
 
 #include <cuda/std/cstdint>
 
+#include <tuple>
+
 namespace cudf::detail {
 template <typename Hasher>
 std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
@@ -83,61 +85,68 @@ hash_join<Hasher>::partitioned_join_retrieve(join_kind join,
   validate_hash_join_probe(_right, left_partition_view, _has_nulls);
 
   auto const temp_mr = cudf::get_current_device_resource_ref();
-  auto const preprocessed_left =
-    cudf::detail::row::equality::preprocessed_table::create(left_partition_view, stream, temp_mr);
+  // Release copied counts and probe preprocessing before allocating the output.
+  auto [offsets, probe_groups, output_size] = [&] {
+    auto const preprocessed_left =
+      cudf::detail::row::equality::preprocessed_table::create(left_partition_view, stream, temp_mr);
 
-  auto counts = cudf::detail::make_zeroed_device_uvector_async<size_type>(
-    static_cast<std::size_t>(partition_size) + 1, stream, temp_mr);
-  CUDF_CUDA_TRY(
-    cudf::detail::memcpy_async(counts.data(),
-                               match_ctx._match_counts->data() + left_start_idx,
-                               static_cast<std::size_t>(partition_size) * sizeof(size_type),
-                               stream));
-  auto offsets = cudf::detail::make_zeroed_device_uvector_async<cuda::std::int64_t>(
-    static_cast<std::size_t>(partition_size) + 1, stream, temp_mr);
-  auto const output_size = cudf::detail::sizes_to_offsets(
-    counts.begin(), counts.end(), offsets.begin(), 0, stream, temp_mr);
-  CUDF_EXPECTS(output_size >= 0, "Join output size overflowed", std::overflow_error);
+    auto [offsets, output_size] = [&] {
+      auto counts = cudf::detail::make_zeroed_device_uvector_async<size_type>(
+        static_cast<std::size_t>(partition_size) + 1, stream, temp_mr);
+      CUDF_CUDA_TRY(
+        cudf::detail::memcpy_async(counts.data(),
+                                   match_ctx._match_counts->data() + left_start_idx,
+                                   static_cast<std::size_t>(partition_size) * sizeof(size_type),
+                                   stream));
+      auto offsets = cudf::detail::make_zeroed_device_uvector_async<cuda::std::int64_t>(
+        static_cast<std::size_t>(partition_size) + 1, stream, temp_mr);
+      auto const output_size = cudf::detail::sizes_to_offsets(
+        counts.begin(), counts.end(), offsets.begin(), 0, stream, temp_mr);
+      CUDF_EXPECTS(output_size >= 0, "Join output size overflowed", std::overflow_error);
+      return std::pair(std::move(offsets), output_size);
+    }();
 
-  rmm::device_uvector<size_type> probe_slots(partition_size, stream, temp_mr);
-  auto const row_bitmask = cudf::detail::bitmask_and(left_partition_view, stream, temp_mr).first;
-  auto const valid_rows  = _nulls_equal == null_equality::UNEQUAL
-                             ? static_cast<bitmask_type const*>(row_bitmask.data())
-                             : nullptr;
-  auto save_slots        = [&](auto equality, auto hasher) {
-    if (join == join_kind::INNER_JOIN) {
-      launch_hash_csr_probe_count_kernel<false>(partition_size,
-                                                valid_rows,
-                                                probe_slots.data(),
-                                                nullptr,
-                                                nullptr,
-                                                nullptr,
-                                                _impl->hash_table(),
-                                                _impl->csr(),
-                                                equality,
-                                                hasher,
-                                                stream);
-    } else {
-      launch_hash_csr_probe_count_kernel<true>(partition_size,
-                                               valid_rows,
-                                               probe_slots.data(),
-                                               nullptr,
-                                               nullptr,
-                                               nullptr,
-                                               _impl->hash_table(),
-                                               _impl->csr(),
-                                               equality,
-                                               hasher,
-                                               stream);
-    }
-  };
-  dispatch_join_comparator(_right,
-                           left_partition_view,
-                           _preprocessed_right,
-                           preprocessed_left,
-                           _has_nulls,
-                           _nulls_equal,
-                           save_slots);
+    rmm::device_uvector<size_type> probe_groups(partition_size, stream, temp_mr);
+    auto const row_bitmask = cudf::detail::bitmask_and(left_partition_view, stream, temp_mr).first;
+    auto const valid_rows  = _nulls_equal == null_equality::UNEQUAL
+                               ? static_cast<bitmask_type const*>(row_bitmask.data())
+                               : nullptr;
+    auto save_groups       = [&](auto equality, auto hasher) {
+      if (join == join_kind::INNER_JOIN) {
+        launch_hash_csr_probe_count_kernel<false>(partition_size,
+                                                  valid_rows,
+                                                  probe_groups.data(),
+                                                  nullptr,
+                                                  nullptr,
+                                                  nullptr,
+                                                  _impl->hash_table(),
+                                                  _impl->csr(),
+                                                  equality,
+                                                  hasher,
+                                                  stream);
+      } else {
+        launch_hash_csr_probe_count_kernel<true>(partition_size,
+                                                 valid_rows,
+                                                 probe_groups.data(),
+                                                 nullptr,
+                                                 nullptr,
+                                                 nullptr,
+                                                 _impl->hash_table(),
+                                                 _impl->csr(),
+                                                 equality,
+                                                 hasher,
+                                                 stream);
+      }
+    };
+    dispatch_join_comparator(_right,
+                             left_partition_view,
+                             _preprocessed_right,
+                             preprocessed_left,
+                             _has_nulls,
+                             _nulls_equal,
+                             save_groups);
+    return std::tuple(std::move(offsets), std::move(probe_groups), output_size);
+  }();
 
   auto left_indices = std::make_unique<rmm::device_uvector<size_type>>(
     static_cast<std::size_t>(output_size), stream, mr);
@@ -150,7 +159,7 @@ hash_join<Hasher>::partitioned_join_retrieve(join_kind join,
     launch_hash_csr_retrieve_kernel<false>(output_size,
                                            partition_size,
                                            offsets.data(),
-                                           probe_slots.data(),
+                                           probe_groups.data(),
                                            _impl->csr(),
                                            left_start_idx,
                                            left_indices->data(),
@@ -160,7 +169,7 @@ hash_join<Hasher>::partitioned_join_retrieve(join_kind join,
     launch_hash_csr_retrieve_kernel<true>(output_size,
                                           partition_size,
                                           offsets.data(),
-                                          probe_slots.data(),
+                                          probe_groups.data(),
                                           _impl->csr(),
                                           left_start_idx,
                                           left_indices->data(),

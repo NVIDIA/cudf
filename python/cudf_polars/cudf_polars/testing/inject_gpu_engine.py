@@ -25,6 +25,8 @@ from cudf_polars.utils.config import StreamingFallbackMode
 if TYPE_CHECKING:
     from collections.abc import Generator, Mapping
 
+    from pluggy import Result
+
 
 def nonnegative_int(value: str) -> int:
     """Parse a non-negative integer pytest option."""
@@ -177,6 +179,22 @@ def pytest_runtest_protocol(
     token = fallback_used.set(False)
     yield
     fallback_used.reset(token)
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_makereport(
+    item: pytest.Item, call: pytest.CallInfo[None]
+) -> Generator[None, Result[pytest.TestReport], None]:
+    """Attach per-test fallback telemetry to the call report."""
+    outcome = yield
+    report = outcome.get_result()
+    if report.when == "call":
+        report.user_properties.extend(
+            (
+                ("cudf_polars_nodeid", item.nodeid),
+                ("cudf_polars_fallback", str(fallback_used.get()).lower()),
+            )
+        )
 
 
 def _verify_collect_patch(engine: object) -> None:

@@ -63,12 +63,6 @@ cdef extern from "cudf/transform.hpp" namespace "cudf" nogil:
         device_async_resource_ref mr
     ) except +libcudf_exception_handler
 
-    cdef pair[unique_ptr[device_buffer], size_type] nans_to_nulls(
-        const column_view& input,
-        cudaStream_t stream,
-        device_async_resource_ref mr
-    ) except +libcudf_exception_handler
-
     cdef unique_ptr[column] column_nans_to_nulls(
         const column_view& input,
         cudaStream_t stream,

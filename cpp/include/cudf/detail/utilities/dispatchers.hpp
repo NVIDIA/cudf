@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -67,10 +67,12 @@ inline constexpr auto first_value = First;
 template <typename Func>
 auto dispatch_bool(bool value, Func&& func)
 {
+  // Named aliases avoid an NVCC bug that rewrites bool_constant template arguments
+  // as expressions referring to unrelated private types.
   if (value) {
-    return func(std::bool_constant<true>{});
+    return func(std::true_type{});
   } else {
-    return func(std::bool_constant<false>{});
+    return func(std::false_type{});
   }
 }
 

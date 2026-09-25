@@ -473,6 +473,8 @@ ConfigureNVBench(
   string/lengths.cpp
   string/like.cpp
   string/make_strings_column.cu
+  string/regex/corpus.cpp
+  string/regex/regex_redux.cpp
   string/repeat_strings.cpp
   string/replace.cpp
   string/replace_re.cpp

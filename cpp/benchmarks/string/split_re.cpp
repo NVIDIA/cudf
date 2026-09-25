@@ -8,6 +8,7 @@
 
 #include <cudf_test/column_wrapper.hpp>
 
+#include <cudf/experimental/strings/regex.hpp>
 #include <cudf/strings/regex/regex_program.hpp>
 #include <cudf/strings/split/split_re.hpp>
 #include <cudf/strings/strings_column_view.hpp>
@@ -31,19 +32,24 @@ static void bench_split_re(nvbench::state& state)
   auto const min_width     = static_cast<cudf::size_type>(state.get_int64("min_width"));
   auto const max_width     = static_cast<cudf::size_type>(state.get_int64("max_width"));
   auto const pattern_index = state.get_int64("pattern");
+  auto backend             = state.get_string("backend");
 
   if (pattern_index < 0 || std::cmp_greater_equal(pattern_index, patterns.size())) {
     state.skip("invalid pattern index");
     return;
   }
 
-  auto prog = cudf::strings::regex_program::create(patterns[pattern_index]);
+  auto& pattern = patterns[pattern_index];
+  auto prog = backend == "interpreter" ? cudf::strings::regex_program::create(pattern) : nullptr;
+  auto jit_program = backend == "jit"
+                       ? cudf::experimental::regex_jit_program::create(
+                           pattern, cudf::experimental::regex_operation::SPLIT_RECORD)
+                       : nullptr;
 
   data_profile const profile = data_profile_builder().distribution(
     cudf::type_id::STRING, distribution_id::NORMAL, min_width, max_width);
   auto const column = create_random_column(cudf::type_id::STRING, row_count{num_rows}, profile);
   cudf::strings_column_view input(column->view());
-
   state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().get()));
   // gather some throughput statistics as well
   auto const data_size = column->alloc_size();
@@ -52,7 +58,66 @@ static void bench_split_re(nvbench::state& state)
 
   auto const mem_stats_logger = cudf::memory_stats_logger();
   state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
-    auto result = cudf::strings::split_record_re(input, *prog);
+    if (backend == "jit") {
+      static_cast<void>(cudf::experimental::split_record_re(input, *jit_program, -1));
+    } else {
+      static_cast<void>(cudf::strings::split_record_re(input, *prog));
+    }
+  });
+  state.add_buffer_size(
+    mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
+}
+
+static void bench_split_modes(nvbench::state& state)
+{
+  auto num_rows  = static_cast<cudf::size_type>(state.get_int64("num_rows"));
+  auto max_width = static_cast<cudf::size_type>(state.get_int64("max_width"));
+  auto maxsplit  = static_cast<cudf::size_type>(state.get_int64("maxsplit"));
+  auto operation = state.get_string("operation");
+  auto backend   = state.get_string("backend");
+  auto& pattern  = patterns.front();
+
+  auto jit_operation = operation == "table"    ? cudf::experimental::regex_operation::SPLIT
+                       : operation == "record" ? cudf::experimental::regex_operation::SPLIT_RECORD
+                       : operation == "rtable" ? cudf::experimental::regex_operation::RSPLIT
+                                               : cudf::experimental::regex_operation::RSPLIT_RECORD;
+  auto prog = backend == "interpreter" ? cudf::strings::regex_program::create(pattern) : nullptr;
+  auto jit_program = backend == "jit" ? cudf::experimental::regex_jit_program::create(
+                                          pattern, jit_operation, {.maxsplit = maxsplit})
+                                      : nullptr;
+
+  data_profile const profile = data_profile_builder().distribution(
+    cudf::type_id::STRING, distribution_id::NORMAL, 0, max_width);
+  auto column = create_random_column(cudf::type_id::STRING, row_count{num_rows}, profile);
+  cudf::strings_column_view input(column->view());
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().get()));
+  auto data_size = column->alloc_size();
+  state.add_global_memory_reads<nvbench::int8_t>(data_size);
+  state.add_global_memory_writes<nvbench::int8_t>(data_size);
+
+  auto mem_stats_logger = cudf::memory_stats_logger();
+  state.exec(nvbench::exec_tag::sync, [&](nvbench::launch&) {
+    if (backend == "jit") {
+      if (operation == "table") {
+        static_cast<void>(cudf::experimental::split_re(input, *jit_program, maxsplit));
+      } else if (operation == "record") {
+        static_cast<void>(cudf::experimental::split_record_re(input, *jit_program, maxsplit));
+      } else if (operation == "rtable") {
+        static_cast<void>(cudf::experimental::rsplit_re(input, *jit_program, maxsplit));
+      } else {
+        static_cast<void>(cudf::experimental::rsplit_record_re(input, *jit_program, maxsplit));
+      }
+    } else {
+      if (operation == "table") {
+        static_cast<void>(cudf::strings::split_re(input, *prog, maxsplit));
+      } else if (operation == "record") {
+        static_cast<void>(cudf::strings::split_record_re(input, *prog, maxsplit));
+      } else if (operation == "rtable") {
+        static_cast<void>(cudf::strings::rsplit_re(input, *prog, maxsplit));
+      } else {
+        static_cast<void>(cudf::strings::rsplit_record_re(input, *prog, maxsplit));
+      }
+    }
   });
   state.add_buffer_size(
     mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
@@ -63,4 +128,13 @@ NVBENCH_BENCH(bench_split_re)
   .add_int64_axis("min_width", {0})
   .add_int64_axis("max_width", {64, 128, 256})
   .add_int64_axis("num_rows", {262144, 2097152})
-  .add_int64_axis("pattern", {0, 1, 2, 3, 4, 5, 6});
+  .add_int64_axis("pattern", {0, 1, 2, 3, 4, 5, 6})
+  .add_string_axis("backend", {"interpreter", "jit"});
+
+NVBENCH_BENCH(bench_split_modes)
+  .set_name("split_re_modes")
+  .add_int64_axis("max_width", {64, 256})
+  .add_int64_axis("num_rows", {262144})
+  .add_int64_axis("maxsplit", {-1, 4})
+  .add_string_axis("operation", {"table", "record", "rtable", "rrecord"})
+  .add_string_axis("backend", {"interpreter", "jit"});

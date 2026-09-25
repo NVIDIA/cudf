@@ -1,9 +1,11 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
 #pragma once
+
+#include "cuda_error_diagnostics.hpp"
 
 #include <cudf/utilities/error.hpp>
 
@@ -89,7 +91,8 @@ inline jthrowable cuda_exception(JNIEnv* const env, cudaError_t status, jthrowab
     env->GetMethodID(ex_class, "<init>", "(Ljava/lang/String;ILjava/lang/Throwable;)V");
   if (ctor_id == nullptr) { return nullptr; }
 
-  jstring msg = env->NewStringUTF(cudaGetErrorString(status));
+  auto const message = augment_cuda_error_message(cudaGetErrorString(status), status);
+  jstring msg        = env->NewStringUTF(message.c_str());
   if (msg == nullptr) { return nullptr; }
 
   jint err_code = static_cast<jint>(status);
@@ -153,7 +156,9 @@ inline void jni_cuda_check(JNIEnv* const env, cudaError_t cuda_status)
       env->GetMethodID(ex_class, "<init>", "(Ljava/lang/String;Ljava/lang/String;I)V");             \
     if (ctor_id == nullptr) { return ret_val; }                                                     \
     auto const empty_str = std::string{""};                                                         \
-    auto const jmessage  = env->NewStringUTF(message == nullptr ? empty_str.c_str() : message);     \
+    auto const detailed_message =                                                                   \
+      cudf::jni::augment_cuda_error_message(message, static_cast<cudaError_t>(error_code));         \
+    auto const jmessage = env->NewStringUTF(detailed_message.c_str());                              \
     if (jmessage == nullptr) { return ret_val; }                                                    \
     auto const jstacktrace =                                                                        \
       env->NewStringUTF(stacktrace == nullptr ? empty_str.c_str() : stacktrace);                    \

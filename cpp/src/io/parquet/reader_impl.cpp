@@ -14,6 +14,7 @@
 #include <cudf/detail/stream_compaction.hpp>
 #include <cudf/detail/structs/utilities.hpp>
 #include <cudf/detail/transform.hpp>
+#include <cudf/detail/utilities/getenv_or.hpp>
 #include <cudf/detail/utilities/stream_pool.hpp>
 #include <cudf/dictionary/detail/encode.hpp>
 #include <cudf/io/parquet_schema.hpp>
@@ -34,6 +35,40 @@
 #include <utility>
 
 namespace cudf::io::parquet::detail {
+
+namespace {
+
+/**
+ * @brief RAII CUDA event used to let only the prepass consumers wait on the prepass producer.
+ *
+ * `cudf::detail::fork_streams` gives one event shared by every child stream, which is too coarse
+ * here: it would make kernels that never read the prepass output wait for it anyway.
+ */
+class cuda_event_wrapper {
+ public:
+  cuda_event_wrapper() { CUDF_CUDA_TRY(cudaEventCreateWithFlags(&event_, cudaEventDisableTiming)); }
+  ~cuda_event_wrapper() { cudaEventDestroy(event_); }
+
+  cuda_event_wrapper(cuda_event_wrapper const&)            = delete;
+  cuda_event_wrapper& operator=(cuda_event_wrapper const&) = delete;
+  cuda_event_wrapper(cuda_event_wrapper&&)                 = delete;
+  cuda_event_wrapper& operator=(cuda_event_wrapper&&)      = delete;
+
+  void record(cuda::stream_ref stream) const
+  {
+    CUDF_CUDA_TRY(cudaEventRecord(event_, stream.get()));
+  }
+
+  void wait(cuda::stream_ref stream) const
+  {
+    CUDF_CUDA_TRY(cudaStreamWaitEvent(stream.get(), event_, 0));
+  }
+
+ private:
+  cudaEvent_t event_{};
+};
+
+}  // namespace
 
 void reader_impl::decode_page_data(read_mode mode, size_t skip_rows, size_t num_rows)
 {
@@ -200,11 +235,71 @@ void reader_impl::decode_page_data(read_mode mode, size_t skip_rows, size_t num_
   // create this before we fork streams
   kernel_error error_code(_stream);
 
-  // get the number of streams we need from the pool and tell them to wait on the H2D copies
+  // The null-rate gate is applied here as well as on the device so that a subpass whose pages all
+  // fail it skips the producer launch, its stream and its event entirely, rather than launching a
+  // kernel that exits on every block. `num_valids` is populated and copied back to the host by
+  // `preprocess_subpass_pages`, which runs before this, so the host and device agree.
+  auto const has_flat_prepass =
+    std::any_of(subpass.pages.host_begin(), subpass.pages.host_end(), [](PageInfo const& page) {
+      return page.prepass_is(level_prepass_family::DELTA_FLAT) &&
+             delta_prepass_pays_for_itself(page);
+    });
+  auto const has_list_prepass =
+    std::any_of(subpass.pages.host_begin(), subpass.pages.host_end(), [](PageInfo const& page) {
+      return page.prepass_is(level_prepass_family::DELTA_LIST);
+    });
+  auto const has_any_prepass = has_flat_prepass || has_list_prepass;
+
+  // Get the streams up front, so the level prepass can run on one of them concurrently with the
+  // decode kernels that do not consume it.
+  //
+  // Forking *after* launching the prepass would serialise every decode kernel behind it:
+  // `fork_streams` records one event on the parent stream and has every child wait on it, so a
+  // page whose kernel never reads the prepass map would still block on the prepass finishing.
+  // That matters for a mixed file -- PLAIN and dictionary pages decoded alongside delta pages
+  // consume no prepass output at all, and there is no data dependency to justify making them wait.
+  //
+  // The dependency really is per-mask: the prepass writes only `subpass.prepass_state_buf` and the
+  // map buffer, which only the selected consumers read, and page sets are disjoint by construction
+  // (kernel_mask plus the per-page family), so parallel kernels touch disjoint output.
   int const nkernels = std::bitset<32>(kernel_mask).count();
-  auto streams       = cudf::detail::fork_streams(_stream, nkernels);
+  // One extra stream for the prepass producer when any page needs it.
+  auto streams = cudf::detail::fork_streams(_stream, nkernels + (has_any_prepass ? 1 : 0));
+  auto const prepass_stream = has_any_prepass ? streams.back() : _stream;
+
+  // Signalled once the prepass producer has been enqueued; only consumers wait on it.
+  cuda_event_wrapper prepass_done;
+
+  if (has_flat_prepass) {
+    precompute_flat_level_state(subpass.pages,
+                                pass.chunks,
+                                subpass_page_mask_span(),
+                                skip_rows,
+                                num_rows,
+                                level_type_size,
+                                prepass_stream);
+  }
+  if (has_list_prepass) {
+    precompute_list_level_state(subpass.pages,
+                                pass.chunks,
+                                subpass_page_mask_span(),
+                                skip_rows,
+                                num_rows,
+                                level_type_size,
+                                prepass_stream);
+  }
+  if (has_any_prepass) { prepass_done.record(prepass_stream); }
 
   int s_idx = 0;
+
+  // Hand out the next decode stream, making it wait on the prepass only when the kernel about to
+  // run on it actually consumes the prepass output. Kernels that do not start immediately and
+  // overlap with the prepass instead of queueing behind it.
+  auto next_stream = [&](bool consumes_prepass) -> cuda::stream_ref {
+    auto const stream = streams[s_idx++];
+    if (has_any_prepass && consumes_prepass) { prepass_done.wait(stream); }
+    return stream;
+  };
 
   auto decode_data = [&](decode_kernel_mask decoder_mask) {
     detail::decode_page_data(subpass.pages,
@@ -217,7 +312,7 @@ void reader_impl::decode_page_data(read_mode mode, size_t skip_rows, size_t num_
                              initial_str_offsets,
                              subpass.page_string_offset_indices,
                              error_code.data(),
-                             streams[s_idx++]);
+                             next_stream(false));
   };
 
   // launch string decoder for plain encoded flat columns
@@ -280,7 +375,9 @@ void reader_impl::decode_page_data(read_mode mode, size_t skip_rows, size_t num_
                             subpass_page_mask_span(),
                             initial_str_offsets,
                             error_code.data(),
-                            streams[s_idx++]);
+                            next_stream(has_any_prepass),
+                            has_flat_prepass,
+                            has_list_prepass);
   }
 
   // launch delta length byte array decoder
@@ -293,7 +390,9 @@ void reader_impl::decode_page_data(read_mode mode, size_t skip_rows, size_t num_
                                    subpass_page_mask_span(),
                                    initial_str_offsets,
                                    error_code.data(),
-                                   streams[s_idx++]);
+                                   next_stream(has_any_prepass),
+                                   has_flat_prepass,
+                                   has_list_prepass);
   }
 
   // launch delta binary decoder
@@ -305,7 +404,9 @@ void reader_impl::decode_page_data(read_mode mode, size_t skip_rows, size_t num_
                         level_type_size,
                         subpass_page_mask_span(),
                         error_code.data(),
-                        streams[s_idx++]);
+                        next_stream(has_any_prepass),
+                        has_flat_prepass,
+                        has_list_prepass);
   }
 
   // launch byte stream split decoder
@@ -332,7 +433,7 @@ void reader_impl::decode_page_data(read_mode mode, size_t skip_rows, size_t num_
                            level_type_size,
                            subpass_page_mask_span(),
                            error_code.data(),
-                           streams[s_idx++]);
+                           next_stream(false));
   }
 
   // launch fixed width type decoder
@@ -389,7 +490,7 @@ void reader_impl::decode_page_data(read_mode mode, size_t skip_rows, size_t num_
                              level_type_size,
                              subpass_page_mask_span(),
                              error_code.data(),
-                             streams[s_idx++]);
+                             next_stream(false));
   }
 
   // synchronize the streams
@@ -538,6 +639,9 @@ reader_impl::reader_impl(std::size_t chunk_read_limit,
     _output_chunk_read_limit{chunk_read_limit},
     _input_pass_read_limit{pass_read_limit}
 {
+  // Snapshot once: the selector must not change between passes of a single reader.
+  _level_prepass_enabled = cudf::detail::get_bool_env_or("LIBCUDF_PARQUET_LEVEL_PREPASS", true);
+
   // The direct parquet-dict → DICTIONARY32 transcode fast path only supports single-pass,
   // non-chunked reads.
   if (_options.output_dict_columns and (chunk_read_limit != 0 or pass_read_limit != 0)) {

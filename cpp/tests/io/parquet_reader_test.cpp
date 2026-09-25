@@ -34,6 +34,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cstdlib>
 #include <cstring>
 #include <limits>
 #include <memory>
@@ -86,6 +87,85 @@ TEST_F(ParquetReaderTest, ManyTinyStringPages)
   auto const result = cudf::io::read_parquet(read_options);
 
   CUDF_TEST_EXPECT_TABLES_EQUAL(input, result.tbl->view());
+}
+
+TEST_F(ParquetReaderTest, LevelPrepassMatchesLegacyDecoder)
+{
+  // The level prepass is a second decode path selected by an env var, so the property that has to
+  // hold is that it is invisible: the same file must read identically with it on and off. That is
+  // what this pins, rather than the env-var parsing itself (which is
+  // `cudf::detail::get_bool_env_or`, tested with that utility).
+  //
+  // The column is DELTA_BINARY_PACKED and nullable, because that is the only combination the
+  // prepass claims at this point in the series; a required or PLAIN column would exercise nothing.
+  struct scoped_env {
+    scoped_env(char const* v)
+    {
+      v ? setenv("LIBCUDF_PARQUET_LEVEL_PREPASS", v, 1) : unsetenv("LIBCUDF_PARQUET_LEVEL_PREPASS");
+    }
+    ~scoped_env() { unsetenv("LIBCUDF_PARQUET_LEVEL_PREPASS"); }
+  };
+
+  constexpr int num_rows = 50000;
+  auto const values      = cudf::detail::make_counting_transform_iterator(
+    0, [](auto i) { return static_cast<int32_t>(i * 3 - 7); });
+  auto const valids =
+    cudf::detail::make_counting_transform_iterator(0, [](auto i) { return (i % 7) != 0; });
+  cudf::test::fixed_width_column_wrapper<int32_t> const col{values, values + num_rows, valids};
+  auto const expected = table_view({col});
+
+  auto input_metadata = cudf::io::table_input_metadata{expected};
+  input_metadata.column_metadata[0].set_encoding(cudf::io::column_encoding::DELTA_BINARY_PACKED);
+
+  std::vector<char> buffer;
+  cudf::io::write_parquet(
+    cudf::io::parquet_writer_options::builder(cudf::io::sink_info{&buffer}, expected)
+      .write_v2_headers(true)
+      .metadata(input_metadata)
+      .dictionary_policy(cudf::io::dictionary_policy::NEVER)
+      .build());
+
+  auto const read_back = [&] {
+    return cudf::io::read_parquet(
+      cudf::io::parquet_reader_options::builder(
+        cudf::io::source_info{cudf::host_span<std::byte const>{
+          reinterpret_cast<std::byte const*>(buffer.data()), buffer.size()}})
+        .build());
+  };
+
+  // Unset is now the shipping configuration, and it selects the prepass.
+  {
+    scoped_env env{nullptr};
+    auto const prepass = read_back();
+    CUDF_TEST_EXPECT_TABLES_EQUAL(expected, prepass.tbl->view());
+  }
+  // `0` is the kill switch: it must still reach the legacy decoder.
+  {
+    scoped_env env{"0"};
+    auto const legacy = read_back();
+    CUDF_TEST_EXPECT_TABLES_EQUAL(expected, legacy.tbl->view());
+  }
+  // A bounded read puts the same pages on the bounds-page path, where the two routes diverge most.
+  {
+    auto const trimmed = [&] {
+      return cudf::io::read_parquet(
+        cudf::io::parquet_reader_options::builder(
+          cudf::io::source_info{cudf::host_span<std::byte const>{
+            reinterpret_cast<std::byte const*>(buffer.data()), buffer.size()}})
+          .skip_rows(1001)
+          .num_rows(4321)
+          .build());
+    };
+    auto const sliced = cudf::slice(expected, {1001, 1001 + 4321});
+    {
+      scoped_env env{nullptr};
+      CUDF_TEST_EXPECT_TABLES_EQUAL(sliced, trimmed().tbl->view());
+    }
+    {
+      scoped_env env{"0"};
+      CUDF_TEST_EXPECT_TABLES_EQUAL(sliced, trimmed().tbl->view());
+    }
+  }
 }
 
 TEST_F(ParquetReaderTest, UserBounds)
@@ -1699,6 +1779,19 @@ TEST_F(ParquetReaderTest, DeltaLengthByteArrayLargeMiniBlockSkipRows)
   auto const s96 = delta_test_strings(141, false);
   delta_large_mini_block_string_read_test(
     build_delta_length_byte_array_parquet(s96, 384, 4), s96, 40, 60);
+}
+
+TEST_F(ParquetReaderTest, DeltaLengthByteArrayWideSkipMidBlock)
+{
+  // The prepass consumer's block-wide value loop hands one DELTA pass to each warp, so it can only
+  // start on a block boundary. A leading skip re-inits the flat decoder and re-decodes from index
+  // 0, which keeps that true; this pins that behaviour for a single-mini-block geometry, where a
+  // resumed decoder would otherwise land mid-block. Both a leading skip and a bounded slice are
+  // exercised, since only the latter also trims the tail.
+  auto const strings = delta_test_strings(301, false);
+  auto const file    = build_delta_length_byte_array_parquet(strings, 256, 1);
+  delta_large_mini_block_string_read_test(file, strings, 70);
+  delta_large_mini_block_string_read_test(file, strings, 70, 90);
 }
 
 TEST_F(ParquetReaderTest, DeltaBinaryListMiniBlock64)
@@ -3857,6 +3950,61 @@ TEST_F(ParquetReaderTest, DeltaByteArraySkipAllValid)
   auto result = cudf::io::read_parquet(in_opts);
   CUDF_TEST_EXPECT_TABLES_EQUAL(cudf::slice(expected, {num_valid + 1, num_rows}),
                                 result.tbl->view());
+}
+
+TEST_F(ParquetReaderTest, DeltaByteArrayNullRateGateRoundTrips)
+{
+  // The level prepass is gated off for flat DELTA_BYTE_ARRAY pages whose null rate is below
+  // `delta_byte_array_prepass_min_null_percent`, because below that it costs more than it saves.
+  // Four places have to agree on that predicate -- the prepass producer, the consumer,
+  // filter_delta_legacy_pages, and the host-side launch decision -- and a disagreement does not
+  // fail loudly: the page is either decoded twice or by nobody, which shows up as wrong data
+  // rather than an error. So walk null rates either side of the threshold and check the round trip.
+  constexpr int num_rows = 40000;
+
+  for (int null_percent : {0, 1, 5, 6, 7, 10, 50, 100}) {
+    SCOPED_TRACE("null_percent = " + std::to_string(null_percent));
+    auto const strings = cudf::detail::make_counting_transform_iterator(
+      0, [](auto i) { return "string_value_" + std::to_string(i); });
+    // Deterministic, and spread so that pages land on both sides of the threshold consistently.
+    auto const valids = cudf::detail::make_counting_transform_iterator(
+      0, [null_percent](auto i) { return null_percent == 0 || (i % 100) >= null_percent; });
+
+    auto const col      = null_percent == 0
+                            ? cudf::test::strings_column_wrapper{strings, strings + num_rows}
+                            : cudf::test::strings_column_wrapper{strings, strings + num_rows, valids};
+    auto const expected = table_view({col});
+
+    auto input_metadata = cudf::io::table_input_metadata{expected};
+    input_metadata.column_metadata[0].set_encoding(cudf::io::column_encoding::DELTA_BYTE_ARRAY);
+
+    std::vector<char> buffer;
+    cudf::io::write_parquet(
+      cudf::io::parquet_writer_options::builder(cudf::io::sink_info{&buffer}, expected)
+        .write_v2_headers(true)
+        .metadata(input_metadata)
+        .dictionary_policy(cudf::io::dictionary_policy::NEVER)
+        .build());
+
+    auto const result =
+      cudf::io::read_parquet(cudf::io::parquet_reader_options::builder(
+                               cudf::io::source_info{cudf::host_span<std::byte const>{
+                                 reinterpret_cast<std::byte const*>(buffer.data()), buffer.size()}})
+                               .build());
+    CUDF_TEST_EXPECT_TABLES_EQUAL(expected, result.tbl->view());
+
+    // A row-range read puts the same pages on the bounds-page path, where the gated and ungated
+    // routes diverge most (skipped_leaf_values, temp_string_buf staging).
+    auto const trimmed =
+      cudf::io::read_parquet(cudf::io::parquet_reader_options::builder(
+                               cudf::io::source_info{cudf::host_span<std::byte const>{
+                                 reinterpret_cast<std::byte const*>(buffer.data()), buffer.size()}})
+                               .skip_rows(1234)
+                               .num_rows(5678)
+                               .build());
+    SCOPED_TRACE("row-range read");
+    CUDF_TEST_EXPECT_TABLES_EQUAL(cudf::slice(expected, {1234, 1234 + 5678}), trimmed.tbl->view());
+  }
 }
 
 namespace {

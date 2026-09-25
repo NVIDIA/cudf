@@ -649,7 +649,8 @@ __device__ int update_validity_and_row_indices_lists(int32_t target_value_count,
                                                      state_buf* sb,
                                                      level_t const* const def,
                                                      level_t const* const rep,
-                                                     int t)
+                                                     int t,
+                                                     uint32_t* global_nz_idx = nullptr)
 {
   constexpr int num_warps      = decode_block_size / cudf::detail::warp_size;
   constexpr int max_batch_size = num_warps * cudf::detail::warp_size;
@@ -835,6 +836,10 @@ __device__ int update_validity_and_row_indices_lists(int32_t target_value_count,
           // Index from rolling buffer of values (which doesn't include nulls) to final array (which
           // includes gaps for nulls)
           sb->nz_idx[output_index] = dst_pos;
+          // The list prepass reuses this walker verbatim and only tees the map out to device
+          // memory, so that a later decode launch can index it by valid rank. Null for every
+          // legacy caller, which keeps the rolling buffer the only consumer.
+          if (global_nz_idx != nullptr) { global_nz_idx[src_pos] = dst_pos; }
         }
         max_depth_valid_count += block_valid_count;
       }
@@ -1492,6 +1497,113 @@ void decode_page_data(cudf::detail::hostdevice_span<PageInfo> pages,
       break;
     default: CUDF_EXPECTS(false, "Kernel type not handled by this function"); break;
   }
+}
+
+namespace {
+
+/**
+ * @brief Publish the list level-prepass state for one page.
+ *
+ * One block per page. Runs the same level walker the legacy list decoders run, with its rank map
+ * teed out to `PagePrepassState::nz_idx`, and then records the per-depth counters the consumer
+ * restores. Nothing about the walk itself changes -- that is deliberate, since the list output
+ * contract (offsets, per-depth validity, row counts) is what the consumer must reproduce exactly.
+ */
+template <typename level_t, int decode_block_size_t>
+CUDF_KERNEL void __launch_bounds__(decode_block_size_t)
+  precompute_list_level_state_kernel(PageInfo* pages,
+                                     device_span<ColumnChunkDesc const> chunks,
+                                     size_t min_row,
+                                     size_t num_rows,
+                                     cudf::device_span<bool const> page_mask)
+{
+  __shared__ __align__(16) full_page_decode_state state_g;
+  using state_buf_t = page_state_buffers_s<decode_block_size_t * 2, 1, 1>;
+  __shared__ __align__(16) state_buf_t state_buffers;
+  auto const block   = cg::this_thread_block();
+  auto* const s      = &state_g;
+  auto* const sb     = &state_buffers;
+  int const page_idx = blockIdx.x;
+  int const t        = block.thread_rank();
+  PageInfo* const pp = &pages[page_idx];
+
+  if (!pp->prepass_is(level_prepass_family::DELTA_LIST) || pp->prepass_state->nesting == nullptr ||
+      BitAnd(pp->kernel_mask, DELTA_LIST_LEVEL_PREPASS_MASK) == 0) {
+    return;
+  }
+  if (!page_mask.empty() && !page_mask[page_idx]) { return; }
+  if (!setup_local_page_info(s,
+                             pp,
+                             chunks,
+                             min_row,
+                             num_rows,
+                             mask_filter{DELTA_LIST_LEVEL_PREPASS_MASK},
+                             page_processing_stage::DECODE)) {
+    return;
+  }
+
+  bool const process_nulls = should_process_nulls(s);
+  auto const* const def =
+    reinterpret_cast<level_t const*>(pp->lvl_decode_buf[level_type::DEFINITION]);
+  auto const* const rep =
+    reinterpret_cast<level_t const*>(pp->lvl_decode_buf[level_type::REPETITION]);
+  int processed_count            = s->setup.page.skipped_leaf_values;
+  int valid_count                = 0;
+  int const decoded_value_limit  = s->setup.page.num_input_values;
+  int const last_row             = s->setup.first_row + s->setup.num_rows;
+  constexpr int rolling_buf_size = decode_block_size_t * 2;
+
+  while (processed_count < decoded_value_limit && s->progress.input_row_count <= last_row) {
+    processed_count += min(rolling_buf_size, decoded_value_limit - processed_count);
+    if (process_nulls) {
+      valid_count =
+        update_validity_and_row_indices_lists<decode_block_size_t, true, level_t, state_buf_t>(
+          processed_count, s, sb, def, rep, t, pp->prepass_state->nz_idx);
+    } else {
+      valid_count =
+        update_validity_and_row_indices_lists<decode_block_size_t, false, level_t, state_buf_t>(
+          processed_count, s, sb, nullptr, rep, t, pp->prepass_state->nz_idx);
+    }
+    block.sync();
+  }
+
+  if (t == 0) {
+    for (int depth = 0; depth < s->setup.page.nesting_info_size; ++depth) {
+      auto const& source                = s->nesting.nesting_info[depth];
+      pp->prepass_state->nesting[depth] = {
+        source.null_count, source.valid_map_offset, source.valid_count, source.value_count};
+    }
+    pp->prepass_state->nz_count        = valid_count;
+    pp->prepass_state->aux_count       = s->progress.input_value_count;
+    pp->prepass_state->input_row_count = s->progress.input_row_count;
+  }
+}
+
+}  // namespace
+
+void precompute_list_level_state(cudf::detail::hostdevice_span<PageInfo> pages,
+                                 cudf::detail::hostdevice_span<ColumnChunkDesc const> chunks,
+                                 cudf::device_span<bool const> page_mask,
+                                 size_t min_row,
+                                 size_t num_rows,
+                                 int level_type_size,
+                                 cuda::stream_ref stream)
+{
+  if (pages.size() == 0) { return; }
+  constexpr int decode_block_size = 128;
+  dim3 const block(decode_block_size, 1);
+  dim3 const grid(pages.size(), 1);
+  auto launch = [&](auto level_tag) {
+    using level_t = decltype(level_tag);
+    precompute_list_level_state_kernel<level_t, decode_block_size>
+      <<<grid, block, 0, stream.get()>>>(pages.device_ptr(), chunks, min_row, num_rows, page_mask);
+  };
+  if (level_type_size == 1) {
+    launch(uint8_t{});
+  } else {
+    launch(uint16_t{});
+  }
+  CUDF_CUDA_TRY(cudaGetLastError());
 }
 
 }  // namespace cudf::io::parquet::detail

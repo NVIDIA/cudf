@@ -734,27 +734,12 @@ class DynamicPlanningOptions:
 
     These options can be configured via environment variables
     with the prefix ``CUDF_POLARS__EXECUTOR__DYNAMIC_PLANNING__``.
-
-    Parameters
-    ----------
-    sample_chunk_count
-        The maximum number of chunks to sample before making
-        dynamic-planning decisions. Default is 2.
     """
 
     _env_prefix = "CUDF_POLARS__EXECUTOR__DYNAMIC_PLANNING"
 
-    sample_chunk_count: int = dataclasses.field(
-        default_factory=_make_default_factory(
-            f"{_env_prefix}__SAMPLE_CHUNK_COUNT", int, default=2
-        )
-    )
-
     def __post_init__(self) -> None:  # noqa: D105
-        if not isinstance(self.sample_chunk_count, int):
-            raise TypeError("sample_chunk_count must be an int")
-        if self.sample_chunk_count < 1:
-            raise ValueError("sample_chunk_count must be at least 1")
+        pass
 
 
 @dataclasses.dataclass(frozen=True)

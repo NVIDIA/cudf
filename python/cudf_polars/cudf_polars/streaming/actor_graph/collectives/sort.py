@@ -457,12 +457,10 @@ async def _sample_chunks_for_size_estimate(
 
     size_estimate_id = collective_ids.pop()
     target_partition_size = executor.target_partition_size
-    sample_chunk_count = executor.dynamic_planning.sample_chunk_count
 
     sample = await _sample_chunks(
         context,
         ch_in,
-        sample_chunk_count,
         target_partition_size,
         metadata_in.local_count,
     )

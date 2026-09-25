@@ -80,14 +80,12 @@ async def pushdown_filter_actor(
                     ChunkSampler(
                         context=context,
                         ch_in=ch_target,
-                        max_chunks=dynamic_planning.sample_chunk_count,
                         max_bytes=executor.target_partition_size,
                         ch_in_chunk_count=target_metadata.local_count,
                     ),
                     ChunkSampler(
                         context=context,
                         ch_in=ch_domain,
-                        max_chunks=dynamic_planning.sample_chunk_count,
                         max_bytes=executor.target_partition_size,
                         ch_in_chunk_count=domain_metadata.local_count,
                         cardinality_estimator=CardinalityEstimator(

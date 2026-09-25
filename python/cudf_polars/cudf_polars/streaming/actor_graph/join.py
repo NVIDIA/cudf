@@ -1436,7 +1436,6 @@ async def collect_samples(
     comm: Communicator,
     join_state: JoinPlanningState,
     inputs: tuple[JoinInput, ...],
-    sample_chunk_count: int,
     target_partition_size: int,
     collective_id: int,
 ) -> None:
@@ -1475,7 +1474,6 @@ async def collect_samples(
             ChunkSampler(
                 context=context,
                 ch_in=input_.channel,
-                max_chunks=sample_chunk_count,
                 max_bytes=target_partition_size,
                 ch_in_chunk_count=input_.metadata.local_count,
                 cardinality_estimator=cardinality_estimator,
@@ -1545,7 +1543,6 @@ async def resolve_prefilters(
             if isinstance(candidate.spec.domain, ExternalDomain)
             and candidate.decision is None
         ),
-        executor.dynamic_planning.sample_chunk_count,
         executor.target_partition_size,
         collective_id,
     )
@@ -1641,7 +1638,6 @@ async def choose_strategy(
             comm,
             join_state,
             (join_state.left, join_state.right),
-            executor.dynamic_planning.sample_chunk_count,
             executor.target_partition_size,
             collective_ids.size_estimate,
         )

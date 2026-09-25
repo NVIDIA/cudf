@@ -883,32 +883,11 @@ def test_ir_execution_context() -> None:
     context.get_cuda_stream()  # no exception
 
 
-def test_validate_dynamic_planning() -> None:
-    with pytest.raises(TypeError, match="sample_chunk_count must be"):
-        ConfigOptions.from_polars_engine(
-            pl.GPUEngine(
-                executor="streaming",
-                executor_options={"dynamic_planning": {"sample_chunk_count": object()}},
-            )
-        )
-
-
-def test_dynamic_planning_sample_chunk_count_min() -> None:
-    with pytest.raises(ValueError, match="sample_chunk_count must be at least 1"):
-        ConfigOptions.from_polars_engine(
-            pl.GPUEngine(
-                executor="streaming",
-                executor_options={"dynamic_planning": {"sample_chunk_count": 0}},
-            )
-        )
-
-
 def test_dynamic_planning_defaults() -> None:
     config = ConfigOptions.from_polars_engine(pl.GPUEngine())
     assert config.executor.name == "streaming"
     # Dynamic planning is enabled by default
     assert config.executor.dynamic_planning is not None
-    assert config.executor.dynamic_planning.sample_chunk_count == 2
     assert config.executor.join_filter_pushdown is None
 
 
@@ -918,19 +897,6 @@ def test_dynamic_planning_disabled_from_env(monkeypatch: pytest.MonkeyPatch) -> 
     config = ConfigOptions.from_polars_engine(pl.GPUEngine())
     assert config.executor.name == "streaming"
     assert config.executor.dynamic_planning is None
-
-
-def test_dynamic_planning_sample_chunk_count_from_env(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    # Test that sample_chunk_count_reduce can be configured via env var
-    monkeypatch.setenv(
-        "CUDF_POLARS__EXECUTOR__DYNAMIC_PLANNING__SAMPLE_CHUNK_COUNT", "3"
-    )
-    config = ConfigOptions.from_polars_engine(pl.GPUEngine())
-    assert config.executor.name == "streaming"
-    assert config.executor.dynamic_planning is not None
-    assert config.executor.dynamic_planning.sample_chunk_count == 3
 
 
 def test_join_filter_pushdown_options_from_env(
@@ -1052,7 +1018,6 @@ def test_dynamic_planning_from_instance() -> None:
     )
     assert config.executor.name == "streaming"
     assert config.executor.dynamic_planning is not None
-    assert config.executor.dynamic_planning.sample_chunk_count == 2  # default
 
 
 def test_parse_memory_resource_config() -> None:

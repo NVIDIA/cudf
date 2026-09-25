@@ -2041,6 +2041,35 @@ class Select(IR):
             )
         return False
 
+    @staticmethod
+    def _dataframe_scan_below_cache(node: IR, cache: CSECache) -> DataFrameScan | None:
+        """
+        Find the DataFrameScan under ``node``, looking through Cache nodes.
+
+        A Cache node whose key is already materialized is not looked through,
+        so its cached frame is reused instead of being counted separately.
+        """
+        while isinstance(node, Cache):
+            if node.key in cache:
+                return None
+            (node,) = node.children
+        return node if isinstance(node, DataFrameScan) else None
+
+    def _len_frame(self, count: int, context: IRExecutionContext) -> DataFrame:
+        """Build the single-row result of a ``len`` select from a known count."""
+        stream = context.get_cuda_stream()
+        dtype = DataType(pl.UInt32())
+        col = Column(
+            plc.Column.from_scalar(
+                plc.Scalar.from_py(count, dtype.plc_type, stream=stream),
+                1,
+                stream=stream,
+            ),
+            name=self.exprs[0].name or "len",
+            dtype=dtype,
+        )
+        return DataFrame([col], stream=stream)
+
     @classmethod
     @log_do_evaluate
     @nvtx_annotate_cudf_polars(message="Select")
@@ -2080,7 +2109,8 @@ class Select(IR):
         -------
         DataFrame
             Result of evaluating this Select node. If the expression is a
-            count over a parquet scan, returns a constant row count directly
+            count over a parquet scan or an in-memory DataFrameScan (possibly
+            behind Cache nodes), returns a constant row count directly
             without evaluating the scan.
 
         Raises
@@ -2115,6 +2145,15 @@ class Select(IR):
                 dtype=dtype,
             )
             return DataFrame([col], stream=stream)
+
+        if Select._is_len_expr(self.exprs):
+            df_scan = Select._dataframe_scan_below_cache(self.children[0], cache)
+            if df_scan is not None:
+                # The polars DataFrame already knows its height, so don't copy
+                # it to the GPU (which fails beyond cudf::size_type rows) to
+                # count it.
+                height = pl.DataFrame._from_pydf(df_scan.df).height
+                return self._len_frame(height, context)
 
         return super().evaluate(cache=cache, timer=timer, context=context)
 

@@ -134,8 +134,6 @@ TEST_F(PackUnpackTest, EmptyColumns)
 
 std::vector<std::unique_ptr<cudf::column>> generate_lists(bool include_validity)
 {
-  using LCW = cudf::test::lists_column_wrapper<int>;
-
   if (include_validity) {
     auto valids = cudf::test::iterators::valids_at_multiples_of(2);
     cudf::test::lists_column_wrapper<int> list0{{1, 2, 3},
@@ -143,20 +141,20 @@ std::vector<std::unique_ptr<cudf::column>> generate_lists(bool include_validity)
                                                 {6},
                                                 {{7, 8}, valids},
                                                 {9, 10, 11},
-                                                LCW{},
-                                                LCW{},
+                                                {},
+                                                {},
                                                 {{-1, -2, -3, -4, -5}, valids},
                                                 {{100, -200}, valids}};
 
     cudf::test::lists_column_wrapper<int> list1{{{{1, 2, 3}, valids}, {4, 5}},
-                                                {{LCW{}, LCW{}, {7, 8}, LCW{}}, valids},
-                                                {LCW{6}},
-                                                {{{7, 8}, {{9, 10, 11}, valids}, LCW{}}, valids},
-                                                {{LCW{}, {-1, -2, -3, -4, -5}}, valids},
-                                                {LCW{}},
-                                                {LCW{-10}, {-100, -200}},
-                                                {{-10, -200}, LCW{}, {8, 9}},
-                                                {LCW{8}, LCW{}, LCW{9}, {5, 6}}};
+                                                {{{}, {}, {7, 8}, {}}, valids},
+                                                {{6}},
+                                                {{{7, 8}, {{9, 10, 11}, valids}, {}}, valids},
+                                                {{{}, {-1, -2, -3, -4, -5}}, valids},
+                                                {{}},
+                                                {{-10}, {-100, -200}},
+                                                {{-10, -200}, {}, {8, 9}},
+                                                {{8}, {}, {9}, {5, 6}}};
 
     std::vector<std::unique_ptr<cudf::column>> out;
     out.push_back(list0.release());
@@ -165,17 +163,17 @@ std::vector<std::unique_ptr<cudf::column>> generate_lists(bool include_validity)
   }
 
   cudf::test::lists_column_wrapper<int> list0{
-    {1, 2, 3}, {4, 5}, {6}, {7, 8}, {9, 10, 11}, LCW{}, LCW{}, {-1, -2, -3, -4, -5}, {-100, -200}};
+    {1, 2, 3}, {4, 5}, {6}, {7, 8}, {9, 10, 11}, {}, {}, {-1, -2, -3, -4, -5}, {-100, -200}};
 
   cudf::test::lists_column_wrapper<int> list1{{{1, 2, 3}, {4, 5}},
-                                              {LCW{}, LCW{}, {7, 8}, LCW{}},
-                                              {LCW{6}},
-                                              {{7, 8}, {9, 10, 11}, LCW{}},
-                                              {LCW{}, {-1, -2, -3, -4, -5}},
-                                              {LCW{}},
+                                              {{}, {}, {7, 8}, {}},
+                                              {{6}},
+                                              {{7, 8}, {9, 10, 11}, {}},
+                                              {{}, {-1, -2, -3, -4, -5}},
+                                              {{}},
                                               {{-10}, {-100, -200}},
-                                              {{-10, -200}, LCW{}, {8, 9}},
-                                              {LCW{8}, LCW{}, LCW{9}, {5, 6}}};
+                                              {{-10, -200}, {}, {8, 9}},
+                                              {{8}, {}, {9}, {5, 6}}};
 
   std::vector<std::unique_ptr<cudf::column>> out;
   out.push_back(list0.release());
@@ -235,18 +233,17 @@ std::vector<std::unique_ptr<cudf::column>> generate_struct_of_list()
     cudf::test::fixed_width_column_wrapper<int>(ages.begin(), ages.end(), ages_validity.begin());
 
   // 3. List column
-  using LCW = cudf::test::lists_column_wrapper<cudf::string_view>;
   std::vector<bool> list_validity{true, true, true, true, true, false, true, false, true};
   cudf::test::lists_column_wrapper<cudf::string_view> list(
     {{{"abc", "d", "edf"}, {"jjj"}},
-     {{"dgaer", "-7"}, LCW{}},
-     {LCW{}},
+     {{"dgaer", "-7"}, {}},
+     {{}},
      {{"qwerty"}, {"ral", "ort", "tal"}, {"five", "six"}},
-     {LCW{}, LCW{}, {"eight", "nine"}},
-     {LCW{}},
+     {{}, {}, {"eight", "nine"}},
+     {{}},
      {{"fun"}, {"a", "bc", "def", "ghij", "klmno", "pqrstu"}},
-     {{"seven", "zz"}, LCW{}, {"xyzzy"}},
-     {LCW{"negative 3", "  ", "cleveland"}}},
+     {{"seven", "zz"}, {}, {"xyzzy"}},
+     {{"negative 3", "  ", "cleveland"}}},
     list_validity.begin());
 
   // Assemble struct column.
@@ -513,14 +510,12 @@ TEST_F(PackUnpackTest, NestedSliced)
   {
     auto valids = cudf::test::iterators::valids_at_multiples_of(2);
 
-    using LCW = cudf::test::lists_column_wrapper<int>;
-
     cudf::test::lists_column_wrapper<int> col0{{{{1, 2, 3}, valids}, {4, 5}},
-                                               {{LCW{}, LCW{}, {7, 8}, LCW{}}, valids},
+                                               {{{}, {}, {7, 8}, {}}, valids},
                                                {{6, 12}},
-                                               {{{7, 8}, {{9, 10, 11}, valids}, LCW{}}, valids},
-                                               {{LCW{}, {-1, -2, -3, -4, -5}}, valids},
-                                               {LCW{}},
+                                               {{{7, 8}, {{9, 10, 11}, valids}, {}}, valids},
+                                               {{{}, {-1, -2, -3, -4, -5}}, valids},
+                                               {{}},
                                                {{-10}, {-100, -200}}};
 
     cudf::test::strings_column_wrapper col1{

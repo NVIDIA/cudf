@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2024, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -806,9 +806,8 @@ TEST_F(DistinctKeepFirstLastNone, ListsWithNullsUnequal)
 
   // KEEP_NONE
   {
-    auto const exp_idx_sort = int32s_col{7, 10};
-    auto const exp_keys_sort =
-      lists_col{{lists_col{} /*NULL*/, lists_col{} /*NULL*/}, nulls_at({0, 1})};
+    auto const exp_idx_sort  = int32s_col{7, 10};
+    auto const exp_keys_sort = lists_col{{{} /*NULL*/, {} /*NULL*/}, nulls_at({0, 1})};
     auto const expected_sort = cudf::table_view{{exp_idx_sort, exp_keys_sort}};
 
     auto const result      = cudf::distinct(input, key_idx, KEEP_NONE, NULL_UNEQUAL);
@@ -1159,8 +1158,7 @@ TEST_F(DistinctKeepAny, EmptyDeepList)
   // 2. Null
   // 3. Null
 
-  auto const keys =
-    lists_col{{lists_col{}, lists_col{}, lists_col{}, lists_col{}}, nulls_at({2, 3})};
+  auto const keys = lists_col{{{}, {}, {}, {}}, nulls_at({2, 3})};
 
   auto const idx     = int32s_col{1, 1, 2, 2};
   auto const input   = cudf::table_view{{idx, keys}};

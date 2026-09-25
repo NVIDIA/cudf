@@ -746,8 +746,7 @@ TEST_F(ParquetChunkedReaderTest, TestChunkedReadWithListsNoNulls)
     // 20001 offsets :   80004  bytes
     // 30000 ints    :   120000 bytes
     // total         :   200004 bytes
-    auto const template_lists = int32s_lists_col{
-      int32s_lists_col{}, int32s_lists_col{0}, int32s_lists_col{1, 2}, int32s_lists_col{3, 4, 5}};
+    auto const template_lists = int32s_lists_col{{}, {0}, {1, 2}, {3, 4, 5}};
 
     auto const gather_values =
       std::views::iota(int32_t{0}) | std::views::transform([&](int32_t i) { return i % 4; });
@@ -756,10 +755,7 @@ TEST_F(ParquetChunkedReaderTest, TestChunkedReadWithListsNoNulls)
     input_columns.emplace_back(
       std::move(cudf::gather(cudf::table_view{{template_lists}}, gather_map)->release().front()));
 
-    auto const bools_lists = bools_lists_col{bools_lists_col{},
-                                             bools_lists_col{false},
-                                             bools_lists_col{false, true},
-                                             bools_lists_col{true, true, false}};
+    auto const bools_lists = bools_lists_col{{}, {false}, {false, true}, {true, true, false}};
     input_columns.emplace_back(
       std::move(cudf::gather(cudf::table_view{{bools_lists}}, gather_map)->release().front()));
 
@@ -836,10 +832,10 @@ TEST_F(ParquetChunkedReaderTest, TestChunkedReadWithListsHavingNulls)
     // total              :   142504 bytes
     auto const template_lists =
       int32s_lists_col{// these will all be null
-                       int32s_lists_col{},
-                       int32s_lists_col{0},
-                       int32s_lists_col{1, 2},
-                       int32s_lists_col{3, 4, 5, 6, 7, 8, 9} /* this list will be nullified out */};
+                       {},
+                       {0},
+                       {1, 2},
+                       {3, 4, 5, 6, 7, 8, 9} /* this list will be nullified out */};
     auto const gather_values =
       std::views::iota(int32_t{0}) | std::views::transform([&](int32_t i) { return i % 4; });
     auto const gather_iter = gather_values.begin();
@@ -849,11 +845,10 @@ TEST_F(ParquetChunkedReaderTest, TestChunkedReadWithListsHavingNulls)
 
     auto const bools_lists = bools_lists_col{
       // these will all be null
-      bools_lists_col{},
-      bools_lists_col{false},
-      bools_lists_col{false, true},
-      bools_lists_col{
-        true, true, false, true, true, false, false} /* this list will be nullified out */};
+      {},
+      {false},
+      {false, true},
+      {true, true, false, true, true, false, false} /* this list will be nullified out */};
     input_columns.emplace_back(
       std::move(cudf::gather(cudf::table_view{{bools_lists}}, gather_map)->release().front()));
 
@@ -937,8 +932,7 @@ TEST_F(ParquetChunkedReaderTest, TestChunkedReadWithStructsOfLists)
       auto const str_iter = str_values.begin();
       child_columns.emplace_back(strings_col{str_iter, str_iter + num_rows}.release());
 
-      auto const template_lists = int32s_lists_col{
-        int32s_lists_col{}, int32s_lists_col{0}, int32s_lists_col{0, 1}, int32s_lists_col{0, 1, 2}};
+      auto const template_lists = int32s_lists_col{{}, {0}, {0, 1}, {0, 1, 2}};
       auto const gather_values =
         std::views::iota(int32_t{0}) | std::views::transform([&](int32_t i) { return i % 4; });
       auto const gather_iter = gather_values.begin();

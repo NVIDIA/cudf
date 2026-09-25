@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -49,18 +49,16 @@ TYPED_TEST_SUITE(ListOverlapTypedTest, TestTypes);
 
 TEST_F(ListOverlapTest, TrivialTest)
 {
-  auto const lhs =
-    floats_lists{{floats_lists{{NaN, 5.0, 0.0, 0.0, 0.0, 0.0, null, 0.0}, null_at(6)},
-                  floats_lists{{NaN, 5.0, 0.0, 0.0, 0.0, 0.0, null, 1.0}, null_at(6)},
-                  {} /*NULL*/,
-                  floats_lists{{NaN, 5.0, 0.0, 0.0, 0.0, 0.0, null, 1.0}, null_at(6)}},
-                 null_at(2)};
-  auto const rhs =
-    floats_lists{{floats_lists{{1.0, 0.5, null, 0.0, 0.0, null, NaN}, nulls_at({2, 5})},
-                  floats_lists{{2.0, 1.0, null, 0.0, 0.0, null}, nulls_at({2, 5})},
-                  floats_lists{{2.0, 1.0, null, 0.0, 0.0, null}, nulls_at({2, 5})},
-                  {} /*NULL*/},
-                 null_at(3)};
+  auto const lhs      = floats_lists{{{{NaN, 5.0, 0.0, 0.0, 0.0, 0.0, null, 0.0}, null_at(6)},
+                                      {{NaN, 5.0, 0.0, 0.0, 0.0, 0.0, null, 1.0}, null_at(6)},
+                                      {} /*NULL*/,
+                                      {{NaN, 5.0, 0.0, 0.0, 0.0, 0.0, null, 1.0}, null_at(6)}},
+                                null_at(2)};
+  auto const rhs      = floats_lists{{{{1.0, 0.5, null, 0.0, 0.0, null, NaN}, nulls_at({2, 5})},
+                                      {{2.0, 1.0, null, 0.0, 0.0, null}, nulls_at({2, 5})},
+                                      {{2.0, 1.0, null, 0.0, 0.0, null}, nulls_at({2, 5})},
+                                      {} /*NULL*/},
+                                null_at(3)};
   auto const expected = bools_col{{1, 1, null, null}, nulls_at({2, 3})};
 
   auto const results = cudf::lists::have_overlap(lists_cv{lhs}, lists_cv{rhs});
@@ -126,8 +124,8 @@ TEST_F(ListOverlapTest, StringTestsNonNull)
 
   // Trivial cases - empty input.
   {
-    auto const lhs      = strings_lists{strings_lists{}};
-    auto const rhs      = strings_lists{strings_lists{}};
+    auto const lhs      = strings_lists{{}};
+    auto const rhs      = strings_lists{{}};
     auto const expected = bools_col{0};
 
     auto const results = cudf::lists::have_overlap(lists_cv{lhs}, lists_cv{rhs});
@@ -156,12 +154,10 @@ TEST_F(ListOverlapTest, StringTestsNonNull)
 
   // Multiple lists column.
   {
-    auto const lhs      = strings_lists{strings_lists{"one", "two", "three"},
-                                   strings_lists{"four", "five", "six"},
-                                   strings_lists{"1", "2", "3"}};
-    auto const rhs      = strings_lists{strings_lists{"one", "banana"},
-                                   strings_lists{"apple", "kiwi", "cherry"},
-                                   strings_lists{"two", "and", "1"}};
+    auto const lhs =
+      strings_lists{{"one", "two", "three"}, {"four", "five", "six"}, {"1", "2", "3"}};
+    auto const rhs =
+      strings_lists{{"one", "banana"}, {"apple", "kiwi", "cherry"}, {"two", "and", "1"}};
     auto const expected = bools_col{1, 0, 1};
 
     auto const results = cudf::lists::have_overlap(lists_cv{lhs}, lists_cv{rhs});
@@ -187,15 +183,15 @@ TEST_F(ListOverlapTest, StringTestsWithNullsEqual)
 
   // Multiple lists column with null lists and null entries.
   {
-    auto const lhs = strings_lists{
-      strings_lists{{"this", null, "is", null, "a", null, null, "string"}, nulls_at({1, 3, 5, 6})},
-      strings_lists{},
-      strings_lists{"this", "is", "a", "string"}};
-    auto const rhs = strings_lists{
-      {strings_lists{{"aha", null, "abc", null, "1111", null, "2222"}, nulls_at({1, 3, 5})},
-       strings_lists{}, /* NULL */
-       strings_lists{"aha", "this", "is another", "string???"}},
-      null_at(1)};
+    auto const lhs =
+      strings_lists{{{"this", null, "is", null, "a", null, null, "string"}, nulls_at({1, 3, 5, 6})},
+                    {},
+                    {"this", "is", "a", "string"}};
+    auto const rhs =
+      strings_lists{{{{"aha", null, "abc", null, "1111", null, "2222"}, nulls_at({1, 3, 5})},
+                     {}, /* NULL */
+                     {"aha", "this", "is another", "string???"}},
+                    null_at(1)};
     auto const expected = bools_col{{1, 0 /*null*/, 1}, null_at(1)};
 
     auto const results = cudf::lists::have_overlap(lists_cv{lhs}, lists_cv{rhs}, NULL_EQUAL);
@@ -221,15 +217,15 @@ TEST_F(ListOverlapTest, StringTestsWithNullsUnequal)
 
   // Multiple lists column with null lists and null entries.
   {
-    auto const lhs = strings_lists{
-      strings_lists{{"this", null, "is", null, "a", null, null, "string"}, nulls_at({1, 3, 5, 6})},
-      strings_lists{},
-      strings_lists{"this", "is", "a", "string"}};
-    auto const rhs = strings_lists{
-      {strings_lists{{"aha", null, "abc", null, "1111", null, "2222"}, nulls_at({1, 3, 5})},
-       strings_lists{}, /* NULL */
-       strings_lists{"aha", "this", "is another", "string???"}},
-      null_at(1)};
+    auto const lhs =
+      strings_lists{{{"this", null, "is", null, "a", null, null, "string"}, nulls_at({1, 3, 5, 6})},
+                    {},
+                    {"this", "is", "a", "string"}};
+    auto const rhs =
+      strings_lists{{{{"aha", null, "abc", null, "1111", null, "2222"}, nulls_at({1, 3, 5})},
+                     {}, /* NULL */
+                     {"aha", "this", "is another", "string???"}},
+                    null_at(1)};
     auto const expected = bools_col{{0, 0 /*null*/, 1}, null_at(1)};
 
     auto const results = cudf::lists::have_overlap(lists_cv{lhs}, lists_cv{rhs}, NULL_UNEQUAL);
@@ -253,8 +249,8 @@ TYPED_TEST(ListOverlapTypedTest, TrivialInputTests)
 
   // All input lists are empty.
   {
-    auto const lhs      = lists_col{lists_col{}, lists_col{}, lists_col{}};
-    auto const rhs      = lists_col{lists_col{}, lists_col{}, lists_col{}};
+    auto const lhs      = lists_col{{}, {}, {}};
+    auto const rhs      = lists_col{{}, {}, {}};
     auto const expected = bools_col{0, 0, 0};
 
     auto const results = cudf::lists::have_overlap(lists_cv{lhs}, lists_cv{rhs});
@@ -336,12 +332,11 @@ TYPED_TEST(ListOverlapTypedTest, InputHaveNullsTests)
 
   // Nullable child and nulls are equal.
   {
-    auto const lhs      = lists_col{lists_col{{null, 1, null, 3}, nulls_at({0, 2})},
-                               lists_col{{null, 5}, null_at(0)},
-                               lists_col{{null, 7, null, 9}, nulls_at({0, 2})}};
-    auto const rhs      = lists_col{lists_col{{null, null, 5}, nulls_at({0, 1})},
-                               lists_col{{5, null}, null_at(1)},
-                               lists_col{7, 8, 9}};
+    auto const lhs = lists_col{{{null, 1, null, 3}, nulls_at({0, 2})},
+                               {{null, 5}, null_at(0)},
+                               {{null, 7, null, 9}, nulls_at({0, 2})}};
+    auto const rhs =
+      lists_col{{{null, null, 5}, nulls_at({0, 1})}, {{5, null}, null_at(1)}, {7, 8, 9}};
     auto const expected = bools_col{1, 1, 1};
 
     auto const results = cudf::lists::have_overlap(lists_cv{lhs}, lists_cv{rhs}, NULL_EQUAL);
@@ -350,12 +345,11 @@ TYPED_TEST(ListOverlapTypedTest, InputHaveNullsTests)
 
   // Nullable child and nulls are unequal.
   {
-    auto const lhs      = lists_col{lists_col{{null, 1, null, 3}, nulls_at({0, 2})},
-                               lists_col{{null, 5}, null_at(0)},
-                               lists_col{{null, 7, null, 9}, nulls_at({0, 2})}};
-    auto const rhs      = lists_col{lists_col{{null, null, 5}, nulls_at({0, 1})},
-                               lists_col{{5, null}, null_at(1)},
-                               lists_col{7, 8, 9}};
+    auto const lhs = lists_col{{{null, 1, null, 3}, nulls_at({0, 2})},
+                               {{null, 5}, null_at(0)},
+                               {{null, 7, null, 9}, nulls_at({0, 2})}};
+    auto const rhs =
+      lists_col{{{null, null, 5}, nulls_at({0, 1})}, {{5, null}, null_at(1)}, {7, 8, 9}};
     auto const expected = bools_col{0, 1, 1};
 
     auto const results = cudf::lists::have_overlap(lists_cv{lhs}, lists_cv{rhs}, NULL_UNEQUAL);
@@ -488,15 +482,15 @@ TEST_F(ListOverlapTest, InputListsOfStructsOfLists)
                                5,
                                6};
       auto child2 = floats_lists{// begin list1
-                                 floats_lists{0, 1},
-                                 floats_lists{0, 2},
-                                 floats_lists{1, 1},     // end list1
-                                                         // begin list2
-                                 floats_lists{3, 4, 5},  // end list2
-                                                         // begin list3
-                                 floats_lists{6, 7},
-                                 floats_lists{6, 8},
-                                 floats_lists{6, 7, 8}};
+                                 {0, 1},
+                                 {0, 2},
+                                 {1, 1},     // end list1
+                                             // begin list2
+                                 {3, 4, 5},  // end list2
+                                             // begin list3
+                                 {6, 7},
+                                 {6, 8},
+                                 {6, 7, 8}};
       return structs_col{{child1, child2}};
     };
 
@@ -517,15 +511,15 @@ TEST_F(ListOverlapTest, InputListsOfStructsOfLists)
                                5,
                                6};
       auto child2 = floats_lists{// begin list1
-                                 floats_lists{1, 1},
-                                 floats_lists{1, 2},
-                                 floats_lists{1, 2},     // end list1
-                                                         // begin list2
-                                 floats_lists{3, 4, 5},  // end list2
-                                                         // begin list3
-                                 floats_lists{6, 7, 8, 9},
-                                 floats_lists{6, 8},
-                                 floats_lists{3, 4, 5}};
+                                 {1, 1},
+                                 {1, 2},
+                                 {1, 2},     // end list1
+                                             // begin list2
+                                 {3, 4, 5},  // end list2
+                                             // begin list3
+                                 {6, 7, 8, 9},
+                                 {6, 8},
+                                 {3, 4, 5}};
       return structs_col{{child1, child2}};
     };
 

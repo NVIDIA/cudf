@@ -2361,7 +2361,6 @@ TEST_F(JsonReaderTest, ValueValidation)
 TEST_F(JsonReaderTest, MixedTypes)
 {
   using LCWS    = cudf::test::lists_column_wrapper<cudf::string_view>;
-  using LCWI    = cudf::test::lists_column_wrapper<int64_t>;
   using valid_t = std::vector<cudf::valid_type>;
   {
     // Simple test for mixed types
@@ -2469,7 +2468,7 @@ TEST_F(JsonReaderTest, MixedTypes)
 { "a": [1,2,3] }
 { "a": null }
 )",
-    cudf::test::lists_column_wrapper{{LCWI{1L, 2L, 3L}, LCWI{4L, 5L}}, valid_t{1, 0}.begin()});
+    cudf::test::lists_column_wrapper<int64_t>({{1L, 2L, 3L}, {4L, 5L}}, valid_t{1, 0}.begin()));
 
   // All mixed:
   // LIST + STRUCT + STR, STRUCT + LIST + STR, STR + STRUCT + LIST, STRUCT + LIST + null
@@ -2523,17 +2522,14 @@ TEST_F(JsonReaderTest, MixedTypes)
   // max_rowoffsets is generated based on parent col id,
   // so, even if mixed types are present, their row offset will be correct.
 
-  cudf::test::lists_column_wrapper expected_list{
-    {
-      cudf::test::lists_column_wrapper({LCWS({"1", "2", "3"}), LCWS({"4", "5", "6"})}),
-      cudf::test::lists_column_wrapper({LCWS()}),
-      cudf::test::lists_column_wrapper({LCWS()}),  // null
-      cudf::test::lists_column_wrapper({LCWS()}),  // null
-      cudf::test::lists_column_wrapper({LCWS({"{\"c\": -1}"}), LCWS({"5"})}),
-      cudf::test::lists_column_wrapper({LCWS({"7"}), LCWS({"8", "9"})}),
-      cudf::test::lists_column_wrapper({LCWS()}),  // null
-    },
-    valid_t{1, 1, 0, 0, 1, 1, 0}.begin()};
+  LCWS expected_list({{{"1", "2", "3"}, {"4", "5", "6"}},
+                      {{}},
+                      {{}},  // null
+                      {{}},  // null
+                      LCWS::nested({{"{\"c\": -1}"}, {"5"}}),
+                      {{"7"}, {"8", "9"}},
+                      {{}}},  // null
+                     valid_t{1, 1, 0, 0, 1, 1, 0}.begin());
   test_fn(R"(
 {"b": [ [1, 2, 3], [ 4, 5, 6] ]}
 {"b": [[]]}
@@ -4025,7 +4021,7 @@ TEST_F(JsonReaderTest, MalformedStructuralCharsInValues)
   EXPECT_EQ(tbl.tbl->get_column(0).null_count(), 1);
   // Column "b": list<int64> [[10,20], null, [50,60]].
   using LCWI = cudf::test::lists_column_wrapper<int64_t>;
-  LCWI expected_b{{LCWI{10, 20}, LCWI{}, LCWI{50, 60}}, std::vector<bool>{1, 0, 1}.begin()};
+  LCWI expected_b{{{10, 20}, {}, {50, 60}}, std::vector<bool>{1, 0, 1}.begin()};
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(tbl.tbl->view().column(1), expected_b);
 }
 

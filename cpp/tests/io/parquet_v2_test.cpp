@@ -6,6 +6,7 @@
 #include "parquet_common.hpp"
 
 #include <cudf_test/base_fixture.hpp>
+#include <cudf_test/column_wrapper.hpp>
 #include <cudf_test/io_metadata_utilities.hpp>
 #include <cudf_test/iterator_utilities.hpp>
 #include <cudf_test/table_utilities.hpp>
@@ -293,12 +294,12 @@ TEST_P(ParquetV2Test, SlicedTable)
   lcw col4{{
              {{{{1, 2, 3, 4}, valids}}, {{{5, 6, 7}, valids}, {8, 9}}},
              {{{{10, 11}, {12}}, {{13}, {14, 15, 16}}, {{17, 18}}}, valids},
-             {{lcw{lcw{}}, lcw{}, lcw{}, lcw{lcw{}}}, valids},
-             lcw{lcw{lcw{}}},
+             {{{{}}, {}, {}, {{}}}, valids},
+             {{{}}},
              {{{{1, 2, 3, 4}, valids}}, {{{5, 6, 7}, valids}, {8, 9}}},
              {{{{10, 11}, {12}}, {{13}, {14, 15, 16}}, {{17, 18}}}, valids},
-             lcw{lcw{lcw{}}},
-             {{lcw{lcw{}}, lcw{}, lcw{}, lcw{lcw{}}}, valids},
+             {{{}}},
+             {{{{}}, {}, {}, {{}}}, valids},
            },
            valids2};
 
@@ -329,13 +330,13 @@ TEST_P(ParquetV2Test, SlicedTable)
   // [[], [], []]
   // [[10]]
   // [[13, 14], [15]]
-  lcw flats{lcw{},
+  lcw flats{{},
             {{1, 2, 3}, {}, {4, 5}, {}, {0, 6, 0}},
             {{7, 8}, {}},
-            lcw{lcw{}},
-            lcw{lcw{}},
-            lcw{lcw{}, lcw{}, lcw{}},
-            {lcw{10}},
+            {{}},
+            {{}},
+            {{}, {}, {}},
+            {{10}},
             {{13, 14}, {15}}};
 
   auto struct_1 = cudf::test::structs_column_wrapper{land, flats};
@@ -396,23 +397,21 @@ TEST_P(ParquetV2Test, ListColumn)
   // [[7, 8]]
   // []
   // [[]]
-  lcw col1{{{1, 2, 3}, {}, {4, 5}, {}, {0, 6, 0}}, {{7, 8}}, lcw{}, lcw{lcw{}}};
+  lcw col1{{{1, 2, 3}, {}, {4, 5}, {}, {0, 6, 0}}, {{7, 8}}, {}, {{}}};
 
   // [[1, 2, 3], [], [4, 5], NULL, [0, 6, 0]]
   // [[7, 8]]
   // []
   // [[]]
-  lcw col2{{{{1, 2, 3}, {}, {4, 5}, {}, {0, 6, 0}}, valids2}, {{7, 8}}, lcw{}, lcw{lcw{}}};
+  lcw col2{{{{1, 2, 3}, {}, {4, 5}, {}, {0, 6, 0}}, valids2}, {{7, 8}}, {}, {{}}};
 
   // [[1, 2, 3], [], [4, 5], NULL, [NULL, 6, NULL]]
   // [[7, 8]]
   // []
   // [[]]
   using dlcw = cudf::test::lists_column_wrapper<double>;
-  dlcw col3{{{{1., 2., 3.}, {}, {4., 5.}, {}, {{0., 6., 0.}, valids}}, valids2},
-            {{7., 8.}},
-            dlcw{},
-            dlcw{dlcw{}}};
+  dlcw col3{
+    {{{1., 2., 3.}, {}, {4., 5.}, {}, {{0., 6., 0.}, valids}}, valids2}, {{7., 8.}}, {}, {{}}};
 
   // TODO: uint16_t lists are not read properly in parquet reader
   // [[1, 2, 3], [], [4, 5], NULL, [0, 6, 0]]
@@ -428,16 +427,14 @@ TEST_P(ParquetV2Test, ListColumn)
   // [[7, 8]]
   // []
   // NULL
-  lcw col5{
-    {{{{1, 2, 3}, {}, {4, 5}, {}, {{0, 6, 0}, valids}}, valids2}, {{7, 8}}, lcw{}, lcw{lcw{}}},
-    valids2};
+  lcw col5{{{{{1, 2, 3}, {}, {4, 5}, {}, {{0, 6, 0}, valids}}, valids2}, {{7, 8}}, {}, {{}}},
+           valids2};
 
-  using strlcw = cudf::test::lists_column_wrapper<cudf::string_view>;
   cudf::test::lists_column_wrapper<cudf::string_view> col6{
     {{"Monday", "Monday", "Friday"}, {}, {"Monday", "Friday"}, {}, {"Sunday", "Funday"}},
     {{"bee", "sting"}},
-    strlcw{},
-    strlcw{strlcw{}}};
+    {},
+    {{}}};
 
   // [[[NULL,2,NULL,4]], [[NULL,6,NULL], [8,9]]]
   // [NULL, [[13],[14,15,16]],  NULL]
@@ -446,8 +443,8 @@ TEST_P(ParquetV2Test, ListColumn)
   lcw col7{{
              {{{{1, 2, 3, 4}, valids}}, {{{5, 6, 7}, valids}, {8, 9}}},
              {{{{10, 11}, {12}}, {{13}, {14, 15, 16}}, {{17, 18}}}, valids},
-             {{lcw{lcw{}}, lcw{}, lcw{}, lcw{lcw{}}}, valids},
-             lcw{lcw{lcw{}}},
+             {{{{}}, {}, {}, {{}}}, valids},
+             {{{}}},
            },
            valids2};
 
@@ -515,12 +512,7 @@ TEST_P(ParquetV2Test, StructOfList)
   // [[]]
   // [[]]
   // [[], [], []]
-  lcw flats{lcw{},
-            {{1, 2, 3}, {}, {4, 5}, {}, {0, 6, 0}},
-            {{7, 8}, {}},
-            lcw{lcw{}},
-            lcw{lcw{}},
-            lcw{lcw{}, lcw{}, lcw{}}};
+  lcw flats{{}, {{1, 2, 3}, {}, {4, 5}, {}, {0, 6, 0}}, {{7, 8}, {}}, {{}}, {{}}, {{}, {}, {}}};
 
   auto struct_1 = cudf::test::structs_column_wrapper{{weights_col, ages_col, land_unit, flats},
                                                      {true, true, true, true, false, true}};
@@ -1187,7 +1179,7 @@ TEST_P(ParquetV2Test, CheckColumnIndexListWithNulls)
   // [[]]
   // def histogram [1, 3, 10]
   // rep histogram [4, 4, 6]
-  lcw col1{{{1, 2, 3}, {}, {4, 5}, {}, {0, 6, 0}}, {{7, 8}}, lcw{}, lcw{lcw{}}};
+  lcw col1{{{1, 2, 3}, {}, {4, 5}, {}, {0, 6, 0}}, {{7, 8}}, {}, {{}}};
 
   // 4 nulls
   // [[1, 2, 3], [], [4, 5], NULL, [0, 6, 0]]
@@ -1196,7 +1188,7 @@ TEST_P(ParquetV2Test, CheckColumnIndexListWithNulls)
   // [[]]
   // def histogram [1, 1, 2, 10]
   // rep histogram [4, 4, 6]
-  lcw col2{{{{1, 2, 3}, {}, {4, 5}, {}, {0, 6, 0}}, null_at(3)}, {{7, 8}}, lcw{}, lcw{lcw{}}};
+  lcw col2{{{{1, 2, 3}, {}, {4, 5}, {}, {0, 6, 0}}, null_at(3)}, {{7, 8}}, {}, {{}}};
 
   // 6 nulls
   // [[1, 2, 3], [], [4, 5], NULL, [NULL, 6, NULL]]
@@ -1208,8 +1200,8 @@ TEST_P(ParquetV2Test, CheckColumnIndexListWithNulls)
   using dlcw = cudf::test::lists_column_wrapper<double>;
   dlcw col3{{{{1., 2., 3.}, {}, {4., 5.}, {}, {{0., 6., 0.}, nulls_at({0, 2})}}, null_at(3)},
             {{7., 8.}},
-            dlcw{},
-            dlcw{dlcw{}}};
+            {},
+            {{}}};
 
   // 4 nulls
   // [[1, 2, 3], [], [4, 5], NULL, [0, 6, 0]]
@@ -1218,10 +1210,8 @@ TEST_P(ParquetV2Test, CheckColumnIndexListWithNulls)
   // NULL
   // def histogram [1, 1, 1, 1, 10]
   // rep histogram [4, 4, 6]
-  using ui16lcw = cudf::test::lists_column_wrapper<uint16_t>;
   cudf::test::lists_column_wrapper<uint16_t> col4{
-    {{{{1, 2, 3}, {}, {4, 5}, {}, {0, 6, 0}}, null_at(3)}, {{7, 8}}, ui16lcw{}, ui16lcw{ui16lcw{}}},
-    null_at(3)};
+    {{{{1, 2, 3}, {}, {4, 5}, {}, {0, 6, 0}}, null_at(3)}, {{7, 8}}, {}, {{}}}, null_at(3)};
 
   // 6 nulls
   // [[1, 2, 3], [], [4, 5], NULL, [NULL, 6, NULL]]
@@ -1230,34 +1220,30 @@ TEST_P(ParquetV2Test, CheckColumnIndexListWithNulls)
   // NULL
   // def histogram [1, 1, 1, 1, 2, 8]
   // rep histogram [4, 4, 6]
-  lcw col5{{{{{1, 2, 3}, {}, {4, 5}, {}, {{0, 6, 0}, nulls_at({0, 2})}}, null_at(3)},
-            {{7, 8}},
-            lcw{},
-            lcw{lcw{}}},
-           null_at(3)};
+  lcw col5{
+    {{{{1, 2, 3}, {}, {4, 5}, {}, {{0, 6, 0}, nulls_at({0, 2})}}, null_at(3)}, {{7, 8}}, {}, {{}}},
+    null_at(3)};
 
   // 4 nulls
   // def histogram [1, 3, 9]
   // rep histogram [4, 4, 5]
-  using strlcw = cudf::test::lists_column_wrapper<cudf::string_view>;
   cudf::test::lists_column_wrapper<cudf::string_view> col6{
     {{"Monday", "Monday", "Friday"}, {}, {"Monday", "Friday"}, {}, {"Sunday", "Funday"}},
     {{"bee", "sting"}},
-    strlcw{},
-    strlcw{strlcw{}}};
+    {},
+    {{}}};
 
   // 5 nulls
   // def histogram [1, 3, 1, 8]
   // rep histogram [4, 4, 5]
-  using strlcw = cudf::test::lists_column_wrapper<cudf::string_view>;
   cudf::test::lists_column_wrapper<cudf::string_view> col7{{{"Monday", "Monday", "Friday"},
                                                             {},
                                                             {{"Monday", "Friday"}, null_at(1)},
                                                             {},
                                                             {"Sunday", "Funday"}},
                                                            {{"bee", "sting"}},
-                                                           strlcw{},
-                                                           strlcw{strlcw{}}};
+                                                           {},
+                                                           {{}}};
 
   // 11 nulls
   // D   5   6   5  6        5  6  5      6 6
@@ -1277,8 +1263,8 @@ TEST_P(ParquetV2Test, CheckColumnIndexListWithNulls)
   lcw col8{{
              {{{{1, 2, 3, 4}, nulls_at({0, 2})}}, {{{5, 6, 7}, nulls_at({0, 2})}, {8, 9}}},
              {{{{10, 11}, {12}}, {{13}, {14, 15, 16}}, {{17, 18}}}, nulls_at({0, 2})},
-             {{lcw{lcw{}}, lcw{}, lcw{}, lcw{lcw{}}}, nulls_at({0, 2})},
-             lcw{lcw{lcw{}}},
+             {{{{}}, {}, {}, {{}}}, nulls_at({0, 2})},
+             {{{}}},
            },
            null_at(3)};
 

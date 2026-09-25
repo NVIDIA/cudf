@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -63,17 +63,16 @@ TYPED_TEST_SUITE(ListDistinctTypedTest, TestTypes);
 
 TEST_F(ListDistinctTest, TrivialTest)
 {
-  auto const input =
-    floats_lists{{floats_lists{{NaN, 5.0, 0.0, 0.0, 0.0, 0.0, null, 0.0}, null_at(6)},
-                  floats_lists{{NaN, 5.0, 0.0, 0.0, 0.0, 0.0, null, 1.0}, null_at(6)},
-                  {} /*NULL*/,
-                  floats_lists{{NaN, 5.0, 0.0, 0.0, 0.0, 0.0, null, 1.0}, null_at(6)}},
-                 null_at(2)};
+  auto const input = floats_lists{{{{NaN, 5.0, 0.0, 0.0, 0.0, 0.0, null, 0.0}, null_at(6)},
+                                   {{NaN, 5.0, 0.0, 0.0, 0.0, 0.0, null, 1.0}, null_at(6)},
+                                   {} /*NULL*/,
+                                   {{NaN, 5.0, 0.0, 0.0, 0.0, 0.0, null, 1.0}, null_at(6)}},
+                                  null_at(2)};
 
-  auto const expected = floats_lists{{floats_lists{{null, 0.0, 5.0, NaN}, null_at(0)},
-                                      floats_lists{{null, 0.0, 1.0, 5.0, NaN}, null_at(0)},
-                                      floats_lists{} /*NULL*/,
-                                      floats_lists{{null, 0.0, 1.0, 5.0, NaN}, null_at(0)}},
+  auto const expected = floats_lists{{{{null, 0.0, 5.0, NaN}, null_at(0)},
+                                      {{null, 0.0, 1.0, 5.0, NaN}, null_at(0)},
+                                      {} /*NULL*/,
+                                      {{null, 0.0, 1.0, 5.0, NaN}, null_at(0)}},
                                      null_at(2)};
 
   auto const results_sorted = distinct_sorted(input);
@@ -152,16 +151,15 @@ TEST_F(ListDistinctTest, StringTestsNonNull)
 
   // Multiple lists column.
   {
-    auto const input = strings_lists{
-      strings_lists{"this", "is", "a", "no duplicate", "string"},
-      strings_lists{"this", "is", "is", "a", "one duplicate", "string"},
-      strings_lists{"this", "is", "is", "is", "a", "two duplicates", "string"},
-      strings_lists{"this", "is", "is", "is", "is", "a", "three duplicates", "string"}};
-    auto const expected =
-      strings_lists{strings_lists{"a", "is", "no duplicate", "string", "this"},
-                    strings_lists{"a", "is", "one duplicate", "string", "this"},
-                    strings_lists{"a", "is", "string", "this", "two duplicates"},
-                    strings_lists{"a", "is", "string", "this", "three duplicates"}};
+    auto const input =
+      strings_lists{{"this", "is", "a", "no duplicate", "string"},
+                    {"this", "is", "is", "a", "one duplicate", "string"},
+                    {"this", "is", "is", "is", "a", "two duplicates", "string"},
+                    {"this", "is", "is", "is", "is", "a", "three duplicates", "string"}};
+    auto const expected = strings_lists{{"a", "is", "no duplicate", "string", "this"},
+                                        {"a", "is", "one duplicate", "string", "this"},
+                                        {"a", "is", "string", "this", "two duplicates"},
+                                        {"a", "is", "string", "this", "three duplicates"}};
 
     auto const results_sorted = distinct_sorted(input);
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, *results_sorted);
@@ -184,16 +182,16 @@ TEST_F(ListDistinctTest, StringTestsWithNullsEqual)
 
   // Multiple lists column with null lists and null entries.
   {
-    auto const input = strings_lists{
-      {strings_lists{{"this", null, "is", null, "a", null, "no duplicate", null, "string"},
-                     nulls_at({1, 3, 5, 7})},
-       strings_lists{}, /* NULL */
-       strings_lists{"this", "is", "is", "a", "one duplicate", "string"}},
-      null_at(1)};
+    auto const input =
+      strings_lists{{{{"this", null, "is", null, "a", null, "no duplicate", null, "string"},
+                      nulls_at({1, 3, 5, 7})},
+                     {}, /* NULL */
+                     {"this", "is", "is", "a", "one duplicate", "string"}},
+                    null_at(1)};
     auto const expected =
-      strings_lists{{strings_lists{{null, "a", "is", "no duplicate", "string", "this"}, null_at(0)},
-                     strings_lists{}, /* NULL */
-                     strings_lists{"a", "is", "one duplicate", "string", "this"}},
+      strings_lists{{{{null, "a", "is", "no duplicate", "string", "this"}, null_at(0)},
+                     {}, /* NULL */
+                     {"a", "is", "one duplicate", "string", "this"}},
                     null_at(1)};
 
     auto const results_sorted = distinct_sorted(input);
@@ -218,18 +216,18 @@ TEST_F(ListDistinctTest, StringTestsWithNullsUnequal)
 
   // Multiple lists column with null lists and null entries.
   {
-    auto const input = strings_lists{
-      {strings_lists{{"this", null, "is", null, "a", null, "no duplicate", null, "string"},
-                     nulls_at({1, 3, 5, 7})},
-       strings_lists{}, /* NULL */
-       strings_lists{"this", "is", "is", "a", "one duplicate", "string"}},
-      null_at(1)};
-    auto const expected = strings_lists{
-      {strings_lists{{null, null, null, null, "a", "is", "no duplicate", "string", "this"},
-                     nulls_at({0, 1, 2, 3})},
-       strings_lists{}, /* NULL */
-       strings_lists{"a", "is", "one duplicate", "string", "this"}},
-      null_at(1)};
+    auto const input =
+      strings_lists{{{{"this", null, "is", null, "a", null, "no duplicate", null, "string"},
+                      nulls_at({1, 3, 5, 7})},
+                     {}, /* NULL */
+                     {"this", "is", "is", "a", "one duplicate", "string"}},
+                    null_at(1)};
+    auto const expected =
+      strings_lists{{{{null, null, null, null, "a", "is", "no duplicate", "string", "this"},
+                      nulls_at({0, 1, 2, 3})},
+                     {}, /* NULL */
+                     {"a", "is", "one duplicate", "string", "this"}},
+                    null_at(1)};
 
     auto const results_sorted = distinct_sorted(input, NULL_UNEQUAL);
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, *results_sorted);
@@ -251,8 +249,8 @@ TYPED_TEST(ListDistinctTypedTest, TrivialInputTests)
 
   // All input lists are empty.
   {
-    auto const input    = lists_col{lists_col{}, lists_col{}, lists_col{}};
-    auto const expected = lists_col{lists_col{}, lists_col{}, lists_col{}};
+    auto const input    = lists_col{{}, {}, {}};
+    auto const expected = lists_col{{}, {}, {}};
 
     auto const results_sorted = distinct_sorted(input);
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, *results_sorted);
@@ -711,18 +709,18 @@ TEST_F(ListDistinctTest, InputListsOfStructsOfLists)
                                3,
                                3};
       auto child2 = floats_lists{// begin list1
-                                 floats_lists{0, 1},
-                                 floats_lists{0, 1},
-                                 floats_lists{0, 1},     // end list1
-                                                         // begin list2
-                                 floats_lists{3, 4, 5},  // end list2
-                                                         // begin list3
-                                 floats_lists{},
-                                 floats_lists{},  // end list3
-                                                  // begin list4
-                                 floats_lists{6, 7},
-                                 floats_lists{6, 7},
-                                 floats_lists{6, 7}};
+                                 {0, 1},
+                                 {0, 1},
+                                 {0, 1},     // end list1
+                                             // begin list2
+                                 {3, 4, 5},  // end list2
+                                             // begin list3
+                                 {},
+                                 {},  // end list3
+                                      // begin list4
+                                 {6, 7},
+                                 {6, 7},
+                                 {6, 7}};
       return structs_col{{child1, child2}};
     };
 
@@ -733,8 +731,7 @@ TEST_F(ListDistinctTest, InputListsOfStructsOfLists)
   auto const expected = [] {
     auto const get_structs = [] {
       auto child1 = int32s_col{0, 1, 2, 3};
-      auto child2 =
-        floats_lists{floats_lists{0, 1}, floats_lists{3, 4, 5}, floats_lists{}, floats_lists{6, 7}};
+      auto child2 = floats_lists{{0, 1}, {3, 4, 5}, {}, {6, 7}};
       return structs_col{{child1, child2}};
     };
 

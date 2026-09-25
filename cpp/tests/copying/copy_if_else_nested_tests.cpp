@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2024, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -279,8 +279,8 @@ TYPED_TEST(TypedCopyIfElseNestedTest, ListsWithNulls)
 
   auto lhs = lcw{{{0, 0},
                   {1, 1},
-                  lcw{{2, 2}, null_at_0},
-                  lcw{{3, 3, 3}, null_at_0},
+                  {{2, 2}, null_at_0},
+                  {{3, 3, 3}, null_at_0},
                   {4, 4, 4, 4},
                   {5, 5, 5, 5, 5},
                   {6, 6, 6, 6, 6, 6}},
@@ -305,8 +305,7 @@ TYPED_TEST(TypedCopyIfElseNestedTest, ListsWithNulls)
   auto null_at_4_5 = nulls_at(std::vector{4, 5});
 
   auto expected_output =
-    lcw{{{0, 0}, {1, 1}, {22, 22}, lcw{{3, 3, 3}, null_at_0}, {}, {}, {6, 6, 6, 6, 6, 6}},
-        null_at_4_5}
+    lcw{{{0, 0}, {1, 1}, {22, 22}, {{3, 3, 3}, null_at_0}, {}, {}, {6, 6, 6, 6, 6, 6}}, null_at_4_5}
       .release();
 
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(result_column->view(), expected_output->view());
@@ -379,7 +378,7 @@ TYPED_TEST(TypedCopyIfElseNestedTest, ScalarListBothInvalid)
 
   auto selector_column = bools{1, 1, 0, 1, 1, 0, 1}.release();
 
-  auto expected = lcw{{lcw{}, lcw{}, lcw{}, lcw{}, lcw{}, lcw{}, lcw{}}, all_nulls()}.release();
+  auto expected = lcw{{{}, {}, {}, {}, {}, {}, {}}, all_nulls()}.release();
 
   auto result = cudf::copy_if_else(lhs_scalar, rhs_scalar, selector_column->view());
 
@@ -401,13 +400,13 @@ TYPED_TEST(TypedCopyIfElseNestedTest, ScalarListBothValid)
 
   auto expected =
     lcw{
-      lcw{{33, 33, 33}, null_at(1)},
-      lcw{{33, 33, 33}, null_at(1)},
-      lcw{{22, 22}, null_at(0)},
-      lcw{{33, 33, 33}, null_at(1)},
-      lcw{{33, 33, 33}, null_at(1)},
-      lcw{{22, 22}, null_at(0)},
-      lcw{{33, 33, 33}, null_at(1)},
+      {{33, 33, 33}, null_at(1)},
+      {{33, 33, 33}, null_at(1)},
+      {{22, 22}, null_at(0)},
+      {{33, 33, 33}, null_at(1)},
+      {{33, 33, 33}, null_at(1)},
+      {{22, 22}, null_at(0)},
+      {{33, 33, 33}, null_at(1)},
     }
       .release();
 
@@ -429,20 +428,20 @@ TYPED_TEST(TypedCopyIfElseNestedTest, ScalarListLeft)
                          {21, 22},
                          {-20, -10, 0},
                          {-200, -100, 0, 100},
-                         lcw{{23, 24, 25, 26, 27, 28}, null_at(1)},
+                         {{23, 24, 25, 26, 27, 28}, null_at(1)},
                          {-400}},
                         null_at(2)}
                       .release();
 
   auto selector_column = bools{1, 1, 0, 1, 1, 0, 1}.release();
 
-  auto expected = lcw{{lcw{{33, 33, 33}, null_at(1)},
-                       lcw{{33, -33, 33}, null_at(1)},
+  auto expected = lcw{{{{33, 33, 33}, null_at(1)},
+                       {{33, -33, 33}, null_at(1)},
                        {-21, -22},
-                       lcw{{33, -33, 33}, null_at(1)},
-                       lcw{{33, -33, 33}, null_at(1)},
-                       lcw{{23, -24, 25, 26, 27, 28}, null_at(1)},
-                       lcw{{33, -33, 33}, null_at(1)}},
+                       {{33, -33, 33}, null_at(1)},
+                       {{33, -33, 33}, null_at(1)},
+                       {{23, -24, 25, 26, 27, 28}, null_at(1)},
+                       {{33, -33, 33}, null_at(1)}},
                       null_at(2)}
                     .release();
 
@@ -464,7 +463,7 @@ TYPED_TEST(TypedCopyIfElseNestedTest, ScalarListRight)
                          {21, 22},
                          {-20, -10, 0},
                          {-200, -100, 0, 100},
-                         lcw{{23, 24, 25, 26, 27, 28}, null_at(1)},
+                         {{23, 24, 25, 26, 27, 28}, null_at(1)},
                          {-400}},
                         null_at(2)}
                       .release();
@@ -474,13 +473,13 @@ TYPED_TEST(TypedCopyIfElseNestedTest, ScalarListRight)
   auto selector_column = bools{0, 0, 1, 0, 0, 1, 0}.release();
 
   auto expected = lcw{{
-                        lcw{{33, -33, 33}, null_at(1)},
-                        lcw{{33, -33, 33}, null_at(1)},
+                        {{33, -33, 33}, null_at(1)},
+                        {{33, -33, 33}, null_at(1)},
                         {-21, -22},
-                        lcw{{33, -33, 33}, null_at(1)},
-                        lcw{{33, -33, 33}, null_at(1)},
-                        lcw{{23, -24, 25, 26, 27, 28}, null_at(1)},
-                        lcw{{33, -33, 33}, null_at(1)},
+                        {{33, -33, 33}, null_at(1)},
+                        {{33, -33, 33}, null_at(1)},
+                        {{23, -24, 25, 26, 27, 28}, null_at(1)},
+                        {{33, -33, 33}, null_at(1)},
                       },
                       null_at(2)}
                     .release();

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -65,23 +65,19 @@ TYPED_TEST_SUITE(SetIntersectTypedTest, TestTypes);
 
 TEST_F(SetIntersectTest, TrivialTest)
 {
-  auto const lhs =
-    floats_lists{{floats_lists{{NaN, 5.0, 0.0, 0.0, 0.0, 0.0, null, 0.0}, null_at(6)},
-                  floats_lists{{NaN, 5.0, 0.0, 0.0, 0.0, 0.0, null, 1.0}, null_at(6)},
-                  {} /*NULL*/,
-                  floats_lists{{NaN, 5.0, 0.0, 0.0, 0.0, 0.0, null, 1.0}, null_at(6)}},
-                 null_at(2)};
-  auto const rhs =
-    floats_lists{{floats_lists{{1.0, 0.5, null, 0.0, 0.0, null, NaN}, nulls_at({2, 5})},
-                  floats_lists{{2.0, 1.0, null, 0.0, 0.0, null}, nulls_at({2, 5})},
-                  floats_lists{{2.0, 1.0, null, 0.0, 0.0, null}, nulls_at({2, 5})},
-                  {} /*NULL*/},
-                 null_at(3)};
-  auto const expected = floats_lists{{floats_lists{{null, 0.0, NaN}, null_at(0)},
-                                      floats_lists{{null, 0.0, 1.0}, null_at(0)},
-                                      floats_lists{} /*NULL*/,
-                                      floats_lists{} /*NULL*/},
-                                     nulls_at({2, 3})};
+  auto const lhs      = floats_lists{{{{NaN, 5.0, 0.0, 0.0, 0.0, 0.0, null, 0.0}, null_at(6)},
+                                      {{NaN, 5.0, 0.0, 0.0, 0.0, 0.0, null, 1.0}, null_at(6)},
+                                      {} /*NULL*/,
+                                      {{NaN, 5.0, 0.0, 0.0, 0.0, 0.0, null, 1.0}, null_at(6)}},
+                                null_at(2)};
+  auto const rhs      = floats_lists{{{{1.0, 0.5, null, 0.0, 0.0, null, NaN}, nulls_at({2, 5})},
+                                      {{2.0, 1.0, null, 0.0, 0.0, null}, nulls_at({2, 5})},
+                                      {{2.0, 1.0, null, 0.0, 0.0, null}, nulls_at({2, 5})},
+                                      {} /*NULL*/},
+                                null_at(3)};
+  auto const expected = floats_lists{
+    {{{null, 0.0, NaN}, null_at(0)}, {{null, 0.0, 1.0}, null_at(0)}, {} /*NULL*/, {} /*NULL*/},
+    nulls_at({2, 3})};
 
   auto const results_sorted = set_intersect_sorted(lhs, rhs);
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(expected, *results_sorted);
@@ -89,12 +85,11 @@ TEST_F(SetIntersectTest, TrivialTest)
 
 TEST_F(SetIntersectTest, TrivialIdentityTest)
 {
-  auto const input =
-    floats_lists{{floats_lists{{NaN, 5.0, 0.0, 0.0, 0.0, 0.0, null, 0.0}, null_at(6)},
-                  floats_lists{{NaN, 5.0, 0.0, 0.0, 0.0, 0.0, null, 1.0}, null_at(6)},
-                  {} /*NULL*/,
-                  floats_lists{{NaN, 5.0, 0.0, 0.0, 0.0, 0.0, null, 1.0}, null_at(6)}},
-                 null_at(2)};
+  auto const input = floats_lists{{{{NaN, 5.0, 0.0, 0.0, 0.0, 0.0, null, 0.0}, null_at(6)},
+                                   {{NaN, 5.0, 0.0, 0.0, 0.0, 0.0, null, 1.0}, null_at(6)},
+                                   {} /*NULL*/,
+                                   {{NaN, 5.0, 0.0, 0.0, 0.0, 0.0, null, 1.0}, null_at(6)}},
+                                  null_at(2)};
 
   // `intersect_distinct(input, input) <==> lists::distinct(input)`.
   auto const input_distinct        = cudf::lists::distinct(lists_cv{input});
@@ -110,7 +105,7 @@ TEST_F(SetIntersectTest, FloatingPointTestsWithSignedZero)
   // -0.0 and 0.0 should be considered equal.
   auto const lhs      = floats_lists{{0.0, 0.0, 0.0, 0.0, 0.0}, {-0.0, 1.0}, {0.0}};
   auto const rhs      = floats_lists{{-0.0, -0.0, -0.0, -0.0, -0.0}, {0.0, 2.0}, {1.0}};
-  auto const expected = floats_lists{floats_lists{0}, floats_lists{0}, floats_lists{}};
+  auto const expected = floats_lists{{0}, {0}, {}};
 
   auto const results_sorted = set_intersect_sorted(lhs, rhs);
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, *results_sorted);
@@ -120,7 +115,7 @@ TEST_F(SetIntersectTest, FloatingPointTestsWithInf)
 {
   auto const lhs      = floats_lists{{Inf, Inf, Inf}, {Inf, 0.0, neg_Inf}};
   auto const rhs      = floats_lists{{neg_Inf, neg_Inf}, {0.0, Inf}};
-  auto const expected = floats_lists{floats_lists{}, floats_lists{0.0, Inf}};
+  auto const expected = floats_lists{{}, {0.0, Inf}};
 
   auto const results_sorted = set_intersect_sorted(lhs, rhs);
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, *results_sorted);
@@ -162,9 +157,9 @@ TEST_F(SetIntersectTest, StringTestsNonNull)
 
   // Trivial cases - empty input.
   {
-    auto const lhs      = strings_lists{strings_lists{}};
-    auto const rhs      = strings_lists{strings_lists{}};
-    auto const expected = strings_lists{strings_lists{}};
+    auto const lhs      = strings_lists{{}};
+    auto const rhs      = strings_lists{{}};
+    auto const expected = strings_lists{{}};
 
     auto const results_sorted = set_intersect_sorted(lhs, rhs);
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, *results_sorted);
@@ -174,7 +169,7 @@ TEST_F(SetIntersectTest, StringTestsNonNull)
   {
     auto const lhs      = strings_lists{"this", "is", "a", "string"};
     auto const rhs      = strings_lists{"aha", "bear", "blow", "heat"};
-    auto const expected = strings_lists{strings_lists{}};
+    auto const expected = strings_lists{{}};
 
     auto const results_sorted = set_intersect_sorted(lhs, rhs);
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, *results_sorted);
@@ -192,13 +187,11 @@ TEST_F(SetIntersectTest, StringTestsNonNull)
 
   // Multiple lists column.
   {
-    auto const lhs      = strings_lists{strings_lists{"one", "two", "three"},
-                                   strings_lists{"four", "five", "six"},
-                                   strings_lists{"1", "2", "3"}};
-    auto const rhs      = strings_lists{strings_lists{"one", "banana"},
-                                   strings_lists{"apple", "kiwi", "cherry"},
-                                   strings_lists{"two", "and", "1"}};
-    auto const expected = strings_lists{strings_lists{"one"}, strings_lists{}, strings_lists{"1"}};
+    auto const lhs =
+      strings_lists{{"one", "two", "three"}, {"four", "five", "six"}, {"1", "2", "3"}};
+    auto const rhs =
+      strings_lists{{"one", "banana"}, {"apple", "kiwi", "cherry"}, {"two", "and", "1"}};
+    auto const expected = strings_lists{{"one"}, {}, {"1"}};
 
     auto const results_sorted = set_intersect_sorted(lhs, rhs);
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, *results_sorted);
@@ -223,18 +216,16 @@ TEST_F(SetIntersectTest, StringTestsWithNullsEqual)
 
   // Multiple lists column with null lists and null entries.
   {
-    auto const lhs = strings_lists{
-      strings_lists{{"this", null, "is", null, "a", null, null, "string"}, nulls_at({1, 3, 5, 6})},
-      strings_lists{},
-      strings_lists{"this", "is", "a", "string"}};
-    auto const rhs = strings_lists{
-      {strings_lists{{"aha", null, "abc", null, "1111", null, "2222"}, nulls_at({1, 3, 5})},
-       strings_lists{}, /* NULL */
-       strings_lists{"aha", "this", "is another", "string???"}},
-      null_at(1)};
-    auto const expected = strings_lists{
-      {strings_lists{{null}, null_at(0)}, strings_lists{} /*NULL*/, strings_lists{"this"}},
-      null_at(1)};
+    auto const lhs =
+      strings_lists{{{"this", null, "is", null, "a", null, null, "string"}, nulls_at({1, 3, 5, 6})},
+                    {},
+                    {"this", "is", "a", "string"}};
+    auto const rhs =
+      strings_lists{{{{"aha", null, "abc", null, "1111", null, "2222"}, nulls_at({1, 3, 5})},
+                     {}, /* NULL */
+                     {"aha", "this", "is another", "string???"}},
+                    null_at(1)};
+    auto const expected = strings_lists{{{{null}, null_at(0)}, {} /*NULL*/, {"this"}}, null_at(1)};
 
     auto const results_sorted = set_intersect_sorted(lhs, rhs, NULL_EQUAL);
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, *results_sorted);
@@ -251,7 +242,7 @@ TEST_F(SetIntersectTest, StringTestsWithNullsUnequal)
       {"this", null, "is", "is", "is", "a", null, "string", null, "string"}, nulls_at({1, 6, 8})};
     auto const rhs =
       strings_lists{{"aha", null, "abc", null, "1111", null, "2222"}, nulls_at({1, 3, 5})};
-    auto const expected = strings_lists{strings_lists{}};
+    auto const expected = strings_lists{{}};
 
     auto const results_sorted = set_intersect_sorted(lhs, rhs, NULL_UNEQUAL);
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, *results_sorted);
@@ -259,21 +250,18 @@ TEST_F(SetIntersectTest, StringTestsWithNullsUnequal)
 
   // Multiple lists column with null lists and null entries.
   {
-    auto const lhs = strings_lists{
-      strings_lists{{"this", null, "is", null, "a", null, null, "string"}, nulls_at({1, 3, 5, 6})},
-      strings_lists{},
-      strings_lists{"this", "is", "a", "string"}};
-    auto const rhs = strings_lists{
-      {strings_lists{{"aha", null, "abc", null, "1111", null, "2222"}, nulls_at({1, 3, 5})},
-       strings_lists{}, /* NULL */
-       strings_lists{"aha", "this", "is another", "string???"}},
-      null_at(1)};
+    auto const lhs =
+      strings_lists{{{"this", null, "is", null, "a", null, null, "string"}, nulls_at({1, 3, 5, 6})},
+                    {},
+                    {"this", "is", "a", "string"}};
+    auto const rhs =
+      strings_lists{{{{"aha", null, "abc", null, "1111", null, "2222"}, nulls_at({1, 3, 5})},
+                     {}, /* NULL */
+                     {"aha", "this", "is another", "string???"}},
+                    null_at(1)};
     auto const expected = [] {
-      auto str_lists =
-        strings_lists{{strings_lists{}, strings_lists{} /*NULL*/, strings_lists{"this"}},
-                      null_at(1)}
-          .release();
-      auto& child = str_lists->child(cudf::lists_column_view::child_column_index);
+      auto str_lists = strings_lists({{}, {} /*NULL*/, {"this"}}, null_at(1)).release();
+      auto& child    = str_lists->child(cudf::lists_column_view::child_column_index);
       child.set_null_mask(cudf::create_null_mask(child.size(), cudf::mask_state::ALL_VALID), 0);
       return str_lists;
     }();
@@ -299,9 +287,9 @@ TYPED_TEST(SetIntersectTypedTest, TrivialInputTests)
 
   // All input lists are empty.
   {
-    auto const lhs      = lists_col{lists_col{}, lists_col{}, lists_col{}};
-    auto const rhs      = lists_col{lists_col{}, lists_col{}, lists_col{}};
-    auto const expected = lists_col{lists_col{}, lists_col{}, lists_col{}};
+    auto const lhs      = lists_col{{}, {}, {}};
+    auto const rhs      = lists_col{{}, {}, {}};
+    auto const expected = lists_col{{}, {}, {}};
 
     auto const results_sorted = set_intersect_sorted(lhs, rhs);
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, *results_sorted);
@@ -346,7 +334,7 @@ TYPED_TEST(SetIntersectTypedTest, SlicedNonNullInputTests)
   {
     auto const lhs      = cudf::slice(lhs_original, {1, 3})[0];
     auto const rhs      = cudf::slice(rhs_original, {1, 3})[0];
-    auto const expected = lists_col{lists_col{}, lists_col{}};
+    auto const expected = lists_col{{}, {}};
 
     auto const results_sorted = set_intersect_sorted(lhs, rhs);
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, *results_sorted);
@@ -382,14 +370,12 @@ TYPED_TEST(SetIntersectTypedTest, InputHaveNullsTests)
 
   // Nullable child and nulls are equal.
   {
-    auto const lhs = lists_col{lists_col{{null, 1, null, 3}, nulls_at({0, 2})},
-                               lists_col{{null, 5}, null_at(0)},
-                               lists_col{{null, 7, null, 9}, nulls_at({0, 2})}};
-    auto const rhs = lists_col{lists_col{{null, null, 5}, nulls_at({0, 1})},
-                               lists_col{{5, null}, null_at(1)},
-                               lists_col{7, 8, 9}};
-    auto const expected =
-      lists_col{lists_col{{null}, null_at(0)}, lists_col{{null, 5}, null_at(0)}, lists_col{7, 9}};
+    auto const lhs = lists_col{{{null, 1, null, 3}, nulls_at({0, 2})},
+                               {{null, 5}, null_at(0)},
+                               {{null, 7, null, 9}, nulls_at({0, 2})}};
+    auto const rhs =
+      lists_col{{{null, null, 5}, nulls_at({0, 1})}, {{5, null}, null_at(1)}, {7, 8, 9}};
+    auto const expected = lists_col{{{null}, null_at(0)}, {{null, 5}, null_at(0)}, {7, 9}};
 
     auto const results_sorted = set_intersect_sorted(lhs, rhs, NULL_EQUAL);
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, *results_sorted);
@@ -397,13 +383,12 @@ TYPED_TEST(SetIntersectTypedTest, InputHaveNullsTests)
 
   // Nullable child and nulls are unequal.
   {
-    auto const lhs      = lists_col{lists_col{{null, 1, null, 3}, nulls_at({0, 2})},
-                               lists_col{{null, 5}, null_at(0)},
-                               lists_col{{null, 7, null, 9}, nulls_at({0, 2})}};
-    auto const rhs      = lists_col{lists_col{{null, null, 5}, nulls_at({0, 1})},
-                               lists_col{{5, null}, null_at(1)},
-                               lists_col{7, 8, 9}};
-    auto const expected = lists_col{lists_col{}, lists_col{5}, lists_col{7, 9}};
+    auto const lhs = lists_col{{{null, 1, null, 3}, nulls_at({0, 2})},
+                               {{null, 5}, null_at(0)},
+                               {{null, 7, null, 9}, nulls_at({0, 2})}};
+    auto const rhs =
+      lists_col{{{null, null, 5}, nulls_at({0, 1})}, {{5, null}, null_at(1)}, {7, 8, 9}};
+    auto const expected = lists_col{{}, {5}, {7, 9}};
 
     auto const results_sorted = set_intersect_sorted(lhs, rhs, NULL_UNEQUAL);
     CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(expected, *results_sorted);
@@ -565,15 +550,15 @@ TEST_F(SetIntersectTest, InputListsOfStructsOfLists)
                                5,
                                6};
       auto child2 = floats_lists{// begin list1
-                                 floats_lists{0, 1},
-                                 floats_lists{0, 2},
-                                 floats_lists{1, 1},     // end list1
-                                                         // begin list2
-                                 floats_lists{3, 4, 5},  // end list2
-                                                         // begin list3
-                                 floats_lists{6, 7},
-                                 floats_lists{6, 8},
-                                 floats_lists{6, 7, 8}};
+                                 {0, 1},
+                                 {0, 2},
+                                 {1, 1},     // end list1
+                                             // begin list2
+                                 {3, 4, 5},  // end list2
+                                             // begin list3
+                                 {6, 7},
+                                 {6, 8},
+                                 {6, 7, 8}};
       return structs_col{{child1, child2}};
     };
 
@@ -594,15 +579,15 @@ TEST_F(SetIntersectTest, InputListsOfStructsOfLists)
                                5,
                                6};
       auto child2 = floats_lists{// begin list1
-                                 floats_lists{1, 1},
-                                 floats_lists{0, 2},
-                                 floats_lists{1, 2},     // end list1
-                                                         // begin list2
-                                 floats_lists{3, 4, 5},  // end list2
-                                                         // begin list3
-                                 floats_lists{6, 7, 8, 9},
-                                 floats_lists{6, 8},
-                                 floats_lists{3, 4, 5}};
+                                 {1, 1},
+                                 {0, 2},
+                                 {1, 2},     // end list1
+                                             // begin list2
+                                 {3, 4, 5},  // end list2
+                                             // begin list3
+                                 {6, 7, 8, 9},
+                                 {6, 8},
+                                 {3, 4, 5}};
       return structs_col{{child1, child2}};
     };
 
@@ -613,7 +598,7 @@ TEST_F(SetIntersectTest, InputListsOfStructsOfLists)
   auto const expected = [] {
     auto const get_structs = [] {
       auto child1 = int32s_col{1, 3, 5};
-      auto child2 = floats_lists{floats_lists{0, 2}, floats_lists{3, 4, 5}, floats_lists{6, 8}};
+      auto child2 = floats_lists{{0, 2}, {3, 4, 5}, {6, 8}};
       return structs_col{{child1, child2}};
     };
 

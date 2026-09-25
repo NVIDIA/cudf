@@ -13,15 +13,13 @@
 
 #include <nvbench/nvbench.cuh>
 
-template <typename DataType>
-void bench_segmented_top_k(nvbench::state& state, nvbench::type_list<DataType>)
+void run_segmented_top_k(nvbench::state& state,
+                         cudf::type_id data_type,
+                         cudf::size_type num_rows,
+                         cudf::size_type segment,
+                         cudf::size_type k,
+                         bool ordered)
 {
-  auto const ordered   = static_cast<bool>(state.get_int64("ordered"));
-  auto const num_rows  = static_cast<cudf::size_type>(state.get_int64("num_rows"));
-  auto const segment   = static_cast<cudf::size_type>(state.get_int64("segment"));
-  auto const k         = static_cast<cudf::size_type>(state.get_int64("k"));
-  auto const data_type = cudf::type_to_id<DataType>();
-
   data_profile const profile = data_profile_builder().no_validity().distribution(
     data_type, distribution_id::UNIFORM, 0, segment);
   auto const input = create_random_column(data_type, row_count{num_rows}, profile);
@@ -47,6 +45,28 @@ void bench_segmented_top_k(nvbench::state& state, nvbench::type_list<DataType>)
     mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
 }
 
+template <typename DataType>
+void bench_segmented_top_k(nvbench::state& state, nvbench::type_list<DataType>)
+{
+  auto const ordered  = static_cast<bool>(state.get_int64("ordered"));
+  auto const num_rows = static_cast<cudf::size_type>(state.get_int64("num_rows"));
+  auto const segment  = static_cast<cudf::size_type>(state.get_int64("segment"));
+  auto const k        = static_cast<cudf::size_type>(state.get_int64("k"));
+  run_segmented_top_k(state, cudf::type_to_id<DataType>(), num_rows, segment, k, ordered);
+}
+
+// The shape the per-segment DeviceTopK path targets: few large segments.
+template <typename DataType>
+void bench_segmented_top_k_few_large(nvbench::state& state, nvbench::type_list<DataType>)
+{
+  auto const ordered      = static_cast<bool>(state.get_int64("ordered"));
+  auto const num_segments = static_cast<cudf::size_type>(state.get_int64("num_segments"));
+  auto const segment      = static_cast<cudf::size_type>(state.get_int64("segment"));
+  auto const k            = static_cast<cudf::size_type>(state.get_int64("k"));
+  run_segmented_top_k(
+    state, cudf::type_to_id<DataType>(), num_segments * segment, segment, k, ordered);
+}
+
 NVBENCH_DECLARE_TYPE_STRINGS(cudf::timestamp_s, "time_s", "time_s");
 
 using Types = nvbench::type_list<int32_t, float, cudf::timestamp_s>;
@@ -56,4 +76,11 @@ NVBENCH_BENCH_TYPES(bench_segmented_top_k, NVBENCH_TYPE_AXES(Types))
   .add_int64_axis("num_rows", {262144, 2097152, 16777216, 67108864})
   .add_int64_axis("segment", {1024, 2048})
   .add_int64_axis("k", {100, 1000})
+  .add_int64_axis("ordered", {0, 1});
+
+NVBENCH_BENCH_TYPES(bench_segmented_top_k_few_large, NVBENCH_TYPE_AXES(Types))
+  .set_name("segmented_top_k_few_large")
+  .add_int64_axis("num_segments", {4, 16, 64})
+  .add_int64_axis("segment", {16384, 131072, 1048576})
+  .add_int64_axis("k", {100, 2048})
   .add_int64_axis("ordered", {0, 1});

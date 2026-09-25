@@ -1029,48 +1029,16 @@ sort_merge_join::inner_join(table_view const& left,
 
 std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
           std::unique_ptr<rmm::device_uvector<size_type>>>
-sort_merge_join::inner_join(table_view const& left,
-                            sorted is_left_sorted,
-                            cuda::stream_ref stream,
-                            rmm::device_async_resource_ref mr) const
-{
-  static_cast<void>(is_left_sorted);
-  return _impl->inner_join(left, stream, mr);
-}
-
-std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
-          std::unique_ptr<rmm::device_uvector<size_type>>>
 sort_merge_join::left_join(table_view const& left,
                            cuda::stream_ref stream,
                            rmm::device_async_resource_ref mr) const
 {
-  return _impl->left_join(left, stream, mr);
-}
-
-std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
-          std::unique_ptr<rmm::device_uvector<size_type>>>
-sort_merge_join::left_join(table_view const& left,
-                           sorted is_left_sorted,
-                           cuda::stream_ref stream,
-                           rmm::device_async_resource_ref mr) const
-{
-  static_cast<void>(is_left_sorted);
   return _impl->left_join(left, stream, mr);
 }
 
 std::unique_ptr<join_match_context> sort_merge_join::inner_join_match_context(
   table_view const& left, cuda::stream_ref stream, rmm::device_async_resource_ref mr) const
 {
-  return _impl->inner_join_match_context(left, stream, mr);
-}
-
-std::unique_ptr<join_match_context> sort_merge_join::inner_join_match_context(
-  table_view const& left,
-  sorted is_left_sorted,
-  cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr) const
-{
-  static_cast<void>(is_left_sorted);
   return _impl->inner_join_match_context(left, stream, mr);
 }
 

@@ -504,12 +504,12 @@ std::vector<row_range> compute_page_splits_by_row(device_span<cumulative_page_in
   // Dispatch batches of pages to decompress for each codec.
   // Buffer needs to be padded, required by `gpuDecodePageData`.
   rmm::device_buffer pass_decomp_pages(
-    cudf::util::round_up_safe(total_pass_decomp_size, cudf::io::detail::BUFFER_PADDING_MULTIPLE),
+    cudf::util::round_up_safe(total_pass_decomp_size + cudf::io::detail::BUFFER_EXTRA_PADDING, cudf::io::detail::BUFFER_PADDING_MULTIPLE),
     stream,
     mr);
   auto const total_subpass_decomp_size = total_decomp_size - total_pass_decomp_size;
   rmm::device_buffer subpass_decomp_pages(
-    cudf::util::round_up_safe(total_subpass_decomp_size, cudf::io::detail::BUFFER_PADDING_MULTIPLE),
+    cudf::util::round_up_safe(total_subpass_decomp_size + cudf::io::detail::BUFFER_EXTRA_PADDING, cudf::io::detail::BUFFER_PADDING_MULTIPLE),
     stream,
     mr);
 

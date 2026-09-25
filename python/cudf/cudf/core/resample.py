@@ -232,9 +232,9 @@ class _ResampleGrouping(_Grouping):
         if by.key is None and by.level is None:
             # then assume that the key is the index of `self._obj`:
             self._handle_index(self._obj.index)
-        elif by.key:
+        elif by.key is not None:
             self._handle_label(by.key)
-        elif by.level:
+        elif by.level is not None:
             self._handle_level(by.level)
 
         if not len(self._key_columns) == 1:

@@ -83,15 +83,20 @@ std::vector<aggregation_request> build_aggregation_requests(
 
 streaming_groupby::impl::impl(host_span<size_type const> key_indices,
                               host_span<streaming_aggregation_request const> requests,
-                              size_type max_distinct_keys,
+                              size_type initial_distinct_keys,
                               null_policy null_handling,
                               cuda::mr::any_resource<cuda::mr::device_accessible> mr)
-  : _max_distinct_keys{max_distinct_keys},
+  : _capacity{initial_distinct_keys},
     _null_handling{null_handling},
     _mr{std::move(mr)},
     _d_agg_results{nullptr, +[](mutable_table_device_view*) {}}
 {
-  CUDF_EXPECTS(max_distinct_keys > 0, "max_distinct_keys must be positive.", std::invalid_argument);
+  CUDF_EXPECTS(
+    initial_distinct_keys > 0, "initial_distinct_keys must be positive.", std::invalid_argument);
+  CUDF_EXPECTS(initial_distinct_keys <= max_capacity,
+               "initial_distinct_keys (" + std::to_string(initial_distinct_keys) +
+                 ") exceeds the largest supported capacity (" + std::to_string(max_capacity) + ").",
+               std::invalid_argument);
   if (!key_indices.empty()) { _key_indices.assign(key_indices.begin(), key_indices.end()); }
   validate_requests(requests);
 
@@ -158,11 +163,10 @@ void streaming_groupby::impl::initialize(table_view const& data, cuda::stream_re
   }
 
   _agg_results = detail::hash::create_results_table(
-    _max_distinct_keys, values_view, _agg_kinds, _is_agg_intermediate, stream, mr);
+    _capacity, values_view, _agg_kinds, _is_agg_intermediate, stream, mr);
 
-  // Cache the mutable_table_device_view once; the underlying table is fixed-size and
-  // never reallocated, so the device-side descriptor stays valid for the whole
-  // lifetime of this impl.
+  // Cache the mutable_table_device_view; the underlying table is replaced only by grow(),
+  // which rebuilds the descriptor, so it stays valid between growths.
   {
     auto raii = mutable_table_device_view::create(*_agg_results, stream);
     _d_agg_results =
@@ -206,16 +210,19 @@ void streaming_groupby::impl::initialize(table_view const& data, cuda::stream_re
     CUDF_EXPECTS(found, "Internal error: request's first simple agg not found.");
   }
 
-  // Companion vector: indexed by dense ID, one {batch_id, row} entry per distinct key.
-  _key_loc = std::make_unique<rmm::device_uvector<key_location_t>>(_max_distinct_keys, stream, mr);
+  // Companion vectors: indexed by dense ID, one {batch_id, row} entry and one hash per
+  // distinct key.
+  _key_loc    = std::make_unique<rmm::device_uvector<key_location_t>>(_capacity, stream, mr);
+  _key_hashes = std::make_unique<rmm::device_uvector<hash_value_type>>(_capacity, stream, mr);
 
   _initialized = true;
 }
 
-void streaming_groupby::impl::create_key_set(cuda::stream_ref stream)
+std::unique_ptr<streaming_set_t> streaming_groupby::impl::make_key_set(
+  size_type capacity, cuda::stream_ref stream) const
 {
-  _key_set = std::make_unique<streaming_set_t>(
-    cuco::extent<int64_t>{static_cast<int64_t>(_max_distinct_keys)},
+  return std::make_unique<streaming_set_t>(
+    cuco::extent<int64_t>{static_cast<int64_t>(capacity)},
     cudf::detail::CUCO_DESIRED_LOAD_FACTOR,
     cuco::empty_key{cudf::detail::CUDF_SIZE_TYPE_SENTINEL},
     cuda::std::equal_to<size_type>{},
@@ -224,6 +231,45 @@ void streaming_groupby::impl::create_key_set(cuda::stream_ref stream)
     cuco::storage<detail::hash::GROUPBY_BUCKET_SIZE>{},
     rmm::mr::polymorphic_allocator<char>{_mr},
     stream.get());
+}
+
+void streaming_groupby::impl::create_key_set(cuda::stream_ref stream)
+{
+  _key_set = make_key_set(_capacity, stream);
+}
+
+void streaming_groupby::impl::ensure_room(size_type keys, cuda::stream_ref stream)
+{
+  if (room() >= keys) { return; }
+
+  auto const needed = static_cast<int64_t>(_distinct_keys.load(std::memory_order_relaxed)) +
+                      static_cast<int64_t>(keys);
+  CUDF_EXPECTS(needed <= static_cast<int64_t>(max_capacity),
+               "Distinct key count (" + std::to_string(needed) +
+                 ") would exceed the largest supported capacity (" + std::to_string(max_capacity) +
+                 ").");
+
+  auto const doubled = std::min<int64_t>(2 * static_cast<int64_t>(_capacity), max_capacity);
+  grow(static_cast<size_type>(std::max(needed, doubled)), stream);
+}
+
+void streaming_groupby::impl::record_aggregation(cuda::stream_ref stream)
+{
+  auto const completed = std::find_if(
+    _inflight_aggregations.begin(), _inflight_aggregations.end(), [](auto const& aggregation) {
+      return aggregation->completed();
+    });
+
+  std::unique_ptr<ordering_event> event;
+  if (completed == _inflight_aggregations.end()) {
+    event = std::make_unique<ordering_event>();
+  } else {
+    event = std::move(*completed);
+    _inflight_aggregations.erase(completed);
+  }
+
+  event->record(stream);
+  _inflight_aggregations.push_back(std::move(event));
 }
 
 void streaming_groupby::impl::update_nullable_state(table_view const& batch_keys)
@@ -348,11 +394,11 @@ streaming_groupby::impl::batch_insert_result streaming_groupby::impl::probe_and_
 // Constructor, destructor, and move ops require full impl definition.
 streaming_groupby::streaming_groupby(host_span<size_type const> key_indices,
                                      host_span<streaming_aggregation_request const> requests,
-                                     size_type max_distinct_keys,
+                                     size_type initial_distinct_keys,
                                      null_policy null_handling,
                                      cuda::mr::any_resource<cuda::mr::device_accessible> mr)
   : _impl{std::make_unique<impl>(
-      key_indices, requests, max_distinct_keys, null_handling, std::move(mr))}
+      key_indices, requests, initial_distinct_keys, null_handling, std::move(mr))}
 {
 }
 

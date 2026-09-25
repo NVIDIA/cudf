@@ -16,6 +16,7 @@ jobs:
       - changed-files
       - checks
       - cmake-tests
+      - cudf-polars-quent
       - conda-cpp-build
       - cpp-linters
       - conda-cpp-checks
@@ -197,7 +198,15 @@ jobs:
           - 'ci/run_cudf_streaming_pytests.sh'
         test_python_cudf_polars:
           - 'python/cudf_polars/**'
+          - '!python/cudf_polars/quent/**'
+          - '!python/cudf_polars/cudf_polars/_quent.pyi'
           - 'ci/test_python_cudf_polars.sh'
+        test_cudf_polars_quent:
+          - 'python/cudf_polars/quent/bridge/**'
+          - 'python/cudf_polars/quent/model.yaml'
+          - 'python/cudf_polars/cudf_polars/_quent.pyi'
+          - 'ci/test_cudf_polars_quent.sh'
+          - 'ci/run_cudf_polars_quent_tests.sh'
         test_python_cudf_streaming:
           - 'python/cudf_streaming/**'
           - 'python/libcudf_streaming/**'
@@ -294,6 +303,23 @@ jobs:
       arch: "amd64"
       container_image: "rapidsai/ci-conda:26.12-latest"
       script: "ci/test_cmake.sh"
+  cudf-polars-quent:
+    needs: [checks, changed-files]
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+      packages: read
+      pull-requests: read
+    secrets: inherit # zizmor: ignore[secrets-inherit]
+    uses: rapidsai/shared-workflows/.github/workflows/custom-job.yaml@main
+    if: fromJSON(needs.changed-files.outputs.changed_file_groups).test_cudf_polars_quent
+    with:
+      build_type: pull-request
+      node_type: cpu8
+      arch: "amd64"
+      container_image: "rapidsai/ci-conda:26.12-latest"
+      script: "ci/test_cudf_polars_quent.sh"
   cpp-linters:
     permissions:
       actions: read

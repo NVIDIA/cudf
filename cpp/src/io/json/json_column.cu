@@ -324,12 +324,9 @@ std::pair<std::unique_ptr<column>, std::vector<column_name_info>> device_json_co
   switch (json_col.type) {
     case json_col_t::StringColumn: {
       // move string_offsets to GPU and transform to string column
-      auto const col_size      = json_col.string_offsets.size();
-      using char_length_pair_t = cuda::std::pair<char const*, size_type>;
+      auto const col_size = json_col.string_offsets.size();
       CUDF_EXPECTS(json_col.string_offsets.size() == json_col.string_lengths.size(),
                    "string offset, string length mismatch");
-      rmm::device_uvector<char_length_pair_t> d_string_data(col_size, stream);
-      // TODO how about directly storing pair<char*, size_t> in json_column?
 
       auto [result_bitmask, null_count] = make_validity(json_col);
 

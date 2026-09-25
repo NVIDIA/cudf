@@ -4023,6 +4023,15 @@ public final class Table implements AutoCloseable {
      * Computes row-based window aggregation functions on the Table/projection,
      * based on windows specified in the argument.
      *
+     * The rows must already be sorted by the columns passed to {@link Table#groupBy}; this method
+     * does not sort them, and the {@link GroupByOptions} sort settings have no effect here. Groups
+     * are taken to be runs of adjacent rows with equal values in those columns, so rows with equal
+     * values that are not adjacent are aggregated as separate groups. Within a group, the preceding
+     * and following rows are counted in the order the rows appear in the table, so if the window
+     * should follow some other order (the ORDER BY of the SQL example below), the rows must be
+     * sorted by it within each group as well. Unsorted input is not detected and might silently
+     * produce incorrect results.
+     *
      * This method enables queries such as the following SQL:
      *
      *  SELECT user_id,
@@ -4053,7 +4062,7 @@ public final class Table implements AutoCloseable {
      *    { "user2",     40      }
      *  ]
      *
-     * Partitioning (grouping) by `user_id` yields the following `sales_amt` vector
+     * The input must first be sorted by `user_id`, which yields the following `sales_amt` vector
      * (with 2 groups, one for each distinct `user_id`):
      *
      *    [ 10,  20,  10,  50,  60,  20,  30,  80,  40 ]
@@ -4150,6 +4159,17 @@ public final class Table implements AutoCloseable {
      * Computes range-based window aggregation functions on the Table/projection,
      * based on windows specified in the argument.
      *
+     * The rows must already be sorted by the columns passed to {@link Table#groupBy} and, within
+     * each group, by the order-by columns of the {@link WindowOptions}; this method does not sort
+     * them, and the {@link GroupByOptions} sort settings have no effect here. Groups are taken to be
+     * runs of adjacent rows with equal values in the group-by columns, as in
+     * {@link #aggregateWindows}. Within a group, the window bounds are found by searching the
+     * order-by columns, so they must be sorted in the direction the {@link WindowOptions} gives. For
+     * a single order-by column, the placement of nulls is deduced from the data, so the nulls must be
+     * at the same end, either the start or the end, of every group; for multiple order-by columns,
+     * the nulls must be placed as {@link WindowOptions.Builder#orderByColumns} states. Unsorted input
+     * is not detected and might silently produce incorrect results.
+     *
      * This method enables queries such as the following SQL:
      *
      *  SELECT user_id,
@@ -4181,8 +4201,8 @@ public final class Table implements AutoCloseable {
      *    { "user2",   40,      20200104    }
      *  ]
      *
-     * Partitioning (grouping) by `user_id`, and ordering by `date` yields the following `sales_amt` vector
-     * (with 2 groups, one for each distinct `user_id`):
+     * The input must first be sorted by `user_id` and then by `date`, which yields the following
+     * `sales_amt` vector (with 2 groups, one for each distinct `user_id`):
      *
      * Date :(202001-)  [ 01,  02,  03,  07,  07,    01,   01,   02,  04 ]
      * Input:           [ 10,  20,  10,  50,  60,    20,   30,   80,  40 ]

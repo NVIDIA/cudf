@@ -59,6 +59,31 @@ std::tuple<std::unique_ptr<cudf::table>, std::unique_ptr<cudf::table>> chunked_h
   rmm::mr::aligned_resource_adaptor& aligned_mr);
 
 /**
+ * @brief Read parquet file with chunked hybrid scan and sparse page-level payload I/O
+ *
+ * Filter columns use full-column-chunk I/O. Payload ranges are planned only after filter
+ * materialization updates the row mask, then only retained data pages are fetched.
+ *
+ * @param datasource Input datasource
+ * @param filter_expression Filter expression
+ * @param payload_column_names List of paths of select payload column names, if any
+ * @param case_sensitive_names Whether column names are case sensitive
+ * @param stream CUDA stream for hybrid scan reader
+ * @param mr Device memory resource
+ * @param aligned_mr Device memory resource to allocate aligned memory for bloom filters
+ *
+ * @return Tuple of filter and payload tables
+ */
+std::tuple<std::unique_ptr<cudf::table>, std::unique_ptr<cudf::table>> sparse_chunked_hybrid_scan(
+  cudf::io::datasource& datasource,
+  cudf::ast::operation const& filter_expression,
+  std::optional<std::vector<std::string>> const& payload_column_names,
+  bool case_sensitive_names,
+  rmm::cuda_stream_view stream,
+  rmm::device_async_resource_ref mr,
+  rmm::mr::aligned_resource_adaptor& aligned_mr);
+
+/**
  * @brief Read parquet file with the hybrid scan reader in a single step
  *
  * @param datasource Input datasource

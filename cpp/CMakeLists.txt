@@ -733,53 +733,44 @@ add_library(
   src/filling/fill.cu
   src/filling/repeat.cu
   src/filling/sequence.cu
+  src/groupby/common/groupby_helper.cu
+  src/groupby/common/groupby_helper_nested.cu
   src/groupby/common/m2_var_std.cu
   src/groupby/common/utils.cpp
   src/groupby/groupby.cu
-  src/groupby/hash/compute_global_memory_aggs.cu
-  src/groupby/hash/compute_global_memory_aggs_null.cu
   src/groupby/hash/compute_groupby.cu
-  src/groupby/hash/compute_mapping_indices.cu
-  src/groupby/hash/compute_mapping_indices_null.cu
-  src/groupby/hash/compute_shared_memory_aggs.cu
+  src/groupby/hash/compute_single_pass_aggs.cpp
   src/groupby/hash/compute_single_pass_aggs.cu
-  src/groupby/hash/compute_single_pass_aggs_null.cu
   src/groupby/hash/extract_single_pass_aggs.cpp
+  src/groupby/hash/group_bitwise.cu
+  src/groupby/hash/group_collect.cu
+  src/groupby/hash/group_correlation.cu
+  src/groupby/hash/group_count_scan.cu
+  src/groupby/hash/group_histogram.cu
+  src/groupby/hash/group_keys.cu
+  src/groupby/hash/group_max_scan.cu
+  src/groupby/hash/group_merge_lists.cu
+  src/groupby/hash/group_merge_m2.cu
+  src/groupby/hash/group_min_scan.cu
+  src/groupby/hash/group_nth_element.cu
+  src/groupby/hash/group_nunique.cu
+  src/groupby/hash/group_product_scan.cu
+  src/groupby/hash/group_quantiles.cu
+  src/groupby/hash/group_rank_scan.cu
+  src/groupby/hash/group_replace_nulls.cu
+  src/groupby/hash/group_sum_scan.cu
+  src/groupby/hash/group_topk.cu
   src/groupby/hash/groupby.cu
   src/groupby/hash/hash_compound_agg_finalizer.cu
+  src/groupby/hash/host_udf_aggregation.cpp
   src/groupby/hash/output_utils.cu
-  src/groupby/sort/aggregate.cpp
-  src/groupby/sort/group_argmax.cu
-  src/groupby/sort/group_argmin.cu
-  src/groupby/sort/group_bitwise.cu
-  src/groupby/sort/group_collect.cu
-  src/groupby/sort/group_correlation.cu
-  src/groupby/sort/group_count.cu
-  src/groupby/sort/group_count_scan.cu
-  src/groupby/sort/group_histogram.cu
-  src/groupby/sort/group_m2.cu
-  src/groupby/sort/group_max.cu
-  src/groupby/sort/group_max_scan.cu
-  src/groupby/sort/group_merge_lists.cu
-  src/groupby/sort/group_merge_m2.cu
-  src/groupby/sort/group_min.cu
-  src/groupby/sort/group_min_scan.cu
-  src/groupby/sort/group_nth_element.cu
-  src/groupby/sort/group_nunique.cu
-  src/groupby/sort/group_product.cu
-  src/groupby/sort/group_product_scan.cu
-  src/groupby/sort/group_quantiles.cu
-  src/groupby/sort/group_rank_scan.cu
-  src/groupby/sort/group_replace_nulls.cu
-  src/groupby/sort/group_std.cu
-  src/groupby/sort/group_sum.cu
-  src/groupby/sort/group_sum_overflow.cu
-  src/groupby/sort/group_sum_scan.cu
-  src/groupby/sort/group_topk.cu
-  src/groupby/sort/host_udf_aggregation.cpp
-  src/groupby/sort/scan.cpp
-  src/groupby/sort/sort_helper.cu
-  src/groupby/sort/sort_helper_nested.cu
+  src/groupby/hash/scan.cpp
+  src/groupby/hash/single_pass_argminmax.cu
+  src/groupby/hash/single_pass_m2.cu
+  src/groupby/hash/single_pass_minmax.cu
+  src/groupby/hash/single_pass_product.cu
+  src/groupby/hash/single_pass_sum_overflow.cu
+  src/groupby/hash/single_pass_sums.cu
   src/groupby/streaming_groupby.cpp
   src/groupby/streaming_groupby/aggregate.cu
   src/groupby/streaming_groupby/impl.cu

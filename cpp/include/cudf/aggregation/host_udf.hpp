@@ -218,8 +218,8 @@ struct aggregate_result_functor;
  * framework through a set of ``get*`` accessors, as well as calling other built-in groupby
  * aggregations through the ``compute_aggregation`` function.
  *
- * @note The derived class can only perform sort-based groupby aggregations. Hash-based groupby
- * aggregations require more complex data structure and is not yet supported.
+ * @note Grouping metadata and value views are shared with the built-in aggregations. Values are
+ * sorted within each group only when requested.
  *
  * Example:
  * @code{.cpp}

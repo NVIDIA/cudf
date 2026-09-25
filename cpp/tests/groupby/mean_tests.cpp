@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -168,7 +168,7 @@ TYPED_TEST(FixedPointTestBothReps, GroupBySortMeanDecimalAsValue)
 
     auto agg = cudf::make_mean_aggregation<cudf::groupby_aggregation>();
     test_single_agg(
-      keys, vals, expect_keys, expect_vals_min, std::move(agg), force_use_sort_impl::YES);
+      keys, vals, expect_keys, expect_vals_min, std::move(agg), include_nth_aggregation::YES);
   }
 }
 

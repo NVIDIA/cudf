@@ -16,6 +16,9 @@
 #include <cudf/detail/valid_if.cuh>
 #include <cudf/dictionary/dictionary_column_view.hpp>
 #include <cudf/types.hpp>
+#include <cudf/utilities/traits.hpp>
+
+#include <rmm/device_buffer.hpp>
 
 #include <cuda/stream>
 
@@ -25,7 +28,7 @@ hash_compound_agg_finalizer::hash_compound_agg_finalizer(column_view const& col,
                                                          cudf::detail::result_cache* cache,
                                                          bitmask_type const* d_row_bitmask,
                                                          cuda::stream_ref stream,
-                                                         rmm::device_async_resource_ref mr)
+                                                         cudf::memory_resources mr)
   : col{col},
     input_type{is_dictionary(col.type()) ? dictionary_column_view(col).keys().type() : col.type()},
     cache{cache},
@@ -61,18 +64,17 @@ std::unique_ptr<column> gather_argminmax(hash_compound_agg_finalizer const& fina
   return std::move(result->release()[0]);
 }
 
-// Helper for MIN/MAX finalization - shared logic for compound types (e.g., strings)
+// Helper for MIN/MAX finalization - shared logic for strings and nested types.
 template <typename MakeArgAggFn>
 void finalize_minmax_for_compound_types(hash_compound_agg_finalizer const& finalizer,
                                         aggregation const& agg,
                                         MakeArgAggFn make_arg_agg)
 {
   if (finalizer.cache->has_result(finalizer.col, agg)) { return; }
-  if (finalizer.input_type.id() == type_id::STRING) {
+  if (finalizer.input_type.id() == type_id::STRING || cudf::is_nested(finalizer.input_type)) {
     auto transformed_agg = make_arg_agg();
     finalizer.cache->add_result(finalizer.col, agg, gather_argminmax(finalizer, *transformed_agg));
   }  // else: no-op, since this is only relevant for compound aggregations
-  // TODO: support other nested types.
 }
 
 // Specialization for MIN aggregation
@@ -99,11 +101,8 @@ void hash_compound_agg_finalizer::operator()<aggregation::MEAN>(aggregation cons
   auto const count_agg         = make_count_aggregation();
   auto const sum_result        = cache->get_result(col, *sum_agg);
   auto const count_result      = cache->get_result(col, *count_agg);
-  auto const sum_without_nulls = [&] {
-    if (sum_result.null_count() == 0) { return sum_result; }
-    return column_view{
-      sum_result.type(), sum_result.size(), sum_result.head(), nullptr, 0, sum_result.offset()};
-  }();
+  auto const sum_without_nulls = column_view{
+    sum_result.type(), sum_result.size(), sum_result.head(), nullptr, 0, sum_result.offset()};
 
   // Perform division without any null masks, and generate the null mask for the result later.
   // This is because the null mask (if exists) is just needed to be copied from the sum result,
@@ -114,10 +113,10 @@ void hash_compound_agg_finalizer::operator()<aggregation::MEAN>(aggregation cons
                                    binary_operator::DIV,
                                    cudf::detail::target_type(input_type, aggregation::MEAN),
                                    stream,
-                                   mr);
+                                   mr.get_output_mr());
   // SUM result only has nulls if it is an input aggregation, not intermediate-only aggregation.
   if (sum_result.has_nulls()) {
-    result->set_null_mask(cudf::detail::copy_bitmask(sum_result, stream, mr),
+    result->set_null_mask(cudf::detail::copy_bitmask(sum_result, stream, mr.get_output_mr()),
                           sum_result.null_count());
   } else if (col.has_nulls()) {  // SUM aggregation is only intermediate result, thus it is
                                  // forced to be non-nullable
@@ -126,8 +125,10 @@ void hash_compound_agg_finalizer::operator()<aggregation::MEAN>(aggregation cons
       count_result.end<size_type>(),
       [] __device__(size_type const count) -> bool { return count > 0; },
       stream,
-      mr);
-    if (null_count > 0) { result->set_null_mask(std::move(null_mask), null_count); }
+      cudf::memory_resources{mr.get_temporary_mr(), mr.get_temporary_mr()});
+    if (null_count > 0) {
+      result->set_null_mask(rmm::device_buffer{null_mask, stream, mr.get_output_mr()}, null_count);
+    }
   }
   cache->add_result(col, agg, std::move(result));
 }

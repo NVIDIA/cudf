@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -11,6 +11,8 @@
 #include <cudf_test/type_lists.hpp>
 
 #include <cudf/aggregation.hpp>
+#include <cudf/copying.hpp>
+#include <cudf/sorting.hpp>
 
 using namespace cudf::test::iterators;
 
@@ -159,9 +161,8 @@ TYPED_TEST(groupby_var_test, dictionary)
                   cudf::make_variance_aggregation<cudf::groupby_aggregation>());
 }
 
-// This test ensures that the same results are produced by the sort-based and
-// hash-based implementations of groupby-variance.
-TYPED_TEST(groupby_var_test, sort_vs_hash)
+// Adding quantiles to a request must preserve its variance result.
+TYPED_TEST(groupby_var_test, SeparateAndCombinedRequests)
 {
   using K = int32_t;
   using V = double;
@@ -180,11 +181,15 @@ TYPED_TEST(groupby_var_test, sort_vs_hash)
 
   auto result1 = gb_obj.aggregate(requests);
 
-  // This agg forces a sort groupby.
+  // Add an aggregation that sorts values within each group.
   auto agg2 = cudf::make_quantile_aggregation<cudf::groupby_aggregation>({0.25});
   requests[0].aggregations.push_back(std::move(agg2));
 
   auto result2 = gb_obj.aggregate(requests);
 
-  CUDF_TEST_EXPECT_COLUMNS_EQUAL(*result1.second[0].results[0], *result2.second[0].results[0]);
+  auto order1  = cudf::sorted_order(result1.first->view());
+  auto order2  = cudf::sorted_order(result2.first->view());
+  auto values1 = cudf::gather(cudf::table_view{{result1.second[0].results[0]->view()}}, *order1);
+  auto values2 = cudf::gather(cudf::table_view{{result2.second[0].results[0]->view()}}, *order2);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(values1->get_column(0), values2->get_column(0));
 }

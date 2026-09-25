@@ -8,9 +8,11 @@
 #include <cudf_test/table_utilities.hpp>
 #include <cudf_test/type_lists.hpp>
 
+#include <cudf/copying.hpp>
 #include <cudf/fixed_point/fixed_point.hpp>
 #include <cudf/groupby.hpp>
 #include <cudf/scalar/scalar_factories.hpp>
+#include <cudf/sorting.hpp>
 
 template <typename T>
 struct groupby_shift_fixed_width_test : public cudf::test::BaseFixture {};
@@ -27,8 +29,10 @@ void test_groupby_shift_fixed_width_single(
 {
   cudf::groupby::groupby gb_obj(cudf::table_view({key}));
   std::vector<cudf::size_type> offsets{offset};
-  auto got = gb_obj.shift(cudf::table_view{{value}}, offsets, {fill_value});
-  CUDF_TEST_EXPECT_COLUMNS_EQUAL((*got.second).view().column(0), expected);
+  auto got                  = gb_obj.shift(cudf::table_view{{value}}, offsets, {fill_value});
+  auto const order          = cudf::stable_sorted_order(got.first->view());
+  auto const ordered_values = cudf::gather(got.second->view(), *order);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(ordered_values->get_column(0), expected);
 }
 
 TYPED_TEST(groupby_shift_fixed_width_test, ForwardShiftWithoutNull_NullScalar)
@@ -226,8 +230,10 @@ void test_groupby_shift_string_single(cudf::test::fixed_width_column_wrapper<K> 
 {
   cudf::groupby::groupby gb_obj(cudf::table_view({key}));
   std::vector<cudf::size_type> offsets{offset};
-  auto got = gb_obj.shift(cudf::table_view{{value}}, offsets, {fill_value});
-  CUDF_TEST_EXPECT_COLUMNS_EQUAL((*got.second).view().column(0), expected);
+  auto got                  = gb_obj.shift(cudf::table_view{{value}}, offsets, {fill_value});
+  auto const order          = cudf::stable_sorted_order(got.first->view());
+  auto const ordered_values = cudf::gather(got.second->view(), *order);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(ordered_values->get_column(0), expected);
 }
 
 TEST_F(groupby_shift_string_test, ForwardShiftWithoutNull_NullScalar)
@@ -407,8 +413,10 @@ void test_groupby_shift_multi(cudf::test::fixed_width_column_wrapper<K> const& k
                               cudf::table_view const& expected)
 {
   cudf::groupby::groupby gb_obj(cudf::table_view({key}));
-  auto got = gb_obj.shift(value, offsets, fill_values);
-  CUDF_TEST_EXPECT_TABLES_EQUAL((*got.second).view(), expected);
+  auto got                  = gb_obj.shift(value, offsets, fill_values);
+  auto const order          = cudf::stable_sorted_order(got.first->view());
+  auto const ordered_values = cudf::gather(got.second->view(), *order);
+  CUDF_TEST_EXPECT_TABLES_EQUAL(*ordered_values, expected);
 }
 
 TYPED_TEST(groupby_shift_mixed_test, NoFill)

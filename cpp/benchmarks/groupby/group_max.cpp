@@ -91,7 +91,7 @@ void bench_groupby_max_cardinality(nvbench::state& state, nvbench::type_list<Typ
 
   // TODO: streaming groupby reuses the cudf hash element_aggregator, which has
   // no decimal128 MIN/MAX/SUM specialization (no native 128-bit atomics).  The
-  // stateless `normal` path falls back to sort-based aggregation, but streaming
+  // stateless `normal` path uses segmented aggregation, but streaming
   // has no fallback and rejects the request.  Re-enable once streaming has a
   // non-atomic aggregator path or 128-bit atomics gain hardware support.
   if (is_streaming && std::is_same_v<Type, numeric::decimal128>) {

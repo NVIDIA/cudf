@@ -57,12 +57,16 @@ inline std::vector<aggregation_result> extract_results(std::span<RequestType con
 /**
  * @brief Compute a combined null bitmask for multi-column keys.
  *
+ * @param keys Table of groupby keys
+ * @param stream CUDA stream used for device memory operations
+ * @param mr Memory resources; the output resource allocates the returned bitmask
  * @return Pair of {buffer, raw_pointer} where pointer is null if no nulls exist.
  */
 std::pair<rmm::device_buffer, bitmask_type const*> compute_row_bitmask(table_view const& keys,
-                                                                       cuda::stream_ref stream);
+                                                                       cuda::stream_ref stream,
+                                                                       cudf::memory_resources mr);
 
-/// Whether the given aggregation kind is supported by hash-based groupby.
+/// Whether the aggregation decomposes into the shared single-pass reductions.
 constexpr bool is_hash_aggregation(aggregation::Kind k)
 {
   switch (k) {

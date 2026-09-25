@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -11,6 +11,7 @@
 #include <cudf/concatenate.hpp>
 #include <cudf/copying.hpp>
 #include <cudf/groupby.hpp>
+#include <cudf/sorting.hpp>
 #include <cudf/table/table_view.hpp>
 
 using namespace cudf::test::iterators;
@@ -35,7 +36,12 @@ auto merge_lists(vcol_views const& keys_cols, vcol_views const& values_cols)
 
   auto gb_obj = cudf::groupby::groupby(cudf::table_view({*keys}));
   auto result = gb_obj.aggregate(requests);
-  return std::pair(std::move(result.first->release()[0]), std::move(result.second[0].results[0]));
+  auto ordered =
+    cudf::sort_by_key(
+      cudf::table_view{{result.first->view().column(0), result.second[0].results[0]->view()}},
+      result.first->view())
+      ->release();
+  return std::pair(std::move(ordered[0]), std::move(ordered[1]));
 }
 
 }  // namespace

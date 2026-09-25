@@ -1,11 +1,12 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
 #include "groupby_test_util.hpp"
 
 #include <cudf_test/column_utilities.hpp>
+#include <cudf_test/column_wrapper.hpp>
 #include <cudf_test/cudf_gtest.hpp>
 #include <cudf_test/default_stream.hpp>
 #include <cudf_test/table_utilities.hpp>
@@ -17,12 +18,38 @@
 #include <cudf/table/table.hpp>
 #include <cudf/types.hpp>
 
+namespace {
+
+std::unique_ptr<cudf::table> reorder_aggregation_values(cudf::column_view values,
+                                                        cudf::column_view group_order)
+{
+  if (group_order.size() == 0 || values.size() == group_order.size()) {
+    return cudf::gather(cudf::table_view{{values}}, group_order);
+  }
+
+  // Multiple quantiles produce a contiguous block of results for each key.
+  CUDF_EXPECTS(values.size() % group_order.size() == 0, "Unexpected aggregation result size");
+  auto const values_per_group   = values.size() / group_order.size();
+  auto const [groups, validity] = cudf::test::to_host<cudf::size_type>(group_order);
+  std::vector<cudf::size_type> indices;
+  indices.reserve(values.size());
+  for (auto group : groups) {
+    for (cudf::size_type value = 0; value < values_per_group; ++value) {
+      indices.push_back(group * values_per_group + value);
+    }
+  }
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> order(indices.begin(), indices.end());
+  return cudf::gather(cudf::table_view{{values}}, order);
+}
+
+}  // namespace
+
 void test_single_agg(cudf::column_view const& keys,
                      cudf::column_view const& values,
                      cudf::column_view const& expect_keys,
                      cudf::column_view const& expect_vals,
                      std::unique_ptr<cudf::groupby_aggregation>&& agg,
-                     force_use_sort_impl use_sort,
+                     include_nth_aggregation include_nth,
                      cudf::null_policy include_null_keys,
                      cudf::sorted keys_are_sorted,
                      std::vector<cudf::order> const& column_order,
@@ -39,7 +66,7 @@ void test_single_agg(cudf::column_view const& keys,
       auto const sort_expect_order =
         cudf::sorted_order(cudf::table_view{{expect_keys}}, column_order, null_precedence);
       auto sorted_expect_keys = cudf::gather(cudf::table_view{{expect_keys}}, *sort_expect_order);
-      auto sorted_expect_vals = cudf::gather(cudf::table_view{{expect_vals}}, *sort_expect_order);
+      auto sorted_expect_vals = reorder_aggregation_values(expect_vals, *sort_expect_order);
       return std::make_pair(std::move(sorted_expect_keys), std::move(sorted_expect_vals));
     } else {
       auto sorted_expect_keys = std::make_unique<cudf::table>(cudf::table_view{{expect_keys}});
@@ -57,8 +84,8 @@ void test_single_agg(cudf::column_view const& keys,
     requests[0].aggregations.push_back(std::unique_ptr<cudf::groupby_aggregation>{
       dynamic_cast<cudf::groupby_aggregation*>(agg->clone().release())});
 
-    if (use_sort == force_use_sort_impl::YES) {
-      // WAR to force cudf::groupby to use sort implementation
+    if (include_nth == include_nth_aggregation::YES) {
+      // Exercise the same reductions in mixed aggregation requests.
       requests[0].aggregations.push_back(
         cudf::make_nth_element_aggregation<cudf::groupby_aggregation>(0));
     }
@@ -74,21 +101,14 @@ void test_single_agg(cudf::column_view const& keys,
 
     auto result = gb_obj.aggregate(requests, cudf::test::get_default_stream());
 
-    if (use_sort == force_use_sort_impl::YES && keys_are_sorted == cudf::sorted::NO) {
-      CUDF_TEST_EXPECT_TABLES_EQUAL(*sorted_expect_keys, result.first->view());
-      CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(sorted_expect_vals->get_column(0),
-                                          *result.second[0].results[0]);
+    auto const sort_order  = cudf::sorted_order(result.first->view(), column_order, precedence);
+    auto const sorted_keys = cudf::gather(result.first->view(), *sort_order);
+    auto const sorted_vals =
+      reorder_aggregation_values(result.second[0].results[0]->view(), *sort_order);
 
-    } else {
-      auto const sort_order  = cudf::sorted_order(result.first->view(), column_order, precedence);
-      auto const sorted_keys = cudf::gather(result.first->view(), *sort_order);
-      auto const sorted_vals =
-        cudf::gather(cudf::table_view({result.second[0].results[0]->view()}), *sort_order);
-
-      CUDF_TEST_EXPECT_TABLES_EQUAL(*sorted_expect_keys, *sorted_keys);
-      CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(sorted_expect_vals->get_column(0),
-                                          sorted_vals->get_column(0));
-    }
+    CUDF_TEST_EXPECT_TABLES_EQUAL(*sorted_expect_keys, *sorted_keys);
+    CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(sorted_expect_vals->get_column(0),
+                                        sorted_vals->get_column(0));
   }
 
   // --- Streaming groupby path (single-batch, validates against same expected output) ---
@@ -140,13 +160,13 @@ void test_sum_agg(cudf::column_view const& keys,
                   cudf::column_view const& expected_values,
                   std::source_location const& location)
 {
-  auto const do_test = [&](auto const use_sort_option) {
+  auto const do_test = [&](auto const include_nth_option) {
     test_single_agg(keys,
                     values,
                     expected_keys,
                     expected_values,
                     cudf::make_sum_aggregation<cudf::groupby_aggregation>(),
-                    use_sort_option,
+                    include_nth_option,
                     cudf::null_policy::INCLUDE,
                     cudf::sorted::NO,
                     {},
@@ -155,8 +175,8 @@ void test_sum_agg(cudf::column_view const& keys,
                     test_streaming::NO,
                     location);
   };
-  do_test(force_use_sort_impl::YES);
-  do_test(force_use_sort_impl::NO);
+  do_test(include_nth_aggregation::YES);
+  do_test(include_nth_aggregation::NO);
 }
 
 void test_single_scan(cudf::column_view const& keys,
@@ -181,9 +201,16 @@ void test_single_scan(cudf::column_view const& keys,
   cudf::groupby::groupby gb_obj(
     cudf::table_view({keys}), include_null_keys, keys_are_sorted, column_order, null_precedence);
 
-  // cudf::groupby scan uses sort implementation
   auto result = gb_obj.scan(requests);
 
-  CUDF_TEST_EXPECT_TABLES_EQUAL(cudf::table_view({expect_keys}), result.first->view());
-  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(expect_vals, *result.second[0].results[0]);
+  // Group order is unspecified; preserve each group's row order when normalizing it.
+  auto const actual_order   = cudf::stable_sorted_order(result.first->view());
+  auto const expected_order = cudf::stable_sorted_order(cudf::table_view{{expect_keys}});
+  auto const actual_keys    = cudf::gather(result.first->view(), *actual_order);
+  auto const actual_values =
+    cudf::gather(cudf::table_view{{result.second[0].results[0]->view()}}, *actual_order);
+  auto const expected_keys   = cudf::gather(cudf::table_view{{expect_keys}}, *expected_order);
+  auto const expected_values = cudf::gather(cudf::table_view{{expect_vals}}, *expected_order);
+  CUDF_TEST_EXPECT_TABLES_EQUAL(*expected_keys, *actual_keys);
+  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(expected_values->get_column(0), actual_values->get_column(0));
 }

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -9,8 +9,10 @@
 #include <cudf_test/table_utilities.hpp>
 #include <cudf_test/type_lists.hpp>
 
+#include <cudf/copying.hpp>
 #include <cudf/groupby.hpp>
 #include <cudf/replace.hpp>
+#include <cudf/sorting.hpp>
 #include <cudf/table/table.hpp>
 #include <cudf/table/table_view.hpp>
 #include <cudf/types.hpp>
@@ -35,8 +37,11 @@ void TestReplaceNullsGroupbySingle(K const& key,
   std::vector<cudf::replace_policy> policies{policy};
   auto p = gb_obj.replace_nulls(cudf::table_view({input}), policies);
 
-  CUDF_TEST_EXPECT_TABLES_EQUAL(*p.first, cudf::table_view({expected_key}));
-  CUDF_TEST_EXPECT_TABLES_EQUAL(*p.second, cudf::table_view({expected_val}));
+  auto const order          = cudf::stable_sorted_order(p.first->view());
+  auto const ordered_keys   = cudf::gather(p.first->view(), *order);
+  auto const ordered_values = cudf::gather(p.second->view(), *order);
+  CUDF_TEST_EXPECT_TABLES_EQUAL(*ordered_keys, cudf::table_view({expected_key}));
+  CUDF_TEST_EXPECT_TABLES_EQUAL(*ordered_values, cudf::table_view({expected_val}));
 }
 
 TYPED_TEST(GroupbyReplaceNullsFixedWidthTest, PrecedingFill)

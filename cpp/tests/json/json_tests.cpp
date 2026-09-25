@@ -1059,6 +1059,18 @@ TEST_F(JsonPathTests, ObjectWithEmptyKey)
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(*result, expected);
 }
 
+TEST_F(JsonPathTests, ObjectNameWithoutColon)
+{
+  auto const input = cudf::test::strings_column_wrapper{
+    R"({"a" 1})", R"({"a" 1, "b":2})", R"({"a"})", R"({"a" "b"})", R"({"a" , "b":2})"};
+
+  auto const result =
+    cudf::get_json_object(cudf::strings_column_view(input), std::string_view{"$.a"});
+  auto const expected =
+    cudf::test::strings_column_wrapper{{"", "", "", "", ""}, {false, false, false, false, false}};
+  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(*result, expected);
+}
+
 // Test that get_json_object creates valid string columns for empty/whitespace JSONPath queries
 TEST_F(JsonPathTests, EmptyPathCreatesValidColumn)
 {

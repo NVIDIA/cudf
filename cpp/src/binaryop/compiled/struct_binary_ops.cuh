@@ -68,10 +68,10 @@ void apply_struct_binary_op(mutable_column_view& out,
     lhs.size(),
     is_any_v<BinaryOperator, ops::Greater, ops::GreaterEqual> ? order::DESCENDING
                                                               : order::ASCENDING);
-  auto const tlhs = table_view{{lhs}};
-  auto const trhs = table_view{{rhs}};
-  auto const table_comparator =
-    cudf::detail::row::lexicographic::two_table_comparator{tlhs, trhs, compare_orders, {}, stream};
+  auto const tlhs             = table_view{{lhs}};
+  auto const trhs             = table_view{{rhs}};
+  auto const table_comparator = cudf::detail::row::lexicographic::two_table_comparator{
+    tlhs, trhs, compare_orders, {}, stream, cudf::get_current_device_resource_ref()};
   auto outd = column_device_view::create(out, stream);
   auto optional_iter =
     cudf::detail::make_optional_iterator<bool>(*outd, nullate::DYNAMIC{out.has_nulls()});

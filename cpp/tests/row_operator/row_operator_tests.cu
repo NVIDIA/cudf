@@ -83,8 +83,6 @@ TYPED_TEST(TypedTableViewTest, TestLexicographicalComparatorTwoTables)
 {
   using T = TypeParam;
 
-  // TODO: lexicographic row operators still allocate from the current device resource.
-
   auto const stream = this->stream();
   auto const mr     = this->resources();
 
@@ -95,6 +93,7 @@ TYPED_TEST(TypedTableViewTest, TestLexicographicalComparatorTwoTables)
   auto const rhs          = cudf::table_view{{col2}};
 
   auto const expected = cudf::test::fixed_width_column_wrapper<bool>{{1, 1, 0, 1}, stream, mr};
+  auto const guard    = this->harness().fail_on_current_device_resource_use();
   auto const got =
     two_table_comparison(lhs,
                          rhs,
@@ -120,8 +119,6 @@ TYPED_TEST(TypedTableViewTest, TestLexicographicalComparatorSameTable)
 {
   using T = TypeParam;
 
-  // TODO: lexicographic row operators still allocate from the current device resource.
-
   auto const stream = this->stream();
   auto const mr     = this->resources();
 
@@ -130,6 +127,7 @@ TYPED_TEST(TypedTableViewTest, TestLexicographicalComparatorSameTable)
   auto const input_table  = cudf::table_view{{col1}};
 
   auto const expected = cudf::test::fixed_width_column_wrapper<bool>{{0, 0, 0, 0}, stream, mr};
+  auto const guard    = this->harness().fail_on_current_device_resource_use();
   auto const got      = self_comparison(input_table,
                                    column_order,
                                    cudf::detail::row::lexicographic::physical_element_comparator{},
@@ -152,8 +150,6 @@ TYPED_TEST(TypedTableViewTest, TestSortSameTableFromTwoTables)
 {
   using data_col   = cudf::test::fixed_width_column_wrapper<TypeParam>;
   using int32s_col = cudf::test::fixed_width_column_wrapper<int32_t>;
-
-  // TODO: lexicographic row operators still allocate from the current device resource.
 
   auto const stream = this->stream();
   auto const mr     = this->resources();
@@ -195,19 +191,21 @@ TYPED_TEST(TypedTableViewTest, TestSortSameTableFromTwoTables)
               expected_empty_rhs);
   };
 
+  auto const guard = this->harness().fail_on_current_device_resource_use();
+
   // Generate preprocessed data for both lhs and lhs at the same time.
   // Switching order of lhs and rhs tables then sorting them using their preprocessed data should
   // produce exactly the same result.
   {
     auto const [preprocessed_lhs, preprocessed_empty_rhs] =
       cudf::detail::row::lexicographic::preprocessed_table::create(
-        lhs, empty_rhs, std::vector{cudf::order::ASCENDING}, {}, stream);
+        lhs, empty_rhs, std::vector{cudf::order::ASCENDING}, {}, stream, mr);
     test_sort_two_tables(preprocessed_lhs, preprocessed_empty_rhs);
   }
   {
     auto const [preprocessed_empty_rhs, preprocessed_lhs] =
       cudf::detail::row::lexicographic::preprocessed_table::create(
-        empty_rhs, lhs, std::vector{cudf::order::ASCENDING}, {}, stream);
+        empty_rhs, lhs, std::vector{cudf::order::ASCENDING}, {}, stream, mr);
     test_sort_two_tables(preprocessed_lhs, preprocessed_empty_rhs);
   }
 }
@@ -218,8 +216,6 @@ TYPED_TEST(TypedTableViewTest, TestSortSameTableFromTwoTablesWithListsOfStructs)
   using int32s_col  = cudf::test::fixed_width_column_wrapper<int32_t>;
   using strings_col = cudf::test::strings_column_wrapper;
   using structs_col = cudf::test::structs_column_wrapper;
-
-  // TODO: lexicographic row operators still allocate from the current device resource.
 
   auto const stream = this->stream();
   auto const mr     = this->resources();
@@ -287,13 +283,13 @@ TYPED_TEST(TypedTableViewTest, TestSortSameTableFromTwoTablesWithListsOfStructs)
   {
     auto const [preprocessed_lhs, preprocessed_empty_rhs] =
       cudf::detail::row::lexicographic::preprocessed_table::create(
-        lhs, empty_rhs, std::vector{cudf::order::ASCENDING}, {}, stream);
+        lhs, empty_rhs, std::vector{cudf::order::ASCENDING}, {}, stream, mr);
     test_sort_two_tables(preprocessed_lhs, preprocessed_empty_rhs);
   }
   {
     auto const [preprocessed_empty_rhs, preprocessed_lhs] =
       cudf::detail::row::lexicographic::preprocessed_table::create(
-        empty_rhs, lhs, std::vector{cudf::order::ASCENDING}, {}, stream);
+        empty_rhs, lhs, std::vector{cudf::order::ASCENDING}, {}, stream, mr);
     test_sort_two_tables(preprocessed_lhs, preprocessed_empty_rhs);
   }
 }
@@ -306,8 +302,6 @@ TYPED_TEST_SUITE(NaNTableViewTest, cudf::test::FloatingPointTypes);
 TYPED_TEST(NaNTableViewTest, TestLexicographicalComparatorTwoTableNaNCase)
 {
   using T = TypeParam;
-
-  // TODO: lexicographic row operators still allocate from the current device resource.
 
   auto const stream = this->stream();
   auto const mr     = this->resources();
@@ -322,6 +316,7 @@ TYPED_TEST(NaNTableViewTest, TestLexicographicalComparatorTwoTableNaNCase)
   auto const rhs = cudf::table_view{{col2}};
 
   auto const expected = cudf::test::fixed_width_column_wrapper<bool>{{0, 0, 0, 0}, stream, mr};
+  auto const guard    = this->harness().fail_on_current_device_resource_use();
   auto const got =
     two_table_comparison(lhs,
                          rhs,

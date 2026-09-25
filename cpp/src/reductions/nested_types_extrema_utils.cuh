@@ -111,7 +111,11 @@ class arg_minmax_binop_generator {
             auto null_orders    = flattened_input->null_orders();
             null_orders.front() = cudf::null_order::AFTER;
             return cudf::detail::row::lexicographic::self_comparator{
-              flattened_input->flattened_columns(), {}, null_orders, stream_};
+              flattened_input->flattened_columns(),
+              {},
+              null_orders,
+              stream_,
+              cudf::get_current_device_resource_ref()};
           } else {
             // For list type, we cannot set a separate null order for the top level column.
             // Thus, we have to workaround this by creating a dummy (empty) struct column view
@@ -127,11 +131,19 @@ class arg_minmax_binop_generator {
                                                   0,
                                                   {}};
             return cudf::detail::row::lexicographic::self_comparator{
-              cudf::table_view{{dummy_struct, input_}}, {}, null_orders, stream_};
+              cudf::table_view{{dummy_struct, input_}},
+              {},
+              null_orders,
+              stream_,
+              cudf::get_current_device_resource_ref()};
           }
         } else {
           return cudf::detail::row::lexicographic::self_comparator{
-            input_tview, {}, std::vector<null_order>{DEFAULT_NULL_ORDER}, stream_};
+            input_tview,
+            {},
+            std::vector<null_order>{DEFAULT_NULL_ORDER},
+            stream_,
+            cudf::get_current_device_resource_ref()};
         }
       }()}
   {

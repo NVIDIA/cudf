@@ -109,6 +109,7 @@ ConfigureNVBench(
 # ##################################################################################################
 # * contiguous_split benchmark  -------------------------------------------------------------------
 ConfigureNVBench(CONTIGUOUS_SPLIT_NVBENCH contiguous_split/contiguous_split.cpp)
+ConfigureNVBench(PACK_NVBENCH contiguous_split/pack.cpp)
 
 # ##################################################################################################
 # * lists scatter benchmark -----------------------------------------------------------------------

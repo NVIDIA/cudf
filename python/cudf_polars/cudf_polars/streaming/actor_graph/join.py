@@ -1265,11 +1265,22 @@ def _choose_strategy_from_samples(
 
     # Determine which sides may be broadcasted
     broadcast_threshold = executor.broadcast_limit
-    left_size_ok = left_total < broadcast_threshold and (
-        left_total_rows < MAX_ROWS_PER_PARTITION or left_metadata.duplicated
+    # An incomplete all-zero prefix is not evidence that the full input is empty.
+    # Treat it as unknown rather than choosing it as the broadcast side. This can
+    # happen when an ordered scan's early chunks are eliminated by a predicate.
+    left_size_known = left_sample.is_complete or left_total > 0 or left_total_rows > 0
+    right_size_known = (
+        right_sample.is_complete or right_total > 0 or right_total_rows > 0
     )
-    right_size_ok = right_total < broadcast_threshold and (
-        right_total_rows < MAX_ROWS_PER_PARTITION or right_metadata.duplicated
+    left_size_ok = (
+        left_size_known
+        and left_total < broadcast_threshold
+        and (left_total_rows < MAX_ROWS_PER_PARTITION or left_metadata.duplicated)
+    )
+    right_size_ok = (
+        right_size_known
+        and right_total < broadcast_threshold
+        and (right_total_rows < MAX_ROWS_PER_PARTITION or right_metadata.duplicated)
     )
     can_broadcast_left = left_size_ok and ir.options[0] in ("Inner", "Right")
     can_broadcast_right = right_size_ok and ir.options[0] in (

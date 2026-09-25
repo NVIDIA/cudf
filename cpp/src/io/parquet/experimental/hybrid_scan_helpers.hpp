@@ -30,6 +30,7 @@ using io::detail::inline_column_buffer;
 using parquet::detail::equality_literals_collector;
 using parquet::detail::input_column_info;
 using parquet::detail::row_group_info;
+using parquet::detail::simplified_expression_opt;
 
 /**
  * @brief Class for parsing dataset metadata
@@ -375,20 +376,10 @@ class aggregate_reader_metadata : public aggregate_reader_metadata_base {
  * expression, one per input table column. This is used in row group filtering based on dictionary
  * pages
  */
-class dictionary_literals_collector : public equality_literals_collector {
+class dictionary_literals_collector final : public equality_literals_collector {
  public:
-  dictionary_literals_collector() = default;
-
   dictionary_literals_collector(ast::expression const& expr,
                                 std::span<cudf::data_type const> output_dtypes);
-
-  // Bring all overloads of `visit` from equality_literals_collector into scope
-  using equality_literals_collector::visit;
-
-  /**
-   * @copydoc ast::detail::expression_transformer::visit(ast::operation const& )
-   */
-  std::reference_wrapper<ast::expression const> visit(ast::operation const& expr) override;
 
   /**
    * @brief Returns vectors of collected literals and (in)equality operators in the AST expression,
@@ -400,6 +391,18 @@ class dictionary_literals_collector : public equality_literals_collector {
   [[nodiscard]] std::pair<std::vector<std::vector<ast::literal*>>,
                           std::vector<std::vector<ast::ast_operator>>>
   get_literals_and_operators() &&;
+
+ protected:
+  /**
+   * @copydoc parquet_expression_simplifier::simplify_comparison
+   *
+   * A dictionary page holds the values contained in a column chunk, so EQUAL and NOT_EQUAL
+   * predicates against a literal can be answered exactly.Ordered comparisons are not
+   * collected here.
+   */
+  [[nodiscard]] simplified_expression_opt simplify_comparison(ast::ast_operator op,
+                                                              ast::column_reference const& col_ref,
+                                                              ast::literal const& literal) override;
 
  private:
   std::vector<std::vector<ast::ast_operator>> _operators;

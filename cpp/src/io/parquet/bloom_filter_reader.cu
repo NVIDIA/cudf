@@ -437,87 +437,57 @@ std::optional<std::vector<std::vector<size_type>>> aggregate_reader_metadata::ap
 }
 
 equality_literals_collector::equality_literals_collector(
-  ast::expression const& expr,
-  cudf::host_span<cudf::data_type const> output_dtypes,
-  cudf::host_span<cudf::size_type const> output_column_schemas,
-  cudf::host_span<SchemaElement const> schema_tree)
-  : _output_dtypes{output_dtypes},
+  std::span<cudf::data_type const> output_dtypes,
+  std::span<cudf::size_type const> output_column_schemas,
+  std::span<SchemaElement const> schema_tree)
+  : parquet_expression_simplifier{output_dtypes},
     _output_column_schemas{output_column_schemas},
     _schema_tree{schema_tree}
 {
   CUDF_EXPECTS(
-    _output_column_schemas.empty() or _output_column_schemas.size() == _output_dtypes.size(),
+    _output_column_schemas.empty() or _output_column_schemas.size() == output_dtypes.size(),
     "output_column_schemas must have the same size as output_dtypes when provided");
-  _literals.resize(static_cast<size_type>(_output_dtypes.size()));
-  expr.accept(*this);
+  _literals.resize(static_cast<size_type>(output_dtypes.size()));
 }
 
-std::reference_wrapper<ast::expression const> equality_literals_collector::visit(
-  ast::literal const& expr)
+equality_literals_collector::equality_literals_collector(
+  ast::expression const& expr,
+  std::span<cudf::data_type const> output_dtypes,
+  std::span<cudf::size_type const> output_column_schemas,
+  std::span<SchemaElement const> schema_tree)
+  : equality_literals_collector{output_dtypes, output_column_schemas, schema_tree}
 {
-  return expr;
+  collect(expr);
 }
 
-std::reference_wrapper<ast::expression const> equality_literals_collector::visit(
-  ast::column_reference const& expr)
+void equality_literals_collector::collect(ast::expression const& expr)
 {
-  CUDF_EXPECTS(expr.get_table_source() == ast::table_reference::LEFT,
-               "DictionaryAST and BloomfilterAST support only left table");
-  CUDF_EXPECTS(expr.get_column_index() < static_cast<cudf::size_type>(_output_dtypes.size()),
-               "Column index cannot be more than number of columns in the table");
-  return expr;
+  _can_filter = simplify_expr(expr).has_value();
 }
 
-std::reference_wrapper<ast::expression const> equality_literals_collector::visit(
-  ast::column_name_reference const& expr)
+bool equality_literals_collector::can_filter() const { return _can_filter; }
+
+simplified_expression_opt equality_literals_collector::simplify_comparison(
+  ast::ast_operator op, ast::column_reference const& col_ref, ast::literal const& literal)
 {
-  CUDF_FAIL("Column name reference is not supported in DictionaryAST and BloomfilterAST");
-}
+  if (op != ast::ast_operator::EQUAL) { return std::nullopt; }
 
-std::reference_wrapper<ast::expression const> equality_literals_collector::visit(
-  ast::operation const& expr)
-{
-  using cudf::ast::ast_operator;
+  auto const col_idx = col_ref.get_column_index();
 
-  auto const input_op       = expr.get_operator();
-  auto const operator_arity = cudf::ast::detail::ast_operator_arity(input_op);
-
-  if (operator_arity == 1) {
-    auto const [kind, col_ref] = extract_unary_operand(expr);
-
-    if (kind == operand_kind::COLUMN_REF) {
-      col_ref->accept(*this);
-    } else {
-      std::ignore = visit_operands(expr.get_operands());
+  // Do not collect literals for timestamp columns whose output precision differs from the column's
+  // native precision as the literal would never match the native values.
+  if (not _output_column_schemas.empty() and cudf::is_timestamp(_output_dtypes[col_idx])) {
+    auto const schema_idx = _output_column_schemas[col_idx];
+    auto const& schema    = _schema_tree[schema_idx];
+    auto const clockrate  = cudf::io::detail::to_clockrate(_output_dtypes[col_idx].id());
+    if (schema.logical_type.has_value() and
+        calc_timestamp_scale(schema.logical_type, clockrate) != 0) {
+      return std::nullopt;
     }
-    return expr;
   }
 
-  // Binary operation
-  auto const [op, lhs_kind, rhs_kind, col_ref, literal] = extract_binary_operands(expr);
-
-  if (lhs_kind == operand_kind::COLUMN_REF and rhs_kind == operand_kind::LITERAL) {
-    col_ref->accept(*this);
-    auto const col_idx = col_ref->get_column_index();
-    // Do not collect literals for timestamp columns whose output precision differs from
-    // the column's native precision as the literal would never match the native values.
-    if (not _output_column_schemas.empty() and cudf::is_timestamp(_output_dtypes[col_idx])) {
-      auto const schema_idx = _output_column_schemas[col_idx];
-      auto const& schema    = _schema_tree[schema_idx];
-      auto const clockrate  = cudf::io::detail::to_clockrate(_output_dtypes[col_idx].id());
-      if (schema.logical_type.has_value() and
-          calc_timestamp_scale(schema.logical_type, clockrate) != 0) {
-        return expr;
-      }
-    }
-    if (op == ast_operator::EQUAL) {
-      _literals[col_idx].emplace_back(const_cast<ast::literal*>(literal));
-    }
-  } else {
-    // For all other forms, visit operands to collect any nested literals
-    std::ignore = visit_operands(expr.get_operands());
-  }
-  return expr;
+  _literals[col_idx].emplace_back(const_cast<ast::literal*>(&literal));
+  return placeholder_expr();
 }
 
 std::vector<std::vector<ast::literal*>> equality_literals_collector::get_literals() &&

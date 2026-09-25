@@ -479,3 +479,32 @@ def test_sort_by_renamed_join_column(streaming_engine_factory):
         "ORDER BY df2.text"
     )
     assert_gpu_result_equal(q, engine=engine)
+
+
+@pytest.fixture
+def force_external_sort(monkeypatch):
+    """Make every partition exceed the run budget and every merge exceed the fan-in."""
+    from cudf_polars.streaming.actor_graph.collectives import external_sort
+
+    monkeypatch.setattr(external_sort, "batch_bytes_for", lambda executor: 1)
+    monkeypatch.setattr(external_sort, "merge_fanin", lambda: 2)
+
+
+@pytest.mark.parametrize("large_df,by,stable", list(large_frames()))
+@pytest.mark.parametrize(
+    "nulls_last,descending", [(False, False), (True, True), (False, True)]
+)
+def test_large_sort_external(
+    large_df, by, engine_large, stable, nulls_last, descending, force_external_sort
+):
+    # Same queries as test_large_sort, but every owned partition is sorted via
+    # runs on disk and a multi-pass k-way merge (fan-in 2).
+    q = large_df.sort(
+        by, nulls_last=nulls_last, descending=descending, maintain_order=stable
+    )
+    assert_gpu_result_equal(q, engine=engine_large)
+
+
+def test_sort_external_small(df, engine, force_external_sort):
+    q = df.sort("y")
+    assert_gpu_result_equal(q, engine=engine)

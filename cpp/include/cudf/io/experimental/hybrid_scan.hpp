@@ -17,6 +17,7 @@
 #include <cuda/stream>
 
 #include <memory>
+#include <optional>
 #include <span>
 #include <utility>
 #include <vector>
@@ -57,6 +58,48 @@ enum class use_data_page_mask : bool {
   YES = true,  ///< Compute and use a data page mask
   NO  = false  ///< Do not compute or use a data page mask
 };
+
+/**
+ * @brief How closely a dictionary page byte range describes the page it points at
+ *
+ * An `upper_bound_if_present` range begins at the dictionary page if the column chunk has one, and
+ * ends no earlier than that page does. A writer is allowed to leave out where the page ends, and to
+ * say that a chunk is dictionary encoded when it holds no dictionary page at all, so a range of
+ * this kind is a bound on a page that may not be there. See `dictionary_page_length` for cutting
+ * what is read of such a range down to the one page the reader takes.
+ */
+enum class dictionary_page_extent : bool {
+  exact,                  ///< The range is exactly the dictionary page
+  upper_bound_if_present  ///< The range bounds a dictionary page that may not be there
+};
+
+/**
+ * @brief Byte range of a column chunk's dictionary page, and how closely it describes that page
+ *
+ * A caller is free to read less than an `upper_bound_if_present` range, which is how it caps what
+ * it spends looking for a page that may not be there. The reader still wants a span holding exactly
+ * one dictionary page, so a caller that reads such a range measures the page in it with
+ * `dictionary_page_length`, and passes an empty span for a chunk whose page is not there or does
+ * not fit in what was read.
+ */
+struct dictionary_byte_range {
+  byte_range_info byte_range;     ///< Byte range to read from the file
+  dictionary_page_extent extent;  ///< How closely `byte_range` describes the dictionary page
+};
+
+/**
+ * @brief Length of the dictionary page at the front of the specified bytes, header included
+ *
+ * What was read of a range that only bounds its dictionary page begins at that page and runs past
+ * it. The page's own header says how long the page is, so this reads that header to find where the
+ * page ends, which is what turns such a range into the one page the reader takes.
+ *
+ * @param page_bytes Bytes read for a dictionary page range, from the start of the range
+ * @return Length of the dictionary page, or `std::nullopt` if these bytes do not begin with a whole
+ *         dictionary page, which is the case for a column chunk that has none to prune with
+ */
+[[nodiscard]] std::optional<int64_t> dictionary_page_length(
+  cudf::host_span<uint8_t const> page_bytes);
 
 /**
  * @brief Shareable, pre-parsed Parquet file metadata for the Hybrid Scan reader.
@@ -528,6 +571,24 @@ class hybrid_scan_reader {
    * @return Vector of byte ranges to column chunk dictionary pages subject to the filter predicate
    */
   [[nodiscard]] std::vector<byte_range_info> dictionary_pages_byte_ranges(
+    std::span<size_type const> row_group_indices, parquet_reader_options const& options) const;
+
+  /**
+   * @brief Get dictionary page ranges for row group pruning, including ranges that only bound a
+   *        dictionary page that may not be there
+   *
+   * Unlike `dictionary_pages_byte_ranges`, which returns only ranges the footer pins down exactly,
+   * this also returns an `upper_bound_if_present` range for a column chunk whose footer neither
+   * gives a `dictionary_page_offset` nor an offset index to bound the page with, which some writers
+   * omit even with a dictionary page present. A caller that opts into these ranges caps how much of
+   * each it reads, measures the page in what it read with `dictionary_page_length`, and passes an
+   * empty span for a chunk whose page is not there. See `dictionary_byte_range`.
+   *
+   * @param row_group_indices Input row groups indices
+   * @param options Parquet reader options
+   * @return Vector of dictionary page ranges subject to the filter predicate
+   */
+  [[nodiscard]] std::vector<dictionary_byte_range> dictionary_pages_byte_ranges_include_unbounded(
     std::span<size_type const> row_group_indices, parquet_reader_options const& options) const;
 
   /**

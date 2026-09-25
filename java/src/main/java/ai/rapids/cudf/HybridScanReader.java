@@ -274,6 +274,73 @@ public class HybridScanReader implements AutoCloseable {
     return decodeRanges(dictionaryPagesByteRanges(cleaner.nativeHandle, rowGroupIndices));
   }
 
+  /**
+   * Like {@link #dictionaryPagesByteRanges(int[])} but also returns a range for a column chunk
+   * whose footer does not pin its dictionary page down exactly.
+   *
+   * <p>Such a range only bounds a page that may not be there: some writers omit
+   * {@code dictionary_page_offset} even with a dictionary page present. A caller that opts into
+   * these ranges caps how much of each it reads with
+   * {@link DictionaryByteRange#byteRangeToRead(long)}, cuts what it read down to the one page with
+   * {@link #dictionaryPageLengths(HostMemoryBuffer[])}, and passes an empty buffer for a chunk whose
+   * page turns out not to be there.
+   *
+   * <p>The ordering follows the C++ reader's ordering and is meaningful: the i-th entry corresponds
+   * to the i-th column chunk needing a dictionary page. The result may be empty.
+   */
+  public DictionaryByteRange[] dictionaryPagesByteRangesIncludeUnbounded(int[] rowGroupIndices) {
+    assertNotClosed();
+    requireNonNullRowGroups(rowGroupIndices);
+    long[] packed =
+        dictionaryPagesByteRangesIncludeUnbounded(cleaner.nativeHandle, rowGroupIndices);
+    if (packed == null || packed.length == 0) {
+      return new DictionaryByteRange[0];
+    }
+    // Layout: [off0, size0, extent0, off1, size1, extent1, ...]
+    int n = packed.length / 3;
+    DictionaryByteRange.Extent[] extents = DictionaryByteRange.Extent.values();
+    DictionaryByteRange[] out = new DictionaryByteRange[n];
+    for (int i = 0; i < n; i++) {
+      long extent = packed[3 * i + 2];
+      if (extent < 0 || extent >= extents.length) {
+        throw new IllegalStateException("Unknown dictionary page extent " + extent);
+      }
+      out[i] = new DictionaryByteRange(new ByteRange(packed[3 * i], packed[3 * i + 1]),
+          extents[(int) extent]);
+    }
+    return out;
+  }
+
+  /**
+   * The length of the dictionary page at the front of each buffer, its page header included, or 0
+   * for a buffer that does not begin with a whole dictionary page.
+   *
+   * <p>What was read of a range that only bounds its dictionary page begins at that page and runs
+   * past it, so it has to be cut down to the page before
+   * {@link #filterRowGroupsWithDictionaryPages} is given it. The page's own header says how long
+   * the page is, and this reads that header off the front of each buffer. A 0 means the chunk
+   * cannot be pruned with what was read, either because a writer claimed dictionary encoding and
+   * wrote no dictionary page, or because the page is longer than what was read; such a chunk is
+   * passed on as an empty buffer.
+   *
+   * <p>The buffers are read on the host, and nothing here touches the GPU.
+   *
+   * @param pageData one buffer per dictionary page range, read from the start of the range
+   * @return the length of the page in each buffer, in the order the buffers were given
+   */
+  public static long[] dictionaryPageLengths(HostMemoryBuffer[] pageData) {
+    if (pageData == null) {
+      throw new IllegalArgumentException("pageData must not be null");
+    }
+    long[] addrs = new long[pageData.length];
+    long[] lens = new long[pageData.length];
+    for (int i = 0; i < pageData.length; i++) {
+      addrs[i] = pageData[i].getAddress();
+      lens[i] = pageData[i].getLength();
+    }
+    return dictionaryPageLengths(addrs, lens);
+  }
+
   // TODO: add filterRowGroupsWithBloomFilters(int[] rowGroups) once the Java Parquet
   //       writer can emit bloom filter blocks. The C++ writer exposes this via
   //       parquet_writer_options::set_column_chunks_bloom_filter_params, which has not
@@ -730,6 +797,9 @@ public class HybridScanReader implements AutoCloseable {
   private static native int[] filterRowGroupsWithStats(long handle, int[] rowGroupIndices);
   private static native long[] bloomFiltersByteRanges(long handle, int[] rowGroupIndices);
   private static native long[] dictionaryPagesByteRanges(long handle, int[] rowGroupIndices);
+  private static native long[] dictionaryPagesByteRangesIncludeUnbounded(long handle,
+                                                                          int[] rowGroupIndices);
+  private static native long[] dictionaryPageLengths(long[] bufferAddresses, long[] bufferLengths);
   private static native int[] filterRowGroupsWithDictionaryPages(long handle,
                                                                  long[] bufferAddresses,
                                                                  long[] bufferLengths,

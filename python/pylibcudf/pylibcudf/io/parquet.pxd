@@ -43,6 +43,8 @@ from pylibcudf.types cimport DataType
 cdef class ParquetReaderOptions:
     cdef parquet_reader_options c_obj
     cdef SourceInfo source
+    # Hold on to the filter expression since the C++ options only reference it
+    cdef Expression _filter
     cpdef void set_row_groups(self, list row_groups)
     cpdef void set_num_rows(self, int64_t nrows)
     cpdef void set_skip_rows(self, int64_t skip_rows)
@@ -62,6 +64,8 @@ cdef class ParquetReaderOptions:
 cdef class ParquetReaderOptionsBuilder:
     cdef parquet_reader_options_builder c_obj
     cdef SourceInfo source
+    # Hold on to the filter expression since the C++ options only reference it
+    cdef Expression _filter
     cpdef ParquetReaderOptionsBuilder convert_strings_to_categories(self, bool val)
     cpdef ParquetReaderOptionsBuilder use_pandas_metadata(self, bool val)
     cpdef ParquetReaderOptionsBuilder allow_mismatched_pq_schemas(self, bool val)

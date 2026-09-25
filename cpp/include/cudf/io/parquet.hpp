@@ -514,9 +514,16 @@ class parquet_reader_options {
    * Here, `1` will refer to column "Z" because output will contain 3 columns in
    * order ["A", "Z", "X"].
    *
+   * Only a reference to `filter` is stored, so it must outlive these options.
+   *
    * @param filter AST expression to use as filter
    */
   void set_filter(ast::expression const& filter) { _filter = filter; }
+
+  /**
+   * @brief Deleted overload to prevent a temporary filter from dangling after the call.
+   */
+  void set_filter(ast::expression const&&) = delete;
 
   /**
    * @brief Sets to enable/disable conversion of strings to categories.
@@ -750,6 +757,13 @@ class parquet_reader_options_builder {
     options.set_filter(filter);
     return *this;
   }
+
+  /**
+   * @brief Deleted overload to prevent a temporary filter from dangling after the call.
+   *
+   * @return this for chaining
+   */
+  parquet_reader_options_builder& filter(ast::expression const&&) = delete;
 
   /**
    * @brief Sets enable/disable conversion of strings to categories.

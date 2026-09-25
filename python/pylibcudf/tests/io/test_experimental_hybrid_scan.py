@@ -19,6 +19,7 @@ from pylibcudf.expressions import (
 )
 from pylibcudf.io.experimental import (
     HybridScanReader,
+    ReadColumnsMode,
     UseDataPageMask,
 )
 
@@ -757,21 +758,30 @@ def test_hybrid_scan_construct_row_group_passes(
     # zero pass read limit => single pass with all row groups
     pass_read_limit = 0
     passes = simple_hybrid_scan_reader.construct_row_group_passes(
-        all_row_groups, pass_read_limit
+        ReadColumnsMode.ALL_COLUMNS,
+        all_row_groups,
+        pass_read_limit,
+        simple_parquet_options,
     )
     assert passes == [all_row_groups]
 
     # small pass read limit => each row group in its own pass
     pass_read_limit = 1
     passes = simple_hybrid_scan_reader.construct_row_group_passes(
-        all_row_groups, pass_read_limit
+        ReadColumnsMode.ALL_COLUMNS,
+        all_row_groups,
+        pass_read_limit,
+        simple_parquet_options,
     )
     assert passes == [[rg] for rg in all_row_groups]
 
     # Passes should flatten to all row groups
     pass_read_limit = 1024
     passes = simple_hybrid_scan_reader.construct_row_group_passes(
-        all_row_groups, pass_read_limit
+        ReadColumnsMode.ALL_COLUMNS,
+        all_row_groups,
+        pass_read_limit,
+        simple_parquet_options,
     )
     assert [rg for p in passes for rg in p] == all_row_groups
     assert all(passes)
@@ -781,7 +791,10 @@ def test_hybrid_scan_construct_row_group_passes(
         ValueError, match="Empty input row group indices encountered"
     ):
         simple_hybrid_scan_reader.construct_row_group_passes(
-            [], pass_read_limit
+            ReadColumnsMode.ALL_COLUMNS,
+            [],
+            pass_read_limit,
+            simple_parquet_options,
         )
 
 

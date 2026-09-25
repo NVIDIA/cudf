@@ -297,8 +297,10 @@ table_with_metadata hybrid_scan_multifile::materialize_all_columns_chunk() const
 bool hybrid_scan_multifile::has_next_table_chunk() const { return _impl->has_next_table_chunk(); }
 
 std::vector<std::vector<std::vector<size_type>>> hybrid_scan_multifile::construct_row_group_passes(
-  cudf::host_span<std::vector<size_type> const> row_group_indices,
-  std::size_t pass_read_limit) const
+  read_columns_mode columns_mode,
+  std::span<std::vector<size_type> const> row_group_indices,
+  std::size_t pass_read_limit,
+  parquet_reader_options const& options) const
 {
   CUDF_FUNC_RANGE();
 
@@ -307,11 +309,9 @@ std::vector<std::vector<std::vector<size_type>>> hybrid_scan_multifile::construc
                     row_group_indices.end(),
                     std::size_t{0},
                     [](auto sum, auto const& rgs) { return sum + rgs.size(); });
-  CUDF_EXPECTS(
-    total_row_groups > 0, "Empty input row group indices encountered", std::invalid_argument);
 
-  auto [passes, source_map] =
-    _impl->construct_row_group_passes(row_group_indices, total_row_groups, pass_read_limit);
+  auto [passes, source_map] = _impl->construct_row_group_passes(
+    columns_mode, row_group_indices, total_row_groups, pass_read_limit, options);
 
   if (pass_read_limit == 0) { return {passes}; }
 

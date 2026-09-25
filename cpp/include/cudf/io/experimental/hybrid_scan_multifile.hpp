@@ -538,24 +538,26 @@ class hybrid_scan_multifile {
 
   /**
    * @brief Partition row groups into passes such that the amount of GPU memory required to read,
-   * decompress and decode a pass is bounded by the specified limit
+   * decompress and decode a pass of selected columns is bounded by the specified limit.
    *
    * Note that the `pass_read_limit` is a hint, not an absolute limit - if a single row group
    * cannot fit within the limit given, it will still constitute a pass. The compressed row group
-   * size is estimated over all columns in each row group (not just the columns selected for
-   * reading), for conservative estimates.
+   * size is estimated over the columns selected by @p columns_mode.
    *
    * @throws std::invalid_argument if no row group indices in the input
    *
-   * @param row_group_indices Span of vectors of input row group indices, one per source
-   * @param pass_read_limit Memory limit to read and decompress row group data, `0` if there is
-   * no limit (single pass)
-   *
+   * @param columns_mode Columns to consider for pass memory estimation
+   * @param row_group_indices Span of input row group indices, one per source
+   * @param pass_read_limit Memory limit to read and decompress pass column chunks, `0` if there is
+   * no limit
+   * @param options Parquet reader options
    * @return Vector of per-source row group indices, one per constructed pass
    */
   [[nodiscard]] std::vector<std::vector<std::vector<size_type>>> construct_row_group_passes(
-    cudf::host_span<std::vector<size_type> const> row_group_indices,
-    std::size_t pass_read_limit) const;
+    read_columns_mode columns_mode,
+    std::span<std::vector<size_type> const> row_group_indices,
+    std::size_t pass_read_limit,
+    parquet_reader_options const& options) const;
 
   /**
    * @brief Check if there is any parquet data left to read for the current chunked setup

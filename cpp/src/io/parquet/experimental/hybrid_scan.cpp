@@ -404,20 +404,20 @@ table_with_metadata hybrid_scan_reader::materialize_all_columns_chunk() const
 }
 
 std::vector<std::vector<cudf::size_type>> hybrid_scan_reader::construct_row_group_passes(
-  std::span<cudf::size_type const> row_group_indices, std::size_t pass_read_limit) const
+  read_columns_mode columns_mode,
+  std::span<cudf::size_type const> row_group_indices,
+  std::size_t pass_read_limit,
+  parquet_reader_options const& options) const
 {
   CUDF_FUNC_RANGE();
 
   auto const total_row_groups = row_group_indices.size();
-
-  CUDF_EXPECTS(
-    total_row_groups > 0, "Empty input row group indices encountered", std::invalid_argument);
-
   auto const input_row_group_indices =
     std::vector<std::vector<size_type>>{{row_group_indices.begin(), row_group_indices.end()}};
 
   return _impl
-    ->construct_row_group_passes(input_row_group_indices, total_row_groups, pass_read_limit)
+    ->construct_row_group_passes(
+      columns_mode, input_row_group_indices, total_row_groups, pass_read_limit, options)
     .first;
 }
 

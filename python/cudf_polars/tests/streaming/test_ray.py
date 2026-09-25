@@ -4,8 +4,10 @@
 
 from __future__ import annotations
 
+import contextlib
 import os
-from typing import TYPE_CHECKING, Any
+import time
+from typing import TYPE_CHECKING, Any, cast
 from unittest.mock import patch
 
 import pytest
@@ -18,6 +20,8 @@ from cudf_polars.engine.hardware_binding import HardwareBindingPolicy
 from cudf_polars.utils.config import RayContext
 
 ray = pytest.importorskip("ray")
+from ray.util.queue import Queue  # noqa: E402
+
 from cudf_polars.engine.ray import RayEngine  # noqa: E402
 
 if TYPE_CHECKING:
@@ -30,6 +34,35 @@ pytestmark = [
         reason="RayEngine must not be created from within an rrun cluster",
     ),
 ]
+
+
+def _signal_then_sleep(started: Queue, seconds: float) -> None:
+    """Tell the driver this actor task is running, then keep its queue occupied."""
+    started.put("started")
+    time.sleep(seconds)
+
+
+@ray.remote
+class _ActorBlockedInShutdown:
+    """Test actor whose first cleanup phase succeeds and second phase blocks."""
+
+    def _exit(self) -> list[dict[str, Any]]:
+        return []
+
+    def shutdown(self) -> None:
+        time.sleep(5.0)
+
+
+@ray.remote
+class _ActorExitsDuringExit:
+    """Test actor that unexpectedly terminates during the first cleanup phase."""
+
+    def _exit(self) -> None:
+        ray.actor.exit_actor()
+
+    def shutdown(self) -> None:
+        msg = "shutdown must not be called after _exit fails"
+        raise AssertionError(msg)
 
 
 # ---------------------------------------------------------------------------
@@ -257,6 +290,134 @@ def test_shutdown_skips_when_ray_not_initialized(
         # actors are released so the next test's fixture isn't blocked.
         if engine._rank_actors is not None:
             engine.shutdown()
+
+
+def test_shutdown_kills_actor_blocked_by_running_task(
+    ray_init_options: dict[str, Any],
+    timeout_seconds: int,
+) -> None:
+    """Shutdown is bounded when control calls queue behind a running actor task."""
+    started_ray = not ray.is_initialized()
+    if started_ray:
+        ray.init(**ray_init_options)
+
+    engine = RayEngine(
+        executor_options={"max_rows_per_partition": 10},
+        engine_options={"allow_gpu_sharing": True},
+        num_ranks=1,
+        ray_init_options=ray_init_options,
+    )
+    started = Queue(maxsize=1)
+    sleep_seconds = 5.0
+    task_ref = engine.rank_actors[0]._run.remote(
+        _signal_then_sleep, started, sleep_seconds
+    )
+    assert started.get(timeout=timeout_seconds) == "started"
+
+    try:
+        shutdown_timeout_seconds = 0.1
+        before = time.monotonic()
+        with (
+            patch(
+                "cudf_polars.engine.ray.ACTOR_SHUTDOWN_TIMEOUT_SECONDS",
+                shutdown_timeout_seconds,
+            ),
+            pytest.warns(
+                RuntimeWarning,
+                match="force-killing 1 unresponsive Ray actor",
+            ),
+        ):
+            engine.shutdown()
+        assert time.monotonic() - before < shutdown_timeout_seconds + 1.0
+        with pytest.raises(ray.exceptions.RayActorError):
+            ray.get(task_ref)
+    finally:
+        engine.shutdown()
+        if ray.is_initialized():
+            started.shutdown()
+        if started_ray:
+            ray.shutdown()
+
+
+def test_shutdown_reports_actor_error_during_exit(
+    ray_init_options: dict[str, Any],
+) -> None:
+    """An actor failure during ``_exit`` is unexpected and must be reported."""
+    started_ray = not ray.is_initialized()
+    if started_ray:
+        ray.init(**ray_init_options)
+
+    engine = RayEngine(
+        executor_options={"max_rows_per_partition": 10},
+        engine_options={"allow_gpu_sharing": True},
+        num_ranks=1,
+        ray_init_options=ray_init_options,
+    )
+    original_actor = engine.rank_actors[0]
+    actor = cast("Any", _ActorExitsDuringExit).remote()
+    try:
+        engine._rank_actors = [actor]
+        with pytest.raises(ExceptionGroup, match="Actor shutdown failed") as exc_info:
+            engine.shutdown()
+        assert any(
+            isinstance(exc, ray.exceptions.RayActorError)
+            for exc in exc_info.value.exceptions
+        )
+    finally:
+        try:
+            engine.shutdown()
+        finally:
+            for actor_to_kill in (actor, original_actor):
+                with contextlib.suppress(ray.exceptions.RayActorError):
+                    ray.kill(actor_to_kill, no_restart=True)
+        if started_ray:
+            ray.shutdown()
+
+
+def test_shutdown_kills_actor_blocked_in_shutdown(
+    ray_init_options: dict[str, Any],
+) -> None:
+    """Shutdown is bounded when an actor blocks after completing ``_exit``."""
+    started_ray = not ray.is_initialized()
+    if started_ray:
+        ray.init(**ray_init_options)
+
+    engine = RayEngine(
+        executor_options={"max_rows_per_partition": 10},
+        engine_options={"allow_gpu_sharing": True},
+        num_ranks=1,
+        ray_init_options=ray_init_options,
+    )
+    original_actor = engine.rank_actors[0]
+    actor = cast("Any", _ActorBlockedInShutdown).remote()
+    try:
+        assert ray.get(actor._exit.remote()) == []
+        engine._rank_actors = [actor]
+        shutdown_timeout_seconds = 0.1
+        before = time.monotonic()
+        with (
+            patch(
+                "cudf_polars.engine.ray.ACTOR_SHUTDOWN_TIMEOUT_SECONDS",
+                shutdown_timeout_seconds,
+            ),
+            pytest.warns(
+                RuntimeWarning,
+                match="Ray actor shutdown.*force-killing 1 unresponsive Ray actor",
+            ),
+        ):
+            engine.shutdown()
+        assert time.monotonic() - before < shutdown_timeout_seconds + 1.0
+        with pytest.raises(ray.exceptions.RayActorError):
+            ray.get(actor._exit.remote())
+    finally:
+        try:
+            engine.shutdown()
+        finally:
+            for actor_to_kill in (actor, original_actor):
+                with contextlib.suppress(ray.exceptions.RayActorError):
+                    ray.kill(actor_to_kill, no_restart=True)
+        if started_ray:
+            ray.shutdown()
 
 
 def test_gathers_are_in_rank_order(ray_init_options: dict[str, Any]) -> None:

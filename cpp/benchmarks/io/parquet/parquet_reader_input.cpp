@@ -12,8 +12,12 @@
 
 #include <cudf/io/parquet.hpp>
 #include <cudf/utilities/default_stream.hpp>
+#include <cudf/utilities/error.hpp>
 
 #include <nvbench/nvbench.cuh>
+
+#include <string>
+#include <string_view>
 
 template <data_type DataType>
 void BM_parquet_read_data_common(nvbench::state& state,
@@ -91,7 +95,12 @@ void BM_parquet_read_flat_nullable_pages(nvbench::state& state)
     if (validity == "no_validity") {
       profile.no_validity();
     } else {
-      profile.null_probability(validity == "nullable_1" ? 0.01 : 0.50);
+      // Read the rate out of the axis value rather than mapping it, so a new `nullable_N` entry
+      // needs no code change. The previous two-way test silently gave anything that was not
+      // `nullable_1` a probability of 0.50.
+      constexpr std::string_view prefix{"nullable_"};
+      CUDF_EXPECTS(validity.starts_with(prefix), "Unsupported validity: " + std::string{validity});
+      profile.null_probability(std::stod(std::string{validity.substr(prefix.size())}) / 100.0);
     }
     auto const tbl =
       create_random_table({cudf::type_id::INT32}, table_size_bytes{data_size}, profile);
@@ -173,7 +182,7 @@ NVBENCH_BENCH_TYPES(BM_parquet_read_data, NVBENCH_TYPE_AXES(d_type_list))
 NVBENCH_BENCH(BM_parquet_read_flat_nullable_pages)
   .set_name("parquet_read_flat_nullable_pages")
   .set_min_samples(4)
-  .add_string_axis("validity", {"no_validity", "nullable_1", "nullable_50"})
+  .add_string_axis("validity", {"no_validity", "nullable_1", "nullable_50", "nullable_90"})
   .add_int64_axis("page_rows", {31, 32, 33, 255, 256, 257})
   .add_int64_axis("data_size", {1 << 20});
 

@@ -6,6 +6,7 @@
 #include <cudf_test/base_fixture.hpp>
 #include <cudf_test/column_utilities.hpp>
 #include <cudf_test/column_wrapper.hpp>
+#include <cudf_test/iterator_utilities.hpp>
 #include <cudf_test/table_utilities.hpp>
 #include <cudf_test/type_lists.hpp>
 
@@ -932,12 +933,14 @@ TEST_F(StreamingGroupbyTest, ExceedsDistinctKeyCapacityThrows)
   EXPECT_THROW(streaming_agg.aggregate(cudf::table_view{{k2, v2}}), cudf::logic_error);
 
   // The object is now invalidated: even an empty batch is rejected, while finalize() still
-  // recovers the groups inserted before the failure.
+  // recovers the groups.  The packed-key path these keys take finds the bound crossed only
+  // after the batch has gone in, so the rejected batch's group is there too.
+  EXPECT_EQ(streaming_agg.distinct_keys(), 5);
   cudf::test::fixed_width_column_wrapper<K> k_empty{};
   cudf::test::fixed_width_column_wrapper<V> v_empty{};
   EXPECT_THROW(streaming_agg.aggregate(cudf::table_view{{k_empty, v_empty}}), cudf::logic_error);
   auto [keys, results] = streaming_agg.finalize();
-  EXPECT_EQ(keys->num_rows(), 4);
+  EXPECT_EQ(keys->num_rows(), 5);
 }
 
 // Test that sliced input columns with non-zero offsets work correctly.
@@ -1429,5 +1432,613 @@ TEST_F(StreamingGroupbyTest, StructKeySumTwoBatches)
   streaming_agg.aggregate(batch2);
   auto [keys, results] = streaming_agg.finalize();
 
+  verify_against_groupby(keys, results, {batch1, batch2}, KEY_COL, reqs);
+}
+
+// ===== Packed-key table tests =====
+// Integer keys whose widths fit in eight bytes between them, aggregated by SUM, MIN, MAX, COUNT
+// or SUM_OF_SQUARES, are kept in the packed-key table rather than the generic hash set.  These
+// tests cover what is particular to it: packing keys of several widths into one word, the key
+// that equals the set's empty-slot sentinel, growth, chunking, nulls in keys and values, and
+// merging.
+
+TEST_F(StreamingGroupbyTest, PackedMixedWidthKeys)
+{
+  using V = int32_t;
+
+  cudf::test::fixed_width_column_wrapper<int8_t> k1a{1, -1, 1, 2, -1};
+  cudf::test::fixed_width_column_wrapper<int16_t> k1b{-300, 300, -300, 5, 300};
+  cudf::test::fixed_width_column_wrapper<int32_t> k1c{7, 7, 7, 100000, 8};
+  cudf::test::fixed_width_column_wrapper<V> v1{1, 2, 3, 4, 5};
+
+  cudf::test::fixed_width_column_wrapper<int8_t> k2a{1, -1, 3};
+  cudf::test::fixed_width_column_wrapper<int16_t> k2b{-300, 300, 0};
+  cudf::test::fixed_width_column_wrapper<int32_t> k2c{7, 8, 0};
+  cudf::test::fixed_width_column_wrapper<V> v2{10, 20, 30};
+
+  cudf::table_view batch1{{k1a, k1b, k1c, v1}};
+  cudf::table_view batch2{{k2a, k2b, k2c, v2}};
+
+  std::vector<cudf::size_type> key_cols{0, 1, 2};
+  std::vector<cudf::groupby::streaming_aggregation_request> reqs;
+  reqs.push_back(make_req(3, cudf::make_sum_aggregation<cudf::groupby_aggregation>()));
+  reqs.push_back(make_req(3, cudf::make_min_aggregation<cudf::groupby_aggregation>()));
+  reqs.push_back(make_req(3, cudf::make_max_aggregation<cudf::groupby_aggregation>()));
+
+  cudf::groupby::streaming_groupby streaming_agg(key_cols, reqs, DEFAULT_MAX_DISTINCT_KEYS);
+  streaming_agg.aggregate(batch1);
+  streaming_agg.aggregate(batch2);
+  EXPECT_EQ(streaming_agg.distinct_keys(), 5);
+
+  auto [keys, results] = streaming_agg.finalize();
+  verify_against_groupby(keys, results, {batch1, batch2}, key_cols, reqs);
+}
+
+// A key whose packed bits are all ones equals the set's empty-slot sentinel; its rows go to the
+// spare slot and it comes out as a group like any other.
+TEST_F(StreamingGroupbyTest, PackedSentinelKey)
+{
+  using K = int64_t;
+  using V = int32_t;
+
+  constexpr K k_min = std::numeric_limits<K>::min();
+  constexpr K k_max = std::numeric_limits<K>::max();
+
+  cudf::test::fixed_width_column_wrapper<K> keys1{K{-1}, K{5}, K{-1}, k_max};
+  cudf::test::fixed_width_column_wrapper<V> vals1{1, 2, 3, 4};
+  cudf::test::fixed_width_column_wrapper<K> keys2{K{-1}, K{5}, k_min};
+  cudf::test::fixed_width_column_wrapper<V> vals2{10, 20, 30};
+
+  cudf::table_view batch1{{keys1, vals1}};
+  cudf::table_view batch2{{keys2, vals2}};
+
+  std::vector<cudf::groupby::streaming_aggregation_request> reqs;
+  reqs.push_back(make_req(1, cudf::make_sum_aggregation<cudf::groupby_aggregation>()));
+  reqs.push_back(make_req(
+    1, cudf::make_count_aggregation<cudf::groupby_aggregation>(cudf::null_policy::EXCLUDE)));
+
+  cudf::groupby::streaming_groupby streaming_agg(KEY_COL, reqs, DEFAULT_MAX_DISTINCT_KEYS);
+  streaming_agg.aggregate(batch1);
+  EXPECT_EQ(streaming_agg.distinct_keys(), 3);
+  streaming_agg.aggregate(batch2);
+  EXPECT_EQ(streaming_agg.distinct_keys(), 4);
+
+  auto [keys, results] = streaming_agg.finalize();
+  cudf::test::fixed_width_column_wrapper<K> ek{k_min, K{-1}, K{5}, k_max};
+  cudf::test::fixed_width_column_wrapper<int64_t> esum{30, 14, 22, 4};
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> ecount{1, 3, 2, 1};
+  check(keys, results, cudf::table_view{{ek}}, {esum, ecount});
+}
+
+TEST_F(StreamingGroupbyTest, PackedSentinelKeyUnsigned)
+{
+  using K = uint64_t;
+  using V = double;
+
+  constexpr K k_max = std::numeric_limits<K>::max();
+
+  cudf::test::fixed_width_column_wrapper<K> keys1{k_max, K{0}, k_max};
+  cudf::test::fixed_width_column_wrapper<V> vals1{1.5, 2.5, 3.5};
+  cudf::test::fixed_width_column_wrapper<K> keys2{K{0}, k_max, K{7}};
+  cudf::test::fixed_width_column_wrapper<V> vals2{-1.0, -2.0, 0.0};
+
+  cudf::table_view batch1{{keys1, vals1}};
+  cudf::table_view batch2{{keys2, vals2}};
+
+  std::vector<cudf::groupby::streaming_aggregation_request> reqs;
+  reqs.push_back(make_req(1, cudf::make_min_aggregation<cudf::groupby_aggregation>()));
+  reqs.push_back(make_req(1, cudf::make_max_aggregation<cudf::groupby_aggregation>()));
+  reqs.push_back(make_req(1, cudf::make_mean_aggregation<cudf::groupby_aggregation>()));
+
+  cudf::groupby::streaming_groupby streaming_agg(KEY_COL, reqs, DEFAULT_MAX_DISTINCT_KEYS);
+  streaming_agg.aggregate(batch1);
+  streaming_agg.aggregate(batch2);
+  EXPECT_EQ(streaming_agg.distinct_keys(), 3);
+
+  auto [keys, results] = streaming_agg.finalize();
+  verify_against_groupby(keys, results, {batch1, batch2}, KEY_COL, reqs);
+}
+
+// The sentinel key's group merges like any other.
+TEST_F(StreamingGroupbyTest, PackedSentinelKeyMerges)
+{
+  using K = int64_t;
+  using V = int32_t;
+  using R = int64_t;
+
+  auto reqs = single_agg_req(1, cudf::make_sum_aggregation<cudf::groupby_aggregation>());
+  cudf::groupby::streaming_groupby worker1(KEY_COL, reqs, DEFAULT_MAX_DISTINCT_KEYS);
+  cudf::groupby::streaming_groupby worker2(KEY_COL, reqs, DEFAULT_MAX_DISTINCT_KEYS);
+
+  cudf::test::fixed_width_column_wrapper<K> k1{-1, 1};
+  cudf::test::fixed_width_column_wrapper<V> v1{10, 20};
+  worker1.aggregate(cudf::table_view{{k1, v1}});
+  cudf::test::fixed_width_column_wrapper<K> k2{2, 3, 4, -1};
+  cudf::test::fixed_width_column_wrapper<V> v2{30, 40, 50, 60};
+  worker1.aggregate(cudf::table_view{{k2, v2}});
+  EXPECT_EQ(worker1.distinct_keys(), 5);
+
+  cudf::test::fixed_width_column_wrapper<K> k3{-1, 5, 1};
+  cudf::test::fixed_width_column_wrapper<V> v3{100, 200, 300};
+  worker2.aggregate(cudf::table_view{{k3, v3}});
+
+  worker1.merge(worker2);
+  EXPECT_EQ(worker1.distinct_keys(), 6);
+
+  auto [keys, results] = worker1.finalize();
+  cudf::test::fixed_width_column_wrapper<K> ek{-1, 1, 2, 3, 4, 5};
+  cudf::test::fixed_width_column_wrapper<R> ev{170, 320, 30, 40, 50, 200};
+  check(keys, results, cudf::table_view{{ek}}, {ev});
+}
+
+// Many distinct two-column keys, exactly as many as `max_distinct_keys`, each group with several
+// accumulators.
+TEST_F(StreamingGroupbyTest, PackedManyKeysUpToMaxDistinctKeys)
+{
+  using V = int32_t;
+
+  constexpr int num_batches = 10;
+  constexpr int batch_rows  = 500;
+
+  std::vector<cudf::size_type> key_cols{0, 1};
+  std::vector<cudf::groupby::streaming_aggregation_request> reqs;
+  reqs.push_back(make_req(2, cudf::make_sum_aggregation<cudf::groupby_aggregation>()));
+  reqs.push_back(make_req(2, cudf::make_min_aggregation<cudf::groupby_aggregation>()));
+  reqs.push_back(make_req(2, cudf::make_max_aggregation<cudf::groupby_aggregation>()));
+  reqs.push_back(make_req(
+    2, cudf::make_count_aggregation<cudf::groupby_aggregation>(cudf::null_policy::INCLUDE)));
+  constexpr cudf::size_type num_distinct = num_batches * (batch_rows / 2) + batch_rows / 2;
+  cudf::groupby::streaming_groupby streaming_agg(key_cols, reqs, num_distinct);
+
+  std::vector<std::unique_ptr<cudf::column>> owners;
+  std::vector<cudf::table_view> batches;
+  for (int b = 0; b < num_batches; ++b) {
+    // The first half of every batch is keys of its own, the second half keys every batch has.
+    std::vector<int32_t> ka(batch_rows);
+    std::vector<int16_t> kb(batch_rows);
+    std::vector<V> vals(batch_rows);
+    for (int i = 0; i < batch_rows; ++i) {
+      ka[i]   = i < batch_rows / 2 ? b * batch_rows + i : i;
+      kb[i]   = static_cast<int16_t>(i % 3 - 1);
+      vals[i] = (b * 1000 + i) % 97 - 48;
+    }
+    auto a = std::make_unique<cudf::column>(
+      cudf::test::fixed_width_column_wrapper<int32_t>(ka.begin(), ka.end()));
+    auto c = std::make_unique<cudf::column>(
+      cudf::test::fixed_width_column_wrapper<int16_t>(kb.begin(), kb.end()));
+    auto v = std::make_unique<cudf::column>(
+      cudf::test::fixed_width_column_wrapper<V>(vals.begin(), vals.end()));
+    batches.push_back(cudf::table_view{{a->view(), c->view(), v->view()}});
+    owners.push_back(std::move(a));
+    owners.push_back(std::move(c));
+    owners.push_back(std::move(v));
+    streaming_agg.aggregate(batches.back());
+  }
+  EXPECT_EQ(streaming_agg.distinct_keys(), num_distinct);
+
+  auto [keys, results] = streaming_agg.finalize();
+  verify_against_groupby(keys, results, batches, key_cols, reqs);
+}
+
+// A batch of more rows than the minimum chunk, over a few keys.
+TEST_F(StreamingGroupbyTest, PackedLargeBatchFewKeys)
+{
+  using K = int32_t;
+  using V = int64_t;
+
+  constexpr cudf::size_type num_rows = (1 << 18) + 12'345;
+  constexpr K num_groups             = 9;
+
+  std::vector<K> key_values(num_rows);
+  std::vector<V> val_values(num_rows);
+  for (cudf::size_type i = 0; i < num_rows; ++i) {
+    key_values[i] = (i * 7) % num_groups;
+    val_values[i] = i % 11 - 5;
+  }
+  cudf::test::fixed_width_column_wrapper<K> keys(key_values.begin(), key_values.end());
+  cudf::test::fixed_width_column_wrapper<V> vals(val_values.begin(), val_values.end());
+  cudf::table_view batch{{keys, vals}};
+
+  std::vector<cudf::groupby::streaming_aggregation_request> reqs;
+  reqs.push_back(make_req(1, cudf::make_sum_aggregation<cudf::groupby_aggregation>()));
+  reqs.push_back(make_req(
+    1, cudf::make_count_aggregation<cudf::groupby_aggregation>(cudf::null_policy::INCLUDE)));
+  reqs.push_back(make_req(1, cudf::make_min_aggregation<cudf::groupby_aggregation>()));
+
+  cudf::groupby::streaming_groupby streaming_agg(KEY_COL, reqs, num_rows);
+  streaming_agg.aggregate(batch);
+  streaming_agg.aggregate(batch);
+  EXPECT_EQ(streaming_agg.distinct_keys(), num_groups);
+
+  auto [out_keys, results] = streaming_agg.finalize();
+  verify_against_groupby(out_keys, results, {batch, batch}, KEY_COL, reqs);
+}
+
+// Null values arriving after groups exist: the groups made before stay valid, a group that only
+// ever saw nulls is null, and a count of all rows still counts them.
+TEST_F(StreamingGroupbyTest, PackedNullValuesInLaterBatch)
+{
+  using K = int32_t;
+  using V = int32_t;
+
+  cudf::test::fixed_width_column_wrapper<K> keys1{1, 2, 3};
+  cudf::test::fixed_width_column_wrapper<V> vals1{10, 20, 30};
+  cudf::test::fixed_width_column_wrapper<K> keys2{1, 4, 4, 2, 3};
+  cudf::test::fixed_width_column_wrapper<V> vals2{{0, 0, 0, 5, 0},
+                                                  {false, false, false, true, false}};
+  cudf::test::fixed_width_column_wrapper<K> keys3{4, 5};
+  cudf::test::fixed_width_column_wrapper<V> vals3{{0, 50}, {false, true}};
+
+  cudf::table_view batch1{{keys1, vals1}};
+  cudf::table_view batch2{{keys2, vals2}};
+  cudf::table_view batch3{{keys3, vals3}};
+
+  std::vector<cudf::groupby::streaming_aggregation_request> reqs;
+  reqs.push_back(make_req(1, cudf::make_min_aggregation<cudf::groupby_aggregation>()));
+  reqs.push_back(make_req(1, cudf::make_max_aggregation<cudf::groupby_aggregation>()));
+  reqs.push_back(make_req(1, cudf::make_sum_aggregation<cudf::groupby_aggregation>()));
+  reqs.push_back(make_req(
+    1, cudf::make_count_aggregation<cudf::groupby_aggregation>(cudf::null_policy::EXCLUDE)));
+  reqs.push_back(make_req(
+    1, cudf::make_count_aggregation<cudf::groupby_aggregation>(cudf::null_policy::INCLUDE)));
+  reqs.push_back(make_req(1, cudf::make_mean_aggregation<cudf::groupby_aggregation>()));
+  reqs.push_back(make_req(1, cudf::make_sum_of_squares_aggregation<cudf::groupby_aggregation>()));
+
+  cudf::groupby::streaming_groupby streaming_agg(KEY_COL, reqs, DEFAULT_MAX_DISTINCT_KEYS);
+  streaming_agg.aggregate(batch1);
+  streaming_agg.aggregate(batch2);
+  streaming_agg.aggregate(batch3);
+  EXPECT_EQ(streaming_agg.distinct_keys(), 5);
+
+  auto [keys, results] = streaming_agg.finalize();
+  verify_against_groupby(keys, results, {batch1, batch2, batch3}, KEY_COL, reqs);
+
+  // Group 4 only ever saw nulls: its MIN is null, its counts are 0 and 3.
+  auto const order   = cudf::sorted_order(keys->view());
+  auto const min_col = cudf::gather(cudf::table_view{{results[0].results[0]->view()}}, *order);
+  cudf::test::fixed_width_column_wrapper<V> emin{{10, 5, 30, 0, 50},
+                                                 {true, true, true, false, true}};
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(emin, min_col->get_column(0));
+}
+
+// With `null_policy::INCLUDE`, a validity bit per key column is part of the packed key, so a
+// null in either of two key columns makes a group of its own.
+TEST_F(StreamingGroupbyTest, PackedNullKeysIncludedMultiColumn)
+{
+  using K = int32_t;
+  using V = int32_t;
+
+  cudf::test::fixed_width_column_wrapper<K> k1a{{1, 1, 2, 2}, {true, false, true, true}};
+  cudf::test::fixed_width_column_wrapper<K> k1b{{5, 5, 5, 0}, {true, true, false, true}};
+  cudf::test::fixed_width_column_wrapper<V> v1{1, 2, 3, 4};
+  cudf::test::fixed_width_column_wrapper<K> k2a{{1, 2, 1}, {false, true, true}};
+  cudf::test::fixed_width_column_wrapper<K> k2b{{5, 5, 5}, {true, false, true}};
+  cudf::test::fixed_width_column_wrapper<V> v2{10, 20, 30};
+
+  cudf::table_view batch1{{k1a, k1b, v1}};
+  cudf::table_view batch2{{k2a, k2b, v2}};
+
+  std::vector<cudf::size_type> key_cols{0, 1};
+  std::vector<cudf::groupby::streaming_aggregation_request> reqs;
+  reqs.push_back(make_req(2, cudf::make_sum_aggregation<cudf::groupby_aggregation>()));
+  reqs.push_back(make_req(2, cudf::make_max_aggregation<cudf::groupby_aggregation>()));
+
+  cudf::groupby::streaming_groupby streaming_agg(
+    key_cols, reqs, DEFAULT_MAX_DISTINCT_KEYS, cudf::null_policy::INCLUDE);
+  streaming_agg.aggregate(batch1);
+  streaming_agg.aggregate(batch2);
+  EXPECT_EQ(streaming_agg.distinct_keys(), 4);
+
+  auto [keys, results] = streaming_agg.finalize();
+  verify_against_groupby(
+    keys, results, {batch1, batch2}, key_cols, reqs, cudf::null_policy::INCLUDE);
+
+  // The output key columns carry the null groups.
+  auto const order =
+    cudf::sorted_order(keys->view(), {}, {cudf::null_order::AFTER, cudf::null_order::AFTER});
+  auto const sorted_keys = cudf::gather(keys->view(), *order);
+  cudf::test::fixed_width_column_wrapper<K> eka{{1, 2, 2, 1}, {true, true, true, false}};
+  cudf::test::fixed_width_column_wrapper<K> ekb{{5, 0, 5, 5}, {true, true, false, true}};
+  CUDF_TEST_EXPECT_TABLES_EQUAL(cudf::table_view{{eka, ekb}}, sorted_keys->view());
+}
+
+// A key column that is nullable only from the second batch on: its null rows are skipped, and
+// the output key column is nullable as the input was.
+TEST_F(StreamingGroupbyTest, PackedNullKeysExcludedFromLaterBatch)
+{
+  using K = int32_t;
+  using V = int32_t;
+  using R = int64_t;
+
+  cudf::test::fixed_width_column_wrapper<K> keys1{1, 2, 3};
+  cudf::test::fixed_width_column_wrapper<V> vals1{10, 20, 30};
+  cudf::test::fixed_width_column_wrapper<K> keys2{{1, 2, 4}, {true, false, true}};
+  cudf::test::fixed_width_column_wrapper<V> vals2{1, 2, 4};
+
+  auto reqs = single_agg_req(1, cudf::make_sum_aggregation<cudf::groupby_aggregation>());
+  cudf::groupby::streaming_groupby streaming_agg(KEY_COL, reqs, DEFAULT_MAX_DISTINCT_KEYS);
+  streaming_agg.aggregate(cudf::table_view{{keys1, vals1}});
+  streaming_agg.aggregate(cudf::table_view{{keys2, vals2}});
+  EXPECT_EQ(streaming_agg.distinct_keys(), 4);
+
+  auto [keys, results] = streaming_agg.finalize();
+  EXPECT_TRUE(keys->get_column(0).nullable());
+  EXPECT_EQ(keys->get_column(0).null_count(), 0);
+  cudf::test::fixed_width_column_wrapper<K> ek{{1, 2, 3, 4}, cudf::test::iterators::no_nulls()};
+  cudf::test::fixed_width_column_wrapper<R> ev{11, 20, 30, 4};
+  check(keys, results, cudf::table_view{{ek}}, {ev});
+}
+
+// Merging when only one side has seen null values, in either direction: the side without nulls
+// has every aggregate valid, the side with them has a group that is null.
+TEST_F(StreamingGroupbyTest, PackedMergeNullValuesOnOneSide)
+{
+  using K = int32_t;
+  using V = int32_t;
+
+  auto const run = [](bool nulls_in_target) {
+    auto reqs = single_agg_req(1, cudf::make_min_aggregation<cudf::groupby_aggregation>());
+    cudf::groupby::streaming_groupby plain(KEY_COL, reqs, 4);
+    cudf::groupby::streaming_groupby with_nulls(KEY_COL, reqs, 4);
+
+    cudf::test::fixed_width_column_wrapper<K> k1{1, 2};
+    cudf::test::fixed_width_column_wrapper<V> v1{10, 20};
+    plain.aggregate(cudf::table_view{{k1, v1}});
+
+    cudf::test::fixed_width_column_wrapper<K> k2{2, 3, 3, 4};
+    cudf::test::fixed_width_column_wrapper<V> v2{{15, 0, 0, 40}, {true, false, false, true}};
+    with_nulls.aggregate(cudf::table_view{{k2, v2}});
+
+    auto& target = nulls_in_target ? with_nulls : plain;
+    auto& source = nulls_in_target ? plain : with_nulls;
+    target.merge(source);
+    EXPECT_EQ(target.distinct_keys(), 4);
+
+    auto [keys, results] = target.finalize();
+    cudf::test::fixed_width_column_wrapper<K> ek{1, 2, 3, 4};
+    cudf::test::fixed_width_column_wrapper<V> ev{{10, 15, 0, 40}, {true, true, false, true}};
+    check(keys, results, cudf::table_view{{ek}}, {ev});
+  };
+  run(false);
+  run(true);
+}
+
+TEST_F(StreamingGroupbyTest, PackedBoolAndTimestampKeys)
+{
+  using ts_ms = cudf::timestamp_ms;
+  using dur_s = cudf::duration_s;
+  using ts_ns = cudf::timestamp_ns;
+
+  cudf::test::fixed_width_column_wrapper<bool> k1a{true, false, true, true};
+  cudf::test::fixed_width_column_wrapper<ts_ms, int64_t> k1b{1000, 2000, 1000, -5};
+  cudf::test::fixed_width_column_wrapper<dur_s, int64_t> v1a{1, 2, 3, 4};
+  cudf::test::fixed_width_column_wrapper<ts_ns, int64_t> v1b{100, 200, 50, -7};
+
+  cudf::test::fixed_width_column_wrapper<bool> k2a{false, true, false};
+  cudf::test::fixed_width_column_wrapper<ts_ms, int64_t> k2b{2000, 1000, 1000};
+  cudf::test::fixed_width_column_wrapper<dur_s, int64_t> v2a{10, 20, 30};
+  cudf::test::fixed_width_column_wrapper<ts_ns, int64_t> v2b{-1, 300, 0};
+
+  cudf::table_view batch1{{k1a, k1b, v1a, v1b}};
+  cudf::table_view batch2{{k2a, k2b, v2a, v2b}};
+
+  std::vector<cudf::size_type> key_cols{0, 1};
+  std::vector<cudf::groupby::streaming_aggregation_request> reqs;
+  reqs.push_back(make_req(2, cudf::make_sum_aggregation<cudf::groupby_aggregation>()));
+  reqs.push_back(make_req(2, cudf::make_min_aggregation<cudf::groupby_aggregation>()));
+  reqs.push_back(make_req(3, cudf::make_max_aggregation<cudf::groupby_aggregation>()));
+  reqs.push_back(make_req(3, cudf::make_min_aggregation<cudf::groupby_aggregation>()));
+
+  cudf::groupby::streaming_groupby streaming_agg(key_cols, reqs, DEFAULT_MAX_DISTINCT_KEYS);
+  streaming_agg.aggregate(batch1);
+  streaming_agg.aggregate(batch2);
+  EXPECT_EQ(streaming_agg.distinct_keys(), 4);
+
+  auto [keys, results] = streaming_agg.finalize();
+  verify_against_groupby(keys, results, {batch1, batch2}, key_cols, reqs);
+}
+
+// Float values: SUM accumulates in double and narrows to float; MIN and MAX order by the bits.
+TEST_F(StreamingGroupbyTest, PackedFloat32Values)
+{
+  using K = int16_t;
+  using V = float;
+
+  cudf::test::fixed_width_column_wrapper<K> keys1{1, 2, 1, 3, 2};
+  cudf::test::fixed_width_column_wrapper<V> vals1{1.5f, -2.25f, 0.f, -0.5f, 8.f};
+  cudf::test::fixed_width_column_wrapper<K> keys2{3, 1, 2};
+  cudf::test::fixed_width_column_wrapper<V> vals2{-1e6f, 1e-3f, -7.f};
+
+  cudf::table_view batch1{{keys1, vals1}};
+  cudf::table_view batch2{{keys2, vals2}};
+
+  std::vector<cudf::groupby::streaming_aggregation_request> reqs;
+  reqs.push_back(make_req(1, cudf::make_sum_aggregation<cudf::groupby_aggregation>()));
+  reqs.push_back(make_req(1, cudf::make_min_aggregation<cudf::groupby_aggregation>()));
+  reqs.push_back(make_req(1, cudf::make_max_aggregation<cudf::groupby_aggregation>()));
+  reqs.push_back(make_req(1, cudf::make_mean_aggregation<cudf::groupby_aggregation>()));
+  reqs.push_back(make_req(1, cudf::make_sum_of_squares_aggregation<cudf::groupby_aggregation>()));
+
+  cudf::groupby::streaming_groupby streaming_agg(KEY_COL, reqs, DEFAULT_MAX_DISTINCT_KEYS);
+  streaming_agg.aggregate(batch1);
+  streaming_agg.aggregate(batch2);
+
+  auto [keys, results] = streaming_agg.finalize();
+  verify_against_groupby(keys, results, {batch1, batch2}, KEY_COL, reqs);
+}
+
+// Unsigned values above the signed range compare as unsigned, and small unsigned sums widen.
+TEST_F(StreamingGroupbyTest, PackedUnsignedValues)
+{
+  using K = uint8_t;
+
+  constexpr uint64_t big = std::numeric_limits<uint64_t>::max();
+  constexpr uint64_t mid = uint64_t{1} << 63;
+
+  cudf::test::fixed_width_column_wrapper<K> keys1{1, 2, 1, 255};
+  cudf::test::fixed_width_column_wrapper<uint64_t> v1a{big, uint64_t{1}, mid, uint64_t{0}};
+  cudf::test::fixed_width_column_wrapper<uint8_t> v1b{200, 100, 200, 255};
+  cudf::test::fixed_width_column_wrapper<K> keys2{2, 255};
+  cudf::test::fixed_width_column_wrapper<uint64_t> v2a{mid, big};
+  cudf::test::fixed_width_column_wrapper<uint8_t> v2b{255, 255};
+
+  cudf::table_view batch1{{keys1, v1a, v1b}};
+  cudf::table_view batch2{{keys2, v2a, v2b}};
+
+  std::vector<cudf::groupby::streaming_aggregation_request> reqs;
+  reqs.push_back(make_req(1, cudf::make_min_aggregation<cudf::groupby_aggregation>()));
+  reqs.push_back(make_req(1, cudf::make_max_aggregation<cudf::groupby_aggregation>()));
+  reqs.push_back(make_req(2, cudf::make_sum_aggregation<cudf::groupby_aggregation>()));
+  reqs.push_back(make_req(2, cudf::make_max_aggregation<cudf::groupby_aggregation>()));
+
+  cudf::groupby::streaming_groupby streaming_agg(KEY_COL, reqs, DEFAULT_MAX_DISTINCT_KEYS);
+  streaming_agg.aggregate(batch1);
+  streaming_agg.aggregate(batch2);
+
+  auto [keys, results] = streaming_agg.finalize();
+  verify_against_groupby(keys, results, {batch1, batch2}, KEY_COL, reqs);
+}
+
+// A COUNT reads only the value column's null mask, so it takes the packed table whatever the
+// column's type.
+TEST_F(StreamingGroupbyTest, PackedCountOnStringValues)
+{
+  using K = int32_t;
+
+  cudf::test::fixed_width_column_wrapper<K> keys1{1, 2, 1, 2};
+  cudf::test::strings_column_wrapper vals1({"a", "", "c", "d"}, {true, false, true, true});
+  cudf::test::fixed_width_column_wrapper<K> keys2{3, 1};
+  cudf::test::strings_column_wrapper vals2({"", "f"}, {false, true});
+
+  cudf::table_view batch1{{keys1, vals1}};
+  cudf::table_view batch2{{keys2, vals2}};
+
+  std::vector<cudf::groupby::streaming_aggregation_request> reqs;
+  reqs.push_back(make_req(
+    1, cudf::make_count_aggregation<cudf::groupby_aggregation>(cudf::null_policy::EXCLUDE)));
+  reqs.push_back(make_req(
+    1, cudf::make_count_aggregation<cudf::groupby_aggregation>(cudf::null_policy::INCLUDE)));
+
+  cudf::groupby::streaming_groupby streaming_agg(KEY_COL, reqs, DEFAULT_MAX_DISTINCT_KEYS);
+  streaming_agg.aggregate(batch1);
+  streaming_agg.aggregate(batch2);
+
+  auto [keys, results] = streaming_agg.finalize();
+  cudf::test::fixed_width_column_wrapper<K> ek{1, 2, 3};
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> evalid{3, 1, 0};
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> eall{3, 2, 1};
+  check(keys, results, cudf::table_view{{ek}}, {evalid, eall});
+}
+
+// Keys the packed table cannot hold take the generic path and give the same results.
+TEST_F(StreamingGroupbyTest, FloatKeysTakeGenericPath)
+{
+  using K = double;
+  using V = int32_t;
+
+  cudf::test::fixed_width_column_wrapper<K> keys1{1.5, 2.5, 1.5};
+  cudf::test::fixed_width_column_wrapper<V> vals1{1, 2, 3};
+  cudf::test::fixed_width_column_wrapper<K> keys2{2.5, -0.0};
+  cudf::test::fixed_width_column_wrapper<V> vals2{4, 5};
+
+  cudf::table_view batch1{{keys1, vals1}};
+  cudf::table_view batch2{{keys2, vals2}};
+
+  auto reqs = single_agg_req(1, cudf::make_sum_aggregation<cudf::groupby_aggregation>());
+  cudf::groupby::streaming_groupby streaming_agg(KEY_COL, reqs, DEFAULT_MAX_DISTINCT_KEYS);
+  streaming_agg.aggregate(batch1);
+  streaming_agg.aggregate(batch2);
+
+  auto [keys, results] = streaming_agg.finalize();
+  verify_against_groupby(keys, results, {batch1, batch2}, KEY_COL, reqs);
+}
+
+// Eight bytes of keys leave no room for the validity bits of `null_policy::INCLUDE`, so such
+// keys take the generic path, which handles null keys the same way.
+TEST_F(StreamingGroupbyTest, WideKeysWithNullsIncludedTakeGenericPath)
+{
+  using K = uint64_t;
+  using V = int32_t;
+
+  cudf::test::fixed_width_column_wrapper<K> keys1{{1, 2, 1}, {true, false, true}};
+  cudf::test::fixed_width_column_wrapper<V> vals1{1, 2, 3};
+  cudf::test::fixed_width_column_wrapper<K> keys2{{2, 3}, {false, true}};
+  cudf::test::fixed_width_column_wrapper<V> vals2{4, 5};
+
+  cudf::table_view batch1{{keys1, vals1}};
+  cudf::table_view batch2{{keys2, vals2}};
+
+  auto reqs = single_agg_req(1, cudf::make_sum_aggregation<cudf::groupby_aggregation>());
+  cudf::groupby::streaming_groupby streaming_agg(
+    KEY_COL, reqs, DEFAULT_MAX_DISTINCT_KEYS, cudf::null_policy::INCLUDE);
+  streaming_agg.aggregate(batch1);
+  streaming_agg.aggregate(batch2);
+  EXPECT_EQ(streaming_agg.distinct_keys(), 3);
+
+  auto [keys, results] = streaming_agg.finalize();
+  verify_against_groupby(
+    keys, results, {batch1, batch2}, KEY_COL, reqs, cudf::null_policy::INCLUDE);
+}
+
+// Two objects with the same aggregations but keys of different types cannot be merged.
+TEST_F(StreamingGroupbyTest, MergeDifferentKeyTypesThrows)
+{
+  using V = int32_t;
+
+  auto reqs = single_agg_req(1, cudf::make_sum_aggregation<cudf::groupby_aggregation>());
+  cudf::groupby::streaming_groupby int_keys(KEY_COL, reqs, DEFAULT_MAX_DISTINCT_KEYS);
+  cudf::groupby::streaming_groupby wide_keys(KEY_COL, reqs, DEFAULT_MAX_DISTINCT_KEYS);
+  cudf::groupby::streaming_groupby string_keys(KEY_COL, reqs, DEFAULT_MAX_DISTINCT_KEYS);
+
+  cudf::test::fixed_width_column_wrapper<int32_t> k1{1, 2};
+  cudf::test::fixed_width_column_wrapper<V> v1{1, 2};
+  int_keys.aggregate(cudf::table_view{{k1, v1}});
+  cudf::test::fixed_width_column_wrapper<int64_t> k2{1, 2};
+  cudf::test::fixed_width_column_wrapper<V> v2{1, 2};
+  wide_keys.aggregate(cudf::table_view{{k2, v2}});
+  cudf::test::strings_column_wrapper k3{"1", "2"};
+  cudf::test::fixed_width_column_wrapper<V> v3{1, 2};
+  string_keys.aggregate(cudf::table_view{{k3, v3}});
+
+  EXPECT_THROW(int_keys.merge(wide_keys), std::invalid_argument);
+  EXPECT_THROW(int_keys.merge(string_keys), std::invalid_argument);
+  EXPECT_THROW(string_keys.merge(int_keys), std::invalid_argument);
+}
+
+// The same seven requests on one column through the generic path: MEAN decomposes to SUM and
+// COUNT_VALID, both of which are also requested on their own, and finalize must not count the
+// shared intermediates twice.
+TEST_F(StreamingGroupbyTest, StringKeyManyAggregationsOnOneColumn)
+{
+  using V = int32_t;
+
+  cudf::test::strings_column_wrapper keys1{"a", "b", "c"};
+  // A null in the first batch, so the results are nullable from the start (they are sized and
+  // typed by the first batch) and the group of only nulls comes out null.
+  cudf::test::fixed_width_column_wrapper<V> vals1{{10, 0, 30}, {true, false, true}};
+  cudf::test::strings_column_wrapper keys2{"a", "d", "d", "b", "c"};
+  cudf::test::fixed_width_column_wrapper<V> vals2{{0, 0, 0, 5, 0},
+                                                  {false, false, false, true, false}};
+
+  cudf::table_view batch1{{keys1, vals1}};
+  cudf::table_view batch2{{keys2, vals2}};
+
+  std::vector<cudf::groupby::streaming_aggregation_request> reqs;
+  reqs.push_back(make_req(1, cudf::make_min_aggregation<cudf::groupby_aggregation>()));
+  reqs.push_back(make_req(1, cudf::make_max_aggregation<cudf::groupby_aggregation>()));
+  reqs.push_back(make_req(1, cudf::make_sum_aggregation<cudf::groupby_aggregation>()));
+  reqs.push_back(make_req(
+    1, cudf::make_count_aggregation<cudf::groupby_aggregation>(cudf::null_policy::EXCLUDE)));
+  reqs.push_back(make_req(
+    1, cudf::make_count_aggregation<cudf::groupby_aggregation>(cudf::null_policy::INCLUDE)));
+  reqs.push_back(make_req(1, cudf::make_mean_aggregation<cudf::groupby_aggregation>()));
+  reqs.push_back(make_req(1, cudf::make_sum_of_squares_aggregation<cudf::groupby_aggregation>()));
+
+  cudf::groupby::streaming_groupby streaming_agg(KEY_COL, reqs, DEFAULT_MAX_DISTINCT_KEYS);
+  streaming_agg.aggregate(batch1);
+  streaming_agg.aggregate(batch2);
+  EXPECT_EQ(streaming_agg.distinct_keys(), 4);
+
+  auto [keys, results] = streaming_agg.finalize();
   verify_against_groupby(keys, results, {batch1, batch2}, KEY_COL, reqs);
 }

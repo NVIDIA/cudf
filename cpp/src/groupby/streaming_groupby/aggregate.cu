@@ -39,10 +39,8 @@ void streaming_groupby::impl::do_aggregate(table_view const& data, cuda::stream_
                "Transient key encoding (max_distinct_keys + batch_size) would overflow size_type.",
                std::invalid_argument);
 
-  // The transient key encoding is only valid while a single insertion is in flight, so
-  // insertion is serialized across concurrent callers on the host and, via the event, on the
-  // device.  The aggregation below is per-group atomic and runs unserialized.
-  auto const result = [&] {
+  // The packed-key table inserts and aggregates a batch in one pass, so it is serialized whole.
+  {
     std::lock_guard const lock{_insert_mutex};
 
     // Re-check under the lock: another caller may have invalidated the object since the
@@ -50,6 +48,23 @@ void streaming_groupby::impl::do_aggregate(table_view const& data, cuda::stream_
     ensure_not_invalidated();
 
     if (!_initialized) { initialize(data, stream); }
+
+    if (_packed) {
+      _insert_done.wait(stream);
+      _packed->aggregate(data.select(_key_indices), data.select(_value_col_indices), stream);
+      _insert_done.record(stream);
+      store_packed_distinct_keys();
+      return;
+    }
+  }
+
+  // The transient key encoding is only valid while a single insertion is in flight, so
+  // insertion is serialized across concurrent callers on the host and, via the event, on the
+  // device.  The aggregation below is per-group atomic and runs unserialized.
+  auto const result = [&] {
+    std::lock_guard const lock{_insert_mutex};
+
+    ensure_not_invalidated();
 
     auto const batch_keys = data.select(_key_indices);
 

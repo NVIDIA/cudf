@@ -1066,21 +1066,29 @@ std::unique_ptr<cudf::column> create_string_column(cudf::size_type num_rows,
 }
 
 std::pair<rmm::device_buffer, cudf::size_type> create_random_null_mask(
-  cudf::size_type size, std::optional<double> null_probability, unsigned seed)
+  cudf::size_type size,
+  std::optional<double> null_probability,
+  unsigned seed,
+  cuda::stream_ref stream,
+  cudf::memory_resources resources)
 {
   if (not null_probability.has_value()) { return {rmm::device_buffer{}, 0}; }
   CUDF_EXPECTS(*null_probability >= 0.0 and *null_probability <= 1.0,
                "Null probability must be within the range [0.0, 1.0]");
   if (*null_probability == 0.0f) {
-    return {cudf::create_null_mask(size, cudf::mask_state::ALL_VALID), 0};
+    return {
+      cudf::create_null_mask(size, cudf::mask_state::ALL_VALID, stream, resources.get_output_mr()),
+      0};
   } else if (*null_probability == 1.0) {
-    return {cudf::create_null_mask(size, cudf::mask_state::ALL_NULL), size};
+    return {
+      cudf::create_null_mask(size, cudf::mask_state::ALL_NULL, stream, resources.get_output_mr()),
+      size};
   } else {
     return cudf::detail::valid_if(cuda::counting_iterator<cudf::size_type>{0},
                                   cuda::counting_iterator<cudf::size_type>{size},
                                   bool_generator{seed, 1.0 - *null_probability},
-                                  cudf::get_default_stream(),
-                                  cudf::get_current_device_resource_ref());
+                                  stream,
+                                  resources);
   }
 }
 

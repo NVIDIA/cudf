@@ -273,8 +273,11 @@ struct interleave_list_entries_impl<T, std::enable_if_t<cudf::is_fixed_width<T>(
       });
 
     if (data_has_null_mask) {
-      auto [null_mask, null_count] = cudf::detail::valid_if(
-        validities.begin(), validities.end(), cuda::std::identity{}, stream, mr);
+      auto [null_mask, null_count] = cudf::detail::valid_if(validities.begin(),
+                                                            validities.end(),
+                                                            cuda::std::identity{},
+                                                            stream,
+                                                            cudf::memory_resources{mr, mr});
       if (null_count > 0) { output->set_null_mask(std::move(null_mask), null_count); }
     }
 
@@ -367,8 +370,11 @@ std::unique_ptr<column> interleave_columns(table_view const& input,
       num_output_lists, std::move(list_offsets), std::move(list_entries), 0, rmm::device_buffer{});
   }
 
-  auto [null_mask, null_count] = cudf::detail::valid_if(
-    list_validities.begin(), list_validities.end(), cuda::std::identity{}, stream, mr);
+  auto [null_mask, null_count] = cudf::detail::valid_if(list_validities.begin(),
+                                                        list_validities.end(),
+                                                        cuda::std::identity{},
+                                                        stream,
+                                                        cudf::memory_resources{mr, mr});
   return make_lists_column(num_output_lists,
                            std::move(list_offsets),
                            std::move(list_entries),

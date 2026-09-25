@@ -1160,6 +1160,8 @@ parse_options make_parse_options(csv_reader_options const& reader_opts, cuda::st
     parse_opts.keepquotes = false;
     parse_opts.detect_whitespace_around_quotes =
       reader_opts.is_enabled_detect_whitespace_around_quotes();
+    parse_opts.detect_whitespace_after_quotes =
+      reader_opts.is_enabled_detect_whitespace_after_quotes();
     parse_opts.doublequote = reader_opts.is_enabled_doublequote();
   } else {
     parse_opts.quotechar   = '\0';

@@ -1335,7 +1335,8 @@ Java_ai_rapids_cudf_Table_readCSVFromDataSource(JNIEnv* env,
                                                 jobjectArray null_values,
                                                 jobjectArray true_values,
                                                 jobjectArray false_values,
-                                                jlong ds_handle)
+                                                jlong ds_handle,
+                                                jboolean detect_whitespace_after_quotes)
 {
   JNI_NULL_CHECK(env, null_values, "null_values must be supplied, even if it is empty", NULL);
   JNI_NULL_CHECK(env, ds_handle, "no data source handle given", NULL);
@@ -1376,44 +1377,48 @@ Java_ai_rapids_cudf_Table_readCSVFromDataSource(JNIEnv* env,
 
     auto const quote_style = static_cast<cudf::io::quote_style>(j_quote_style);
 
-    cudf::io::csv_reader_options opts = cudf::io::csv_reader_options::builder(source)
-                                          .delimiter(delim)
-                                          .header(header_row)
-                                          .names(n_col_names.as_cpp_vector())
-                                          .dtypes(data_types)
-                                          .use_cols_names(n_filter_col_names.as_cpp_vector())
-                                          .true_values(n_true_values.as_cpp_vector())
-                                          .false_values(n_false_values.as_cpp_vector())
-                                          .na_values(n_null_values.as_cpp_vector())
-                                          .keep_default_na(false)
-                                          .na_filter(n_null_values.size() > 0)
-                                          .quoting(quote_style)
-                                          .quotechar(quote)
-                                          .comment(comment)
-                                          .build();
+    cudf::io::csv_reader_options opts =
+      cudf::io::csv_reader_options::builder(source)
+        .delimiter(delim)
+        .header(header_row)
+        .names(n_col_names.as_cpp_vector())
+        .dtypes(data_types)
+        .use_cols_names(n_filter_col_names.as_cpp_vector())
+        .true_values(n_true_values.as_cpp_vector())
+        .false_values(n_false_values.as_cpp_vector())
+        .na_values(n_null_values.as_cpp_vector())
+        .keep_default_na(false)
+        .na_filter(n_null_values.size() > 0)
+        .quoting(quote_style)
+        .quotechar(quote)
+        .comment(comment)
+        .detect_whitespace_after_quotes(detect_whitespace_after_quotes)
+        .build();
 
     return convert_table_for_return(env, cudf::io::read_csv(opts).tbl);
   }
   JNI_CATCH(env, NULL);
 }
 
-JNIEXPORT jlongArray JNICALL Java_ai_rapids_cudf_Table_readCSV(JNIEnv* env,
-                                                               jclass,
-                                                               jobjectArray col_names,
-                                                               jintArray j_types,
-                                                               jintArray j_scales,
-                                                               jobjectArray filter_col_names,
-                                                               jstring inputfilepath,
-                                                               jlong buffer,
-                                                               jlong buffer_length,
-                                                               jint header_row,
-                                                               jbyte delim,
-                                                               jint j_quote_style,
-                                                               jbyte quote,
-                                                               jbyte comment,
-                                                               jobjectArray null_values,
-                                                               jobjectArray true_values,
-                                                               jobjectArray false_values)
+JNIEXPORT jlongArray JNICALL
+Java_ai_rapids_cudf_Table_readCSV(JNIEnv* env,
+                                  jclass,
+                                  jobjectArray col_names,
+                                  jintArray j_types,
+                                  jintArray j_scales,
+                                  jobjectArray filter_col_names,
+                                  jstring inputfilepath,
+                                  jlong buffer,
+                                  jlong buffer_length,
+                                  jint header_row,
+                                  jbyte delim,
+                                  jint j_quote_style,
+                                  jbyte quote,
+                                  jbyte comment,
+                                  jobjectArray null_values,
+                                  jobjectArray true_values,
+                                  jobjectArray false_values,
+                                  jboolean detect_whitespace_after_quotes)
 {
   JNI_NULL_CHECK(env, null_values, "null_values must be supplied, even if it is empty", NULL);
 
@@ -1475,21 +1480,23 @@ JNIEXPORT jlongArray JNICALL Java_ai_rapids_cudf_Table_readCSV(JNIEnv* env,
         : cudf::io::source_info{filename};
     auto const quote_style = static_cast<cudf::io::quote_style>(j_quote_style);
 
-    cudf::io::csv_reader_options opts = cudf::io::csv_reader_options::builder(source)
-                                          .delimiter(delim)
-                                          .header(header_row)
-                                          .names(n_col_names.as_cpp_vector())
-                                          .dtypes(data_types)
-                                          .use_cols_names(n_filter_col_names.as_cpp_vector())
-                                          .true_values(n_true_values.as_cpp_vector())
-                                          .false_values(n_false_values.as_cpp_vector())
-                                          .na_values(n_null_values.as_cpp_vector())
-                                          .keep_default_na(false)
-                                          .na_filter(n_null_values.size() > 0)
-                                          .quoting(quote_style)
-                                          .quotechar(quote)
-                                          .comment(comment)
-                                          .build();
+    cudf::io::csv_reader_options opts =
+      cudf::io::csv_reader_options::builder(source)
+        .delimiter(delim)
+        .header(header_row)
+        .names(n_col_names.as_cpp_vector())
+        .dtypes(data_types)
+        .use_cols_names(n_filter_col_names.as_cpp_vector())
+        .true_values(n_true_values.as_cpp_vector())
+        .false_values(n_false_values.as_cpp_vector())
+        .na_values(n_null_values.as_cpp_vector())
+        .keep_default_na(false)
+        .na_filter(n_null_values.size() > 0)
+        .quoting(quote_style)
+        .quotechar(quote)
+        .comment(comment)
+        .detect_whitespace_after_quotes(detect_whitespace_after_quotes)
+        .build();
 
     return convert_table_for_return(env, cudf::io::read_csv(opts).tbl);
   }

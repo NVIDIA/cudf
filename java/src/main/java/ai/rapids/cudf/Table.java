@@ -215,6 +215,8 @@ public final class Table implements AutoCloseable {
    * @param nullValues        values that should be treated as nulls
    * @param trueValues        values that should be treated as boolean true
    * @param falseValues       values that should be treated as boolean false
+   * @param detectWhitespaceAfterQuotes whether to recognize trailing spaces or tabs after
+   *                                    quoted string fields
    */
   private static native long[] readCSV(String[] columnNames,
                                        int[] dTypeIds, int[] dTypeScales,
@@ -222,7 +224,8 @@ public final class Table implements AutoCloseable {
                                        String filePath, long address, long length,
                                        int headerRow, byte delim, int quoteStyle, byte quote,
                                        byte comment, String[] nullValues,
-                                       String[] trueValues, String[] falseValues) throws CudfException;
+                                       String[] trueValues, String[] falseValues,
+                                       boolean detectWhitespaceAfterQuotes) throws CudfException;
 
   private static native long[] readCSVFromDataSource(String[] columnNames,
                                        int[] dTypeIds, int[] dTypeScales,
@@ -230,7 +233,8 @@ public final class Table implements AutoCloseable {
                                        int headerRow, byte delim, int quoteStyle, byte quote,
                                        byte comment, String[] nullValues,
                                        String[] trueValues, String[] falseValues,
-                                       long dataSourceHandle) throws CudfException;
+                                       long dataSourceHandle,
+                                       boolean detectWhitespaceAfterQuotes) throws CudfException;
 
   /**
    * read JSON data and return a pointer to a TableWithMeta object.
@@ -788,7 +792,7 @@ public final class Table implements AutoCloseable {
             opts.getComment(),
             opts.getNullValues(),
             opts.getTrueValues(),
-            opts.getFalseValues()));
+            opts.getFalseValues(), opts.getDetectWhitespaceAfterQuotes()));
   }
 
   /**
@@ -872,7 +876,7 @@ public final class Table implements AutoCloseable {
         opts.getComment(),
         opts.getNullValues(),
         opts.getTrueValues(),
-        opts.getFalseValues()));
+        opts.getFalseValues(), opts.getDetectWhitespaceAfterQuotes()));
   }
 
   public static Table readCSV(Schema schema, CSVOptions opts, DataSource ds) {
@@ -893,7 +897,7 @@ public final class Table implements AutoCloseable {
               opts.getNullValues(),
               opts.getTrueValues(),
               opts.getFalseValues(),
-              dsHandle));
+              dsHandle, opts.getDetectWhitespaceAfterQuotes()));
     } finally {
       DataSourceHelper.destroyWrapperDataSource(dsHandle);
     }

@@ -23,7 +23,7 @@ std::unique_ptr<column> stable_sorted_order(table_view const& input,
                                             std::vector<order> const& column_order,
                                             std::vector<null_order> const& null_precedence,
                                             cuda::stream_ref stream,
-                                            rmm::device_async_resource_ref mr)
+                                            cudf::memory_resources mr)
 {
   return sorted_order<sort_method::STABLE>(input, column_order, null_precedence, stream, mr);
 }
@@ -71,7 +71,7 @@ std::unique_ptr<column> stable_sorted_order(table_view const& input,
                                             std::vector<order> const& column_order,
                                             std::vector<null_order> const& null_precedence,
                                             cuda::stream_ref stream,
-                                            rmm::device_async_resource_ref mr)
+                                            cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::stable_sorted_order(input, column_order, null_precedence, stream, mr);

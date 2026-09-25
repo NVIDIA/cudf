@@ -2,7 +2,6 @@
  * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
-#pragma once
 
 #include "common.cuh"
 #include "dispatch.cuh"
@@ -15,6 +14,9 @@
 
 #include <cuda/std/cstdint>
 #include <cuda/std/functional>
+
+#include <limits>
+#include <stdexcept>
 
 namespace cudf::detail {
 
@@ -124,5 +126,12 @@ std::size_t hash_join<Hasher>::join_size(cudf::table_view const& left,
                std::overflow_error);
   return static_cast<std::size_t>(output_size);
 }
+
+template std::size_t hash_join<hash_join_hasher>::join_size<join_kind::INNER_JOIN>(
+  cudf::table_view const&, cuda::stream_ref) const;
+template std::size_t hash_join<hash_join_hasher>::join_size<join_kind::LEFT_JOIN>(
+  cudf::table_view const&, cuda::stream_ref) const;
+template std::size_t hash_join<hash_join_hasher>::join_size<join_kind::FULL_JOIN>(
+  cudf::table_view const&, cuda::stream_ref, rmm::device_async_resource_ref) const;
 
 }  // namespace cudf::detail

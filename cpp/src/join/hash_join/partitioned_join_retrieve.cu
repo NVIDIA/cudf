@@ -156,17 +156,17 @@ hash_join<Hasher>::partitioned_join_retrieve(join_kind join,
   cudf::prefetch::detail::prefetch(*right_indices, stream);
 
   if (join == join_kind::INNER_JOIN) {
-    launch_hash_csr_retrieve_kernel<false>(output_size,
-                                           partition_size,
-                                           offsets.data(),
-                                           probe_groups.data(),
-                                           _impl->csr(),
-                                           left_start_idx,
-                                           left_indices->data(),
-                                           right_indices->data(),
-                                           stream);
+    launch_hash_csr_inner_retrieve_kernel(output_size,
+                                          partition_size,
+                                          offsets.data(),
+                                          probe_groups.data(),
+                                          _impl->csr(),
+                                          left_start_idx,
+                                          left_indices->data(),
+                                          right_indices->data(),
+                                          stream);
   } else {
-    launch_hash_csr_retrieve_kernel<true>(output_size,
+    launch_hash_csr_outer_retrieve_kernel(output_size,
                                           partition_size,
                                           offsets.data(),
                                           probe_groups.data(),

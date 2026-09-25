@@ -23,6 +23,7 @@
 #include <rapidsmpf/memory/buffer_resource.hpp>
 #include <rapidsmpf/owning_wrapper.hpp>
 #include <rapidsmpf/streaming/core/channel.hpp>
+#include <rapidsmpf/utils/string.hpp>
 
 #include <cstdint>
 #include <memory>
@@ -50,12 +51,13 @@ class StreamingTableChunk : public BaseStreamingFixture,
       memory_limits,                      // memory_limits
       std::chrono::milliseconds{1},       // periodic_spill_check
       stream_pool,                        // stream_pool
-      rapidsmpf::Statistics::disabled()   // statistics
-    );
+      rapidsmpf::Statistics::disabled(),  // statistics
+      spill_dir.path());
     ctx = std::make_shared<rapidsmpf::streaming::Context>(
       options, GlobalEnvironment->comm_->logger(), br);
   }
 
+  TempDir spill_dir;
   cuda::stream_ref stream{cudaStream_t{cudaStreamDefault}};
   rmm::mr::cuda_memory_resource mr_cuda;
   std::shared_ptr<rapidsmpf::BufferResource> br;
@@ -172,7 +174,9 @@ TEST_F(StreamingTableChunk, FromPackedDataOnDevice)
 
 INSTANTIATE_TEST_SUITE_P(StreamingTableChunkWithSpillTargets,
                          StreamingTableChunk,
-                         ::testing::ValuesIn(rapidsmpf::SPILL_TARGET_MEMORY_TYPES),
+                         ::testing::ValuesIn({rapidsmpf::MemoryType::PINNED_HOST,
+                                              rapidsmpf::MemoryType::HOST,
+                                              rapidsmpf::MemoryType::DISK}),
                          [](testing::TestParamInfo<rapidsmpf::MemoryType> const& info) {
                            return std::string{rapidsmpf::to_string(info.param)};
                          });
@@ -304,9 +308,12 @@ TEST_P(StreamingTableChunk, DeviceToHostRoundTripCopy)
     }
   }
 
-  // Host to host copy.
-  auto host_res2  = br->reserve_or_fail(host_copy.data_alloc_size(spill_mem_type), spill_mem_type);
-  auto host_copy2 = host_copy.copy(host_res2);
+  // Disk-to-disk copies are unsupported; keep the disk chunk for the round trip.
+  auto host_copy2 = [&] {
+    if (spill_mem_type == rapidsmpf::MemoryType::DISK) { return std::move(host_copy); }
+    auto host_res2 = br->reserve_or_fail(host_copy.data_alloc_size(spill_mem_type), spill_mem_type);
+    return host_copy.copy(host_res2);
+  }();
   EXPECT_FALSE(host_copy2.is_available());
   EXPECT_TRUE(host_copy2.is_spillable());
   EXPECT_EQ(host_copy2.stream().get(), stream.get());
@@ -371,7 +378,8 @@ TEST_P(StreamingTableChunk, SpillTrackingOnHostCopy)
     std::unordered_map<rapidsmpf::MemoryType, std::int64_t>{},
     std::nullopt,
     std::make_shared<rapidsmpf::StreamPool>(16),
-    stats);
+    stats,
+    spill_dir.path());
 
   auto samples = [&stats] {
     return stats->has_stat("buffer-spilled-time") ? stats->get_stat("buffer-spilled-time").count()
@@ -392,10 +400,14 @@ TEST_P(StreamingTableChunk, SpillTrackingOnHostCopy)
   // no token and must not be reported as a spill.
   std::ignore = round_trip(random_table_with_index(2025, 0, 0, 5));
   EXPECT_EQ(samples(), 0UL);
+  auto const spill_mem_name = rapidsmpf::to_lower(rapidsmpf::to_string(spill_mem_type));
+  EXPECT_FALSE(stats->has_stat("copy-device-to-" + spill_mem_name + "-bytes"));
+  EXPECT_FALSE(stats->has_stat("copy-" + spill_mem_name + "-to-device-bytes"));
 
   // A non-empty one does leave the device, so the round trip is recorded once.
   std::ignore = round_trip(random_table_with_index(2025, 64, 0, 5));
   EXPECT_EQ(samples(), 1UL);
+  EXPECT_GT(stats->get_stat("copy-device-to-" + spill_mem_name + "-bytes").value(), 0);
 }
 
 TEST_F(StreamingTableChunk, ToMessageRoundTrip)

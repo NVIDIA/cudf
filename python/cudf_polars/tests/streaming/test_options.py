@@ -484,3 +484,88 @@ def test_hardware_binding_cli_disabled() -> None:
     args = parser.parse_args(["--hardware-binding", '{"enabled": false}'])
     opts = StreamingOptions._from_argparse(args)
     assert opts.hardware_binding == HardwareBindingPolicy(enabled=False)
+
+
+def test_rapidsmpf_options_disk_spill_dir(tmp_path) -> None:
+    opts = StreamingOptions(disk_spill_dir=str(tmp_path))
+    strings = opts.to_rapidsmpf_options().get_strings()
+    assert strings["disk_spill_dir"] == str(tmp_path)
+
+
+def test_rapidsmpf_options_disk_spill_dir_env(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    monkeypatch.setenv("RAPIDSMPF_DISK_SPILL_DIR", str(tmp_path))
+    strings = StreamingOptions().to_rapidsmpf_options().get_strings()
+    assert strings["disk_spill_dir"] == str(tmp_path)
+
+
+def test_rapidsmpf_options_disk_spill_dir_cli(tmp_path) -> None:
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    StreamingOptions._add_cli_args(parser)
+    opts = StreamingOptions._from_argparse(
+        parser.parse_args(["--disk-spill-dir", str(tmp_path)])
+    )
+    assert opts.disk_spill_dir == str(tmp_path)
+
+
+def test_rapidsmpf_options_spill_host_limit() -> None:
+    opts = StreamingOptions(spill_host_limit="96GiB")
+    strings = opts.to_rapidsmpf_options().get_strings()
+    assert strings["spill_host_limit"] == "96GiB"
+    assert "spill_host_limit" not in StreamingOptions().to_rapidsmpf_options().get_strings()
+
+
+def test_rapidsmpf_options_spill_host_limit_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("RAPIDSMPF_SPILL_HOST_LIMIT", "10%")
+    strings = StreamingOptions().to_rapidsmpf_options().get_strings()
+    assert strings["spill_host_limit"] == "10%"
+
+
+def test_rapidsmpf_options_spill_host_limit_cli() -> None:
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    StreamingOptions._add_cli_args(parser)
+    opts = StreamingOptions._from_argparse(parser.parse_args(["--spill-host-limit", "64GiB"]))
+    assert opts.spill_host_limit == "64GiB"
+
+
+def test_executor_options_sort_run_dir(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    assert "sort_run_dir" not in StreamingOptions().to_executor_options()
+    opts = StreamingOptions(sort_run_dir=str(tmp_path))
+    assert opts.to_executor_options()["sort_run_dir"] == str(tmp_path)
+    monkeypatch.setenv("CUDF_POLARS__EXECUTOR__SORT_RUN_DIR", str(tmp_path))
+    assert StreamingOptions().to_executor_options()["sort_run_dir"] == str(tmp_path)
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    StreamingOptions._add_cli_args(parser)
+    parsed = StreamingOptions._from_argparse(parser.parse_args(["--sort-run-dir", str(tmp_path)]))
+    assert parsed.sort_run_dir == str(tmp_path)
+
+
+def test_executor_options_sort_strategy() -> None:
+    opts = StreamingOptions(sort_strategy="external")
+    assert opts.to_executor_options()["sort_strategy"] == "external"
+    assert "sort_strategy" not in StreamingOptions().to_executor_options()
+
+
+def test_executor_options_sort_strategy_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("CUDF_POLARS__EXECUTOR__SORT_STRATEGY", "external")
+    assert StreamingOptions().to_executor_options()["sort_strategy"] == "external"
+
+
+def test_executor_options_sort_strategy_cli() -> None:
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    StreamingOptions._add_cli_args(parser)
+    opts = StreamingOptions._from_argparse(
+        parser.parse_args(["--sort-strategy", "external"])
+    )
+    assert opts.sort_strategy == "external"
+    with pytest.raises(SystemExit):
+        parser.parse_args(["--sort-strategy", "bogus"])

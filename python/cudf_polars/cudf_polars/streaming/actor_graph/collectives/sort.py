@@ -999,7 +999,9 @@ async def _extract_partitions_external(
     """
     order_keys = _sort_to_order_keys(post_sort_ir)
     batch_bytes = external_sort.batch_bytes_for(executor)
-    run_root = external_sort.make_run_directory(context.options(), comm.rank)
+    run_root = external_sort.make_run_directory(
+        context.options(), comm.rank, run_dir=executor.sort_run_dir
+    )
     decisions: set[str] = set()
     try:
         for partition_id in shuffle.local_partitions():

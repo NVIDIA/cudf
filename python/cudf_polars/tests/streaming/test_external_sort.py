@@ -282,6 +282,13 @@ def test_make_run_directory(tmp_path) -> None:
         assert fallback.is_dir()
         assert spill not in fallback.parents
         fallback.rmdir()
+    # An explicit run_dir wins over disk_spill_dir.
+    runs = tmp_path / "runs"
+    explicit = es.make_run_directory(
+        Options({"disk_spill_dir": str(spill)}), rank=1, run_dir=str(runs)
+    )
+    assert explicit.parent == runs
+    assert explicit.is_dir()
 
 
 # --------------------------------------------------------------------------- #

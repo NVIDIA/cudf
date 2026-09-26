@@ -533,6 +533,20 @@ def test_rapidsmpf_options_spill_host_limit_cli() -> None:
     assert opts.spill_host_limit == "64GiB"
 
 
+def test_executor_options_sort_run_dir(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    assert "sort_run_dir" not in StreamingOptions().to_executor_options()
+    opts = StreamingOptions(sort_run_dir=str(tmp_path))
+    assert opts.to_executor_options()["sort_run_dir"] == str(tmp_path)
+    monkeypatch.setenv("CUDF_POLARS__EXECUTOR__SORT_RUN_DIR", str(tmp_path))
+    assert StreamingOptions().to_executor_options()["sort_run_dir"] == str(tmp_path)
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    StreamingOptions._add_cli_args(parser)
+    parsed = StreamingOptions._from_argparse(parser.parse_args(["--sort-run-dir", str(tmp_path)]))
+    assert parsed.sort_run_dir == str(tmp_path)
+
+
 def test_executor_options_sort_strategy() -> None:
     opts = StreamingOptions(sort_strategy="external")
     assert opts.to_executor_options()["sort_strategy"] == "external"

@@ -109,15 +109,18 @@ def merge_fanin() -> int:
     return DEFAULT_MERGE_FANIN
 
 
-def make_run_directory(options: Options, rank: int) -> Path:
+def make_run_directory(options: Options, rank: int, run_dir: str | None = None) -> Path:
     """
     Directory for this rank's run pages.
 
-    Uses rapidsmpf's ``disk_spill_dir`` option (env ``RAPIDSMPF_DISK_SPILL_DIR``)
-    when set, so the shuffler's disk spill and the sort's run pages share one
-    location; otherwise a temporary directory.
+    ``run_dir`` (the executor's ``sort_run_dir``) wins when given. Otherwise uses
+    rapidsmpf's ``disk_spill_dir`` option (env ``RAPIDSMPF_DISK_SPILL_DIR``) so
+    the shuffler's disk spill and the sort's run pages share one location, and
+    falls back to a temporary directory. Run pages are parquet files written by
+    cudf, so this must be a filesystem KvikIO can use in the configured compat
+    mode (GDS-registered when ``KVIKIO_COMPAT_MODE=OFF``).
     """
-    base = options.get_strings().get("disk_spill_dir")
+    base = run_dir if run_dir else options.get_strings().get("disk_spill_dir")
     name = f"cudf-polars-sort-{rank}-{uuid.uuid4().hex[:8]}"
     if base is None or base.strip() == "" or base.strip().lower() == "false":
         return Path(tempfile.mkdtemp(prefix=name + "-"))

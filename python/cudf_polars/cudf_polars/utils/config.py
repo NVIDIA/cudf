@@ -1101,6 +1101,12 @@ class StreamingExecutor:
         device memory; "external" streams the input into the disk-spilling
         shuffler and sorts each partition with an external merge sort whose
         runs live under rapidsmpf's ``disk_spill_dir``.
+    sort_run_dir
+        Directory for the external sort's run pages (``sort_strategy="external"``).
+        Defaults to rapidsmpf's ``disk_spill_dir``. Set it when the spill directory
+        is on a filesystem cudf's parquet writer cannot use with GDS (e.g. a local
+        ext4 disk under ``KVIKIO_COMPAT_MODE=OFF``).
+        Env: ``CUDF_POLARS__EXECUTOR__SORT_RUN_DIR``. Default: ``None``.
     dynamic_planning
         Options controlling dynamic shuffle planning. See
         :class:`~cudf_polars.utils.config.DynamicPlanningOptions` for more.
@@ -1268,6 +1274,11 @@ class StreamingExecutor:
             f"{_env_prefix}__SORT_STRATEGY", str, default="in-memory"
         )
     )
+    sort_run_dir: str | None = dataclasses.field(
+        default_factory=_make_default_factory(
+            f"{_env_prefix}__SORT_RUN_DIR", str, default=None
+        )
+    )
     dynamic_planning: DynamicPlanningOptions | None = dataclasses.field(
         default_factory=DynamicPlanningOptions
     )
@@ -1335,6 +1346,8 @@ class StreamingExecutor:
 
         if not isinstance(self.sort_strategy, str):
             raise TypeError("sort_strategy must be a str")
+        if self.sort_run_dir is not None and not isinstance(self.sort_run_dir, str):
+            raise TypeError("sort_run_dir must be a str or None")
         if self.sort_strategy not in ("in-memory", "external"):
             raise ValueError(
                 f"sort_strategy must be 'in-memory' or 'external', got {self.sort_strategy!r}"

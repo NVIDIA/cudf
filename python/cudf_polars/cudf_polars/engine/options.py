@@ -327,6 +327,13 @@ class StreamingOptions:
         Env: ``CUDF_POLARS__EXECUTOR__SORT_STRATEGY``.
         Default: ``"in-memory"``.
         Category: executor.
+    sort_run_dir
+        Directory for the external sort's run pages; defaults to
+        ``disk_spill_dir``. Use a GDS-capable filesystem when the spill
+        directory is not one.
+        Env: ``CUDF_POLARS__EXECUTOR__SORT_RUN_DIR``.
+        Default: ``None`` (``disk_spill_dir``).
+        Category: executor.
     sink_to_directory
         Whether multi-partition sink operations should write to a directory
         rather than a single file. The ``spmd``/``ray``/``dask`` engines
@@ -473,6 +480,9 @@ class StreamingOptions:
     )
     sort_strategy: Literal["in-memory", "external"] | Unspecified = _opt(
         "executor", "CUDF_POLARS__EXECUTOR__SORT_STRATEGY"
+    )
+    sort_run_dir: str | Unspecified | None = _opt(
+        "executor", "CUDF_POLARS__EXECUTOR__SORT_RUN_DIR"
     )
     quent_context: QuentContext | Unspecified | None = _opt(
         "executor",
@@ -905,6 +915,15 @@ class StreamingOptions:
             help=textwrap.dedent("""\
                 Target IO partition size in bytes. 0 = auto.
                 Env: CUDF_POLARS__EXECUTOR__TARGET_PARTITION_SIZE. Built-in default: auto."""),
+        )
+        g.add_argument(
+            "--sort-run-dir",
+            dest="sort_run_dir",
+            default=None,
+            type=str,
+            help=textwrap.dedent("""\
+                Directory for the external sort's run pages (default: the
+                rapidsmpf disk_spill_dir). Env: CUDF_POLARS__EXECUTOR__SORT_RUN_DIR."""),
         )
         g.add_argument(
             "--sort-strategy",

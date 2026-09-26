@@ -72,8 +72,13 @@ DEFAULT_MERGE_FANIN = 16
 # Device budget for one sorted run, relative to the executor's chunk size and
 # to device memory. Derived rather than configured: the partition count is
 # already governed by ``target_partition_size``.
-_BATCH_BYTES_TARGET_MULTIPLE = 4
-_BATCH_BYTES_DEVICE_FRACTION = 0.25
+# One sorted run holds about one partition's worth of rows. Phase A keeps the
+# unpacked batch and its sorted copy resident while the shuffler still owns
+# most of the device budget for the partitions not yet extracted, so a larger
+# multiple (4x, i.e. 32 GiB at an 8 GiB target) ran out of device memory at
+# 3TB on 8 nodes; the standalone reference sort uses 8 GiB batches.
+_BATCH_BYTES_TARGET_MULTIPLE = 1
+_BATCH_BYTES_DEVICE_FRACTION = 0.10
 
 # Lower bound on rows per run page, so a tiny budget (tests, or a very wide
 # table) cannot degenerate into one parquet file per row.

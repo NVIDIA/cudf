@@ -193,6 +193,16 @@ class StreamingOptions:
         Env: ``RAPIDSMPF_SPILL_DEVICE_LIMIT``.
         Default: ``"80%"``.
         Category: rapidsmpf.
+    spill_host_limit
+        Cap on pageable host memory the rapidsmpf BufferResource may use as a
+        spill tier, per GPU (e.g. ``"96GiB"`` or ``"10%"`` of host memory).
+        Only meaningful when the shuffler's spillable memory types include
+        ``host`` (``RAPIDSMPF_SHUFFLER_SPILLABLE_MEM_TYPES=host,disk``): spilled
+        buffers then go to host RAM up to this cap and to disk beyond it.
+        Budget it together with ``pinned_max_pool_size``.
+        Env: ``RAPIDSMPF_SPILL_HOST_LIMIT``.
+        Default: unlimited.
+        Category: rapidsmpf.
     periodic_spill_check
         Interval between spill checks (e.g. ``"1ms"``).
         Env: ``RAPIDSMPF_PERIODIC_SPILL_CHECK``.
@@ -389,6 +399,9 @@ class StreamingOptions:
     )
     spill_device_limit: str | Unspecified = _opt(
         "rapidsmpf", "RAPIDSMPF_SPILL_DEVICE_LIMIT"
+    )
+    spill_host_limit: str | Unspecified = _opt(
+        "rapidsmpf", "RAPIDSMPF_SPILL_HOST_LIMIT"
     )
     periodic_spill_check: str | Unspecified = _opt(
         "rapidsmpf", "RAPIDSMPF_PERIODIC_SPILL_CHECK"
@@ -772,6 +785,17 @@ class StreamingOptions:
             help=textwrap.dedent("""\
                 Interval between periodic spill checks (e.g. "1ms").
                 Env: RAPIDSMPF_PERIODIC_SPILL_CHECK. Built-in default: 1ms."""),
+        )
+        g.add_argument(
+            "--spill-host-limit",
+            dest="spill_host_limit",
+            default=None,
+            type=str,
+            help=textwrap.dedent("""\
+                Cap on host RAM used as a spill tier per GPU (e.g. "96GiB" or
+                "10%%"); takes effect when RAPIDSMPF_SHUFFLER_SPILLABLE_MEM_TYPES
+                includes host. Env: RAPIDSMPF_SPILL_HOST_LIMIT. Built-in
+                default: unlimited."""),
         )
         g.add_argument(
             "--disk-spill-dir",

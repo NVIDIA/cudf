@@ -511,6 +511,28 @@ def test_rapidsmpf_options_disk_spill_dir_cli(tmp_path) -> None:
     assert opts.disk_spill_dir == str(tmp_path)
 
 
+def test_rapidsmpf_options_spill_host_limit() -> None:
+    opts = StreamingOptions(spill_host_limit="96GiB")
+    strings = opts.to_rapidsmpf_options().get_strings()
+    assert strings["spill_host_limit"] == "96GiB"
+    assert "spill_host_limit" not in StreamingOptions().to_rapidsmpf_options().get_strings()
+
+
+def test_rapidsmpf_options_spill_host_limit_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("RAPIDSMPF_SPILL_HOST_LIMIT", "10%")
+    strings = StreamingOptions().to_rapidsmpf_options().get_strings()
+    assert strings["spill_host_limit"] == "10%"
+
+
+def test_rapidsmpf_options_spill_host_limit_cli() -> None:
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    StreamingOptions._add_cli_args(parser)
+    opts = StreamingOptions._from_argparse(parser.parse_args(["--spill-host-limit", "64GiB"]))
+    assert opts.spill_host_limit == "64GiB"
+
+
 def test_executor_options_sort_strategy() -> None:
     opts = StreamingOptions(sort_strategy="external")
     assert opts.to_executor_options()["sort_strategy"] == "external"

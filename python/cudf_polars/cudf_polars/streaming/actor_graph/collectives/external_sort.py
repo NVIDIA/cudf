@@ -83,6 +83,10 @@ _BATCH_BYTES_DEVICE_FRACTION = 0.10
 # Lower bound on rows per run page, so a tiny budget (tests, or a very wide
 # table) cannot degenerate into one parquet file per row.
 _MIN_PAGE_ROWS = 1024
+# Merged output is emitted page by page (~batch/(2*fanin) bytes); the sink
+# writes one file per emitted chunk, which produced ~48k ~8 MB files for a
+# 3TB sort. Coalesce pages to at least this many bytes (or batch/4) first.
+_MIN_COALESCE_BYTES = 256 << 20
 
 
 def _device_total_bytes() -> int | None:
@@ -522,7 +526,36 @@ async def sort_partition(
                 next_runs.append(writer.finish())
             runs = next_runs
             pass_no += 1
-        await merge_runs(context, ir_context, runs, order_keys, emit)
+        # Final pass: coalesce merged pages into sink-sized chunks before emitting.
+        coalesce_bytes = max(_MIN_COALESCE_BYTES, batch_bytes // 4)
+        pending_tables: list[plc.Table] = []
+        pending_bytes = 0
+
+        async def flush_coalesced(s: Stream) -> None:
+            nonlocal pending_tables, pending_bytes
+            if not pending_tables:
+                return
+            if len(pending_tables) == 1:
+                table = pending_tables[0]
+            else:
+                # The concatenated copy is transient: inputs are dropped right after.
+                reservation = await reserve_memory(context, pending_bytes, net_memory_delta=0)
+                with opaque_memory_usage(reservation):
+                    table = plc.concatenate.concatenate(pending_tables, stream=s)
+            pending_tables, pending_bytes = [], 0
+            await emit(table, s)
+
+        async def emit_coalesced(table: plc.Table, s: Stream) -> None:
+            nonlocal pending_bytes
+            if table.num_rows() == 0:
+                return
+            pending_tables.append(table)
+            pending_bytes += table_nbytes(table)
+            if pending_bytes >= coalesce_bytes:
+                await flush_coalesced(s)
+
+        await merge_runs(context, ir_context, runs, order_keys, emit_coalesced)
+        await flush_coalesced(stream)
         return "external"
     finally:
         await ir_context.to_thread(shutil.rmtree, part_dir, ignore_errors=True)

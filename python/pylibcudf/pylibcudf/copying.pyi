@@ -29,6 +29,13 @@ def gather(
     stream: CudaStreamLike | None = None,
     mr: DeviceMemoryResource | None = None,
 ) -> Table: ...
+def gather_every(
+    source_table: Table,
+    step: int,
+    offset: int = 0,
+    stream: CudaStreamLike | None = None,
+    mr: DeviceMemoryResource | None = None,
+) -> Table: ...
 def scatter(
     source: Table | list[Scalar],
     scatter_map: Column,

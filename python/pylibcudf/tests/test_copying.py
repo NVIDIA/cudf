@@ -191,6 +191,28 @@ def test_gather_map_has_nulls(target_table):
         )
 
 
+@pytest.mark.parametrize(
+    "step, offset",
+    [(1, 0), (2, 0), (3, 1), (100, 0), (2, 100)],
+)
+def test_gather_every(target_table, step, offset):
+    pa_target_table, plc_target_table = target_table
+    result = plc.copying.gather_every(plc_target_table, step, offset)
+    expected = pa_target_table.take(
+        pa.array(
+            range(offset, pa_target_table.num_rows, step), type=pa.int32()
+        )
+    )
+    assert_table_eq(expected, result)
+
+
+@pytest.mark.parametrize("step, offset", [(0, 0), (-1, 0), (1, -1)])
+def test_gather_every_invalid_arguments(target_table, step, offset):
+    _, plc_target_table = target_table
+    with cudf_raises(ValueError):
+        plc.copying.gather_every(plc_target_table, step, offset)
+
+
 def _pyarrow_index_to_mask(indices, mask_size):
     # Convert a list of indices to a boolean mask.
     return pc.is_in(pa.array(range(mask_size)), pa.array(indices))

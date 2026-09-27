@@ -58,6 +58,7 @@ __all__ = [
     "copy_range_in_place",
     "empty_like",
     "gather",
+    "gather_every",
     "get_element",
     "reverse",
     "scatter",
@@ -111,6 +112,58 @@ cpdef Table gather(
             c_source_table,
             c_gather_map,
             bounds_policy,
+            _cs,
+            mr.get_mr()
+        )
+
+    return Table.from_libcudf(move(c_result), _stream, mr)
+
+
+cpdef Table gather_every(
+    Table source_table,
+    size_type step,
+    size_type offset=0,
+    object stream: CudaStreamLike | None = None,
+    DeviceMemoryResource mr=None
+):
+    """Select every ``step``-th row of source_table, starting at row ``offset``.
+
+    For details, see :cpp:func:`gather_every`.
+
+    Parameters
+    ----------
+    source_table : Table
+        The table object from which to pull data.
+    step : int
+        Distance between consecutive gathered rows. Must be positive.
+    offset : int, default 0
+        Index of the first row to gather. Must be non-negative.
+    stream : Stream | None
+        CUDA stream on which to perform the operation.
+    mr : DeviceMemoryResource | None
+        Device memory resource used to allocate the returned table's device memory.
+
+    Returns
+    -------
+    pylibcudf.Table
+        Rows ``offset, offset + step, offset + 2 * step, ...`` of source_table.
+
+    Raises
+    ------
+    ValueError
+        If ``step`` is not positive or ``offset`` is negative.
+    """
+    cdef unique_ptr[table] c_result
+    cdef Stream _stream = _get_stream(stream)
+    cdef cudaStream_t _cs = _stream.view().get()
+    mr = _get_memory_resource(mr)
+
+    cdef table_view c_source_table = source_table.view()
+    with nogil:
+        c_result = cpp_copying.gather_every(
+            c_source_table,
+            step,
+            offset,
             _cs,
             mr.get_mr()
         )

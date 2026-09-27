@@ -35,6 +35,14 @@ cdef extern from "cudf/copying.hpp" namespace "cudf" nogil:
         device_async_resource_ref mr
     ) except +libcudf_exception_handler
 
+    cdef unique_ptr[table] gather_every (
+        const table_view& source_table,
+        size_type step,
+        size_type offset,
+        cudaStream_t stream,
+        device_async_resource_ref mr
+    ) except +libcudf_exception_handler
+
     cdef unique_ptr[column] shift(
         const column_view& input,
         size_type offset,

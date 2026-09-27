@@ -3,6 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+#include "cudf/types.hpp"
 #include <cudf_test/base_fixture.hpp>
 #include <cudf_test/column_utilities.hpp>
 #include <cudf_test/column_wrapper.hpp>
@@ -73,23 +74,32 @@ TYPED_TEST(GatherTest, StepIdentityTest)
 
 TYPED_TEST(GatherTest, StepEvenTest)
 {
-  constexpr cudf::size_type source_size{1000};
-  constexpr cudf::size_type result_size{500};
+  std::vector<cudf::size_type> steps_to_check = {2,  5,  10, 100};
+  std::vector<cudf::size_type> offsets_to_check = {0, 100};
 
-  auto data = cuda::counting_iterator{0};
-  cudf::test::fixed_width_column_wrapper<TypeParam> source_column(data, data + source_size);
+  for (cudf::size_type offset : offsets_to_check)
+  {
+    for (cudf::size_type step : steps_to_check)
+    {
+      cudf::size_type source_size{1000};
+      cudf::size_type result_size{(source_size - offset) / step};
 
-  auto reversed_data =
-    cudf::detail::make_counting_transform_iterator(0, [](auto i) { return i * 2; });
+      auto data = cuda::counting_iterator{0};
+      cudf::test::fixed_width_column_wrapper<TypeParam> source_column(data, data + source_size);
 
-  cudf::table_view source_table({source_column});
+      auto reversed_data =
+        cudf::detail::make_counting_transform_iterator(0, [step, offset](auto i) { return i * step + offset; });
 
-  std::unique_ptr<cudf::table> result = cudf::gather_every(source_table, 2);
-  cudf::test::fixed_width_column_wrapper<TypeParam> expect_column(reversed_data,
-                                                                  reversed_data + result_size);
+      cudf::table_view source_table({source_column});
 
-  for (auto i = 0; i < source_table.num_columns(); ++i) {
-    CUDF_TEST_EXPECT_COLUMNS_EQUAL(expect_column, result->view().column(i));
+      std::unique_ptr<cudf::table> result = cudf::gather_every(source_table, step, offset);
+      cudf::test::fixed_width_column_wrapper<TypeParam> expect_column(reversed_data,
+                                                                      reversed_data + result_size);
+
+      for (auto i = 0; i < source_table.num_columns(); ++i) {
+        CUDF_TEST_EXPECT_COLUMNS_EQUAL(expect_column, result->view().column(i));
+      }
+    }
   }
 }
 

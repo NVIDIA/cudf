@@ -15,6 +15,24 @@ constexpr cudf::test::debug_output_level verbosity{cudf::test::debug_output_leve
 
 class MurmurHashTest : public cudf::test::BaseFixture {};
 
+TEST_F(MurmurHashTest, BoolHashed)
+{
+  auto const stream = cudf::get_default_stream();
+  std::vector<uint8_t> const raw{0, 1, 2, 255};
+  auto data      = rmm::device_buffer{raw.data(), raw.size(), stream};
+  auto const col = std::make_unique<cudf::column>(cudf::data_type{cudf::type_id::BOOL8},
+                                                  static_cast<cudf::size_type>(raw.size()),
+                                                  std::move(data),
+                                                  rmm::device_buffer{},
+                                                  0);
+
+  auto const output = cudf::hashing::murmurhash3_x86_32(cudf::table_view({col->view()}));
+
+  auto const expect = cudf::test::fixed_width_column_wrapper<uint32_t>{
+    1364076727u, 3831157163u, 3831157163u, 3831157163u};
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expect, output->view(), verbosity);
+}
+
 TEST_F(MurmurHashTest, MultiValue)
 {
   cudf::test::strings_column_wrapper const strings_col(

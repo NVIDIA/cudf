@@ -49,7 +49,7 @@ template <>
 MurmurHash3_x86_32<bool>::result_type __device__ inline MurmurHash3_x86_32<bool>::operator()(
   bool const& key) const
 {
-  return this->compute(static_cast<uint8_t>(key));
+  return this->compute(static_cast<uint8_t>(key ? 1 : 0));
 }
 
 template <>

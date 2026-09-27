@@ -75,6 +75,9 @@ std::unique_ptr<table> gather_every(table_view const& source_table,
                                     cuda::stream_ref stream,
                                     memory_resources mr)
 {
+  CUDF_EXPECTS(step > 0, "step must be positive", std::invalid_argument);
+  CUDF_EXPECTS(offset >= 0, "offset must be non-negative", std::invalid_argument);
+
   auto const num_rows = source_table.num_rows();
   if (offset >= num_rows) { return empty_like(source_table); }
 

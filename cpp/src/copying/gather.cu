@@ -8,6 +8,7 @@
 #include <cudf/detail/gather.cuh>
 #include <cudf/detail/gather.hpp>
 #include <cudf/detail/indexalator.cuh>
+#include <cudf/detail/iterator.cuh>
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/table/table.hpp>
 #include <cudf/table/table_view.hpp>
@@ -68,6 +69,25 @@ std::unique_ptr<table> gather(table_view const& source_table,
   return detail::gather(source_table, map_col, bounds_policy, neg_indices, stream, mr);
 }
 
+std::unique_ptr<table> gather_every(table_view const& source_table,
+                                    size_type step,
+                                    size_type offset,
+                                    cuda::stream_ref stream,
+                                    memory_resources mr)
+{
+  auto const num_rows = source_table.num_rows();
+  if (offset >= num_rows) { return empty_like(source_table); }
+
+  auto const output_size = 1 + (num_rows - 1 - offset) / step;
+  auto const map_begin = make_counting_transform_iterator(
+    0, cuda::proclaim_return_type<size_type>([step, offset] __device__(size_type i) {
+      return offset + i * step;
+    }));
+
+  return gather(
+    source_table, map_begin, map_begin + output_size, out_of_bounds_policy::DONT_CHECK, stream, mr);
+}
+
 }  // namespace detail
 
 std::unique_ptr<table> gather(table_view const& source_table,
@@ -93,6 +113,16 @@ std::unique_ptr<table> gather(table_view const& source_table,
 {
   CUDF_FUNC_RANGE();
   return detail::gather(source_table, gather_map, bounds_policy, neg_indices, stream, mr);
+}
+
+std::unique_ptr<table> gather_every(table_view const& source_table,
+                                    size_type step,
+                                    size_type offset,
+                                    cuda::stream_ref stream,
+                                    cudf::memory_resources mr)
+{
+  CUDF_FUNC_RANGE();
+  return detail::gather_every(source_table, step, offset, stream, mr);
 }
 
 }  // namespace cudf

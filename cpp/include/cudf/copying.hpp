@@ -121,6 +121,13 @@ std::unique_ptr<table> gather(table_view const& source_table,
                               cuda::stream_ref stream   = cudf::get_default_stream(),
                               cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
+std::unique_ptr<table> gather_every(
+  table_view const& source_table,
+  size_type step,
+  size_type offset          = 0,
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
+
 /**
  * @brief Reverses the rows within a table.
  *

@@ -56,6 +56,43 @@ TYPED_TEST(GatherTest, IdentityTest)
   CUDF_TEST_EXPECT_TABLES_EQUAL(source_table, result->view());
 }
 
+TYPED_TEST(GatherTest, StepIdentityTest)
+{
+  constexpr cudf::size_type source_size{1000};
+
+  auto data = cuda::counting_iterator{0};
+  cudf::test::fixed_width_column_wrapper<TypeParam> source_column(data, data + source_size);
+  cudf::test::fixed_width_column_wrapper<int32_t> gather_map(data, data + source_size);
+
+  cudf::table_view source_table({source_column});
+
+  std::unique_ptr<cudf::table> result = cudf::gather_every(source_table, 1);
+
+  CUDF_TEST_EXPECT_TABLES_EQUAL(source_table, result->view());
+}
+
+TYPED_TEST(GatherTest, StepEvenTest)
+{
+  constexpr cudf::size_type source_size{1000};
+  constexpr cudf::size_type result_size{500};
+
+  auto data = cuda::counting_iterator{0};
+  cudf::test::fixed_width_column_wrapper<TypeParam> source_column(data, data + source_size);
+
+  auto reversed_data =
+    cudf::detail::make_counting_transform_iterator(0, [](auto i) { return i * 2; });
+
+  cudf::table_view source_table({source_column});
+
+  std::unique_ptr<cudf::table> result = cudf::gather_every(source_table, 2);
+  cudf::test::fixed_width_column_wrapper<TypeParam> expect_column(reversed_data,
+                                                                  reversed_data + result_size);
+
+  for (auto i = 0; i < source_table.num_columns(); ++i) {
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(expect_column, result->view().column(i));
+  }
+}
+
 TYPED_TEST(GatherTest, ReverseIdentityTest)
 {
   constexpr cudf::size_type source_size{1000};

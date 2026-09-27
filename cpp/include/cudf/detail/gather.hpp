@@ -44,5 +44,11 @@ std::unique_ptr<table> gather(table_view const& source_table,
                               cuda::stream_ref stream,
                               memory_resources mr);
 
+std::unique_ptr<table> gather_every(table_view const& source_table,
+                                    size_type step,
+                                    size_type offset,
+                                    cuda::stream_ref stream,
+                                    memory_resources mr);
+
 }  // namespace detail
 }  // namespace cudf

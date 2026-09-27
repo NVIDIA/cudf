@@ -99,7 +99,7 @@ TYPED_TEST(ConcatenateListElementsTypedTest, SimpleInputWithNulls)
     {{{1, 2, 3, null}, null_at(3)},
      {{null}, null_at(0)},
      {{null, null, null, null, null}, all_nulls()}},
-    ListsCol::nested({{} /*NULL*/, {} /*NULL*/, {} /*NULL*/}, all_nulls())};
+    {{{} /*NULL*/, {} /*NULL*/, {} /*NULL*/}, all_nulls()}};
 
   // Ignore null list elements.
   {

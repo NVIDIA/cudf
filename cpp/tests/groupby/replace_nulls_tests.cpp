@@ -226,7 +226,7 @@ TYPED_TEST(GroupbyReplaceNullsListsTest, PrecedingFillNested)
            {{{}, {{102, -1}, Mask_t{1, 0}.begin()}}, Mask_t{0, 1}.begin()},
            {},
            {},
-           {{{{}}, Mask_t{0}.begin()}, {}},
+           {{{0}, Mask_t{0}.begin()}, {}},
            {{{-1, 202}, Mask_t{0, 1}.begin()}, {}}},
            Mask_t{0, 1, 1, 0, 0, 1, 1}.begin());
   // clang-format on
@@ -236,7 +236,7 @@ TYPED_TEST(GroupbyReplaceNullsListsTest, PrecedingFillNested)
   // clang-format off
   LCW expect_val({{{{{1, -1, 3}, Mask_t{1, 0, 1}.begin()}, {}}, Mask_t{1, 0}.begin()},
                   {{{{1, -1, 3}, Mask_t{1, 0, 1}.begin()}, {}}, Mask_t{1, 0}.begin()},
-                  {{{{}}, Mask_t{0}.begin()}, {}},
+                  {{{0}, Mask_t{0}.begin()}, {}},
                   {},
                   {{{}, {{102, -1}, Mask_t{1, 0}.begin()}}, Mask_t{0, 1}.begin()},
                   {{{}, {{102, -1}, Mask_t{1, 0}.begin()}}, Mask_t{0, 1}.begin()},
@@ -274,7 +274,7 @@ TYPED_TEST(GroupbyReplaceNullsListsTest, FollowingFillNested)
            {},
            {{{-1, 202}, Mask_t{0, 1}.begin()}, {}},
            {},
-           {{{{}}, Mask_t{0}.begin()}, {}},
+           {{{0}, Mask_t{0}.begin()}, {}},
            {}},
            Mask_t{1, 1, 0, 1, 0, 1, 0}.begin());
   // clang-format on
@@ -283,8 +283,8 @@ TYPED_TEST(GroupbyReplaceNullsListsTest, FollowingFillNested)
 
   // clang-format off
   LCW expect_val({{{{{1, -1, 3}, Mask_t{1, 0, 1}.begin()}, {}}, Mask_t{1, 0}.begin()},
-                 {{{{}}, Mask_t{0}.begin()}, {}},
-                 {{{{}}, Mask_t{0}.begin()}, {}},
+                 {{{0}, Mask_t{0}.begin()}, {}},
+                 {{{0}, Mask_t{0}.begin()}, {}},
                  {{{}, {{102, -1}, Mask_t{1, 0}.begin()}}, Mask_t{0, 1}.begin()},
                  {{{-1, 202}, Mask_t{0, 1}.begin()}, {}},
                  {{{-1, 202}, Mask_t{0, 1}.begin()}, {}},

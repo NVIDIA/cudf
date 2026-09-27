@@ -1408,14 +1408,14 @@ TEST_F(ListsColumnTest, SlicedColumnsWithNulls)
     LCW a{{{{{1, 1, 1}, valids}, {2, 2}},
            {{{3, 3}}, valids},
            {{{10, 9, 16}, valids}, {8, 7, 1}, {{6, 8, 2}, valids}}},
-          {{{}, LCW::nested({{}}, valids), {{6, 6}, {2}}}, valids},
-          {LCW::nested({{}, {}}, valids)},
+          {{{}, {{{}}, valids}, {{6, 6}, {2}}}, valids},
+          {{{{}, {}}, valids}},
           {{}, {}, {{{10, 10, 10}, {{11, 11}, valids}, {12, 12}}, valids}, {}}};
     auto split_a = cudf::split(a, {3});
 
     LCW b{
-      {LCW::nested({{}}, valids)},
-      {{{}, LCW::nested({{}}, valids)}, valids},
+      {{{{}}, valids}},
+      {{{}, {{{}}, valids}}, valids},
       {{{{1, 2, 9}, {}}, {{5, 6, 7, 8, 9}, {0}, {15, 17}}}, valids},
       {{{}}},
     };
@@ -1425,10 +1425,10 @@ TEST_F(ListsColumnTest, SlicedColumnsWithNulls)
       {{{{1, 1, 1}, valids}, {2, 2}},
        {{{3, 3}}, valids},
        {{{10, 9, 16}, valids}, {8, 7, 1}, {{6, 8, 2}, valids}}},
-      {{{}, LCW::nested({{}}, valids), {{6, 6}, {2}}}, valids},
-      {LCW::nested({{}, {}}, valids)},
-      {LCW::nested({{}}, valids)},
-      {{{}, LCW::nested({{}}, valids)}, valids},
+      {{{}, {{{}}, valids}, {{6, 6}, {2}}}, valids},
+      {{{{}, {}}, valids}},
+      {{{{}}, valids}},
+      {{{}, {{{}}, valids}}, valids},
       {{{{1, 2, 9}, {}}, {{5, 6, 7, 8, 9}, {0}, {15, 17}}}, valids},
     };
     auto result0 = cudf::concatenate(std::vector<column_view>({split_a[0], split_b[0]}));
@@ -1438,8 +1438,8 @@ TEST_F(ListsColumnTest, SlicedColumnsWithNulls)
       {{{{1, 1, 1}, valids}, {2, 2}},
        {{{3, 3}}, valids},
        {{{10, 9, 16}, valids}, {8, 7, 1}, {{6, 8, 2}, valids}}},
-      {{{}, LCW::nested({{}}, valids), {{6, 6}, {2}}}, valids},
-      {LCW::nested({{}, {}}, valids)},
+      {{{}, {{{}}, valids}, {{6, 6}, {2}}}, valids},
+      {{{{}, {}}, valids}},
       {{{}}},
     };
     auto result1 = cudf::concatenate(std::vector<column_view>({split_a[0], split_b[1]}));
@@ -1447,8 +1447,8 @@ TEST_F(ListsColumnTest, SlicedColumnsWithNulls)
 
     LCW expected2{
       {{}, {}, {{{10, 10, 10}, {{11, 11}, valids}, {12, 12}}, valids}, {}},
-      {LCW::nested({{}}, valids)},
-      {{{}, LCW::nested({{}}, valids)}, valids},
+      {{{{}}, valids}},
+      {{{}, {{{}}, valids}}, valids},
       {{{{1, 2, 9}, {}}, {{5, 6, 7, 8, 9}, {0}, {15, 17}}}, valids},
     };
     auto result2 = cudf::concatenate(std::vector<column_view>({split_a[1], split_b[0]}));

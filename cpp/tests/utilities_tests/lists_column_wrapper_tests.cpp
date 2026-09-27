@@ -1180,6 +1180,56 @@ TEST_F(ListColumnWrapperTest, ListOfListOfStrings)
   }
 }
 
+TEST_F(ListColumnWrapperTest, NestedEmptyListsWithValidity)
+{
+  using LCW = cudf::test::lists_column_wrapper<int32_t>;
+
+  LCW list{{{{}, {}, {}}, cudf::test::iterators::all_nulls()}};
+  cudf::lists_column_view outer(list);
+  ASSERT_EQ(outer.child().type().id(), cudf::type_id::LIST);
+  EXPECT_EQ(outer.null_count(), 0);
+  cudf::test::fixed_width_column_wrapper<int32_t> outer_offsets{0, 3};
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(outer.offsets(), outer_offsets);
+
+  cudf::lists_column_view inner(outer.child());
+  EXPECT_EQ(inner.size(), 3);
+  EXPECT_EQ(inner.null_count(), 3);
+  cudf::test::fixed_width_column_wrapper<int32_t> inner_offsets{0, 0, 0, 0};
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(inner.offsets(), inner_offsets);
+  EXPECT_EQ(inner.child().type().id(), cudf::type_id::INT32);
+  EXPECT_EQ(inner.child().size(), 0);
+}
+
+TEST_F(ListColumnWrapperTest, NestedSingletonListsWithValidity)
+{
+  using LCW = cudf::test::lists_column_wrapper<int32_t>;
+  using cudf::test::iterators::all_nulls;
+  using cudf::test::iterators::null_at;
+
+  LCW list{{{{1}, {2}}, null_at(1)}, {{}, all_nulls()}, {{{3}}, all_nulls()}};
+  cudf::lists_column_view outer(list);
+  ASSERT_EQ(outer.child().type().id(), cudf::type_id::LIST);
+  cudf::test::fixed_width_column_wrapper<int32_t> outer_offsets{0, 2, 2, 3};
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(outer.offsets(), outer_offsets);
+
+  LCW expected({{1}, {}, {}}, cudf::test::iterators::nulls_at({1, 2}));
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(outer.child(), expected);
+}
+
+TEST_F(ListColumnWrapperTest, NumericLeavesWithConstantValidity)
+{
+  using LCW = cudf::test::lists_column_wrapper<int32_t>;
+  using cudf::test::iterators::all_nulls;
+  using cudf::test::iterators::no_nulls;
+
+  LCW list{{{1}, all_nulls()}, {{2, 3}, no_nulls()}, {{}, all_nulls()}};
+  cudf::lists_column_view view(list);
+  cudf::test::fixed_width_column_wrapper<int32_t> offsets{0, 1, 3, 3};
+  cudf::test::fixed_width_column_wrapper<int32_t> values({1, 2, 3}, {false, true, true});
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(view.offsets(), offsets);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(view.child(), values);
+}
+
 TEST_F(ListColumnWrapperTest, SingletonStringLists)
 {
   using LCW = cudf::test::lists_column_wrapper<cudf::string_view>;

@@ -1704,49 +1704,29 @@ class lists_column_initializer {
   }
 
   template <iterator_like InputIterator>
-  lists_column_initializer(InputIterator begin, InputIterator end)
+  lists_column_initializer(InputIterator begin, std::type_identity_t<InputIterator> end)
     requires(std::is_constructible_v<T, std::iter_reference_t<InputIterator>>)
     : values_(begin, end)
   {
   }
 
   /**
-   * @brief Construct a leaf from scalar values and a validity iterator.
+   * @brief Construct a leaf or nested node with validity.
    *
    * @tparam ValidityIterator Iterator convertible to `bool`
-   * @param values Leaf element values
-   * @param v Validity iterator over `values.size()` elements
+   * @param values Leaf values or child initializers
+   * @param v Validity iterator over the values or child rows
    */
   template <validity_iterator ValidityIterator>
-  lists_column_initializer(std::initializer_list<T> values, ValidityIterator v)
-    requires(!std::is_same_v<T, std::string>)
-    : values_{values}, has_validity_{true}
-  {
-    value_validity_.reserve(values_.size());
-    for (std::size_t i = 0; i < values_.size(); ++i) {
-      value_validity_.push_back(static_cast<bool>(*v++));
-    }
-  }
-
-  template <validity_iterator ValidityIterator>
   lists_column_initializer(lists_column_initializer values, ValidityIterator v)
-    requires(std::is_same_v<T, std::string>)
     : lists_column_initializer(std::move(values).with_validity(v))
-  {
-  }
-
-  template <typename Validity>
-  lists_column_initializer(std::initializer_list<T> values,
-                           std::initializer_list<Validity> validity)
-    requires(!std::is_same_v<T, std::string> && validity_iterator<Validity const*>)
-    : lists_column_initializer(values, validity.begin())
   {
   }
 
   template <typename Validity>
   lists_column_initializer(lists_column_initializer values,
                            std::initializer_list<Validity> validity)
-    requires(std::is_same_v<T, std::string> && validity_iterator<Validity const*>)
+    requires(validity_iterator<Validity const*>)
     : lists_column_initializer(std::move(values), validity.begin())
   {
   }
@@ -1754,11 +1734,9 @@ class lists_column_initializer {
   /**
    * @brief Construct a nested node from child initializers.
    *
-   * This constructor is a template so the non-template leaf
-   * `initializer_list<T>` constructor is preferred for scalar lists such as
-   * `{1, 2, 3}`. Otherwise both overloads are non-templates and constructing
-   * `Init` from an `int` via the nested overload recurses until the stack
-   * overflows.
+   * Scalar values deduce the leaf constructor's element type. Brace-enclosed
+   * child lists cannot deduce that type and instead use this overload's default
+   * `NestedInit`, preserving their nesting.
    *
    * @param children Child list initializers
    */
@@ -1774,13 +1752,6 @@ class lists_column_initializer {
     return lists_column_initializer(children);
   }
 
-  template <validity_iterator ValidityIterator>
-  static lists_column_initializer nested(std::initializer_list<lists_column_initializer> children,
-                                         ValidityIterator v)
-  {
-    return lists_column_initializer(children, v);
-  }
-
   /**
    * @brief Construct a nested node from child initializers and a row-validity iterator.
    *
@@ -1788,27 +1759,11 @@ class lists_column_initializer {
    * @param children Child list initializers
    * @param v Validity iterator over `children.size()` rows
    */
-  template <validity_iterator ValidityIterator, typename NestedInit = lists_column_initializer>
-  lists_column_initializer(std::initializer_list<NestedInit> children, ValidityIterator v)
-    requires(!std::is_same_v<T, std::string> &&
-             std::is_same_v<NestedInit, lists_column_initializer>)
-    : nested_{true}, has_validity_{true}
+  template <validity_iterator ValidityIterator>
+  static lists_column_initializer nested(std::initializer_list<lists_column_initializer> children,
+                                         ValidityIterator v)
   {
-    children_.reserve(children.size());
-    for (auto const& child : children) {
-      children_.push_back(child);
-      children_.back().valid_ = static_cast<bool>(*v++);
-    }
-  }
-
-  template <typename Validity, typename NestedInit = lists_column_initializer>
-  lists_column_initializer(std::initializer_list<NestedInit> children,
-                           std::initializer_list<Validity> validity)
-    requires(!std::is_same_v<T, std::string> &&
-             std::is_same_v<NestedInit, lists_column_initializer> &&
-             validity_iterator<Validity const*>)
-    : lists_column_initializer(children, validity.begin())
-  {
+    return lists_column_initializer(children, v);
   }
 
   /**

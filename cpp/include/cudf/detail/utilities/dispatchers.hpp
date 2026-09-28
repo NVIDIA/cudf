@@ -67,8 +67,7 @@ inline constexpr auto first_value = First;
 template <typename Func>
 auto dispatch_bool(bool value, Func&& func)
 {
-  // Named aliases avoid an NVCC bug that rewrites bool_constant template arguments
-  // as expressions referring to unrelated private types.
+  // Avoid a bug with `std::bool_constant<true>` in NVCC 13.1-13.2, see PR 24290.
   if (value) {
     return func(std::true_type{});
   } else {

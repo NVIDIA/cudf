@@ -8,11 +8,13 @@
 #include <benchmarks/io/cuio_common.hpp>
 #include <benchmarks/io/nvbench_helpers.hpp>
 
+#include <cudf/copying.hpp>
 #include <cudf/io/datasource.hpp>
 #include <cudf/io/experimental/hybrid_scan.hpp>
 #include <cudf/io/parquet.hpp>
 #include <cudf/io/parquet_io_utils.hpp>
 #include <cudf/io/text/byte_range_info.hpp>
+#include <cudf/reduction/distinct_count.hpp>
 #include <cudf/scalar/scalar.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/traits.hpp>
@@ -20,27 +22,38 @@
 
 #include <nvbench/nvbench.cuh>
 
+#include <limits>
 #include <numeric>
+
+namespace {
 
 constexpr cudf::size_type num_cols = 8;
 
-void BM_filter_row_groups_with_dicts_common(nvbench::state& state,
-                                            cudf::type_id dtype,
-                                            data_profile const& table_profile,
-                                            cudf::ast::operation const& filter_expr,
-                                            double average_value_width,
-                                            cudf::size_type cardinality)
+void filter_row_groups_with_dicts_common(nvbench::state& state,
+                                         cudf::type_id dtype,
+                                         data_profile const& table_profile,
+                                         cudf::ast::operation const& filter_expr)
 {
   auto const num_row_groups = static_cast<cudf::size_type>(state.get_int64("num_row_groups"));
   auto constexpr rows_per_row_group = 5'000;  //< Chosen such that it is not ignored by the writer
   auto const num_rows               = num_row_groups * rows_per_row_group;
 
   std::vector<char> parquet_buffer;
+  std::size_t num_dict_entries = 0;
 
   // Write table to parquet
   {
     auto const table =
       create_random_table(cycle_dtypes({dtype}, num_cols), row_count{num_rows}, table_profile);
+
+    // Only the filter column's dictionaries are decoded; each holds its row group's distinct values
+    auto const filter_col = table->get_column(0).view();
+    for (cudf::size_type rg = 0; rg < num_row_groups; ++rg) {
+      auto const rg_col =
+        cudf::slice(filter_col, {rg * rows_per_row_group, (rg + 1) * rows_per_row_group}).front();
+      num_dict_entries +=
+        cudf::distinct_count(rg_col, cudf::null_policy::EXCLUDE, cudf::nan_policy::NAN_IS_VALID);
+    }
 
     cudf::io::parquet_writer_options write_opts =
       cudf::io::parquet_writer_options::builder(cudf::io::sink_info(&parquet_buffer), table->view())
@@ -80,6 +93,9 @@ void BM_filter_row_groups_with_dicts_common(nvbench::state& state,
   auto input_row_group_indices = reader->all_row_groups(read_opts);
   auto dict_page_byte_ranges   = std::vector<cudf::io::text::byte_range_info>{};
 
+  // Must precede `state.exec()`, which derives the `Elem/s` column from this count
+  state.add_element_count(num_dict_entries, "num_dict_entries");
+
   auto mem_stats_logger = cudf::memory_stats_logger();
 
   state.exec(
@@ -110,12 +126,8 @@ void BM_filter_row_groups_with_dicts_common(nvbench::state& state,
       timer.stop();
     });
 
-  auto const time = state.get_summary("nv/cold/time/gpu/mean").get_float64("value");
   state.add_buffer_size(
     mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
-  state.add_element_count(
-    static_cast<double>(cardinality * num_row_groups * average_value_width) / time,
-    "values_per_second");
   auto const total_dict_data_size =
     std::accumulate(dict_page_byte_ranges.begin(),
                     dict_page_byte_ranges.end(),
@@ -128,9 +140,7 @@ template <typename ScalarType>
 void run_dict_page_pruning(nvbench::state& state,
                            cudf::type_id dtype,
                            data_profile const& table_profile,
-                           ScalarType& filter_value,
-                           double average_value_width,
-                           cudf::size_type cardinality)
+                           ScalarType& filter_value)
 {
   auto const is_inline_eval = static_cast<bool>(state.get_int64("is_inline"));
 
@@ -145,14 +155,14 @@ void run_dict_page_pruning(nvbench::state& state,
   auto filter_expr_many_literals =
     cudf::ast::operation(cudf::ast::ast_operator::LOGICAL_OR, filter_expr_few_literals, expr3);
 
-  BM_filter_row_groups_with_dicts_common(
+  filter_row_groups_with_dicts_common(
     state,
     dtype,
     table_profile,
-    is_inline_eval ? filter_expr_few_literals : filter_expr_many_literals,
-    average_value_width,
-    cardinality);
+    is_inline_eval ? filter_expr_few_literals : filter_expr_many_literals);
 }
+
+}  // namespace
 
 void BM_hybrid_scan_dict_page_pruning_string(nvbench::state& state)
 {
@@ -160,38 +170,44 @@ void BM_hybrid_scan_dict_page_pruning_string(nvbench::state& state)
   auto const max_length  = static_cast<cudf::size_type>(state.get_int64("max_length"));
   auto const cardinality = static_cast<cudf::size_type>(state.get_int64("cardinality"));
 
-  auto table_profile = data_profile_builder().cardinality(cardinality);
-  table_profile.distribution(
-    cudf::type_id::STRING, distribution_id::NORMAL, min_length, max_length);
+  auto table_profile =
+    data_profile_builder()
+      .distribution(cudf::type_id::STRING, distribution_id::NORMAL, min_length, max_length)
+      .cardinality(cardinality);
 
   auto filter_value = cudf::string_scalar("000010000");
-  run_dict_page_pruning(state,
-                        cudf::type_id::STRING,
-                        table_profile,
-                        filter_value,
-                        (static_cast<double>(min_length) + static_cast<double>(max_length)) / 2.0,
-                        cardinality);
+  run_dict_page_pruning(state, cudf::type_id::STRING, table_profile, filter_value);
 }
 
 template <cudf::type_id DType>
 void BM_hybrid_scan_dict_page_pruning_fixed_width(nvbench::state& state,
                                                   nvbench::type_list<nvbench::enum_type<DType>>)
 {
-  auto const cardinality = static_cast<cudf::size_type>(state.get_int64("cardinality"));
+  using T = cudf::id_to_type<DType>;
+  static_assert(
+    cudf::is_numeric<T>(),
+    "The filter literal is a cudf::numeric_scalar, so only numeric types are supported");
 
-  using T           = cudf::id_to_type<DType>;
-  auto filter_value = cudf::numeric_scalar<T>(static_cast<T>(0));
+  auto const cardinality   = static_cast<cudf::size_type>(state.get_int64("cardinality"));
+  auto constexpr max_value = std::numeric_limits<T>::max();
 
-  // The dictionary entry width of a fixed-width column is the type width
-  run_dict_page_pruning(state,
-                        DType,
-                        data_profile_builder().cardinality(cardinality),
-                        filter_value,
-                        static_cast<double>(cudf::size_of(cudf::data_type{DType})),
-                        cardinality);
+  auto table_profile = data_profile_builder()
+                         .distribution(DType, distribution_id::UNIFORM, T{0}, max_value)
+                         .cardinality(cardinality);
+
+  // The literal lies inside the value range, so min/max statistics cannot prune any row group
+  auto filter_value = cudf::numeric_scalar<T>(static_cast<T>(max_value / 2));
+  run_dict_page_pruning(state, DType, table_profile, filter_value);
 }
 
-using dict_fixed_width_dtypes = nvbench::enum_type_list<cudf::type_id::INT32, cudf::type_id::INT64>;
+// Separates the two variables behind dictionary pruning cost. INT8, INT16 and INT32 all store as
+// physical INT32 in Parquet, so entry width is constant across them while the value range caps the
+// distinct entries per row group at 128, 32'768 and the row group size respectively. INT64 is the
+// only one that widens the entry, so it isolates width from entry count.
+using dict_fixed_width_dtypes = nvbench::enum_type_list<cudf::type_id::INT8,
+                                                        cudf::type_id::INT16,
+                                                        cudf::type_id::INT32,
+                                                        cudf::type_id::INT64>;
 
 NVBENCH_BENCH(BM_hybrid_scan_dict_page_pruning_string)
   .set_name("hybrid_scan_dict_page_pruning_string")

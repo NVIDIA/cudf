@@ -1445,198 +1445,6 @@ class dictionary_column_wrapper<std::string> : public detail::column_wrapper {
   }
 };
 
-/**
- * @brief True when `T` is convertible to `cuda::stream_ref`.
- */
-template <typename T>
-concept convertible_to_cuda_stream_ref = std::is_convertible_v<T&, cuda::stream_ref>;
-
-/**
- * @brief `column_wrapper` derived class for wrapping columns of structs.
- */
-class structs_column_wrapper : public detail::column_wrapper {
- public:
-  /**
-   * @brief Constructs a struct column from the specified list of pre-constructed child columns.
-   *
-   * The child columns are "adopted" by the struct column constructed here.
-   *
-   * Example usage:
-   * @code{.cpp}
-   * // The following constructs a column for struct< int, string >.
-   * auto child_int_col = fixed_width_column_wrapper<int32_t>{ 1, 2, 3, 4, 5 }.release();
-   * auto child_string_col = string_column_wrapper {"All", "the", "leaves", "are",
-   * "brown"}.release();
-   *
-   * std::vector<std::unique_ptr<column>> child_columns;
-   * child_columns.push_back(std::move(child_int_col));
-   * child_columns.push_back(std::move(child_string_col));
-   *
-   * structs_column_wrapper structs_col{
-   *  child_cols,
-   *  {1,0,1,0,1} // Validity.
-   * };
-   *
-   * auto struct_col {structs_col.release()};
-   * @endcode
-   *
-   * The existing allocations in adopted child columns retain their original memory-resource
-   * provenance. The supplied output resource controls the struct null mask and any child
-   * allocations created while sanitizing null struct rows.
-   *
-   * To pass an explicit stream/mr with no parent nulls, pass an empty validity:
-   * `structs_column_wrapper(std::move(children), {}, stream, mr)`.
-   *
-   * @param child_columns The vector of pre-constructed child columns
-   * @param validity The vector of bools representing the column validity values
-   * @param stream CUDA stream used for device memory operations
-   * @param mr Memory resources used for new allocations owned by the returned column
-   */
-  structs_column_wrapper(std::vector<std::unique_ptr<cudf::column>>&& child_columns,
-                         std::vector<bool> const& validity = {},
-                         cuda::stream_ref stream           = cudf::test::get_default_stream(),
-                         cudf::memory_resources mr = cudf::get_current_device_resource_ref())
-  {
-    init(std::move(child_columns), validity, stream, mr);
-  }
-
-  /**
-   * @brief Constructs a struct column from the list of column wrappers for child columns.
-   *
-   * Example usage:
-   * @code{.cpp}
-   * // The following constructs a column for struct< int, string >.
-   * fixed_width_column_wrapper<int32_t> child_int_col_wrapper{ 1, 2, 3, 4, 5 };
-   * string_column_wrapper child_string_col_wrapper {"All", "the", "leaves", "are", "brown"};
-   *
-   * structs_column_wrapper structs_col{
-   *  {child_int_col_wrapper, child_string_col_wrapper}
-   *  {1,0,1,0,1} // Validity.
-   * };
-   *
-   * auto struct_col {structs_col.release()};
-   * @endcode
-   *
-   * Child wrappers are deep-copied, so all allocations in the returned children use the supplied
-   * output resource. The source wrappers retain their original allocations.
-   *
-   * To pass an explicit stream/mr with no parent nulls, pass an empty validity:
-   * `structs_column_wrapper({wrappers}, {}, stream, mr)`.
-   *
-   * @param child_column_wrappers The list of child column wrappers
-   * @param validity The vector of bools representing the column validity values
-   * @param stream CUDA stream used for device memory operations
-   * @param mr Memory resources used to allocate the returned column
-   */
-  structs_column_wrapper(
-    std::initializer_list<std::reference_wrapper<detail::column_wrapper>> child_column_wrappers,
-    std::vector<bool> const& validity = {},
-    cuda::stream_ref stream           = cudf::test::get_default_stream(),
-    cudf::memory_resources mr         = cudf::get_current_device_resource_ref())
-  {
-    std::vector<std::unique_ptr<cudf::column>> child_columns;
-    child_columns.reserve(child_column_wrappers.size());
-    std::transform(child_column_wrappers.begin(),
-                   child_column_wrappers.end(),
-                   std::back_inserter(child_columns),
-                   [&](auto const& column_wrapper) {
-                     return std::make_unique<cudf::column>(
-                       column_wrapper.get(), stream, mr.get_output_mr());
-                   });
-    init(std::move(child_columns), validity, stream, mr);
-  }
-
-  /**
-   * @brief Constructs a struct column from the list of column wrappers for child columns.
-   *
-   * Example usage:
-   * @code{.cpp}
-   * // The following constructs a column for struct< int, string >.
-   * fixed_width_column_wrapper<int32_t> child_int_col_wrapper{ 1, 2, 3, 4, 5 };
-   * string_column_wrapper child_string_col_wrapper {"All", "the", "leaves", "are", "brown"};
-   *
-   * structs_column_wrapper structs_col{
-   *  {child_int_col_wrapper, child_string_col_wrapper}
-   *  cudf::detail::make_counting_transform_iterator(0, [](auto i){ return i%2; }) // Validity.
-   * };
-   *
-   * auto struct_col {structs_col.release()};
-   * @endcode
-   *
-   * @param child_column_wrappers The list of child column wrappers
-   * @param validity_iter Iterator returning the per-row validity bool
-   * @param stream CUDA stream used for device memory operations
-   * @param mr Memory resources used to allocate the returned column
-   */
-  template <typename V>
-  structs_column_wrapper(
-    std::initializer_list<std::reference_wrapper<detail::column_wrapper>> child_column_wrappers,
-    V validity_iter,
-    cuda::stream_ref stream   = cudf::test::get_default_stream(),
-    cudf::memory_resources mr = cudf::get_current_device_resource_ref())
-    requires(!convertible_to_cuda_stream_ref<V>)
-  {
-    std::vector<std::unique_ptr<cudf::column>> child_columns;
-    child_columns.reserve(child_column_wrappers.size());
-    std::transform(child_column_wrappers.begin(),
-                   child_column_wrappers.end(),
-                   std::back_inserter(child_columns),
-                   [&](auto const& column_wrapper) {
-                     return std::make_unique<cudf::column>(
-                       column_wrapper.get(), stream, mr.get_output_mr());
-                   });
-    init(std::move(child_columns), validity_iter, stream, mr);
-  }
-
- private:
-  void init(std::vector<std::unique_ptr<cudf::column>>&& child_columns,
-            std::vector<bool> const& validity,
-            cuda::stream_ref stream,
-            cudf::memory_resources mr)
-  {
-    size_type num_rows = child_columns.empty() ? 0 : child_columns[0]->size();
-
-    CUDF_EXPECTS(std::all_of(child_columns.begin(),
-                             child_columns.end(),
-                             [&](auto const& p_column) { return p_column->size() == num_rows; }),
-                 "All struct member columns must have the same row count.");
-
-    CUDF_EXPECTS(validity.size() <= 0 || static_cast<size_type>(validity.size()) == num_rows,
-                 "Validity buffer must have as many elements as rows in the struct column.");
-
-    auto [null_mask, null_count] = [&] {
-      if (validity.size() <= 0) return std::make_pair(rmm::device_buffer{}, cudf::size_type{0});
-      return cudf::test::detail::make_null_mask(validity.begin(), validity.end(), stream, mr);
-    }();
-
-    wrapped = cudf::make_structs_column(num_rows,
-                                        std::move(child_columns),
-                                        null_count,
-                                        std::move(null_mask),
-                                        stream,
-                                        mr.get_output_mr());
-  }
-
-  template <typename V>
-  void init(std::vector<std::unique_ptr<cudf::column>>&& child_columns,
-            V validity_iterator,
-            cuda::stream_ref stream,
-            cudf::memory_resources mr)
-  {
-    size_type const num_rows = child_columns.empty() ? 0 : child_columns[0]->size();
-
-    CUDF_EXPECTS(std::all_of(child_columns.begin(),
-                             child_columns.end(),
-                             [&](auto const& p_column) { return p_column->size() == num_rows; }),
-                 "All struct member columns must have the same row count.");
-
-    std::vector<bool> validity(num_rows);
-    std::copy(validity_iterator, validity_iterator + num_rows, validity.begin());
-
-    init(std::move(child_columns), validity, stream, mr);
-  }
-};
-
 //! @cond Doxygen_Suppress
 
 // Forward declaration for lists_column_initializer
@@ -2498,6 +2306,198 @@ class lists_column_wrapper : public detail::column_wrapper {
 };
 
 //! @endcond
+
+/**
+ * @brief True when `T` is convertible to `cuda::stream_ref`.
+ */
+template <typename T>
+concept convertible_to_cuda_stream_ref = std::is_convertible_v<T&, cuda::stream_ref>;
+
+/**
+ * @brief `column_wrapper` derived class for wrapping columns of structs.
+ */
+class structs_column_wrapper : public detail::column_wrapper {
+ public:
+  /**
+   * @brief Constructs a struct column from the specified list of pre-constructed child columns.
+   *
+   * The child columns are "adopted" by the struct column constructed here.
+   *
+   * Example usage:
+   * @code{.cpp}
+   * // The following constructs a column for struct< int, string >.
+   * auto child_int_col = fixed_width_column_wrapper<int32_t>{ 1, 2, 3, 4, 5 }.release();
+   * auto child_string_col = string_column_wrapper {"All", "the", "leaves", "are",
+   * "brown"}.release();
+   *
+   * std::vector<std::unique_ptr<column>> child_columns;
+   * child_columns.push_back(std::move(child_int_col));
+   * child_columns.push_back(std::move(child_string_col));
+   *
+   * structs_column_wrapper structs_col{
+   *  child_cols,
+   *  {1,0,1,0,1} // Validity.
+   * };
+   *
+   * auto struct_col {structs_col.release()};
+   * @endcode
+   *
+   * The existing allocations in adopted child columns retain their original memory-resource
+   * provenance. The supplied output resource controls the struct null mask and any child
+   * allocations created while sanitizing null struct rows.
+   *
+   * To pass an explicit stream/mr with no parent nulls, pass an empty validity:
+   * `structs_column_wrapper(std::move(children), {}, stream, mr)`.
+   *
+   * @param child_columns The vector of pre-constructed child columns
+   * @param validity The vector of bools representing the column validity values
+   * @param stream CUDA stream used for device memory operations
+   * @param mr Memory resources used for new allocations owned by the returned column
+   */
+  structs_column_wrapper(std::vector<std::unique_ptr<cudf::column>>&& child_columns,
+                         std::vector<bool> const& validity = {},
+                         cuda::stream_ref stream           = cudf::test::get_default_stream(),
+                         cudf::memory_resources mr = cudf::get_current_device_resource_ref())
+  {
+    init(std::move(child_columns), validity, stream, mr);
+  }
+
+  /**
+   * @brief Constructs a struct column from the list of column wrappers for child columns.
+   *
+   * Example usage:
+   * @code{.cpp}
+   * // The following constructs a column for struct< int, string >.
+   * fixed_width_column_wrapper<int32_t> child_int_col_wrapper{ 1, 2, 3, 4, 5 };
+   * string_column_wrapper child_string_col_wrapper {"All", "the", "leaves", "are", "brown"};
+   *
+   * structs_column_wrapper structs_col{
+   *  {child_int_col_wrapper, child_string_col_wrapper}
+   *  {1,0,1,0,1} // Validity.
+   * };
+   *
+   * auto struct_col {structs_col.release()};
+   * @endcode
+   *
+   * Child wrappers are deep-copied, so all allocations in the returned children use the supplied
+   * output resource. The source wrappers retain their original allocations.
+   *
+   * To pass an explicit stream/mr with no parent nulls, pass an empty validity:
+   * `structs_column_wrapper({wrappers}, {}, stream, mr)`.
+   *
+   * @param child_column_wrappers The list of child column wrappers
+   * @param validity The vector of bools representing the column validity values
+   * @param stream CUDA stream used for device memory operations
+   * @param mr Memory resources used to allocate the returned column
+   */
+  structs_column_wrapper(
+    std::initializer_list<std::reference_wrapper<detail::column_wrapper>> child_column_wrappers,
+    std::vector<bool> const& validity = {},
+    cuda::stream_ref stream           = cudf::test::get_default_stream(),
+    cudf::memory_resources mr         = cudf::get_current_device_resource_ref())
+  {
+    std::vector<std::unique_ptr<cudf::column>> child_columns;
+    child_columns.reserve(child_column_wrappers.size());
+    std::transform(child_column_wrappers.begin(),
+                   child_column_wrappers.end(),
+                   std::back_inserter(child_columns),
+                   [&](auto const& column_wrapper) {
+                     return std::make_unique<cudf::column>(
+                       column_wrapper.get(), stream, mr.get_output_mr());
+                   });
+    init(std::move(child_columns), validity, stream, mr);
+  }
+
+  /**
+   * @brief Constructs a struct column from the list of column wrappers for child columns.
+   *
+   * Example usage:
+   * @code{.cpp}
+   * // The following constructs a column for struct< int, string >.
+   * fixed_width_column_wrapper<int32_t> child_int_col_wrapper{ 1, 2, 3, 4, 5 };
+   * string_column_wrapper child_string_col_wrapper {"All", "the", "leaves", "are", "brown"};
+   *
+   * structs_column_wrapper structs_col{
+   *  {child_int_col_wrapper, child_string_col_wrapper}
+   *  cudf::detail::make_counting_transform_iterator(0, [](auto i){ return i%2; }) // Validity.
+   * };
+   *
+   * auto struct_col {structs_col.release()};
+   * @endcode
+   *
+   * @param child_column_wrappers The list of child column wrappers
+   * @param validity_iter Iterator returning the per-row validity bool
+   * @param stream CUDA stream used for device memory operations
+   * @param mr Memory resources used to allocate the returned column
+   */
+  template <typename V>
+  structs_column_wrapper(
+    std::initializer_list<std::reference_wrapper<detail::column_wrapper>> child_column_wrappers,
+    V validity_iter,
+    cuda::stream_ref stream   = cudf::test::get_default_stream(),
+    cudf::memory_resources mr = cudf::get_current_device_resource_ref())
+    requires(!convertible_to_cuda_stream_ref<V>)
+  {
+    std::vector<std::unique_ptr<cudf::column>> child_columns;
+    child_columns.reserve(child_column_wrappers.size());
+    std::transform(child_column_wrappers.begin(),
+                   child_column_wrappers.end(),
+                   std::back_inserter(child_columns),
+                   [&](auto const& column_wrapper) {
+                     return std::make_unique<cudf::column>(
+                       column_wrapper.get(), stream, mr.get_output_mr());
+                   });
+    init(std::move(child_columns), validity_iter, stream, mr);
+  }
+
+ private:
+  void init(std::vector<std::unique_ptr<cudf::column>>&& child_columns,
+            std::vector<bool> const& validity,
+            cuda::stream_ref stream,
+            cudf::memory_resources mr)
+  {
+    size_type num_rows = child_columns.empty() ? 0 : child_columns[0]->size();
+
+    CUDF_EXPECTS(std::all_of(child_columns.begin(),
+                             child_columns.end(),
+                             [&](auto const& p_column) { return p_column->size() == num_rows; }),
+                 "All struct member columns must have the same row count.");
+
+    CUDF_EXPECTS(validity.size() <= 0 || static_cast<size_type>(validity.size()) == num_rows,
+                 "Validity buffer must have as many elements as rows in the struct column.");
+
+    auto [null_mask, null_count] = [&] {
+      if (validity.size() <= 0) return std::make_pair(rmm::device_buffer{}, cudf::size_type{0});
+      return cudf::test::detail::make_null_mask(validity.begin(), validity.end(), stream, mr);
+    }();
+
+    wrapped = cudf::make_structs_column(num_rows,
+                                        std::move(child_columns),
+                                        null_count,
+                                        std::move(null_mask),
+                                        stream,
+                                        mr.get_output_mr());
+  }
+
+  template <typename V>
+  void init(std::vector<std::unique_ptr<cudf::column>>&& child_columns,
+            V validity_iterator,
+            cuda::stream_ref stream,
+            cudf::memory_resources mr)
+  {
+    size_type const num_rows = child_columns.empty() ? 0 : child_columns[0]->size();
+
+    CUDF_EXPECTS(std::all_of(child_columns.begin(),
+                             child_columns.end(),
+                             [&](auto const& p_column) { return p_column->size() == num_rows; }),
+                 "All struct member columns must have the same row count.");
+
+    std::vector<bool> validity(num_rows);
+    std::copy(validity_iterator, validity_iterator + num_rows, validity.begin());
+
+    init(std::move(child_columns), validity, stream, mr);
+  }
+};
 
 }  // namespace test
 }  // namespace CUDF_EXPORT cudf

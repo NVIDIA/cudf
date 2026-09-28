@@ -1,5 +1,7 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+
+from collections.abc import Callable
 
 import numpy as np
 import pyarrow as pa
@@ -59,6 +61,75 @@ def test_cross_join(left, right):
 
 
 sentinel = np.iinfo(np.int32).min
+
+
+@pytest.mark.parametrize(
+    "join_type,expect_left,expect_right",
+    [
+        (plc.join.HashJoin.inner_join, [0, 1], [2, 3]),
+        (
+            plc.join.HashJoin.left_join,
+            [0, 1, 2, 3],
+            [sentinel, sentinel, 2, 3],
+        ),
+        (
+            plc.join.HashJoin.full_join,
+            [sentinel, sentinel, sentinel, 0, 1, 2, 3],
+            [sentinel, sentinel, 0, 1, 2, 3, 4],
+        ),
+    ],
+    ids=["inner", "left", "full"],
+)
+def test_hash_join(
+    left: pa.Table,
+    right: pa.Table,
+    join_type: Callable[
+        [plc.join.HashJoin, plc.Table], tuple[plc.Column, plc.Column]
+    ],
+    expect_left: list[int | None],
+    expect_right: list[int | None],
+):
+    d_left = plc.Table.from_arrow(left)
+    d_right = plc.Table.from_arrow(right)
+
+    joiner = plc.join.HashJoin(
+        plc.Table(d_right.columns()[:1]),
+        has_nulls=plc.join.NullableJoin.YES,
+        compare_nulls=plc.types.NullEquality.EQUAL,
+    )
+
+    lg, rg = join_type(joiner, plc.Table(d_left.columns()[:1]))
+    got_left = sorted(lg.to_pylist())
+    got_right = sorted(rg.to_pylist())
+    assert got_left == expect_left
+    assert got_right == expect_right
+
+
+@pytest.mark.parametrize(
+    "join_type,expect",
+    [
+        (plc.join.FilteredJoin.semi_join, [0, 1]),
+        (plc.join.FilteredJoin.anti_join, [2, 3]),
+    ],
+    ids=["semi", "anti"],
+)
+def test_filtered_join(
+    left: pa.Table,
+    right: pa.Table,
+    join_type: Callable[[plc.join.FilteredJoin, plc.Table], plc.Column],
+    expect: list[int | None],
+):
+    d_left = plc.Table.from_arrow(left)
+    d_right = plc.Table.from_arrow(right)
+
+    joiner = plc.join.FilteredJoin(
+        plc.Table(d_right.columns()[:1]),
+        compare_nulls=plc.types.NullEquality.EQUAL,
+    )
+
+    lg = join_type(joiner, plc.Table(d_left.columns()[:1]))
+    got = sorted(lg.to_pylist())
+    assert got == expect
 
 
 @pytest.mark.parametrize(

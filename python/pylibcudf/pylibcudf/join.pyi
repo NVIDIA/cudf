@@ -1,13 +1,18 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from rmm.pylibrmm.memory_resource import DeviceMemoryResource
+from enum import IntEnum
 
 from pylibcudf.column import Column
 from pylibcudf.expressions import Expression
 from pylibcudf.table import Table
 from pylibcudf.types import NullEquality
 from pylibcudf.utils import CudaStreamLike
+
+class NullableJoin(IntEnum):
+    NO = ...
+    YES = ...
 
 def inner_join(
     left_keys: Table,
@@ -140,9 +145,10 @@ class FilteredJoin:
     def __init__(
         self,
         right: Table,
-        compare_nulls: NullEquality,
+        compare_nulls: NullEquality = ...,
         load_factor: float = ...,
         stream: CudaStreamLike | None = None,
+        mr: DeviceMemoryResource | None = None,
     ) -> None: ...
     def semi_join(
         self,
@@ -156,3 +162,32 @@ class FilteredJoin:
         stream: CudaStreamLike | None = None,
         mr: DeviceMemoryResource | None = None,
     ) -> Column: ...
+
+class HashJoin:
+    def __init__(
+        self,
+        right: Table,
+        has_nulls: NullableJoin = ...,
+        compare_nulls: NullEquality = ...,
+        load_factor: float = ...,
+        stream: CudaStreamLike | None = None,
+        mr: DeviceMemoryResource | None = None,
+    ) -> None: ...
+    def inner_join(
+        self,
+        left: Table,
+        stream: CudaStreamLike | None = None,
+        mr: DeviceMemoryResource | None = None,
+    ) -> tuple[Column, Column]: ...
+    def left_join(
+        self,
+        left: Table,
+        stream: CudaStreamLike | None = None,
+        mr: DeviceMemoryResource | None = None,
+    ) -> tuple[Column, Column]: ...
+    def full_join(
+        self,
+        left: Table,
+        stream: CudaStreamLike | None = None,
+        mr: DeviceMemoryResource | None = None,
+    ) -> tuple[Column, Column]: ...

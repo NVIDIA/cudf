@@ -5,7 +5,9 @@
 
 #include <cudf/column/column_device_view_base.cuh>
 #include <cudf/detail/row_ir/opcode.hpp>
+#include <cudf/detail/utilities/cuda.cuh>
 #include <cudf/detail/utilities/grid_1d.cuh>
+#include <cudf/detail/utilities/integer_utils.hpp>
 #include <cudf/errc.hpp>
 #include <cudf/strings/string_view.cuh>
 #include <cudf/types.hpp>
@@ -68,26 +70,26 @@ __device__ void transform_kernel(size_type row_size,
   auto stride       = detail::grid_1d::grid_stride();
   auto thread_error = errc::SUCCESS;
 
-  for (auto row = start; row < row_size; row += stride) {
-    auto operation = [&]<typename Args>(Args args) {
-      // TODO: static assert invocable
-      auto func = [&](auto... a) {
-        if constexpr (!cuda::std::is_void_v<decltype(GENERIC_TRANSFORM_OP(a...))>) {
-          return static_cast<cudf::errc>(GENERIC_TRANSFORM_OP(a...));
-        } else {
-          (void)GENERIC_TRANSFORM_OP(a...);
-          return errc::SUCCESS;
-        }
-      };
-
-      if constexpr (has_user_data) {
-        return cuda::std::apply(func, cuda::std::tuple_cat(cuda::std::tuple{user_data, row}, args));
+  auto operation = [&]<typename Args>(thread_index_type row, Args args) {
+    // TODO: static assert invocable
+    auto func = [&](auto... a) {
+      if constexpr (!cuda::std::is_void_v<decltype(GENERIC_TRANSFORM_OP(a...))>) {
+        return static_cast<cudf::errc>(GENERIC_TRANSFORM_OP(a...));
       } else {
-        return cuda::std::apply(func, args);
+        (void)GENERIC_TRANSFORM_OP(a...);
+        return errc::SUCCESS;
       }
     };
 
-    if constexpr (!is_null_aware) {
+    if constexpr (has_user_data) {
+      return cuda::std::apply(func, cuda::std::tuple_cat(cuda::std::tuple{user_data, row}, args));
+    } else {
+      return cuda::std::apply(func, args);
+    }
+  };
+
+  if constexpr (!is_null_aware) {
+    for (auto row = start; row < row_size; row += stride) {
       if (stencil != nullptr && !bit_is_set(stencil, row)) { continue; }
 
       auto ins = InputAccessors::map(
@@ -99,16 +101,21 @@ __device__ void transform_kernel(size_type row_size,
       auto out_ptrs =
         cuda::std::apply([&](auto&... args) { return cuda::std::tuple{&args...}; }, outs);
 
-      auto row_error = operation(cuda::std::tuple_cat(out_ptrs, ins));
+      auto row_error = operation(row, cuda::std::tuple_cat(out_ptrs, ins));
 
       OutputAccessors::map([&]<typename... A>() {
         (A::assign(output_cols, row, cuda::std::get<A::index>(outs)), ...);
       });
 
       thread_error = cuda::std::max(thread_error, row_error);
+    }
+  } else {
+    // Keep every lane in a warp on the same loop iteration when writing validity.
+    auto warp_padded_size = util::round_up_safe<thread_index_type>(row_size, detail::warp_size);
 
-    } else {
-      auto active_mask = __ballot_sync(__activemask(), row < row_size);
+    for (auto row = start; row < warp_padded_size; row += stride) {
+      auto active_mask = __ballot_sync(0xffff'ffffu, row < row_size);
+      if (row >= row_size) { continue; }
 
       auto ins = InputAccessors::map(
         [&]<typename... A>() { return cuda::std::tuple{A::nullable_element(input_cols, row)...}; });
@@ -119,7 +126,7 @@ __device__ void transform_kernel(size_type row_size,
       auto out_ptrs =
         cuda::std::apply([&](auto&... args) { return cuda::std::tuple{&args...}; }, outs);
 
-      auto row_error = operation(cuda::std::tuple_cat(out_ptrs, ins));
+      auto row_error = operation(row, cuda::std::tuple_cat(out_ptrs, ins));
 
       OutputAccessors::map([&]<typename... A>() {
         (A::assign(output_cols, row, *cuda::std::get<A::index>(outs)), ...);

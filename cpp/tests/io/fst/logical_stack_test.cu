@@ -9,11 +9,12 @@
 #include <cudf_test/testing_main.hpp>
 
 #include <cudf/types.hpp>
+#include <cudf/utilities/error.hpp>
 
-#include <rmm/cuda_stream.hpp>
 #include <rmm/device_uvector.hpp>
 
 #include <cuda/stream>
+#include <cuda_runtime_api.h>
 
 #include <src/io/fst/logical_stack.cuh>
 
@@ -25,6 +26,13 @@
 
 namespace {
 namespace fst = cudf::io::fst;
+
+cuda::stream make_stream()
+{
+  int device{};
+  CUDF_CUDA_TRY(cudaGetDevice(&device));
+  return cuda::stream{cuda::device_ref{device}};
+}
 
 /**
  * @brief Generates the sparse representation of stack operations to feed into the logical
@@ -153,8 +161,8 @@ TEST_F(LogicalStackTest, GroundTruth)
   constexpr SymbolT read_symbol = 'x';
 
   // Prepare cuda stream for data transfers & kernels
-  rmm::cuda_stream stream{};
-  cuda::stream_ref stream_view{stream.value()};
+  auto stream = make_stream();
+  cuda::stream_ref stream_view{stream.get()};
 
   // Test input,
   std::string input = R"(  {)"
@@ -200,13 +208,13 @@ TEST_F(LogicalStackTest, GroundTruth)
                                 stack_symbols.data(),
                                 stack_symbols.size() * sizeof(SymbolT),
                                 cudaMemcpyDefault,
-                                stream.value()));
+                                stream.get()));
 
   CUDF_CUDA_TRY(cudaMemcpyAsync(d_stack_op_indexes.data(),
                                 stack_op_indexes.data(),
                                 stack_op_indexes.size() * sizeof(SymbolOffsetT),
                                 cudaMemcpyDefault,
-                                stream.value()));
+                                stream.get()));
 
   // Run algorithm
   fst::sparse_stack_op_to_top_of_stack<fst::stack_op_support::NO_RESET_SUPPORT, StackLevelT>(
@@ -217,7 +225,7 @@ TEST_F(LogicalStackTest, GroundTruth)
     empty_stack_symbol,
     read_symbol,
     string_size,
-    stream.value());
+    stream.get());
 
   // Async copy results from device to host
   top_of_stack_gpu.device_to_host_async(stream_view);
@@ -232,7 +240,7 @@ TEST_F(LogicalStackTest, GroundTruth)
                   std::back_inserter(top_of_stack_cpu));
 
   // Make sure results have been copied back to host
-  stream.synchronize();
+  stream.sync();
 
   // Verify results
   ASSERT_EQ(string_size, top_of_stack_cpu.size());

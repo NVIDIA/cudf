@@ -5,14 +5,16 @@
 #pragma once
 
 #include <cudf/hashing.hpp>
-#include <cudf/utilities/default_stream.hpp>
-#include <cudf/utilities/memory_resource.hpp>
+#include <cudf/types.hpp>
 
-#include <cuda/stream>
+#include <rmm/resource_ref.hpp>
+
+#include <cuda/stream_ref>
 
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <memory>
 
 namespace cudf {
 namespace hashing::detail {
@@ -21,6 +23,11 @@ std::unique_ptr<column> murmurhash3_x86_32(table_view const& input,
                                            uint32_t seed,
                                            cuda::stream_ref,
                                            rmm::device_async_resource_ref mr);
+
+std::unique_ptr<column> spark_murmurhash3_x86_32(table_view const& input,
+                                                 uint32_t seed,
+                                                 cuda::stream_ref,
+                                                 rmm::device_async_resource_ref mr);
 
 std::unique_ptr<table> murmurhash3_x64_128(table_view const& input,
                                            uint64_t seed,

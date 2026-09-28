@@ -20,6 +20,69 @@
 
 namespace cudf_streaming {
 
+namespace {
+
+/**
+ * @brief Pack an available table chunk into host or pinned host memory.
+ *
+ * @param chunk The available table chunk to pack.
+ * @param reservation Host or pinned host memory reservation.
+ * @param spill Whether the table is leaving device memory, in which case it is
+ * recorded as a spill.
+ * @return A new, unavailable `table_chunk` holding the packed table.
+ */
+table_chunk pack_into_host(table_chunk const& chunk,
+                           rapidsmpf::MemoryReservation& reservation,
+                           bool spill)
+{
+  rapidsmpf::BufferResource* br = reservation.br();
+
+  if (reservation.mem_type() == rapidsmpf::MemoryType::PINNED_HOST) {
+    rapidsmpf::StreamOrderedTiming timing{chunk.stream(), br->statistics()};
+
+    auto packed_pinned = cudf::pack(chunk.table_view(), chunk.stream(), br->pinned_mr());
+    auto nbytes        = packed_pinned.gpu_data->size();
+
+    br->statistics()->record_copy(
+      rapidsmpf::MemoryType::DEVICE, rapidsmpf::MemoryType::PINNED_HOST, nbytes, std::move(timing));
+    // update the provided `reservation`
+    br->release(reservation, nbytes);
+    // The data leaves device memory here rather than through `BufferResource`, so a
+    // spill is recorded by handing the buffer a token. An empty table packs to a
+    // default-constructed `device_buffer`, which ignores the pinned resource and frees
+    // nothing, so it gets none.
+    auto spill_token =
+      spill && nbytes > 0 ? std::make_shared<rapidsmpf::SpillTrackToken>() : nullptr;
+    auto host_buffer =
+      br->move(std::move(packed_pinned.gpu_data), chunk.stream(), std::move(spill_token));
+    return table_chunk(std::make_unique<rapidsmpf::PackedData>(std::move(packed_pinned.metadata),
+                                                               std::move(host_buffer)));
+  }
+
+  // We use libcudf's pack() to serialize `table_view()` into a packed_columns and then
+  // move the packed_columns' gpu_data to a new host buffer.
+  // TODO: use `cudf::chunked_pack()` with a bounce buffer. Currently, `cudf::pack()`
+  // allocates device memory we haven't reserved.
+  auto packed_columns = cudf::pack(chunk.table_view(), chunk.stream(), br->device_mr());
+  auto packed_data    = std::make_unique<rapidsmpf::PackedData>(
+    std::move(packed_columns.metadata),
+    br->move(std::move(packed_columns.gpu_data), chunk.stream()));
+  if (spill) {
+    // `BufferResource::move` records leaving device memory as a spill.
+    packed_data->data = br->move(std::move(packed_data->data), reservation);
+  } else {
+    // Copied rather than moved, since moving the intermediate buffer out of device
+    // memory would be recorded as a spill.
+    auto const nbytes = packed_data->data->size;
+    auto host         = br->make_buffer(nbytes, chunk.stream(), reservation);
+    rapidsmpf::buffer_copy(br->statistics(), *host, *packed_data->data, nbytes);
+    packed_data->data = std::move(host);
+  }
+  return table_chunk(std::move(packed_data));
+}
+
+}  // namespace
+
 table_chunk::table_chunk(std::unique_ptr<cudf::table> table, cuda::stream_ref stream)
   : table_{std::move(table)}, stream_{stream}, is_spillable_{true}
 {
@@ -178,45 +241,8 @@ table_chunk table_chunk::copy(rapidsmpf::MemoryReservation& reservation) const
         return table_chunk(std::move(table), stream());
       }
       case rapidsmpf::MemoryType::PINNED_HOST:  // Case 1b.
-      {
-        rapidsmpf::StreamOrderedTiming timing{stream(), br->statistics()};
-
-        // use cudf pack with pinned mr
-        auto packed_pinned = cudf::pack(table_view(), stream(), br->pinned_mr());
-        auto nbytes        = packed_pinned.gpu_data->size();
-
-        br->statistics()->record_copy(rapidsmpf::MemoryType::DEVICE,
-                                      rapidsmpf::MemoryType::PINNED_HOST,
-                                      nbytes,
-                                      std::move(timing));
-        // update the provided `reservation`
-        br->release(reservation, nbytes);
-        // The data leaves device memory here rather than through `BufferResource`, so
-        // the spill is opened by hand and the token handed to the buffer.
-        auto host_buffer =
-          br->move(std::move(packed_pinned.gpu_data),
-                   stream(),
-                   // An empty table packs to a default-constructed `device_buffer`,
-                   // which ignores the resource and frees nothing, so it gets no token.
-                   nbytes > 0 ? std::make_shared<rapidsmpf::SpillTrackToken>() : nullptr);
-        return table_chunk(std::make_unique<rapidsmpf::PackedData>(
-          std::move(packed_pinned.metadata), std::move(host_buffer)));
-      }
-      case rapidsmpf::MemoryType::HOST:  // Case 1c.
-      {
-        // We use libcudf's pack() to serialize `table_view()` into a
-        // packed_columns and then we move the packed_columns' gpu_data to a
-        // new host buffer.
-        // TODO: use `cudf::chunked_pack()` with a bounce buffer. Currently,
-        // `cudf::pack()` allocates device memory we haven't reserved.
-        auto packed_columns = cudf::pack(table_view(), stream(), br->device_mr());
-        auto packed_data    = std::make_unique<rapidsmpf::PackedData>(
-          std::move(packed_columns.metadata),
-          br->move(std::move(packed_columns.gpu_data), stream()));
-
-        packed_data->data = br->move(std::move(packed_data->data), reservation);
-        return table_chunk(std::move(packed_data));
-      }
+      case rapidsmpf::MemoryType::HOST:         // Case 1c.
+        return pack_into_host(*this, reservation, /* spill = */ false);
       default: RAPIDSMPF_FAIL("MemoryType: unknown");
     }
   }
@@ -231,6 +257,27 @@ table_chunk table_chunk::copy(rapidsmpf::MemoryReservation& reservation) const
   auto data         = br->make_buffer(nbytes, packed_data_->stream(), reservation);
   rapidsmpf::buffer_copy(br->statistics(), *data, *packed_data_->data, nbytes);
   return table_chunk(std::make_unique<rapidsmpf::PackedData>(std::move(metadata), std::move(data)));
+}
+
+table_chunk table_chunk::move(rapidsmpf::MemoryReservation& reservation)
+{
+  RAPIDSMPF_EXPECTS(
+    is_spillable(), "table chunk must be spillable to be moved", std::invalid_argument);
+
+  table_chunk src               = std::move(*this);
+  rapidsmpf::BufferResource* br = reservation.br();
+  if (src.packed_data_ != nullptr) {
+    // `BufferResource::move` records leaving device memory as a spill.
+    auto packed_data  = std::move(src.packed_data_);
+    packed_data->data = br->move(std::move(packed_data->data), reservation);
+    return table_chunk{std::move(packed_data)};
+  }
+  switch (reservation.mem_type()) {
+    case rapidsmpf::MemoryType::DEVICE: return src;
+    case rapidsmpf::MemoryType::PINNED_HOST:
+    case rapidsmpf::MemoryType::HOST: return pack_into_host(src, reservation, /* spill = */ true);
+    default: RAPIDSMPF_FAIL("MemoryType: unknown");
+  }
 }
 
 std::size_t table_chunk::into_packed_data_cost() const noexcept
@@ -289,14 +336,23 @@ rapidsmpf::streaming::Message to_message(std::uint64_t sequence_number,
     sequence_number,
     std::move(chunk),
     cd,
-    [](rapidsmpf::streaming::Message const& msg,
-       rapidsmpf::MemoryReservation& reservation) -> rapidsmpf::streaming::Message {
-      auto const& self = msg.get<table_chunk>();
-      auto chunk       = std::make_unique<table_chunk>(self.copy(reservation));
-      auto cd          = get_content_description(*chunk);
-      return rapidsmpf::streaming::Message{
-        msg.sequence_number(), std::move(chunk), cd, msg.copy_cb()};
-    }};
+    rapidsmpf::streaming::Message::Callbacks{
+      .copy = [](rapidsmpf::streaming::Message const& msg,
+                 rapidsmpf::MemoryReservation& reservation) -> rapidsmpf::streaming::Message {
+        auto const& self = msg.get<table_chunk>();
+        auto chunk       = std::make_unique<table_chunk>(self.copy(reservation));
+        auto cd          = get_content_description(*chunk);
+        return rapidsmpf::streaming::Message{
+          msg.sequence_number(), std::move(chunk), cd, msg.callbacks()};
+      },
+      .move = [](rapidsmpf::streaming::Message&& msg,
+                 rapidsmpf::MemoryReservation& reservation) -> rapidsmpf::streaming::Message {
+        auto const seq = msg.sequence_number();
+        auto callbacks = msg.callbacks();
+        auto chunk = std::make_unique<table_chunk>(msg.release<table_chunk>().move(reservation));
+        auto cd    = get_content_description(*chunk);
+        return rapidsmpf::streaming::Message{seq, std::move(chunk), cd, std::move(callbacks)};
+      }}};
 }
 
 }  // namespace cudf_streaming

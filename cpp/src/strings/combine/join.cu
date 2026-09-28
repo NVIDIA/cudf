@@ -167,7 +167,7 @@ std::unique_ptr<column> join_strings(strings_column_view const& input,
     static_cast<size_type>(input.null_count() == input.size() && !narep.is_valid(stream));
   auto null_mask = null_count
                      ? cudf::detail::create_null_mask(1, cudf::mask_state::ALL_NULL, stream, mr)
-                     : rmm::device_buffer{0, stream, mr};
+                     : cudf::detail::create_null_mask(0, cudf::mask_state::UNALLOCATED, stream, mr);
 
   // perhaps this return a string_scalar instead of a single-row column
   return make_strings_column(

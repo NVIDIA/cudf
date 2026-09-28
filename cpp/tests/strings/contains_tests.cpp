@@ -11,6 +11,7 @@
 #include <cudf_test/iterator_utilities.hpp>
 
 #include <cudf/detail/utilities/vector_factories.hpp>
+#include <cudf/null_mask.hpp>
 #include <cudf/strings/contains.hpp>
 #include <cudf/strings/regex/regex_program.hpp>
 #include <cudf/strings/strings_column_view.hpp>
@@ -288,9 +289,13 @@ TEST_F(StringsContainsTests, HexTest)
   auto d_offsets = std::make_unique<cudf::column>(
     cudf::detail::make_device_uvector(
       offsets, cudf::get_default_stream(), cudf::get_current_device_resource_ref()),
-    rmm::device_buffer{},
+    cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
     0);
-  auto input = cudf::make_strings_column(count, std::move(d_offsets), d_chars.release(), 0, {});
+  auto input = cudf::make_strings_column(count,
+                                         std::move(d_offsets),
+                                         d_chars.release(),
+                                         0,
+                                         cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
   auto strings_view = cudf::strings_column_view(input->view());
   for (auto ch : ascii_chars) {

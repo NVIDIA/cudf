@@ -385,7 +385,8 @@ TEST_F(ToArrowDeviceTest, StructColumn)
   cols.push_back(std::move(list_col));
   cols.push_back(std::move(sub_struct_col));
 
-  auto struct_col = cudf::make_structs_column(num_rows, std::move(cols), 0, {});
+  auto struct_col = cudf::make_structs_column(
+    num_rows, std::move(cols), 0, cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
   std::vector<std::unique_ptr<cudf::column>> table_cols;
   table_cols.emplace_back(struct_col.release());
   cudf::table input(std::move(table_cols));

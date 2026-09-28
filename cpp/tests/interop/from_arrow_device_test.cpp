@@ -453,8 +453,11 @@ TEST_F(FromArrowDeviceTest, FixedSizeListColumnLarge)
     cudf::test::fixed_width_column_wrapper<int64_t>(values.begin(), values.end()).release();
   auto offsets_col =
     cudf::test::fixed_width_column_wrapper<int32_t>(offsets.begin(), offsets.end()).release();
-  auto expected = cudf::make_lists_column(
-    num_rows, std::move(offsets_col), std::move(child), 0, rmm::device_buffer{});
+  auto expected = cudf::make_lists_column(num_rows,
+                                          std::move(offsets_col),
+                                          std::move(child),
+                                          0,
+                                          cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
   auto input_schema = make_struct_fixed_size_list_int64_schema(width);
   nanoarrow::UniqueArray input_array;
@@ -553,7 +556,8 @@ TEST_F(FromArrowDeviceTest, StructColumn)
   cols.push_back(std::move(list_col));
   cols.push_back(std::move(sub_struct_col));
 
-  auto struct_col = cudf::make_structs_column(num_rows, std::move(cols), 0, {});
+  auto struct_col = cudf::make_structs_column(
+    num_rows, std::move(cols), 0, cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
   cudf::table_view expected_table_view({struct_col->view()});
 
   // Create name metadata

@@ -1115,6 +1115,32 @@ TYPED_TEST(TransformTest, NullLogicalAnd)
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, result->view(), verbosity);
 }
 
+// Exercise multiple grid-stride iterations and every partial-warp tail.
+TYPED_TEST(TransformTest, NullLogicalAndLargeNonNullableInputs)
+{
+  using Executor                         = TypeParam;
+  constexpr cudf::size_type aligned_size = 1'048'576;
+  auto const values                      = cuda::make_constant_iterator<int64_t>(1);
+  auto const expected_values             = cuda::make_constant_iterator<bool>(true);
+  for (cudf::size_type tail = 0; tail < 32; ++tail) {
+    auto const size = aligned_size + tail;
+    SCOPED_TRACE(size);
+    auto input      = column_wrapper<int64_t>(values, values + size);
+    auto table      = cudf::table_view{{input, input}};
+    auto c0         = cudf::ast::column_reference{0};
+    auto c1         = cudf::ast::column_reference{1};
+    auto z0         = cudf::ast::operation{cudf::ast::ast_operator::IS_NULL, c0};
+    auto z1         = cudf::ast::operation{cudf::ast::ast_operator::IS_NULL, c1};
+    auto n0         = cudf::ast::operation{cudf::ast::ast_operator::NOT, z0};
+    auto n1         = cudf::ast::operation{cudf::ast::ast_operator::NOT, z1};
+    auto expression = cudf::ast::operation{cudf::ast::ast_operator::NULL_LOGICAL_AND, n0, n1};
+    auto result     = Executor::compute_column(table, expression);
+    auto expected   = column_wrapper<bool>(expected_values, expected_values + size);
+    EXPECT_EQ(result->null_count(), 0);
+    CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(expected, result->view(), verbosity);
+  }
+}
+
 TYPED_TEST(TransformTest, NullLogicalOr)
 {
   using Executor = TypeParam;

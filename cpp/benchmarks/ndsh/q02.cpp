@@ -141,7 +141,7 @@ void ndsh_q2(nvbench::state& state)
     scale_factor, {"nation", "part", "partsupp", "region", "supplier"}, sources);
 
   auto const stream = cudf::get_default_stream();
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.value()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.get()));
   auto data =
     mode == query_mode::COMPUTE_ONLY ? std::optional{load_ndsh_q2(sources)} : std::nullopt;
   auto const mem_stats_logger = cudf::memory_stats_logger();

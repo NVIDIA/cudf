@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -8,9 +8,9 @@
 #include <cudf/io/types.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/mr/pinned_host_memory_resource.hpp>
 
+#include <cuda/stream>
 #include <thrust/host_vector.h>
 
 #include <filesystem>
@@ -41,7 +41,7 @@ io_source_type get_io_source_type(std::string name)
   }
 }
 
-io_source::io_source(std::string_view file_path, io_source_type type, rmm::cuda_stream_view stream)
+io_source::io_source(std::string_view file_path, io_source_type type, cuda::stream_ref stream)
   : pinned_buffer({pinned_memory_resource(), stream}), d_buffer{0, stream}
 {
   std::string const file_name{file_path};
@@ -76,7 +76,7 @@ io_source::io_source(std::string_view file_path, io_source_type type, rmm::cuda_
       file.read(h_buffer.data(), file_size);
       d_buffer.resize(file_size, stream);
       CUDF_CUDA_TRY(cudaMemcpyAsync(
-        d_buffer.data(), h_buffer.data(), file_size, cudaMemcpyDefault, stream.value()));
+        d_buffer.data(), h_buffer.data(), file_size, cudaMemcpyDefault, stream.get()));
 
       source_info = cudf::io::source_info(d_buffer);
       break;

@@ -1,9 +1,11 @@
-# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from __future__ import annotations
 
 from cudf_polars.testing.engine_utils import (
+    SMALL_MAX_ROWS_PER_PARTITION,
+    SMALL_TARGET_PARTITION_SIZE,
     EngineFixtureParam,
     create_streaming_options,
     merge_streaming_options,
@@ -37,8 +39,8 @@ def test_create_streaming_options_medium():
 
 def test_create_streaming_options_small():
     opts = create_streaming_options("small")
-    assert opts.max_rows_per_partition == 4
-    assert opts.target_partition_size == 10
+    assert opts.max_rows_per_partition == SMALL_MAX_ROWS_PER_PARTITION
+    assert opts.target_partition_size == SMALL_TARGET_PARTITION_SIZE
 
 
 def test_create_streaming_options_overrides_merge():

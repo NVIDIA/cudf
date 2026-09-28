@@ -1,8 +1,5 @@
-# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-import pytest
-
-pytest.importorskip("numba_cuda_mlir")
 
 
 def test_mlir_backend_package_importable():

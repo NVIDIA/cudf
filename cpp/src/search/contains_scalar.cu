@@ -93,30 +93,30 @@ struct contains_scalar_dispatch {
     // In addition, haystack and needle structure compatibility will be checked later on by
     // constructor of the table comparator.
 
-    auto const haystack_tv = table_view{{haystack}};
-    auto const needle_as_col =
-      make_column_from_scalar(needle, 1, stream, cudf::get_current_device_resource_ref());
-    auto const needle_tv = table_view{{needle_as_col->view()}};
-    auto const has_nulls = has_nested_nulls(haystack_tv) || has_nested_nulls(needle_tv);
+    auto const haystack_tv   = table_view{{haystack}};
+    auto const temp_mr       = cudf::get_current_device_resource_ref();
+    auto const needle_as_col = make_column_from_scalar(needle, 1, stream, temp_mr);
+    auto const needle_tv     = table_view{{needle_as_col->view()}};
+    auto const has_nulls     = has_nested_nulls(haystack_tv) || has_nested_nulls(needle_tv);
 
     auto const comparator =
-      cudf::detail::row::equality::two_table_comparator(haystack_tv, needle_tv, stream);
+      cudf::detail::row::equality::two_table_comparator(haystack_tv, needle_tv, stream, temp_mr);
 
     auto const begin = cudf::detail::row::lhs_iterator(0);
     auto const end   = begin + haystack.size();
     using cudf::detail::row::rhs_index_type;
 
     auto const check_nulls      = haystack.has_nulls();
-    auto const haystack_cdv_ptr = column_device_view::create(haystack, stream);
+    auto const haystack_cdv_ptr = column_device_view::create(haystack, stream, temp_mr);
 
     auto const d_comp = comparator.equal_to<true>(nullate::DYNAMIC{has_nulls});
 
     // Using a temporary buffer for intermediate transform results from the lambda containing
     // the comparator speeds up compile-time significantly without much degradation in
     // runtime performance over using the comparator in a transform iterator with thrust::count_if.
-    auto d_results = rmm::device_uvector<bool>(haystack.size(), stream);
+    auto d_results = rmm::device_uvector<bool>(haystack.size(), stream, temp_mr);
     thrust::transform(
-      rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+      rmm::exec_policy_nosync(stream, temp_mr),
       begin,
       end,
       d_results.begin(),
@@ -127,10 +127,9 @@ struct contains_scalar_dispatch {
         return d_comp(idx, rhs_index_type{0});  // compare haystack[idx] == needle[0].
       });
 
-    return thrust::count(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-                         d_results.begin(),
-                         d_results.end(),
-                         true) > 0;
+    return thrust::count(
+             rmm::exec_policy_nosync(stream, temp_mr), d_results.begin(), d_results.end(), true) >
+           0;
   }
 };
 

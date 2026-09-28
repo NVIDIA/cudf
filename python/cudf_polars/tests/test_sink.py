@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 from __future__ import annotations
 
@@ -111,6 +111,18 @@ def test_sink_parquet(
     )
 
 
+def test_sink_parquet_array_falls_back(in_memory_engine, tmp_path):
+    df = pl.LazyFrame({"a": pl.Series([[1, 2], [3, 4]], dtype=pl.Array(pl.Int8, 2))})
+
+    assert_sink_ir_translation_raises(
+        df,
+        tmp_path / "array.parquet",
+        in_memory_engine,
+        {},
+        NotImplementedError,
+    )
+
+
 @pytest.mark.parametrize("compression_level", [9, None])
 @pytest.mark.parametrize(
     "compression", ["zstd", "gzip", "brotli", "snappy", "lz4", "uncompressed"]
@@ -118,10 +130,9 @@ def test_sink_parquet(
 def test_sink_parquet_compression_type(
     engine: pl.GPUEngine, df, tmp_path, compression, compression_level
 ):
-    is_zstd = compression == "zstd"
-    is_zstd_and_none = is_zstd and compression_level is None
     # LZO compression not supported in polars
-    if is_zstd_and_none:
+    # Only zstd and gzip take a compression level, which libcudf cannot set
+    if compression in {"zstd", "gzip"} and compression_level is None:
         assert_sink_result_equal(
             df,
             tmp_path / "compression.parquet",

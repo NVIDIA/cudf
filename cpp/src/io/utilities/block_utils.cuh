@@ -62,7 +62,19 @@ template <typename T>
 inline __device__ T unaligned_load(uint8_t const* p)
 {
   T value;
+#ifdef NDEBUG
   cuda::std::memcpy(&value, p, sizeof(T));
+#else
+  // In debug builds, cuda::std::memcpy wraps the copy with CCCL's
+  // __is_valid_address_range assertion.  When `p` is a shared-memory
+  // pointer derived by arithmetic on a staged s_start (PR #23090 /
+  // #23271), NVCC 13.1 loses address-space tracking through the
+  // reinterpret_cast chain inside __is_smem_valid_address_range, causing
+  // a spurious "source range is invalid" assert.  The ::memcpy
+  // is semantically identical but avoids the CCCL wrapper.
+  // CCCL issue: https://github.com/NVIDIA/cccl/issues/10901
+  ::memcpy(&value, p, sizeof(T));
+#endif
   return value;
 }
 

@@ -42,7 +42,6 @@ if TYPE_CHECKING:
 # Without this setting, the first IO task to run
 # on each worker takes ~15 sec extra
 os.environ["KVIKIO_COMPAT_MODE"] = os.environ.get("KVIKIO_COMPAT_MODE", "on")
-os.environ["KVIKIO_NTHREADS"] = os.environ.get("KVIKIO_NTHREADS", "8")
 # TODO: consider raising the rapidsmpf built-in default from 1 to 8.
 os.environ["RAPIDSMPF_NUM_STREAMING_THREADS"] = os.environ.get(
     "RAPIDSMPF_NUM_STREAMING_THREADS", "8"

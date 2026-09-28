@@ -19,7 +19,7 @@
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
+#include <cuda/stream>
 
 namespace cudf {
 namespace strings {
@@ -94,7 +94,7 @@ std::unique_ptr<column> replace_re(strings_column_view const& input,
                                    regex_program const& prog,
                                    string_scalar const& replacement,
                                    std::optional<size_type> max_replace_count,
-                                   rmm::cuda_stream_view stream,
+                                   cuda::stream_ref stream,
                                    rmm::device_async_resource_ref mr)
 {
   if (input.is_empty()) { return make_empty_column(type_id::STRING); }
@@ -141,7 +141,7 @@ std::unique_ptr<column> replace_re(strings_column_view const& strings,
                                    regex_program const& prog,
                                    string_scalar const& replacement,
                                    std::optional<size_type> max_replace_count,
-                                   rmm::cuda_stream_view stream,
+                                   cuda::stream_ref stream,
                                    rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();

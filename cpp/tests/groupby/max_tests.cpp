@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -516,7 +516,7 @@ TYPED_TEST(groupby_max_floating_point_test, values_with_infinity)
   auto const expected_keys = int32s_col{1, 2};
   auto const expected_vals = floats_col{inf, static_cast<T>(2)};
 
-  // Related issue: https://github.com/rapidsai/cudf/issues/11352
+  // Related issue: https://github.com/NVIDIA/cudf/issues/11352
   // The issue only occurs in sort-based cudf::aggregation.
   auto agg = cudf::make_max_aggregation<cudf::groupby_aggregation>();
   test_single_agg(

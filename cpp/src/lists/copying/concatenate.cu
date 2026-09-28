@@ -16,9 +16,9 @@
 #include <cudf/lists/lists_column_view.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/stream>
 #include <thrust/transform.h>
 
 #include <algorithm>
@@ -46,7 +46,7 @@ namespace {
  */
 std::unique_ptr<column> merge_offsets(host_span<lists_column_view const> columns,
                                       size_type total_list_count,
-                                      rmm::cuda_stream_view stream,
+                                      cuda::stream_ref stream,
                                       rmm::device_async_resource_ref mr)
 {
   // outgoing offsets
@@ -86,7 +86,7 @@ std::unique_ptr<column> merge_offsets(host_span<lists_column_view const> columns
  * @copydoc cudf::lists::detail::concatenate
  */
 std::unique_ptr<column> concatenate(host_span<column_view const> columns,
-                                    rmm::cuda_stream_view stream,
+                                    cuda::stream_ref stream,
                                     rmm::device_async_resource_ref mr)
 {
   std::vector<lists_column_view> lists_columns;

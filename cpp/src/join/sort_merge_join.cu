@@ -14,12 +14,12 @@
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/row_operator/lexicographic.cuh>
 #include <cudf/detail/sizes_to_offsets_iterator.cuh>
+#include <cudf/detail/stream_compaction.hpp>
 #include <cudf/join/join.hpp>
 #include <cudf/join/sort_merge_join.hpp>
 #include <cudf/lists/lists_column_view.hpp>
 #include <cudf/null_mask.hpp>
 #include <cudf/sorting.hpp>
-#include <cudf/stream_compaction.hpp>
 #include <cudf/table/table_view.hpp>
 #include <cudf/types.hpp>
 #include <cudf/utilities/error.hpp>
@@ -648,7 +648,9 @@ void sort_merge_join::preprocessed_table::apply_nonnull_filter(cuda::stream_ref 
                "Something went wrong while dropping nulls in the unprocessed tables");
   bool_mask->set_null_mask(_validity_mask.value(), _num_nulls.value(), stream);
 
-  _null_processed_table      = apply_boolean_mask(_table_view, *bool_mask, stream, temp_mr);
+  // Use the internal apply_mask directly to avoid the public API overhead (NVTX range).
+  _null_processed_table =
+    detail::apply_mask(_table_view, *bool_mask, detail::mask_type::RETENTION, stream, temp_mr);
   _null_processed_table_view = _null_processed_table.value()->view();
 }
 

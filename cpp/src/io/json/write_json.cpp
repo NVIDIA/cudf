@@ -43,7 +43,7 @@
 namespace cudf::io::json::detail {
 
 std::unique_ptr<column> make_strings_column_from_host(host_span<std::string const> host_strings,
-                                                      rmm::cuda_stream_view stream)
+                                                      cuda::stream_ref stream)
 {
   std::string const host_chars =
     std::accumulate(host_strings.begin(), host_strings.end(), std::string(""));
@@ -65,7 +65,7 @@ std::unique_ptr<column> make_strings_column_from_host(host_span<std::string cons
 
 std::unique_ptr<column> make_column_names_column(host_span<column_name_info const> column_names,
                                                  size_type num_columns,
-                                                 rmm::cuda_stream_view stream)
+                                                 cuda::stream_ref stream)
 {
   std::vector<std::string> unescaped_column_names;
   if (column_names.empty()) {
@@ -93,7 +93,7 @@ std::unique_ptr<column> make_column_names_column(host_span<column_name_info cons
 }
 
 std::unique_ptr<column> timestamp_to_strings(column_view const& column,
-                                             rmm::cuda_stream_view stream,
+                                             cuda::stream_ref stream,
                                              rmm::device_async_resource_ref mr)
 {
   auto format = [&]() {
@@ -114,7 +114,7 @@ std::unique_ptr<column> timestamp_to_strings(column_view const& column,
 }
 
 std::unique_ptr<column> duration_to_strings(column_view const& column,
-                                            rmm::cuda_stream_view stream,
+                                            cuda::stream_ref stream,
                                             rmm::device_async_resource_ref mr)
 {
   auto duration_string = cudf::io::detail::csv::pandas_format_durations(column, stream, mr);
@@ -131,7 +131,7 @@ std::unique_ptr<column> duration_to_strings(column_view const& column,
 
 std::unique_ptr<column> string_to_strings(column_view const& column,
                                           bool escaped_utf8,
-                                          rmm::cuda_stream_view stream,
+                                          cuda::stream_ref stream,
                                           rmm::device_async_resource_ref mr)
 {
   auto d_column = column_device_view::create(column, stream);
@@ -147,7 +147,7 @@ std::unique_ptr<column> string_to_strings(column_view const& column,
 
 std::unique_ptr<column> leaf_column_to_strings(column_view const& column,
                                                json_writer_options const& options,
-                                               rmm::cuda_stream_view stream,
+                                               cuda::stream_ref stream,
                                                rmm::device_async_resource_ref mr)
 {
   if (column.type().id() == type_id::STRING) {
@@ -187,7 +187,7 @@ host_span<column_name_info const> child_column_names(
 
 struct column_to_strings_fn {
   explicit column_to_strings_fn(json_writer_options const& options,
-                                rmm::cuda_stream_view stream,
+                                cuda::stream_ref stream,
                                 rmm::device_async_resource_ref mr)
     : options_(options),
       stream_(stream),
@@ -319,7 +319,7 @@ struct column_to_strings_fn {
 
  private:
   json_writer_options const& options_;
-  rmm::cuda_stream_view stream_;
+  cuda::stream_ref stream_;
   rmm::device_async_resource_ref mr_;
   string_scalar const narep;
   string_scalar const struct_value_separator;
@@ -334,7 +334,7 @@ void write_chunked(data_sink* out_sink,
                    strings_column_view const& str_column_view,
                    int skip_last_chars,
                    json_writer_options const&,
-                   rmm::cuda_stream_view stream)
+                   cuda::stream_ref stream)
 {
   CUDF_FUNC_RANGE();
   CUDF_EXPECTS(str_column_view.size() > 0, "Unexpected empty strings column.");
@@ -356,7 +356,7 @@ void write_chunked(data_sink* out_sink,
 void write_json_uncompressed(data_sink* out_sink,
                              table_view const& table,
                              json_writer_options const& options,
-                             rmm::cuda_stream_view stream)
+                             cuda::stream_ref stream)
 {
   CUDF_FUNC_RANGE();
   std::vector<column_name_info> user_column_names = [&]() {
@@ -446,13 +446,13 @@ void write_json_uncompressed(data_sink* out_sink,
 void write_json(data_sink* out_sink,
                 table_view const& table,
                 json_writer_options const& options,
-                rmm::cuda_stream_view stream)
+                cuda::stream_ref stream)
 {
   if (options.get_compression() != compression_type::NONE) {
     std::vector<char> hbuf;
     auto hbuf_sink_ptr = data_sink::create(&hbuf);
     write_json_uncompressed(hbuf_sink_ptr.get(), table, options, stream);
-    stream.synchronize();
+    stream.sync();
     auto comp_hbuf = cudf::io::detail::compress(
       options.get_compression(),
       host_span<uint8_t>(reinterpret_cast<uint8_t*>(hbuf.data()), hbuf.size()));

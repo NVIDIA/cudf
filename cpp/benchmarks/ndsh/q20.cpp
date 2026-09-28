@@ -150,7 +150,7 @@ void ndsh_q20(nvbench::state& state)
     scale_factor, {"lineitem", "nation", "part", "partsupp", "supplier"}, sources);
 
   auto stream = cudf::get_default_stream();
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.value()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.get()));
   std::unordered_map<std::string, std::unique_ptr<table_with_names>> tables;
   if (mode == query_mode::COMPUTE_ONLY) { tables = load_ndsh_q20(sources); }
   auto const mem_stats_logger = cudf::memory_stats_logger();

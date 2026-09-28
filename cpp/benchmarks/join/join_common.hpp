@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -109,7 +109,7 @@ void BM_join(state_type& state,
   // Setup join parameters and result table
   std::vector<cudf::size_type> columns_to_join(num_keys);
   std::iota(columns_to_join.begin(), columns_to_join.end(), 0);
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().value()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().get()));
 
   if constexpr (join_type == join_t::HASH || join_type == join_t::SORT_MERGE) {
     state.add_element_count(join_input_size, "join_input_size");  // number of bytes

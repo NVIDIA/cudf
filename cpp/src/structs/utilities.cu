@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -27,7 +27,7 @@ namespace cudf::structs::detail {
  * @copydoc cudf::structs::detail::extract_ordered_struct_children
  */
 std::vector<std::vector<column_view>> extract_ordered_struct_children(
-  host_span<column_view const> struct_cols, rmm::cuda_stream_view stream)
+  host_span<column_view const> struct_cols, cuda::stream_ref stream)
 {
   auto const num_children = struct_cols[0].num_children();
   auto const num_cols     = static_cast<size_type>(struct_cols.size());
@@ -81,7 +81,7 @@ struct table_flattener {
   std::vector<order> const& column_order;
   std::vector<null_order> const& null_precedence;
   column_nullability nullability;
-  rmm::cuda_stream_view stream;
+  cuda::stream_ref stream;
   rmm::device_async_resource_ref mr;
 
   temporary_nullable_data nullable_data;
@@ -94,7 +94,7 @@ struct table_flattener {
                   std::vector<order> const& column_order,
                   std::vector<null_order> const& null_precedence,
                   column_nullability nullability,
-                  rmm::cuda_stream_view stream,
+                  cuda::stream_ref stream,
                   rmm::device_async_resource_ref mr)
     : column_order{column_order},
       null_precedence{null_precedence},
@@ -191,7 +191,7 @@ std::unique_ptr<flattened_table> flatten_nested_columns(
   std::vector<order> const& column_order,
   std::vector<null_order> const& null_precedence,
   column_nullability nullability,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr)
 {
   auto const has_struct = std::any_of(input.begin(), input.end(), is_struct);
@@ -223,7 +223,7 @@ namespace {
 std::unique_ptr<column> superimpose_nulls(bitmask_type const* null_mask,
                                           size_type null_count,
                                           std::unique_ptr<column>&& input,
-                                          rmm::cuda_stream_view stream,
+                                          cuda::stream_ref stream,
                                           rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
@@ -300,7 +300,7 @@ std::unique_ptr<column> superimpose_nulls(bitmask_type const* null_mask,
 std::vector<std::unique_ptr<column>> superimpose_nulls(
   host_span<bitmask_type const* const> null_masks,
   std::vector<std::unique_ptr<column>> inputs,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
@@ -401,7 +401,7 @@ std::vector<std::unique_ptr<column>> superimpose_nulls(
  * @copydoc cudf::structs::detail::push_down_nulls
  */
 std::pair<column_view, temporary_nullable_data> push_down_nulls_no_sanitize(
-  column_view const& input, rmm::cuda_stream_view stream, rmm::device_async_resource_ref mr)
+  column_view const& input, cuda::stream_ref stream, rmm::device_async_resource_ref mr)
 {
   auto ret_nullable_data = temporary_nullable_data{};
   if (input.type().id() != type_id::STRUCT) {
@@ -494,7 +494,7 @@ void temporary_nullable_data::emplace_back(temporary_nullable_data&& other)
 std::unique_ptr<column> superimpose_and_sanitize_nulls(bitmask_type const* null_mask,
                                                        size_type null_count,
                                                        std::unique_ptr<column>&& input,
-                                                       rmm::cuda_stream_view stream,
+                                                       cuda::stream_ref stream,
                                                        rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
@@ -517,7 +517,7 @@ std::unique_ptr<column> superimpose_and_sanitize_nulls(bitmask_type const* null_
 std::vector<std::unique_ptr<column>> superimpose_and_sanitize_nulls(
   host_span<bitmask_type const* const> null_masks,
   std::vector<std::unique_ptr<column>> inputs,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
@@ -539,7 +539,7 @@ std::vector<std::unique_ptr<column>> superimpose_and_sanitize_nulls(
 
 std::vector<std::unique_ptr<column>> enforce_null_consistency(
   std::vector<std::unique_ptr<column>> columns,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
@@ -615,7 +615,7 @@ std::vector<std::unique_ptr<column>> enforce_null_consistency(
 }
 
 std::pair<column_view, temporary_nullable_data> push_down_nulls(column_view const& input,
-                                                                rmm::cuda_stream_view stream,
+                                                                cuda::stream_ref stream,
                                                                 rmm::device_async_resource_ref mr)
 {
   auto output = push_down_nulls_no_sanitize(input, stream, mr);
@@ -636,7 +636,7 @@ std::pair<column_view, temporary_nullable_data> push_down_nulls(column_view cons
 }
 
 std::pair<table_view, temporary_nullable_data> push_down_nulls(table_view const& table,
-                                                               rmm::cuda_stream_view stream,
+                                                               cuda::stream_ref stream,
                                                                rmm::device_async_resource_ref mr)
 {
   auto processed_columns = std::vector<column_view>{};

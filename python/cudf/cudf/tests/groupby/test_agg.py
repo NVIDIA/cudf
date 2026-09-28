@@ -201,12 +201,41 @@ def test_series_groupby_agg(groupby_reduction_methods):
     assert_groupby_results_equal(sg, gg)
 
 
+def test_groupby_namedagg_mean_decimal128_keeps_columns():
+    df = cudf.DataFrame(
+        {
+            "g": [0, 0, 1, 1],
+            "qty": cudf.Series(
+                [1, 3, 5, 7], dtype=cudf.Decimal128Dtype(15, 2)
+            ),
+            "price": cudf.Series(
+                [10, 30, 50, 70], dtype=cudf.Decimal128Dtype(15, 2)
+            ),
+        }
+    )
+    out = df.groupby("g", as_index=False).agg(
+        sum_qty=cudf.NamedAgg(column="qty", aggfunc="sum"),
+        avg_qty=cudf.NamedAgg(column="qty", aggfunc="mean"),
+        avg_price=cudf.NamedAgg(column="price", aggfunc="mean"),
+    )
+    expected = cudf.DataFrame(
+        {
+            "g": [0, 1],
+            "sum_qty": cudf.Series([4, 12], dtype=cudf.Decimal128Dtype(38, 2)),
+            "avg_qty": [2.0, 6.0],
+            "avg_price": [20.0, 60.0],
+        }
+    )
+    assert out["sum_qty"].dtype == expected["sum_qty"].dtype
+    assert_eq(out, expected, check_dtype=False)
+
+
 def test_groupby_agg_decimal(groupby_reduction_methods, request):
     request.applymarker(
         pytest.mark.xfail(
-            groupby_reduction_methods in ["prod", "mean"],
+            groupby_reduction_methods == "prod",
             raises=pd.errors.DataError,
-            reason=f"{groupby_reduction_methods} not supported with Decimals in pandas",
+            reason="prod not supported with Decimals in pandas",
         )
     )
     rng = np.random.default_rng(seed=0)
@@ -222,7 +251,7 @@ def test_groupby_agg_decimal(groupby_reduction_methods, request):
 
     # The unique is necessary because otherwise if there are duplicates idxmin
     # and idxmax may return different results than pandas (see
-    # https://github.com/rapidsai/cudf/issues/7756). This is not relevant to
+    # https://github.com/NVIDIA/cudf/issues/7756). This is not relevant to
     # the current version of the test, because idxmin and idxmax simply don't
     # work with pandas Series composed of Decimal objects (see
     # https://github.com/pandas-dev/pandas/issues/40685). However, if that is
@@ -254,10 +283,32 @@ def test_groupby_agg_decimal(groupby_reduction_methods, request):
         }
     )
 
-    expect_df = pdf.groupby("idx", sort=True).agg(groupby_reduction_methods)
     got_df = gdf.groupby("idx", sort=True).agg(groupby_reduction_methods)
-    assert_eq(expect_df["x"], got_df["x"], check_dtype=False)
-    assert_eq(expect_df["y"], got_df["y"], check_dtype=False)
+    if groupby_reduction_methods == "mean":
+        # pandas object-Decimal mean is lossy; compare to float64 reference
+        expect_df = (
+            pd.DataFrame({"idx": idx_col, "x": x, "y": y})
+            .groupby("idx", sort=True)
+            .agg("mean")
+        )
+        assert_eq(
+            got_df["x"].astype("float64"),
+            expect_df["x"],
+            check_dtype=False,
+            atol=1e-2,
+        )
+        assert_eq(
+            got_df["y"].astype("float64"),
+            expect_df["y"],
+            check_dtype=False,
+            atol=1e-2,
+        )
+    else:
+        expect_df = pdf.groupby("idx", sort=True).agg(
+            groupby_reduction_methods
+        )
+        assert_eq(expect_df["x"], got_df["x"], check_dtype=False)
+        assert_eq(expect_df["y"], got_df["y"], check_dtype=False)
 
 
 def test_groupby_use_agg_column_as_index():

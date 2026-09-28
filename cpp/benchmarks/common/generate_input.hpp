@@ -21,8 +21,7 @@
  * The create_random_table functions take a data profile, the information about table size and a
  * seed to deterministically generate a table with given parameters.
  *
- * Currently, the data generation is done on the CPU and the data is then copied to the device
- * memory.
+ * The input data generation happens on device.
  */
 
 /**

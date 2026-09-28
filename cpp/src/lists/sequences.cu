@@ -16,10 +16,10 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/type_checks.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/std/iterator>
+#include <cuda/stream>
 #include <thrust/binary_search.h>
 #include <thrust/execution_policy.h>
 #include <thrust/scan.h>
@@ -81,7 +81,7 @@ struct sequences_dispatcher {
                                      column_view const& starts,
                                      std::optional<column_view> const& steps,
                                      int32_t const* offsets,
-                                     rmm::cuda_stream_view stream,
+                                     cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr)
   {
     return sequences_functor<T>::invoke(n_lists, n_elements, starts, steps, offsets, stream, mr);
@@ -101,7 +101,7 @@ struct sequences_functor<T, std::enable_if_t<is_supported<T>()>> {
                                         column_view const& starts,
                                         std::optional<column_view> const& steps,
                                         int32_t const* offsets,
-                                        rmm::cuda_stream_view stream,
+                                        cuda::stream_ref stream,
                                         rmm::device_async_resource_ref mr)
   {
     auto result =
@@ -128,7 +128,7 @@ struct sequences_functor<T, std::enable_if_t<is_supported<T>()>> {
 std::unique_ptr<column> sequences(column_view const& starts,
                                   std::optional<column_view> const& steps,
                                   column_view const& sizes,
-                                  rmm::cuda_stream_view stream,
+                                  cuda::stream_ref stream,
                                   rmm::device_async_resource_ref mr)
 {
   CUDF_EXPECTS(!starts.has_nulls() && !sizes.has_nulls(),
@@ -176,7 +176,7 @@ std::unique_ptr<column> sequences(column_view const& starts,
 
 std::unique_ptr<column> sequences(column_view const& starts,
                                   column_view const& sizes,
-                                  rmm::cuda_stream_view stream,
+                                  cuda::stream_ref stream,
                                   rmm::device_async_resource_ref mr)
 {
   return sequences(starts, std::nullopt, sizes, stream, mr);
@@ -185,7 +185,7 @@ std::unique_ptr<column> sequences(column_view const& starts,
 std::unique_ptr<column> sequences(column_view const& starts,
                                   column_view const& steps,
                                   column_view const& sizes,
-                                  rmm::cuda_stream_view stream,
+                                  cuda::stream_ref stream,
                                   rmm::device_async_resource_ref mr)
 {
   return sequences(starts, std::optional<column_view>{steps}, sizes, stream, mr);
@@ -195,7 +195,7 @@ std::unique_ptr<column> sequences(column_view const& starts,
 
 std::unique_ptr<column> sequences(column_view const& starts,
                                   column_view const& sizes,
-                                  rmm::cuda_stream_view stream,
+                                  cuda::stream_ref stream,
                                   rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
@@ -205,7 +205,7 @@ std::unique_ptr<column> sequences(column_view const& starts,
 std::unique_ptr<column> sequences(column_view const& starts,
                                   column_view const& steps,
                                   column_view const& sizes,
-                                  rmm::cuda_stream_view stream,
+                                  cuda::stream_ref stream,
                                   rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();

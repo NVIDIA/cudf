@@ -30,7 +30,6 @@
 #include <cuda/iterator>
 #include <cuda/stream>
 #include <thrust/count.h>
-#include <thrust/iterator/transform_iterator.h>
 #include <thrust/scatter.h>
 #include <thrust/sequence.h>
 
@@ -348,7 +347,7 @@ std::unique_ptr<table> scatter(std::vector<std::reference_wrapper<scalar const>>
   // note: the intermediate ((in % n_rows) + n_rows) will overflow a size_type for any value of `in`
   // > (2^31)/2, but the end result after the final (% n_rows) will fit. so we'll do the computation
   // using a signed 64 bit value.
-  auto scatter_iter = thrust::make_transform_iterator(
+  auto scatter_iter = cuda::transform_iterator(
     map_begin,
     cuda::proclaim_return_type<size_type>(
       [n_rows = static_cast<int64_t>(n_rows)] __device__(size_type in) -> size_type {

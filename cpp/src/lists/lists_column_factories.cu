@@ -12,10 +12,10 @@
 #include <cudf/lists/detail/lists_column_factories.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/iterator>
+#include <cuda/stream>
 #include <thrust/sequence.h>
 
 namespace cudf {
@@ -24,7 +24,7 @@ namespace detail {
 
 std::unique_ptr<cudf::column> make_lists_column_from_scalar(list_scalar const& value,
                                                             size_type size,
-                                                            rmm::cuda_stream_view stream,
+                                                            cuda::stream_ref stream,
                                                             rmm::device_async_resource_ref mr)
 {
   if (size == 0) {
@@ -79,7 +79,7 @@ std::unique_ptr<column> make_empty_lists_column(data_type child_type)
 
 std::unique_ptr<column> make_all_nulls_lists_column(size_type size,
                                                     data_type child_type,
-                                                    rmm::cuda_stream_view stream,
+                                                    cuda::stream_ref stream,
                                                     rmm::device_async_resource_ref mr)
 {
   auto offsets = [&] {

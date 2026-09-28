@@ -20,7 +20,6 @@
 #include <cuda/functional>
 #include <cuda/iterator>
 #include <cuda/stream>
-#include <thrust/iterator/transform_iterator.h>
 #include <thrust/scan.h>
 #include <thrust/scatter.h>
 #include <thrust/transform.h>
@@ -72,10 +71,9 @@ std::unique_ptr<column> group_nth_element(column_view const& values,
     // Returns index of nth value.
     auto values_view = column_device_view::create(values, stream);
     auto bitmask_iterator =
-      thrust::make_transform_iterator(cudf::detail::make_validity_iterator(*values_view),
-                                      cuda::proclaim_return_type<size_type>([] __device__(auto b) {
-                                        return static_cast<size_type>(b);
-                                      }));
+      cuda::transform_iterator(cudf::detail::make_validity_iterator(*values_view),
+                               cuda::proclaim_return_type<size_type>(
+                                 [] __device__(auto b) { return static_cast<size_type>(b); }));
     rmm::device_uvector<size_type> intra_group_index(values.size(), stream);
     // intra group index for valids only.
     thrust::exclusive_scan_by_key(

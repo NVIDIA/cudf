@@ -49,7 +49,7 @@ std::unique_ptr<column> sort_lists(
   lists_column_view const& source_column,
   order column_order,
   null_order null_precedence,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -62,7 +62,7 @@ std::unique_ptr<column> stable_sort_lists(
   lists_column_view const& source_column,
   order column_order,
   null_order null_precedence,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /** @} */  // end of group

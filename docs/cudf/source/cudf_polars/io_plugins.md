@@ -60,7 +60,7 @@ is used, but that flag is not carried into the GPU plan, so cudf-polars validate
 unconditionally. A source that deliberately yields a dtype different from its
 declared schema (only valid with `validate_schema=False`) therefore cannot run on
 the GPU and must be collected with the default Polars CPU engine. This is tracked
-in [cudf#22917](https://github.com/rapidsai/cudf/issues/22917).
+in [cudf#22917](https://github.com/NVIDIA/cudf/issues/22917).
 
 ## Rank-Aware Sources
 
@@ -120,7 +120,7 @@ unwrapped instance is recognized; wrapping it in anything else (for example, a
 `functools.partial`, closure, lambda, or decorator) hides the instance, in which
 case the source is treated as rank-unaware and executes on rank 0 only.
 
-This limitation is tracked in [cudf#22917](https://github.com/rapidsai/cudf/issues/22917).
+This limitation is tracked in [cudf#22917](https://github.com/NVIDIA/cudf/issues/22917).
 
 
 (io-plugins-sized-chunks)=
@@ -166,7 +166,7 @@ cudf-polars raises `NotImplementedError`.
 As a result, `n_rows` is always `None` on GPU engines. However, IO sources intended
 to also work with the default Polars CPU engine must still handle `n_rows` correctly.
 
-Distributed support for a global row limit is tracked in [cudf#22918](https://github.com/rapidsai/cudf/issues/22918).
+Distributed support for a global row limit is tracked in [cudf#22918](https://github.com/NVIDIA/cudf/issues/22918).
 
 ## Threading
 

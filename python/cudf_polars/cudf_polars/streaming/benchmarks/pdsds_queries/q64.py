@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 """Query 64."""
@@ -363,7 +363,7 @@ def polars_impl(run_config: RunConfig) -> QueryResult:
                 [
                     pl.len().alias("cnt"),
                     # Polars sum() returns 0 for all-null groups; SQL returns NULL.
-                    # See https://github.com/rapidsai/cudf/issues/19560.
+                    # See https://github.com/NVIDIA/cudf/issues/19560.
                     pl.when(pl.col("ss_wholesale_cost").count() > 0)
                     .then(pl.col("ss_wholesale_cost").sum())
                     .otherwise(None)

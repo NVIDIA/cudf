@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -10,7 +10,7 @@
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
+#include <cuda/stream>
 
 namespace nvtext {
 namespace detail {
@@ -22,7 +22,7 @@ namespace detail {
  */
 std::unique_ptr<cudf::column> tokenize(cudf::strings_column_view const& strings,
                                        cudf::string_scalar const& delimiter,
-                                       rmm::cuda_stream_view stream,
+                                       cuda::stream_ref stream,
                                        rmm::device_async_resource_ref mr);
 
 /**
@@ -33,7 +33,7 @@ std::unique_ptr<cudf::column> tokenize(cudf::strings_column_view const& strings,
  */
 std::unique_ptr<cudf::column> tokenize(cudf::strings_column_view const& strings,
                                        cudf::strings_column_view const& delimiters,
-                                       rmm::cuda_stream_view stream,
+                                       cuda::stream_ref stream,
                                        rmm::device_async_resource_ref mr);
 
 /**
@@ -44,7 +44,7 @@ std::unique_ptr<cudf::column> tokenize(cudf::strings_column_view const& strings,
  */
 std::unique_ptr<cudf::column> count_tokens(cudf::strings_column_view const& strings,
                                            cudf::string_scalar const& delimiter,
-                                           rmm::cuda_stream_view stream,
+                                           cuda::stream_ref stream,
                                            rmm::device_async_resource_ref mr);
 
 /**
@@ -55,7 +55,7 @@ std::unique_ptr<cudf::column> count_tokens(cudf::strings_column_view const& stri
  */
 std::unique_ptr<cudf::column> count_tokens(cudf::strings_column_view const& strings,
                                            cudf::strings_column_view const& delimiters,
-                                           rmm::cuda_stream_view stream,
+                                           cuda::stream_ref stream,
                                            rmm::device_async_resource_ref mr);
 
 }  // namespace detail

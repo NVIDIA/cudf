@@ -9,6 +9,7 @@
 #include <cudf/join/direct_join.hpp>
 #include <cudf/join/distinct_hash_join.hpp>
 #include <cudf/join/join.hpp>
+#include <cudf/join/streaming_hash_join.hpp>
 
 #include <thrust/execution_policy.h>
 #include <thrust/functional.h>
@@ -16,6 +17,8 @@
 #include <thrust/sequence.h>
 #include <thrust/shuffle.h>
 #include <thrust/tabulate.h>
+
+#include <array>
 
 // Apples-to-apples comparison of inner join implementations on input that satisfies
 // `direct_inner_join`'s preconditions: a single UINT32 key column per side, distinct right keys,
@@ -60,7 +63,7 @@ void nvbench_direct_inner_join(nvbench::state& state)
   auto const right_keys = cudf::table_view{{right_view}};
 
   auto const input_bytes = estimate_size(left_keys) + estimate_size(right_keys);
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().value()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().get()));
   state.add_element_count(input_bytes, "input_bytes");
   state.add_global_memory_reads<nvbench::int8_t>(input_bytes);
 
@@ -71,6 +74,19 @@ void nvbench_direct_inner_join(nvbench::state& state)
   } else if (algorithm == "distinct_hash") {
     state.exec(nvbench::exec_tag::sync, [&](nvbench::launch&) {
       auto hj_obj = cudf::distinct_hash_join{right_keys, cudf::null_equality::UNEQUAL, 0.5};
+      auto result = hj_obj.inner_join(left_keys);
+    });
+  } else if (algorithm == "streaming_hash") {
+    std::array<cudf::size_type, 1> const right_key_indices{0};
+    state.exec(nvbench::exec_tag::sync, [&](nvbench::launch&) {
+      auto hj_obj = cudf::streaming_hash_join{right_keys,
+                                              right_key_indices,
+                                              right_size,
+                                              /*max_num_batches=*/1,
+                                              cudf::nullable_join::NO,
+                                              cudf::null_equality::UNEQUAL,
+                                              /*load_factor=*/0.5};
+      hj_obj.insert(right_keys);
       auto result = hj_obj.inner_join(left_keys);
     });
   } else if (algorithm == "direct") {
@@ -84,7 +100,7 @@ void nvbench_direct_inner_join(nvbench::state& state)
 
 NVBENCH_BENCH(nvbench_direct_inner_join)
   .set_name("direct_inner_join")
-  .add_string_axis("algorithm", {"hash", "distinct_hash", "direct"})
+  .add_string_axis("algorithm", {"hash", "distinct_hash", "streaming_hash", "direct"})
   .add_int64_axis("left_size", JOIN_SIZE_RANGE)
   .add_int64_axis("right_size", JOIN_SIZE_RANGE)
   .add_int64_axis("skip_large_sizes", {1});

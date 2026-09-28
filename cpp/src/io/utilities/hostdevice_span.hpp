@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -9,7 +9,7 @@
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/span.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
+#include <cuda/stream>
 
 namespace cudf::detail {
 
@@ -152,30 +152,30 @@ class hostdevice_span {
     return hostdevice_span<T>(_host_data.subspan(offset, count), device_ptr(offset));
   }
 
-  void host_to_device_async(rmm::cuda_stream_view stream) const
+  void host_to_device_async(cuda::stream_ref stream) const
   {
     static_assert(not std::is_const_v<T>, "Cannot copy to const device memory");
     cudf::detail::cuda_memcpy_async<T>(device_span<T>{device_ptr(), size()}, _host_data, stream);
   }
 
   [[deprecated("Use host_to_device_async instead")]] void host_to_device(
-    rmm::cuda_stream_view stream) const
+    cuda::stream_ref stream) const
   {
     host_to_device_async(stream);
-    stream.synchronize();
+    stream.sync();
   }
 
-  void device_to_host_async(rmm::cuda_stream_view stream) const
+  void device_to_host_async(cuda::stream_ref stream) const
   {
     static_assert(not std::is_const_v<T>, "Cannot copy to const host memory");
     cudf::detail::cuda_memcpy_async<T>(
       _host_data, device_span<T const>{device_ptr(), size()}, stream);
   }
 
-  void device_to_host(rmm::cuda_stream_view stream) const
+  void device_to_host(cuda::stream_ref stream) const
   {
     device_to_host_async(stream);
-    stream.synchronize();
+    stream.sync();
   }
 
  private:

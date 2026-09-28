@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -16,12 +16,12 @@
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cooperative_groups.h>
 #include <cooperative_groups/reduce.h>
 #include <cooperative_groups/scan.h>
+#include <cuda/stream>
 
 namespace cudf {
 namespace strings {
@@ -84,7 +84,7 @@ CUDF_KERNEL void find_instance_warp_parallel_fn(column_device_view const d_strin
 std::unique_ptr<column> find_instance(strings_column_view const& input,
                                       string_scalar const& target,
                                       size_type instance,
-                                      rmm::cuda_stream_view stream,
+                                      cuda::stream_ref stream,
                                       rmm::device_async_resource_ref mr)
 {
   CUDF_EXPECTS(
@@ -109,10 +109,8 @@ std::unique_ptr<column> find_instance(strings_column_view const& input,
   constexpr thread_index_type warp_size  = cudf::detail::warp_size;
   static_assert(block_size % warp_size == 0, "block size must be a multiple of warp size");
   cudf::detail::grid_1d grid{input.size() * warp_size, block_size};
-  find_instance_warp_parallel_fn<<<grid.num_blocks,
-                                   grid.num_threads_per_block,
-                                   0,
-                                   stream.value()>>>(*d_strings, d_target, instance, d_results);
+  find_instance_warp_parallel_fn<<<grid.num_blocks, grid.num_threads_per_block, 0, stream.get()>>>(
+    *d_strings, d_target, instance, d_results);
   CUDF_CUDA_TRY(cudaGetLastError());
 
   return results;
@@ -123,7 +121,7 @@ std::unique_ptr<column> find_instance(strings_column_view const& input,
 std::unique_ptr<column> find_instance(strings_column_view const& input,
                                       string_scalar const& target,
                                       size_type instance,
-                                      rmm::cuda_stream_view stream,
+                                      cuda::stream_ref stream,
                                       rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();

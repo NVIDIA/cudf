@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -16,13 +16,13 @@
 #include <cudf/utilities/traits.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/functional>
 #include <cuda/iterator>
 #include <cuda/std/algorithm>
 #include <cuda/std/functional>
+#include <cuda/stream>
 #include <thrust/for_each.h>
 #include <thrust/transform_reduce.h>
 
@@ -78,7 +78,7 @@ struct cast_to_integer_fn {
 std::unique_ptr<column> cast_to_integer(strings_column_view const& input,
                                         data_type output_type,
                                         endian swap,
-                                        rmm::cuda_stream_view stream,
+                                        cuda::stream_ref stream,
                                         rmm::device_async_resource_ref mr)
 {
   CUDF_EXPECTS(cudf::is_integral_not_bool(output_type),
@@ -109,7 +109,7 @@ std::unique_ptr<column> cast_to_integer(strings_column_view const& input,
 std::unique_ptr<column> cast_to_integer(strings_column_view const& input,
                                         data_type output_type,
                                         endian swap,
-                                        rmm::cuda_stream_view stream,
+                                        cuda::stream_ref stream,
                                         rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
@@ -172,7 +172,7 @@ struct from_integers_fn {
 // Convert boolean column to strings column
 std::unique_ptr<column> cast_from_integer(column_view const& integers,
                                           endian swap,
-                                          rmm::cuda_stream_view stream,
+                                          cuda::stream_ref stream,
                                           rmm::device_async_resource_ref mr)
 {
   CUDF_EXPECTS(cudf::is_integral_not_bool(integers.type()),
@@ -198,7 +198,7 @@ std::unique_ptr<column> cast_from_integer(column_view const& integers,
 
 std::unique_ptr<column> cast_from_integer(column_view const& integers,
                                           endian swap,
-                                          rmm::cuda_stream_view stream,
+                                          cuda::stream_ref stream,
                                           rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
@@ -208,7 +208,7 @@ std::unique_ptr<column> cast_from_integer(column_view const& integers,
 namespace detail {
 
 std::optional<cudf::data_type> integer_cast_type(strings_column_view const& input,
-                                                 rmm::cuda_stream_view stream)
+                                                 cuda::stream_ref stream)
 {
   if (input.size() == 0) { return std::nullopt; }
   auto d_strings = column_device_view::create(input.parent(), stream);
@@ -243,7 +243,7 @@ std::optional<cudf::data_type> integer_cast_type(strings_column_view const& inpu
 }  // namespace detail
 
 std::optional<cudf::data_type> integer_cast_type(strings_column_view const& input,
-                                                 rmm::cuda_stream_view stream)
+                                                 cuda::stream_ref stream)
 {
   CUDF_FUNC_RANGE();
   return detail::integer_cast_type(input, stream);

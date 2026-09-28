@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 package ai.rapids.cudf;
@@ -29,21 +29,28 @@ public enum BinaryOp {
   BITWISE_AND(16),
   BITWISE_OR(17),
   BITWISE_XOR(18),
-  LOGICAL_AND(19),
-  LOGICAL_OR(20),
-  EQUAL(21),
-  NOT_EQUAL(22),
+  LOGICAL_AND(19),      // operator &&: returns NULL when either operand is NULL, otherwise returns
+                        // true only if both operands are true
+  LOGICAL_OR(20),       // operator ||: returns NULL when either operand is NULL, otherwise returns
+                        // true only if either or both operands are true
+  EQUAL(21),            // operator ==: returns NULL when either operand is NULL, otherwise returns
+                        // whether they are equal
+  NOT_EQUAL(22),        // operator !=: returns NULL when either operand is NULL, otherwise returns
+                        // whether they are unequal
   LESS(23),
   GREATER(24),
   LESS_EQUAL(25), // <=
   GREATER_EQUAL(26), // >=
-  NULL_EQUALS(27), // like EQUAL but NULL == NULL is TRUE and NULL == not NULL is FALSE
+  NULL_EQUALS(27), // null-safe equality (result is never null): returns true if both operands are
+                   // null, false if one is null, otherwise returns whether they are equal
   NULL_NOT_EQUALS(28), // negation of NULL_EQUALS
   NULL_MAX(29), // MAX but NULL < not NULL
   NULL_MIN(30), // MIN but NULL > not NULL
   //NOT IMPLEMENTED YET GENERIC_BINARY(30);
-  NULL_LOGICAL_AND(32),
-  NULL_LOGICAL_OR(33);
+  NULL_LOGICAL_AND(32), // three-valued (Kleene) &&: if any operand is false, returns false; if both
+                        // operands are true, returns true; otherwise returns null
+  NULL_LOGICAL_OR(33);  // three-valued (Kleene) ||: if any operand is true, returns true; if both
+                        // operands are false, returns false; otherwise returns null
 
 
   static final EnumSet<BinaryOp> COMPARISON = EnumSet.of(

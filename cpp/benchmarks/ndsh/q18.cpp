@@ -103,7 +103,7 @@ void ndsh_q18(nvbench::state& state)
   generate_parquet_data_sources(scale_factor, {"customer", "orders", "lineitem"}, sources);
 
   auto stream = cudf::get_default_stream();
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.value()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.get()));
   std::unordered_map<std::string, std::unique_ptr<table_with_names>> tables;
   if (mode == query_mode::COMPUTE_ONLY) { tables = load_ndsh_q18(sources); }
   auto const mem_stats_logger = cudf::memory_stats_logger();

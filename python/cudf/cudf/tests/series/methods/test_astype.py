@@ -1393,7 +1393,7 @@ def test_typecast_from_float_to_decimal(
     request.applymarker(
         pytest.mark.xfail(
             float_types_as_str == "float32" and to_dtype.precision > 12,
-            reason="https://github.com/rapidsai/cudf/issues/14169",
+            reason="https://github.com/NVIDIA/cudf/issues/14169",
         )
     )
     got = data.astype(float_types_as_str)
@@ -1639,7 +1639,7 @@ def test_astype_aware_to_naive_raises():
 )
 @pytest.mark.parametrize("dtype", ["int32", "int64", "uint64"])
 def test_string_astype_int_pep515_underscores(data, dtype):
-    # https://github.com/rapidsai/cudf/issues/12047
+    # https://github.com/NVIDIA/cudf/issues/12047
     # Python (PEP 515) allows underscores between digits, so pandas
     # parses "123_1" as 1231; cudf should match.
     got = cudf.Series(data).astype(dtype)
@@ -1658,7 +1658,7 @@ def test_string_astype_int_pep515_underscores(data, dtype):
 )
 @pytest.mark.parametrize("dtype", ["int32", "int64", "uint64"])
 def test_string_astype_int_invalid_underscores_raises(data, dtype):
-    # https://github.com/rapidsai/cudf/issues/12047
+    # https://github.com/NVIDIA/cudf/issues/12047
     # Underscores not surrounded by digits are invalid (PEP 515);
     # both pandas and cudf must reject them.
     assert_exceptions_equal(

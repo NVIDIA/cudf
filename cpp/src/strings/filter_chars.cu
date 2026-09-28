@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -19,10 +19,10 @@
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/std/utility>
+#include <cuda/stream>
 #include <thrust/execution_policy.h>
 #include <thrust/find.h>
 #include <thrust/host_vector.h>
@@ -108,7 +108,7 @@ std::unique_ptr<column> filter_characters(
   std::vector<std::pair<cudf::char_utf8, cudf::char_utf8>> characters_to_filter,
   filter_type keep_characters,
   string_scalar const& replacement,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr)
 {
   size_type strings_count = strings.size();
@@ -149,7 +149,7 @@ std::unique_ptr<column> filter_characters(
   std::vector<std::pair<cudf::char_utf8, cudf::char_utf8>> characters_to_filter,
   filter_type keep_characters,
   string_scalar const& replacement,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();

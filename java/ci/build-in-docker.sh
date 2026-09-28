@@ -69,7 +69,7 @@ BUILD_ARG=(
   "-DCUDF_USE_PER_THREAD_DEFAULT_STREAM=$ENABLE_PTDS"
   "-DCUDF_JNI_LIBCUDF_STATIC=ON"
   "-DUSE_GDS=$ENABLE_GDS"
-  "-Dtest=*,!CuFileTest,!CudaFatalTest,!ColumnViewNonEmptyNullsTest,!NativeDepsLoaderTest"
+  "-Dtest=*,!CuFileTest,!CudaFatalTest,!ColumnViewNonEmptyNullsTest,!NativeDepsLoaderTest,!PackagedJarOriginCheck"
 )
 
 if [ "$SIGN_FILE" == true ]; then

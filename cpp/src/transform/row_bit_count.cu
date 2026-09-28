@@ -551,8 +551,8 @@ std::unique_ptr<column> segmented_row_bit_count(table_view const& t,
     {mcv.data<size_type>(), static_cast<std::size_t>(mcv.size())},
     segment_length,
     h_info.max_branch_depth);
-  CUDF_CUDA_TRY(cudaGetLastError());
 
+  stream.sync();
   return output;
 }
 

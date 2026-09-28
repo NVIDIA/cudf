@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -50,27 +50,19 @@ static void bench_scatter_lists(nvbench::state& state, nvbench::type_list<TypePa
                    target_base_col->mutable_view().begin<TypeParam>(),
                    target_base_col->mutable_view().end<TypeParam>());
 
-  auto source_offsets =
-    make_fixed_width_column(cudf::data_type{cudf::type_to_id<cudf::size_type>()},
-                            num_rows + 1,
-                            cudf::mask_state::UNALLOCATED,
-                            stream,
-                            mr);
-  auto target_offsets =
-    make_fixed_width_column(cudf::data_type{cudf::type_to_id<cudf::size_type>()},
-                            num_rows + 1,
-                            cudf::mask_state::UNALLOCATED,
-                            stream,
-                            mr);
+  auto source_offsets = make_fixed_width_column(
+    cudf::data_type{cudf::type_id::INT32}, num_rows + 1, cudf::mask_state::UNALLOCATED, stream, mr);
+  auto target_offsets = make_fixed_width_column(
+    cudf::data_type{cudf::type_id::INT32}, num_rows + 1, cudf::mask_state::UNALLOCATED, stream, mr);
 
   thrust::sequence(rmm::exec_policy_nosync(stream),
-                   source_offsets->mutable_view().begin<cudf::size_type>(),
-                   source_offsets->mutable_view().end<cudf::size_type>(),
+                   source_offsets->mutable_view().begin<int32_t>(),
+                   source_offsets->mutable_view().end<int32_t>(),
                    0,
                    num_elements_per_row);
   thrust::sequence(rmm::exec_policy_nosync(stream),
-                   target_offsets->mutable_view().begin<cudf::size_type>(),
-                   target_offsets->mutable_view().end<cudf::size_type>(),
+                   target_offsets->mutable_view().begin<int32_t>(),
+                   target_offsets->mutable_view().end<int32_t>(),
                    0,
                    num_elements_per_row);
 
@@ -105,7 +97,7 @@ static void bench_scatter_lists(nvbench::state& state, nvbench::type_list<TypePa
                     g);
   }
 
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.value()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.get()));
   state.add_global_memory_reads<int8_t>(base_size * sizeof(TypeParam) * 2);  // source + scatter_map
   state.add_global_memory_writes<int8_t>(base_size * sizeof(TypeParam));     // target
 

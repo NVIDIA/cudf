@@ -47,7 +47,7 @@ struct identity_initializer {
 
  public:
   template <typename T, aggregation::Kind k>
-  void operator()(mutable_column_view const& col, rmm::cuda_stream_view stream)
+  void operator()(mutable_column_view const& col, cuda::stream_ref stream)
     requires(is_supported<T, k>())
   {
     if constexpr (k == aggregation::SUM_OVERFLOW) {
@@ -76,7 +76,7 @@ struct identity_initializer {
   }
 
   template <typename T, aggregation::Kind k>
-  void operator()(mutable_column_view const& col, rmm::cuda_stream_view stream)
+  void operator()(mutable_column_view const& col, cuda::stream_ref stream)
     requires(not is_supported<T, k>())
   {
     CUDF_FAIL("Unsupported aggregation for initializing values");
@@ -86,7 +86,7 @@ struct identity_initializer {
 
 void initialize_with_identity(mutable_table_view const& table,
                               host_span<cudf::aggregation::Kind const> aggs,
-                              rmm::cuda_stream_view stream)
+                              cuda::stream_ref stream)
 {
   // TODO: Initialize all the columns in a single kernel instead of invoking one
   // kernel per column

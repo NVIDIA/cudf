@@ -13,11 +13,11 @@
 #include <cudf/scalar/scalar_factories.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_uvector.hpp>
 
 #include <cuda/iterator>
 #include <cuda/std/tuple>
+#include <cuda/stream>
 
 #include <cstddef>
 #include <string>

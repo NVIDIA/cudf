@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -13,7 +13,7 @@
 #include <cudf/io/types.hpp>
 #include <cudf/utilities/span.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
+#include <cuda/stream>
 
 #include <cstdint>
 #include <vector>
@@ -114,7 +114,7 @@ void compress(compression_type compression,
               device_span<device_span<uint8_t const> const> inputs,
               device_span<device_span<uint8_t> const> outputs,
               device_span<codec_exec_result> results,
-              rmm::cuda_stream_view stream);
+              cuda::stream_ref stream);
 
 /**
  * @brief Decompresses a host memory buffer.
@@ -155,7 +155,7 @@ void decompress(compression_type compression,
                 device_span<codec_exec_result> results,
                 size_t max_uncomp_chunk_size,
                 size_t max_total_uncomp_size,
-                rmm::cuda_stream_view stream);
+                cuda::stream_ref stream);
 
 /** @} */  // end of group
 }  // namespace io::detail

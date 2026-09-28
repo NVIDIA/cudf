@@ -11,8 +11,6 @@
 #include <cudf/utilities/span.hpp>
 #include <cudf/utilities/traits.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
-
 #include <cuda/std/utility>
 #include <cuda/stream>
 
@@ -368,7 +366,7 @@ std::unique_ptr<column> make_fixed_width_column(
  */
 std::unique_ptr<column> make_strings_column(
   cudf::device_span<cuda::std::pair<char const*, size_type> const> strings,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -388,7 +386,7 @@ std::unique_ptr<column> make_strings_column(
  */
 std::vector<std::unique_ptr<column>> make_strings_column_batch(
   std::vector<cudf::device_span<cuda::std::pair<char const*, size_type> const>> const& input,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -420,7 +418,7 @@ std::vector<std::unique_ptr<column>> make_strings_column_batch(
 std::unique_ptr<column> make_strings_column(
   cudf::device_span<string_view const> string_views,
   string_view const null_placeholder,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -543,7 +541,7 @@ std::unique_ptr<cudf::column> make_structs_column(
   std::vector<std::unique_ptr<column>>&& child_columns,
   size_type null_count,
   rmm::device_buffer&& null_mask,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -577,7 +575,7 @@ std::unique_ptr<cudf::column> create_structs_hierarchy(
   std::vector<std::unique_ptr<column>>&& child_columns,
   size_type null_count,
   rmm::device_buffer&& null_mask,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**

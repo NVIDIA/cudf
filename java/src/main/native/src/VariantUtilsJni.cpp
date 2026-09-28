@@ -10,6 +10,8 @@
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
+#include <optional>
+
 extern "C" {
 
 JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_VariantUtils_getVariantFieldValue(
@@ -25,8 +27,24 @@ JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_VariantUtils_getVariantFieldValue(
     return cudf::jni::release_as_jlong(
       cudf::io::parquet::experimental::get_variant_field(variant_struct,
                                                          path.get(),
+                                                         std::nullopt,
                                                          cudf::get_default_stream(),
                                                          cudf::get_current_device_resource_ref()));
+  }
+  JNI_CATCH(env, 0);
+}
+
+JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_VariantUtils_getVariantTypeId(JNIEnv* env,
+                                                                          jclass,
+                                                                          jlong value_bytes_handle)
+{
+  JNI_NULL_CHECK(env, value_bytes_handle, "value bytes column is null", 0);
+  JNI_TRY
+  {
+    cudf::jni::auto_set_device(env);
+    auto const& value_bytes = *reinterpret_cast<cudf::column_view const*>(value_bytes_handle);
+    return cudf::jni::release_as_jlong(cudf::io::parquet::experimental::get_variant_type_id(
+      value_bytes, cudf::get_default_stream(), cudf::get_current_device_resource_ref()));
   }
   JNI_CATCH(env, 0);
 }
@@ -44,6 +62,7 @@ JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_VariantUtils_castVariantValue(JNIEnv
     return cudf::jni::release_as_jlong(cudf::io::parquet::experimental::cast_variant(
       value_bytes,
       cudf::data_type{static_cast<cudf::type_id>(cudf_type_id)},
+      std::nullopt,
       cudf::get_default_stream(),
       cudf::get_current_device_resource_ref()));
   }
@@ -64,6 +83,7 @@ JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_VariantUtils_extractVariantField(
       variant_struct,
       path.get(),
       cudf::data_type{static_cast<cudf::type_id>(cudf_type_id)},
+      std::nullopt,
       cudf::get_default_stream(),
       cudf::get_current_device_resource_ref()));
   }

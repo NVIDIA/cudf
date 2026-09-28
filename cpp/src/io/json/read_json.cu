@@ -174,13 +174,13 @@ class compressed_host_buffer_source final : public datasource {
   std::future<std::size_t> device_read_async(std::size_t offset,
                                              std::size_t size,
                                              uint8_t* dst,
-                                             rmm::cuda_stream_view stream) override
+                                             cuda::stream_ref stream) override
   {
     auto& thread_pool = pools::tpool();
     return thread_pool.submit_task([this, offset, size, dst, stream] {
       auto hbuf = host_read(offset, size);
       CUDF_CUDA_TRY(cudf::detail::memcpy_async(dst, hbuf->data(), hbuf->size(), stream));
-      stream.synchronize();
+      stream.sync();
       return hbuf->size();
     });
   }
@@ -255,7 +255,7 @@ std::size_t get_batch_size(std::size_t chunk_size)
  */
 size_type find_first_delimiter(device_span<char const> d_data,
                                char const delimiter,
-                               rmm::cuda_stream_view stream)
+                               cuda::stream_ref stream)
 {
   auto const first_delimiter_position =
     thrust::find(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
@@ -294,7 +294,7 @@ std::pair<datasource::owning_buffer<rmm::device_buffer>,
           std::optional<datasource::owning_buffer<rmm::device_buffer>>>
 get_record_range_raw_input(host_span<std::unique_ptr<datasource>> sources,
                            json_reader_options const& reader_opts,
-                           rmm::cuda_stream_view stream)
+                           cuda::stream_ref stream)
 {
   CUDF_FUNC_RANGE();
 
@@ -475,7 +475,7 @@ get_record_range_raw_input(host_span<std::unique_ptr<datasource>> sources,
 std::pair<table_with_metadata, std::optional<table_with_metadata>> read_batch(
   host_span<std::unique_ptr<datasource>> sources,
   json_reader_options const& reader_opts,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr,
   read_json_diagnostics* diagnostics_out = nullptr)
 {
@@ -492,7 +492,7 @@ std::pair<table_with_metadata, std::optional<table_with_metadata>> read_batch(
                             reader_opts.get_delimiter(),
                             stream,
                             cudf::get_current_device_resource_ref());
-    stream.synchronize();
+    stream.sync();
   }
 
   // Helper: parse one buffer, optionally appending schema-mismatch diagnostics. The two call sites
@@ -519,7 +519,7 @@ std::pair<table_with_metadata, std::optional<table_with_metadata>> read_batch(
                             reader_opts.get_delimiter(),
                             stream,
                             cudf::get_current_device_resource_ref());
-    stream.synchronize();
+    stream.sync();
   }
   buffer = cudf::device_span<char const>(
     reinterpret_cast<char const*>(owning_buffers.second.value().data()),
@@ -540,7 +540,7 @@ std::pair<table_with_metadata, std::optional<table_with_metadata>> read_batch(
  */
 table_with_metadata read_json_impl(host_span<std::unique_ptr<datasource>> sources,
                                    json_reader_options const& reader_opts,
-                                   rmm::cuda_stream_view stream,
+                                   cuda::stream_ref stream,
                                    rmm::device_async_resource_ref mr,
                                    read_json_diagnostics* diagnostics_out = nullptr)
 {
@@ -747,7 +747,7 @@ device_span<char> ingest_raw_input(device_span<char> buffer,
                                    std::size_t range_offset,
                                    std::size_t range_size,
                                    char delimiter,
-                                   rmm::cuda_stream_view stream)
+                                   cuda::stream_ref stream)
 {
   CUDF_FUNC_RANGE();
   // We append a line delimiter between two files to make sure the last line of file i and the first
@@ -821,7 +821,7 @@ device_span<char> ingest_raw_input(device_span<char> buffer,
                     d_delimiter_map.data(),
                     buffer.data());
   }
-  stream.synchronize();
+  stream.sync();
 
   if (thread_tasks.size()) {
     auto const bytes_read = std::accumulate(
@@ -843,7 +843,7 @@ namespace {
 // batch reads, entries are accumulated across batches and deduplicated below.
 table_with_metadata read_json_dispatch(host_span<std::unique_ptr<datasource>> sources,
                                        json_reader_options const& reader_opts,
-                                       rmm::cuda_stream_view stream,
+                                       cuda::stream_ref stream,
                                        rmm::device_async_resource_ref mr,
                                        read_json_diagnostics* diagnostics_out)
 {
@@ -881,7 +881,7 @@ table_with_metadata read_json_dispatch(host_span<std::unique_ptr<datasource>> so
 
 table_with_metadata read_json(host_span<std::unique_ptr<datasource>> sources,
                               json_reader_options const& reader_opts,
-                              rmm::cuda_stream_view stream,
+                              cuda::stream_ref stream,
                               rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
@@ -890,7 +890,7 @@ table_with_metadata read_json(host_span<std::unique_ptr<datasource>> sources,
 
 json_reader_result read_json_with_diagnostics(host_span<std::unique_ptr<datasource>> sources,
                                               json_reader_options const& reader_opts,
-                                              rmm::cuda_stream_view stream,
+                                              cuda::stream_ref stream,
                                               rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
@@ -904,7 +904,7 @@ json_reader_result read_json_with_diagnostics(host_span<std::unique_ptr<datasour
 json_reader_result_with_row_diagnostics read_json_with_row_diagnostics(
   host_span<std::unique_ptr<datasource>> sources,
   json_reader_options const& reader_opts,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();

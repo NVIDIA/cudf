@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -11,7 +11,7 @@
 #include <cudf/hashing/detail/murmurhash3_x86_32.cuh>
 #include <cudf/io/orc_types.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
+#include <cuda/stream>
 
 namespace cudf::io::orc::detail {
 
@@ -47,7 +47,7 @@ void rowgroup_char_counts(device_2dspan<size_type> counts,
                           device_span<orc_column_device_view const> orc_columns,
                           device_2dspan<rowgroup_rows const> rowgroup_bounds,
                           device_span<uint32_t const> str_col_indexes,
-                          rmm::cuda_stream_view stream)
+                          cuda::stream_ref stream)
 {
   if (rowgroup_bounds.count() == 0) { return; }
 
@@ -62,7 +62,7 @@ void rowgroup_char_counts(device_2dspan<size_type> counts,
     cudf::util::div_rounding_up_unsafe<unsigned int>(num_rowgroups, block_size) *
     str_col_indexes.size();
 
-  rowgroup_char_counts_kernel<<<num_blocks, block_size, 0, stream.value()>>>(
+  rowgroup_char_counts_kernel<<<num_blocks, block_size, 0, stream.get()>>>(
     counts, orc_columns, rowgroup_bounds, str_col_indexes);
   CUDF_CUDA_TRY(cudaGetLastError());
 }
@@ -226,33 +226,32 @@ CUDF_KERNEL void __launch_bounds__(block_size)
 
 void populate_dictionary_hash_maps(device_2dspan<stripe_dictionary> dictionaries,
                                    device_span<orc_column_device_view const> columns,
-                                   rmm::cuda_stream_view stream)
+                                   cuda::stream_ref stream)
 {
   if (dictionaries.count() == 0) { return; }
   constexpr int block_size = 256;
   populate_dictionary_hash_maps_kernel<block_size>
-    <<<dictionaries.count(), block_size, 0, stream.value()>>>(dictionaries, columns);
+    <<<dictionaries.count(), block_size, 0, stream.get()>>>(dictionaries, columns);
   CUDF_CUDA_TRY(cudaGetLastError());
 }
 
-void collect_map_entries(device_2dspan<stripe_dictionary> dictionaries,
-                         rmm::cuda_stream_view stream)
+void collect_map_entries(device_2dspan<stripe_dictionary> dictionaries, cuda::stream_ref stream)
 {
   if (dictionaries.count() == 0) { return; }
   constexpr int block_size = 1024;
   collect_map_entries_kernel<block_size>
-    <<<dictionaries.count(), block_size, 0, stream.value()>>>(dictionaries);
+    <<<dictionaries.count(), block_size, 0, stream.get()>>>(dictionaries);
   CUDF_CUDA_TRY(cudaGetLastError());
 }
 
 void get_dictionary_indices(device_2dspan<stripe_dictionary> dictionaries,
                             device_span<orc_column_device_view const> columns,
-                            rmm::cuda_stream_view stream)
+                            cuda::stream_ref stream)
 {
   if (dictionaries.count() == 0) { return; }
   constexpr int block_size = 1024;
   get_dictionary_indices_kernel<block_size>
-    <<<dictionaries.count(), block_size, 0, stream.value()>>>(dictionaries, columns);
+    <<<dictionaries.count(), block_size, 0, stream.get()>>>(dictionaries, columns);
   CUDF_CUDA_TRY(cudaGetLastError());
 }
 

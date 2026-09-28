@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -18,6 +18,48 @@
 #include <utility>
 
 struct ArrowColumnTest : public cudf::test::BaseFixture {};
+
+namespace {
+
+void set_fixed_size_list_type(ArrowSchema* schema)
+{
+  NANOARROW_THROW_NOT_OK(ArrowSchemaSetTypeFixedSize(schema, NANOARROW_TYPE_FIXED_SIZE_LIST, 3));
+  NANOARROW_THROW_NOT_OK(ArrowSchemaSetType(schema->children[0], NANOARROW_TYPE_INT64));
+}
+
+nanoarrow::UniqueSchema make_fixed_size_list_schema(bool wrap_in_struct)
+{
+  nanoarrow::UniqueSchema schema;
+  ArrowSchemaInit(schema.get());
+
+  auto* list_schema = schema.get();
+  if (wrap_in_struct) {
+    NANOARROW_THROW_NOT_OK(ArrowSchemaSetTypeStruct(schema.get(), 1));
+    list_schema = schema->children[0];
+  }
+
+  set_fixed_size_list_type(list_schema);
+  return schema;
+}
+
+nanoarrow::UniqueSchema make_fixed_size_list_dictionary_schema()
+{
+  nanoarrow::UniqueSchema schema;
+  ArrowSchemaInit(schema.get());
+  NANOARROW_THROW_NOT_OK(ArrowSchemaSetType(schema.get(), NANOARROW_TYPE_INT32));
+  NANOARROW_THROW_NOT_OK(ArrowSchemaAllocateDictionary(schema.get()));
+  ArrowSchemaInit(schema->dictionary);
+  set_fixed_size_list_type(schema->dictionary);
+  return schema;
+}
+
+ArrowDeviceArray make_empty_device_array()
+{
+  return ArrowDeviceArray{
+    .array = {}, .device_id = 0, .device_type = ARROW_DEVICE_CUDA, .sync_event = nullptr};
+}
+
+}  // namespace
 
 template <typename T>
 auto export_to_arrow(T& obj, ArrowDeviceType device_type = ARROW_DEVICE_CUDA)
@@ -166,6 +208,26 @@ TEST_F(ArrowColumnTest, ToFromHost)
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(int_col, arrow_column_from_arrow_array.view());
 }
 
+TEST_F(ArrowColumnTest, FixedSizeListDeviceInputRejected)
+{
+  auto schema = make_fixed_size_list_schema(false);
+  auto array  = make_empty_device_array();
+
+  EXPECT_THROW(
+    { static_cast<void>(cudf::interop::arrow_column(std::move(*schema.get()), std::move(array))); },
+    cudf::data_type_error);
+}
+
+TEST_F(ArrowColumnTest, DictionaryFixedSizeListDeviceInputRejected)
+{
+  auto schema = make_fixed_size_list_dictionary_schema();
+  auto array  = make_empty_device_array();
+
+  EXPECT_THROW(
+    { static_cast<void>(cudf::interop::arrow_column(std::move(*schema.get()), std::move(array))); },
+    cudf::data_type_error);
+}
+
 struct ArrowTableTest : public cudf::test::BaseFixture {};
 
 TEST_F(ArrowTableTest, TwoWayConversion)
@@ -278,9 +340,19 @@ TEST_F(ArrowTableTest, ToFromHost)
 
 TEST_F(ArrowTableTest, FromArrowArrayStream)
 {
-  auto num_copies         = 3;
-  auto [tbl, sch, stream] = get_nanoarrow_stream(num_copies);
+  auto num_copies    = 3;
+  auto [tbl, stream] = get_nanoarrow_stream(num_copies);
 
   auto result = cudf::interop::arrow_table(std::move(stream));
   CUDF_TEST_EXPECT_TABLES_EQUAL(tbl->view(), result.view());
+}
+
+TEST_F(ArrowTableTest, NestedFixedSizeListDeviceInputRejected)
+{
+  auto schema = make_fixed_size_list_schema(true);
+  auto array  = make_empty_device_array();
+
+  EXPECT_THROW(
+    { static_cast<void>(cudf::interop::arrow_table(std::move(*schema.get()), std::move(array))); },
+    cudf::data_type_error);
 }

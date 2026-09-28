@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 
@@ -8,6 +8,40 @@ import pytest
 
 import cudf
 from cudf.testing import assert_eq
+
+
+@pytest.fixture(scope="module")
+def multiindex_iloc_frames():
+    rng = np.random.default_rng(seed=0)
+    pdf = pd.DataFrame(rng.random(size=(7, 5)))
+    pdf.index = pd.MultiIndex(
+        [
+            ["a", "b", "c"],
+            ["house", "store", "forest"],
+            ["clouds", "clear", "storm"],
+            ["fire", "smoke", "clear"],
+            [
+                np.datetime64("2001-01-01", "ns"),
+                np.datetime64("2002-01-01", "ns"),
+                np.datetime64("2003-01-01", "ns"),
+            ],
+        ],
+        [
+            [0, 0, 0, 0, 1, 1, 2],
+            [1, 1, 1, 1, 0, 0, 2],
+            [0, 0, 2, 2, 2, 0, 1],
+            [0, 0, 0, 1, 2, 0, 1],
+            [1, 0, 1, 2, 0, 0, 1],
+        ],
+        names=["alpha", "location", "weather", "sign", "timestamp"],
+    )
+    gdf = cudf.from_pandas(pdf)
+    return pdf, gdf
+
+
+def test_multiindex_iloc_fixture_indices(multiindex_iloc_frames):
+    pdf, gdf = multiindex_iloc_frames
+    assert_eq(pdf.index, gdf.index)
 
 
 @pytest.mark.parametrize(
@@ -38,35 +72,8 @@ from cudf.testing import assert_eq
         slice(1, None),
     ],
 )
-def test_multiindex_iloc(iloc_rows, iloc_columns):
-    rng = np.random.default_rng(seed=0)
-    pdf = pd.DataFrame(rng.random(size=(7, 5)))
-    gdf = cudf.from_pandas(pdf)
-    pdfIndex = pd.MultiIndex(
-        [
-            ["a", "b", "c"],
-            ["house", "store", "forest"],
-            ["clouds", "clear", "storm"],
-            ["fire", "smoke", "clear"],
-            [
-                np.datetime64("2001-01-01", "ns"),
-                np.datetime64("2002-01-01", "ns"),
-                np.datetime64("2003-01-01", "ns"),
-            ],
-        ],
-        [
-            [0, 0, 0, 0, 1, 1, 2],
-            [1, 1, 1, 1, 0, 0, 2],
-            [0, 0, 2, 2, 2, 0, 1],
-            [0, 0, 0, 1, 2, 0, 1],
-            [1, 0, 1, 2, 0, 0, 1],
-        ],
-    )
-    pdfIndex.names = ["alpha", "location", "weather", "sign", "timestamp"]
-    gdfIndex = cudf.from_pandas(pdfIndex)
-    assert_eq(pdfIndex, gdfIndex)
-    pdf.index = pdfIndex
-    gdf.index = gdfIndex
+def test_multiindex_iloc(multiindex_iloc_frames, iloc_rows, iloc_columns):
+    pdf, gdf = multiindex_iloc_frames
     presult = pdf.iloc[iloc_rows, iloc_columns]
     gresult = gdf.iloc[iloc_rows, iloc_columns]
     if isinstance(gresult, cudf.DataFrame):
@@ -117,35 +124,8 @@ def test_multiindex_iloc_scalar():
         slice(1, None),
     ],
 )
-def test_multicolumn_iloc(iloc_rows, iloc_columns):
-    rng = np.random.default_rng(seed=0)
-    pdf = pd.DataFrame(rng.random(size=(7, 5)))
-    gdf = cudf.from_pandas(pdf)
-    pdfIndex = pd.MultiIndex(
-        [
-            ["a", "b", "c"],
-            ["house", "store", "forest"],
-            ["clouds", "clear", "storm"],
-            ["fire", "smoke", "clear"],
-            [
-                np.datetime64("2001-01-01", "ns"),
-                np.datetime64("2002-01-01", "ns"),
-                np.datetime64("2003-01-01", "ns"),
-            ],
-        ],
-        [
-            [0, 0, 0, 0, 1, 1, 2],
-            [1, 1, 1, 1, 0, 0, 2],
-            [0, 0, 2, 2, 2, 0, 1],
-            [0, 0, 0, 1, 2, 0, 1],
-            [1, 0, 1, 2, 0, 0, 1],
-        ],
-    )
-    pdfIndex.names = ["alpha", "location", "weather", "sign", "timestamp"]
-    gdfIndex = cudf.from_pandas(pdfIndex)
-    assert_eq(pdfIndex, gdfIndex)
-    pdf.index = pdfIndex
-    gdf.index = gdfIndex
+def test_multicolumn_iloc(multiindex_iloc_frames, iloc_rows, iloc_columns):
+    pdf, gdf = multiindex_iloc_frames
     pdf = pdf.T
     gdf = gdf.T
     presult = pdf.iloc[iloc_rows, iloc_columns]
@@ -368,7 +348,7 @@ def test_dataframe_iloc_inplace_update_shape_mismatch_RHS_df():
 
 
 def test_iloc_single_row_with_nullable_column():
-    # see https://github.com/rapidsai/cudf/issues/11349
+    # see https://github.com/NVIDIA/cudf/issues/11349
     pdf = pd.DataFrame({"a": [0, 1, 2, 3], "b": [0.1, 0.2, None, 0.4]})
     df = cudf.from_pandas(pdf)
 
@@ -392,7 +372,7 @@ def test_boolean_mask_columns_iloc_series():
 
 
 def test_iloc_column_boolean_mask_issue_13265():
-    # https://github.com/rapidsai/cudf/issues/13265
+    # https://github.com/NVIDIA/cudf/issues/13265
     df = pd.DataFrame(np.arange(4).reshape(2, 2))
     cdf = cudf.from_pandas(df)
     expect = df.iloc[:, [True, True]]
@@ -401,8 +381,8 @@ def test_iloc_column_boolean_mask_issue_13265():
 
 
 def test_iloc_repeated_column_label_issue_13266():
-    # https://github.com/rapidsai/cudf/issues/13266
-    # https://github.com/rapidsai/cudf/issues/13273
+    # https://github.com/NVIDIA/cudf/issues/13266
+    # https://github.com/NVIDIA/cudf/issues/13273
     df = pd.DataFrame(np.arange(4).reshape(2, 2))
     cdf = cudf.from_pandas(df)
 
@@ -419,7 +399,7 @@ def test_iloc_repeated_column_label_issue_13266():
     ids=["row_ellipsis", "column_ellipsis"],
 )
 def test_iloc_ellipsis_as_slice_issue_13267(indexer):
-    # https://github.com/rapidsai/cudf/issues/13267
+    # https://github.com/NVIDIA/cudf/issues/13267
     df = pd.DataFrame(np.arange(4).reshape(2, 2))
     cdf = cudf.from_pandas(df)
 
@@ -443,7 +423,7 @@ def test_iloc_ellipsis_as_slice_issue_13267(indexer):
     ],
 )
 def test_iloc_multiindex_lookup_as_label_issue_13515(indexer):
-    # https://github.com/rapidsai/cudf/issues/13515
+    # https://github.com/NVIDIA/cudf/issues/13515
     df = pd.DataFrame(
         {"a": [1, 1, 3], "b": [2, 3, 4], "c": [1, 6, 7], "d": [1, 8, 9]}
     ).set_index(["a", "b"])

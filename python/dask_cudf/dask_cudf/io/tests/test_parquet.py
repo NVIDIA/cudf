@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import glob
@@ -598,7 +598,7 @@ def test_null_partition(tmpdir):
 
 
 def test_nullable_schema_mismatch(tmpdir):
-    # See: https://github.com/rapidsai/cudf/issues/12702
+    # See: https://github.com/NVIDIA/cudf/issues/12702
     path0 = str(tmpdir.join("test.0.parquet"))
     path1 = str(tmpdir.join("test.1.parquet"))
     cudf.DataFrame.from_dict({"a": [1, 2, 3]}).to_parquet(path0)

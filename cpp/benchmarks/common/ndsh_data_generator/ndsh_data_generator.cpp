@@ -25,8 +25,9 @@
 #include <cudf/unary.hpp>
 #include <cudf/utilities/error.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/resource_ref.hpp>
+
+#include <cuda/stream>
 
 #include <array>
 #include <limits>
@@ -147,7 +148,7 @@ constexpr std::array vocab_containers{
  * @param mr Device memory resource used to allocate the returned column's device memory
  */
 std::unique_ptr<cudf::table> generate_orders_independent(double scale_factor,
-                                                         rmm::cuda_stream_view stream,
+                                                         cuda::stream_ref stream,
                                                          rmm::device_async_resource_ref mr)
 {
   CUDF_BENCHMARK_RANGE();
@@ -274,7 +275,7 @@ std::unique_ptr<cudf::table> generate_orders_independent(double scale_factor,
  */
 std::unique_ptr<cudf::table> generate_lineitem_partial(cudf::table_view const& orders_independent,
                                                        double scale_factor,
-                                                       rmm::cuda_stream_view stream,
+                                                       cuda::stream_ref stream,
                                                        rmm::device_async_resource_ref mr)
 {
   CUDF_BENCHMARK_RANGE();
@@ -445,7 +446,7 @@ std::unique_ptr<cudf::table> generate_lineitem_partial(cudf::table_view const& o
  * @param mr Device memory resource used to allocate the returned column's device memory
  */
 std::unique_ptr<cudf::table> generate_orders_dependent(cudf::table_view const& lineitem_partial,
-                                                       rmm::cuda_stream_view stream,
+                                                       cuda::stream_ref stream,
                                                        rmm::device_async_resource_ref mr)
 {
   CUDF_BENCHMARK_RANGE();
@@ -538,7 +539,7 @@ std::unique_ptr<cudf::table> generate_orders_dependent(cudf::table_view const& l
  * @param mr Device memory resource used to allocate the returned column's device memory
  */
 std::unique_ptr<cudf::table> generate_partsupp(double scale_factor,
-                                               rmm::cuda_stream_view stream,
+                                               cuda::stream_ref stream,
                                                rmm::device_async_resource_ref mr)
 {
   CUDF_BENCHMARK_RANGE();
@@ -586,7 +587,7 @@ std::unique_ptr<cudf::table> generate_partsupp(double scale_factor,
  * @param mr Device memory resource used to allocate the returned column's device memory
  */
 std::unique_ptr<cudf::table> generate_part(double scale_factor,
-                                           rmm::cuda_stream_view stream,
+                                           cuda::stream_ref stream,
                                            rmm::device_async_resource_ref mr)
 {
   CUDF_BENCHMARK_RANGE();
@@ -712,7 +713,7 @@ std::unique_ptr<cudf::table> generate_part(double scale_factor,
  */
 std::tuple<std::unique_ptr<cudf::table>, std::unique_ptr<cudf::table>, std::unique_ptr<cudf::table>>
 generate_orders_lineitem_part(double scale_factor,
-                              rmm::cuda_stream_view stream,
+                              cuda::stream_ref stream,
                               rmm::device_async_resource_ref mr)
 {
   CUDF_BENCHMARK_RANGE();
@@ -782,7 +783,7 @@ generate_orders_lineitem_part(double scale_factor,
  * @param mr Device memory resource used to allocate the returned column's device memory
  */
 std::unique_ptr<cudf::table> generate_supplier(double scale_factor,
-                                               rmm::cuda_stream_view stream,
+                                               cuda::stream_ref stream,
                                                rmm::device_async_resource_ref mr)
 {
   CUDF_BENCHMARK_RANGE();
@@ -843,7 +844,7 @@ std::unique_ptr<cudf::table> generate_supplier(double scale_factor,
  * @param mr Device memory resource used to allocate the returned column's device memory
  */
 std::unique_ptr<cudf::table> generate_customer(double scale_factor,
-                                               rmm::cuda_stream_view stream,
+                                               cuda::stream_ref stream,
                                                rmm::device_async_resource_ref mr)
 {
   CUDF_BENCHMARK_RANGE();
@@ -910,7 +911,7 @@ std::unique_ptr<cudf::table> generate_customer(double scale_factor,
  * @param stream CUDA stream used for device memory operations and kernel launches
  * @param mr Device memory resource used to allocate the returned column's device memory
  */
-std::unique_ptr<cudf::table> generate_nation(rmm::cuda_stream_view stream,
+std::unique_ptr<cudf::table> generate_nation(cuda::stream_ref stream,
                                              rmm::device_async_resource_ref mr)
 {
   CUDF_BENCHMARK_RANGE();
@@ -950,7 +951,7 @@ std::unique_ptr<cudf::table> generate_nation(rmm::cuda_stream_view stream,
  * @param stream CUDA stream used for device memory operations and kernel launches
  * @param mr Device memory resource used to allocate the returned column's device memory
  */
-std::unique_ptr<cudf::table> generate_region(rmm::cuda_stream_view stream,
+std::unique_ptr<cudf::table> generate_region(cuda::stream_ref stream,
                                              rmm::device_async_resource_ref mr)
 {
   CUDF_BENCHMARK_RANGE();

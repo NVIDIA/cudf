@@ -20,13 +20,13 @@
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/iterator>
 #include <cuda/std/utility>
+#include <cuda/stream>
 #include <thrust/for_each.h>
-#include <thrust/iterator/constant_iterator.h>
 
 namespace cudf {
 namespace strings {
@@ -123,7 +123,7 @@ struct join_gather_fn : public join_base_fn {
 std::unique_ptr<column> join_strings(strings_column_view const& input,
                                      string_scalar const& separator,
                                      string_scalar const& narep,
-                                     rmm::cuda_stream_view stream,
+                                     cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr)
 {
   if (input.is_empty()) { return make_empty_column(type_id::STRING); }
@@ -158,7 +158,7 @@ std::unique_ptr<column> join_strings(strings_column_view const& input,
                std::overflow_error);
 
   // build the offsets: single string output has offsets [0,chars-size]
-  auto sizes_itr      = thrust::constant_iterator(static_cast<size_type>(chars.size()));
+  auto sizes_itr      = cuda::constant_iterator(static_cast<size_type>(chars.size()));
   auto offsets_column = std::get<0>(
     cudf::strings::detail::make_offsets_child_column(sizes_itr, sizes_itr + 1, stream, mr));
 
@@ -181,7 +181,7 @@ std::unique_ptr<column> join_strings(strings_column_view const& input,
 std::unique_ptr<column> join_strings(strings_column_view const& strings,
                                      string_scalar const& separator,
                                      string_scalar const& narep,
-                                     rmm::cuda_stream_view stream,
+                                     cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();

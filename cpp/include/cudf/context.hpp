@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -11,6 +11,7 @@
 #include <type_traits>
 
 namespace CUDF_EXPORT cudf {
+namespace detail {
 
 /// @brief Flags for controlling initialization steps
 enum class init_flags : std::uint32_t {
@@ -18,12 +19,10 @@ enum class init_flags : std::uint32_t {
   NONE = 0,
   /// @brief Load the nvCOMP library during initialization
   LOAD_NVCOMP = 1 << 0,
-  /// @brief Initialize the JIT program cache during initialization
-  INIT_JIT_CACHE = 1 << 1,
-  /// @brief Pre-load the JIT program cache from disk during initialization
-  DEFAULT = INIT_JIT_CACHE,
-  /// @brief All initialization steps (default behavior)
-  ALL = LOAD_NVCOMP | INIT_JIT_CACHE
+  /// @brief Default initialization steps
+  DEFAULT = NONE,
+  /// @brief All initialization steps
+  ALL = LOAD_NVCOMP
 };
 
 /// @brief Bitwise OR operator for init_flags
@@ -66,19 +65,18 @@ constexpr bool has_flag(init_flags flags, init_flags flag) noexcept
   return (flags | flag) == flags;
 }
 
-/// @brief Initialize the cudf global context
-/// @param flags Optional flags to control which initialization steps to perform.
-/// Can be called multiple times to initialize additional components. If all selected
-/// steps are already performed, the call has no effect.
+/// @brief Ensure the cudf global context is initialized. Only the first call to this function will
+/// have an effect, subsequent calls are no-ops regardless of the initialization flags.
+///  This function is thread-safe and can be called from multiple threads concurrently.
+///
+/// It is intended for advanced users who need to explicitly control the initialization order of the
+/// cuDF context. Most users should not need to call this function directly, as the context is
+/// automatically initialized when needed.
+///
+/// @param flags Flags controlling which components to initialize
 void initialize(init_flags flags = init_flags::DEFAULT);
 
-/// @brief Destroy the cudf global context, resetting it to an uninitialized state. This is
-/// primarily intended for testing purposes, allowing for re-initialization of the context after
-/// teardown.
-/// @warning This is not intended for general use and may lead to undefined behavior if used
-/// improperly. The caller must ensure that no threads are concurrently accessing the context during
-/// teardown and that only one thread calls teardown at a time.
-void teardown();
+}  // namespace detail
 
 /**
  * @brief Enable or disable the JIT program cache

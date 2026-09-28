@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -395,7 +395,7 @@ TYPED_TEST(typed_groupby_rank_scan_test, structsWithNullPushdown)
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(*agg_results[1].results[2], expected_percent_for_null);
 }
 
-/* List support dependent on https://github.com/rapidsai/cudf/issues/8683
+/* List support dependent on https://github.com/NVIDIA/cudf/issues/8683
 template <typename T>
 struct list_groupby_rank_scan_test : public cudf::test::BaseFixture {
 };

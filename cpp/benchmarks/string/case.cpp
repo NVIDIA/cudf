@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -49,7 +49,7 @@ void bench_case(nvbench::state& state)
   }
   auto input = cudf::strings_column_view(col_view);
 
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().value()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().get()));
 
   state.add_global_memory_reads<nvbench::int8_t>(col_size);
   state.add_global_memory_writes<nvbench::int8_t>(col_size);

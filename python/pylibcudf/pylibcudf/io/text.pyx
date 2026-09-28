@@ -47,12 +47,12 @@ cdef class ByteRangeInfo:
         self.c_obj = byte_range_info(offset, size)
 
     @property
-    def offset(self):
+    def offset(self) -> int:
         """Get the offset in bytes."""
         return self.c_obj.offset()
 
     @property
-    def size(self):
+    def size(self) -> int:
         """Get the size in bytes."""
         return self.c_obj.size()
 
@@ -67,7 +67,7 @@ cdef class ParseOptions:
         Only rows starting inside this byte range will be
         part of the output column.
 
-    strip_delimiters : bool, default True
+    strip_delimiters : bool, default False
         Whether delimiters at the end of rows should
         be stripped from the output column.
     """
@@ -75,7 +75,7 @@ cdef class ParseOptions:
         self,
         *,
         byte_range: tuple[int, int] | list[int] | None = None,
-        strip_delimiters=False,
+        strip_delimiters: bool = False,
     ):
         self.c_options = cpp_text.parse_options()
         if byte_range is not None:
@@ -98,7 +98,7 @@ cdef class DataChunkSource:
         Filename or data itself.
     """
 
-    def __cinit__(self, str data):
+    def __cinit__(self, str data) -> None:
         # Need to keep a reference alive for make_source
         self.data_ref = data.encode()
 
@@ -230,7 +230,7 @@ cpdef Column multibyte_split(
     cdef unique_ptr[data_chunk_source] c_source = move(source.c_source)
     cdef string c_delimiter = delimiter.encode()
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
 
     if options is None:

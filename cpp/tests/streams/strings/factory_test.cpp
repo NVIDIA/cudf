@@ -1,9 +1,10 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
 #include <cudf_test/base_fixture.hpp>
+#include <cudf_test/column_wrapper.hpp>
 #include <cudf_test/default_stream.hpp>
 
 #include <cudf/column/column_factories.hpp>
@@ -52,4 +53,29 @@ TEST_F(StringsFactoryTest, StringBatchConstruction)
   std::vector<cudf::device_span<string_pair const>> input(
     10, cudf::device_span<string_pair const>{d_input.data(), d_input.size()});
   cudf::make_strings_column_batch(input, stream);
+}
+
+TEST_F(StringsFactoryTest, StructConstruction)
+{
+  auto const stream = cudf::test::get_default_stream();
+
+  std::vector<std::unique_ptr<cudf::column>> children;
+  children.push_back(cudf::test::fixed_width_column_wrapper<int32_t>{1, 2, 3}.release());
+  children.push_back(cudf::test::strings_column_wrapper{"a", "b", "c"}.release());
+
+  auto result = cudf::make_structs_column(3, std::move(children), 0, rmm::device_buffer{}, stream);
+  EXPECT_EQ(result->size(), 3);
+}
+
+TEST_F(StringsFactoryTest, StructHierarchyConstruction)
+{
+  auto const stream = cudf::test::get_default_stream();
+
+  std::vector<std::unique_ptr<cudf::column>> children;
+  children.push_back(cudf::test::fixed_width_column_wrapper<int32_t>{1, 2, 3}.release());
+  children.push_back(cudf::test::strings_column_wrapper{"a", "b", "c"}.release());
+
+  auto result =
+    cudf::create_structs_hierarchy(3, std::move(children), 0, rmm::device_buffer{}, stream);
+  EXPECT_EQ(result->size(), 3);
 }

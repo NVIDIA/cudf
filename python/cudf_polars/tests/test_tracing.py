@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from __future__ import annotations
@@ -68,7 +68,7 @@ def test_trace_basic(
 
 def test_import_without_structlog(timeout_seconds: int) -> None:
     # This test could avoid the subprocess by monkeypatching sys.modules, but
-    # that was flaky. https://github.com/rapidsai/cudf/pull/22012#issuecomment-4284536686
+    # that was flaky. https://github.com/NVIDIA/cudf/pull/22012#issuecomment-4284536686
     # has more details.
     code = textwrap.dedent("""\
     import sys
@@ -156,13 +156,13 @@ def test_sets_cudf_polars_query_id():
         assert "scope" in log
         assert "cudf_polars_query_id" in log
         assert log["cudf_polars_query_id"] == query_id
+        keys = set(log.keys())
 
         match log["scope"]:
             case "plan":
-                assert "plan" in log
+                expected_keys = {"plan"}
             case "actor":
-                keys = set(log.keys())
-                assert keys >= {
+                expected_keys = {
                     "actor_ir_id",
                     "actor_ir_type",
                     "cudf_polars_query_id",
@@ -172,8 +172,7 @@ def test_sets_cudf_polars_query_id():
                     "stop",
                 }
             case "evaluate_ir_node":
-                keys = set(log.keys())
-                assert keys >= {
+                expected_keys = {
                     "start",
                     "stop",
                     "cudf_polars_query_id",
@@ -182,5 +181,24 @@ def test_sets_cudf_polars_query_id():
                     "scope",
                     "actor_ir_id",
                 }
+            case "io_task":
+                expected_keys = {
+                    "actor_ir_id",
+                    "actor_ir_type",
+                    "admitted",
+                    "cudf_polars_query_id",
+                    "estimated_output_bytes",
+                    "event",
+                    "ir_id",
+                    "ir_type",
+                    "log_level",
+                    "reservation_bytes",
+                    "scope",
+                    "sequence_number",
+                    "start",
+                    "stop",
+                }
             case _:
                 pytest.fail(f"Unexpected scope: {log['scope']}")
+
+        assert expected_keys.issubset(keys)

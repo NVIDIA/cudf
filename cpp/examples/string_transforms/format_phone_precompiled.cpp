@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -17,13 +17,14 @@
 #include <cudf/strings/replace_re.hpp>
 #include <cudf/strings/strip.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_uvector.hpp>
+
+#include <cuda/stream>
 
 std::tuple<std::unique_ptr<cudf::column>, std::vector<int32_t>> transform(
   cudf::table_view const& table)
 {
-  auto stream = rmm::cuda_stream_default;
+  auto stream = cudf::get_default_stream();
   auto mr     = cudf::get_current_device_resource_ref();
 
   auto country_code    = table.column(2);

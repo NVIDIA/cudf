@@ -14,18 +14,18 @@
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/iterator>
+#include <cuda/stream>
 #include <thrust/for_each.h>
 
 namespace cudf::lists {
 namespace detail {
 
 std::unique_ptr<column> reverse(lists_column_view const& input,
-                                rmm::cuda_stream_view stream,
+                                cuda::stream_ref stream,
                                 rmm::device_async_resource_ref mr)
 {
   if (input.is_empty()) { return cudf::empty_like(input.parent()); }
@@ -75,7 +75,7 @@ std::unique_ptr<column> reverse(lists_column_view const& input,
 }  // namespace detail
 
 std::unique_ptr<column> reverse(lists_column_view const& input,
-                                rmm::cuda_stream_view stream,
+                                cuda::stream_ref stream,
                                 rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();

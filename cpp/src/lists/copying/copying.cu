@@ -11,9 +11,9 @@
 #include <cudf/types.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/stream>
 #include <thrust/transform.h>
 
 #include <iostream>
@@ -26,7 +26,7 @@ namespace detail {
 std::unique_ptr<cudf::column> copy_slice(lists_column_view const& lists,
                                          size_type start,
                                          size_type end,
-                                         rmm::cuda_stream_view stream,
+                                         cuda::stream_ref stream,
                                          rmm::device_async_resource_ref mr)
 {
   if (lists.is_empty() or start == end) { return cudf::empty_like(lists.parent()); }

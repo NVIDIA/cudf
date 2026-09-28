@@ -18,6 +18,7 @@
 #include <cuda/stream>
 #include <thrust/for_each.h>
 
+#include <mutex>
 #include <string>
 
 namespace cudf::groupby {
@@ -90,17 +91,20 @@ struct merge_single_pass_aggs_fn {
 
 void streaming_groupby::impl::do_merge(impl const& other, cuda::stream_ref stream)
 {
-  CUDF_EXPECTS(!_invalidated,
-               "streaming_groupby is in an invalidated state from a prior failure; "
-               "no further aggregate()/merge() is allowed.  finalize() may still be called.");
-  CUDF_EXPECTS(!other._invalidated, "Cannot merge from an invalidated streaming_groupby.");
+  // `other` is only read from, so a single lock on this object's insertion state is enough.
+  std::lock_guard const lock{_insert_mutex};
 
-  if (!other._initialized || !other.has_state()) { return; }
+  ensure_not_invalidated();
+  CUDF_EXPECTS(!other._invalidated.load(std::memory_order_relaxed),
+               "Cannot merge from an invalidated streaming_groupby.");
+
+  auto const other_distinct_keys = other._distinct_keys.load(std::memory_order_relaxed);
+  if (!other._initialized || other_distinct_keys == 0) { return; }
   CUDF_EXPECTS(_initialized,
                "Cannot merge into an uninitialized streaming_groupby. "
                "Call aggregate() at least once before merge().");
-  CUDF_EXPECTS(other._distinct_keys <= _max_distinct_keys,
-               "Merge source distinct keys (" + std::to_string(other._distinct_keys) +
+  CUDF_EXPECTS(other_distinct_keys <= _max_distinct_keys,
+               "Merge source distinct keys (" + std::to_string(other_distinct_keys) +
                  ") exceeds max_distinct_keys (" + std::to_string(_max_distinct_keys) + ").",
                std::invalid_argument);
   CUDF_EXPECTS(other._agg_kinds == _agg_kinds,
@@ -115,16 +119,16 @@ void streaming_groupby::impl::do_merge(impl const& other, cuda::stream_ref strea
 
   auto const mr = cudf::get_current_device_resource_ref();
 
-  auto other_keys                = other.gather_distinct_keys(stream, mr);
-  auto const other_key_view      = other_keys->view();
-  auto const other_distinct_keys = other._distinct_keys;
-  if (other_distinct_keys == 0) { return; }
+  auto other_keys           = other.gather_distinct_keys(stream, mr);
+  auto const other_key_view = other_keys->view();
 
   update_nullable_state(other_key_view);
 
   if (!_key_set) { create_key_set(stream); }
 
+  _insert_done.wait(stream);
   auto result = probe_and_insert(other_key_view, stream);
+  _insert_done.record(stream);
 
   // Merge aggregation values using dense target indices.  We only read from
   // `other._agg_results`; no need to deep-copy the source rows like keys.
@@ -138,7 +142,7 @@ void streaming_groupby::impl::do_merge(impl const& other, cuda::stream_ref strea
     cuda::counting_iterator<int64_t>(0),
     static_cast<int64_t>(other_distinct_keys) * num_agg_cols,
     merge_single_pass_aggs_fn{
-      result.target_indices.begin(), _d_agg_kinds.data(), *d_source, *_d_agg_results});
+      result.target_indices.begin(), _d_agg_kinds->data(), *d_source, *_d_agg_results});
 }
 
 }  // namespace cudf::groupby

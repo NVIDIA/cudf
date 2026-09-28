@@ -1008,7 +1008,7 @@ class parquet_reader_options_builder {
  */
 table_with_metadata read_parquet(
   parquet_reader_options const& options,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -1039,7 +1039,7 @@ table_with_metadata read_parquet(
   std::vector<std::unique_ptr<cudf::io::datasource>>&& sources,
   std::vector<parquet::FileMetaData>&& parquet_metadatas,
   parquet_reader_options const& options,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -1077,7 +1077,7 @@ class chunked_parquet_reader {
   chunked_parquet_reader(
     std::size_t chunk_read_limit,
     parquet_reader_options const& options,
-    rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+    cuda::stream_ref stream           = cudf::get_default_stream(),
     rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
   /**
@@ -1101,7 +1101,7 @@ class chunked_parquet_reader {
     std::vector<std::unique_ptr<cudf::io::datasource>>&& sources,
     std::vector<parquet::FileMetaData>&& parquet_metadatas,
     parquet_reader_options const& options,
-    rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+    cuda::stream_ref stream           = cudf::get_default_stream(),
     rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
   /**
@@ -1127,7 +1127,7 @@ class chunked_parquet_reader {
     std::size_t chunk_read_limit,
     std::size_t pass_read_limit,
     parquet_reader_options const& options,
-    rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+    cuda::stream_ref stream           = cudf::get_default_stream(),
     rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
   /**
@@ -1158,7 +1158,7 @@ class chunked_parquet_reader {
     std::vector<std::unique_ptr<cudf::io::datasource>>&& sources,
     std::vector<parquet::FileMetaData>&& parquet_metadatas,
     parquet_reader_options const& options,
-    rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+    cuda::stream_ref stream           = cudf::get_default_stream(),
     rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
   /**
@@ -1957,7 +1957,7 @@ class parquet_writer_options_builder
  */
 
 std::unique_ptr<std::vector<uint8_t>> write_parquet(
-  parquet_writer_options const& options, rmm::cuda_stream_view stream = cudf::get_default_stream());
+  parquet_writer_options const& options, cuda::stream_ref stream = cudf::get_default_stream());
 
 /**
  * @brief Merges multiple raw metadata blobs that were previously created by write_parquet
@@ -2061,7 +2061,7 @@ class chunked_parquet_writer {
    * @param[in] stream CUDA stream used for device memory operations and kernel launches
    */
   chunked_parquet_writer(chunked_parquet_writer_options const& options,
-                         rmm::cuda_stream_view stream = cudf::get_default_stream());
+                         cuda::stream_ref stream = cudf::get_default_stream());
   /**
    * @brief Default destructor.
    *        This is added to not leak detail API

@@ -2618,8 +2618,8 @@ class Series(SingleColumnFrame, IndexedFrame):
         Thus the allowed operations within ``func`` are limited to `those
         supported by the CUDA Python Numba target
         <https://numba.readthedocs.io/en/stable/cuda/cudapysupported.html>`__.
-        For more information, see the `cuDF guide to user defined functions
-        <https://docs.rapids.ai/api/cudf/stable/cudf/guide-to-udfs/>`__.
+        For more information, see the :doc:`cuDF guide to user defined functions
+        </cudf/guide-to-udfs>`.
 
         Some string functions and methods are supported. Refer to the guide
         to UDFs for details.
@@ -2751,8 +2751,8 @@ class Series(SingleColumnFrame, IndexedFrame):
         >>> sr.apply(f)  # doctest: +SKIP
 
         For a complete list of supported functions and methods that may be
-        used to manipulate string data, see the UDF guide,
-        <https://docs.rapids.ai/api/cudf/stable/cudf/guide-to-udfs/>
+        used to manipulate string data, see the :doc:`UDF guide
+        </cudf/guide-to-udfs>`
 
         """
         if convert_dtype is not True:
@@ -5158,7 +5158,7 @@ class DatetimeProperties(BaseDatelikeProperties):
             )
 
         # TODO: Remove following validations
-        # once https://github.com/rapidsai/cudf/issues/5991
+        # once https://github.com/NVIDIA/cudf/issues/5991
         # is implemented
         not_implemented_formats = {
             "%c",
@@ -5170,7 +5170,7 @@ class DatetimeProperties(BaseDatelikeProperties):
                 raise NotImplementedError(
                     f"{d_format} date-time format is not "
                     f"supported yet, Please follow this issue "
-                    f"https://github.com/rapidsai/cudf/issues/5991 "
+                    f"https://github.com/NVIDIA/cudf/issues/5991 "
                     f"for tracking purposes."
                 )
         if isinstance(self.series.dtype, pd.ArrowDtype):

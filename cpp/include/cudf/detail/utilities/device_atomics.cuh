@@ -367,7 +367,7 @@ __device__ __forceinline__ uint64_t calculate_carry_64(uint64_t old_val,
 __forceinline__ __device__ __int128_t atomic_add(__int128_t* address, __int128_t val)
 {
   // CUDA 13.0 miscompiles the native 128-bit CAS on Blackwell; the fix is confirmed in 13.3, so
-  // gate off all 13.x before 13.3. See https://github.com/rapidsai/cudf/issues/23150.
+  // gate off all 13.x before 13.3. See https://github.com/NVIDIA/cudf/issues/23150.
 #if __CUDA_ARCH__ >= 900 && \
   !(__CUDA_ARCH__ >= 1000 && __CUDACC_VER_MAJOR__ == 13 && __CUDACC_VER_MINOR__ < 3)
   __int128_t expected, desired;

@@ -56,7 +56,7 @@ template <typename ProgDevice>
 std::unique_ptr<column> count_matches(column_device_view const& d_strings,
                                       ProgDevice& d_prog,
                                       size_type strings_count,
-                                      rmm::cuda_stream_view stream,
+                                      cuda::stream_ref stream,
                                       rmm::device_async_resource_ref mr)
 {
   auto results = make_numeric_column(
@@ -87,18 +87,18 @@ std::unique_ptr<column> count_matches(column_device_view const& d_strings,
 template std::unique_ptr<column> count_matches<reprog_device>(column_device_view const&,
                                                               reprog_device&,
                                                               size_type,
-                                                              rmm::cuda_stream_view,
+                                                              cuda::stream_ref,
                                                               rmm::device_async_resource_ref);
 
 template std::unique_ptr<column> count_matches<gkprog_device>(column_device_view const&,
                                                               gkprog_device&,
                                                               size_type,
-                                                              rmm::cuda_stream_view,
+                                                              cuda::stream_ref,
                                                               rmm::device_async_resource_ref);
 
 std::unique_ptr<column> count_matches(column_device_view const& d_strings,
                                       regex_program const& prog,
-                                      rmm::cuda_stream_view stream,
+                                      cuda::stream_ref stream,
                                       rmm::device_async_resource_ref mr)
 {
   auto const strings_count = d_strings.size();

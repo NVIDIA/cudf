@@ -15,7 +15,6 @@
 #include <cudf/dictionary/encode.hpp>
 
 #include <cuda/iterator>
-#include <thrust/iterator/transform_iterator.h>
 
 #include <stdexcept>
 
@@ -338,12 +337,12 @@ TEST_F(CopyRangeTestFixture, CopyDictionary)
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(*decoded, expected);
   }
 
-  auto source_validity = thrust::make_transform_iterator(
-    cuda::counting_iterator<cudf::size_type>{0}, [](auto i) { return i != 3; });
-  auto target_validity = thrust::make_transform_iterator(
-    cuda::counting_iterator<cudf::size_type>{0}, [](auto i) { return i != 3 && i != 9; });
-  auto expected_validity = thrust::make_transform_iterator(
-    cuda::counting_iterator<cudf::size_type>{0}, [](auto i) { return i != 5 && i != 9; });
+  auto source_validity   = cuda::transform_iterator(cuda::counting_iterator<cudf::size_type>{0},
+                                                  [](auto i) { return i != 3; });
+  auto target_validity   = cuda::transform_iterator(cuda::counting_iterator<cudf::size_type>{0},
+                                                  [](auto i) { return i != 3 && i != 9; });
+  auto expected_validity = cuda::transform_iterator(cuda::counting_iterator<cudf::size_type>{0},
+                                                    [](auto i) { return i != 5 && i != 9; });
   {
     auto source = cudf::dictionary::encode(cudf::test::strings_column_wrapper(
       source_elements.begin(), source_elements.end(), source_validity));

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -209,7 +209,7 @@ TEST_F(ParquetChunkedWriterTest, ListOfStruct)
   auto struct_2_1 = cudf::test::structs_column_wrapper{{is_human_1, struct_1_1}};
 
   auto list_offsets_column_1 =
-    cudf::test::fixed_width_column_wrapper<cudf::size_type>{0, 2, 3, 3}.release();
+    cudf::test::fixed_width_column_wrapper<int32_t>{0, 2, 3, 3}.release();
   auto num_list_rows_1 = list_offsets_column_1->size() - 1;
 
   auto list_col_1 = cudf::make_lists_column(
@@ -227,7 +227,7 @@ TEST_F(ParquetChunkedWriterTest, ListOfStruct)
   auto struct_2_2 = cudf::test::structs_column_wrapper{{is_human_2, struct_1_2}};
 
   auto list_offsets_column_2 =
-    cudf::test::fixed_width_column_wrapper<cudf::size_type>{0, 1, 2, 3}.release();
+    cudf::test::fixed_width_column_wrapper<int32_t>{0, 1, 2, 3}.release();
   auto num_list_rows_2 = list_offsets_column_2->size() - 1;
 
   auto list_col_2 = cudf::make_lists_column(
@@ -287,7 +287,7 @@ TEST_F(ParquetChunkedWriterTest, ListOfStructOfStructOfListOfList)
   auto struct_2_1 = cudf::test::structs_column_wrapper{{is_human_1, struct_1_1}};
 
   auto list_offsets_column_1 =
-    cudf::test::fixed_width_column_wrapper<cudf::size_type>{0, 2, 3, 4}.release();
+    cudf::test::fixed_width_column_wrapper<int32_t>{0, 2, 3, 4}.release();
   auto num_list_rows_1 = list_offsets_column_1->size() - 1;
 
   auto list_col_1 = cudf::make_lists_column(
@@ -312,9 +312,8 @@ TEST_F(ParquetChunkedWriterTest, ListOfStructOfStructOfListOfList)
   auto is_human_2 = cudf::test::fixed_width_column_wrapper<bool>{{false, false}, {true, false}};
   auto struct_2_2 = cudf::test::structs_column_wrapper{{is_human_2, struct_1_2}};
 
-  auto list_offsets_column_2 =
-    cudf::test::fixed_width_column_wrapper<cudf::size_type>{0, 1, 2}.release();
-  auto num_list_rows_2 = list_offsets_column_2->size() - 1;
+  auto list_offsets_column_2 = cudf::test::fixed_width_column_wrapper<int32_t>{0, 1, 2}.release();
+  auto num_list_rows_2       = list_offsets_column_2->size() - 1;
 
   auto list_col_2 = cudf::make_lists_column(
     num_list_rows_2, std::move(list_offsets_column_2), struct_2_2.release(), 0, {});

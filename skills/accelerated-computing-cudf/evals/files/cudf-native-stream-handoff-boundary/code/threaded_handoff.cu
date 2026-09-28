@@ -96,7 +96,7 @@ std::uint64_t consume_on_stream(const std::shared_ptr<NativeGpuTable>& table,
   check_cuda(cudaMemcpyAsync(&h_sum,
                              d_sum,
                              sizeof(std::uint64_t),
-                             cudaMemcpyDeviceToHost,
+                             cudaMemcpyDefault,
                              consumer_stream),
              "copy checksum");
   check_cuda(cudaStreamSynchronize(consumer_stream), "sync consumer stream");

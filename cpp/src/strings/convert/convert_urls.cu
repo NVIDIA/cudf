@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -20,7 +20,6 @@
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_uvector.hpp>
 
 #include <cooperative_groups.h>
@@ -28,6 +27,7 @@
 #include <cooperative_groups/scan.h>
 #include <cub/cub.cuh>
 #include <cuda/std/algorithm>
+#include <cuda/stream>
 
 namespace cudf {
 namespace strings {
@@ -120,7 +120,7 @@ struct url_encoder_fn {
 
 //
 std::unique_ptr<column> url_encode(strings_column_view const& input,
-                                   rmm::cuda_stream_view stream,
+                                   cuda::stream_ref stream,
                                    rmm::device_async_resource_ref mr)
 {
   if (input.is_empty()) return make_empty_column(type_id::STRING);
@@ -141,7 +141,7 @@ std::unique_ptr<column> url_encode(strings_column_view const& input,
 
 // external API
 std::unique_ptr<column> url_encode(strings_column_view const& input,
-                                   rmm::cuda_stream_view stream,
+                                   cuda::stream_ref stream,
                                    rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
@@ -374,7 +374,7 @@ CUDF_KERNEL void url_decode_char_replacer(column_device_view const in_strings,
 
 //
 std::unique_ptr<column> url_decode(strings_column_view const& strings,
-                                   rmm::cuda_stream_view stream,
+                                   cuda::stream_ref stream,
                                    rmm::device_async_resource_ref mr)
 {
   size_type strings_count = strings.size();
@@ -391,7 +391,7 @@ std::unique_ptr<column> url_decode(strings_column_view const& strings,
   // build offsets column by computing the output row sizes and scanning the results
   auto row_sizes = rmm::device_uvector<size_type>(strings_count, stream);
   url_decode_char_counter<num_warps_per_threadblock, char_block_size>
-    <<<num_threadblocks, threadblock_size, 0, stream.value()>>>(*d_strings, row_sizes.data());
+    <<<num_threadblocks, threadblock_size, 0, stream.get()>>>(*d_strings, row_sizes.data());
   CUDF_CUDA_TRY(cudaGetLastError());
   // performs scan on the sizes and builds the appropriate offsets column
   auto [offsets_column, out_chars_bytes] = cudf::strings::detail::make_offsets_child_column(
@@ -405,7 +405,7 @@ std::unique_ptr<column> url_decode(strings_column_view const& strings,
 
   // decode and copy the characters from the input column to the output column
   url_decode_char_replacer<num_warps_per_threadblock, char_block_size>
-    <<<num_threadblocks, threadblock_size, 0, stream.value()>>>(*d_strings, d_out_chars, offsets);
+    <<<num_threadblocks, threadblock_size, 0, stream.get()>>>(*d_strings, d_out_chars, offsets);
   CUDF_CUDA_TRY(cudaGetLastError());
 
   // copy null mask
@@ -423,7 +423,7 @@ std::unique_ptr<column> url_decode(strings_column_view const& strings,
 // external API
 
 std::unique_ptr<column> url_decode(strings_column_view const& input,
-                                   rmm::cuda_stream_view stream,
+                                   cuda::stream_ref stream,
                                    rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();

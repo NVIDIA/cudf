@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -86,7 +86,7 @@ void add_column_to_mapping(std::map<size_type, std::vector<size_type>>& selected
  * @brief Create a metadata object from each element in the source vector
  */
 auto metadatas_from_sources(std::vector<std::unique_ptr<datasource>> const& sources,
-                            rmm::cuda_stream_view stream)
+                            cuda::stream_ref stream)
 {
   std::vector<metadata> metadatas;
   metadatas.reserve(sources.size());
@@ -116,7 +116,7 @@ size_type aggregate_orc_metadata::calc_num_stripes() const
 }
 
 aggregate_orc_metadata::aggregate_orc_metadata(
-  std::vector<std::unique_ptr<datasource>> const& sources, rmm::cuda_stream_view stream)
+  std::vector<std::unique_ptr<datasource>> const& sources, cuda::stream_ref stream)
   : per_file_metadata(metadatas_from_sources(sources, stream)),
     num_rows(calc_num_rows()),
     num_stripes(calc_num_stripes())
@@ -149,7 +149,7 @@ aggregate_orc_metadata::select_stripes(
   std::vector<std::vector<size_type>> const& user_specified_stripes,
   int64_t skip_rows,
   std::optional<size_type> const& num_read_rows,
-  rmm::cuda_stream_view stream)
+  cuda::stream_ref stream)
 {
   CUDF_EXPECTS((skip_rows == 0 and not num_read_rows.has_value()) or user_specified_stripes.empty(),
                "Can't use both the row selection and the stripe selection");

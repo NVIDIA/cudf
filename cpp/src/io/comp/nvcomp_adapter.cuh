@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -9,8 +9,9 @@
 
 #include <cudf/utilities/span.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_uvector.hpp>
+
+#include <cuda/stream>
 
 #include <nvcomp.h>
 
@@ -34,13 +35,13 @@ struct batched_args {
  */
 batched_args create_batched_nvcomp_args(device_span<device_span<uint8_t const> const> inputs,
                                         device_span<device_span<uint8_t> const> outputs,
-                                        rmm::cuda_stream_view stream);
+                                        cuda::stream_ref stream);
 
 /**
  * @brief Prepares device arrays of input pointers and sizes for use with nvCOMP temp size APIs.
  */
 std::pair<rmm::device_uvector<void const*>, rmm::device_uvector<size_t>> create_get_temp_size_args(
-  device_span<device_span<uint8_t const> const> inputs, rmm::cuda_stream_view stream);
+  device_span<device_span<uint8_t const> const> inputs, cuda::stream_ref stream);
 
 /**
  * @brief Convert nvcomp statuses and output sizes into cuIO compression results.
@@ -48,14 +49,14 @@ std::pair<rmm::device_uvector<void const*>, rmm::device_uvector<size_t>> create_
 void update_compression_results(device_span<nvcompStatus_t const> nvcomp_stats,
                                 device_span<size_t const> actual_output_sizes,
                                 device_span<codec_exec_result> results,
-                                rmm::cuda_stream_view stream);
+                                cuda::stream_ref stream);
 
 /**
  * @brief Fill the result array based on the actual output sizes.
  */
 void update_compression_results(device_span<size_t const> actual_output_sizes,
                                 device_span<codec_exec_result> results,
-                                rmm::cuda_stream_view stream);
+                                cuda::stream_ref stream);
 
 /**
  * @brief Mark unsupported input chunks for skipping.
@@ -63,12 +64,12 @@ void update_compression_results(device_span<size_t const> actual_output_sizes,
 void skip_unsupported_inputs(device_span<size_t> input_sizes,
                              device_span<codec_exec_result> results,
                              std::optional<size_t> max_valid_input_size,
-                             rmm::cuda_stream_view stream);
+                             cuda::stream_ref stream);
 
 /**
  * @brief Returns the size of the largest input chunk and the total input size.
  */
 std::pair<size_t, size_t> max_chunk_and_total_input_size(device_span<size_t const> input_sizes,
-                                                         rmm::cuda_stream_view stream);
+                                                         cuda::stream_ref stream);
 
 }  // namespace cudf::io::detail::nvcomp

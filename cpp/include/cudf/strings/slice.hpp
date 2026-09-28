@@ -65,7 +65,7 @@ slice_strings(strings_column_view const& input,
               numeric_scalar<size_type> const& start = numeric_scalar<size_type>(0, false),
               numeric_scalar<size_type> const& stop  = numeric_scalar<size_type>(0, false),
               numeric_scalar<size_type> const& step  = numeric_scalar<size_type>(1),
-              rmm::cuda_stream_view stream           = cudf::get_default_stream(),
+              cuda::stream_ref stream                = cudf::get_default_stream(),
               rmm::device_async_resource_ref mr      = cudf::get_current_device_resource_ref());
 
 /**
@@ -102,7 +102,7 @@ std::unique_ptr<column> slice_strings(
   std::optional<size_type> start,
   std::optional<size_type> stop     = std::nullopt,
   std::optional<size_type> step     = std::nullopt,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -147,7 +147,7 @@ std::unique_ptr<column> slice_strings(
   strings_column_view const& input,
   column_view const& starts,
   column_view const& stops,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /** @} */  // end of doxygen group

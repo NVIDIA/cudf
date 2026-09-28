@@ -17,7 +17,7 @@ from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 
 from pylibcudf.libcudf.types import mask_state as MaskState  # no-cython-lint
 
-from .span import is_span as py_is_span
+from .span import Span, is_span as py_is_span
 
 from .column cimport Column
 from .table cimport Table
@@ -72,7 +72,7 @@ cpdef DeviceBuffer copy_bitmask(
     """
     cdef device_buffer db
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
 
     cdef column_view c_col = col.view()
@@ -83,7 +83,7 @@ cpdef DeviceBuffer copy_bitmask(
 
 
 cpdef DeviceBuffer copy_bitmask_from_bitmask(
-    object bitmask,
+    object bitmask: Span,
     size_type begin_bit,
     size_type end_bit,
     object stream: CudaStreamLike | None = None,
@@ -119,7 +119,7 @@ cpdef DeviceBuffer copy_bitmask_from_bitmask(
         )
     cdef device_buffer db
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
     cdef uintptr_t ptr = bitmask.ptr
 
@@ -188,7 +188,7 @@ cpdef DeviceBuffer create_null_mask(
     """
     cdef device_buffer db
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
 
     with nogil:
@@ -197,7 +197,7 @@ cpdef DeviceBuffer create_null_mask(
     return buffer_to_python(move(db), _stream, mr)
 
 
-cpdef tuple bitmask_and(
+cpdef tuple[DeviceBuffer, int] bitmask_and(
     columns: Sequence[Column],
     object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
@@ -223,7 +223,7 @@ cpdef tuple bitmask_and(
     cdef Table c_table = Table(columns)
     cdef pair[device_buffer, size_type] c_result
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
 
     cdef table_view c_input = c_table.view()
@@ -235,7 +235,7 @@ cpdef tuple bitmask_and(
     return buffer_to_python(move(c_result.first), _stream, mr), c_result.second
 
 
-cpdef tuple bitmask_or(
+cpdef tuple[DeviceBuffer, int] bitmask_or(
     columns: Sequence[Column],
     object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
@@ -261,7 +261,7 @@ cpdef tuple bitmask_or(
     cdef Table c_table = Table(columns)
     cdef pair[device_buffer, size_type] c_result
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
 
     cdef table_view c_input = c_table.view()
@@ -272,7 +272,7 @@ cpdef tuple bitmask_or(
 
 
 cpdef size_type null_count(
-    object bitmask,
+    object bitmask: Span,
     size_type start,
     size_type stop,
     object stream: CudaStreamLike | None = None
@@ -304,7 +304,7 @@ cpdef size_type null_count(
         )
     cdef uintptr_t ptr = bitmask.ptr
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     with nogil:
         return cpp_null_mask.null_count(
             <bitmask_type*>ptr,
@@ -314,7 +314,7 @@ cpdef size_type null_count(
         )
 
 cpdef size_type index_of_first_set_bit(
-    object bitmask,
+    object bitmask: Span,
     size_type start,
     size_type stop,
     object stream: CudaStreamLike | None = None
@@ -347,7 +347,7 @@ cpdef size_type index_of_first_set_bit(
         )
     cdef uintptr_t ptr = bitmask.ptr
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     with nogil:
         return cpp_null_mask.index_of_first_set_bit(
             <bitmask_type*>ptr,

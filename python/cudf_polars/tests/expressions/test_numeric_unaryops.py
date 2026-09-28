@@ -253,3 +253,15 @@ def test_atan2_unsupported(engine: pl.GPUEngine) -> None:
     df = pl.LazyFrame({"y": [1.0, 2.0, 3.0], "x": [4.0, 5.0, 6.0]})
     q = df.select(pl.arctan2("y", "x"))
     assert_ir_translation_raises(q, engine, NotImplementedError)
+
+
+@pytest.mark.parametrize("op", ["sqrt", "cbrt", "sin", "degrees", "pct_change"])
+def test_math_op_on_struct_unsupported(engine: pl.GPUEngine, op: str) -> None:
+    # https://github.com/pola-rs/polars/issues/28563: polars doesn't reject all
+    # of these at the schema level, so libcudf would otherwise crash on the
+    # struct input instead of cleanly falling back to CPU.
+    df = pl.LazyFrame(
+        {"a": pl.Series([{"x": 1}, {"x": 2}], dtype=pl.Struct({"x": pl.Int64}))}
+    )
+    q = df.select(getattr(pl.col("a"), op)())
+    assert_ir_translation_raises(q, engine, NotImplementedError)

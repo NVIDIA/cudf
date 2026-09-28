@@ -13,6 +13,7 @@
 #include <cudf/detail/null_mask.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/utilities/cuda.cuh>
+#include <cudf/detail/utilities/cuda.hpp>
 #include <cudf/detail/utilities/cuda_memcpy.hpp>
 #include <cudf/detail/utilities/grid_1d.cuh>
 #include <cudf/detail/utilities/vector_factories.hpp>
@@ -89,6 +90,7 @@ auto create_device_views(host_span<column_view const> views, cuda::stream_ref st
   auto d_offsets =
     make_device_uvector_async(offsets, stream, cudf::get_current_device_resource_ref());
   auto const output_size = offsets.back();
+  cudf::detail::sync_stream(stream);
 
   return std::make_tuple(
     std::move(device_view_owners), std::move(d_views), std::move(d_offsets), output_size);

@@ -48,6 +48,9 @@ import java.util.function.Function;
 import java.util.stream.Collectors;
 
 import static ai.rapids.cudf.AssertUtils.assertColumnsAreEqual;
+import static ai.rapids.cudf.AssertUtils.assertGatherMapEquals;
+import static ai.rapids.cudf.AssertUtils.assertGatherMapEqualsUnordered;
+import static ai.rapids.cudf.AssertUtils.assertGatherMapsEqualUnordered;
 import static ai.rapids.cudf.AssertUtils.assertPartialColumnsAreEqual;
 import static ai.rapids.cudf.AssertUtils.assertPartialTablesAreEqual;
 import static ai.rapids.cudf.AssertUtils.assertTableTypes;
@@ -63,6 +66,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -1976,29 +1980,6 @@ public class TableTest extends CudfTestBase {
     }
   }
 
-  private void verifyJoinGatherMaps(GatherMap[] maps, Table expected) {
-    assertEquals(2, maps.length);
-    int numRows = (int) expected.getRowCount();
-    assertEquals(numRows, maps[0].getRowCount());
-    assertEquals(numRows, maps[1].getRowCount());
-    try (ColumnVector leftMap = maps[0].toColumnView(0, numRows).copyToColumnVector();
-         ColumnVector rightMap = maps[1].toColumnView(0, numRows).copyToColumnVector();
-         Table result = new Table(leftMap, rightMap);
-         Table orderedResult = result.orderBy(OrderByArg.asc(0, true))) {
-      assertTablesAreEqual(expected, orderedResult);
-    }
-  }
-
-  private void verifySemiJoinGatherMap(GatherMap map, Table expected) {
-    int numRows = (int) expected.getRowCount();
-    assertEquals(numRows, map.getRowCount());
-    try (ColumnVector leftMap = map.toColumnView(0, numRows).copyToColumnVector();
-         Table result = new Table(leftMap);
-         Table orderedResult = result.orderBy(OrderByArg.asc(0, true))) {
-      assertTablesAreEqual(expected, orderedResult);
-    }
-  }
-
   @Test
   void testLeftJoinGatherMaps() {
     final int inv = Integer.MIN_VALUE;
@@ -2010,7 +1991,7 @@ public class TableTest extends CudfTestBase {
              .build()) {
       GatherMap[] maps = leftKeys.leftJoinGatherMaps(rightKeys, false);
       try {
-        verifyJoinGatherMaps(maps, expected);
+        assertGatherMapsEqualUnordered(expected, maps);
       } finally {
         for (GatherMap map : maps) {
           map.close();
@@ -2034,7 +2015,7 @@ public class TableTest extends CudfTestBase {
              .build()) {
       GatherMap[] maps = leftKeys.leftJoinGatherMaps(rightKeys, true);
       try {
-        verifyJoinGatherMaps(maps, expected);
+        assertGatherMapsEqualUnordered(expected, maps);
       } finally {
         for (GatherMap map : maps) {
           map.close();
@@ -2046,11 +2027,11 @@ public class TableTest extends CudfTestBase {
   private void checkLeftDistinctJoin(Table leftKeys, Table rightKeys, ColumnView expected,
                                      boolean compareNullsEqual) {
     try (GatherMap map = leftKeys.leftDistinctJoinGatherMap(rightKeys, compareNullsEqual)) {
-      int numRows = (int) expected.getRowCount();
-      assertEquals(numRows, map.getRowCount());
-      try (ColumnView view = map.toColumnView(0, numRows)) {
-        assertColumnsAreEqual(expected, view);
-      }
+      assertGatherMapEquals(expected, map);
+    }
+    try (DistinctHashJoin rightHash = new DistinctHashJoin(rightKeys, compareNullsEqual);
+         GatherMap map = leftKeys.leftDistinctJoinGatherMap(rightHash)) {
+      assertGatherMapEquals(expected, map);
     }
   }
 
@@ -2156,7 +2137,7 @@ public class TableTest extends CudfTestBase {
              .build()) {
       GatherMap[] maps = leftKeys.leftJoinGatherMaps(rightHash);
       try {
-        verifyJoinGatherMaps(maps, expected);
+        assertGatherMapsEqualUnordered(expected, maps);
       } finally {
         for (GatherMap map : maps) {
           map.close();
@@ -2179,7 +2160,7 @@ public class TableTest extends CudfTestBase {
       assertEquals(expected.getRowCount(), rowCount);
       GatherMap[] maps = leftKeys.leftJoinGatherMaps(rightHash, rowCount);
       try {
-        verifyJoinGatherMaps(maps, expected);
+        assertGatherMapsEqualUnordered(expected, maps);
       } finally {
         for (GatherMap map : maps) {
           map.close();
@@ -2204,7 +2185,7 @@ public class TableTest extends CudfTestBase {
              .build()) {
       GatherMap[] maps = leftKeys.leftJoinGatherMaps(rightHash);
       try {
-        verifyJoinGatherMaps(maps, expected);
+        assertGatherMapsEqualUnordered(expected, maps);
       } finally {
         for (GatherMap map : maps) {
           map.close();
@@ -2231,7 +2212,7 @@ public class TableTest extends CudfTestBase {
       assertEquals(expected.getRowCount(), rowCount);
       GatherMap[] maps = leftKeys.leftJoinGatherMaps(rightHash, rowCount);
       try {
-        verifyJoinGatherMaps(maps, expected);
+        assertGatherMapsEqualUnordered(expected, maps);
       } finally {
         for (GatherMap map : maps) {
           map.close();
@@ -2257,7 +2238,7 @@ public class TableTest extends CudfTestBase {
          CompiledExpression condition = expr.compile()) {
       GatherMap[] maps = left.conditionalLeftJoinGatherMaps(right, condition);
       try {
-        verifyJoinGatherMaps(maps, expected);
+        assertGatherMapsEqualUnordered(expected, maps);
       } finally {
         for (GatherMap map : maps) {
           map.close();
@@ -2285,7 +2266,7 @@ public class TableTest extends CudfTestBase {
          CompiledExpression condition = expr.compile()) {
       GatherMap[] maps = left.conditionalLeftJoinGatherMaps(right, condition);
       try {
-        verifyJoinGatherMaps(maps, expected);
+        assertGatherMapsEqualUnordered(expected, maps);
       } finally {
         for (GatherMap map : maps) {
           map.close();
@@ -2313,7 +2294,7 @@ public class TableTest extends CudfTestBase {
       assertEquals(expected.getRowCount(), rowCount);
       GatherMap[] maps = left.conditionalLeftJoinGatherMaps(right, condition, rowCount);
       try {
-        verifyJoinGatherMaps(maps, expected);
+        assertGatherMapsEqualUnordered(expected, maps);
       } finally {
         for (GatherMap map : maps) {
           map.close();
@@ -2343,7 +2324,7 @@ public class TableTest extends CudfTestBase {
       assertEquals(expected.getRowCount(), rowCount);
       GatherMap[] maps = left.conditionalLeftJoinGatherMaps(right, condition, rowCount);
       try {
-        verifyJoinGatherMaps(maps, expected);
+        assertGatherMapsEqualUnordered(expected, maps);
       } finally {
         for (GatherMap map : maps) {
           map.close();
@@ -2376,7 +2357,7 @@ public class TableTest extends CudfTestBase {
       GatherMap[] maps = Table.mixedLeftJoinGatherMaps(leftKeys, rightKeys, left, right, condition,
           NullEquality.UNEQUAL);
       try {
-        verifyJoinGatherMaps(maps, expected);
+        assertGatherMapsEqualUnordered(expected, maps);
       } finally {
         for (GatherMap map : maps) {
           map.close();
@@ -2409,7 +2390,7 @@ public class TableTest extends CudfTestBase {
       GatherMap[] maps = Table.mixedLeftJoinGatherMaps(leftKeys, rightKeys, left, right, condition,
           NullEquality.EQUAL);
       try {
-        verifyJoinGatherMaps(maps, expected);
+        assertGatherMapsEqualUnordered(expected, maps);
       } finally {
         for (GatherMap map : maps) {
           map.close();
@@ -2445,7 +2426,7 @@ public class TableTest extends CudfTestBase {
       GatherMap[] maps = Table.mixedLeftJoinGatherMaps(leftKeys, rightKeys, left, right, condition,
           NullEquality.UNEQUAL, sizeInfo);
       try {
-        verifyJoinGatherMaps(maps, expected);
+        assertGatherMapsEqualUnordered(expected, maps);
       } finally {
         for (GatherMap map : maps) {
           map.close();
@@ -2481,7 +2462,7 @@ public class TableTest extends CudfTestBase {
       GatherMap[] maps = Table.mixedLeftJoinGatherMaps(leftKeys, rightKeys, left, right, condition,
               NullEquality.EQUAL, sizeInfo);
       try {
-        verifyJoinGatherMaps(maps, expected);
+        assertGatherMapsEqualUnordered(expected, maps);
       } finally {
         for (GatherMap map : maps) {
           map.close();
@@ -2500,7 +2481,7 @@ public class TableTest extends CudfTestBase {
              .build()) {
       GatherMap[] maps = leftKeys.innerJoinGatherMaps(rightKeys, false);
       try {
-        verifyJoinGatherMaps(maps, expected);
+        assertGatherMapsEqualUnordered(expected, maps);
       } finally {
         for (GatherMap map : maps) {
           map.close();
@@ -2523,7 +2504,7 @@ public class TableTest extends CudfTestBase {
              .build()) {
       GatherMap[] maps = leftKeys.innerJoinGatherMaps(rightKeys, true);
       try {
-        verifyJoinGatherMaps(maps, expected);
+        assertGatherMapsEqualUnordered(expected, maps);
       } finally {
         for (GatherMap map : maps) {
           map.close();
@@ -2534,9 +2515,16 @@ public class TableTest extends CudfTestBase {
 
   private void checkInnerDistinctJoin(Table leftKeys, Table rightKeys, Table expected,
                                       boolean compareNullsEqual) {
-    GatherMap[] maps = leftKeys.innerDistinctJoinGatherMaps(rightKeys, compareNullsEqual);
+    checkInnerDistinctJoinGatherMaps(
+        leftKeys.innerDistinctJoinGatherMaps(rightKeys, compareNullsEqual), expected);
+    try (DistinctHashJoin rightHash = new DistinctHashJoin(rightKeys, compareNullsEqual)) {
+      checkInnerDistinctJoinGatherMaps(leftKeys.innerDistinctJoinGatherMaps(rightHash), expected);
+    }
+  }
+
+  private void checkInnerDistinctJoinGatherMaps(GatherMap[] maps, Table expected) {
     try {
-      verifyJoinGatherMaps(maps, expected);
+      assertGatherMapsEqualUnordered(expected, maps);
     } finally {
       for (GatherMap map : maps) {
         map.close();
@@ -2653,7 +2641,7 @@ public class TableTest extends CudfTestBase {
              .build()) {
       GatherMap[] maps = leftKeys.innerJoinGatherMaps(rightHash);
       try {
-        verifyJoinGatherMaps(maps, expected);
+        assertGatherMapsEqualUnordered(expected, maps);
       } finally {
         for (GatherMap map : maps) {
           map.close();
@@ -2675,7 +2663,7 @@ public class TableTest extends CudfTestBase {
       assertEquals(expected.getRowCount(), rowCount);
       GatherMap[] maps = leftKeys.innerJoinGatherMaps(rightHash, rowCount);
       try {
-        verifyJoinGatherMaps(maps, expected);
+        assertGatherMapsEqualUnordered(expected, maps);
       } finally {
         for (GatherMap map : maps) {
           map.close();
@@ -2699,7 +2687,7 @@ public class TableTest extends CudfTestBase {
              .build()) {
       GatherMap[] maps = leftKeys.innerJoinGatherMaps(rightHash);
       try {
-        verifyJoinGatherMaps(maps, expected);
+        assertGatherMapsEqualUnordered(expected, maps);
       } finally {
         for (GatherMap map : maps) {
           map.close();
@@ -2725,7 +2713,7 @@ public class TableTest extends CudfTestBase {
       assertEquals(expected.getRowCount(), rowCount);
       GatherMap[] maps = leftKeys.innerJoinGatherMaps(rightHash, rowCount);
       try {
-        verifyJoinGatherMaps(maps, expected);
+        assertGatherMapsEqualUnordered(expected, maps);
       } finally {
         for (GatherMap map : maps) {
           map.close();
@@ -2750,7 +2738,7 @@ public class TableTest extends CudfTestBase {
          CompiledExpression condition = expr.compile()) {
       GatherMap[] maps = left.conditionalInnerJoinGatherMaps(right, condition);
       try {
-        verifyJoinGatherMaps(maps, expected);
+        assertGatherMapsEqualUnordered(expected, maps);
       } finally {
         for (GatherMap map : maps) {
           map.close();
@@ -2778,7 +2766,7 @@ public class TableTest extends CudfTestBase {
          CompiledExpression condition = expr.compile()) {
       GatherMap[] maps = left.conditionalInnerJoinGatherMaps(right, condition);
       try {
-        verifyJoinGatherMaps(maps, expected);
+        assertGatherMapsEqualUnordered(expected, maps);
       } finally {
         for (GatherMap map : maps) {
           map.close();
@@ -2805,7 +2793,7 @@ public class TableTest extends CudfTestBase {
          CompiledExpression condition = expr.compile()) {
       GatherMap[] maps = left.conditionalInnerJoinGatherMaps(right, condition);
       try {
-        verifyJoinGatherMaps(maps, expected);
+        assertGatherMapsEqualUnordered(expected, maps);
       } finally {
         for (GatherMap map : maps) {
           map.close();
@@ -2832,7 +2820,7 @@ public class TableTest extends CudfTestBase {
       assertEquals(expected.getRowCount(), rowCount);
       GatherMap[] maps = left.conditionalInnerJoinGatherMaps(right, condition, rowCount);
       try {
-        verifyJoinGatherMaps(maps, expected);
+        assertGatherMapsEqualUnordered(expected, maps);
       } finally {
         for (GatherMap map : maps) {
           map.close();
@@ -2861,7 +2849,7 @@ public class TableTest extends CudfTestBase {
       assertEquals(expected.getRowCount(), rowCount);
       GatherMap[] maps = left.conditionalInnerJoinGatherMaps(right, condition, rowCount);
       try {
-        verifyJoinGatherMaps(maps, expected);
+        assertGatherMapsEqualUnordered(expected, maps);
       } finally {
         for (GatherMap map : maps) {
           map.close();
@@ -2893,7 +2881,7 @@ public class TableTest extends CudfTestBase {
       GatherMap[] maps = Table.mixedInnerJoinGatherMaps(leftKeys, rightKeys, left, right, condition,
           NullEquality.UNEQUAL);
       try {
-        verifyJoinGatherMaps(maps, expected);
+        assertGatherMapsEqualUnordered(expected, maps);
       } finally {
         for (GatherMap map : maps) {
           map.close();
@@ -2925,7 +2913,7 @@ public class TableTest extends CudfTestBase {
       GatherMap[] maps = Table.mixedInnerJoinGatherMaps(leftKeys, rightKeys, left, right, condition,
           NullEquality.EQUAL);
       try {
-        verifyJoinGatherMaps(maps, expected);
+        assertGatherMapsEqualUnordered(expected, maps);
       } finally {
         for (GatherMap map : maps) {
           map.close();
@@ -2960,7 +2948,7 @@ public class TableTest extends CudfTestBase {
       GatherMap[] maps = Table.mixedInnerJoinGatherMaps(leftKeys, rightKeys, left, right, condition,
           NullEquality.UNEQUAL, sizeInfo);
       try {
-        verifyJoinGatherMaps(maps, expected);
+        assertGatherMapsEqualUnordered(expected, maps);
       } finally {
         for (GatherMap map : maps) {
           map.close();
@@ -2995,7 +2983,7 @@ public class TableTest extends CudfTestBase {
       GatherMap[] maps = Table.mixedInnerJoinGatherMaps(leftKeys, rightKeys, left, right, condition,
           NullEquality.EQUAL, sizeInfo);
       try {
-        verifyJoinGatherMaps(maps, expected);
+        assertGatherMapsEqualUnordered(expected, maps);
       } finally {
         for (GatherMap map : maps) {
           map.close();
@@ -3015,7 +3003,7 @@ public class TableTest extends CudfTestBase {
              .build()) {
       GatherMap[] maps = leftKeys.fullJoinGatherMaps(rightKeys, false);
       try {
-        verifyJoinGatherMaps(maps, expected);
+        assertGatherMapsEqualUnordered(expected, maps);
       } finally {
         for (GatherMap map : maps) {
           map.close();
@@ -3039,7 +3027,7 @@ public class TableTest extends CudfTestBase {
              .build()) {
       GatherMap[] maps = leftKeys.fullJoinGatherMaps(rightKeys, true);
       try {
-        verifyJoinGatherMaps(maps, expected);
+        assertGatherMapsEqualUnordered(expected, maps);
       } finally {
         for (GatherMap map : maps) {
           map.close();
@@ -3060,7 +3048,7 @@ public class TableTest extends CudfTestBase {
              .build()) {
       GatherMap[] maps = leftKeys.fullJoinGatherMaps(rightHash);
       try {
-        verifyJoinGatherMaps(maps, expected);
+        assertGatherMapsEqualUnordered(expected, maps);
       } finally {
         for (GatherMap map : maps) {
           map.close();
@@ -3083,7 +3071,7 @@ public class TableTest extends CudfTestBase {
       assertEquals(expected.getRowCount(), rowCount);
       GatherMap[] maps = leftKeys.fullJoinGatherMaps(rightHash, rowCount);
       try {
-        verifyJoinGatherMaps(maps, expected);
+        assertGatherMapsEqualUnordered(expected, maps);
       } finally {
         for (GatherMap map : maps) {
           map.close();
@@ -3108,7 +3096,7 @@ public class TableTest extends CudfTestBase {
              .build()) {
       GatherMap[] maps = leftKeys.fullJoinGatherMaps(rightHash);
       try {
-        verifyJoinGatherMaps(maps, expected);
+        assertGatherMapsEqualUnordered(expected, maps);
       } finally {
         for (GatherMap map : maps) {
           map.close();
@@ -3135,7 +3123,7 @@ public class TableTest extends CudfTestBase {
       assertEquals(expected.getRowCount(), rowCount);
       GatherMap[] maps = leftKeys.fullJoinGatherMaps(rightHash, rowCount);
       try {
-        verifyJoinGatherMaps(maps, expected);
+        assertGatherMapsEqualUnordered(expected, maps);
       } finally {
         for (GatherMap map : maps) {
           map.close();
@@ -3161,7 +3149,7 @@ public class TableTest extends CudfTestBase {
          CompiledExpression condition = expr.compile()) {
       GatherMap[] maps = left.conditionalFullJoinGatherMaps(right, condition);
       try {
-        verifyJoinGatherMaps(maps, expected);
+        assertGatherMapsEqualUnordered(expected, maps);
       } finally {
         for (GatherMap map : maps) {
           map.close();
@@ -3189,7 +3177,7 @@ public class TableTest extends CudfTestBase {
          CompiledExpression condition = expr.compile()) {
       GatherMap[] maps = left.conditionalFullJoinGatherMaps(right, condition);
       try {
-        verifyJoinGatherMaps(maps, expected);
+        assertGatherMapsEqualUnordered(expected, maps);
       } finally {
         for (GatherMap map : maps) {
           map.close();
@@ -3222,7 +3210,7 @@ public class TableTest extends CudfTestBase {
       GatherMap[] maps = Table.mixedFullJoinGatherMaps(leftKeys, rightKeys, left, right, condition,
           NullEquality.UNEQUAL);
       try {
-        verifyJoinGatherMaps(maps, expected);
+        assertGatherMapsEqualUnordered(expected, maps);
       } finally {
         for (GatherMap map : maps) {
           map.close();
@@ -3255,7 +3243,7 @@ public class TableTest extends CudfTestBase {
       GatherMap[] maps = Table.mixedFullJoinGatherMaps(leftKeys, rightKeys, left, right, condition,
           NullEquality.EQUAL);
       try {
-        verifyJoinGatherMaps(maps, expected);
+        assertGatherMapsEqualUnordered(expected, maps);
       } finally {
         for (GatherMap map : maps) {
           map.close();
@@ -3285,7 +3273,7 @@ public class TableTest extends CudfTestBase {
              .build();
          GatherMap map = Table.mixedLeftSemiJoinGatherMap(leftKeys, rightKeys, left, right,
              condition, NullEquality.UNEQUAL)) {
-      verifySemiJoinGatherMap(map, expected);
+      assertGatherMapEqualsUnordered(expected.getColumn(0), map);
     }
   }
 
@@ -3310,7 +3298,7 @@ public class TableTest extends CudfTestBase {
              .build();
          GatherMap map = Table.mixedLeftSemiJoinGatherMap(leftKeys, rightKeys, left, right,
              condition, NullEquality.EQUAL)) {
-      verifySemiJoinGatherMap(map, expected);
+      assertGatherMapEqualsUnordered(expected.getColumn(0), map);
     }
   }
 
@@ -3335,7 +3323,7 @@ public class TableTest extends CudfTestBase {
              .build();
          GatherMap map = Table.mixedLeftAntiJoinGatherMap(leftKeys, rightKeys, left, right,
              condition, NullEquality.UNEQUAL)) {
-      verifySemiJoinGatherMap(map, expected);
+      assertGatherMapEqualsUnordered(expected.getColumn(0), map);
     }
   }
 
@@ -3360,7 +3348,7 @@ public class TableTest extends CudfTestBase {
              .build();
          GatherMap map = Table.mixedLeftAntiJoinGatherMap(leftKeys, rightKeys, left, right,
              condition, NullEquality.EQUAL)) {
-      verifySemiJoinGatherMap(map, expected);
+      assertGatherMapEqualsUnordered(expected.getColumn(0), map);
     }
   }
 
@@ -3372,7 +3360,7 @@ public class TableTest extends CudfTestBase {
              .column(2, 7, 8, 9) // left
              .build();
          GatherMap map = leftKeys.leftSemiJoinGatherMap(rightKeys, false)) {
-      verifySemiJoinGatherMap(map, expected);
+      assertGatherMapEqualsUnordered(expected.getColumn(0), map);
     }
   }
 
@@ -3388,7 +3376,7 @@ public class TableTest extends CudfTestBase {
              .column(2, 7, 8, 9) // left
              .build();
          GatherMap map = leftKeys.leftSemiJoinGatherMap(rightKeys, true)) {
-      verifySemiJoinGatherMap(map, expected);
+      assertGatherMapEqualsUnordered(expected.getColumn(0), map);
     }
   }
 
@@ -3406,7 +3394,7 @@ public class TableTest extends CudfTestBase {
              .build();
          CompiledExpression condition = expr.compile();
          GatherMap map = left.conditionalLeftSemiJoinGatherMap(right, condition)) {
-      verifySemiJoinGatherMap(map, expected);
+      assertGatherMapEqualsUnordered(expected.getColumn(0), map);
     }
   }
 
@@ -3426,7 +3414,7 @@ public class TableTest extends CudfTestBase {
              .build();
          CompiledExpression condition = expr.compile();
          GatherMap map = left.conditionalLeftSemiJoinGatherMap(right, condition)) {
-      verifySemiJoinGatherMap(map, expected);
+      assertGatherMapEqualsUnordered(expected.getColumn(0), map);
     }
   }
 
@@ -3447,7 +3435,7 @@ public class TableTest extends CudfTestBase {
       assertEquals(expected.getRowCount(), rowCount);
       try (GatherMap map =
                left.conditionalLeftSemiJoinGatherMap(right, condition, rowCount)) {
-        verifySemiJoinGatherMap(map, expected);
+        assertGatherMapEqualsUnordered(expected.getColumn(0), map);
       }
     }
   }
@@ -3471,7 +3459,7 @@ public class TableTest extends CudfTestBase {
       assertEquals(expected.getRowCount(), rowCount);
       try (GatherMap map =
                left.conditionalLeftSemiJoinGatherMap(right, condition, rowCount)) {
-        verifySemiJoinGatherMap(map, expected);
+        assertGatherMapEqualsUnordered(expected.getColumn(0), map);
       }
     }
   }
@@ -3484,7 +3472,7 @@ public class TableTest extends CudfTestBase {
              .column(0, 1, 3, 4, 5, 6) // left
              .build();
          GatherMap map = leftKeys.leftAntiJoinGatherMap(rightKeys, false)) {
-      verifySemiJoinGatherMap(map, expected);
+      assertGatherMapEqualsUnordered(expected.getColumn(0), map);
     }
   }
 
@@ -3500,7 +3488,7 @@ public class TableTest extends CudfTestBase {
              .column(0, 1, 3, 4, 5, 6) // left
              .build();
          GatherMap map = leftKeys.leftAntiJoinGatherMap(rightKeys, true)) {
-      verifySemiJoinGatherMap(map, expected);
+      assertGatherMapEqualsUnordered(expected.getColumn(0), map);
     }
   }
 
@@ -3518,7 +3506,7 @@ public class TableTest extends CudfTestBase {
              .build();
          CompiledExpression condition = expr.compile();
          GatherMap map = left.conditionalLeftAntiJoinGatherMap(right, condition)) {
-      verifySemiJoinGatherMap(map, expected);
+      assertGatherMapEqualsUnordered(expected.getColumn(0), map);
     }
   }
 
@@ -3538,7 +3526,7 @@ public class TableTest extends CudfTestBase {
              .build();
          CompiledExpression condition = expr.compile();
          GatherMap map = left.conditionalLeftAntiJoinGatherMap(right, condition)) {
-      verifySemiJoinGatherMap(map, expected);
+      assertGatherMapEqualsUnordered(expected.getColumn(0), map);
     }
   }
 
@@ -3559,7 +3547,7 @@ public class TableTest extends CudfTestBase {
       assertEquals(expected.getRowCount(), rowCount);
       try (GatherMap map =
                left.conditionalLeftAntiJoinGatherMap(right, condition, rowCount)) {
-        verifySemiJoinGatherMap(map, expected);
+        assertGatherMapEqualsUnordered(expected.getColumn(0), map);
       }
     }
   }
@@ -3583,7 +3571,7 @@ public class TableTest extends CudfTestBase {
       assertEquals(expected.getRowCount(), rowCount);
       try (GatherMap map =
                left.conditionalLeftAntiJoinGatherMap(right, condition, rowCount)) {
-        verifySemiJoinGatherMap(map, expected);
+        assertGatherMapEqualsUnordered(expected.getColumn(0), map);
       }
     }
   }
@@ -10014,6 +10002,7 @@ public class TableTest extends CudfTestBase {
   private final class MyBufferConsumer implements HostBufferConsumer, AutoCloseable {
     public final HostMemoryBuffer buffer;
     long offset = 0;
+    int doneCount = 0;
 
     public MyBufferConsumer() {
       buffer = hostMemoryAllocator.allocate(10 * 1024 * 1024);
@@ -10027,6 +10016,11 @@ public class TableTest extends CudfTestBase {
       } finally {
         src.close();
       }
+    }
+
+    @Override
+    public void done() {
+      doneCount++;
     }
 
     @Override
@@ -10145,6 +10139,109 @@ public class TableTest extends CudfTestBase {
            Table concat = Table.concatenate(table0, table0, table0)) {
         assertTablesAreEqual(concat, table1);
       }
+    }
+  }
+
+  @Test
+  void testParquetWriterCloseAndGetFooterToFile() throws IOException {
+    ParquetWriterOptions options = ParquetWriterOptions.builder()
+        .withColumns(true, "id", "value")
+        .build();
+    try (TempFile tempFile = TempFile.create("returned-footer", ".parquet");
+         Table table = new Table.TestBuilder()
+             .column(1, 2, 3)
+             .column("a", "b", "c")
+             .build();
+         ParquetTableWriter writer =
+             Table.writeParquetChunked(options, tempFile.getFile())) {
+      writer.write(table);
+      writer.write(table);
+      try (HostMemoryBuffer footer = writer.closeAndGetFooter()) {
+        assertReturnedFooterMatches(Files.readAllBytes(tempFile.getFile().toPath()), footer);
+        assertThrows(IllegalStateException.class, writer::closeAndGetFooter);
+        assertDoesNotThrow(writer::close);
+      }
+
+      try (Table result = Table.readParquet(tempFile.getFile());
+           Table expected = Table.concatenate(table, table)) {
+        assertTablesAreEqual(expected, result);
+      }
+    }
+  }
+
+  @Test
+  void testParquetWriterCloseAndGetFooterToBuffer() {
+    ParquetWriterOptions options = ParquetWriterOptions.builder()
+        .withColumns(true, "id", "value")
+        .build();
+    TrackingHostMemoryAllocator allocator = new TrackingHostMemoryAllocator();
+    try (Table table = new Table.TestBuilder()
+             .column(1, 2, 3)
+             .column("a", "b", "c")
+             .build();
+         MyBufferConsumer consumer = new MyBufferConsumer();
+         ParquetTableWriter writer =
+             Table.writeParquetChunked(options, consumer, allocator)) {
+      writer.write(table);
+      try (HostMemoryBuffer footer = writer.closeAndGetFooter()) {
+        byte[] parquetData = new byte[(int) consumer.offset];
+        consumer.buffer.getBytes(parquetData, 0, 0, consumer.offset);
+        assertReturnedFooterMatches(parquetData, footer);
+        assertSame(allocator.lastAllocated, footer);
+        assertEquals(1, consumer.doneCount);
+        assertDoesNotThrow(writer::close);
+        assertEquals(1, consumer.doneCount);
+      }
+    }
+  }
+
+  @Test
+  void testParquetWriterCloseAndGetFooterAfterClose() throws IOException {
+    ParquetWriterOptions options = ParquetWriterOptions.builder()
+        .withColumns(true, "id")
+        .build();
+    try (TempFile tempFile = TempFile.create("discarded-footer", ".parquet");
+         Table table = new Table.TestBuilder().column(1, 2, 3).build()) {
+      ParquetTableWriter writer = Table.writeParquetChunked(options, tempFile.getFile());
+      writer.write(table);
+      writer.close();
+      assertThrows(IllegalStateException.class, writer::closeAndGetFooter);
+      assertDoesNotThrow(writer::close);
+    }
+  }
+
+  private static void assertReturnedFooterMatches(byte[] parquetData,
+                                                  HostMemoryBuffer returnedFooter) {
+    int fileLength = parquetData.length;
+    int metadataLength = (parquetData[fileLength - 8] & 0xff)
+        | ((parquetData[fileLength - 7] & 0xff) << 8)
+        | ((parquetData[fileLength - 6] & 0xff) << 16)
+        | ((parquetData[fileLength - 5] & 0xff) << 24);
+    int footerAndTrailerLength = metadataLength + 8;
+    byte[] expected = new byte[4 + footerAndTrailerLength];
+    System.arraycopy(parquetData, 0, expected, 0, 4);
+    System.arraycopy(parquetData, fileLength - footerAndTrailerLength,
+        expected, 4, footerAndTrailerLength);
+
+    assertEquals(expected.length, returnedFooter.getLength());
+    byte[] actual = new byte[expected.length];
+    returnedFooter.getBytes(actual, 0, 0, actual.length);
+    assertArrayEquals(expected, actual);
+  }
+
+  private static final class TrackingHostMemoryAllocator implements HostMemoryAllocator {
+    private HostMemoryBuffer lastAllocated;
+
+    @Override
+    public HostMemoryBuffer allocate(long bytes, boolean preferPinned) {
+      lastAllocated = DefaultHostMemoryAllocator.get().allocate(bytes, preferPinned);
+      return lastAllocated;
+    }
+
+    @Override
+    public HostMemoryBuffer allocate(long bytes) {
+      lastAllocated = DefaultHostMemoryAllocator.get().allocate(bytes);
+      return lastAllocated;
     }
   }
 
@@ -10841,6 +10938,40 @@ public class TableTest extends CudfTestBase {
         }
       }
     }
+  }
+
+  @Test
+  void testORCWriteWithWriterTimezone() throws IOException {
+    // Asia/Shanghai is a fixed +8 offset, with no daylight saving to depend on the dates used here
+    long offset = 8 * 60 * 60;
+    try (TempFile tempFile = TempFile.create("test-timezone", ".orc");
+         ColumnVector timestamps = ColumnVector.timestampSecondsFromLongs(-3000, 0, 1421323200);
+         Table table0 = new Table(timestamps)) {
+      File file = tempFile.getFile();
+      ORCWriterOptions opts = ORCWriterOptions.builder()
+          .withColumns(false, "ts")
+          .withWriterTimezone("Asia/Shanghai")
+          .build();
+      try (TableWriter writer = Table.writeORCChunked(opts, file.getAbsoluteFile())) {
+        writer.write(table0);
+      }
+      ORCOptions readOpts = ORCOptions.builder().withTimeUnit(DType.TIMESTAMP_SECONDS).build();
+      // The reader has no session timezone, so it returns the wall clock the writer encoded
+      try (Table table1 = Table.readORC(readOpts, file.getAbsoluteFile());
+           ColumnVector expected =
+               ColumnVector.timestampSecondsFromLongs(-3000 + offset, offset, 1421323200 + offset);
+           Table expectedTable = new Table(expected)) {
+        assertTablesAreEqual(expectedTable, table1);
+      }
+    }
+  }
+
+  @Test
+  void testORCWriterTimezoneInvalid() {
+    assertThrows(IllegalArgumentException.class,
+        () -> ORCWriterOptions.builder().withWriterTimezone(null));
+    assertThrows(IllegalArgumentException.class,
+        () -> ORCWriterOptions.builder().withWriterTimezone(""));
   }
 
   @Test

@@ -20,8 +20,9 @@
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/exec_policy.hpp>
+
+#include <cuda/stream>
 
 namespace cudf {
 namespace strings {
@@ -105,7 +106,7 @@ struct one_capture_fn {
 //
 std::unique_ptr<column> findall(strings_column_view const& input,
                                 regex_program const& prog,
-                                rmm::cuda_stream_view stream,
+                                cuda::stream_ref stream,
                                 rmm::device_async_resource_ref mr)
 {
   auto const groups = prog.groups_count();
@@ -152,7 +153,7 @@ std::unique_ptr<column> findall(strings_column_view const& input,
     });
   }();
 
-  auto strings_output = make_strings_column(indices.begin(), indices.end(), stream, mr);
+  auto strings_output = cudf::make_strings_column(indices, stream, mr);
 
   // Build the lists column from the offsets and the strings
   return make_lists_column(input.size(),
@@ -182,7 +183,7 @@ struct find_re_fn {
 
 std::unique_ptr<column> find_re(strings_column_view const& input,
                                 regex_program const& prog,
-                                rmm::cuda_stream_view stream,
+                                cuda::stream_ref stream,
                                 rmm::device_async_resource_ref mr)
 {
   auto results = make_numeric_column(data_type{type_to_id<size_type>()},
@@ -212,7 +213,7 @@ std::unique_ptr<column> find_re(strings_column_view const& input,
 
 std::unique_ptr<column> findall(strings_column_view const& input,
                                 regex_program const& prog,
-                                rmm::cuda_stream_view stream,
+                                cuda::stream_ref stream,
                                 rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
@@ -221,7 +222,7 @@ std::unique_ptr<column> findall(strings_column_view const& input,
 
 std::unique_ptr<column> find_re(strings_column_view const& input,
                                 regex_program const& prog,
-                                rmm::cuda_stream_view stream,
+                                cuda::stream_ref stream,
                                 rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();

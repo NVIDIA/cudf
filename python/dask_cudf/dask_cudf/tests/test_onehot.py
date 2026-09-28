@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2019-2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import pandas as pd
@@ -107,7 +107,7 @@ def test_get_dummies_large():
 
 
 def test_get_dummies_categorical():
-    # https://github.com/rapidsai/cudf/issues/7111
+    # https://github.com/NVIDIA/cudf/issues/7111
     gdf = cudf.DataFrame({"A": ["a", "b", "b"], "B": [1, 2, 3]})
     pdf = gdf.to_pandas()
 

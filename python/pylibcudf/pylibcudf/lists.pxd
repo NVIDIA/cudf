@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from libcpp cimport bool
@@ -139,6 +139,13 @@ cpdef Column union_distinct(
     Column,
     null_equality nulls_equal=*,
     nan_equality nans_equal=*,
+    object stream = *,
+    DeviceMemoryResource mr=*,
+)
+
+cpdef Column apply_retention_mask(
+    Column,
+    Column,
     object stream = *,
     DeviceMemoryResource mr=*,
 )

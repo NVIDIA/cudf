@@ -11,10 +11,9 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
-
 #include <cuda/iterator>
 #include <cuda/std/tuple>
+#include <cuda/stream>
 
 namespace cudf::io {
 /**
@@ -121,7 +120,7 @@ CUDF_EXPORT cudf::data_type infer_data_type(
   device_span<char const> data,
   cuda::zip_iterator<size_type const*, size_type const*> offset_length_begin,
   std::size_t const size,
-  rmm::cuda_stream_view stream);
+  cuda::stream_ref stream);
 }  // namespace detail
 
 namespace json::detail {
@@ -147,7 +146,7 @@ CUDF_EXPORT std::unique_ptr<column> parse_data(
   rmm::device_buffer&& null_mask,
   size_type null_count,
   cudf::io::parse_options_view const& options,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr);
 }  // namespace json::detail
 }  // namespace cudf::io

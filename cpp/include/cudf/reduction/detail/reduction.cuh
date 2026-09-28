@@ -139,7 +139,7 @@ std::unique_ptr<scalar> reduce(InputIterator d_in,
                             initial_value,
                             stream.get());
 
-  return std::make_unique<cudf::string_scalar>(dev_result, true, stream, mr);
+  return std::make_unique<cudf::string_scalar>(dev_result.value(stream), true, stream, mr);
 }
 
 /**

@@ -14,7 +14,7 @@ add_library(
 target_compile_features(cudf_datagen PUBLIC cxx_std_20 cuda_std_20)
 
 target_compile_options(
-  cudf_datagen PUBLIC "$<$<COMPILE_LANGUAGE:CXX>:${CUDF_CXX_FLAGS}>"
+  cudf_datagen PUBLIC "$<$<COMPILE_LANGUAGE:CXX>:${CUDF_CXX_FLAGS};${CUDF_CXX_TEST_FLAGS}>"
                       "$<$<COMPILE_LANGUAGE:CUDA>:${CUDF_CUDA_FLAGS}>"
 )
 
@@ -39,7 +39,7 @@ add_library(
 target_compile_features(ndsh_data_generator PUBLIC cxx_std_20 cuda_std_20)
 
 target_compile_options(
-  ndsh_data_generator PUBLIC "$<$<COMPILE_LANGUAGE:CXX>:${CUDF_CXX_FLAGS}>"
+  ndsh_data_generator PUBLIC "$<$<COMPILE_LANGUAGE:CXX>:${CUDF_CXX_FLAGS};${CUDF_CXX_TEST_FLAGS}>"
                              "$<$<COMPILE_LANGUAGE:CUDA>:${CUDF_CUDA_FLAGS}>"
 )
 
@@ -178,7 +178,7 @@ ConfigureNVBench(FILTER_NVBENCH filter/minmax_filter.cpp)
 # * stream_compaction benchmark -------------------------------------------------------------------
 ConfigureNVBench(
   STREAM_COMPACTION_NVBENCH
-  stream_compaction/apply_boolean_mask.cpp
+  stream_compaction/apply_mask.cpp
   stream_compaction/distinct.cpp
   stream_compaction/stable_distinct.cpp
   stream_compaction/stream_compaction_common.cpp
@@ -337,34 +337,35 @@ ConfigureNVBench(
 # * parquet reader benchmark ----------------------------------------------------------------------
 ConfigureNVBench(
   PARQUET_READER_NVBENCH io/parquet/parquet_reader_input.cpp io/parquet/parquet_reader_encoding.cpp
-  io/parquet/parquet_reader_options.cpp io/parquet/reader_common.cpp
+  io/parquet/parquet_reader_options.cpp io/parquet/parquet_common.cpp
 )
 
 # ##################################################################################################
 # * parquet reader chunks benchmark
 # ------------------------------------------------------------------
 ConfigureNVBench(
-  PARQUET_READER_CHUNKS_NVBENCH io/parquet/parquet_reader_chunks.cpp io/parquet/reader_common.cpp
+  PARQUET_READER_CHUNKS_NVBENCH io/parquet/parquet_reader_chunks.cpp io/parquet/parquet_common.cpp
 )
 
 # ##################################################################################################
 # * parquet reader compressed benchmark ------------------------------------------------------------
 ConfigureNVBench(
   PARQUET_READER_COMPRESSED_NVBENCH io/parquet/parquet_reader_compressed.cpp
-  io/parquet/reader_common.cpp
+  io/parquet/parquet_common.cpp
 )
 
 # ##################################################################################################
 # * parquet reader strings benchmark
 # ------------------------------------------------------------------
 ConfigureNVBench(
-  PARQUET_READER_STRINGS_NVBENCH io/parquet/parquet_reader_strings.cpp io/parquet/reader_common.cpp
+  PARQUET_READER_STRINGS_NVBENCH io/parquet/parquet_reader_strings.cpp
+  io/parquet/parquet_common.cpp
 )
 
 # ##################################################################################################
 # * parquet reader wide benchmark ------------------------------------------------------------------
 ConfigureNVBench(
-  PARQUET_READER_WIDE_NVBENCH io/parquet/parquet_reader_wide.cpp io/parquet/reader_common.cpp
+  PARQUET_READER_WIDE_NVBENCH io/parquet/parquet_reader_wide.cpp io/parquet/parquet_common.cpp
 )
 
 # ##################################################################################################
@@ -390,6 +391,11 @@ target_compile_definitions(
           CROARING_COMPILER_SUPPORTS_AVX512=0
 )
 target_link_libraries(PARQUET_DELETION_VECTORS_NVBENCH PRIVATE roaring)
+
+# ##################################################################################################
+# * parquet variant extract benchmark
+# ----------------------------------------------------------------------
+ConfigureNVBench(VARIANT_NVBENCH io/parquet/experimental/variant/extract.cpp)
 
 # ##################################################################################################
 # * parquet multithread reader benchmark
@@ -437,8 +443,7 @@ rtcx_add_embed(cudf_benchmark_fragments)
 add_fragment(cudf_benchmark_fragments FRAGMENT add_f32 SOURCE binaryop/fragments/add_f32.cu)
 add_fragment(cudf_benchmark_fragments FRAGMENT mul_f32 SOURCE binaryop/fragments/mul_f32.cu)
 rtcx_embed(
-  cudf_benchmark_fragments COMPRESSION none OUTPUT_DIRECTORY
-  "${CUDF_GENERATED_INCLUDE_DIR}/rtcx_embed"
+  cudf_benchmark_fragments COMPRESSION none OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/embed"
 )
 
 # ##################################################################################################
@@ -454,8 +459,13 @@ add_dependencies(BINARYOP_NVBENCH cudf_benchmark_fragments)
 # * transform benchmark
 # ---------------------------------------------------------------------------------
 ConfigureNVBench(
-  TRANSFORM_NVBENCH transform/encode.cpp transform/polynomials.cpp
-  transform/polynomials_concurrent.cpp transform/transform.cpp
+  TRANSFORM_NVBENCH
+  transform/encode.cpp
+  transform/polynomials.cpp
+  transform/polynomials_concurrent.cpp
+  transform/transform.cpp
+  transform/transform_dispatch.cpp
+  transform/transform_widetable.cpp
 )
 
 # ##################################################################################################
@@ -472,6 +482,7 @@ ConfigureNVBench(
   text/replace.cpp
   text/subword.cpp
   text/tokenize.cpp
+  text/unicode_normalize.cpp
   text/vocab.cpp
 )
 
@@ -545,8 +556,13 @@ ConfigureNVBench(RESHAPE_NVBENCH reshape/interleave.cpp reshape/table_to_array.c
 # * rolling benchmark
 # ---------------------------------------------------------------------------------
 ConfigureNVBench(
-  ROLLING_NVBENCH rolling/grouped_range_rolling_sum.cu rolling/grouped_rolling_sum.cpp
-  rolling/multi_orderby_range_rolling_sum.cpp rolling/range_rolling_sum.cu rolling/rolling_sum.cpp
+  ROLLING_NVBENCH
+  rolling/grouped_range_rolling_sum.cu
+  rolling/grouped_rolling_sum.cpp
+  rolling/multi_orderby_range_rolling_sum.cpp
+  rolling/range_rolling_column_bounds_sum.cpp
+  rolling/range_rolling_sum.cu
+  rolling/rolling_sum.cpp
 )
 
 # ##################################################################################################

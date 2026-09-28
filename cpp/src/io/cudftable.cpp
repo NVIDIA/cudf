@@ -13,8 +13,9 @@
 #include <cudf/table/table.hpp>
 #include <cudf/utilities/error.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_buffer.hpp>
+
+#include <cuda/stream>
 
 namespace cudf::io::experimental {
 namespace detail {
@@ -65,7 +66,7 @@ static_assert(sizeof(cudftable_header) == 32);
 
 }  // anonymous namespace
 
-void write_cudftable(data_sink* sink, table_view const& input, rmm::cuda_stream_view stream)
+void write_cudftable(data_sink* sink, table_view const& input, cuda::stream_ref stream)
 {
   auto const packed = cudf::pack(input, stream, cudf::get_current_device_resource_ref());
 
@@ -89,7 +90,7 @@ void write_cudftable(data_sink* sink, table_view const& input, rmm::cuda_stream_
 }
 
 packed_table read_cudftable(datasource* source,
-                            rmm::cuda_stream_view stream,
+                            cuda::stream_ref stream,
                             rmm::device_async_resource_ref mr)
 {
   auto const header_size = sizeof(cudftable_header);
@@ -121,7 +122,7 @@ packed_table read_cudftable(datasource* source,
     auto host_buffer = source->host_read(data_offset, header.data_length);
     CUDF_CUDA_TRY(cudf::detail::memcpy_async(
       packed.gpu_data->data(), host_buffer->data(), header.data_length, stream));
-    stream.synchronize();
+    stream.sync();
   }
 
   auto unpacked_view = cudf::unpack(packed);

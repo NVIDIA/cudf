@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 from __future__ import annotations
 
@@ -72,7 +72,7 @@ def test_union_cache_nodes():
     #   (repeated 2 times)
 
     # Check that the concatenated Cache nodes are the same object
-    # See: https://github.com/rapidsai/cudf/issues/19766
+    # See: https://github.com/NVIDIA/cudf/issues/19766
     assert isinstance(qir, ir.Union)
     assert isinstance(qir.children[0], ir.Cache)
     assert isinstance(qir.children[1], ir.Cache)

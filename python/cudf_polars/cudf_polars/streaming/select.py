@@ -434,13 +434,16 @@ def _(
         # Special Case: Fast count.
         # We can't use prefetched file metadata here, because we're in lowering,
         # not execution, so we don't have an IRExecutionContext with the prefetched
-        # file metadata yet.
+        # file metadata yet. Hybrid scan requires prefetched file metadata,
+        # so disable that as well.
         count = Scan._get_parquet_row_count_from_metadata(
             scan_child.paths,
             scan_child.skip_rows,
             scan_child.n_rows,
             dataclasses.replace(
-                scan_child.parquet_options, prefetch_file_metadata=False
+                scan_child.parquet_options,
+                prefetch_file_metadata=False,
+                use_hybrid_scan=False,
             ),
             None,
         )

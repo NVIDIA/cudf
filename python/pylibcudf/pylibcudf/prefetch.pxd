@@ -1,10 +1,10 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-cpdef enable()
+cpdef void enable()
 
-cpdef disable()
+cpdef void disable()
 
-cpdef enable_debugging()
+cpdef void enable_debugging()
 
-cpdef disable_debugging()
+cpdef void disable_debugging()

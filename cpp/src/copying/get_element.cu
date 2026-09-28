@@ -60,8 +60,9 @@ struct get_element_functor {
   {
     auto device_col = column_device_view::create(input, stream);
 
-    rmm::device_scalar<string_view> temp_data(stream, mr);
-    cudf::detail::device_scalar<bool> temp_valid(stream, mr);
+    auto const temp_mr = cudf::get_current_device_resource_ref();
+    cudf::detail::device_scalar<string_view> temp_data(stream, temp_mr);
+    cudf::detail::device_scalar<bool> temp_valid(stream, temp_mr);
 
     device_single_thread(
       [buffer   = temp_data.data(),
@@ -73,7 +74,8 @@ struct get_element_functor {
       },
       stream);
 
-    return std::make_unique<string_scalar>(temp_data, temp_valid.value(stream), stream, mr);
+    return std::make_unique<string_scalar>(
+      temp_data.value(stream), temp_valid.value(stream), stream, mr);
   }
 
   template <typename T, std::enable_if_t<std::is_same_v<T, dictionary32>>* p = nullptr>

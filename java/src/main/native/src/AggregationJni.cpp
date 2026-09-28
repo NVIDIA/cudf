@@ -70,33 +70,31 @@ JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_Aggregation_createNoParamAgg(JNIEnv*
         // case 21: MERGE_SETS
         // case 22: LEAD
         // case 23: LAG
-        // case 24: PTX
-        // case 25: CUDA
-        // case 26: HOST_UDF
-        case 27:  // M2
+        // case 24: HOST_UDF
+        case 25:  // M2
           return cudf::make_m2_aggregation();
-        case 28:  // MERGE_M2
+        case 26:  // MERGE_M2
           return cudf::make_merge_m2_aggregation();
-        case 29:  // RANK
+        case 27:  // RANK
           return cudf::make_rank_aggregation(
             cudf::rank_method::MIN, {}, cudf::null_policy::INCLUDE);
-        case 30:  // DENSE_RANK
+        case 28:  // DENSE_RANK
           return cudf::make_rank_aggregation(
             cudf::rank_method::DENSE, {}, cudf::null_policy::INCLUDE);
-        case 31:  // ANSI SQL PERCENT_RANK
+        case 29:  // ANSI SQL PERCENT_RANK
           return cudf::make_rank_aggregation(cudf::rank_method::MIN,
                                              {},
                                              cudf::null_policy::INCLUDE,
                                              {},
                                              cudf::rank_percentage::ONE_NORMALIZED);
-        // case 32: TDIGEST
-        // case 33: MERGE_TDIGEST
-        case 34:  // HISTOGRAM
+        // case 30: TDIGEST
+        // case 31: MERGE_TDIGEST
+        case 32:  // HISTOGRAM
           return cudf::make_histogram_aggregation();
-        case 35:  // MERGE_HISTOGRAM
+        case 33:  // MERGE_HISTOGRAM
           return cudf::make_merge_histogram_aggregation();
-          // case 36: BITWISE_AGG
-        case 37:  // SUM_OVERFLOW
+          // case 34: BITWISE_AGG
+        case 35:  // SUM_OVERFLOW
           return cudf::make_sum_overflow_aggregation();
 
         default: throw std::logic_error("Unsupported No Parameter Aggregation Operation");
@@ -161,10 +159,10 @@ JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_Aggregation_createTDigestAgg(JNIEnv*
     std::unique_ptr<cudf::aggregation> ret;
     // These numbers come from Aggregation.java and must stay in sync
     switch (kind) {
-      case 32:  // TDIGEST
+      case 30:  // TDIGEST
         ret = cudf::make_tdigest_aggregation<cudf::groupby_aggregation>(delta);
         break;
-      case 33:  // MERGE_TDIGEST
+      case 31:  // MERGE_TDIGEST
         ret = cudf::make_merge_tdigest_aggregation<cudf::groupby_aggregation>(delta);
         break;
       default: throw std::logic_error("Unsupported TDigest Aggregation Operation");

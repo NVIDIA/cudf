@@ -53,7 +53,7 @@ THE SOFTWARE.
 #include <cudf/detail/utilities/cuda_memcpy.hpp>
 #include <cudf/utilities/error.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
+#include <cuda/stream>
 
 namespace cudf::io::detail {
 
@@ -2083,7 +2083,7 @@ size_t get_gpu_debrotli_scratch_size(int max_num_inputs)
 void gpu_debrotli(device_span<device_span<uint8_t const> const> inputs,
                   device_span<device_span<uint8_t> const> outputs,
                   device_span<codec_exec_result> results,
-                  rmm::cuda_stream_view stream)
+                  cuda::stream_ref stream)
 {
   // Scratch memory for decompressing
   rmm::device_uvector<uint8_t> scratch(
@@ -2095,12 +2095,12 @@ void gpu_debrotli(device_span<device_span<uint8_t const> const> inputs,
 
   auto const fb_heap_size = (uint32_t)((scratch.size() - sizeof(brotli_dictionary_s)) & ~0xf);
 
-  CUDF_CUDA_TRY(cudaMemsetAsync(scratch.data(), 0, 2 * sizeof(uint32_t), stream.value()));
+  CUDF_CUDA_TRY(cudaMemsetAsync(scratch.data(), 0, 2 * sizeof(uint32_t), stream.get()));
   // NOTE: The 128KB dictionary copy can have a relatively large overhead since source isn't
   // page-locked
   CUDF_CUDA_TRY(cudf::detail::memcpy_async(
     scratch.data() + fb_heap_size, get_brotli_dictionary(), sizeof(brotli_dictionary_s), stream));
-  gpu_debrotli_kernel<<<dim_grid, dim_block, 0, stream.value()>>>(
+  gpu_debrotli_kernel<<<dim_grid, dim_block, 0, stream.get()>>>(
     inputs, outputs, results, scratch.data(), fb_heap_size);
   CUDF_CUDA_TRY(cudaGetLastError());
 #if DUMP_FB_HEAP
@@ -2110,7 +2110,7 @@ void gpu_debrotli(device_span<device_span<uint8_t const> const> inputs,
   while (cur < fb_heap_size && !(cur & 3)) {
     CUDF_CUDA_TRY(
       cudf::detail::memcpy_async(&dump[0], scratch.data() + cur, 2 * sizeof(uint32_t), stream));
-    stream.synchronize();
+    stream.sync();
     printf("@%d: next = %d, size = %d\n", cur, dump[0], dump[1]);
     cur = (dump[0] > cur) ? dump[0] : 0xffff'ffffu;
   }

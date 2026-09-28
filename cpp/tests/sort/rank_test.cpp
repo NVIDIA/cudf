@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -430,7 +430,7 @@ struct RankLarge : public cudf::test::BaseFixture {};
 
 TEST_F(RankLarge, average_large)
 {
-  // testcase of https://github.com/rapidsai/cudf/issues/9703
+  // testcase of https://github.com/NVIDIA/cudf/issues/9703
   auto iter = cuda::counting_iterator<int64_t>{0};
   cudf::test::fixed_width_column_wrapper<int64_t> col1(iter, iter + 10558);
   auto result = cudf::rank(col1,

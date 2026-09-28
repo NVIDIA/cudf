@@ -17,11 +17,12 @@
 #include <cudf/table/table_device_view.cuh>
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/span.hpp>
+#include <cudf/wrappers/durations.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_uvector.hpp>
 
 #include <cuda/iterator>
+#include <cuda/stream>
 #include <thrust/host_vector.h>
 
 #include <cstdint>
@@ -137,9 +138,9 @@ struct stripe_size_limits {
  *
  */
 struct intermediate_statistics {
-  explicit intermediate_statistics(rmm::cuda_stream_view stream) : stripe_stat_chunks(0, stream) {}
+  explicit intermediate_statistics(cuda::stream_ref stream) : stripe_stat_chunks(0, stream) {}
 
-  intermediate_statistics(orc_table_view const& table, rmm::cuda_stream_view stream);
+  intermediate_statistics(orc_table_view const& table, cuda::stream_ref stream);
 
   intermediate_statistics(std::vector<col_stats_blob> rb,
                           rmm::device_uvector<statistics_chunk> sc,
@@ -181,7 +182,7 @@ struct persisted_statistics {
   void persist(uint64_t num_table_rows,
                single_write_mode write_mode,
                intermediate_statistics&& intermediate_stats,
-               rmm::cuda_stream_view stream);
+               cuda::stream_ref stream);
 
   std::vector<rmm::device_uvector<statistics_chunk>> stripe_stat_chunks;
   std::vector<cudf::detail::hostdevice_vector<statistics_merge_group>> stripe_stat_merge;
@@ -198,6 +199,33 @@ struct persisted_statistics {
 struct encoded_footer_statistics {
   std::vector<col_stats_blob> stripe_level;
   std::vector<col_stats_blob> file_level;
+};
+
+/**
+ * @brief Timezone that the written timestamps are relative to.
+ */
+struct writer_timezone {
+  // Recorded in the stripe footers as `writerTimezone`
+  std::string const name;
+  // Instant that encoded timestamps are stored relative to: the ORC epoch as wall-clock time in
+  // `name`. Equal to `orc_utc_epoch` when writing UTC.
+  duration_s const base_epoch;
+
+  /**
+   * @brief Resolves a timezone name into the epoch that timestamps are encoded relative to.
+   *
+   * The offset is looked up at the ORC epoch as a UTC instant, matching how the reader derives its
+   * epoch in `decode_column_data`; the Apache writer resolves it as a local time, which differs
+   * only for a timezone with a transition inside that offset-wide window.
+   *
+   * @param timezone Timezone name
+   *
+   * @throw cudf::logic_error if `timezone` is empty or does not resolve to a TZif file
+   */
+  explicit writer_timezone(std::string timezone);
+
+ private:
+  [[nodiscard]] static duration_s compute_base_epoch(std::string_view timezone);
 };
 
 enum class writer_state {
@@ -227,7 +255,7 @@ class writer::impl {
   explicit impl(std::unique_ptr<data_sink> sink,
                 orc_writer_options const& options,
                 single_write_mode mode,
-                rmm::cuda_stream_view stream);
+                cuda::stream_ref stream);
 
   /**
    * @brief Constructor with chunked writer options.
@@ -240,7 +268,7 @@ class writer::impl {
   explicit impl(std::unique_ptr<data_sink> sink,
                 chunked_orc_writer_options const& options,
                 single_write_mode mode,
-                rmm::cuda_stream_view stream);
+                cuda::stream_ref stream);
 
   /**
    * @brief Destructor to complete any incomplete write and release resources.
@@ -315,7 +343,7 @@ class writer::impl {
 
  private:
   // CUDA stream.
-  rmm::cuda_stream_view const _stream;
+  cuda::stream_ref const _stream;
 
   // Writer options.
   stripe_size_limits const _max_stripe_size;
@@ -329,6 +357,7 @@ class writer::impl {
                                                // indicate that we are guaranteeing a single table
                                                // write. This enables some internal optimizations.
   std::map<std::string, std::string> const _kv_meta;  // Optional user metadata.
+  writer_timezone const _timezone;
   std::unique_ptr<data_sink> const _out_sink;
 
   // Debug parameter---currently not yet supported to be user-specified.

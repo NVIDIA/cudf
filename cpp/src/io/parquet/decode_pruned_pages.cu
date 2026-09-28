@@ -105,10 +105,10 @@ void fill_pruned_offsets(cudf::device_span<PageInfo> pages,
                          cudf::device_span<size_t> initial_str_offsets,
                          size_t skip_rows,
                          size_t num_rows,
-                         rmm::cuda_stream_view stream)
+                         cuda::stream_ref stream)
 {
   CUDF_EXPECTS(pages.size() == page_mask.size(), "Page mask size does not match page count");
-  fill_pruned_offsets_kernel<<<pages.size(), block_size, 0, stream.value()>>>(
+  fill_pruned_offsets_kernel<<<pages.size(), block_size, 0, stream.get()>>>(
     pages, chunks, page_mask, initial_str_offsets, skip_rows, num_rows);
   CUDF_CUDA_TRY(cudaGetLastError());
 }

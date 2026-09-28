@@ -1,6 +1,6 @@
 # =============================================================================
 # cmake-format: off
-# SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 # cmake-format: on
 # =============================================================================
@@ -37,7 +37,7 @@ function(find_and_configure_cudf VERSION EXPORT_SET)
     BUILD_EXPORT_SET ${EXPORT_SET}
     INSTALL_EXPORT_SET ${EXPORT_SET}
     CPM_ARGS
-    GIT_REPOSITORY https://github.com/rapidsai/cudf.git
+    GIT_REPOSITORY https://github.com/NVIDIA/cudf.git
     GIT_TAG "${RAPIDS_BRANCH}"
     GIT_SHALLOW TRUE SOURCE_SUBDIR cpp
     OPTIONS "BUILD_TESTS OFF" "BUILD_BENCHMARKS OFF"

@@ -37,7 +37,7 @@ struct row_arg_minmax_fn {
   // used with `thrust::reduce_by_key` or `thrust::scan_by_key`.
   __attribute__((noinline)) __device__ auto operator()(size_type lhs_idx, size_type rhs_idx) const
   {
-    // The extra bounds checking is due to issue github.com/rapidsai/cudf/issues/9156 and
+    // The extra bounds checking is due to issue github.com/NVIDIA/cudf/issues/9156 and
     // github.com/NVIDIA/thrust/issues/1525
     // where invalid random values may be passed here by thrust::reduce_by_key
     if (lhs_idx < 0 || lhs_idx >= num_rows) { return rhs_idx; }

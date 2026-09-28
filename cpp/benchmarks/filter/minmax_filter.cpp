@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -14,14 +14,14 @@
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/error.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
-
 #include <cuda/iterator>
 
 #include <nvbench/nvbench.cuh>
 #include <nvbench/types.cuh>
 
+#include <array>
 #include <concepts>
+#include <span>
 #include <vector>
 
 namespace {
@@ -131,22 +131,27 @@ void BM_filter_min_max(nvbench::state& state)
         auto filter_table         = cudf::table_view{filter_column_views};
         auto const filter_boolean = cudf::compute_column(predicate_table, tree.back(), stream, mr);
         auto const result =
-          cudf::apply_boolean_mask(filter_table, filter_boolean->view(), stream, mr);
+          cudf::apply_retention_mask(filter_table, filter_boolean->view(), stream, mr);
       } break;
       case engine_type::JIT: {
-        cudf::filter_input predicate_inputs[] = {
+        cudf::transform_input predicate_inputs[] = {
           predicate_column->view(),
           cudf::scalar_column_view(min_scalar_column->view()),
           cudf::scalar_column_view(max_scalar_column->view())};
-        auto result = cudf::filter_extended(predicate_inputs,
-                                            udf,
-                                            filter_column_views,
-                                            cudf::udf_source_type::CUDA,
-                                            std::nullopt,
-                                            cudf::null_aware::NO,
-                                            cudf::output_nullability::PRESERVE,
-                                            stream,
-                                            mr);
+        auto predicate =
+          cudf::transform(udf,
+                          cudf::udf_source_type::CUDA,
+                          cudf::null_aware::NO,
+                          std::nullopt,
+                          std::span{predicate_inputs},
+                          std::array{cudf::transform_output{cudf::data_type{cudf::type_id::BOOL8},
+                                                            cudf::output_nullability::PRESERVE}},
+                          {},
+                          num_rows,
+                          stream,
+                          mr);
+        auto result = cudf::apply_retention_mask(
+          cudf::table_view{filter_column_views}, predicate->view().column(0), stream, mr);
       } break;
       default: CUDF_UNREACHABLE("Unrecognised engine type requested");
     }

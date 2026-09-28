@@ -229,7 +229,7 @@ def test_column_series_cuda_array_dtype(data, float_types_as_str):
 
 
 def test_column_zero_length_slice():
-    # see https://github.com/rapidsai/cudf/pull/4777
+    # see https://github.com/NVIDIA/cudf/pull/4777
     x = cudf.DataFrame({"a": [1]})
     the_column = x[1:]["a"]._column
 

@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from __future__ import annotations
@@ -13,6 +13,7 @@ from cudf_polars.testing.asserts import (
     assert_gpu_result_equal,
     assert_ir_translation_raises,
 )
+from cudf_polars.testing.engine_utils import is_streaming_engine
 from cudf_polars.utils.versions import POLARS_VERSION_LT_136
 
 
@@ -110,15 +111,23 @@ def test_calendrical_period_unsupported(engine: pl.GPUEngine, df):
     assert_ir_translation_raises(q, engine, NotImplementedError)
 
 
-def test_unsorted_raises(engine_raise_on_fail: pl.GPUEngine):
+def test_unsorted_raises(engine: pl.GPUEngine):
     df = pl.LazyFrame({"orderby": [1, 2, 4, 2], "values": [1, 2, 3, 4]})
     q = df.rolling("orderby", period="2i").agg(sum=pl.sum("values"))
     with pytest.raises(pl.exceptions.InvalidOperationError):
         q.collect(engine="in-memory")
-    with pytest.raises(
-        RuntimeError, match=r".*rolling is not sorted, please sort first"
-    ):
-        q.collect(engine=engine_raise_on_fail)
+    if is_streaming_engine(engine):
+        with pytest.RaisesGroup(
+            pytest.RaisesExc(
+                RuntimeError, match=r".*rolling is not sorted, please sort first"
+            )
+        ):
+            q.collect(engine=engine)
+    else:
+        with pytest.raises(
+            RuntimeError, match=r".*rolling is not sorted, please sort first"
+        ):
+            q.collect(engine=engine)
 
 
 def test_grouped_rolling(engine: pl.GPUEngine):
@@ -134,7 +143,7 @@ def test_grouped_rolling(engine: pl.GPUEngine):
     assert_gpu_result_equal(q, engine=engine)
 
 
-def test_grouped_rolling_unsorted_raises(engine_raise_on_fail: pl.GPUEngine):
+def test_grouped_rolling_unsorted_raises(engine: pl.GPUEngine):
     df = pl.LazyFrame(
         {
             "keys": [1, None, 2, 1, 2, None],
@@ -146,19 +155,38 @@ def test_grouped_rolling_unsorted_raises(engine_raise_on_fail: pl.GPUEngine):
 
     with pytest.raises(pl.exceptions.ComputeError):
         q.collect(engine="in-memory")
-    with pytest.raises(RuntimeError, match="Input for grouped rolling is not sorted"):
-        q.collect(engine=engine_raise_on_fail)
+    if is_streaming_engine(engine):
+        with pytest.RaisesGroup(
+            pytest.RaisesExc(
+                RuntimeError, match="Input for grouped rolling is not sorted"
+            )
+        ):
+            q.collect(engine=engine)
+    else:
+        with pytest.raises(
+            RuntimeError, match="Input for grouped rolling is not sorted"
+        ):
+            q.collect(engine=engine)
 
 
-def test_orderby_nulls_raises_computeerror(engine_raise_on_fail: pl.GPUEngine):
+def test_orderby_nulls_raises_computeerror(engine: pl.GPUEngine):
     df = pl.LazyFrame({"orderby": [1, 2, 4, None], "values": [1, 2, 3, 4]})
     q = df.rolling("orderby", period="2i").agg(sum=pl.sum("values"))
     with pytest.raises(pl.exceptions.InvalidOperationError):
         q.collect(engine="in-memory")
-    with pytest.raises(
-        RuntimeError, match=r"Index column.*in rolling may not contain nulls"
-    ):
-        q.collect(engine=engine_raise_on_fail)
+    if is_streaming_engine(engine):
+        with pytest.RaisesGroup(
+            pytest.RaisesExc(
+                RuntimeError,
+                match=r"Index column.*in rolling may not contain nulls",
+            )
+        ):
+            q.collect(engine=engine)
+    else:
+        with pytest.raises(
+            RuntimeError, match=r"Index column.*in rolling may not contain nulls"
+        ):
+            q.collect(engine=engine)
 
 
 @pytest.mark.xfail(

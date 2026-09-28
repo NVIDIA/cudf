@@ -89,7 +89,6 @@ streaming_groupby::impl::impl(host_span<size_type const> key_indices,
   : _max_distinct_keys{max_distinct_keys},
     _null_handling{null_handling},
     _mr{std::move(mr)},
-    _d_agg_kinds{0, rmm::cuda_stream_default, cudf::get_current_device_resource_ref()},
     _d_agg_results{nullptr, +[](mutable_table_device_view*) {}}
 {
   CUDF_EXPECTS(max_distinct_keys > 0, "max_distinct_keys must be positive.", std::invalid_argument);
@@ -170,7 +169,8 @@ void streaming_groupby::impl::initialize(table_view const& data, cuda::stream_re
       decltype(_d_agg_results){raii.release(), +[](mutable_table_device_view* t) { t->destroy(); }};
   }
 
-  _d_agg_kinds = cudf::detail::make_device_uvector_async(_agg_kinds, stream, mr);
+  _d_agg_kinds = std::make_unique<rmm::device_uvector<aggregation::Kind>>(
+    cudf::detail::make_device_uvector_async(_agg_kinds, stream, mr));
 
   // Map each column in `values_view` back to its index in `data`.
   _value_col_indices.reserve(values_view.num_columns());
@@ -243,7 +243,9 @@ std::unique_ptr<table> streaming_groupby::impl::gather_agg_results(
   // The results we care about are dense in `[0, _distinct_keys)` and can be extracted by
   // slice+copy.
   auto const sliced =
-    cudf::detail::slice(_agg_results->view(), {0, _distinct_keys}, stream).front();
+    cudf::detail::slice(
+      _agg_results->view(), {0, _distinct_keys.load(std::memory_order_relaxed)}, stream)
+      .front();
   return std::make_unique<table>(sliced, stream, mr);
 }
 
@@ -378,7 +380,10 @@ std::pair<std::unique_ptr<table>, std::vector<aggregation_result>> streaming_gro
   return _impl->do_finalize(stream, mr);
 }
 
-size_type streaming_groupby::distinct_keys() const noexcept { return _impl->_distinct_keys; }
+size_type streaming_groupby::distinct_keys() const noexcept
+{
+  return _impl->_distinct_keys.load(std::memory_order_relaxed);
+}
 
 bool is_streaming_groupby_supported(data_type values_type, aggregation::Kind kind)
 {

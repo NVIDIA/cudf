@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -24,7 +24,7 @@ namespace lists::detail {
  */
 std::unique_ptr<cudf::column> make_lists_column_from_scalar(list_scalar const& value,
                                                             size_type size,
-                                                            rmm::cuda_stream_view stream,
+                                                            cuda::stream_ref stream,
                                                             rmm::device_async_resource_ref mr);
 
 /**
@@ -46,7 +46,7 @@ std::unique_ptr<column> make_empty_lists_column(data_type child_type);
  */
 std::unique_ptr<column> make_all_nulls_lists_column(size_type size,
                                                     data_type child_type,
-                                                    rmm::cuda_stream_view stream,
+                                                    cuda::stream_ref stream,
                                                     rmm::device_async_resource_ref mr);
 
 }  // namespace lists::detail

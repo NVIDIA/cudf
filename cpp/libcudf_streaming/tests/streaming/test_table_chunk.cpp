@@ -16,9 +16,11 @@
 
 #include <cudf_streaming/table_chunk.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/mr/per_device_resource.hpp>
 
+#include <cuda/stream>
+
+#include <rapidsmpf/memory/buffer_resource.hpp>
 #include <rapidsmpf/owning_wrapper.hpp>
 #include <rapidsmpf/streaming/core/channel.hpp>
 
@@ -35,9 +37,8 @@ class StreamingTableChunk : public BaseStreamingFixture,
     rapidsmpf::config::Options options(rapidsmpf::config::get_environment_variables());
 
     std::unordered_map<rapidsmpf::MemoryType, std::int64_t> memory_limits{};
-    auto stream_pool =
-      std::make_shared<rmm::cuda_stream_pool>(16, rmm::cuda_stream::flags::non_blocking);
-    stream = cudf::get_default_stream();
+    auto stream_pool = std::make_shared<rapidsmpf::StreamPool>(16);
+    stream           = cudf::get_default_stream();
     // Enable pinned host memory only when supported; otherwise the non-pinned
     // params still run and the PINNED_HOST cases skip in the test bodies.
     auto pinned_pool_properties = rapidsmpf::is_pinned_memory_resources_supported()
@@ -55,7 +56,29 @@ class StreamingTableChunk : public BaseStreamingFixture,
       options, GlobalEnvironment->comm_->logger(), br);
   }
 
-  rmm::cuda_stream_view stream;
+  /// @brief A resource recording into @p stats, since the fixture's has statistics disabled.
+  std::shared_ptr<rapidsmpf::BufferResource> make_tracked_br(
+    std::shared_ptr<rapidsmpf::Statistics> stats)
+  {
+    return rapidsmpf::BufferResource::create(
+      mr_cuda,
+      rapidsmpf::is_pinned_memory_resources_supported()
+        ? std::optional<rapidsmpf::PinnedPoolProperties>{rapidsmpf::PinnedPoolProperties{}}
+        : rapidsmpf::PinnedMemoryDisabled,
+      std::unordered_map<rapidsmpf::MemoryType, std::int64_t>{},
+      std::nullopt,
+      std::make_shared<rapidsmpf::StreamPool>(16),
+      std::move(stats));
+  }
+
+  /// @brief The number of spills recorded in @p stats.
+  static std::size_t spill_samples(rapidsmpf::Statistics const& stats)
+  {
+    return stats.has_stat("buffer-spilled-time") ? stats.get_stat("buffer-spilled-time").count()
+                                                 : 0UL;
+  }
+
+  cuda::stream_ref stream{cudaStream_t{cudaStreamDefault}};
   rmm::mr::cuda_memory_resource mr_cuda;
   std::shared_ptr<rapidsmpf::BufferResource> br;
   std::shared_ptr<rapidsmpf::streaming::Context> ctx;
@@ -69,7 +92,7 @@ TEST_F(StreamingTableChunk, FromTable)
   cudf::table expect = random_table_with_index(seed, num_rows, 0, 10);
 
   table_chunk chunk{std::make_unique<cudf::table>(expect), stream};
-  EXPECT_EQ(chunk.stream().value(), stream.value());
+  EXPECT_EQ(chunk.stream().get(), stream.get());
   EXPECT_TRUE(chunk.is_available());
   EXPECT_TRUE(chunk.is_spillable());
   EXPECT_EQ(chunk.make_available_cost(), 0);
@@ -102,7 +125,7 @@ TEST_F(StreamingTableChunk, TableChunkOwner)
     return table_chunk{expect, stream, rapidsmpf::OwningWrapper(new int, deleter), exclusive_view};
   };
   auto check_chunk = [&](table_chunk const& chunk, bool is_spillable) {
-    EXPECT_EQ(chunk.stream().value(), stream.value());
+    EXPECT_EQ(chunk.stream().get(), stream.get());
     EXPECT_TRUE(chunk.is_available());
     EXPECT_EQ(chunk.is_spillable(), is_spillable);
     EXPECT_EQ(chunk.make_available_cost(), 0);
@@ -152,7 +175,7 @@ TEST_F(StreamingTableChunk, FromPackedDataOnDevice)
     std::move(packed_columns.metadata), br->move(std::move(packed_columns.gpu_data), stream));
   table_chunk chunk{std::move(packed_data)};
 
-  EXPECT_EQ(chunk.stream().value(), stream.value());
+  EXPECT_EQ(chunk.stream().get(), stream.get());
   // chunk was created from packed data on device, so it is available and make available
   // cost is 0.
   EXPECT_TRUE(chunk.is_available());
@@ -202,7 +225,7 @@ TEST_P(StreamingTableChunk, FromPackedDataOn)
                                                              std::move(gpu_data_in_spill_memory));
   table_chunk chunk{std::move(packed_data)};
 
-  EXPECT_EQ(chunk.stream().value(), stream.value());
+  EXPECT_EQ(chunk.stream().get(), stream.get());
   EXPECT_FALSE(chunk.is_available());
   EXPECT_TRUE(chunk.is_spillable());
   EXPECT_THROW(std::ignore = chunk.table_view(), std::invalid_argument);
@@ -277,7 +300,7 @@ TEST_P(StreamingTableChunk, DeviceToHostRoundTripCopy)
   table_chunk dev_chunk{std::make_unique<cudf::table>(expect), stream};
   EXPECT_TRUE(dev_chunk.is_available());
   EXPECT_TRUE(dev_chunk.is_spillable());
-  EXPECT_EQ(dev_chunk.stream().value(), stream.value());
+  EXPECT_EQ(dev_chunk.stream().get(), stream.get());
   EXPECT_EQ(dev_chunk.make_available_cost(), 0);
   {
     auto cd = get_content_description(dev_chunk);
@@ -293,7 +316,7 @@ TEST_P(StreamingTableChunk, DeviceToHostRoundTripCopy)
   auto host_copy = dev_chunk.copy(host_res);
   EXPECT_FALSE(host_copy.is_available());
   EXPECT_TRUE(host_copy.is_spillable());
-  EXPECT_EQ(host_copy.stream().value(), stream.value());
+  EXPECT_EQ(host_copy.stream().get(), stream.get());
   EXPECT_GT(host_copy.make_available_cost(), 0);
   {
     auto cd = get_content_description(host_copy);
@@ -308,7 +331,7 @@ TEST_P(StreamingTableChunk, DeviceToHostRoundTripCopy)
   auto host_copy2 = host_copy.copy(host_res2);
   EXPECT_FALSE(host_copy2.is_available());
   EXPECT_TRUE(host_copy2.is_spillable());
-  EXPECT_EQ(host_copy2.stream().value(), stream.value());
+  EXPECT_EQ(host_copy2.stream().get(), stream.get());
   EXPECT_EQ(host_copy2.make_available_cost(), host_copy.make_available_cost());
   {
     auto cd = get_content_description(host_copy2);
@@ -324,7 +347,7 @@ TEST_P(StreamingTableChunk, DeviceToHostRoundTripCopy)
   auto dev_back = host_copy2.make_available(dev_res);
   EXPECT_TRUE(dev_back.is_available());
   EXPECT_TRUE(dev_back.is_spillable());
-  EXPECT_EQ(dev_back.stream().value(), stream.value());
+  EXPECT_EQ(dev_back.stream().get(), stream.get());
   EXPECT_EQ(dev_back.make_available_cost(), 0);
   CUDF_TEST_EXPECT_TABLES_EQUIVALENT(dev_back.table_view(), expect);
   {
@@ -349,6 +372,98 @@ TEST_P(StreamingTableChunk, DeviceToHostRoundTripCopy)
       EXPECT_EQ(cd.content_size(mem_type), dev_copy2.data_alloc_size(mem_type));
     }
   }
+}
+
+TEST_P(StreamingTableChunk, MoveThroughMessage)
+{
+  auto const spill_mem_type = GetParam();
+  if (spill_mem_type == rapidsmpf::MemoryType::PINNED_HOST &&
+      !rapidsmpf::is_pinned_memory_resources_supported()) {
+    GTEST_SKIP() << "MemoryType::PINNED_HOST isn't supported on the system.";
+  }
+  // A move and a copy differ only in the statistic, so record it to tell them apart.
+  auto stats      = rapidsmpf::Statistics::create();
+  auto tracked_br = make_tracked_br(stats);
+  auto expect     = random_table_with_index(2025, 64, 0, 5);
+  auto msg =
+    to_message(0, std::make_unique<table_chunk>(std::make_unique<cudf::table>(expect), stream));
+
+  auto host_res = tracked_br->reserve_or_fail(msg.copy_cost(), spill_mem_type);
+  auto spilled  = msg.move(host_res);
+  EXPECT_TRUE(msg.empty());
+  {
+    auto const& cd = spilled.content_description();
+    EXPECT_TRUE(cd.spillable());
+    EXPECT_EQ(cd.content_size(rapidsmpf::MemoryType::DEVICE), 0);
+    EXPECT_GT(cd.content_size(spill_mem_type), 0);
+  }
+
+  // Moving back closes the spill. One sample means both hops ran the move callback, so it
+  // was passed on to the spilled message rather than dropped.
+  auto dev_res = tracked_br->reserve_or_fail(spilled.copy_cost(), rapidsmpf::MemoryType::DEVICE);
+  auto back    = spilled.move(dev_res);
+  {
+    auto const& cd = back.content_description();
+    EXPECT_TRUE(cd.spillable());
+    EXPECT_GT(cd.content_size(rapidsmpf::MemoryType::DEVICE), 0);
+    EXPECT_EQ(cd.content_size(spill_mem_type), 0);
+  }
+  EXPECT_EQ(spill_samples(*stats), 1UL);
+
+  // Packed data on device unpacks straight away, so the round trip can be compared.
+  auto const& chunk = back.get<table_chunk>();
+  ASSERT_TRUE(chunk.is_available());
+  CUDF_TEST_EXPECT_TABLES_EQUIVALENT(chunk.table_view(), expect);
+}
+
+TEST_F(StreamingTableChunk, MoveRequiresOwnership)
+{
+  cudf::table table = random_table_with_index(2025, 64, 0, 5);
+  table_chunk chunk{table,
+                    stream,
+                    rapidsmpf::OwningWrapper(new int, [](void* p) { delete static_cast<int*>(p); }),
+                    table_chunk::exclusive_view::NO};
+  auto res = br->reserve_or_fail(chunk.data_alloc_size(rapidsmpf::MemoryType::DEVICE),
+                                 rapidsmpf::MemoryType::HOST);
+  EXPECT_THROW(std::ignore = chunk.move(res), std::invalid_argument);
+  EXPECT_TRUE(chunk.is_available());  // Left untouched.
+}
+
+TEST_P(StreamingTableChunk, SpillTrackingOnHostMove)
+{
+  auto const spill_mem_type = GetParam();
+  if (spill_mem_type == rapidsmpf::MemoryType::PINNED_HOST &&
+      !rapidsmpf::is_pinned_memory_resources_supported()) {
+    GTEST_SKIP() << "MemoryType::PINNED_HOST isn't supported on the system.";
+  }
+
+  // `buffer-spilled-time` is the only way to observe that a spill token was handed to the
+  // host buffer.
+  auto stats      = rapidsmpf::Statistics::create();
+  auto tracked_br = make_tracked_br(stats);
+
+  auto round_trip = [&](cudf::table table, bool move) {
+    table_chunk dev{std::make_unique<cudf::table>(std::move(table)), stream};
+    auto host_res = tracked_br->reserve_or_fail(dev.data_alloc_size(rapidsmpf::MemoryType::DEVICE),
+                                                spill_mem_type);
+    auto host     = move ? dev.move(host_res) : dev.copy(host_res);
+    auto dev_res  = tracked_br->reserve_or_fail(host.data_alloc_size(spill_mem_type),
+                                               rapidsmpf::MemoryType::DEVICE);
+    return host.make_available(dev_res);
+  };
+
+  // A copy leaves the table on device, so it is not a spill.
+  std::ignore = round_trip(random_table_with_index(2025, 64, 0, 5), /* move = */ false);
+  EXPECT_EQ(spill_samples(*stats), 0UL);
+
+  // An empty table packs to a device buffer that never left the device, so it carries
+  // no token and must not be reported as a spill.
+  std::ignore = round_trip(random_table_with_index(2025, 0, 0, 5), /* move = */ true);
+  EXPECT_EQ(spill_samples(*stats), 0UL);
+
+  // A move releases the table, so the round trip is recorded once.
+  std::ignore = round_trip(random_table_with_index(2025, 64, 0, 5), /* move = */ true);
+  EXPECT_EQ(spill_samples(*stats), 1UL);
 }
 
 TEST_F(StreamingTableChunk, ToMessageRoundTrip)
@@ -459,7 +574,9 @@ TEST_F(StreamingTableChunk, ToPackedDataFromPackedChunk)
     std::move(packed_columns.metadata), br->move(std::move(packed_columns.gpu_data), stream))};
   EXPECT_TRUE(chunk.is_available());
 
-  auto packed = std::move(chunk).into_packed_data(br.get());
+  auto [reservation, overbooking] = br->reserve(
+    rapidsmpf::MemoryType::DEVICE, chunk.into_packed_data_cost(), rapidsmpf::AllowOverbooking::NO);
+  auto packed = std::move(chunk).into_packed_data(reservation);
   EXPECT_FALSE(chunk.is_available());
   CUDF_TEST_EXPECT_TABLES_EQUIVALENT(expect, table_chunk{std::move(packed)}.table_view());
 }
@@ -473,9 +590,67 @@ TEST_F(StreamingTableChunk, ToPackedDataFromTable)
   table_chunk chunk{std::make_unique<cudf::table>(expect), stream};
   EXPECT_TRUE(chunk.is_available());
 
-  auto packed = std::move(chunk).into_packed_data(br.get());
+  auto [reservation, overbooking] = br->reserve(
+    rapidsmpf::MemoryType::DEVICE, chunk.into_packed_data_cost(), rapidsmpf::AllowOverbooking::NO);
+  auto packed = std::move(chunk).into_packed_data(reservation);
   EXPECT_FALSE(chunk.is_available());
   CUDF_TEST_EXPECT_TABLES_EQUIVALENT(expect, table_chunk{std::move(packed)}.table_view());
+}
+
+TEST_F(StreamingTableChunk, ToPackedDataCost)
+{
+  constexpr unsigned int num_rows = 100;
+  constexpr std::int64_t seed     = 1337;
+
+  cudf::table expect = random_table_with_index(seed, num_rows, 0, 10);
+
+  // Packing an unpacked table allocates, so the cost is the packed size.
+  table_chunk from_table{std::make_unique<cudf::table>(expect), stream};
+  EXPECT_EQ(from_table.into_packed_data_cost(),
+            from_table.data_alloc_size(rapidsmpf::MemoryType::DEVICE));
+  EXPECT_GT(from_table.into_packed_data_cost(), 0);
+
+  // Already-packed data is moved out, so it costs nothing.
+  auto packed_columns = cudf::pack(expect, stream);
+  table_chunk from_packed{std::make_unique<rapidsmpf::PackedData>(
+    std::move(packed_columns.metadata), br->move(std::move(packed_columns.gpu_data), stream))};
+  EXPECT_EQ(from_packed.into_packed_data_cost(), 0);
+}
+
+TEST_F(StreamingTableChunk, ToPackedDataWithReservation)
+{
+  constexpr unsigned int num_rows = 100;
+  constexpr std::int64_t seed     = 1337;
+
+  cudf::table expect = random_table_with_index(seed, num_rows, 0, 10);
+  table_chunk chunk{std::make_unique<cudf::table>(expect), stream};
+  auto const cost = chunk.into_packed_data_cost();
+
+  auto [reservation, overbooking] =
+    br->reserve(rapidsmpf::MemoryType::DEVICE, cost, rapidsmpf::AllowOverbooking::NO);
+  EXPECT_EQ(overbooking, 0);
+
+  auto packed = std::move(chunk).into_packed_data(reservation);
+  // The pack consumed exactly the cost.
+  EXPECT_EQ(reservation.size(), 0);
+  CUDF_TEST_EXPECT_TABLES_EQUIVALENT(expect, table_chunk{std::move(packed)}.table_view());
+}
+
+TEST_F(StreamingTableChunk, ToPackedDataRejectsSmallReservation)
+{
+  constexpr unsigned int num_rows = 100;
+  constexpr std::int64_t seed     = 1337;
+
+  cudf::table expect = random_table_with_index(seed, num_rows, 0, 10);
+  table_chunk chunk{std::make_unique<cudf::table>(expect), stream};
+
+  auto [reservation, overbooking] = br->reserve(rapidsmpf::MemoryType::DEVICE,
+                                                chunk.into_packed_data_cost() - 1,
+                                                rapidsmpf::AllowOverbooking::NO);
+  EXPECT_EQ(overbooking, 0);
+  EXPECT_THROW(
+    { [[maybe_unused]] auto packed = std::move(chunk).into_packed_data(reservation); },
+    rapidsmpf::reservation_error);
 }
 
 TEST_P(StreamingTableChunk, ToMessageUnalignedSize)

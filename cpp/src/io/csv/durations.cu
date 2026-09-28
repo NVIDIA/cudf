@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #include <cudf/column/column_device_view.cuh>
@@ -13,12 +13,10 @@
 #include <cudf/types.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
-
 #include <cuda/iterator>
 #include <cuda/std/cmath>
+#include <cuda/stream>
 #include <thrust/for_each.h>
-#include <thrust/iterator/transform_iterator.h>
 
 namespace cudf {
 namespace io {
@@ -164,7 +162,7 @@ struct duration_to_string_fn : public duration_to_string_size_fn<T> {
 struct dispatch_from_durations_fn {
   template <typename T>
   std::unique_ptr<column> operator()(column_view const& durations,
-                                     rmm::cuda_stream_view stream,
+                                     cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr) const
     requires(cudf::is_duration<T>())
   {
@@ -202,7 +200,7 @@ struct dispatch_from_durations_fn {
   // non-duration types throw an exception
   template <typename T>
   std::unique_ptr<column> operator()(column_view const&,
-                                     rmm::cuda_stream_view,
+                                     cuda::stream_ref,
                                      rmm::device_async_resource_ref) const
     requires(not cudf::is_duration<T>())
   {
@@ -213,7 +211,7 @@ struct dispatch_from_durations_fn {
 }  // namespace
 
 std::unique_ptr<column> pandas_format_durations(column_view const& durations,
-                                                rmm::cuda_stream_view stream,
+                                                cuda::stream_ref stream,
                                                 rmm::device_async_resource_ref mr)
 {
   size_type strings_count = durations.size();

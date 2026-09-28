@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -61,7 +61,7 @@ void BM_setnullmask(nvbench::state& state)
   rmm::device_buffer mask = cudf::create_null_mask(mask_size, cudf::mask_state::UNINITIALIZED);
   auto begin = 0, end = mask_size;
 
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().value()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().get()));
   auto const mem_stats_logger = cudf::memory_stats_logger();
 
   state.exec(nvbench::exec_tag::sync | nvbench::exec_tag::timer,
@@ -90,7 +90,7 @@ void BM_setnullmask_unsafe_bulk(nvbench::state& state)
   auto [begin_bits, end_bits, valids, masks, masks_ptr] =
     generate_test_data(num_masks, mask_size, use_variable_mask_sizes);
 
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().value()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().get()));
   auto const mem_stats_logger = cudf::memory_stats_logger();
 
   state.exec(nvbench::exec_tag::sync | nvbench::exec_tag::timer,
@@ -118,7 +118,7 @@ void BM_setnullmask_safe_bulk(nvbench::state& state)
   auto [begin_bits, end_bits, valids, masks, masks_ptr] =
     generate_test_data(num_masks, mask_size, use_variable_mask_sizes);
 
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().value()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().get()));
   auto const mem_stats_logger = cudf::memory_stats_logger();
 
   state.exec(nvbench::exec_tag::sync | nvbench::exec_tag::timer,
@@ -146,7 +146,7 @@ void BM_setnullmask_loop(nvbench::state& state)
   auto [begin_bits, end_bits, valids, masks, masks_ptr] =
     generate_test_data(num_masks, mask_size, use_variable_mask_sizes);
 
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().value()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().get()));
   auto const mem_stats_logger = cudf::memory_stats_logger();
 
   state.exec(nvbench::exec_tag::sync | nvbench::exec_tag::timer,

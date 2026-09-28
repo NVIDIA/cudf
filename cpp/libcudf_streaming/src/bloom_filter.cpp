@@ -9,6 +9,7 @@
 #include <cudf_streaming/detail/device_bloom_filter.hpp>
 #include <cudf_streaming/table_chunk.hpp>
 
+#include <cuda/stream>
 #include <cuda_runtime_api.h>
 
 #include <rapidsmpf/cuda_stream.hpp>
@@ -54,7 +55,7 @@ rapidsmpf::streaming::Actor bloom_filter::build(
   rapidsmpf::CudaEvent event;
   auto storage =
     cudf_streaming::detail::device_bloom_filter::storage(filter_size_, filter_stream, mr);
-  RAPIDSMPF_CUDA_TRY(cudaMemsetAsync(storage->data(), 0, storage->size(), filter_stream));
+  RAPIDSMPF_CUDA_TRY(cudaMemsetAsync(storage->data(), 0, storage->size(), filter_stream.get()));
   auto filter = cudf_streaming::detail::device_bloom_filter(filter_size_, seed_, storage->data());
   rapidsmpf::CudaEvent build_event;
   build_event.record(filter_stream);
@@ -91,7 +92,7 @@ rapidsmpf::streaming::Actor bloom_filter::build(
       tag,
       [filter_size = filter_size_, seed = seed_](rapidsmpf::Buffer const* left,
                                                  rapidsmpf::Buffer* right) {
-        right->write_access([&](std::byte* out_bytes, rmm::cuda_stream_view stream) {
+        right->write_access([&](std::byte* out_bytes, cuda::stream_ref stream) {
           auto const in =
             cudf_streaming::detail::device_bloom_filter::view(filter_size, seed, left->data());
           cudf_streaming::detail::device_bloom_filter(filter_size, seed, out_bytes)
@@ -102,7 +103,10 @@ rapidsmpf::streaming::Actor bloom_filter::build(
     auto [res, _] = br->reserve(rapidsmpf::MemoryType::DEVICE, 0, rapidsmpf::AllowOverbooking::YES);
     storage       = br->move_to_device_buffer(std::move(result.second), res);
   }
-  co_await ch_out->send(rapidsmpf::streaming::Message{0, std::move(storage), {}, {}});
+  co_await ch_out->send(rapidsmpf::streaming::Message{0,
+                                                      std::move(storage),
+                                                      rapidsmpf::ContentDescription{},
+                                                      rapidsmpf::streaming::Message::Callbacks{}});
   co_await ch_out->drain(ctx_->executor());
 }
 
@@ -150,7 +154,7 @@ rapidsmpf::streaming::Actor bloom_filter::apply(
                                        mask.data(),
                                        {},
                                        0};
-    auto result    = cudf::apply_boolean_mask(
+    auto result    = cudf::apply_retention_mask(
       chunk.table_view(), mask_view, chunk_stream, ctx_->br()->device_mr());
     std::ignore = std::move(chunk);
     std::ignore = std::move(res);

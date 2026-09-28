@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -215,7 +215,7 @@ struct compare_sv {
  * Creates an ArrowBinaryView vector and data buffer from a strings column.
  */
 std::pair<rmm::device_uvector<ArrowBinaryView>, rmm::device_buffer> create_sv_array(
-  cudf::strings_column_view const& input, rmm::cuda_stream_view stream)
+  cudf::strings_column_view const& input, cuda::stream_ref stream)
 {
   auto const d_strings = cudf::column_device_view::create(input.parent(), stream);
   auto d_offsets =
@@ -250,7 +250,7 @@ std::pair<rmm::device_uvector<ArrowBinaryView>, rmm::device_buffer> create_sv_ar
         }));
     auto longer_strings = cudf::strings::detail::make_strings_column(
       indices, indices + input.size(), stream, cudf::get_current_device_resource_ref());
-    stream.synchronize();
+    stream.sync();
     auto const sv = cudf::strings_column_view(longer_strings->view());
     return std::pair{std::move(longer_strings), sv};
   }();
@@ -274,7 +274,7 @@ std::pair<rmm::device_uvector<ArrowBinaryView>, rmm::device_buffer> create_sv_ar
   rmm::device_buffer data_buffer(longer_chars_size, stream);
   auto const chars_data = longer_strings.chars_begin(stream);
   CUDF_CUDA_TRY(cudaMemcpyAsync(
-    data_buffer.data(), chars_data, longer_chars_size, cudaMemcpyDefault, stream.value()));
+    data_buffer.data(), chars_data, longer_chars_size, cudaMemcpyDefault, stream.get()));
 
   return std::pair{std::move(d_items), std::move(data_buffer)};
 }
@@ -285,7 +285,7 @@ std::pair<rmm::device_uvector<ArrowBinaryView>, rmm::device_buffer> gather_sv_ar
   rmm::device_buffer const& data,
   MapIterator begin,
   cudf::size_type map_size,
-  rmm::cuda_stream_view stream)
+  cuda::stream_ref stream)
 {
   auto output   = rmm::device_uvector<ArrowBinaryView>(map_size, stream);
   auto d_output = output.data();
@@ -356,7 +356,7 @@ static void BM_sv_hash(nvbench::state& state)
   auto const column = create_random_column(cudf::type_id::STRING, row_count{num_rows}, profile);
   auto col_view     = column->view();
   auto stream       = cudf::get_default_stream();
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.value()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.get()));
   state.add_global_memory_writes(num_rows * sizeof(cudf::hash_value_type));
   auto output = rmm::device_uvector<cudf::hash_value_type>(num_rows, stream);
   auto begin  = cuda::counting_iterator<cudf::size_type>{0};
@@ -398,7 +398,7 @@ static void BM_sv_starts(nvbench::state& state)
   auto const column = create_random_column(cudf::type_id::STRING, row_count{num_rows}, profile);
   auto col_view     = column->view();
   auto stream       = cudf::get_default_stream();
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.value()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.get()));
   state.add_global_memory_writes(num_rows * sizeof(bool));
   auto output = rmm::device_uvector<bool>(num_rows, stream);
   auto begin  = cuda::counting_iterator<cudf::size_type>{0};
@@ -454,7 +454,7 @@ static void BM_sv_sort(nvbench::state& state)
 
   auto col_view = column->view();
   auto stream   = cudf::get_default_stream();
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.value()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.get()));
   state.add_global_memory_writes(num_rows * sizeof(cudf::size_type));
 
   // indices are the keys that are sorted (not inplace)
@@ -468,12 +468,12 @@ static void BM_sv_sort(nvbench::state& state)
     auto const d_chars          = reinterpret_cast<char const*>(data_buffer.data());
     auto comparator             = compare_arrow_sv{d_items.data(), d_chars};
     cub::DeviceMergeSort::SortKeysCopy(
-      nullptr, tmp_bytes, in_keys, out_keys, num_rows, comparator, stream.value());
+      nullptr, tmp_bytes, in_keys, out_keys, num_rows, comparator, stream.get());
     auto tmp_stg = rmm::device_buffer(tmp_bytes, stream);
     state.add_global_memory_reads(num_rows * sizeof(ArrowBinaryView) + data_buffer.size());
     state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
       cub::DeviceMergeSort::SortKeysCopy(
-        tmp_stg.data(), tmp_bytes, in_keys, out_keys, num_rows, comparator, stream.value());
+        tmp_stg.data(), tmp_bytes, in_keys, out_keys, num_rows, comparator, stream.get());
     });
   } else {
     auto d_strings = cudf::column_device_view::create(col_view, stream);
@@ -481,12 +481,12 @@ static void BM_sv_sort(nvbench::state& state)
     state.add_global_memory_reads(col_size);
     auto comparator = compare_sv{*d_strings};
     cub::DeviceMergeSort::SortKeysCopy(
-      nullptr, tmp_bytes, in_keys, out_keys, num_rows, comparator, stream.value());
+      nullptr, tmp_bytes, in_keys, out_keys, num_rows, comparator, stream.get());
     auto tmp_stg = rmm::device_buffer(tmp_bytes, stream);
     state.add_global_memory_reads(col_size);
     state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
       cub::DeviceMergeSort::SortKeysCopy(
-        tmp_stg.data(), tmp_bytes, in_keys, out_keys, num_rows, comparator, stream.value());
+        tmp_stg.data(), tmp_bytes, in_keys, out_keys, num_rows, comparator, stream.get());
     });
   }
 }
@@ -508,7 +508,7 @@ static void BM_sv_gather(nvbench::state& state)
   auto map_view = map->view();
 
   auto stream = cudf::get_default_stream();
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.value()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.get()));
 
   if (std::getenv(BM_ARROWSTRINGVIEW)) {
     auto [d_items, data_buffer] = create_sv_array(col_view, stream);

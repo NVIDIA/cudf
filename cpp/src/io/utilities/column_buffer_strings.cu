@@ -12,7 +12,7 @@
 namespace cudf::io::detail {
 
 std::unique_ptr<column> cudf::io::detail::inline_column_buffer::make_string_column_impl(
-  rmm::cuda_stream_view stream)
+  cuda::stream_ref stream)
 {
   // if the size of _string_data is over the threshold for 64bit size_type, _data will contain
   // sizes rather than offsets. need special handling for that case.
@@ -27,7 +27,7 @@ std::unique_ptr<column> cudf::io::detail::inline_column_buffer::make_string_colu
     auto d_offsets64 = offsets_col->mutable_view().template data<int64_t>();
     // it's safe to call with size + 1 because _data is also sized that large
     cudf::detail::sizes_to_offsets(
-      offsets_ptr, offsets_ptr + size + 1, d_offsets64, initial_string_offset, stream);
+      offsets_ptr, offsets_ptr + size + 1, d_offsets64, initial_string_offset, stream, _mr);
     return make_strings_column(
       size, std::move(offsets_col), std::move(_string_data), null_count(), std::move(_null_mask));
   } else {

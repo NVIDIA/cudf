@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -797,7 +797,7 @@ TEST_F(ConcatenateListElementsTest, ListsOfListsOfStructsHavingListsWithNulls)
   }
 }
 
-// Tests for the child.size()==0 early-exit guard added to fix rapidsai/cudf#22146.
+// Tests for the child.size()==0 early-exit guard added to fix NVIDIA/cudf#22146.
 // When the inner list column has 0 rows, the offsets buffer may be unallocated;
 // the guard must build the result without dereferencing that buffer.
 
@@ -861,7 +861,7 @@ TEST_F(ConcatenateListElementsTest, EmptyInnerListColumnWithNullRow)
 
 // Subcase D: child.size()==0 with a struct grandchild — verifies the guard preserves
 // child column structure (field columns) when the grandchild is a struct type.
-// Addresses review feedback on rapidsai/cudf#22147 (pmattione-nvidia).
+// Addresses review feedback on NVIDIA/cudf#22147 (pmattione-nvidia).
 TEST_F(ConcatenateListElementsTest, EmptyInnerListColumnChildSizeZeroWithStructGrandchild)
 {
   // list<list<struct<int32,int32>>> with 1 outer row that is an empty list-of-lists.

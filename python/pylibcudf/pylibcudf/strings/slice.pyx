@@ -67,7 +67,7 @@ cpdef Column slice_strings(
     cdef numeric_scalar[size_type]* cpp_stop
     cdef numeric_scalar[size_type]* cpp_step
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
     cdef column_view c_input
     cdef column_view c_start
@@ -100,15 +100,15 @@ cpdef Column slice_strings(
     elif ColumnOrScalar is Scalar:
         if start is None:
             start = Scalar.from_libcudf(
-                cpp_make_fixed_width_scalar(0, _stream.view().value(), mr.get_mr())
+                cpp_make_fixed_width_scalar(0, _stream.view().get(), mr.get_mr())
             )
         if stop is None:
             stop = Scalar.from_libcudf(
-                cpp_make_fixed_width_scalar(0, _stream.view().value(), mr.get_mr())
+                cpp_make_fixed_width_scalar(0, _stream.view().get(), mr.get_mr())
             )
         if step is None:
             step = Scalar.from_libcudf(
-                cpp_make_fixed_width_scalar(1, _stream.view().value(), mr.get_mr())
+                cpp_make_fixed_width_scalar(1, _stream.view().get(), mr.get_mr())
             )
 
         cpp_start = <numeric_scalar[size_type]*>start.c_obj.get()

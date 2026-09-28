@@ -1,17 +1,16 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
 
 #include "common.cuh"
 
-#include <cudf/detail/iterator.cuh>
 #include <cudf/detail/row_operator/equality.cuh>
 #include <cudf/detail/row_operator/hashing.cuh>
 #include <cudf/detail/row_operator/primitive_row_operators.cuh>
 
-#include <cuco/pair.cuh>
+#include <cuda/std/utility>
 
 #include <memory>
 #include <utility>
@@ -19,7 +18,7 @@
 namespace cudf::detail {
 
 /**
- * @brief Equality comparator for cuco hash table probing with row-level equality.
+ * @brief Equality comparator for hash table probing with row-level equality.
  */
 template <typename Equal>
 class pair_equal {
@@ -27,8 +26,8 @@ class pair_equal {
   pair_equal(Equal check_row_equality) : _check_row_equality{std::move(check_row_equality)} {}
 
   __device__ __forceinline__ bool operator()(
-    cuco::pair<hash_value_type, size_type> const& lhs,
-    cuco::pair<hash_value_type, size_type> const& rhs) const noexcept
+    cuda::std::pair<hash_value_type, size_type> const& lhs,
+    cuda::std::pair<hash_value_type, size_type> const& rhs) const noexcept
   {
     using detail::row::lhs_index_type;
     using detail::row::rhs_index_type;
@@ -42,18 +41,7 @@ class pair_equal {
 };
 
 /**
- * @brief Extracts the right-side row index from a cuco hash table slot.
- */
-struct output_fn {
-  __device__ constexpr cudf::size_type operator()(
-    cuco::pair<hash_value_type, cudf::size_type> const& slot) const
-  {
-    return slot.second;
-  }
-};
-
-/**
- * @brief Equality comparator for cuco hash table probing with primitive row equality.
+ * @brief Equality comparator for hash table probing with primitive row equality.
  */
 class primitive_pair_equal {
  public:
@@ -63,8 +51,8 @@ class primitive_pair_equal {
   }
 
   __device__ __forceinline__ bool operator()(
-    cuco::pair<hash_value_type, size_type> const& lhs,
-    cuco::pair<hash_value_type, size_type> const& rhs) const noexcept
+    cuda::std::pair<hash_value_type, size_type> const& lhs,
+    cuda::std::pair<hash_value_type, size_type> const& rhs) const noexcept
   {
     return lhs.first == rhs.first and _check_row_equality(lhs.second, rhs.second);
   }

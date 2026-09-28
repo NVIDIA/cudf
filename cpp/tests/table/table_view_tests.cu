@@ -18,9 +18,9 @@
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/stream>
 #include <thrust/transform.h>
 
 #include <vector>
@@ -33,7 +33,7 @@ void row_comparison(cudf::table_view input1,
                     cudf::mutable_column_view output,
                     std::vector<cudf::order> const& column_order)
 {
-  rmm::cuda_stream_view stream{cudf::get_default_stream()};
+  cuda::stream_ref stream{cudf::get_default_stream()};
 
   auto const comparator = cudf::detail::row::lexicographic::two_table_comparator{
     input1, input2, column_order, {}, stream};

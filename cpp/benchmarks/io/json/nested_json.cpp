@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -115,7 +115,7 @@ std::string generate_json(int num_rows,
   return s;
 }
 
-auto make_test_json_data(cudf::size_type string_size, rmm::cuda_stream_view stream)
+auto make_test_json_data(cudf::size_type string_size, cuda::stream_ref stream)
 {
   // Test input
   std::string input = R"(
@@ -136,8 +136,8 @@ auto make_test_json_data(cudf::size_type string_size, rmm::cuda_stream_view stre
   auto d_scalar         = cudf::strings::repeat_string(d_string_scalar, repeat_times);
 
   auto data = const_cast<char*>(d_scalar->data());
-  CUDF_CUDA_TRY(cudaMemsetAsync(data, '[', 1, stream.value()));
-  CUDF_CUDA_TRY(cudaMemsetAsync(data + d_scalar->size() - 1, ']', 1, stream.value()));
+  CUDF_CUDA_TRY(cudaMemsetAsync(data, '[', 1, stream.get()));
+  CUDF_CUDA_TRY(cudaMemsetAsync(data + d_scalar->size() - 1, ']', 1, stream.get()));
 
   return d_scalar;
 }
@@ -153,7 +153,7 @@ void BM_NESTED_JSON(nvbench::state& state)
 
   // Run algorithm
   auto const mem_stats_logger = cudf::memory_stats_logger();
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().value()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().get()));
   state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
     // Allocate device-side temporary storage & run algorithm
     cudf::io::json::detail::device_parse_nested_json(
@@ -187,7 +187,7 @@ void BM_NESTED_JSON_DEPTH(nvbench::state& state)
 
   // Run algorithm
   auto const mem_stats_logger = cudf::memory_stats_logger();
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().value()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().get()));
   state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
     // Allocate device-side temporary storage & run algorithm
     cudf::io::json::detail::device_parse_nested_json(

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -9,7 +9,7 @@
 #include "io/orc/orc.hpp"
 #include "io/utilities/column_buffer.hpp"
 
-#include <rmm/cuda_stream_view.hpp>
+#include <cuda/stream>
 
 #include <memory>
 #include <vector>
@@ -122,7 +122,7 @@ std::unique_ptr<column> create_empty_column(size_type orc_col_id,
                                             bool use_np_dtypes,
                                             data_type timestamp_type,
                                             column_name_info& schema_info,
-                                            rmm::cuda_stream_view stream);
+                                            cuda::stream_ref stream);
 
 /**
  * @brief Assemble the buffer with child columns.
@@ -133,7 +133,7 @@ column_buffer assemble_buffer(size_type orc_col_id,
                               aggregate_orc_metadata const& metadata,
                               column_hierarchy const& selected_columns,
                               std::vector<std::vector<column_buffer>>& col_buffers,
-                              rmm::cuda_stream_view stream,
+                              cuda::stream_ref stream,
                               rmm::device_async_resource_ref mr);
 
 }  // namespace cudf::io::orc::detail

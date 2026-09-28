@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -47,7 +47,7 @@ namespace io::detail {
 [[nodiscard]] writer_compression_statistics collect_compression_statistics(
   device_span<device_span<uint8_t const> const> inputs,
   device_span<codec_exec_result const> results,
-  rmm::cuda_stream_view stream);
+  cuda::stream_ref stream);
 
 }  // namespace io::detail
 }  // namespace CUDF_EXPORT cudf

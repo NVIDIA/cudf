@@ -51,7 +51,7 @@ namespace CUDF_EXPORT nvtext {
 std::unique_ptr<cudf::column> tokenize(
   cudf::strings_column_view const& input,
   cudf::string_scalar const& delimiter = cudf::string_scalar{""},
-  rmm::cuda_stream_view stream         = cudf::get_default_stream(),
+  cuda::stream_ref stream              = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr    = cudf::get_current_device_resource_ref());
 
 /**
@@ -87,7 +87,7 @@ std::unique_ptr<cudf::column> tokenize(
 std::unique_ptr<cudf::column> tokenize(
   cudf::strings_column_view const& input,
   cudf::strings_column_view const& delimiters,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -118,7 +118,7 @@ std::unique_ptr<cudf::column> tokenize(
 std::unique_ptr<cudf::column> count_tokens(
   cudf::strings_column_view const& input,
   cudf::string_scalar const& delimiter = cudf::string_scalar{""},
-  rmm::cuda_stream_view stream         = cudf::get_default_stream(),
+  cuda::stream_ref stream              = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr    = cudf::get_current_device_resource_ref());
 
 /**
@@ -150,7 +150,7 @@ std::unique_ptr<cudf::column> count_tokens(
 std::unique_ptr<cudf::column> count_tokens(
   cudf::strings_column_view const& input,
   cudf::strings_column_view const& delimiters,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -176,7 +176,7 @@ std::unique_ptr<cudf::column> count_tokens(
  */
 std::unique_ptr<cudf::column> character_tokenize(
   cudf::strings_column_view const& input,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -217,7 +217,7 @@ std::unique_ptr<cudf::column> detokenize(
   cudf::strings_column_view const& input,
   cudf::column_view const& row_indices,
   cudf::string_scalar const& separator = cudf::string_scalar(" "),
-  rmm::cuda_stream_view stream         = cudf::get_default_stream(),
+  cuda::stream_ref stream              = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr    = cudf::get_current_device_resource_ref());
 
 /**
@@ -239,7 +239,7 @@ struct tokenize_vocabulary {
    * @param mr Device memory resource used to allocate the returned column's device memory
    */
   tokenize_vocabulary(cudf::strings_column_view const& input,
-                      rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+                      cuda::stream_ref stream           = cudf::get_default_stream(),
                       rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
   ~tokenize_vocabulary();
 
@@ -262,7 +262,7 @@ struct tokenize_vocabulary {
  */
 std::unique_ptr<tokenize_vocabulary> load_vocabulary(
   cudf::strings_column_view const& input,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -295,7 +295,7 @@ std::unique_ptr<cudf::column> tokenize_with_vocabulary(
   tokenize_vocabulary const& vocabulary,
   cudf::string_scalar const& delimiter,
   cudf::size_type default_id        = -1,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /** @} */  // end of tokenize group

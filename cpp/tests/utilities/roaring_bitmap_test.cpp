@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -12,7 +12,7 @@
 #include <cudf/detail/iterator.cuh>
 #include <cudf/utilities/roaring_bitmap.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
+#include <cuda/stream>
 
 #include <vector>
 
@@ -47,8 +47,8 @@ TYPED_TEST(RoaringBitmapTest, Basics)
     }
   }();
 
-  auto const stream = cudf::get_default_stream();
-  auto const mr     = cudf::get_current_device_resource_ref();
+  cuda::stream_ref const stream = cudf::get_default_stream();
+  auto const mr                 = cudf::get_current_device_resource_ref();
 
   auto bitmap = cudf::roaring_bitmap(bitmap_type, serialized_bitmap_data);
 
@@ -62,7 +62,7 @@ TYPED_TEST(RoaringBitmapTest, Basics)
     auto result_col = bitmap.contains_async(keys_col, stream, mr);
     auto results    = cudf::detail::make_host_vector_async(
       cudf::device_span<bool const>(result_col->view().template data<bool>(), num_keys), stream);
-    stream.synchronize();
+    stream.sync();
     EXPECT_TRUE(std::equal(results.begin(), results.end(), is_even));
   }
 
@@ -73,7 +73,7 @@ TYPED_TEST(RoaringBitmapTest, Basics)
     bitmap.contains_async(keys_col, result_col->mutable_view(), stream);
     auto results = cudf::detail::make_host_vector_async(
       cudf::device_span<bool const>(result_col->view().template data<bool>(), num_keys), stream);
-    stream.synchronize();
+    stream.sync();
     EXPECT_TRUE(std::equal(results.begin(), results.end(), is_even));
   }
 }

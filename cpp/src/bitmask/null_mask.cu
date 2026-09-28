@@ -652,6 +652,9 @@ std::pair<rmm::device_buffer, size_type> bitmask_and(table_view const& view,
   return std::pair(std::move(null_mask), 0);
 }
 
+// Identity of bitwise AND, used to seed each segment's reduction
+constexpr bitmask_type all_set_mask = ~bitmask_type{0};
+
 // Returns the bitwise AND of the null masks of all columns in the same segment of the input masks
 std::pair<std::vector<std::unique_ptr<rmm::device_buffer>>, std::vector<size_type>>
 segmented_bitmask_and(host_span<column_view const> colviews,
@@ -664,7 +667,7 @@ segmented_bitmask_and(host_span<column_view const> colviews,
                            [&](auto const& view) { return view.size() == colviews[0].size(); }),
                "All column views must have the same number of elements");
 
-  if (colviews[0].size() == 0 or colviews.size() == 0) { return {}; }
+  if (colviews.empty() or colviews[0].size() == 0) { return {}; }
 
   std::vector<bitmask_type const*> masks;
   std::vector<size_type> masks_begin_bits(colviews.size(), 0);
@@ -678,6 +681,7 @@ segmented_bitmask_and(host_span<column_view const> colviews,
     masks_begin_bits,
     colviews[0].size(),
     segment_offsets,
+    all_set_mask,
     stream,
     mr);
 }
@@ -699,6 +703,7 @@ segmented_bitmask_and(host_span<bitmask_type const* const> masks,
     masks_begin_bits,
     mask_size_bits,
     segment_offsets,
+    all_set_mask,
     stream,
     mr);
 }

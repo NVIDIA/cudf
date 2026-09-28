@@ -575,7 +575,7 @@ std::unique_ptr<rmm::device_uvector<cudf::size_type>> mark_join::mark_probe_and_
   if (null_contribution > 0) {
     auto const bitmask_buffer_and_ptr = build_row_bitmask(_left, stream);
     auto const row_bitmask_ptr        = bitmask_buffer_and_ptr.second;
-    thrust::copy_if(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    thrust::copy_if(rmm::exec_policy_nosync(stream, temp_mr),
                     cuda::counting_iterator<size_type>{0},
                     cuda::counting_iterator{_left.num_rows()},
                     result.begin() + unmatched_valid,
@@ -595,7 +595,8 @@ mark_join::mark_join(cudf::table_view const& left,
     _left{left},
     _nulls_equal{compare_nulls},
     _prefilter{prefilter},
-    _preprocessed_left{cudf::detail::row::equality::preprocessed_table::create(left, stream)},
+    _preprocessed_left{cudf::detail::row::equality::preprocessed_table::create(
+      left, stream, cudf::get_current_device_resource_ref())},
     _bucket_storage{
       cuco::extent<std::size_t>{compute_mark_join_capacity(left, checked_load_factor(load_factor))},
       rmm::mr::polymorphic_allocator<char>{mr},
@@ -742,7 +743,8 @@ std::unique_ptr<rmm::device_uvector<cudf::size_type>> mark_join::semi_anti_join(
 
   auto const preprocessed_right = [&right, stream] {
     cudf::scoped_range range{"mark_join::semi_anti_join::preprocessed_right"};
-    return cudf::detail::row::equality::preprocessed_table::create(right, stream);
+    return cudf::detail::row::equality::preprocessed_table::create(
+      right, stream, cudf::get_current_device_resource_ref());
   }();
 
   if (is_primitive_row_op_compatible(_left)) {

@@ -34,7 +34,7 @@ cdef class AvroReaderOptions:
     For details, see :cpp:class:`cudf::io::avro_reader_options`
     """
     @staticmethod
-    def builder(SourceInfo source):
+    def builder(SourceInfo source) -> AvroReaderOptionsBuilder:
         """
         Create a AvroWriterOptionsBuilder object
 
@@ -93,6 +93,8 @@ cdef class AvroReaderOptions:
 
 
 cdef class AvroReaderOptionsBuilder:
+    """Builder to build options for ``read_avro``."""
+
     cpdef AvroReaderOptionsBuilder columns(self, list col_names: list[str]):
         """
         Set names of the column to be read.
@@ -178,7 +180,7 @@ cpdef TableWithMetadata read_avro(
         Device memory resource used to allocate the returned table's device memory.
     """
     cdef Stream s = _get_stream(stream)
-    cdef cudaStream_t _cs = s.view().value()
+    cdef cudaStream_t _cs = s.view().get()
     mr = _get_memory_resource(mr)
     with nogil:
         c_result = move(cpp_read_avro(options.c_obj, _cs, mr.get_mr()))

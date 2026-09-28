@@ -4,7 +4,7 @@
 Tests in cuDF are written using [`pytest`](https://docs.pytest.org/en/latest/).
 Test coverage is measured using [`coverage.py`](https://coverage.readthedocs.io/en/latest/),
 with the [`pytest-cov`](https://github.com/pytest-dev/pytest-cov) plugin.
-Code coverage reports are uploaded to [Codecov](https://app.codecov.io/gh/rapidsai/cudf).
+Code coverage reports are uploaded to [Codecov](https://app.codecov.io/gh/NVIDIA/cudf).
 Each PR also indicates whether it increases or decreases test coverage.
 
 ### Configuring pytest

@@ -90,7 +90,7 @@ fi
 # Determine RAPIDS_SHA from the PR's head commit
 RAPIDS_SHA="${RAPIDS_SHA:-}"
 if [[ -z "$RAPIDS_SHA" ]]; then
-    RAPIDS_SHA=$(gh pr view "$PR_NUMBER" --repo rapidsai/cudf --json commits --jq '.commits[-1].oid' 2>/dev/null || true)
+    RAPIDS_SHA=$(gh pr view "$PR_NUMBER" --repo NVIDIA/cudf --json commits --jq '.commits[-1].oid' 2>/dev/null || true)
     if [[ -z "$RAPIDS_SHA" ]]; then
         echo "Warning: Could not determine RAPIDS_SHA for PR #${PR_NUMBER}."
         echo "Artifact downloads inside the container may fail."
@@ -106,7 +106,7 @@ DOCKER_ARGS=(
     --volume "$PWD:/repo"
     --workdir /repo
     --env "RAPIDS_BUILD_TYPE=pull-request"
-    --env "RAPIDS_REPOSITORY=rapidsai/cudf"
+    --env "RAPIDS_REPOSITORY=NVIDIA/cudf"
     --env "RAPIDS_REF_NAME=pull-request/${PR_NUMBER}"
     --name "$CONTAINER_NAME"
     -d

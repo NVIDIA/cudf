@@ -8,6 +8,7 @@
 #include <cudf/io/data_sink.hpp>
 #include <cudf/io/datasource.hpp>
 #include <cudf/logger.hpp>
+#include <cudf/utilities/error.hpp>
 
 #include <rapids_logger/logger.hpp>
 
@@ -54,21 +55,20 @@ class ThrowingDeviceReadDatasource : public cudf::io::datasource {
 
   std::unique_ptr<cudf::io::datasource::buffer> device_read(size_t offset,
                                                             size_t size,
-                                                            rmm::cuda_stream_view stream) override
+                                                            cuda::stream_ref stream) override
   {
     // For testing, just copy the data from the host buffer into a new buffer
     size = std::min(size, data_.size() - offset);
     rmm::device_buffer out_data(size, stream);
-    cudaMemcpyAsync(
-      out_data.data(), data_.data() + offset, size, cudaMemcpyHostToDevice, stream.value());
-    cudaStreamSynchronize(stream.value());
+    cudaMemcpyAsync(out_data.data(), data_.data() + offset, size, cudaMemcpyDefault, stream.get());
+    cudaStreamSynchronize(stream.get());
     return cudf::io::datasource::buffer::create(std::move(out_data));
   }
 
   std::future<size_t> device_read_async(size_t offset,
                                         size_t size,
                                         uint8_t* dst,
-                                        rmm::cuda_stream_view stream) override
+                                        cuda::stream_ref stream) override
   {
     // This datasource returns a future that throws a custom exception when accessed for testing
     std::promise<size_t> promise;
@@ -91,14 +91,14 @@ class ThrowingDeviceWriteDataSink : public cudf::io::data_sink {
 
   [[nodiscard]] bool supports_device_write() const override { return true; }
 
-  void device_write(void const* gpu_data, size_t size, rmm::cuda_stream_view stream) override
+  void device_write(void const* gpu_data, size_t size, cuda::stream_ref stream) override
   {
     buffer_size_ += size;
   }
 
   std::future<void> device_write_async(void const* gpu_data,
                                        size_t size,
-                                       rmm::cuda_stream_view stream) override
+                                       cuda::stream_ref stream) override
   {
     // This data sink returns a future that throws a custom exception when accessed for testing
     std::promise<void> promise;

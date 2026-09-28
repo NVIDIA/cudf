@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -15,12 +15,12 @@
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/iterator>
 #include <cuda/std/algorithm>
 #include <cuda/std/utility>
+#include <cuda/stream>
 #include <thrust/for_each.h>
 
 #include <vector>
@@ -174,7 +174,7 @@ struct rpartition_fn : public partition_fn {
 
 std::unique_ptr<table> partition(strings_column_view const& strings,
                                  string_scalar const& delimiter,
-                                 rmm::cuda_stream_view stream,
+                                 cuda::stream_ref stream,
                                  rmm::device_async_resource_ref mr)
 {
   CUDF_EXPECTS(delimiter.is_valid(stream), "Parameter delimiter must be valid");
@@ -201,7 +201,7 @@ std::unique_ptr<table> partition(strings_column_view const& strings,
 
 std::unique_ptr<table> rpartition(strings_column_view const& strings,
                                   string_scalar const& delimiter,
-                                  rmm::cuda_stream_view stream,
+                                  cuda::stream_ref stream,
                                   rmm::device_async_resource_ref mr)
 {
   CUDF_EXPECTS(delimiter.is_valid(stream), "Parameter delimiter must be valid");
@@ -232,7 +232,7 @@ std::unique_ptr<table> rpartition(strings_column_view const& strings,
 
 std::unique_ptr<table> partition(strings_column_view const& input,
                                  string_scalar const& delimiter,
-                                 rmm::cuda_stream_view stream,
+                                 cuda::stream_ref stream,
                                  rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
@@ -241,7 +241,7 @@ std::unique_ptr<table> partition(strings_column_view const& input,
 
 std::unique_ptr<table> rpartition(strings_column_view const& input,
                                   string_scalar const& delimiter,
-                                  rmm::cuda_stream_view stream,
+                                  cuda::stream_ref stream,
                                   rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();

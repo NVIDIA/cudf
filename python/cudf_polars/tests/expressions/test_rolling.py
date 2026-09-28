@@ -3,16 +3,24 @@
 
 from __future__ import annotations
 
+import datetime as dt
 from typing import TYPE_CHECKING, Literal, cast
 
 import pytest
 
 import polars as pl
+from polars.testing import assert_frame_equal
 
+from cudf_polars.containers import DataType
+from cudf_polars.dsl import expr
+from cudf_polars.dsl.expressions.base import ExecutionContext
+from cudf_polars.dsl.utils.aggregations import decompose_single_agg
 from cudf_polars.testing.asserts import (
     assert_gpu_result_equal,
     assert_ir_translation_raises,
 )
+from cudf_polars.testing.engine_utils import is_streaming_engine
+from cudf_polars.typing import Duration
 from cudf_polars.utils.versions import POLARS_VERSION_LT_136, POLARS_VERSION_LT_139
 
 if TYPE_CHECKING:
@@ -38,6 +46,22 @@ def df():
             "g2": ["a", "a", "b", "a", "a"],
             "g_null": [1, None, 1, None, 2],
         }
+    )
+
+
+def _range_rolling_sum(
+    dtype: DataType, orderby: str, child: expr.Expr
+) -> expr.RollingWindow:
+    offset = Duration((0, 0, 0, 0, True, False))
+    period = Duration((0, 0, 0, 2, True, False))
+    return expr.RollingWindow(
+        dtype,
+        dtype.plc_type,
+        offset,
+        period,
+        "right",
+        orderby,
+        expr.Agg(dtype, "sum", (), ExecutionContext.WINDOW, child),
     )
 
 
@@ -126,28 +150,33 @@ def test_rolling_collect_list_raises(engine: pl.GPUEngine):
 
 
 @skip_rolling_expr_136_to_138
-def test_unsorted_raises(engine_raise_on_fail: pl.GPUEngine):
+def test_unsorted_raises(engine: pl.GPUEngine):
     df = pl.LazyFrame({"orderby": [1, 2, 4, 2], "values": [1, 2, 3, 4]})
     q = df.select(pl.col("values").sum().rolling("orderby", period="2i"))
     with pytest.raises(pl.exceptions.InvalidOperationError):
         q.collect(engine="in-memory")
-    with pytest.raises(
-        RuntimeError,
-        match=r"Index column.*in rolling is not sorted, please sort first",
-    ):
-        q.collect(engine=engine_raise_on_fail)
+    match = r"Index column.*in rolling is not sorted, please sort first"
+    if is_streaming_engine(engine):
+        with pytest.RaisesGroup(pytest.RaisesExc(RuntimeError, match=match)):
+            q.collect(engine=engine)
+    else:
+        with pytest.raises(RuntimeError, match=match):
+            q.collect(engine=engine)
 
 
 @skip_rolling_expr_136_to_138
-def test_orderby_nulls_raises_computeerror(engine_raise_on_fail: pl.GPUEngine):
+def test_orderby_nulls_raises_computeerror(engine: pl.GPUEngine):
     df = pl.LazyFrame({"orderby": [1, 2, 4, None], "values": [1, 2, 3, 4]})
     q = df.select(pl.col("values").sum().rolling("orderby", period="2i"))
     with pytest.raises(pl.exceptions.InvalidOperationError):
         q.collect(engine="in-memory")
-    with pytest.raises(
-        RuntimeError, match=r"Index column.*in rolling may not contain nulls"
-    ):
-        q.collect(engine=engine_raise_on_fail)
+    match = r"Index column.*in rolling may not contain nulls"
+    if is_streaming_engine(engine):
+        with pytest.RaisesGroup(pytest.RaisesExc(RuntimeError, match=match)):
+            q.collect(engine=engine)
+    else:
+        with pytest.raises(RuntimeError, match=match):
+            q.collect(engine=engine)
 
 
 @skip_rolling_expr_136_to_138
@@ -183,6 +212,351 @@ def test_rolling_sum_all_null_window_returns_null(engine: pl.GPUEngine):
     )
     # Expected: [null, null, 5, 5, 5, 1]
     assert_gpu_result_equal(q, engine=engine)
+
+
+@skip_rolling_expr_136_to_138
+def test_rolling_sum_over(engine: pl.GPUEngine) -> None:
+    df = (
+        pl.LazyFrame(
+            {
+                "ric": ["A", "A", "A", "B", "B", "B"],
+                "ts": [
+                    dt.datetime(2025, 1, 1, 9, 0),
+                    dt.datetime(2025, 1, 1, 9, 1),
+                    dt.datetime(2025, 1, 1, 9, 3),
+                    dt.datetime(2025, 1, 1, 9, 0),
+                    dt.datetime(2025, 1, 1, 9, 2),
+                    dt.datetime(2025, 1, 1, 9, 3),
+                ],
+                "price": [10.0, 11.0, 12.0, 20.0, 21.0, 22.0],
+                "volume": [100, 200, 300, 400, 500, 600],
+            }
+        )
+        .with_columns(notional=pl.col("price") * pl.col("volume"))
+        .sort("ric", "ts")
+    )
+    q = df.with_columns(
+        volume_before=pl.col("volume")
+        .sum()
+        .rolling("ts", period="2m", offset="-2m", closed="left")
+        .over("ric"),
+        notional_before=pl.col("notional")
+        .sum()
+        .rolling("ts", period="2m", offset="-2m", closed="left")
+        .over("ric"),
+        volume_after=pl.col("volume")
+        .sum()
+        .rolling("ts", period="2m", closed="right")
+        .over("ric"),
+    ).select(
+        "ric",
+        "ts",
+        "volume_before",
+        "notional_before",
+        "volume_after",
+    )
+    expected = pl.DataFrame(
+        {
+            "ric": ["A", "A", "A", "B", "B", "B"],
+            "ts": [
+                dt.datetime(2025, 1, 1, 9, 0),
+                dt.datetime(2025, 1, 1, 9, 1),
+                dt.datetime(2025, 1, 1, 9, 3),
+                dt.datetime(2025, 1, 1, 9, 0),
+                dt.datetime(2025, 1, 1, 9, 2),
+                dt.datetime(2025, 1, 1, 9, 3),
+            ],
+            "volume_before": [0, 100, 200, 0, 400, 500],
+            "notional_before": [0.0, 1000.0, 2200.0, 0.0, 8000.0, 10500.0],
+            "volume_after": [100, 300, 300, 400, 500, 1100],
+        }
+    )
+    # Polars <1.36 cannot collect this expression on CPU. Switch to
+    # assert_gpu_result_equal after we drop Polars 1.35.
+    assert_frame_equal(q.collect(engine=engine), expected)
+
+
+@skip_rolling_expr_136_to_138
+def test_rolling_over_with_order_by_raises(engine: pl.GPUEngine) -> None:
+    df = pl.LazyFrame(
+        {
+            "g": ["A", "A", "A"],
+            "seq": [1, 2, 3],
+            "ts": [1, 2, 3],
+            "x": [10, 20, 30],
+        }
+    )
+    q = df.select(
+        pl.col("x").sum().rolling("ts", period="2i").over("g", order_by="seq")
+    )
+    assert_ir_translation_raises(q, engine, NotImplementedError)
+
+
+@skip_rolling_expr_136_to_138
+def test_rolling_common_aggs_over(engine: pl.GPUEngine) -> None:
+    df = pl.LazyFrame(
+        {
+            "g": ["A", "A", "A", "B", "B", "B"],
+            "ts": [1, 2, 4, 1, 3, 4],
+            "x": [100, 200, 300, 400, 500, 600],
+        }
+    ).sort("g", "ts")
+    q = df.select(
+        pl.col("x").sum().rolling("ts", period="2i").over("g").alias("sum"),
+        pl.col("x").min().rolling("ts", period="2i").over("g").alias("min"),
+        pl.col("x").max().rolling("ts", period="2i").over("g").alias("max"),
+        pl.col("x").mean().rolling("ts", period="2i").over("g").alias("mean"),
+        pl.col("x").count().rolling("ts", period="2i").over("g").alias("count"),
+        pl.len().rolling("ts", period="2i").over("g").alias("len"),
+    )
+    expected = pl.DataFrame(
+        {
+            "sum": [100, 300, 300, 400, 500, 1100],
+            "min": [100, 100, 300, 400, 500, 500],
+            "max": [100, 200, 300, 400, 500, 600],
+            "mean": [100.0, 150.0, 300.0, 400.0, 500.0, 550.0],
+            "count": pl.Series([1, 2, 1, 1, 1, 2], dtype=pl.UInt32),
+            "len": pl.Series([1, 2, 1, 1, 1, 2], dtype=pl.UInt32),
+        }
+    )
+    assert_frame_equal(q.collect(engine=engine), expected)
+
+
+@skip_rolling_expr_136_to_138
+@pytest.mark.parametrize(
+    "idx,period",
+    [
+        (pl.Series("idx", [1, 1, 3, 1, 2, 4, 5], dtype=pl.Int32), "2i"),
+        (
+            [
+                dt.datetime(2025, 1, 1, 9, 0),
+                dt.datetime(2025, 1, 1, 9, 0),
+                dt.datetime(2025, 1, 1, 9, 2),
+                dt.datetime(2025, 1, 1, 9, 0),
+                dt.datetime(2025, 1, 1, 9, 1),
+                dt.datetime(2025, 1, 1, 9, 3),
+                dt.datetime(2025, 1, 1, 9, 4),
+            ],
+            "2m",
+        ),
+    ],
+    ids=["integer_index", "datetime_index"],
+)
+def test_rolling_sum_over_index_types_and_group_sizes(
+    engine: pl.GPUEngine,
+    idx: pl.Series | list[dt.datetime],
+    period: str,
+) -> None:
+    df = pl.LazyFrame(
+        {
+            "g": ["A", "B", "B", "C", "C", "C", "C"],
+            "idx": idx,
+            "x": [10, 20, 30, 40, 50, 60, 70],
+        }
+    )
+    q = df.select(
+        pl.col("x").sum().rolling("idx", period=period).over("g").alias("sum")
+    )
+    expected = pl.DataFrame({"sum": [10, 20, 30, 40, 90, 60, 130]})
+    assert_frame_equal(q.collect(engine=engine), expected)
+
+
+@skip_rolling_expr_136_to_138
+def test_rolling_sum_over_null_index_raises(
+    engine: pl.GPUEngine,
+) -> None:
+    df = pl.LazyFrame(
+        {
+            "g": ["A", "A", "A"],
+            "idx": pl.Series([1, None, 3], dtype=pl.Int64),
+            "x": [10, 20, 30],
+        }
+    )
+    q = df.select(pl.col("x").sum().rolling("idx", period="2i").over("g").alias("sum"))
+    match = "Index column 'idx' in rolling may not contain nulls"
+    if is_streaming_engine(engine):
+        with pytest.RaisesGroup(pytest.RaisesExc(RuntimeError, match=match)):
+            q.collect(engine=engine)
+    else:
+        with pytest.raises(RuntimeError, match=match):
+            q.collect(engine=engine)
+
+
+def test_rolling_orderby_name_multiple_index_columns_raises() -> None:
+    dtype = DataType(pl.Int64())
+    col = expr.Col(dtype, "x")
+    named_exprs = [
+        expr.NamedExpr("x_sum", _range_rolling_sum(dtype, "t1", col)),
+        expr.NamedExpr("y_sum", _range_rolling_sum(dtype, "t2", col)),
+    ]
+    with pytest.raises(
+        NotImplementedError,
+        match=r"rolling\(\.\.\.\)\.over\(\.\.\.\) only supports one rolling index column",
+    ):
+        expr.GroupedWindow._rolling_orderby_name(named_exprs)
+
+
+@skip_rolling_expr_136_to_138
+@pytest.mark.parametrize(
+    "lf,expected",
+    [
+        (
+            pl.LazyFrame(
+                {
+                    "g": pl.Series([], dtype=pl.String),
+                    "ts": pl.Series([], dtype=pl.Int64),
+                    "x": pl.Series([], dtype=pl.Int64),
+                }
+            ),
+            pl.DataFrame(
+                {
+                    "sum": pl.Series([], dtype=pl.Int64),
+                    "min": pl.Series([], dtype=pl.Int64),
+                    "max": pl.Series([], dtype=pl.Int64),
+                    "mean": pl.Series([], dtype=pl.Float64),
+                    "count": pl.Series([], dtype=pl.UInt32),
+                    "len": pl.Series([], dtype=pl.UInt32),
+                }
+            ),
+        ),
+        (
+            pl.LazyFrame(
+                {
+                    "g": ["A", "A", "B"],
+                    "ts": [1, 2, 1],
+                    "x": pl.Series([None, None, None], dtype=pl.Int64),
+                }
+            ),
+            pl.DataFrame(
+                {
+                    "sum": [0, 0, 0],
+                    "min": [None, None, None],
+                    "max": [None, None, None],
+                    "mean": [None, None, None],
+                    "count": pl.Series([0, 0, 0], dtype=pl.UInt32),
+                    "len": pl.Series([1, 2, 1], dtype=pl.UInt32),
+                },
+                schema={
+                    "sum": pl.Int64,
+                    "min": pl.Int64,
+                    "max": pl.Int64,
+                    "mean": pl.Float64,
+                    "count": pl.UInt32,
+                    "len": pl.UInt32,
+                },
+            ),
+        ),
+        (
+            pl.LazyFrame(
+                {
+                    "g": ["A", "A", "A", "B", "B"],
+                    "ts": [1, 2, 3, 1, 3],
+                    "x": pl.Series([10, None, 30, None, 50], dtype=pl.Int64),
+                }
+            ),
+            pl.DataFrame(
+                {
+                    "sum": [10, 10, 30, 0, 50],
+                    "min": [10, 10, 30, None, 50],
+                    "max": [10, 10, 30, None, 50],
+                    "mean": [10.0, 10.0, 30.0, None, 50.0],
+                    "count": pl.Series([1, 1, 1, 0, 1], dtype=pl.UInt32),
+                    "len": pl.Series([1, 2, 2, 1, 1], dtype=pl.UInt32),
+                },
+                schema={
+                    "sum": pl.Int64,
+                    "min": pl.Int64,
+                    "max": pl.Int64,
+                    "mean": pl.Float64,
+                    "count": pl.UInt32,
+                    "len": pl.UInt32,
+                },
+            ),
+        ),
+        (
+            pl.LazyFrame(
+                {
+                    "g": ["A", "B"],
+                    "ts": [1, 1],
+                    "x": pl.Series([10, None], dtype=pl.Int64),
+                }
+            ),
+            pl.DataFrame(
+                {
+                    "sum": [10, 0],
+                    "min": [10, None],
+                    "max": [10, None],
+                    "mean": [10.0, None],
+                    "count": pl.Series([1, 0], dtype=pl.UInt32),
+                    "len": pl.Series([1, 1], dtype=pl.UInt32),
+                },
+                schema={
+                    "sum": pl.Int64,
+                    "min": pl.Int64,
+                    "max": pl.Int64,
+                    "mean": pl.Float64,
+                    "count": pl.UInt32,
+                    "len": pl.UInt32,
+                },
+            ),
+        ),
+    ],
+    ids=["empty", "all_null", "mixed_null", "single_row_groups"],
+)
+def test_rolling_common_aggs_over_edge_cases(
+    engine: pl.GPUEngine,
+    lf: pl.LazyFrame,
+    expected: pl.DataFrame,
+) -> None:
+    q = lf.sort("g", "ts").select(
+        pl.col("x").sum().rolling("ts", period="2i").over("g").alias("sum"),
+        pl.col("x").min().rolling("ts", period="2i").over("g").alias("min"),
+        pl.col("x").max().rolling("ts", period="2i").over("g").alias("max"),
+        pl.col("x").mean().rolling("ts", period="2i").over("g").alias("mean"),
+        pl.col("x").count().rolling("ts", period="2i").over("g").alias("count"),
+        pl.len().rolling("ts", period="2i").over("g").alias("len"),
+    )
+    assert_frame_equal(q.collect(engine=engine), expected)
+
+
+@skip_rolling_expr_136_to_138
+def test_range_rolling_nested_under_range_rolling_over_raises(
+    engine: pl.GPUEngine,
+) -> None:
+    df = pl.LazyFrame(
+        {
+            "g": ["A", "A", "A"],
+            "ts": [1, 2, 3],
+            "x": [10, 20, 30],
+        }
+    )
+    q = df.select(
+        pl.col("x")
+        .sum()
+        .rolling("ts", period="2i")
+        .sum()
+        .rolling("ts", period="2i")
+        .over("g")
+    )
+    assert_ir_translation_raises(q, engine, NotImplementedError)
+
+
+def test_range_rolling_nested_window_decomposition_raises() -> None:
+    dtype = DataType(pl.Int64())
+    child = expr.Col(dtype, "x")
+    inner_rolling = _range_rolling_sum(dtype, "ts", child)
+    outer_rolling = _range_rolling_sum(dtype, "ts", inner_rolling)
+
+    with pytest.raises(
+        NotImplementedError,
+        match="Range rolling over a window does not support nested window expressions",
+    ):
+        decompose_single_agg(
+            expr.NamedExpr("out", outer_rolling),
+            (f"__{i}" for i in range(1)),
+            is_top=True,
+            context=ExecutionContext.WINDOW,
+        )
 
 
 @pytest.mark.parametrize(
@@ -525,12 +899,12 @@ def test_diff_over_unsupported_args_raises(
 
 @pytest.mark.parametrize("n", [1, -1])
 def test_shift_over_without_order_by(
-    engine_raise_on_fail: pl.GPUEngine,
+    engine: pl.GPUEngine,
     df: pl.LazyFrame,
     n: int,
 ) -> None:
     q = df.select(pl.col("x").shift(n).over("g"))
-    assert_gpu_result_equal(q, engine=engine_raise_on_fail)
+    assert_gpu_result_equal(q, engine=engine)
 
 
 @pytest.mark.parametrize(

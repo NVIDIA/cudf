@@ -18,7 +18,6 @@
 #include <cudf/detail/iterator.cuh>
 
 #include <cuda/iterator>
-#include <thrust/iterator/transform_iterator.h>
 
 #include <sstream>
 
@@ -233,7 +232,7 @@ TEST_F(ColumnUtilitiesStringsTest, StringsToHost)
   cudf::test::strings_column_wrapper strings(
     h_strings.begin(),
     h_strings.end(),
-    thrust::make_transform_iterator(h_strings.begin(), [](auto str) { return str != nullptr; }),
+    cuda::transform_iterator(h_strings.begin(), [](auto str) { return str != nullptr; }),
     stream,
     mr);
   auto host_data  = cudf::test::to_host<std::string>(strings, stream, mr);
@@ -252,7 +251,7 @@ TEST_F(ColumnUtilitiesStringsTest, StringsToHostAllNulls)
   cudf::test::strings_column_wrapper strings(
     h_strings.begin(),
     h_strings.end(),
-    thrust::make_transform_iterator(h_strings.begin(), [](auto str) { return str != nullptr; }),
+    cuda::transform_iterator(h_strings.begin(), [](auto str) { return str != nullptr; }),
     stream,
     mr);
   auto host_data = cudf::test::to_host<std::string>(strings, stream, mr);

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -14,7 +14,7 @@
 
 void nvbench_merge_list(nvbench::state& state)
 {
-  rmm::cuda_stream_view stream;
+  cuda::stream_ref stream = cudf::get_default_stream();
 
   auto const input1 = create_lists_data(state);
   auto const sorted_input1 =
@@ -24,12 +24,12 @@ void nvbench_merge_list(nvbench::state& state)
   auto const sorted_input2 =
     cudf::sort(*input2, {}, {}, stream, cudf::get_current_device_resource_ref());
 
-  stream.synchronize();
+  stream.sync();
 
   auto const mem_stats_logger = cudf::memory_stats_logger();
 
   state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
-    rmm::cuda_stream_view stream_view{launch.get_stream()};
+    cuda::stream_ref stream_view{launch.get_stream()};
 
     cudf::merge({*sorted_input1, *sorted_input2},
                 {0},

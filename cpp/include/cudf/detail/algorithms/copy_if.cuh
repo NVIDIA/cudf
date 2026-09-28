@@ -8,7 +8,6 @@
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_buffer.hpp>
 #include <rmm/exec_policy.hpp>
 
@@ -49,7 +48,7 @@ OutputIterator copy_if(InputIterator begin,
                        StencilIterator stencil,
                        OutputIterator result,
                        Predicate predicate,
-                       rmm::cuda_stream_view stream)
+                       cuda::stream_ref stream)
 {
   auto const num_items = cuda::std::distance(begin, end);
 
@@ -65,7 +64,7 @@ OutputIterator copy_if(InputIterator begin,
                                              num_selected.data(),
                                              num_items,
                                              predicate,
-                                             stream.value()));
+                                             stream.get()));
 
   auto d_temp_storage =
     rmm::device_buffer(temp_storage_bytes, stream, cudf::get_current_device_resource_ref());
@@ -78,7 +77,7 @@ OutputIterator copy_if(InputIterator begin,
                                              num_selected.data(),
                                              num_items,
                                              predicate,
-                                             stream.value()));
+                                             stream.get()));
 
   return result + num_selected.value(stream);
 }
@@ -106,7 +105,7 @@ OutputIterator copy_if(InputIterator begin,
                        InputIterator end,
                        OutputIterator output,
                        Predicate predicate,
-                       rmm::cuda_stream_view stream)
+                       cuda::stream_ref stream)
 {
   auto const num_items = cuda::std::distance(begin, end);
 
@@ -123,7 +122,7 @@ OutputIterator copy_if(InputIterator begin,
                                       num_selected.data(),
                                       num_items,
                                       predicate,
-                                      stream.value()));
+                                      stream.get()));
 
   // Allocate temporary storage
   rmm::device_buffer d_temp_storage(
@@ -137,7 +136,7 @@ OutputIterator copy_if(InputIterator begin,
                                       num_selected.data(),
                                       num_items,
                                       predicate,
-                                      stream.value()));
+                                      stream.get()));
 
   // Copy number of selected elements back to host via pinned memory
   return output + num_selected.value(stream);
@@ -155,18 +154,18 @@ void copy_if_async(InputIterator begin,
                    InputIterator end,
                    OutputIterator output,
                    Predicate predicate,
-                   rmm::cuda_stream_view stream)
+                   cuda::stream_ref stream)
 {
   auto const num_items = cuda::std::distance(begin, end);
 
   auto tmp_bytes = std::size_t{0};
   auto no_out    = cuda::make_discard_iterator<int>();
   CUDF_CUDA_TRY(cub::DeviceSelect::If(
-    nullptr, tmp_bytes, begin, output, no_out, num_items, predicate, stream.value()));
+    nullptr, tmp_bytes, begin, output, no_out, num_items, predicate, stream.get()));
 
   auto tmp_stg = rmm::device_buffer(tmp_bytes, stream, cudf::get_current_device_resource_ref());
   CUDF_CUDA_TRY(cub::DeviceSelect::If(
-    tmp_stg.data(), tmp_bytes, begin, output, no_out, num_items, predicate, stream.value()));
+    tmp_stg.data(), tmp_bytes, begin, output, no_out, num_items, predicate, stream.get()));
 }
 
 /**
@@ -185,18 +184,18 @@ void copy_if_async(InputIterator begin,
                    StencilIterator stencil,
                    OutputIterator result,
                    Predicate predicate,
-                   rmm::cuda_stream_view stream)
+                   cuda::stream_ref stream)
 {
   auto const num_items = cuda::std::distance(begin, end);
 
   auto tmp_bytes = std::size_t{0};
   auto no_out    = cuda::make_discard_iterator<int>();
   CUDF_CUDA_TRY(cub::DeviceSelect::FlaggedIf(
-    nullptr, tmp_bytes, begin, stencil, result, no_out, num_items, predicate, stream.value()));
+    nullptr, tmp_bytes, begin, stencil, result, no_out, num_items, predicate, stream.get()));
 
   auto tmp = rmm::device_buffer(tmp_bytes, stream, cudf::get_current_device_resource_ref());
   CUDF_CUDA_TRY(cub::DeviceSelect::FlaggedIf(
-    tmp.data(), tmp_bytes, begin, stencil, result, no_out, num_items, predicate, stream.value()));
+    tmp.data(), tmp_bytes, begin, stencil, result, no_out, num_items, predicate, stream.get()));
 }
 
 }  // namespace cudf::detail

@@ -21,11 +21,11 @@
 #include <nvtext/detail/tokenize.hpp>
 #include <nvtext/ngrams_tokenize.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/functional>
 #include <cuda/iterator>
+#include <cuda/stream>
 #include <thrust/for_each.h>
 #include <thrust/transform.h>
 
@@ -129,7 +129,7 @@ std::unique_ptr<cudf::column> ngrams_tokenize(cudf::strings_column_view const& s
                                               cudf::size_type ngrams,
                                               cudf::string_scalar const& delimiter,
                                               cudf::string_scalar const& separator,
-                                              rmm::cuda_stream_view stream,
+                                              cuda::stream_ref stream,
                                               rmm::device_async_resource_ref mr)
 {
   CUDF_EXPECTS(delimiter.is_valid(stream), "Parameter delimiter must be valid");
@@ -236,7 +236,7 @@ std::unique_ptr<cudf::column> ngrams_tokenize(cudf::strings_column_view const& s
                                               cudf::size_type ngrams,
                                               cudf::string_scalar const& delimiter,
                                               cudf::string_scalar const& separator,
-                                              rmm::cuda_stream_view stream,
+                                              cuda::stream_ref stream,
                                               rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();

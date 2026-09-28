@@ -28,7 +28,6 @@
 #include <cuda/iterator>
 #include <cuda/std/functional>
 #include <cuda/stream>
-#include <thrust/iterator/transform_iterator.h>
 #include <thrust/scan.h>
 
 namespace cudf {
@@ -118,14 +117,14 @@ struct group_scan_functor<K, T, std::enable_if_t<is_group_scan_supported<K, T>()
     };
 
     if (values.has_nulls()) {
-      auto input = thrust::make_transform_iterator(
+      auto input = cuda::transform_iterator(
         make_null_replacement_iterator(*values_view, OpType::template identity<DeviceType>()),
         cudf::detail::cast_fn<ResultDeviceType>{});
       do_scan(input, result_view->begin<ResultDeviceType>(), OpType{});
       result->set_null_mask(cudf::detail::copy_bitmask(values, stream, mr), values.null_count());
     } else {
-      auto input = thrust::make_transform_iterator(values_view->begin<DeviceType>(),
-                                                   cudf::detail::cast_fn<ResultDeviceType>{});
+      auto input = cuda::transform_iterator(values_view->begin<DeviceType>(),
+                                            cudf::detail::cast_fn<ResultDeviceType>{});
       do_scan(input, result_view->begin<ResultDeviceType>(), OpType{});
     }
     return result;

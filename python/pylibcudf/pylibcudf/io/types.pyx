@@ -133,7 +133,7 @@ cdef class ColumnInMetadata:
 
         Returns
         -------
-        Self
+        ColumnInMetadata
         """
         dereference(self.c_obj).set_name(name.encode())
         return self
@@ -149,7 +149,7 @@ cdef class ColumnInMetadata:
 
         Returns
         -------
-        Self
+        ColumnInMetadata
         """
         dereference(self.c_obj).set_nullability(nullable)
         return self
@@ -161,7 +161,7 @@ cdef class ColumnInMetadata:
 
         Returns
         -------
-        Self
+        ColumnInMetadata
         """
         dereference(self.c_obj).set_list_column_as_map()
         return self
@@ -178,7 +178,7 @@ cdef class ColumnInMetadata:
 
         Returns
         -------
-        Self
+        ColumnInMetadata
         """
         dereference(self.c_obj).set_int96_timestamps(req)
         return self
@@ -195,7 +195,7 @@ cdef class ColumnInMetadata:
 
         Returns
         -------
-        Self
+        ColumnInMetadata
         """
         dereference(self.c_obj).set_decimal_precision(precision)
         return self
@@ -227,7 +227,7 @@ cdef class ColumnInMetadata:
 
         Returns
         -------
-        Self
+        ColumnInMetadata
         """
         dereference(self.c_obj).set_output_as_binary(binary)
         return self
@@ -243,7 +243,7 @@ cdef class ColumnInMetadata:
 
         Returns
         -------
-        Self
+        ColumnInMetadata
         """
         dereference(self.c_obj).set_type_length(type_length)
         return self
@@ -260,7 +260,7 @@ cdef class ColumnInMetadata:
 
         Returns
         -------
-        Self
+        ColumnInMetadata
         """
         dereference(self.c_obj).set_skip_compression(skip)
         return self
@@ -331,7 +331,9 @@ cdef class TableWithMetadata:
         [("id", []), ("name", [("first", []), ("last", [])])]
 
     """
-    def __init__(self, Table tbl, list column_names: list[ColumnNameSpec]):
+    def __init__(
+        self, Table tbl, list column_names: list[ColumnNameSpec]
+    ):
         self.tbl = tbl
 
         self.metadata.schema_info = self._make_column_info(column_names)
@@ -370,7 +372,7 @@ cdef class TableWithMetadata:
         return names
 
     def column_names(
-        self, include_children=False
+        self, include_children: bool = False
     ) -> list[str] | list[ColumnNameSpec]:
         """
         Return a list containing the column names of the table

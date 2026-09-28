@@ -21,9 +21,22 @@
 
 #include <cuda/iterator>
 
+#include <array>
+#include <cstdint>
 #include <numeric>
+#include <string_view>
 
 using vector_of_columns = std::vector<std::unique_ptr<cudf::column>>;
+
+namespace {
+
+bool is_valid(void const* validity_buffer, cudf::size_type index)
+{
+  auto const byte = static_cast<std::uint8_t const*>(validity_buffer)[index / 8];
+  return (byte & (std::uint8_t{1} << (index % 8))) != 0;
+}
+
+}  // namespace
 
 struct BaseToArrowHostFixture : public cudf::test::BaseFixture {
   template <typename T>
@@ -213,6 +226,98 @@ TEST_F(ToArrowHostDeviceTest, EmptyTable)
 
   ArrowArrayViewReset(&expected);
   ArrowArrayViewReset(&actual);
+}
+
+TEST_F(ToArrowHostDeviceTest, DirectArrowCConsumerTable)
+{
+  auto const expected_ints    = std::array<int32_t, 5>{1, 2, 5, 2, 7};
+  auto const int_validity     = std::array<bool, 5>{true, false, true, true, true};
+  auto const expected_offsets = std::array<int32_t, 6>{0, 3, 6, 6, 6, 9};
+  auto const string_validity  = std::array<bool, 5>{true, true, true, false, true};
+
+  auto const ints = cudf::test::fixed_width_column_wrapper<int32_t>{
+    expected_ints.begin(), expected_ints.end(), int_validity.begin()};
+  auto const strings =
+    cudf::test::strings_column_wrapper{{"fff", "aaa", "", "", "ccc"}, string_validity.begin()};
+  auto const input    = cudf::table_view{{ints, strings}};
+  auto const metadata = std::array<cudf::column_metadata, 2>{cudf::column_metadata{"ints"},
+                                                             cudf::column_metadata{"strings"}};
+
+  auto schema = cudf::to_arrow_schema(input, metadata);
+  ASSERT_NE(nullptr, schema->release);
+  EXPECT_STREQ("+s", schema->format);
+  EXPECT_EQ(2, schema->n_children);
+  ASSERT_NE(nullptr, schema->children);
+
+  ASSERT_NE(nullptr, schema->children[0]);
+  EXPECT_STREQ("i", schema->children[0]->format);
+  EXPECT_STREQ("ints", schema->children[0]->name);
+  EXPECT_EQ(ARROW_FLAG_NULLABLE, schema->children[0]->flags);
+  EXPECT_EQ(0, schema->children[0]->n_children);
+
+  ASSERT_NE(nullptr, schema->children[1]);
+  EXPECT_STREQ("u", schema->children[1]->format);
+  EXPECT_STREQ("strings", schema->children[1]->name);
+  EXPECT_EQ(ARROW_FLAG_NULLABLE, schema->children[1]->flags);
+  EXPECT_EQ(0, schema->children[1]->n_children);
+
+  auto arrow = cudf::to_arrow_host(input);
+  EXPECT_EQ(ARROW_DEVICE_CPU, arrow->device_type);
+  EXPECT_EQ(-1, arrow->device_id);
+  EXPECT_EQ(nullptr, arrow->sync_event);
+
+  auto const* parent = &arrow->array;
+  ASSERT_NE(nullptr, parent->release);
+  EXPECT_EQ(5, parent->length);
+  EXPECT_EQ(0, parent->null_count);
+  EXPECT_EQ(0, parent->offset);
+  EXPECT_EQ(1, parent->n_buffers);
+  ASSERT_NE(nullptr, parent->buffers);
+  EXPECT_EQ(nullptr, parent->buffers[0]);
+  EXPECT_EQ(2, parent->n_children);
+  ASSERT_NE(nullptr, parent->children);
+
+  auto const* int_array = parent->children[0];
+  ASSERT_NE(nullptr, int_array);
+  ASSERT_NE(nullptr, int_array->release);
+  EXPECT_EQ(5, int_array->length);
+  EXPECT_EQ(1, int_array->null_count);
+  EXPECT_EQ(0, int_array->offset);
+  EXPECT_EQ(2, int_array->n_buffers);
+  EXPECT_EQ(0, int_array->n_children);
+  ASSERT_NE(nullptr, int_array->buffers);
+  ASSERT_NE(nullptr, int_array->buffers[0]);
+  ASSERT_NE(nullptr, int_array->buffers[1]);
+
+  auto const* int_values = static_cast<int32_t const*>(int_array->buffers[1]);
+  for (cudf::size_type row = 0; row < int_array->length; ++row) {
+    EXPECT_EQ(int_validity[row], is_valid(int_array->buffers[0], row));
+    if (int_validity[row]) { EXPECT_EQ(expected_ints[row], int_values[row]); }
+  }
+
+  auto const* string_array = parent->children[1];
+  ASSERT_NE(nullptr, string_array);
+  ASSERT_NE(nullptr, string_array->release);
+  EXPECT_EQ(5, string_array->length);
+  EXPECT_EQ(1, string_array->null_count);
+  EXPECT_EQ(0, string_array->offset);
+  EXPECT_EQ(3, string_array->n_buffers);
+  EXPECT_EQ(0, string_array->n_children);
+  ASSERT_NE(nullptr, string_array->buffers);
+  ASSERT_NE(nullptr, string_array->buffers[0]);
+  ASSERT_NE(nullptr, string_array->buffers[1]);
+  ASSERT_NE(nullptr, string_array->buffers[2]);
+
+  auto const* string_offsets = static_cast<int32_t const*>(string_array->buffers[1]);
+  for (cudf::size_type row = 0; row < string_array->length; ++row) {
+    EXPECT_EQ(string_validity[row], is_valid(string_array->buffers[0], row));
+    EXPECT_EQ(expected_offsets[row], string_offsets[row]);
+  }
+  EXPECT_EQ(expected_offsets.back(), string_offsets[string_array->length]);
+
+  auto const string_chars = std::string_view{static_cast<char const*>(string_array->buffers[2]),
+                                             static_cast<std::size_t>(expected_offsets.back())};
+  EXPECT_EQ("fffaaaccc", string_chars);
 }
 
 TEST_F(ToArrowHostDeviceTest, Nullable)

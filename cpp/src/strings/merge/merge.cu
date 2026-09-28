@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -10,10 +10,10 @@
 #include <cudf/strings/string_view.cuh>
 #include <cudf/strings/strings_column_view.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/iterator>
+#include <cuda/stream>
 #include <thrust/transform.h>
 
 namespace cudf {
@@ -22,7 +22,7 @@ namespace detail {
 std::unique_ptr<column> merge(strings_column_view const& lhs,
                               strings_column_view const& rhs,
                               cudf::detail::index_vector const& row_order,
-                              rmm::cuda_stream_view stream,
+                              cuda::stream_ref stream,
                               rmm::device_async_resource_ref mr)
 {
   using cudf::detail::side;
@@ -55,7 +55,7 @@ std::unique_ptr<column> merge(strings_column_view const& lhs,
                     });
 
   // convert vector into strings column
-  return make_strings_column(indices.begin(), indices.end(), stream, mr);
+  return cudf::make_strings_column(indices, stream, mr);
 }
 
 }  // namespace detail

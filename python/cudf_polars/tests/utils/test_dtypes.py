@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2025, NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from __future__ import annotations
@@ -30,7 +30,10 @@ FLOAT64 = plc.DataType(plc.TypeId.FLOAT64)
         pl.Time(),
         pl.Struct({"a": pl.Binary(), "b": pl.Float32}),
         pl.List(pl.Object()),
-        pl.Array(pl.Int8, 2),
+        pl.List(pl.Array(pl.Int8, 2)),
+        pl.Array(pl.String, 2),
+        pl.Array(pl.Array(pl.Int8, 2), 3),
+        pl.Struct({"a": pl.Array(pl.Int8, 2)}),
         pl.Binary(),
         pl.Categorical(),
         pl.Enum(["a", "b"]),

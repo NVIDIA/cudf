@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2023-2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import subprocess
@@ -55,7 +55,7 @@ def test_rapids_no_initialize_cuinit(
     # Intercepting the call to cuInit programmatically is tricky since
     # the way it is resolved from dynamic libraries by
     # cuda-python/numba/cupy is multitudinous (see discussion at
-    # https://github.com/rapidsai/cudf/pull/12361 which does this, but
+    # https://github.com/NVIDIA/cudf/pull/12361 which does this, but
     # needs provide hooks that override dlsym, cuGetProcAddress, and
     # cuInit.
     # Instead, we just run under GDB and see if we hit a breakpoint

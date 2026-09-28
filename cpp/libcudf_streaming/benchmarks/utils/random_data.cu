@@ -26,7 +26,7 @@
 rmm::device_uvector<std::int32_t> random_device_vector(std::size_t nelem,
                                                        std::int32_t min_val,
                                                        std::int32_t max_val,
-                                                       rmm::cuda_stream_view stream,
+                                                       cuda::stream_ref stream,
                                                        rmm::device_async_resource_ref mr)
 {
   // Fill vector with random data.
@@ -51,7 +51,7 @@ rmm::device_uvector<std::int32_t> random_device_vector(std::size_t nelem,
 std::unique_ptr<cudf::column> random_column(cudf::size_type nrows,
                                             std::int32_t min_val,
                                             std::int32_t max_val,
-                                            rmm::cuda_stream_view stream,
+                                            cuda::stream_ref stream,
                                             rmm::device_async_resource_ref mr)
 {
   auto vec =
@@ -63,7 +63,7 @@ cudf::table random_table(cudf::size_type ncolumns,
                          cudf::size_type nrows,
                          std::int32_t min_val,
                          std::int32_t max_val,
-                         rmm::cuda_stream_view stream,
+                         cuda::stream_ref stream,
                          rmm::device_async_resource_ref mr)
 {
   std::vector<std::unique_ptr<cudf::column>> cols;
@@ -85,7 +85,7 @@ void random_fill(rapidsmpf::Buffer& buffer, rmm::device_async_resource_ref mr)
                                       std::numeric_limits<std::int32_t>::max(),
                                       buffer.stream(),
                                       mr);
-      buffer.write_access([&](std::byte* buffer_data, rmm::cuda_stream_view stream) {
+      buffer.write_access([&](std::byte* buffer_data, cuda::stream_ref stream) {
         RAPIDSMPF_CUDA_TRY(
           rapidsmpf::cuda_memcpy_async(buffer_data, vec.data(), buffer.size, stream));
       });

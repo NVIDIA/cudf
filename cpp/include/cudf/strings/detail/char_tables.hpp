@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -8,7 +8,7 @@
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/export.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
+#include <cuda/stream>
 
 #include <cstdint>
 
@@ -29,7 +29,7 @@ using character_flags_table_type = std::uint8_t;
  * @return Device memory pointer to character flags table.
  */
 character_flags_table_type const* get_character_flags_table(
-  rmm::cuda_stream_view stream = cudf::get_default_stream());
+  cuda::stream_ref stream = cudf::get_default_stream());
 
 // utilities to dissect a character-table flag
 CUDF_HOST_DEVICE constexpr uint8_t IS_DECIMAL(uint8_t x) { return ((x) & (1 << 0)); }
@@ -62,7 +62,7 @@ using character_cases_table_type = uint16_t;
  * @return Device memory pointer to character cases table.
  */
 character_cases_table_type const* get_character_cases_table(
-  rmm::cuda_stream_view stream = cudf::get_default_stream());
+  cuda::stream_ref stream = cudf::get_default_stream());
 
 /**
  * @brief Case mapping structure for special characters.
@@ -91,7 +91,7 @@ struct special_case_mapping {
  * @return Device memory pointer to the special case mapping table
  */
 special_case_mapping const* get_special_case_mapping_table(
-  rmm::cuda_stream_view stream = cudf::get_default_stream());
+  cuda::stream_ref stream = cudf::get_default_stream());
 
 /**
  * @brief Get the special mapping table index for a given code-point.

@@ -219,7 +219,7 @@ def test_to_datetime_units(data, unit):
             pd.Series(["1", "2", "1"]),
             "%m",
             marks=pytest.mark.xfail(
-                reason="https://github.com/rapidsai/cudf/issues/6109"
+                reason="https://github.com/NVIDIA/cudf/issues/6109"
                 "https://github.com/pandas-dev/pandas/issues/35934"
             ),
         ),
@@ -227,7 +227,7 @@ def test_to_datetime_units(data, unit):
             pd.Series(["14", "20", "10"]),
             "%d",
             marks=pytest.mark.xfail(
-                reason="https://github.com/rapidsai/cudf/issues/6109"
+                reason="https://github.com/NVIDIA/cudf/issues/6109"
                 "https://github.com/pandas-dev/pandas/issues/35934"
             ),
         ),

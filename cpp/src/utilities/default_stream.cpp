@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -12,9 +12,9 @@ namespace cudf {
 namespace detail {
 
 #if defined(CUDF_USE_PER_THREAD_DEFAULT_STREAM)
-rmm::cuda_stream_view const default_stream_value{rmm::cuda_stream_per_thread};
+cuda::stream_ref const default_stream_value{cudaStreamPerThread};
 #else
-rmm::cuda_stream_view const default_stream_value{};
+cuda::stream_ref const default_stream_value{cudaStream_t{cudaStreamDefault}};
 #endif
 
 }  // namespace detail
@@ -33,11 +33,11 @@ bool is_ptds_enabled()
 #endif
 }
 
-rmm::cuda_stream_view const get_default_stream()
+cuda::stream_ref const get_default_stream()
 {
   static auto const default_stream = []() {
     if (std::getenv("CUDF_PER_THREAD_STREAM") != nullptr) {
-      return rmm::cuda_stream_per_thread;
+      return cuda::stream_ref{cudaStreamPerThread};
     } else {
       return detail::default_stream_value;
     }

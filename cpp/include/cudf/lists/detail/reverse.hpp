@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -15,7 +15,7 @@ namespace lists::detail {
  * @param stream CUDA stream used for device memory operations and kernel launches
  */
 std::unique_ptr<column> reverse(lists_column_view const& input,
-                                rmm::cuda_stream_view stream,
+                                cuda::stream_ref stream,
                                 rmm::device_async_resource_ref mr);
 
 }  // namespace lists::detail

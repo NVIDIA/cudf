@@ -18,9 +18,9 @@
 #include <cudf/utilities/export.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
+#include <cuda/iterator>
 #include <cuda/stream>
 #include <thrust/host_vector.h>
-#include <thrust/iterator/transform_iterator.h>
 
 namespace CUDF_EXPORT cudf {
 namespace test {

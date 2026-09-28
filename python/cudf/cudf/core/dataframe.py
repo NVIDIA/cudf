@@ -330,7 +330,7 @@ class _DataFrameLocIndexer(_DataFrameIndexer):
         else:
             raise RuntimeError(
                 "Should have been handled by now. Please raise Github issue "
-                "at https://github.com/rapidsai/cudf/issues"
+                "at https://github.com/NVIDIA/cudf/issues"
             )
 
     @_performance_tracking
@@ -5500,8 +5500,8 @@ class DataFrame(IndexedFrame, GetAttrGetItemMixin):
         Thus the allowed operations within ``func`` are limited to `those
         supported by the CUDA Python Numba target
         <https://numba.readthedocs.io/en/stable/cuda/cudapysupported.html>`__.
-        For more information, see the `cuDF guide to user defined functions
-        <https://docs.rapids.ai/api/cudf/stable/cudf/guide-to-udfs/>`__.
+        For more information, see the :doc:`cuDF guide to user defined functions
+        </cudf/guide-to-udfs>`.
 
         Some string functions and methods are supported. Refer to the guide
         to UDFs for details.
@@ -5684,8 +5684,8 @@ class DataFrame(IndexedFrame, GetAttrGetItemMixin):
         >>> df.apply(f, axis=1)  # doctest: +SKIP
 
         For a complete list of supported functions and methods that may be
-        used to manipulate string data, see the UDF guide,
-        <https://docs.rapids.ai/api/cudf/stable/cudf/guide-to-udfs/>
+        used to manipulate string data, see the :doc:`UDF guide
+        </cudf/guide-to-udfs>`
         """
         if axis != 1:
             raise NotImplementedError(
@@ -6903,7 +6903,7 @@ class DataFrame(IndexedFrame, GetAttrGetItemMixin):
         dog        False      False
         """
         # TODO: propagate nulls through isin
-        # https://github.com/rapidsai/cudf/issues/7556
+        # https://github.com/NVIDIA/cudf/issues/7556
 
         def make_false_column_like_self():
             return as_column(False, length=len(self), dtype=np.dtype("bool"))

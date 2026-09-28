@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -13,12 +13,12 @@
 #include <cudf/io/types.hpp>
 #include <cudf/table/table_view.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/mr/cuda_async_memory_resource.hpp>
 #include <rmm/mr/pool_memory_resource.hpp>
 #include <rmm/resource_ref.hpp>
 
 #include <cuda/memory_resource>
+#include <cuda/stream>
 
 #include <string>
 #include <vector>
@@ -74,7 +74,7 @@ std::unique_ptr<cudf::table> combine_tables(std::unique_ptr<cudf::table> filter_
  */
 void check_tables_equal(cudf::table_view const& lhs_table,
                         cudf::table_view const& rhs_table,
-                        rmm::cuda_stream_view stream = cudf::get_default_stream());
+                        cuda::stream_ref stream = cudf::get_default_stream());
 
 /**
  * @brief Function to process comma delimited input paths string to parquet files and/or dirs
@@ -97,4 +97,4 @@ void check_tables_equal(cudf::table_view const& lhs_table,
                                                            int32_t input_multiplier,
                                                            int32_t thread_count,
                                                            io_source_type io_source_type,
-                                                           rmm::cuda_stream_view stream);
+                                                           cuda::stream_ref stream);

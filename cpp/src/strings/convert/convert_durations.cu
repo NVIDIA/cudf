@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #include "utilities/time_utils.cuh"
@@ -15,12 +15,12 @@
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_uvector.hpp>
 
 #include <cuda/iterator>
 #include <cuda/std/algorithm>
 #include <cuda/std/cmath>
+#include <cuda/stream>
 #include <thrust/execution_policy.h>
 #include <thrust/transform.h>
 #include <thrust/transform_reduce.h>
@@ -79,7 +79,7 @@ struct alignas(4) format_item {
 struct format_compiler {
   std::string_view const format;
   rmm::device_uvector<format_item> d_items;
-  format_compiler(std::string_view format, rmm::cuda_stream_view stream)
+  format_compiler(std::string_view format, cuda::stream_ref stream)
     : format(format), d_items(0, stream)
   {
     static std::map<char, int8_t> const specifier_lengths = {
@@ -389,7 +389,7 @@ struct dispatch_from_durations_fn {
   template <typename T>
   std::unique_ptr<column> operator()(column_view const& durations,
                                      std::string_view format,
-                                     rmm::cuda_stream_view stream,
+                                     cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr) const
     requires(cudf::is_duration<T>())
   {
@@ -644,7 +644,7 @@ struct dispatch_to_durations_fn {
   void operator()(column_device_view const& d_strings,
                   std::string_view format,
                   mutable_column_view& results_view,
-                  rmm::cuda_stream_view stream) const
+                  cuda::stream_ref stream) const
     requires(cudf::is_duration<T>())
   {
     format_compiler compiler(format, stream);
@@ -661,7 +661,7 @@ struct dispatch_to_durations_fn {
   void operator()(column_device_view const&,
                   std::string_view,
                   mutable_column_view&,
-                  rmm::cuda_stream_view) const
+                  cuda::stream_ref) const
     requires(not cudf::is_duration<T>())
   {
     CUDF_FAIL("Only durations type are expected for to_durations function");
@@ -672,7 +672,7 @@ struct dispatch_to_durations_fn {
 
 std::unique_ptr<column> from_durations(column_view const& durations,
                                        std::string_view format,
-                                       rmm::cuda_stream_view stream,
+                                       cuda::stream_ref stream,
                                        rmm::device_async_resource_ref mr)
 {
   size_type strings_count = durations.size();
@@ -685,7 +685,7 @@ std::unique_ptr<column> from_durations(column_view const& durations,
 std::unique_ptr<column> to_durations(strings_column_view const& input,
                                      data_type duration_type,
                                      std::string_view format,
-                                     rmm::cuda_stream_view stream,
+                                     cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr)
 {
   size_type strings_count = input.size();
@@ -715,7 +715,7 @@ std::unique_ptr<column> to_durations(strings_column_view const& input,
 
 std::unique_ptr<column> from_durations(column_view const& durations,
                                        std::string_view format,
-                                       rmm::cuda_stream_view stream,
+                                       cuda::stream_ref stream,
                                        rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
@@ -725,7 +725,7 @@ std::unique_ptr<column> from_durations(column_view const& durations,
 std::unique_ptr<column> to_durations(strings_column_view const& input,
                                      data_type duration_type,
                                      std::string_view format,
-                                     rmm::cuda_stream_view stream,
+                                     cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();

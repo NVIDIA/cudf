@@ -25,8 +25,9 @@
 #include <cudf_streaming/partition_utils.hpp>
 #include <cudf_streaming/table_chunk.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/mr/per_device_resource.hpp>
+
+#include <cuda/stream>
 
 #include <rapidsmpf/coll/allgather.hpp>
 #include <rapidsmpf/memory/packed_data.hpp>
@@ -191,9 +192,9 @@ TEST_P(StreamingReadParquetParams, ReadParquet)
     if (filter_expr != nullptr) {
       auto expected_options = options;
       expected_options.set_filter(filter_expr->filter);
-      filter_expr->stream.synchronize();
+      filter_expr->stream.sync();
       auto expected = cudf::io::read_parquet(expected_options).tbl;
-      filter_expr->stream.synchronize();
+      filter_expr->stream.sync();
       return expected;
     } else {
       return cudf::io::read_parquet(options).tbl;
@@ -239,7 +240,7 @@ TEST_P(StreamingReadParquetParams, ReadParquet)
   // May as well check on all ranks, so we also mildly exercise the allgather.
   auto gathered_packed_data = allgather.wait_and_extract(rapidsmpf::coll::AllGather::Ordered::YES);
   auto result               = cudf_streaming::unpack_and_concat(
-    std::move(gathered_packed_data), rmm::cuda_stream_default, br.get());
+    std::move(gathered_packed_data), cudf::get_default_stream(), br.get());
   EXPECT_EQ(result->num_rows(), expected->num_rows());
   EXPECT_EQ(result->num_columns(), expected->num_columns());
   EXPECT_EQ(result->num_columns(), 1);

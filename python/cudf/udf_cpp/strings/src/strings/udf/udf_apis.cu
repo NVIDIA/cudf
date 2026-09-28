@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -48,7 +48,7 @@ struct managed_udf_string_to_string_view_transform_fn {
  * @param stream CUDA stream used for allocating/copying device memory and launching kernels
  */
 std::unique_ptr<rmm::device_buffer> to_string_view_array(cudf::column_view const input,
-                                                         rmm::cuda_stream_view stream)
+                                                         cuda::stream_ref stream)
 {
   return std::make_unique<rmm::device_buffer>(
     std::move(cudf::strings::create_string_vector_from_column(
@@ -62,7 +62,7 @@ std::unique_ptr<rmm::device_buffer> to_string_view_array(cudf::column_view const
  * @param stream CUDA stream used for allocating/copying device memory and launching kernels
  */
 std::unique_ptr<cudf::column> column_from_managed_udf_string_array(
-  managed_udf_string* managed_strings, cudf::size_type size, rmm::cuda_stream_view stream)
+  managed_udf_string* managed_strings, cudf::size_type size, cuda::stream_ref stream)
 {
   // create string_views of the udf_strings
   auto indices = rmm::device_uvector<cudf::string_view>(size, stream);
@@ -73,7 +73,7 @@ std::unique_ptr<cudf::column> column_from_managed_udf_string_array(
                     managed_udf_string_to_string_view_transform_fn{});
 
   auto result = cudf::make_strings_column(indices, cudf::string_view(nullptr, 0), stream);
-  stream.synchronize();
+  stream.sync();
   return result;
 }
 

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -28,17 +28,12 @@ class multi_host_buffer_source : public cudf::io::datasource {
   size_t host_read(size_t offset, size_t size, uint8_t* dst) override;
   bool supports_device_read() const override { return true; }
   bool is_device_read_preferred(size_t size) const override { return true; }
-  std::unique_ptr<buffer> device_read(size_t offset,
-                                      size_t size,
-                                      rmm::cuda_stream_view stream) override;
-  size_t device_read(size_t offset,
-                     size_t size,
-                     uint8_t* dst,
-                     rmm::cuda_stream_view stream) override;
+  std::unique_ptr<buffer> device_read(size_t offset, size_t size, cuda::stream_ref stream) override;
+  size_t device_read(size_t offset, size_t size, uint8_t* dst, cuda::stream_ref stream) override;
   std::future<size_t> device_read_async(size_t offset,
                                         size_t size,
                                         uint8_t* dst,
-                                        rmm::cuda_stream_view stream) override;
+                                        cuda::stream_ref stream) override;
   size_t size() const override { return offsets_.back(); }
 };
 

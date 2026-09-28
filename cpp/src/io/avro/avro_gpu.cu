@@ -1,11 +1,11 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #include "avro_gpu.hpp"
 #include "io/utilities/block_utils.cuh"
 
-#include <rmm/cuda_stream_view.hpp>
+#include <cuda/stream>
 
 using cudf::device_span;
 
@@ -243,7 +243,7 @@ avro_decode_row(schemadesc_s const* schema,
       } break;
 
       // N.B. These aren't handled yet, see the discussion on
-      //      https://github.com/rapidsai/cudf/pull/12788.  The decoding logic
+      //      https://github.com/NVIDIA/cudf/pull/12788.  The decoding logic
       //      is correct, though, so there's no harm in having them here.
       case type_timestamp_millis: [[fallthrough]];
       case type_timestamp_micros: [[fallthrough]];
@@ -415,14 +415,14 @@ void DecodeAvroColumnData(device_span<block_desc_s const> blocks,
                           uint8_t const* avro_data,
                           uint32_t schema_len,
                           uint32_t min_row_size,
-                          rmm::cuda_stream_view stream)
+                          cuda::stream_ref stream)
 {
   // num_warps warps per threadblock
   dim3 const dim_block(32, num_warps);
   // 1 warp per datablock, num_warps datablocks per threadblock
   dim3 const dim_grid((blocks.size() + num_warps - 1) / num_warps, 1);
 
-  gpuDecodeAvroColumnData<<<dim_grid, dim_block, 0, stream.value()>>>(
+  gpuDecodeAvroColumnData<<<dim_grid, dim_block, 0, stream.get()>>>(
     blocks, schema, global_dictionary, avro_data, schema_len, min_row_size);
   CUDF_CUDA_TRY(cudaGetLastError());
 }

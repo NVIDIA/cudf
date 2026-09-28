@@ -12,7 +12,7 @@
 #include <cudf/stream_compaction.hpp>
 #include <cudf/transform.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
+#include <cuda/stream>
 
 #include <jit/helpers.hpp>
 
@@ -29,7 +29,7 @@ std::unique_ptr<table> filter(std::string const& predicate_udf,
                               std::span<transform_input const> predicate_inputs,
                               table_view const& filter_table,
                               output_nullability predicate_nullability,
-                              rmm::cuda_stream_view stream,
+                              cuda::stream_ref stream,
                               rmm::device_async_resource_ref mr)
 {
   CUDF_EXPECTS(filter_table.num_columns() > 0,
@@ -73,7 +73,7 @@ std::unique_ptr<table> filter(std::string const& predicate_udf,
 std::unique_ptr<table> filter(table_view const& predicate_table,
                               ast::expression const& predicate_expr,
                               table_view const& filter_table,
-                              rmm::cuda_stream_view stream,
+                              cuda::stream_ref stream,
                               rmm::device_async_resource_ref mr)
 {
   auto args = cudf::detail::row_ir::ast_converter::filter(cudf::detail::row_ir::target::CUDA,
@@ -103,7 +103,7 @@ std::vector<std::unique_ptr<column>> filter_extended(
   std::optional<void*> user_data,
   null_aware is_null_aware,
   output_nullability predicate_nullability,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
@@ -126,7 +126,7 @@ std::vector<std::unique_ptr<column>> filter(std::vector<column_view> const& pred
                                             std::optional<void*> user_data,
                                             null_aware is_null_aware,
                                             output_nullability predicate_nullability,
-                                            rmm::cuda_stream_view stream,
+                                            cuda::stream_ref stream,
                                             rmm::device_async_resource_ref mr)
 {
   // legacy behavior was to detect which column were scalars based on their sizes

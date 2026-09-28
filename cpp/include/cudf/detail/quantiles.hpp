@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -9,7 +9,7 @@
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
+#include <cuda/stream>
 
 namespace cudf {
 namespace detail {
@@ -22,7 +22,7 @@ std::unique_ptr<column> quantile(column_view const& input,
                                  interpolation interp,
                                  column_view const& ordered_indices,
                                  bool exact,
-                                 rmm::cuda_stream_view stream,
+                                 cuda::stream_ref stream,
                                  rmm::device_async_resource_ref mr);
 
 /**
@@ -34,7 +34,7 @@ std::unique_ptr<table> quantiles(table_view const& input,
                                  cudf::sorted is_input_sorted,
                                  std::vector<order> const& column_order,
                                  std::vector<null_order> const& null_precedence,
-                                 rmm::cuda_stream_view stream,
+                                 cuda::stream_ref stream,
                                  rmm::device_async_resource_ref mr);
 
 /**
@@ -43,7 +43,7 @@ std::unique_ptr<table> quantiles(table_view const& input,
  */
 std::unique_ptr<column> percentile_approx(tdigest::tdigest_column_view const& input,
                                           column_view const& percentiles,
-                                          rmm::cuda_stream_view stream,
+                                          cuda::stream_ref stream,
                                           rmm::device_async_resource_ref mr);
 
 }  // namespace detail

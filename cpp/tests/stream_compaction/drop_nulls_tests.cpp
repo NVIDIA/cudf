@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -83,7 +83,7 @@ TEST_F(DropNullsTest, MixedSetOfRows)
 TEST_F(DropNullsTest, LargeColumn)
 {
   // This test is a C++ repro of the failing Python in this issue:
-  // https://github.com/rapidsai/cudf/issues/5456
+  // https://github.com/NVIDIA/cudf/issues/5456
   // Specifically, there are two large columns, one nullable, one non-nullable
   using T       = int32_t;
   using index_T = int64_t;

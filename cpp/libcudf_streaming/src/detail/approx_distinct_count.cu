@@ -24,15 +24,15 @@ __global__ void add_values_kernel(std::uint64_t const* left, std::uint64_t* righ
 
 }  // namespace
 
-void set_value(std::uint64_t* data, std::uint64_t value, rmm::cuda_stream_view stream)
+void set_value(std::uint64_t* data, std::uint64_t value, cuda::stream_ref stream)
 {
-  set_value_kernel<<<1, 1, 0, stream.value()>>>(data, value);
+  set_value_kernel<<<1, 1, 0, stream.get()>>>(data, value);
   RAPIDSMPF_CUDA_TRY(cudaPeekAtLastError());
 }
 
-void add_values(std::uint64_t const* left, std::uint64_t* right, rmm::cuda_stream_view stream)
+void add_values(std::uint64_t const* left, std::uint64_t* right, cuda::stream_ref stream)
 {
-  add_values_kernel<<<1, 1, 0, stream.value()>>>(left, right);
+  add_values_kernel<<<1, 1, 0, stream.get()>>>(left, right);
   RAPIDSMPF_CUDA_TRY(cudaPeekAtLastError());
 }
 

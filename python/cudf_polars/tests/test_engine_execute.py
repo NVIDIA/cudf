@@ -224,7 +224,7 @@ def test_spmd_execute_self_join_raises(spmd_engine):
     reused = result.lazy()
     # Polars does not dedup a reused plugin source, so the self-join scans the
     # partition twice; the second read finds it already consumed. Re-scan support
-    # is tracked as future work (see https://github.com/rapidsai/cudf/issues/23115).
+    # is tracked as future work (see https://github.com/NVIDIA/cudf/issues/23115).
     with pytest.RaisesGroup(
         pytest.RaisesExc(RuntimeError, match="consumed on read"),
         allow_unwrapped=True,

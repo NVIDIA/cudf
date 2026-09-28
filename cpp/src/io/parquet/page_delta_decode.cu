@@ -117,10 +117,15 @@ struct delta_byte_array_decoder {
 
     // now fill in blockers until done
     for (uint32_t i = 1; i < warp_size && i + start_idx < end_idx; i++) {
-      if (prefix_len != 0 && prefix_lens[blocker] == 0 && lane_out != nullptr) {
+      // record whether this lane's blocker is complete before any lane writes below
+      // prevents race condition accessing prefix_lens
+      bool const completed = prefix_len != 0 && prefix_lens[blocker] == 0 && lane_out != nullptr;
+      __syncwarp();
+      if (completed) {
         memcpy(lane_out, offsets[blocker], prefix_len);
         prefix_lens[lane_id] = prefix_len = 0;
       }
+      __syncwarp();
 
       // check for finished
       if (__all_sync(0xffff'ffff, prefix_len == 0)) { return; }
@@ -214,8 +219,13 @@ struct delta_byte_array_decoder {
     // the next batch overwrites the temp scratch from its start, so if the last decoded string
     // lives there, preserve it in the reserved seed slot ahead of the scratch
     if (end_idx <= start_val && last_string != prefix_seed) {
+      // snapshot before lane 0 overwrites last_string below; without this sync, other lanes'
+      // (unused but still issued) reads of last_string can race with lane 0's write of it.
+      uint8_t const* const last_string_snapshot = last_string;
+      uint32_t const last_string_len_snapshot   = last_string_len;
+      __syncwarp();
       if (lane_id == 0) {
-        memcpy(prefix_seed, last_string, last_string_len);
+        memcpy(prefix_seed, last_string_snapshot, last_string_len_snapshot);
         last_string = prefix_seed;
       }
       __syncwarp();
@@ -279,8 +289,13 @@ struct delta_byte_array_decoder {
     // the next batch overwrites the temp scratch from its start, so if the last decoded string
     // lives there, preserve it in the reserved seed slot ahead of the scratch
     if (end_idx <= start_val && last_string != prefix_seed) {
+      // snapshot before lane 0 overwrites last_string below; without this sync, other lanes'
+      // (unused but still issued) reads of last_string can race with lane 0's write of it.
+      uint8_t const* const last_string_snapshot = last_string;
+      uint32_t const last_string_len_snapshot   = last_string_len;
+      __syncwarp();
       if (lane_id == 0) {
-        memcpy(prefix_seed, last_string, last_string_len);
+        memcpy(prefix_seed, last_string_snapshot, last_string_len_snapshot);
         last_string = prefix_seed;
       }
       __syncwarp();
@@ -304,9 +319,16 @@ struct delta_byte_array_decoder {
     while (skip_pos < start_val) {
       // warp 0 decodes a pass of prefixes and warp 1 a pass of suffixes. this will potentially
       // decode past start_val, and those values stay resident in the rolling buffers for the
-      // decode loop that follows.
-      auto* const db = warp.meta_group_rank() == 0 ? &prefixes : &suffixes;
-      if (warp.meta_group_rank() < 2) { db->decode_next_pass(warp); }
+      // decode loop that follows. dispatch on a compile-time-constant decoder per warp (as the
+      // main decode loop does) rather than a runtime-selected `db` pointer: selecting the object
+      // at runtime makes the compiler speculatively load both prefixes and suffixes on every
+      // `db->` access, so the suffix warp reads prefix state (and vice versa) while the other
+      // warp writes it, which compute-sanitizer racecheck reports as a cross-warp hazard.
+      if (warp.meta_group_rank() == 0) {
+        prefixes.decode_next_pass(warp);
+      } else if (warp.meta_group_rank() == 1) {
+        suffixes.decode_next_pass(warp);
+      }
       block.sync();
 
       // warp 0 reconstructs this round's skipped strings into the temp scratch (the helpers
@@ -483,11 +505,12 @@ CUDF_KERNEL void __launch_bounds__(decode_delta_binary_block_size)
     auto const& ni = s->nesting.nesting_info[s->setup.col.max_nesting_depth - 1];
     if (ni.valid_map != nullptr) {
       int const num_values = ni.valid_map_offset - init_valid_map_offset;
-      zero_fill_null_positions_shared<decode_block_size>(s,
-                                                         s->output_cvt.dtype_len,
-                                                         init_valid_map_offset,
-                                                         num_values,
-                                                         static_cast<int>(block.thread_rank()));
+      zero_fill_null_positions_shared<decode_delta_binary_block_size>(
+        s,
+        s->output_cvt.dtype_len,
+        init_valid_map_offset,
+        num_values,
+        static_cast<int>(block.thread_rank()));
     }
   }
 
@@ -807,8 +830,6 @@ CUDF_KERNEL void __launch_bounds__(decode_block_size)
 
   int const leaf_level_index = s->setup.col.max_nesting_depth - 1;
 
-  // db->init_binary_block below resets db->values_per_mb
-  block.sync();
   // if this is a bounds page, then we need to decode up to the first mini-block
   // that has a value we need, and set string_offset to the position of the first value in the
   // string data block.
@@ -824,6 +845,10 @@ CUDF_KERNEL void __launch_bounds__(decode_block_size)
     resumes_mid_page ? cudf::detail::warp_size
                      : min(db->values_per_mb, static_cast<uint32_t>(delta_max_batch_size));
   uint32_t const passes_per_batch = batch_size / cudf::detail::warp_size;
+
+  // db->init_binary_block below resets db->values_per_mb, so make sure every thread has read it
+  // for batch_size above before warp 0 re-initializes the decoder
+  block.sync();
 
   if (is_skip_resume) {
     if (warp.meta_group_rank() == 0) {
@@ -956,7 +981,7 @@ void decode_delta_binary(cudf::detail::hostdevice_span<PageInfo> pages,
                          int level_type_size,
                          cudf::device_span<bool const> page_mask,
                          kernel_error::pointer error_code,
-                         rmm::cuda_stream_view stream)
+                         cuda::stream_ref stream)
 {
   CUDF_EXPECTS(pages.size() > 0, "There is no page to decode");
 
@@ -964,11 +989,11 @@ void decode_delta_binary(cudf::detail::hostdevice_span<PageInfo> pages,
   dim3 dim_grid(pages.size(), 1);  // 1 threadblock per page
 
   if (level_type_size == 1) {
-    decode_delta_binary_kernel<uint8_t><<<dim_grid, dim_block, 0, stream.value()>>>(
+    decode_delta_binary_kernel<uint8_t><<<dim_grid, dim_block, 0, stream.get()>>>(
       pages.device_ptr(), chunks, min_row, num_rows, page_mask, error_code);
     CUDF_CUDA_TRY(cudaGetLastError());
   } else {
-    decode_delta_binary_kernel<uint16_t><<<dim_grid, dim_block, 0, stream.value()>>>(
+    decode_delta_binary_kernel<uint16_t><<<dim_grid, dim_block, 0, stream.get()>>>(
       pages.device_ptr(), chunks, min_row, num_rows, page_mask, error_code);
     CUDF_CUDA_TRY(cudaGetLastError());
   }
@@ -985,7 +1010,7 @@ void decode_delta_byte_array(cudf::detail::hostdevice_span<PageInfo> pages,
                              cudf::device_span<bool const> page_mask,
                              cudf::device_span<size_t> initial_str_offsets,
                              kernel_error::pointer error_code,
-                             rmm::cuda_stream_view stream)
+                             cuda::stream_ref stream)
 {
   CUDF_EXPECTS(pages.size() > 0, "There is no page to decode");
 
@@ -993,11 +1018,11 @@ void decode_delta_byte_array(cudf::detail::hostdevice_span<PageInfo> pages,
   dim3 const dim_grid(pages.size(), 1);  // 1 threadblock per page
 
   if (level_type_size == 1) {
-    decode_delta_byte_array_kernel<uint8_t><<<dim_grid, dim_block, 0, stream.value()>>>(
+    decode_delta_byte_array_kernel<uint8_t><<<dim_grid, dim_block, 0, stream.get()>>>(
       pages.device_ptr(), chunks, min_row, num_rows, page_mask, initial_str_offsets, error_code);
     CUDF_CUDA_TRY(cudaGetLastError());
   } else {
-    decode_delta_byte_array_kernel<uint16_t><<<dim_grid, dim_block, 0, stream.value()>>>(
+    decode_delta_byte_array_kernel<uint16_t><<<dim_grid, dim_block, 0, stream.get()>>>(
       pages.device_ptr(), chunks, min_row, num_rows, page_mask, initial_str_offsets, error_code);
     CUDF_CUDA_TRY(cudaGetLastError());
   }
@@ -1014,7 +1039,7 @@ void decode_delta_length_byte_array(cudf::detail::hostdevice_span<PageInfo> page
                                     cudf::device_span<bool const> page_mask,
                                     cudf::device_span<size_t> initial_str_offsets,
                                     kernel_error::pointer error_code,
-                                    rmm::cuda_stream_view stream)
+                                    cuda::stream_ref stream)
 {
   CUDF_EXPECTS(pages.size() > 0, "There is no page to decode");
 
@@ -1022,11 +1047,11 @@ void decode_delta_length_byte_array(cudf::detail::hostdevice_span<PageInfo> page
   dim3 const dim_grid(pages.size(), 1);  // 1 threadblock per page
 
   if (level_type_size == 1) {
-    decode_delta_length_byte_array_kernel<uint8_t><<<dim_grid, dim_block, 0, stream.value()>>>(
+    decode_delta_length_byte_array_kernel<uint8_t><<<dim_grid, dim_block, 0, stream.get()>>>(
       pages.device_ptr(), chunks, min_row, num_rows, page_mask, initial_str_offsets, error_code);
     CUDF_CUDA_TRY(cudaGetLastError());
   } else {
-    decode_delta_length_byte_array_kernel<uint16_t><<<dim_grid, dim_block, 0, stream.value()>>>(
+    decode_delta_length_byte_array_kernel<uint16_t><<<dim_grid, dim_block, 0, stream.get()>>>(
       pages.device_ptr(), chunks, min_row, num_rows, page_mask, initial_str_offsets, error_code);
     CUDF_CUDA_TRY(cudaGetLastError());
   }

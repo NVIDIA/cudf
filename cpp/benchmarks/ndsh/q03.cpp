@@ -47,7 +47,7 @@
 [[nodiscard]] std::unique_ptr<cudf::column> calculate_revenue(
   cudf::column_view const& extendedprice,
   cudf::column_view const& discount,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref())
 {
   auto const one = cudf::numeric_scalar<double>(1);
@@ -133,7 +133,7 @@ void ndsh_q3(nvbench::state& state)
   generate_parquet_data_sources(scale_factor, {"customer", "orders", "lineitem"}, sources);
 
   auto stream = cudf::get_default_stream();
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.value()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.get()));
   std::unordered_map<std::string, std::unique_ptr<table_with_names>> tables;
   if (mode == query_mode::COMPUTE_ONLY) { tables = load_ndsh_q3(sources); }
   auto const mem_stats_logger = cudf::memory_stats_logger();

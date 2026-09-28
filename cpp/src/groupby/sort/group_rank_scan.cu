@@ -94,7 +94,9 @@ std::unique_ptr<column> rank_generator(column_view const& grouped_values,
                                        rmm::device_async_resource_ref mr)
 {
   auto const grouped_values_view = table_view{{grouped_values}};
-  auto const comparator = cudf::detail::row::equality::self_comparator{grouped_values_view, stream};
+  auto const temp_mr             = cudf::get_current_device_resource_ref();
+  auto const comparator =
+    cudf::detail::row::equality::self_comparator{grouped_values_view, stream, temp_mr};
 
   auto ranks = make_fixed_width_column(
     data_type{type_to_id<size_type>()}, grouped_values.size(), mask_state::UNALLOCATED, stream, mr);
@@ -104,7 +106,7 @@ std::unique_ptr<column> rank_generator(column_view const& grouped_values,
     auto const permuted_equal =
       permuted_row_equality_comparator(d_equal, value_order.begin<size_type>());
 
-    thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    thrust::transform(rmm::exec_policy_nosync(stream, temp_mr),
                       cuda::counting_iterator<size_type>(0),
                       cuda::counting_iterator<size_type>(grouped_values.size()),
                       mutable_ranks.begin<size_type>(),
@@ -130,14 +132,13 @@ std::unique_ptr<column> rank_generator(column_view const& grouped_values,
                              cuda::std::reverse_iterator(mutable_ranks.end<size_type>())};
     }
   }();
-  thrust::inclusive_scan_by_key(
-    rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-    group_labels_begin,
-    group_labels_begin + group_labels.size(),
-    mutable_rank_begin,
-    mutable_rank_begin,
-    cuda::std::equal_to{},
-    scan_op);
+  thrust::inclusive_scan_by_key(rmm::exec_policy_nosync(stream, temp_mr),
+                                group_labels_begin,
+                                group_labels_begin + group_labels.size(),
+                                mutable_rank_begin,
+                                mutable_rank_begin,
+                                cuda::std::equal_to{},
+                                scan_op);
   return ranks;
 }
 }  // namespace

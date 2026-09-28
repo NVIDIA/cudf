@@ -50,7 +50,7 @@ std::unique_ptr<column> replace_re(
   regex_program const& prog,
   string_scalar const& replacement           = string_scalar(""),
   std::optional<size_type> max_replace_count = std::nullopt,
-  rmm::cuda_stream_view stream               = cudf::get_default_stream(),
+  cuda::stream_ref stream                    = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr          = cudf::get_current_device_resource_ref());
 
 /**
@@ -75,7 +75,7 @@ std::unique_ptr<column> replace_with_backrefs(
   strings_column_view const& input,
   regex_program const& prog,
   std::string_view replacement,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 }  // namespace strings

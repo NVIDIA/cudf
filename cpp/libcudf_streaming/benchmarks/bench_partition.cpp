@@ -11,10 +11,11 @@
 
 #include <cudf_streaming/partition_utils.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_buffer.hpp>
 #include <rmm/mr/cuda_memory_resource.hpp>
 #include <rmm/mr/pool_memory_resource.hpp>
+
+#include <cuda/stream>
 
 #include <benchmark/benchmark.h>
 #include <rapidsmpf/utils/misc.hpp>
@@ -23,8 +24,7 @@
 #include <vector>
 
 // Helper function to create a table with a single int column
-std::unique_ptr<cudf::table> create_int_table(cudf::size_type num_rows,
-                                              rmm::cuda_stream_view stream)
+std::unique_ptr<cudf::table> create_int_table(cudf::size_type num_rows, cuda::stream_ref stream)
 {
   auto data =
     rmm::device_buffer(rapidsmpf::safe_cast<std::size_t>(num_rows) * sizeof(std::int32_t), stream);
@@ -45,7 +45,7 @@ static void BM_PartitionAndPack(benchmark::State& state)
 
   int const num_partitions = state.range(1);
 
-  rmm::cuda_stream_view stream = rmm::cuda_stream_default;
+  cuda::stream_ref stream = cudf::get_default_stream();
 
   // Get total GPU memory
   cudaDeviceProp prop;
@@ -74,7 +74,7 @@ static void BM_PartitionAndPack(benchmark::State& state)
                                                               stream,
                                                               br.get());
     benchmark::DoNotOptimize(pack_partitions);
-    CUDF_CUDA_TRY(cudaStreamSynchronize(stream));
+    stream.sync();
   }
 
   // Set metrics
@@ -94,7 +94,7 @@ static void BM_PartitionAndPackCurrentImpl(benchmark::State& state)
   int num_rows =
     int(local_size / std::int64_t{sizeof(std::int32_t)} / std::int64_t{num_partitions});
 
-  rmm::cuda_stream_view stream = rmm::cuda_stream_default;
+  cuda::stream_ref stream = cudf::get_default_stream();
 
   // Get total GPU memory
   cudaDeviceProp prop;
@@ -125,7 +125,7 @@ static void BM_PartitionAndPackCurrentImpl(benchmark::State& state)
                                                                 br.get());
       benchmark::DoNotOptimize(pack_partitions);
     }
-    CUDF_CUDA_TRY(cudaStreamSynchronize(stream));
+    stream.sync();
   }
 
   // Set metrics

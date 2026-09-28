@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import numpy as np
@@ -140,7 +140,7 @@ def test_groupby_cov_positive_semidefinite_matrix():
     # rows containing missing values.
     # Note: cuDF currently matches pandas behavior in that the covariance
     # matrices are not guaranteed PSD (positive semi definite).
-    # https://github.com/rapidsai/cudf/pull/9889#discussion_r794158358
+    # https://github.com/NVIDIA/cudf/pull/9889#discussion_r794158358
     gdf = cudf.DataFrame(
         [[1, 2], [None, 4], [5, None], [7, 8]], columns=["v0", "v1"]
     )

@@ -15,7 +15,7 @@
 #include <cudf/strings/strings_column_view.hpp>
 #include <cudf/table/table_view.hpp>
 
-#include <thrust/iterator/transform_iterator.h>
+#include <cuda/iterator>
 
 #include <vector>
 
@@ -27,9 +27,9 @@ TEST_F(StringsExtractTests, ExtractTest)
     "First Last", "Joe Schmoe", "John Smith", "Jane Smith", "Beyonce", "Sting", nullptr, ""};
 
   cudf::test::strings_column_wrapper strings(
-    h_strings.begin(),
-    h_strings.end(),
-    thrust::make_transform_iterator(h_strings.begin(), [](auto str) { return str != nullptr; }));
+    h_strings.begin(), h_strings.end(), cuda::transform_iterator(h_strings.begin(), [](auto str) {
+      return str != nullptr;
+    }));
   auto strings_view = cudf::strings_column_view(strings);
 
   std::vector<char const*> h_expecteds{"First",
@@ -54,12 +54,12 @@ TEST_F(StringsExtractTests, ExtractTest)
   cudf::test::strings_column_wrapper expected1(
     h_expecteds.data(),
     h_expecteds.data() + h_strings.size(),
-    thrust::make_transform_iterator(h_expecteds.begin(), [](auto str) { return str != nullptr; }));
+    cuda::transform_iterator(h_expecteds.begin(), [](auto str) { return str != nullptr; }));
   cudf::test::strings_column_wrapper expected2(
     h_expecteds.data() + h_strings.size(),
     h_expecteds.data() + h_expecteds.size(),
-    thrust::make_transform_iterator(h_expecteds.data() + h_strings.size(),
-                                    [](auto str) { return str != nullptr; }));
+    cuda::transform_iterator(h_expecteds.data() + h_strings.size(),
+                             [](auto str) { return str != nullptr; }));
   std::vector<std::unique_ptr<cudf::column>> columns;
   columns.push_back(expected1.release());
   columns.push_back(expected2.release());
@@ -246,9 +246,9 @@ TEST_F(StringsExtractTests, EmptyExtractTest)
 {
   std::vector<char const*> h_strings{nullptr, "AAA", "AAA_A", "AAA_AAA_", "A__", ""};
   cudf::test::strings_column_wrapper strings(
-    h_strings.begin(),
-    h_strings.end(),
-    thrust::make_transform_iterator(h_strings.begin(), [](auto str) { return str != nullptr; }));
+    h_strings.begin(), h_strings.end(), cuda::transform_iterator(h_strings.begin(), [](auto str) {
+      return str != nullptr;
+    }));
   auto strings_view = cudf::strings_column_view(strings);
 
   auto pattern = std::string("([^_]*)\\Z");
@@ -257,7 +257,7 @@ TEST_F(StringsExtractTests, EmptyExtractTest)
   cudf::test::strings_column_wrapper expected(
     h_expected.data(),
     h_expected.data() + h_strings.size(),
-    thrust::make_transform_iterator(h_expected.begin(), [](auto str) { return str != nullptr; }));
+    cuda::transform_iterator(h_expected.begin(), [](auto str) { return str != nullptr; }));
   std::vector<std::unique_ptr<cudf::column>> columns;
   columns.push_back(expected.release());
   cudf::table table_expected(std::move(columns));
@@ -298,7 +298,7 @@ TEST_F(StringsExtractTests, ExtractAllTest)
   std::vector<char const*> h_input(
     {"123 banana 7 eleven", "41 apple", "6 péar 0 pair", nullptr, "", "bees", "4 paré"});
   auto validity =
-    thrust::make_transform_iterator(h_input.begin(), [](auto str) { return str != nullptr; });
+    cuda::transform_iterator(h_input.begin(), [](auto str) { return str != nullptr; });
   cudf::test::strings_column_wrapper input(h_input.begin(), h_input.end(), validity);
   auto sv = cudf::strings_column_view(input);
 
@@ -388,9 +388,9 @@ TEST_F(StringsExtractTests, MediumRegex)
     "abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnop"
     "qrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyz"};
   cudf::test::strings_column_wrapper strings(
-    h_strings.begin(),
-    h_strings.end(),
-    thrust::make_transform_iterator(h_strings.begin(), [](auto str) { return str != nullptr; }));
+    h_strings.begin(), h_strings.end(), cuda::transform_iterator(h_strings.begin(), [](auto str) {
+      return str != nullptr;
+    }));
 
   auto strings_view = cudf::strings_column_view(strings);
   auto results      = cudf::strings::extract(strings_view, *prog);
@@ -398,7 +398,7 @@ TEST_F(StringsExtractTests, MediumRegex)
   cudf::test::strings_column_wrapper expected(
     h_expected.begin(),
     h_expected.end(),
-    thrust::make_transform_iterator(h_expected.begin(), [](auto str) { return str != nullptr; }));
+    cuda::transform_iterator(h_expected.begin(), [](auto str) { return str != nullptr; }));
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(results->get_column(0), expected);
 }
 
@@ -418,9 +418,9 @@ TEST_F(StringsExtractTests, LargeRegex)
     "abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnop"
     "qrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyz"};
   cudf::test::strings_column_wrapper strings(
-    h_strings.begin(),
-    h_strings.end(),
-    thrust::make_transform_iterator(h_strings.begin(), [](auto str) { return str != nullptr; }));
+    h_strings.begin(), h_strings.end(), cuda::transform_iterator(h_strings.begin(), [](auto str) {
+      return str != nullptr;
+    }));
 
   auto strings_view = cudf::strings_column_view(strings);
   auto results      = cudf::strings::extract(strings_view, *prog);
@@ -428,7 +428,7 @@ TEST_F(StringsExtractTests, LargeRegex)
   cudf::test::strings_column_wrapper expected(
     h_expected.begin(),
     h_expected.end(),
-    thrust::make_transform_iterator(h_expected.begin(), [](auto str) { return str != nullptr; }));
+    cuda::transform_iterator(h_expected.begin(), [](auto str) { return str != nullptr; }));
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(results->get_column(0), expected);
 }
 
@@ -472,6 +472,6 @@ TEST_F(StringsExtractTests, CrlfLineAnchorExtNewline)
   cudf::test::strings_column_wrapper expected(
     h_expected.begin(),
     h_expected.end(),
-    thrust::make_transform_iterator(h_expected.begin(), [](auto str) { return str != nullptr; }));
+    cuda::transform_iterator(h_expected.begin(), [](auto str) { return str != nullptr; }));
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(results->get_column(0), expected);
 }

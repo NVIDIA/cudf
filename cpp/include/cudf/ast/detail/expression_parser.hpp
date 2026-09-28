@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -106,7 +106,7 @@ class expression_parser {
                     cudf::table_view const& left,
                     std::optional<std::reference_wrapper<cudf::table_view const>> right,
                     bool has_nulls,
-                    rmm::cuda_stream_view stream,
+                    cuda::stream_ref stream,
                     rmm::device_async_resource_ref mr);
 
   /**
@@ -121,7 +121,7 @@ class expression_parser {
   expression_parser(expression const& expr,
                     cudf::table_view const& table,
                     bool has_nulls,
-                    rmm::cuda_stream_view stream,
+                    cuda::stream_ref stream,
                     rmm::device_async_resource_ref mr);
 
   /**
@@ -240,7 +240,7 @@ class expression_parser {
     alignment = std::max(alignment, static_cast<cudf::size_type>(alignof(T)));
   }
 
-  void move_to_device(rmm::cuda_stream_view stream, rmm::device_async_resource_ref mr);
+  void move_to_device(cuda::stream_ref stream, rmm::device_async_resource_ref mr);
 
   /**
    * @brief Helper function for recursive traversal of expressions.

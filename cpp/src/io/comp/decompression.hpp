@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2018-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2018-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -39,7 +39,8 @@ struct decompression_info {
 /**
  * @brief Returns total scratch space required based on computed decompression_info data.
  */
-[[nodiscard]] size_t get_decompression_scratch_size(decompression_info const& di);
+[[nodiscard]] size_t get_decompression_scratch_size(decompression_info const& di,
+                                                    cuda::stream_ref stream);
 
 /**
  * @brief Returns total scratch space required based on the compressed input data.
@@ -52,7 +53,7 @@ struct decompression_info {
   device_span<device_span<uint8_t const> const> inputs,
   size_t max_uncomp_chunk_size,
   size_t max_total_uncomp_size,
-  rmm::cuda_stream_view stream);
+  cuda::stream_ref stream);
 
 /**
  * @brief Checks if the decompression scratch size can be computed using the extended API of the
@@ -72,7 +73,7 @@ struct decompression_info {
  */
 void get_snappy_uncompressed_size(device_span<device_span<uint8_t const> const> inputs,
                                   device_span<size_t> uncompressed_sizes,
-                                  rmm::cuda_stream_view stream);
+                                  cuda::stream_ref stream);
 
 }  // namespace io::detail
 }  // namespace CUDF_EXPORT cudf

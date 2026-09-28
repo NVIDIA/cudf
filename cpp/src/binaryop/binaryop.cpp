@@ -206,6 +206,13 @@ std::unique_ptr<column> binary_operation(LhsType const& lhs,
                                          cuda::stream_ref stream,
                                          rmm::device_async_resource_ref mr)
 {
+  CUDF_EXPECTS(not cudf::is_dictionary(lhs.type()) and not cudf::is_dictionary(rhs.type()),
+               "Dictionary operands are not supported",
+               cudf::data_type_error);
+  CUDF_EXPECTS(not cudf::is_dictionary(output_type),
+               "Dictionary output type is not supported",
+               cudf::data_type_error);
+
   if constexpr (std::is_same_v<LhsType, column_view> and std::is_same_v<RhsType, column_view>)
     CUDF_EXPECTS(lhs.size() == rhs.size(), "Column sizes don't match", std::invalid_argument);
 

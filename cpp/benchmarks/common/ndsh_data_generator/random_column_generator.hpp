@@ -26,7 +26,7 @@ std::unique_ptr<cudf::column> generate_random_string_column(
   cudf::size_type lower,
   cudf::size_type upper,
   cudf::size_type num_rows,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -51,7 +51,7 @@ std::unique_ptr<cudf::column> generate_random_numeric_column(
   T lower,
   T upper,
   cudf::size_type num_rows,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -71,7 +71,7 @@ std::unique_ptr<cudf::column> generate_random_numeric_column(
 std::unique_ptr<cudf::column> generate_primary_key_column(
   cudf::scalar const& start,
   cudf::size_type num_rows,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -91,7 +91,7 @@ std::unique_ptr<cudf::column> generate_primary_key_column(
 std::unique_ptr<cudf::column> generate_repeat_string_column(
   std::string const& value,
   cudf::size_type num_rows,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -111,7 +111,7 @@ std::unique_ptr<cudf::column> generate_repeat_string_column(
 std::unique_ptr<cudf::column> generate_random_string_column_from_set(
   cudf::host_span<char const* const> set,
   cudf::size_type num_rows,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -135,7 +135,7 @@ std::unique_ptr<cudf::column> generate_repeat_sequence_column(
   T seq_length,
   bool zero_indexed,
   cudf::size_type num_rows,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 }  // namespace cudf::datagen

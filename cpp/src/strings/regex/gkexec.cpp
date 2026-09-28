@@ -12,8 +12,9 @@
 #include <cudf/strings/detail/char_tables.hpp>
 #include <cudf/utilities/error.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_buffer.hpp>
+
+#include <cuda/stream>
 
 #include <cstring>
 #include <functional>
@@ -37,7 +38,7 @@ namespace detail {
  *   [_classes : classes_count × reclass_device + variable-length literals]
  */
 std::unique_ptr<gkprog_device, std::function<void(gkprog_device*)>> gkprog_device::create(
-  gkprog const& h_gp, rmm::cuda_stream_view stream)
+  gkprog const& h_gp, cuda::stream_ref stream)
 {
   auto const num_states  = h_gp.num_states;
   auto const classes_cnt = static_cast<int32_t>(h_gp.classes.size());
@@ -146,7 +147,7 @@ std::unique_ptr<gkprog_device, std::function<void(gkprog_device*)>> gkprog_devic
     delete d_buffer;
   };
 
-  stream.synchronize();  // wait for h_buffer to finish copying
+  stream.sync();  // wait for h_buffer to finish copying
 
   auto result =
     std::unique_ptr<gkprog_device, std::function<void(gkprog_device*)>>(d_prog.get(), deleter);

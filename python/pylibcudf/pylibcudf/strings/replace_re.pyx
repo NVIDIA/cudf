@@ -60,13 +60,13 @@ cpdef Column replace_re(
     """
     cdef unique_ptr[column] c_result
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
     cdef column_view c_input
 
     if replacement is None:
         replacement = Scalar.from_libcudf(
-            cpp_make_string_scalar("".encode(), _stream.view().value(), mr.get_mr())
+            cpp_make_string_scalar("".encode(), _stream.view().get(), mr.get_mr())
         )
     c_input = input.view()
     with nogil:
@@ -114,7 +114,7 @@ cpdef Column replace_with_backrefs(
     """
     cdef unique_ptr[column] c_result
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
     cdef string c_replacement = replacement.encode()
 

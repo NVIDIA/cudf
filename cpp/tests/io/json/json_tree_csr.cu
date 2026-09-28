@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -15,9 +15,9 @@
 #include <cudf/utilities/span.hpp>
 
 #include <rmm/cuda_stream.hpp>
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/stream>
 #include <thrust/sequence.h>
 #include <thrust/sort.h>
 
@@ -58,10 +58,10 @@ bool check_equality(cuio_json::tree_meta_t& d_a,
                     cudf::device_span<cudf::size_type const> d_a_max_row_offsets,
                     cuio_json::experimental::compressed_sparse_row& d_b_csr,
                     cuio_json::experimental::column_tree_properties& d_b_ctp,
-                    rmm::cuda_stream_view stream)
+                    cuda::stream_ref stream)
 {
   // convert from tree_meta_t to column_tree_csr
-  stream.synchronize();
+  stream.sync();
 
   h_tree_meta_t a{cudf::detail::make_std_vector_async(d_a.node_categories, stream),
                   cudf::detail::make_std_vector_async(d_a.parent_node_ids, stream),
@@ -76,7 +76,7 @@ bool check_equality(cuio_json::tree_meta_t& d_a,
   auto a_max_row_offsets = cudf::detail::make_std_vector_async(d_a_max_row_offsets, stream);
   auto b_max_row_offsets = cudf::detail::make_std_vector_async(d_b_ctp.max_row_offsets, stream);
 
-  stream.synchronize();
+  stream.sync();
 
   auto num_nodes = a.parent_node_ids.size();
   if (num_nodes > 1) {
@@ -147,8 +147,8 @@ void run_test(std::string const& input, bool enable_lines = true)
                                   gpu_tree.node_categories.data(),
                                   sizeof(cuio_json::node_t) * size_to_copy,
                                   cudaMemcpyDefault,
-                                  stream.value()));
-    stream.synchronize();
+                                  stream.get()));
+    stream.sync();
     if (options.is_enabled_lines()) return h_node_categories[0] == cuio_json::NC_LIST;
     return h_node_categories[0] == cuio_json::NC_LIST and
            h_node_categories[1] == cuio_json::NC_LIST;
@@ -186,8 +186,8 @@ void run_test(std::string const& input, bool enable_lines = true)
                                   gpu_col_id.data() + list_node_index,
                                   sizeof(cudf::size_type),
                                   cudaMemcpyDefault,
-                                  stream.value()));
-    stream.synchronize();
+                                  stream.get()));
+    stream.sync();
     return value;
   }();
 
@@ -362,5 +362,13 @@ TEST_F(JsonColumnTreeTests, JSONL_CornerCase_ListofLists)
 TEST_F(JsonColumnTreeTests, JSONL_CornerCase_EmptyListOfLists)
 {
   std::string json_string = R"([[]])";
+  run_test(json_string, true);
+}
+
+TEST_F(JsonColumnTreeTests, JSONL_CornerCase_SingleColumn)
+{
+  std::string json_string = R"({}
+{}
+{})";
   run_test(json_string, true);
 }

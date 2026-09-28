@@ -59,7 +59,7 @@ void json_reader_options::set_dtypes(schema_element types)
 namespace cudf::io::json::detail {
 /// Created an empty column of the specified schema
 struct empty_column_functor {
-  rmm::cuda_stream_view stream;
+  cuda::stream_ref stream;
   rmm::device_async_resource_ref mr;
 
   template <typename T, CUDF_ENABLE_IF(!cudf::is_nested<T>())>
@@ -102,7 +102,7 @@ struct empty_column_functor {
 };
 
 std::unique_ptr<column> make_empty_column(schema_element const& schema,
-                                          rmm::cuda_stream_view stream,
+                                          cuda::stream_ref stream,
                                           rmm::device_async_resource_ref mr)
 {
   return cudf::type_dispatcher(schema.type, empty_column_functor{stream, mr}, schema);
@@ -110,7 +110,7 @@ std::unique_ptr<column> make_empty_column(schema_element const& schema,
 
 /// Created all null column of the specified schema
 struct allnull_column_functor {
-  rmm::cuda_stream_view stream;
+  cuda::stream_ref stream;
   rmm::device_async_resource_ref mr;
 
  private:
@@ -119,6 +119,12 @@ struct allnull_column_functor {
     auto offsets_buff =
       cudf::detail::make_zeroed_device_uvector_async<int32_t>(size + 1, stream, mr);
     return std::make_unique<column>(std::move(offsets_buff), rmm::device_buffer{}, 0);
+  }
+
+  [[nodiscard]] auto make_zeroed_indices(size_type size) const
+  {
+    auto indices_buff = cudf::detail::make_zeroed_device_uvector_async<size_type>(size, stream, mr);
+    return std::make_unique<column>(std::move(indices_buff), rmm::device_buffer{}, 0);
   }
 
  public:
@@ -135,8 +141,7 @@ struct allnull_column_functor {
     auto const& child_name = schema.child_types.begin()->first;
     std::unique_ptr<column> child =
       make_empty_column(schema.child_types.at(child_name), stream, mr);
-    return make_fixed_width_column(schema.type, size, mask_state::ALL_NULL, stream, mr);
-    auto indices   = make_zeroed_offsets(size - 1);
+    auto indices   = make_zeroed_indices(size);
     auto null_mask = cudf::detail::create_null_mask(size, mask_state::ALL_NULL, stream, mr);
     return make_dictionary_column(std::move(child), std::move(indices), std::move(null_mask), size);
   }
@@ -195,7 +200,7 @@ struct allnull_column_functor {
 
 std::unique_ptr<column> make_all_nulls_column(schema_element const& schema,
                                               size_type num_rows,
-                                              rmm::cuda_stream_view stream,
+                                              cuda::stream_ref stream,
                                               rmm::device_async_resource_ref mr)
 {
   return cudf::type_dispatcher(schema.type, allnull_column_functor{stream, mr}, schema, num_rows);

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -16,11 +16,10 @@
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
-
 #include <cuda/iterator>
 #include <cuda/std/iterator>
 #include <cuda/std/utility>
+#include <cuda/stream>
 #include <thrust/binary_search.h>
 #include <thrust/transform.h>
 
@@ -126,7 +125,7 @@ struct base_fn {
   char* d_chars{};
   cudf::detail::input_offsetalator d_offsets;
 
-  base_fn(column_device_view const& d_column, rmm::cuda_stream_view stream)
+  base_fn(column_device_view const& d_column, cuda::stream_ref stream)
     : d_flags(get_character_flags_table(stream)),
       d_case_table(get_character_cases_table(stream)),
       d_special_case_mapping(get_special_case_mapping_table(stream)),
@@ -234,7 +233,7 @@ struct capitalize_fn : base_fn<capitalize_fn> {
 
   capitalize_fn(column_device_view const& d_column,
                 string_view const& d_delimiters,
-                rmm::cuda_stream_view stream)
+                cuda::stream_ref stream)
     : base_fn(d_column, stream), d_delimiters(d_delimiters)
   {
   }
@@ -258,7 +257,7 @@ struct title_fn : base_fn<title_fn> {
 
   title_fn(column_device_view const& d_column,
            string_character_types sequence_type,
-           rmm::cuda_stream_view stream)
+           cuda::stream_ref stream)
     : base_fn(d_column, stream), sequence_type(sequence_type)
   {
   }
@@ -311,7 +310,7 @@ struct is_title_fn {
 template <typename CapitalFn>
 std::unique_ptr<column> capitalizer(CapitalFn cfn,
                                     strings_column_view const& input,
-                                    rmm::cuda_stream_view stream,
+                                    cuda::stream_ref stream,
                                     rmm::device_async_resource_ref mr)
 {
   auto [offsets_column, chars] = make_strings_children(cfn, input.size(), stream, mr);
@@ -327,7 +326,7 @@ std::unique_ptr<column> capitalizer(CapitalFn cfn,
 
 std::unique_ptr<column> capitalize(strings_column_view const& input,
                                    string_scalar const& delimiters,
-                                   rmm::cuda_stream_view stream,
+                                   cuda::stream_ref stream,
                                    rmm::device_async_resource_ref mr)
 {
   CUDF_EXPECTS(delimiters.is_valid(stream), "Delimiter must be a valid string");
@@ -339,7 +338,7 @@ std::unique_ptr<column> capitalize(strings_column_view const& input,
 
 std::unique_ptr<column> title(strings_column_view const& input,
                               string_character_types sequence_type,
-                              rmm::cuda_stream_view stream,
+                              cuda::stream_ref stream,
                               rmm::device_async_resource_ref mr)
 {
   if (input.is_empty()) return make_empty_column(type_id::STRING);
@@ -348,7 +347,7 @@ std::unique_ptr<column> title(strings_column_view const& input,
 }
 
 std::unique_ptr<column> is_title(strings_column_view const& input,
-                                 rmm::cuda_stream_view stream,
+                                 cuda::stream_ref stream,
                                  rmm::device_async_resource_ref mr)
 {
   if (input.is_empty()) return make_empty_column(type_id::BOOL8);
@@ -372,7 +371,7 @@ std::unique_ptr<column> is_title(strings_column_view const& input,
 
 std::unique_ptr<column> capitalize(strings_column_view const& input,
                                    string_scalar const& delimiter,
-                                   rmm::cuda_stream_view stream,
+                                   cuda::stream_ref stream,
                                    rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
@@ -381,7 +380,7 @@ std::unique_ptr<column> capitalize(strings_column_view const& input,
 
 std::unique_ptr<column> title(strings_column_view const& input,
                               string_character_types sequence_type,
-                              rmm::cuda_stream_view stream,
+                              cuda::stream_ref stream,
                               rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
@@ -389,7 +388,7 @@ std::unique_ptr<column> title(strings_column_view const& input,
 }
 
 std::unique_ptr<column> is_title(strings_column_view const& input,
-                                 rmm::cuda_stream_view stream,
+                                 cuda::stream_ref stream,
                                  rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();

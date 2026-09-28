@@ -1956,7 +1956,7 @@ def _replace_closurevars(
 
     g_closure = tuple(types.CellType(val) for val in g_nonlocals.values())
 
-    # https://github.com/rapidsai/cudf/issues/15548
+    # https://github.com/NVIDIA/cudf/issues/15548
     new_g_globals = f.__globals__.copy()
     new_g_globals.update(g_globals)
 

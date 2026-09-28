@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -17,7 +17,7 @@ structs_column_view::structs_column_view(column_view const& rhs) : column_view{r
 
 column_view structs_column_view::parent() const { return *this; }
 
-column_view structs_column_view::get_sliced_child(int index, rmm::cuda_stream_view stream) const
+column_view structs_column_view::get_sliced_child(int index, cuda::stream_ref stream) const
 {
   std::vector<column_view> children;
   children.reserve(child(index).num_children());

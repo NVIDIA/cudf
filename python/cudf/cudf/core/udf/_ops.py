@@ -1,10 +1,12 @@
-# SPDX-FileCopyrightText: Copyright (c) 2021-2022, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import math
 import operator
+from collections.abc import Callable
+from typing import Any
 
-arith_ops = [
+arith_ops: list[Callable[..., Any]] = [
     operator.add,
     operator.sub,
     operator.mul,
@@ -21,9 +23,13 @@ arith_ops = [
     operator.imod,
 ]
 
-bitwise_ops = [operator.and_, operator.or_, operator.xor]
+bitwise_ops: list[Callable[..., Any]] = [
+    operator.and_,
+    operator.or_,
+    operator.xor,
+]
 
-unary_ops = [
+unary_ops: list[Callable[..., Any]] = [
     math.acos,
     math.acosh,
     math.asin,
@@ -57,7 +63,7 @@ unary_ops = [
     operator.invert,
 ]
 
-comparison_ops = [
+comparison_ops: list[Callable[..., Any]] = [
     operator.eq,
     operator.ne,
     operator.lt,

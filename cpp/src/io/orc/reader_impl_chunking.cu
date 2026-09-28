@@ -19,9 +19,9 @@
 #include <rmm/device_buffer.hpp>
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/iterator>
 #include <cuda/std/iterator>
 #include <thrust/binary_search.h>
-#include <thrust/iterator/transform_iterator.h>
 #include <thrust/scan.h>
 
 #include <algorithm>
@@ -144,10 +144,10 @@ std::vector<range> find_splits(host_span<T const> cumulative_sizes,
 
   [[maybe_unused]] std::size_t cur_cumulative_rows{0};
 
-  auto const start = thrust::make_transform_iterator(
-    cumulative_sizes.begin(),
-    [&](auto const& size) { return size.size_bytes - cur_cumulative_size; });
-  auto const end = start + cumulative_sizes.size();
+  auto const start = cuda::transform_iterator(cumulative_sizes.begin(), [&](auto const& size) {
+    return size.size_bytes - cur_cumulative_size;
+  });
+  auto const end   = start + cumulative_sizes.size();
 
   while (cur_count < total_count) {
     int64_t split_pos = static_cast<int64_t>(cuda::std::distance(
@@ -507,7 +507,7 @@ void reader_impl::load_next_stripe_data(read_mode mode)
       // Instead, it may use some other stream(s) to sync the H->D memcpy.
       // As such, we need to make sure the device buffers in `lvl_stripe_data` are ready first.
       if (!stream_synchronized) {
-        _stream.synchronize();
+        _stream.sync();
         stream_synchronized = true;
       }
       device_read_tasks.emplace_back(
@@ -528,7 +528,7 @@ void reader_impl::load_next_stripe_data(read_mode mode)
     CUDF_CUDA_TRY(
       cudf::detail::memcpy_async(dev_dst, host_buffer->data(), host_buffer->size(), _stream));
   }
-  _stream.synchronize();
+  _stream.sync();
 
   for (auto& task : device_read_tasks) {  // if there were device reads
     CUDF_EXPECTS(task.first.get() == task.second, "Unexpected discrepancy in bytes read.");

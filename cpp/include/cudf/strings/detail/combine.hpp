@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -12,7 +12,7 @@
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
+#include <cuda/stream>
 
 namespace cudf {
 namespace strings::detail {
@@ -27,7 +27,7 @@ std::unique_ptr<column> concatenate(table_view const& strings_columns,
                                     string_scalar const& separator,
                                     string_scalar const& narep,
                                     separator_on_nulls separate_nulls,
-                                    rmm::cuda_stream_view stream,
+                                    cuda::stream_ref stream,
                                     rmm::device_async_resource_ref mr);
 
 /**
@@ -39,7 +39,7 @@ std::unique_ptr<column> concatenate(table_view const& strings_columns,
 std::unique_ptr<column> join_strings(strings_column_view const& strings,
                                      string_scalar const& separator,
                                      string_scalar const& narep,
-                                     rmm::cuda_stream_view stream,
+                                     cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr);
 
 /**
@@ -53,7 +53,7 @@ std::unique_ptr<column> join_list_elements(lists_column_view const& lists_string
                                            string_scalar const& narep,
                                            separator_on_nulls separate_nulls,
                                            output_if_empty_list empty_list_policy,
-                                           rmm::cuda_stream_view stream,
+                                           cuda::stream_ref stream,
                                            rmm::device_async_resource_ref mr);
 
 }  // namespace strings::detail

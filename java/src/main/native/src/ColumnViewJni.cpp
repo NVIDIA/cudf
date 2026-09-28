@@ -1390,7 +1390,7 @@ Java_ai_rapids_cudf_ColumnView_castTo(JNIEnv* env, jclass, jlong handle, jint ty
     } else if (cudf::is_timestamp(n_data_type) && cudf::is_numeric(column->type())) {
       // This is a temporary workaround to allow Java to cast from integral types into a timestamp
       // without forcing an intermediate duration column to be manifested.  Ultimately this style of
-      // "reinterpret" casting will be supported via https://github.com/rapidsai/cudf/pull/5358
+      // "reinterpret" casting will be supported via https://github.com/NVIDIA/cudf/pull/5358
       if (n_data_type.id() == cudf::type_id::TIMESTAMP_DAYS) {
         if (column->type().id() != cudf::type_id::INT32) {
           JNI_THROW_NEW(env,
@@ -1413,7 +1413,7 @@ Java_ai_rapids_cudf_ColumnView_castTo(JNIEnv* env, jclass, jlong handle, jint ty
     } else if (cudf::is_timestamp(column->type()) && cudf::is_numeric(n_data_type)) {
       // This is a temporary workaround to allow Java to cast from timestamp types to integral types
       // without forcing an intermediate duration column to be manifested.  Ultimately this style of
-      // "reinterpret" casting will be supported via https://github.com/rapidsai/cudf/pull/5358
+      // "reinterpret" casting will be supported via https://github.com/NVIDIA/cudf/pull/5358
       cudf::data_type duration_type   = cudf::jni::timestamp_to_duration(column->type());
       cudf::column_view duration_view = cudf::column_view(
         duration_type, column->size(), column->head(), column->null_mask(), column->null_count());
@@ -2956,11 +2956,11 @@ JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_ColumnView_repeatStringsWithColumnRe
   JNI_CATCH(env, 0);
 }
 
-JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_ColumnView_applyBooleanMask(
-  JNIEnv* env, jclass, jlong list_column_handle, jlong boolean_mask_list_column_handle)
+JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_ColumnView_applyRetentionMask(
+  JNIEnv* env, jclass, jlong list_column_handle, jlong retention_mask_list_column_handle)
 {
   JNI_NULL_CHECK(env, list_column_handle, "list handle is null", 0);
-  JNI_NULL_CHECK(env, boolean_mask_list_column_handle, "boolean mask handle is null", 0);
+  JNI_NULL_CHECK(env, retention_mask_list_column_handle, "retention mask handle is null", 0);
   JNI_TRY
   {
     cudf::jni::auto_set_device(env);
@@ -2969,12 +2969,12 @@ JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_ColumnView_applyBooleanMask(
       reinterpret_cast<cudf::column_view const*>(list_column_handle);
     cudf::lists_column_view const list_view = cudf::lists_column_view(*list_column);
 
-    cudf::column_view const* boolean_mask_list_column =
-      reinterpret_cast<cudf::column_view const*>(boolean_mask_list_column_handle);
-    cudf::lists_column_view const boolean_mask_list_view =
-      cudf::lists_column_view(*boolean_mask_list_column);
+    cudf::column_view const* retention_mask_list_column =
+      reinterpret_cast<cudf::column_view const*>(retention_mask_list_column_handle);
+    cudf::lists_column_view const retention_mask_list_view =
+      cudf::lists_column_view(*retention_mask_list_column);
 
-    return release_as_jlong(cudf::lists::apply_boolean_mask(list_view, boolean_mask_list_view));
+    return release_as_jlong(cudf::lists::apply_retention_mask(list_view, retention_mask_list_view));
   }
   JNI_CATCH(env, 0);
 }

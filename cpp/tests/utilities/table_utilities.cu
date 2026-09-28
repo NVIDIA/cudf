@@ -16,7 +16,7 @@ void expect_table_properties_equal(cudf::table_view lhs, cudf::table_view rhs)
 
 void expect_tables_equal(cudf::table_view lhs,
                          cudf::table_view rhs,
-                         rmm::cuda_stream_view stream,
+                         cuda::stream_ref stream,
                          cudf::memory_resources mr)
 {
   expect_table_properties_equal(lhs, rhs);
@@ -31,7 +31,7 @@ void expect_tables_equal(cudf::table_view lhs,
  */
 void expect_tables_equivalent(cudf::table_view lhs,
                               cudf::table_view rhs,
-                              rmm::cuda_stream_view stream,
+                              cuda::stream_ref stream,
                               cudf::memory_resources mr)
 {
   auto num_columns = lhs.num_columns();

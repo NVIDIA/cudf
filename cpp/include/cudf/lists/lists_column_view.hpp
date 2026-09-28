@@ -8,7 +8,7 @@
 #include <cudf/column/column_view.hpp>
 #include <cudf/utilities/export.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
+#include <cuda/stream>
 
 /**
  * @file
@@ -99,7 +99,7 @@ class lists_column_view : private column_view {
    * @param stream CUDA stream used for device memory operations and kernel launches
    * @return A sliced child column view
    */
-  [[nodiscard]] column_view get_sliced_child(rmm::cuda_stream_view stream) const;
+  [[nodiscard]] column_view get_sliced_child(cuda::stream_ref stream) const;
 
   /**
    * @brief Return first offset (accounting for column offset)

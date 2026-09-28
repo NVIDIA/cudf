@@ -204,6 +204,12 @@ class _ListDataTypeHeader(TypedDict):
     inner: DataTypeHeader
 
 
+class _ArrayDataTypeHeader(TypedDict):
+    kind: Literal["array"]
+    inner: DataTypeHeader
+    width: int
+
+
 class _StructFieldHeader(TypedDict):
     name: str
     dtype: DataTypeHeader
@@ -220,6 +226,7 @@ DataTypeHeader = (
     | _DatetimeDataTypeHeader
     | _DurationDataTypeHeader
     | _ListDataTypeHeader
+    | _ArrayDataTypeHeader
     | _StructDataTypeHeader
 )
 

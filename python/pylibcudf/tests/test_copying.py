@@ -455,6 +455,22 @@ def test_empty_like_table(source_table):
         assert rcol.type() == icol.type()
 
 
+def test_reverse_column(target_column):
+    pa_target_column, plc_target_column = target_column
+    result = plc.copying.reverse(plc_target_column)
+    reversed_indices = pa.array(range(len(pa_target_column) - 1, -1, -1))
+    expected = pa_target_column.take(reversed_indices)
+    assert_column_eq(expected, result)
+
+
+def test_reverse_table(source_table):
+    pa_source_table, plc_source_table = source_table
+    result = plc.copying.reverse(plc_source_table)
+    reversed_indices = pa.array(range(pa_source_table.num_rows - 1, -1, -1))
+    expected = pa_source_table.take(reversed_indices)
+    assert_table_eq(expected, result)
+
+
 @pytest.mark.parametrize("size", [None, 10])
 def test_allocate_like(input_column, size):
     _, plc_input_column = input_column

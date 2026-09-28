@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -9,7 +9,7 @@
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
+#include <cuda/stream>
 namespace CUDF_EXPORT cudf {
 
 /**
@@ -31,7 +31,7 @@ namespace CUDF_EXPORT cudf {
  */
 [[nodiscard]] bool tables_equal(table_view const& left,
                                 table_view const& right,
-                                null_equality nulls_equal    = null_equality::EQUAL,
-                                rmm::cuda_stream_view stream = cudf::get_default_stream());
+                                null_equality nulls_equal = null_equality::EQUAL,
+                                cuda::stream_ref stream   = cudf::get_default_stream());
 
 }  // namespace CUDF_EXPORT cudf

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -7,10 +7,10 @@
 
 #include <cudf/io/types.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_uvector.hpp>
 #include <rmm/resource_ref.hpp>
 
+#include <cuda/stream>
 #include <thrust/host_vector.h>
 
 #include <string>
@@ -46,7 +46,7 @@ rmm::host_async_resource_ref pinned_memory_resource();
  */
 template <typename T>
 struct pinned_allocator : public std::allocator<T> {
-  pinned_allocator(rmm::host_async_resource_ref _mr, rmm::cuda_stream_view _stream)
+  pinned_allocator(rmm::host_async_resource_ref _mr, cuda::stream_ref _stream)
     : mr{_mr}, stream{_stream}
   {
   }
@@ -54,7 +54,7 @@ struct pinned_allocator : public std::allocator<T> {
   T* allocate(std::size_t n)
   {
     auto ptr = mr.allocate(stream, n * sizeof(T), alignof(T));
-    stream.synchronize();
+    stream.sync();
     return static_cast<T*>(ptr);
   }
 
@@ -65,7 +65,7 @@ struct pinned_allocator : public std::allocator<T> {
 
  private:
   rmm::host_async_resource_ref mr;
-  rmm::cuda_stream_view stream;
+  cuda::stream_ref stream;
 };
 
 /**
@@ -74,7 +74,7 @@ struct pinned_allocator : public std::allocator<T> {
  */
 class io_source {
  public:
-  io_source(std::string_view file_path, io_source_type io_type, rmm::cuda_stream_view stream);
+  io_source(std::string_view file_path, io_source_type io_type, cuda::stream_ref stream);
 
   // Get the internal source info
   [[nodiscard]] cudf::io::source_info get_source_info() const { return source_info; }

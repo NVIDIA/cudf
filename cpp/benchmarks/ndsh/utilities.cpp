@@ -326,7 +326,7 @@ std::unique_ptr<table_with_names> apply_filter(std::unique_ptr<table_with_names>
 {
   CUDF_BENCHMARK_RANGE();
   auto const boolean_mask = cudf::compute_column(table->table(), predicate);
-  auto result_table       = cudf::apply_boolean_mask(table->table(), boolean_mask->view());
+  auto result_table       = cudf::apply_retention_mask(table->table(), boolean_mask->view());
   return std::make_unique<table_with_names>(std::move(result_table), table->column_names());
 }
 
@@ -334,7 +334,7 @@ std::unique_ptr<table_with_names> apply_mask(std::unique_ptr<table_with_names> c
                                              std::unique_ptr<cudf::column> const& mask)
 {
   CUDF_BENCHMARK_RANGE();
-  auto result_table = cudf::apply_boolean_mask(table->table(), mask->view());
+  auto result_table = cudf::apply_retention_mask(table->table(), mask->view());
   return std::make_unique<table_with_names>(std::move(result_table), table->column_names());
 }
 

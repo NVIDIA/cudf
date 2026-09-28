@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #include <benchmarks/common/generate_input.hpp>
@@ -35,7 +35,7 @@ static void bench_shift(nvbench::state& state)
   auto const null_bytes    = use_validity ? 2 * cudf::bitmask_allocation_size_bytes(num_rows) : 0;
 
   auto stream = cudf::get_default_stream();
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.value()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.get()));
   state.add_global_memory_reads<int8_t>(bytes_read);
   state.add_global_memory_writes<int8_t>(bytes_written + null_bytes);
 

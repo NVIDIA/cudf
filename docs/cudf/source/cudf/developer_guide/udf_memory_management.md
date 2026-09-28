@@ -155,8 +155,8 @@ that view the strings owned by ``udf_string`` instances.
 
 The cuDF extensions to Numba generate code to manipulate instances of these
 classes, so we outline the members of these classes to aid in understanding
-them. These classes also have various methods; consult the [cuDF C++ Developer
-Documentation for further details of these structures.](https://docs.rapids.ai/api/libcudf/stable/developer_guide)
+them. These classes also have various methods; consult the {ref}`cuDF C++ Developer
+Documentation <md_developer_guide>` for further details of these structures.
 
 ```c++
 class string_view {

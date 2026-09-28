@@ -5,7 +5,7 @@
 # Self-contained packaging of the cuDF Java JAR for a single classifier.
 #
 # Consumes a prebuilt static libcudf install tree (from build_static_libcudf.sh),
-# compiles the JNI layer against it inside a throwaway RAPIDS ci-conda container,
+# compiles the JNI layer against it inside a throwaway RAPIDS ci-wheel container,
 # and emits the single classifier JAR (plus its POM) to a per-classifier
 # subdirectory under --output-dir. This script is layout-agnostic: it produces
 # one classifier's artifacts and knows nothing about the combined
@@ -18,6 +18,10 @@ REPO_ROOT="$(git -C "${SCRIPT_DIR}" rev-parse --show-toplevel)"
 
 # shellcheck disable=SC1091
 . "${SCRIPT_DIR}/argparse.sh"
+# shellcheck disable=SC1091
+. "${SCRIPT_DIR}/ci_wheel_image.sh"
+# shellcheck disable=SC1091
+. "${SCRIPT_DIR}/java_classifier.sh"
 
 LIBCUDF_DIR=""
 OUTPUT_DIR=""
@@ -31,11 +35,10 @@ print_help() {
 Usage: build_cudf_java_jar.sh --libcudf-dir <path> --output-dir <path> \\
                               --cuda-version <ver> [OPTIONS]
 
-Packages the cuDF Java JAR for a single classifier inside a RAPIDS ci-conda
+Packages the cuDF Java JAR for a single classifier inside a RAPIDS ci-wheel
 container, linking against a prebuilt static libcudf. Always builds for the
-host architecture (uname -m). The build image is fixed to
-rapidsai/ci-conda:<rapids_version>-latest (version derived from the VERSION
-file).
+host architecture (uname -m). The build image is derived from --cuda-version
+and the VERSION file (see java/ci/ci_wheel_image.sh).
 
 The classifier is derived from --cuda-version (major) + host arch (uname -m),
 mirroring the pom.xml Groovy logic: "cuda<major>" for x86_64,
@@ -49,9 +52,10 @@ REQUIRED:
     -o, --output-dir     Host parent directory. The script creates and writes
                          to <output-dir>/<classifier>/, which must not already
                          exist.
-    -c, --cuda-version   CUDA version to build for (e.g. "12.9" or "12.9.1").
-                         Must match --cuda-version of the static libcudf tree;
-                         determines the cuda12/cuda13 classifier.
+    -c, --cuda-version   CUDA toolkit version to build for (e.g. "12.9.2").
+                         Must match a rapidsai/ci-wheel image tag and the
+                         --cuda-version of the static libcudf tree. The major
+                         version determines the cuda12/cuda13 classifier.
 
 OPTIONS:
     -A, --cmake-cuda-architectures
@@ -65,8 +69,8 @@ OPTIONS:
     -h, --help           Show this help message.
 
 EXAMPLES:
-    build_cudf_java_jar.sh -l /tmp/libcudf-cuda12 -o /tmp/jars -c 12.9
-    build_cudf_java_jar.sh -l /tmp/libcudf-cuda13 -o /tmp/jars -c 13.3 -A 80
+    build_cudf_java_jar.sh -l /tmp/libcudf-cuda12 -o /tmp/jars -c 12.9.2
+    build_cudf_java_jar.sh -l /tmp/libcudf-cuda13 -o /tmp/jars -c 13.3.0 -A 80
     # writes:
     #   /tmp/jars/cuda12/cudf-<version>-cuda12.jar
     #   /tmp/jars/cuda12/cudf-<version>.pom
@@ -126,26 +130,8 @@ if [[ ! -d ${LIBCUDF_DIR} ]]; then
   exit 1
 fi
 
-# Derive the Maven classifier from --cuda-version major + host arch, mirroring
-# the pom.xml Groovy logic: "cuda<major>" for x86_64, "cuda<major>-arm64" for
-# aarch64.
-CUDA_MAJOR="$(echo "${CUDA_VERSION}" | cut -d. -f1)"
-HOST_ARCH="$(uname -m)"
-case "${HOST_ARCH}" in
-  x86_64)
-    CLASSIFIER="cuda${CUDA_MAJOR}"
-    ;;
-  aarch64|arm64)
-    CLASSIFIER="cuda${CUDA_MAJOR}-arm64"
-    ;;
-  *)
-    echo "Error: Unsupported host arch '${HOST_ARCH}' (expected x86_64 or aarch64)" >&2
-    exit 1
-    ;;
-esac
-
-RAPIDS_VERSION="$(head -1 "${REPO_ROOT}/VERSION" | cut -d. -f1,2)"
-IMAGE="rapidsai/ci-conda:${RAPIDS_VERSION}-latest"
+CLASSIFIER="$(cudf_java_maven_classifier "${CUDA_VERSION}")"
+IMAGE="$(cudf_java_ci_wheel_image "${CUDA_VERSION}")"
 
 mkdir -p "${OUTPUT_DIR}"
 OUTPUT_DIR="$(cd "${OUTPUT_DIR}" && pwd)"
@@ -194,7 +180,14 @@ DOCKER_ARGS=(
   --env PARALLEL_LEVEL="${PARALLEL_LEVEL}"
   --env HOST_UID="$(id -u)"
   --env HOST_GID="$(id -g)"
+  --env CUDF_INSTALL_DIR=/libcudf
+  --env OUTPUT_DIR=/output
+  --env REPO_ROOT=/repo
 )
+
+if [[ -n ${GITHUB_REF:-} ]]; then
+  DOCKER_ARGS+=(--env GITHUB_REF="${GITHUB_REF}")
+fi
 
 if [[ -n ${CMAKE_CUDA_ARCHITECTURES} ]]; then
   DOCKER_ARGS+=(--env CMAKE_CUDA_ARCHITECTURES="${CMAKE_CUDA_ARCHITECTURES}")
@@ -205,42 +198,4 @@ docker run "${DOCKER_ARGS[@]}" "${IMAGE}" \
 
 # Post-run: assert exactly one main classifier JAR + one POM, and that the
 # JAR's classifier suffix matches the subdir name we chose (catches pom drift).
-PRODUCED_JAR=""
-for candidate in "${CLASSIFIER_OUT}"/cudf-*-"${CLASSIFIER}".jar; do
-  if [[ -f "${candidate}" ]]; then
-    if [[ -n "${PRODUCED_JAR}" ]]; then
-      echo "Error: multiple JARs matching cudf-*-${CLASSIFIER}.jar found in ${CLASSIFIER_OUT}"
-      ls -1 "${CLASSIFIER_OUT}"
-      exit 1
-    fi
-    PRODUCED_JAR=${candidate}
-  fi
-done
-
-if [[ -z "${PRODUCED_JAR}" ]]; then
-  echo "Error: no cudf-*-${CLASSIFIER}.jar found in ${CLASSIFIER_OUT}"
-  ls -1 "${CLASSIFIER_OUT}" || true
-  exit 1
-fi
-
-PRODUCED_POM=""
-for candidate in "${CLASSIFIER_OUT}"/cudf-*.pom; do
-  if [[ -f "${candidate}" ]]; then
-    if [[ -n "${PRODUCED_POM}" ]]; then
-      echo "Error: multiple POMs found in ${CLASSIFIER_OUT}"
-      ls -1 "${CLASSIFIER_OUT}"
-      exit 1
-    fi
-    PRODUCED_POM=${candidate}
-  fi
-done
-
-if [[ -z "${PRODUCED_POM}" ]]; then
-  echo "Error: no cudf-*.pom found in ${CLASSIFIER_OUT}"
-  ls -1 "${CLASSIFIER_OUT}" || true
-  exit 1
-fi
-
-echo "cuDF Java JAR build succeeded:"
-echo "  $(basename "${PRODUCED_JAR}")"
-echo "  $(basename "${PRODUCED_POM}")"
+cudf_java_assert_classifier_artifacts "${CLASSIFIER_OUT}" "${CLASSIFIER}"

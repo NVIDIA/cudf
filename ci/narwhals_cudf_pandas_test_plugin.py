@@ -14,19 +14,19 @@ if TYPE_CHECKING:
 
 
 TESTS_TO_SKIP: Mapping[str, str] = {
-    "tests/expr_and_series/list/len_test.py::test_pandas_object_series": "cudf.pandas does not raise on object-dtype Series construction (rapidsai/cudf#18248).",
-    "tests/expr_and_series/struct_/field_test.py::test_pandas_object_series": "cudf.pandas does not raise on object-dtype Series construction (rapidsai/cudf#18248).",
-    "tests/frame/to_arrow_test.py::test_to_arrow[pandas]": "cudf.pandas cannot convert to a host Arrow object (rapidsai/cudf#18248).",
+    "tests/expr_and_series/list/len_test.py::test_pandas_object_series": "cudf.pandas does not raise on object-dtype Series construction (NVIDIA/cudf#18248).",
+    "tests/expr_and_series/struct_/field_test.py::test_pandas_object_series": "cudf.pandas does not raise on object-dtype Series construction (NVIDIA/cudf#18248).",
+    "tests/frame/to_arrow_test.py::test_to_arrow[pandas]": "cudf.pandas cannot convert to a host Arrow object (NVIDIA/cudf#18248).",
     "tests/series_only/from_iterable_test.py::test_series_from_iterable[pandas-polars.series.series.Series-String]": "Flaky under cudf.pandas: a pandas DeprecationWarning (turned into an error by Narwhals' filterwarnings) fires non-deterministically, and Narwhals otherwise marks this param xfail(strict) so an XPASS also fails.",
 }
 
 
 EXPECTED_FAILURES: Mapping[str, str] = {
-    "tests/expr_and_series/all_horizontal_test.py::test_all_ignore_nulls[pandas]": "rapidsai/cudf#19417: Kleene any/all horizontal with nulls.",
-    "tests/expr_and_series/all_horizontal_test.py::test_allh_kleene[pandas]": "rapidsai/cudf#19417: Kleene any/all horizontal with nulls.",
-    "tests/expr_and_series/any_horizontal_test.py::test_anyh_kleene[pandas]": "rapidsai/cudf#19417: Kleene any/all horizontal with nulls.",
+    "tests/expr_and_series/all_horizontal_test.py::test_all_ignore_nulls[pandas]": "NVIDIA/cudf#19417: Kleene any/all horizontal with nulls.",
+    "tests/expr_and_series/all_horizontal_test.py::test_allh_kleene[pandas]": "NVIDIA/cudf#19417: Kleene any/all horizontal with nulls.",
+    "tests/expr_and_series/any_horizontal_test.py::test_anyh_kleene[pandas]": "NVIDIA/cudf#19417: Kleene any/all horizontal with nulls.",
     "tests/expr_and_series/cast_test.py::test_pandas_pyarrow_dtypes": "cudf.pandas preserves pyarrow extension dtypes, causing PyArrow dtype handling differences.",
-    "tests/expr_and_series/dt/offset_by_test.py::test_offset_by_date_pandas": "rapidsai/cudf#19418: dt.offset_by on date columns.",
+    "tests/expr_and_series/dt/offset_by_test.py::test_offset_by_date_pandas": "NVIDIA/cudf#19418: dt.offset_by on date columns.",
     "tests/expr_and_series/fill_null_test.py::test_fill_null_pandas_downcast": "cudf.pandas represents nullable bool natively, so fill_null keeps a bool (not object) dtype.",
     "tests/expr_and_series/list/get_test.py::test_get_series[pandas-0-expected0]": "cudf.pandas List.get does not raise on out-of-bounds indices.",
     "tests/expr_and_series/log_test.py::test_log_dtype_pandas": "cudf.pandas promotes the result of log to float64.",
@@ -45,8 +45,8 @@ EXPECTED_FAILURES: Mapping[str, str] = {
     "tests/expr_and_series/pandas_str_dtypes_test.py::test_pandas_str_types[left_dtype29-right_dtype29-result_dtype29]": "cudf.pandas returns a different pandas string dtype than the test expects.",
     "tests/expr_and_series/pandas_str_dtypes_test.py::test_pandas_str_types[left_dtype30-right_dtype30-result_dtype30]": "cudf.pandas returns a different pandas string dtype than the test expects.",
     "tests/expr_and_series/pandas_str_dtypes_test.py::test_pandas_str_types[left_dtype31-right_dtype31-result_dtype31]": "cudf.pandas returns a different pandas string dtype than the test expects.",
-    "tests/frame/select_test.py::test_select_boolean_cols": "rapidsai/cudf#19421: selecting boolean columns raises a length-mismatch error.",
-    "tests/frame/select_test.py::test_select_boolean_cols_multi_group_by": "rapidsai/cudf#19421: selecting boolean columns raises a length-mismatch error.",
+    "tests/frame/select_test.py::test_select_boolean_cols": "NVIDIA/cudf#19421: selecting boolean columns raises a length-mismatch error.",
+    "tests/frame/select_test.py::test_select_boolean_cols_multi_group_by": "NVIDIA/cudf#19421: selecting boolean columns raises a length-mismatch error.",
     "tests/frame/top_k_test.py::test_top_k[pandas]": "cudf.pandas top_k returns rows in a different order.",
     "tests/series_only/from_iterable_test.py::test_series_from_iterable[polars-cudf.pandas.fast_slow_proxy._FunctionProxy-Float64]": "cudf.pandas Series constructor rejects nullable/pyarrow-backed arrays produced via the fast-slow proxy.",
     "tests/series_only/from_iterable_test.py::test_series_from_iterable[polars-cudf.pandas.fast_slow_proxy._FunctionProxy-Int32]": "cudf.pandas Series constructor rejects nullable/pyarrow-backed arrays produced via the fast-slow proxy.",

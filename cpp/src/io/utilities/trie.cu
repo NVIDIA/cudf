@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -24,7 +24,7 @@ namespace cudf {
 namespace detail {
 
 rmm::device_uvector<serial_trie_node> create_serialized_trie(std::vector<std::string> const& keys,
-                                                             rmm::cuda_stream_view stream)
+                                                             cuda::stream_ref stream)
 {
   if (keys.empty()) { return rmm::device_uvector<serial_trie_node>{0, stream}; }
 

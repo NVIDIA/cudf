@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -144,12 +144,12 @@ TEST_F(ListTest, StableSortLists)
     list_col, cudf::order::DESCENDING, cudf::null_order::AFTER, cudf::test::get_default_stream());
 }
 
-TEST_F(ListTest, ApplyBooleanMask)
+TEST_F(ListTest, ApplyRetentionMask)
 {
   cudf::test::lists_column_wrapper<int> list_col{{0, 1}, {2, 3, 7, 8}, {4, 5}};
   cudf::test::lists_column_wrapper<bool> boolean_mask{
     {false, true}, {true, true, true, false}, {false, true}};
-  cudf::lists::apply_boolean_mask(list_col, boolean_mask, cudf::test::get_default_stream());
+  cudf::lists::apply_retention_mask(list_col, boolean_mask, cudf::test::get_default_stream());
 }
 
 TEST_F(ListTest, ApplyDeletionMask)

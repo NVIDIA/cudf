@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -9,6 +9,7 @@
 #include <cudf_test/type_lists.hpp>
 
 #include <cudf/scalar/scalar.hpp>
+#include <cudf/scalar/scalar_factories.hpp>
 
 template <typename T>
 struct TypedScalarTest : public cudf::test::BaseFixture {};
@@ -30,6 +31,16 @@ TEST_F(StringScalarTest, DefaultValidity)
   std::string value = "test string";
   auto s            = cudf::string_scalar(value, true, cudf::test::get_default_stream());
   EXPECT_EQ(value, s.to_string(cudf::test::get_default_stream()));
+}
+
+TEST_F(StringScalarTest, StringFactory)
+{
+  std::string value = "test string";
+  auto s            = cudf::make_string_scalar(value, cudf::test::get_default_stream());
+  auto string_s     = static_cast<cudf::string_scalar*>(s.get());
+
+  EXPECT_EQ(value, string_s->to_string(cudf::test::get_default_stream()));
+  EXPECT_TRUE(string_s->is_valid(cudf::test::get_default_stream()));
 }
 
 CUDF_TEST_PROGRAM_MAIN()

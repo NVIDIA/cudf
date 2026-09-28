@@ -93,7 +93,7 @@ std::pair<rmm::device_uvector<size_type>, bool> compute_single_pass_aggs(
   rmm::device_uvector<size_type> block_cardinality(grid_size, stream);
 
   // Flag indicating whether a global memory aggregation fallback is required or not.
-  rmm::device_scalar<cuda::std::atomic_flag> needs_global_memory_fallback(stream);
+  rmm::device_uvector<cuda::std::atomic_flag> needs_global_memory_fallback(1, stream);
   CUDF_CUDA_TRY(cudaMemsetAsync(
     needs_global_memory_fallback.data(), 0, sizeof(cuda::std::atomic_flag), stream.get()));
 
@@ -110,8 +110,8 @@ std::pair<rmm::device_uvector<size_type>, bool> compute_single_pass_aggs(
 
   auto const needs_fallback = [&] {
     cuda::std::atomic_flag h_needs_fallback;
-    // Cannot use `device_scalar::value` as it requires a copy constructor, which
-    // `atomic_flag` doesn't have.
+    // Cannot use a value-returning helper because atomic_flag is not copy-constructible;
+    // copy the raw bytes back to host instead.
     CUDF_CUDA_TRY(cudf::detail::memcpy_async(&h_needs_fallback,
                                              needs_global_memory_fallback.data(),
                                              sizeof(cuda::std::atomic_flag),

@@ -379,6 +379,10 @@ __device__ int skip_validity_and_row_indices_nonlist(
 
     value_count += batch_size;
     max_depth_valid_count += block_valid_count;
+
+    // Required before the next iteration reuses `scan_storage`: CUB needs a barrier between the
+    // last read of a collective's TempStorage and its reuse.
+    __syncthreads();
   }  // end loop
 
   return max_depth_valid_count;
@@ -488,6 +492,10 @@ __device__ int update_validity_and_row_indices_nested(
         max_depth_valid_count += block_valid_count;
       }
 
+      // Required before `scan_storage` is reused: CUB needs a barrier between the last read of a
+      // collective's TempStorage and its reuse. At the end of the depth loop it also covers the
+      // enclosing value loop's back edge, since the depth loop always runs at least once.
+      __syncthreads();
     }  // end depth loop
 
     value_count += block_value_count;
@@ -601,6 +609,10 @@ __device__ int update_validity_and_row_indices_flat(
     // update stuff
     value_count += block_value_count;
     valid_count += block_valid_count;
+
+    // Required before the next iteration reuses `scan_storage`: CUB needs a barrier between the
+    // last read of a collective's TempStorage and its reuse.
+    __syncthreads();
   }
 
   if (t == 0) {
@@ -1371,7 +1383,7 @@ void decode_page_data(cudf::detail::hostdevice_span<PageInfo> pages,
                       cudf::device_span<size_t> initial_str_offsets,
                       cudf::device_span<size_t const> page_string_offset_indices,
                       kernel_error::pointer error_code,
-                      rmm::cuda_stream_view stream)
+                      cuda::stream_ref stream)
 {
   // No template parameters on lambdas until C++20, so use type tags instead
   auto launch_kernel = [&](auto block_size_tag, auto kernel_mask_tag) {
@@ -1383,25 +1395,25 @@ void decode_page_data(cudf::detail::hostdevice_span<PageInfo> pages,
 
     if (level_type_size == 1) {
       decode_page_data_generic<uint8_t, decode_block_size, mask>
-        <<<dim_grid, dim_block, 0, stream.value()>>>(pages.device_ptr(),
-                                                     chunks,
-                                                     min_row,
-                                                     num_rows,
-                                                     page_mask,
-                                                     initial_str_offsets,
-                                                     page_string_offset_indices,
-                                                     error_code);
+        <<<dim_grid, dim_block, 0, stream.get()>>>(pages.device_ptr(),
+                                                   chunks,
+                                                   min_row,
+                                                   num_rows,
+                                                   page_mask,
+                                                   initial_str_offsets,
+                                                   page_string_offset_indices,
+                                                   error_code);
       CUDF_CUDA_TRY(cudaGetLastError());
     } else {
       decode_page_data_generic<uint16_t, decode_block_size, mask>
-        <<<dim_grid, dim_block, 0, stream.value()>>>(pages.device_ptr(),
-                                                     chunks,
-                                                     min_row,
-                                                     num_rows,
-                                                     page_mask,
-                                                     initial_str_offsets,
-                                                     page_string_offset_indices,
-                                                     error_code);
+        <<<dim_grid, dim_block, 0, stream.get()>>>(pages.device_ptr(),
+                                                   chunks,
+                                                   min_row,
+                                                   num_rows,
+                                                   page_mask,
+                                                   initial_str_offsets,
+                                                   page_string_offset_indices,
+                                                   error_code);
       CUDF_CUDA_TRY(cudaGetLastError());
     }
   };

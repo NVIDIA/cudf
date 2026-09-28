@@ -15,6 +15,7 @@ import polars as pl
 # handlers at import time so the dispatch table is populated before any query
 # is lowered.
 import cudf_polars.streaming.distinct
+import cudf_polars.streaming.filter_hint
 import cudf_polars.streaming.groupby
 import cudf_polars.streaming.io
 import cudf_polars.streaming.join
@@ -302,6 +303,9 @@ def _(
 def _(
     ir: MapFunction, rec: LowerIRTransformer
 ) -> tuple[IR, MutableMapping[IR, PartitionInfo]]:
+    if ir.name == "hint_sorted":
+        return _lower_ir_pwise(ir, rec, preserve_partitioning=True)
+
     # Allow pointwise operations
     if ir.name in ("rename", "explode"):
         return _lower_ir_pwise(ir, rec)
@@ -366,7 +370,7 @@ def _(
         expr.is_pointwise for expr in traversal([ir.mask.value])
     ):
         # TODO: Use expression decomposition to lower Filter
-        # See: https://github.com/rapidsai/cudf/issues/20076
+        # See: https://github.com/NVIDIA/cudf/issues/20076
         return _lower_ir_fallback(
             ir, rec, msg="This filter is not supported for multiple partitions."
         )

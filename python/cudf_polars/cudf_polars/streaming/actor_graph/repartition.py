@@ -17,7 +17,10 @@ from rapidsmpf.streaming.core.actor import define_actor
 
 from cudf_polars.containers import DataFrame
 from cudf_polars.streaming.actor_graph.collectives.allgather import AllGatherManager
-from cudf_polars.streaming.actor_graph.dispatch import generate_ir_sub_network
+from cudf_polars.streaming.actor_graph.dispatch import (
+    generate_ir_sub_network,
+    ir_context_for_node,
+)
 from cudf_polars.streaming.actor_graph.nodes import shutdown_on_error
 from cudf_polars.streaming.actor_graph.tracing import send_chunk
 from cudf_polars.streaming.actor_graph.utils import (
@@ -83,7 +86,11 @@ async def concatenate_node(
         Pre-allocated collective ID for this operation.
     """
     async with shutdown_on_error(
-        context, ch_in, ch_out, trace_ir=ir, ir_context=ir_context
+        context,
+        chs_in=(ch_in,),
+        chs_out=(ch_out,),
+        trace_ir=ir,
+        ir_context=ir_context,
     ) as tracer:
         # Receive metadata.
         input_metadata = await recv_metadata(ch_in, context)
@@ -148,7 +155,7 @@ async def concatenate_node(
             allgather = AllGatherManager(context, comm, collective_id)
             with allgather.inserting() as inserter:
                 while (msg := await ch_in.recv(context)) is not None:
-                    inserter.insert(
+                    await inserter.insert(
                         seq_num, TableChunk.from_message(msg, br=context.br())
                     )
                     seq_num += 1
@@ -258,6 +265,7 @@ def _(
 
     # Look up the reserved shuffle ID for this operation
     collective_id = rec.state["collective_id_map"][ir][0]
+    ir_context = ir_context_for_node(rec, ir)
 
     # Add python node
     nodes[ir] = [
@@ -265,7 +273,7 @@ def _(
             rec.state["context"],
             rec.state["comm"],
             ir,
-            rec.state["ir_context"],
+            ir_context,
             channels[ir].reserve_input_slot(),
             channels[ir.children[0]].reserve_output_slot(),
             output_count=partition_info[ir].count,

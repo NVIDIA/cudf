@@ -7,7 +7,6 @@ from libcpp.pair cimport pair
 from libcpp.utility cimport move
 from libcpp.vector cimport vector
 from pylibcudf.libcudf cimport partitioning as cpp_partitioning
-from pylibcudf.libcudf.partitioning import hash_id as HashId  # no-cython-lint
 from pylibcudf.libcudf.column.column_view cimport column_view
 from pylibcudf.libcudf.table.table cimport table
 from pylibcudf.libcudf.table.table_view cimport table_view
@@ -32,7 +31,7 @@ __all__ = [
 
 cpdef tuple[Table, list] hash_partition(
     Table input,
-    TableOrList keys,
+    TableOrList keys: Table | list[int],
     int num_partitions,
     cpp_partitioning.hash_id hash_function = cpp_partitioning.hash_id.HASH_MURMUR3,
     uint32_t seed = cpp_partitioning.DEFAULT_HASH_SEED,
@@ -71,7 +70,7 @@ cpdef tuple[Table, list] hash_partition(
     cdef int c_num_partitions = num_partitions
     cdef vector[libcudf_types.size_type] columns_to_hash
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
     cdef table_view c_input = input.view()
     cdef table_view c_keys
@@ -138,7 +137,7 @@ cpdef tuple[Table, list] partition(
     cdef int c_num_partitions = num_partitions
 
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
 
     cdef table_view c_input = t.view()
@@ -191,7 +190,7 @@ cpdef tuple[Table, list] round_robin_partition(
     cdef int c_start_partition = start_partition
 
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
 
     cdef table_view c_input = input.view()

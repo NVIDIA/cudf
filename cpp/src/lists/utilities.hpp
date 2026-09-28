@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -9,7 +9,7 @@
 #include <cudf/lists/lists_column_view.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
+#include <cuda/stream>
 
 namespace cudf::lists::detail {
 
@@ -24,7 +24,7 @@ namespace cudf::lists::detail {
  */
 std::unique_ptr<column> generate_labels(lists_column_view const& input,
                                         size_type n_elements,
-                                        rmm::cuda_stream_view stream,
+                                        cuda::stream_ref stream,
                                         rmm::device_async_resource_ref mr);
 
 /**
@@ -38,7 +38,7 @@ std::unique_ptr<column> generate_labels(lists_column_view const& input,
  */
 std::unique_ptr<column> reconstruct_offsets(column_view const& labels,
                                             size_type n_lists,
-                                            rmm::cuda_stream_view stream,
+                                            cuda::stream_ref stream,
                                             rmm::device_async_resource_ref mr);
 
 /**
@@ -50,7 +50,7 @@ std::unique_ptr<column> reconstruct_offsets(column_view const& labels,
  * @return The output offsets column with values start from 0
  */
 std::unique_ptr<column> get_normalized_offsets(lists_column_view const& input,
-                                               rmm::cuda_stream_view stream,
+                                               cuda::stream_ref stream,
                                                rmm::device_async_resource_ref mr);
 
 }  // namespace cudf::lists::detail

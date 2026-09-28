@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -19,7 +19,7 @@
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
+#include <cuda/stream>
 
 #include <regex>
 
@@ -94,7 +94,7 @@ std::pair<std::string, std::vector<backref_type>> parse_backrefs(std::string_vie
 std::unique_ptr<column> replace_with_backrefs(strings_column_view const& input,
                                               regex_program const& prog,
                                               std::string_view replacement,
-                                              rmm::cuda_stream_view stream,
+                                              cuda::stream_ref stream,
                                               rmm::device_async_resource_ref mr)
 {
   if (input.is_empty()) return make_empty_column(type_id::STRING);
@@ -138,7 +138,7 @@ std::unique_ptr<column> replace_with_backrefs(strings_column_view const& input,
 std::unique_ptr<column> replace_with_backrefs(strings_column_view const& strings,
                                               regex_program const& prog,
                                               std::string_view replacement,
-                                              rmm::cuda_stream_view stream,
+                                              cuda::stream_ref stream,
                                               rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();

@@ -294,6 +294,7 @@ struct rle_stream {
       auto* const smem_stage =
         static_cast<uint8_t const*>(cuda::std::assume_aligned<16>(_smem_stage));
       auto const len = static_cast<int>(cuda::std::distance(_start, _end));
+      cudf_assert(len >= 0 && "rle_stream::init: _end must be >= _start");
       if (len > 0 && len <= stage_capacity) {
         cuda::memcpy_async(group, _smem_stage, _start, static_cast<size_t>(len), *_copy_barrier);
         // Rebase the parse cursor and end onto the shared copy. All downstream

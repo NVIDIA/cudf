@@ -1,5 +1,5 @@
 #!/bin/bash
-# SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 set -euo pipefail
@@ -17,7 +17,7 @@ CUDF_WHEELHOUSE=$(rapids-download-from-github "$(rapids-artifact-name wheel_pyth
 rapids-logger "Install dask_cudf, cudf, pylibcudf, and test requirements"
 
 # generate constraints (possibly pinning to oldest support versions of dependencies)
-rapids-generate-pip-constraints py_test_dask_cudf "${PIP_CONSTRAINT}"
+rapids-generate-pip-constraints py_test_dask_cudf "${PIP_CONSTRAINT}" constraints
 
 # notes:
 #

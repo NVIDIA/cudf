@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -355,7 +355,8 @@ class json_state : private parser {
    * The user can specify whether or not the name string must be present via
    * the `can_be_empty` flag.
    *
-   * When a name is present, it must be followed by a colon `:`
+   * When a name is present, it must be followed by a colon `:`. A present but zero-length
+   * name (the `""` key of `{"":1}`) is not an absent name.
    *
    * @param[out] name The resulting name.
    * @param can_be_empty Parameter indicating whether it is valid for the name
@@ -366,17 +367,16 @@ class json_state : private parser {
   {
     char const quote = options.get_allow_single_quotes() ? 0 : '\"';
 
-    if (parse_string(name, can_be_empty, quote) == parse_result::ERROR) {
-      return parse_result::ERROR;
+    if (auto const result = parse_string(name, can_be_empty, quote);
+        result != parse_result::SUCCESS) {
+      return result;
     }
 
-    // if we got a real string, the next char must be a :
-    if (name.size_bytes() > 0) {
-      if (!parse_whitespace()) { return parse_result::ERROR; }
-      if (*pos == ':') {
-        pos++;
-        return parse_result::SUCCESS;
-      }
+    // a name is present, so the next non-whitespace char must be a ':'
+    if (!parse_whitespace()) { return parse_result::ERROR; }
+    if (*pos == ':') {
+      pos++;
+      return parse_result::SUCCESS;
     }
     return parse_result::EMPTY;
   }
@@ -649,7 +649,7 @@ class path_state : private parser {
  * @returns A pair containing the command buffer, and maximum stack depth required.
  */
 std::pair<cuda::std::optional<rmm::device_uvector<path_operator>>, int> build_command_buffer(
-  cudf::string_scalar const& json_path, rmm::cuda_stream_view stream)
+  cudf::string_scalar const& json_path, cuda::stream_ref stream)
 {
   std::string h_json_path = json_path.to_string(stream);
   path_state p_state(h_json_path.data(), static_cast<size_type>(h_json_path.size()));
@@ -969,7 +969,7 @@ __launch_bounds__(block_size) CUDF_KERNEL
 std::unique_ptr<cudf::column> get_json_object(cudf::strings_column_view const& col,
                                               cudf::string_scalar const& json_path,
                                               get_json_object_options options,
-                                              rmm::cuda_stream_view stream,
+                                              cuda::stream_ref stream,
                                               rmm::device_async_resource_ref mr)
 {
   // preprocess the json_path into a command buffer
@@ -1006,7 +1006,7 @@ std::unique_ptr<cudf::column> get_json_object(cudf::strings_column_view const& c
   auto cdv = column_device_view::create(col.parent(), stream);
   // preprocess sizes (returned in the offsets buffer)
   get_json_object_kernel<block_size>
-    <<<grid.num_blocks, grid.num_threads_per_block, 0, stream.value()>>>(
+    <<<grid.num_blocks, grid.num_threads_per_block, 0, stream.get()>>>(
       *cdv,
       std::get<0>(preprocess).value().data(),
       sizes.data(),
@@ -1018,8 +1018,7 @@ std::unique_ptr<cudf::column> get_json_object(cudf::strings_column_view const& c
   CUDF_CUDA_TRY(cudaGetLastError());
 
   // convert sizes to offsets
-  auto [offsets, output_size] =
-    cudf::strings::detail::make_offsets_child_column(sizes.begin(), sizes.end(), stream, mr);
+  auto [offsets, output_size] = cudf::strings::detail::make_offsets_child_column(sizes, stream, mr);
   d_offsets = cudf::detail::offsetalator_factory::make_input_iterator(offsets->view());
 
   // allocate output string column
@@ -1035,7 +1034,7 @@ std::unique_ptr<cudf::column> get_json_object(cudf::strings_column_view const& c
     0, stream, cudf::get_current_device_resource_ref()};
 
   get_json_object_kernel<block_size>
-    <<<grid.num_blocks, grid.num_threads_per_block, 0, stream.value()>>>(
+    <<<grid.num_blocks, grid.num_threads_per_block, 0, stream.get()>>>(
       *cdv,
       std::get<0>(preprocess).value().data(),
       sizes.data(),
@@ -1064,7 +1063,7 @@ std::unique_ptr<cudf::column> get_json_object(cudf::strings_column_view const& c
 std::unique_ptr<cudf::column> get_json_object(cudf::strings_column_view const& col,
                                               cudf::string_scalar const& json_path,
                                               get_json_object_options options,
-                                              rmm::cuda_stream_view stream,
+                                              cuda::stream_ref stream,
                                               rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();

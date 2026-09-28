@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -13,10 +13,10 @@
 #include <cudf/types.hpp>
 #include <cudf/utilities/span.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/iterator>
+#include <cuda/stream>
 #include <thrust/for_each.h>
 
 namespace cudf {
@@ -41,7 +41,7 @@ template <typename ColumnDescriptor>
 rmm::device_uvector<column_device_view> create_leaf_column_device_views(
   typename cudf::device_span<ColumnDescriptor> col_desc,
   table_device_view const& parent_table_device_view,
-  rmm::cuda_stream_view stream)
+  cuda::stream_ref stream)
 {
   rmm::device_uvector<column_device_view> leaf_column_views(parent_table_device_view.num_columns(),
                                                             stream);

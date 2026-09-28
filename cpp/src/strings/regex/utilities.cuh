@@ -17,9 +17,9 @@
 #include <cudf/strings/detail/utilities.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/stream>
 #include <thrust/scan.h>
 
 #include <stdexcept>
@@ -51,7 +51,7 @@ template <typename ForEachFunction, typename ProgDevice>
 void launch_for_each_kernel(ForEachFunction fn,
                             ProgDevice& d_prog,
                             size_type size,
-                            rmm::cuda_stream_view stream)
+                            cuda::stream_ref stream)
 {
   auto [buffer_size, thread_count] = d_prog.compute_strided_working_memory(size);
 
@@ -60,7 +60,7 @@ void launch_for_each_kernel(ForEachFunction fn,
 
   auto const shmem_size = d_prog.compute_shared_memory_size();
   cudf::detail::grid_1d grid{thread_count, regex_launch_kernel_block_size};
-  for_each_kernel<<<grid.num_blocks, grid.num_threads_per_block, shmem_size, stream.value()>>>(
+  for_each_kernel<<<grid.num_blocks, grid.num_threads_per_block, shmem_size, stream.get()>>>(
     fn, d_prog, size);
   CUDF_CUDA_TRY(cudaGetLastError());
 }
@@ -90,7 +90,7 @@ void launch_transform_kernel(TransformFunction fn,
                              ProgDevice& d_prog,
                              OutputType* d_output,
                              size_type size,
-                             rmm::cuda_stream_view stream)
+                             cuda::stream_ref stream)
 {
   auto [buffer_size, thread_count] = d_prog.compute_strided_working_memory(size);
 
@@ -99,7 +99,7 @@ void launch_transform_kernel(TransformFunction fn,
 
   auto const shmem_size = d_prog.compute_shared_memory_size();
   cudf::detail::grid_1d grid{thread_count, regex_launch_kernel_block_size};
-  transform_kernel<<<grid.num_blocks, grid.num_threads_per_block, shmem_size, stream.value()>>>(
+  transform_kernel<<<grid.num_blocks, grid.num_threads_per_block, shmem_size, stream.get()>>>(
     fn, d_prog, d_output, size);
   CUDF_CUDA_TRY(cudaGetLastError());
 }
@@ -108,7 +108,7 @@ template <typename SizeAndExecuteFunction, typename ProgDevice>
 auto make_strings_children(SizeAndExecuteFunction size_and_exec_fn,
                            ProgDevice& d_prog,
                            size_type strings_count,
-                           rmm::cuda_stream_view stream,
+                           cuda::stream_ref stream,
                            rmm::device_async_resource_ref mr)
 {
   auto output_sizes        = rmm::device_uvector<size_type>(strings_count, stream);
@@ -123,7 +123,7 @@ auto make_strings_children(SizeAndExecuteFunction size_and_exec_fn,
 
   // Compute the output size for each row
   if (strings_count > 0) {
-    for_each_kernel<<<grid.num_blocks, grid.num_threads_per_block, shmem_size, stream.value()>>>(
+    for_each_kernel<<<grid.num_blocks, grid.num_threads_per_block, shmem_size, stream.get()>>>(
       size_and_exec_fn, d_prog, strings_count);
     CUDF_CUDA_TRY(cudaGetLastError());
   }
@@ -137,7 +137,7 @@ auto make_strings_children(SizeAndExecuteFunction size_and_exec_fn,
   rmm::device_uvector<char> chars(char_bytes, stream, mr);
   if (char_bytes > 0) {
     size_and_exec_fn.d_chars = chars.data();
-    for_each_kernel<<<grid.num_blocks, grid.num_threads_per_block, shmem_size, stream.value()>>>(
+    for_each_kernel<<<grid.num_blocks, grid.num_threads_per_block, shmem_size, stream.get()>>>(
       size_and_exec_fn, d_prog, strings_count);
     CUDF_CUDA_TRY(cudaGetLastError());
   }

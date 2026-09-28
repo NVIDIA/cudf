@@ -13,10 +13,10 @@
 #include <cudf/types.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/iterator>
+#include <cuda/stream>
 #include <thrust/for_each.h>
 
 namespace cudf {
@@ -48,7 +48,7 @@ std::unique_ptr<column> copy_range(strings_column_view const& source,
                                    size_type source_begin,
                                    size_type source_end,
                                    size_type target_begin,
-                                   rmm::cuda_stream_view stream,
+                                   cuda::stream_ref stream,
                                    rmm::device_async_resource_ref mr)
 {
   auto target_end = target_begin + (source_end - source_begin);

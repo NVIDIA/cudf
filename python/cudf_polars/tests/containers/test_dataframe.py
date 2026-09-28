@@ -224,3 +224,14 @@ def test_serialization_roundtrip(polars_tbl):
     res = DataFrame.deserialize(header, frames, stream=stream)
 
     assert_frame_equal(df.to_polars(), res.to_polars())
+
+
+def test_size_bytes():
+    stream = get_cuda_stream()
+    df = pl.DataFrame(
+        {
+            "a": pl.Series([1, 2, 3], dtype=pl.Int64()),
+        }
+    )
+    df = DataFrame.from_polars(df, stream=stream)
+    assert df._size_bytes == 24

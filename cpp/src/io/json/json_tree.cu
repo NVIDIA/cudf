@@ -19,7 +19,6 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 #include <rmm/mr/polymorphic_allocator.hpp>
@@ -32,12 +31,11 @@
 #include <cuda/iterator>
 #include <cuda/std/limits>
 #include <cuda/std/tuple>
+#include <cuda/stream>
 #include <thrust/binary_search.h>
 #include <thrust/count.h>
 #include <thrust/fill.h>
 #include <thrust/gather.h>
-#include <thrust/iterator/permutation_iterator.h>
-#include <thrust/iterator/transform_output_iterator.h>
 #include <thrust/reduce.h>
 #include <thrust/remove.h>
 #include <thrust/scan.h>
@@ -161,7 +159,7 @@ struct checked_token_level_output {
  */
 template <typename IndexType = size_t, typename KeyType>
 std::pair<rmm::device_uvector<KeyType>, rmm::device_uvector<IndexType>> stable_sorted_key_order(
-  cudf::device_span<KeyType const> keys, rmm::cuda_stream_view stream)
+  cudf::device_span<KeyType const> keys, cuda::stream_ref stream)
 {
   CUDF_FUNC_RANGE();
 
@@ -192,7 +190,7 @@ std::pair<rmm::device_uvector<KeyType>, rmm::device_uvector<IndexType>> stable_s
                                   keys.size(),
                                   0,
                                   sizeof(KeyType) * 8,
-                                  stream.value());
+                                  stream.get());
 
   return std::pair{keys_buffer.Current() == keys_buffer1.data() ? std::move(keys_buffer1)
                                                                 : std::move(keys_buffer2),
@@ -210,7 +208,7 @@ std::pair<rmm::device_uvector<KeyType>, rmm::device_uvector<IndexType>> stable_s
  */
 void propagate_first_sibling_to_other(cudf::device_span<TreeDepthT const> node_levels,
                                       cudf::device_span<NodeIndexT> parent_node_ids,
-                                      rmm::cuda_stream_view stream)
+                                      cuda::stream_ref stream)
 {
   CUDF_FUNC_RANGE();
   auto [sorted_node_levels, sorted_order] = stable_sorted_key_order<size_type>(node_levels, stream);
@@ -230,7 +228,7 @@ void propagate_first_sibling_to_other(cudf::device_span<TreeDepthT const> node_l
 tree_meta_t get_tree_representation(device_span<PdaTokenT const> tokens,
                                     device_span<SymbolOffsetT const> token_indices,
                                     bool is_strict_nested_boundaries,
-                                    rmm::cuda_stream_view stream,
+                                    cuda::stream_ref stream,
                                     rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
@@ -295,7 +293,7 @@ tree_meta_t get_tree_representation(device_span<PdaTokenT const> tokens,
   rmm::device_uvector<TreeDepthT> node_levels(num_nodes, stream, mr);
   {
     rmm::device_uvector<TreeDepthT> token_levels(num_tokens, stream);
-    auto const push_pop_it = thrust::make_transform_iterator(
+    auto const push_pop_it = cuda::transform_iterator(
       tokens.begin(),
       cuda::proclaim_return_type<size_type>(
         [does_push, does_pop] __device__(PdaTokenT const token) -> size_type {
@@ -438,7 +436,7 @@ tree_meta_t get_tree_representation(device_span<PdaTokenT const> tokens,
     rmm::device_uvector<TreeDepthT> token_levels(num_nested, stream);
     rmm::device_uvector<NodeIndexT> token_id(num_nested, stream);
     rmm::device_uvector<NodeIndexT> parent_node_ids(num_nested, stream);
-    auto const push_pop_it = thrust::make_transform_iterator(
+    auto const push_pop_it = cuda::transform_iterator(
       tokens.begin(),
       cuda::proclaim_return_type<cudf::size_type>(
         [] __device__(PdaTokenT const token) -> size_type {
@@ -501,20 +499,19 @@ tree_meta_t get_tree_representation(device_span<PdaTokenT const> tokens,
       stream);
 
     // scatter to node_range_end for only nested end tokens.
-    auto token_indices_it =
-      thrust::make_permutation_iterator(token_indices.begin(), token_id.begin());
-    auto nested_node_range_end_it =
-      thrust::make_transform_output_iterator(node_range_end.begin(), [] __device__(auto i) {
+    auto token_indices_it = cuda::transform_iterator(
+      cuda::make_permutation_iterator(token_indices.begin(), token_id.begin()),
+      [] __device__(auto i) -> SymbolOffsetT {
         // add +1 to include end symbol.
         return i + 1;
       });
-    auto stencil = thrust::make_transform_iterator(token_id.begin(), is_nested_end{tokens.data()});
+    auto stencil = cuda::transform_iterator(token_id.begin(), is_nested_end{tokens.data()});
     thrust::scatter_if(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                        token_indices_it,
                        token_indices_it + num_nested,
                        parent_node_ids.begin(),
                        stencil,
-                       nested_node_range_end_it);
+                       node_range_end.begin());
   }
 
   return {std::move(node_categories),
@@ -529,7 +526,7 @@ std::pair<size_t, rmm::device_uvector<size_type>> remapped_field_nodes_after_uni
   device_span<SymbolT const> d_input,
   tree_meta_t const& d_tree,
   device_span<size_type const> keys,
-  rmm::cuda_stream_view stream)
+  cuda::stream_ref stream)
 {
   size_t num_keys = keys.size();
   if (num_keys == 0) { return {num_keys, rmm::device_uvector<size_type>(num_keys, stream)}; }
@@ -592,14 +589,14 @@ std::pair<size_t, rmm::device_uvector<size_type>> remapped_field_nodes_after_uni
                                                                    {},
                                                                    {},
                                   rmm::mr::polymorphic_allocator<char>{},
-                                  stream.value()};
+                                  stream.get()};
   auto const counting_iter                      = cuda::counting_iterator<size_type>{0};
   rmm::device_uvector<size_type> found_keys(num_keys, stream);
   key_set.insert_and_find_async(counting_iter,
                                 counting_iter + num_keys,
                                 found_keys.begin(),
                                 cuda::make_discard_iterator(),
-                                stream.value());
+                                stream.get());
   // set.size will synchronize the stream before return.
   return {key_set.size(stream), std::move(found_keys)};
 }
@@ -620,7 +617,7 @@ std::pair<size_t, rmm::device_uvector<size_type>> remapped_field_nodes_after_uni
 rmm::device_uvector<size_type> hash_node_type_with_field_name(device_span<SymbolT const> d_input,
                                                               tree_meta_t const& d_tree,
                                                               bool is_enabled_experimental,
-                                                              rmm::cuda_stream_view stream)
+                                                              cuda::stream_ref stream)
 {
   CUDF_FUNC_RANGE();
 
@@ -669,12 +666,12 @@ rmm::device_uvector<size_type> hash_node_type_with_field_name(device_span<Symbol
                                                                    {},
                                                                    {},
                                   rmm::mr::polymorphic_allocator<char>{},
-                                  stream.value()};
+                                  stream.get()};
   key_set.insert_if_async(counting_iter,
                           counting_iter + num_nodes,
                           cuda::counting_iterator<size_type>{0},  // stencil
                           is_field_name_node,
-                          stream.value());
+                          stream.get());
 
   // experimental feature: utf8 field name support
   // parse_data on field names,
@@ -692,13 +689,13 @@ rmm::device_uvector<size_type> hash_node_type_with_field_name(device_span<Symbol
                               {},
                               {},
                               rmm::mr::polymorphic_allocator<char>{},
-                              stream.value()};
+                              stream.get()};
     };
     if (!is_enabled_experimental) { return std::pair{false, make_map(size_type{0})}; }
     // get all unique field node ids for utf8 decoding
     auto num_keys = static_cast<size_type>(key_set.size(stream));
     rmm::device_uvector<size_type> keys(num_keys, stream);
-    key_set.retrieve_all(keys.data(), stream.value());
+    key_set.retrieve_all(keys.data(), stream.get());
 
     auto [num_unique_fields, found_keys] =
       remapped_field_nodes_after_unicode_decode(d_input, d_tree, keys, stream);
@@ -748,7 +745,7 @@ std::pair<rmm::device_uvector<NodeIndexT>, rmm::device_uvector<NodeIndexT>>
 get_array_children_indices(TreeDepthT row_array_children_level,
                            device_span<TreeDepthT const> node_levels,
                            device_span<NodeIndexT const> parent_node_ids,
-                           rmm::cuda_stream_view stream)
+                           cuda::stream_ref stream)
 {
   // array children level: (level 2 for values, level 1 for values-JSONLines format)
   // copy nodes id of level 1's children (level 2)
@@ -801,7 +798,7 @@ std::pair<rmm::device_uvector<size_type>, rmm::device_uvector<size_type>> hash_n
   device_span<NodeIndexT const> parent_node_ids,
   bool is_array_of_arrays,
   bool is_enabled_lines,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
@@ -912,16 +909,16 @@ std::pair<rmm::device_uvector<size_type>, rmm::device_uvector<size_type>> hash_n
                                   {},
                                   {},
                                   rmm::mr::polymorphic_allocator<char>{},
-                                  stream.value()};
+                                  stream.get()};
 
   // insert and convert node ids to unique set ids
   auto nodes_itr         = cuda::counting_iterator<size_type>{0};
-  auto const num_columns = key_set.insert(nodes_itr, nodes_itr + num_nodes, stream.value());
+  auto const num_columns = key_set.insert(nodes_itr, nodes_itr + num_nodes, stream.get());
 
   rmm::device_uvector<size_type> unique_keys(num_columns, stream);
   rmm::device_uvector<size_type> col_id(num_nodes, stream, mr);
-  key_set.find_async(nodes_itr, nodes_itr + num_nodes, col_id.begin(), stream.value());
-  std::ignore = key_set.retrieve_all(unique_keys.begin(), stream.value());
+  key_set.find_async(nodes_itr, nodes_itr + num_nodes, col_id.begin(), stream.get());
+  std::ignore = key_set.retrieve_all(unique_keys.begin(), stream.get());
 
   return {std::move(col_id), std::move(unique_keys)};
 }
@@ -953,7 +950,7 @@ std::pair<rmm::device_uvector<NodeIndexT>, rmm::device_uvector<NodeIndexT>> gene
   bool is_array_of_arrays,
   bool is_enabled_lines,
   bool is_enabled_experimental,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
@@ -1024,7 +1021,7 @@ rmm::device_uvector<size_type> compute_row_offsets(rmm::device_uvector<NodeIndex
                                                    tree_meta_t const& d_tree,
                                                    bool is_array_of_arrays,
                                                    bool is_enabled_lines,
-                                                   rmm::cuda_stream_view stream,
+                                                   cuda::stream_ref stream,
                                                    rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
@@ -1128,7 +1125,7 @@ records_orient_tree_traversal(device_span<SymbolT const> d_input,
                               bool is_array_of_arrays,
                               bool is_enabled_lines,
                               bool is_enabled_experimental,
-                              rmm::cuda_stream_view stream,
+                              cuda::stream_ref stream,
                               rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();

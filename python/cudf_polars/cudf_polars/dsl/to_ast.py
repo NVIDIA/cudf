@@ -15,7 +15,7 @@ from pylibcudf import expressions as plc_expr
 
 from cudf_polars.containers import DataType
 from cudf_polars.dsl import expr
-from cudf_polars.dsl.traversal import CachingVisitor, reuse_if_unchanged
+from cudf_polars.dsl.traversal import CachingVisitor, reuse_if_unchanged, traversal
 from cudf_polars.typing import GenericTransformer
 
 if TYPE_CHECKING:
@@ -182,7 +182,7 @@ def _(node: expr.BinOp, self: Transformer) -> plc_expr.Expression:
     if c1.dtype != c2.dtype:
         if isinstance(c1, expr.Literal):  # pragma: no cover
             c1 = c1.astype(c2.dtype)
-        elif isinstance(c2, expr.Literal):
+        elif isinstance(c2, expr.Literal):  # pragma: no cover
             c2 = c2.astype(c1.dtype)
         elif (
             isinstance(c1, (expr.Col, expr.ColRef)) and c1.dtype.id() in _DECIMAL_IDS
@@ -232,9 +232,18 @@ def _(node: expr.BooleanFunction, self: Transformer) -> plc_expr.Expression:
                 ),
             )
     if self.state["for_parquet"] and isinstance(node.children[0], expr.Col):
-        raise NotImplementedError(
-            f"Parquet filters don't support {node.name} on columns"
-        )
+        if node.name not in (
+            expr.BooleanFunction.Name.IsNull,
+            expr.BooleanFunction.Name.IsNotNull,
+        ):
+            raise NotImplementedError(
+                f"Parquet filters don't support {node.name} on columns"
+            )
+        if node.children[0].dtype.id() in (plc.TypeId.STRUCT, plc.TypeId.LIST):
+            # TODO: Remove once https://github.com/NVIDIA/cudf/issues/23397 is resolved.
+            raise NotImplementedError(
+                f"Parquet filters don't support {node.name} on nested types"
+            )
     if node.name is expr.BooleanFunction.Name.IsNull:
         return plc_expr.Operation(plc_expr.ASTOperator.IS_NULL, self(node.children[0]))
     elif node.name is expr.BooleanFunction.Name.IsNotNull:
@@ -258,21 +267,23 @@ def _(node: expr.UnaryFunction, self: Transformer) -> plc_expr.Expression:
     )
 
 
-def to_parquet_filter(node: expr.Expr, stream: Stream) -> plc_expr.Expression | None:
-    """
-    Convert an expression to libcudf AST nodes suitable for parquet filtering.
+def _extract_conjuncts(node: expr.Expr) -> list[expr.Expr]:
+    if (
+        isinstance(node, expr.BinOp)
+        and node.op == plc.binaryop.BinaryOperator.NULL_LOGICAL_AND
+    ):
+        return [c for child in node.children for c in _extract_conjuncts(child)]
+    return [node]
 
-    Parameters
-    ----------
-    node
-        Expression to convert.
-    stream
-        CUDA stream used for device memory operations and kernel launches.
 
-    Returns
-    -------
-    pylibcudf Expression if conversion is possible, otherwise None.
-    """
+def _to_parquet_filter(
+    node: expr.Expr, mapper: Transformer, unreadable_columns: frozenset[str]
+) -> plc_expr.Expression | None:
+    if unreadable_columns and any(
+        isinstance(child, expr.Col) and child.name in unreadable_columns
+        for child in traversal([node])
+    ):
+        return None
     # Converts a boolean column reference (e.g., filter(pl.col("foo")))
     # to an explicit comparison for parquet filters (e.g., filter(pl.col("foo") == True)).
     # TODO: Have polars pass us the comparison instead
@@ -283,14 +294,69 @@ def to_parquet_filter(node: expr.Expr, stream: Stream) -> plc_expr.Expression | 
             node,
             expr.Literal(node.dtype, value=True),
         )
-
-    mapper: Transformer = CachingVisitor(
-        _to_ast, state={"for_parquet": True, "stream": stream}
-    )
     try:
         return mapper(node)
     except (KeyError, NotImplementedError):
         return None
+
+
+def to_parquet_filter(
+    node: expr.Expr,
+    stream: Stream,
+    unreadable_columns: frozenset[str] = frozenset(),
+) -> tuple[plc_expr.Expression | None, expr.Expr | None]:
+    """
+    Convert an expression to libcudf AST nodes suitable for parquet filtering.
+
+    Parameters
+    ----------
+    node
+        Expression to convert.
+    stream
+        CUDA stream used for device memory operations and kernel launches.
+    unreadable_columns
+        Names of columns that are part of the scan's schema but are not stored
+        in the files, such as hive partition keys. Conjuncts referencing them
+        are left to the residual so they can be applied once those columns have
+        been materialized.
+
+    Returns
+    -------
+    filter
+        pylibcudf Expression suitable for parquet filtering, or None if no part
+        of the predicate can be converted.
+    residual
+        Expression still to be applied as a post-read filter, or None when
+        ``filter`` is exact (equivalent to ``node``).  When ``filter`` is None
+        the caller must apply the full original predicate post-read.
+    """
+    mapper: Transformer = CachingVisitor(
+        _to_ast, state={"for_parquet": True, "stream": stream}
+    )
+    whole = _to_parquet_filter(node, mapper, unreadable_columns)
+    if whole is not None:
+        return whole, None
+    can_handle_filters = []
+    cant_handle_exprs = []
+    for conjunct in _extract_conjuncts(node):
+        f = _to_parquet_filter(conjunct, mapper, unreadable_columns)
+        if f is not None:
+            can_handle_filters.append(f)
+        else:
+            cant_handle_exprs.append(conjunct)
+    if not can_handle_filters:
+        return None, None
+    combined = reduce(
+        partial(plc_expr.Operation, plc_expr.ASTOperator.LOGICAL_AND),
+        can_handle_filters,
+    )
+    residual = reduce(
+        lambda a, b: expr.BinOp(
+            b.dtype, plc.binaryop.BinaryOperator.NULL_LOGICAL_AND, a, b
+        ),
+        cant_handle_exprs,
+    )
+    return combined, residual
 
 
 def to_ast(node: expr.Expr, stream: Stream) -> plc_expr.Expression | None:

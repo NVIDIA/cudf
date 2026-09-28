@@ -88,7 +88,7 @@ struct calculate_group_statistics_functor {
              (IO != detail::io_file_format::PARQUET or !std::is_same_v<T, list_view>))
   {
     // Temporarily disable stats writing for int96 timestamps
-    // TODO: https://github.com/rapidsai/cudf/issues/10438
+    // TODO: https://github.com/NVIDIA/cudf/issues/10438
     if constexpr (cudf::is_timestamp<T>() and IO == detail::io_file_format::PARQUET and
                   INT96 == detail::is_int96_timestamp::YES) {
       return;
@@ -302,7 +302,7 @@ CUDF_KERNEL void __launch_bounds__(block_size, 1)
         threadIdx.x);
     }
     // Temporarily disable stats writing for int96 timestamps
-    // TODO: https://github.com/rapidsai/cudf/issues/10438
+    // TODO: https://github.com/NVIDIA/cudf/issues/10438
     else {
       type_dispatcher(
         state.col.leaf_column->type(),
@@ -338,12 +338,12 @@ template <detail::io_file_format IO>
 void calculate_group_statistics(statistics_chunk* chunks,
                                 statistics_group const* groups,
                                 uint32_t num_chunks,
-                                rmm::cuda_stream_view stream,
+                                cuda::stream_ref stream,
                                 bool const int96_timestamps = false)
 {
   constexpr int block_size = 256;
   gpu_calculate_group_statistics<block_size, IO>
-    <<<num_chunks, block_size, 0, stream.value()>>>(chunks, groups, int96_timestamps);
+    <<<num_chunks, block_size, 0, stream.get()>>>(chunks, groups, int96_timestamps);
   CUDF_CUDA_TRY(cudaGetLastError());
 }
 
@@ -394,11 +394,11 @@ void merge_group_statistics(statistics_chunk* chunks_out,
                             statistics_chunk const* chunks_in,
                             statistics_merge_group const* groups,
                             uint32_t num_chunks,
-                            rmm::cuda_stream_view stream)
+                            cuda::stream_ref stream)
 {
   constexpr int block_size = 256;
   gpu_merge_group_statistics<block_size, IO>
-    <<<num_chunks, block_size, 0, stream.value()>>>(chunks_out, chunks_in, groups);
+    <<<num_chunks, block_size, 0, stream.get()>>>(chunks_out, chunks_in, groups);
   CUDF_CUDA_TRY(cudaGetLastError());
 }
 

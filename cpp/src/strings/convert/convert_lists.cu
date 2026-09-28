@@ -213,8 +213,11 @@ std::unique_ptr<column> format_list_column(lists_column_view const& input,
     stream,
     mr);
 
-  return make_strings_column(
-    input.size(), std::move(offsets_column), chars.release(), 0, rmm::device_buffer{});
+  return make_strings_column(input.size(),
+                             std::move(offsets_column),
+                             chars.release(),
+                             0,
+                             cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 }
 
 }  // namespace detail

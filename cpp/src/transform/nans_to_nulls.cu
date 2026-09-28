@@ -24,7 +24,7 @@ namespace cudf {
 namespace detail {
 struct dispatch_nan_to_null {
   template <typename T>
-  std::pair<std::unique_ptr<rmm::device_buffer>, cudf::size_type> operator()(
+  std::pair<std::unique_ptr<cuda::device_buffer<std::byte>>, cudf::size_type> operator()(
     column_view const& input, cuda::stream_ref stream, rmm::device_async_resource_ref mr)
     requires(std::is_floating_point_v<T>)
   {
@@ -42,11 +42,12 @@ struct dispatch_nan_to_null {
                                  stream,
                                  mr);
 
-    return std::pair(std::make_unique<rmm::device_buffer>(std::move(mask.first)), mask.second);
+    return std::pair(std::make_unique<cuda::device_buffer<std::byte>>(std::move(mask.first)),
+                     mask.second);
   }
 
   template <typename T>
-  std::pair<std::unique_ptr<rmm::device_buffer>, cudf::size_type> operator()(
+  std::pair<std::unique_ptr<cuda::device_buffer<std::byte>>, cudf::size_type> operator()(
     column_view const& input, cuda::stream_ref stream, rmm::device_async_resource_ref mr)
     requires(!std::is_floating_point_v<T>)
   {

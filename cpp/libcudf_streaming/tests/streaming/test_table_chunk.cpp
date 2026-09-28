@@ -50,8 +50,8 @@ class StreamingTableChunk : public BaseStreamingFixture,
       memory_limits,                      // memory_limits
       std::chrono::milliseconds{1},       // periodic_spill_check
       stream_pool,                        // stream_pool
-      rapidsmpf::Statistics::disabled()   // statistics
-    );
+      rapidsmpf::Statistics::disabled(),  // statistics
+      spill_dir.path());
     ctx = std::make_shared<rapidsmpf::streaming::Context>(
       options, GlobalEnvironment->comm_->logger(), br);
   }
@@ -68,7 +68,8 @@ class StreamingTableChunk : public BaseStreamingFixture,
       std::unordered_map<rapidsmpf::MemoryType, std::int64_t>{},
       std::nullopt,
       std::make_shared<rapidsmpf::StreamPool>(16),
-      std::move(stats));
+      std::move(stats),
+      spill_dir.path());
   }
 
   /// @brief The number of spills recorded in @p stats.
@@ -78,6 +79,7 @@ class StreamingTableChunk : public BaseStreamingFixture,
                                                  : 0UL;
   }
 
+  TempDir spill_dir;
   cuda::stream_ref stream{cudaStream_t{cudaStreamDefault}};
   rmm::mr::cuda_memory_resource mr_cuda;
   std::shared_ptr<rapidsmpf::BufferResource> br;
@@ -194,7 +196,9 @@ TEST_F(StreamingTableChunk, FromPackedDataOnDevice)
 
 INSTANTIATE_TEST_SUITE_P(StreamingTableChunkWithSpillTargets,
                          StreamingTableChunk,
-                         ::testing::ValuesIn(rapidsmpf::SPILL_TARGET_MEMORY_TYPES),
+                         ::testing::ValuesIn({rapidsmpf::MemoryType::PINNED_HOST,
+                                              rapidsmpf::MemoryType::HOST,
+                                              rapidsmpf::MemoryType::DISK}),
                          [](testing::TestParamInfo<rapidsmpf::MemoryType> const& info) {
                            return std::string{rapidsmpf::to_string(info.param)};
                          });
@@ -326,13 +330,17 @@ TEST_P(StreamingTableChunk, DeviceToHostRoundTripCopy)
     }
   }
 
-  // Host to host copy.
-  auto host_res2  = br->reserve_or_fail(host_copy.data_alloc_size(spill_mem_type), spill_mem_type);
-  auto host_copy2 = host_copy.copy(host_res2);
+  // Disk-to-disk copies are unsupported; keep the disk chunk for the round trip.
+  auto const host_cost = host_copy.make_available_cost();
+  auto host_copy2 = [&] {
+    if (spill_mem_type == rapidsmpf::MemoryType::DISK) { return std::move(host_copy); }
+    auto host_res2 = br->reserve_or_fail(host_copy.data_alloc_size(spill_mem_type), spill_mem_type);
+    return host_copy.copy(host_res2);
+  }();
   EXPECT_FALSE(host_copy2.is_available());
   EXPECT_TRUE(host_copy2.is_spillable());
   EXPECT_EQ(host_copy2.stream().get(), stream.get());
-  EXPECT_EQ(host_copy2.make_available_cost(), host_copy.make_available_cost());
+  EXPECT_EQ(host_copy2.make_available_cost(), host_cost);
   {
     auto cd = get_content_description(host_copy2);
     EXPECT_EQ(cd.spillable(), host_copy2.is_spillable());

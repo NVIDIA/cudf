@@ -23,10 +23,10 @@ namespace cudf_streaming {
 namespace {
 
 /**
- * @brief Pack an available table chunk into host or pinned host memory.
+ * @brief Pack an available table chunk into host, pinned host, or disk memory.
  *
  * @param chunk The available table chunk to pack.
- * @param reservation Host or pinned host memory reservation.
+ * @param reservation Host, pinned host, or disk memory reservation.
  * @param spill Whether the table is leaving device memory, in which case it is
  * recorded as a spill.
  * @return A new, unavailable `table_chunk` holding the packed table.
@@ -60,7 +60,7 @@ table_chunk pack_into_host(table_chunk const& chunk,
   }
 
   // We use libcudf's pack() to serialize `table_view()` into a packed_columns and then
-  // move the packed_columns' gpu_data to a new host buffer.
+  // move the packed_columns' gpu_data to a new host or disk buffer.
   // TODO: use `cudf::chunked_pack()` with a bounce buffer. Currently, `cudf::pack()`
   // allocates device memory we haven't reserved.
   auto packed_columns = cudf::pack(chunk.table_view(), chunk.stream(), br->device_mr());
@@ -213,8 +213,8 @@ table_chunk table_chunk::copy(rapidsmpf::MemoryReservation& reservation) const
   //    into the reservation-specified memory type using libcudf:
   //    a. DEVICE       - cudf-copy table_view() into device memory.
   //    b. PINNED_HOST  - cudf::pack table_view() directly into pinned memory.
-  //    c. HOST         - cudf::pack table_view() into intermediate device
-  //                      memory and then copy to host memory.
+  //    c. HOST / DISK  - cudf::pack table_view() into intermediate device
+  //                      memory and then copy to host or disk memory.
   //
   // 2. The chunk data is already packed (packed_data_ != nullptr).
   //    Use buffer_copy() to copy the packed data into the reservation-
@@ -242,6 +242,7 @@ table_chunk table_chunk::copy(rapidsmpf::MemoryReservation& reservation) const
       }
       case rapidsmpf::MemoryType::PINNED_HOST:  // Case 1b.
       case rapidsmpf::MemoryType::HOST:         // Case 1c.
+      case rapidsmpf::MemoryType::DISK:         // Case 1c.
         return pack_into_host(*this, reservation, /* spill = */ false);
       default: RAPIDSMPF_FAIL("MemoryType: unknown");
     }
@@ -275,7 +276,8 @@ table_chunk table_chunk::move(rapidsmpf::MemoryReservation& reservation)
   switch (reservation.mem_type()) {
     case rapidsmpf::MemoryType::DEVICE: return src;
     case rapidsmpf::MemoryType::PINNED_HOST:
-    case rapidsmpf::MemoryType::HOST: return pack_into_host(src, reservation, /* spill = */ true);
+    case rapidsmpf::MemoryType::HOST:
+    case rapidsmpf::MemoryType::DISK: return pack_into_host(src, reservation, /* spill = */ true);
     default: RAPIDSMPF_FAIL("MemoryType: unknown");
   }
 }

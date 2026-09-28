@@ -112,7 +112,6 @@ def test_numeric_binop(engine: pl.GPUEngine, df, binop):
     ],
 )
 @pytest.mark.parametrize("with_nulls", [False, True], ids=["no_nulls", "nulls"])
-@pytest.mark.parametrize("binop", _BINOPS, ids=lambda fn: fn.__name__)
 def test_numeric_binop_non_spmd(engine: pl.GPUEngine, ltype, rtype, with_nulls, binop):
     """Exercise non-SPMD backends with representative promotion pairs."""
     q = _make_df(ltype, rtype, with_nulls).select(binop(pl.col("a"), pl.col("b")))

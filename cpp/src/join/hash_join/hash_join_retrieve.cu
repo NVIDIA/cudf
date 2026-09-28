@@ -2,8 +2,6 @@
  * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
-#pragma once
-
 #include "common.cuh"
 #include "dispatch.cuh"
 #include "hash_csr_kernels.cuh"
@@ -23,7 +21,11 @@
 
 #include <cuda/std/cstdint>
 
+#include <memory>
+#include <optional>
+#include <stdexcept>
 #include <tuple>
+#include <utility>
 
 namespace cudf::detail {
 
@@ -145,15 +147,27 @@ hash_join<Hasher>::join_retrieve(cudf::table_view const& left,
     cudf::prefetch::detail::prefetch(*left_indices, stream);
     cudf::prefetch::detail::prefetch(*right_indices, stream);
 
-    launch_hash_csr_retrieve_kernel<Join != join_kind::INNER_JOIN>(actual_size,
-                                                                   left.num_rows(),
-                                                                   offsets.data(),
-                                                                   probe_groups.data(),
-                                                                   _impl->csr(),
-                                                                   0,
-                                                                   left_indices->data(),
-                                                                   right_indices->data(),
-                                                                   stream);
+    if constexpr (Join == join_kind::INNER_JOIN) {
+      launch_hash_csr_inner_retrieve_kernel(actual_size,
+                                            left.num_rows(),
+                                            offsets.data(),
+                                            probe_groups.data(),
+                                            _impl->csr(),
+                                            0,
+                                            left_indices->data(),
+                                            right_indices->data(),
+                                            stream);
+    } else {
+      launch_hash_csr_outer_retrieve_kernel(actual_size,
+                                            left.num_rows(),
+                                            offsets.data(),
+                                            probe_groups.data(),
+                                            _impl->csr(),
+                                            0,
+                                            left_indices->data(),
+                                            right_indices->data(),
+                                            stream);
+    }
 
     return std::pair(std::move(left_indices), std::move(right_indices));
   }();
@@ -172,5 +186,27 @@ hash_join<Hasher>::join_retrieve(cudf::table_view const& left,
     return join_indices;
   }
 }
+
+template std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
+                   std::unique_ptr<rmm::device_uvector<size_type>>>
+hash_join<hash_join_hasher>::join_retrieve<join_kind::INNER_JOIN>(
+  cudf::table_view const&,
+  std::optional<std::size_t>,
+  cuda::stream_ref,
+  rmm::device_async_resource_ref) const;
+template std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
+                   std::unique_ptr<rmm::device_uvector<size_type>>>
+hash_join<hash_join_hasher>::join_retrieve<join_kind::LEFT_JOIN>(
+  cudf::table_view const&,
+  std::optional<std::size_t>,
+  cuda::stream_ref,
+  rmm::device_async_resource_ref) const;
+template std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
+                   std::unique_ptr<rmm::device_uvector<size_type>>>
+hash_join<hash_join_hasher>::join_retrieve<join_kind::FULL_JOIN>(
+  cudf::table_view const&,
+  std::optional<std::size_t>,
+  cuda::stream_ref,
+  rmm::device_async_resource_ref) const;
 
 }  // namespace cudf::detail

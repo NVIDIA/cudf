@@ -26,6 +26,10 @@ from cudf.core.udf._ops import (
     unary_ops,
 )
 from cudf.core.udf.api import Masked, pack_return
+from cudf.core.udf.mlir_backend.strings_typing import (
+    MLIRStringType,
+    mlir_string,
+)
 
 # Datetime / timedelta resolutions cudf UDFs support. Mirrors the units
 # used by the column dtypes flowing into the kernels.
@@ -35,11 +39,13 @@ _units = ("ns", "us", "ms", "s")
 # ``nb_types.real_domain`` (``float32``/``float64``) rather than ``types.Float``
 # so that ``float16`` -- which is not a valid cuDF column dtype -- is excluded;
 # ``types.Number`` would likewise wrongly admit ``float16`` and complex types.
+# ``MLIRStringType`` covers nullable string columns (``Masked(mlir_string)``).
 _SUPPORTED_MASKED_VALUE_TYPE_CLASSES = (
     types.Integer,
     types.Boolean,
     types.NPDatetime,
     types.NPTimedelta,
+    MLIRStringType,
 )
 
 
@@ -49,6 +55,7 @@ _supported_value_type_instances = (
     | {nb_types.boolean}
     | {nb_types.NPDatetime(u) for u in _units}
     | {nb_types.NPTimedelta(u) for u in _units}
+    | {mlir_string}
 )
 
 

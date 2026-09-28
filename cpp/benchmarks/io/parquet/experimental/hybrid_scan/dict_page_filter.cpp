@@ -8,13 +8,11 @@
 #include <benchmarks/io/cuio_common.hpp>
 #include <benchmarks/io/nvbench_helpers.hpp>
 
-#include <cudf/copying.hpp>
 #include <cudf/io/datasource.hpp>
 #include <cudf/io/experimental/hybrid_scan.hpp>
 #include <cudf/io/parquet.hpp>
 #include <cudf/io/parquet_io_utils.hpp>
 #include <cudf/io/text/byte_range_info.hpp>
-#include <cudf/reduction/distinct_count.hpp>
 #include <cudf/scalar/scalar.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/traits.hpp>
@@ -22,6 +20,7 @@
 
 #include <nvbench/nvbench.cuh>
 
+#include <algorithm>
 #include <limits>
 #include <numeric>
 
@@ -35,25 +34,16 @@ void filter_row_groups_with_dicts_common(nvbench::state& state,
                                          cudf::ast::operation const& filter_expr)
 {
   auto const num_row_groups = static_cast<cudf::size_type>(state.get_int64("num_row_groups"));
+  auto const cardinality    = static_cast<cudf::size_type>(state.get_int64("cardinality"));
   auto constexpr rows_per_row_group = 5'000;  //< Chosen such that it is not ignored by the writer
   auto const num_rows               = num_row_groups * rows_per_row_group;
 
   std::vector<char> parquet_buffer;
-  std::size_t num_dict_entries = 0;
 
   // Write table to parquet
   {
     auto const table =
       create_random_table(cycle_dtypes({dtype}, num_cols), row_count{num_rows}, table_profile);
-
-    // Only the filter column's dictionaries are decoded; each holds its row group's distinct values
-    auto const filter_col = table->get_column(0).view();
-    for (cudf::size_type rg = 0; rg < num_row_groups; ++rg) {
-      auto const rg_col =
-        cudf::slice(filter_col, {rg * rows_per_row_group, (rg + 1) * rows_per_row_group}).front();
-      num_dict_entries +=
-        cudf::distinct_count(rg_col, cudf::null_policy::EXCLUDE, cudf::nan_policy::NAN_IS_VALID);
-    }
 
     cudf::io::parquet_writer_options write_opts =
       cudf::io::parquet_writer_options::builder(cudf::io::sink_info(&parquet_buffer), table->view())
@@ -92,6 +82,11 @@ void filter_row_groups_with_dicts_common(nvbench::state& state,
 
   auto input_row_group_indices = reader->all_row_groups(read_opts);
   auto dict_page_byte_ranges   = std::vector<cudf::io::text::byte_range_info>{};
+
+  // Upper bound on the dictionary entries. Real dictionaries are smaller because the generator
+  // repeats each value it draws for a run of rows, and may draw the same value again
+  auto const num_dict_entries =
+    static_cast<std::size_t>(std::min(cardinality, rows_per_row_group) * num_row_groups);
 
   // Must precede `state.exec()`, which derives the `Elem/s` column from this count
   state.add_element_count(num_dict_entries, "num_dict_entries");
@@ -200,10 +195,6 @@ void BM_hybrid_scan_dict_page_pruning_fixed_width(nvbench::state& state,
   run_dict_page_pruning(state, DType, table_profile, filter_value);
 }
 
-// Separates the two variables behind dictionary pruning cost. INT8, INT16 and INT32 all store as
-// physical INT32 in Parquet, so entry width is constant across them while the value range caps the
-// distinct entries per row group at 128, 32'768 and the row group size respectively. INT64 is the
-// only one that widens the entry, so it isolates width from entry count.
 using dict_fixed_width_dtypes = nvbench::enum_type_list<cudf::type_id::INT8,
                                                         cudf::type_id::INT16,
                                                         cudf::type_id::INT32,

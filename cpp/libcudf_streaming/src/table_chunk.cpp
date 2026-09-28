@@ -37,6 +37,14 @@ table_chunk pack_into_reservation(table_chunk const& chunk,
 {
   rapidsmpf::BufferResource* br = reservation.br();
 
+  if (chunk.data_alloc_size(rapidsmpf::MemoryType::DEVICE) == 0) {
+    // Preserve the packing metadata without recording a zero-byte copy or spill.
+    auto packed_columns = cudf::pack(chunk.table_view(), chunk.stream(), br->device_mr());
+    RAPIDSMPF_EXPECTS(packed_columns.gpu_data->size() == 0, "packed data size must be zero");
+    return table_chunk(std::make_unique<rapidsmpf::PackedData>(
+      std::move(packed_columns.metadata), br->make_buffer(0, chunk.stream(), reservation)));
+  }
+
   if (reservation.mem_type() == rapidsmpf::MemoryType::PINNED_HOST) {
     rapidsmpf::StreamOrderedTiming timing{chunk.stream(), br->statistics()};
 
@@ -112,7 +120,6 @@ table_chunk::table_chunk(std::unique_ptr<rapidsmpf::PackedData> packed_data)
 {
   RAPIDSMPF_EXPECTS(
     packed_data_ != nullptr, "packed data pointer cannot be null", std::invalid_argument);
-  RAPIDSMPF_EXPECTS(!packed_data_->empty(), "packed data cannot be empty", std::invalid_argument);
   // Initialize stream_ here rather than in the member-initializer list to avoid
   // dereferencing packed_data_ before the null check above.
   stream_ = packed_data_->data->stream();
@@ -123,8 +130,11 @@ table_chunk::table_chunk(std::unique_ptr<rapidsmpf::PackedData> packed_data)
   } else {
     // table data is in device memory. We can trivially unpack it and make it
     // available.
-    table_view_          = cudf::unpack(packed_data_->metadata->data(),
-                               reinterpret_cast<std::uint8_t const*>(packed_data_->data->data()));
+    table_view_ =
+      packed_data_->metadata->empty()
+        ? cudf::table_view{}
+        : cudf::unpack(packed_data_->metadata->data(),
+                       reinterpret_cast<std::uint8_t const*>(packed_data_->data->data()));
     make_available_cost_ = 0;
   }
 }

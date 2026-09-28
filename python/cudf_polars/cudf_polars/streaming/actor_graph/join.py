@@ -506,6 +506,9 @@ async def broadcast_join(
 
     small_duplicated = small_metadata.duplicated
     need_allgather = comm.nranks > 1 and not small_duplicated
+    can_join_build_chunks_separately = _can_join_build_chunks_separately(
+        comm, ir, small_metadata
+    )
     output_duplicated = (
         small_duplicated or need_allgather
     ) and large_metadata.duplicated
@@ -523,7 +526,7 @@ async def broadcast_join(
         need_allgather=need_allgather,
         collective_id=collective_id,
         ir_context=ir_context,
-        must_concatenate=ir.options[0] != "Inner",
+        must_concatenate=not can_join_build_chunks_separately,
     )
 
     # Publish output metadata only once the broadcast-side collective has
@@ -1246,54 +1249,6 @@ def _can_join_build_chunks_separately(
     return not need_allgather and ir.options[0] == "Inner"
 
 
-def _make_shuffle_strategy_from_samples(
-    comm: Communicator,
-    ir: Join,
-    left_partitioning: NormalizedPartitioning,
-    right_partitioning: NormalizedPartitioning,
-    executor: StreamingExecutor,
-    left_sample: TableSizeStats,
-    right_sample: TableSizeStats,
-    tracer: ActorTracer | None,
-) -> ShuffleJoinStrategy:
-    """Construct and trace a shuffle strategy from sampled input sizes."""
-    estimated_output_size = max(left_sample.total_size, right_sample.total_size)
-    ideal_output_count = max(1, estimated_output_size // executor.target_partition_size)
-    # Limit the output count to 10x the larger input side. This prevents an
-    # oversized sample from blowing up the chunk count.
-    max_output_chunks = 10 * max(left_sample.total_chunks, right_sample.total_chunks)
-    min_shuffle_modulus = min(ideal_output_count, max_output_chunks)
-
-    # Stay away from cuDF's row limit.
-    estimated_rows_count = max(left_sample.total_rows, right_sample.total_rows)
-    if estimated_rows_count > 0:
-        min_partitions_for_row_limit = (
-            estimated_rows_count + MAX_ROWS_PER_PARTITION - 1
-        ) // MAX_ROWS_PER_PARTITION
-        min_shuffle_modulus = max(min_shuffle_modulus, min_partitions_for_row_limit)
-
-    shuffle_modulus = _choose_shuffle_modulus(
-        comm,
-        left_partitioning,
-        right_partitioning,
-        min_shuffle_modulus,
-    )
-    strategy = _make_shuffle_strategy(
-        ir,
-        shuffle_modulus,
-        left_partitioning,
-        right_partitioning,
-    )
-    if tracer is not None:
-        _log_shuffle_strategy_decision(
-            tracer,
-            strategy,
-            left_partitioning,
-            right_partitioning,
-        )
-    return strategy
-
-
 def _choose_strategy_from_samples(
     comm: Communicator,
     ir: Join,
@@ -1307,8 +1262,13 @@ def _choose_strategy_from_samples(
     right_sample: TableSizeStats,
     chunkwise: bool,
     tracer: ActorTracer | None,
+    allow_broadcast: bool = True,
 ) -> JoinStrategy:
-    """Choose a tentative broadcast side or a committed non-broadcast plan."""
+    """
+    Choose a tentative broadcast side or a committed non-broadcast plan.
+
+    When ``allow_broadcast`` is false, choose the shuffle fallback.
+    """
     if chunkwise:
         if tracer is not None:
             tracer.decision = "chunkwise"
@@ -1324,6 +1284,7 @@ def _choose_strategy_from_samples(
 
     left_total, right_total = left_sample.total_size, right_sample.total_size
     left_total_rows, right_total_rows = left_sample.total_rows, right_sample.total_rows
+    how = ir.options[0]
 
     # =====================================================================
     # Broadcast-Join Strategy Selection
@@ -1350,12 +1311,17 @@ def _choose_strategy_from_samples(
             comm, ir, right_metadata
         ),
     )
-    can_broadcast_left = left_size_ok and ir.options[0] in ("Inner", "Right")
-    can_broadcast_right = right_size_ok and ir.options[0] in (
-        "Inner",
-        "Left",
-        "Semi",
-        "Anti",
+    can_broadcast_left = allow_broadcast and left_size_ok and how in ("Inner", "Right")
+    can_broadcast_right = (
+        allow_broadcast
+        and right_size_ok
+        and how
+        in (
+            "Inner",
+            "Left",
+            "Semi",
+            "Anti",
+        )
     )
 
     broadcast_side: Literal["left", "right"] | None = None
@@ -1376,16 +1342,41 @@ def _choose_strategy_from_samples(
         return BroadcastJoinStrategy(side=broadcast_side)
 
     # Couldn't broadcast - Use a shuffle join instead.
-    return _make_shuffle_strategy_from_samples(
+    estimated_output_size = max(left_total, right_total)
+    ideal_output_count = max(1, estimated_output_size // executor.target_partition_size)
+    # Limit the output count to 10x the larger input side. This prevents an
+    # oversized sample from blowing up the chunk count.
+    max_output_chunks = 10 * max(left_sample.total_chunks, right_sample.total_chunks)
+    min_shuffle_modulus = min(ideal_output_count, max_output_chunks)
+
+    # Stay away from cuDF's row limit.
+    estimated_rows_count = max(left_total_rows, right_total_rows)
+    if estimated_rows_count > 0:
+        min_partitions_for_row_limit = (
+            estimated_rows_count + MAX_ROWS_PER_PARTITION - 1
+        ) // MAX_ROWS_PER_PARTITION
+        min_shuffle_modulus = max(min_shuffle_modulus, min_partitions_for_row_limit)
+
+    shuffle_modulus = _choose_shuffle_modulus(
         comm,
-        ir,
         left_partitioning,
         right_partitioning,
-        executor,
-        left_sample,
-        right_sample,
-        tracer,
+        min_shuffle_modulus,
     )
+    strategy = _make_shuffle_strategy(
+        ir,
+        shuffle_modulus,
+        left_partitioning,
+        right_partitioning,
+    )
+    if tracer is not None:
+        _log_shuffle_strategy_decision(
+            tracer,
+            strategy,
+            left_partitioning,
+            right_partitioning,
+        )
+    return strategy
 
 
 def _choose_shuffle_modulus(
@@ -1621,7 +1612,7 @@ async def _validate_broadcast_candidate(
     *,
     can_join_build_chunks_separately: bool,
 ) -> bool:
-    """Finish buffering a candidate side and decide whether it is safe."""
+    """Buffer a candidate until exhausted or proven too large to broadcast."""
     sample = input_.sample
     if sample is None:
         raise ValueError("Broadcast candidate has not been sampled")
@@ -1829,15 +1820,19 @@ async def choose_strategy(
             right_sample = join_state.right.sample
             if left_sample is None or right_sample is None:
                 raise ValueError("Join inputs have not been sampled")
-            strategy = _make_shuffle_strategy_from_samples(
+            strategy = _choose_strategy_from_samples(
                 comm,
                 ir,
+                left_metadata,
+                right_metadata,
                 left_partitioning,
                 right_partitioning,
                 executor,
-                left_sample,
-                right_sample,
-                tracer,
+                left_sample=left_sample,
+                right_sample=right_sample,
+                chunkwise=False,
+                tracer=tracer,
+                allow_broadcast=False,
             )
     else:
         strategy = proposed_strategy

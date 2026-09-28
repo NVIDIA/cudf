@@ -272,21 +272,30 @@ def test_io_tasks_wait_for_memory_admission(
     assert second["admitted"] >= first["stop"]
 
 
-def test_broadcast_candidate_uses_exact_size_before_commit(
+def test_underestimated_broadcast_candidate(
     tmp_path: pathlib.Path,
     timeout_seconds: int,
 ) -> None:
-    """An incomplete broadcast candidate is committed or rejected exactly."""
+    """A join does not commit to broadcasting an underestimated input."""
     pytest.importorskip("structlog")
 
+    large_row_count = 1_000
+    right_row_count = 10 * large_row_count + 1
+    # Two int64 columns put the complete left side between these limits.
+    reject_limit = 1_024
+    accept_limit = 32_768
     left_path = tmp_path / "left"
     left_path.mkdir()
+    # Sampling one chunk sees the small file first and underestimates the table.
     pl.DataFrame({"key": [0], "left": [0]}).write_parquet(
         left_path / "00-small.parquet"
     )
-    pl.DataFrame({"key": range(1, 1_001), "left": range(1, 1_001)}).write_parquet(
-        left_path / "01-large.parquet"
-    )
+    pl.DataFrame(
+        {
+            "key": range(1, large_row_count + 1),
+            "left": range(1, large_row_count + 1),
+        }
+    ).write_parquet(left_path / "01-large.parquet")
 
     code = textwrap.dedent(f"""\
     import json
@@ -301,15 +310,18 @@ def test_broadcast_candidate_uses_exact_size_before_commit(
 
     left = pl.scan_parquet({str(left_path / "*.parquet")!r})
     right = pl.LazyFrame({{
-        "key": range(10_001),
-        "right": range(10_001),
+        "key": range({right_row_count}),
+        "right": range({right_row_count}),
     }})
     records = {{}}
-    for case, broadcast_limit in (("reject", 1_024), ("commit", 32_768)):
+    for case, broadcast_limit in (
+        ("reject", {reject_limit}),
+        ("accept", {accept_limit}),
+    ):
         options = {{
             "broadcast_limit": broadcast_limit,
             "target_partition_size": 1 << 20,
-            "max_rows_per_partition": 20_000,
+            "max_rows_per_partition": {2 * right_row_count},
             "dynamic_planning": {{"sample_chunk_count": 1}},
         }}
         with SPMDEngine(executor_options=options) as engine:
@@ -350,12 +362,12 @@ def test_broadcast_candidate_uses_exact_size_before_commit(
     record = json.loads(payload)
 
     expected_result = {
-        "rows": 1_001,
-        "left_sum": sum(range(1_001)),
+        "rows": large_row_count + 1,
+        "left_sum": sum(range(large_row_count + 1)),
     }
     assert record == {
         "reject": {"decision": "shuffle", **expected_result},
-        "commit": {"decision": "broadcast_left", **expected_result},
+        "accept": {"decision": "broadcast_left", **expected_result},
     }
 
 

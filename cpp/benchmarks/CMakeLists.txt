@@ -246,6 +246,7 @@ ConfigureNVBench(
   groupby/group_rank.cpp
   groupby/group_scan.cpp
   groupby/group_shift.cpp
+  groupby/group_streaming.cpp
   groupby/group_struct_keys.cpp
   groupby/group_struct_values.cpp
   groupby/group_sum.cpp

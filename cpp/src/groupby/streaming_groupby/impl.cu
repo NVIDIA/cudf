@@ -157,21 +157,6 @@ void streaming_groupby::impl::initialize(table_view const& data, cuda::stream_re
                  std::invalid_argument);
   }
 
-  _agg_results = detail::hash::create_results_table(
-    _max_distinct_keys, values_view, _agg_kinds, _is_agg_intermediate, stream, mr);
-
-  // Cache the mutable_table_device_view once; the underlying table is fixed-size and
-  // never reallocated, so the device-side descriptor stays valid for the whole
-  // lifetime of this impl.
-  {
-    auto raii = mutable_table_device_view::create(*_agg_results, stream);
-    _d_agg_results =
-      decltype(_d_agg_results){raii.release(), +[](mutable_table_device_view* t) { t->destroy(); }};
-  }
-
-  _d_agg_kinds = std::make_unique<rmm::device_uvector<aggregation::Kind>>(
-    cudf::detail::make_device_uvector_async(_agg_kinds, stream, mr));
-
   // Map each column in `values_view` back to its index in `data`.
   _value_col_indices.reserve(values_view.num_columns());
   for (size_type i = 0; i < values_view.num_columns(); ++i) {
@@ -205,6 +190,41 @@ void streaming_groupby::impl::initialize(table_view const& data, cuda::stream_re
     }
     CUDF_EXPECTS(found, "Internal error: request's first simple agg not found.");
   }
+
+  // Integer keys that pack into eight bytes, aggregated by simple folds, take the packed-key
+  // table; everything else takes the generic row-operator path.
+  std::vector<data_type> key_types;
+  key_types.reserve(key_cols.size());
+  for (auto const& kc : key_cols) {
+    key_types.push_back(kc.type());
+  }
+  std::vector<packed::value_spec> value_specs;
+  value_specs.reserve(_agg_kinds.size());
+  for (size_t k = 0; k < _agg_kinds.size(); ++k) {
+    value_specs.push_back(packed::value_spec{
+      values_view.column(k).type(), _agg_kinds[k], _is_agg_intermediate[k] != 0});
+  }
+  if (packed::packed_state::supported(key_types, value_specs, _null_handling)) {
+    _packed = std::make_unique<packed::packed_state>(
+      std::move(key_types), std::move(value_specs), _null_handling, _max_distinct_keys, _mr, stream);
+    _initialized = true;
+    return;
+  }
+
+  _agg_results = detail::hash::create_results_table(
+    _max_distinct_keys, values_view, _agg_kinds, _is_agg_intermediate, stream, mr);
+
+  // Cache the mutable_table_device_view once; the underlying table is fixed-size and
+  // never reallocated, so the device-side descriptor stays valid for the whole
+  // lifetime of this impl.
+  {
+    auto raii = mutable_table_device_view::create(*_agg_results, stream);
+    _d_agg_results =
+      decltype(_d_agg_results){raii.release(), +[](mutable_table_device_view* t) { t->destroy(); }};
+  }
+
+  _d_agg_kinds = std::make_unique<rmm::device_uvector<aggregation::Kind>>(
+    cudf::detail::make_device_uvector_async(_agg_kinds, stream, mr));
 
   // Companion vector: indexed by dense ID, one {batch_id, row} entry per distinct key.
   _key_loc = std::make_unique<rmm::device_uvector<key_location_t>>(_max_distinct_keys, stream, mr);
@@ -272,30 +292,36 @@ streaming_groupby::impl::do_finalize(cuda::stream_ref stream,
 {
   CUDF_EXPECTS(_initialized, "Cannot finalize streaming_groupby with no accumulated data.");
 
-  auto keys         = gather_distinct_keys(stream, mr);
-  auto agg_gathered = gather_agg_results(stream, mr);
+  auto [keys, agg_gathered] =
+    _packed ? _packed->write_groups(stream, mr)
+            : std::pair{gather_distinct_keys(stream, mr), gather_agg_results(stream, mr)};
 
-  // Group user requests by their target column in `agg_gathered` so the cache layout
-  // produced by `extract_single_pass_aggs` matches the dedup'd `agg_gathered`.  Uses
-  // linear search on a small `group_offsets` vector since the number of distinct
-  // columns is typically small.
+  // Group user requests by the input column they aggregate, exactly as `initialize()` did, so
+  // that decomposing them again yields the simple aggregations of `agg_gathered` in the same
+  // order.  (Grouping by anything finer, such as each request's first simple aggregation, would
+  // let a compound aggregation's intermediates be counted twice when another request on the same
+  // column shares only some of them.)  A group's `values` is the first result column of its
+  // first request; every cache entry of the group is keyed by that column.  Uses linear search
+  // on a small `group_columns` vector since the number of distinct columns is typically small.
   auto const agg_gathered_view = agg_gathered->view();
   std::vector<aggregation_request> column_grouped;
-  std::vector<size_type> group_offsets;
+  std::vector<size_type> group_columns;
+  std::vector<size_type> request_group(_requests_clone.size());
   for (size_t i = 0; i < _requests_clone.size(); ++i) {
-    auto const offset = _request_first_agg_offset[i];
+    auto const column = _requests_clone[i].column_index;
     auto cloned       = std::unique_ptr<groupby_aggregation>{
       dynamic_cast<groupby_aggregation*>(_requests_clone[i].aggregation->clone().release())};
-    auto const it = std::find(group_offsets.begin(), group_offsets.end(), offset);
-    if (it == group_offsets.end()) {
+    auto const it = std::find(group_columns.begin(), group_columns.end(), column);
+    if (it == group_columns.end()) {
       aggregation_request ar;
-      ar.values = agg_gathered_view.column(offset);
+      ar.values = agg_gathered_view.column(_request_first_agg_offset[i]);
       ar.aggregations.push_back(std::move(cloned));
+      request_group[i] = static_cast<size_type>(column_grouped.size());
       column_grouped.push_back(std::move(ar));
-      group_offsets.push_back(offset);
+      group_columns.push_back(column);
     } else {
-      column_grouped[std::distance(group_offsets.begin(), it)].aggregations.push_back(
-        std::move(cloned));
+      request_group[i] = static_cast<size_type>(std::distance(group_columns.begin(), it));
+      column_grouped[request_group[i]].aggregations.push_back(std::move(cloned));
     }
   }
 
@@ -324,7 +350,7 @@ streaming_groupby::impl::do_finalize(cuda::stream_ref stream,
   user_requests.reserve(_requests_clone.size());
   for (size_t i = 0; i < _requests_clone.size(); ++i) {
     aggregation_request ar;
-    ar.values = agg_gathered_view.column(_request_first_agg_offset[i]);
+    ar.values = column_grouped[request_group[i]].values;
     ar.aggregations.push_back(std::unique_ptr<groupby_aggregation>{
       dynamic_cast<groupby_aggregation*>(_requests_clone[i].aggregation->clone().release())});
     user_requests.push_back(std::move(ar));

@@ -117,6 +117,22 @@ void streaming_groupby::impl::do_merge(impl const& other, cuda::stream_ref strea
                "Cannot merge streaming_groupby objects with different null handling policies.",
                std::invalid_argument);
 
+  // Both objects have the same aggregation kinds and null policy, so they take the packed path
+  // together unless their key or value types differ, which the packed merge reports.
+  if (_packed) {
+    CUDF_EXPECTS(other._packed != nullptr,
+                 "Cannot merge streaming_groupby objects with different key or value types.",
+                 std::invalid_argument);
+    _insert_done.wait(stream);
+    _packed->merge(*other._packed, stream);
+    _insert_done.record(stream);
+    store_packed_distinct_keys();
+    return;
+  }
+  CUDF_EXPECTS(other._packed == nullptr,
+               "Cannot merge streaming_groupby objects with different key or value types.",
+               std::invalid_argument);
+
   auto const mr = cudf::get_current_device_resource_ref();
 
   auto other_keys           = other.gather_distinct_keys(stream, mr);

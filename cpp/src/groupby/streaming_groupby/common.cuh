@@ -6,6 +6,7 @@
 #pragma once
 
 #include "groupby/hash/helpers.cuh"
+#include "packed_table.cuh"
 
 #include <cudf/detail/cuco_helpers.hpp>
 #include <cudf/detail/row_operator/equality.cuh>
@@ -29,6 +30,7 @@
 #include <atomic>
 #include <memory>
 #include <mutex>
+#include <string>
 #include <vector>
 
 namespace cudf::groupby {
@@ -339,12 +341,38 @@ struct streaming_groupby::impl {
 
   std::unique_ptr<streaming_set_t> _key_set;
 
+  /*
+   * The packed-key table, when the keys are integers that fit in eight bytes between them and
+   * every aggregate is a SUM, MIN, MAX, COUNT or SUM_OF_SQUARES (see packed_table.cuh).  Chosen
+   * once by `initialize()` from the types of the first batch.  When set, it replaces the hash
+   * set, the companion vectors, the compacted batches and the results table above: insertion
+   * and aggregation happen in one kernel per chunk, and `do_finalize()` reads the groups out
+   * of it in the same layout the generic path produces.
+   */
+  std::unique_ptr<packed::packed_state> _packed;
+
   [[nodiscard]] size_type num_keys() const { return static_cast<size_type>(_key_indices.size()); }
   void ensure_not_invalidated() const
   {
     CUDF_EXPECTS(!_invalidated.load(std::memory_order_relaxed),
                  "streaming_groupby is in an invalidated state from a prior failure; "
                  "no further aggregate()/merge() is allowed.  finalize() may still be called.");
+  }
+
+  /*
+   * Publishes the group count of the packed-key table.  The table grows on its own, so the
+   * `max_distinct_keys` bound is checked here, after the fact, and a batch or merge that
+   * crosses it leaves the object invalidated, as it does on the generic path.
+   */
+  void store_packed_distinct_keys()
+  {
+    auto const groups = _packed->num_groups();
+    _distinct_keys.store(groups, std::memory_order_relaxed);
+    if (groups > _max_distinct_keys) {
+      _invalidated = true;
+      CUDF_FAIL("Distinct key count (" + std::to_string(groups) +
+                ") would exceed max_distinct_keys (" + std::to_string(_max_distinct_keys) + ").");
+    }
   }
 
   impl(host_span<size_type const> key_indices,

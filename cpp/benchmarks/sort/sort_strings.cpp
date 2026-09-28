@@ -8,6 +8,7 @@
 
 #include <cudf/sorting.hpp>
 #include <cudf/strings/strings_column_view.hpp>
+#include <cudf/table/table.hpp>
 #include <cudf/types.hpp>
 #include <cudf/utilities/default_stream.hpp>
 
@@ -22,10 +23,8 @@ static void bench_sort_strings(nvbench::state& state)
   data_profile const profile = data_profile_builder().distribution(
     cudf::type_id::STRING, distribution_id::NORMAL, min_width, max_width);
 
-  auto const table = create_random_table({cudf::type_id::STRING}, row_count{num_rows});
-
-  auto sv    = cudf::strings_column_view(table->view().column(0));
-  auto bytes = sv.chars_size(cudf::get_default_stream());
+  auto const table = create_random_table({cudf::type_id::STRING}, row_count{num_rows}, profile);
+  auto const bytes = table->alloc_size();
 
   state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().get()));
   state.add_global_memory_reads<nvbench::int8_t>(bytes);
@@ -44,3 +43,71 @@ NVBENCH_BENCH(bench_sort_strings)
   .add_int64_axis("min_width", {0})
   .add_int64_axis("max_width", {32, 64, 128, 256})
   .add_int64_axis("num_rows", {32768, 262144, 2097152});
+
+// Measures the `sorted_order` fast-path case: a single strings column with no nulls
+static void bench_sorted_order_strings(nvbench::state& state)
+{
+  auto const num_rows  = static_cast<cudf::size_type>(state.get_int64("num_rows"));
+  auto const min_width = static_cast<cudf::size_type>(state.get_int64("min_width"));
+  auto const max_width = static_cast<cudf::size_type>(state.get_int64("max_width"));
+
+  data_profile const profile =
+    data_profile_builder()
+      .distribution(cudf::type_id::STRING, distribution_id::NORMAL, min_width, max_width)
+      .no_validity();
+
+  auto const table = create_random_table({cudf::type_id::STRING}, row_count{num_rows}, profile);
+  auto const bytes = table->alloc_size();
+
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().get()));
+  state.add_global_memory_reads<nvbench::int8_t>(bytes);
+  state.add_global_memory_writes<cudf::size_type>(num_rows);
+
+  auto const mem_stats_logger = cudf::memory_stats_logger();
+
+  state.exec(nvbench::exec_tag::sync,
+             [&](nvbench::launch& launch) { cudf::sorted_order(table->view()); });
+
+  state.add_buffer_size(
+    mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
+}
+
+NVBENCH_BENCH(bench_sorted_order_strings)
+  .set_name("sorted_order_strings")
+  .add_int64_axis("min_width", {1})
+  .add_int64_axis("max_width", {8, 32, 64, 128, 256})
+  .add_int64_axis("num_rows", {32768, 262144, 2097152, 16777216});
+
+// Measures the multi-column (lexicographic row comparator) strings path
+static void bench_sorted_order_strings_multi(nvbench::state& state)
+{
+  auto const num_rows  = static_cast<cudf::size_type>(state.get_int64("num_rows"));
+  auto const num_cols  = static_cast<cudf::size_type>(state.get_int64("num_cols"));
+  auto const max_width = static_cast<cudf::size_type>(state.get_int64("max_width"));
+
+  data_profile const profile =
+    data_profile_builder()
+      .distribution(cudf::type_id::STRING, distribution_id::NORMAL, 1, max_width)
+      .no_validity();
+
+  auto const table = create_random_table(
+    cycle_dtypes({cudf::type_id::STRING}, num_cols), row_count{num_rows}, profile);
+
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().get()));
+  state.add_global_memory_reads<nvbench::int8_t>(table->alloc_size());
+  state.add_global_memory_writes<cudf::size_type>(num_rows);
+
+  auto const mem_stats_logger = cudf::memory_stats_logger();
+
+  state.exec(nvbench::exec_tag::sync,
+             [&](nvbench::launch& launch) { cudf::sorted_order(table->view()); });
+
+  state.add_buffer_size(
+    mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
+}
+
+NVBENCH_BENCH(bench_sorted_order_strings_multi)
+  .set_name("sorted_order_strings_multi")
+  .add_int64_axis("max_width", {8, 32, 64})
+  .add_int64_axis("num_cols", {2, 4})
+  .add_int64_axis("num_rows", {262144, 2097152});

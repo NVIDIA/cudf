@@ -291,7 +291,7 @@ async def _collect_small_side_for_broadcast(
     need_allgather: bool,
     collective_id: int,
     ir_context: IRExecutionContext,
-    concat_size_limit: int | None,
+    must_concatenate: bool,
 ) -> tuple[list[DataFrame], int]:
     """
     Drain small-side channel into chunks, then build DataFrame(s) for broadcast.
@@ -305,9 +305,6 @@ async def _collect_small_side_for_broadcast(
         size += chunks[-1].data_alloc_size()
     row_count = sum(c.shape[0] for c in chunks)
 
-    if (can_concatenate := row_count < CUDF_ROW_LIMIT) and concat_size_limit:
-        can_concatenate = size <= concat_size_limit
-
     dfs: list[DataFrame] = []
     if need_allgather:
         allgather = AllGatherManager(context, comm, collective_id)
@@ -315,6 +312,7 @@ async def _collect_small_side_for_broadcast(
             for s_id in range(len(chunks)):
                 await inserter.insert(s_id, chunks.pop(0))
         stream = ir_context.get_cuda_stream()
+        # TODO: if we can't concatenate and we needn't then this spuriously fails.
         gathered = await allgather.extract_concatenated(stream, ir_context=ir_context)
         # When every rank inserted zero chunks, the AllGather has no schema
         # to infer and returns a 0 column table. Substitute a properly typed
@@ -334,11 +332,16 @@ async def _collect_small_side_for_broadcast(
             )
         ]
     elif chunks:
+        can_concatenate = row_count <= CUDF_ROW_LIMIT
+        if must_concatenate and not can_concatenate:
+            raise RuntimeError(
+                "Broadcast join selected but broadcast side cannot be constructed"
+            )
         if can_concatenate:
             chunks, extra = await make_table_chunks_available_or_wait(
                 context,
                 chunks,
-                reserve_extra=size,
+                reserve_extra=0 if len(chunks) == 1 else size,
                 net_memory_delta=0,
             )
             with opaque_memory_usage(extra):
@@ -349,10 +352,37 @@ async def _collect_small_side_for_broadcast(
                     )
                 ]
         else:
-            chunks, _ = await make_table_chunks_available_or_wait(
-                context, chunks, reserve_extra=0, net_memory_delta=0
-            )
-            dfs = [chunk_to_frame(c, ir) for c in chunks]
+            # Group greedily ensuring that only single-chunk groups can be
+            # above MAX_ROWS_PER_PARTITION.
+            groups = []
+            group: list[TableChunk] = []
+            rows = 0
+            for chunk in chunks:
+                chunk_rows = chunk.shape[0]
+                if group and chunk_rows + rows > MAX_ROWS_PER_PARTITION:
+                    groups.append(group)
+                    rows = 0
+                    group = []
+                group.append(chunk)
+                rows += chunk_rows
+            if group:
+                groups.append(group)
+            del chunks
+            for group in groups:
+                group_size = sum(chunk.data_alloc_size() for chunk in group)
+                group, extra = await make_table_chunks_available_or_wait(  # noqa: PLW2901
+                    context,
+                    group,
+                    reserve_extra=0 if len(group) == 1 else group_size,
+                    net_memory_delta=0,
+                )
+                with opaque_memory_usage(extra):
+                    dfs.append(
+                        _concat(
+                            *[chunk_to_frame(chunk, ir) for chunk in group],
+                            context=ir_context,
+                        )
+                    )
 
     return dfs, size
 
@@ -490,7 +520,7 @@ async def broadcast_join(
         need_allgather=need_allgather,
         collective_id=collective_id,
         ir_context=ir_context,
-        concat_size_limit=(target_partition_size if ir.options[0] == "Inner" else None),
+        must_concatenate=ir.options[0] != "Inner",
     )
 
     # Publish output metadata only once the broadcast-side collective has

@@ -103,7 +103,10 @@ rapidsmpf::streaming::Actor bloom_filter::build(
     auto [res, _] = br->reserve(rapidsmpf::MemoryType::DEVICE, 0, rapidsmpf::AllowOverbooking::YES);
     storage       = br->move_to_device_buffer(std::move(result.second), res);
   }
-  co_await ch_out->send(rapidsmpf::streaming::Message{0, std::move(storage), {}, {}});
+  co_await ch_out->send(rapidsmpf::streaming::Message{0,
+                                                      std::move(storage),
+                                                      rapidsmpf::ContentDescription{},
+                                                      rapidsmpf::streaming::Message::Callbacks{}});
   co_await ch_out->drain(ctx_->executor());
 }
 

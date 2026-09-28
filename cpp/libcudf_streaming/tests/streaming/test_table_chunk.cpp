@@ -332,7 +332,7 @@ TEST_P(StreamingTableChunk, DeviceToHostRoundTripCopy)
 
   // Disk-to-disk copies are unsupported; keep the disk chunk for the round trip.
   auto const host_cost = host_copy.make_available_cost();
-  auto host_copy2 = [&] {
+  auto host_copy2      = [&] {
     if (spill_mem_type == rapidsmpf::MemoryType::DISK) { return std::move(host_copy); }
     auto host_res2 = br->reserve_or_fail(host_copy.data_alloc_size(spill_mem_type), spill_mem_type);
     return host_copy.copy(host_res2);

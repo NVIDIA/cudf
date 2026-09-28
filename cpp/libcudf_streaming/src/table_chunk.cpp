@@ -31,9 +31,9 @@ namespace {
  * recorded as a spill.
  * @return A new, unavailable `table_chunk` holding the packed table.
  */
-table_chunk pack_into_host(table_chunk const& chunk,
-                           rapidsmpf::MemoryReservation& reservation,
-                           bool spill)
+table_chunk pack_into_reservation(table_chunk const& chunk,
+                                  rapidsmpf::MemoryReservation& reservation,
+                                  bool spill)
 {
   rapidsmpf::BufferResource* br = reservation.br();
 
@@ -243,7 +243,7 @@ table_chunk table_chunk::copy(rapidsmpf::MemoryReservation& reservation) const
       case rapidsmpf::MemoryType::PINNED_HOST:  // Case 1b.
       case rapidsmpf::MemoryType::HOST:         // Case 1c.
       case rapidsmpf::MemoryType::DISK:         // Case 1c.
-        return pack_into_host(*this, reservation, /* spill = */ false);
+        return pack_into_reservation(*this, reservation, /* spill = */ false);
       default: RAPIDSMPF_FAIL("MemoryType: unknown");
     }
   }
@@ -277,7 +277,8 @@ table_chunk table_chunk::move(rapidsmpf::MemoryReservation& reservation)
     case rapidsmpf::MemoryType::DEVICE: return src;
     case rapidsmpf::MemoryType::PINNED_HOST:
     case rapidsmpf::MemoryType::HOST:
-    case rapidsmpf::MemoryType::DISK: return pack_into_host(src, reservation, /* spill = */ true);
+    case rapidsmpf::MemoryType::DISK:
+      return pack_into_reservation(src, reservation, /* spill = */ true);
     default: RAPIDSMPF_FAIL("MemoryType: unknown");
   }
 }

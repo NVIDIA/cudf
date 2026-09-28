@@ -572,7 +572,7 @@ TYPED_TEST(ListColumnWrapperTestTyped, EmptyListsWithValidity)
 {
   using T = TypeParam;
 
-  // Use nested() to disambiguate between {} == 0 and {} == List{0}.
+  // Braces distinguish empty lists from zero-valued elements.
 
   auto valids = cudf::test::iterators::valids_at_multiples_of(2);
 
@@ -689,7 +689,7 @@ TYPED_TEST(ListColumnWrapperTestTyped, IncompleteHierarchies)
 {
   using T = TypeParam;
 
-  // Use nested() to disambiguate between {} == 0 and {} == List{0}.
+  // Braces distinguish empty lists from zero-valued elements.
   using LCW = cudf::test::lists_column_wrapper<T, int32_t>;
 
   // List<List<List<T>>>:
@@ -1447,7 +1447,7 @@ TEST_F(ListColumnWrapperTest, MismatchedHierarchies)
 {
   using T = int;
 
-  // Use nested() to disambiguate between {} == 0 and {} == List{0}.
+  // Braces distinguish empty lists from zero-valued elements.
   using LCW = cudf::test::lists_column_wrapper<T>;
 
   // trying to build a column out of a List<List<int>> column, and a List<int> column

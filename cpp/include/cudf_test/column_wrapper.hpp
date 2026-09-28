@@ -1747,25 +1747,6 @@ class lists_column_initializer {
   {
   }
 
-  static lists_column_initializer nested(std::initializer_list<lists_column_initializer> children)
-  {
-    return lists_column_initializer(children);
-  }
-
-  /**
-   * @brief Construct a nested node from child initializers and a row-validity iterator.
-   *
-   * @tparam ValidityIterator Iterator convertible to `bool`
-   * @param children Child list initializers
-   * @param v Validity iterator over `children.size()` rows
-   */
-  template <validity_iterator ValidityIterator>
-  static lists_column_initializer nested(std::initializer_list<lists_column_initializer> children,
-                                         ValidityIterator v)
-  {
-    return lists_column_initializer(children, v);
-  }
-
   /**
    * @brief True if this node holds nested child initializers rather than leaf values.
    * @return Whether this node is nested
@@ -1859,13 +1840,12 @@ class lists_column_initializer {
 /**
  * @brief `column_wrapper` derived class for wrapping columns of lists.
  *
- * Nested rows can normally be expressed directly with braces. Use `nested()` when a
- * single-child initializer would otherwise make the intended depth ambiguous.
+ * Nested rows, including single-child and empty rows, are expressed directly with braces.
  *
  * @code{.cpp}
  * using LCW = cudf::test::lists_column_wrapper<int>;
  * LCW lists{{{1}, {2}}, {}, {{3}, {4, 5}}};
- * LCW deeper{LCW::nested({{1}}), {}};
+ * LCW deeper{{{1}}, {}};
  * @endcode
  */
 template <typename T, typename SourceElementT = T>
@@ -1882,18 +1862,6 @@ class lists_column_wrapper : public detail::column_wrapper {
   using host_element_t =
     std::conditional_t<std::is_same_v<T, cudf::string_view>, std::string, SourceElementT>;
   using initializer_type = lists_column_initializer<host_element_t>;
-
-  static initializer_type nested(std::initializer_list<initializer_type> children)
-  {
-    return initializer_type::nested(children);
-  }
-
-  template <validity_iterator ValidityIterator>
-  static initializer_type nested(std::initializer_list<initializer_type> children,
-                                 ValidityIterator validity)
-  {
-    return initializer_type::nested(children, validity);
-  }
 
   /**
    * @brief Column wrapper type used to materialize leaf list contents.
@@ -2205,7 +2173,7 @@ class lists_column_wrapper : public detail::column_wrapper {
    * @code{.cpp}
    * using LCW = cudf::test::lists_column_wrapper<int>;
    * LCW lists{{{0, 1}, {2, 3}, {4, 5}}, stream, mr};
-   * LCW nested{{LCW::nested({{0, 1}, {2}}), LCW::nested({{3}})}, stream, mr};
+   * LCW nested{{{{0, 1}, {2}}, {{3}}}, stream, mr};
    * @endcode
    *
    * @param init Host-side nested values (and optional validity)

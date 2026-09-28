@@ -805,6 +805,10 @@ class StringMethods(BaseAccessor):
                 f"na must be None, pd.NA, np.nan, True, or False;got {na!r}"
             )
         if regex and isinstance(pat, re.Pattern):
+            if flags:
+                raise ValueError(
+                    "cannot process flags argument with a compiled pattern"
+                )
             flags = pat.flags & ~re.U
             pat = pat.pattern
         if not _is_supported_regex_flags(flags):

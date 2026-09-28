@@ -10941,6 +10941,40 @@ public class TableTest extends CudfTestBase {
   }
 
   @Test
+  void testORCWriteWithWriterTimezone() throws IOException {
+    // Asia/Shanghai is a fixed +8 offset, with no daylight saving to depend on the dates used here
+    long offset = 8 * 60 * 60;
+    try (TempFile tempFile = TempFile.create("test-timezone", ".orc");
+         ColumnVector timestamps = ColumnVector.timestampSecondsFromLongs(-3000, 0, 1421323200);
+         Table table0 = new Table(timestamps)) {
+      File file = tempFile.getFile();
+      ORCWriterOptions opts = ORCWriterOptions.builder()
+          .withColumns(false, "ts")
+          .withWriterTimezone("Asia/Shanghai")
+          .build();
+      try (TableWriter writer = Table.writeORCChunked(opts, file.getAbsoluteFile())) {
+        writer.write(table0);
+      }
+      ORCOptions readOpts = ORCOptions.builder().withTimeUnit(DType.TIMESTAMP_SECONDS).build();
+      // The reader has no session timezone, so it returns the wall clock the writer encoded
+      try (Table table1 = Table.readORC(readOpts, file.getAbsoluteFile());
+           ColumnVector expected =
+               ColumnVector.timestampSecondsFromLongs(-3000 + offset, offset, 1421323200 + offset);
+           Table expectedTable = new Table(expected)) {
+        assertTablesAreEqual(expectedTable, table1);
+      }
+    }
+  }
+
+  @Test
+  void testORCWriterTimezoneInvalid() {
+    assertThrows(IllegalArgumentException.class,
+        () -> ORCWriterOptions.builder().withWriterTimezone(null));
+    assertThrows(IllegalArgumentException.class,
+        () -> ORCWriterOptions.builder().withWriterTimezone(""));
+  }
+
+  @Test
   void testORCWriteToFileUncompressed() throws IOException {
     try (TempFile tempFileUncompressed = TempFile.create("test-uncompressed", ".orc");
          Table table0 = getExpectedFileTable(WriteUtils.getNonNestedColumns(false))) {

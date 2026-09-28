@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#include "reader_common.hpp"
+#include "parquet_common.hpp"
 
 #include <benchmarks/common/generate_input.hpp>
 #include <benchmarks/io/cuio_common.hpp>

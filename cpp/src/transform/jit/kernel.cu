@@ -7,6 +7,7 @@
 #include <cudf/detail/row_ir/opcode.hpp>
 #include <cudf/detail/utilities/cuda.cuh>
 #include <cudf/detail/utilities/grid_1d.cuh>
+#include <cudf/detail/utilities/integer_utils.hpp>
 #include <cudf/errc.hpp>
 #include <cudf/strings/string_view.cuh>
 #include <cudf/types.hpp>
@@ -70,8 +71,7 @@ __device__ void transform_kernel(size_type row_size,
   auto thread_error = errc::SUCCESS;
 
   // Keep every lane in a warp on the same loop iteration when writing validity.
-  auto const warp_padded_size = (static_cast<thread_index_type>(row_size) + detail::warp_size - 1) /
-                                detail::warp_size * detail::warp_size;
+  auto const warp_padded_size = util::round_up_safe<thread_index_type>(row_size, detail::warp_size);
   for (auto row = start; row < warp_padded_size; row += stride) {
     auto const active_mask = __ballot_sync(0xffff'ffffu, row < row_size);
     if (row >= row_size) { continue; }

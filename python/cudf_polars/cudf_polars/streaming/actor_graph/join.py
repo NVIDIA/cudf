@@ -1624,12 +1624,15 @@ async def _validate_broadcast_candidate(
     local_rows = local_sample.rows
     local_is_complete = local_sample.is_complete
 
-    while not local_is_complete and _broadcast_input_fits(
-        local_size,
-        local_rows,
-        broadcast_limit,
-        can_join_build_chunks_separately=can_join_build_chunks_separately,
-    ):
+    def fits(size: int, rows: int) -> bool:
+        return _broadcast_input_fits(
+            size,
+            rows,
+            broadcast_limit,
+            can_join_build_chunks_separately=can_join_build_chunks_separately,
+        )
+
+    while not local_is_complete and fits(local_size, local_rows):
         msg = await input_.channel.recv(context)
         if msg is None:
             local_is_complete = True
@@ -1639,16 +1642,10 @@ async def _validate_broadcast_candidate(
         local_rows += chunk.shape[0]
         local_sample.chunks.insert(Message(msg.sequence_number, chunk))
 
-    local_fits = _broadcast_input_fits(
-        local_size,
-        local_rows,
-        broadcast_limit,
-        can_join_build_chunks_separately=can_join_build_chunks_separately,
-    )
+    local_fits = fits(local_size, local_rows)
     (
         total_size,
         total_rows,
-        total_chunks,
         complete_rank_count,
         fitting_rank_count,
     ) = await allgather_reduce(
@@ -1657,27 +1654,18 @@ async def _validate_broadcast_candidate(
         collective_id,
         local_size,
         local_rows,
-        len(local_sample.chunks),
         int(local_is_complete),
         int(local_fits),
     )
     is_complete = complete_rank_count == comm.nranks
 
     if input_.metadata.duplicated:
-        # Duplicated inputs are already complete copies on every rank; summing
-        # their sizes would count the same logical input once per rank.
+        # Avoid counting a duplicated input once per rank.
         is_safe = is_complete and fitting_rank_count == comm.nranks
     else:
-        is_safe = is_complete and _broadcast_input_fits(
-            total_size,
-            total_rows,
-            broadcast_limit,
-            can_join_build_chunks_separately=can_join_build_chunks_separately,
-        )
+        is_safe = is_complete and fits(total_size, total_rows)
 
-    # Exact totals improve subsequent planning when the stream was exhausted.
-    # When collection stopped at the limit, retain the larger of the sampled
-    # estimate and the observed lower bound for shuffle sizing.
+    # Preserve estimates when validation stops before exhausting the input.
     input_.sample = replace(
         sample,
         local_sample=replace(
@@ -1688,9 +1676,6 @@ async def _validate_broadcast_candidate(
         ),
         total_size=total_size if is_complete else max(sample.total_size, total_size),
         total_rows=total_rows if is_complete else max(sample.total_rows, total_rows),
-        total_chunks=(
-            total_chunks if is_complete else max(sample.total_chunks, total_chunks)
-        ),
         is_complete=is_complete,
     )
     return is_safe

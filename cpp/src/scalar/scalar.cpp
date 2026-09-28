@@ -629,7 +629,7 @@ table struct_scalar::init_data(table&& data,
     1, mask_state::ALL_NULL, stream, cudf::get_current_device_resource_ref());
   for (auto& col : data_cols) {
     col = cudf::structs::detail::superimpose_and_sanitize_nulls(
-      static_cast<bitmask_type const*>(validity.data()), 1, std::move(col), stream, mr);
+      reinterpret_cast<bitmask_type const*>(validity.data()), 1, std::move(col), stream, mr);
   }
 
   return table{std::move(data_cols)};

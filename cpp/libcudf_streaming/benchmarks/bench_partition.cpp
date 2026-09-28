@@ -28,7 +28,7 @@ std::unique_ptr<cudf::table> create_int_table(cudf::size_type num_rows, cuda::st
 {
   auto data =
     rmm::device_buffer(rapidsmpf::safe_cast<std::size_t>(num_rows) * sizeof(std::int32_t), stream);
-  auto validity = rmm::device_buffer(0, stream);  // No nulls
+  auto validity = cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED, stream);  // No nulls
 
   auto column = std::make_unique<cudf::column>(
     cudf::data_type{cudf::type_id::INT32}, num_rows, std::move(data), std::move(validity), 0);

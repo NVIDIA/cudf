@@ -90,7 +90,7 @@ hash_join<Hasher>::join_retrieve(cudf::table_view const& left,
         cudf::detail::device_scalar<cuda::std::uint64_t>(0, stream, temp_mr);
       auto const row_bitmask = cudf::detail::bitmask_and(left, stream, temp_mr).first;
       auto const valid_rows  = _nulls_equal == null_equality::UNEQUAL
-                                 ? static_cast<bitmask_type const*>(row_bitmask.data())
+                                 ? reinterpret_cast<bitmask_type const*>(row_bitmask.data())
                                  : nullptr;
 
       auto count_matches = [&](auto equality, auto hasher) {

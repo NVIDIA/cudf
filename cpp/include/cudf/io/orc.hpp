@@ -295,10 +295,9 @@ class orc_reader_options {
    * @brief Sets whether to ignore writer timezone in the stripe footer.
    *
    * Timestamps are returned on the wall clock the file declares, without converting them to UTC.
-   * The writer timezone is still resolved through the timezone database, because ORC encodes
-   * negative timestamps relative to the ORC epoch as it occurs in that timezone. If the name does
-   * not resolve, a warning is logged and timestamps within the timezone's offset of 2015-01-01
-   * may be one second off.
+   * The writer timezone is still resolved, because ORC encodes negative timestamps relative to the
+   * ORC epoch as it occurs in that timezone; an unresolvable name is warned about and leaves
+   * timestamps within the timezone's offset of 2015-01-01 up to one second off.
    *
    * @param val Boolean value to enable/disable ignoring writer timezone
    */

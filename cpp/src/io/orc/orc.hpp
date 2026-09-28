@@ -61,15 +61,9 @@ static constexpr int32_t DEFAULT_MAX_NANOS = 999'999;
 /**
  * @brief Returns the ORC epoch as it occurs in a timezone.
  *
- * ORC timestamps are wall-clock values, stored relative to this instant, so both the writer and
- * the reader have to resolve it the same way. The offset is looked up at the ORC epoch as a UTC
- * instant; the Apache writer resolves it as a local time, which differs only for a timezone with
- * a transition inside that offset-wide window.
+ * @param timezone Timezone name
  *
- * @param timezone Timezone name; `"UTC"` and an empty name have no offset, so they give
- * `orc_utc_epoch`
- *
- * @throw cudf::logic_error if `timezone` does not resolve to a TZif file
+ * @throw cudf::logic_error if `timezone` does not resolve to a valid TZif file
  *
  * @return Instant that encoded timestamps are stored relative to
  */

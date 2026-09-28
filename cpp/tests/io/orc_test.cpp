@@ -730,16 +730,11 @@ TEST_F(OrcWriterTest, WriterTimezoneNonUtc)
                                 read_orc_buffer(buffer, /*ignore_timezone=*/true).tbl->view());
 }
 
-// The negative timestamp borrow is an encoding artifact, so it has to be decided in the writer's
-// timezone. Ignoring the timezone must not change which values borrow, only the frame they are
-// returned in, so both read modes agree for a zone with no daylight saving time.
 TEST_F(OrcWriterTest, WriterTimezoneNearEpochBorrow)
 {
-  // The two frames disagree on the sign of a value, and so on whether it borrows, over the window
-  // between the Unix epoch and the writer's offset from it: `[-offset, 0)` for a positive offset
-  // and `[0, -offset)` for a negative one. Three values inside that window and one just outside
-  // each end. Every one has a fractional part, since a whole second never borrows, and none falls
-  // in the 999 ms before the epoch that ORC cannot represent (`NegativeTimestampsNearEpoch`).
+  // Values straddling the window where UTC and the writer's local time disagree on the sign, and
+  // so on the borrow: `[-offset, 0)` for a positive offset, `[0, -offset)` for a negative one. All
+  // have a fractional part, since a whole second never borrows.
   auto const near_epoch_ms = [](int64_t offset_s) {
     auto const lo = std::min<cudf::timestamp_ms::rep>(-offset_s * 1000, 0);
     auto const hi = std::max<cudf::timestamp_ms::rep>(-offset_s * 1000, 0);
@@ -747,7 +742,7 @@ TEST_F(OrcWriterTest, WriterTimezoneNearEpochBorrow)
       lo - 1'117, lo + 1, (lo + hi) / 2 + 117, hi - 1'117, hi + 1'117};
   };
 
-  auto const agrees_across_read_modes = [&](std::string const& timezone, int64_t offset_s) {
+  auto const agrees_whether_timezone_ignored = [&](std::string const& timezone, int64_t offset_s) {
     auto const inputs = near_epoch_ms(offset_s);
     auto const timestamps =
       column_wrapper<cudf::timestamp_ms, cudf::timestamp_ms::rep>(inputs.begin(), inputs.end());
@@ -767,11 +762,9 @@ TEST_F(OrcWriterTest, WriterTimezoneNearEpochBorrow)
       table_view({expected}), read_orc_buffer(buffer, /*ignore_timezone=*/true, ms).tbl->view());
   };
 
-  // Neither zone has observed daylight saving time since before the epoch, so the offset at each
-  // value matches the one at the ORC epoch. One offset of each sign, since the wrong frame skips
-  // the borrow for a positive offset and applies it for a negative one.
-  agrees_across_read_modes("Asia/Shanghai", shanghai_offset);
-  agrees_across_read_modes("America/Phoenix", phoenix_offset);
+  // Cover timezone offsets of both signs.
+  agrees_whether_timezone_ignored("Asia/Shanghai", shanghai_offset);
+  agrees_whether_timezone_ignored("America/Phoenix", phoenix_offset);
 }
 
 TEST_F(OrcWriterTest, WriterTimezoneFractionalOffset)

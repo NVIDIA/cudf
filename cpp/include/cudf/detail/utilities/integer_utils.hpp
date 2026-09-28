@@ -1,7 +1,7 @@
 /*
  * SPDX-FileCopyrightText: Copyright 2019 BlazingDB, Inc.
  * SPDX-FileCopyrightText: Copyright 2019 Eyal Rozenberg <eyalroz@blazingdb.com>
- * SPDX-FileCopyrightText: Copyright (c) 2020-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 /*
@@ -27,14 +27,18 @@
  * @file Utility code involving integer arithmetic
  */
 
+#include <cudf/detail/utilities/assert.cuh>
 #include <cudf/fixed_point/temporary.hpp>
 #include <cudf/types.hpp>
+
+#ifndef __CUDACC_RTC__
 #include <cudf/utilities/error.hpp>
 
 #include <cmath>
 #include <cstdlib>
 #include <stdexcept>
 #include <type_traits>
+#endif
 
 namespace cudf {
 //! Utility functions
@@ -172,7 +176,7 @@ CUDF_HOST_DEVICE constexpr I div_rounding_up_safe(I dividend, I divisor) noexcep
 template <typename I>
 constexpr bool is_a_power_of_two(I val) noexcept
 {
-  static_assert(std::is_integral_v<I>, "This function only applies to integral types");
+  static_assert(cuda::std::is_integral_v<I>, "This function only applies to integral types");
   return ((val - 1) & val) == 0;
 }
 

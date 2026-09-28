@@ -320,8 +320,12 @@ JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_ColumnVector_makeList(
       auto offsets                = cudf::make_column_from_scalar(*zero, row_count + 1);
       cudf::data_type n_data_type = cudf::jni::make_data_type(j_type, scale);
       auto empty_col              = cudf::make_empty_column(n_data_type);
-      return release_as_jlong(cudf::make_lists_column(
-        row_count, std::move(offsets), std::move(empty_col), 0, rmm::device_buffer()));
+      return release_as_jlong(
+        cudf::make_lists_column(row_count,
+                                std::move(offsets),
+                                std::move(empty_col),
+                                0,
+                                cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED)));
     } else {
       auto count = cudf::make_numeric_scalar(cudf::data_type(cudf::type_id::INT32));
       count->set_valid_async(true);
@@ -329,8 +333,12 @@ JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_ColumnVector_makeList(
 
       std::unique_ptr<cudf::column> offsets = cudf::sequence(row_count + 1, *zero, *count);
       auto data_col = cudf::interleave_columns(cudf::table_view(children_vector));
-      return release_as_jlong(cudf::make_lists_column(
-        row_count, std::move(offsets), std::move(data_col), 0, rmm::device_buffer()));
+      return release_as_jlong(
+        cudf::make_lists_column(row_count,
+                                std::move(offsets),
+                                std::move(data_col),
+                                0,
+                                cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED)));
     }
   }
   JNI_CATCH(env, 0);
@@ -349,11 +357,12 @@ JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_ColumnVector_makeListFromOffsets(
     CUDF_EXPECTS(offsets_cv->type().id() == cudf::type_id::INT32,
                  "Input offsets does not have type INT32.");
 
-    return release_as_jlong(cudf::make_lists_column(static_cast<cudf::size_type>(row_count),
-                                                    std::make_unique<cudf::column>(*offsets_cv),
-                                                    std::make_unique<cudf::column>(*child_cv),
-                                                    0,
-                                                    {}));
+    return release_as_jlong(
+      cudf::make_lists_column(static_cast<cudf::size_type>(row_count),
+                              std::make_unique<cudf::column>(*offsets_cv),
+                              std::make_unique<cudf::column>(*child_cv),
+                              0,
+                              cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED)));
   }
   JNI_CATCH(env, 0);
 }

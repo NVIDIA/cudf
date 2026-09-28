@@ -9,7 +9,9 @@
 #include <benchmarks/io/cuio_common.hpp>
 #include <benchmarks/io/nvbench_helpers.hpp>
 
+#include <cudf/column/column_view.hpp>
 #include <cudf/io/parquet.hpp>
+#include <cudf/types.hpp>
 #include <cudf/utilities/error.hpp>
 
 #include <nvbench/nvbench.cuh>
@@ -43,16 +45,20 @@ cudf::io::column_encoding retrieve_column_encoding_enum(std::string_view encodin
 // The writer only honours an encoding request on the schema node whose
 // physical type matches, and for a LIST the encoded values live on the element
 // node, not the top-level column, so this function pushes the request down to
-// the leaves.
+// the leaves. Leafness is decided from the column, not from the metadata node: a cudf STRING
+// column carries an offsets child, so `col_meta.num_children()` is non-zero for a string and
+// recursing on it would leave the request on the offsets column, which is not a Parquet schema
+// node and is silently ignored by the writer.
 void set_encoding_recursive(cudf::io::column_in_metadata& col_meta,
+                            cudf::column_view const& col,
                             cudf::io::column_encoding encoding)
 {
-  if (col_meta.num_children() == 0) {
+  if (col.num_children() == 0 or col.type().id() == cudf::type_id::STRING) {
     col_meta.set_encoding(encoding);
     return;
   }
-  for (cudf::size_type i = 0; i < col_meta.num_children(); i++) {
-    set_encoding_recursive(col_meta.child(i), encoding);
+  for (cudf::size_type i = 0; i < col.num_children(); i++) {
+    set_encoding_recursive(col_meta.child(i), col.child(i), encoding);
   }
 }
 
@@ -137,8 +143,8 @@ void bench_read_encoding(nvbench::state& state,
     auto const view = tbl->view();
 
     cudf::io::table_input_metadata metadata(view);
-    for (auto& col_meta : metadata.column_metadata) {
-      set_encoding_recursive(col_meta, encoding);
+    for (cudf::size_type col_idx = 0; col_idx < view.num_columns(); col_idx++) {
+      set_encoding_recursive(metadata.column_metadata[col_idx], view.column(col_idx), encoding);
     }
 
     cudf::io::parquet_writer_options write_opts =

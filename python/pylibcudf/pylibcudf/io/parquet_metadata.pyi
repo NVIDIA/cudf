@@ -23,6 +23,7 @@ __all__ = [
     "ParquetMetadata",
     "ParquetSchema",
     "RowGroup",
+    "SchemaElement",
     "SortingColumn",
     "read_parquet_column_chunk_bounds",
     "read_parquet_footers",
@@ -63,6 +64,16 @@ class FileMetaData:
     def row_group_num_rows(self) -> list[int]: ...
     @property
     def columnchunk_metadata(self) -> dict[str, list[int]]: ...
+    @property
+    def schema(self) -> list[SchemaElement]: ...
+
+class SchemaElement:
+    @property
+    def name(self) -> str: ...
+    @property
+    def num_children(self) -> int: ...
+    @property
+    def field_id(self) -> int | None: ...
 
 class SortingColumn:
     @property

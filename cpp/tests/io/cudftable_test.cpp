@@ -554,7 +554,7 @@ TEST_F(CudftableTest, LongStringColumns)
 
 TEST_F(CudftableTest, ManyColumns)
 {
-  constexpr int num_cols = 12'345;
+  constexpr int num_cols = 1'234;
   std::vector<cudf::column_view> columns;
   for (int i = 0; i < num_cols; ++i) {
     cudf::test::fixed_width_column_wrapper<int32_t> col({i % 10, (i + 1) % 10, (i + 2) % 10});

@@ -119,6 +119,11 @@ per-entry artifact. The separate `java-gather` job downloads them (with
 `merge-multiple: true`, so all subdirs land in a single parent dir), runs
 Step 3, and uploads the combined `cudf_java_maven_repo` artifact.
 
+The `java-publish` job then hands the assembled repository to
+[`maven-publish.yaml`](https://github.com/rapidsai/shared-workflows/blob/main/.github/workflows/maven-publish.yaml),
+which routes on `rapids-is-release-build`: Maven Central on release tags,
+Sonatype snapshots otherwise.
+
 ### Packaging-aware tests (local)
 
 Plain `cd java && mvn test` does not exercise the classifier JAR. Use

@@ -31,7 +31,7 @@ dependencies:
 - cython>=3.2.2,<3.3.0a0
 - dask-cuda==26.12.*,>=0.0.0a0
 - dlpack>=0.8,<1.0
-- doxygen=1.9.1
+- doxygen=1.18.0
 - fastavro>=0.22.9
 - flatbuffers==24.3.25
 - fsspec>=0.6.0

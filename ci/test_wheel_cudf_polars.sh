@@ -110,7 +110,6 @@ for version in "${VERSIONS[@]}"; do
         --dist=worksteal \
         --durations=50 --durations-min=1 \
         -x \
-        -ra \
         --junitxml="${RAPIDS_TESTS_DIR}/junit-cudf-polars-${version}.xml"
 
     test_exitcode=$?

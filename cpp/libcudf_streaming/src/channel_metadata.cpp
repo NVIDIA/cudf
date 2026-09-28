@@ -128,12 +128,15 @@ rapidsmpf::streaming::Message to_message(std::uint64_t sequence_number,
   return rapidsmpf::streaming::Message{
     sequence_number,
     std::move(m),
-    {},
-    [](rapidsmpf::streaming::Message const& msg,
-       rapidsmpf::MemoryReservation& /* reservation */) -> rapidsmpf::streaming::Message {
-      auto copy = std::make_unique<channel_metadata>(msg.get<channel_metadata>());
-      return rapidsmpf::streaming::Message{
-        msg.sequence_number(), std::move(copy), {}, msg.copy_cb()};
+    rapidsmpf::ContentDescription{},
+    rapidsmpf::streaming::Message::Callbacks{
+      .copy = [](rapidsmpf::streaming::Message const& msg,
+                 rapidsmpf::MemoryReservation& /* reservation */) -> rapidsmpf::streaming::Message {
+        auto copy = std::make_unique<channel_metadata>(msg.get<channel_metadata>());
+        return rapidsmpf::streaming::Message{
+          msg.sequence_number(), std::move(copy), rapidsmpf::ContentDescription{}, msg.callbacks()};
+      },
+      .move = nullptr  // Metadata is not spillable, so it is only copied.
     }};
 }
 

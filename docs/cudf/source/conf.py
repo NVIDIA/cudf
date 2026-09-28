@@ -30,7 +30,9 @@ import xml.etree.ElementTree as ET
 from enum import IntEnum, IntFlag
 from typing import Any
 
+import breathe
 import cudf
+from breathe import parser
 from breathe.directives.content_block import DoxygenPageDirective
 from breathe.renderer.sphinxrenderer import SphinxRenderer
 from docutils import nodes
@@ -47,22 +49,52 @@ from sphinx.highlighting import lexers
 from sphinx.util import logging
 from sphinx.util.nodes import clean_astext, make_refnode
 
+_BREATHE_GE_5 = Version(breathe.__version__) >= Version("5")
+
 
 # TODO: ship this upstream in breathe. Today breathe doesn't render
 # docsect4 headers or the contents at all.
 def visit_docsect4(self, node):
-    (title,) = (item for item in node.content_ if item.name == "title")
+    # Breathe 5 stores the title separately from the tagged body children;
+    # Breathe 4 mixes both in content_, so the title must be filtered out.
+    if _BREATHE_GE_5:
+        title = self.render_tagged_iterable(node.title) if node.title else []
+    else:
+        (title,) = (item for item in node.content_ if item.name == "title")
+        title = self.render(title)
 
     section = nodes.section(ids=[self.get_refid(node.id)])
-    section += nodes.title("", "", *self.render(title))
+    section += nodes.title("", "", *title)
     section += self.create_doxygen_target(node)
-    section += self.render_iterable(
-        [item for item in node.content_ if item.name != "title"]
-    )
+    if _BREATHE_GE_5:
+        section += self.render_tagged_iterable(node)
+    else:
+        section += self.render_iterable(
+            [item for item in node.content_ if item.name != "title"]
+        )
     return [section]
 
 
-SphinxRenderer.methods["docsect4"] = visit_docsect4
+# Breathe 5 dispatches on parser node types; Breathe 4 uses string names.
+if _BREATHE_GE_5:
+    SphinxRenderer.node_handlers[parser.Node_docSect4Type] = visit_docsect4
+
+    # Restore template arguments lost by Breathe 5 so distinct class
+    # specializations do not collide in Sphinx's C++ domain.
+    # https://github.com/breathe-doc/breathe/issues/1074
+    def join_nested_name(self, names):
+        domain = self.get_domain()
+        name = ("::" if not domain or domain == "cpp" else ".").join(names)
+        node = self.context.node_stack[0].value
+        if isinstance(node, parser.Node_compounddefType):
+            _, sep, args = node.compoundname.partition("<")
+            if sep and not name.endswith(sep + args):
+                name += sep + args
+        return name
+
+    SphinxRenderer.join_nested_name = join_nested_name
+else:
+    SphinxRenderer.methods["docsect4"] = visit_docsect4
 
 
 class FlatDoxygenPageDirective(DoxygenPageDirective):
@@ -144,6 +176,20 @@ remove_from_toctrees = ["cudf/api_docs/api/*"]
 
 # Preprocess doxygen xml for compatibility with latest Breathe
 def clean_definitions(root):
+    # Doxygen 1.18 associates a namespace with each group declared inside it.
+    # Breathe renders inner namespaces recursively, duplicating the namespace
+    # contents in every group.
+    for compound in root.findall("./compounddef[@kind='group']"):
+        for namespace in compound.findall("./innernamespace"):
+            compound.remove(namespace)
+
+    # Breathe checks whether an initializer starts with "=" before deciding
+    # whether to add one. Doxygen 1.18 may align that token with leading
+    # whitespace, which makes Breathe emit a duplicate "=".
+    for initializer in root.findall(".//initializer"):
+        if initializer.text and initializer.text.lstrip().startswith("="):
+            initializer.text = initializer.text.lstrip()
+
     # Breathe can't handle SFINAE properly:
     # https://github.com/breathe-doc/breathe/issues/624
     seen_ids = set()
@@ -192,6 +238,32 @@ def clean_definitions(root):
                 node.text = node.text.replace(string, "")
             if node.tail is not None:
                 node.tail = node.tail.replace(string, "")
+
+    if _BREATHE_GE_5:
+        # Workaround for https://github.com/breathe-doc/breathe/issues/1081
+        # Breathe 5 emits constexpr from the member attribute but fails to
+        # strip a type containing only constexpr (as on constructors). Clearing
+        # that redundant type avoids an invalid "constexpr constexpr" declaration.
+        for type_ in root.findall(".//memberdef[@constexpr='yes']/type"):
+            if "".join(type_.itertext()).strip() == "constexpr":
+                type_.clear()
+
+    # Doxygen 1.18 may wrap one of the removed macros in a ref element. Once
+    # the macro text is stripped, Breathe renders the empty ref as an empty
+    # pending_xref node, which crashes Sphinx's ReferencesResolver. Remove
+    # only refs that became empty, preserving any text that follows them.
+    for parent in root.iter():
+        for ref in list(parent):
+            if ref.tag != "ref" or "".join(ref.itertext()).strip():
+                continue
+
+            index = list(parent).index(ref)
+            if index == 0:
+                parent.text = (parent.text or "") + (ref.tail or "")
+            else:
+                previous = parent[index - 1]
+                previous.tail = (previous.tail or "") + (ref.tail or "")
+            parent.remove(ref)
 
 
 def clean_all_xml_files(path):
@@ -529,6 +601,7 @@ _names_to_skip_in_cpp = {
     # kafka objects
     "python_callable_type",
     "kafka_oauth_callback_wrapper_type",
+    "jit_compilation_error",
     # Template types
     "Radix",
     # Unsupported by Breathe
@@ -541,6 +614,15 @@ _names_to_skip_in_cpp = {
     # host_span defines member typedefs via its underlying cuda::std::span alias
     "span_type",
 }
+
+# Doxygen emits references to these internal or non-rendered targets from
+# otherwise public documentation. Preserve their visible text when Sphinx
+# cannot resolve them instead of treating them as broken documentation links.
+_doxygen_targets_to_skip = (
+    "structcudf_1_1dictionary__element",
+    "structcudf_1_1groupby__host__udf",
+    "namespacenvtext",
+)
 
 _domain_objects = None
 _prefixed_domain_objects = None
@@ -618,6 +700,10 @@ def on_missing_reference(app, env, node, contnode):
                 _prefixed_domain_objects[f"{prefix}{name}"] = name
 
     reftarget = node.get("reftarget")
+    if node["refdomain"] == "std" and reftarget.startswith(
+        _doxygen_targets_to_skip
+    ):
+        return contnode
     if "namespacecudf" in reftarget:
         node["reftarget"] = "cudf"
         return contnode

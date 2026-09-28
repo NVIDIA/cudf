@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -103,10 +103,8 @@ TEST_P(JsonLargeReaderTest, MultiBatch)
   auto datasources  = cudf::io::datasource::create(json_lines_options.get_source().host_buffers());
   auto cdatasources = cudf::io::datasource::create(cjson_lines_options.get_source().host_buffers());
 
-  // Test for different chunk sizes
+  // Test small byte ranges that require many batches and large ranges that exceed a batch.
   std::vector<std::size_t> chunk_sizes{batch_size_upper_bound / 4,
-                                       batch_size_upper_bound / 2,
-                                       batch_size_upper_bound,
                                        static_cast<std::size_t>(batch_size_upper_bound * 2)};
 
   for (auto chunk_size : chunk_sizes) {

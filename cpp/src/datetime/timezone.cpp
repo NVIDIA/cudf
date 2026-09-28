@@ -2,8 +2,11 @@
  * SPDX-FileCopyrightText: Copyright (c) 2018-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
+#include "datetime/timezone_utils.hpp"
+
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/timezone.hpp>
+#include <cudf/detail/timezone_lookup.hpp>
 #include <cudf/detail/utilities/cuda.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/table/table.hpp>
@@ -11,6 +14,7 @@
 #include <algorithm>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -412,7 +416,7 @@ static int days_in_month(int month, bool is_leap_year)
  *
  * @return transition time in seconds from the beginning of the year
  */
-static int64_t get_transition_time(dst_transition_s const& trans, int year)
+static duration_s get_transition_time(dst_transition_s const& trans, int year)
 {
   auto day = trans.day;
 
@@ -446,7 +450,123 @@ static int64_t get_transition_time(dst_transition_s const& trans, int year)
     day += (day > 31 + 29 && is_leap);
   }
 
-  return trans.time + cuda::std::chrono::duration_cast<duration_s>(duration_D{day}).count();
+  return duration_s{trans.time} + cuda::std::chrono::duration_cast<duration_s>(duration_D{day});
+}
+
+/**
+ * @brief Host-side timezone transition table.
+ *
+ * Mirrors the layout of the table returned by `make_timezone_transition_table`: entries from the
+ * TZif file, followed by `solar_cycle_entry_count` future entries.
+ */
+struct host_transition_table {
+  std::vector<timestamp_s> times;
+  std::vector<duration_s> offsets;
+
+  [[nodiscard]] bool empty() const { return times.empty(); }
+
+  /**
+   * @brief Returns the UT offset for a timestamp, through the lookup the device-side
+   * `cudf::detail::get_ut_offset` also uses.
+   */
+  [[nodiscard]] duration_s ut_offset(timestamp_s ts) const
+  {
+    if (empty()) { return duration_s{0}; }
+    CUDF_EXPECTS(times.size() > solar_cycle_entry_count,
+                 "Timezone transition table is missing its file entries");
+
+    return cudf::detail::get_ut_offset(
+      times.data(), offsets.data(), static_cast<size_type>(times.size()), ts);
+  }
+};
+
+[[nodiscard]] host_transition_table build_transition_table(std::optional<std::string_view> tzif_dir,
+                                                           std::string_view timezone_name)
+{
+  if (timezone_name == "UTC" || timezone_name.empty()) { return {}; }
+
+  timezone_file const tzf(tzif_dir, timezone_name);
+
+  std::vector<timestamp_s> transition_times(1);
+  std::vector<duration_s> offsets(1);
+  // One ancient rule entry, one per TZ file entry, 2 entries per year in the future cycle
+  transition_times.reserve(1 + tzf.timecnt() + solar_cycle_entry_count);
+  offsets.reserve(1 + tzf.timecnt() + solar_cycle_entry_count);
+  size_t earliest_std_idx = 0;
+  for (size_t t = 0; t < tzf.timecnt(); t++) {
+    auto const ttime = tzf.transition_times[t];
+    auto const idx   = tzf.ttime_idx[t];
+    CUDF_EXPECTS(idx < tzf.typecnt(), "Out-of-range type index");
+    transition_times.emplace_back(duration_s{ttime});
+    offsets.emplace_back(tzf.ttype[idx].utcoff);
+    if (!earliest_std_idx && !tzf.ttype[idx].isdst) {
+      earliest_std_idx = transition_times.size() - 1;
+    }
+  }
+
+  if (tzf.timecnt() != 0) {
+    if (!earliest_std_idx) { earliest_std_idx = 1; }
+    transition_times[0] = transition_times[earliest_std_idx];
+    offsets[0]          = offsets[earliest_std_idx];
+  } else {
+    if (tzf.typecnt() == 0 || tzf.ttype[0].utcoff == 0) {
+      // No transitions, offset is zero; Table would be a no-op.
+      // Return an empty table to speed up parsing.
+      return {};
+    }
+    // No transitions to use for the time/offset - use the first offset and apply to all timestamps
+    transition_times[0] = timestamp_s::max();
+    offsets[0]          = duration_s{tzf.ttype[0].utcoff};
+  }
+
+  // Generate entries for times after the last transition
+  auto future_std_offset = offsets[tzf.timecnt()];
+  auto future_dst_offset = future_std_offset;
+  dst_transition_s dst_start{};
+  dst_transition_s dst_end{};
+  if (!tzf.posix_tz_string.empty()) {
+    posix_parser<decltype(tzf.posix_tz_string)> parser(tzf.posix_tz_string);
+    parser.skip_name();
+    future_std_offset = duration_s{-parser.parse_offset()};
+    if (parser.remaining_char_cnt() > 1) {
+      // Parse Daylight Saving Time information
+      parser.skip_name();
+      if (parser.remaining_char_cnt() > 0 && parser.next_character() != ',') {
+        future_dst_offset = duration_s{-parser.parse_offset()};
+      } else {
+        future_dst_offset = future_std_offset + duration_h{1};
+      }
+      dst_start = parser.parse_transition();
+      dst_end   = parser.parse_transition();
+    } else {
+      future_dst_offset = future_std_offset;
+    }
+  }
+
+  // Add entries to fill the transition cycle
+  for (int32_t year = 1970; year < 1970 + solar_cycle_years; ++year) {
+    auto const year_start = year_start_since_epoch(year);
+    // The transitions are wall clock times, so the offset in effect makes them UT
+    auto const dst_start_ut = get_transition_time(dst_start, year) - future_std_offset;
+    auto const dst_end_ut   = get_transition_time(dst_end, year) - future_dst_offset;
+
+    // Two entries per year, since there are two transitions
+    transition_times.emplace_back(year_start + dst_start_ut);
+    offsets.emplace_back(future_dst_offset);
+    transition_times.emplace_back(year_start + dst_end_ut);
+    offsets.emplace_back(future_std_offset);
+
+    // Swap the newly added transitions if in descending order
+    if (transition_times.rbegin()[1] > transition_times.rbegin()[0]) {
+      std::swap(transition_times.rbegin()[0], transition_times.rbegin()[1]);
+      std::swap(offsets.rbegin()[0], offsets.rbegin()[1]);
+    }
+  }
+
+  CUDF_EXPECTS(transition_times.size() == offsets.size(),
+               "Error reading TZif file for timezone " + std::string{timezone_name});
+
+  return {std::move(transition_times), std::move(offsets)};
 }
 
 }  // namespace
@@ -467,108 +587,11 @@ std::unique_ptr<table> make_timezone_transition_table(std::optional<std::string_
                                                       cuda::stream_ref stream,
                                                       rmm::device_async_resource_ref mr)
 {
-  if (timezone_name == "UTC" || timezone_name.empty()) {
-    // Return an empty table for UTC
-    return std::make_unique<cudf::table>();
-  }
+  auto const tz_table = build_transition_table(tzif_dir, timezone_name);
+  if (tz_table.empty()) { return std::make_unique<cudf::table>(); }
 
-  timezone_file const tzf(tzif_dir, timezone_name);
-
-  std::vector<timestamp_s::rep> transition_times(1);
-  std::vector<duration_s::rep> offsets(1);
-  // One ancient rule entry, one per TZ file entry, 2 entries per year in the future cycle
-  transition_times.reserve(1 + tzf.timecnt() + solar_cycle_entry_count);
-  offsets.reserve(1 + tzf.timecnt() + solar_cycle_entry_count);
-  size_t earliest_std_idx = 0;
-  for (size_t t = 0; t < tzf.timecnt(); t++) {
-    auto const ttime = tzf.transition_times[t];
-    auto const idx   = tzf.ttime_idx[t];
-    CUDF_EXPECTS(idx < tzf.typecnt(), "Out-of-range type index");
-    auto const utcoff = tzf.ttype[idx].utcoff;
-    transition_times.push_back(ttime);
-    offsets.push_back(utcoff);
-    if (!earliest_std_idx && !tzf.ttype[idx].isdst) {
-      earliest_std_idx = transition_times.size() - 1;
-    }
-  }
-
-  if (tzf.timecnt() != 0) {
-    if (!earliest_std_idx) { earliest_std_idx = 1; }
-    transition_times[0] = transition_times[earliest_std_idx];
-    offsets[0]          = offsets[earliest_std_idx];
-  } else {
-    if (tzf.typecnt() == 0 || tzf.ttype[0].utcoff == 0) {
-      // No transitions, offset is zero; Table would be a no-op.
-      // Return an empty table to speed up parsing.
-      return std::make_unique<cudf::table>();
-    }
-    // No transitions to use for the time/offset - use the first offset and apply to all timestamps
-    transition_times[0] = std::numeric_limits<int64_t>::max();
-    offsets[0]          = tzf.ttype[0].utcoff;
-  }
-
-  // Generate entries for times after the last transition
-  auto future_std_offset = offsets[tzf.timecnt()];
-  auto future_dst_offset = future_std_offset;
-  dst_transition_s dst_start{};
-  dst_transition_s dst_end{};
-  if (!tzf.posix_tz_string.empty()) {
-    posix_parser<decltype(tzf.posix_tz_string)> parser(tzf.posix_tz_string);
-    parser.skip_name();
-    future_std_offset = -parser.parse_offset();
-    if (parser.remaining_char_cnt() > 1) {
-      // Parse Daylight Saving Time information
-      parser.skip_name();
-      if (parser.remaining_char_cnt() > 0 && parser.next_character() != ',') {
-        future_dst_offset = -parser.parse_offset();
-      } else {
-        future_dst_offset = future_std_offset + 60 * 60;
-      }
-      dst_start = parser.parse_transition();
-      dst_end   = parser.parse_transition();
-    } else {
-      future_dst_offset = future_std_offset;
-    }
-  }
-
-  // Add entries to fill the transition cycle
-  int64_t year_timestamp = 0;
-  for (int32_t year = 1970; year < 1970 + solar_cycle_years; ++year) {
-    auto const dst_start_time = get_transition_time(dst_start, year);
-    auto const dst_end_time   = get_transition_time(dst_end, year);
-
-    // Two entries per year, since there are two transitions
-    transition_times.push_back(year_timestamp + dst_start_time - future_std_offset);
-    offsets.push_back(future_dst_offset);
-    transition_times.push_back(year_timestamp + dst_end_time - future_dst_offset);
-    offsets.push_back(future_std_offset);
-
-    // Swap the newly added transitions if in descending order
-    if (transition_times.rbegin()[1] > transition_times.rbegin()[0]) {
-      std::swap(transition_times.rbegin()[0], transition_times.rbegin()[1]);
-      std::swap(offsets.rbegin()[0], offsets.rbegin()[1]);
-    }
-
-    year_timestamp += cuda::std::chrono::duration_cast<duration_s>(
-                        duration_D{365 + cuda::std::chrono::year{year}.is_leap()})
-                        .count();
-  }
-
-  CUDF_EXPECTS(transition_times.size() == offsets.size(),
-               "Error reading TZif file for timezone " + std::string{timezone_name});
-
-  auto ttimes_typed = make_empty_host_vector<timestamp_s>(transition_times.size(), stream);
-  std::transform(transition_times.cbegin(),
-                 transition_times.cend(),
-                 std::back_inserter(ttimes_typed),
-                 [](auto ts) { return timestamp_s{duration_s{ts}}; });
-  auto offsets_typed = make_empty_host_vector<duration_s>(offsets.size(), stream);
-  std::transform(offsets.cbegin(), offsets.cend(), std::back_inserter(offsets_typed), [](auto ts) {
-    return duration_s{ts};
-  });
-
-  auto d_ttimes  = cudf::detail::make_device_uvector_async(ttimes_typed, stream, mr);
-  auto d_offsets = cudf::detail::make_device_uvector_async(offsets_typed, stream, mr);
+  auto d_ttimes  = cudf::detail::make_device_uvector_async(tz_table.times, stream, mr);
+  auto d_offsets = cudf::detail::make_device_uvector_async(tz_table.offsets, stream, mr);
 
   std::vector<std::unique_ptr<column>> tz_table_columns;
   tz_table_columns.emplace_back(
@@ -576,10 +599,17 @@ std::unique_ptr<table> make_timezone_transition_table(std::optional<std::string_
   tz_table_columns.emplace_back(
     std::make_unique<cudf::column>(std::move(d_offsets), rmm::device_buffer{}, 0));
 
-  // Need to finish copies before transition_times and offsets go out of scope
+  // Need to finish copies before the host vectors go out of scope
   cudf::detail::sync_stream(stream);
 
   return std::make_unique<cudf::table>(std::move(tz_table_columns));
+}
+
+duration_s get_ut_offset(std::optional<std::string_view> tzif_dir,
+                         std::string_view timezone_name,
+                         timestamp_s ts)
+{
+  return build_transition_table(tzif_dir, timezone_name).ut_offset(ts);
 }
 
 }  // namespace detail

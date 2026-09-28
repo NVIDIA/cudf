@@ -44,3 +44,4 @@ pyproject.toml           @NVIDIA/adi-packaging-codeowners
 /ci/narwhals_cudf_test_plugin.py @NVIDIA/cudf-python-codeowners
 /ci/narwhals_cudf_pandas_test_plugin.py @NVIDIA/cudf-python-codeowners
 /ci/narwhals_cudf_polars_test_plugin.py @NVIDIA/cudf-polars-codeowners
+/ci/cudf_polars/                        @NVIDIA/cudf-polars-codeowners

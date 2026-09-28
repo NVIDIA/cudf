@@ -43,9 +43,6 @@ from cudf_polars.streaming.actor_graph.dispatch import (
     ir_context_for_node,
 )
 from cudf_polars.streaming.actor_graph.nodes import shutdown_on_error
-from cudf_polars.streaming.actor_graph.tracing import (
-    trace_channel,
-)
 from cudf_polars.streaming.actor_graph.utils import (
     ChannelManager,
     _is_already_partitioned,
@@ -625,10 +622,12 @@ async def shuffle_actor(
         The collective ID.
     """
     async with shutdown_on_error(
-        context, ch_in, ch_out, trace_ir=ir, ir_context=ir_context
-    ) as tracer:
-        ch_in = trace_channel(ch_in, tracer)
-        ch_out = trace_channel(ch_out, tracer)
+        context,
+        chs_in=(ch_in,),
+        chs_out=(ch_out,),
+        trace_ir=ir,
+        ir_context=ir_context,
+    ):
         await _global_shuffle(
             context,
             comm,

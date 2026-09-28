@@ -1702,13 +1702,8 @@ class lists_column_wrapper : public detail::column_wrapper {
                        cuda::stream_ref stream   = cudf::test::get_default_stream(),
                        cudf::memory_resources mr = cudf::get_current_device_resource_ref())
     requires(cudf::is_fixed_width<T>() && std::is_convertible_v<Element, SourceElementT>)
-    : column_wrapper{}
+    : lists_column_wrapper(elements.begin(), elements.end(), stream, mr)
   {
-    build_from_non_nested(
-      fixed_width_column_wrapper<T, SourceElementT>(elements.begin(), elements.end(), stream, mr)
-        .release(),
-      stream,
-      mr);
   }
 
   template <typename First, typename... Rest>
@@ -1773,13 +1768,8 @@ class lists_column_wrapper : public detail::column_wrapper {
                        cuda::stream_ref stream   = cudf::test::get_default_stream(),
                        cudf::memory_resources mr = cudf::get_current_device_resource_ref())
     requires(cudf::is_fixed_width<T>() && std::is_convertible_v<Element, SourceElementT>)
-    : column_wrapper{}
+    : lists_column_wrapper(elements.begin(), elements.end(), v, stream, mr)
   {
-    build_from_non_nested(
-      fixed_width_column_wrapper<T, SourceElementT>(elements.begin(), elements.end(), v, stream, mr)
-        .release(),
-      stream,
-      mr);
   }
 
   /**
@@ -1835,10 +1825,8 @@ class lists_column_wrapper : public detail::column_wrapper {
                        cuda::stream_ref stream   = cudf::test::get_default_stream(),
                        cudf::memory_resources mr = cudf::get_current_device_resource_ref())
     requires(std::is_same_v<T, cudf::string_view> && std::is_constructible_v<std::string, Element>)
-    : column_wrapper{}
+    : lists_column_wrapper(elements.begin(), elements.end(), stream, mr)
   {
-    build_from_non_nested(
-      strings_column_wrapper(elements.begin(), elements.end(), stream, mr).release(), stream, mr);
   }
 
   /**
@@ -1863,12 +1851,8 @@ class lists_column_wrapper : public detail::column_wrapper {
                        cuda::stream_ref stream   = cudf::test::get_default_stream(),
                        cudf::memory_resources mr = cudf::get_current_device_resource_ref())
     requires(std::is_same_v<T, cudf::string_view> && std::is_constructible_v<std::string, Element>)
-    : column_wrapper{}
+    : lists_column_wrapper(elements.begin(), elements.end(), v, stream, mr)
   {
-    build_from_non_nested(
-      strings_column_wrapper(elements.begin(), elements.end(), v, stream, mr).release(),
-      stream,
-      mr);
   }
 
   /**

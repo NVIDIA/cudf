@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -434,7 +434,7 @@ TEST_F(NestedListTest, MultipleListsColumnsWithNulls)
 {
   // A STRUCT<LIST<INT>> column with all nulls.
   auto const col0 = [] {
-    auto child = int32s_lists{{int32s_lists{}, int32s_lists{}}, all_nulls()};
+    auto child = int32s_lists{{{}, {}}, all_nulls()};
     return structs_col{{child}, all_nulls()};
   }();
 

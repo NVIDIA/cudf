@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -137,16 +137,9 @@ TYPED_TEST(TypedListsContainsTestScalarNeedle, SimpleInputWithNulls)
 
   // Test with nulls at the children level.
   {
-    auto const haystack = lists_col{{lists_col{1, 2},
-                                     lists_col{1},
-                                     lists_col{{1, null}, null_at(1)},
-                                     lists_col{} /*NULL*/,
-                                     lists_col{1, 3},
-                                     lists_col{1, 4},
-                                     lists_col{4},
-                                     lists_col{} /*NULL*/,
-                                     lists_col{1, 1}},
-                                    nulls_at({3, 7})};
+    auto const haystack = lists_col{
+      {{1, 2}, {1}, {{1, null}, null_at(1)}, {} /*NULL*/, {1, 3}, {1, 4}, {4}, {} /*NULL*/, {1, 1}},
+      nulls_at({3, 7})};
 
     auto const needle1 = [] {
       auto child = tdata_col{{1, null}, null_at(1)};
@@ -174,7 +167,7 @@ TYPED_TEST(TypedListsContainsTestScalarNeedle, SlicedInputHavingNulls)
 
   auto const haystack_original = lists_col{{{0, 0},
                                             {0} /*NULL*/,
-                                            lists_col{{1, null}, null_at(1)},
+                                            {{1, null}, null_at(1)},
                                             {1},
                                             {} /*NULL*/,
                                             {1, 3},
@@ -253,7 +246,7 @@ TYPED_TEST(TypedListContainsTestColumnNeedles, SlicedInputHavingNulls)
 
   auto const haystack_original = lists_col{{{0, 0},
                                             {0} /*NULL*/,
-                                            lists_col{{1, null}, null_at(1)},
+                                            {{1, null}, null_at(1)},
                                             {1},
                                             {} /*NULL*/,
                                             {1, 3},
@@ -266,7 +259,7 @@ TYPED_TEST(TypedListContainsTestColumnNeedles, SlicedInputHavingNulls)
 
   auto const needles_original = lists_col{{{0, 0},
                                            {0} /*NULL*/,
-                                           lists_col{{1, null}, null_at(1)},
+                                           {{1, null}, null_at(1)},
                                            {1},
                                            {} /*NULL*/,
                                            {1, 3, 1},
@@ -349,13 +342,13 @@ TEST_F(ListBinarySearch, ListWithNulls)
   {
     using lcw           = cudf::test::lists_column_wrapper<double>;
     auto const haystack = lcw{
-      lcw{-3.45967821e+12},  // 0
-      lcw{-3.6912186e-32},   // 1
-      lcw{9.721175},         // 2
+      {-3.45967821e+12},  // 0
+      {-3.6912186e-32},   // 1
+      {9.721175},         // 2
     };
 
     auto const needles = lcw{
-      lcw{{null, 4.22671e+32}, null_at(0)},
+      {{null, 4.22671e+32}, null_at(0)},
     };
 
     auto const expected = int32s_col{0};
@@ -371,23 +364,23 @@ TEST_F(ListBinarySearch, ListWithNulls)
   {
     using lcw       = cudf::test::lists_column_wrapper<int32_t, int32_t>;
     auto const col1 = lcw{
-      lcw{{null}, null_at(0)},  // 0
-      lcw{-80},                 // 1
-      lcw{-17},                 // 2
+      {{null}, null_at(0)},  // 0
+      {-80},                 // 1
+      {-17},                 // 2
     };
 
     auto const col2 = lcw{
-      lcw{27},                  // 0
-      lcw{{null}, null_at(0)},  // 1
-      lcw{},                    // 2
+      {27},                  // 0
+      {{null}, null_at(0)},  // 1
+      {},                    // 2
     };
 
     auto const val1 = lcw{
-      lcw{87},
+      {87},
     };
 
     auto const val2 = lcw{
-      lcw{},
+      {},
     };
 
     cudf::table_view input{{col1, col2}};

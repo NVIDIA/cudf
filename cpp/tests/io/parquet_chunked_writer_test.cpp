@@ -6,6 +6,7 @@
 #include "parquet_common.hpp"
 
 #include <cudf_test/base_fixture.hpp>
+#include <cudf_test/column_wrapper.hpp>
 #include <cudf_test/io_metadata_utilities.hpp>
 #include <cudf_test/iterator_utilities.hpp>
 #include <cudf_test/table_utilities.hpp>
@@ -278,7 +279,7 @@ TEST_F(ParquetChunkedWriterTest, ListOfStructOfStructOfListOfList)
   // [[1, 2, 3], [], [4, 5], [], [0, 6, 0]]
   // [[7, 8], []]
   // [[]]
-  lcw flats_1{lcw{}, {{1, 2, 3}, {}, {4, 5}, {}, {0, 6, 0}}, {{7, 8}, {}}, lcw{lcw{}}};
+  lcw flats_1{{}, {{1, 2, 3}, {}, {4, 5}, {}, {0, 6, 0}}, {{7, 8}, {}}, {{}}};
 
   auto weight_1   = cudf::test::fixed_width_column_wrapper<float>{{57.5, 51.1, 15.3, 1.1}};
   auto ages_1     = cudf::test::fixed_width_column_wrapper<int32_t>{{30, 27, 5, 31}};
@@ -303,7 +304,7 @@ TEST_F(ParquetChunkedWriterTest, ListOfStructOfStructOfListOfList)
 
   // [[]]
   // [[], [], []]
-  lcw flats_2{lcw{lcw{}}, lcw{lcw{}, lcw{}, lcw{}}};
+  lcw flats_2{{{}}, {{}, {}, {}}};
 
   auto weight_2 = cudf::test::fixed_width_column_wrapper<float>{{-1.0, -1.0}};
   auto ages_2   = cudf::test::fixed_width_column_wrapper<int32_t>{{351, 351}, {true, false}};
@@ -428,7 +429,7 @@ TEST_F(ParquetChunkedWriterTest, MismatchedStructureList)
   // [[7, 8]]
   // []
   // [[]]
-  lcw col01{{{1, 2, 3}, {}, {4, 5}, {}, {0, 6, 0}}, {{7, 8}}, lcw{}, lcw{lcw{}}};
+  lcw col01{{{1, 2, 3}, {}, {4, 5}, {}, {0, 6, 0}}, {{7, 8}}, {}, {{}}};
 
   // COL2 (non-nested columns to test proper schema construction)
   size_t num_rows = static_cast<cudf::column_view>(col00).size();

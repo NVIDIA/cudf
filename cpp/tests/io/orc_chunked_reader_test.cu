@@ -630,8 +630,7 @@ TEST_F(OrcChunkedReaderTest, TestChunkedReadWithListsNoNulls)
     //
     // However, `segmented_row_bit_count` used in chunked reader returns 200000,
     // thus we consider as having only 200000 bytes in total.
-    auto const template_lists = int32s_lists_col{
-      int32s_lists_col{}, int32s_lists_col{0}, int32s_lists_col{1, 2}, int32s_lists_col{3, 4, 5}};
+    auto const template_lists = int32s_lists_col{{}, {0}, {1, 2}, {3, 4, 5}};
 
     auto const gather_values = std::views::iota(int32_t{0}) |
                                std::views::transform([&](int32_t i) -> int32_t { return i % 4; });
@@ -716,10 +715,10 @@ TEST_F(OrcChunkedReaderTest, TestChunkedReadWithListsHavingNulls)
     // thus we consider as having only 142500 bytes in total.
     auto const template_lists =
       int32s_lists_col{// these will all be null
-                       int32s_lists_col{},
-                       int32s_lists_col{0},
-                       int32s_lists_col{1, 2},
-                       int32s_lists_col{3, 4, 5, 6, 7, 8, 9} /* this list will be nullified out */};
+                       {},
+                       {0},
+                       {1, 2},
+                       {3, 4, 5, 6, 7, 8, 9} /* this list will be nullified out */};
     auto const gather_values = std::views::iota(int32_t{0}) |
                                std::views::transform([&](int32_t i) -> int32_t { return i % 4; });
     auto const gather_iter = gather_values.begin();
@@ -808,9 +807,8 @@ TEST_F(OrcChunkedReaderTest, TestChunkedReadWithStructsOfLists)
       auto const str_iter = str_values.begin();
       child_columns.emplace_back(strings_col{str_iter, str_iter + num_rows}.release());
 
-      auto const template_lists = int32s_lists_col{
-        int32s_lists_col{}, int32s_lists_col{0}, int32s_lists_col{0, 1}, int32s_lists_col{0, 1, 2}};
-      auto const gather_values = std::views::iota(int32_t{0}) |
+      auto const template_lists = int32s_lists_col{{}, {0}, {0, 1}, {0, 1, 2}};
+      auto const gather_values  = std::views::iota(int32_t{0}) |
                                  std::views::transform([&](int32_t i) -> int32_t { return i % 4; });
       auto const gather_iter = gather_values.begin();
       auto const gather_map  = int32s_col(gather_iter, gather_iter + num_rows);

@@ -91,16 +91,13 @@ TYPED_TEST(groupby_collect_list_test, CollectLists)
   using K = int32_t;
   using V = TypeParam;
 
-  using LCW = cudf::test::lists_column_wrapper<TypeParam, int32_t>;
-
   cudf::test::fixed_width_column_wrapper<K, int32_t> keys{1, 1, 2, 2, 3, 3};
-  cudf::test::lists_column_wrapper<V, int32_t> values{
-    {1, 2}, {3, 4}, {5, 6, 7}, LCW{}, {9, 10}, {11}};
+  cudf::test::lists_column_wrapper<V, int32_t> values{{1, 2}, {3, 4}, {5, 6, 7}, {}, {9, 10}, {11}};
 
   cudf::test::fixed_width_column_wrapper<K, int32_t> expect_keys{1, 2, 3};
 
   cudf::test::lists_column_wrapper<V, int32_t> expect_vals{
-    {{1, 2}, {3, 4}}, {{5, 6, 7}, LCW{}}, {{9, 10}, {11}}};
+    {{1, 2}, {3, 4}}, {{5, 6, 7}, {}}, {{9, 10}, {11}}};
 
   auto agg = cudf::make_collect_list_aggregation<cudf::groupby_aggregation>();
   test_single_agg(keys, values, expect_keys, expect_vals, std::move(agg));
@@ -115,12 +112,12 @@ TYPED_TEST(groupby_collect_list_test, CollectListsWithNullExclusion)
 
   cudf::test::fixed_width_column_wrapper<K, int32_t> keys{1, 1, 2, 2, 3, 3, 4, 4};
   std::array const validity_mask{true, false, false, true, true, true, false, false};
-  LCW values{{{1, 2}, {3, 4}, {5, 6, 7}, LCW{}, {9, 10}, {11}, {20, 30, 40}, LCW{}},
+  LCW values{{{1, 2}, {3, 4}, {5, 6, 7}, {}, {9, 10}, {11}, {20, 30, 40}, {}},
              validity_mask.data()};
 
   cudf::test::fixed_width_column_wrapper<K, int32_t> expect_keys{1, 2, 3, 4};
 
-  LCW expect_vals{{{1, 2}}, {LCW{}}, {{9, 10}, {11}}, {}};
+  LCW expect_vals{{{1, 2}}, {{}}, {{9, 10}, {11}}, {}};
 
   auto agg =
     cudf::make_collect_list_aggregation<cudf::groupby_aggregation>(cudf::null_policy::EXCLUDE);

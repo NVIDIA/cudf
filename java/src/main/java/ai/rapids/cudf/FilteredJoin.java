@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -9,27 +9,23 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * This class represents a hash table built from the join keys of the right-side table for a
- * join operation. This hash table can then be reused across a series of left probe tables
- * to compute gather maps for joins more efficiently when the right-side table is not changing.
- * It can also be used to query the output row count of a join before manifesting the join gather
- * maps. Passing that row count to the gather-map operation no longer avoids any work: the output
- * size is always computed internally and a supplied count is only validated against it, so an
- * incorrect count fails with a {@link CudfException}. Prefer the overloads without a row count;
- * the row-count overloads will be deprecated in a future release.
+ * A reusable hash lookup built from the right-side join keys for left semi and left anti joins.
+ * This object can be reused for multiple probe tables. Duplicate build keys are supported.
+ * Each probe row is returned at most once by a semi join, regardless of how many build rows match.
+ * An anti join returns probe rows with no match.
  */
-public class HashJoin implements AutoCloseable {
+public class FilteredJoin implements AutoCloseable {
   static {
     NativeDepsLoader.loadNativeDeps();
   }
 
-  private static final Logger log = LoggerFactory.getLogger(HashJoin.class);
+  private static final Logger log = LoggerFactory.getLogger(FilteredJoin.class);
 
-  private static class HashJoinCleaner extends MemoryCleaner.Cleaner {
+  private static class FilteredJoinCleaner extends MemoryCleaner.Cleaner {
     private volatile Table buildKeys;
     private long nativeHandle;
 
-    HashJoinCleaner(Table buildKeys) {
+    FilteredJoinCleaner(Table buildKeys) {
       this.buildKeys = new Table(buildKeys.getColumns());
     }
 
@@ -45,7 +41,8 @@ public class HashJoin implements AutoCloseable {
           buildKeys = null;
         }
         if (logErrorIfNotClean) {
-          log.error("A HASH TABLE WAS LEAKED (ID: {} {})", id, Long.toHexString(origAddress));
+          log.error("A FILTERED JOIN WAS LEAKED (ID: {} {})", id,
+              Long.toHexString(origAddress));
         }
       }
       return neededCleanup;
@@ -57,23 +54,24 @@ public class HashJoin implements AutoCloseable {
     }
   }
 
-  private final HashJoinCleaner cleaner;
+  private final FilteredJoinCleaner cleaner;
   private final long numberOfColumns;
   private final boolean compareNullsEqual;
   private boolean isClosed = false;
 
   /**
-   * Construct a hash table for a join from a table representing the join key columns from the
-   * right-side table in the join. The resulting instance must be closed to release the
-   * GPU resources associated with the instance.
+   * Construct a reusable lookup from the join key columns of the right-side table.
+   * The key rows need not be distinct. All NaN values are considered equal. The
+   * resulting instance must be closed to release the GPU resources associated with
+   * this instance.
    *
-   * @param buildKeys table view containing the join keys for the right-side join table
+   * @param buildKeys table containing the right-side join keys
    * @param compareNullsEqual true if null key values should match otherwise false
    */
-  public HashJoin(Table buildKeys, boolean compareNullsEqual) {
+  public FilteredJoin(Table buildKeys, boolean compareNullsEqual) {
     this.numberOfColumns = buildKeys.getNumberOfColumns();
     this.compareNullsEqual = compareNullsEqual;
-    this.cleaner = new HashJoinCleaner(buildKeys);
+    this.cleaner = new FilteredJoinCleaner(buildKeys);
     try {
       cleaner.addRef();
       cleaner.nativeHandle = create(cleaner.buildKeys.getNativeView(), compareNullsEqual);
@@ -99,29 +97,19 @@ public class HashJoin implements AutoCloseable {
     cleaner.clean(false);
   }
 
-  /** Get the number of join key columns for the table used to generate the hash table. */
+  /** Get the number of join key columns used to build the lookup. */
   public long getNumberOfColumns() {
     return numberOfColumns;
   }
 
-  /** Returns true if the hash table was built to match on nulls otherwise false. */
+  /** Returns true if the lookup was built to match on null keys. */
   public boolean getCompareNullsEqual() {
     return compareNullsEqual;
   }
 
-  /**
-   * Returns true if the hash table was built to match on nulls otherwise false.
-   *
-   * @deprecated Use {@link #getCompareNullsEqual()} instead.
-   */
-  @Deprecated
-  public boolean getCompareNulls() {
-    return getCompareNullsEqual();
-  }
-
   long getNativeView() {
     if (isClosed) {
-      throw new IllegalStateException("HashJoin is already closed");
+      throw new IllegalStateException("FilteredJoin is already closed");
     }
     return cleaner.nativeHandle;
   }

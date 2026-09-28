@@ -17,11 +17,13 @@
 #include <cudf/table/table.hpp>
 #include <cudf/table/table_view.hpp>
 #include <cudf/unary.hpp>
+#include <cudf/utilities/error.hpp>
 #include <cudf/utilities/traits.hpp>
 
-#include <rmm/cuda_device.hpp>
-#include <rmm/cuda_stream.hpp>
 #include <rmm/mr/statistics_resource_adaptor.hpp>
+
+#include <cuda/stream>
+#include <cuda_runtime_api.h>
 
 #include <atomic>
 #include <thread>
@@ -353,16 +355,18 @@ TEST_F(StreamingGroupbyTest, ConcurrentAggregate)
     batches.push_back(cudf::table_view{{keys[i], vals[i]}});
   }
 
-  std::vector<std::unique_ptr<rmm::cuda_stream>> streams;
+  int device{};
+  CUDF_CUDA_TRY(cudaGetDevice(&device));
+  auto const stream_device = cuda::device_ref{device};
+  std::vector<std::unique_ptr<cuda::stream>> streams;
   streams.reserve(num_batches);
   for (int i = 0; i < num_batches; ++i) {
-    streams.push_back(std::make_unique<rmm::cuda_stream>());
+    streams.push_back(std::make_unique<cuda::stream>(stream_device));
   }
 
   auto reqs = single_agg_req(1, cudf::make_sum_aggregation<cudf::groupby_aggregation>());
   cudf::groupby::streaming_groupby streaming_agg(KEY_COL, reqs, DEFAULT_MAX_DISTINCT_KEYS);
 
-  auto const device = rmm::get_current_cuda_device();
   std::vector<std::thread> threads;
   std::vector<std::exception_ptr> errors(num_batches);
   // `ready` lets the main thread wait until every worker is spinning, and `start` then releases
@@ -372,7 +376,7 @@ TEST_F(StreamingGroupbyTest, ConcurrentAggregate)
   threads.reserve(num_batches);
   for (int i = 0; i < num_batches; ++i) {
     threads.emplace_back([&, i] {
-      rmm::cuda_set_device_raii const device_guard{device};
+      CUDF_CUDA_TRY(cudaSetDevice(device));
       ready.fetch_add(1, std::memory_order_relaxed);
       while (!start.load(std::memory_order_acquire)) {
         std::this_thread::yield();
@@ -395,7 +399,7 @@ TEST_F(StreamingGroupbyTest, ConcurrentAggregate)
     EXPECT_FALSE(error);
   }
   for (auto const& stream : streams) {
-    stream->synchronize();
+    stream->sync();
   }
 
   auto [out_keys, results] = streaming_agg.finalize();

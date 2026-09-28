@@ -272,6 +272,93 @@ def test_io_tasks_wait_for_memory_admission(
     assert second["admitted"] >= first["stop"]
 
 
+def test_broadcast_candidate_uses_exact_size_before_commit(
+    tmp_path: pathlib.Path,
+    timeout_seconds: int,
+) -> None:
+    """An incomplete broadcast candidate is committed or rejected exactly."""
+    pytest.importorskip("structlog")
+
+    left_path = tmp_path / "left"
+    left_path.mkdir()
+    pl.DataFrame({"key": [0], "left": [0]}).write_parquet(
+        left_path / "00-small.parquet"
+    )
+    pl.DataFrame({"key": range(1, 1_001), "left": range(1, 1_001)}).write_parquet(
+        left_path / "01-large.parquet"
+    )
+
+    code = textwrap.dedent(f"""\
+    import json
+
+    import polars as pl
+    import rmm
+    import structlog
+
+    rmm.mr.set_current_device_resource(rmm.mr.ManagedMemoryResource())
+
+    from cudf_polars.engine.spmd import SPMDEngine
+
+    left = pl.scan_parquet({str(left_path / "*.parquet")!r})
+    right = pl.LazyFrame({{
+        "key": range(10_001),
+        "right": range(10_001),
+    }})
+    records = {{}}
+    for case, broadcast_limit in (("reject", 1_024), ("commit", 32_768)):
+        options = {{
+            "broadcast_limit": broadcast_limit,
+            "target_partition_size": 1 << 20,
+            "max_rows_per_partition": 20_000,
+            "dynamic_planning": {{"sample_chunk_count": 1}},
+        }}
+        with SPMDEngine(executor_options=options) as engine:
+            with structlog.testing.capture_logs() as logs:
+                result = left.join(right, on="key").collect(engine=engine)
+
+        (event,) = (
+            log
+            for log in logs
+            if log.get("scope") == "actor"
+            and log.get("decision") in {"broadcast_left", "broadcast_right", "shuffle"}
+        )
+        records[case] = {{
+            "decision": event["decision"],
+            "rows": result.height,
+            "left_sum": result["left"].sum(),
+        }}
+    print("SAFE_BROADCAST=" + json.dumps(records))
+    """)
+
+    env = os.environ.copy()
+    env["CUDF_POLARS_LOG_TRACES"] = "1"
+    completed = subprocess.run(
+        [sys.executable, "-c", code],
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        timeout=timeout_seconds,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stdout.decode(errors="replace")
+    result = completed.stdout
+    (payload,) = (
+        line.removeprefix(b"SAFE_BROADCAST=")
+        for line in result.splitlines()
+        if line.startswith(b"SAFE_BROADCAST=")
+    )
+    record = json.loads(payload)
+
+    expected_result = {
+        "rows": 1_001,
+        "left_sum": sum(range(1_001)),
+    }
+    assert record == {
+        "reject": {"decision": "shuffle", **expected_result},
+        "commit": {"decision": "broadcast_left", **expected_result},
+    }
+
+
 def test_local_join_prefilter_trace_records_decision_and_effect(
     tmp_path: pathlib.Path, timeout_seconds: int
 ) -> None:

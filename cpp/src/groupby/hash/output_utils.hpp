@@ -6,6 +6,7 @@
 #pragma once
 
 #include <cudf/aggregation.hpp>
+#include <cudf/column/column.hpp>
 #include <cudf/detail/aggregation/result_cache.hpp>
 #include <cudf/table/table.hpp>
 #include <cudf/table/table_view.hpp>
@@ -22,6 +23,25 @@
 #include <vector>
 
 namespace cudf::groupby::detail::hash {
+
+/**
+ * @brief Create an uninitialized column for storing the results of one aggregation.
+ *
+ * For data types smaller than 4 bytes, the buffer size is adjusted to be a multiple of 4 to
+ * ensure memory safety when atomic operations use 4-byte CAS loops to emulate smaller atomics.
+ *
+ * @param type The type of the column
+ * @param size Number of rows in the column
+ * @param state The state of the column's null mask
+ * @param stream CUDA stream used for device memory operations and kernel launches
+ * @param mr Device memory resource used to allocate the returned column's device memory
+ * @return The column for storing the results of one aggregation
+ */
+std::unique_ptr<column> create_result_column(data_type type,
+                                             size_type size,
+                                             mask_state state,
+                                             cuda::stream_ref stream,
+                                             rmm::device_async_resource_ref mr);
 
 /**
  * @brief Create the table containing columns for storing aggregation results.

@@ -114,8 +114,9 @@ void test_single_agg(cudf::column_view const& keys,
     std::vector<cudf::groupby::streaming_aggregation_request> sreqs;
     sreqs.push_back(std::move(sreq));
 
-    auto const max_distinct_keys = std::max(keys.size(), cudf::size_type{64});
-    cudf::groupby::streaming_groupby sgb(key_indices, sreqs, max_distinct_keys, include_null_keys);
+    auto const initial_distinct_keys = std::max(keys.size(), cudf::size_type{64});
+    cudf::groupby::streaming_groupby sgb(
+      key_indices, sreqs, initial_distinct_keys, include_null_keys);
     sgb.aggregate(data, cudf::test::get_default_stream());
     auto [skeys, sresults] = sgb.finalize(cudf::test::get_default_stream());
 

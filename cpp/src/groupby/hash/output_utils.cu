@@ -43,8 +43,6 @@ namespace {
  *
  * This functor handles the creation of appropriately typed and sized columns for each
  * aggregation, including special handling for SUM_OVERFLOW which requires a struct column.
- * For data types smaller than 4 bytes, the buffer size is adjusted to be a multiple of 4 to
- * ensure memory safety when atomic operations use 4-byte CAS loops to emulate smaller atomics.
  */
 struct result_column_creator {
   size_type output_size;
@@ -66,19 +64,8 @@ struct result_column_creator {
       is_dictionary(col.type()) ? dictionary_column_view(col).keys().type() : col.type();
     auto const nullable = !is_agg_intermediate && agg != aggregation::COUNT_VALID &&
                           agg != aggregation::COUNT_ALL && col.has_nulls();
-    // TODO: Remove adjusted buffer size workaround once https://github.com/NVIDIA/cccl/issues/6430
-    // is fixed. Use adjusted buffer size for small data types to ensure atomic operation safety.
     auto const make_uninitialized_column = [&](data_type d_type, size_type size, mask_state state) {
-      auto const type_size = cudf::size_of(d_type);
-      if (type_size < 4) {
-        auto adjusted_size    = cudf::util::round_up_safe(size, static_cast<size_type>(4));
-        auto buffer           = rmm::device_buffer(adjusted_size * type_size, stream, mr);
-        auto mask             = create_null_mask(size, state, stream, mr);
-        auto const null_count = state_null_count(state, size);
-        return std::make_unique<column>(
-          d_type, size, std::move(buffer), std::move(mask), null_count);
-      }
-      return make_fixed_width_column(d_type, size, state, stream, mr);
+      return create_result_column(d_type, size, state, stream, mr);
     };
     if (agg != aggregation::SUM_OVERFLOW) {
       auto const target_type = cudf::detail::target_type(col_type, agg);
@@ -111,6 +98,25 @@ struct result_column_creator {
 };
 
 }  // anonymous namespace
+
+std::unique_ptr<column> create_result_column(data_type type,
+                                             size_type size,
+                                             mask_state state,
+                                             cuda::stream_ref stream,
+                                             rmm::device_async_resource_ref mr)
+{
+  // TODO: Remove adjusted buffer size workaround once https://github.com/NVIDIA/cccl/issues/6430
+  // is fixed. Use adjusted buffer size for small data types to ensure atomic operation safety.
+  auto const type_size = cudf::size_of(type);
+  if (type_size < 4) {
+    auto adjusted_size    = cudf::util::round_up_safe(size, static_cast<size_type>(4));
+    auto buffer           = rmm::device_buffer(adjusted_size * type_size, stream, mr);
+    auto mask             = create_null_mask(size, state, stream, mr);
+    auto const null_count = state_null_count(state, size);
+    return std::make_unique<column>(type, size, std::move(buffer), std::move(mask), null_count);
+  }
+  return make_fixed_width_column(type, size, state, stream, mr);
+}
 
 std::unique_ptr<table> create_results_table(size_type output_size,
                                             table_view const& values,

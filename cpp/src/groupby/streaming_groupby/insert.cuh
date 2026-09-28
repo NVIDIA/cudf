@@ -65,7 +65,7 @@ streaming_groupby::impl::batch_insert_result streaming_groupby::impl::probe_and_
   rmm::device_uvector<size_type> batch_local_indices(batch_size, stream, temp_mr);
 
   // First batch has no compacted batches yet, so all slot values are transient (>=
-  // _max_distinct_keys) and only the batch-self equality branch of n_table_comparator
+  // _capacity) and only the batch-self equality branch of n_table_comparator
   // can fire.  Dispatch to a dedicated helper that uses first_batch_comparator to skip
   // the cross-table dispatch, the cross-comparator build, and the dense-ID branches.
   // The two helpers live in separate TUs to parallelize the heavy cuco/thrust template
@@ -93,14 +93,16 @@ streaming_groupby::impl::batch_insert_result streaming_groupby::impl::probe_and_
   batch_local_indices.resize(new_distinct_keys, stream);
 
   if (new_distinct_keys > 0) {
-    // Bound check: the hash set has already been written above (transient slot values),
-    // so on failure the object is left invalidated; further aggregate()/merge() calls
-    // will throw immediately while finalize() can still recover partial results.
+    // The caller made room for every row of the batch to be a new key, so this cannot fire.
+    // Were it to, the hash set has already been written above (transient slot values), so
+    // the object is left invalidated; further aggregate()/merge() calls will throw
+    // immediately while finalize() can still recover partial results.
     auto const distinct_so_far = _distinct_keys.load(std::memory_order_relaxed);
-    if (distinct_so_far + new_distinct_keys > _max_distinct_keys) {
+    if (distinct_so_far + new_distinct_keys > _capacity) {
       _invalidated = true;
-      CUDF_FAIL("Distinct key count (" + std::to_string(distinct_so_far + new_distinct_keys) +
-                ") would exceed max_distinct_keys (" + std::to_string(_max_distinct_keys) + ").");
+      CUDF_FAIL("Internal error: distinct key count (" +
+                std::to_string(distinct_so_far + new_distinct_keys) + ") exceeds the capacity (" +
+                std::to_string(_capacity) + ").");
     }
 
     // Gather compacted distinct keys from the batch.
@@ -121,7 +123,7 @@ streaming_groupby::impl::batch_insert_result streaming_groupby::impl::probe_and_
     _preprocessed_batches.push_back(preprocessed_compacted);
 
     // Pass 2 — fused: rewrites slots from transient encoding to dense IDs and
-    // writes the {batch_id, row} companion entry.
+    // writes the {batch_id, row} companion entry and the key's hash.
     auto* const base = _key_set->data();
     thrust::for_each_n(rmm::exec_policy_nosync(stream, temp_mr),
                        cuda::counting_iterator<size_type>(0),
@@ -130,6 +132,8 @@ streaming_groupby::impl::batch_insert_result streaming_groupby::impl::probe_and_
                                            base,
                                            slot_offsets.data(),
                                            _key_loc->data(),
+                                           batch_hash_cache.data(),
+                                           _key_hashes->data(),
                                            new_batch_id,
                                            dense_id_offset});
 
@@ -137,7 +141,7 @@ streaming_groupby::impl::batch_insert_result streaming_groupby::impl::probe_and_
                        cuda::counting_iterator<size_type>(0),
                        batch_size,
                        update_transient_target_indices_fn{
-                         base, slot_offsets.data(), _max_distinct_keys, target_indices.data()});
+                         base, slot_offsets.data(), _capacity, target_indices.data()});
 
     _distinct_keys.fetch_add(new_distinct_keys, std::memory_order_relaxed);
   }

@@ -40,8 +40,7 @@ Quent:
    commit SHA. Do not use a branch, tag, abbreviated SHA, or different revision
    spelling: Cargo must resolve one package identity for the generated model,
    analyzer, and `quent-open` viewer traits.
-2. Resolve each crate once without `--locked` so Cargo replaces the old Quent
-   Git source and records the new source SHA and transitive dependency graph:
+2. Refresh the Cargo lockfile.
 
    ```sh
    # From python/cudf_polars/quent/bridge
@@ -49,29 +48,20 @@ Quent:
    ```
 
    Review the then commit the changes (including the lockfiles).
-3. Activate the cudf development environment and rebuild from
-   `python/cudf_polars/quent/bridge`:
+3. Activate the cudf development environment and rebuild from the repository
+   root:
 
    ```sh
-   python -m maturin develop
+   ./build.sh cudf_polars_quent
    ```
 
-   The build script generates the Rust bridge and a PEP 561 stub under Cargo's
-   `OUT_DIR`; it does not overwrite the tracked
-   `../../cudf_polars/_quent.pyi`. When the generated API changes, refresh that
-   tracked stub from the most recent debug build:
+   The build script generates the Rust instrumentation library from the
+   `model.yaml` and Python bindings to the Rust instrumentation library. The
+   build also outputs a typestub file and copies it to
+   `python/cudf_polars/cudf_polars/_quent.pyi`, which is checked into the
+   repository.
 
-   ```sh
-   generated_stub="$(
-     ls -t target/debug/build/cudf-polars-quent-*/out/_quent/__init__.pyi |
-       head -n 1
-   )"
-   cp "${generated_stub}" ../../cudf_polars/_quent.pyi
-   ```
 
-   The generated output already includes the cudf-specific transformations
-   made in `build.rs`. Review and commit the stub diff, then run mypy so stale
-   handle names, event methods, and argument types are caught.
 4. Run the checks at `ci/run_cudf_polars_quent_tests`.
 5. Commit and push the analyzer changes to the Git remote recorded in the
    bridge's build provenance. Rebuild the bridge after committing, then

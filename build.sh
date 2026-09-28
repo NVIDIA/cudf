@@ -351,22 +351,19 @@ fi
 # Build and install the cudf-polars Quent bridge and update its stub
 if hasArg cudf_polars_quent; then
     cd "${REPODIR}/python/cudf_polars/quent/bridge"
+
+    cargo clean -p cudf-polars-quent
     python -m maturin develop
 
     shopt -s nullglob
     generated_stubs=(target/*/build/cudf-polars-quent-*/out/_quent/__init__.pyi)
     shopt -u nullglob
-    if ((${#generated_stubs[@]} == 0)); then
-        echo "No generated Quent stub found" >&2
+    if ((${#generated_stubs[@]} != 1)); then
+        echo "Expected one generated Quent stub, found ${#generated_stubs[@]}" >&2
         exit 1
     fi
 
     generated_stub="${generated_stubs[0]}"
-    for candidate in "${generated_stubs[@]:1}"; do
-        if [[ "${candidate}" -nt "${generated_stub}" ]]; then
-            generated_stub="${candidate}"
-        fi
-    done
 
     cp "${generated_stub}" "${REPODIR}/python/cudf_polars/cudf_polars/_quent.pyi"
 fi

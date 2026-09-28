@@ -62,7 +62,7 @@ Quent:
    repository.
 
 
-4. Run the checks at `ci/run_cudf_polars_quent_tests`.
+4. Run the checks at `ci/run_cudf_polars_quent_tests.sh`.
 5. Commit and push the analyzer changes to the Git remote recorded in the
    bridge's build provenance. Rebuild the bridge after committing, then
    regenerate traces. `quent-open` checks out the analyzer package at the exact

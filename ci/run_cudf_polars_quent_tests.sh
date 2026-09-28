@@ -14,22 +14,18 @@ pushd "${BRIDGE_DIR}"
 cargo fmt --all -- --check
 cargo clippy --locked --all-targets -- -D warnings
 cargo check --locked
+cargo clean -p cudf-polars-quent
 python -m maturin build --locked
 
 shopt -s nullglob
 generated_stubs=(target/*/build/cudf-polars-quent-*/out/_quent/__init__.pyi)
 shopt -u nullglob
-if ((${#generated_stubs[@]} == 0)); then
-  echo "No generated Quent stub found" >&2
+if ((${#generated_stubs[@]} != 1)); then
+  echo "Expected one generated Quent stub, found ${#generated_stubs[@]}" >&2
   exit 1
 fi
 
 generated_stub="${generated_stubs[0]}"
-for candidate in "${generated_stubs[@]:1}"; do
-  if [[ "${candidate}" -nt "${generated_stub}" ]]; then
-    generated_stub="${candidate}"
-  fi
-done
 
 cp "${generated_stub}" "${TRACKED_STUB}"
 popd

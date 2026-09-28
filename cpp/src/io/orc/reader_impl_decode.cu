@@ -389,6 +389,7 @@ void decode_stream_data(int64_t num_dicts,
       auto& chunk            = chunks[stripe_idx][col_idx];
       chunk.column_data_base = out_buffers[col_idx].data();
       chunk.valid_map_base   = out_buffers[col_idx].null_mask();
+      chunk.null_count       = 0;
     });
   });
 
@@ -396,8 +397,14 @@ void decode_stream_data(int64_t num_dicts,
   rmm::device_uvector<dictionary_entry> global_dict(num_dicts, stream);
 
   chunks.host_to_device_async(stream);
-  decode_nulls_and_string_dictionaries(
-    chunks.base_device_ptr(), global_dict.data(), num_columns, num_stripes, skip_rows, stream);
+  decode_nulls_and_string_dictionaries(chunks.base_device_ptr(),
+                                       global_dict.data(),
+                                       num_columns,
+                                       num_stripes,
+                                       skip_rows,
+                                       row_groups,
+                                       level,
+                                       stream);
 
   if (level > 0) {
     // Update nullmasks for children if parent was a struct and had null mask

@@ -99,13 +99,12 @@ def row_groups(num_row_groups: int) -> list[list[int]]:
 
 
 @pytest.fixture
-def hybrid_scan_multifile_reader(
+def hybrid_scan_multifile_reader_without_page_index(
     parquet_bytes: list[bytes],
     parquet_options: plc.io.parquet.ParquetReaderOptions,
 ) -> HybridScanMultiFile:
-    """Create a HybridScanMultiFile with the page index of both sources."""
-    # Create the reader from the footer bytes of each source
-    reader = HybridScanMultiFile.from_parquet_metadatas(
+    """A HybridScanMultiFile readers *without* the page index of each source setup."""
+    return HybridScanMultiFile.from_parquet_metadatas(
         [
             plc.io.parquet_metadata.FileMetaData.from_bytes(
                 footer_bytes(source)
@@ -114,20 +113,28 @@ def hybrid_scan_multifile_reader(
         ],
         parquet_options,
     )
+
+
+@pytest.fixture
+def hybrid_scan_multifile_reader(
+    parquet_bytes: list[bytes],
+    hybrid_scan_multifile_reader_without_page_index: HybridScanMultiFile,
+) -> HybridScanMultiFile:
+    """A HybridScanMultiFile reader *with* the page index of both sources."""
     # Fetch the page index of each source and set it up within the metadata
-    reader.setup_page_indexes(
+    hybrid_scan_multifile_reader_without_page_index.setup_page_indexes(
         [
             memoryview(source)[
                 byte_range.offset : byte_range.offset + byte_range.size
             ]
             for source, byte_range in zip(
                 parquet_bytes,
-                reader.page_index_byte_ranges(),
+                hybrid_scan_multifile_reader_without_page_index.page_index_byte_ranges(),
                 strict=True,
             )
         ]
     )
-    return reader
+    return hybrid_scan_multifile_reader_without_page_index
 
 
 def test_hybrid_scan_multifile_construct_directly_raises() -> None:
@@ -137,7 +144,7 @@ def test_hybrid_scan_multifile_construct_directly_raises() -> None:
 
 
 def test_hybrid_scan_multifile_metadata(
-    hybrid_scan_multifile_reader: HybridScanMultiFile,
+    hybrid_scan_multifile_reader_without_page_index: HybridScanMultiFile,
     row_groups: list[list[int]],
     num_rows: int,
 ) -> None:
@@ -145,12 +152,14 @@ def test_hybrid_scan_multifile_metadata(
     # One metadata object per source, in source order
     assert [
         metadata.num_rows
-        for metadata in hybrid_scan_multifile_reader.parquet_metadatas()
+        for metadata in hybrid_scan_multifile_reader_without_page_index.parquet_metadatas()
     ] == [num_rows, num_rows]
 
     # Row counts are totalled across all sources
     assert (
-        hybrid_scan_multifile_reader.total_rows_in_row_groups(row_groups)
+        hybrid_scan_multifile_reader_without_page_index.total_rows_in_row_groups(
+            row_groups
+        )
         == 2 * num_rows
     )
 
@@ -159,10 +168,10 @@ def test_hybrid_scan_multifile_metadata(
     # calls `setup_page_indexes`. This in turn causes `page_index_byte_ranges`
     # to return an empty byte range.
     # See https://github.com/NVIDIA/cudf/pull/24133 for more.
-    # assert all(
-    #     byte_range.size > 0
-    #     for byte_range in hybrid_scan_multifile_reader.page_index_byte_ranges()
-    # )
+    assert all(
+        byte_range.size > 0
+        for byte_range in hybrid_scan_multifile_reader_without_page_index.page_index_byte_ranges()
+    )
 
 
 def test_hybrid_scan_multifile_construct_row_group_passes(

@@ -10,7 +10,7 @@ ci:
   # Lychee's hook script runs `git rev-parse` at run time, which exits 128 in
   # pre-commit.ci's differently-owned clone. Lychee still runs in rapids `checks`
   # CI via `pre-commit run --all-files` in ci/check_style.sh.
-  skip: ["mypy", "verify-alpha-spec", "lychee"]
+  skip: ["mypy", "verify-alpha-spec", "verify-dependencies", "lychee"]
   submodules: false
 
 # Agent skill artifacts are validated and signed by the NVIDIA skills pipeline.
@@ -241,8 +241,9 @@ repos:
       - id: numpydoc-validation
         files: ^python/cudf/cudf/
   - repo: https://github.com/rapidsai/pre-commit-hooks
-    rev: v1.6.0
+    rev: v1.7.0
     hooks:
+      - id: verify-dependencies
       - id: verify-copyright
         name: verify-copyright-cudf
         args: [--fix, --spdx]

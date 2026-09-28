@@ -49,6 +49,7 @@ if TYPE_CHECKING:
     from cudf_polars.containers import DataType
     from cudf_polars.dsl.expr import NamedExpr
     from cudf_polars.dsl.ir import CachedParquetInfo, IRExecutionContext
+    from cudf_polars.dsl.utils.per_path import PerPathValues
     from cudf_polars.streaming.base import (
         DataSourceInfo,
         SerializedDataSourceInfo,
@@ -192,7 +193,8 @@ def expand_scan_for_rank(
         sindex = local_offset % plan.factor
         tasks: list[ScanTask] = []
         splits_created = 0
-        for path in local_paths:
+        for path_index, path in enumerate(local_paths, start=path_offset):
+            hive_parts = ir.slice_hive_parts(path_index, path_index + 1)
             while sindex < plan.factor and splits_created < local_count:
                 tasks.append(
                     ParquetScanTask(
@@ -201,6 +203,7 @@ def expand_scan_for_rank(
                         sindex,
                         plan.factor,
                         parquet_options,
+                        hive_parts,
                     )
                 )
                 sindex += 1
@@ -215,7 +218,16 @@ def expand_scan_for_rank(
             if not paths:
                 continue
             if ir.typ == "parquet":
-                tasks.append(ParquetScanTask(ir, paths, 0, 1, parquet_options))
+                tasks.append(
+                    ParquetScanTask(
+                        ir,
+                        paths,
+                        0,
+                        1,
+                        parquet_options,
+                        ir.slice_hive_parts(offset, offset + plan.factor),
+                    )
+                )
             else:
                 tasks.append(ScanTask(ir, paths, 0, 1))
     return StreamingScan(tasks, ir)
@@ -227,6 +239,7 @@ def hybrid_scan_eligible(
     row_index: tuple[str, int] | None,
     include_file_paths: str | None,
     predicate: NamedExpr | None,
+    hive_parts: PerPathValues | None,
 ) -> bool:
     """Whether scan options allow hybrid scan if metadata is available."""
     return (
@@ -234,6 +247,8 @@ def hybrid_scan_eligible(
         and row_index is None
         and include_file_paths is None
         and predicate is not None
+        # TODO: Support hive partitioning
+        and hive_parts is None
     )
 
 
@@ -466,7 +481,8 @@ class ScanTask(IR):
                 base_scan.include_file_paths,
                 base_scan.predicate,
                 base_scan.parquet_options,
-                None,
+                hive_parts=None,
+                cached_parquet_info=None,
                 context=context,
             )
 
@@ -476,12 +492,17 @@ class ParquetScanTask(ScanTask):
 
     is_io_node: bool = True
 
-    __slots__ = ("parquet_options",)
+    __slots__ = ("hive_parts", "parquet_options")
     _non_child: ClassVar[tuple[str, ...]] = (
         *ScanTask._non_child,
         "parquet_options",
+        "hive_parts",
     )
-    _n_non_child_args = 5
+    _n_non_child_args = 6
+    parquet_options: ParquetOptions
+    """Parquet-specific options."""
+    hive_parts: PerPathValues | None
+    """Hive partition values for this task's paths."""
 
     def __init__(
         self,
@@ -490,16 +511,20 @@ class ParquetScanTask(ScanTask):
         split_index: int,
         total_splits: int,
         parquet_options: ParquetOptions,
+        hive_parts: PerPathValues | None = None,
     ):
         if base_scan.typ != "parquet":
             raise ValueError(f"Expected a parquet scan, got: {base_scan.typ}")
         if total_splits > 1 and len(paths) > 1:
             raise ValueError(f"Expected a single path for a split task, got: {paths}")
+        Scan._validate_hive_parts_info(paths, hive_parts)
         super().__init__(base_scan, paths, split_index, total_splits)
         self.parquet_options = parquet_options
+        self.hive_parts = hive_parts
         self._non_child_args = (
             *self._non_child_args,
             parquet_options,
+            hive_parts,
         )
 
     def get_hashable(self) -> Hashable:
@@ -512,6 +537,7 @@ class ParquetScanTask(ScanTask):
             self.split_index,
             self.total_splits,
             self.parquet_options,
+            self.hive_parts,
         )
 
     def get_task_bounds(self) -> ParquetScanTaskBounds:
@@ -613,11 +639,14 @@ class ParquetScanTask(ScanTask):
         split_index: int,
         total_splits: int,
         parquet_options: ParquetOptions,
+        hive_parts: PerPathValues | None,
         *,
         context: IRExecutionContext,
     ) -> DataFrame:
         """Evaluate a parquet scan task."""
-        task = cls(base_scan, paths, split_index, total_splits, parquet_options)
+        task = cls(
+            base_scan, paths, split_index, total_splits, parquet_options, hive_parts
+        )
         base_scan = task.base_scan
         paths = task.paths
         cached_parquet_info = task._get_cached_parquet_info()
@@ -630,6 +659,7 @@ class ParquetScanTask(ScanTask):
                 row_index=base_scan.row_index,
                 include_file_paths=base_scan.include_file_paths,
                 predicate=base_scan.predicate,
+                hive_parts=hive_parts,
             )
         )
         if cached_parquet_info is None and should_try_hybrid_scan:
@@ -690,7 +720,8 @@ class ParquetScanTask(ScanTask):
                 base_scan.include_file_paths,
                 base_scan.predicate,
                 parquet_options,
-                cached_parquet_info,
+                hive_parts=hive_parts,
+                cached_parquet_info=cached_parquet_info,
                 context=context,
             )
 

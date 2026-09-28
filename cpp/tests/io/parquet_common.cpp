@@ -240,9 +240,7 @@ void read_footer(std::unique_ptr<cudf::io::datasource> const& source,
   // parquet files end with 4-byte footer_length and 4-byte magic == "PAR1"
   // seek backwards from the end of the file (footer_length + 8 bytes of ender)
   auto const footer_buffer = cudf::io::parquet::fetch_footer_to_host(*source);
-  cudf::io::parquet::detail::CompactProtocolReader cp(footer_buffer->data(), footer_buffer->size());
-
-  cp.read(file_meta_data);
+  cudf::io::parquet::detail::decode_footer_bytes(*footer_buffer, file_meta_data);
 }
 
 // returns the number of bits used for dictionary encoding data at the given page location.

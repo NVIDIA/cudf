@@ -1,0 +1,6 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# This file contains additional pytest node IDs that are skipped when the polars test binary
+# requires a newer glibc than the test environment provides.
+
+tests/benchmark/test_pdsh.py::test_pdsh

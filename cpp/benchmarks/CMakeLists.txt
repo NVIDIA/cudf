@@ -332,6 +332,14 @@ ConfigureNVBench(
 )
 
 # ##################################################################################################
+# * parquet reader page headers benchmark
+# ------------------------------------------------------------------
+ConfigureNVBench(
+  PARQUET_READER_PAGE_HEADERS_NVBENCH io/parquet/parquet_reader_page_headers.cpp
+  io/parquet/parquet_common.cpp
+)
+
+# ##################################################################################################
 # * parquet reader wide benchmark ------------------------------------------------------------------
 ConfigureNVBench(
   PARQUET_READER_WIDE_NVBENCH io/parquet/parquet_reader_wide.cpp io/parquet/parquet_common.cpp

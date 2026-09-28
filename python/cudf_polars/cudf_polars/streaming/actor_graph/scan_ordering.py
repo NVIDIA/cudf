@@ -15,6 +15,7 @@ from cudf_streaming.channel_metadata import (
 )
 from cudf_streaming.table_chunk import TableChunk
 
+from cudf_polars.dsl.tracing import nvtx_annotate_cudf_polars
 from cudf_polars.dsl.utils.naming import names_to_indices
 from cudf_polars.streaming.actor_graph.collectives.allgather import AllGatherManager
 from cudf_polars.streaming.actor_graph.collectives.sort import (
@@ -267,10 +268,10 @@ def _partitioning_from_task_bounds(
     context: Context,
     candidates: list[tuple[str, OrderKey]],
     bounds: plc.Table,
-    global_task_count: int,
+    global_chunk_count: int,
     stream: Stream,
 ) -> Partitioning | None:
-    """Infer global partitioning from task bounds in rank order."""
+    """Infer global partitioning from scan-task bounds in rank order."""
     for i, (_, key) in enumerate(candidates):
         column = bounds.columns()[i]
         if column.null_count():
@@ -282,14 +283,14 @@ def _partitioning_from_task_bounds(
         ):
             continue
 
-        if global_task_count < 2:
+        if global_chunk_count < 2:
             ordering_boundaries = plc.Table(
                 [plc.Column.from_iterable_of_py([], column.type(), stream=stream)]
             )
             strict = True
         else:
             ordering_boundaries, strict = _extract_ordering_boundaries(
-                candidate_bounds, global_task_count, stream
+                candidate_bounds, global_chunk_count, stream
             )
         return Partitioning(
             inter_rank=OrderScheme(
@@ -312,6 +313,7 @@ def _partitioning_from_task_bounds(
     return None
 
 
+@nvtx_annotate_cudf_polars(message="parquet_metadata_ordering")
 async def parquet_metadata_ordering(
     context: Context,
     comm: Communicator,
@@ -362,6 +364,8 @@ async def parquet_metadata_ordering(
             stream, ordered=True, ir_context=ir_context
         )
 
+    # StreamingScan emits one output chunk per scan task, so task-bound rows
+    # also line up with the global chunk count used by Ordering metadata.
     assert global_task_bounds.num_rows() == 2 * global_chunk_count, (
         "Ordering task bounds must contain first/last rows for every scan task."
     )

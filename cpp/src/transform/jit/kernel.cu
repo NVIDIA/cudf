@@ -70,9 +70,9 @@ __device__ void transform_kernel(size_type row_size,
   auto thread_error = errc::SUCCESS;
 
   // Keep every lane in a warp on the same loop iteration when writing validity.
-  auto const lane = threadIdx.x % cudf::detail::warp_size;
-  for (auto warp_row = start - lane; warp_row < row_size; warp_row += stride) {
-    auto const row         = warp_row + lane;
+  auto const warp_padded_size = (static_cast<thread_index_type>(row_size) + detail::warp_size - 1) /
+                                detail::warp_size * detail::warp_size;
+  for (auto row = start; row < warp_padded_size; row += stride) {
     auto const active_mask = __ballot_sync(0xffff'ffffu, row < row_size);
     if (row >= row_size) { continue; }
     auto operation = [&]<typename Args>(Args args) {

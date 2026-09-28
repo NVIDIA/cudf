@@ -82,7 +82,7 @@ std::unique_ptr<table> build_table(
                                                explode_col_gather_map->end(),
                                                [] __device__(auto i) { return i != InvalidIndex; },
                                                stream,
-                                               mr)
+                                               cudf::memory_resources{mr, mr})
                                            : std::pair<rmm::device_buffer, size_type>{
                                                rmm::device_buffer(0, stream), size_type{0}};
 

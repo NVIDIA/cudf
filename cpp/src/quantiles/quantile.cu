@@ -117,7 +117,7 @@ struct quantile_functor {
           return select_quantile_validity(sorted_validity, size, q, interp);
         },
         stream,
-        mr);
+        cudf::memory_resources{mr, mr});
 
       output->set_null_mask(std::move(mask), null_count);
     }

@@ -114,7 +114,11 @@ std::unique_ptr<column> extract_all_record(strings_column_view const& input,
 
   // Compute null output rows
   auto [null_mask, null_count] = cudf::detail::valid_if(
-    d_counts, d_counts + strings_count, [] __device__(auto v) { return v > 0; }, stream, mr);
+    d_counts,
+    d_counts + strings_count,
+    [] __device__(auto v) { return v > 0; },
+    stream,
+    cudf::memory_resources{mr, mr});
 
   // Return an empty lists column if there are no valid rows
   if (strings_count == null_count) {

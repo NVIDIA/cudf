@@ -120,7 +120,7 @@ struct remap_indices_dispatch_fn {
       iota + input.size(),
       [d_indices] __device__(size_type idx) { return d_indices[idx] >= 0; },
       stream,
-      mr);
+      cudf::memory_resources{mr, mr});
 
     return {std::move(indices_column), std::move(null_mask), null_count};
   }

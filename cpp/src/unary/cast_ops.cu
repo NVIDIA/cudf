@@ -306,7 +306,7 @@ struct dispatch_unary_cast_to {
                                cuda::counting_iterator{size},
                                is_convertible_floating_point<SourceT>{*d_input_ptr},
                                stream,
-                               mr);
+                               cudf::memory_resources{mr, mr});
       if (null_count > 0) { output->set_null_mask(std::move(null_mask), null_count); }
     } else {
       output->set_null_mask(detail::copy_bitmask(input, stream, mr), input.null_count());

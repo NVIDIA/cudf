@@ -6,6 +6,8 @@
 #pragma once
 
 #include <cudf/table/table.hpp>
+#include <cudf/utilities/default_stream.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 #include <cudf/utilities/traits.hpp>
 
@@ -664,7 +666,13 @@ std::vector<cudf::type_id> mix_dtypes(std::pair<cudf::type_id, cudf::type_id> co
  * @param null_probability probability of a null value
  *  no value implies no null mask, =0 implies all valids, >=1 implies all nulls
  * @param seed Optional, seed for the pseudo-random engine
+ * @param stream CUDA stream used for device memory operations and kernel launches
+ * @param resources Memory resources used for the returned bitmask and temporary allocations
  * @return null mask device buffer with random null mask data and null count
  */
 std::pair<rmm::device_buffer, cudf::size_type> create_random_null_mask(
-  cudf::size_type size, std::optional<double> null_probability = std::nullopt, unsigned seed = 1);
+  cudf::size_type size,
+  std::optional<double> null_probability = std::nullopt,
+  unsigned seed                          = 1,
+  cuda::stream_ref stream                = cudf::get_default_stream(),
+  cudf::memory_resources resources       = cudf::get_current_device_resource_ref());

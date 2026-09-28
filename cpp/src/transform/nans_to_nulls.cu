@@ -40,7 +40,7 @@ struct dispatch_nan_to_null {
                                  cuda::counting_iterator<cudf::size_type>{input.size()},
                                  pred,
                                  stream,
-                                 mr);
+                                 cudf::memory_resources{mr, mr});
 
     return std::pair(std::make_unique<rmm::device_buffer>(std::move(mask.first)), mask.second);
   }

@@ -140,8 +140,11 @@ std::unique_ptr<column> compute_variance_std(TransformFunc&& transform_fn,
                    out_it + size,
                    transform_fn);
 
-  auto [null_mask, null_count] =
-    cudf::detail::valid_if(validity.begin(), validity.end(), cuda::std::identity{}, stream, mr);
+  auto [null_mask, null_count] = cudf::detail::valid_if(validity.begin(),
+                                                        validity.end(),
+                                                        cuda::std::identity{},
+                                                        stream,
+                                                        cudf::memory_resources{mr, mr});
   if (null_count > 0) { output->set_null_mask(std::move(null_mask), null_count); }
 
   return output;

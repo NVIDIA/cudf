@@ -54,7 +54,7 @@ std::pair<rmm::device_buffer, size_type> create_null_mask(column_device_view con
                           cuda::counting_iterator<size_type>{size},
                           func_validity,
                           stream,
-                          mr);
+                          cudf::memory_resources{mr, mr});
 }
 
 struct shift_functor {

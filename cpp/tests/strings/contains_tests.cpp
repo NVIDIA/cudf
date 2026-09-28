@@ -8,7 +8,6 @@
 #include <cudf_test/base_fixture.hpp>
 #include <cudf_test/column_utilities.hpp>
 #include <cudf_test/column_wrapper.hpp>
-#include <cudf_test/debug_utilities.hpp>
 #include <cudf_test/iterator_utilities.hpp>
 
 #include <cudf/detail/utilities/vector_factories.hpp>
@@ -938,7 +937,6 @@ TEST_F(StringsContainsTests, CountASCII)
   results  = cudf::strings::count_re(view, *prog);
   expected = cudf::test::fixed_width_column_wrapper<cudf::size_type>({6, 6, 4, 5});
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(*results, expected);
-  cudf::test::print(results->view());
 }
 
 TEST_F(StringsContainsTests, IgnoreCase)

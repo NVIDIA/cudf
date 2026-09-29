@@ -1,0 +1,27 @@
+{
+  "skill_name": "cudf-query-engine-builder",
+  "evals": [
+    {
+      "id": "missing-engine-input",
+      "prompt": "Build my query engine its first native cuDF GPU execution path and show that its output matches the CPU implementation. I have not supplied the repository, query, schema or CPU reference yet.",
+      "expected_skill": "cudf-query-engine-builder",
+      "expected_output": "Asks for the target-engine code/build entry point, selected query or CPU implementation, input schema/fixture and expected result. Does not invent an engine or claim code was built or executed. Identifies the missing prerequisites as blocking implementation.",
+      "assertions": [
+        "Identifies the missing target-engine inputs.",
+        "Asks focused questions needed to establish the actual POC.",
+        "Does not fabricate build, GPU execution or correctness results."
+      ]
+    },
+    {
+      "id": "dataframe-negative",
+      "prompt": "I only need a pandas expression for a small CPU-only DataFrame named sales with columns region and revenue. Return total revenue by region, preserving missing region keys. No GPU or query-engine integration is involved.",
+      "expected_skill": null,
+      "expected_output": "Provides a pandas groupby expression equivalent to sales.groupby(\"region\", dropna=False)[\"revenue\"].sum(), without activating the query-engine builder or proposing a native GPU integration.",
+      "assertions": [
+        "Does not load the query-engine builder skill.",
+        "Uses dropna=False to retain missing region keys.",
+        "Does not introduce GPU setup or engine integration work."
+      ]
+    }
+  ]
+}

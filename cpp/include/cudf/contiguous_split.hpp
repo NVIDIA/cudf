@@ -308,6 +308,7 @@ table_view unpack(packed_columns const& input);
  * The returned `table_view` must not outlive the device data in `gpu_data`.
  * No new device memory is allocated.
  *
+ * @throws cudf::logic_error if non-empty metadata does not describe a valid column tree
  * @param metadata The host-side metadata buffer resulting from `cudf::pack`
  * @param gpu_data The device-side contiguous buffer referenced by the resulting `table_view`
  * @return The unpacked `table_view`

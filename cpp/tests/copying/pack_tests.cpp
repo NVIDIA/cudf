@@ -633,6 +633,19 @@ TEST_F(PackUnpackTest, UnpackMetadataSpan)
   unpack_and_test(empty, std::move(empty_packed));
 }
 
+TEST_F(PackUnpackTest, UnpackMetadataSpanRejectsTruncatedBuffer)
+{
+  std::vector<uint8_t> truncated_header(1);
+  EXPECT_THROW(cudf::unpack(truncated_header, nullptr), cudf::logic_error);
+
+  cudf::test::fixed_width_column_wrapper<int> column{1, 2, 3};
+  auto packed           = cudf::pack(cudf::table_view({column}));
+  auto truncated_column = std::span<uint8_t>{packed.metadata->data(), packed.metadata->size() - 1};
+  EXPECT_THROW(
+    cudf::unpack(truncated_column, reinterpret_cast<uint8_t const*>(packed.gpu_data->data())),
+    cudf::logic_error);
+}
+
 TEST_F(PackUnpackTest, SlicedEmpty)
 {
   // empty sliced column. this is specifically testing the corner case:

@@ -154,6 +154,8 @@ def _candidate_task_bounds(
             file_metadata, columns=[name], stream=stream
         )
     except ValueError:
+        # Ordering keys can name synthetic columns, such as hive partitions
+        # or include_file_paths, that are not Parquet leaf columns.
         return None
 
     columns = bounds.columns()[2:]
@@ -185,11 +187,6 @@ def _candidate_task_bounds(
         min_col = plc.unary.cast(min_col, dtype, stream=stream)
         max_col = plc.unary.cast(max_col, dtype, stream=stream)
 
-    def invalidate() -> plc.Column:
-        return plc.Column.all_null_like(
-            min_col, 2 * len(task_row_group_indices), stream=stream
-        )
-
     start, end = (
         (max_col, min_col)
         if key.order == plc.types.Order.DESCENDING
@@ -216,7 +213,9 @@ def _candidate_task_bounds(
         if not plc.sorting.is_sorted(
             selected, [key.order], [key.null_order], stream=stream
         ):
-            return invalidate()
+            return plc.Column.all_null_like(
+                min_col, 2 * len(task_row_group_indices), stream=stream
+            )
         task_bounds.append(_gather_rows(selected, [0, selected.num_rows() - 1], stream))
 
     return plc.concatenate.concatenate(task_bounds, stream=stream).columns()[0]

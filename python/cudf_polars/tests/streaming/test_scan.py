@@ -520,6 +520,27 @@ def test_expand_scan_for_rank_fused_and_single_read(
         assert scan.paths == expected_paths
 
 
+def test_expand_scan_for_rank_matches_ordered_partition_ownership() -> None:
+    paths = [f"f{i}" for i in range(6)]
+    expected_by_rank = [
+        [["f0"], ["f1"]],
+        [["f2"]],
+        [["f3"], ["f4"]],
+        [["f5"]],
+    ]
+
+    for rank, expected_path_groups in enumerate(expected_by_rank):
+        streaming_scan = expand_scan_for_rank(
+            _make_parquet_scan(paths),
+            IOPartitionPlan(1, IOPartitionFlavor.SINGLE_FILE),
+            partition_count=len(paths),
+            rank=rank,
+            nranks=len(expected_by_rank),
+            parquet_options=ParquetOptions(),
+        )
+        assert [task.paths for task in streaming_scan.tasks] == expected_path_groups
+
+
 @pytest.mark.parametrize(
     "rank,expected_splits",
     [

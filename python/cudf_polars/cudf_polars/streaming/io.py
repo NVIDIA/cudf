@@ -36,6 +36,7 @@ from cudf_polars.streaming.base import (
     SerializedDataSourceInfo,
 )
 from cudf_polars.streaming.dispatch import lower_ir_node
+from cudf_polars.streaming.utils import partition_range
 from cudf_polars.utils.config import Cluster
 from cudf_polars.utils.cuda_stream import get_cuda_stream
 from cudf_polars.utils.versions import POLARS_VERSION_LT_137
@@ -148,8 +149,8 @@ def scan_partition_plan(
 
 def _rank_slice(total: int, rank: int, nranks: int) -> tuple[int, int]:
     """Return the partition range owned by this rank."""
-    count = math.ceil(total / nranks)
-    return count * rank, count
+    start, stop = partition_range(rank, nranks, total)
+    return start, stop - start
 
 
 def expand_scan_for_rank(

@@ -33,8 +33,8 @@ python -m maturin develop
 
 ## Updating Quent
 
-Quent is pinned by full Git commit SHA in both `bridge/Cargo.toml`. To update
-Quent:
+Quent is pinned by full Git commit SHA in the `Cargo.toml` for both
+the `bridge` and `analyzer`. To update Quent:
 
 1. Replace every Quent dependency's `rev` in both manifests with the same full
    commit SHA. Do not use a branch, tag, abbreviated SHA, or different revision

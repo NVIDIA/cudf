@@ -15,8 +15,11 @@ constexpr cudf::test::debug_output_level verbosity{cudf::test::debug_output_leve
 
 class MurmurHashTest : public cudf::test::BaseFixture {};
 
-TEST_F(MurmurHashTest, BoolHashed)
+TEST_F(MurmurHashTest, NonCanonicalBool)
 {
+  // BOOL8 is documented as "0 == false, else true", so any non-zero byte must hash as true.
+  // `fixed_width_column_wrapper<bool>` normalizes on construction, so build the column from raw
+  // bytes to get values the wrapper cannot express.
   auto const stream = cudf::get_default_stream();
   std::vector<uint8_t> const raw{0, 1, 2, 255};
   auto data      = rmm::device_buffer{raw.data(), raw.size(), stream};
@@ -27,10 +30,13 @@ TEST_F(MurmurHashTest, BoolHashed)
                                                   0);
 
   auto const output = cudf::hashing::murmurhash3_x86_32(cudf::table_view({col->view()}));
+  auto const host   = cudf::test::to_host<uint32_t>(output->view()).first;
 
-  auto const expect = cudf::test::fixed_width_column_wrapper<uint32_t>{
-    1364076727u, 3831157163u, 3831157163u, 3831157163u};
-  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expect, output->view(), verbosity);
+  ASSERT_EQ(raw.size(), host.size());
+  ASSERT_GT(host.size(), 3);
+  EXPECT_EQ(host[1], host[2]) << "byte 2 must hash the same as byte 1";
+  EXPECT_EQ(host[1], host[3]) << "byte 255 must hash the same as byte 1";
+  EXPECT_NE(host[0], host[1]) << "false and true must differ";
 }
 
 TEST_F(MurmurHashTest, MultiValue)

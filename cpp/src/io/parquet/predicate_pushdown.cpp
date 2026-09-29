@@ -106,24 +106,27 @@ std::optional<std::vector<std::vector<size_type>>> aggregate_reader_metadata::ap
     if (not stats_columns_mask[col_idx] or
         (cudf::is_compound(dtype) && dtype.id() != cudf::type_id::STRING)) {
       // Placeholder for unsupported types and non-participating columns
-      columns.push_back(cudf::make_numeric_column(data_type{cudf::type_id::BOOL8},
-                                                  total_row_groups,
-                                                  rmm::device_buffer{0, stream, mr},
-                                                  0,
-                                                  stream,
-                                                  mr));
-      columns.push_back(cudf::make_numeric_column(data_type{cudf::type_id::BOOL8},
-                                                  total_row_groups,
-                                                  rmm::device_buffer{0, stream, mr},
-                                                  0,
-                                                  stream,
-                                                  mr));
-      columns.push_back(cudf::make_numeric_column(data_type{cudf::type_id::BOOL8},
-                                                  total_row_groups,
-                                                  rmm::device_buffer{0, stream, mr},
-                                                  0,
-                                                  stream,
-                                                  mr));
+      columns.push_back(cudf::make_numeric_column(
+        data_type{cudf::type_id::BOOL8},
+        total_row_groups,
+        cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED, stream, mr),
+        0,
+        stream,
+        mr));
+      columns.push_back(cudf::make_numeric_column(
+        data_type{cudf::type_id::BOOL8},
+        total_row_groups,
+        cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED, stream, mr),
+        0,
+        stream,
+        mr));
+      columns.push_back(cudf::make_numeric_column(
+        data_type{cudf::type_id::BOOL8},
+        total_row_groups,
+        cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED, stream, mr),
+        0,
+        stream,
+        mr));
       continue;
     }
     // Map each filter column's zeroth-source schema index into every source's schema tree.

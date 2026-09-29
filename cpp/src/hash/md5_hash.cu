@@ -335,7 +335,11 @@ std::unique_ptr<column> md5(table_view const& input,
       }
     });
 
-  return make_strings_column(input.num_rows(), std::move(offsets_column), chars.release(), 0, {});
+  return make_strings_column(input.num_rows(),
+                             std::move(offsets_column),
+                             chars.release(),
+                             0,
+                             cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 }
 
 }  // namespace detail

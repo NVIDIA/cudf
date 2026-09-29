@@ -6,6 +6,7 @@ from cython.operator import dereference
 from libcpp.memory cimport unique_ptr, make_unique
 from libcpp.utility cimport move
 from pylibcudf.column cimport Column
+from pylibcudf.libcudf cimport null_mask as cpp_null_mask
 from pylibcudf.libcudf.column.column cimport column
 from pylibcudf.libcudf.column.column_view cimport column_view
 from pylibcudf.libcudf.nvtext.deduplicate cimport (
@@ -14,14 +15,14 @@ from pylibcudf.libcudf.nvtext.deduplicate cimport (
     resolve_duplicates as cpp_resolve_duplicates,
     resolve_duplicates_pair as cpp_resolve_duplicates_pair,
 )
-from pylibcudf.libcudf.types cimport size_type
+from pylibcudf.libcudf.types cimport mask_state, size_type
+from pylibcudf.libcudf.utilities.device_buffer cimport byte, device_buffer
 from pylibcudf.utils cimport _get_stream, _get_memory_resource
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from pylibcudf.typing import CudaStreamLike
 from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
-from rmm.librmm.device_buffer cimport device_buffer
 from rmm.pylibrmm.stream cimport Stream
 from cuda.bindings.cyruntime cimport cudaStream_t
 
@@ -35,11 +36,19 @@ cdef Column _column_from_suffix_array(
     cpp_suffix_array_type suffix_array, Stream stream, DeviceMemoryResource mr
 ):
     # helper to convert a suffix array to a Column
+    cdef unique_ptr[device_buffer[byte]] mask = (
+        cpp_null_mask.create_null_mask_unique_ptr(
+            0,
+            mask_state.UNALLOCATED,
+            stream.view().get(),
+            mr.get_mr(),
+        )
+    )
     return Column.from_libcudf(
         move(
             make_unique[column](
                 move(dereference(suffix_array.get())),
-                device_buffer(),
+                move(dereference(mask)),
                 0
             )
         ), stream, mr

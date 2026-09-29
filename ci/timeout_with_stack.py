@@ -124,16 +124,13 @@ def capture_stack_trace(pid: int, stack_type=StackType.C) -> None:
     else:
         auto_load_script = f"{executable}-gdb.py"
         if os.path.isfile(auto_load_script):
-            escaped_script = auto_load_script.replace("\\", "\\\\").replace(
-                '"', '\\"'
-            )
             # GDB attaches while processing --pid, before regular -ex commands
             # run. Trust only this executable's helper early enough for it to
             # register Python commands such as py-bt during the attach.
             gdb_args.extend(
                 [
                     "-iex",
-                    f'add-auto-load-safe-path "{escaped_script}"',
+                    f"add-auto-load-safe-path {auto_load_script}",
                 ]
             )
 

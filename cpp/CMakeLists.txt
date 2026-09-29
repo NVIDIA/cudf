@@ -1006,6 +1006,7 @@ add_library(
   src/reductions/mean.cu
   src/reductions/min.cu
   src/reductions/minmax.cu
+  src/reductions/nested_minmax.cu
   src/reductions/nth_element.cu
   src/reductions/nunique.cpp
   src/reductions/product.cu

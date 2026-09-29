@@ -1252,7 +1252,11 @@ def _allow_decomposed_broadcast(
     metadata: ChannelMetadata,
 ) -> bool:
     """Return whether dynamic planning may choose a high-row broadcast."""
-    return metadata.duplicated and _can_join_build_chunks_separately(comm, ir, metadata)
+    return (
+        comm.nranks > 1
+        and metadata.duplicated
+        and _can_join_build_chunks_separately(comm, ir, metadata)
+    )
 
 
 def _choose_strategy_from_samples(

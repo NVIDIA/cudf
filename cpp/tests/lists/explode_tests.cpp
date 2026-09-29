@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -11,6 +11,7 @@
 
 #include <cudf/detail/iterator.cuh>
 #include <cudf/lists/explode.hpp>
+#include <cudf/null_mask.hpp>
 
 using FCW = cudf::test::fixed_width_column_wrapper<int32_t>;
 using LCW = cudf::test::lists_column_wrapper<int32_t>;
@@ -365,7 +366,8 @@ TEST_F(ExplodeTest, ListOfStructsWithEmpties)
   s0_cols.push_back(i0.release());
   cudf::test::structs_column_wrapper s0(std::move(s0_cols));
   cudf::test::fixed_width_column_wrapper<int32_t> off0{0, 1};
-  auto row0 = cudf::make_lists_column(1, off0.release(), s0.release(), 0, rmm::device_buffer{});
+  auto row0 = cudf::make_lists_column(
+    1, off0.release(), s0.release(), 0, cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
   // row 1.  1 struct that contains a null value
   cudf::test::fixed_width_column_wrapper<int32_t> i1{{1}, {false}};
@@ -373,7 +375,8 @@ TEST_F(ExplodeTest, ListOfStructsWithEmpties)
   s1_cols.push_back(i1.release());
   cudf::test::structs_column_wrapper s1(std::move(s1_cols));
   cudf::test::fixed_width_column_wrapper<int32_t> off1{0, 1};
-  auto row1 = cudf::make_lists_column(1, off1.release(), s1.release(), 0, rmm::device_buffer{});
+  auto row1 = cudf::make_lists_column(
+    1, off1.release(), s1.release(), 0, cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
   // row 2.  1 null struct
   cudf::test::fixed_width_column_wrapper<int32_t> i2{0};
@@ -384,21 +387,25 @@ TEST_F(ExplodeTest, ListOfStructsWithEmpties)
     cudf::test::detail::make_null_mask(r2_valids.begin(), r2_valids.end());
   auto s2 = cudf::make_structs_column(1, std::move(s2_cols), null_count, std::move(null_mask));
   cudf::test::fixed_width_column_wrapper<int32_t> off2{0, 1};
-  auto row2 = cudf::make_lists_column(1, off2.release(), std::move(s2), 0, rmm::device_buffer{});
+  auto row2 = cudf::make_lists_column(
+    1, off2.release(), std::move(s2), 0, cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
   // row 3.  empty list.
   cudf::test::fixed_width_column_wrapper<int32_t> i3{};
   std::vector<std::unique_ptr<cudf::column>> s3_cols;
   s3_cols.push_back(i3.release());
-  auto s3 = cudf::make_structs_column(0, std::move(s3_cols), 0, rmm::device_buffer{});
+  auto s3 = cudf::make_structs_column(
+    0, std::move(s3_cols), 0, cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
   cudf::test::fixed_width_column_wrapper<int32_t> off3{0, 0};
-  auto row3 = cudf::make_lists_column(1, off3.release(), std::move(s3), 0, rmm::device_buffer{});
+  auto row3 = cudf::make_lists_column(
+    1, off3.release(), std::move(s3), 0, cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
   // row 4.  null list
   cudf::test::fixed_width_column_wrapper<int32_t> i4{};
   std::vector<std::unique_ptr<cudf::column>> s4_cols;
   s4_cols.push_back(i4.release());
-  auto s4 = cudf::make_structs_column(0, std::move(s4_cols), 0, rmm::device_buffer{});
+  auto s4 = cudf::make_structs_column(
+    0, std::move(s4_cols), 0, cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
   cudf::test::fixed_width_column_wrapper<int32_t> off4{0, 0};
   std::vector<bool> r4_valids{false};
   std::tie(null_mask, null_count) =
@@ -445,8 +452,11 @@ TYPED_TEST(ExplodeTypedTest, ListOfStructs)
   cudf::test::strings_column_wrapper string_col{
     "70", "75", "50", "55", "35", "45", "25", "30", "15", "20"};
   auto struct_col = cudf::test::structs_column_wrapper{{numeric_col, string_col}}.release();
-  auto a =
-    cudf::make_lists_column(5, FCW{0, 2, 4, 6, 8, 10}.release(), std::move(struct_col), 0, {});
+  auto a          = cudf::make_lists_column(5,
+                                   FCW{0, 2, 4, 6, 8, 10}.release(),
+                                   std::move(struct_col),
+                                   0,
+                                   cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
   FCW b{100, 200, 300, 400, 500};
 
@@ -1003,7 +1013,8 @@ TEST_F(ExplodeOuterTest, ListOfStructsWithEmpties)
   s0_cols.push_back(i0.release());
   cudf::test::structs_column_wrapper s0(std::move(s0_cols));
   cudf::test::fixed_width_column_wrapper<int32_t> off0{0, 1};
-  auto row0 = cudf::make_lists_column(1, off0.release(), s0.release(), 0, rmm::device_buffer{});
+  auto row0 = cudf::make_lists_column(
+    1, off0.release(), s0.release(), 0, cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
   // row 1.  1 struct that contains a null value
   cudf::test::fixed_width_column_wrapper<int32_t> i1{{1}, {false}};
@@ -1011,7 +1022,8 @@ TEST_F(ExplodeOuterTest, ListOfStructsWithEmpties)
   s1_cols.push_back(i1.release());
   cudf::test::structs_column_wrapper s1(std::move(s1_cols));
   cudf::test::fixed_width_column_wrapper<int32_t> off1{0, 1};
-  auto row1 = cudf::make_lists_column(1, off1.release(), s1.release(), 0, rmm::device_buffer{});
+  auto row1 = cudf::make_lists_column(
+    1, off1.release(), s1.release(), 0, cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
   // row 2.  1 null struct
   cudf::test::fixed_width_column_wrapper<int32_t> i2{0};
@@ -1022,21 +1034,25 @@ TEST_F(ExplodeOuterTest, ListOfStructsWithEmpties)
     cudf::test::detail::make_null_mask(r2_valids.begin(), r2_valids.end());
   auto s2 = cudf::make_structs_column(1, std::move(s2_cols), null_count, std::move(null_mask));
   cudf::test::fixed_width_column_wrapper<int32_t> off2{0, 1};
-  auto row2 = cudf::make_lists_column(1, off2.release(), std::move(s2), 0, rmm::device_buffer{});
+  auto row2 = cudf::make_lists_column(
+    1, off2.release(), std::move(s2), 0, cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
   // row 3.  empty list.
   cudf::test::fixed_width_column_wrapper<int32_t> i3{};
   std::vector<std::unique_ptr<cudf::column>> s3_cols;
   s3_cols.push_back(i3.release());
-  auto s3 = cudf::make_structs_column(0, std::move(s3_cols), 0, rmm::device_buffer{});
+  auto s3 = cudf::make_structs_column(
+    0, std::move(s3_cols), 0, cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
   cudf::test::fixed_width_column_wrapper<int32_t> off3{0, 0};
-  auto row3 = cudf::make_lists_column(1, off3.release(), std::move(s3), 0, rmm::device_buffer{});
+  auto row3 = cudf::make_lists_column(
+    1, off3.release(), std::move(s3), 0, cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
   // row 4.  null list
   cudf::test::fixed_width_column_wrapper<int32_t> i4{};
   std::vector<std::unique_ptr<cudf::column>> s4_cols;
   s4_cols.push_back(i4.release());
-  auto s4 = cudf::make_structs_column(0, std::move(s4_cols), 0, rmm::device_buffer{});
+  auto s4 = cudf::make_structs_column(
+    0, std::move(s4_cols), 0, cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
   cudf::test::fixed_width_column_wrapper<int32_t> off4{0, 0};
   std::vector<bool> r4_valids{false};
   std::tie(null_mask, null_count) =
@@ -1085,8 +1101,11 @@ TYPED_TEST(ExplodeOuterTypedTest, ListOfStructs)
   cudf::test::strings_column_wrapper string_col{
     "70", "75", "50", "55", "35", "45", "25", "30", "15", "20"};
   auto struct_col = cudf::test::structs_column_wrapper{{numeric_col, string_col}}.release();
-  auto a =
-    cudf::make_lists_column(5, FCW{0, 2, 4, 6, 8, 10}.release(), std::move(struct_col), 0, {});
+  auto a          = cudf::make_lists_column(5,
+                                   FCW{0, 2, 4, 6, 8, 10}.release(),
+                                   std::move(struct_col),
+                                   0,
+                                   cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
   FCW b{100, 200, 300, 400, 500};
 

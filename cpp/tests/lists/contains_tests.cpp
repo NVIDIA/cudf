@@ -287,8 +287,12 @@ TYPED_TEST(TypedContainsTest, ScalarKeyNonNullListsWithNullValues)
 
   auto numerals = cudf::test::fixed_width_column_wrapper<T>{
     {X, 1, 2, X, 4, 5, X, 7, 8, X, X, 1, 2, X, 1}, nulls_at({0, 3, 6, 9, 10, 13})};
-  auto search_space = cudf::make_lists_column(
-    8, indices_col{0, 1, 3, 7, 7, 7, 10, 11, 15}.release(), numerals.release(), 0, {});
+  auto search_space =
+    cudf::make_lists_column(8,
+                            indices_col{0, 1, 3, 7, 7, 7, 10, 11, 15}.release(),
+                            numerals.release(),
+                            0,
+                            cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
   // Search space: [ [x], [1,2], [x,4,5,x], [], [], [7,8,x], [x], [1,2,x,1] ]
   auto search_key_one = create_scalar_search_key<T>(1);
   {
@@ -619,8 +623,12 @@ TYPED_TEST(TypedVectorContainsTest, VectorNonNullListsWithNullValues)
   auto numerals = cudf::test::fixed_width_column_wrapper<T>{
     {X, 1, 2, X, 4, 5, X, 7, 8, X, X, 1, 2, X, 1}, nulls_at({0, 3, 6, 9, 10, 13})};
 
-  auto search_space = cudf::make_lists_column(
-    8, indices_col{0, 1, 3, 7, 7, 7, 10, 11, 15}.release(), numerals.release(), 0, {});
+  auto search_space =
+    cudf::make_lists_column(8,
+                            indices_col{0, 1, 3, 7, 7, 7, 10, 11, 15}.release(),
+                            numerals.release(),
+                            0,
+                            cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
   // Search space: [ [x], [1,2], [x,4,5,x], [], [], [7,8,x], [x], [1,2,x,1] ]
   auto search_keys = cudf::test::fixed_width_column_wrapper<T, int32_t>{1, 2, 3, 1, 2, 3, 1, 1};
   {
@@ -1007,7 +1015,11 @@ TYPED_TEST(TypedContainsDecimalsTest, ScalarKey)
     auto decimals     = cudf::test::fixed_point_column_wrapper<typename T::rep>{
       values.begin(), values.end(), numeric::scale_type{0}};
     auto list_offsets = indices_col{0, 3, 6, 9, 12, 15, 18, 21, 21, 24, 24};
-    return cudf::make_lists_column(10, list_offsets.release(), decimals.release(), 0, {});
+    return cudf::make_lists_column(10,
+                                   list_offsets.release(),
+                                   decimals.release(),
+                                   0,
+                                   cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
   }();
   auto search_key_one =
     cudf::make_fixed_point_scalar<T>(typename T::rep{1}, numeric::scale_type{0});
@@ -1043,7 +1055,11 @@ TYPED_TEST(TypedContainsDecimalsTest, VectorKey)
     auto decimals     = cudf::test::fixed_point_column_wrapper<typename T::rep>{
       values.begin(), values.end(), numeric::scale_type{0}};
     auto list_offsets = indices_col{0, 3, 6, 9, 12, 15, 18, 21, 21, 24, 24};
-    return cudf::make_lists_column(10, list_offsets.release(), decimals.release(), 0, {});
+    return cudf::make_lists_column(10,
+                                   list_offsets.release(),
+                                   decimals.release(),
+                                   0,
+                                   cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
   }();
 
   auto search_key =
@@ -1085,7 +1101,11 @@ TYPED_TEST(TypedStructContainsTest, EmptyInputTest)
     auto offsets = indices_col{};
     auto data    = tdata_col{};
     auto child   = cudf::test::structs_column_wrapper{{data}};
-    return cudf::make_lists_column(0, offsets.release(), child.release(), 0, {});
+    return cudf::make_lists_column(0,
+                                   offsets.release(),
+                                   child.release(),
+                                   0,
+                                   cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
   }();
 
   auto const scalar_key = [] {
@@ -1131,7 +1151,11 @@ TYPED_TEST(TypedStructContainsTest, ScalarKeyNoNullLists)
     };
     // clang-format on
     auto child = cudf::test::structs_column_wrapper{{data1, data2}};
-    return cudf::make_lists_column(10, offsets.release(), child.release(), 0, {});
+    return cudf::make_lists_column(10,
+                                   offsets.release(),
+                                   child.release(),
+                                   0,
+                                   cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
   }();
 
   auto const key = [] {
@@ -1263,7 +1287,11 @@ TYPED_TEST(TypedStructContainsTest, SlicedListsColumnNoNulls)
     };
     // clang-format on
     auto child = cudf::test::structs_column_wrapper{{data1, data2}};
-    return cudf::make_lists_column(10, offsets.release(), child.release(), 0, {});
+    return cudf::make_lists_column(10,
+                                   offsets.release(),
+                                   child.release(),
+                                   0,
+                                   cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
   }();
   auto const lists = cudf::slice(lists_original->view(), {3, 10})[0];
 
@@ -1326,7 +1354,11 @@ TYPED_TEST(TypedStructContainsTest, ScalarKeyNoNullListsWithNullStructs)
     };
     // clang-format on
     auto child = cudf::test::structs_column_wrapper{{data1, data2}, nulls_at({1, 10, 15, 24})};
-    return cudf::make_lists_column(10, offsets.release(), child.release(), 0, {});
+    return cudf::make_lists_column(10,
+                                   offsets.release(),
+                                   child.release(),
+                                   0,
+                                   cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
   }();
 
   auto const key = [] {
@@ -1390,7 +1422,11 @@ TYPED_TEST(TypedStructContainsTest, ColumnKeyNoNullLists)
     };
     // clang-format on
     auto child = cudf::test::structs_column_wrapper{{data1, data2}};
-    return cudf::make_lists_column(10, offsets.release(), child.release(), 0, {});
+    return cudf::make_lists_column(10,
+                                   offsets.release(),
+                                   child.release(),
+                                   0,
+                                   cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
   }();
 
   auto const keys = [] {
@@ -1448,7 +1484,11 @@ TYPED_TEST(TypedStructContainsTest, ColumnKeyWithSlicedListsNoNulls)
     };
     // clang-format on
     auto child = cudf::test::structs_column_wrapper{{data1, data2}};
-    return cudf::make_lists_column(10, offsets.release(), child.release(), 0, {});
+    return cudf::make_lists_column(10,
+                                   offsets.release(),
+                                   child.release(),
+                                   0,
+                                   cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
   }();
 
   auto const keys_original = [] {
@@ -1798,10 +1838,18 @@ TYPED_TEST(TypedListContainsTest, ColumnKeyWithListsOfStructsNoNulls)
     };
     // clang-format on
     auto structs = cudf::test::structs_column_wrapper{{data1, data2}};
-    auto child   = cudf::make_lists_column(8, child_offsets.release(), structs.release(), 0, {});
+    auto child   = cudf::make_lists_column(8,
+                                         child_offsets.release(),
+                                         structs.release(),
+                                         0,
+                                         cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
     auto offsets = indices_col{0, 4, 8};
-    return cudf::make_lists_column(2, offsets.release(), std::move(child), 0, {});
+    return cudf::make_lists_column(2,
+                                   offsets.release(),
+                                   std::move(child),
+                                   0,
+                                   cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
   }();
 
   auto const key = [] {

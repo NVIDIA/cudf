@@ -20,7 +20,7 @@ data structures and fundamental algorithms for tabular data.
 
 Notable projects that use cuDF include:
 
-* [Accelerator for Apache Spark](https://github.com/NVIDIA/spark-rapids): A GPU accelerator plugin for [Apache Spark](https://spark.apache.org/)
+* [NVIDIA cuDF plugin for Apache Spark](https://github.com/NVIDIA/cudf-spark): A GPU accelerator plugin for [Apache Spark](https://spark.apache.org/)
 * [Velox-cuDF](https://github.com/facebookincubator/velox/blob/main/velox/experimental/cudf/README.md): A [Velox](https://velox-lib.io/)
 extension module to execute Velox plans on the GPU
 * [Sirius](https://www.sirius-db.com/): A GPU-native SQL engine providing extensions for libraries like [DuckDB](https://duckdb.org/)

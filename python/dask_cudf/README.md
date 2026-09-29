@@ -11,7 +11,7 @@ Please visit [the official documentation page](https://docs.nvidia.com/dask-cudf
 
 ## Installation
 
-See the [installation guide](https://docs.nvidia.com/datascience/install/) for the most up-to-date information and commands for installing Dask cuDF and other required packages.
+See the [installation guide](https://docs.nvidia.com/datascience/install/) for the most up-to-date information and commands for installing Dask cuDF and related packages.
 
 ## Resources
 

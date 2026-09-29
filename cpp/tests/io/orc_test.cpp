@@ -1885,7 +1885,8 @@ TEST_F(OrcReaderTest, NestedEmptyStructColumnSelection)
     cudf::test::detail::make_null_mask(validity.begin(), validity.end());
 
   std::vector<std::unique_ptr<cudf::column>> struct_children;
-  struct_children.emplace_back(cudf::make_structs_column(num_rows, {}, 0, {}));
+  struct_children.emplace_back(cudf::make_structs_column(
+    num_rows, {}, 0, cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED)));
   auto input_column = cudf::make_structs_column(
     num_rows, std::move(struct_children), null_count, std::move(null_mask));
   ASSERT_TRUE(input_column->nullable());
@@ -1908,7 +1909,11 @@ TEST_F(OrcReaderTest, NullableEmptyStructChildColumnSelection)
   std::vector<std::unique_ptr<cudf::column>> struct_children;
   struct_children.emplace_back(
     cudf::make_structs_column(num_rows, {}, null_count, std::move(null_mask)));
-  auto input_column = cudf::make_structs_column(num_rows, std::move(struct_children), 0, {});
+  auto input_column =
+    cudf::make_structs_column(num_rows,
+                              std::move(struct_children),
+                              0,
+                              cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
   ASSERT_FALSE(input_column->nullable());
   ASSERT_TRUE(input_column->child(0).nullable());
   ASSERT_EQ(null_count, input_column->child(0).null_count());
@@ -1959,8 +1964,12 @@ TEST_F(OrcWriterTest, DecimalOptionsNested)
   std::iota(row_offsets.begin(), row_offsets.end(), 0);
   int32_col offsets(row_offsets.begin(), row_offsets.end());
 
-  auto map_list_col = cudf::make_lists_column(
-    num_rows, offsets.release(), std::move(map_struct_col), 0, rmm::device_buffer{});
+  auto map_list_col =
+    cudf::make_lists_column(num_rows,
+                            offsets.release(),
+                            std::move(map_struct_col),
+                            0,
+                            cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
   table_view expected({*map_list_col});
 
@@ -2059,8 +2068,11 @@ TEST_F(OrcMetadataReaderTest, TestNested)
   }
   int32_col offsets(row_offsets.begin(), row_offsets.end());
 
-  auto list_col =
-    cudf::make_lists_column(num_rows, offsets.release(), std::move(s_col), 0, rmm::device_buffer{});
+  auto list_col = cudf::make_lists_column(num_rows,
+                                          offsets.release(),
+                                          std::move(s_col),
+                                          0,
+                                          cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
   table_view expected({*list_col, *list_col});
 
@@ -2399,6 +2411,34 @@ TEST_F(OrcWriterTest, UnorderedDictionary)
   auto const from_unsorted = cudf::io::read_orc(in_opts_unsorted).tbl;
 
   CUDF_TEST_EXPECT_TABLES_EQUAL(*from_sorted, *from_unsorted);
+}
+
+TEST_F(OrcWriterTest, DictionaryMultipleBlocksPerStripe)
+{
+  constexpr cudf::size_type num_rows = 5000;
+
+  // Few distinct values, so dictionary encoding is cheaper than direct encoding and gets enabled
+  std::vector<std::string> const values{
+    "alpha", "beta", "gamma", "delta", "epsilon", "zeta", "eta"};
+  auto const keys = cudf::detail::make_counting_transform_iterator(
+    0, [&](auto i) { return values[i % values.size()]; });
+  auto const validity =
+    cudf::detail::make_counting_transform_iterator(0, [](auto i) { return i % 11 != 0; });
+  str_col col(keys, keys + num_rows, validity);
+
+  table_view expected({col});
+
+  std::vector<char> out_buffer;
+  cudf::io::orc_writer_options out_opts =
+    cudf::io::orc_writer_options::builder(cudf::io::sink_info{&out_buffer}, expected);
+  cudf::io::write_orc(out_opts);
+
+  cudf::io::orc_reader_options in_opts =
+    cudf::io::orc_reader_options::builder(cudf::io::source_info{cudf::host_span<std::byte const>{
+      reinterpret_cast<std::byte const*>(out_buffer.data()), out_buffer.size()}});
+  auto const result = cudf::io::read_orc(in_opts);
+
+  CUDF_TEST_EXPECT_TABLES_EQUAL(expected, result.tbl->view());
 }
 
 TEST_F(OrcStatisticsTest, Empty)

@@ -109,7 +109,7 @@ hash_join<Hasher>::partitioned_join_retrieve(join_kind join,
     rmm::device_uvector<size_type> probe_groups(partition_size, stream, temp_mr);
     auto const row_bitmask = cudf::detail::bitmask_and(left_partition_view, stream, temp_mr).first;
     auto const valid_rows  = _nulls_equal == null_equality::UNEQUAL
-                               ? static_cast<bitmask_type const*>(row_bitmask.data())
+                               ? reinterpret_cast<bitmask_type const*>(row_bitmask.data())
                                : nullptr;
     auto save_groups       = [&](auto equality, auto hasher) {
       if (join == join_kind::INNER_JOIN) {
@@ -156,17 +156,17 @@ hash_join<Hasher>::partitioned_join_retrieve(join_kind join,
   cudf::prefetch::detail::prefetch(*right_indices, stream);
 
   if (join == join_kind::INNER_JOIN) {
-    launch_hash_csr_retrieve_kernel<false>(output_size,
-                                           partition_size,
-                                           offsets.data(),
-                                           probe_groups.data(),
-                                           _impl->csr(),
-                                           left_start_idx,
-                                           left_indices->data(),
-                                           right_indices->data(),
-                                           stream);
+    launch_hash_csr_inner_retrieve_kernel(output_size,
+                                          partition_size,
+                                          offsets.data(),
+                                          probe_groups.data(),
+                                          _impl->csr(),
+                                          left_start_idx,
+                                          left_indices->data(),
+                                          right_indices->data(),
+                                          stream);
   } else {
-    launch_hash_csr_retrieve_kernel<true>(output_size,
+    launch_hash_csr_outer_retrieve_kernel(output_size,
                                           partition_size,
                                           offsets.data(),
                                           probe_groups.data(),

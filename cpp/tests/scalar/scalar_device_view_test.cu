@@ -82,8 +82,8 @@ TYPED_TEST(FixedPointScalarDeviceViewTest, Value)
   using rep_type = typename TypeParam::rep;
 
   auto constexpr value = rep_type{12'345};
-  auto constexpr scale = cudf::numeric::scale_type{-2};
-  auto const expected  = TypeParam{cudf::numeric::scaled_integer<rep_type>{value, scale}};
+  auto constexpr scale = numeric::scale_type{-2};
+  auto const expected  = TypeParam{numeric::scaled_integer<rep_type>{value, scale}};
   cudf::fixed_point_scalar<TypeParam> s{value, scale};
 
   auto scalar_device_view = cudf::get_scalar_device_view(s);
@@ -109,7 +109,7 @@ TYPED_TEST(FixedPointScalarDeviceViewTest, SetRepresentation)
 
   auto constexpr initial_value = rep_type{0};
   auto constexpr value         = rep_type{12'345};
-  auto constexpr scale         = cudf::numeric::scale_type{-2};
+  auto constexpr scale         = numeric::scale_type{-2};
   cudf::fixed_point_scalar<TypeParam> s{initial_value, scale};
 
   auto scalar_device_view = cudf::get_scalar_device_view(s);
@@ -126,7 +126,7 @@ TYPED_TEST(FixedPointScalarDeviceViewTest, SetValue)
 
   auto constexpr source_rep   = rep_type{12'345};
   auto constexpr initial_rep  = rep_type{0};
-  auto constexpr source_scale = cudf::numeric::scale_type{-2};
+  auto constexpr source_scale = numeric::scale_type{-2};
   cudf::fixed_point_scalar<TypeParam> source{source_rep, source_scale};
   cudf::fixed_point_scalar<TypeParam> target{initial_rep, source_scale};
 

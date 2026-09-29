@@ -141,8 +141,12 @@ std::unique_ptr<column> empty_like(column_view const& input)
                  std::back_inserter(children),
                  [](column_view const& col) { return empty_like(col); });
 
-  return std::make_unique<cudf::column>(
-    input.type(), 0, rmm::device_buffer{}, rmm::device_buffer{}, 0, std::move(children));
+  return std::make_unique<cudf::column>(input.type(),
+                                        0,
+                                        rmm::device_buffer{},
+                                        cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
+                                        0,
+                                        std::move(children));
 }
 
 /*

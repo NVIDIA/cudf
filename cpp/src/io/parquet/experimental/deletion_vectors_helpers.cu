@@ -76,11 +76,12 @@ std::unique_ptr<cudf::column> compute_row_index_column(
                      row_indices_iter,
                      row_indices_iter + num_rows,
                      start_row.value_or(size_t{0}));
-    return std::make_unique<cudf::column>(cudf::data_type{cudf::type_id::UINT64},
-                                          num_rows,
-                                          std::move(row_indices),
-                                          rmm::device_buffer{0, stream, mr},
-                                          0);
+    return std::make_unique<cudf::column>(
+      cudf::data_type{cudf::type_id::UINT64},
+      num_rows,
+      std::move(row_indices),
+      cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED, stream, mr),
+      0);
   }
 
   auto row_group_span_offsets =
@@ -133,11 +134,12 @@ std::unique_ptr<cudf::column> compute_row_index_column(
     row_indices_iter);
 
   stream.sync();
-  return std::make_unique<cudf::column>(cudf::data_type{cudf::type_id::UINT64},
-                                        num_rows,
-                                        std::move(row_indices),
-                                        rmm::device_buffer{0, stream, mr},
-                                        0);
+  return std::make_unique<cudf::column>(
+    cudf::data_type{cudf::type_id::UINT64},
+    num_rows,
+    std::move(row_indices),
+    cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED, stream, mr),
+    0);
 }
 
 std::unique_ptr<cudf::column> compute_partial_row_index_column(

@@ -124,7 +124,7 @@ class PDSHQueries:
             sum_disc_price=pd.NamedAgg(column="disc_price", aggfunc="sum"),
             sum_charge=pd.NamedAgg(column="charge", aggfunc="sum"),
             sum_disc=pd.NamedAgg(column="l_discount", aggfunc="sum"),
-            count_order=pd.NamedAgg(column="l_shipdate", aggfunc="size"),
+            count_order=pd.NamedAgg(column="l_quantity", aggfunc="size"),
         )
         agg["avg_qty"] = agg["sum_qty"].astype("float64") / agg["count_order"]
         agg["avg_price"] = (

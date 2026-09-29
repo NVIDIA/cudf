@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import contextlib
 import dataclasses
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import kvikio
 import kvikio.defaults
@@ -50,6 +50,9 @@ from cudf_polars.utils.config import (
     resolve_kvikio_task_size,
 )
 from cudf_polars.utils.cuda_stream import get_cuda_stream
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 def test_polars_verbose_warns(engine: pl.GPUEngine, monkeypatch: pytest.MonkeyPatch):
@@ -620,6 +623,18 @@ def test_quent_context_from_env_disabled(monkeypatch: pytest.MonkeyPatch) -> Non
         engine = pl.GPUEngine()
         config = ConfigOptions.from_polars_engine(engine)
         assert config.executor.quent_context is None
+
+
+def test_quent_output_root_from_env(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    output_root = tmp_path / "quent"
+    with monkeypatch.context() as m:
+        m.setenv("CUDF_POLARS__EXECUTOR__QUENT_CONTEXT", "1")
+        m.setenv("CUDF_POLARS__EXECUTOR__QUENT_OUTPUT_ROOT", str(output_root))
+        config = ConfigOptions.from_polars_engine(pl.GPUEngine())
+        assert config.executor.quent_context is not None
+        assert config.executor.quent_context.output_root == str(output_root)
 
 
 def test_quent_context_from_env_raises(monkeypatch: pytest.MonkeyPatch) -> None:

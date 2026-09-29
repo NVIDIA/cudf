@@ -27,6 +27,7 @@ import functools
 import importlib.util
 import json
 import os
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Generic, Literal, TypeVar
 
 import kvikio
@@ -50,7 +51,7 @@ if TYPE_CHECKING:
 
     from cudf_polars.engine.ray import RankActor
     from cudf_polars.quent._context import QuentContext, WorkerResources
-    from cudf_polars.quent._logging import QuentLogger
+    from cudf_polars.quent._runtime import QuentSession
 
 
 __all__ = [
@@ -68,6 +69,7 @@ __all__ = [
     "StreamingExecutor",
     "StreamingFallbackMode",
     "Unspecified",
+    "resolve_quent_output_root",
 ]
 
 
@@ -557,6 +559,22 @@ def _quent_context_converter(v: str) -> QuentContext | None:
             return None
 
 
+def resolve_quent_output_root(output_root: str | os.PathLike[str] | None = None) -> str:
+    """
+    Resolve the controller-local staging root for collected Quent events.
+
+    An explicit value takes precedence over
+    ``CUDF_POLARS__EXECUTOR__QUENT_OUTPUT_ROOT``, which in turn defaults to
+    ``logs/.quent-events``. Relative paths are resolved in the process creating
+    the Quent configuration before its Collector is started.
+    """
+    if output_root is None:
+        output_root = os.environ.get(
+            "CUDF_POLARS__EXECUTOR__QUENT_OUTPUT_ROOT", "logs/.quent-events"
+        )
+    return str(Path(output_root).resolve())
+
+
 @dataclasses.dataclass(frozen=True)
 class ParquetOptions:
     """
@@ -994,7 +1012,7 @@ class SPMDContext:
     py_executor: ThreadPoolExecutor
     engine_id: uuid.UUID
     worker_id: uuid.UUID
-    quent_logger: QuentLogger | None
+    quent_session: QuentSession | None
     worker_resources: WorkerResources | None = None
 
 
@@ -1018,7 +1036,7 @@ class RayContext:
     """
 
     rank_actors: list[ActorHandle[RankActor]]
-    quent_logger: QuentLogger | None
+    quent_session: QuentSession | None
 
 
 @dataclasses.dataclass(frozen=True)
@@ -1048,7 +1066,7 @@ class DaskContext:
 
     client: distributed.Client
     rapidsmpf_id: str
-    quent_logger: QuentLogger | None
+    quent_session: QuentSession | None
     owned_client: distributed.Client | None = None
     owned_cluster: Any | None = None
 
@@ -1220,7 +1238,9 @@ class StreamingExecutor:
         Pass a :class:`~cudf_polars.quent.QuentContext` instance to enable tracing.
         Can be set via the ``CUDF_POLARS__EXECUTOR__QUENT_CONTEXT`` environment
         variable (``true`` enables tracing with a default context, ``false``
-        disables it).
+        disables it). The controller-local Collector staging path can be set
+        with ``CUDF_POLARS__EXECUTOR__QUENT_OUTPUT_ROOT``; workers do not access
+        this path.
 
     Notes
     -----
@@ -1473,8 +1493,8 @@ class StreamingExecutor:
         # Hash the quent context UUIDs as ints
         quent_context = d["quent_context"]
         if quent_context is not None:
-            for key in ["engine", "query_group", "query"]:
-                quent_context[key]["id"] = int(quent_context[key]["id"])
+            quent_context["engine_id"] = int(quent_context["engine_id"])
+            quent_context["query_group_id"] = int(quent_context["query_group_id"])
             d["quent_context"] = json.dumps(quent_context)
         return hash(tuple(sorted(d.items())))
 

@@ -36,7 +36,7 @@ from cudf_polars.dsl.utils.io import (
     attach_cached_parquet_metadata,
     prefetch_parquet_file_metadata_for_ir,
 )
-from cudf_polars.quent._plan import build_plan, build_quent_operator_map
+from cudf_polars.quent._plan import build_quent_operator_map, emit_plan
 from cudf_polars.streaming.actor_graph.collectives import ReserveOpIDs
 from cudf_polars.streaming.actor_graph.collectives.common import reserve_op_id
 from cudf_polars.streaming.actor_graph.core import generate_network
@@ -51,6 +51,7 @@ from cudf_polars.utils.config import get_total_device_memory
 if TYPE_CHECKING:
     from collections.abc import Callable, MutableMapping
     from concurrent.futures import Executor, ThreadPoolExecutor
+    from pathlib import Path
 
     import rapidsmpf.config
     from cudf_streaming.channel_metadata import ChannelMetadata
@@ -58,11 +59,10 @@ if TYPE_CHECKING:
     from rapidsmpf.memory.buffer_resource import BufferResource
     from rapidsmpf.streaming.core.context import Context
 
-    import cudf_polars.quent._logging
-    import cudf_polars.quent._types
+    import cudf_polars.quent._runtime
     from cudf_polars.dsl.ir import IR
     from cudf_polars.dsl.translate import Translator
-    from cudf_polars.quent._context import LocalQuentContext
+    from cudf_polars.quent._context import LocalQuentContext, QuentContext
     from cudf_polars.streaming.base import PartitionInfo
     from cudf_polars.streaming.parallel import ConfigOptions
     from cudf_polars.utils.config import StreamingExecutor
@@ -334,7 +334,7 @@ class StreamingEngine(pl.GPUEngine):
         when :meth:`shutdown` is called. If ``None``, an empty stack is created.
     """
 
-    _quent_logger: cudf_polars.quent._logging.QuentLogger | None
+    _quent_session: cudf_polars.quent._runtime.QuentSession | None
     rapidsmpf_options: rapidsmpf.config.Options
     # Process-wide registry of every live :class:`StreamingEngine`. Used by
     # :class:`DefaultSingletonEngine` to enforce that no other engine is
@@ -358,7 +358,10 @@ class StreamingEngine(pl.GPUEngine):
 
         check_no_live_default_singleton(self)
         self._nranks = nranks
-        self._quent_events_raw: list[dict[str, Any]] = []  # populated on shutdown
+        quent_context: QuentContext | None = executor_options.get("quent_context")
+        self._quent_output_root: Path | None = (
+            quent_context.run_root if quent_context is not None else None
+        )
         self._exit_stack: contextlib.ExitStack | None = (
             exit_stack or contextlib.ExitStack()
         )
@@ -574,12 +577,6 @@ class StreamingEngine(pl.GPUEngine):
         """Exit the context manager, calling :meth:`shutdown`."""
         self.shutdown()
 
-    @property
-    def _quent_events(self) -> list[dict[str, Any]]:
-        """Return all Quent telemetry events collected during the engine's lifecycle."""
-        # Not ready to make this public yet.
-        return [x["event"] for x in self._quent_events_raw]
-
     def _run(self, func: Callable[..., T], *args: Any, **kwargs: Any) -> list[T]:
         """
         Execute a function on all ranks.
@@ -621,7 +618,7 @@ def execute_ir_on_rank(
     stats: StatsCollector,
     collective_id_map: dict[IR, list[int]],
     *,
-    quent_operator_map: dict[IR, cudf_polars.quent._types.Operator] | None = None,
+    quent_operator_map: dict[IR, uuid.UUID] | None = None,
     local_quent_context: LocalQuentContext | None = None,
 ) -> tuple[DataFrame, list[ChannelMetadata]]:
     """
@@ -914,8 +911,8 @@ def evaluate_on_rank(
     # unique per collect.
     logical_plan_id = uuid.uuid5(query_id, str(ir.get_stable_plan_id()))
 
-    physical_op_by_id: dict[str, cudf_polars.quent._types.Operator] | None = None
-    quent_operator_map: dict[IR, cudf_polars.quent._types.Operator] | None = None
+    physical_op_by_id: dict[str, uuid.UUID] | None = None
+    quent_operator_map: dict[IR, uuid.UUID] | None = None
 
     lowering, node_map = lower_ir_graph_with_node_map(
         ir, config_options, stats, rank=comm.rank, nranks=comm.nranks
@@ -926,20 +923,18 @@ def evaluate_on_rank(
     # TODO: figure out if we emit anything about optimized.
     if config_options.executor.quent_context is not None:
         assert local_quent_context is not None
-        plan, ops, ports, logical_op_by_id = build_plan(
+        logical_op_by_id = emit_plan(
+            local_quent_context.session,
             optimized,
             config_options,
-            query=local_quent_context.query,
+            query_id=local_quent_context.query_id,
             plan_id=logical_plan_id,
-            worker=local_quent_context.worker,
+            worker_id=local_quent_context.worker_id,
             instance_name="logical",
-            parent_plan=None,
+            parent_plan_id=None,
             parent_operators_by_node_id=None,
+            emit=comm.rank == 0,
         )
-        if comm.rank == 0:
-            local_quent_context.context._emit_plan_declarations(
-                local_quent_context.logger, plan, ops, ports
-            )
 
     if comm.rank == 0:
         log_query_plan(ir, config_options)
@@ -948,12 +943,13 @@ def evaluate_on_rank(
         assert local_quent_context is not None
         physical_plan_id = uuid.uuid4()
         physical_op_by_id = local_quent_context.context._emit_physical_plan_events(
-            local_quent_context.logger,
+            local_quent_context.session,
             ir,
             config_options,
             plan_id=physical_plan_id,
-            worker=local_quent_context.worker,
-            parent_plan=plan,
+            query_id=local_quent_context.query_id,
+            worker_id=local_quent_context.worker_id,
+            parent_plan_id=logical_plan_id,
             node_map=node_map,
             logical_op_by_id=logical_op_by_id,
         )

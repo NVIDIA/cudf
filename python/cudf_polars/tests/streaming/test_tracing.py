@@ -11,6 +11,7 @@ import subprocess
 import sys
 import textwrap
 from typing import TYPE_CHECKING
+from unittest.mock import Mock
 
 import pytest
 
@@ -24,7 +25,11 @@ from rapidsmpf.streaming.core.message import Message
 from cudf_polars.containers import DataFrame
 from cudf_polars.dsl.ir import Empty
 from cudf_polars.streaming.actor_graph.io import Lineariser
-from cudf_polars.streaming.actor_graph.tracing import ActorTracer, send_chunk
+from cudf_polars.streaming.actor_graph.tracing import (
+    ActorTracer,
+    record_channel_metrics,
+    send_chunk,
+)
 from cudf_polars.streaming.actor_graph.utils import shutdown_on_error
 from cudf_polars.utils.versions import POLARS_VERSION_LT_138
 
@@ -52,6 +57,25 @@ def test_actor_tracer_counts_table_chunk_without_table_view(chunk: TableChunk) -
     assert tracer.row_count == 3
 
 
+def test_record_channel_metrics_sums_all_memory_types() -> None:
+    input_channel = Mock()
+    input_channel.metrics.return_value.recv_bytes = {
+        MemoryType.DEVICE: 10,
+        MemoryType.HOST: 4,
+    }
+    output_channel = Mock()
+    output_channel.metrics.return_value.send_bytes = {
+        MemoryType.DEVICE: 7,
+        MemoryType.HOST: 3,
+    }
+    tracer = ActorTracer()
+
+    record_channel_metrics(tracer, chs_in=(input_channel,), chs_out=(output_channel,))
+
+    assert sum(tracer.input_bytes.values()) == 14
+    assert sum(tracer.output_bytes.values()) == 10
+
+
 @pytest.mark.spmd
 def test_send_and_recv_bytes(spmd_engine: SPMDEngine, chunk: TableChunk) -> None:
     context = spmd_engine.context
@@ -61,16 +85,20 @@ def test_send_and_recv_bytes(spmd_engine: SPMDEngine, chunk: TableChunk) -> None
     async def run() -> tuple[ActorTracer, ActorTracer]:
 
         async def producer() -> ActorTracer:
-            async with shutdown_on_error(context, chs_out=(ch,), trace_ir=ir) as tracer:
-                await send_chunk(context, ch, chunk, 11, tracer=tracer)
+            async with shutdown_on_error(
+                context, chs_out=(ch,), trace_ir=ir
+            ) as actor_scope:
+                await send_chunk(context, ch, chunk, 11, tracer=actor_scope.tracer)
                 await ch.drain(context)
-            return tracer
+            return actor_scope.tracer
 
         async def consumer() -> ActorTracer:
-            async with shutdown_on_error(context, chs_in=(ch,), trace_ir=ir) as tracer:
+            async with shutdown_on_error(
+                context, chs_in=(ch,), trace_ir=ir
+            ) as actor_scope:
                 msg = await ch.recv(context)
                 assert msg is not None
-            return tracer
+            return actor_scope.tracer
 
         async with asyncio.TaskGroup() as tg:
             producer_tracer_task = tg.create_task(producer())

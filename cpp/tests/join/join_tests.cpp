@@ -383,15 +383,21 @@ struct JoinTest : public cudf::test::BaseFixture {
 
 TEST_F(JoinTest, HashJoinMaximumSizeDefaultLoadFactor)
 {
+  int device{};
+  CUDF_CUDA_TRY(cudaGetDevice(&device));
+  cuda::stream stream_owner{cuda::device_ref{device}};
+  cuda::stream_ref stream{stream_owner};
+
   auto const build_col = cudf::sequence(std::numeric_limits<cudf::size_type>::max(),
-                                        cudf::numeric_scalar<cudf::size_type>{0},
-                                        cudf::numeric_scalar<cudf::size_type>{1});
+                                        cudf::numeric_scalar<int8_t>{0, true, stream},
+                                        cudf::numeric_scalar<int8_t>{1, true, stream},
+                                        stream);
   auto const build     = cudf::table_view{{build_col->view()}};
 
   // At the default load factor, power-of-two rounding would require 2^32 slots.
   EXPECT_NO_THROW({
-    cudf::hash_join join(build, cudf::null_equality::EQUAL);
-    cudf::get_default_stream().sync();
+    cudf::hash_join join(build, cudf::null_equality::EQUAL, stream);
+    stream.sync();
   });
 }
 

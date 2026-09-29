@@ -17,6 +17,7 @@
 #include <cudf/structs/structs_column_device_view.cuh>
 #include <cudf/table/table_device_view.cuh>
 #include <cudf/utilities/default_stream.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/traits.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
@@ -702,12 +703,15 @@ struct preprocessed_table {
    *        the input tables that indicates how null values compare to all other. If it is empty,
    *        the order `null_order::BEFORE` will be used for all columns.
    * @param stream The stream to launch kernels and h->d copies on while preprocessing
+   * @param mr Device memory resources used for returned and temporary allocations
    * @return A shared pointer to a preprocessed table
    */
-  static std::shared_ptr<preprocessed_table> create(table_view const& table,
-                                                    host_span<order const> column_order,
-                                                    host_span<null_order const> null_precedence,
-                                                    cuda::stream_ref stream);
+  static std::shared_ptr<preprocessed_table> create(
+    table_view const& table,
+    host_span<order const> column_order,
+    host_span<null_order const> null_precedence,
+    cuda::stream_ref stream,
+    cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
   /**
    * @brief Preprocess tables for use with lexicographical comparison
@@ -728,6 +732,7 @@ struct preprocessed_table {
    *        the input tables that indicates how null values compare to all other. If it is empty,
    *        the order `null_order::BEFORE` will be used for all columns.
    * @param stream The stream to launch kernels and h->d copies on while preprocessing
+   * @param mr Device memory resources used for returned and temporary allocations
    * @return A pair of shared pointers to the preprocessed tables
    */
   static std::pair<std::shared_ptr<preprocessed_table>, std::shared_ptr<preprocessed_table>> create(
@@ -735,7 +740,8 @@ struct preprocessed_table {
     table_view const& rhs,
     host_span<order const> column_order,
     host_span<null_order const> null_precedence,
-    cuda::stream_ref stream);
+    cuda::stream_ref stream,
+    cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
  private:
   friend class self_comparator;
@@ -758,6 +764,7 @@ struct preprocessed_table {
    * @param has_ranked_children Flag indicating if the input table was preprocessed to transform
    *        any nested child column into an integer column using `cudf::rank`
    * @param stream The stream to launch kernels and h->d copies on while preprocessing
+   * @param mr Device memory resources used for returned and temporary allocations
    * @return A shared pointer to a preprocessed table
    */
   static std::shared_ptr<preprocessed_table> create(
@@ -767,7 +774,8 @@ struct preprocessed_table {
     host_span<order const> column_order,
     host_span<null_order const> null_precedence,
     bool has_ranked_children,
-    cuda::stream_ref stream);
+    cuda::stream_ref stream,
+    cudf::memory_resources mr);
 
   /**
    * @brief Construct a preprocessed table for use with lexicographical comparison
@@ -920,12 +928,14 @@ class self_comparator {
    *        `null_order::BEFORE` for all columns.
    * @param stream The stream to construct this object on. Not the stream that will be used for
    *        comparisons using this object.
+   * @param mr Device memory resources used for returned and temporary allocations
    */
   self_comparator(table_view const& t,
                   host_span<order const> column_order         = {},
                   host_span<null_order const> null_precedence = {},
-                  cuda::stream_ref stream                     = cudf::get_default_stream())
-    : d_t{preprocessed_table::create(t, column_order, null_precedence, stream)}
+                  cuda::stream_ref stream                     = cudf::get_default_stream(),
+                  cudf::memory_resources mr = cudf::get_current_device_resource_ref())
+    : d_t{preprocessed_table::create(t, column_order, null_precedence, stream, mr)}
   {
   }
 
@@ -1076,12 +1086,14 @@ class two_table_comparator {
    *        `null_order::BEFORE` for all columns.
    * @param stream The stream to construct this object on. Not the stream that will be used for
    *        comparisons using this object.
+   * @param mr Device memory resources used for returned and temporary allocations
    */
   two_table_comparator(table_view const& left,
                        table_view const& right,
                        host_span<order const> column_order         = {},
                        host_span<null_order const> null_precedence = {},
-                       cuda::stream_ref stream                     = cudf::get_default_stream());
+                       cuda::stream_ref stream                     = cudf::get_default_stream(),
+                       cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
   /**
    * @brief Construct an owning object for performing a lexicographic comparison between two rows of

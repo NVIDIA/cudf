@@ -1267,7 +1267,7 @@ def _choose_strategy_from_samples(
     """
     Choose a tentative broadcast side or a committed non-broadcast plan.
 
-    When ``allow_broadcast`` is false, choose the shuffle fallback.
+    When ``allow_broadcast`` is false, choose a shuffle plan.
     """
     if chunkwise:
         if tracer is not None:

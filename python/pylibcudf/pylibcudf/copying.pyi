@@ -32,7 +32,8 @@ def gather(
 def gather_every(
     source_table: Table,
     step: int,
-    offset: int = 0,
+    start: int | None = None,
+    stop: int | None = None,
     stream: CudaStreamLike | None = None,
     mr: DeviceMemoryResource | None = None,
 ) -> Table: ...

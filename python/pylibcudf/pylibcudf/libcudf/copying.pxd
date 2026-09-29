@@ -4,6 +4,7 @@ from libc.stdint cimport int32_t, int64_t, uint8_t
 from libcpp cimport bool
 from libcpp.functional cimport reference_wrapper
 from libcpp.memory cimport unique_ptr
+from libcpp.optional cimport optional
 from libcpp.vector cimport vector
 from pylibcudf.exception_handler cimport libcudf_exception_handler
 from pylibcudf.libcudf.column.column cimport column
@@ -38,7 +39,8 @@ cdef extern from "cudf/copying.hpp" namespace "cudf" nogil:
     cdef unique_ptr[table] gather_every (
         const table_view& source_table,
         size_type step,
-        size_type offset,
+        optional[size_type] start,
+        optional[size_type] stop,
         cudaStream_t stream,
         device_async_resource_ref mr
     ) except +libcudf_exception_handler

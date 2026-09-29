@@ -46,7 +46,8 @@ cpdef Table gather(
 cpdef Table gather_every(
     Table source_table,
     size_type step,
-    size_type offset = *,
+    object start = *,
+    object stop = *,
     object stream = *,
     DeviceMemoryResource mr=*,
 )

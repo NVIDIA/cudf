@@ -5,6 +5,7 @@ from cython.operator import dereference
 
 from libcpp.functional cimport reference_wrapper
 from libcpp.memory cimport unique_ptr
+from libcpp.optional cimport make_optional, nullopt, optional
 from libcpp.utility cimport move
 from libcpp.vector cimport vector
 # TODO: We want to make cpp a more full-featured package so that we can access
@@ -122,11 +123,16 @@ cpdef Table gather(
 cpdef Table gather_every(
     Table source_table,
     size_type step,
-    size_type offset=0,
+    object start=None,
+    object stop=None,
     object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None
 ):
-    """Select every ``step``-th row of source_table, starting at row ``offset``.
+    """Select the rows of source_table given by the slice ``[start:stop:step]``.
+
+    The slice follows Python semantics: negative ``start`` and ``stop`` count
+    from the end, out-of-range values are clamped, and a negative ``step``
+    selects rows in reverse order.
 
     For details, see :cpp:func:`gather_every`.
 
@@ -135,9 +141,13 @@ cpdef Table gather_every(
     source_table : Table
         The table object from which to pull data.
     step : int
-        Distance between consecutive gathered rows. Must be positive.
-    offset : int, default 0
-        Index of the first row to gather. Must be non-negative.
+        Distance between consecutive gathered rows. Must be non-zero.
+    start : int | None, default None
+        Index of the first row to gather. ``None`` means the start of the
+        traversal (the last row if ``step`` is negative).
+    stop : int | None, default None
+        Index at which gathering stops (exclusive). ``None`` means the end of
+        the traversal.
     stream : Stream | None
         CUDA stream on which to perform the operation.
     mr : DeviceMemoryResource | None
@@ -146,24 +156,32 @@ cpdef Table gather_every(
     Returns
     -------
     pylibcudf.Table
-        Rows ``offset, offset + step, offset + 2 * step, ...`` of source_table.
+        The rows ``source_table[start:stop:step]``.
 
     Raises
     ------
     ValueError
-        If ``step`` is not positive or ``offset`` is negative.
+        If ``step`` is zero.
     """
     cdef unique_ptr[table] c_result
     cdef Stream _stream = _get_stream(stream)
     cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
 
+    cdef optional[size_type] c_start = nullopt
+    cdef optional[size_type] c_stop = nullopt
+    if start is not None:
+        c_start = make_optional[size_type](<size_type>start)
+    if stop is not None:
+        c_stop = make_optional[size_type](<size_type>stop)
+
     cdef table_view c_source_table = source_table.view()
     with nogil:
         c_result = cpp_copying.gather_every(
             c_source_table,
             step,
-            offset,
+            c_start,
+            c_stop,
             _cs,
             mr.get_mr()
         )

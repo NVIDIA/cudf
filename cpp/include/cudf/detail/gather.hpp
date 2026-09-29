@@ -16,6 +16,7 @@
 #include <cuda/stream>
 
 #include <memory>
+#include <optional>
 
 namespace cudf {
 namespace detail {
@@ -44,9 +45,13 @@ std::unique_ptr<table> gather(table_view const& source_table,
                               cuda::stream_ref stream,
                               memory_resources mr);
 
+/**
+ * @copydoc cudf::gather_every
+ */
 std::unique_ptr<table> gather_every(table_view const& source_table,
                                     size_type step,
-                                    size_type offset,
+                                    std::optional<size_type> start,
+                                    std::optional<size_type> stop,
                                     cuda::stream_ref stream,
                                     memory_resources mr);
 

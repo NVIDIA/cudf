@@ -16,6 +16,7 @@
 #include <cudf/utilities/memory_resource.hpp>
 
 #include <memory>
+#include <optional>
 #include <span>
 #include <vector>
 
@@ -121,12 +122,45 @@ std::unique_ptr<table> gather(table_view const& source_table,
                               cuda::stream_ref stream   = cudf::get_default_stream(),
                               cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
+/**
+ * @brief Gathers the rows of `source_table` selected by the Python-style slice
+ * `[start:stop:step]`.
+ *
+ * The slice is resolved with the same rules as Python's `slice.indices(num_rows)`:
+ * - A negative `start` or `stop` is interpreted as `i + num_rows`.
+ * - Out-of-range `start` and `stop` values are clamped rather than rejected.
+ * - An unset `start` means the first row (or the last row if `step < 0`), and an unset `stop`
+ *   means one past the last row (or one before the first row if `step < 0`).
+ *
+ * A negative `step` gathers rows in reverse order. If the resolved slice is empty, the result
+ * is an empty table with the same schema as `source_table`.
+ *
+ * @code{.pseudo}
+ * source_table: {{0, 1, 2, 3, 4, 5, 6, 7}}
+ * gather_every(source_table, 3)          -> {{0, 3, 6}}
+ * gather_every(source_table, 3, 1)       -> {{1, 4, 7}}
+ * gather_every(source_table, 2, 1, 6)    -> {{1, 3, 5}}
+ * gather_every(source_table, -3)         -> {{7, 4, 1}}
+ * gather_every(source_table, -2, -2, 1)  -> {{6, 4, 2}}
+ * @endcode
+ *
+ * @throws std::invalid_argument if `step` is zero
+ *
+ * @param source_table The input columns whose rows will be gathered
+ * @param step Distance between consecutive gathered rows; negative values traverse in reverse
+ * @param start Index of the first row to gather; defaults to the start of the traversal
+ * @param stop Index at which gathering stops (exclusive); defaults to the end of the traversal
+ * @param stream CUDA stream used for device memory operations and kernel launches.
+ * @param mr Memory resources used for temporary allocations and the returned table
+ * @return Table containing the selected rows
+ */
 std::unique_ptr<table> gather_every(
   table_view const& source_table,
   size_type step,
-  size_type offset          = 0,
-  cuda::stream_ref stream   = cudf::get_default_stream(),
-  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
+  std::optional<size_type> start = std::nullopt,
+  std::optional<size_type> stop  = std::nullopt,
+  cuda::stream_ref stream        = cudf::get_default_stream(),
+  cudf::memory_resources mr      = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Reverses the rows within a table.

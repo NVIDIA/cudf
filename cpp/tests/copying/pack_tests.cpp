@@ -587,8 +587,6 @@ TEST_F(PackUnpackTest, EmptyTable)
   // no columns
   {
     cudf::table_view t;
-    auto packed = cudf::pack(t);
-    ASSERT_TRUE(packed.metadata->empty());
     this->run_test(t);
   }
 
@@ -653,6 +651,16 @@ TEST_F(PackUnpackTest, DISABLED_LongOffsetsAndChars)
   auto str = make_long_offsets_and_chars_string_column();
   cudf::table_view tbl({*str});
   this->run_test(tbl);
+}
+
+TEST_F(PackUnpackTest, MetadataViewEmptyBuffer)
+{
+  auto packed = cudf::pack(cudf::table_view{});
+  ASSERT_TRUE(packed.metadata->empty());
+  auto view = cudf::packed_metadata_view(*packed.metadata);
+  EXPECT_EQ(view.num_columns(), 0);
+  EXPECT_EQ(view.num_rows(), 0);
+  EXPECT_THROW(std::ignore = view.column(0), std::out_of_range);
 }
 
 TEST_F(PackUnpackTest, MetadataViewRejectsNonMultipleSize)

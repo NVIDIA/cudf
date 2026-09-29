@@ -24,8 +24,6 @@ namespace CUDF_EXPORT nvtext {
 /**
  * @brief The table of merge pairs for the BPE encoder.
  *
- * @deprecated Since 26.04
- *
  * To create an instance, call @ref nvtext::load_merge_pairs
  */
 struct bpe_merge_pairs {

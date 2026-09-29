@@ -480,39 +480,31 @@ TEST_P(StreamingTableChunk, SpillTrackingOnHostMove)
     return host.make_available(dev_res);
   };
 
-  // An empty table still needs packing metadata, but transfers no data.
-  std::ignore = round_trip(random_table_with_index(2025, 0, 0, 5), /* move = */ false);
-  std::ignore = round_trip(random_table_with_index(2025, 0, 0, 5), /* move = */ true);
-  EXPECT_EQ(spill_samples(*stats), 0UL);
   auto const host_name = rapidsmpf::to_lower(rapidsmpf::to_string(spill_mem_type));
-  EXPECT_FALSE(stats->has_stat("copy-device-to-" + host_name + "-bytes"));
-  EXPECT_FALSE(stats->has_stat("copy-" + host_name + "-to-device-bytes"));
-
-  // An empty table still needs packing metadata, but transfers no data.
-  std::ignore = round_trip(random_table_with_index(2025, 0, 0, 5), /* move = */ false);
-  std::ignore = round_trip(random_table_with_index(2025, 0, 0, 5), /* move = */ true);
-  EXPECT_EQ(spill_samples(*stats), 0UL);
-  auto const host_name = rapidsmpf::to_lower(rapidsmpf::to_string(spill_mem_type));
-  EXPECT_FALSE(stats->has_stat("copy-device-to-" + host_name + "-bytes"));
-  EXPECT_FALSE(stats->has_stat("copy-" + host_name + "-to-device-bytes"));
-
   // A copy leaves the table on device, so it is not a spill.
   std::ignore = round_trip(random_table(2025, nrows, ncols, 0, 5), /* move = */ false);
   EXPECT_EQ(spill_samples(*stats), 0UL);
 
   // A move releases the table, so the round trip is recorded once.
   std::ignore = round_trip(random_table(2025, nrows, ncols, 0, 5), /* move = */ true);
-  EXPECT_EQ(spill_samples(*stats), nrows == 0 ? 0UL : 1UL);
-  EXPECT_GT(stats->get_stat("copy-device-to-" + host_name + "-bytes").value(), 0);
+  if (nrows > 0 && ncols > 0) {
+    EXPECT_EQ(spill_samples(*stats), 1UL);
+    EXPECT_GT(stats->get_stat("copy-device-to-" + host_name + "-bytes").value(), 0);
+  } else {
+    // An empty table still needs packing metadata, but transfers no data.
+    EXPECT_EQ(spill_samples(*stats), 0UL);
+    EXPECT_FALSE(stats->has_stat("copy-device-to-" + host_name + "-bytes"));
+    EXPECT_FALSE(stats->has_stat("copy-" + host_name + "-to-device-bytes"));
+  }
 }
 
 TEST_F(StreamingTableChunk, ToMessageRoundTrip)
 {
-  constexpr unsigned int nrows = 64;
-  constexpr std::int64_t seed  = 2025;
-  constexpr std::uint64_t seq  = 7;
+  constexpr unsigned int num_rows = 64;
+  constexpr std::int64_t seed     = 2025;
+  constexpr std::uint64_t seq     = 7;
 
-  auto expect = random_table_with_index(seed, nrows, 0, 5);
+  auto expect = random_table_with_index(seed, num_rows, 0, 5);
   auto chunk  = std::make_unique<table_chunk>(std::make_unique<cudf::table>(expect), stream);
 
   rapidsmpf::streaming::Message m = to_message(seq, std::move(chunk));

@@ -149,14 +149,15 @@ def _candidate_task_bounds(
     Parquet stores min/max statistics as encoded values. libcudf decodes them
     into typed device columns used by libcudf sorting operations.
     """
-    try:
-        bounds = plc.io.parquet_metadata.read_parquet_column_chunk_bounds(
-            file_metadata, columns=[name], stream=stream
-        )
-    except ValueError:
-        # Ordering keys can name synthetic columns, such as hive partitions
-        # or include_file_paths, that are not Parquet leaf columns.
+    # Ordering keys can name synthetic columns, such as hive partitions
+    # or include_file_paths, that are not Parquet leaf columns.
+    if not file_metadata or any(
+        name not in metadata.columnchunk_metadata for metadata in file_metadata
+    ):
         return None
+    bounds = plc.io.parquet_metadata.read_parquet_column_chunk_bounds(
+        file_metadata, columns=[name], stream=stream
+    )
 
     columns = bounds.columns()[2:]
     assert len(columns) == 2, "Single-column parquet bounds must have min/max columns."

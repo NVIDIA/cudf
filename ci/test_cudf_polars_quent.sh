@@ -11,17 +11,13 @@ rapids-logger "Create cudf-polars Quent test environment"
 . /opt/conda/etc/profile.d/conda.sh
 
 ENV_YAML_DIR="$(mktemp -d)"
-cat >"${ENV_YAML_DIR}/env.yaml" <<EOF
-name: cudf_polars_quent
-channels:
-  - conda-forge
-dependencies:
-  - maturin>=1.14,<2
-  - python=${RAPIDS_PY_VERSION}
-  - rust=1.97
-EOF
 
-rapids-mamba-retry env create --yes -f "${ENV_YAML_DIR}/env.yaml"
+rapids-dependency-file-generator \
+  --output conda \
+  --file-key test_cudf_polars_quent \
+  --matrix "cuda=${RAPIDS_CUDA_VERSION%.*};arch=$(arch);py=${RAPIDS_PY_VERSION}" | tee "${ENV_YAML_DIR}/env.yaml"
+
+rapids-mamba-retry env create --yes -f "${ENV_YAML_DIR}/env.yaml" -n cudf_polars_quent
 
 # Temporarily allow unbound variables for conda activation.
 set +u

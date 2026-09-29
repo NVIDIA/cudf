@@ -268,7 +268,7 @@ void reader_impl::preprocess_file(read_mode mode)
     // Don't throw if the timezone is only used for negative timestamp borrow.
     CUDF_LOG_WARN(std::format(
       "Could not resolve the ORC writer timezone '{}'; the negative timestamp borrow falls back "
-      "to UTC, so timestamps within the timezone's offset of 2015-01-01 may be one second off. {}",
+      "to UTC, so timestamps within the timezone's offset of 1970-01-01 may be one second off. {}",
       writer_timezone,
       e.what()));
   }

@@ -472,11 +472,15 @@ std::vector<uint8_t> pack_metadata(table_view const& table,
 
 table_view unpack(packed_columns const& input)
 {
+  return unpack(*input.metadata, reinterpret_cast<uint8_t const*>(input.gpu_data->data()));
+}
+
+table_view unpack(std::span<uint8_t const> const metadata, uint8_t const* gpu_data)
+{
   CUDF_FUNC_RANGE();
-  return input.metadata->size() == 0
-           ? table_view{}
-           : detail::unpack(input.metadata->data(),
-                            reinterpret_cast<uint8_t const*>(input.gpu_data->data()));
+  if (metadata.empty()) { return table_view{}; }
+  std::ignore = packed_metadata_view{metadata};  // validate the metadata before unpacking
+  return detail::unpack(metadata.data(), gpu_data);
 }
 
 table_view unpack(uint8_t const* metadata, uint8_t const* gpu_data)

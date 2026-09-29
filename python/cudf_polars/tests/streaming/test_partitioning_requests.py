@@ -163,7 +163,9 @@ def test_hint_sorted_creates_order_partition_request() -> None:
     requests = collect_partitioning_requests(hint_sorted)
 
     assert requests[scan] == (
-        OrderPartitioningRequest((named_order_key("a", descending=True),)),
+        OrderPartitioningRequest(
+            (named_order_key("a", descending=True),), source="hint"
+        ),
     )
 
 
@@ -265,7 +267,9 @@ def test_hint_sorted_keeps_declared_order_with_compatible_downstream_sort() -> N
 
     requests = collect_partitioning_requests(sort)
 
-    assert requests[scan] == (OrderPartitioningRequest((named_order_key("a"),)),)
+    assert requests[scan] == (
+        OrderPartitioningRequest((named_order_key("a"),), source="hint"),
+    )
 
 
 def test_hint_sorted_keeps_declared_order_with_extended_downstream_sort() -> None:
@@ -275,7 +279,9 @@ def test_hint_sorted_keeps_declared_order_with_extended_downstream_sort() -> Non
 
     requests = collect_partitioning_requests(sort)
 
-    assert requests[scan] == (OrderPartitioningRequest((named_order_key("a"),)),)
+    assert requests[scan] == (
+        OrderPartitioningRequest((named_order_key("a"),), source="hint"),
+    )
 
 
 def test_hint_sorted_keeps_declared_order_with_incompatible_downstream_sort() -> None:
@@ -286,7 +292,9 @@ def test_hint_sorted_keeps_declared_order_with_incompatible_downstream_sort() ->
     requests = collect_partitioning_requests(sort)
 
     assert requests[scan] == (
-        OrderPartitioningRequest((named_order_key("a", descending=True),)),
+        OrderPartitioningRequest(
+            (named_order_key("a", descending=True),), source="hint"
+        ),
     )
 
 

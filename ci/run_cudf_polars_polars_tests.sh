@@ -103,6 +103,10 @@ for test in "${DESELECTED_TESTS[@]}"; do
     DESELECTED_TEST_ARGS+=(--deselect "${test}")
 done
 
+# SQLAlchemy 2.1 warns about URI parameters used by the Polars 1.44 Iceberg
+# tests. Polars fixed this in https://github.com/pola-rs/polars/pull/29533.
+SQLALCHEMY_SQLITE_URI_WARNING="ignore:Query string argument(s) 'cache', 'mode' are not accepted by the pysqlite driver and are being ignored; SQLite URI arguments require that 'uri=true' also be present in the URL.:sqlalchemy.exc.SAWarning"
+
 # Fail fast (-x) rather than trying to continue because failed tests pollute the state
 if [[ "${ENGINE}" == "both" || "${ENGINE}" == "in-memory" ]]; then
     echo "Run polars tests with injected in-memory GPU engine"
@@ -117,6 +121,7 @@ if [[ "${ENGINE}" == "both" || "${ENGINE}" == "in-memory" ]]; then
            --dist=worksteal \
            --tb=native \
            --durations=50 --durations-min=1 \
+           -W "${SQLALCHEMY_SQLITE_URI_WARNING}" \
            "${DESELECTED_TEST_ARGS[@]}" \
            "${PYTEST_ARGS[@]}" \
            py-polars/tests \
@@ -140,6 +145,7 @@ if [[ "${ENGINE}" == "both" || "${ENGINE}" == "spmd" ]]; then
            --dist=worksteal \
            --tb=native \
            --durations=50 --durations-min=1 \
+           -W "${SQLALCHEMY_SQLITE_URI_WARNING}" \
            "${DESELECTED_TEST_ARGS[@]}" \
            "${PYTEST_ARGS[@]}" \
            py-polars/tests \

@@ -21,6 +21,7 @@ CUDF_STREAMING_WHEELHOUSE=$(rapids-download-from-github "$(rapids-artifact-name 
 rapids-generate-pip-constraints py_test_cudf_polars "${PIP_CONSTRAINT}" constraints
 
 read -r -a VERSIONS <<< "$(python ci/utils/get_matrix_values.py dependencies.yaml test_cudf_polars_compat polars_compat_version)"
+LATEST_VERSION="${VERSIONS[-1]}"
 
 case "${POLARS_VERSIONS:-all}" in
     all) ;;
@@ -32,8 +33,6 @@ case "${POLARS_VERSIONS:-all}" in
         exit 1
         ;;
 esac
-
-LATEST_VERSION="${VERSIONS[-1]}"
 
 # shellcheck disable=SC2317
 function set_exitcode()

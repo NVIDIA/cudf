@@ -885,11 +885,12 @@ jlongArray mixed_join_size(JNIEnv* env,
     auto col_data = matches_per_row->release();
     cudf::jni::native_jlongArray result(env, 2);
     result[0] = static_cast<jlong>(join_size);
-    result[1] = ptr_as_jlong(new cudf::column{cudf::data_type{cudf::type_id::INT32},
-                                              col_size,
-                                              std::move(col_data),
-                                              rmm::device_buffer{},
-                                              0});
+    result[1] =
+      ptr_as_jlong(new cudf::column{cudf::data_type{cudf::type_id::INT32},
+                                    col_size,
+                                    std::move(col_data),
+                                    cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
+                                    0});
     return result.get_jArray();
   }
   JNI_CATCH(env, NULL);
@@ -2597,6 +2598,7 @@ Java_ai_rapids_cudf_Table_writeORCBufferBegin(JNIEnv* env,
                                               jintArray j_precisions,
                                               jbooleanArray j_is_map,
                                               jint j_stripe_size_rows,
+                                              jstring j_writer_timezone,
                                               jobject consumer,
                                               jobject host_memory_allocator)
 {
@@ -2604,12 +2606,14 @@ Java_ai_rapids_cudf_Table_writeORCBufferBegin(JNIEnv* env,
   JNI_NULL_CHECK(env, j_col_nullability, "null nullability", 0);
   JNI_NULL_CHECK(env, j_metadata_keys, "null metadata keys", 0);
   JNI_NULL_CHECK(env, j_metadata_values, "null metadata values", 0);
+  JNI_NULL_CHECK(env, j_writer_timezone, "null writer timezone", 0);
   JNI_NULL_CHECK(env, consumer, "null consumer", 0);
   JNI_TRY
   {
     cudf::jni::auto_set_device(env);
     using namespace cudf::io;
     using namespace cudf::jni;
+    cudf::jni::native_jstring writer_timezone(env, j_writer_timezone);
     table_input_metadata metadata;
     // ORC has no `j_is_int96`, but `createTableMetaData` needs a lvalue.
     jbooleanArray j_is_int96 = NULL;
@@ -2654,6 +2658,7 @@ Java_ai_rapids_cudf_Table_writeORCBufferBegin(JNIEnv* env,
                                         .key_value_metadata(kv_metadata)
                                         .compression_statistics(stats)
                                         .stripe_size_rows(j_stripe_size_rows)
+                                        .writer_timezone(writer_timezone.get())
                                         .build();
     auto writer_ptr                          = std::make_unique<cudf::io::orc_chunked_writer>(opts);
     cudf::jni::native_orc_writer_handle* ret = new cudf::jni::native_orc_writer_handle(
@@ -2675,12 +2680,14 @@ JNIEXPORT long JNICALL Java_ai_rapids_cudf_Table_writeORCFileBegin(JNIEnv* env,
                                                                    jintArray j_precisions,
                                                                    jbooleanArray j_is_map,
                                                                    jint j_stripe_size_rows,
+                                                                   jstring j_writer_timezone,
                                                                    jstring j_output_path)
 {
   JNI_NULL_CHECK(env, j_col_names, "null columns", 0);
   JNI_NULL_CHECK(env, j_col_nullability, "null nullability", 0);
   JNI_NULL_CHECK(env, j_metadata_keys, "null metadata keys", 0);
   JNI_NULL_CHECK(env, j_metadata_values, "null metadata values", 0);
+  JNI_NULL_CHECK(env, j_writer_timezone, "null writer timezone", 0);
   JNI_NULL_CHECK(env, j_output_path, "null output path", 0);
   JNI_TRY
   {
@@ -2688,6 +2695,7 @@ JNIEXPORT long JNICALL Java_ai_rapids_cudf_Table_writeORCFileBegin(JNIEnv* env,
     using namespace cudf::io;
     using namespace cudf::jni;
     cudf::jni::native_jstring output_path(env, j_output_path);
+    cudf::jni::native_jstring writer_timezone(env, j_writer_timezone);
     table_input_metadata metadata;
     // ORC has no `j_is_int96`, but `createTableMetaData` needs a lvalue.
     jbooleanArray j_is_int96 = NULL;
@@ -2728,6 +2736,7 @@ JNIEXPORT long JNICALL Java_ai_rapids_cudf_Table_writeORCFileBegin(JNIEnv* env,
                                         .key_value_metadata(kv_metadata)
                                         .compression_statistics(stats)
                                         .stripe_size_rows(j_stripe_size_rows)
+                                        .writer_timezone(writer_timezone.get())
                                         .build();
     auto writer_ptr = std::make_unique<cudf::io::orc_chunked_writer>(opts);
     cudf::jni::native_orc_writer_handle* ret =
@@ -3595,6 +3604,21 @@ JNIEXPORT jlongArray JNICALL Java_ai_rapids_cudf_Table_leftSemiJoinGatherMap(
     });
 }
 
+JNIEXPORT jlongArray JNICALL Java_ai_rapids_cudf_Table_leftSemiFilteredJoinGatherMap(
+  JNIEnv* env, jclass, jlong j_left_keys, jlong j_right_filtered_join)
+{
+  JNI_NULL_CHECK(env, j_left_keys, "left keys table is null", NULL);
+  JNI_NULL_CHECK(env, j_right_filtered_join, "right filtered join is null", NULL);
+  JNI_TRY
+  {
+    cudf::jni::auto_set_device(env);
+    auto const left_keys     = reinterpret_cast<cudf::table_view const*>(j_left_keys);
+    auto const filtered_join = reinterpret_cast<cudf::filtered_join const*>(j_right_filtered_join);
+    return cudf::jni::gather_map_to_java(env, filtered_join->semi_join(*left_keys));
+  }
+  JNI_CATCH(env, NULL);
+}
+
 JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_Table_conditionalLeftSemiJoinRowCount(
   JNIEnv* env, jclass, jlong j_left_table, jlong j_right_table, jlong j_condition)
 {
@@ -3693,6 +3717,21 @@ JNIEXPORT jlongArray JNICALL Java_ai_rapids_cudf_Table_leftAntiJoinGatherMap(
       cudf::filtered_join obj(right, nulleq, load_factor, cudf::get_default_stream());
       return obj.anti_join(left);
     });
+}
+
+JNIEXPORT jlongArray JNICALL Java_ai_rapids_cudf_Table_leftAntiFilteredJoinGatherMap(
+  JNIEnv* env, jclass, jlong j_left_keys, jlong j_right_filtered_join)
+{
+  JNI_NULL_CHECK(env, j_left_keys, "left keys table is null", NULL);
+  JNI_NULL_CHECK(env, j_right_filtered_join, "right filtered join is null", NULL);
+  JNI_TRY
+  {
+    cudf::jni::auto_set_device(env);
+    auto const left_keys     = reinterpret_cast<cudf::table_view const*>(j_left_keys);
+    auto const filtered_join = reinterpret_cast<cudf::filtered_join const*>(j_right_filtered_join);
+    return cudf::jni::gather_map_to_java(env, filtered_join->anti_join(*left_keys));
+  }
+  JNI_CATCH(env, NULL);
 }
 
 JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_Table_conditionalLeftAntiJoinRowCount(
@@ -4916,8 +4955,12 @@ Java_ai_rapids_cudf_Table_contiguousSplitGroups(JNIEnv* env,
       auto const vec  = thrust::host_vector<cudf::size_type>(begin, end);
       auto buf =
         rmm::device_buffer{vec.data(), size * sizeof(cudf::size_type), cudf::get_default_stream()};
-      auto gather_map_col = std::make_unique<cudf::column>(
-        cudf::data_type{cudf::type_id::INT32}, size, std::move(buf), rmm::device_buffer{}, 0);
+      auto gather_map_col =
+        std::make_unique<cudf::column>(cudf::data_type{cudf::type_id::INT32},
+                                       size,
+                                       std::move(buf),
+                                       cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
+                                       0);
 
       // gather the first key in each group to remove duplicated ones.
       group_by_result_table = cudf::gather(groups.keys->view(), gather_map_col->view());

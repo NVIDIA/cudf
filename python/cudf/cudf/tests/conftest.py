@@ -379,7 +379,8 @@ def float_types_as_str(request):
 
 
 @pytest.fixture(
-    params=signed_integer_types + unsigned_integer_types + float_types
+    scope="session",
+    params=signed_integer_types + unsigned_integer_types + float_types,
 )
 def numeric_types_as_str(request):
     """

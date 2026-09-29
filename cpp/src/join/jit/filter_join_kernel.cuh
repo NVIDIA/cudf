@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -7,8 +7,6 @@
 
 #include <cudf/column/column_device_view_base.cuh>
 #include <cudf/types.hpp>
-
-#include <jit/span.cuh>
 
 namespace cudf::join::jit {
 
@@ -19,8 +17,8 @@ namespace cudf::join::jit {
  * @tparam is_null_aware Whether the expression needs input validity as part of its computation
  * @tparam Accessors type list of accessors for columns used in the predicate
  * @param num_rows Number of rows to process
- * @param left_indices Device span of left table indices
- * @param right_indices Device span of right table indices
+ * @param left_indices Device pointer to left table indices
+ * @param right_indices Device pointer to right table indices
  * @param columns Device view of all columns involved in the predicate
  * @param predicate_results Output array for predicate evaluation results
  * @param user_data Optional user data for predicate function

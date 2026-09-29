@@ -74,7 +74,7 @@ auto write_file(std::vector<std::unique_ptr<cudf::column>>& input_columns,
       auto const [null_mask, null_count] =
         cudf::test::detail::make_null_mask(valid_iter + offset, valid_iter + col->size() + offset);
       col = cudf::structs::detail::superimpose_and_sanitize_nulls(
-        static_cast<cudf::bitmask_type const*>(null_mask.data()),
+        reinterpret_cast<cudf::bitmask_type const*>(null_mask.data()),
         null_count,
         std::move(col),
         cudf::get_default_stream(),
@@ -551,8 +551,11 @@ TEST_F(ParquetChunkedReaderTest, TestChunkedReadWithPlainListOfStringSpanningPag
 
   auto child_col   = strings_col(child_strings.begin(), child_strings.end()).release();
   auto offsets_col = int32s_col(offsets.begin(), offsets.end()).release();
-  auto list_col    = cudf::make_lists_column(
-    num_rows, std::move(offsets_col), std::move(child_col), 0, rmm::device_buffer{});
+  auto list_col    = cudf::make_lists_column(num_rows,
+                                          std::move(offsets_col),
+                                          std::move(child_col),
+                                          0,
+                                          cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
   std::vector<std::unique_ptr<cudf::column>> cols;
   cols.push_back(std::move(list_col));
@@ -1092,7 +1095,7 @@ TEST_F(ParquetChunkedReaderTest, TestChunkedReadWithListsOfStructs)
                               int32s_col(offsets.begin(), offsets.end()).release(),
                               make_structs_col(),
                               0,
-                              rmm::device_buffer{}));
+                              cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED)));
 
     return write_file(input_columns,
                       "chunked_read_with_lists_of_structs",
@@ -1272,20 +1275,21 @@ void input_limit_test_write(std::vector<std::string> const& test_filenames,
     test_filenames[3], t, cudf::io::compression_type::SNAPPY, cudf::io::dictionary_policy::ALWAYS);
 }
 
-void input_limit_test_read(std::vector<std::string> const& test_filenames,
-                           cudf::table_view const& t,
-                           std::size_t output_limit,
-                           std::size_t input_limit,
-                           int const expected_chunk_counts[input_limit_expected_file_count])
+void input_limit_test_read(
+  std::vector<std::string> const& test_filenames,
+  cudf::table_view const& t,
+  std::size_t output_limit,
+  std::size_t input_limit,
+  [[maybe_unused]] int const expected_chunk_counts[input_limit_expected_file_count],
+  bool require_multiple_chunks = true)
 {
   CUDF_EXPECTS(test_filenames.size() == input_limit_expected_file_count,
                "Unexpected count of test filenames");
 
   for (std::size_t idx = 0; idx < test_filenames.size(); idx++) {
     auto result = chunked_read(test_filenames[idx], output_limit, input_limit);
-    // CUDF_EXPECTS(result.second == expected_chunk_counts[idx],
-    //            "Unexpected number of chunks produced in chunk read");
     CUDF_TEST_EXPECT_TABLES_EQUIVALENT(*result.first, t);
+    if (require_multiple_chunks) { EXPECT_GT(result.second, 1); }
   }
 }
 }  // namespace
@@ -1306,10 +1310,10 @@ TEST_F(ParquetChunkedReaderInputLimitConstrainedTest, SingleFixedWidthColumn)
 
   // semi-reasonable limit
   constexpr int expected_a[] = {1, 25, 5, 1};
-  input_limit_test_read(test_filenames, tbl, 0, 2 * 1024 * 1024, expected_a);
+  input_limit_test_read(test_filenames, tbl, 0, 2 * 1024 * 1024, expected_a, false);
   // an unreasonable limit
   constexpr int expected_b[] = {1, 50, 50, 1};
-  input_limit_test_read(test_filenames, tbl, 0, 1, expected_b);
+  input_limit_test_read(test_filenames, tbl, 0, 1, expected_b, false);
 }
 
 TEST_F(ParquetChunkedReaderInputLimitConstrainedTest, MixedColumns)
@@ -1341,9 +1345,9 @@ TEST_F(ParquetChunkedReaderInputLimitConstrainedTest, MixedColumns)
   input_limit_test_write(test_filenames, tbl);
 
   constexpr int expected_a[] = {1, 50, 13, 7};
-  input_limit_test_read(test_filenames, tbl, 0, 2 * 1024 * 1024, expected_a);
+  input_limit_test_read(test_filenames, tbl, 0, 2 * 1024 * 1024, expected_a, false);
   constexpr int expected_b[] = {1, 50, 50, 50};
-  input_limit_test_read(test_filenames, tbl, 0, 1, expected_b);
+  input_limit_test_read(test_filenames, tbl, 0, 1, expected_b, false);
 }
 
 struct ParquetChunkedReaderInputLimitTest : public cudf::test::BaseFixture {};
@@ -1485,18 +1489,23 @@ TEST_F(ParquetChunkedReaderInputLimitTest, ListSpanningPagesAtPassEnd)
   auto const make_offsets = [&] { return int32s_col(offsets.begin(), offsets.end()).release(); };
 
   // array<string>
-  auto list_of_string = cudf::make_lists_column(num_rows,
-                                                make_offsets(),
-                                                strings_col(keys.begin(), keys.end()).release(),
-                                                0,
-                                                rmm::device_buffer{});
+  auto list_of_string =
+    cudf::make_lists_column(num_rows,
+                            make_offsets(),
+                            strings_col(keys.begin(), keys.end()).release(),
+                            0,
+                            cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
   // map<string, string>, modeled as list<struct<string, string>>
   std::vector<std::unique_ptr<cudf::column>> key_value;
   key_value.emplace_back(strings_col(keys.begin(), keys.end()).release());
   key_value.emplace_back(strings_col(values.begin(), values.end(), value_valid.begin()).release());
-  auto list_of_struct = cudf::make_lists_column(
-    num_rows, make_offsets(), structs_col{std::move(key_value)}.release(), 0, rmm::device_buffer{});
+  auto list_of_struct =
+    cudf::make_lists_column(num_rows,
+                            make_offsets(),
+                            structs_col{std::move(key_value)}.release(),
+                            0,
+                            cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
   std::vector<std::unique_ptr<cudf::column>> cols;
   cols.emplace_back(std::move(list_of_string));
@@ -1575,7 +1584,7 @@ TEST_F(ParquetChunkedReaderInputLimitTest, List)
   auto base_path      = temp_env->get_temp_filepath("list");
   auto test_filenames = input_limit_get_test_names(base_path);
 
-  constexpr int num_rows  = 10'000'000;
+  constexpr int num_rows  = 2'500'000;
   constexpr int list_size = 4;
 
   auto const stream = cudf::get_default_stream();
@@ -1622,16 +1631,13 @@ TEST_F(ParquetChunkedReaderInputLimitTest, List)
   //   size of the decompressed data. so 2 GB is actually not enough to hold the whole thing at
   //   once.
   //
-  // Note that in the dictionary cases, both of these revert down to 1 chunk because the
-  // dictionaries dramatically shrink the size of the uncompressed data.
   constexpr int expected_a[] = {3, 3, 1, 1};
-  input_limit_test_read(test_filenames, tbl, 0, 256 * 1024 * 1024, expected_a);
-  // smaller limit
+  input_limit_test_read(test_filenames, tbl, 0, 64 * 1024 * 1024, expected_a, false);
   constexpr int expected_b[] = {5, 5, 2, 1};
-  input_limit_test_read(test_filenames, tbl, 0, 128 * 1024 * 1024, expected_b);
-  // include output chunking as well
+  input_limit_test_read(test_filenames, tbl, 0, 32 * 1024 * 1024, expected_b, false);
+  // Include output chunking as well, and verify each input format is split.
   constexpr int expected_c[] = {10, 9, 8, 7};
-  input_limit_test_read(test_filenames, tbl, 32 * 1024 * 1024, 64 * 1024 * 1024, expected_c);
+  input_limit_test_read(test_filenames, tbl, 8 * 1024 * 1024, 16 * 1024 * 1024, expected_c, true);
 }
 
 namespace {
@@ -1655,7 +1661,12 @@ void tiny_list_rowgroup_test(bool just_list_col)
     // write out the single-row list column as it's own file
     cudf::test::fixed_width_column_wrapper<int> values(iter, iter + row_sizes[idx]);
     cudf::test::fixed_width_column_wrapper<int> offsets({0, row_sizes[idx]});
-    cols.push_back(cudf::make_lists_column(1, offsets.release(), values.release(), 0, {}));
+    cols.push_back(
+      cudf::make_lists_column(1,
+                              offsets.release(),
+                              values.release(),
+                              0,
+                              cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED)));
 
     // add a column after the list
     if (!just_list_col) {
@@ -1725,7 +1736,7 @@ TEST_F(ParquetChunkedReaderInputLimitTest, Mixed)
   auto base_path      = temp_env->get_temp_filepath("mixed_types");
   auto test_filenames = input_limit_get_test_names(base_path);
 
-  constexpr int num_rows  = 10'000'000;
+  constexpr int num_rows  = 2'500'000;
   constexpr int list_size = 4;
   constexpr int str_size  = 3;
 
@@ -1804,16 +1815,13 @@ TEST_F(ParquetChunkedReaderInputLimitTest, Mixed)
   //   size of the decompressed data. so 2 GB is actually not enough to hold the whole thing at
   //   once.
   //
-  // Note that in the dictionary cases, both of these revert down to 1 chunk because the
-  // dictionaries dramatically shrink the size of the uncompressed data.
   constexpr int expected_a[] = {5, 5, 2, 1};
-  input_limit_test_read(test_filenames, tbl, 0, 256 * 1024 * 1024, expected_a);
-  // smaller limit
+  input_limit_test_read(test_filenames, tbl, 0, 64 * 1024 * 1024, expected_a, false);
   constexpr int expected_b[] = {10, 9, 3, 1};
-  input_limit_test_read(test_filenames, tbl, 0, 128 * 1024 * 1024, expected_b);
-  // include output chunking as well
+  input_limit_test_read(test_filenames, tbl, 0, 32 * 1024 * 1024, expected_b, false);
+  // Include output chunking as well, and verify each input format is split.
   constexpr int expected_c[] = {20, 18, 15, 12};
-  input_limit_test_read(test_filenames, tbl, 32 * 1024 * 1024, 64 * 1024 * 1024, expected_c);
+  input_limit_test_read(test_filenames, tbl, 8 * 1024 * 1024, 16 * 1024 * 1024, expected_c, true);
 }
 
 TEST_F(ParquetChunkedReaderTest, TestChunkedReadOutOfBoundChunks)
@@ -2601,8 +2609,12 @@ TEST_F(ParquetReaderTest, ManyLargeLists)
     stream.sync();
 
     // list<bool> column
-    auto list_col = cudf::make_lists_column(
-      num_rows, std::move(offsets_col), std::move(bools_col), 0, rmm::device_buffer{});
+    auto list_col =
+      cudf::make_lists_column(num_rows,
+                              std::move(offsets_col),
+                              std::move(bools_col),
+                              0,
+                              cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
     auto const table    = cudf::table_view({*list_col});
     auto const filepath = temp_env->get_temp_filepath("ManyLargeLists.parquet");

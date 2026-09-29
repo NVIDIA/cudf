@@ -106,6 +106,14 @@ if rapids-is-release-build; then
   cp -p "${REPO_ROOT}/java/pom.xml" "${REPO_ROOT}/java/pom.xml.backup"
   POM_WAS_REWRITTEN=1
   mvn versions:set -DnewVersion="${CUDF_VERSION}" -DgenerateBackupPoms=false "${BUILD_ARG[@]}"
+else
+  # Non-release runs must publish to Sonatype snapshots, so the POM must
+  # already carry a -SNAPSHOT version. Fail fast if it doesn't, before the
+  # (expensive) mvn package step.
+  if [[ ${CUDF_VERSION} != *-SNAPSHOT ]]; then
+    echo "Error: non-release build read a non-SNAPSHOT version from pom.xml: '${CUDF_VERSION}'" >&2
+    exit 1
+  fi
 fi
 
 rapids-logger "Packaging cuDF Java JAR ${CUDF_VERSION}"

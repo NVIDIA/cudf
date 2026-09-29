@@ -409,8 +409,6 @@ std::unique_ptr<cudf::column> resolve_duplicates_pair_impl(
   rmm::device_async_resource_ref mr)
 {
   CUDF_EXPECTS(min_width > 8, "min_width should be at least 8", std::invalid_argument);
-  auto d_strings1 = cudf::column_device_view::create(input1.parent(), stream);
-  auto d_strings2 = cudf::column_device_view::create(input2.parent(), stream);
 
   auto [first_offset1, last_offset1] =
     cudf::strings::detail::get_first_and_last_offset(input1, stream);

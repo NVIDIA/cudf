@@ -71,7 +71,7 @@ auto write_file(std::vector<std::unique_ptr<cudf::column>>& input_columns,
       auto const [null_mask, null_count] =
         cudf::test::detail::make_null_mask(valid_iter + offset, valid_iter + col->size() + offset);
       col = cudf::structs::detail::superimpose_and_sanitize_nulls(
-        static_cast<cudf::bitmask_type const*>(null_mask.data()),
+        reinterpret_cast<cudf::bitmask_type const*>(null_mask.data()),
         null_count,
         std::move(col),
         cudf::get_default_stream(),
@@ -220,7 +220,8 @@ TEST_F(OrcChunkedReaderTest, NestedEmptyStructColumnSelection)
     cudf::test::detail::make_null_mask(validity.begin(), validity.end());
 
   std::vector<std::unique_ptr<cudf::column>> struct_children;
-  struct_children.emplace_back(cudf::make_structs_column(num_rows, {}, 0, {}));
+  struct_children.emplace_back(cudf::make_structs_column(
+    num_rows, {}, 0, cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED)));
   auto input_column = cudf::make_structs_column(
     num_rows, std::move(struct_children), null_count, std::move(null_mask));
   ASSERT_TRUE(input_column->nullable());
@@ -243,7 +244,11 @@ TEST_F(OrcChunkedReaderTest, NullableEmptyStructChildColumnSelection)
   std::vector<std::unique_ptr<cudf::column>> struct_children;
   struct_children.emplace_back(
     cudf::make_structs_column(num_rows, {}, null_count, std::move(null_mask)));
-  auto input_column = cudf::make_structs_column(num_rows, std::move(struct_children), 0, {});
+  auto input_column =
+    cudf::make_structs_column(num_rows,
+                              std::move(struct_children),
+                              0,
+                              cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
   ASSERT_FALSE(input_column->nullable());
   ASSERT_TRUE(input_column->child(0).nullable());
   ASSERT_EQ(null_count, input_column->child(0).null_count());
@@ -953,7 +958,7 @@ TEST_F(OrcChunkedReaderTest, TestChunkedReadWithListsOfStructs)
                               int32s_col(offsets.begin(), offsets.end()).release(),
                               make_structs_col(),
                               0,
-                              rmm::device_buffer{}));
+                              cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED)));
 
     return write_file(input_columns, "chunked_read_with_lists_of_structs", nullable);
   };
@@ -1128,7 +1133,8 @@ void input_limit_test_read(int test_location,
                            cudf::table_view const& input,
                            output_limit output_limit_bytes,
                            input_limit input_limit_bytes,
-                           int const* expected_chunk_counts)
+                           int const* expected_chunk_counts,
+                           bool require_multiple_chunks = false)
 {
   CUDF_EXPECTS(test_files.size() == input_limit_expected_file_count,
                "Unexpected count of test filenames.");
@@ -1142,6 +1148,7 @@ void input_limit_test_read(int test_location,
     // EXPECT_EQ(expected_chunk_counts[idx], num_chunks);
     // TODO: equal
     CUDF_TEST_EXPECT_TABLES_EQUIVALENT(*result, input);
+    if (require_multiple_chunks) { EXPECT_GT(num_chunks, 1); }
   }
 }
 
@@ -1242,7 +1249,7 @@ TEST_F(OrcChunkedReaderInputLimitTest, ListType)
   // this test runs over 3 hours when racecheck is used
   if (getenv("LIBCUDF_RACECHECK_ENABLED")) { GTEST_SKIP(); }
 
-  int constexpr num_rows  = 50'000'000;
+  int constexpr num_rows  = 25'000'000;
   int constexpr list_size = 4;
 
   auto const stream = cudf::get_default_stream();
@@ -1266,7 +1273,11 @@ TEST_F(OrcChunkedReaderInputLimitTest, ListType)
                     value_gen<int>{});
 
   auto const lists_col =
-    cudf::make_lists_column(num_rows, std::move(offset_col), std::move(value_col), 0, {});
+    cudf::make_lists_column(num_rows,
+                            std::move(offset_col),
+                            std::move(value_col),
+                            0,
+                            cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
   auto const filename   = std::string{"list_type"};
   auto const test_files = input_limit_get_test_names(temp_env->get_temp_filepath(filename));
@@ -1274,13 +1285,18 @@ TEST_F(OrcChunkedReaderInputLimitTest, ListType)
 
   // Although we set `stripe_size_rows` to be very large, the writer only write
   // 250k rows (top level) per stripe due to having nested type.
-  // Thus, we have 200 stripes in total.
+  // Thus, we have 100 stripes in total.
   input_limit_test_write(test_files, input, cudf::io::default_stripe_size_rows);
 
   {
     int constexpr expected[] = {3, 40, 3};
-    input_limit_test_read(
-      __LINE__, test_files, input, output_limit{0UL}, input_limit{5 * 1024 * 1024UL}, expected);
+    input_limit_test_read(__LINE__,
+                          test_files,
+                          input,
+                          output_limit{0UL},
+                          input_limit{5 * 1024 * 1024UL},
+                          expected,
+                          true);
   }
 
   {
@@ -1299,7 +1315,7 @@ TEST_F(OrcChunkedReaderInputLimitTest, MixedColumnsHavingList)
   // this test runs over 3 hours when racecheck is used
   if (getenv("LIBCUDF_RACECHECK_ENABLED")) { GTEST_SKIP(); }
 
-  int constexpr num_rows  = 50'000'000;
+  int constexpr num_rows  = 25'000'000;
   int constexpr list_size = 4;
   int constexpr str_size  = 3;
 
@@ -1325,7 +1341,11 @@ TEST_F(OrcChunkedReaderInputLimitTest, MixedColumnsHavingList)
                     value_gen<int>{});
 
   auto const lists_col =
-    cudf::make_lists_column(num_rows, std::move(offset_col), std::move(value_col), 0, {});
+    cudf::make_lists_column(num_rows,
+                            std::move(offset_col),
+                            std::move(value_col),
+                            0,
+                            cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
   // strings
   int constexpr num_chars = num_rows * str_size;
@@ -1343,7 +1363,11 @@ TEST_F(OrcChunkedReaderInputLimitTest, MixedColumnsHavingList)
                     static_cast<int8_t*>(str_chars.data()),
                     char_values{});
   auto const str_col =
-    cudf::make_strings_column(num_rows, std::move(str_offset_col), std::move(str_chars), 0, {});
+    cudf::make_strings_column(num_rows,
+                              std::move(str_offset_col),
+                              std::move(str_chars),
+                              0,
+                              cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
   // doubles
   auto const double_col = cudf::make_fixed_width_column(
@@ -1360,13 +1384,18 @@ TEST_F(OrcChunkedReaderInputLimitTest, MixedColumnsHavingList)
 
   // Although we set `stripe_size_rows` to be very large, the writer only write
   // 250k rows (top level) per stripe due to having nested type.
-  // Thus, we have 200 stripes in total.
+  // Thus, we have 100 stripes in total.
   input_limit_test_write(test_files, input, cudf::io::default_stripe_size_rows);
 
   {
     int constexpr expected[] = {13, 8, 6};
-    input_limit_test_read(
-      __LINE__, test_files, input, output_limit{0UL}, input_limit{128 * 1024 * 1024UL}, expected);
+    input_limit_test_read(__LINE__,
+                          test_files,
+                          input,
+                          output_limit{0UL},
+                          input_limit{128 * 1024 * 1024UL},
+                          expected,
+                          true);
   }
 
   {
@@ -1461,7 +1490,7 @@ TEST_F(OrcChunkedReaderInputLimitTest, SizeTypeRowsOverflow)
 
   int64_t constexpr num_rows    = 500'000'000l;
   int constexpr rows_per_stripe = 1'000'000;
-  int constexpr num_reps        = 10;
+  int constexpr num_reps        = 5;
   int64_t constexpr total_rows  = num_rows * num_reps;
   static_assert(total_rows > std::numeric_limits<cudf::size_type>::max());
 

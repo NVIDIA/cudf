@@ -59,9 +59,9 @@ async def pushdown_filter_actor(
     collected_samples: Sequence[TableSizeStats] = []
     async with shutdown_on_error(
         context,
-        ch_out,
-        ch_target,
-        ch_domain,
+        chs_in=(ch_target,),
+        chs_out=(ch_out,),
+        chs_aux=(ch_domain,),
         trace_ir=ir,
         ir_context=ir_context,
     ) as tracer:
@@ -182,7 +182,7 @@ async def pushdown_filter_actor(
                 )
                 async with shutdown_on_error(
                     context,
-                    *execution.channels,
+                    chs_aux=execution.channels,
                     trace_ir=ir,
                     ir_context=ir_context,
                 ):

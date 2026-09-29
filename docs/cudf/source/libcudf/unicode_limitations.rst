@@ -3,5 +3,5 @@
 Unicode Limitations
 ===================
 
-.. flatdoxygenpage:: md_doxygen_unicode
+.. flatdoxygenpage:: md_doxygen_2unicode
    :project: libcudf

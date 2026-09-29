@@ -27,8 +27,10 @@
 
 #include <cuco/bloom_filter_ref.cuh>
 #include <cuda/iterator>
+#include <cuda/std/chrono>
 #include <cuda/stream>
 #include <thrust/tabulate.h>
+#include <thrust/uninitialized_fill.h>
 
 #include <functional>
 #include <future>
@@ -58,39 +60,80 @@ using arrow_filter_policy =
   cudf::arrow_bloom_filter_policy<Key, cudf::hashing::detail::XXHash_64<Key>>;
 
 /**
+ * @brief Queries a bloom filter for a literal, encoded as the column chunk's physical type.
+ *
+ * Parquet bloom filters hash the plain encoding of the physical type, which can differ from the
+ * cudf type the column is read as: INT8/INT16/UINT8/UINT16 and TIME(MILLIS) are stored as INT32,
+ * decimals as INT32, INT64 or big-endian FIXED_LEN_BYTE_ARRAY, and timestamps may be INT96. And
+ * +0.0 and -0.0 compare equal but hash differently, so a zero literal probes both.
+ *
+ * @tparam T cudf storage type of the literal
+ * @tparam Key Type hashed into the bloom filter for the physical type
+ */
+template <typename T, typename Key>
+struct bloom_filter_probe {
+  ast::generic_scalar_device_view literal;
+  int32_t type_length;  ///< Byte length of a FIXED_LEN_BYTE_ARRAY column
+
+  template <typename BloomFilter>
+  __device__ bool operator()(BloomFilter const& filter) const
+  {
+    if constexpr (cuda::std::is_same_v<T, cudf::string_view>) {
+      return filter.contains(literal.value<T>());
+    } else if constexpr (cuda::std::is_same_v<Key, cudf::string_view> and cudf::is_timestamp<T>()) {
+      // INT96 timestamp: nanoseconds since midnight (8 bytes), then the Julian day (4 bytes)
+      using namespace cuda::std::chrono;
+      auto const nanos = duration_cast<nanoseconds>(literal.value<T>().time_since_epoch());
+      auto const days_since_epoch = floor<days>(nanos);
+      int64_t const time_of_day   = (nanos - days_since_epoch).count();
+      uint32_t const julian_day   = days_since_epoch.count() + 2'440'588;  // 1970-01-01
+      char bytes[12];
+      memcpy(bytes, &time_of_day, sizeof(time_of_day));
+      memcpy(bytes + sizeof(time_of_day), &julian_day, sizeof(julian_day));
+      return filter.contains(cudf::string_view{bytes, 12});
+    } else if constexpr (cuda::std::is_same_v<Key, cudf::string_view>) {
+      // FIXED_LEN_BYTE_ARRAY decimal: big-endian two's complement, sign-extended to `type_length`
+      auto const value = static_cast<__int128_t>(literal.value<T>());
+      char bytes[sizeof(__int128_t)];
+      for (int32_t i = 0; i < type_length; ++i) {
+        bytes[type_length - 1 - i] = static_cast<char>(value >> (8 * i));
+      }
+      return filter.contains(cudf::string_view{bytes, type_length});
+    } else if constexpr (cuda::std::is_floating_point_v<T>) {
+      auto const value = literal.value<T>();
+      if (value == T{0}) { return filter.contains(T{0}) or filter.contains(-T{0}); }
+      return filter.contains(value);
+    } else if constexpr (cudf::is_timestamp<T>()) {
+      return filter.contains(static_cast<Key>(literal.value<T>().time_since_epoch().count()));
+    } else if constexpr (cudf::is_duration<T>()) {
+      return filter.contains(static_cast<Key>(literal.value<T>().count()));
+    } else {
+      return filter.contains(static_cast<Key>(literal.value<T>()));
+    }
+  }
+};
+
+/**
  * @brief Converts bloom filter membership results (for each column chunk) to a device column.
  *
  */
 struct bloom_filter_caster {
   cudf::device_span<cudf::device_span<cuda::std::byte const> const> bloom_filter_spans;
   host_span<Type const> parquet_types;
+  host_span<int32_t const> parquet_type_lengths;
   std::size_t total_row_groups;
   std::size_t num_equality_columns;
 
-  enum class is_int96_timestamp : bool { YES, NO };
-
-  template <typename T, is_int96_timestamp IS_INT96_TIMESTAMP = is_int96_timestamp::NO>
+  template <typename T, typename Key>
   std::unique_ptr<cudf::column> query_bloom_filter(cudf::size_type equality_col_idx,
-                                                   cudf::data_type dtype,
                                                    ast::literal const* const literal,
                                                    cuda::stream_ref stream) const
-    requires(not std::is_same_v<T, bool> and
-             not(cudf::is_compound<T>() and not std::is_same_v<T, string_view>))
   {
-    using key_type          = T;
-    using policy_type       = arrow_filter_policy<key_type>;
+    using policy_type       = arrow_filter_policy<Key>;
     using bloom_filter_type = cuco::
-      bloom_filter_ref<key_type, cuco::extent<std::size_t>, cuco::thread_scope_thread, policy_type>;
+      bloom_filter_ref<Key, cuco::extent<std::size_t>, cuco::thread_scope_thread, policy_type>;
     using filter_block_type = typename bloom_filter_type::filter_block_type;
     using word_type         = typename policy_type::word_type;
-
-    // Check if the literal has the same type as the predicate column
-    CUDF_EXPECTS(
-      dtype == literal->get_data_type() and
-        cudf::have_same_types(
-          cudf::column_view{dtype, 0, {}, {}, 0, 0, {}},
-          cudf::scalar_type_t<T>(T{}, false, stream, cudf::get_current_device_resource_ref())),
-      "Mismatched predicate column and literal types");
 
     // Filter properties
     auto constexpr bytes_per_block = sizeof(word_type) * policy_type::words_per_block;
@@ -103,8 +146,9 @@ struct bloom_filter_caster {
       rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
       results_span.begin(),
       results_span.end(),
-      [filter_span          = bloom_filter_spans.data(),
-       d_scalar             = literal->get_value(),
+      [filter_span = bloom_filter_spans.data(),
+       probe =
+         bloom_filter_probe<T, Key>{literal->get_value(), parquet_type_lengths[equality_col_idx]},
        col_idx              = equality_col_idx,
        num_equality_columns = num_equality_columns] __device__(auto row_group_idx) {
         // Filter bitset buffer index
@@ -127,19 +171,27 @@ struct bloom_filter_caster {
                                  {}};  // Arrow policy with cudf::hashing::detail::XXHash_64 seeded
                                        // with 0 for Arrow compatibility
 
-        // If int96_timestamp type, convert literal to string_view and query bloom
-        // filter
-        if constexpr (cuda::std::is_same_v<T, cudf::string_view> and
-                      IS_INT96_TIMESTAMP == is_int96_timestamp::YES) {
-          auto const int128_key = static_cast<__int128_t>(d_scalar.value<int64_t>());
-          cudf::string_view probe_key{reinterpret_cast<char const*>(&int128_key), 12};
-          return filter.contains(probe_key);
-        } else {
-          // Query the bloom filter and store results
-          return filter.contains(d_scalar.value<T>());
-        }
+        // Query the bloom filter and store results
+        return probe(filter);
       });
 
+    return std::make_unique<cudf::column>(
+      cudf::data_type{cudf::type_id::BOOL8},
+      static_cast<cudf::size_type>(total_row_groups),
+      std::move(results),
+      cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED, stream),
+      0);
+  }
+
+  // Membership is unknown, i.e. `true`, in every row group for a literal that cannot be queried
+  [[nodiscard]] std::unique_ptr<cudf::column> unknown_membership(cuda::stream_ref stream) const
+  {
+    rmm::device_buffer results{total_row_groups, stream, cudf::get_current_device_resource_ref()};
+    thrust::uninitialized_fill(
+      rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+      static_cast<bool*>(results.data()),
+      static_cast<bool*>(results.data()) + total_row_groups,
+      true);
     return std::make_unique<cudf::column>(
       cudf::data_type{cudf::type_id::BOOL8},
       static_cast<cudf::size_type>(total_row_groups),
@@ -155,23 +207,50 @@ struct bloom_filter_caster {
                                            ast::literal const* const literal,
                                            cuda::stream_ref stream) const
   {
-    // Boolean, List, Struct, Dictionary types are not supported
-    if constexpr (std::is_same_v<T, bool> or
-                  (cudf::is_compound<T>() and not std::is_same_v<T, string_view>)) {
-      CUDF_FAIL("Bloom filters do not support boolean or compound types");
-    } else {
-      // For INT96 timestamps, use cudf::string_view type and set is_int96_timestamp to YES
-      if constexpr (cudf::is_timestamp<T>()) {
-        if (parquet_types[equality_col_idx] == Type::INT96) {
-          // For INT96 timestamps, use cudf::string_view type and set is_int96_timestamp to YES
-          return query_bloom_filter<cudf::string_view, is_int96_timestamp::YES>(
-            equality_col_idx, dtype, literal, stream);
+    // Check if the literal has the same type as the predicate column
+    CUDF_EXPECTS(dtype.id() == literal->get_data_type().id(),
+                 "Mismatched predicate column and literal types");
+    // A decimal literal with a different scale would have to be rescaled first
+    if (dtype.scale() != literal->get_data_type().scale()) { return unknown_membership(stream); }
+
+    auto const physical_type = parquet_types[equality_col_idx];
+    if constexpr (cuda::std::is_same_v<T, cudf::string_view>) {
+      return query_bloom_filter<T, cudf::string_view>(equality_col_idx, literal, stream);
+    } else if constexpr (cuda::std::is_floating_point_v<T>) {
+      return query_bloom_filter<T, T>(equality_col_idx, literal, stream);
+    } else if constexpr (cudf::is_integral_not_bool<T>() or cuda::std::is_same_v<T, __int128_t> or
+                         cudf::is_chrono<T>()) {
+      // Integers, decimals (dispatched as their integer storage), timestamps and durations are
+      // hashed in the width of their physical type. INT32 also stores 8 and 16-bit integers, and
+      // TIME(MILLIS) which is read as a 64-bit duration.
+      if constexpr (sizeof(T) <= sizeof(int32_t) or cudf::is_duration<T>()) {
+        if (physical_type == Type::INT32) {
+          return query_bloom_filter<T, int32_t>(equality_col_idx, literal, stream);
         }
       }
-
-      // For all other cases
-      return query_bloom_filter<T>(equality_col_idx, dtype, literal, stream);
+      if constexpr (sizeof(T) == sizeof(int64_t)) {
+        if (physical_type == Type::INT64) {
+          return query_bloom_filter<T, int64_t>(equality_col_idx, literal, stream);
+        }
+      }
+      // INT96 values have nanosecond precision, so a coarser literal cannot be encoded as one
+      if constexpr (cuda::std::is_same_v<T, cudf::timestamp_ns>) {
+        if (physical_type == Type::INT96) {
+          return query_bloom_filter<T, cudf::string_view>(equality_col_idx, literal, stream);
+        }
+      }
+      // Decimals dispatch as `int32_t`, `int64_t` or `__int128_t`
+      if constexpr (cuda::std::is_same_v<T, int32_t> or cuda::std::is_same_v<T, int64_t> or
+                    cuda::std::is_same_v<T, __int128_t>) {
+        if (cudf::is_fixed_point(dtype) and physical_type == Type::FIXED_LEN_BYTE_ARRAY and
+            parquet_type_lengths[equality_col_idx] <= static_cast<int32_t>(sizeof(__int128_t))) {
+          return query_bloom_filter<T, cudf::string_view>(equality_col_idx, literal, stream);
+        }
+      }
     }
+    // Booleans, decimals stored as BYTE_ARRAY and INT96 read as a coarser timestamp cannot be
+    // queried
+    return unknown_membership(stream);
   }
 };
 
@@ -392,6 +471,13 @@ std::optional<std::vector<std::vector<size_type>>> aggregate_reader_metadata::ap
   // Get parquet types for the predicate columns
   auto const parquet_types = get_parquet_types(input_row_group_indices, bloom_filter_col_schemas);
 
+  // Byte lengths of the FIXED_LEN_BYTE_ARRAY predicate columns
+  std::vector<int32_t> parquet_type_lengths(bloom_filter_col_schemas.size());
+  std::transform(bloom_filter_col_schemas.begin(),
+                 bloom_filter_col_schemas.end(),
+                 parquet_type_lengths.begin(),
+                 [&](auto const schema_idx) { return get_schema(schema_idx).type_length; });
+
   // Copy bloom filter bitset spans to device
   auto const device_bloom_filter_data = cudf::detail::make_device_uvector_async(
     bloom_filter_data, stream, cudf::get_current_device_resource_ref());
@@ -399,6 +485,7 @@ std::optional<std::vector<std::vector<size_type>>> aggregate_reader_metadata::ap
   // Create a bloom filter query table caster
   bloom_filter_caster const bloom_filter_col{device_bloom_filter_data,
                                              parquet_types,
+                                             parquet_type_lengths,
                                              static_cast<std::size_t>(total_row_groups),
                                              bloom_filter_col_schemas.size()};
 

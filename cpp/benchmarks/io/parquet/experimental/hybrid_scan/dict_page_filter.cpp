@@ -17,6 +17,7 @@
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/traits.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
+#include <cudf/wrappers/durations.hpp>
 
 #include <nvbench/nvbench.cuh>
 
@@ -131,16 +132,14 @@ void filter_row_groups_with_dicts_common(nvbench::state& state,
   state.add_buffer_size(total_dict_data_size, "total_dict_data_size", "total_dict_data_size");
 }
 
-template <typename ScalarType>
 void run_dict_page_pruning(nvbench::state& state,
                            cudf::type_id dtype,
                            data_profile const& table_profile,
-                           ScalarType& filter_value)
+                           cudf::ast::literal const& literal)
 {
   auto const is_inline_eval = static_cast<bool>(state.get_int64("is_inline"));
 
   auto col_ref = cudf::ast::column_name_reference("_col0");
-  auto literal = cudf::ast::literal(filter_value);
   auto expr1   = cudf::ast::operation(cudf::ast::ast_operator::EQUAL, col_ref, literal);
   auto expr2   = cudf::ast::operation(cudf::ast::ast_operator::NOT_EQUAL, col_ref, literal);
   auto expr3   = cudf::ast::operation(cudf::ast::ast_operator::EQUAL, col_ref, literal);
@@ -159,61 +158,76 @@ void run_dict_page_pruning(nvbench::state& state,
 
 }  // namespace
 
-void BM_hybrid_scan_dict_page_pruning_string(nvbench::state& state)
+template <cudf::type_id DType>
+void BM_hybrid_scan_dict_page_pruning(nvbench::state& state,
+                                      nvbench::type_list<nvbench::enum_type<DType>>)
 {
   auto const min_length  = static_cast<cudf::size_type>(state.get_int64("min_length"));
   auto const max_length  = static_cast<cudf::size_type>(state.get_int64("max_length"));
   auto const cardinality = static_cast<cudf::size_type>(state.get_int64("cardinality"));
 
-  auto table_profile =
-    data_profile_builder()
-      .distribution(cudf::type_id::STRING, distribution_id::NORMAL, min_length, max_length)
-      .cardinality(cardinality);
+  if constexpr (DType == cudf::type_id::STRING) {
+    auto table_profile = data_profile_builder()
+                           .distribution(DType, distribution_id::NORMAL, min_length, max_length)
+                           .cardinality(cardinality);
 
-  auto filter_value = cudf::string_scalar("000010000");
-  run_dict_page_pruning(state, cudf::type_id::STRING, table_profile, filter_value);
+    auto filter_value = cudf::string_scalar("000010000");
+    run_dict_page_pruning(state, DType, table_profile, cudf::ast::literal(filter_value));
+  } else {
+    using T = cudf::id_to_type<DType>;
+    static_assert(cudf::is_numeric<T>() or cudf::is_timestamp<T>(),
+                  "Filter literals are only generated for numeric, timestamp and string types");
+
+    // Only STRING varies along the string length axes, so other types run at their first values
+    auto const& axes = state.get_benchmark().get_axes();
+    if (min_length != axes.get_int64_axis("min_length").get_value(0) or
+        max_length != axes.get_int64_axis("max_length").get_value(0)) {
+      state.skip("String lengths do not apply to fixed-width types");
+      return;
+    }
+
+    // Timestamps span 1970 to 2020 as the generator overflows past 2262
+    auto constexpr max_value = [] {
+      if constexpr (cudf::is_timestamp<T>()) {
+        return cuda::std::chrono::duration_cast<typename T::duration>(cudf::duration_D{50 * 365})
+          .count();
+      } else {
+        return std::numeric_limits<T>::max();
+      }
+    }();
+
+    auto table_profile =
+      data_profile_builder()
+        .distribution(DType, distribution_id::UNIFORM, decltype(max_value){0}, max_value)
+        .cardinality(cardinality);
+
+    // The literal lies inside the value range, so min/max statistics cannot prune any row group
+    auto filter_value = [&] {
+      if constexpr (cudf::is_timestamp<T>()) {
+        return cudf::timestamp_scalar<T>(T{typename T::duration{max_value / 2}});
+      } else {
+        return cudf::numeric_scalar<T>(static_cast<T>(max_value / 2));
+      }
+    }();
+    run_dict_page_pruning(state, DType, table_profile, cudf::ast::literal(filter_value));
+  }
 }
 
-template <cudf::type_id DType>
-void BM_hybrid_scan_dict_page_pruning_fixed_width(nvbench::state& state,
-                                                  nvbench::type_list<nvbench::enum_type<DType>>)
-{
-  using T = cudf::id_to_type<DType>;
-  static_assert(
-    cudf::is_numeric<T>(),
-    "The filter literal is a cudf::numeric_scalar, so only numeric types are supported");
+using dict_page_pruning_dtypes = nvbench::enum_type_list<cudf::type_id::INT8,
+                                                         cudf::type_id::INT16,
+                                                         cudf::type_id::INT32,
+                                                         cudf::type_id::INT64,
+                                                         cudf::type_id::FLOAT32,
+                                                         cudf::type_id::FLOAT64,
+                                                         cudf::type_id::TIMESTAMP_MILLISECONDS,
+                                                         cudf::type_id::STRING>;
 
-  auto const cardinality   = static_cast<cudf::size_type>(state.get_int64("cardinality"));
-  auto constexpr max_value = std::numeric_limits<T>::max();
-
-  auto table_profile = data_profile_builder()
-                         .distribution(DType, distribution_id::UNIFORM, T{0}, max_value)
-                         .cardinality(cardinality);
-
-  // The literal lies inside the value range, so min/max statistics cannot prune any row group
-  auto filter_value = cudf::numeric_scalar<T>(static_cast<T>(max_value / 2));
-  run_dict_page_pruning(state, DType, table_profile, filter_value);
-}
-
-using dict_fixed_width_dtypes = nvbench::enum_type_list<cudf::type_id::INT8,
-                                                        cudf::type_id::INT16,
-                                                        cudf::type_id::INT32,
-                                                        cudf::type_id::INT64>;
-
-NVBENCH_BENCH(BM_hybrid_scan_dict_page_pruning_string)
-  .set_name("hybrid_scan_dict_page_pruning_string")
+NVBENCH_BENCH_TYPES(BM_hybrid_scan_dict_page_pruning, NVBENCH_TYPE_AXES(dict_page_pruning_dtypes))
+  .set_name("hybrid_scan_dict_page_pruning")
+  .set_type_axes_names({"dtype"})
   .set_min_samples(4)
   .add_int64_axis("num_row_groups", {32, 64, 128})
   .add_int64_axis("min_length", {4})
   .add_int64_axis("max_length", {64, 128})
-  .add_int64_axis("cardinality", {1'000, 10'000})
-  .add_int64_axis("is_inline", {true, false});
-
-NVBENCH_BENCH_TYPES(BM_hybrid_scan_dict_page_pruning_fixed_width,
-                    NVBENCH_TYPE_AXES(dict_fixed_width_dtypes))
-  .set_name("hybrid_scan_dict_page_pruning_fixed_width")
-  .set_type_axes_names({"dtype"})
-  .set_min_samples(4)
-  .add_int64_axis("num_row_groups", {32, 64, 128})
   .add_int64_axis("cardinality", {1'000, 10'000})
   .add_int64_axis("is_inline", {true, false});

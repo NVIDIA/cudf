@@ -50,7 +50,7 @@ struct PackUnpackTest : public cudf::test::BaseFixture {
 
     // verify packed_metadata_view matches the unpacked table (which reflects
     // the compacted sizes stored in the packed metadata, not the original sliced sizes)
-    if (!packed.metadata->empty()) { verify_metadata(unpacked, packed); }
+    verify_metadata(unpacked, packed);
 
     // verify packed_size returns the correct size
     EXPECT_EQ(cudf::packed_size(t), packed.gpu_data->size());
@@ -570,6 +570,8 @@ TEST_F(PackUnpackTest, EmptyTable)
   // no columns
   {
     cudf::table_view t;
+    auto packed = cudf::pack(t);
+    ASSERT_TRUE(packed.metadata->empty());
     this->run_test(t);
   }
 

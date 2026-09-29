@@ -50,7 +50,7 @@ struct PackUnpackTest : public cudf::test::BaseFixture {
 
     // verify packed_metadata_view matches the unpacked table (which reflects
     // the compacted sizes stored in the packed metadata, not the original sliced sizes)
-    if (!packed.metadata->empty()) { verify_metadata(unpacked, packed); }
+    verify_metadata(unpacked, packed);
 
     // verify packed_size returns the correct size
     EXPECT_EQ(cudf::packed_size(t), packed.gpu_data->size());
@@ -669,6 +669,16 @@ TEST_F(PackUnpackTest, DISABLED_LongOffsetsAndChars)
   auto str = make_long_offsets_and_chars_string_column();
   cudf::table_view tbl({*str});
   this->run_test(tbl);
+}
+
+TEST_F(PackUnpackTest, MetadataViewEmptyBuffer)
+{
+  auto packed = cudf::pack(cudf::table_view{});
+  ASSERT_TRUE(packed.metadata->empty());
+  auto view = cudf::packed_metadata_view(*packed.metadata);
+  EXPECT_EQ(view.num_columns(), 0);
+  EXPECT_EQ(view.num_rows(), 0);
+  EXPECT_THROW(std::ignore = view.column(0), std::out_of_range);
 }
 
 TEST_F(PackUnpackTest, MetadataViewRejectsNonMultipleSize)

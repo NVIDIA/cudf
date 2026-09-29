@@ -401,7 +401,8 @@ packed_metadata_view::column_view packed_metadata_view::column_view::child(size_
 
 packed_metadata_view::packed_metadata_view(std::span<uint8_t const> buffer)
 {
-  CUDF_EXPECTS(!buffer.empty(), "metadata buffer must not be empty");
+  // pack() represents a table with no columns and no rows using empty metadata.
+  if (buffer.empty()) { return; }
   CUDF_EXPECTS(buffer.size() >= sizeof(detail::serialized_table_header),
                "metadata buffer too small");
   CUDF_EXPECTS(

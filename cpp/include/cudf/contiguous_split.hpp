@@ -413,8 +413,9 @@ class packed_metadata_view {
   /**
    * @brief Construct a view from a metadata byte buffer.
    *
-   * @throws cudf::logic_error if the buffer is empty or does not satisfy minimum requirements for
-   * describing a valid column tree.
+   * An empty buffer represents a table with no columns and no rows.
+   *
+   * @throws cudf::logic_error if a non-empty buffer does not describe a valid column tree.
    * @param buffer The metadata bytes (as produced by `cudf::pack`)
    */
   explicit packed_metadata_view(std::span<std::uint8_t const> buffer);

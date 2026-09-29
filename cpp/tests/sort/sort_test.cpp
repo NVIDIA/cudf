@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -948,9 +948,13 @@ TYPED_TEST(Sort, WithEmptyListColumn)
                                     cudf::make_empty_column(cudf::data_type(cudf::type_id::INT32)),
                                     cudf::make_empty_column(cudf::data_type{cudf::type_id::INT64}),
                                     0,
-                                    {});
-  auto L0 = cudf::make_lists_column(
-    3, cudf::test::fixed_width_column_wrapper<int32_t>{0, 0, 0, 0}.release(), std::move(L1), 0, {});
+                                    cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
+  auto L0 =
+    cudf::make_lists_column(3,
+                            cudf::test::fixed_width_column_wrapper<int32_t>{0, 0, 0, 0}.release(),
+                            std::move(L1),
+                            0,
+                            cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
   auto expect = cudf::test::fixed_width_column_wrapper<cudf::size_type>{0, 1, 2};
   auto result = cudf::sorted_order(cudf::table_view({*L0}));
@@ -1038,8 +1042,8 @@ TEST_F(SortCornerTest, WithEmptyStructColumn)
   std::vector<std::unique_ptr<cudf::column>> child_columns;
   child_columns.push_back(std::move(struct_col));
   child_columns.push_back(col3.release());
-  auto struct_col2 =
-    cudf::make_structs_column(6, std::move(child_columns), 0, rmm::device_buffer{});
+  auto struct_col2 = cudf::make_structs_column(
+    6, std::move(child_columns), 0, cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
   cudf::table_view input2{{struct_col2->view()}};
 
   int_col expected2{{5, 4, 3, 2, 0, 1}};
@@ -1056,10 +1060,11 @@ TEST_F(SortCornerTest, WithEmptyStructColumn)
   int_col col4{{5, 4, 3, 2, 1, 0}};
   std::vector<std::unique_ptr<cudf::column>> grand_child;
   grand_child.push_back(col4.release());
-  auto child_col_2 = cudf::make_structs_column(6, std::move(grand_child), 0, rmm::device_buffer{});
+  auto child_col_2 = cudf::make_structs_column(
+    6, std::move(grand_child), 0, cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
   child_columns2.push_back(std::move(child_col_2));
-  auto struct_col3 =
-    cudf::make_structs_column(6, std::move(child_columns2), 0, rmm::device_buffer{});
+  auto struct_col3 = cudf::make_structs_column(
+    6, std::move(child_columns2), 0, cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
   cudf::table_view input3{{struct_col3->view()}};
 
   int_col expected3{{4, 1, 5, 3, 2, 0}};

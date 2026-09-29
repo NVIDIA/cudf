@@ -17,6 +17,7 @@
 #include <cudf/detail/utilities/integer_utils.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/logger.hpp>
+#include <cudf/null_mask.hpp>
 #include <cudf/scalar/scalar.hpp>
 #include <cudf/table/table.hpp>
 #include <cudf/types.hpp>
@@ -774,7 +775,8 @@ std::unique_ptr<column> compute_row_mask_from_page_stats(
 
   // Drop the null mask if it was allocated but ended up empty
   if (segment_mask->nullable() and segment_mask->null_count() == 0) {
-    segment_mask->set_null_mask(rmm::device_buffer{}, 0);
+    segment_mask->set_null_mask(
+      cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED, stream, temp_mr), 0);
   }
 
   // Compute row-level segment indices

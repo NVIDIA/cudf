@@ -1372,8 +1372,12 @@ TEST_F(ParquetChunkedReaderInputLimitTest, V2PagesWithLevels)
   int32s_col child(values, values + 2 * num_rows, valid);
   auto offsets = cudf::detail::make_counting_transform_iterator(0, [](auto i) { return 2 * i; });
   int32s_col list_offsets(offsets, offsets + num_rows + 1);
-  auto const lists = cudf::make_lists_column(
-    num_rows, list_offsets.release(), child.release(), 0, rmm::device_buffer{});
+  auto const lists =
+    cudf::make_lists_column(num_rows,
+                            list_offsets.release(),
+                            child.release(),
+                            0,
+                            cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
   auto const expected = cudf::table_view{{flat, all_null, mixed, lists->view()}};
   auto const filepath = temp_env->get_temp_filepath("ScratchLevels.parquet");
   auto const options =
@@ -1384,7 +1388,7 @@ TEST_F(ParquetChunkedReaderInputLimitTest, V2PagesWithLevels)
       .page_level_compression(true)
       .dictionary_policy(cudf::io::dictionary_policy::NEVER)
       .max_page_size_rows(page_rows)
-      .max_page_fragment_size(rows_per_rg)
+      .max_page_fragment_size(page_rows)
       .row_group_size_rows(rows_per_rg)
       .build();
   cudf::io::write_parquet(options);

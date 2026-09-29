@@ -37,6 +37,14 @@ table_chunk pack_into_host(table_chunk const& chunk,
 {
   rapidsmpf::BufferResource* br = reservation.br();
 
+  if (chunk.data_alloc_size(rapidsmpf::MemoryType::DEVICE) == 0) {
+    // Preserve the packing metadata without recording a zero-byte copy or spill.
+    auto packed_columns = cudf::pack(chunk.table_view(), chunk.stream(), br->device_mr());
+    RAPIDSMPF_EXPECTS(packed_columns.gpu_data->size() == 0, "packed data size must be zero");
+    return table_chunk(std::make_unique<rapidsmpf::PackedData>(
+      std::move(packed_columns.metadata), br->make_buffer(0, chunk.stream(), reservation)));
+  }
+
   if (reservation.mem_type() == rapidsmpf::MemoryType::PINNED_HOST) {
     rapidsmpf::StreamOrderedTiming timing{chunk.stream(), br->statistics()};
 

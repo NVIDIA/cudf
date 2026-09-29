@@ -23,6 +23,7 @@
 #include <rapidsmpf/memory/buffer_resource.hpp>
 #include <rapidsmpf/owning_wrapper.hpp>
 #include <rapidsmpf/streaming/core/channel.hpp>
+#include <rapidsmpf/utils/string.hpp>
 
 #include <cstdint>
 #include <memory>
@@ -452,18 +453,22 @@ TEST_P(StreamingTableChunk, SpillTrackingOnHostMove)
     return host.make_available(dev_res);
   };
 
+  // An empty table still needs packing metadata, but transfers no data.
+  std::ignore = round_trip(random_table_with_index(2025, 0, 0, 5), /* move = */ false);
+  std::ignore = round_trip(random_table_with_index(2025, 0, 0, 5), /* move = */ true);
+  EXPECT_EQ(spill_samples(*stats), 0UL);
+  auto const host_name = rapidsmpf::to_lower(rapidsmpf::to_string(spill_mem_type));
+  EXPECT_FALSE(stats->has_stat("copy-device-to-" + host_name + "-bytes"));
+  EXPECT_FALSE(stats->has_stat("copy-" + host_name + "-to-device-bytes"));
+
   // A copy leaves the table on device, so it is not a spill.
   std::ignore = round_trip(random_table_with_index(2025, 64, 0, 5), /* move = */ false);
-  EXPECT_EQ(spill_samples(*stats), 0UL);
-
-  // An empty table packs to a device buffer that never left the device, so it carries
-  // no token and must not be reported as a spill.
-  std::ignore = round_trip(random_table_with_index(2025, 0, 0, 5), /* move = */ true);
   EXPECT_EQ(spill_samples(*stats), 0UL);
 
   // A move releases the table, so the round trip is recorded once.
   std::ignore = round_trip(random_table_with_index(2025, 64, 0, 5), /* move = */ true);
   EXPECT_EQ(spill_samples(*stats), 1UL);
+  EXPECT_GT(stats->get_stat("copy-device-to-" + host_name + "-bytes").value(), 0);
 }
 
 TEST_F(StreamingTableChunk, ToMessageRoundTrip)

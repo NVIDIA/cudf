@@ -32,10 +32,7 @@ from cudf_polars.dsl.utils.naming import names_to_indices
 from cudf_polars.streaming.actor_graph.collectives.allgather import (
     AllGatherManager,
 )
-from cudf_polars.streaming.actor_graph.collectives.ordering import (
-    _partition_range,
-    adjust_ordering,
-)
+from cudf_polars.streaming.actor_graph.collectives.ordering import adjust_ordering
 from cudf_polars.streaming.actor_graph.collectives.shuffle import (
     _global_shuffle,
     _key_column_indices,
@@ -83,7 +80,7 @@ from cudf_polars.streaming.filter_hint import (
     JoinWithPrefilter,
 )
 from cudf_polars.streaming.repartition import Repartition
-from cudf_polars.streaming.utils import _concat
+from cudf_polars.streaming.utils import _concat, partition_range
 
 if TYPE_CHECKING:
     from collections.abc import MutableMapping
@@ -1018,7 +1015,7 @@ async def _shuffle_join(
 def _local_count_for_ordering(comm: Communicator, ordering: Ordering) -> int:
     """Return this rank's local partition count for a contiguous Ordering."""
     npartitions = ordering.num_boundaries + 1
-    start, stop = _partition_range(comm.rank, comm.nranks, npartitions)
+    start, stop = partition_range(comm.rank, comm.nranks, npartitions)
     return stop - start
 
 

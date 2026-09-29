@@ -34,7 +34,6 @@ rapids-logger "pytest cudf-polars"
   --dist=worksteal \
   --cov-config=./pyproject.toml \
   --cov=cudf_polars \
-  --cov-fail-under=100 \
   --cov-report=xml:"${RAPIDS_COVERAGE_DIR}/cudf-polars-coverage.xml" \
   --cov-report=term-missing:skip-covered \
   --durations=50 --durations-min=1

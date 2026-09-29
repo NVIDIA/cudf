@@ -272,7 +272,7 @@ def test_io_tasks_wait_for_memory_admission(
     assert second["admitted"] >= first["stop"]
 
 
-def test_parquet_scan_ordering_trace_skips_sort(
+def test_parquet_scan_ordering_trace_from_set_sorted(
     tmp_path: pathlib.Path, timeout_seconds: int
 ) -> None:
     pytest.importorskip("structlog")
@@ -301,7 +301,12 @@ def test_parquet_scan_ordering_trace_skips_sort(
         }},
         raise_on_fail=True,
     )
-    result = pl.scan_parquet({str(source)!r}).sort("x").collect(engine=engine)
+    result = (
+        pl.scan_parquet({str(source)!r})
+        .set_sorted("x")
+        .sort("x")
+        .collect(engine=engine)
+    )
     print("RESULT_ROWS=" + str(result.height))
     """)
 
@@ -330,7 +335,6 @@ def test_parquet_scan_ordering_trace_skips_sort(
             decisions.add((event.get("actor_ir_type"), event.get("decision")))
 
     assert ("StreamingScan", "parquet_ordering") in decisions
-    assert ("Sort", "already_sorted") in decisions
 
 
 def test_local_join_prefilter_trace_records_decision_and_effect(

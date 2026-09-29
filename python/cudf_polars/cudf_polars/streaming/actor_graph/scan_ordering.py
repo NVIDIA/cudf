@@ -60,10 +60,13 @@ def _get_ordering_candidates(
     ir: StreamingScan,
     requests: tuple[PartitioningRequest, ...],
 ) -> list[tuple[str, OrderKey]]:
-    """Return the distinct leading keys requested downstream."""
+    """Return distinct leading keys from explicit ordering hints."""
     candidates: list[tuple[str, OrderKey]] = []
     for request in requests:
-        if not isinstance(request, OrderPartitioningRequest):
+        if (
+            not isinstance(request, OrderPartitioningRequest)
+            or request.source != "hint"
+        ):
             continue
         assert request.keys, "Order partitioning requests must have at least one key."
         key = request.keys[0]

@@ -1087,4 +1087,39 @@ TEST_F(SortDouble, InfinityAndNan)
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(results->view(), expected);
 }
 
+struct SortMemoryResourceTest : public cudf::test::BaseFixtureWithHarness {};
+
+TEST_F(SortMemoryResourceTest, SortedOrderResources)
+{
+  auto const stream = this->stream();
+  auto const mr     = this->resources();
+  auto& harness     = this->harness();
+
+  cudf::test::fixed_width_column_wrapper<int32_t> input(
+    {5, 1, 4, 2, 3}, stream, harness.setup_mr());
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> expected(
+    {1, 3, 4, 2, 0}, stream, harness.setup_mr());
+
+  {
+    auto result = cudf::sorted_order(cudf::table_view{{input}}, {}, {}, stream, mr);
+    harness.synchronize(stream);
+    harness.expect_output_allocations_live(stream);
+    harness.expect_temporary_allocation_activity(stream);
+    harness.expect_temporary_allocations_released(stream);
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(
+      expected, result->view(), cudf::test::debug_output_level::FIRST_ERROR, stream, mr);
+  }
+  harness.expect_no_live_allocations(stream);
+
+  {
+    auto result = cudf::stable_sorted_order(cudf::table_view{{input}}, {}, {}, stream, mr);
+    harness.synchronize(stream);
+    harness.expect_output_allocations_live(stream);
+    harness.expect_temporary_allocation_activity(stream);
+    harness.expect_temporary_allocations_released(stream);
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(
+      expected, result->view(), cudf::test::debug_output_level::FIRST_ERROR, stream, mr);
+  }
+}
+
 CUDF_TEST_PROGRAM_MAIN()

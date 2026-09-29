@@ -1249,6 +1249,15 @@ def _can_join_build_chunks_separately(
     return not need_allgather and ir.options[0] == "Inner"
 
 
+def _allow_decomposed_broadcast(
+    comm: Communicator,
+    ir: Join,
+    metadata: ChannelMetadata,
+) -> bool:
+    """Return whether dynamic planning may choose a high-row broadcast."""
+    return metadata.duplicated and _can_join_build_chunks_separately(comm, ir, metadata)
+
+
 def _choose_strategy_from_samples(
     comm: Communicator,
     ir: Join,
@@ -1299,7 +1308,7 @@ def _choose_strategy_from_samples(
         left_total,
         left_total_rows,
         executor.broadcast_limit,
-        can_join_build_chunks_separately=_can_join_build_chunks_separately(
+        can_join_build_chunks_separately=_allow_decomposed_broadcast(
             comm, ir, left_metadata
         ),
     )
@@ -1307,7 +1316,7 @@ def _choose_strategy_from_samples(
         right_total,
         right_total_rows,
         executor.broadcast_limit,
-        can_join_build_chunks_separately=_can_join_build_chunks_separately(
+        can_join_build_chunks_separately=_allow_decomposed_broadcast(
             comm, ir, right_metadata
         ),
     )
@@ -1795,7 +1804,7 @@ async def choose_strategy(
             candidate_input,
             executor.broadcast_limit,
             collective_ids.size_estimate,
-            can_join_build_chunks_separately=_can_join_build_chunks_separately(
+            can_join_build_chunks_separately=_allow_decomposed_broadcast(
                 comm, ir, candidate_input.metadata
             ),
         ):

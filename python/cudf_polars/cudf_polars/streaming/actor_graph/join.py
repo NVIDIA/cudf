@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+from functools import partial
 from typing import TYPE_CHECKING, Any, Literal, TypeAlias, assert_never
 
 from cudf_streaming import CardinalityEstimator
@@ -914,12 +915,11 @@ async def _join_chunks(
     await ch_out.drain(context)
 
 
-def _log_shuffle_strategy_decision(
-    tracer: ActorTracer,
+def _shuffle_strategy_decision(
     strategy: ShuffleJoinStrategy,
     partitioning_left: NormalizedPartitioning,
     partitioning_right: NormalizedPartitioning,
-) -> None:
+) -> Literal["chunkwise", "shuffle_left", "shuffle_right", "shuffle"]:
     left_scheme_desired = HashScheme(strategy.left_indices, strategy.shuffle_modulus)
     right_scheme_desired = HashScheme(strategy.right_indices, strategy.shuffle_modulus)
     left_partitioned = (
@@ -931,13 +931,13 @@ def _log_shuffle_strategy_decision(
         and partitioning_right.local_scheme == "inherit"
     )
     if left_partitioned and right_partitioned:
-        tracer.decision = "chunkwise"
+        return "chunkwise"
     elif left_partitioned:
-        tracer.decision = "shuffle_right"
+        return "shuffle_right"
     elif right_partitioned:
-        tracer.decision = "shuffle_left"
+        return "shuffle_left"
     else:
-        tracer.decision = "shuffle"
+        return "shuffle"
 
 
 async def _shuffle_join(
@@ -1251,7 +1251,7 @@ def _allow_decomposed_broadcast(
     ir: Join,
     metadata: ChannelMetadata,
 ) -> bool:
-    """Return whether dynamic planning may choose a high-row broadcast."""
+    """Return whether planning may keep a broadcast input as separate chunks."""
     return (
         comm.nranks > 1
         and metadata.duplicated
@@ -1380,8 +1380,7 @@ def _choose_strategy_from_samples(
         right_partitioning,
     )
     if tracer is not None:
-        _log_shuffle_strategy_decision(
-            tracer,
+        tracer.decision = _shuffle_strategy_decision(
             strategy,
             left_partitioning,
             right_partitioning,
@@ -1633,16 +1632,13 @@ async def _validate_broadcast_candidate(
     local_size = local_sample.size
     local_rows = local_sample.rows
     local_is_complete = local_sample.is_complete
+    fits_broadcast = partial(
+        _broadcast_input_fits,
+        broadcast_limit=broadcast_limit,
+        can_join_build_chunks_separately=can_join_build_chunks_separately,
+    )
 
-    def fits(size: int, rows: int) -> bool:
-        return _broadcast_input_fits(
-            size,
-            rows,
-            broadcast_limit,
-            can_join_build_chunks_separately=can_join_build_chunks_separately,
-        )
-
-    while not local_is_complete and fits(local_size, local_rows):
+    while not local_is_complete and fits_broadcast(local_size, local_rows):
         msg = await input_.channel.recv(context)
         if msg is None:
             local_is_complete = True
@@ -1652,7 +1648,7 @@ async def _validate_broadcast_candidate(
         local_rows += chunk.shape[0]
         local_sample.chunks.insert(Message(msg.sequence_number, chunk))
 
-    local_fits = fits(local_size, local_rows)
+    local_fits = fits_broadcast(local_size, local_rows)
     (
         total_size,
         total_rows,
@@ -1673,7 +1669,7 @@ async def _validate_broadcast_candidate(
         # Avoid counting a duplicated input once per rank.
         is_safe = is_complete and fitting_rank_count == comm.nranks
     else:
-        is_safe = is_complete and fits(total_size, total_rows)
+        is_safe = is_complete and fits_broadcast(total_size, total_rows)
 
     # Preserve estimates when validation stops before exhausting the input.
     input_.sample = replace(
@@ -1826,9 +1822,19 @@ async def choose_strategy(
                 left_sample=left_sample,
                 right_sample=right_sample,
                 chunkwise=False,
-                tracer=tracer,
+                tracer=None,
                 allow_broadcast=False,
             )
+            assert isinstance(strategy, ShuffleJoinStrategy)
+            if tracer is not None:
+                shuffle_decision = _shuffle_strategy_decision(
+                    strategy,
+                    left_partitioning,
+                    right_partitioning,
+                )
+                tracer.decision = (
+                    f"broadcast_{broadcast_candidate.side}_rejected_{shuffle_decision}"
+                )
     else:
         strategy = proposed_strategy
     await resolve_prefilters(

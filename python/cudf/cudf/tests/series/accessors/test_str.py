@@ -2530,6 +2530,23 @@ def test_string_join(ps_gs, sep):
     assert_eq(expect, got)
 
 
+@pytest.mark.parametrize(
+    "data",
+    [
+        ["ab", "", None, "c"],
+        ["", ""],
+        ["", None],
+        ["x", None, "", "yz", None],
+    ],
+)
+def test_string_join_empty_strings(data):
+    gs = cudf.Series(data)
+    ps = gs.to_pandas()
+
+    assert_eq(ps.str.join("-"), gs.str.join("-"))
+    assert_eq(ps[1:].str.join("-"), gs[1:].str.join("-"))
+
+
 @pytest.mark.parametrize("pat", [r"(a)", r"(f)", r"([a-z])", r"([A-Z])"])
 @pytest.mark.parametrize("expand", [True, False])
 @pytest.mark.parametrize(

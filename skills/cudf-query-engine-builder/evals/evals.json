@@ -2,6 +2,99 @@
   "skill_name": "cudf-query-engine-builder",
   "evals": [
     {
+      "id": "async-copy-cleanup",
+      "prompt": "Complete the host-side adapter for our first single-GPU cuDF query-engine proof of concept in /workspace/input/async-copy-cleanup. Read TASK.md and the supplied caller and interfaces, preserve the CPU reference and protected engine behavior, and repair only the allowed implementation. From the task directory run python run_checks.py to compile and execute the supplied tests. Return the patch, exact build/run commands, observed results and any remaining native checks. This environment executes a deterministic CPU simulation of asynchronous backend operations. Its checks establish the host contract only; CUDA/libcudf execution must be reported separately.",
+      "expected_skill": "cudf-query-engine-builder",
+      "files": [
+        "files/async-copy-cleanup"
+      ],
+      "expected_output": "Repairs the allowed C++ implementation, builds it and runs python run_checks.py. The synchronous adapter preserves the required upload, output allocation, aggregation and wrapper-construction order. Exact sum/count matches the supplied CPU reference for nullable, empty and all-null inputs. Required owners survive queued consumers on normal completion, failure before submission, output allocation failure after upload submission, and result-wrapper failure. Each exercised std::bad_alloc propagates as the original error, queued work is completed before dependent owners are released, and a subsequent valid call succeeds. Reports actual commands and all supplied test outcomes without claiming the CPU simulation proves native cuDF execution.",
+      "assertions": [
+        "Produces a concrete repair only to adapter.hpp, preserving public signatures, protected caller/checker and the required submission order.",
+        "Runs python run_checks.py, compiling the repaired C++20 program and reporting its actual full test outcome.",
+        "Returns exact sum/count for nullable, empty and all-null inputs.",
+        "Keeps every required buffer, resource and stream owner valid until queued consumers finish on success and the exercised allocation failures.",
+        "Preserves std::bad_alloc and verifies recovery with a subsequent valid call.",
+        "Distinguishes host-contract simulation results from unperformed native CUDA/libcudf validation."
+      ]
+    },
+    {
+      "id": "worker-result-handoff",
+      "prompt": "Complete the host-side adapter for our first cuDF execution path in /workspace/input/worker-result-handoff. Our engine sends a batch between workers, then consumes the returned result. Read TASK.md and the supplied interface, fix the allowed implementation, and run python run_checks.py from the task directory to compile and execute the supplied checks while preserving the existing caller and CPU reference. Return the patch, exact commands, observed comparison and remaining work. The supplied backend is a deterministic CPU simulation of queued GPU work, so a successful simulator run is not evidence that native cuDF ran.",
+      "expected_skill": "cudf-query-engine-builder",
+      "files": [
+        "files/worker-result-handoff"
+      ],
+      "expected_output": "Repairs adapter.hpp, builds it and runs python run_checks.py. submit returns with work still queued, honoring the caller's asynchronous contract. The returned QueryResult owns the input, staged/output buffers, producer and consumer streams, and allocation resource for their needed lifetimes. Consumer work waits for the correct producer dependency. get returns completed backend sum/count and can be called repeatedly; destruction before get also completes dependent work safely. Two outstanding results can be consumed independently in either order. Explicit CPU fallback remains allowed only when selected and is labeled Origin::cpu; a backend-selected request returns the backend operation's result. All supplied checks pass with clean ownership/queued-work audits. Reports actual simulator results separately from native cuDF checks still required.",
+      "assertions": [
+        "Repairs only adapter.hpp and runs python run_checks.py with an observed full test result.",
+        "Preserves asynchronous submit, returning before queued work executes.",
+        "Retains required buffers, streams and resource owners after caller references expire, and establishes producer-to-consumer readiness.",
+        "Returns exact backend sum/count for normal, empty and all-null inputs; repeated get and independent outstanding results remain correct.",
+        "Safely completes dependent work when a result is destroyed before get.",
+        "Preserves explicit CPU fallback and labels its origin truthfully, without treating simulator Origin::backend as native cuDF evidence."
+      ]
+    },
+    {
+      "id": "owning-result-context",
+      "prompt": "Complete the engine adapter for its first native, single-GPU POC. The CPU reference concatenates the supplied INT64 batches in arrival order and returns an owning global OFFSET/LIMIT result, preserving duplicates. The engine permits a synchronous POC. Here are the full relevant C++ interface contracts for this source review:\n\nstruct EngineContext {\n  Stream stream;\n  Resource output_resource;\n  void finish() noexcept; // completes all submitted work; failure is outside this fixture\n};\nstruct Batch { std::unique_ptr<NativeTable> table; };\nusing Inputs = std::vector<std::shared_ptr<Batch>>;\nstruct NativeTable { /* destruction uses its allocation Resource and Stream */ };\nstd::unique_ptr<NativeTable> submit_concat_slice(\n    Inputs const&, int64_t offset, int64_t limit, Stream&, Resource&);\n// This version-matched public-cuDF wrapper submits result-producing work,\n// returns an owning table, may return before completion, and may throw\n// std::bad_alloc after submitting work. It does not retain Inputs or context.\nstd::unique_ptr<Descriptor> make_descriptor(NativeTable const&);\n// make_descriptor may throw std::bad_alloc.\n\nThe initial adapter is:\nstruct Result {\n  std::unique_ptr<NativeTable> table;\n  std::shared_ptr<EngineContext> context;\n  std::unique_ptr<Descriptor> descriptor;\n};\nResult run(Inputs inputs, std::shared_ptr<EngineContext> ctx,\n           int64_t offset, int64_t limit) {\n  Result out;\n  out.table = submit_concat_slice(inputs, offset, limit,\n                                  ctx->stream, ctx->output_resource);\n  out.context = ctx;\n  out.descriptor = make_descriptor(*out.table);\n  ctx->finish();\n  return out;\n}\n\nThe caller may drop its original context reference immediately after return. A result's NativeTable must be destroyed before its allocator and stream. Offset and limit are nonnegative and supported arithmetic fits INT64. Supply corrected C++ for Result and run using only these interfaces. Explain what the patch proves, give an executable-test protocol for the owning result, and state the implementation/execution status. No compiler, native runtime, test output or repository is attached to this source-review request. Do not invent executions.",
+      "expected_skill": "cudf-query-engine-builder",
+      "files": [],
+      "expected_output": "Corrects both ordinary result destruction order and exceptional pending-work lifetime. Declares/retains context so table and descriptor are destroyed before context, and keeps required input owners plus context outside the throwing scope until finish covers all submitted work. Catches exceptions around native submission and descriptor construction, calls finish before local owners/table can unwind, then rethrows the original exception. A correct synchronous strategy may finish immediately after submit before descriptor construction, but must also catch submit itself throwing after work was queued. The owning result is preserved rather than returning a view. The test protocol compares exact ordered CPU values across empty/cross-batch/bounds cases, drops the caller context, injects recoverable post-submission host allocation failure with pending-work observation, checks release order, and retries in the same context. Does not report a native POC pass or executed tests because only source-review inputs were supplied.",
+      "assertions": [
+        "Shows corrected C++ that ensures table/descriptor destruction precedes their required context owners.",
+        "Retains inputs and context across native calls that can throw after submitting work.",
+        "Completes pending work before releasing dependent objects on both success and exception paths, preserving the original exception.",
+        "Does not propose only a successful-return wait or a guard destroyed after the owning objects it must protect.",
+        "Keeps an owning native result and preserves the full OFFSET/LIMIT operation.",
+        "Defines exact comparison and failure-injection checks and marks build/native execution unperformed."
+      ]
+    },
+    {
+      "id": "engine-buffer-read-path",
+      "prompt": "Implement the minimal adapter for a first single-GPU cuDF POC using this query engine's existing storage interface. The CPU path already decodes an encrypted object through the engine scan layer and applies the selected query. The same decoded Parquet byte stream must feed the native POC; object paths/credentials are private to the scan layer. No production I/O policy work is requested.\n\nThe engine exposes:\nstruct ScanLease {\n  std::shared_ptr<Bytes> owner;\n  std::span<std::byte const> bytes;\n  bool pinned; // false for this fixture\n};\nScanLease engine_scan(ScanToken);\nstruct GpuTable; struct HostAnswer;\nstd::unique_ptr<GpuTable> read_parquet_host(\n    std::span<std::byte const>, Stream&);\n// a version-matched public-cuDF wrapper, may queue reads from the supplied host bytes;\n// does not retain their owner and may throw after submitting work\nstd::unique_ptr<GpuTable> evaluate_selected_query(GpuTable const&, Stream&);\n// a version-matched public-cuDF wrapper for the whole selected query;\n// may queue work and may throw after submission\nHostAnswer collect(GpuTable const&, Stream&); // may throw; result readable after finish\nvoid finish(Stream&) noexcept; // completes submitted work in this fixture\n\nThe initial code is:\nHostAnswer run(ScanToken token, Stream& stream) {\n  auto table = read_parquet_host(engine_scan(token).bytes, stream);\n  auto result = evaluate_selected_query(*table, stream);\n  auto answer = collect(*result, stream);\n  finish(stream);\n  return answer;\n}\n\nWrite the corrected function using these wrappers, with explicit ownership on normal and exceptional paths. State the buffer type and the chosen I/O boundary. The scan token is not a file path. You have the CPU result schema but no build environment, input file or expected row values in this request. Give the next concrete validation steps and current POC status. Do not claim a new filesystem reader or a completed runtime comparison.",
+      "expected_skill": "cudf-query-engine-builder",
+      "files": [],
+      "expected_output": "Keeps the existing engine scan and passes its host bytes to cuDF, without treating ScanToken as a path or introducing a new reader/credential/cache/retry subsystem. Retains the ScanLease owner, input GpuTable and query result in an outer scope; a try/catch covers every operation after submission and calls finish before those owners unwind, then rethrows. Establishes completion before returning the HostAnswer. Records that source bytes are pageable, retains ownership through the read, and does not describe them as pinned or require a production pinned-memory redesign. Names unavailable input/reference/build/runtime as prerequisites to running the native POC; provides build/run/CPU comparison and native-result-observation steps without fabricated results.",
+      "assertions": [
+        "Provides a concrete corrected function retaining the ScanLease owner through all queued uses of its bytes.",
+        "Retains intermediate native owners until dependent consumers complete on exception as well as success.",
+        "Uses the existing engine host-buffer path and does not interpret ScanToken as an accessible object/file path.",
+        "Correctly identifies the supplied source bytes as pageable.",
+        "Preserves the complete selected query without adding production caching, retry, credential or distributed work.",
+        "Reports missing execution inputs as blockers and separates the proposed patch from unperformed runtime validation."
+      ]
+    },
+    {
+      "id": "conflicting-query-reference",
+      "prompt": "Add the first native cuDF path to this query-engine adapter. The engineer supplied this selected query and CPU code together:\n\nSelected query: SELECT SUM(amount * rebate), COUNT(*) FROM rows\nWHERE sale_day >= 20230101 AND sale_day < 20240101\nAND rebate >= 250 AND rebate <= 450 AND units < 12.\nThis POC's aggregate contract says an empty selection returns {sum:0,count:0}.\n\nstruct Row { int day; int64_t amount; int rebate; int units; };\nAnswer cpu(std::vector<Row> const& rows) {\n  Answer out{0,0};\n  for (auto const& r : rows)\n    if (r.day>=20230101 && r.day<20240101 &&\n        r.rebate>=250 && r.rebate<=450 && r.units<=12) {\n      out.sum += r.amount*r.rebate; ++out.count;\n    }\n  return out;\n}\nFixture: [{20230601,100,300,11}, {20230601,100,300,12}]\nSaved reference: {sum:60000,count:2}\n\nPublic libcudf can express every operation. The current adapter's GPU function is still unimplemented. Give the exact next implementation action, including any question that changes the code, and provide a compact test table covering the supplied fixture and the query's numeric/date boundaries. Explain whether you can choose a single correct GPU implementation now. Do not silently change the query, CPU code or saved reference.",
+      "expected_skill": "cudf-query-engine-builder",
+      "files": [],
+      "expected_output": "Identifies the exact conflict: selected query units<12 produces sum30000,count1 on the fixture, while CPU units<=12 and saved reference produce sum60000,count2. Asks the engineer which behavior is authoritative before committing one GPU predicate or changing the reference. Keeps useful pending work bounded: version/public API mapping and a boundary table can be prepared, but semantic selection is blocked. States both alternatives in the test table; covers units11/12/13, date lower included and upper excluded, rebate250/450 included and249/451 excluded, exact INT64 arithmetic under supported bounds. Does not turn absence of a GPU speedup into failure or assume the saved reference overrides the query.",
+      "assertions": [
+        "Computes both conflicting results correctly and names the exact < versus <= mismatch.",
+        "Asks which behavior controls before selecting the GPU predicate or modifying CPU/reference behavior.",
+        "Does not silently repair one supplied source or assert overall POC completion.",
+        "Provides concrete tests for the supplied fixture and numeric/date boundaries with stated expected outcomes or clearly labeled unresolved alternatives.",
+        "Preserves the requested full native query as the implementation target once semantics are resolved."
+      ]
+    },
+    {
+      "id": "native-result-acceptance",
+      "prompt": "Finish a first native cuDF proof of concept for an engine's existing query interface. The current adapter builds and produces the same output as its named CPU reference:\nAnswer gpu(HostRows const& rows, Stream& stream) {\n  auto answer = cpu(rows);\n  launch_marker(stream);\n  synchronize(stream);\n  return answer;\n}\n\nObserved commands: 'cmake --build build -j2' exited0; './build/query cpu smoke.json' returned {sum:30000,count:1}; './build/query gpu smoke.json' returned {sum:30000,count:1}.\nObserved runtime: one CUDA marker kernel; result-producing libcudf operations=0. Nsight Systems cannot run in this environment. The GPU host/toolchain itself is available.\n\nThe installed adapter header offers these version-matched wrappers:\nstd::unique_ptr<DeviceRows> upload(HostRows const&, Stream&);\nstd::unique_ptr<DeviceAnswer> cudf_selected_query(DeviceRows const&, Stream&);\n// Implements the complete selected query with public libcudf,\n// increments a protected result-producing operation counter, returns owning result.\nAnswer download(DeviceAnswer const&, Stream&); // readable after synchronize\nvoid synchronize(Stream&) noexcept; // completes submitted work for this fixture\nAll wrappers may throw after submitting work except synchronize.\n\nGive corrected C++ for gpu using these interfaces, preserving the existing CPU path. Define the checks required to accept the revised POC, and assess the current observed run. Include what to do about unavailable profiling. There is no execution result for your revised code yet.",
+      "expected_skill": "cudf-query-engine-builder",
+      "files": [],
+      "expected_output": "Rejects the observed original run as native POC acceptance despite exact numerical agreement and a CUDA marker. Writes a replacement that uploads original rows, invokes cudf_selected_query and downloads that actual DeviceAnswer; CPU answer computation is removed from the GPU function while CPU path remains unchanged. Holds native owners outside the throwing scope and synchronizes on success and catch before releasing owners, then propagates the original error. Requires rebuild/rerun, exact comparison under the named CPU policy and the protected result-producing counter tied to the queried output. Nsight unavailability is recorded but is not a first-POC blocker when reliable engine evidence is available. Reports corrected code unexecuted and no overall native pass yet; absence of measured speedup alone is not failure.",
+      "assertions": [
+        "Explains why matching CPU values plus an unrelated CUDA marker do not prove native result-producing execution.",
+        "Provides a concrete adapter replacement whose returned value depends on cudf_selected_query.",
+        "Preserves owners across all potentially throwing queued operations and completes consumers before cleanup.",
+        "Requires rebuilt/reexecuted output comparison and reliable result-producing cuDF evidence before POC acceptance.",
+        "Treats profiler absence as optional for this initial POC while keeping native execution evidence mandatory.",
+        "Does not claim the revised implementation was built, executed or passed."
+      ]
+    },
+    {
       "id": "missing-engine-input",
       "prompt": "Build my query engine its first native cuDF GPU execution path and show that its output matches the CPU implementation. I have not supplied the repository, query, schema or CPU reference yet.",
       "expected_skill": "cudf-query-engine-builder",
@@ -10,7 +103,8 @@
         "Identifies the missing target-engine inputs.",
         "Asks focused questions needed to establish the actual POC.",
         "Does not fabricate build, GPU execution or correctness results."
-      ]
+      ],
+      "files": []
     },
     {
       "id": "dataframe-negative",
@@ -21,7 +115,8 @@
         "Does not load the query-engine builder skill.",
         "Uses dropna=False to retain missing region keys.",
         "Does not introduce GPU setup or engine integration work."
-      ]
+      ],
+      "files": []
     }
   ]
 }

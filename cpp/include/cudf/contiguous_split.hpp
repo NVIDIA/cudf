@@ -302,6 +302,19 @@ std::vector<uint8_t> pack_metadata(table_view const& table,
 table_view unpack(packed_columns const& input);
 
 /**
+ * @brief Deserialize packed table data using a sized metadata buffer.
+ *
+ * An empty metadata buffer represents a table with no columns and no rows.
+ * The returned `table_view` must not outlive the device data in `gpu_data`.
+ * No new device memory is allocated.
+ *
+ * @param metadata The host-side metadata buffer resulting from `cudf::pack`
+ * @param gpu_data The device-side contiguous buffer referenced by the resulting `table_view`
+ * @return The unpacked `table_view`
+ */
+table_view unpack(std::span<uint8_t> const metadata, uint8_t const* gpu_data);
+
+/**
  * @brief Deserialize the result of `cudf::pack`.
  *
  * Converts the result of a serialized table into a `table_view` that points to the data stored in

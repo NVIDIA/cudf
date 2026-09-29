@@ -615,6 +615,24 @@ TEST_F(PackUnpackTest, ZeroColumnsWithRows)
   EXPECT_EQ(unpacked_empty.num_rows(), 0);
 }
 
+TEST_F(PackUnpackTest, UnpackMetadataSpan)
+{
+  auto const unpack_and_test = [](cudf::table_view const& input,
+                                  cudf::packed_columns const packed) {
+    auto unpacked =
+      cudf::unpack(*packed.metadata, reinterpret_cast<uint8_t const*>(packed.gpu_data->data()));
+    CUDF_TEST_EXPECT_TABLES_EQUAL(input, unpacked);
+  };
+
+  cudf::table_view only_rows{std::vector<cudf::column_view>{}, 7};
+  unpack_and_test(only_rows, cudf::pack(only_rows));
+
+  cudf::table_view empty{};
+  auto empty_packed = cudf::pack(empty);
+  ASSERT_TRUE(empty_packed.metadata->empty());
+  unpack_and_test(empty, std::move(empty_packed));
+}
+
 TEST_F(PackUnpackTest, SlicedEmpty)
 {
   // empty sliced column. this is specifically testing the corner case:

@@ -149,7 +149,7 @@ template <std::integral T = std::int64_t>
   for (std::size_t i = 0; i < ncols; ++i) {
     cols.emplace_back(random_column(seed, nrows, min, max));
   }
-  return cudf::table(std::move(cols));
+  return cudf::table(std::move(cols), nrows);
 }
 
 [[nodiscard]] inline cudf::table sort_table(

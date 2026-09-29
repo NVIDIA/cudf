@@ -26,11 +26,9 @@
 #include <rapidsmpf/utils/string.hpp>
 
 #include <cstdint>
-#include <initializer_list>
 #include <memory>
 #include <tuple>
 #include <utility>
-#include <vector>
 
 using namespace cudf_streaming;
 
@@ -203,19 +201,11 @@ TEST_F(StreamingTableChunk, FromPackedDataOnDevice)
 
 INSTANTIATE_TEST_SUITE_P(StreamingTableChunkWithSpillTargets,
                          StreamingTableChunk,
-                         ::testing::ValuesIn([] {
-                           std::vector<StreamingTableChunkParam> params;
-                           for (auto memory_type : {rapidsmpf::MemoryType::PINNED_HOST,
-                                                    rapidsmpf::MemoryType::HOST,
-                                                    rapidsmpf::MemoryType::DISK}) {
-                             for (auto const [ncols, nrows] :
-                                  std::initializer_list<std::tuple<int, int>>{
-                                    {2, 100}, {2, 0}, {0, 0}}) {
-                               params.emplace_back(memory_type, ncols, nrows);
-                             }
-                           }
-                           return params;
-                         }()),
+                         ::testing::Combine(::testing::Values(rapidsmpf::MemoryType::PINNED_HOST,
+                                                              rapidsmpf::MemoryType::HOST,
+                                                              rapidsmpf::MemoryType::DISK),
+                                            ::testing::Values(2, 0),
+                                            ::testing::Values(100, 0)),
                          ([](testing::TestParamInfo<StreamingTableChunkParam> const& info) {
                            auto const [memory_type, ncols, nrows] = info.param;
                            std::stringstream ss;
@@ -247,6 +237,8 @@ TEST_P(StreamingTableChunk, FromPackedDataOn)
   auto packed_data = std::make_unique<rapidsmpf::PackedData>(std::move(packed_columns.metadata),
                                                              std::move(gpu_data_in_spill_memory));
   table_chunk chunk{std::move(packed_data)};
+  auto const expected_shape = std::pair<cudf::size_type, cudf::size_type>{nrows, ncols};
+  EXPECT_EQ(chunk.shape(), expected_shape);
 
   EXPECT_EQ(chunk.stream().get(), stream.get());
   EXPECT_FALSE(chunk.is_available());
@@ -256,6 +248,7 @@ TEST_P(StreamingTableChunk, FromPackedDataOn)
 
   auto chunk2 = chunk.make_available(
     br->reserve_or_fail(chunk.make_available_cost(), rapidsmpf::MemoryType::DEVICE));
+  EXPECT_EQ(chunk2.shape(), expected_shape);
   EXPECT_FALSE(chunk.is_available());
   EXPECT_TRUE(chunk2.is_available());
   EXPECT_TRUE(chunk2.is_spillable());
@@ -307,7 +300,7 @@ TEST_F(StreamingTableChunk, ShapeOnAvailableAndSpilledChunk)
   EXPECT_EQ(device_chunk.shape(), expected_shape);
 }
 
-TEST_P(StreamingTableChunk, DeviceToHostRoundTripCopy)
+TEST_P(StreamingTableChunk, RoundTripCopy)
 {
   auto const [spill_mem_type, ncols, nrows] = GetParam();
   if (spill_mem_type == rapidsmpf::MemoryType::PINNED_HOST &&
@@ -317,10 +310,12 @@ TEST_P(StreamingTableChunk, DeviceToHostRoundTripCopy)
 
   constexpr std::int64_t seed = 2025;
 
-  auto expect = random_table(seed, nrows, ncols, 0, 5);
+  auto expect               = random_table(seed, nrows, ncols, 0, 5);
+  auto const expected_shape = std::pair<cudf::size_type, cudf::size_type>{nrows, ncols};
 
   table_chunk dev_chunk{std::make_unique<cudf::table>(expect), stream};
   EXPECT_TRUE(dev_chunk.is_available());
+  EXPECT_EQ(dev_chunk.shape(), expected_shape);
   EXPECT_TRUE(dev_chunk.is_spillable());
   EXPECT_EQ(dev_chunk.stream().get(), stream.get());
   EXPECT_EQ(dev_chunk.make_available_cost(), 0);
@@ -337,6 +332,7 @@ TEST_P(StreamingTableChunk, DeviceToHostRoundTripCopy)
     br->reserve_or_fail(dev_chunk.data_alloc_size(rapidsmpf::MemoryType::DEVICE), spill_mem_type);
   auto host_copy = dev_chunk.copy(host_res);
   EXPECT_FALSE(host_copy.is_available());
+  EXPECT_EQ(host_copy.shape(), expected_shape);
   EXPECT_TRUE(host_copy.is_spillable());
   EXPECT_EQ(host_copy.stream().get(), stream.get());
   EXPECT_EQ(host_copy.make_available_cost(),
@@ -357,6 +353,7 @@ TEST_P(StreamingTableChunk, DeviceToHostRoundTripCopy)
     return host_copy.copy(host_res2);
   }();
   EXPECT_FALSE(host_copy2.is_available());
+  EXPECT_EQ(host_copy2.shape(), expected_shape);
   EXPECT_TRUE(host_copy2.is_spillable());
   EXPECT_EQ(host_copy2.stream().get(), stream.get());
   EXPECT_EQ(host_copy2.make_available_cost(), host_cost);
@@ -373,6 +370,7 @@ TEST_P(StreamingTableChunk, DeviceToHostRoundTripCopy)
     br->reserve_or_fail(host_copy2.data_alloc_size(spill_mem_type), rapidsmpf::MemoryType::DEVICE);
   auto dev_back = host_copy2.make_available(dev_res);
   EXPECT_TRUE(dev_back.is_available());
+  EXPECT_EQ(dev_back.shape(), expected_shape);
   EXPECT_TRUE(dev_back.is_spillable());
   EXPECT_EQ(dev_back.stream().get(), stream.get());
   EXPECT_EQ(dev_back.make_available_cost(), 0);
@@ -390,6 +388,7 @@ TEST_P(StreamingTableChunk, DeviceToHostRoundTripCopy)
                                       rapidsmpf::MemoryType::DEVICE);
   auto dev_copy2 = dev_back.copy(dev_res2);
   EXPECT_TRUE(dev_copy2.is_available());
+  EXPECT_EQ(dev_copy2.shape(), expected_shape);
   EXPECT_EQ(dev_copy2.make_available_cost(), 0);
   CUDF_TEST_EXPECT_TABLES_EQUIVALENT(dev_copy2.table_view(), expect);
   {
@@ -409,9 +408,10 @@ TEST_P(StreamingTableChunk, MoveThroughMessage)
     GTEST_SKIP() << "MemoryType::PINNED_HOST isn't supported on the system.";
   }
   // A move and a copy differ only in the statistic, so record it to tell them apart.
-  auto stats      = rapidsmpf::Statistics::create();
-  auto tracked_br = make_tracked_br(stats);
-  auto expect     = random_table(2025, nrows, ncols, 0, 5);
+  auto stats                = rapidsmpf::Statistics::create();
+  auto tracked_br           = make_tracked_br(stats);
+  auto expect               = random_table(2025, nrows, ncols, 0, 5);
+  auto const expected_shape = std::pair<cudf::size_type, cudf::size_type>{nrows, ncols};
   auto msg =
     to_message(0, std::make_unique<table_chunk>(std::make_unique<cudf::table>(expect), stream));
 
@@ -419,6 +419,7 @@ TEST_P(StreamingTableChunk, MoveThroughMessage)
   auto host_res          = tracked_br->reserve_or_fail(packed_size, spill_mem_type);
   auto spilled           = msg.move(host_res);
   EXPECT_TRUE(msg.empty());
+  EXPECT_EQ(spilled.get<table_chunk>().shape(), expected_shape);
   {
     auto const& cd = spilled.content_description();
     EXPECT_TRUE(cd.spillable());
@@ -441,6 +442,7 @@ TEST_P(StreamingTableChunk, MoveThroughMessage)
   // Packed data on device unpacks straight away, so the round trip can be compared.
   auto const& chunk = back.get<table_chunk>();
   ASSERT_TRUE(chunk.is_available());
+  EXPECT_EQ(chunk.shape(), expected_shape);
   CUDF_TEST_EXPECT_TABLES_EQUIVALENT(chunk.table_view(), expect);
 }
 
@@ -699,6 +701,7 @@ TEST_P(StreamingTableChunk, ToMessageCopy)
   auto expect = random_table(seed, nrows, ncols, 0, 5);
   auto const expected_packed_size =
     cudf::packed_size(expect.view(), stream, rmm::mr::get_current_device_resource_ref());
+  EXPECT_GE(expected_packed_size, expect.alloc_size());
   auto chunk = std::make_unique<table_chunk>(std::make_unique<cudf::table>(expect), stream);
 
   rapidsmpf::streaming::Message m = to_message(seq, std::move(chunk));
@@ -724,19 +727,4 @@ TEST_P(StreamingTableChunk, ToMessageCopy)
   EXPECT_EQ(m2.content_description().content_size(spill_mem_type), expected_packed_size);
   EXPECT_EQ(m2.content_description().content_size(rapidsmpf::MemoryType::DEVICE), 0);
   EXPECT_EQ(m2.sequence_number(), seq);
-}
-
-TEST_F(StreamingTableChunk, ToMessageUnalignedSize)
-{
-  auto expect = random_table_with_index(2025, 5, 0, 5);
-  auto const packed_size =
-    cudf::packed_size(expect.view(), stream, rmm::mr::get_current_device_resource_ref());
-  EXPECT_EQ(expect.alloc_size(), 80);
-  EXPECT_EQ(packed_size, 128);
-
-  auto msg =
-    to_message(7, std::make_unique<table_chunk>(std::make_unique<cudf::table>(expect), stream));
-  auto reservation = br->reserve_or_fail(msg.copy_cost(), rapidsmpf::MemoryType::HOST);
-  auto copied      = msg.copy(reservation);
-  EXPECT_EQ(copied.content_description().content_size(rapidsmpf::MemoryType::HOST), packed_size);
 }

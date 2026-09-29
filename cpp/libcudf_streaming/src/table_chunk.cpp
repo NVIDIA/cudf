@@ -323,6 +323,8 @@ std::unique_ptr<rapidsmpf::PackedData> table_chunk::into_packed_data(
 std::pair<cudf::size_type, cudf::size_type> table_chunk::shape() const noexcept
 {
   if (packed_data_ != nullptr) {
+    // Remove this guard when packed_metadata_view accepts empty metadata (NVIDIA/cudf#24329).
+    if (packed_data_->metadata->empty()) { return {0, 0}; }
     auto view = cudf::packed_metadata_view(*packed_data_->metadata);
     return {view.num_rows(), view.num_columns()};
   }

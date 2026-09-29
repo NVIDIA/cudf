@@ -89,7 +89,7 @@ TYPED_TEST(FixedPointScalarDeviceViewTest, Value)
   auto scalar_device_view = cudf::get_scalar_device_view(s);
   cudf::detail::device_scalar<bool> result{cudf::get_default_stream()};
 
-  test_fixed_point_value<<<1, 1, 0, cudf::get_default_stream().value()>>>(
+  test_fixed_point_value<<<1, 1, 0, cudf::get_default_stream().get()>>>(
     scalar_device_view, expected, result.data());
   CUDF_CHECK_CUDA(0);
 
@@ -113,8 +113,8 @@ TYPED_TEST(FixedPointScalarDeviceViewTest, SetRepresentation)
   cudf::fixed_point_scalar<TypeParam> s{initial_value, scale};
 
   auto scalar_device_view = cudf::get_scalar_device_view(s);
-  test_set_fixed_point_rep<<<1, 1, 0, cudf::get_default_stream().value()>>>(scalar_device_view,
-                                                                            value);
+  test_set_fixed_point_rep<<<1, 1, 0, cudf::get_default_stream().get()>>>(scalar_device_view,
+                                                                          value);
   CUDF_CHECK_CUDA(0);
 
   EXPECT_EQ(s.value(), value);
@@ -127,15 +127,13 @@ TYPED_TEST(FixedPointScalarDeviceViewTest, SetValue)
   auto constexpr source_rep   = rep_type{12'345};
   auto constexpr initial_rep  = rep_type{0};
   auto constexpr source_scale = cudf::numeric::scale_type{-2};
-  auto const source_value =
-    TypeParam{cudf::numeric::scaled_integer<rep_type>{source_rep, source_scale}};
   cudf::fixed_point_scalar<TypeParam> source{source_rep, source_scale};
   cudf::fixed_point_scalar<TypeParam> target{initial_rep, source_scale};
 
   auto source_device_view = cudf::get_scalar_device_view(source);
   auto target_device_view = cudf::get_scalar_device_view(target);
-  test_set_value<<<1, 1, 0, cudf::get_default_stream().value()>>>(source_device_view,
-                                                                  target_device_view);
+  test_set_value<<<1, 1, 0, cudf::get_default_stream().get()>>>(source_device_view,
+                                                                target_device_view);
   CUDF_CHECK_CUDA(0);
 
   EXPECT_EQ(target.value(), source_rep);

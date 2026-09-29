@@ -272,6 +272,9 @@ def test_io_tasks_wait_for_memory_admission(
     assert second["admitted"] >= first["stop"]
 
 
+@pytest.mark.skipif(
+    POLARS_VERSION_LT_138, reason="set_sorted lowers to unsupported hint ir"
+)
 def test_parquet_scan_ordering_trace_from_set_sorted(
     tmp_path: pathlib.Path, timeout_seconds: int
 ) -> None:

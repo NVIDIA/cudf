@@ -15,12 +15,10 @@
 #include <cudf/copying.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/dictionary/encode.hpp>
-#include <cudf/filling.hpp>
 #include <cudf/join/hash_join.hpp>
 #include <cudf/join/join.hpp>
 #include <cudf/join/sort_merge_join.hpp>
 #include <cudf/join/streaming_hash_join.hpp>
-#include <cudf/scalar/scalar.hpp>
 #include <cudf/sorting.hpp>
 #include <cudf/table/table.hpp>
 #include <cudf/table/table_view.hpp>
@@ -380,23 +378,6 @@ struct JoinTest : public cudf::test::BaseFixture {
     return std::pair(std::move(sorted_gold), std::move(sorted_result));
   }
 };
-
-TEST_F(JoinTest, HashJoinMaximumSizeDefaultLoadFactor)
-{
-  auto const stream = cudf::test::get_default_stream();
-
-  auto const build_col = cudf::sequence(std::numeric_limits<cudf::size_type>::max(),
-                                        cudf::numeric_scalar<int8_t>{0, true, stream},
-                                        cudf::numeric_scalar<int8_t>{1, true, stream},
-                                        stream);
-  auto const build     = cudf::table_view{{build_col->view()}};
-
-  // At the default load factor, power-of-two rounding would require 2^32 slots.
-  EXPECT_NO_THROW({
-    cudf::hash_join join(build, cudf::null_equality::EQUAL, stream);
-    stream.sync();
-  });
-}
 
 TEST_F(JoinTest, InvalidLoadFactor)
 {

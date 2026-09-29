@@ -50,7 +50,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut stubs = quent_schema_codegen_python::emit_stubs(&parsed.schema, &options)?;
     for file in &mut stubs {
         if file.name == "_quent_generated/__init__.pyi" {
-            file.name = "_quent/__init__.pyi".to_owned();
+            file.name = "cudf_polars_quent.pyi".to_owned();
         }
 
         if file.name.ends_with(".pyi") {

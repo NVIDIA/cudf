@@ -1,14 +1,17 @@
 # cudf-polars Quent bindings
 
-This package generates the `cudf_polars._quent` extension, an *optional*
-dependency for cudf-polars.
+This package builds the top-level `cudf_polars_quent` extension. The
+distribution is named `cudf-polars-quent` and is an *optional* dependency for
+cudf-polars.
 
 It uses [Quent] to define a schema for cudf-polars execution and telemetry
 model. A Python instrumentation library is generated from this model definition
 (via generated Rust code).
 
-The main cudf-polars package imports `cudf_polars._quent` extension only when
-telemetry collection is enabled.
+The main cudf-polars package imports `cudf_polars_quent` only when telemetry
+collection is enabled. Keeping the extension at the top level lets the optional
+distribution own its complete import namespace and allows the generated
+bindings to be imported without first initializing `cudf_polars`.
 
 ## Distributed filesystem workaround
 
@@ -29,6 +32,7 @@ extension:
 
 ```sh
 python -m maturin develop
+python -c "import cudf_polars_quent"
 ```
 
 ## Updating Quent
@@ -57,9 +61,10 @@ the `bridge` and `analyzer`. To update Quent:
 
    The build script generates the Rust instrumentation library from the
    `model.yaml` and Python bindings to the Rust instrumentation library. The
-   build also outputs a typestub file and copies it to
-   `python/cudf_polars/cudf_polars/_quent.pyi`, which is checked into the
-   repository.
+   build also outputs the checked-in
+   `python/cudf_polars/quent/bridge/cudf_polars_quent.pyi` type stub. Maturin
+   packages that stub alongside the extension so editors and static type
+   checkers can use the generated API from the installed distribution.
 
 
 4. Run the checks at `ci/run_cudf_polars_quent_tests.sh`.

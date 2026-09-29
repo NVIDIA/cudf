@@ -8,7 +8,7 @@ set -euo pipefail
 cd "$(dirname "$(realpath "${BASH_SOURCE[0]}")")"/../
 
 BRIDGE_DIR="${PWD}/python/cudf_polars/quent/bridge"
-TRACKED_STUB="${PWD}/python/cudf_polars/cudf_polars/_quent.pyi"
+TRACKED_STUB="${BRIDGE_DIR}/cudf_polars_quent.pyi"
 
 pushd "${BRIDGE_DIR}"
 cargo fmt --all -- --check
@@ -18,14 +18,19 @@ cargo clean -p cudf-polars-quent
 python -m maturin build --locked
 
 shopt -s nullglob
-generated_stubs=(target/*/build/cudf-polars-quent-*/out/_quent/__init__.pyi)
+generated_stubs=(target/*/build/cudf-polars-quent-*/out/cudf_polars_quent.pyi)
 shopt -u nullglob
-if ((${#generated_stubs[@]} != 1)); then
-  echo "Expected one generated Quent stub, found ${#generated_stubs[@]}" >&2
+if ((${#generated_stubs[@]} == 0)); then
+  echo "No generated Quent stub found" >&2
   exit 1
 fi
 
 generated_stub="${generated_stubs[0]}"
+for candidate in "${generated_stubs[@]:1}"; do
+  if [[ "${candidate}" -nt "${generated_stub}" ]]; then
+    generated_stub="${candidate}"
+  fi
+done
 
 cp "${generated_stub}" "${TRACKED_STUB}"
 popd

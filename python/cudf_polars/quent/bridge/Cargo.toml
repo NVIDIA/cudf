@@ -7,7 +7,7 @@ edition = "2024"
 publish = false
 
 [lib]
-name = "_quent"
+name = "cudf_polars_quent"
 crate-type = ["cdylib"]
 
 [dependencies]

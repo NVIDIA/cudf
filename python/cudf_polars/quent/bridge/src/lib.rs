@@ -13,7 +13,7 @@ mod generated_python {
     }
 }
 
-#[pymodule(name = "_quent")]
-fn _quent(module: &Bound<'_, PyModule>) -> PyResult<()> {
+#[pymodule]
+fn cudf_polars_quent(module: &Bound<'_, PyModule>) -> PyResult<()> {
     generated_python::register(module)
 }

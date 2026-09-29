@@ -126,8 +126,8 @@ TYPED_TEST(TypedTraitsTest, NotEqualityComparableWithList)
 template <typename T>
 class CvQualifiedTraitsTest : public TraitsTest {};
 
-using AllAndCompoundTypes = cudf::test::Concat<cudf::test::AllTypes, cudf::test::CompoundTypes>;
-TYPED_TEST_SUITE(CvQualifiedTraitsTest, AllAndCompoundTypes);
+using DispatchedTypes = cudf::test::Concat<cudf::test::FixedWidthTypes, cudf::test::CompoundTypes>;
+TYPED_TEST_SUITE(CvQualifiedTraitsTest, DispatchedTypes);
 
 template <typename T, typename U>
 void expect_same_type_category()

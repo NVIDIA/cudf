@@ -24,7 +24,7 @@ std::unique_ptr<scalar> nested_minmax(column_view const& input,
   // boolean is carried by row_arg_minmax_fn, so this one instantiation serves
   // both public operations without changing comparator specialization.
   auto const binop_generator = arg_minmax_binop_generator::create(input, is_min_op, stream);
-  auto const binary_op        = cudf::detail::cast_functor<size_type>(binop_generator.binop());
+  auto const binary_op       = cudf::detail::cast_functor<size_type>(binop_generator.binop());
   auto const minmax_idx =
     thrust::reduce(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                    cuda::counting_iterator<cudf::size_type>{0},

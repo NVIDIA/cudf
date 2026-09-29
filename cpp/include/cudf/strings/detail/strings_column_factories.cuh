@@ -64,8 +64,9 @@ std::unique_ptr<column> make_strings_column(IndexPairIterator begin,
   auto validator = [] __device__(string_index_pair const item) { return item.first != nullptr; };
   auto new_nulls = cudf::detail::valid_if(begin, end, validator, stream, mr);
   auto const null_count = new_nulls.second;
-  auto null_mask =
-    (null_count > 0) ? std::move(new_nulls.first) : rmm::device_buffer{0, stream, mr};
+  auto null_mask        = (null_count > 0)
+                            ? std::move(new_nulls.first)
+                            : cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED, stream, mr);
 
   // build chars column
   auto chars_data =

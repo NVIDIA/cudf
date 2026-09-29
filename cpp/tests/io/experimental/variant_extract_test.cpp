@@ -633,7 +633,11 @@ inline cudf::test::structs_column_wrapper wrap_multi_row_variant(
     auto offs =
       cudf::test::fixed_width_column_wrapper<int32_t>(offsets.begin(), offsets.end()).release();
     auto data = cudf::test::fixed_width_column_wrapper<uint8_t>(flat.begin(), flat.end()).release();
-    return cudf::make_lists_column(n, std::move(offs), std::move(data), 0, {});
+    return cudf::make_lists_column(n,
+                                   std::move(offs),
+                                   std::move(data),
+                                   0,
+                                   cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
   };
   std::vector<std::unique_ptr<cudf::column>> children;
   children.emplace_back(build_list(meta_rows));
@@ -1956,7 +1960,8 @@ inline std::unique_ptr<cudf::column> scalar_i32()
 // A single-row STRUCT column adopting `children`.
 inline std::unique_ptr<cudf::column> struct_of(std::vector<std::unique_ptr<cudf::column>> children)
 {
-  return cudf::make_structs_column(1, std::move(children), 0, rmm::device_buffer{});
+  return cudf::make_structs_column(
+    1, std::move(children), 0, cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 }
 
 inline std::vector<std::unique_ptr<cudf::column>> two_children(std::unique_ptr<cudf::column> a,
@@ -2728,10 +2733,15 @@ TEST_F(CastVariantStatusTest, SqlNullInputProducesRowNullStatus)
     cudf::test::fixed_width_column_wrapper<int32_t>(offsets.begin(), offsets.end()).release();
   auto data_col =
     cudf::test::fixed_width_column_wrapper<uint8_t>(flat.begin(), flat.end()).release();
-  auto values_col = cudf::make_lists_column(2, std::move(offs_col), std::move(data_col), 0, {});
+  auto values_col =
+    cudf::make_lists_column(2,
+                            std::move(offs_col),
+                            std::move(data_col),
+                            0,
+                            cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
   // Mask row 1 SQL null
   auto null_mask = cudf::create_null_mask(2, cudf::mask_state::ALL_VALID, stream, cmr());
-  cudf::set_null_mask(static_cast<cudf::bitmask_type*>(null_mask.data()), 1, 2, false);
+  cudf::set_null_mask(reinterpret_cast<cudf::bitmask_type*>(null_mask.data()), 1, 2, false);
   stream.sync();
   values_col->set_null_mask(std::move(null_mask), 1);
 

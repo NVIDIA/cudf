@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -177,7 +177,7 @@ TEST_F(ParquetStringsTest, ChunkedReadNestedLargeStrings)
                             int32s_col(offsets.begin(), offsets.end()).release(),
                             make_structs_col(),
                             0,
-                            rmm::device_buffer{}));
+                            cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED)));
 
   // Input table
   auto const table    = cudf::table{std::move(input_columns)};

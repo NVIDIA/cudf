@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -10,6 +10,7 @@
 #include <cudf_test/type_lists.hpp>
 
 #include <cudf/column/column_factories.hpp>
+#include <cudf/null_mask.hpp>
 #include <cudf/reshape.hpp>
 
 using namespace cudf::test::iterators;
@@ -838,11 +839,23 @@ TYPED_TEST(ListsColumnsInterleaveTypedTest, InputListsOfStructsNoNull)
   }();
 
   auto const col1 =
-    cudf::make_lists_column(3, IntCol{0, 1, 3, 5}.release(), structs1.release(), 0, {});
+    cudf::make_lists_column(3,
+                            IntCol{0, 1, 3, 5}.release(),
+                            structs1.release(),
+                            0,
+                            cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
   auto const col2 =
-    cudf::make_lists_column(3, IntCol{0, 3, 4, 5}.release(), structs2.release(), 0, {});
-  auto const expected = cudf::make_lists_column(
-    6, IntCol{0, 1, 4, 6, 7, 9, 10}.release(), structs_expected.release(), 0, {});
+    cudf::make_lists_column(3,
+                            IntCol{0, 3, 4, 5}.release(),
+                            structs2.release(),
+                            0,
+                            cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
+  auto const expected =
+    cudf::make_lists_column(6,
+                            IntCol{0, 1, 4, 6, 7, 9, 10}.release(),
+                            structs_expected.release(),
+                            0,
+                            cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
   auto const results = cudf::interleave_columns(TView{{col1->view(), col2->view()}});
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(*expected, *results, verbosity);
 }
@@ -883,11 +896,23 @@ TYPED_TEST(ListsColumnsInterleaveTypedTest, InputListsOfStructsWithNulls)
   }();
 
   auto const col1 =
-    cudf::make_lists_column(3, IntCol{0, 1, 3, 5}.release(), structs1.release(), 0, {});
+    cudf::make_lists_column(3,
+                            IntCol{0, 1, 3, 5}.release(),
+                            structs1.release(),
+                            0,
+                            cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
   auto const col2 =
-    cudf::make_lists_column(3, IntCol{0, 3, 4, 5}.release(), structs2.release(), 0, {});
-  auto const expected = cudf::make_lists_column(
-    6, IntCol{0, 1, 4, 6, 7, 9, 10}.release(), structs_expected.release(), 0, {});
+    cudf::make_lists_column(3,
+                            IntCol{0, 3, 4, 5}.release(),
+                            structs2.release(),
+                            0,
+                            cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
+  auto const expected =
+    cudf::make_lists_column(6,
+                            IntCol{0, 1, 4, 6, 7, 9, 10}.release(),
+                            structs_expected.release(),
+                            0,
+                            cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
   auto const results = cudf::interleave_columns(TView{{col1->view(), col2->view()}});
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(*expected, *results, verbosity);
 }
@@ -920,11 +945,23 @@ TYPED_TEST(ListsColumnsInterleaveTypedTest, SlicedInputListsOfStructsNoNull)
   }();
 
   auto const col1_original =
-    cudf::make_lists_column(5, IntCol{0, 2, 3, 5, 7, 8}.release(), structs1.release(), 0, {});
+    cudf::make_lists_column(5,
+                            IntCol{0, 2, 3, 5, 7, 8}.release(),
+                            structs1.release(),
+                            0,
+                            cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
   auto const col2_original =
-    cudf::make_lists_column(4, IntCol{0, 3, 4, 5, 7}.release(), structs2.release(), 0, {});
-  auto const expected = cudf::make_lists_column(
-    6, IntCol{0, 1, 4, 6, 7, 9, 10}.release(), structs_expected.release(), 0, {});
+    cudf::make_lists_column(4,
+                            IntCol{0, 3, 4, 5, 7}.release(),
+                            structs2.release(),
+                            0,
+                            cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
+  auto const expected =
+    cudf::make_lists_column(6,
+                            IntCol{0, 1, 4, 6, 7, 9, 10}.release(),
+                            structs_expected.release(),
+                            0,
+                            cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
   auto const col1    = cudf::slice(col1_original->view(), {1, 4})[0];
   auto const col2    = cudf::slice(col2_original->view(), {0, 3})[0];
@@ -969,14 +1006,26 @@ TYPED_TEST(ListsColumnsInterleaveTypedTest, SlicedInputListsOfStructsWithNulls)
   }();
 
   auto const col1_original =
-    cudf::make_lists_column(5, IntCol{0, 1, 2, 4, 6, 7}.release(), structs1.release(), 0, {});
+    cudf::make_lists_column(5,
+                            IntCol{0, 1, 2, 4, 6, 7}.release(),
+                            structs1.release(),
+                            0,
+                            cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
   auto const col2_original =
-    cudf::make_lists_column(4, IntCol{0, 1, 4, 5, 6}.release(), structs2.release(), 0, {});
+    cudf::make_lists_column(4,
+                            IntCol{0, 1, 4, 5, 6}.release(),
+                            structs2.release(),
+                            0,
+                            cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
-  auto const col1     = cudf::slice(col1_original->view(), {1, 4})[0];
-  auto const col2     = cudf::slice(col2_original->view(), {1, 4})[0];
-  auto const expected = cudf::make_lists_column(
-    6, IntCol{0, 1, 4, 6, 7, 9, 10}.release(), structs_expected.release(), 0, {});
+  auto const col1 = cudf::slice(col1_original->view(), {1, 4})[0];
+  auto const col2 = cudf::slice(col2_original->view(), {1, 4})[0];
+  auto const expected =
+    cudf::make_lists_column(6,
+                            IntCol{0, 1, 4, 6, 7, 9, 10}.release(),
+                            structs_expected.release(),
+                            0,
+                            cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
   auto const results = cudf::interleave_columns(TView{{col1, col2}});
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(*expected, *results, verbosity);
 }

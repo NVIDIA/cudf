@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -575,7 +575,7 @@ JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_Scalar_binaryOpSV(
       auto out = make_fixed_width_column(n_data_type, rhs->size(), cudf::mask_state::UNALLOCATED);
 
       if (op == cudf::binary_operator::NULL_EQUALS) {
-        out->set_null_mask(rmm::device_buffer{}, 0);
+        out->set_null_mask(cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED), 0);
       } else {
         auto [new_mask, new_null_count] = cudf::binops::scalar_col_valid_mask_and(*rhs, *lhs);
         out->set_null_mask(std::move(new_mask), new_null_count);

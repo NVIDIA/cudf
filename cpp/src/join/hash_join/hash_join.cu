@@ -64,7 +64,7 @@ cuda::std::uint32_t hash_csr_capacity(size_type rows, double load_factor)
   CUDF_EXPECTS(requested <= std::numeric_limits<cuda::std::uint32_t>::max(),
                "HashCSR table capacity is not representable",
                std::overflow_error);
-  // Hash reduction uses modulo, and linear probing wraps with a conditional increment.
+  // Hash reduction uses multiply-high, and linear probing wraps with a conditional increment.
   // Neither requires a power-of-two capacity. Keep one empty slot even at load_factor == 1.
   return static_cast<cuda::std::uint32_t>(requested);
 }

@@ -640,7 +640,8 @@ TEST_F(PackUnpackTest, UnpackMetadataSpanRejectsTruncatedBuffer)
 
   cudf::test::fixed_width_column_wrapper<int> column{1, 2, 3};
   auto packed           = cudf::pack(cudf::table_view({column}));
-  auto truncated_column = std::span<uint8_t>{packed.metadata->data(), packed.metadata->size() - 1};
+  auto truncated_column =
+    std::span<uint8_t const>{packed.metadata->data(), packed.metadata->size() - 1};
   EXPECT_THROW(
     cudf::unpack(truncated_column, reinterpret_cast<uint8_t const*>(packed.gpu_data->data())),
     cudf::logic_error);

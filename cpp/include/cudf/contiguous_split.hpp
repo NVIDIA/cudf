@@ -313,7 +313,7 @@ table_view unpack(packed_columns const& input);
  * @param gpu_data The device-side contiguous buffer referenced by the resulting `table_view`
  * @return The unpacked `table_view`
  */
-table_view unpack(std::span<uint8_t> const metadata, uint8_t const* gpu_data);
+table_view unpack(std::span<uint8_t const> const metadata, uint8_t const* gpu_data);
 
 /**
  * @brief Deserialize the result of `cudf::pack`.

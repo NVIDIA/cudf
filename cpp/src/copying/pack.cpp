@@ -475,7 +475,7 @@ table_view unpack(packed_columns const& input)
   return unpack(*input.metadata, reinterpret_cast<uint8_t const*>(input.gpu_data->data()));
 }
 
-table_view unpack(std::span<uint8_t> const metadata, uint8_t const* gpu_data)
+table_view unpack(std::span<uint8_t const> const metadata, uint8_t const* gpu_data)
 {
   CUDF_FUNC_RANGE();
   if (metadata.empty()) { return table_view{}; }

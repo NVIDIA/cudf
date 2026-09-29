@@ -383,10 +383,7 @@ struct JoinTest : public cudf::test::BaseFixture {
 
 TEST_F(JoinTest, HashJoinMaximumSizeDefaultLoadFactor)
 {
-  int device{};
-  CUDF_CUDA_TRY(cudaGetDevice(&device));
-  cuda::stream stream_owner{cuda::device_ref{device}};
-  cuda::stream_ref stream{stream_owner};
+  auto const stream = cudf::test::get_default_stream();
 
   auto const build_col = cudf::sequence(std::numeric_limits<cudf::size_type>::max(),
                                         cudf::numeric_scalar<int8_t>{0, true, stream},

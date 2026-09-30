@@ -222,3 +222,4 @@ TEST_P(NumOfPartitions, split_and_pack)
   // Compare the input table with the result.
   CUDF_TEST_EXPECT_TABLES_EQUIVALENT(expect, *result);
 }
+// CI scenario: libcudf_streaming/tests

@@ -82,7 +82,7 @@ struct subpass_intermediate_data {
   subpass_intermediate_data(subpass_intermediate_data&&)                 = default;
   subpass_intermediate_data& operator=(subpass_intermediate_data&&)      = default;
   subpass_intermediate_data(cuda::stream_ref stream)
-    : decomp_page_data(0, stream),
+    : decomp_page_data(stream, cudf::get_current_device_resource_ref()),
       level_decode_data(stream, cudf::get_current_device_resource_ref()),
       page_buf(0, stream),
       page_src_index{0, stream},
@@ -94,7 +94,7 @@ struct subpass_intermediate_data {
   {
   }
 
-  rmm::device_buffer decomp_page_data;
+  cuda::device_buffer<std::uint8_t> decomp_page_data;
 
   cuda::device_buffer<std::byte> level_decode_data;
   cudf::detail::hostdevice_span<PageInfo> pages{};
@@ -157,7 +157,7 @@ struct pass_intermediate_data {
       chunks(0, stream),
       pages(0, stream),
       page_offsets{0, stream},
-      decomp_dict_data{0, stream},
+      decomp_dict_data{stream, cudf::get_current_device_resource_ref()},
       decomp_scratch_sizes{0, stream},
       string_offset_sizes{0, stream},
       level_decode_sizes{0, stream},
@@ -180,7 +180,7 @@ struct pass_intermediate_data {
   // page_offsets would be 0, 5, 8
   rmm::device_uvector<size_type> page_offsets;
 
-  rmm::device_buffer decomp_dict_data;
+  cuda::device_buffer<std::uint8_t> decomp_dict_data;
   rmm::device_uvector<size_t> decomp_scratch_sizes;
   rmm::device_uvector<size_t> string_offset_sizes;
   rmm::device_uvector<size_t> level_decode_sizes;

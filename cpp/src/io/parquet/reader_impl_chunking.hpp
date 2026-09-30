@@ -8,6 +8,9 @@
 #include "reader_impl_helpers.hpp"
 
 #include <cudf/types.hpp>
+#include <cudf/utilities/memory_resource.hpp>
+
+#include <cuda/buffer>
 
 namespace cudf::io::parquet::detail {
 
@@ -80,7 +83,7 @@ struct subpass_intermediate_data {
   subpass_intermediate_data& operator=(subpass_intermediate_data&&)      = default;
   subpass_intermediate_data(cuda::stream_ref stream)
     : decomp_page_data(0, stream),
-      level_decode_data(0, stream),
+      level_decode_data(stream, cudf::get_current_device_resource_ref()),
       page_buf(0, stream),
       page_src_index{0, stream},
       page_string_offset_indices(0, stream),
@@ -93,7 +96,7 @@ struct subpass_intermediate_data {
 
   rmm::device_buffer decomp_page_data;
 
-  rmm::device_buffer level_decode_data;
+  cuda::device_buffer<std::byte> level_decode_data;
   cudf::detail::hostdevice_span<PageInfo> pages{};
 
   cudf::detail::hostdevice_vector<PageInfo> page_buf;

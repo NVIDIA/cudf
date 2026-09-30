@@ -32,6 +32,7 @@ from cudf_polars.streaming.actor_graph.utils import (
     empty_table_chunk,
     shutdown_channels_on_error,
 )
+from cudf_polars.streaming.utils import partition_owner, partition_range
 from cudf_polars.utils.cuda_stream import stream_ordered_after
 
 if TYPE_CHECKING:
@@ -44,10 +45,10 @@ if TYPE_CHECKING:
     from rmm.pylibrmm.stream import Stream
 
     from cudf_polars.dsl.ir import IR, IRExecutionContext
+    from cudf_polars.streaming.utils import PartitionRange
 
 
 _PID_DTYPE = DataType(pl.Int32())
-_PartitionRange = tuple[int, int]
 
 
 @dataclass(frozen=True)
@@ -56,9 +57,9 @@ class _RoutingPlan:
 
     npartitions: int
     """Number of output partitions implied by the target ordering."""
-    local_window: _PartitionRange
+    local_window: PartitionRange
     """Half-open output-partition range owned by this rank."""
-    source_ranges: list[_PartitionRange]
+    source_ranges: list[PartitionRange]
     """Half-open output-partition range each source rank may contribute to."""
     remote_sources: list[int]
     """Remote ranks that may contribute to this rank's local output window."""
@@ -66,7 +67,7 @@ class _RoutingPlan:
     """Remote-owned output partitions this rank may contribute to."""
     remote_destinations: list[int]
     """Remote ranks that may receive this rank's data."""
-    owed_remote_range: _PartitionRange
+    owed_remote_range: PartitionRange
     """Half-open range spanning owed remote pids, or empty when none are owed."""
 
     @classmethod
@@ -80,7 +81,7 @@ class _RoutingPlan:
     ) -> _RoutingPlan:
         """Compute local ownership and sparse-exchange obligations."""
         npartitions = output_ordering.num_boundaries + 1
-        local_window = _partition_range(comm.rank, comm.nranks, npartitions)
+        local_window = partition_range(comm.rank, comm.nranks, npartitions)
 
         if comm.nranks == 1:
             source_ranges = [(0, npartitions)]
@@ -116,13 +117,10 @@ class _RoutingPlan:
         owed_remote_pids = [
             pid
             for pid in range(*local_source_range)
-            if _contiguous_owner(pid, comm.nranks, npartitions) != comm.rank
+            if partition_owner(pid, comm.nranks, npartitions) != comm.rank
         ]
         remote_destinations = sorted(
-            {
-                _contiguous_owner(pid, comm.nranks, npartitions)
-                for pid in owed_remote_pids
-            }
+            {partition_owner(pid, comm.nranks, npartitions) for pid in owed_remote_pids}
         )
         owed_remote_range = (
             (owed_remote_pids[0], owed_remote_pids[-1] + 1)
@@ -138,19 +136,6 @@ class _RoutingPlan:
             remote_destinations=remote_destinations,
             owed_remote_range=owed_remote_range,
         )
-
-
-def _contiguous_owner(pid: int, nranks: int, npartitions: int) -> int:
-    """Return the rank owning *pid* under contiguous partition assignment."""
-    return pid * nranks // npartitions
-
-
-def _partition_range(rank: int, nranks: int, npartitions: int) -> _PartitionRange:
-    """Return the half-open partition ID range owned by *rank*."""
-    return (
-        (rank * npartitions + nranks - 1) // nranks,
-        ((rank + 1) * npartitions + nranks - 1) // nranks,
-    )
 
 
 def _validate_orderings(input_ordering: Ordering, output_ordering: Ordering) -> None:
@@ -266,14 +251,14 @@ def _source_output_range(
     output_ordering: Ordering,
     lower_positions: list[int],
     upper_positions: list[int],
-) -> _PartitionRange:
+) -> PartitionRange:
     """Return the half-open output partition range touched by a source rank."""
     input_npartitions = input_ordering.num_boundaries + 1
     output_npartitions = output_ordering.num_boundaries + 1
     output_prefix_only = len(output_ordering.keys) < len(input_ordering.keys)
     # Prefix/non-strict boundaries can overlap the equal-boundary run above them.
     include_upper_boundary = output_prefix_only or not input_ordering.strict_boundaries
-    input_start, input_stop = _partition_range(source_rank, nranks, input_npartitions)
+    input_start, input_stop = partition_range(source_rank, nranks, input_npartitions)
     if input_start == input_stop:
         return 0, 0
     output_start = 0 if input_start == 0 else upper_positions[input_start - 1]
@@ -289,13 +274,13 @@ def _source_output_range(
     return output_start, output_stop
 
 
-def _ranges_overlap(left: _PartitionRange, right: _PartitionRange) -> bool:
+def _ranges_overlap(left: PartitionRange, right: PartitionRange) -> bool:
     """Return whether two half-open integer ranges overlap."""
     return max(left[0], right[0]) < min(left[1], right[1])
 
 
 def _sources_for_pid(
-    source_ranges: list[_PartitionRange],
+    source_ranges: list[PartitionRange],
     pid: int,
 ) -> list[int]:
     """Return source ranks that may contribute to one output partition."""
@@ -315,7 +300,7 @@ def _remote_pids_from_source(
     return [
         pid
         for pid in range(*plan.source_ranges[source_rank])
-        if _contiguous_owner(pid, len(plan.source_ranges), plan.npartitions)
+        if partition_owner(pid, len(plan.source_ranges), plan.npartitions)
         == destination_rank
     ]
 
@@ -561,7 +546,7 @@ async def _send_remote_partition(
     )
     stream = chunk.stream
     exchange.insert(
-        _contiguous_owner(pid, comm.nranks, npartitions),
+        partition_owner(pid, comm.nranks, npartitions),
         packed_data_from_cudf_packed_columns(
             pack(
                 chunk.table_view(),
@@ -653,7 +638,7 @@ async def _adjust_ordering_impl(
     owed_remote_pid_set = set(plan.owed_remote_pids)
     for pid in range(pre_start, pre_stop):
         piece = await buffer.collect_output_partition(pid)
-        owner = _contiguous_owner(pid, comm.nranks, plan.npartitions)
+        owner = partition_owner(pid, comm.nranks, plan.npartitions)
         if exchange is not None and pid in owed_remote_pid_set:
             await _send_remote_partition(
                 context,

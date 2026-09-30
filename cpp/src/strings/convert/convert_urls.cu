@@ -25,7 +25,8 @@
 #include <cooperative_groups.h>
 #include <cooperative_groups/reduce.h>
 #include <cooperative_groups/scan.h>
-#include <cub/cub.cuh>
+#include <cub/warp/warp_reduce.cuh>
+#include <cub/warp/warp_scan.cuh>
 #include <cuda/std/algorithm>
 #include <cuda/stream>
 
@@ -409,7 +410,8 @@ std::unique_ptr<column> url_decode(strings_column_view const& strings,
   CUDF_CUDA_TRY(cudaGetLastError());
 
   // copy null mask
-  rmm::device_buffer null_mask = cudf::detail::copy_bitmask(strings.parent(), stream, mr);
+  cuda::device_buffer<std::byte> null_mask =
+    cudf::detail::copy_bitmask(strings.parent(), stream, mr);
 
   return make_strings_column(strings_count,
                              std::move(offsets_column),

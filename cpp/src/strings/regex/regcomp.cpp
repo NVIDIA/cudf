@@ -274,7 +274,8 @@ class regex_parser {
       ranges.push_back({'_', '_'});
     } else {
       ranges.back().last = 'A' - 1;
-      ranges.push_back({'Z' + 1, 'a' - 1});  // {'_'-1, '_' + 1}
+      ranges.push_back({'Z' + 1, '_' - 1});
+      ranges.push_back({'_' + 1, 'a' - 1});
       ranges.push_back({'z' + 1, MAX_REGEX_CHAR});
     }
   }
@@ -492,8 +493,8 @@ class regex_parser {
           } else {
             if (_id_cclass_s < 0) { _id_cclass_s = _prog.add_class(cclass_s); }
             _cclass_id = _id_cclass_s;
-            return NCCLASS;
           }
+          return NCCLASS;
         }
         case 'd': {
           if (is_ascii(_flags)) {

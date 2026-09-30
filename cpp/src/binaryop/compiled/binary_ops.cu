@@ -53,7 +53,7 @@ struct scalar_as_column_view {
     // Null scalar needs a single-element null mask (kept alive by an auxiliary column) as its
     // validity (bool) cannot be reinterpreted as `bitmask_type` without reading out of bounds.
     auto null_mask = cudf::detail::create_null_mask(1, cudf::mask_state::ALL_NULL, stream, mr);
-    auto const* null_mask_ptr = static_cast<bitmask_type const*>(null_mask.data());
+    auto const* null_mask_ptr = reinterpret_cast<bitmask_type const*>(null_mask.data());
     auto aux_col              = std::make_unique<column>(
       data_type{type_id::INT8}, 0, rmm::device_buffer{}, std::move(null_mask), 1);
     auto col_v = column_view(s.type(), 1, h_scalar_type_view.data(), null_mask_ptr, 1);
@@ -89,7 +89,7 @@ scalar_as_column_view::return_type scalar_as_column_view::operator()<cudf::strin
   // Null scalar needs a single-element null mask and offsets (kepy alive by an auxiliary column) as
   // its validity (bool) cannot be reinterpreted as `bitmask_type` without reading out of bounds.
   auto null_mask = cudf::detail::create_null_mask(1, cudf::mask_state::ALL_NULL, stream, mr);
-  auto const* null_mask_ptr = static_cast<bitmask_type const*>(null_mask.data());
+  auto const* null_mask_ptr = reinterpret_cast<bitmask_type const*>(null_mask.data());
   auto col_v                = cudf::column_view(
     s.type(), 1, h_scalar_type_view.data(), null_mask_ptr, 1, 0, {offsets_column->view()});
   std::vector<std::unique_ptr<column>> children;

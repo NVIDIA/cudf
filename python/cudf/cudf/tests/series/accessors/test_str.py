@@ -89,6 +89,21 @@ def test_replace_invalid_scalar_repl():
         ser.str.replace("1", 2)
 
 
+@pytest.mark.parametrize("flags", [re.IGNORECASE, re.MULTILINE, re.DOTALL])
+@pytest.mark.parametrize("pattern_flags", [0, re.IGNORECASE])
+def test_contains_compiled_pattern_with_flags(flags, pattern_flags):
+    ps = pd.Series(["foo", "bar", "Baz"])
+    gs = cudf.from_pandas(ps)
+    pattern = re.compile("ba.", pattern_flags)
+
+    assert_exceptions_equal(
+        lfunc=gs.str.contains,
+        rfunc=ps.str.contains,
+        lfunc_args_and_kwargs=((pattern,), {"flags": flags}),
+        rfunc_args_and_kwargs=((pattern,), {"flags": flags}),
+    )
+
+
 def test_string_methods_setattr():
     ser = cudf.Series(["ab", "cd", "ef"])
     pser = ser.to_pandas()
@@ -2513,6 +2528,23 @@ def test_string_join(ps_gs, sep):
     got = gs.str.join(sep)
 
     assert_eq(expect, got)
+
+
+@pytest.mark.parametrize(
+    "data",
+    [
+        ["ab", "", None, "c"],
+        ["", ""],
+        ["", None],
+        ["x", None, "", "yz", None],
+    ],
+)
+def test_string_join_empty_strings(data):
+    gs = cudf.Series(data)
+    ps = gs.to_pandas()
+
+    assert_eq(ps.str.join("-"), gs.str.join("-"))
+    assert_eq(ps[1:].str.join("-"), gs[1:].str.join("-"))
 
 
 @pytest.mark.parametrize("pat", [r"(a)", r"(f)", r"([a-z])", r"([A-Z])"])

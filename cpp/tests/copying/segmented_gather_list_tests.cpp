@@ -32,9 +32,6 @@ using FixedWidthTypesNotBool = cudf::test::Concat<cudf::test::IntegralTypesNotBo
                                                   cudf::test::TimestampTypes>;
 TYPED_TEST_SUITE(SegmentedGatherTest, FixedWidthTypesNotBool);
 
-// to disambiguate between {} == 0 and {} == List{0}
-// Also, see note about compiler issues when declaring nested
-// empty lists in lists_column_wrapper documentation
 template <typename T>
 using LCW = cudf::test::lists_column_wrapper<T, int32_t>;
 using namespace cudf::test::iterators;
@@ -109,9 +106,9 @@ TYPED_TEST(SegmentedGatherTest, GatherNothing)
                                                        mr.get_output_mr());
 
     // hack to get column of empty list of list
-    LCW<T> col{{{{1, 2, 3, 4}, {5}}, {}, {}, {}}, stream, mr};
+    LCW<T> expected_dummy{{{{1, 2, 3, 4}, {5}}, {}, {}, {}}, stream, mr};
 
-    auto const expected = cudf::split(col, {1}, stream)[1];
+    auto const expected = cudf::split(expected_dummy, {1}, stream)[1];
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(
       *results, expected, cudf::test::debug_output_level::FIRST_ERROR, stream, mr);
   }
@@ -125,9 +122,9 @@ TYPED_TEST(SegmentedGatherTest, GatherNothing)
                                                        stream,
                                                        mr.get_output_mr());
     // hack to get column of empty list of list of list
-    LCW<T> col{{{{{1, 2, 3, 4}}}, {}, {}}, stream, mr};
+    LCW<T> expected_dummy{{{{{1, 2, 3, 4}}}, {}, {}}, stream, mr};
 
-    auto const expected = cudf::split(col, {1}, stream)[1];
+    auto const expected = cudf::split(expected_dummy, {1}, stream)[1];
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(
       *results, expected, cudf::test::debug_output_level::FIRST_ERROR, stream, mr);
 
@@ -501,7 +498,6 @@ TYPED_TEST(SegmentedGatherTest, GatherNestedWithEmpties)
   auto const mr     = this->resources();
 
   LCW<T> list{{{{2, 3}, {}}, {{6, 7, 8}, {9, 10, 11}, {12, 13, 14}}, {{}}}, stream, mr};
-  // Per-row singleton lists: {{0},{0},{0}} flattens to one list of three.
   LCW<int> gather_map({{0}, {0}, {0}}, stream, mr);
   auto results = cudf::lists::segmented_gather(cudf::lists_column_view{list},
                                                cudf::lists_column_view{gather_map},
@@ -523,25 +519,25 @@ TYPED_TEST(SegmentedGatherTest, GatherSliced)
   auto const mr     = this->resources();
 
   {
-    LCW<T> col{{
-                 {{1, 1, 1}, {2, 2}, {3, 3}},
-                 {{4, 4, 4}, {5, 5}, {6, 6}},
-                 {{7, 7, 7}, {8, 8}, {9, 9}},
-                 {{10, 10, 10}, {11, 11}, {12, 12}},
-                 {{20, 20, 20, 20}, {25}},
-                 {{30, 30, 30, 30}, {40}},
-                 {{50, 50, 50, 50}, {6, 13}},
-                 {{70, 70, 70, 70}, {80}},
-               },
-               stream,
-               mr};
+    LCW<T> a{{
+               {{1, 1, 1}, {2, 2}, {3, 3}},
+               {{4, 4, 4}, {5, 5}, {6, 6}},
+               {{7, 7, 7}, {8, 8}, {9, 9}},
+               {{10, 10, 10}, {11, 11}, {12, 12}},
+               {{20, 20, 20, 20}, {25}},
+               {{30, 30, 30, 30}, {40}},
+               {{50, 50, 50, 50}, {6, 13}},
+               {{70, 70, 70, 70}, {80}},
+             },
+             stream,
+             mr};
 
-    auto const split_a = cudf::split(col, {3}, stream);
+    auto const split_a = cudf::split(a, {3}, stream);
 
     {
-      LCW<int> map_col{{{1, 2}, {0, 2}, {0, 1}}, stream, mr};
+      LCW<int> list{{{1, 2}, {0, 2}, {0, 1}}, stream, mr};
 
-      auto const gather_map = cudf::lists_column_view{map_col};
+      auto const gather_map = cudf::lists_column_view{list};
       auto const result     = cudf::lists::segmented_gather(cudf::lists_column_view{split_a[0]},
                                                         gather_map,
                                                         cudf::out_of_bounds_policy::DONT_CHECK,
@@ -559,9 +555,9 @@ TYPED_TEST(SegmentedGatherTest, GatherSliced)
     }
 
     {
-      LCW<int> map_col{{{0, 1}, {}, {}, {0, 1}, {}}, stream, mr};
+      LCW<int> list{{{0, 1}, {}, {}, {0, 1}, {}}, stream, mr};
 
-      auto const gather_map = cudf::lists_column_view{map_col};
+      auto const gather_map = cudf::lists_column_view{list};
       auto const result     = cudf::lists::segmented_gather(cudf::lists_column_view{split_a[1]},
                                                         gather_map,
                                                         cudf::out_of_bounds_policy::DONT_CHECK,
@@ -578,7 +574,7 @@ TYPED_TEST(SegmentedGatherTest, GatherSliced)
 
   // List<List<List<T>>>
   {
-    LCW<T> col{
+    LCW<T> list{
       {// slice 0
        {{{2, 3}, {4, 5}}, {{6, 7, 8}, {9, 10, 11}, {12, 13, 14}}},
 
@@ -598,7 +594,7 @@ TYPED_TEST(SegmentedGatherTest, GatherSliced)
       stream,
       mr};
 
-    auto sliced = cudf::slice(col, {0, 1, 2, 5, 5, 7}, stream);
+    auto sliced = cudf::slice(list, {0, 1, 2, 5, 5, 7}, stream);
 
     // gather from slice 0
     {
@@ -735,23 +731,22 @@ TEST_F(SegmentedGatherTestFloat, GatherMapSliced)
 
   // List<T>
   {
-    LCW<T> list_col{
-      {{1, 2, 3, 4}, {5}, {6, 7}, {8, 9, 10}, {11, 12}, {13, 14, 15, 16}}, stream, mr};
-    LCW<int> gather_map_col{{{3, 2, 1, 0}, {0}, {0, 1}, {0, 2, 1}, {0}, {1}}, stream, mr};
+    LCW<T> list{{{1, 2, 3, 4}, {5}, {6, 7}, {8, 9, 10}, {11, 12}, {13, 14, 15, 16}}, stream, mr};
+    LCW<int> gather_map{{{3, 2, 1, 0}, {0}, {0, 1}, {0, 2, 1}, {0}, {1}}, stream, mr};
     // gather_map.offset: 0, 4, 5, 7, 10, 11, 12
-    LCW<T> expected_col{{{4, 3, 2, 1}, {5}, {6, 7}, {8, 10, 9}, {11}, {14}}, stream, mr};
+    LCW<T> expected{{{4, 3, 2, 1}, {5}, {6, 7}, {8, 10, 9}, {11}, {14}}, stream, mr};
 
-    auto const results = cudf::lists::segmented_gather(cudf::lists_column_view{list_col},
-                                                       cudf::lists_column_view{gather_map_col},
+    auto const results = cudf::lists::segmented_gather(cudf::lists_column_view{list},
+                                                       cudf::lists_column_view{gather_map},
                                                        cudf::out_of_bounds_policy::DONT_CHECK,
                                                        stream,
                                                        mr.get_output_mr());
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(
-      results->view(), expected_col, cudf::test::debug_output_level::FIRST_ERROR, stream, mr);
+      results->view(), expected, cudf::test::debug_output_level::FIRST_ERROR, stream, mr);
 
-    auto const sliced  = cudf::split(list_col, {1, 4}, stream);
-    auto const split_m = cudf::split(gather_map_col, {1, 4}, stream);
-    auto const split_e = cudf::split(expected_col, {1, 4}, stream);
+    auto const sliced  = cudf::split(list, {1, 4}, stream);
+    auto const split_m = cudf::split(gather_map, {1, 4}, stream);
+    auto const split_e = cudf::split(expected, {1, 4}, stream);
 
     auto result0 = cudf::lists::segmented_gather(cudf::lists_column_view{sliced[0]},
                                                  cudf::lists_column_view{split_m[0]},
@@ -790,24 +785,23 @@ TEST_F(SegmentedGatherTestFloat, GatherMapSliced)
 
   // List<T>, with out-of-bounds gather indices.
   {
-    LCW<T> list_col{
-      {{1, 2, 3, 4}, {5}, {6, 7}, {8, 9, 10}, {11, 12}, {13, 14, 15, 16}}, stream, mr};
-    LCW<int> gather_map_col{{{3, -5, 1, 0}, {0}, {0, 1}, {0, 2, 3}, {0}, {1}}, stream, mr};
+    LCW<T> list{{{1, 2, 3, 4}, {5}, {6, 7}, {8, 9, 10}, {11, 12}, {13, 14, 15, 16}}, stream, mr};
+    LCW<int> gather_map{{{3, -5, 1, 0}, {0}, {0, 1}, {0, 2, 3}, {0}, {1}}, stream, mr};
     // gather_map.offset: 0, 4, 5, 7, 10, 11, 12
-    LCW<T> expected_col{
+    LCW<T> expected{
       {{{4, 0, 2, 1}, null_at(1)}, {5}, {6, 7}, {{8, 10, 9}, null_at(2)}, {11}, {14}}, stream, mr};
 
-    auto results = cudf::lists::segmented_gather(cudf::lists_column_view{list_col},
-                                                 cudf::lists_column_view{gather_map_col},
+    auto results = cudf::lists::segmented_gather(cudf::lists_column_view{list},
+                                                 cudf::lists_column_view{gather_map},
                                                  NULLIFY,
                                                  stream,
                                                  mr.get_output_mr());
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(
-      results->view(), expected_col, cudf::test::debug_output_level::FIRST_ERROR, stream, mr);
+      results->view(), expected, cudf::test::debug_output_level::FIRST_ERROR, stream, mr);
 
-    auto const sliced  = cudf::split(list_col, {1, 4}, stream);
-    auto const split_m = cudf::split(gather_map_col, {1, 4}, stream);
-    auto const split_e = cudf::split(expected_col, {1, 4}, stream);
+    auto const sliced  = cudf::split(list, {1, 4}, stream);
+    auto const split_m = cudf::split(gather_map, {1, 4}, stream);
+    auto const split_e = cudf::split(expected, {1, 4}, stream);
 
     auto const result0 = cudf::lists::segmented_gather(cudf::lists_column_view{sliced[0]},
                                                        cudf::lists_column_view{split_m[0]},

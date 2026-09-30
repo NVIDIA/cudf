@@ -27,9 +27,6 @@ TYPED_TEST_SUITE(GatherTestListTyped, FixedWidthTypesNotBool);
 
 class GatherTestList : public cudf::test::BaseFixtureWithHarness {};
 
-// to disambiguate between {} == 0 and {} == List{0}
-// Also, see note about compiler issues when declaring nested
-// empty lists in lists_column_wrapper documentation
 template <typename T>
 using LCW = cudf::test::lists_column_wrapper<T, int32_t>;
 
@@ -44,10 +41,10 @@ TYPED_TEST(GatherTestListTyped, Gather)
   auto const mr     = this->resources();
 
   // List<T>
-  LCW<T> list_col{{{1, 2, 3, 4}, {5}, {6, 7}, {8, 9, 10}}, stream, mr};
+  LCW<T> list{{{1, 2, 3, 4}, {5}, {6, 7}, {8, 9, 10}}, stream, mr};
   cudf::test::fixed_width_column_wrapper<int> gather_map{{0, 2}, stream, mr};
 
-  cudf::table_view source_table({list_col});
+  cudf::table_view source_table({list});
   auto results = cudf::gather(
     source_table, gather_map, cudf::out_of_bounds_policy::DONT_CHECK, stream, mr.get_output_mr());
 
@@ -81,10 +78,10 @@ TYPED_TEST(GatherTestListTyped, GatherNothing)
 
   // List<T>
   {
-    LCW<int> list_col{{{{{1, 2, 3, 4}, {5}}}, {{{6, 7}, {8, 9, 10}}}}, stream, mr};
+    LCW<int> list{{{{{1, 2, 3, 4}, {5}}}, {{{6, 7}, {8, 9, 10}}}}, stream, mr};
     cudf::test::fixed_width_column_wrapper<int> gather_map{};
 
-    cudf::table_view source_table({list_col});
+    cudf::table_view source_table({list});
     auto result = cudf::gather(
       source_table, gather_map, cudf::out_of_bounds_policy::DONT_CHECK, stream, mr.get_output_mr());
 
@@ -114,11 +111,10 @@ TYPED_TEST(GatherTestListTyped, GatherNulls)
   auto valids = cudf::test::iterators::valids_at_multiples_of(2);
 
   // List<T>
-  LCW<T> list_col{
-    {{{1, 2, 3, 4}, valids}, {5}, {{6, 7}, valids}, {{8, 9, 10}, valids}}, stream, mr};
+  LCW<T> list{{{{1, 2, 3, 4}, valids}, {5}, {{6, 7}, valids}, {{8, 9, 10}, valids}}, stream, mr};
   cudf::test::fixed_width_column_wrapper<int> gather_map{{0, 2}, stream, mr};
 
-  cudf::table_view source_table({list_col});
+  cudf::table_view source_table({list});
   auto results = cudf::gather(
     source_table, gather_map, cudf::out_of_bounds_policy::DONT_CHECK, stream, mr.get_output_mr());
 
@@ -137,14 +133,14 @@ TYPED_TEST(GatherTestListTyped, GatherNested)
 
   // List<List<T>>
   {
-    LCW<T> list_col{{{{2, 3}, {4, 5}},
-                     {{6, 7, 8}, {9, 10, 11}, {12, 13, 14}},
-                     {{15, 16}, {17, 18}, {17, 18}, {17, 18}, {17, 18}}},
-                    stream,
-                    mr};
+    LCW<T> list{{{{2, 3}, {4, 5}},
+                 {{6, 7, 8}, {9, 10, 11}, {12, 13, 14}},
+                 {{15, 16}, {17, 18}, {17, 18}, {17, 18}, {17, 18}}},
+                stream,
+                mr};
     cudf::test::fixed_width_column_wrapper<int> gather_map{{0, 2}, stream, mr};
 
-    cudf::table_view source_table({list_col});
+    cudf::table_view source_table({list});
     auto results = cudf::gather(
       source_table, gather_map, cudf::out_of_bounds_policy::DONT_CHECK, stream, mr.get_output_mr());
 
@@ -157,18 +153,18 @@ TYPED_TEST(GatherTestListTyped, GatherNested)
 
   // List<List<List<T>>>
   {
-    LCW<T> list_col{{{{{2, 3}, {4, 5}}, {{6, 7, 8}, {9, 10, 11}, {12, 13, 14}}},
-                     {{{15, 16}, {17, 18}, {17, 18}, {17, 18}, {17, 18}}},
-                     {{{0}}},
-                     {{{10}, {20, 30, 40, 50}, {60, 70, 80}},
-                      {{0, 1, 3}, {5}},
-                      {{11, 12, 13, 14, 15}, {16, 17}, {0}}},
-                     {{{10, 20}}, {{30}}, {{40, 50}, {60, 70, 80}}}},
-                    stream,
-                    mr};
+    LCW<T> list{{{{{2, 3}, {4, 5}}, {{6, 7, 8}, {9, 10, 11}, {12, 13, 14}}},
+                 {{{15, 16}, {17, 18}, {17, 18}, {17, 18}, {17, 18}}},
+                 {{{0}}},
+                 {{{10}, {20, 30, 40, 50}, {60, 70, 80}},
+                  {{0, 1, 3}, {5}},
+                  {{11, 12, 13, 14, 15}, {16, 17}, {0}}},
+                 {{{10, 20}}, {{30}}, {{40, 50}, {60, 70, 80}}}},
+                stream,
+                mr};
     cudf::test::fixed_width_column_wrapper<int> gather_map{{1, 2, 4}, stream, mr};
 
-    cudf::table_view source_table({list_col});
+    cudf::table_view source_table({list});
     auto results = cudf::gather(
       source_table, gather_map, cudf::out_of_bounds_policy::DONT_CHECK, stream, mr.get_output_mr());
 
@@ -192,14 +188,14 @@ TYPED_TEST(GatherTestListTyped, GatherOutOfOrder)
 
   // List<List<T>>
   {
-    LCW<T> list_col{{{{2, 3}, {4, 5}},
-                     {{6, 7, 8}, {9, 10, 11}, {12, 13, 14}},
-                     {{15, 16}, {17, 18}, {17, 18}, {17, 18}, {17, 18}}},
-                    stream,
-                    mr};
+    LCW<T> list{{{{2, 3}, {4, 5}},
+                 {{6, 7, 8}, {9, 10, 11}, {12, 13, 14}},
+                 {{15, 16}, {17, 18}, {17, 18}, {17, 18}, {17, 18}}},
+                stream,
+                mr};
     cudf::test::fixed_width_column_wrapper<int> gather_map{{1, 2, 0}, stream, mr};
 
-    cudf::table_view source_table({list_col});
+    cudf::table_view source_table({list});
     auto results = cudf::gather(
       source_table, gather_map, cudf::out_of_bounds_policy::DONT_CHECK, stream, mr.get_output_mr());
 
@@ -225,17 +221,16 @@ TYPED_TEST(GatherTestListTyped, GatherNestedNulls)
 
   // List<List<T>>
   {
-    LCW<T> list_col{
-      {{{{2, 3}, valids}, {4, 5}},
-       {{{6, 7, 8}, {9, 10, 11}, {12, 13, 14}}, valids},
-       {{15, 16}, {17, 18}, {17, 18}, {17, 18}, {17, 18}},
-       {{{{25, 26}, valids}, {27, 28}, {{29, 30}, valids}, {31, 32}, {33, 34}}, valids}},
-      stream,
-      mr};
+    LCW<T> list{{{{{2, 3}, valids}, {4, 5}},
+                 {{{6, 7, 8}, {9, 10, 11}, {12, 13, 14}}, valids},
+                 {{15, 16}, {17, 18}, {17, 18}, {17, 18}, {17, 18}},
+                 {{{{25, 26}, valids}, {27, 28}, {{29, 30}, valids}, {31, 32}, {33, 34}}, valids}},
+                stream,
+                mr};
 
     cudf::test::fixed_width_column_wrapper<int> gather_map{{0, 1, 3}, stream, mr};
 
-    cudf::table_view source_table({list_col});
+    cudf::table_view source_table({list});
     auto results = cudf::gather(
       source_table, gather_map, cudf::out_of_bounds_policy::DONT_CHECK, stream, mr.get_output_mr());
 
@@ -252,19 +247,19 @@ TYPED_TEST(GatherTestListTyped, GatherNestedNulls)
 
   // List<List<List<T>>>
   {
-    LCW<T> list_col{{{{{2, 3}, {4, 5}}, {{6, 7, 8}, {9, 10, 11}, {12, 13, 14}}},
-                     {{{15, 16}, {{27, 28}, valids}, {{37, 38}, valids}, {47, 48}, {57, 58}}},
-                     {{{0}}},
-                     {{{10}, {20, 30, 40, 50}, {60, 70, 80}},
-                      {{0, 1, 3}, {5}},
-                      {{11, 12, 13, 14, 15}, {16, 17}, {0}}},
-                     {{{{{10, 20}, valids}}, {{30}}, {{40, 50}, {60, 70, 80}}}, valids}},
-                    stream,
-                    mr};
+    LCW<T> list{{{{{2, 3}, {4, 5}}, {{6, 7, 8}, {9, 10, 11}, {12, 13, 14}}},
+                 {{{15, 16}, {{27, 28}, valids}, {{37, 38}, valids}, {47, 48}, {57, 58}}},
+                 {{{0}}},
+                 {{{10}, {20, 30, 40, 50}, {60, 70, 80}},
+                  {{0, 1, 3}, {5}},
+                  {{11, 12, 13, 14, 15}, {16, 17}, {0}}},
+                 {{{{{10, 20}, valids}}, {{30}}, {{40, 50}, {60, 70, 80}}}, valids}},
+                stream,
+                mr};
 
     cudf::test::fixed_width_column_wrapper<int> gather_map{{1, 2, 4}, stream, mr};
 
-    cudf::table_view source_table({list_col});
+    cudf::table_view source_table({list});
     auto results = cudf::gather(
       source_table, gather_map, cudf::out_of_bounds_policy::DONT_CHECK, stream, mr.get_output_mr());
 
@@ -286,10 +281,10 @@ TYPED_TEST(GatherTestListTyped, GatherNestedWithEmpties)
   auto const stream = this->stream();
   auto const mr     = this->resources();
 
-  LCW<T> list_col{{{{2, 3}, {}}, {{6, 7, 8}, {9, 10, 11}, {12, 13, 14}}, {{}}}, stream, mr};
+  LCW<T> list{{{{2, 3}, {}}, {{6, 7, 8}, {9, 10, 11}, {12, 13, 14}}, {{}}}, stream, mr};
   cudf::test::fixed_width_column_wrapper<int> gather_map{{0, 2}, stream, mr};
 
-  cudf::table_view source_table({list_col});
+  cudf::table_view source_table({list});
   auto results = cudf::gather(
     source_table, gather_map, cudf::out_of_bounds_policy::DONT_CHECK, stream, mr.get_output_mr());
 
@@ -308,14 +303,14 @@ TYPED_TEST(GatherTestListTyped, GatherDetailInvalidIndex)
 
   // List<List<T>>
   {
-    LCW<T> list_col{{{{2, 3}, {4, 5}},
-                     {{6, 7, 8}, {9, 10, 11}, {12, 13, 14}},
-                     {{15, 16}, {17, 18}, {17, 18}, {17, 18}, {17, 18}}},
-                    stream,
-                    mr};
+    LCW<T> list{{{{2, 3}, {4, 5}},
+                 {{6, 7, 8}, {9, 10, 11}, {12, 13, 14}},
+                 {{15, 16}, {17, 18}, {17, 18}, {17, 18}, {17, 18}}},
+                stream,
+                mr};
     cudf::test::fixed_width_column_wrapper<int> gather_map{{0, 15, 16, 2}, stream, mr};
 
-    cudf::table_view source_table({list_col});
+    cudf::table_view source_table({list});
     auto results = cudf::gather(
       source_table, gather_map, cudf::out_of_bounds_policy::NULLIFY, stream, mr.get_output_mr());
 
@@ -339,11 +334,11 @@ TEST_F(GatherTestList, GatherIncompleteHierarchies)
   {
     // List<List<List<int>, but rows 1 and 2 are empty at the very top.
     // We expect to get back a "full" hierarchy of type List<List<List<int>> anyway.
-    LCW<int32_t> list_col{{{{{1, 2}}}, {}, {}}, stream, mr};
+    LCW<int32_t> list{{{{{1, 2}}}, {}, {}}, stream, mr};
 
     cudf::test::fixed_width_column_wrapper<int32_t> row1_map{{1}, stream, mr};
 
-    cudf::table_view source_table({list_col});
+    cudf::table_view source_table({list});
     auto result = cudf::gather(
       source_table, row1_map, cudf::out_of_bounds_policy::DONT_CHECK, stream, mr.get_output_mr());
 
@@ -365,11 +360,11 @@ TEST_F(GatherTestList, GatherIncompleteHierarchies)
   {
     // List<List<List<int>, gathering nothing.
     // We expect to get back a "full" hierarchy of type List<List<List<int>> anyway.
-    LCW<int32_t> list_col{{{{{1, 2}}}, {}}, stream, mr};
+    LCW<int32_t> list{{{{{1, 2}}}, {}}, stream, mr};
 
     cudf::test::fixed_width_column_wrapper<int32_t> empty_map{};
 
-    cudf::table_view source_table({list_col});
+    cudf::table_view source_table({list});
     auto result = cudf::gather(
       source_table, empty_map, cudf::out_of_bounds_policy::DONT_CHECK, stream, mr.get_output_mr());
 
@@ -397,20 +392,20 @@ TYPED_TEST(GatherTestListTyped, GatherSliced)
   auto const mr     = this->resources();
 
   {
-    LCW<T> col{{
-                 {{1, 1, 1}, {2, 2}, {3, 3}},
-                 {{4, 4, 4}, {5, 5}, {6, 6}},
-                 {{7, 7, 7}, {8, 8}, {9, 9}},
-                 {{10, 10, 10}, {11, 11}, {12, 12}},
-                 {{20, 20, 20, 20}, {25}},
-                 {{30, 30, 30, 30}, {40}},
-                 {{50, 50, 50, 50}, {6, 13}},
-                 {{70, 70, 70, 70}, {80}},
-               },
-               stream,
-               mr};
+    LCW<T> a{{
+               {{1, 1, 1}, {2, 2}, {3, 3}},
+               {{4, 4, 4}, {5, 5}, {6, 6}},
+               {{7, 7, 7}, {8, 8}, {9, 9}},
+               {{10, 10, 10}, {11, 11}, {12, 12}},
+               {{20, 20, 20, 20}, {25}},
+               {{30, 30, 30, 30}, {40}},
+               {{50, 50, 50, 50}, {6, 13}},
+               {{70, 70, 70, 70}, {80}},
+             },
+             stream,
+             mr};
 
-    auto split_a = cudf::split(col, {3}, stream);
+    auto split_a = cudf::split(a, {3}, stream);
     cudf::table_view tbl0({split_a[0]});
     cudf::table_view tbl1({split_a[1]});
 
@@ -449,7 +444,7 @@ TYPED_TEST(GatherTestListTyped, GatherSliced)
 
   // List<List<List<T>>>
   {
-    LCW<T> col{
+    LCW<T> list{
       {// slice 0
        {{{2, 3}, {4, 5}}, {{6, 7, 8}, {9, 10, 11}, {12, 13, 14}}},
 
@@ -469,7 +464,7 @@ TYPED_TEST(GatherTestListTyped, GatherSliced)
       stream,
       mr};
 
-    auto sliced = cudf::slice(col, {0, 1, 2, 5, 5, 7}, stream);
+    auto sliced = cudf::slice(list, {0, 1, 2, 5, 5, 7}, stream);
 
     // gather from slice 0
     {

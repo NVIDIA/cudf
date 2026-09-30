@@ -1035,9 +1035,6 @@ TEST_F(ListsColumnTest, ConcatenateLists)
 
 TEST_F(ListsColumnTest, ConcatenateEmptyLists)
 {
-  // to disambiguate between {} == 0 and {} == List{0}
-  // Also, see note about compiler issues when declaring nested
-  // empty lists in lists_column_wrapper documentation
   {
     cudf::test::lists_column_wrapper<int> a;
     cudf::test::lists_column_wrapper<int> b{4, 5, 6, 7};
@@ -1147,9 +1144,6 @@ TEST_F(ListsColumnTest, ConcatenateNestedLists)
 TEST_F(ListsColumnTest, ConcatenateNestedEmptyLists)
 {
   using T = int;
-  // to disambiguate between {} == 0 and {} == List{0}
-  // Also, see note about compiler issues when declaring nested
-  // empty lists in lists_column_wrapper documentation
   {
     cudf::test::lists_column_wrapper<T> a{{{}}, {{0, 1}, {2, 3}}};
     cudf::test::lists_column_wrapper<int> b{{{6, 7}}, {{}, {11, 12}}};
@@ -1222,9 +1216,6 @@ TEST_F(ListsColumnTest, ConcatenateNestedListsWithNulls)
 
 TEST_F(ListsColumnTest, ConcatenateMismatchedHierarchies)
 {
-  // to disambiguate between {} == 0 and {} == List{0}
-  // Also, see note about compiler issues when declaring nested
-  // empty lists in lists_column_wrapper documentation
   {
     cudf::test::lists_column_wrapper<int> a{{{{{}}}}};
     cudf::test::lists_column_wrapper<int> b{{{{}}}};

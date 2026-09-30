@@ -24,7 +24,6 @@
 
 #include <cub/block/block_reduce.cuh>
 #include <cub/block/block_scan.cuh>
-#include <cub/warp/warp_scan.cuh>
 #include <cuda/functional>
 #include <cuda/iterator>
 #include <cuda/std/iterator>

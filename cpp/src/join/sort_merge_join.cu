@@ -32,7 +32,6 @@
 #include <cub/device/device_copy.cuh>
 #include <cub/device/device_merge.cuh>
 #include <cub/device/device_select.cuh>
-#include <cub/device/device_transform.cuh>
 #include <cuda/functional>
 #include <cuda/iterator>
 #include <cuda/std/algorithm>

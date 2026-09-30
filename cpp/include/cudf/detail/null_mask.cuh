@@ -19,7 +19,6 @@
 #include <rmm/exec_policy.hpp>
 
 #include <cooperative_groups.h>
-#include <cub/block/block_reduce.cuh>
 #include <cub/device/device_segmented_reduce.cuh>
 #include <cuda/atomic>
 #include <cuda/bit>

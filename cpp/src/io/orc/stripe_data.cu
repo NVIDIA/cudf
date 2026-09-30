@@ -10,7 +10,6 @@
 #include <cudf/io/orc_types.hpp>
 
 #include <cub/block/block_reduce.cuh>
-#include <cub/warp/warp_reduce.cuh>
 #include <cuda/functional>
 #include <cuda/stream>
 

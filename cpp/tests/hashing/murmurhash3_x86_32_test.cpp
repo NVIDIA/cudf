@@ -97,7 +97,8 @@ TEST_F(MurmurHashTest, MultiValueNulls)
   cudf::test::fixed_width_column_wrapper<int32_t> const ints_col2(
     {0, -200, 200, limits::min(), limits::max()}, {true, false, false, true, true});
 
-  // Nulls with different values should be equal
+  // Nulls with different values should be equal. Use canonical bool values here; the differing
+  // values are hidden by the null masks. `NonCanonicalBool` covers hasher canonicalization.
   cudf::test::fixed_width_column_wrapper<bool> const bools_col1({0, 1, 0, 1, 1},
                                                                 {true, true, false, false, true});
   cudf::test::fixed_width_column_wrapper<bool> const bools_col2({0, 1, 1, 0, 1},

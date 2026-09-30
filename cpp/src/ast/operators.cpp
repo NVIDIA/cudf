@@ -20,8 +20,6 @@
 #include <cudf/utilities/traits.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
-#include <cuda/std/type_traits>
-
 #include <span>
 #include <string>
 #include <string_view>

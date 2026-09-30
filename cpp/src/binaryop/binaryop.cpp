@@ -39,9 +39,6 @@
 #include <cudf/utilities/traits.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
-#include <cuda/std/optional>
-#include <cuda/stream>
-
 #include <string>
 
 namespace cudf {

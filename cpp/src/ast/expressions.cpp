@@ -13,8 +13,6 @@
 #include <cudf/types.hpp>
 #include <cudf/utilities/error.hpp>
 
-#include <cuda/stream>
-
 #include <algorithm>
 #include <functional>
 #include <memory>

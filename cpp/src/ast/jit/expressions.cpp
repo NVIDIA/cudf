@@ -10,8 +10,6 @@
 #include <cudf/detail/row_ir/opcode.hpp>
 #include <cudf/utilities/error.hpp>
 
-#include <cuda/stream>
-
 #include <initializer_list>
 #include <memory>
 #include <stdexcept>

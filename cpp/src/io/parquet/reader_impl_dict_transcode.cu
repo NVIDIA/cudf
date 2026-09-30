@@ -10,6 +10,7 @@
 #include <cudf/detail/iterator.cuh>
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/utilities/batched_memset.hpp>
+#include <cudf/detail/utilities/grid_1d.cuh>
 #include <cudf/detail/utilities/host_vector.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/dictionary/detail/encode.hpp>
@@ -17,14 +18,13 @@
 #include <cudf/reduction/detail/distinct_count.hpp>
 #include <cudf/strings/detail/strings_column_factories.cuh>
 #include <cudf/types.hpp>
+#include <cudf/utilities/error.hpp>
 #include <cudf/utilities/span.hpp>
 
-#include <rmm/exec_policy.hpp>
-
 #include <cuda/iterator>
+#include <cuda/std/array>
 #include <thrust/binary_search.h>
 #include <thrust/execution_policy.h>
-#include <thrust/for_each.h>
 
 #include <algorithm>
 #include <functional>
@@ -177,6 +177,97 @@ struct stacked_key_gather_fn {
 };
 
 /**
+ * @brief Resolve row ownership, remap dictionary indices to compact key space, in place.
+ *
+ * @tparam block_size The number of threads per block
+ * @tparam rows_per_thread The number of rows processed per thread
+ * @param indices INT32 index buffer (one entry per row), mutated in place
+ * @param row_offsets Per-chunk row boundaries `[offsets[k], offsets[k+1])`, size num_chunks+1
+ * @param key_counts_prefix Per-chunk key-prefix offsets into the stacked key space, size
+ * num_chunks+1
+ * @param stacked_to_unique Map from stacked-key position to compact unique-key index
+ */
+template <int block_size, int rows_per_thread>
+CUDF_KERNEL void __launch_bounds__(block_size)
+  remap_dict_indices_staged_kernel(cudf::device_span<int32_t> indices,
+                                   cudf::device_span<size_type const> row_offsets,
+                                   cudf::device_span<size_type const> key_counts_prefix,
+                                   cudf::device_span<int32_t const> stacked_to_unique)
+{
+  auto const tile_start = static_cast<size_type>(blockIdx.x) * block_size * rows_per_thread;
+
+  __shared__ size_type first_chunk;
+  __shared__ size_type first_key;
+  __shared__ bool tile_belongs_to_single_chunk;
+  __shared__ bool tile_has_keys;
+
+  if (threadIdx.x == 0) {
+    auto const it =
+      thrust::upper_bound(thrust::seq, row_offsets.begin(), row_offsets.end(), tile_start);
+    first_chunk = static_cast<size_type>(it - row_offsets.begin() - 1);
+    // Check if all the tile's rows belong to a single chunk.
+    auto const tile_rows = cuda::std::min(static_cast<size_type>(indices.size()) - tile_start,
+                                          block_size * rows_per_thread);
+    tile_belongs_to_single_chunk = tile_rows <= row_offsets[first_chunk + 1] - tile_start;
+    if (tile_belongs_to_single_chunk) {
+      first_key     = key_counts_prefix[first_chunk];
+      tile_has_keys = first_key != key_counts_prefix[first_chunk + 1];
+    }
+  }
+  __syncthreads();
+
+  cuda::std::array<int32_t, rows_per_thread> values;  // Array has multiple purposes and is reused.
+  cuda::std::array<bool, rows_per_thread> has_keys;
+
+  if (tile_belongs_to_single_chunk) {
+    // Most tiles fit within one row group. Reuse its key metadata for every row.
+    auto const base = first_key;
+    values.fill(base);
+    has_keys.fill(tile_has_keys);
+#pragma unroll
+    for (int i = 0; i < rows_per_thread; ++i) {
+      auto const row = tile_start + static_cast<size_type>(threadIdx.x) + i * block_size;
+      if (row >= static_cast<size_type>(indices.size())) { has_keys[i] = false; }
+    }
+  } else {
+    auto chunk = first_chunk;
+    values.fill(0);
+    has_keys.fill(false);
+#pragma unroll
+    for (int i = 0; i < rows_per_thread; ++i) {
+      auto const row = tile_start + static_cast<size_type>(threadIdx.x) + i * block_size;
+      if (row < static_cast<size_type>(indices.size())) {
+        while (row >= row_offsets[chunk + 1]) {
+          ++chunk;
+        }
+        auto const base = key_counts_prefix[chunk];
+        has_keys[i]     = base != key_counts_prefix[chunk + 1];
+        values[i]       = base;
+      }
+    }
+  }
+
+  // Load every usable row index before issuing any dependent map lookup.
+#pragma unroll
+  for (int i = 0; i < rows_per_thread; ++i) {
+    auto const row = tile_start + static_cast<size_type>(threadIdx.x) + i * block_size;
+    if (has_keys[i]) { values[i] += indices[row]; }
+  }
+
+  // Issue the map lookups before writing back any of the row results.
+#pragma unroll
+  for (int i = 0; i < rows_per_thread; ++i) {
+    values[i] = has_keys[i] ? stacked_to_unique[values[i]] : 0;
+  }
+
+#pragma unroll
+  for (int i = 0; i < rows_per_thread; ++i) {
+    auto const row = tile_start + static_cast<size_type>(threadIdx.x) + i * block_size;
+    if (row < static_cast<size_type>(indices.size())) { indices[row] = values[i]; }
+  }
+}
+
+/**
  * @brief Remap each row's dictionary index onto the deduplicated key space (in place).
  *
  * Each input row's decoded index is local to its own row group's dictionary. This function shifts
@@ -196,22 +287,16 @@ void remap_dict_indices_by_chunk(cudf::device_span<int32_t> indices,
                                  cudf::device_span<int32_t const> stacked_to_unique,
                                  cuda::stream_ref stream)
 {
-  thrust::for_each(
-    rmm::exec_policy_nosync(stream, get_current_device_resource_ref()),
-    cuda::counting_iterator<size_type>{0},
-    cuda::counting_iterator{static_cast<size_type>(indices.size())},
-    [row_offsets, key_counts_prefix, stacked_to_unique, indices] __device__(size_type row) -> void {
-      // Chunk owning `row` is the last offset <= row.
-      auto const it = thrust::upper_bound(thrust::seq, row_offsets.begin(), row_offsets.end(), row);
-      auto const k  = static_cast<size_type>(it - row_offsets.begin() - 1);
-      // Guard for all-null case.
-      if (key_counts_prefix[k] == key_counts_prefix[k + 1]) {
-        indices[row] = 0;
-        return;
-      }
-      auto const stacked_pos = key_counts_prefix[k] + indices[row];
-      indices[row]           = stacked_to_unique[stacked_pos];
-    });
+  if (indices.empty()) { return; }
+
+  constexpr int block_size      = 256;
+  constexpr int rows_per_thread = 4;
+  cudf::detail::grid_1d const grid{
+    static_cast<size_type>(indices.size()), block_size, rows_per_thread};
+  remap_dict_indices_staged_kernel<block_size, rows_per_thread>
+    <<<grid.num_blocks, grid.num_threads_per_block, 0, stream.get()>>>(
+      indices, row_offsets, key_counts_prefix, stacked_to_unique);
+  CUDF_CUDA_TRY(cudaGetLastError());
 }
 
 }  // namespace

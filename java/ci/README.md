@@ -4,7 +4,7 @@
 
 The scripts under `java/ci/` build the cuDF Java JAR for every Maven classifier the
 same way locally and in CI (GitHub Actions is only a thin wrapper that adds
-artifact upload/download). Each script pulls the RAPIDS `ci-wheel` build image,
+artifact upload/download). Each script pulls the `ci-wheel` build image,
 runs the build in a throwaway container, and writes its output to a host
 directory. No local `docker build` is required, and no GPU is required to build.
 

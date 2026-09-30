@@ -74,10 +74,9 @@ namespace {
 {
   std::vector<cudf::data_type> output_dtypes;
   output_dtypes.reserve(output_buffer_template.size());
-  std::transform(output_buffer_template.begin(),
-                 output_buffer_template.end(),
-                 std::back_inserter(output_dtypes),
-                 [](auto const& col) { return col.type; });
+  std::ranges::transform(output_buffer_template,
+                         std::back_inserter(output_dtypes),
+                         [](auto const& col) { return col.type; });
   return output_dtypes;
 }
 
@@ -92,10 +91,9 @@ namespace {
 {
   std::vector<inline_column_buffer> empty_buffers;
   empty_buffers.reserve(buffers.size());
-  std::transform(
-    buffers.begin(), buffers.end(), std::back_inserter(empty_buffers), [](auto const& buffer) {
-      return inline_column_buffer::empty_like(buffer);
-    });
+  std::ranges::transform(buffers, std::back_inserter(empty_buffers), [](auto const& buffer) {
+    return inline_column_buffer::empty_like(buffer);
+  });
   return empty_buffers;
 }
 
@@ -602,10 +600,9 @@ hybrid_scan_reader_impl::payload_pages_byte_ranges(
 
   auto column_schemas = std::vector<size_type>{};
   column_schemas.reserve(_input_columns.size());
-  std::transform(_input_columns.begin(),
-                 _input_columns.end(),
-                 std::back_inserter(column_schemas),
-                 [](auto const& col) { return col.schema_idx; });
+  std::ranges::transform(_input_columns, std::back_inserter(column_schemas), [](auto const& col) {
+    return col.schema_idx;
+  });
   CUDF_EXPECTS(_extended_metadata->page_index_presence(row_group_indices, column_schemas).second,
                "Page-level I/O for payload columns requires offset indexes to be present");
 
@@ -941,10 +938,9 @@ void hybrid_scan_reader_impl::setup_chunking_for_payload_columns(
   auto const num_columns = _input_columns.size();
   auto column_schemas    = std::vector<size_type>{};
   column_schemas.reserve(num_columns);
-  std::transform(_input_columns.begin(),
-                 _input_columns.end(),
-                 std::back_inserter(column_schemas),
-                 [](auto const& col) { return col.schema_idx; });
+  std::ranges::transform(_input_columns, std::back_inserter(column_schemas), [](auto const& col) {
+    return col.schema_idx;
+  });
   CUDF_EXPECTS(_extended_metadata->page_index_presence(row_group_indices, column_schemas).second,
                "Page-level I/O for payload columns requires offset indexes to be present");
 
@@ -1449,7 +1445,7 @@ void hybrid_scan_reader_impl::set_pass_page_mask(std::span<bool const> data_page
 
   // Handle the empty page mask case
   if (data_page_mask.empty()) {
-    std::fill(_pass_page_mask.begin(), _pass_page_mask.end(), true);
+    std::ranges::fill(_pass_page_mask, true);
     return;
   }
 

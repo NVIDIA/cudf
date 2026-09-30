@@ -2741,6 +2741,18 @@ def test_string_cat_elementwise_nulls(data, others, sep, na_rep):
     _assert_string_cat(data, others, sep, na_rep)
 
 
+@pytest.mark.parametrize("n", [1, 2, 3])
+def test_string_cat_others_propagates_null_for_short_series(n):
+    result = cudf.Series(["x"] * n).str.cat(
+        others=[cudf.Series([None] * n, dtype="str")]
+    )
+    assert result.isna().all()
+
+
+def test_string_cat_reduction_of_single_null_is_empty_string():
+    assert cudf.Series([None], dtype="str").str.cat(sep="|") == ""
+
+
 @pytest.mark.parametrize(
     "others",
     [

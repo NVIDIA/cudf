@@ -21,7 +21,7 @@
 #include <rmm/exec_policy.hpp>
 
 #include <cooperative_groups.h>
-#include <cub/cub.cuh>
+#include <cub/device/device_merge_sort.cuh>
 #include <cuda/functional>
 #include <cuda/iterator>
 #include <cuda/std/iterator>

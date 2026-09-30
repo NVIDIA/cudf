@@ -107,7 +107,6 @@ jobs:
           - 'ci/build_cpp.sh'
           - 'ci/test_cpp.sh'
           - 'ci/test_cpp_common.sh'
-          - '.github/workflows/pr.yaml'
         test_cpp_libcudf:
           - 'ci/run_cudf_ctests.sh'
           - 'cpp/tests/**'
@@ -164,7 +163,6 @@ jobs:
           - 'RAPIDS_BRANCH'
           - 'dependencies.yaml'
           - 'ci/build_java.sh'
-          - '.github/workflows/pr.yaml'
           - '.github/workflows/cudf-spark-jni.yaml'
         test_java_packaged:
           - 'ci/test_packaged_java.sh'
@@ -181,7 +179,6 @@ jobs:
           - 'python/pylibcudf/**'
           - 'RAPIDS_BRANCH'
           - 'dependencies.yaml'
-          - '.github/workflows/pr.yaml'
         test_python_cudf:
           - 'python/cudf/**'
         test_python_cudf_benchmarks:

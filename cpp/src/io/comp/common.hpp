@@ -25,6 +25,7 @@ namespace cudf::io::detail {
  * See https://github.com/NVIDIA/cudf/issues/13605.
  */
 constexpr std::size_t BUFFER_PADDING_MULTIPLE{8};
+constexpr std::size_t BUFFER_EXTRA_PADDING{16};
 
 [[nodiscard]] std::string compression_type_name(compression_type compression);
 

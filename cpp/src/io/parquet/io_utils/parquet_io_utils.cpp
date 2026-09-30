@@ -337,7 +337,7 @@ fetch_byte_ranges_to_device_async_impl(
 
       // Buffer needs to be padded. Required by `gpuDecodePageData`.
       column_chunk_buffers.emplace_back(
-        cudf::util::round_up_safe(buffer_size, cudf::io::detail::BUFFER_PADDING_MULTIPLE),
+        cudf::util::round_up_safe(buffer_size + cudf::io::detail::BUFFER_EXTRA_PADDING, cudf::io::detail::BUFFER_PADDING_MULTIPLE),
         stream,
         mr);
 

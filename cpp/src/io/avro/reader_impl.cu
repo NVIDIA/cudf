@@ -22,10 +22,10 @@
 #include <cudf/utilities/span.hpp>
 #include <cudf/utilities/traits.hpp>
 
-#include <rmm/device_buffer.hpp>
 #include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/buffer>
 #include <cuda/stream>
 #include <thrust/equal.h>
 #include <thrust/tabulate.h>
@@ -176,10 +176,11 @@ class metadata : public file_metadata {
   datasource* const source;
 };
 
-rmm::device_buffer decompress_data(datasource& source,
-                                   metadata& meta,
-                                   rmm::device_buffer const& comp_block_data,
-                                   cuda::stream_ref stream)
+cuda::device_buffer<std::uint8_t> decompress_data(
+  datasource& source,
+  metadata& meta,
+  cuda::device_buffer<std::uint8_t> const& comp_block_data,
+  cuda::stream_ref stream)
 {
   if (meta.codec == "deflate") {
     auto inflate_in =
@@ -198,15 +199,15 @@ rmm::device_buffer decompress_data(datasource& source,
     uint32_t const initial_blk_len = meta.max_block_size * 2 + (meta.max_block_size * 2) % 4096;
     size_t const uncomp_size       = initial_blk_len * meta.block_list.size();
 
-    rmm::device_buffer decomp_block_data(uncomp_size, stream);
+    cuda::device_buffer<std::uint8_t> decomp_block_data(
+      stream, cudf::get_current_device_resource_ref(), uncomp_size, cuda::no_init);
 
     auto const base_offset = meta.block_list[0].offset;
     for (size_t i = 0, dst_pos = 0; i < meta.block_list.size(); i++) {
       auto const src_pos = meta.block_list[i].offset - base_offset;
 
-      inflate_in[i]  = {static_cast<uint8_t const*>(comp_block_data.data()) + src_pos,
-                        meta.block_list[i].size};
-      inflate_out[i] = {static_cast<uint8_t*>(decomp_block_data.data()) + dst_pos, initial_blk_len};
+      inflate_in[i]  = {comp_block_data.data() + src_pos, meta.block_list[i].size};
+      inflate_out[i] = {decomp_block_data.data() + dst_pos, initial_blk_len};
 
       // Update blocks offsets & sizes to refer to uncompressed data
       meta.block_list[i].offset = dst_pos;
@@ -238,15 +239,18 @@ rmm::device_buffer decompress_data(datasource& source,
         auto const total_actual_uncomp_size =
           std::accumulate(actual_uncomp_sizes.cbegin(), actual_uncomp_sizes.cend(), 0ul);
         if (total_actual_uncomp_size > uncomp_size) {
-          decomp_block_data.resize(total_actual_uncomp_size, stream);
+          decomp_block_data =
+            cuda::device_buffer<std::uint8_t>(stream,
+                                              cudf::get_current_device_resource_ref(),
+                                              total_actual_uncomp_size,
+                                              cuda::no_init);
           for (size_t i = 0; i < meta.block_list.size(); ++i) {
             meta.block_list[i].offset =
               i > 0 ? (meta.block_list[i - 1].size + meta.block_list[i - 1].offset) : 0;
             meta.block_list[i].size = static_cast<uint32_t>(actual_uncomp_sizes[i]);
 
-            inflate_out[i] = {
-              static_cast<uint8_t*>(decomp_block_data.data()) + meta.block_list[i].offset,
-              meta.block_list[i].size};
+            inflate_out[i] = {decomp_block_data.data() + meta.block_list[i].offset,
+                              meta.block_list[i].size};
           }
         } else {
           break;
@@ -269,8 +273,7 @@ rmm::device_buffer decompress_data(datasource& source,
                    [&](auto const& block) {
                      // Find ptrs to each compressed block by removing the header offset
                      return device_span<uint8_t const>{
-                       static_cast<uint8_t const*>(comp_block_data.data()) +
-                         (block.offset - meta.block_list[0].offset),
+                       comp_block_data.data() + (block.offset - meta.block_list[0].offset),
                        block.size - sizeof(uint32_t)};  // exclude the CRC32 checksum
                    });
     compressed_blocks.host_to_device_async(stream);
@@ -290,14 +293,15 @@ rmm::device_buffer decompress_data(datasource& source,
     size_t const max_decomp_block_size =
       *std::max_element(uncompressed_sizes.begin(), uncompressed_sizes.end());
 
-    rmm::device_buffer decompressed_data(uncompressed_data_size, stream);
+    cuda::device_buffer<std::uint8_t> decompressed_data(
+      stream, cudf::get_current_device_resource_ref(), uncompressed_data_size, cuda::no_init);
     rmm::device_uvector<device_span<uint8_t>> decompressed_blocks(num_blocks, stream);
     thrust::tabulate(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                      decompressed_blocks.begin(),
                      decompressed_blocks.end(),
                      [off  = uncompressed_offsets.device_ptr(),
                       size = uncompressed_sizes.device_ptr(),
-                      data = static_cast<uint8_t*>(decompressed_data.data())] __device__(int i) {
+                      data = decompressed_data.data()] __device__(int i) {
                        return device_span<uint8_t>{data + off[i], size[i]};
                      });
 
@@ -337,7 +341,7 @@ rmm::device_buffer decompress_data(datasource& source,
 }
 
 std::vector<column_buffer> decode_data(metadata& meta,
-                                       rmm::device_buffer const& block_data,
+                                       cuda::device_buffer<std::uint8_t> const& block_data,
                                        std::vector<std::pair<uint32_t, uint32_t>> const& dict,
                                        device_span<string_index_pair const> global_dictionary,
                                        size_t num_rows,
@@ -425,7 +429,7 @@ std::vector<column_buffer> decode_data(metadata& meta,
   gpu::DecodeAvroColumnData(block_list,
                             schema_desc.device_ptr(),
                             global_dictionary,
-                            static_cast<uint8_t const*>(block_data.data()),
+                            block_data.data(),
                             static_cast<uint32_t>(schema_desc.size()),
                             min_row_data_size,
                             stream);
@@ -483,17 +487,26 @@ table_with_metadata read_avro(std::unique_ptr<cudf::io::datasource>&& source,
     }
 
     if (meta.num_rows > 0) {
-      rmm::device_buffer block_data;
+      cuda::device_buffer<std::uint8_t> block_data(stream, cudf::get_current_device_resource_ref());
       if (source->is_device_read_preferred(meta.selected_data_size)) {
-        block_data      = rmm::device_buffer{meta.selected_data_size, stream};
-        auto read_bytes = source->device_read(meta.block_list[0].offset,
-                                              meta.selected_data_size,
-                                              static_cast<uint8_t*>(block_data.data()),
-                                              stream);
-        block_data.resize(read_bytes, stream);
+        block_data = cuda::device_buffer<std::uint8_t>{
+          stream, cudf::get_current_device_resource_ref(), meta.selected_data_size, cuda::no_init};
+        auto read_bytes = source->device_read(
+          meta.block_list[0].offset, meta.selected_data_size, block_data.data(), stream);
+        if (read_bytes != block_data.size()) {
+          block_data = cuda::device_buffer<std::uint8_t>{stream,
+                                                         cudf::get_current_device_resource_ref(),
+                                                         block_data.data(),
+                                                         block_data.data() + read_bytes};
+        }
       } else {
         auto const buffer = source->host_read(meta.block_list[0].offset, meta.selected_data_size);
-        block_data        = rmm::device_buffer{buffer->data(), buffer->size(), stream};
+        if (buffer->size() != 0) {
+          block_data = cuda::device_buffer<std::uint8_t>{stream,
+                                                         cudf::get_current_device_resource_ref(),
+                                                         buffer->data(),
+                                                         buffer->data() + buffer->size()};
+        }
       }
 
       if (meta.codec != "" && meta.codec != "null") {

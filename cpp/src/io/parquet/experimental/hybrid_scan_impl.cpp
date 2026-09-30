@@ -460,7 +460,7 @@ hybrid_scan_reader_impl::filter_row_groups_with_dictionary_pages(
 
   // Decompress dictionary pages if needed and store uncompressed buffers here
   auto const mr                          = cudf::get_current_device_resource_ref();
-  auto decompressed_dictionary_page_data = std::optional<rmm::device_buffer>{};
+  auto decompressed_dictionary_page_data = std::optional<cuda::device_buffer<std::uint8_t>>{};
   if (has_compressed_data) {
     // Use the `decompress_page_data` utility to decompress dictionary pages (passed as pass_pages)
     decompressed_dictionary_page_data =

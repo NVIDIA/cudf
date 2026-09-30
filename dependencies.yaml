@@ -130,11 +130,11 @@ files:
       - depends_on_cudf_polars
       - depends_on_ray
       - depends_on_cudf_streaming
-  test_cudf_polars_quent:
+  build_cudf_polars_quent:
     output: none
     includes:
       - py_version
-      - test_cudf_polars_quent
+      - build_cudf_polars_quent
   build_java:
     # Toolchain for building static libcudf from source and packaging the cuDF
     # Java JAR. `depends_on_libcudf` is excluded because the Java build links
@@ -1309,7 +1309,7 @@ dependencies:
         packages:
           # Used by timeout_with_stack.py utility
           - gdb
-  test_cudf_polars_quent:
+  build_cudf_polars_quent:
     common:
       - output_types: conda
         packages:

@@ -61,6 +61,8 @@ void BM_parquet_read_footer(nvbench::state& state)
 
   auto source_sink =
     write_mixed_dtype_parquet_file(num_cols, num_row_groups, source_type, write_page_index);
+
+  state.add_element_count(num_cols * num_row_groups, "column_chunks");
   auto const mem_stats_logger = cudf::memory_stats_logger();
 
   state.exec(
@@ -83,9 +85,6 @@ void BM_parquet_read_footer(nvbench::state& state)
                    "Unexpected number of columns in metadata");
     });
 
-  auto const time = state.get_summary("nv/cold/time/gpu/mean").get_float64("value");
-  state.add_element_count(static_cast<double>(num_cols * num_row_groups) / time,
-                          "colchunks_per_sec");
   state.add_buffer_size(
     mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
 }
@@ -110,6 +109,7 @@ void BM_parquet_reader_construction(nvbench::state& state)
                            .convert_strings_to_categories(false)
                            .build();
 
+  state.add_element_count(num_cols * num_row_groups, "column_chunks");
   state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().get()));
   auto const mem_stats_logger = cudf::memory_stats_logger();
 
@@ -124,9 +124,6 @@ void BM_parquet_reader_construction(nvbench::state& state)
       CUDF_EXPECTS(reader.has_next(), "Expected reader to have data");
     });
 
-  auto const time = state.get_summary("nv/cold/time/gpu/mean").get_float64("value");
-  state.add_element_count(static_cast<double>(num_cols * num_row_groups) / time,
-                          "colchunks_per_sec");
   state.add_buffer_size(
     mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
 }
@@ -157,6 +154,8 @@ void BM_parquet_column_selection(nvbench::state& state)
   auto const read_opts = cudf::io::parquet_reader_options::builder(source_sink.make_source_info())
                            .use_arrow_schema(false)
                            .build();
+
+  state.add_element_count(num_cols, "schema_columns");
   state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().get()));
   auto const mem_stats_logger = cudf::memory_stats_logger();
 
@@ -178,8 +177,6 @@ void BM_parquet_column_selection(nvbench::state& state)
       CUDF_EXPECTS(reader.has_next(), "Expected reader to have data");
     });
 
-  auto const time = state.get_summary("nv/cold/time/gpu/mean").get_float64("value");
-  state.add_element_count(static_cast<double>(num_cols) / time, "cols_per_sec");
   state.add_buffer_size(
     mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
 }

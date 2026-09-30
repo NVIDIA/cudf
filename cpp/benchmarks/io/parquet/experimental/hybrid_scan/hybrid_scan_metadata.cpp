@@ -18,6 +18,7 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <tuple>
 #include <utility>
 
 enum class setup_phase : int32_t {
@@ -95,6 +96,8 @@ void BM_hybrid_scan_setup_phase(nvbench::state& state,
 
   auto source_sink =
     write_mixed_dtype_parquet_file(num_cols, num_row_groups, source_type, write_page_index);
+
+  state.add_element_count(num_cols * num_row_groups, "column_chunks");
   auto const mem_stats_logger = cudf::memory_stats_logger();
 
   state.exec(
@@ -109,18 +112,15 @@ void BM_hybrid_scan_setup_phase(nvbench::state& state,
                    "Unexpected row group count");
     });
 
-  auto const time = state.get_summary("nv/cold/time/gpu/mean").get_float64("value");
-  state.add_element_count(static_cast<double>(num_cols * num_row_groups) / time,
-                          "colchunks_per_sec");
   state.add_buffer_size(
     mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
 }
 
 // Measure how page-index fetch and setup cost scales with file shape.
-template <setup_phase Phase>
-void BM_hybrid_scan_file_shape(nvbench::state& state, nvbench::type_list<nvbench::enum_type<Phase>>)
+template <setup_phase Phase, cudf::type_id DType>
+void BM_hybrid_scan_file_shape(
+  nvbench::state& state, nvbench::type_list<nvbench::enum_type<Phase>, nvbench::enum_type<DType>>)
 {
-  auto constexpr d_type           = cudf::type_id::STRING;
   auto constexpr write_page_index = true;
 
   auto const source_type    = retrieve_io_type_enum(state.get_string("io_type"));
@@ -130,7 +130,7 @@ void BM_hybrid_scan_file_shape(nvbench::state& state, nvbench::type_list<nvbench
     static_cast<cudf::size_type>(state.get_int64("pages_per_row_group"));
 
   auto source_sink = write_file_shape_parquet_file(
-    d_type, num_rows, num_row_groups, num_pages_per_row_group, source_type, write_page_index);
+    DType, num_rows, num_row_groups, num_pages_per_row_group, source_type, write_page_index);
 
   auto const read_opts =
     cudf::io::parquet_reader_options::builder(source_sink.make_source_info()).build();
@@ -140,14 +140,9 @@ void BM_hybrid_scan_file_shape(nvbench::state& state, nvbench::type_list<nvbench
       drop_page_cache_if_enabled(read_opts.get_source().filepaths());
       auto datasource = std::move(cudf::io::make_datasources(read_opts.get_source()).front());
 
-      auto const reader = run_setup_path<Phase>(timer, *datasource, read_opts);
-      CUDF_EXPECTS(not reader->all_row_groups(read_opts).empty(),
-                   "Expected at least one row group");
+      std::ignore = run_setup_path<Phase>(timer, *datasource, read_opts);
     });
 
-  auto const time = state.get_summary("nv/cold/time/gpu/mean").get_float64("value");
-  state.add_element_count(static_cast<double>(num_row_groups * num_pages_per_row_group) / time,
-                          "pages_per_sec");
   state.add_buffer_size(source_sink.size(), "encoded_file_size", "encoded_file_size");
 }
 
@@ -156,9 +151,6 @@ using setup_phases = nvbench::enum_type_list<setup_phase::FOOTER_FETCH,
                                              setup_phase::PAGE_INDEX_FETCH,
                                              setup_phase::PAGE_INDEX_SETUP,
                                              setup_phase::ALL>;
-
-using page_index_phases =
-  nvbench::enum_type_list<setup_phase::PAGE_INDEX_FETCH, setup_phase::PAGE_INDEX_SETUP>;
 
 NVBENCH_BENCH_TYPES(BM_hybrid_scan_setup_phase, NVBENCH_TYPE_AXES(setup_phases))
   .set_name("hybrid_scan_setup_phase")
@@ -169,9 +161,27 @@ NVBENCH_BENCH_TYPES(BM_hybrid_scan_setup_phase, NVBENCH_TYPE_AXES(setup_phases))
   .add_int64_axis("num_cols", {64, 256, 512})
   .add_int64_axis("num_row_groups", {10, 50});
 
-NVBENCH_BENCH_TYPES(BM_hybrid_scan_file_shape, NVBENCH_TYPE_AXES(page_index_phases))
+using page_index_phases =
+  nvbench::enum_type_list<setup_phase::PAGE_INDEX_FETCH, setup_phase::PAGE_INDEX_SETUP>;
+
+// The STRING cells write the same file as `parquet_read_file_shape`
+using file_shape_dtypes = nvbench::enum_type_list<cudf::type_id::BOOL8,
+                                                  cudf::type_id::INT8,
+                                                  cudf::type_id::INT16,
+                                                  cudf::type_id::INT32,
+                                                  cudf::type_id::INT64,
+                                                  cudf::type_id::FLOAT32,
+                                                  cudf::type_id::FLOAT64,
+                                                  cudf::type_id::DECIMAL128,
+                                                  cudf::type_id::TIMESTAMP_MILLISECONDS,
+                                                  cudf::type_id::STRING>;
+
+// One row group of 10'000 pages and ten of 1'000 give the same page count split differently,
+// which separates per-page from per-row-group cost. `num_rows` only changes the rows per page
+NVBENCH_BENCH_TYPES(BM_hybrid_scan_file_shape,
+                    NVBENCH_TYPE_AXES(page_index_phases, file_shape_dtypes))
   .set_name("hybrid_scan_file_shape")
-  .set_type_axes_names({"phase"})
+  .set_type_axes_names({"phase", "dtype"})
   .set_min_samples(4)
   .add_string_axis("io_type", {"DEVICE_BUFFER"})
   .add_int64_axis("num_rows", {10'000'000, 100'000'000})

@@ -1301,6 +1301,127 @@ public class HybridScanReaderTest extends CudfTestBase {
   }
 
   // --------------------------------------------------------------------
+  // Tests: dictionaryPagesByteRangesIncludeUnbounded() / dictionaryPageLengths()
+  // --------------------------------------------------------------------
+
+  // Cap for how much of an upper-bound range to read while looking for a dictionary page.
+  private static final long MAX_DICT_PAGE_READ = 1L << 20;
+
+  /**
+   * A writer that sets dictionary_page_offset (every cudf-written file) yields only EXACT ranges,
+   * so the included-unbounded result matches dictionaryPagesByteRanges() one-for-one.
+   */
+  @Test
+  void testIncludeUnboundedMatchesExactForModernWriter(@TempDir Path tmp) throws IOException {
+    try (OpenReader open = OpenReader.pageIndex(tmp).withFilter("num_units", BinaryOperator.EQUAL, 2)) {
+      open.withPageIndex();
+      HybridScanReader reader = open.reader;
+      int[] rgs = reader.allRowGroups();
+      ByteRange[] exact = reader.dictionaryPagesByteRanges(rgs);
+      DictionaryByteRange[] unbounded = reader.dictionaryPagesByteRangesIncludeUnbounded(rgs);
+      assertEquals(exact.length, unbounded.length, "one range per dict column chunk either way");
+      assertTrue(exact.length > 0, "low-cardinality num_units has dictionary pages");
+      for (int i = 0; i < exact.length; i++) {
+        assertEquals(DictionaryByteRange.Extent.EXACT, unbounded[i].extent(),
+            "cudf sets dictionary_page_offset, so the range is the page itself");
+        assertEquals(exact[i], unbounded[i].byteRange(), "same range as the exact API");
+      }
+    }
+  }
+
+  /**
+   * dictionaryPageLengths() measures the page in each EXACT range buffer as the whole buffer, since
+   * an EXACT range is already exactly one dictionary page.
+   */
+  @Test
+  void testDictionaryPageLengthsMeasuresExactPage(@TempDir Path tmp) throws IOException {
+    try (OpenReader open = OpenReader.pageIndex(tmp).withFilter("num_units", BinaryOperator.EQUAL, 2)) {
+      open.withPageIndex();
+      HybridScanReader reader = open.reader;
+      DictionaryByteRange[] ranges =
+          reader.dictionaryPagesByteRangesIncludeUnbounded(reader.allRowGroups());
+      assertTrue(ranges.length > 0, "expected dictionary pages");
+      HostMemoryBuffer[] host = new HostMemoryBuffer[ranges.length];
+      try {
+        for (int i = 0; i < ranges.length; i++) {
+          ByteRange r = ranges[i].byteRangeToRead(MAX_DICT_PAGE_READ);
+          host[i] = open.file.slice(r.offset(), r.size());
+        }
+        long[] lengths = HybridScanReader.dictionaryPageLengths(host);
+        for (int i = 0; i < ranges.length; i++) {
+          assertEquals(ranges[i].byteRange().size(), lengths[i],
+              "an EXACT range is exactly one dictionary page");
+        }
+      } finally {
+        for (HostMemoryBuffer b : host) {
+          if (b != null) b.close();
+        }
+      }
+    }
+  }
+
+  /** Bytes that do not begin with a dictionary-page header measure as 0 (nothing to prune with). */
+  @Test
+  void testDictionaryPageLengthsZeroForNonPageBytes() {
+    try (HostMemoryBuffer buf = HostMemoryBuffer.allocate(64)) {
+      for (int i = 0; i < 64; i++) {
+        buf.setByte(i, (byte) 0);
+      }
+      long[] lengths = HybridScanReader.dictionaryPageLengths(new HostMemoryBuffer[]{buf});
+      assertEquals(1, lengths.length);
+      assertEquals(0L, lengths[0], "zeroed bytes are not a dictionary page header");
+    }
+  }
+
+  /**
+   * End-to-end included-unbounded pruning: cap each range, cut it down to its page with
+   * dictionaryPageLengths(), stage the page on the device, and prune. Matches the exact-path result
+   * for this cudf-written fixture (all EXACT ranges).
+   */
+  @Test
+  void testIncludeUnboundedPrunesSubsetOfGroups(@TempDir Path tmp) throws IOException {
+    try (OpenReader open = OpenReader.pageIndex(tmp).withFilter("num_units", BinaryOperator.EQUAL, 2)) {
+      open.withPageIndex();
+      HybridScanReader reader = open.reader;
+      int[] rgs = reader.allRowGroups();
+      DictionaryByteRange[] ranges = reader.dictionaryPagesByteRangesIncludeUnbounded(rgs);
+      assertTrue(ranges.length > 0, "expected dictionary pages");
+
+      // Cap each range and measure the page in it on the host.
+      ByteRange[] toRead = new ByteRange[ranges.length];
+      for (int i = 0; i < ranges.length; i++) {
+        toRead[i] = ranges[i].byteRangeToRead(MAX_DICT_PAGE_READ);
+      }
+      long[] lengths;
+      HostMemoryBuffer[] host = new HostMemoryBuffer[ranges.length];
+      try {
+        for (int i = 0; i < ranges.length; i++) {
+          host[i] = open.file.slice(toRead[i].offset(), toRead[i].size());
+        }
+        lengths = HybridScanReader.dictionaryPageLengths(host);
+      } finally {
+        for (HostMemoryBuffer b : host) {
+          if (b != null) b.close();
+        }
+      }
+
+      // Trim each range to its measured page (empty when there is none), then stage on the device.
+      ByteRange[] trimmed = new ByteRange[ranges.length];
+      for (int i = 0; i < ranges.length; i++) {
+        trimmed[i] = new ByteRange(toRead[i].offset(), lengths[i]);
+      }
+      DeviceMemoryBuffer[] dictBufs = copyRangesToDevice(open.file, trimmed);
+      try {
+        int[] result = reader.filterRowGroupsWithDictionaryPages(dictBufs, rgs);
+        assertArrayEquals(new int[]{0, 1}, result,
+            "num_units == 2 in g0 dict {1,2} and g1 dict {2,3}, not in g2 dict {3,4}");
+      } finally {
+        closeAll(dictBufs);
+      }
+    }
+  }
+
+  // --------------------------------------------------------------------
   // Fixture helpers
   // --------------------------------------------------------------------
 

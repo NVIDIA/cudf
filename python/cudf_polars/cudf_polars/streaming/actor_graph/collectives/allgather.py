@@ -9,7 +9,11 @@ from typing import TYPE_CHECKING
 from cudf_streaming.partition_utils import unpack_and_concat, unpack_and_concat_cost
 from cudf_streaming.table_chunk import make_table_chunks_available_or_wait
 from rapidsmpf.streaming.coll.allgather import AllGather
-from rapidsmpf.streaming.core.memory_reserve_or_wait import reserve_memory
+
+from cudf_polars.streaming.actor_graph.memory import (
+    MemoryReservationPurpose,
+    reserve_memory_traced,
+)
 
 if TYPE_CHECKING:
     import pylibcudf as plc
@@ -117,10 +121,12 @@ class AllGatherManager:
         # host-resident partitions to device. The packed inputs stay live
         # until the concat finishes and are released after, so the net
         # change is about zero.
-        reservation = await reserve_memory(
+        reservation = await reserve_memory_traced(
             self.context,
             unpack_and_concat_cost(partitions),
             net_memory_delta=0,
+            ir_context=ir_context,
+            purpose=MemoryReservationPurpose.ALLGATHER_EXTRACT,
         )
         return await ir_context.to_thread(
             unpack_and_concat,

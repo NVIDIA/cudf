@@ -773,6 +773,21 @@ the engine start and exit events.
 Upon `StreamingEngine.shutdown`, all events are gathered from the workers and persisted
 on the (now closed) engine at `StreamingEngine._quent_events`.
 
+### Memory Reservations
+
+Before an operation that grows its memory footprint, cudf-polars reserves the
+device or host memory necessary to complete that operation (or our best estimate
+of it). A reservation isn't always satisfiable right away, which gives the
+runtime a chance to apply backpressure or spill rather than run out of memory.
+
+Reservations go through
+`cudf_polars.streaming.actor_graph.memory.reserve_memory_traced` instead of
+rapidsmpf's `reserve_memory`. Each reservation request is recorded as a Quent
+`Task` bound its parent `Operator`, moving through `Queueing`, `Allocating` and
+`Exit`. The duration of the `Allocating` state is how long the operator waited
+for the `reserve_memory` to complete. The size, memory tier, purpose and net
+memory delta ride along as attributes on the `Allocating` transition.
+
 ### Concepts
 
 cudf-polars and Quent's Query Engine domain have somewhat overlapping names for

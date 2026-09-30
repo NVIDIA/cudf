@@ -29,7 +29,8 @@
 
 #include <nvtext/normalize.hpp>
 
-#include <cub/cub.cuh>
+#include <cub/block/block_store.cuh>
+#include <cub/device/device_segmented_reduce.cuh>
 #include <cuda/functional>
 #include <cuda/iterator>
 #include <cuda/std/iterator>

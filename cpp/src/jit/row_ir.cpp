@@ -441,13 +441,13 @@ int32_t instance_context::add_input(input in)
 {
   if (auto* column = std::get_if<column_input>(&in);
       column != nullptr && column->table_source.has_value() && column->column_index.has_value()) {
-    auto existing = std::find_if(inputs_.cbegin(), inputs_.cend(), [&](auto const& input) {
+    auto existing = std::ranges::find_if(inputs_, [&](auto const& input) {
       auto* in = std::get_if<column_input>(&input);
       return in != nullptr && in->table_source == column->table_source &&
              in->column_index == column->column_index;
     });
-    if (existing != inputs_.cend()) {
-      return static_cast<int32_t>(std::distance(inputs_.cbegin(), existing));
+    if (existing != inputs_.end()) {
+      return static_cast<int32_t>(std::distance(inputs_.begin(), existing));
     }
   }
 
@@ -627,7 +627,7 @@ bool node::is_null_aware() const
                "have at least one argument.",
                std::runtime_error);
 
-  return std::any_of(args_.begin(), args_.end(), [](auto& a) { return a->is_null_aware(); });
+  return std::ranges::any_of(args_, [](auto& a) { return a->is_null_aware(); });
 }
 
 bool node::is_always_valid() const
@@ -652,7 +652,7 @@ bool node::is_always_valid() const
                "have at least one argument.",
                std::runtime_error);
 
-  return std::all_of(args_.begin(), args_.end(), [](auto& a) { return a->is_always_valid(); });
+  return std::ranges::all_of(args_, [](auto& a) { return a->is_always_valid(); });
 }
 
 std::string to_cuda_type(cudf::data_type type, bool nullable)
@@ -897,21 +897,18 @@ std::tuple<std::string, null_aware, std::vector<output_nullability>> ast_convert
       std::make_unique<row_ir::node>(output_reference{output_id}, expression.get().accept(*this)));
   }
 
-  bool has_nullable_inputs =
-    std::any_of(instance_.inputs_.begin(), instance_.inputs_.end(), [&](auto& in) {
-      return std::visit([](auto& c) { return is_nullable(c); }, in);
-    });
+  bool has_nullable_inputs = std::ranges::any_of(instance_.inputs_, [&](auto& in) {
+    return std::visit([](auto& c) { return is_nullable(c); }, in);
+  });
 
-  bool is_null_aware = std::any_of(
-    output_irs_.cbegin(), output_irs_.cend(), [](auto& ir) { return ir->is_null_aware(); });
+  bool is_null_aware =
+    std::ranges::any_of(output_irs_, [](auto& ir) { return ir->is_null_aware(); });
 
   std::vector<output_nullability> null_policies;
-  std::transform(
-    output_irs_.cbegin(), output_irs_.cend(), std::back_inserter(null_policies), [&](auto& ir) {
-      auto may_evaluate_null =
-        !ir->is_always_valid() && (has_nullable_inputs || ir->is_null_aware());
-      return may_evaluate_null ? output_nullability::PRESERVE : output_nullability::ALL_VALID;
-    });
+  std::ranges::transform(output_irs_, std::back_inserter(null_policies), [&](auto& ir) {
+    auto may_evaluate_null = !ir->is_always_valid() && (has_nullable_inputs || ir->is_null_aware());
+    return may_evaluate_null ? output_nullability::PRESERVE : output_nullability::ALL_VALID;
+  });
 
   // In a multi-output UDF, if any input is nullable, we need to generate a null mask for each
   // output.

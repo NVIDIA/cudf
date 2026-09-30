@@ -30,6 +30,7 @@
 #include <rmm/exec_policy.hpp>
 
 #include <cub/device/device_reduce.cuh>
+#include <cub/device/device_segmented_sort.cuh>
 #include <cuda/functional>
 #include <cuda/iterator>
 #include <cuda/std/span>

@@ -195,7 +195,7 @@ mutable_column_view::operator column_view() const
 {
   // Convert children to immutable views
   std::vector<column_view> child_views(num_children());
-  std::copy(std::cbegin(mutable_children), std::cend(mutable_children), std::begin(child_views));
+  std::ranges::copy(mutable_children, std::begin(child_views));
   return column_view{_type, _size, _data, _null_mask, _null_count, _offset, std::move(child_views)};
 }
 

@@ -19,6 +19,7 @@
 #include <nvcomp/snappy.h>
 #include <nvcomp/zstd.h>
 
+#include <algorithm>
 #include <mutex>
 
 #define CUDF_NVCOMP_HAS_GZIP_COMPRESSION (NVCOMP_VER >= MAKE_SEMANTIC_VERSION(5, 3, 0))
@@ -83,8 +84,7 @@ namespace {
   auto const env = getenv("LIBCUDF_HW_DECOMPRESSION");
   if (env == nullptr) { return std::nullopt; }
   std::string val{env};
-  std::transform(
-    val.begin(), val.end(), val.begin(), [](unsigned char c) { return std::toupper(c); });
+  std::ranges::transform(val, val.begin(), [](unsigned char c) { return std::toupper(c); });
   return val == "ON";
 }
 
@@ -540,11 +540,9 @@ size_t batched_decompress_temp_size_ex(compression_type compression,
                                             d_statuses.data(),
                                             stream.get());
     if (nvcomp_status == nvcompStatus_t::nvcompSuccess) {
-      auto const h_statuses = cudf::detail::make_host_vector(d_statuses, stream);
-      auto const are_all_success =
-        std::all_of(h_statuses.begin(), h_statuses.end(), [](nvcompStatus_t status) {
-          return status == nvcompStatus_t::nvcompSuccess;
-        });
+      auto const h_statuses      = cudf::detail::make_host_vector(d_statuses, stream);
+      auto const are_all_success = std::ranges::all_of(
+        h_statuses, [](nvcompStatus_t status) { return status == nvcompStatus_t::nvcompSuccess; });
       if (are_all_success) { return temp_size; }
     }
     CUDF_LOG_WARN(

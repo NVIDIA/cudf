@@ -15,6 +15,7 @@
 
 #include <cuda/iterator>
 
+#include <algorithm>
 #include <cstdint>
 #include <functional>
 #include <numeric>
@@ -144,12 +145,11 @@ aggregate_reader_metadata::aggregate_reader_metadata(std::vector<FileMetaData>&&
 std::vector<text::byte_range_info> aggregate_reader_metadata::page_index_byte_ranges() const
 {
   std::vector<text::byte_range_info> page_index_byte_ranges;
-  std::transform(per_file_metadata.begin(),
-                 per_file_metadata.end(),
-                 std::back_inserter(page_index_byte_ranges),
-                 [](auto const& file_metadata) -> text::byte_range_info {
-                   return page_index_byte_range(file_metadata);
-                 });
+  std::ranges::transform(per_file_metadata,
+                         std::back_inserter(page_index_byte_ranges),
+                         [](auto const& file_metadata) -> text::byte_range_info {
+                           return page_index_byte_range(file_metadata);
+                         });
 
   return page_index_byte_ranges;
 }
@@ -248,14 +248,11 @@ std::vector<std::vector<size_type>> aggregate_reader_metadata::all_row_groups(
 
   std::vector<std::vector<size_type>> row_groups;
   row_groups.reserve(per_file_metadata.size());
-  std::transform(per_file_metadata.begin(),
-                 per_file_metadata.end(),
-                 std::back_inserter(row_groups),
-                 [](auto const& pfm) {
-                   std::vector<size_type> indices(pfm.row_groups.size());
-                   std::iota(indices.begin(), indices.end(), size_type{0});
-                   return indices;
-                 });
+  std::ranges::transform(per_file_metadata, std::back_inserter(row_groups), [](auto const& pfm) {
+    std::vector<size_type> indices(pfm.row_groups.size());
+    std::iota(indices.begin(), indices.end(), size_type{0});
+    return indices;
+  });
   return row_groups;
 }
 
@@ -337,11 +334,9 @@ aggregate_reader_metadata::select_payload_columns(
       auto const filter_columns_set =
         construct_filter_columns_set(*filter_column_names, selection_options.case_sensitive_names);
       // Remove a payload column name if it is also present in the hash set
-      valid_payload_columns.erase(
-        std::remove_if(valid_payload_columns.begin(),
-                       valid_payload_columns.end(),
-                       [&](auto const& col) { return filter_columns_set.count(col) > 0; }),
-        valid_payload_columns.end());
+      auto const filtered = std::ranges::remove_if(
+        valid_payload_columns, [&](auto const& col) { return filter_columns_set.count(col) > 0; });
+      valid_payload_columns.erase(filtered.begin(), filtered.end());
     }
     // Call the base `select_columns()` method with valid payload columns
     return select_columns(valid_payload_columns, {}, selection_options);
@@ -682,13 +677,11 @@ aggregate_reader_metadata::filter_row_groups_with_bloom_filters(
   // Transform bloom filter data to cuda::std::byte type for apply_bloom_filters
   std::vector<cudf::device_span<cuda::std::byte const>> transformed_bloom_filter_data;
   transformed_bloom_filter_data.reserve(bloom_filter_data.size());
-  std::transform(bloom_filter_data.begin(),
-                 bloom_filter_data.end(),
-                 std::back_inserter(transformed_bloom_filter_data),
-                 [](auto const& data) {
-                   return cudf::device_span<cuda::std::byte const>{
-                     reinterpret_cast<cuda::std::byte const*>(data.data()), data.size()};
-                 });
+  std::ranges::transform(
+    bloom_filter_data, std::back_inserter(transformed_bloom_filter_data), [](auto const& data) {
+      return cudf::device_span<cuda::std::byte const>{
+        reinterpret_cast<cuda::std::byte const*>(data.data()), data.size()};
+    });
 
   auto const bloom_filtered_row_groups =
     apply_bloom_filters(transformed_bloom_filter_data,

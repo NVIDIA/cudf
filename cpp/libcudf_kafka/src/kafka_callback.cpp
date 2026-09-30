@@ -35,3 +35,4 @@ void python_oauth_refresh_callback::oauthbearer_token_refresh_cb(
 }  // namespace external
 }  // namespace io
 }  // namespace cudf
+// CI scenario: libcudf_kafka/src

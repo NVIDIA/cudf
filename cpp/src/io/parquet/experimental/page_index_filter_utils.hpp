@@ -7,22 +7,34 @@
 
 #include "io/parquet/reader_impl_helpers.hpp"
 
+#include <cudf/ast/expressions.hpp>
+#include <cudf/column/column.hpp>
 #include <cudf/column/column_view.hpp>
 #include <cudf/detail/utilities/host_vector.hpp>
 #include <cudf/io/parquet.hpp>
+#include <cudf/table/table.hpp>
 #include <cudf/types.hpp>
 #include <cudf/utilities/memory_resource.hpp>
-#include <cudf/utilities/span.hpp>
-
-#include <rmm/device_uvector.hpp>
 
 #include <cuda/stream>
 
+#include <functional>
+#include <memory>
 #include <span>
+#include <vector>
 
 namespace cudf::io::parquet::experimental::detail {
 
 using metadata_base = parquet::detail::metadata;
+
+/**
+ * @brief Compact page statistics for a logical filter column.
+ */
+struct page_statistics_input {
+  size_type column_index;  ///< Index of the logical filter column
+  cudf::table statistics;  ///< Compacted page-level min, max, and all-null stats columns
+  std::vector<size_type> page_row_offsets;  ///< Row offset of each page, spanning all rows
+};
 
 /**
  * @brief Compute page row offsets and column chunk page (count) offsets for a given column schema
@@ -56,21 +68,6 @@ compute_page_row_offsets_and_colchunk_page_offsets(
   size_type schema_idx);
 
 /**
- * @brief Computes a device vector where each row contains the index of the page it belongs to
- *
- * @param page_row_offsets Span of page row offsets
- * @param total_rows Total number of rows
- * @param stream CUDA stream
- * @param mr Device memory resource for the output device vector
- * @return Device vector where each row contains the index of the page it belongs to
- */
-[[nodiscard]] rmm::device_uvector<size_type> compute_page_indices_async(
-  cudf::host_span<cudf::size_type const> page_row_offsets,
-  cudf::size_type total_rows,
-  cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr);
-
-/**
  * @brief Checks whether every row is retained by the boolean row mask
  *
  * Null entries in the row mask are treated as surviving rows
@@ -98,5 +95,25 @@ compute_page_row_offsets_and_colchunk_page_offsets(
   std::span<cudf::size_type const> page_row_offsets,
   cudf::size_type max_page_size,
   cuda::stream_ref stream);
+
+/**
+ * @brief Builds a row mask by evaluating page statistics on compact common page segments and
+ * expanding them to rows
+ *
+ * @param inputs Span of page statistics inputs
+ * @param num_columns Number of columns
+ * @param total_rows Total number of rows
+ * @param stats_expression AST expression to evaluate on page statistics
+ * @param stream CUDA stream
+ * @param mr Device memory resource for the output device vector
+ * @return Row mask column
+ */
+[[nodiscard]] std::unique_ptr<column> compute_row_mask_from_page_stats(
+  std::span<page_statistics_input const> inputs,
+  size_type num_columns,
+  size_type total_rows,
+  std::reference_wrapper<ast::expression const> stats_expression,
+  cuda::stream_ref stream,
+  rmm::device_async_resource_ref mr);
 
 }  // namespace cudf::io::parquet::experimental::detail

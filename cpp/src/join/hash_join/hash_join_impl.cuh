@@ -11,7 +11,6 @@
 
 #include <rmm/device_uvector.hpp>
 
-#include <cuda/cmath>
 #include <cuda/std/bit>
 #include <cuda/std/cstdint>
 
@@ -34,14 +33,13 @@ struct hash_join<Hasher>::impl {
       _capacity(capacity),
       _row_mask(
         (cuda::std::uint32_t{1} << cuda::std::bit_width(static_cast<cuda::std::uint32_t>(rows))) -
-        1),
-      _modulo(capacity)
+        1)
   {
   }
 
   hash_table_ref hash_table() const
   {
-    return {const_cast<hash_table_slot_type*>(_slots.data()), _capacity, _row_mask, _modulo};
+    return {const_cast<hash_table_slot_type*>(_slots.data()), _capacity, _row_mask};
   }
 
   csr_ref csr() const { return {_offsets.data(), _values.data()}; }
@@ -52,7 +50,6 @@ struct hash_join<Hasher>::impl {
   rmm::device_uvector<size_type> _values;
   cuda::std::uint32_t _capacity;
   cuda::std::uint32_t _row_mask;
-  cuda::fast_mod_div<cuda::std::uint32_t> _modulo;
 };
 
 }  // namespace cudf::detail

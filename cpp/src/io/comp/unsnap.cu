@@ -10,7 +10,7 @@
 #include <cudf/detail/utilities/grid_1d.cuh>
 #include <cudf/detail/utilities/integer_utils.hpp>
 
-#include <cub/cub.cuh>
+#include <cub/warp/warp_reduce.cuh>
 #include <cuda/stream>
 
 namespace cudf::io::detail {

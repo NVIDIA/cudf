@@ -224,9 +224,8 @@ DLManagedTensor* to_dlpack(table_view const& input,
                cudf::data_type_error);
 
   // Ensure none of the columns have nulls
-  CUDF_EXPECTS(
-    std::none_of(input.begin(), input.end(), [](auto const& col) { return col.has_nulls(); }),
-    "Input required to have null count zero");
+  CUDF_EXPECTS(std::ranges::none_of(input, [](auto const& col) { return col.has_nulls(); }),
+               "Input required to have null count zero");
 
   auto managed_tensor = std::make_unique<DLManagedTensor>();
   auto context        = std::make_unique<dltensor_context>();

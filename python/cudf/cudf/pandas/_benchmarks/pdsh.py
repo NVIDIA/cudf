@@ -1360,13 +1360,21 @@ class PDSHQueries:
         ]
 
         gb1 = order_lines.groupby("l_orderkey", as_index=False)
-        per_order = gb1.agg(
-            n_supp_by_order=pd.NamedAgg(column="l_suppkey", aggfunc="count"),
-            n_late_by_order=pd.NamedAgg(column="late", aggfunc="sum"),
+        n_supp = gb1.agg(
+            n_supp_by_order=pd.NamedAgg(column="l_suppkey", aggfunc="nunique")
         )
+        gb2 = order_lines[order_lines["late"]].groupby(
+            "l_orderkey", as_index=False
+        )
+        n_late_supp = gb2.agg(
+            n_late_supp_by_order=pd.NamedAgg(
+                column="l_suppkey", aggfunc="nunique"
+            )
+        )
+        per_order = n_supp.merge(n_late_supp, on="l_orderkey")
         per_order = per_order[
             (per_order["n_supp_by_order"] > 1)
-            & (per_order["n_late_by_order"] == 1)
+            & (per_order["n_late_supp_by_order"] == 1)
         ]
 
         jn1 = candidates.merge(per_order, on="l_orderkey")

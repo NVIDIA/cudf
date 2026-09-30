@@ -67,6 +67,8 @@ TEST_F(MurmurHashTest, MultiValue)
   auto const output = cudf::hashing::murmurhash3_x86_32(input);
 
   // Reference MurmurHash3 x86_32 hashes of each field, combined in column order.
+  // Reference values: each field hashed with Python `mmh3.hash(bytes, 0, signed=False)` over its
+  // little-endian storage bytes, then folded left to right with cudf's `hash_combine`.
   cudf::test::fixed_width_column_wrapper<uint32_t> const expected{
     2672053335u, 2034548305u, 1118886796u, 3154173071u, 1263010015u};
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, output->view());

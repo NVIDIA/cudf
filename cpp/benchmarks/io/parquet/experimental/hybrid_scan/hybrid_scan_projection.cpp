@@ -3,7 +3,6 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#include <benchmarks/common/generate_input.hpp>
 #include <benchmarks/common/memory_stats.hpp>
 #include <benchmarks/io/cuio_common.hpp>
 #include <benchmarks/io/parquet/parquet_common.hpp>
@@ -48,13 +47,6 @@ void BM_hybrid_scan_projection(nvbench::state& state, nvbench::type_list<nvbench
 
   auto source_sink = write_named_resolution_parquet_file(num_cols, io_type::FILEPATH);
 
-  // The deterministic column names the fixture wrote, regenerated here for the PAYLOAD_EXPLICIT
-  // cell's projection.
-  std::vector<std::string> column_names(num_cols);
-  for (cudf::size_type i = 0; i < num_cols; ++i) {
-    column_names[i] = "col" + std::to_string(i);
-  }
-
   cudf::numeric_scalar<int32_t> filter_literal{std::numeric_limits<int32_t>::min()};
   cudf::ast::tree filter_tree;
   auto const& col_ref = filter_tree.push(cudf::ast::column_name_reference("col0"));
@@ -67,7 +59,7 @@ void BM_hybrid_scan_projection(nvbench::state& state, nvbench::type_list<nvbench
 
   // Caller-supplied payload list
   if constexpr (Side == projection_side::PAYLOAD_EXPLICIT) {
-    read_opts_builder.column_names(column_names);
+    read_opts_builder.column_names(named_resolution_column_names(num_cols));
   }
   auto const read_opts = read_opts_builder.build();
 
@@ -80,33 +72,31 @@ void BM_hybrid_scan_projection(nvbench::state& state, nvbench::type_list<nvbench
     std::make_unique<cudf::io::parquet::experimental::hybrid_scan_reader>(file_metadata);
   auto const row_groups = reader->all_row_groups(read_opts);
 
-  if constexpr (Side == projection_side::PAYLOAD or Side == projection_side::PAYLOAD_EXPLICIT) {
-    // Prime the filter-side column selection so payload measures the expensive branch.
-    // Without this the payload cell resolves through the cheap branch.
-    std::ignore = reader->filter_column_chunks_byte_ranges(row_groups, read_opts);
-  }
-
+  state.add_element_count(num_cols, "schema_columns");
   auto const mem_stats_logger = cudf::memory_stats_logger();
   state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().get()));
 
-  state.exec(nvbench::exec_tag::sync | nvbench::exec_tag::timer,
-             [&](nvbench::launch& launch, auto& timer) {
-               drop_page_cache_if_enabled(source_info.filepaths());
-               reader->reset_column_selection();
+  state.exec(
+    nvbench::exec_tag::sync | nvbench::exec_tag::timer, [&](nvbench::launch& launch, auto& timer) {
+      drop_page_cache_if_enabled(source_info.filepaths());
+      reader->reset_column_selection();
+      if constexpr (Side == projection_side::PAYLOAD or Side == projection_side::PAYLOAD_EXPLICIT) {
+        // Prime the filter-side column selection so payload measures the expensive branch.
+        // Without this the payload cell resolves through the cheap branch.
+        std::ignore = reader->filter_column_chunks_byte_ranges(row_groups, read_opts);
+      }
 
-               timer.start();
-               if constexpr (Side == projection_side::FILTER) {
-                 std::ignore = reader->filter_column_chunks_byte_ranges(row_groups, read_opts);
-               } else {
-                 // PAYLOAD and PAYLOAD_EXPLICIT differ only in whether the payload list is
-                 // caller-supplied or derived from the schema
-                 std::ignore = reader->payload_column_chunks_byte_ranges(row_groups, read_opts);
-               }
-               timer.stop();
-             });
+      timer.start();
+      if constexpr (Side == projection_side::FILTER) {
+        std::ignore = reader->filter_column_chunks_byte_ranges(row_groups, read_opts);
+      } else {
+        // PAYLOAD and PAYLOAD_EXPLICIT differ only in whether the payload list is
+        // caller-supplied or derived from the schema
+        std::ignore = reader->payload_column_chunks_byte_ranges(row_groups, read_opts);
+      }
+      timer.stop();
+    });
 
-  auto const time = state.get_summary("nv/cold/time/gpu/mean").get_float64("value");
-  state.add_element_count(static_cast<double>(num_cols) / time, "cols_per_sec");
   state.add_buffer_size(
     mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
 }

@@ -248,12 +248,8 @@ void BM_parquet_filter_name_resolution(nvbench::state& state)
   auto const heavy_filter   = state.get_int64("heavy_filter") != 0;
   auto const source_type    = retrieve_io_type_enum(state.get_string("io_type"));
 
-  auto source_sink = write_named_resolution_parquet_file(num_cols, source_type);
-
-  std::vector<std::string> file_names(num_cols);
-  for (cudf::size_type i = 0; i < num_cols; i++) {
-    file_names[i] = "col" + std::to_string(i);
-  }
+  auto source_sink      = write_named_resolution_parquet_file(num_cols, source_type);
+  auto const file_names = named_resolution_column_names(num_cols);
 
   // Query name: exact when case-sensitive, upper-cased when case-insensitive so the converter must
   // normalize on lookup.
@@ -301,6 +297,7 @@ void BM_parquet_filter_name_resolution(nvbench::state& state)
   read_opts.enable_case_sensitive_names(case_sensitive);
   read_opts.set_filter(filter_expr);
 
+  state.add_element_count(num_cols, "schema_columns");
   state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().get()));
   auto const mem_stats_logger = cudf::memory_stats_logger();
   state.exec(
@@ -321,8 +318,6 @@ void BM_parquet_filter_name_resolution(nvbench::state& state)
       timer.stop();
     });
 
-  auto const time = state.get_summary("nv/cold/time/gpu/mean").get_float64("value");
-  state.add_element_count(static_cast<double>(num_cols) / time, "cols_per_sec");
   // Should be 0, but adding for completeness
   state.add_buffer_size(
     mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
@@ -336,33 +331,28 @@ void BM_parquet_read_column_projection(nvbench::state& state)
 
   auto source_sink = write_named_resolution_parquet_file(num_cols, source_type);
 
-  std::vector<std::string> column_names(num_cols);
-  for (cudf::size_type i = 0; i < num_cols; i++) {
-    column_names[i] = "col" + std::to_string(i);
-  }
-
   auto read_opts = cudf::io::parquet_reader_options::builder(source_sink.make_source_info())
-                     .column_names(column_names)
+                     .column_names(named_resolution_column_names(num_cols))
                      .build();
 
+  state.add_element_count(num_cols, "schema_columns");
   auto const mem_stats_logger = cudf::memory_stats_logger();
   state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().get()));
   state.exec(
     nvbench::exec_tag::sync | nvbench::exec_tag::timer, [&](nvbench::launch& launch, auto& timer) {
       auto const source_info = source_sink.make_source_info();
       drop_page_cache_if_enabled(source_info.filepaths());
-      // Measures column selection alone
       auto sources   = cudf::io::make_datasources(source_info);
       auto metadatas = cudf::io::read_parquet_footers(sources);
 
+      // Constructing chunked parquet reader with existing datasource and metadata spends almost
+      // entire time in column selection
       timer.start();
       [[maybe_unused]] auto const reader =
         cudf::io::chunked_parquet_reader(0, 0, std::move(sources), std::move(metadatas), read_opts);
       timer.stop();
     });
 
-  auto const time = state.get_summary("nv/cold/time/gpu/mean").get_float64("value");
-  state.add_element_count(static_cast<double>(num_cols) / time, "cols_per_sec");
   state.add_buffer_size(
     mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
 }

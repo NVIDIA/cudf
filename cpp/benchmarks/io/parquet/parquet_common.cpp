@@ -90,6 +90,15 @@ cuio_source_sink_pair write_file_shape_parquet_file(cudf::type_id dtype,
   return source_sink;
 }
 
+std::vector<std::string> named_resolution_column_names(cudf::size_type num_cols)
+{
+  std::vector<std::string> names(num_cols);
+  for (cudf::size_type i = 0; i < num_cols; ++i) {
+    names[i] = "col" + std::to_string(i);
+  }
+  return names;
+}
+
 cuio_source_sink_pair write_named_resolution_parquet_file(cudf::size_type num_cols,
                                                           io_type source_type)
 {
@@ -103,9 +112,10 @@ cuio_source_sink_pair write_named_resolution_parquet_file(cudf::size_type num_co
                         row_count{num_rows},
                         data_profile_builder().cardinality(0).avg_run_length(1).no_validity());
 
+  auto const column_names = named_resolution_column_names(num_cols);
   cudf::io::table_input_metadata input_meta(tbl->view());
   for (cudf::size_type i = 0; i < num_cols; ++i) {
-    input_meta.column_metadata[i].set_name("col" + std::to_string(i));
+    input_meta.column_metadata[i].set_name(column_names[i]);
   }
 
   cudf::io::parquet_writer_options write_opts =

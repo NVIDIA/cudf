@@ -21,6 +21,7 @@
 #include <cudf/utilities/traits.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
+#include <cuda/buffer>
 #include <cuda/iterator>
 #include <cuda/stream>
 
@@ -990,7 +991,8 @@ rmm::device_uvector<char> make_chars_buffer(column_view const& offsets_view,
   size_t temp_storage_bytes = 0;
   CUDF_CUDA_TRY(cub::DeviceMemcpy::Batched(
     nullptr, temp_storage_bytes, srcs, dsts, src_sizes, size, stream.get()));
-  rmm::device_buffer d_temp_storage(temp_storage_bytes, stream);
+  cuda::device_buffer<std::byte> d_temp_storage(
+    stream, cudf::get_current_device_resource_ref(), temp_storage_bytes, cuda::no_init);
   CUDF_CUDA_TRY(cub::DeviceMemcpy::Batched(
     d_temp_storage.data(), temp_storage_bytes, srcs, dsts, src_sizes, size, stream.get()));
 

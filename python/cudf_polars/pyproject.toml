@@ -74,6 +74,10 @@ Homepage = "https://github.com/NVIDIA/cudf"
 [tool.setuptools.dynamic]
 version = {file = "cudf_polars/VERSION"}
 
+[tool.setuptools.packages.find]
+# exclude python/cudf_polars/quent/
+include = ["cudf_polars*"]
+
 [tool.pydistcheck]
 select = [
     "distro-too-large-compressed",

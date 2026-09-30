@@ -260,6 +260,93 @@ enum class decode_kernel_mask {
   DICT_INT32               = (1 << 26),  // Run decode kernel for dict string → INT32 indices
 };
 
+/**
+ * @brief Which level-prepass consumer a page uses, or NONE for the legacy decoders.
+ *
+ * The level prepass walks a page's definition levels once up front and publishes a valid-rank
+ * map, so that the decode kernel can place values without decoding levels itself. Only the DELTA
+ * encodings have a consumer for that map; everything else -- PLAIN, dictionary and
+ * BYTE_STREAM_SPLIT -- decodes with the legacy kernels, which walk the levels themselves. See
+ * `classify_prepass_family` in reader_impl_preprocess.cu.
+ *
+ * `uint8_t` so that `PageInfo` can carry it in existing tail padding.
+ */
+enum class level_prepass_family : uint8_t {
+  NONE,
+  DELTA_FLAT,
+  DELTA_LIST,
+};
+
+/// @brief True when @p family is the list shape.
+constexpr bool is_list_prepass_family(level_prepass_family family)
+{
+  return family == level_prepass_family::DELTA_LIST;
+}
+
+/**
+ * @brief Decode-local nesting counters published by the list level prepass.
+ *
+ * The prepass does not own setup pointers or schema metadata. A selected value decoder still
+ * obtains those from `setup_local_page_info`; it restores only these counters before consuming
+ * the page-global valid-rank map.
+ */
+struct PageNestingPrepassState {
+  int32_t null_count;
+  int32_t valid_map_offset;
+  int32_t valid_count;
+  int32_t value_count;
+};
+
+/**
+ * @brief Out-of-line per-page scratch for the level prepass.
+ *
+ * Held out of `PageInfo` deliberately. Inlining these fields cost 104 bytes on every page of
+ * every read, including reads that never engage the prepass, and that alone regressed the reader
+ * by 5-22% -- `PageInfo` is copied host-to-device once per subpass and the cost scales with page
+ * count, so it was worst on page-dense columns.
+ *
+ * Seeded on the host, written by a producer kernel, and read by a consumer kernel in a *later*
+ * launch, so this array must live in device memory across launches and must not be re-uploaded
+ * from the host in between.
+ */
+struct PagePrepassState {
+  /// `nz_count` value meaning "selected, but the producer has not run yet".
+  ///
+  /// The backing array is sized to every page of the subpass, so an *unselected* page's slot holds
+  /// this value too. It is only meaningful when reached through `PageInfo::prepass_state`, which is
+  /// null for those pages -- do not iterate the array by page index.
+  static constexpr int32_t not_yet_produced = -2;
+
+  /// Valid-rank map: `nz_idx[rank]` is the input position of the rank-th valid value. Null for a
+  /// required page, whose map is the identity and is synthesized by the consumer.
+  uint32_t* nz_idx{};
+  /// List only: per-depth counters published by the producer.
+  PageNestingPrepassState* nesting{};
+  /// Negative until the producer runs; the page's valid count afterwards.
+  int32_t nz_count{not_yet_produced};
+  /// Family-dependent. DELTA_FLAT: the page's null count. DELTA_LIST: its input value count.
+  int32_t aux_count{};
+  /// List only.
+  int32_t input_row_count{};
+};
+
+/**
+ * @brief Decoder masks whose flat pages have a level-prepass consumer.
+ *
+ * `classify_prepass_family` answers a structural question -- can a page of this shape and encoding
+ * be consumed from a rank map -- and is deliberately independent of which consumers have been
+ * written. This is the other half: a page whose mask is absent here gets no scratch and no map,
+ * and keeps the legacy decoder. It widens as the remaining consumers land.
+ */
+/** @brief Delta list decoder masks covered by the opt-in list prepass. */
+constexpr uint32_t DELTA_LIST_LEVEL_PREPASS_MASK = BitOr(decode_kernel_mask::DELTA_BINARY,
+                                                         decode_kernel_mask::DELTA_BYTE_ARRAY,
+                                                         decode_kernel_mask::DELTA_LENGTH_BA);
+
+constexpr uint32_t FLAT_LEVEL_PREPASS_MASK = BitOr(decode_kernel_mask::DELTA_BINARY,
+                                                   decode_kernel_mask::DELTA_LENGTH_BA,
+                                                   decode_kernel_mask::DELTA_BYTE_ARRAY);
+
 constexpr uint32_t STRINGS_MASK_NON_DELTA = BitOr(decode_kernel_mask::STRING,
                                                   decode_kernel_mask::STRING_NESTED,
                                                   decode_kernel_mask::STRING_LIST,
@@ -409,7 +496,80 @@ struct PageInfo {
   Encoding repetition_level_encoding;  // Encoding used for repetition levels (data page)
   bool is_compressed;                  // Whether the page is compressed (V2 header)
   bool has_value_info;  // true if str_bytes, num_valids, etc are derivable from page indexes
+
+  // Declared here, after the trailing scalars, so the enum lands in existing tail padding:
+  // sizeof(PageInfo) grows by 8 (the pointer) rather than 16.
+  //
+  // `prepass_state` is null when the selector did not claim this page -- non-null *is* the
+  // selection flag. See PagePrepassState for why the scratch is held out of line.
+  level_prepass_family prepass_family{level_prepass_family::NONE};
+  PagePrepassState* prepass_state{};
+
+  /**
+   * @brief True when this page was selected for @p family's prepass.
+   *
+   * @param family Prepass family to test against
+   * @return True if the page carries prepass scratch for @p family
+   */
+  [[nodiscard]] CUDF_HOST_DEVICE constexpr bool prepass_is(level_prepass_family family) const
+  {
+    return prepass_state != nullptr && prepass_family == family;
+  }
 };
+
+/**
+ * @brief Null rate, in percent, below which the level prepass costs a DELTA_BYTE_ARRAY page more
+ * than it saves it.
+ *
+ * Measured on H100 as the crossover of the flat prepass/legacy ratio against null rate, 512 MiB,
+ * five order-balanced rounds per point: 1% -> 1.105, 5% -> 1.021, 10% -> 0.826, 20% -> 0.584,
+ * 30% -> 0.461, 50% -> 0.258. The curve crosses 1.0 at roughly 5.5%, and 6 is the first whole
+ * percent past it. Within a point either side of the threshold the two paths are within 2% of each
+ * other, so its exact value matters little; what matters is not running the prepass at 1%.
+ */
+constexpr int delta_byte_array_prepass_min_null_percent = 6;
+
+/**
+ * @brief Whether the level prepass earns its keep on @p page.
+ *
+ * The prepass' cost scales with a page's value count and its benefit with its null count, so below
+ * some null rate it is pure overhead. That break-even is per-encoding, because the consumers
+ * differ, and only DELTA_BYTE_ARRAY has one above zero: measured flat at 1% nulls,
+ * DELTA_BINARY_PACKED is already at 0.947 and DELTA_LENGTH_BYTE_ARRAY at 0.803, and both improve
+ * monotonically from there, so gating either would only give away a win.
+ *
+ * Returns true -- keep the prepass -- whenever the page's null counts are unavailable, so a pruned
+ * page (whose counts are zeroed) or one whose counts were never populated keeps exactly the
+ * behaviour it had before this gate existed.
+ *
+ * Must be evaluated identically by the prepass producer, the consumer, `filter_delta_legacy_pages`
+ * and the host launch gate; if those disagree a page is decoded twice or not at all. It is
+ * deliberately *not* folded into `PageInfo::prepass_is()`, which the host calls to size the map
+ * allocations before `num_valids` has been populated and would therefore answer differently.
+ */
+[[nodiscard]] CUDF_HOST_DEVICE inline bool delta_prepass_pays_for_itself(PageInfo const& page)
+{
+  if (page.prepass_family != level_prepass_family::DELTA_FLAT) { return true; }
+  if (BitAnd(page.kernel_mask, decode_kernel_mask::DELTA_BYTE_ARRAY) == 0) { return true; }
+
+  // int64 because num_nulls is an int32 that a large page can push past INT32_MAX/100.
+  auto const nulls = static_cast<int64_t>(page.num_nulls);
+  auto const total = nulls + static_cast<int64_t>(page.num_valids);
+  if (total <= 0) { return true; }
+  return nulls * 100 >= total * delta_byte_array_prepass_min_null_percent;
+}
+
+/** @brief True when @p page's shape and encoding both have a prepass consumer. */
+[[nodiscard]] CUDF_HOST_DEVICE inline bool prepass_has_consumer(PageInfo const& page)
+{
+  switch (page.prepass_family) {
+    case level_prepass_family::DELTA_FLAT:
+      return BitAnd(page.kernel_mask, FLAT_LEVEL_PREPASS_MASK) != 0;
+    case level_prepass_family::DELTA_LIST:
+      return BitAnd(page.kernel_mask, DELTA_LIST_LEVEL_PREPASS_MASK) != 0;
+    default: return false;
+  }
+}
 
 // forward declaration
 struct column_chunk_info;
@@ -1030,7 +1190,9 @@ void decode_delta_binary(cudf::detail::hostdevice_span<PageInfo> pages,
                          int level_type_size,
                          cudf::device_span<bool const> page_mask,
                          kernel_error::pointer error_code,
-                         cuda::stream_ref stream);
+                         cuda::stream_ref stream,
+                         bool use_flat_prepass = false,
+                         bool use_list_prepass = false);
 
 /**
  * @brief Launches kernel for reading the DELTA_BYTE_ARRAY column data stored in the pages
@@ -1056,7 +1218,9 @@ void decode_delta_byte_array(cudf::detail::hostdevice_span<PageInfo> pages,
                              cudf::device_span<bool const> page_mask,
                              cudf::device_span<size_t> initial_str_offsets,
                              kernel_error::pointer error_code,
-                             cuda::stream_ref stream);
+                             cuda::stream_ref stream,
+                             bool use_flat_prepass = false,
+                             bool use_list_prepass = false);
 
 /**
  * @brief Launches kernel for reading the DELTA_LENGTH_BYTE_ARRAY column data stored in the pages
@@ -1073,6 +1237,7 @@ void decode_delta_byte_array(cudf::detail::hostdevice_span<PageInfo> pages,
  * @param[out] initial_str_offsets Vector to store the initial offsets for large nested string cols
  * @param[out] error_code Error code for kernel failures
  * @param[in] stream CUDA stream to use
+ * @param[in] use_flat_prepass Route claimed flat pages through the level-prepass consumer
  */
 void decode_delta_length_byte_array(cudf::detail::hostdevice_span<PageInfo> pages,
                                     cudf::detail::hostdevice_span<ColumnChunkDesc const> chunks,
@@ -1082,7 +1247,9 @@ void decode_delta_length_byte_array(cudf::detail::hostdevice_span<PageInfo> page
                                     cudf::device_span<bool const> page_mask,
                                     cudf::device_span<size_t> initial_str_offsets,
                                     kernel_error::pointer error_code,
-                                    cuda::stream_ref stream);
+                                    cuda::stream_ref stream,
+                                    bool use_flat_prepass = false,
+                                    bool use_list_prepass = false);
 
 /**
  * @brief Launches pre-processing kernel to fill string offsets for non-dictionary columns
@@ -1130,6 +1297,36 @@ void preprocess_levels(cudf::detail::hostdevice_span<PageInfo> pages,
                        size_t num_rows,
                        int level_type_size,
                        cuda::stream_ref stream);
+
+/**
+ * @brief Publish the flat level-prepass valid-rank map and output validity from decoded levels.
+ *
+ * Runs once per subpass, before the decode kernels, over the pages the selector claimed. Writes
+ * `PagePrepassState::nz_idx` / `nz_count` / `aux_count` and the leaf column's null mask, so that
+ * the matching decode kernel can place values without walking definition levels itself.
+ */
+void precompute_flat_level_state(cudf::detail::hostdevice_span<PageInfo> pages,
+                                 cudf::detail::hostdevice_span<ColumnChunkDesc const> chunks,
+                                 cudf::device_span<bool const> page_mask,
+                                 size_t min_row,
+                                 size_t num_rows,
+                                 int level_type_size,
+                                 cuda::stream_ref stream);
+
+/**
+ * @brief Publish the list level-prepass valid-rank map and per-depth nesting state.
+ *
+ * The list counterpart of `precompute_flat_level_state`. Runs the existing list level walker
+ * (`update_validity_and_row_indices_lists`) once per claimed page, with its rank map teed out to
+ * device memory, and records the per-depth counters the consumer restores afterwards.
+ */
+void precompute_list_level_state(cudf::detail::hostdevice_span<PageInfo> pages,
+                                 cudf::detail::hostdevice_span<ColumnChunkDesc const> chunks,
+                                 cudf::device_span<bool const> page_mask,
+                                 size_t min_row,
+                                 size_t num_rows,
+                                 int level_type_size,
+                                 cuda::stream_ref stream);
 
 /**
  * @brief Fills output offset entries for pruned string and list pages

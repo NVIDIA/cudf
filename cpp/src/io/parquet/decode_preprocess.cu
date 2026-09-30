@@ -29,6 +29,120 @@ namespace {
 constexpr int preprocess_block_size   = 512;
 constexpr int level_decode_block_size = 128;
 
+/**
+ * @brief Publish the flat level-prepass state for one page.
+ *
+ * One block per page. Walks the page's already-decoded definition levels once, writing
+ *  - the output column's null mask for the rows this page contributes, and
+ *  - `nz_idx[rank] = input position of the rank-th valid value`,
+ * then records the totals in `PagePrepassState`. The matching decode kernel reads that map and
+ * places values directly, so it never walks levels itself.
+ */
+template <typename level_t>
+CUDF_KERNEL void __launch_bounds__(level_decode_block_size)
+  precompute_flat_level_state_kernel(PageInfo* pages,
+                                     device_span<ColumnChunkDesc const> chunks,
+                                     cudf::device_span<bool const> page_mask,
+                                     size_t min_row,
+                                     size_t num_rows)
+{
+  __shared__ __align__(16) full_page_decode_state state_g;
+  __shared__ typename cub::BlockScan<int, level_decode_block_size>::TempStorage scan_storage;
+  __shared__ int block_valid_count_shared;
+  auto const block   = cg::this_thread_block();
+  int const page_idx = blockIdx.x;
+  int const t        = block.thread_rank();
+  PageInfo* const pp = &pages[page_idx];
+  if (!pp->prepass_is(level_prepass_family::DELTA_FLAT)) { return; }
+  // Skipping the map for a page whose null rate cannot repay it is the point of the gate; the
+  // consumer and filter_delta_legacy_pages apply the same test, so the page decodes with the
+  // legacy kernel instead. Doing it here rather than only in the consumer means the producer does
+  // not build a map nobody reads.
+  if (!delta_prepass_pays_for_itself(*pp)) { return; }
+  if (!page_mask.empty() && !page_mask[page_idx]) { return; }
+
+  auto* const s = &state_g;
+  null_count_back_copier _{s, t};
+  if (!setup_local_page_info(
+        s, pp, chunks, min_row, num_rows, all_types_filter{}, page_processing_stage::DECODE)) {
+    return;
+  }
+
+  auto& ni = s->nesting.nesting_info[0];
+  // Bounds preprocessing deliberately materializes fewer level values than a page contains. The
+  // prepass must never scan past that decoded prefix: doing so reads beyond lvl_decode_buf and can
+  // silently corrupt an unrelated column when another allocation changes the device-memory layout.
+  int const decoded_value_limit =
+    pp->num_decoded_level_values > 0
+      ? min(s->setup.page.num_input_values, pp->num_decoded_level_values)
+      : s->setup.page.num_input_values;
+  int const first_row   = min(s->setup.first_row, decoded_value_limit);
+  int const value_limit = min(decoded_value_limit, first_row + s->setup.num_rows);
+
+  // A required page's rank map is the identity, so there is nothing to materialize; the consumer
+  // synthesizes it. `nz_idx` stays null, which is what tells the consumer to do that.
+  if (!should_process_nulls(s)) {
+    if (t == 0) {
+      pp->prepass_state->nz_count  = value_limit;
+      pp->prepass_state->aux_count = 0;
+      ni.null_count                = 0;
+    }
+    block.sync();
+    return;
+  }
+
+  auto const* def = reinterpret_cast<level_t const*>(pp->lvl_decode_buf[level_type::DEFINITION]);
+  int valid_count = 0;
+
+  // Writing the output column's null mask needs no cross-warp state: each warp owns a contiguous
+  // 32 values and its ballot is the mask.
+  auto write_validity = [&](int value_base, uint32_t valid_mask, int value_pos) {
+    bool const in_output   = value_pos >= first_row && value_pos < value_limit;
+    auto const output_mask = ballot(in_output);
+    int const write_start  = __ffs(output_mask) - 1;
+    if (write_start >= 0 && (t % cudf::detail::warp_size) == 0 && ni.valid_map != nullptr) {
+      int const write_end = cudf::detail::warp_size - __clz(output_mask);
+      store_validity(ni.valid_map_offset + value_base + (t - (t % cudf::detail::warp_size)) +
+                       write_start - first_row,
+                     ni.valid_map,
+                     valid_mask >> write_start,
+                     write_end - write_start);
+    }
+  };
+
+  for (int value_base = 0; value_base < value_limit; value_base += level_decode_block_size) {
+    int const value_pos   = value_base + t;
+    int const is_valid    = value_pos < value_limit && def[value_pos] > 0;
+    auto const valid_mask = ballot(is_valid);
+    int thread_valid_count, block_valid_count;
+    cub::BlockScan<int, level_decode_block_size>(scan_storage)
+      .ExclusiveSum(is_valid, thread_valid_count, block_valid_count);
+    write_validity(value_base, valid_mask, value_pos);
+    if (is_valid) { pp->prepass_state->nz_idx[valid_count + thread_valid_count] = value_pos; }
+    if (t == 0) { block_valid_count_shared = block_valid_count; }
+    block.sync();
+    valid_count += block_valid_count_shared;
+    block.sync();
+  }
+
+  if (t == 0) {
+    // A sliced page keeps the valid values that precede `first_row` in its map -- the consumer
+    // indexes it by stream position, which counts from the page's first value -- so the null count
+    // for the rows this page actually contributes has to skip that prefix.
+    int prefix            = 0;
+    auto const* const map = pp->prepass_state->nz_idx;
+    while (prefix < valid_count && map[prefix] < static_cast<uint32_t>(first_row)) {
+      ++prefix;
+    }
+    int const selected_value_count = max(value_limit - first_row, 0);
+    int const selected_valid_count = valid_count - prefix;
+    pp->prepass_state->nz_count    = valid_count;
+    pp->prepass_state->aux_count   = selected_value_count - selected_valid_count;
+    ni.null_count                  = pp->prepass_state->aux_count;
+  }
+  block.sync();
+}
+
 using unused_state_buf = page_state_buffers_s<0, 0, 0>;
 
 /**
@@ -524,6 +638,30 @@ void preprocess_levels(cudf::detail::hostdevice_span<PageInfo> pages,
         pages.device_ptr(), chunks, page_mask, min_row, num_rows);
     CUDF_CUDA_TRY(cudaGetLastError());
   }
+}
+
+void precompute_flat_level_state(cudf::detail::hostdevice_span<PageInfo> pages,
+                                 cudf::detail::hostdevice_span<ColumnChunkDesc const> chunks,
+                                 cudf::device_span<bool const> page_mask,
+                                 size_t min_row,
+                                 size_t num_rows,
+                                 int level_type_size,
+                                 cuda::stream_ref stream)
+{
+  if (pages.size() == 0) { return; }
+  dim3 const grid(pages.size(), 1);
+  dim3 const block(level_decode_block_size, 1);
+  auto launch = [&](auto level_tag) {
+    using level_t = decltype(level_tag);
+    precompute_flat_level_state_kernel<level_t>
+      <<<grid, block, 0, stream.get()>>>(pages.device_ptr(), chunks, page_mask, min_row, num_rows);
+  };
+  if (level_type_size == 1) {
+    launch(uint8_t{});
+  } else {
+    launch(uint16_t{});
+  }
+  CUDF_CUDA_TRY(cudaGetLastError());
 }
 
 }  // namespace cudf::io::parquet::detail

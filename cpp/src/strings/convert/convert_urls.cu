@@ -25,7 +25,8 @@
 #include <cooperative_groups.h>
 #include <cooperative_groups/reduce.h>
 #include <cooperative_groups/scan.h>
-#include <cub/cub.cuh>
+#include <cub/warp/warp_reduce.cuh>
+#include <cub/warp/warp_scan.cuh>
 #include <cuda/std/algorithm>
 #include <cuda/stream>
 

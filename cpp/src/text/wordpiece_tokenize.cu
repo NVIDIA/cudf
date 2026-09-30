@@ -29,7 +29,7 @@
 
 #include <cooperative_groups.h>
 #include <cooperative_groups/scan.h>
-#include <cub/cub.cuh>
+#include <cub/device/device_segmented_reduce.cuh>
 #include <cuco/static_map.cuh>
 #include <cuda/functional>
 #include <cuda/iterator>

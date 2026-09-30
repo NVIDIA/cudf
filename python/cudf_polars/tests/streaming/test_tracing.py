@@ -272,6 +272,74 @@ def test_io_tasks_wait_for_memory_admission(
     assert second["admitted"] >= first["stop"]
 
 
+@pytest.mark.skipif(
+    POLARS_VERSION_LT_138, reason="set_sorted lowers to unsupported hint ir"
+)
+def test_parquet_scan_ordering_trace_from_set_sorted(
+    tmp_path: pathlib.Path, timeout_seconds: int
+) -> None:
+    pytest.importorskip("structlog")
+
+    source = tmp_path / "data.parquet"
+    pl.DataFrame({"x": range(100), "y": range(100)}).write_parquet(
+        source,
+        row_group_size=10,
+    )
+
+    code = textwrap.dedent(f"""\
+    import structlog
+    import polars as pl
+
+    structlog.configure(
+        processors=[
+            structlog.contextvars.merge_contextvars,
+            structlog.processors.JSONRenderer(),
+        ]
+    )
+    engine = pl.GPUEngine(
+        executor="streaming",
+        executor_options={{
+            "dynamic_planning": {{"infer_ordering": True}},
+            "target_partition_size": 1024,
+        }},
+        raise_on_fail=True,
+    )
+    result = (
+        pl.scan_parquet({str(source)!r})
+        .set_sorted("x")
+        .sort("x")
+        .collect(engine=engine)
+    )
+    print("RESULT_ROWS=" + str(result.height))
+    """)
+
+    env = os.environ.copy()
+    env["CUDF_POLARS_LOG_TRACES"] = "1"
+
+    with subprocess.Popen(
+        [sys.executable, "-c", code],
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+    ) as proc:
+        result, _ = proc.communicate(timeout=timeout_seconds)
+        returncode = proc.returncode
+
+    assert returncode == 0, result.decode(errors="replace")
+    assert b"RESULT_ROWS=100" in result
+
+    decisions = set()
+    for line in result.splitlines():
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if event.get("event") == "Streaming Actor":
+            decisions.add((event.get("actor_ir_type"), event.get("decision")))
+
+    assert ("StreamingScan", "parquet_ordering") in decisions
+
+
 def test_local_join_prefilter_trace_records_decision_and_effect(
     tmp_path: pathlib.Path, timeout_seconds: int
 ) -> None:

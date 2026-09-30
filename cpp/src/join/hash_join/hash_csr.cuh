@@ -10,7 +10,6 @@
 #include <cudf/types.hpp>
 
 #include <cuda/atomic>
-#include <cuda/cmath>
 #include <cuda/std/cstdint>
 #include <cuda/std/limits>
 #include <cuda/std/utility>
@@ -29,7 +28,14 @@ struct hash_table_ref {
   hash_table_slot_type* slots;
   cuda::std::uint32_t capacity;
   cuda::std::uint32_t row_mask;
-  cuda::fast_mod_div<cuda::std::uint32_t> modulo;
+
+  __device__ cuda::std::uint32_t initial_slot(hash_value_type hash) const
+  {
+    // Multiply-high maps a 32-bit hash into [0, capacity) without division or modulo.
+    // Reverse the bits so bucket selection uses the low hash bits, preserving the high-bit
+    // fingerprint's ability to reject collisions without comparing rows.
+    return __umulhi(__brev(hash), capacity);
+  }
 
   template <typename Equal>
   __device__ bool equal(cuda::std::pair<hash_value_type, size_type> key,
@@ -45,7 +51,7 @@ struct hash_table_ref {
                               Equal equal_rows) const
   {
     auto const desired = (key.first & ~row_mask) | static_cast<cuda::std::uint32_t>(key.second);
-    auto slot          = key.first % modulo;
+    auto slot          = initial_slot(key.first);
     for (cuda::std::uint32_t step = 0; step < capacity; ++step) {
       auto slot_ref =
         cuda::atomic_ref<hash_table_slot_type, cuda::thread_scope_device>{slots[slot]};
@@ -63,7 +69,7 @@ struct hash_table_ref {
   template <bool IsBuild = false, typename Equal>
   __device__ size_type find(cuda::std::pair<hash_value_type, size_type> key, Equal equal_rows) const
   {
-    auto slot = key.first % modulo;
+    auto slot = initial_slot(key.first);
     for (cuda::std::uint32_t step = 0; step < capacity; ++step) {
       auto const current = slots[slot];
       if (current == cuda::std::numeric_limits<hash_table_slot_type>::max()) {

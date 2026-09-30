@@ -22,7 +22,9 @@
 #include <rmm/device_buffer.hpp>
 #include <rmm/exec_policy.hpp>
 
-#include <cub/cub.cuh>
+#include <cub/block/block_reduce.cuh>
+#include <cub/block/block_scan.cuh>
+#include <cub/warp/warp_scan.cuh>
 #include <cuda/functional>
 #include <cuda/iterator>
 #include <cuda/std/iterator>

@@ -32,6 +32,9 @@ namespace cudf::io::parquet::detail {
 /// Initial capacity for the chars host vector in host_column
 constexpr size_t initial_chars_capacity = 1024;
 
+/// Number of statistics columns per input table column: min, max and all-nulls
+auto constexpr stats_cols_per_column = 3;
+
 /**
  * @brief Base utilities for converting and casting stats values
  *
@@ -411,9 +414,6 @@ class stats_expression_converter final : public parquet_expression_simplifier {
     ast::literal const& literal) override;
 
  private:
-  /// Number of statistics columns per input table column: min, max and all-nulls
-  static constexpr size_type stats_cols_per_column = 3;
-
   /**
    * @brief Returns `not_all_null AND stats_expr` for a column, so that a chunk holding nothing but
    * nulls is pruned by a predicate needing a non-null value to match, rather than kept because its

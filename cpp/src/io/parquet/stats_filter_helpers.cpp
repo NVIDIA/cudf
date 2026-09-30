@@ -66,7 +66,8 @@ stats_columns_collector::stats_columns_collector(ast::expression const& expr,
   : parquet_expression_simplifier{output_dtypes}
 {
   _columns_mask.resize(_output_dtypes.size(), false);
-  std::ignore = simplify_expr(expr);
+  // Return an empty mask if statistics cannot prune anything with this filter
+  if (not simplify_expr(expr).has_value()) { _columns_mask.clear(); }
 }
 
 simplified_expression_opt stats_columns_collector::simplify_comparison(

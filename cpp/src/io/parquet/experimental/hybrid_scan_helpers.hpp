@@ -397,7 +397,7 @@ class dictionary_literals_collector final : public equality_literals_collector {
    * @copydoc parquet_expression_simplifier::simplify_comparison
    *
    * A dictionary page holds the values contained in a column chunk, so EQUAL and NOT_EQUAL
-   * predicates against a literal can be answered exactly.Ordered comparisons are not
+   * predicates against a literal can be answered exactly. Ordered comparisons are not
    * collected here.
    */
   [[nodiscard]] simplified_expression_opt simplify_comparison(ast::ast_operator op,

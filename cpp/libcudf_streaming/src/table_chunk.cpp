@@ -130,11 +130,8 @@ table_chunk::table_chunk(std::unique_ptr<rapidsmpf::PackedData> packed_data)
   } else {
     // table data is in device memory. We can trivially unpack it and make it
     // available.
-    table_view_ =
-      packed_data_->metadata->empty()
-        ? cudf::table_view{}
-        : cudf::unpack(packed_data_->metadata->data(),
-                       reinterpret_cast<std::uint8_t const*>(packed_data_->data->data()));
+    table_view_          = cudf::unpack(*packed_data_->metadata,
+                               reinterpret_cast<std::uint8_t const*>(packed_data_->data->data()));
     make_available_cost_ = 0;
   }
 }
@@ -323,8 +320,6 @@ std::unique_ptr<rapidsmpf::PackedData> table_chunk::into_packed_data(
 std::pair<cudf::size_type, cudf::size_type> table_chunk::shape() const noexcept
 {
   if (packed_data_ != nullptr) {
-    // Remove this guard when packed_metadata_view accepts empty metadata (NVIDIA/cudf#24329).
-    if (packed_data_->metadata->empty()) { return {0, 0}; }
     auto view = cudf::packed_metadata_view(*packed_data_->metadata);
     return {view.num_rows(), view.num_columns()};
   }

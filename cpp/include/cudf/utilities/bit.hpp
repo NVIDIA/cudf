@@ -7,6 +7,7 @@
 
 #include <cudf/types.hpp>
 
+#include <cuda/bit>
 #include <cuda/std/climits>
 
 #include <cassert>
@@ -132,7 +133,7 @@ CUDF_HOST_DEVICE inline bool bit_value_or(bitmask_type const* bitmask,
 constexpr CUDF_HOST_DEVICE inline bitmask_type set_least_significant_bits(size_type n)
 {
   assert(0 <= n && n < static_cast<size_type>(detail::size_in_bits<bitmask_type>()));
-  return ((bitmask_type{1} << n) - 1);
+  return cuda::bitmask<bitmask_type>(0, n);
 }
 
 /**
@@ -147,7 +148,7 @@ constexpr CUDF_HOST_DEVICE inline bitmask_type set_most_significant_bits(size_ty
 {
   constexpr size_type word_size{detail::size_in_bits<bitmask_type>()};
   assert(0 <= n && n < word_size);
-  return ~((bitmask_type{1} << (word_size - n)) - 1);
+  return cuda::bitmask<bitmask_type>(word_size - n, n);
 }
 
 #ifdef __CUDACC__

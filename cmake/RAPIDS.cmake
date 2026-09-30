@@ -83,3 +83,4 @@ if(rapids-cmake_POPULATED)
 else()
   FetchContent_MakeAvailable(rapids-cmake)
 endif()
+# CI scenario: cmake/

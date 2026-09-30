@@ -117,7 +117,7 @@ The steps below reproduce the PDS-H benchmark results using cudf.pandas.
 ### Setup
 
 Install `cudf` following the
-[RAPIDS installation guide](https://docs.nvidia.com/datascience/install/). For nightly wheels:
+[installation guide](https://docs.nvidia.com/datascience/install/). For nightly wheels:
 
 ```bash
 CUDA_MAJOR=$(nvidia-smi | grep -oP 'CUDA Version: \K[0-9]+')

@@ -286,10 +286,9 @@ std::vector<uint8_t> pack_metadata(table_view const& table,
                                    size_t buffer_size,
                                    metadata_builder& builder)
 {
-  std::for_each(
-    table.begin(), table.end(), [&builder, contiguous_buffer, buffer_size](column_view const& col) {
-      build_column_metadata(builder, col, contiguous_buffer, buffer_size);
-    });
+  std::ranges::for_each(table, [&builder, contiguous_buffer, buffer_size](column_view const& col) {
+    build_column_metadata(builder, col, contiguous_buffer, buffer_size);
+  });
 
   return builder.build();
 }

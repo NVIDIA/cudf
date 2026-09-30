@@ -336,16 +336,15 @@ std::vector<cuda::stream_ref> fork_streams(cuda::stream_ref stream, std::size_t 
   auto const streams = current_cuda_stream_pool().get_streams(count);
   auto const event   = event_for_thread();
   CUDF_CUDA_TRY(cudaEventRecord(event, stream.get()));
-  std::for_each(streams.begin(), streams.end(), [&](auto& strm) {
-    CUDF_CUDA_TRY(cudaStreamWaitEvent(strm.get(), event, 0));
-  });
+  std::ranges::for_each(
+    streams, [&](auto& strm) { CUDF_CUDA_TRY(cudaStreamWaitEvent(strm.get(), event, 0)); });
   return streams;
 }
 
 void join_streams(std::span<cuda::stream_ref const> streams, cuda::stream_ref stream)
 {
   auto const event = event_for_thread();
-  std::for_each(streams.begin(), streams.end(), [&](auto& strm) {
+  std::ranges::for_each(streams, [&](auto& strm) {
     CUDF_CUDA_TRY(cudaEventRecord(event, strm.get()));
     CUDF_CUDA_TRY(cudaStreamWaitEvent(stream.get(), event, 0));
   });

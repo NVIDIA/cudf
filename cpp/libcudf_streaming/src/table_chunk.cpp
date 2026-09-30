@@ -364,3 +364,4 @@ rapidsmpf::streaming::Message to_message(std::uint64_t sequence_number,
 }
 
 }  // namespace cudf_streaming
+// CI scenario: libcudf_streaming/src

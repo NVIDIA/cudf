@@ -21,7 +21,8 @@
 
 #include <rmm/exec_policy.hpp>
 
-#include <cub/cub.cuh>
+#include <cub/block/block_reduce.cuh>
+#include <cub/block/block_scan.cuh>
 #include <cuda/functional>
 #include <cuda/std/limits>
 #include <cuda/stream>

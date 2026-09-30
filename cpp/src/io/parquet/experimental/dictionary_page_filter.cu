@@ -231,8 +231,8 @@ __device__ __forceinline__ void decode_int96timestamp(uint8_t const* int96_ptr,
   int64_t days  = cudf::io::unaligned_load<uint32_t>(int96_ptr + sizeof(int64_t));
 
   // Convert from Julian day at noon to UTC seconds
-  cudf::duration_D duration_days{
-    days - 2440588};  // TBD: Should be noon instead of midnight, but this matches pyarrow
+  // TBD: Should be noon instead of midnight, but this matches pyarrow
+  cudf::duration_D duration_days{days - cudf::io::parquet::detail::julian_day_unix_epoch};
 
   using cuda::std::chrono::duration_cast;
 

@@ -13,6 +13,9 @@
 
 namespace cudf::io::parquet::detail {
 
+/// Julian day number of the Unix epoch (1970-01-01), as used by INT96 timestamps
+constexpr int32_t julian_day_unix_epoch = 2'440'588;
+
 /**
  * @brief Computes the timestamp scale between a Parquet timestamp logical type's
  * native precision and the output column's clock rate.

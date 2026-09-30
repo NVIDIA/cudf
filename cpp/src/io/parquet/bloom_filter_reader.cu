@@ -176,6 +176,29 @@ struct bloom_filter_caster {
 };
 
 /**
+ * @brief Whether a bloom filter can be queried for a col equal literal predicate
+ *
+ * @throws cudf::logic_error if the literal's type differs from the column's
+ *
+ * @param column_type Output type of the column
+ * @param literal Literal compared against the column
+ * @return Whether the bloom filter can be queried
+ */
+[[nodiscard]] bool is_bloom_filterable(cudf::data_type column_type, ast::literal const& literal)
+{
+  CUDF_EXPECTS(column_type.id() == literal.get_data_type().id(),
+               "Mismatched predicate column and literal types");
+  // Booleans and non-comparable compound types cannot be queried
+  if (column_type.id() == cudf::type_id::BOOL8 or
+      (cudf::is_compound(column_type) and column_type.id() != cudf::type_id::STRING)) {
+    return false;
+  }
+  // A decimal literal with a different scale cannot be queried
+  return not cudf::is_fixed_point(column_type) or
+         column_type.scale() == literal.get_data_type().scale();
+}
+
+/**
  * @brief Converts AST expression to bloom filter membership (BloomfilterAST) expression.
  * This is used in row group filtering based on equality predicate.
  */
@@ -231,16 +254,11 @@ class bloom_filter_expression_converter final : public parquet_expression_simpli
     auto const col_idx            = col_ref.get_column_index();
     auto const& equality_literals = _equality_literals[col_idx];
 
-    // Skip bloom filter probing for timestamp columns with empty vector of literals due to
-    // a timestamp scale mismatch — the literal can never match the native values.
-    if (cudf::is_timestamp(_output_dtypes[col_idx]) and equality_literals.empty()) {
-      return std::nullopt;
-    }
-
     auto const literal_iter =
       std::find(equality_literals.cbegin(), equality_literals.cend(), &literal);
-    CUDF_EXPECTS(literal_iter != equality_literals.end(),
-                 "Bloom filter expression converter encountered an unexpected literal");
+
+    // Skip bloom filter probing for literals not collected by the equality literals collector
+    if (literal_iter == equality_literals.cend()) { return std::nullopt; }
 
     auto const col_literal_offset =
       _col_literals_offsets[col_idx] +
@@ -485,6 +503,9 @@ simplified_expression_opt equality_literals_collector::simplify_comparison(
       return std::nullopt;
     }
   }
+
+  // Do not collect non-bloom-filterable literals
+  if (not is_bloom_filterable(_output_dtypes[col_idx], literal)) { return std::nullopt; }
 
   _literals[col_idx].emplace_back(const_cast<ast::literal*>(&literal));
   return placeholder_expr();

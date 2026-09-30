@@ -1447,10 +1447,6 @@ class dictionary_column_wrapper<std::string> : public detail::column_wrapper {
 
 //! @cond Doxygen_Suppress
 
-// Forward declaration for lists_column_initializer
-template <typename T, typename SourceElementT>
-class lists_column_wrapper;
-
 template <typename Iterator>
 concept iterator_like = requires(Iterator i) {
   *i;
@@ -1586,35 +1582,6 @@ class lists_column_initializer {
    */
   [[nodiscard]] auto const& children() const { return children_; }
 
-  /**
-   * @brief Recursively build child list wrappers and row validity for a nested node.
-   *
-   * Each valid child is allocated with the provided `stream` and `mr`. Null children are
-   * represented as default-constructed wrappers (skipped during concatenate).
-   *
-   * @tparam ElementT List wrapper element type
-   * @tparam SourceElementT Source type used by the list wrapper
-   * @param stream CUDA stream used for device memory operations
-   * @param mr Memory resources used to allocate child columns
-   * @return Child wrappers and an empty validity vector when all rows are valid,
-   *         otherwise a validity mask matching `children().size()`
-   */
-  template <typename ElementT, typename SourceElementT = ElementT>
-  [[nodiscard]] std::pair<std::vector<lists_column_wrapper<ElementT, SourceElementT>>,
-                          std::vector<bool>>
-  build(cuda::stream_ref stream, cudf::memory_resources mr) &&
-  {
-    std::vector<lists_column_wrapper<ElementT, SourceElementT>> children;
-    std::vector<bool> validity;
-    children.reserve(children_.size());
-    validity.reserve(children_.size());
-    for (auto&& child : children_) {
-      validity.push_back(child.valid());
-      children.emplace_back(std::move(child), stream, mr);
-    }
-    return {std::move(children), has_validity_ ? std::move(validity) : std::vector<bool>{}};
-  }
-
  private:
   template <validity_iterator ValidityIterator>
   lists_column_initializer with_validity(ValidityIterator validity) &&
@@ -1731,11 +1698,7 @@ class lists_column_wrapper : public detail::column_wrapper {
    * @param stream CUDA stream used for device memory operations
    * @param mr Memory resources used to allocate the returned column
    */
-  template <typename InputIterator>
-    requires requires(InputIterator i) {
-      *i;
-      ++i;
-    }
+  template <iterator_like InputIterator>
   lists_column_wrapper(InputIterator begin,
                        InputIterator end,
                        cuda::stream_ref stream   = cudf::test::get_default_stream(),
@@ -1791,11 +1754,7 @@ class lists_column_wrapper : public detail::column_wrapper {
    * @param stream CUDA stream used for device memory operations
    * @param mr Memory resources used to allocate the returned column
    */
-  template <typename InputIterator, validity_iterator ValidityIterator>
-    requires requires(InputIterator i) {
-      *i;
-      ++i;
-    }
+  template <iterator_like InputIterator, validity_iterator ValidityIterator>
   lists_column_wrapper(InputIterator begin,
                        InputIterator end,
                        ValidityIterator v,
@@ -1993,7 +1952,14 @@ class lists_column_wrapper : public detail::column_wrapper {
       return;
     }
 
-    auto [children, validity] = std::move(init).template build<T, SourceElementT>(stream, mr);
+    std::vector<lists_column_wrapper> children;
+    std::vector<bool> validity;
+    children.reserve(init.children_.size());
+    if (init.has_validity()) { validity.reserve(init.children_.size()); }
+    for (auto&& child : init.children_) {
+      if (init.has_validity()) { validity.push_back(child.valid()); }
+      children.emplace_back(std::move(child), stream, mr);
+    }
     build_from_nested(children, validity, stream, mr);
   }
 

@@ -22,7 +22,7 @@
 
 #include <cooperative_groups.h>
 #include <cooperative_groups/reduce.h>
-#include <cub/cub.cuh>
+#include <cub/block/block_reduce.cuh>
 #include <cuda/atomic>
 #include <cuda/numeric>
 #include <cuda/stream>

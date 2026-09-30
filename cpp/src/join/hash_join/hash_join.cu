@@ -22,7 +22,6 @@
 #include <rmm/device_buffer.hpp>
 #include <rmm/device_uvector.hpp>
 
-#include <cuda/std/bit>
 #include <cuda/std/cstdint>
 
 #include <algorithm>
@@ -65,15 +64,9 @@ cuda::std::uint32_t hash_csr_capacity(size_type rows, double load_factor)
   CUDF_EXPECTS(requested <= std::numeric_limits<cuda::std::uint32_t>::max(),
                "HashCSR table capacity is not representable",
                std::overflow_error);
-  auto const capacity = cuda::std::bit_ceil(static_cast<cuda::std::uint64_t>(requested));
-  CUDF_EXPECTS(capacity <= std::numeric_limits<cuda::std::uint32_t>::max(),
-               "HashCSR table capacity is not representable",
-               std::overflow_error);
-  // Avoid power-of-two rounding at the default and lower load factors. Retain the extra
-  // headroom of rounded capacities at higher load factors, where linear probing is sensitive
-  // to occupancy (in particular, load_factor == 1 must not produce an almost-full table).
-  return static_cast<cuda::std::uint32_t>(checked <= CUCO_DESIRED_LOAD_FACTOR ? requested
-                                                                              : capacity);
+  // Hash reduction uses multiply-high, and linear probing wraps with a conditional increment.
+  // Neither requires a power-of-two capacity. Keep one empty slot even at load_factor == 1.
+  return static_cast<cuda::std::uint32_t>(requested);
 }
 }  // namespace
 

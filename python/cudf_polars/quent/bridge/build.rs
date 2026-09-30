@@ -18,9 +18,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         &parsed.schema,
         &quent_instrumentation_build::Options {
             serde: true,
-            umbrella_event: true,
+            combined_event: true,
             analyzer_package: Some("cudf-polars-quent-analyzer".to_owned()),
             record_derives: &["Clone"],
+            collector_sink: true,
             ..Default::default()
         },
     )?;
@@ -33,8 +34,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         instrumentation_path: "crate".to_owned(),
         exporters: quent_schema_codegen_python::Exporters {
             ndjson: true,
+            collector: true,
             ..Default::default()
         },
+        collector_server: true,
         ..Default::default()
     };
     let out_dir = PathBuf::from(std::env::var("OUT_DIR")?);

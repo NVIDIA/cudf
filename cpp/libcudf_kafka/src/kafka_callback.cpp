@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #include <cudf_kafka/kafka_callback.hpp>
@@ -35,3 +35,4 @@ void python_oauth_refresh_callback::oauthbearer_token_refresh_cb(
 }  // namespace external
 }  // namespace io
 }  // namespace cudf
+// CI scenario: libcudf_kafka/src

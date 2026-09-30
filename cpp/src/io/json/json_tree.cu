@@ -27,6 +27,7 @@
 #include <cuco/static_map.cuh>
 #include <cuco/static_set.cuh>
 #include <cuda/atomic>
+#include <cuda/buffer>
 #include <cuda/functional>
 #include <cuda/iterator>
 #include <cuda/std/limits>
@@ -173,7 +174,8 @@ std::pair<rmm::device_uvector<KeyType>, rmm::device_uvector<IndexType>> stable_s
   size_t temp_storage_bytes = 0;
   cub::DeviceRadixSort::SortPairs(
     nullptr, temp_storage_bytes, keys_buffer, order_buffer, keys.size());
-  rmm::device_buffer d_temp_storage(temp_storage_bytes, stream);
+  cuda::device_buffer<std::byte> d_temp_storage(
+    stream, cudf::get_current_device_resource_ref(), temp_storage_bytes, cuda::no_init);
 
   thrust::copy(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                keys.begin(),

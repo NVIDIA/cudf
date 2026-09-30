@@ -12,7 +12,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       pull-requests: write
-    if: ${{ ! github.event.pull_request.merged }}
+    if: ${{ ! github.event.pull_request.merged && ! endsWith(github.actor, '[bot]') }}
     steps:
       - uses: actions-ecosystem/action-add-assignees@ce5019e63cc4f35aba27308dc88d19c8f3686747 # v1
         with:

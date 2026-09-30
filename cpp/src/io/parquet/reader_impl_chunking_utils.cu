@@ -21,6 +21,7 @@
 #include <rmm/exec_policy.hpp>
 
 #include <cub/device/device_radix_sort.cuh>
+#include <cuda/buffer>
 #include <cuda/functional>
 #include <cuda/iterator>
 #include <cuda/std/cmath>
@@ -281,7 +282,8 @@ adjust_cumulative_sizes(device_span<cumulative_page_info const> c_info,
                                     0,
                                     sizeof(size_t) * 8,
                                     stream.get());
-    auto tmp_stg = rmm::device_buffer(tmp_bytes, stream);
+    auto tmp_stg = cuda::device_buffer<std::byte>(
+      stream, cudf::get_current_device_resource_ref(), tmp_bytes, cuda::no_init);
     cub::DeviceRadixSort::SortPairs(tmp_stg.data(),
                                     tmp_bytes,
                                     end_row_indices.begin(),         // keys in

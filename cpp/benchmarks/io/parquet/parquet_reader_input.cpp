@@ -16,6 +16,7 @@
 
 #include <nvbench/nvbench.cuh>
 
+#include <cstddef>
 #include <string>
 #include <string_view>
 
@@ -100,7 +101,12 @@ void BM_parquet_read_flat_nullable_pages(nvbench::state& state)
       // `nullable_1` a probability of 0.50.
       constexpr std::string_view prefix{"nullable_"};
       CUDF_EXPECTS(validity.starts_with(prefix), "Unsupported validity: " + std::string{validity});
-      profile.null_probability(std::stod(std::string{validity.substr(prefix.size())}) / 100.0);
+      auto const rate_str = std::string{validity.substr(prefix.size())};
+      std::size_t rate_len{0};
+      auto const rate = std::stod(rate_str, &rate_len);
+      // `std::stod` stops at the first character it cannot parse, so reject trailing junk.
+      CUDF_EXPECTS(rate_len == rate_str.size(), "Unsupported validity: " + std::string{validity});
+      profile.null_probability(rate / 100.0);
     }
     auto const tbl =
       create_random_table({cudf::type_id::INT32}, table_size_bytes{data_size}, profile);

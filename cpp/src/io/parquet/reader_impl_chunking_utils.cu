@@ -455,13 +455,13 @@ std::vector<row_range> compute_page_splits_by_row(device_span<cumulative_page_in
   return splits;
 }
 
-[[nodiscard]] std::pair<rmm::device_buffer, rmm::device_buffer> decompress_page_data(
-  host_span<ColumnChunkDesc const> chunks,
-  host_span<PageInfo> pass_pages,
-  host_span<PageInfo> subpass_pages,
-  host_span<bool const> subpass_page_mask,
-  cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+[[nodiscard]] std::pair<cuda::device_buffer<std::uint8_t>, cuda::device_buffer<std::uint8_t>>
+decompress_page_data(host_span<ColumnChunkDesc const> chunks,
+                     host_span<PageInfo> pass_pages,
+                     host_span<PageInfo> subpass_pages,
+                     host_span<bool const> subpass_page_mask,
+                     cuda::stream_ref stream,
+                     rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
 
@@ -510,15 +510,17 @@ std::vector<row_range> compute_page_splits_by_row(device_span<cumulative_page_in
 
   // Dispatch batches of pages to decompress for each codec.
   // Buffer needs to be padded, required by `gpuDecodePageData`.
-  rmm::device_buffer pass_decomp_pages(
+  cuda::device_buffer<std::uint8_t> pass_decomp_pages(
+    stream,
+    mr,
     cudf::util::round_up_safe(total_pass_output_size, cudf::io::detail::BUFFER_PADDING_MULTIPLE),
-    stream,
-    mr);
+    cuda::no_init);
   auto const total_subpass_output_size = total_output_size - total_pass_output_size;
-  rmm::device_buffer subpass_decomp_pages(
-    cudf::util::round_up_safe(total_subpass_output_size, cudf::io::detail::BUFFER_PADDING_MULTIPLE),
+  cuda::device_buffer<std::uint8_t> subpass_decomp_pages(
     stream,
-    mr);
+    mr,
+    cudf::util::round_up_safe(total_subpass_output_size, cudf::io::detail::BUFFER_PADDING_MULTIPLE),
+    cuda::no_init);
 
   auto comp_in =
     cudf::detail::make_pinned_vector_async<device_span<uint8_t const>>(num_comp_pages, stream);
@@ -536,7 +538,7 @@ std::vector<row_range> compute_page_splits_by_row(device_span<cumulative_page_in
   auto set_parameters = [&](codec_stats& codec,
                             host_span<PageInfo> pages,
                             host_span<bool const> page_mask,
-                            void* decomp_data,
+                            std::uint8_t* decomp_data,
                             bool select_dict_pages,
                             size_t& decomp_offset) {
     // Create a page mask iterator that defaults to true if the page_mask is empty
@@ -550,7 +552,7 @@ std::vector<row_range> compute_page_splits_by_row(device_span<cumulative_page_in
       if (is_page_needed && chunks[page.chunk_idx].codec == codec.compression_type &&
           (page.flags & PAGEINFO_FLAGS_DICTIONARY) == select_dict_pages and
           input.is_page_compressed) {
-        auto const dst_base = static_cast<uint8_t*>(decomp_data) + decomp_offset;
+        auto const dst_base = decomp_data + decomp_offset;
         // for V2 need to copy def and rep level info into place, and then offset the
         // input and output buffers. otherwise we'd have to keep both the compressed
         // and decompressed data.

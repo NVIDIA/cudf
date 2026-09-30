@@ -22,6 +22,7 @@
 #include <rmm/device_buffer.hpp>
 #include <rmm/device_uvector.hpp>
 
+#include <cuda/buffer>
 #include <cuda/std/cstdint>
 
 #include <algorithm>
@@ -138,7 +139,7 @@ hash_join<Hasher>::hash_join(cudf::table_view const& right,
                                                 _impl->_offsets.data(),
                                                 _impl->_offsets.size(),
                                                 stream.get()));
-    rmm::device_buffer temp_storage(temp_storage_bytes, stream, temp_mr);
+    cuda::device_buffer<std::byte> temp_storage(stream, temp_mr, temp_storage_bytes, cuda::no_init);
     CUDF_CUDA_TRY(cub::DeviceScan::InclusiveSum(temp_storage.data(),
                                                 temp_storage_bytes,
                                                 _impl->_offsets.data(),

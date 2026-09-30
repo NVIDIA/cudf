@@ -546,7 +546,7 @@ class hybrid_scan_multifile {
    *
    * @throws std::invalid_argument if no row group indices in the input
    *
-   * @param columns_mode Columns to consider for pass memory estimation
+   * @param columns_mode Columns selection to use for pass memory estimation
    * @param row_group_indices Span of input row group indices, one per source
    * @param pass_read_limit Memory limit to read and decompress pass column chunks, `0` if there is
    * no limit

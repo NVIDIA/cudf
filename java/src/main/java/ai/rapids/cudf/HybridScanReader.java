@@ -63,11 +63,11 @@ public class HybridScanReader implements AutoCloseable {
 
   /** Column selection used when constructing row-group passes. */
   public enum ReadColumnsMode {
-    /** Select filter columns. */
+    /** Only the filter columns. */
     FILTER_COLUMNS(0),
-    /** Select payload columns. */
+    /** Only the payload columns. */
     PAYLOAD_COLUMNS(1),
-    /** Select all selected columns. */
+    /** All selected columns. */
     ALL_COLUMNS(2);
 
     private final int nativeId;
@@ -632,7 +632,7 @@ public class HybridScanReader implements AutoCloseable {
    * bound: a pass always contains whole row groups, so a single row group larger than the limit
    * still constitutes its own pass. The returned array contains one inner array per pass.
    *
-   * @param columnsMode     columns used to estimate each pass
+   * @param columnsMode     columns selection to use for pass memory estimation
    * @param rowGroupIndices row groups to partition
    * @param passReadLimit   limit on the memory used by a single pass, or 0 for no limit.
    *                        Each returned pass can then be fed to a

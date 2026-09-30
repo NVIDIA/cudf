@@ -378,7 +378,7 @@ cdef class HybridScanMultiFile:
         Parameters
         ----------
         columns_mode : ReadColumnsMode
-            Columns to consider for pass memory estimation.
+            Columns selection to use for pass memory estimation
         row_group_indices : list[list[int]]
             Input row group indices, one list per source.
         pass_read_limit : int

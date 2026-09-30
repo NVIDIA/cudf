@@ -325,7 +325,7 @@ class hybrid_scan_reader_impl : public parquet::detail::reader_impl {
   /**
    * @brief Partition per-source row groups into read passes for the specified column selection
    *
-   * @param columns_mode Columns to consider for pass memory estimation
+   * @param columns_mode Columns selection to use for pass memory estimation
    * @param row_group_indices Span of vectors of input row group indices, one per source
    * @param total_row_groups Total number of row groups across all sources
    * @param pass_read_limit Memory limit to read and decompress pass column chunks

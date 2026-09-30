@@ -60,7 +60,8 @@ enum class use_data_page_mask : bool {
 };
 
 /**
- * @brief Columns to consider when constructing row group passes
+ * @brief Columns selection to use for pass memory estimation
+ * row group passes
  */
 enum class read_columns_mode : int8_t {
   FILTER_COLUMNS  = 0,  ///< Filter columns
@@ -793,7 +794,7 @@ class hybrid_scan_reader {
    *
    * @throws std::invalid_argument if no row group indices in the input
    *
-   * @param columns_mode Columns to consider for pass memory estimation
+   * @param columns_mode Columns selection to use for pass memory estimation
    * @param row_group_indices Input row group indices
    * @param pass_read_limit Memory limit to read and decompress pass column chunks, `0` if there is
    * no limit

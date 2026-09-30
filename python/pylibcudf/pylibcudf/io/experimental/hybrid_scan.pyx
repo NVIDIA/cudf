@@ -1038,7 +1038,7 @@ cdef class HybridScanReader:
         Parameters
         ----------
         columns_mode : ReadColumnsMode
-            Columns to consider for pass memory estimation.
+            Columns selection to use for pass memory estimation
         row_group_indices : list[int]
             Input row group indices
         pass_read_limit : int

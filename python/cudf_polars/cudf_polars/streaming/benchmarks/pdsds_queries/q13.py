@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 """Query 13."""
@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 import polars as pl
 
 from cudf_polars.streaming.benchmarks.pdsds_parameters import load_parameters
+from cudf_polars.streaming.benchmarks.pdsds_queries import sql_sum
 from cudf_polars.streaming.benchmarks.utils import QueryResult, get_data
 
 if TYPE_CHECKING:
@@ -158,9 +159,9 @@ def polars_impl(run_config: RunConfig) -> QueryResult:
                     pl.col("ss_ext_wholesale_cost")
                     .mean()
                     .alias("avg(ss_ext_wholesale_cost)"),
-                    pl.col("ss_ext_wholesale_cost")
-                    .sum()
-                    .alias("sum(ss_ext_wholesale_cost)"),
+                    sql_sum("ss_ext_wholesale_cost").alias(
+                        "sum(ss_ext_wholesale_cost)"
+                    ),
                 ]
             )
         ),

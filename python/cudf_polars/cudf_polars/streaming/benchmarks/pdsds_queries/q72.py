@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 """Query 72."""
@@ -126,13 +126,8 @@ def polars_impl(run_config: RunConfig) -> QueryResult:
         .join(week_seqs_2002, left_on="d_week_seq", right_on="d1_week_seq")
         .rename({"d_date_sk": "d2_date_sk", "d_week_seq": "d2_week_seq"})
     )
-    d3_dates = (
-        date_dim.filter(
-            pl.col("d_year").is_not_null()
-            & (pl.col("d_year").is_in([2001, 2002, 2003]))
-        )
-        .select(["d_date_sk", "d_date"])
-        .rename({"d_date_sk": "d3_date_sk", "d_date": "d3_date"})
+    d3_dates = date_dim.select(["d_date_sk", "d_date"]).rename(
+        {"d_date_sk": "d3_date_sk", "d_date": "d3_date"}
     )
     filtered_cd = customer_demographics.filter(
         pl.col("cd_marital_status").is_not_null() & (pl.col("cd_marital_status") == ms)

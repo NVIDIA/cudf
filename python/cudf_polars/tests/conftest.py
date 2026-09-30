@@ -336,6 +336,23 @@ def timeout_seconds() -> int:
     return 30
 
 
+def pytest_addoption(parser: pytest.Parser) -> None:
+    parser.addoption(
+        "--iterations",
+        type=int,
+        default=1,
+        help="Number of times to collect each TPC query result and validate it.",
+    )
+
+
+@pytest.fixture(scope="session")
+def tpc_iterations(request: pytest.FixtureRequest) -> int:
+    iterations = request.config.getoption("--iterations")
+    if iterations < 1:
+        raise pytest.UsageError("--iterations must be >= 1")
+    return iterations
+
+
 def pytest_configure(config: pytest.Config):
     config.addinivalue_line(
         "markers",

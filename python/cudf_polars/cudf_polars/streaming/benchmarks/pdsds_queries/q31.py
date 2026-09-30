@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 """Query 31."""
@@ -204,43 +204,65 @@ def polars_impl(run_config: RunConfig) -> QueryResult:
         .join(ws3, on="ca_county", suffix="_ws3")
         .with_columns(
             [
-                # Calculate ratios with null handling
+                # DuckDB SQL promotes Decimal/Decimal to Float64; Polars keeps it as
+                # Decimal. Cast to Float64 to match DuckDB return type.
                 pl.when(pl.col("web_sales") > 0)
-                .then(pl.col("web_sales_ws2") / pl.col("web_sales"))
+                .then(
+                    pl.col("web_sales_ws2").cast(pl.Float64)
+                    / pl.col("web_sales").cast(pl.Float64)
+                )
                 .otherwise(None)
                 .alias("web_q1_q2_increase"),
                 pl.when(pl.col("store_sales") > 0)
-                .then(pl.col("store_sales_q2") / pl.col("store_sales"))
+                .then(
+                    pl.col("store_sales_q2").cast(pl.Float64)
+                    / pl.col("store_sales").cast(pl.Float64)
+                )
                 .otherwise(None)
                 .alias("store_q1_q2_increase"),
                 pl.when(pl.col("web_sales_ws2") > 0)
-                .then(pl.col("web_sales_ws3") / pl.col("web_sales_ws2"))
+                .then(
+                    pl.col("web_sales_ws3").cast(pl.Float64)
+                    / pl.col("web_sales_ws2").cast(pl.Float64)
+                )
                 .otherwise(None)
                 .alias("web_q2_q3_increase"),
                 pl.when(pl.col("store_sales_q2") > 0)
-                .then(pl.col("store_sales_q3") / pl.col("store_sales_q2"))
+                .then(
+                    pl.col("store_sales_q3").cast(pl.Float64)
+                    / pl.col("store_sales_q2").cast(pl.Float64)
+                )
                 .otherwise(None)
                 .alias("store_q2_q3_increase"),
             ]
         )
         .filter(
-            # First condition: web_q1_q2 > store_q1_q2
             (
                 pl.when(pl.col("web_sales") > 0)
-                .then(pl.col("web_sales_ws2") / pl.col("web_sales"))
+                .then(
+                    pl.col("web_sales_ws2").cast(pl.Float64)
+                    / pl.col("web_sales").cast(pl.Float64)
+                )
                 .otherwise(None)
                 > pl.when(pl.col("store_sales") > 0)
-                .then(pl.col("store_sales_q2") / pl.col("store_sales"))
+                .then(
+                    pl.col("store_sales_q2").cast(pl.Float64)
+                    / pl.col("store_sales").cast(pl.Float64)
+                )
                 .otherwise(None)
             )
-            &
-            # Second condition: web_q2_q3 > store_q2_q3
-            (
+            & (
                 pl.when(pl.col("web_sales_ws2") > 0)
-                .then(pl.col("web_sales_ws3") / pl.col("web_sales_ws2"))
+                .then(
+                    pl.col("web_sales_ws3").cast(pl.Float64)
+                    / pl.col("web_sales_ws2").cast(pl.Float64)
+                )
                 .otherwise(None)
                 > pl.when(pl.col("store_sales_q2") > 0)
-                .then(pl.col("store_sales_q3") / pl.col("store_sales_q2"))
+                .then(
+                    pl.col("store_sales_q3").cast(pl.Float64)
+                    / pl.col("store_sales_q2").cast(pl.Float64)
+                )
                 .otherwise(None)
             )
         )

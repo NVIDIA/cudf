@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 """Query 59."""
@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 import polars as pl
 
 from cudf_polars.streaming.benchmarks.pdsds_parameters import load_parameters
+from cudf_polars.streaming.benchmarks.pdsds_queries import sql_sum
 from cudf_polars.streaming.benchmarks.utils import QueryResult, get_data
 
 if TYPE_CHECKING:
@@ -135,41 +136,20 @@ def polars_impl(run_config: RunConfig) -> QueryResult:
     ).select(["d_week_seq", "ss_store_sk", "d_day_name", "ss_sales_price"])
     wss = base.group_by(["d_week_seq", "ss_store_sk"]).agg(
         [
-            pl.when(pl.col("d_day_name") == "Sunday")
-            .then(pl.col("ss_sales_price"))
-            .otherwise(None)
-            .sum()
-            .alias("sun_sales"),
-            pl.when(pl.col("d_day_name") == "Monday")
-            .then(pl.col("ss_sales_price"))
-            .otherwise(None)
-            .sum()
-            .alias("mon_sales"),
-            pl.when(pl.col("d_day_name") == "Tuesday")
-            .then(pl.col("ss_sales_price"))
-            .otherwise(None)
-            .sum()
-            .alias("tue_sales"),
-            pl.when(pl.col("d_day_name") == "Wednesday")
-            .then(pl.col("ss_sales_price"))
-            .otherwise(None)
-            .sum()
-            .alias("wed_sales"),
-            pl.when(pl.col("d_day_name") == "Thursday")
-            .then(pl.col("ss_sales_price"))
-            .otherwise(None)
-            .sum()
-            .alias("thu_sales"),
-            pl.when(pl.col("d_day_name") == "Friday")
-            .then(pl.col("ss_sales_price"))
-            .otherwise(None)
-            .sum()
-            .alias("fri_sales"),
-            pl.when(pl.col("d_day_name") == "Saturday")
-            .then(pl.col("ss_sales_price"))
-            .otherwise(None)
-            .sum()
-            .alias("sat_sales"),
+            sql_sum(
+                pl.when(pl.col("d_day_name") == day)
+                .then(pl.col("ss_sales_price"))
+                .otherwise(None)
+            ).alias(alias)
+            for day, alias in [
+                ("Sunday", "sun_sales"),
+                ("Monday", "mon_sales"),
+                ("Tuesday", "tue_sales"),
+                ("Wednesday", "wed_sales"),
+                ("Thursday", "thu_sales"),
+                ("Friday", "fri_sales"),
+                ("Saturday", "sat_sales"),
+            ]
         ]
     )
     wss_enriched = wss.join(

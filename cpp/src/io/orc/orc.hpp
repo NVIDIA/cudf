@@ -61,6 +61,9 @@ static constexpr int32_t DEFAULT_MAX_NANOS = 999'999;
 /**
  * @brief Returns the ORC epoch as it occurs in a timezone.
  *
+ * The offset is looked up at the ORC epoch as a UTC instant; the Apache writer resolves it as a
+ * local time, which differs only for a timezone with a transition inside that offset-wide window.
+ *
  * @param timezone Timezone name
  *
  * @throw cudf::logic_error if `timezone` does not resolve to a valid TZif file

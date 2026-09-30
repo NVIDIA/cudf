@@ -30,6 +30,7 @@
 #include <rmm/exec_policy.hpp>
 
 #include <cub/device/device_reduce.cuh>
+#include <cub/device/device_segmented_sort.cuh>
 #include <cuda/functional>
 #include <cuda/iterator>
 #include <cuda/std/span>
@@ -1070,7 +1071,9 @@ std::unique_ptr<column> compute_tdigests(int delta,
   auto offsets = [&]() {
     if (cinfo.requires_rescan) { compute_cluster_starts(cinfo, stream); }
     return std::make_unique<cudf::column>(
-      std::move(cinfo.cluster_start), rmm::device_buffer{0, stream, mr}, 0);
+      std::move(cinfo.cluster_start),
+      cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED, stream, mr),
+      0);
   }();
 
   // create final tdigest column

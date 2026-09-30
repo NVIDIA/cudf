@@ -17,6 +17,7 @@
 #include <cudf/detail/copy.hpp>
 #include <cudf/detail/groupby.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
+#include <cudf/null_mask.hpp>
 #include <cudf/table/table.hpp>
 #include <cudf/table/table_view.hpp>
 #include <cudf/utilities/error.hpp>
@@ -125,16 +126,12 @@ void streaming_groupby::impl::initialize(table_view const& data, cuda::stream_re
 
   auto agg_requests = build_aggregation_requests(_requests_clone, data);
 
-  // TODO: streaming aggregation reuses the cudf hash-groupby element_aggregator,
-  // so it inherits the same atomic-support requirement.  In particular, decimal128
-  // MIN/MAX/SUM falls through to CUDF_UNREACHABLE because __int128 is not
-  // lock-free atomic.  Stateless cudf::groupby falls back to sort-based groupby
-  // in that case; streaming has no such fallback.  Until streaming has a
-  // non-atomic aggregator path (or 128-bit atomics gain hardware support), gate
-  // by the same predicate to fail loudly instead of silently producing garbage.
+  // Streaming aggregation reuses the hash-groupby element aggregator and has no
+  // sort-based fallback. Reject combinations without a supported atomic operation,
+  // including DECIMAL128 MIN/MAX. SUM uses the existing 128-bit atomic addition.
   CUDF_EXPECTS(detail::hash::can_use_hash_groupby(agg_requests),
                "streaming_groupby does not support this combination of value type and "
-               "aggregation kind (e.g. decimal128 MIN/MAX/SUM require 128-bit atomics).",
+               "aggregation kind (e.g. DECIMAL128 MIN/MAX require 128-bit atomic comparisons).",
                std::invalid_argument);
 
   auto [values_view, agg_kinds_hv, agg_objects, is_intermediate, has_compound] =
@@ -159,6 +156,19 @@ void streaming_groupby::impl::initialize(table_view const& data, cuda::stream_re
 
   _agg_results = detail::hash::create_results_table(
     _max_distinct_keys, values_view, _agg_kinds, _is_agg_intermediate, stream, mr);
+
+  // Later batches and merged states may introduce groups containing only null values,
+  // even when the first batch has no nulls. Keep direct results nullable so each group
+  // remains null until its first valid input. Counts and intermediates stay non-nullable.
+  for (size_type i = 0; i < _agg_results->num_columns(); ++i) {
+    auto& result = _agg_results->get_column(i);
+    if (!result.nullable() && !_is_agg_intermediate[i] &&
+        _agg_kinds[i] != aggregation::COUNT_VALID && _agg_kinds[i] != aggregation::COUNT_ALL) {
+      result.set_null_mask(
+        cudf::create_null_mask(_max_distinct_keys, mask_state::ALL_NULL, stream, mr),
+        _max_distinct_keys);
+    }
+  }
 
   // Cache the mutable_table_device_view once; the underlying table is fixed-size and
   // never reallocated, so the device-side descriptor stays valid for the whole
@@ -404,8 +414,8 @@ bool is_streaming_groupby_supported(data_type values_type, aggregation::Kind kin
       break;
     default: return false;
   }
-  // decimal128 SUM/MIN/MAX needs 128-bit atomics, which aren't supported.
-  if ((kind == aggregation::SUM || kind == aggregation::MIN || kind == aggregation::MAX) &&
+  // DECIMAL128 SUM uses 128-bit atomic addition, but MIN/MAX still lack atomic support.
+  if ((kind == aggregation::MIN || kind == aggregation::MAX) &&
       values_type.id() == type_id::DECIMAL128) {
     return false;
   }

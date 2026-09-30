@@ -2,7 +2,6 @@
  * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
-#pragma once
 
 #include "common.cuh"
 #include "dispatch.cuh"
@@ -15,6 +14,9 @@
 
 #include <cuda/std/cstdint>
 #include <cuda/std/functional>
+
+#include <limits>
+#include <stdexcept>
 
 namespace cudf::detail {
 
@@ -45,7 +47,7 @@ std::size_t hash_join<Hasher>::join_size(cudf::table_view const& left,
     cudf::detail::make_zeroed_device_uvector_async<size_type>(left.num_rows(), stream, temp_mr);
   auto const row_bitmask = cudf::detail::bitmask_and(left, stream, temp_mr).first;
   auto const valid_rows  = _nulls_equal == null_equality::UNEQUAL
-                             ? static_cast<bitmask_type const*>(row_bitmask.data())
+                             ? reinterpret_cast<bitmask_type const*>(row_bitmask.data())
                              : nullptr;
 
   auto count_matches = [&](auto equality, auto hasher) {
@@ -89,12 +91,12 @@ std::size_t hash_join<Hasher>::join_size(cudf::table_view const& left,
   auto const temp_mr = cudf::get_current_device_resource_ref();
   auto match_counts =
     cudf::detail::make_zeroed_device_uvector_async<size_type>(left.num_rows(), stream, temp_mr);
-  auto matched_slots = cudf::detail::make_zeroed_device_uvector_async<cuda::std::uint32_t>(
-    _impl->_capacity, stream, temp_mr);
+  auto matched_groups = cudf::detail::make_zeroed_device_uvector_async<cuda::std::uint32_t>(
+    _right.num_rows(), stream, temp_mr);
   auto matched_build_rows = cudf::detail::device_scalar<cuda::std::uint64_t>(0, stream, temp_mr);
   auto const row_bitmask  = cudf::detail::bitmask_and(left, stream, temp_mr).first;
   auto const valid_rows   = _nulls_equal == null_equality::UNEQUAL
-                              ? static_cast<bitmask_type const*>(row_bitmask.data())
+                              ? reinterpret_cast<bitmask_type const*>(row_bitmask.data())
                               : nullptr;
 
   auto count_matches = [&](auto equality, auto hasher) {
@@ -102,7 +104,7 @@ std::size_t hash_join<Hasher>::join_size(cudf::table_view const& left,
                                              valid_rows,
                                              nullptr,
                                              match_counts.data(),
-                                             matched_slots.data(),
+                                             matched_groups.data(),
                                              matched_build_rows.data(),
                                              _impl->hash_table(),
                                              _impl->csr(),
@@ -124,5 +126,12 @@ std::size_t hash_join<Hasher>::join_size(cudf::table_view const& left,
                std::overflow_error);
   return static_cast<std::size_t>(output_size);
 }
+
+template std::size_t hash_join<hash_join_hasher>::join_size<join_kind::INNER_JOIN>(
+  cudf::table_view const&, cuda::stream_ref) const;
+template std::size_t hash_join<hash_join_hasher>::join_size<join_kind::LEFT_JOIN>(
+  cudf::table_view const&, cuda::stream_ref) const;
+template std::size_t hash_join<hash_join_hasher>::join_size<join_kind::FULL_JOIN>(
+  cudf::table_view const&, cuda::stream_ref, rmm::device_async_resource_ref) const;
 
 }  // namespace cudf::detail

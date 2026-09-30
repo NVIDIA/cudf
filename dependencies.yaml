@@ -1907,7 +1907,7 @@ dependencies:
             packages:
   test_cudf_polars_compat:
     specific:
-      - output_types: [requirements, constraints]
+      - output_types: [conda, requirements, constraints]
         matrices:
           - matrix:
               polars_compat_version: "1.35"

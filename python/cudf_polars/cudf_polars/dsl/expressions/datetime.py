@@ -894,36 +894,43 @@ class TemporalFunction(Expr):
                 stream=df.stream,
             )
             return Column(result, dtype=self.dtype)
-        elif self.name is TemporalFunction.Name.MonthStart:
+        elif self.name in {
+            TemporalFunction.Name.MonthStart,
+            TemporalFunction.Name.MonthEnd,
+        }:
             (column,) = columns
-            ends = plc.datetime.last_day_of_month(column.obj, stream=df.stream)
-            days_to_subtract = plc.datetime.days_in_month(column.obj, stream=df.stream)
-            # must subtract 1 to avoid rolling over to the previous month
-            days_to_subtract = plc.binaryop.binary_operation(
-                days_to_subtract,
-                plc.Scalar.from_py(1, plc.DataType(plc.TypeId.INT32), stream=df.stream),
-                plc.binaryop.BinaryOperator.SUB,
-                plc.DataType(plc.TypeId.DURATION_DAYS),
-                stream=df.stream,
+            # Shift by a whole number of days so the time of day is kept
+            day = plc.datetime.extract_datetime_component(
+                column.obj, plc.datetime.DatetimeComponent.DAY, stream=df.stream
             )
+            if self.name is TemporalFunction.Name.MonthStart:
+                # day - 1 days back to the first of the month
+                days_to_shift = plc.binaryop.binary_operation(
+                    plc.Scalar.from_py(
+                        1, plc.DataType(plc.TypeId.INT32), stream=df.stream
+                    ),
+                    day,
+                    plc.binaryop.BinaryOperator.SUB,
+                    plc.DataType(plc.TypeId.DURATION_DAYS),
+                    stream=df.stream,
+                )
+            else:
+                # days_in_month - day days forward to the last of the month
+                days_to_shift = plc.binaryop.binary_operation(
+                    plc.datetime.days_in_month(column.obj, stream=df.stream),
+                    day,
+                    plc.binaryop.BinaryOperator.SUB,
+                    plc.DataType(plc.TypeId.DURATION_DAYS),
+                    stream=df.stream,
+                )
             result = plc.binaryop.binary_operation(
-                ends,
-                days_to_subtract,
-                plc.binaryop.BinaryOperator.SUB,
+                column.obj,
+                days_to_shift,
+                plc.binaryop.BinaryOperator.ADD,
                 self.dtype.plc_type,
                 stream=df.stream,
             )
             return Column(result, dtype=self.dtype)
-        elif self.name is TemporalFunction.Name.MonthEnd:
-            (column,) = columns
-            return Column(
-                plc.unary.cast(
-                    plc.datetime.last_day_of_month(column.obj, stream=df.stream),
-                    self.dtype.plc_type,
-                    stream=df.stream,
-                ),
-                dtype=self.dtype,
-            )
         elif self.name is TemporalFunction.Name.IsLeapYear:
             (column,) = columns
             return Column(

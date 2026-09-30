@@ -1,5 +1,5 @@
 #!/bin/bash
-# SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 # Common setup steps shared by Python test jobs
@@ -27,11 +27,16 @@ for KEY in "$@"; do
   CMD="${CMD} --file-key \"${KEY}\""
 done
 
+DEPENDENCY_MATRIX="cuda=${RAPIDS_CUDA_VERSION%.*};arch=$(arch);py=${RAPIDS_PY_VERSION};dependencies=${RAPIDS_DEPENDENCIES}"
+if [[ -n "${CUDF_EXTRA_DEPENDENCY_MATRIX:-}" ]]; then
+  DEPENDENCY_MATRIX="${DEPENDENCY_MATRIX};${CUDF_EXTRA_DEPENDENCY_MATRIX}"
+fi
+
 CMD="${CMD} \
   --prepend-channel \"${CPP_CHANNEL}\" \
   --prepend-channel \"${PYTHON_CHANNEL}\" \
   --prepend-channel \"${PYTHON_NOARCH_CHANNEL}\" \
-  --matrix \"cuda=${RAPIDS_CUDA_VERSION%.*};arch=$(arch);py=${RAPIDS_PY_VERSION};dependencies=${RAPIDS_DEPENDENCIES}\""
+  --matrix \"${DEPENDENCY_MATRIX}\""
 
 eval ${CMD} | tee "${ENV_YAML_DIR}/env.yaml"
 

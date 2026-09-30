@@ -10,7 +10,6 @@
 
 #include <rmm/exec_policy.hpp>
 
-#include <cub/device/device_reduce.cuh>
 #include <cuda/iterator>
 #include <cuda/std/execution>
 #include <cuda/std/functional>

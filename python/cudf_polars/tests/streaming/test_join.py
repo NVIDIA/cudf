@@ -13,6 +13,7 @@ import polars as pl
 
 import pylibcudf as plc
 from cudf_streaming.channel_metadata import (
+    ChannelMetadata,
     OrderKey,
     OrderScheme,
     Ordering,
@@ -26,11 +27,16 @@ from cudf_polars.dsl.traversal import traversal
 from cudf_polars.engine.options import StreamingOptions
 from cudf_polars.streaming.actor_graph.core import evaluate_logical_plan
 from cudf_polars.streaming.actor_graph.join import (
+    BroadcastJoinStrategy,
+    _choose_strategy_from_samples,
     _make_ordered_strategy,
     _ordered_join_decision,
     _use_pwise_join,
 )
-from cudf_polars.streaming.actor_graph.utils import NormalizedPartitioning
+from cudf_polars.streaming.actor_graph.utils import (
+    NormalizedPartitioning,
+    TableSizeStats,
+)
 from cudf_polars.streaming.base import PartitionInfo
 from cudf_polars.streaming.parallel import lower_ir_graph
 from cudf_polars.streaming.shuffle import Shuffle
@@ -42,8 +48,6 @@ from cudf_polars.utils.versions import POLARS_VERSION_LT_138
 
 if TYPE_CHECKING:
     import concurrent.futures
-
-    from cudf_streaming.channel_metadata import ChannelMetadata
 
 
 @pytest.fixture
@@ -573,6 +577,42 @@ def test_dynamic_planning_skips_compile_time_partition_wise_join():
         right_ir: PartitionInfo(1, partitioned_on=()),
     }
     assert not _use_pwise_join(executor, partition_info, join_ir)
+
+
+def test_dynamic_join_does_not_broadcast_incomplete_zero_sample():
+    """An all-zero sampled prefix is not evidence that an input is empty."""
+    left = pl.LazyFrame({"key": [1], "left_value": [2]})
+    right = pl.LazyFrame({"key": [1], "right_value": [3]})
+    join_ir = _join_ir(left.join(right, on="key", how="inner"))
+    partitioning = NormalizedPartitioning(None, None)
+
+    strategy = _choose_strategy_from_samples(
+        None,
+        join_ir,
+        ChannelMetadata(local_count=2),
+        ChannelMetadata(local_count=90),
+        partitioning,
+        partitioning,
+        StreamingExecutor(broadcast_limit=1_000_000),
+        left_sample=TableSizeStats(
+            chunks=None,
+            total_size=10_000,
+            total_rows=100,
+            total_chunks=2,
+            is_complete=True,
+        ),
+        right_sample=TableSizeStats(
+            chunks=None,
+            total_size=0,
+            total_rows=0,
+            total_chunks=90,
+            is_complete=False,
+        ),
+        chunkwise=False,
+        tracer=None,
+    )
+
+    assert strategy == BroadcastJoinStrategy(side="left")
 
 
 def test_join_computed_expr_right_key(streaming_engine_factory) -> None:

@@ -905,14 +905,14 @@ CUDF_KERNEL void __launch_bounds__(preprocess_block_size)
           data, dict_base, s->stream.dict_bits, dict_size, (end - data), start_value, end_value);
         break;
       case Encoding::PLAIN:
-        // Check if we have precomputed offsets available
-        if (col.column_string_offset_base == nullptr || page_string_offset_indices.empty()) {
-          CUDF_UNREACHABLE("string offsets should have been preprocessed already!");
-        }
-
         if (start_value >= end_value) {
+          // No values, so no offsets are needed (the offset buffer may be empty)
           str_bytes = 0;
         } else {
+          // Check if we have precomputed offsets available
+          if (col.column_string_offset_base == nullptr || page_string_offset_indices.empty()) {
+            CUDF_UNREACHABLE("string offsets should have been preprocessed already!");
+          }
           // The span from str_offsets[start] to str_offsets[end] includes the length prefixes
           // of strings [start+1, end), but we only want the string data bytes.
           // So we need to subtract 4 bytes per string for those embedded length prefixes.

@@ -611,11 +611,10 @@ fetch_bloom_filters_to_device_impl(
                         deferred_buffer,
                         serialize_submissions);
     std::size_t deferred_dst_offset = 0;
-    std::for_each(
-      deferred_filter_indices.begin(), deferred_filter_indices.end(), [&](auto const filter_idx) {
-        copy_srcs[filter_idx] = deferred_buffer.data() + deferred_dst_offset;
-        deferred_dst_offset += copy_sizes[filter_idx];
-      });
+    std::ranges::for_each(deferred_filter_indices, [&](auto const filter_idx) {
+      copy_srcs[filter_idx] = deferred_buffer.data() + deferred_dst_offset;
+      deferred_dst_offset += copy_sizes[filter_idx];
+    });
   }
 
   // Add the buffer base to every output span and copy destination.
@@ -635,13 +634,10 @@ fetch_bloom_filters_to_device_impl(
 
   // Populate the nested per-source spans through a flattened view
   auto flat_output_spans = bitset_spans_per_source | std::views::join;
-  std::transform(copy_dsts.begin(),
-                 copy_dsts.end(),
-                 copy_sizes.begin(),
-                 flat_output_spans.begin(),
-                 [](auto const dst, auto const size) {
-                   return cudf::device_span<uint8_t const>{static_cast<uint8_t const*>(dst), size};
-                 });
+  std::ranges::transform(
+    copy_dsts, copy_sizes, flat_output_spans.begin(), [](auto const dst, auto const size) {
+      return cudf::device_span<uint8_t const>{static_cast<uint8_t const*>(dst), size};
+    });
 
   // One batched copy (entries with a null source or zero size are ignored by the batch API)
   if (total_device_size != 0) {

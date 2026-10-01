@@ -319,6 +319,30 @@ def test_datetime_month_end(engine: pl.GPUEngine, dtype):
     assert_gpu_result_equal(q, engine=engine)
 
 
+@pytest.mark.parametrize("time_unit", ["ms", "us", "ns"])
+@pytest.mark.parametrize("time_zone", [None, "UTC"])
+@pytest.mark.parametrize("func", ["month_start", "month_end"])
+def test_datetime_month_start_end_keeps_time(
+    engine: pl.GPUEngine, time_unit, time_zone, func
+):
+    data = pl.LazyFrame(
+        {
+            "datetimes": pl.Series(
+                [
+                    datetime.datetime(2024, 1, 31, 13, 5, 7, 123456),
+                    datetime.datetime(2024, 2, 1, 23, 59, 59, 999999),
+                    datetime.datetime(2023, 2, 15, 6, 30),
+                    datetime.datetime(1969, 12, 31, 23, 0, 0, 1),
+                    None,
+                ],
+                dtype=pl.Datetime(time_unit),
+            ).dt.replace_time_zone(time_zone)
+        }
+    )
+    q = data.select(getattr(pl.col("datetimes").dt, func)())
+    assert_gpu_result_equal(q, engine=engine)
+
+
 @pytest.mark.parametrize(
     "data",
     [

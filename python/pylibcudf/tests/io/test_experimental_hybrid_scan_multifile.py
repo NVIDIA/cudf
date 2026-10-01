@@ -11,7 +11,7 @@ import rmm
 from rmm.pylibrmm.stream import Stream
 
 import pylibcudf as plc
-from pylibcudf.io.experimental import HybridScanMultiFile
+from pylibcudf.io.experimental import HybridScanMultiFile, ReadColumnsMode
 
 
 @pytest.fixture(scope="module")
@@ -176,19 +176,20 @@ def test_hybrid_scan_multifile_metadata(
 
 def test_hybrid_scan_multifile_construct_row_group_passes(
     hybrid_scan_multifile_reader: HybridScanMultiFile,
+    parquet_options: plc.io.parquet.ParquetReaderOptions,
     row_groups: list[list[int]],
 ) -> None:
     """Test partitioning the input row groups into passes."""
     # No read limit yields a single pass spanning all sources
     assert hybrid_scan_multifile_reader.construct_row_group_passes(
-        row_groups, 0
+        ReadColumnsMode.ALL_COLUMNS, row_groups, 0, parquet_options
     ) == [row_groups]
 
     # A tiny read limit splits the row groups across multiple passes
     assert (
         len(
             hybrid_scan_multifile_reader.construct_row_group_passes(
-                row_groups, 1
+                ReadColumnsMode.ALL_COLUMNS, row_groups, 1, parquet_options
             )
         )
         > 1

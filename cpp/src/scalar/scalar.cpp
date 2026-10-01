@@ -29,7 +29,7 @@ static rmm::device_buffer make_string_device_buffer(std::string_view string,
                                                     rmm::device_async_resource_ref mr)
 {
   auto host_data = cudf::detail::make_pinned_vector<char>(string.size(), stream);
-  std::copy(string.begin(), string.end(), host_data.begin());
+  std::ranges::copy(string, host_data.begin());
   return rmm::device_buffer(host_data.data(), host_data.size(), stream, mr);
 }
 
@@ -610,9 +610,8 @@ table_view struct_scalar::view() const { return _data.view(); }
 void struct_scalar::assert_valid_size()
 {
   auto const tv = _data.view();
-  CUDF_EXPECTS(
-    std::all_of(tv.begin(), tv.end(), [](column_view const& col) { return col.size() == 1; }),
-    "Struct scalar inputs must have exactly 1 row");
+  CUDF_EXPECTS(std::ranges::all_of(tv, [](column_view const& col) { return col.size() == 1; }),
+               "Struct scalar inputs must have exactly 1 row");
 }
 
 table struct_scalar::init_data(table&& data,

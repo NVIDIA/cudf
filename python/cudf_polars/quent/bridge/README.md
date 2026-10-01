@@ -13,18 +13,6 @@ collection is enabled. Keeping the extension at the top level lets the optional
 distribution own its complete import namespace and allows the generated
 bindings to be imported without first initializing `cudf_polars`.
 
-## Distributed filesystem workaround
-
-The generated bindings currently export NDJSON directly from every driver and
-worker process. For multi-node execution, `QuentContext.output_root` (or
-`CUDF_POLARS__EXECUTOR__QUENT_OUTPUT_ROOT`) must be the same writable
-shared-filesystem path on every node. Each process writes a distinct context
-UUID directory, which rank 0 packages after all sessions have closed.
-
-This is a temporary workaround until Quent provides supported Python bindings
-for its Collector. Node-local output paths do not produce a complete
-multi-node archive.
-
 ## Local Development
 
 Install [maturin] into your cudf-polars development environment and build the
@@ -44,6 +32,7 @@ the `bridge` and `analyzer`. To update Quent:
    commit SHA. Do not use a branch, tag, abbreviated SHA, or different revision
    spelling: Cargo must resolve one package identity for the generated model,
    analyzer, and `quent-open` viewer traits.
+
 2. Refresh the Cargo lockfile.
 
    ```sh
@@ -51,7 +40,7 @@ the `bridge` and `analyzer`. To update Quent:
    cargo update
    ```
 
-   Review the then commit the changes (including the lockfiles).
+   Review and then commit the changes (including the lockfiles).
 3. Activate the cudf development environment and rebuild from the repository
    root:
 

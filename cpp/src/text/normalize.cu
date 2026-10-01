@@ -30,7 +30,6 @@
 
 #include <nvtext/normalize.hpp>
 
-#include <cub/block/block_store.cuh>
 #include <cub/device/device_segmented_reduce.cuh>
 #include <cuda/buffer>
 #include <cuda/functional>

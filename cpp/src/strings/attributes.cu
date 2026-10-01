@@ -22,7 +22,6 @@
 #include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
-#include <cub/warp/warp_reduce.cuh>
 #include <cuda/functional>
 #include <cuda/iterator>
 #include <cuda/stream>

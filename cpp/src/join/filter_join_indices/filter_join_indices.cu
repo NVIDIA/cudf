@@ -33,7 +33,6 @@
 #include <rmm/exec_policy.hpp>
 #include <rmm/mr/polymorphic_allocator.hpp>
 
-#include <cub/device/device_reduce.cuh>
 #include <cuco/static_set.cuh>
 #include <cuda/buffer>
 #include <cuda/functional>

@@ -171,10 +171,9 @@ fn events_for_engine(
     events: impl Iterator<Item = Event<CudfPolarsEvent>>,
 ) -> Vec<Event<CudfPolarsEvent>> {
     let events = events.collect::<Vec<_>>();
-    let mut entity_ids = HashSet::from([engine_id]);
-    loop {
-        let previous_len = entity_ids.len();
-        for event in &events {
+    let child_to_parent = events
+        .iter()
+        .filter_map(|event| {
             let parent_id = match &event.data {
                 CudfPolarsEvent::Worker(WorkerEvent::Init { engine, .. })
                 | CudfPolarsEvent::QueryGroup(QueryGroupEvent::Declared { engine, .. }) => {
@@ -205,16 +204,36 @@ fn events_for_engine(
                 }
                 _ => None,
             };
-            if parent_id.is_some_and(|id| entity_ids.contains(&id)) {
-                entity_ids.insert(event.id);
+            parent_id.map(|parent_id| (event.id, parent_id))
+        })
+        .collect::<HashMap<_, _>>();
+
+    let mut belongs_to_engine = HashMap::from([(engine_id, true)]);
+    for event in &events {
+        if belongs_to_engine.contains_key(&event.id) {
+            continue;
+        }
+        let mut path = Vec::new();
+        let mut visited = HashSet::new();
+        let mut entity_id = event.id;
+        let belongs = loop {
+            if let Some(&belongs) = belongs_to_engine.get(&entity_id) {
+                break belongs;
             }
-        }
-        if entity_ids.len() == previous_len {
-            break;
-        }
+            if !visited.insert(entity_id) {
+                break false;
+            }
+            path.push(entity_id);
+            let Some(&parent_id) = child_to_parent.get(&entity_id) else {
+                break false;
+            };
+            entity_id = parent_id;
+        };
+        belongs_to_engine.extend(path.into_iter().map(|id| (id, belongs)));
     }
+
     events
         .into_iter()
-        .filter(|event| entity_ids.contains(&event.id))
+        .filter(|event| belongs_to_engine.get(&event.id) == Some(&true))
         .collect()
 }

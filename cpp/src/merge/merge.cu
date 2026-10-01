@@ -263,6 +263,7 @@ index_vector generate_merged_indices(table_view const& left_table,
                   right_begin + right_size,
                   merged_indices.begin(),
                   ineq_op);
+    stream.sync();
   } else {
     auto ineq_op = detail::row_lexicographic_tagged_comparator<false>(
       *lhs_device_view, *rhs_device_view, d_column_order, {});
@@ -273,9 +274,9 @@ index_vector generate_merged_indices(table_view const& left_table,
                   right_begin + right_size,
                   merged_indices.begin(),
                   ineq_op);
+    stream.sync();
   }
 
-  CUDF_CHECK_CUDA(stream.get());
   return merged_indices;
 }
 

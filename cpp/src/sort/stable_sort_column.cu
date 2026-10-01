@@ -5,6 +5,7 @@
 
 #include "sort_column_impl.cuh"
 #include "sort_radix.hpp"
+#include "sort_strings.hpp"
 
 #include <cudf/column/column_factories.hpp>
 #include <cudf/column/column_view.hpp>
@@ -31,6 +32,9 @@ std::unique_ptr<column> sorted_order<sort_method::STABLE>(column_view const& inp
   mutable_column_view indices_view = sorted_indices->mutable_view();
   if (is_radix_sortable(input)) {
     sorted_order_radix(input, indices_view, column_order == order::ASCENDING, stream);
+  } else if (is_strings_sortable(input)) {
+    sorted_order_strings<sort_method::STABLE>(
+      input, indices_view, column_order == order::ASCENDING, stream);
   } else {
     cudf::type_dispatcher<dispatch_storage_type>(input.type(),
                                                  column_sorted_order_fn<sort_method::STABLE>{},

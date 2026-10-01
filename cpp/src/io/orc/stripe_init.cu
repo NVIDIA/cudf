@@ -9,7 +9,6 @@
 #include <cudf/detail/null_mask.cuh>
 #include <cudf/io/orc_types.hpp>
 
-#include <cub/block/block_reduce.cuh>
 #include <cuda/std/array>
 #include <cuda/stream>
 #include <thrust/copy.h>

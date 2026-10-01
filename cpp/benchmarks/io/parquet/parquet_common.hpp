@@ -13,8 +13,6 @@
 
 #include <cstdint>
 #include <optional>
-#include <string>
-#include <vector>
 
 constexpr cudf::size_type num_cols = 64;
 
@@ -40,10 +38,3 @@ void parquet_read_common(cudf::size_type num_rows_to_read,
   cudf::size_type pages_per_row_group,
   io_type source_type,
   bool write_page_index);
-
-// Column names col0..col{num_cols - 1} used by `write_named_resolution_parquet_file`
-[[nodiscard]] std::vector<std::string> named_resolution_column_names(cudf::size_type num_cols);
-
-// Writes a negligible single-row file whose columns are named by `named_resolution_column_names`
-[[nodiscard]] cuio_source_sink_pair write_named_resolution_parquet_file(cudf::size_type num_cols,
-                                                                        io_type source_type);

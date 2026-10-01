@@ -3,8 +3,6 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#include "parquet_common.hpp"
-
 #include <benchmarks/common/generate_input.hpp>
 #include <benchmarks/common/memory_stats.hpp>
 #include <benchmarks/io/cuio_common.hpp>
@@ -248,8 +246,29 @@ void BM_parquet_filter_name_resolution(nvbench::state& state)
   auto const heavy_filter   = state.get_int64("heavy_filter") != 0;
   auto const source_type    = retrieve_io_type_enum(state.get_string("io_type"));
 
-  auto source_sink      = write_named_resolution_parquet_file(num_cols, source_type);
-  auto const file_names = named_resolution_column_names(num_cols);
+  cuio_source_sink_pair source_sink(source_type);
+
+  // Flat, single-row table of INT32 columns with deterministic names col0..col{n-1}. INT32 keeps
+  // the filter literal trivially type-correct; name-resolution cost is independent of dtype.
+  constexpr cudf::size_type num_rows = 1;
+  auto const tbl =
+    create_random_table(cycle_dtypes({cudf::type_id::INT32}, num_cols),
+                        row_count{num_rows},
+                        data_profile_builder().cardinality(0).avg_run_length(1).no_validity());
+  auto const view = tbl->view();
+
+  cudf::io::table_input_metadata input_meta(view);
+  std::vector<std::string> file_names(num_cols);
+  for (cudf::size_type i = 0; i < num_cols; i++) {
+    file_names[i] = "col" + std::to_string(i);
+    input_meta.column_metadata[i].set_name(file_names[i]);
+  }
+
+  cudf::io::parquet_writer_options write_opts =
+    cudf::io::parquet_writer_options::builder(source_sink.make_sink_info(), view)
+      .metadata(std::move(input_meta))
+      .compression(cudf::io::compression_type::NONE);
+  cudf::io::write_parquet(write_opts);
 
   // Query name: exact when case-sensitive, upper-cased when case-insensitive so the converter must
   // normalize on lookup.
@@ -329,10 +348,27 @@ void BM_parquet_read_column_projection(nvbench::state& state)
   auto const num_cols    = static_cast<cudf::size_type>(state.get_int64("num_cols"));
   auto const source_type = retrieve_io_type_enum(state.get_string("io_type"));
 
-  auto source_sink = write_named_resolution_parquet_file(num_cols, source_type);
+  cuio_source_sink_pair source_sink(source_type);
 
+  // Flat, single-row table of INT32 columns. Without metadata, the writer names them
+  // _col0.._col{n-1}
+  constexpr cudf::size_type num_rows = 1;
+  auto const tbl =
+    create_random_table(cycle_dtypes({cudf::type_id::INT32}, num_cols),
+                        row_count{num_rows},
+                        data_profile_builder().cardinality(0).avg_run_length(1).no_validity());
+
+  cudf::io::parquet_writer_options write_opts =
+    cudf::io::parquet_writer_options::builder(source_sink.make_sink_info(), tbl->view())
+      .compression(cudf::io::compression_type::NONE);
+  cudf::io::write_parquet(write_opts);
+
+  std::vector<std::string> column_names(num_cols);
+  for (cudf::size_type i = 0; i < num_cols; i++) {
+    column_names[i] = "_col" + std::to_string(i);
+  }
   auto read_opts = cudf::io::parquet_reader_options::builder(source_sink.make_source_info())
-                     .column_names(named_resolution_column_names(num_cols))
+                     .column_names(std::move(column_names))
                      .build();
 
   state.add_element_count(num_cols, "schema_columns");

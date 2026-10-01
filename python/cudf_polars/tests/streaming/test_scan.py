@@ -18,7 +18,6 @@ from cudf_polars.dsl.ir import (
     IRExecutionContext,
     Scan,
 )
-from cudf_polars.dsl.traversal import traversal
 from cudf_polars.dsl.utils.io import (
     CachedParquetInfo,
     _prefetch_parquet_footers_for_paths,
@@ -874,24 +873,7 @@ def test_prefetch_file_metadata_with_cached_scan_parent_nodes(
     right = cached_scan.group_by("k").agg(pl.len().alias("n"))
     q = left.join(right, on="k").sort("k")
 
-    ir = Translator(q._ldf.visit(), engine).translate_ir()
-    config = ConfigOptions.from_polars_engine(engine)
-    lowering = lower_ir_graph(ir, config, StatsCollector())
-
-    scans = [
-        node
-        for node in traversal([lowering.lowered])
-        if isinstance(node, StreamingScan)
-    ]
-    assert scans
-    assert all(scan.base_scan.cached_parquet_info is None for scan in scans)
-
-    cached_parquet_info_map = prefetch_parquet_file_metadata_for_ir(
-        lowering.lowered, None
-    )
-    attach_cached_parquet_metadata(lowering.lowered, cached_parquet_info_map)
-
-    assert all(scan.base_scan.cached_parquet_info is not None for scan in scans)
+    assert_gpu_result_equal(q, engine=engine)
 
 
 def test_scan_task_identity_equality() -> None:

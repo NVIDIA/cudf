@@ -31,7 +31,7 @@
 #include <cuda/std/bit>
 #include <cuda/std/chrono>
 #include <cuda/stream>
-#include <thrust/tabulate.h>
+#include <thrust/transform.h>
 #include <thrust/uninitialized_fill.h>
 
 #include <algorithm>
@@ -164,11 +164,11 @@ struct bloom_filter_caster {
                                                    cuda::stream_ref stream,
                                                    cudf::memory_resources mr) const
   {
-    using Key = bloom_filter_key<physical_type>;
+    using key_type = bloom_filter_key<physical_type>;
 
-    using policy_type       = arrow_filter_policy<Key>;
+    using policy_type       = arrow_filter_policy<key_type>;
     using bloom_filter_type = cuco::
-      bloom_filter_ref<Key, cuco::extent<std::size_t>, cuco::thread_scope_thread, policy_type>;
+      bloom_filter_ref<key_type, cuco::extent<std::size_t>, cuco::thread_scope_thread, policy_type>;
     using filter_block_type = typename bloom_filter_type::filter_block_type;
     using word_type         = typename policy_type::word_type;
 
@@ -178,37 +178,39 @@ struct bloom_filter_caster {
     auto constexpr bytes_per_block = sizeof(word_type) * policy_type::words_per_block;
 
     // Query literal in bloom filters from each column chunk (row group).
-    thrust::tabulate(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
-                     results.begin(),
-                     results.end(),
-                     [filter_span          = bloom_filter_spans.data(),
-                      literal              = literal,
-                      type_length          = parquet_type_lengths[equality_col_idx],
-                      col_idx              = equality_col_idx,
-                      num_equality_columns = num_equality_columns] __device__(auto row_group_idx) {
-                       // Filter bitset buffer index
-                       auto const filter_idx  = col_idx + (num_equality_columns * row_group_idx);
-                       auto const filter_size = filter_span[filter_idx].size();
+    thrust::transform(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
+                      cuda::counting_iterator<std::size_t>{0},
+                      cuda::counting_iterator{total_row_groups},
+                      results.begin(),
+                      [filter_span          = bloom_filter_spans.data(),
+                       literal              = literal,
+                       type_length          = parquet_type_lengths[equality_col_idx],
+                       col_idx              = equality_col_idx,
+                       num_equality_columns = num_equality_columns] __device__(auto row_group_idx) {
+                        // Filter bitset buffer index
+                        auto const filter_idx  = col_idx + (num_equality_columns * row_group_idx);
+                        auto const filter_size = filter_span[filter_idx].size();
 
-                       // If no bloom filter, then fill in `true` as membership cannot be determined
-                       if (filter_size == 0) { return true; }
+                        // If no bloom filter, then fill in `true` as membership cannot be
+                        // determined
+                        if (filter_size == 0) { return true; }
 
-                       // Number of filter blocks
-                       auto const num_filter_blocks = filter_size / bytes_per_block;
+                        // Number of filter blocks
+                        auto const num_filter_blocks = filter_size / bytes_per_block;
 
-                       // Create a bloom filter view. `const_cast` is needed because bloom filter
-                       // view expects a mutable view.
-                       bloom_filter_type filter{
-                         reinterpret_cast<filter_block_type*>(
-                           const_cast<cuda::std::byte*>(filter_span[filter_idx].data())),
-                         num_filter_blocks,
-                         {},   // Thread scope as the same literal is being searched across
-                               // different bitsets per thread
-                         {}};  // Arrow policy with cudf::hashing::detail::XXHash_64 seeded
-                               // with 0 for Arrow compatibility
+                        // Create a bloom filter view. `const_cast` is needed because bloom filter
+                        // view expects a mutable view.
+                        bloom_filter_type filter{
+                          reinterpret_cast<filter_block_type*>(
+                            const_cast<cuda::std::byte*>(filter_span[filter_idx].data())),
+                          num_filter_blocks,
+                          {},   // Thread scope as the same literal is being searched across
+                                // different bitsets per thread
+                          {}};  // Arrow policy with XXHash_64 seeded
+                                // with 0 for Arrow compatibility
 
-                       return probe_key<Rep, physical_type>(filter, literal, type_length);
-                     });
+                        return probe_key<Rep, physical_type>(filter, literal, type_length);
+                      });
 
     return std::make_unique<cudf::column>(
       std::move(results),

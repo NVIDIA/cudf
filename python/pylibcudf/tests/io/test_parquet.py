@@ -271,8 +271,12 @@ requires_pyarrow_bloom_filters = pytest.mark.skipif(
 _BLOOM_FILTER = {"ndv": 1000, "fpp": 0.0001}
 
 
+# The default 28-digit context would round 38-digit decimals
+_DECIMAL_CONTEXT = decimal.Context(prec=40)
+
+
 def _decimal(offset):
-    return lambda v: decimal.Decimal(v + offset).scaleb(-2)
+    return lambda v: decimal.Decimal(v + offset).scaleb(-2, _DECIMAL_CONTEXT)
 
 
 def _timestamp(start):
@@ -306,6 +310,27 @@ def _timestamp(start):
         ),
         (pa.decimal128(20, 2), pa.decimal128(20, 2), _decimal(-60), {}),
         (pa.decimal128(38, 2), pa.decimal128(38, 2), _decimal(-60), {}),
+        # Unscaled values beyond the int64 range
+        (
+            pa.decimal128(20, 2),
+            pa.decimal128(20, 2),
+            _decimal(9_500_000_000_000_000_000),
+            {},
+        ),
+        (
+            pa.decimal128(20, 2),
+            pa.decimal128(20, 2),
+            _decimal(-9_500_000_000_000_000_000),
+            {},
+        ),
+        (pa.decimal128(38, 2), pa.decimal128(38, 2), _decimal(10**37), {}),
+        (pa.decimal128(38, 2), pa.decimal128(38, 2), _decimal(-(10**37)), {}),
+        (
+            pa.decimal128(38, 2),
+            pa.decimal128(38, 2),
+            _decimal(0x0102030405060708090A0B0C0D0E0F),
+            {},
+        ),
         (
             pa.timestamp("ns"),
             pa.timestamp("ns"),
@@ -359,6 +384,31 @@ def test_read_parquet_bloom_filter_physical_types(
         assert result.tbl.num_rows() == num_rows
         assert result.num_row_groups_after_stats_filter == 2
         assert result.num_row_groups_after_bloom_filter == num_row_groups
+
+
+@requires_pyarrow_bloom_filters
+def test_read_parquet_bloom_filter_decimal_scale_mismatch(tmp_path):
+    # A literal whose scale differs from the column's is not probed, so no
+    # row group is pruned by the bloom filter
+    to_value = _decimal(-60)
+    evens = [to_value((i % 50) * 2) for i in range(1000)]
+    with_five = [
+        to_value(5) if i % 50 == 1 else v for i, v in enumerate(evens)
+    ]
+    path = tmp_path / "bloom.parquet"
+    write_table(
+        pa.table({"c": pa.array(with_five + evens, pa.decimal128(5, 2))}),
+        path,
+        row_group_size=len(evens),
+        bloom_filter_options={"c": _BLOOM_FILTER},
+    )
+
+    for value, num_rows in [(5, 20), (7, 0)]:
+        literal = pa.array([to_value(value)], pa.decimal32(5, 3))[0]
+        result = _read_parquet_equal_to(path, "c", literal)
+        assert result.tbl.num_rows() == num_rows
+        assert result.num_row_groups_after_stats_filter == 2
+        assert result.num_row_groups_after_bloom_filter is None
 
 
 @requires_pyarrow_bloom_filters

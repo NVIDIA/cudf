@@ -390,6 +390,14 @@ struct OperatorData {
     statistics: Option<DynamicAttributes>,
 }
 
+impl OperatorData {
+    fn add_serialized_attribute(&mut self, name: &str, value: &impl serde::Serialize) {
+        if let Ok(value) = serde_json::to_string(value) {
+            self.custom_attributes.add(name, value);
+        }
+    }
+}
+
 impl EntityEventAccumulator for OperatorData {
     type Payload = OperatorEvent;
 
@@ -425,48 +433,38 @@ impl EntityEventAccumulator for OperatorData {
                 }
                 self.statistics = Some(attributes);
             }
-            event => {
-                let (name, value) = match event {
-                    OperatorEvent::ScanDetails { values } => {
-                        ("scan_details", serde_json::to_string(&values))
-                    }
-                    OperatorEvent::StreamingScanDetails { values } => {
-                        ("streaming_scan_details", serde_json::to_string(&values))
-                    }
-                    OperatorEvent::JoinDetails { values } => {
-                        ("join_details", serde_json::to_string(&values))
-                    }
-                    OperatorEvent::JoinWithPrefilterDetails { values } => (
-                        "join_with_prefilter_details",
-                        serde_json::to_string(&values),
-                    ),
-                    OperatorEvent::PushdownFilterHintDetails { values } => (
-                        "pushdown_filter_hint_details",
-                        serde_json::to_string(&values),
-                    ),
-                    OperatorEvent::GroupByDetails { values } => {
-                        ("group_by_details", serde_json::to_string(&values))
-                    }
-                    OperatorEvent::ShuffleDetails { values } => {
-                        ("shuffle_details", serde_json::to_string(&values))
-                    }
-                    OperatorEvent::SortDetails { values } => {
-                        ("sort_details", serde_json::to_string(&values))
-                    }
-                    OperatorEvent::FilterDetails { values } => {
-                        ("filter_details", serde_json::to_string(&values))
-                    }
-                    OperatorEvent::SelectDetails { values } => {
-                        ("select_details", serde_json::to_string(&values))
-                    }
-                    OperatorEvent::HstackDetails { values } => {
-                        ("hstack_details", serde_json::to_string(&values))
-                    }
-                    _ => unreachable!(),
-                };
-                if let Ok(value) = value {
-                    self.custom_attributes.add(name, value);
-                }
+            OperatorEvent::ScanDetails { values } => {
+                self.add_serialized_attribute("scan_details", &values);
+            }
+            OperatorEvent::StreamingScanDetails { values } => {
+                self.add_serialized_attribute("streaming_scan_details", &values);
+            }
+            OperatorEvent::JoinDetails { values } => {
+                self.add_serialized_attribute("join_details", &values);
+            }
+            OperatorEvent::JoinWithPrefilterDetails { values } => {
+                self.add_serialized_attribute("join_with_prefilter_details", &values);
+            }
+            OperatorEvent::PushdownFilterHintDetails { values } => {
+                self.add_serialized_attribute("pushdown_filter_hint_details", &values);
+            }
+            OperatorEvent::GroupByDetails { values } => {
+                self.add_serialized_attribute("group_by_details", &values);
+            }
+            OperatorEvent::ShuffleDetails { values } => {
+                self.add_serialized_attribute("shuffle_details", &values);
+            }
+            OperatorEvent::SortDetails { values } => {
+                self.add_serialized_attribute("sort_details", &values);
+            }
+            OperatorEvent::FilterDetails { values } => {
+                self.add_serialized_attribute("filter_details", &values);
+            }
+            OperatorEvent::SelectDetails { values } => {
+                self.add_serialized_attribute("select_details", &values);
+            }
+            OperatorEvent::HstackDetails { values } => {
+                self.add_serialized_attribute("hstack_details", &values);
             }
         }
     }
@@ -867,10 +865,7 @@ impl CudfPolarsModelBuilder {
         match data {
             crate::generated::CudfPolarsEvent::Engine(data) => {
                 if id != self.engine_id {
-                    return Err(AnalyzerError::Validation(format!(
-                        "multiple engine instances: expected {}, found {id}",
-                        self.engine_id
-                    )));
+                    return Ok(());
                 }
                 let event = Event::new(id, timestamp, data);
                 if let Some(engine) = &mut self.engine {

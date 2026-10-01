@@ -167,7 +167,7 @@ impl CudfPolarsUiAnalyzer {
             let long_fsms = result
                 .long_entities
                 .iter()
-                .filter_map(|id| self.evaluates.iter().find(|evaluate| evaluate.id == *id))
+                .filter_map(|id| self.evaluate(*id))
                 .map(|evaluate| evaluate.to_ui_fsm(epoch))
                 .collect();
             let mut capacities_states_values = HashMap::new();
@@ -211,7 +211,7 @@ impl CudfPolarsUiAnalyzer {
             let long_fsms = result
                 .long_entities
                 .iter()
-                .filter_map(|id| self.evaluates.iter().find(|evaluate| evaluate.id == *id))
+                .filter_map(|id| self.evaluate(*id))
                 .map(|evaluate| evaluate.to_ui_fsm(epoch))
                 .collect();
             UiResourceTimeline::Binned(ResourceTimelineBinned {

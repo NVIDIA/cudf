@@ -25,7 +25,6 @@ use quent_ui::{
 use uuid::Uuid;
 
 use crate::{
-    actor::ActorSpan,
     evaluate::EvaluateSpan,
     generated::CudfPolarsEvent,
     model::CudfPolarsModel,
@@ -35,8 +34,9 @@ use crate::{
 /// Query-engine UI adapter for the schema-generated cudf-polars event model.
 pub struct CudfPolarsUiAnalyzer {
     pub(super) model: CudfPolarsModel,
-    pub(super) actors: Vec<ActorSpan>,
+    pub(super) actor_operator_ids: HashMap<Uuid, Uuid>,
     pub(super) evaluates: Vec<EvaluateSpan>,
+    pub(super) evaluate_indices: HashMap<Uuid, usize>,
     pub(super) resources: HashMap<Uuid, DeclaredResource>,
     pub(super) resource_groups: HashMap<Uuid, DeclaredResourceGroup>,
 }
@@ -52,10 +52,13 @@ impl CudfPolarsUiAnalyzer {
     }
 
     pub(super) fn evaluate_operator_id(&self, evaluate: &EvaluateSpan) -> Option<Uuid> {
-        self.actors
-            .iter()
-            .find(|actor| actor.id == evaluate.actor_id)
-            .map(|actor| actor.operator_id)
+        self.actor_operator_ids.get(&evaluate.actor_id).copied()
+    }
+
+    pub(super) fn evaluate(&self, id: Uuid) -> Option<&EvaluateSpan> {
+        self.evaluate_indices
+            .get(&id)
+            .and_then(|&index| self.evaluates.get(index))
     }
 
     pub(super) fn is_known_resource_group(&self, group_id: Uuid, engine_id: Uuid) -> bool {

@@ -1,9 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
-use quent_analyzer::AnalyzerResult;
+use quent_analyzer::{AnalyzerError, AnalyzerResult};
 use quent_events::Event;
 use quent_query_engine_analyzer::{OperatorEntityMut, QueryEngineModelMut};
 use uuid::Uuid;
@@ -12,7 +12,11 @@ use super::CudfPolarsUiAnalyzer;
 use crate::{
     actor::{ActorBuilder, ActorSpan},
     evaluate::{EvaluateBuilder, EvaluateSpan},
-    generated::{CudfPolarsEvent, DataChannelEvent, EngineEvent, ProcessorEvent, ThreadPoolEvent},
+    generated::{
+        ActorEvent, CudfPolarsEvent, DataChannelEvent, DeviceMemoryEvent, EngineEvent,
+        EvaluateEvent, OperatorEvent, PlanEvent, PortEvent, ProcessorEvent, QueryEvent,
+        QueryGroupEvent, StorageEvent, ThreadPoolEvent, WorkerEvent,
+    },
     model::CudfPolarsModelBuilder,
     resource::{
         DATA_CHANNEL_RESOURCE_TYPE, DeclaredResource, DeclaredResourceGroup,
@@ -25,6 +29,7 @@ impl CudfPolarsUiAnalyzer {
         engine_id: Uuid,
         events: impl Iterator<Item = Event<CudfPolarsEvent>>,
     ) -> AnalyzerResult<Self> {
+        let events = events_for_engine(engine_id, events);
         let mut builder = CudfPolarsModelBuilder::try_new(engine_id)?;
         let mut actor_builders = HashMap::<Uuid, ActorBuilder>::new();
         let mut evaluate_builders = HashMap::<Uuid, EvaluateBuilder>::new();
@@ -93,11 +98,19 @@ impl CudfPolarsUiAnalyzer {
         }
         let actors: Vec<ActorSpan> = actor_builders
             .into_iter()
-            .map(|(id, builder)| builder.try_build(id))
+            .filter_map(|(id, builder)| match builder.try_build(id) {
+                Ok(actor) => Some(Ok(actor)),
+                Err(AnalyzerError::IncompleteEntity(_)) => None,
+                Err(error) => Some(Err(error)),
+            })
             .collect::<AnalyzerResult<Vec<_>>>()?;
         let evaluates: Vec<EvaluateSpan> = evaluate_builders
             .into_iter()
-            .map(|(id, builder)| builder.try_build(id))
+            .filter_map(|(id, builder)| match builder.try_build(id) {
+                Ok(evaluate) => Some(Ok(evaluate)),
+                Err(AnalyzerError::IncompleteEntity(_)) => None,
+                Err(error) => Some(Err(error)),
+            })
             .collect::<AnalyzerResult<Vec<_>>>()?;
         let mut model = builder.try_build()?;
         for actor in &actors {
@@ -105,10 +118,20 @@ impl CudfPolarsUiAnalyzer {
                 operator.extend_active_span(actor.span);
             }
         }
+        let actor_operator_ids = actors
+            .into_iter()
+            .map(|actor| (actor.id, actor.operator_id))
+            .collect();
+        let evaluate_indices = evaluates
+            .iter()
+            .enumerate()
+            .map(|(index, evaluate)| (evaluate.id, index))
+            .collect();
         Ok(Self {
             model,
-            actors,
+            actor_operator_ids,
             evaluates,
+            evaluate_indices,
             resources,
             resource_groups,
         })
@@ -141,4 +164,57 @@ impl CudfPolarsUiAnalyzer {
         }
         Ok(quent_query_engine_ui::Engine::new(engine_id))
     }
+}
+
+fn events_for_engine(
+    engine_id: Uuid,
+    events: impl Iterator<Item = Event<CudfPolarsEvent>>,
+) -> Vec<Event<CudfPolarsEvent>> {
+    let events = events.collect::<Vec<_>>();
+    let mut entity_ids = HashSet::from([engine_id]);
+    loop {
+        let previous_len = entity_ids.len();
+        for event in &events {
+            let parent_id = match &event.data {
+                CudfPolarsEvent::Worker(WorkerEvent::Init { engine, .. })
+                | CudfPolarsEvent::QueryGroup(QueryGroupEvent::Declared { engine, .. }) => {
+                    Some(engine.target)
+                }
+                CudfPolarsEvent::Query(QueryEvent::Initialized { query_group, .. }) => {
+                    Some(query_group.target)
+                }
+                CudfPolarsEvent::Plan(PlanEvent::Declared { query, .. }) => Some(query.target),
+                CudfPolarsEvent::Operator(OperatorEvent::Declared { plan, .. }) => {
+                    Some(plan.target)
+                }
+                CudfPolarsEvent::Port(PortEvent::Declared { operator, .. })
+                | CudfPolarsEvent::Actor(ActorEvent::Started { operator, .. }) => {
+                    Some(operator.target)
+                }
+                CudfPolarsEvent::ThreadPool(ThreadPoolEvent::Declared { worker, .. })
+                | CudfPolarsEvent::DeviceMemory(DeviceMemoryEvent::Declared { worker, .. })
+                | CudfPolarsEvent::Storage(StorageEvent::Declared { worker, .. })
+                | CudfPolarsEvent::DataChannel(DataChannelEvent::Declared { worker, .. }) => {
+                    Some(worker.target)
+                }
+                CudfPolarsEvent::Processor(ProcessorEvent::Declared { thread_pool, .. }) => {
+                    Some(thread_pool.target)
+                }
+                CudfPolarsEvent::Evaluate(EvaluateEvent::Queued { actor, .. }) => {
+                    Some(actor.target)
+                }
+                _ => None,
+            };
+            if parent_id.is_some_and(|id| entity_ids.contains(&id)) {
+                entity_ids.insert(event.id);
+            }
+        }
+        if entity_ids.len() == previous_len {
+            break;
+        }
+    }
+    events
+        .into_iter()
+        .filter(|event| entity_ids.contains(&event.id))
+        .collect()
 }

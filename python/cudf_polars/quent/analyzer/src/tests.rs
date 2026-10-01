@@ -56,7 +56,9 @@ fn entity_list_request(
 #[test]
 fn builds_query_bundle_from_generated_events() {
     let engine_id = Uuid::now_v7();
+    let foreign_engine_id = Uuid::now_v7();
     let worker_id = Uuid::now_v7();
+    let foreign_worker_id = Uuid::now_v7();
     let idle_worker_id = Uuid::now_v7();
     let query_group_id = Uuid::now_v7();
     let query_id = Uuid::now_v7();
@@ -64,9 +66,11 @@ fn builds_query_bundle_from_generated_events() {
     let idle_plan_id = Uuid::now_v7();
     let operator_id = Uuid::now_v7();
     let actor_id = Uuid::now_v7();
+    let incomplete_actor_id = Uuid::now_v7();
     let thread_pool_id = Uuid::now_v7();
     let processor_id = Uuid::now_v7();
     let evaluate_id = Uuid::now_v7();
+    let incomplete_evaluate_id = Uuid::now_v7();
     let events = vec![
         Event::new(
             engine_id,
@@ -80,6 +84,29 @@ fn builds_query_bundle_from_generated_events() {
                     backend: "spmd".to_owned(),
                     custom_attributes: DynamicAttributes::new(),
                 },
+            }),
+        ),
+        Event::new(
+            foreign_engine_id,
+            1,
+            CudfPolarsEvent::Engine(EngineEvent::Init {
+                seq: 0,
+                instance_name: "foreign-cudf-polars".to_owned(),
+                implementation: Implementation {
+                    name: "cudf-polars".to_owned(),
+                    version: "test".to_owned(),
+                    backend: "spmd".to_owned(),
+                    custom_attributes: DynamicAttributes::new(),
+                },
+            }),
+        ),
+        Event::new(
+            foreign_worker_id,
+            2,
+            CudfPolarsEvent::Worker(WorkerEvent::Init {
+                seq: 0,
+                instance_name: "foreign-rank-0".to_owned(),
+                engine: EntityRef::new(foreign_engine_id, ()),
             }),
         ),
         Event::new(
@@ -234,6 +261,24 @@ fn builds_query_bundle_from_generated_events() {
             }),
         ),
         Event::new(
+            incomplete_actor_id,
+            20,
+            CudfPolarsEvent::Actor(ActorEvent::Started {
+                seq: 0,
+                operator: EntityRef::new(operator_id, ()),
+                worker: EntityRef::new(worker_id, ()),
+            }),
+        ),
+        Event::new(
+            incomplete_evaluate_id,
+            20,
+            CudfPolarsEvent::Evaluate(EvaluateEvent::Queued {
+                seq: 0,
+                instance_name: "incomplete-evaluate".to_owned(),
+                actor: EntityRef::new(incomplete_actor_id, ()),
+            }),
+        ),
+        Event::new(
             query_id,
             21,
             CudfPolarsEvent::Query(QueryEvent::Completed { seq: 3 }),
@@ -268,6 +313,7 @@ fn builds_query_bundle_from_generated_events() {
     );
     assert_eq!(bundle.entities.plans.len(), 2);
     assert!(bundle.entities.workers.contains_key(&idle_worker_id));
+    assert!(!bundle.entities.workers.contains_key(&foreign_worker_id));
     let quent_ui::ResourceTree::ResourceGroup(resource_root) = &bundle.resource_tree else {
         panic!("expected the resource tree root to be the engine")
     };

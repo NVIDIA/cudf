@@ -6,9 +6,6 @@
 
 #include "in_reg_array.cuh"
 
-#include <cub/agent/single_pass_scan_operators.cuh>
-#include <cub/block/block_load.cuh>
-#include <cub/block/block_scan.cuh>
 #include <cuda/functional>
 #include <cuda/iterator>
 #include <cuda/std/array>

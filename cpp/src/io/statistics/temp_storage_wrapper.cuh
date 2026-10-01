@@ -18,8 +18,6 @@
 #include <cudf/wrappers/durations.hpp>
 #include <cudf/wrappers/timestamps.hpp>
 
-#include <cub/block/block_reduce.cuh>
-
 namespace cudf {
 namespace io {
 namespace detail {

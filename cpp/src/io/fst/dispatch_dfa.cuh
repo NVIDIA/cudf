@@ -7,7 +7,6 @@
 #include "agent_dfa.cuh"
 #include "in_reg_array.cuh"
 
-#include <cub/device/device_scan.cuh>
 #include <cuda/functional>
 
 #include <cstdint>

@@ -166,16 +166,19 @@ void BM_hybrid_scan_dict_page_pruning_fixed_width(nvbench::state& state,
                                                   nvbench::type_list<nvbench::enum_type<DType>>)
 {
   using T = cudf::id_to_type<DType>;
-  static_assert(cudf::is_numeric<T>() or cudf::is_timestamp<T>(),
-                "Filter literals are only generated for numeric and timestamp types");
+  static_assert(cudf::is_numeric<T>() or cudf::is_chrono<T>(),
+                "Filter literals are only generated for numeric and chrono types");
 
   auto const cardinality = static_cast<cudf::size_type>(state.get_int64("cardinality"));
 
   // Timestamps span 1970 to 2020 as the generator overflows past 2262
+  // Durations span 24 days to fit
   auto constexpr max_value = [] {
     if constexpr (cudf::is_timestamp<T>()) {
       return cuda::std::chrono::duration_cast<typename T::duration>(cudf::duration_D{50 * 365})
         .count();
+    } else if constexpr (cudf::is_duration<T>()) {
+      return cuda::std::chrono::duration_cast<T>(cudf::duration_D{24}).count();
     } else {
       return std::numeric_limits<T>::max();
     }
@@ -190,6 +193,8 @@ void BM_hybrid_scan_dict_page_pruning_fixed_width(nvbench::state& state,
   auto filter_value = [&] {
     if constexpr (cudf::is_timestamp<T>()) {
       return cudf::timestamp_scalar<T>(T{typename T::duration{max_value / 2}});
+    } else if constexpr (cudf::is_duration<T>()) {
+      return cudf::duration_scalar<T>(T{max_value / 2});
     } else {
       return cudf::numeric_scalar<T>(static_cast<T>(max_value / 2));
     }
@@ -208,12 +213,10 @@ NVBENCH_BENCH(BM_hybrid_scan_dict_page_pruning_string)
   .add_int64_axis("is_inline", {true, false});
 
 using dict_fixed_width_dtypes = nvbench::enum_type_list<cudf::type_id::INT8,
-                                                        cudf::type_id::INT16,
-                                                        cudf::type_id::INT32,
-                                                        cudf::type_id::INT64,
                                                         cudf::type_id::FLOAT32,
                                                         cudf::type_id::FLOAT64,
-                                                        cudf::type_id::TIMESTAMP_MILLISECONDS>;
+                                                        cudf::type_id::DURATION_MILLISECONDS,
+                                                        cudf::type_id::TIMESTAMP_MICROSECONDS>;
 
 NVBENCH_BENCH_TYPES(BM_hybrid_scan_dict_page_pruning_fixed_width,
                     NVBENCH_TYPE_AXES(dict_fixed_width_dtypes))

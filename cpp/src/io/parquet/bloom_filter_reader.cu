@@ -278,7 +278,6 @@ struct bloom_filter_caster {
         return query_bloom_filter<rep_type, Type::INT32>(equality_col_idx, d_literal, stream, mr);
       }
     }
-
     // INT64 values are stored as 64-bit integers
     if constexpr (sizeof(rep_type) == sizeof(int64_t)) {
       if (physical_type == Type::INT64) {
@@ -291,7 +290,6 @@ struct bloom_filter_caster {
         return query_bloom_filter<rep_type, Type::INT96>(equality_col_idx, d_literal, stream, mr);
       }
     }
-
     // Decimals are probed as their storage type
     if constexpr (cuda::std::is_same_v<T, cudf::device_storage_type_t<numeric::decimal32>> or
                   cuda::std::is_same_v<T, cudf::device_storage_type_t<numeric::decimal64>> or
@@ -306,6 +304,7 @@ struct bloom_filter_caster {
           equality_col_idx, d_literal, stream, mr);
       }
     }
+
     // Decimals stored as BYTE_ARRAY and INT96 read as a coarser timestamp cannot be queried
     auto true_scalar = cudf::numeric_scalar<bool>(true, true, stream, mr.get_temporary_mr());
     return cudf::make_column_from_scalar(true_scalar, total_row_groups, stream, mr.get_output_mr());

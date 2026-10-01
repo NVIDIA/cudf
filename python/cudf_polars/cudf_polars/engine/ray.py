@@ -378,30 +378,28 @@ class RankActor:
         self._mr = self._ctx.br().device_mr_adaptor()
         rmm.mr.set_current_device_resource(self._mr)
         if collector_address is not None:
-            self.configure_quent(collector_address)
-
-    def configure_quent(self, collector_address: str) -> None:
-        """Configure this rank to send Quent events to the collector."""
-        assert self._comm is not None
-        if not self._quent_enabled:
-            return
-        self._quent_session = cudf_polars.quent._runtime.QuentSession(collector_address)
-        self._quent_session._workers[self._worker_id] = (
-            self._quent_session.context.worker_observer()
-            .handle(self._worker_id)
-            .init(
-                instance_name=f"RankActor-{self._worker_id.hex[:8]}",
-                engine=self._quent_engine_id,
+            assert self._comm is not None
+            if not self._quent_enabled:
+                return
+            self._quent_session = cudf_polars.quent._runtime.QuentSession(
+                collector_address
             )
-        )
-        self.worker_resources = WorkerResources.build(
-            instance_suffix=f"RankActor-{self._worker_id.hex[:8]}",
-            engine_id=self._quent_engine_id,
-            worker_id=self._worker_id,
-            rank=self._comm.rank,
-            nranks=self._nranks,
-        )
-        self.worker_resources.declare(self._quent_session)
+            self._quent_session._workers[self._worker_id] = (
+                self._quent_session.context.worker_observer()
+                .handle(self._worker_id)
+                .init(
+                    instance_name=f"RankActor-{self._worker_id.hex[:8]}",
+                    engine=self._quent_engine_id,
+                )
+            )
+            self.worker_resources = WorkerResources.build(
+                instance_suffix=f"RankActor-{self._worker_id.hex[:8]}",
+                engine_id=self._quent_engine_id,
+                worker_id=self._worker_id,
+                rank=self._comm.rank,
+                nranks=self._nranks,
+            )
+            self.worker_resources.declare(self._quent_session)
 
     def close_quent(self) -> None:
         """Close this rank's collector client after its Worker exit."""

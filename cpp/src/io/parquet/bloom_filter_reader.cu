@@ -78,16 +78,23 @@ constexpr bool is_fixed_width_probe =
  * cudf::string_view.
  */
 template <Type physical_type>
-using bloom_filter_key = cuda::std::conditional_t<
-  physical_type == Type::INT32,
-  int32_t,
-  cuda::std::conditional_t<
-    physical_type == Type::INT64,
-    int64_t,
-    cuda::std::conditional_t<
-      physical_type == Type::FLOAT,
-      float,
-      cuda::std::conditional_t<physical_type == Type::DOUBLE, double, cudf::string_view>>>>;
+constexpr auto bloom_filter_key_type()
+{
+  if constexpr (physical_type == Type::INT32) {
+    return cuda::std::type_identity<int32_t>{};
+  } else if constexpr (physical_type == Type::INT64) {
+    return cuda::std::type_identity<int64_t>{};
+  } else if constexpr (physical_type == Type::FLOAT) {
+    return cuda::std::type_identity<float>{};
+  } else if constexpr (physical_type == Type::DOUBLE) {
+    return cuda::std::type_identity<double>{};
+  } else {
+    return cuda::std::type_identity<cudf::string_view>{};
+  }
+}
+
+template <Type physical_type>
+using bloom_filter_key = typename decltype(bloom_filter_key_type<physical_type>())::type;
 
 /**
  * @brief Probes a bloom filter for the literal encoded as `physical_type`

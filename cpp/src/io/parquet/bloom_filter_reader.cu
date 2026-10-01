@@ -298,8 +298,10 @@ struct bloom_filter_caster {
                   cuda::std::is_same_v<T, cudf::device_storage_type_t<numeric::decimal128>>) {
       if (cudf::is_fixed_point(dtype) and physical_type == Type::FIXED_LEN_BYTE_ARRAY) {
         auto const type_len = parquet_type_lengths[equality_col_idx];
-        CUDF_EXPECTS(cuda::std::cmp_less_equal(type_len, static_cast<int32_t>(sizeof(__int128_t))),
-                     "Invalid type length for decimal type");
+        CUDF_EXPECTS(type_len > 0 and cuda::std::cmp_less_equal(
+                                        type_len, static_cast<int32_t>(sizeof(__int128_t))),
+                     "Invalid type length for decimal type",
+                     std::invalid_argument);
         return query_bloom_filter<T, Type::FIXED_LEN_BYTE_ARRAY>(
           equality_col_idx, d_literal, stream, mr);
       }

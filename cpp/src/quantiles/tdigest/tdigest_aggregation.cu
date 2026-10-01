@@ -31,6 +31,7 @@
 
 #include <cub/device/device_reduce.cuh>
 #include <cub/device/device_segmented_sort.cuh>
+#include <cuda/buffer>
 #include <cuda/functional>
 #include <cuda/iterator>
 #include <cuda/std/span>
@@ -1402,7 +1403,7 @@ std::pair<rmm::device_uvector<double>, rmm::device_uvector<double>> generate_mer
                                                     centroid_offsets + 1,
                                                     stream.get()));
 
-  rmm::device_buffer temp_mem(temp_size, stream, temp_mr);
+  cuda::device_buffer<std::byte> temp_mem(stream, temp_mr, temp_size, cuda::no_init);
   CUDF_CUDA_TRY(cub::DeviceSegmentedSort::SortPairs(temp_mem.data(),
                                                     temp_size,
                                                     tdv.means().begin<double>(),

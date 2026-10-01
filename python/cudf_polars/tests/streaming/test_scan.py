@@ -18,6 +18,7 @@ from cudf_polars.dsl.ir import (
     IRExecutionContext,
     Scan,
 )
+from cudf_polars.dsl.traversal import traversal
 from cudf_polars.dsl.utils.io import (
     CachedParquetInfo,
     _prefetch_parquet_footers_for_paths,
@@ -110,9 +111,12 @@ def test_parquet_scan_filter_over_fallback_preserves_scan_plan(
 ) -> None:
     path = tmp_path / "data.parquet"
     df.write_parquet(path)
-    engine = spmd_engine_factory(StreamingOptions(target_partition_size=1_000))
+    engine = spmd_engine_factory(
+        StreamingOptions(target_partition_size=1_000, fallback_mode="warn")
+    )
     q = pl.scan_parquet(path).filter(pl.col("x") == pl.col("x").max().over("y"))
-    assert_gpu_result_equal(q, engine=engine, check_row_order=False)
+    with pytest.warns(UserWarning, match=r"over\(\.\.\.\) inside filter"):
+        assert_gpu_result_equal(q, engine=engine, check_row_order=False)
 
 
 @pytest.mark.parametrize(
@@ -870,7 +874,24 @@ def test_prefetch_file_metadata_with_cached_scan_parent_nodes(
     right = cached_scan.group_by("k").agg(pl.len().alias("n"))
     q = left.join(right, on="k").sort("k")
 
-    assert_gpu_result_equal(q, engine=engine)
+    ir = Translator(q._ldf.visit(), engine).translate_ir()
+    config = ConfigOptions.from_polars_engine(engine)
+    lowering = lower_ir_graph(ir, config, StatsCollector())
+
+    scans = [
+        node
+        for node in traversal([lowering.lowered])
+        if isinstance(node, StreamingScan)
+    ]
+    assert scans
+    assert all(scan.base_scan.cached_parquet_info is None for scan in scans)
+
+    cached_parquet_info_map = prefetch_parquet_file_metadata_for_ir(
+        lowering.lowered, None
+    )
+    attach_cached_parquet_metadata(lowering.lowered, cached_parquet_info_map)
+
+    assert all(scan.base_scan.cached_parquet_info is not None for scan in scans)
 
 
 def test_scan_task_identity_equality() -> None:

@@ -973,7 +973,7 @@ dependencies = [
 [[package]]
 name = "quent-build-info"
 version = "0.1.0"
-source = "git+https://github.com/rapidsai/quent?rev=618aea08d4f9aa140133ccea97de598e0925f1e6#618aea08d4f9aa140133ccea97de598e0925f1e6"
+source = "git+https://github.com/rapidsai/quent?rev=ff07098d490742d1a561c8dfa9cda1ed52ae2f7c#ff07098d490742d1a561c8dfa9cda1ed52ae2f7c"
 dependencies = [
  "serde",
  "serde_json",
@@ -982,7 +982,7 @@ dependencies = [
 [[package]]
 name = "quent-collector"
 version = "0.1.0"
-source = "git+https://github.com/rapidsai/quent?rev=618aea08d4f9aa140133ccea97de598e0925f1e6#618aea08d4f9aa140133ccea97de598e0925f1e6"
+source = "git+https://github.com/rapidsai/quent?rev=ff07098d490742d1a561c8dfa9cda1ed52ae2f7c#ff07098d490742d1a561c8dfa9cda1ed52ae2f7c"
 dependencies = [
  "quent-collector-client",
  "quent-collector-proto",
@@ -996,7 +996,7 @@ dependencies = [
 [[package]]
 name = "quent-collector-client"
 version = "0.1.0"
-source = "git+https://github.com/rapidsai/quent?rev=618aea08d4f9aa140133ccea97de598e0925f1e6#618aea08d4f9aa140133ccea97de598e0925f1e6"
+source = "git+https://github.com/rapidsai/quent?rev=ff07098d490742d1a561c8dfa9cda1ed52ae2f7c#ff07098d490742d1a561c8dfa9cda1ed52ae2f7c"
 dependencies = [
  "bitcode",
  "http",
@@ -1015,7 +1015,7 @@ dependencies = [
 [[package]]
 name = "quent-collector-proto"
 version = "0.1.0"
-source = "git+https://github.com/rapidsai/quent?rev=618aea08d4f9aa140133ccea97de598e0925f1e6#618aea08d4f9aa140133ccea97de598e0925f1e6"
+source = "git+https://github.com/rapidsai/quent?rev=ff07098d490742d1a561c8dfa9cda1ed52ae2f7c#ff07098d490742d1a561c8dfa9cda1ed52ae2f7c"
 dependencies = [
  "prost",
  "protox",
@@ -1027,7 +1027,7 @@ dependencies = [
 [[package]]
 name = "quent-collector-python"
 version = "0.1.0"
-source = "git+https://github.com/rapidsai/quent?rev=618aea08d4f9aa140133ccea97de598e0925f1e6#618aea08d4f9aa140133ccea97de598e0925f1e6"
+source = "git+https://github.com/rapidsai/quent?rev=ff07098d490742d1a561c8dfa9cda1ed52ae2f7c#ff07098d490742d1a561c8dfa9cda1ed52ae2f7c"
 dependencies = [
  "http",
  "pyo3",
@@ -1042,7 +1042,7 @@ dependencies = [
 [[package]]
 name = "quent-constraints"
 version = "0.1.0"
-source = "git+https://github.com/rapidsai/quent?rev=618aea08d4f9aa140133ccea97de598e0925f1e6#618aea08d4f9aa140133ccea97de598e0925f1e6"
+source = "git+https://github.com/rapidsai/quent?rev=ff07098d490742d1a561c8dfa9cda1ed52ae2f7c#ff07098d490742d1a561c8dfa9cda1ed52ae2f7c"
 dependencies = [
  "petgraph",
  "quent-schema",
@@ -1053,7 +1053,7 @@ dependencies = [
 [[package]]
 name = "quent-dynamic-attributes"
 version = "0.1.0"
-source = "git+https://github.com/rapidsai/quent?rev=618aea08d4f9aa140133ccea97de598e0925f1e6#618aea08d4f9aa140133ccea97de598e0925f1e6"
+source = "git+https://github.com/rapidsai/quent?rev=ff07098d490742d1a561c8dfa9cda1ed52ae2f7c#ff07098d490742d1a561c8dfa9cda1ed52ae2f7c"
 dependencies = [
  "serde",
 ]
@@ -1061,7 +1061,7 @@ dependencies = [
 [[package]]
 name = "quent-events"
 version = "0.1.0"
-source = "git+https://github.com/rapidsai/quent?rev=618aea08d4f9aa140133ccea97de598e0925f1e6#618aea08d4f9aa140133ccea97de598e0925f1e6"
+source = "git+https://github.com/rapidsai/quent?rev=ff07098d490742d1a561c8dfa9cda1ed52ae2f7c#ff07098d490742d1a561c8dfa9cda1ed52ae2f7c"
 dependencies = [
  "quent-build-info",
  "quent-dynamic-attributes",
@@ -1073,7 +1073,7 @@ dependencies = [
 [[package]]
 name = "quent-fsm"
 version = "0.1.0"
-source = "git+https://github.com/rapidsai/quent?rev=618aea08d4f9aa140133ccea97de598e0925f1e6#618aea08d4f9aa140133ccea97de598e0925f1e6"
+source = "git+https://github.com/rapidsai/quent?rev=ff07098d490742d1a561c8dfa9cda1ed52ae2f7c#ff07098d490742d1a561c8dfa9cda1ed52ae2f7c"
 dependencies = [
  "petgraph",
  "quent-constraints",
@@ -1086,7 +1086,7 @@ dependencies = [
 [[package]]
 name = "quent-instrumentation"
 version = "0.1.0"
-source = "git+https://github.com/rapidsai/quent?rev=618aea08d4f9aa140133ccea97de598e0925f1e6#618aea08d4f9aa140133ccea97de598e0925f1e6"
+source = "git+https://github.com/rapidsai/quent?rev=ff07098d490742d1a561c8dfa9cda1ed52ae2f7c#ff07098d490742d1a561c8dfa9cda1ed52ae2f7c"
 dependencies = [
  "async-trait",
  "quent-build-info",
@@ -1094,6 +1094,7 @@ dependencies = [
  "quent-dynamic-attributes",
  "quent-events",
  "quent-io",
+ "quent-time",
  "serde",
  "thiserror",
  "tokio",
@@ -1105,7 +1106,7 @@ dependencies = [
 [[package]]
 name = "quent-instrumentation-build"
 version = "0.1.0"
-source = "git+https://github.com/rapidsai/quent?rev=618aea08d4f9aa140133ccea97de598e0925f1e6#618aea08d4f9aa140133ccea97de598e0925f1e6"
+source = "git+https://github.com/rapidsai/quent?rev=ff07098d490742d1a561c8dfa9cda1ed52ae2f7c#ff07098d490742d1a561c8dfa9cda1ed52ae2f7c"
 dependencies = [
  "convert_case 0.12.0",
  "prettyplease 0.3.0",
@@ -1122,7 +1123,7 @@ dependencies = [
 [[package]]
 name = "quent-io"
 version = "0.1.0"
-source = "git+https://github.com/rapidsai/quent?rev=618aea08d4f9aa140133ccea97de598e0925f1e6#618aea08d4f9aa140133ccea97de598e0925f1e6"
+source = "git+https://github.com/rapidsai/quent?rev=ff07098d490742d1a561c8dfa9cda1ed52ae2f7c#ff07098d490742d1a561c8dfa9cda1ed52ae2f7c"
 dependencies = [
  "async-trait",
  "http",
@@ -1137,7 +1138,7 @@ dependencies = [
 [[package]]
 name = "quent-io-collector"
 version = "0.1.0"
-source = "git+https://github.com/rapidsai/quent?rev=618aea08d4f9aa140133ccea97de598e0925f1e6#618aea08d4f9aa140133ccea97de598e0925f1e6"
+source = "git+https://github.com/rapidsai/quent?rev=ff07098d490742d1a561c8dfa9cda1ed52ae2f7c#ff07098d490742d1a561c8dfa9cda1ed52ae2f7c"
 dependencies = [
  "async-trait",
  "http",
@@ -1152,7 +1153,7 @@ dependencies = [
 [[package]]
 name = "quent-io-ndjson"
 version = "0.1.0"
-source = "git+https://github.com/rapidsai/quent?rev=618aea08d4f9aa140133ccea97de598e0925f1e6#618aea08d4f9aa140133ccea97de598e0925f1e6"
+source = "git+https://github.com/rapidsai/quent?rev=ff07098d490742d1a561c8dfa9cda1ed52ae2f7c#ff07098d490742d1a561c8dfa9cda1ed52ae2f7c"
 dependencies = [
  "async-trait",
  "quent-events",
@@ -1167,7 +1168,7 @@ dependencies = [
 [[package]]
 name = "quent-io-types"
 version = "0.1.0"
-source = "git+https://github.com/rapidsai/quent?rev=618aea08d4f9aa140133ccea97de598e0925f1e6#618aea08d4f9aa140133ccea97de598e0925f1e6"
+source = "git+https://github.com/rapidsai/quent?rev=ff07098d490742d1a561c8dfa9cda1ed52ae2f7c#ff07098d490742d1a561c8dfa9cda1ed52ae2f7c"
 dependencies = [
  "async-trait",
  "quent-events",
@@ -1179,7 +1180,7 @@ dependencies = [
 [[package]]
 name = "quent-log"
 version = "0.1.0"
-source = "git+https://github.com/rapidsai/quent?rev=618aea08d4f9aa140133ccea97de598e0925f1e6#618aea08d4f9aa140133ccea97de598e0925f1e6"
+source = "git+https://github.com/rapidsai/quent?rev=ff07098d490742d1a561c8dfa9cda1ed52ae2f7c#ff07098d490742d1a561c8dfa9cda1ed52ae2f7c"
 dependencies = [
  "quent-constraints",
  "quent-schema",
@@ -1191,7 +1192,7 @@ dependencies = [
 [[package]]
 name = "quent-os"
 version = "0.1.0"
-source = "git+https://github.com/rapidsai/quent?rev=618aea08d4f9aa140133ccea97de598e0925f1e6#618aea08d4f9aa140133ccea97de598e0925f1e6"
+source = "git+https://github.com/rapidsai/quent?rev=ff07098d490742d1a561c8dfa9cda1ed52ae2f7c#ff07098d490742d1a561c8dfa9cda1ed52ae2f7c"
 dependencies = [
  "quent-constraints",
  "quent-ref-target",
@@ -1204,7 +1205,7 @@ dependencies = [
 [[package]]
 name = "quent-ref-target"
 version = "0.1.0"
-source = "git+https://github.com/rapidsai/quent?rev=618aea08d4f9aa140133ccea97de598e0925f1e6#618aea08d4f9aa140133ccea97de598e0925f1e6"
+source = "git+https://github.com/rapidsai/quent?rev=ff07098d490742d1a561c8dfa9cda1ed52ae2f7c#ff07098d490742d1a561c8dfa9cda1ed52ae2f7c"
 dependencies = [
  "quent-constraints",
  "quent-schema",
@@ -1214,7 +1215,7 @@ dependencies = [
 [[package]]
 name = "quent-ref-tree"
 version = "0.1.0"
-source = "git+https://github.com/rapidsai/quent?rev=618aea08d4f9aa140133ccea97de598e0925f1e6#618aea08d4f9aa140133ccea97de598e0925f1e6"
+source = "git+https://github.com/rapidsai/quent?rev=ff07098d490742d1a561c8dfa9cda1ed52ae2f7c#ff07098d490742d1a561c8dfa9cda1ed52ae2f7c"
 dependencies = [
  "petgraph",
  "quent-constraints",
@@ -1227,7 +1228,7 @@ dependencies = [
 [[package]]
 name = "quent-resource"
 version = "0.1.0"
-source = "git+https://github.com/rapidsai/quent?rev=618aea08d4f9aa140133ccea97de598e0925f1e6#618aea08d4f9aa140133ccea97de598e0925f1e6"
+source = "git+https://github.com/rapidsai/quent?rev=ff07098d490742d1a561c8dfa9cda1ed52ae2f7c#ff07098d490742d1a561c8dfa9cda1ed52ae2f7c"
 dependencies = [
  "indexmap",
  "quent-constraints",
@@ -1242,7 +1243,7 @@ dependencies = [
 [[package]]
 name = "quent-schema"
 version = "0.1.0"
-source = "git+https://github.com/rapidsai/quent?rev=618aea08d4f9aa140133ccea97de598e0925f1e6#618aea08d4f9aa140133ccea97de598e0925f1e6"
+source = "git+https://github.com/rapidsai/quent?rev=ff07098d490742d1a561c8dfa9cda1ed52ae2f7c#ff07098d490742d1a561c8dfa9cda1ed52ae2f7c"
 dependencies = [
  "indexmap",
  "rustc-hash",
@@ -1254,7 +1255,7 @@ dependencies = [
 [[package]]
 name = "quent-schema-codegen-python"
 version = "0.0.0"
-source = "git+https://github.com/rapidsai/quent?rev=618aea08d4f9aa140133ccea97de598e0925f1e6#618aea08d4f9aa140133ccea97de598e0925f1e6"
+source = "git+https://github.com/rapidsai/quent?rev=ff07098d490742d1a561c8dfa9cda1ed52ae2f7c#ff07098d490742d1a561c8dfa9cda1ed52ae2f7c"
 dependencies = [
  "convert_case 0.11.0",
  "prettyplease 0.3.0",
@@ -1271,7 +1272,7 @@ dependencies = [
 [[package]]
 name = "quent-time"
 version = "0.1.0"
-source = "git+https://github.com/rapidsai/quent?rev=618aea08d4f9aa140133ccea97de598e0925f1e6#618aea08d4f9aa140133ccea97de598e0925f1e6"
+source = "git+https://github.com/rapidsai/quent?rev=ff07098d490742d1a561c8dfa9cda1ed52ae2f7c#ff07098d490742d1a561c8dfa9cda1ed52ae2f7c"
 dependencies = [
  "thiserror",
 ]
@@ -1279,7 +1280,7 @@ dependencies = [
 [[package]]
 name = "quent-yaml"
 version = "0.1.0"
-source = "git+https://github.com/rapidsai/quent?rev=618aea08d4f9aa140133ccea97de598e0925f1e6#618aea08d4f9aa140133ccea97de598e0925f1e6"
+source = "git+https://github.com/rapidsai/quent?rev=ff07098d490742d1a561c8dfa9cda1ed52ae2f7c#ff07098d490742d1a561c8dfa9cda1ed52ae2f7c"
 dependencies = [
  "indexmap",
  "quent-constraints",

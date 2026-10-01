@@ -17,6 +17,8 @@ if TYPE_CHECKING:
     from collections.abc import Iterator
     from pathlib import Path
 
+    from cudf_polars_quent import Collector
+
 quent_bindings = pytest.importorskip("cudf_polars_quent")
 
 from cudf_polars.quent._context import (  # noqa: E402
@@ -28,7 +30,7 @@ from cudf_polars.quent._plan import (  # noqa: E402
     _emit_operator_details,
     emit_plan,
 )
-from cudf_polars.quent._runtime import QuentCollector, QuentSession  # noqa: E402
+from cudf_polars.quent._runtime import QuentSession, start_collector  # noqa: E402
 
 
 @pytest.fixture
@@ -37,8 +39,8 @@ def output_root(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
-def collector(output_root: Path) -> Iterator[QuentCollector]:
-    collector = QuentCollector(output_root)
+def collector(output_root: Path) -> Iterator[Collector]:
+    collector = start_collector(output_root)
     yield collector
     collector.close()
 
@@ -55,7 +57,7 @@ def _events(root: Path) -> list[dict[str, Any]]:
 
 
 def _finish(
-    session: QuentSession, collector: QuentCollector, root: Path
+    session: QuentSession, collector: Collector, root: Path
 ) -> list[dict[str, Any]]:
     session.close()
     collector.close()
@@ -64,7 +66,7 @@ def _finish(
 
 def test_context_lifecycle_uses_generated_handles(
     quent_context: QuentContext,
-    collector: QuentCollector,
+    collector: Collector,
     output_root: Path,
 ) -> None:
     session = QuentSession(collector.address)
@@ -99,7 +101,7 @@ def test_context_lifecycle_uses_generated_handles(
 
 def test_query_group_is_declared_once_across_derived_configs(
     quent_context: QuentContext,
-    collector: QuentCollector,
+    collector: Collector,
     output_root: Path,
 ) -> None:
     session = QuentSession(collector.address)
@@ -138,7 +140,7 @@ def test_context_serialization_preserves_configuration(
 def test_plan_entities_are_deterministic(
     quent_context: QuentContext,
     monkeypatch: pytest.MonkeyPatch,
-    collector: QuentCollector,
+    collector: Collector,
     output_root: Path,
 ) -> None:
     nodes = {
@@ -201,7 +203,7 @@ def test_plan_entities_are_deterministic(
 
 
 def test_processor_registry_declares_each_thread_once(
-    collector: QuentCollector,
+    collector: Collector,
     output_root: Path,
 ) -> None:
     session = QuentSession(collector.address)
@@ -219,7 +221,7 @@ def test_processor_registry_declares_each_thread_once(
 
 def test_inter_rank_channel_targets_remote_memory(
     monkeypatch: pytest.MonkeyPatch,
-    collector: QuentCollector,
+    collector: Collector,
     output_root: Path,
 ) -> None:
     monkeypatch.setattr(

@@ -537,7 +537,7 @@ class SPMDEngine(StreamingEngine):
 
             if quent_context is not None:
                 if comm.rank == 0:
-                    self._quent_collector = cudf_polars.quent._runtime.QuentCollector(
+                    self._quent_collector = cudf_polars.quent._runtime.start_collector(
                         quent_context.run_root
                     )
                     collector_address = self._quent_collector.address

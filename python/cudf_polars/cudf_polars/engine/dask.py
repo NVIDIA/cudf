@@ -1095,7 +1095,7 @@ class DaskEngine(StreamingEngine):
         root_ucxx_address_as_bytes = root_result[root_worker]
 
         if quent_context is not None:
-            self._quent_collector = cudf_polars.quent._runtime.QuentCollector(
+            self._quent_collector = cudf_polars.quent._runtime.start_collector(
                 quent_context.run_root
             )
             quent_collector_address = self._quent_collector.address

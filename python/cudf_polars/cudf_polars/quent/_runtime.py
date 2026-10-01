@@ -87,40 +87,23 @@ class QuentSession:
         self._closed = True
 
 
-class QuentCollector:
-    """Collect events from local or remote sessions into one NDJSON tree."""
-
-    def __init__(
-        self,
-        output_root: str | PathLike[str],
-        *,
-        advertised_host: str | None = None,
-    ) -> None:
-        if _quent is None:
-            raise ImportError(
-                "Quent tracing requires the cudf-polars Quent extension. "
-                "Build python/cudf_polars/quent/bridge with maturin."
-            )
-        if advertised_host is None:
-            advertised_host = _local_ipv4_address()
-        bind_host = socket.gethostbyname(advertised_host)
-        self._collector = _quent.start_collector(
-            _quent.ExporterOptions.ndjson(output_root),
-            bind_address=f"{bind_host}:0",
-            advertised_host=advertised_host,
+def start_collector(
+    output_root: str | PathLike[str], *, advertised_host: str | None = None
+) -> quent_bindings.Collector:
+    """Start a collector that writes events to an NDJSON tree."""
+    if _quent is None:
+        raise ImportError(
+            "Quent tracing requires the cudf-polars Quent extension. "
+            "Build python/cudf_polars/quent/bridge with maturin."
         )
-        self._closed = False
-
-    @property
-    def address(self) -> str:
-        """Return the address clients use to connect to this collector."""
-        return self._collector.address
-
-    def close(self) -> None:
-        """Stop accepting clients and flush collected events."""
-        if not self._closed:
-            self._collector.close()
-            self._closed = True
+    if advertised_host is None:
+        advertised_host = _local_ipv4_address()
+    bind_host = socket.gethostbyname(advertised_host)
+    return _quent.start_collector(
+        _quent.ExporterOptions.ndjson(output_root),
+        bind_address=f"{bind_host}:0",
+        advertised_host=advertised_host,
+    )
 
 
-__all__ = ["QuentCollector", "QuentSession"]
+__all__ = ["QuentSession", "start_collector"]

@@ -19,14 +19,14 @@ from cudf_polars.quent._export import (
     SIDECAR_FILE_NAME,
     write_quent_export,
 )
-from cudf_polars.quent._runtime import QuentCollector, QuentSession
+from cudf_polars.quent._runtime import QuentSession, start_collector
 
 if TYPE_CHECKING:
     from pathlib import Path
 
 
 def _collect_engine_events(root: Path) -> Path:
-    collector = QuentCollector(root)
+    collector = start_collector(root)
     session = QuentSession(collector.address)
     identifier = uuid.uuid4()
     session._engines[identifier] = (

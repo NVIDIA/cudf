@@ -3,7 +3,7 @@
 This C++ example demonstrates the use of libcudf to pack and unpack table data to and
 from device and host memory.
 
-The single `pack_unpack_example` binary supports three modes, selected by a CLI argument:
+The single `pack_unpack` binary supports three modes, selected by a CLI argument:
 
 1. `device` (default) — creates a simple cuDF table on the device and then packs and
    unpacks the table on the device. The original and unpacked tables are printed to
@@ -29,9 +29,9 @@ cmake -S . -B build/
 cmake --build build/ --parallel $PARALLEL_LEVEL
 
 # Execute (mode defaults to "device" when omitted)
-build/pack_unpack_example device
-build/pack_unpack_example host
-build/pack_unpack_example host-copy
+build/pack_unpack device
+build/pack_unpack host
+build/pack_unpack host-copy
 ```
 
 If your machine does not come with a pre-built libcudf binary, expect the

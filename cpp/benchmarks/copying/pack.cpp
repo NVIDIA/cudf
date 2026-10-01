@@ -13,8 +13,10 @@
 #include <cudf/table/table_view.hpp>
 #include <cudf/types.hpp>
 #include <cudf/utilities/default_stream.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 
 #include <rmm/mr/pinned_host_memory_resource.hpp>
+#include <rmm/resource_ref.hpp>
 
 #include <nvbench/nvbench.cuh>
 
@@ -62,70 +64,67 @@ void column_sum(cudf::column_view const& col_view)
     cudf::reduce(col_view, *sum_agg, cudf::data_type{cudf::type_id::INT64});
 }
 
-// Device Pack and Unpack
-void bench_device_pack(nvbench::state& state)
+// Shared body for the pack benchmarks. `packed_mr` selects the destination of the packed
+// buffer (device MR for device_pack, pinned host MR for host_pack).
+void run_pack(nvbench::state& state, rmm::device_async_resource_ref packed_mr)
 {
   auto const table      = setup_bench(state);
   auto const table_view = table->view();
+  auto stream           = cudf::get_default_stream();
   set_throughput_counters(state);
-  state.exec(nvbench::exec_tag::sync,
-             [&](nvbench::launch&) { auto packed = cudf::pack(table_view); });
+  state.exec(nvbench::exec_tag::sync, [&](nvbench::launch&) {
+    [[maybe_unused]] auto packed = cudf::pack(table_view, stream, packed_mr);
+  });
+}
+
+// Shared body for the unpack benchmarks. The table is packed once outside the timed region,
+// so measurements only reflect the unpack call (and, when `access_column` is true, a single
+// reduce over the first unpacked column so the device actually touches the data).
+void run_unpack(nvbench::state& state, rmm::device_async_resource_ref packed_mr, bool access_column)
+{
+  auto const table      = setup_bench(state);
+  auto const table_view = table->view();
+  auto stream           = cudf::get_default_stream();
+  auto packed           = cudf::pack(table_view, stream, packed_mr);
+  state.exec(nvbench::exec_tag::sync, [&](nvbench::launch&) {
+    auto unpacked = cudf::unpack(packed);
+    if (access_column) { column_sum(unpacked.column(0)); }
+  });
+}
+
+// Device Pack and Unpack
+void bench_device_pack(nvbench::state& state)
+{
+  run_pack(state, cudf::get_current_device_resource_ref());
 }
 
 void bench_device_unpack(nvbench::state& state)
 {
-  auto const table      = setup_bench(state);
-  auto const table_view = table->view();
-  auto packed           = cudf::pack(table_view);
-  state.exec(nvbench::exec_tag::sync,
-             [&](nvbench::launch&) { auto unpacked = cudf::unpack(packed); });
+  run_unpack(state, cudf::get_current_device_resource_ref(), /*access_column=*/false);
 }
 
 void bench_device_unpack_and_column_access(nvbench::state& state)
 {
-  auto const table      = setup_bench(state);
-  auto const table_view = table->view();
-  auto packed           = cudf::pack(table_view);
-  state.exec(nvbench::exec_tag::sync, [&](nvbench::launch&) {
-    auto unpacked = cudf::unpack(packed);
-    column_sum(unpacked.column(0));
-  });
+  run_unpack(state, cudf::get_current_device_resource_ref(), /*access_column=*/true);
 }
 
 // Host Pack and Unpack
 void bench_host_pack(nvbench::state& state)
 {
-  auto const table      = setup_bench(state);
-  auto const table_view = table->view();
-  auto stream           = cudf::get_default_stream();
   rmm::mr::pinned_host_memory_resource phmr;
-  set_throughput_counters(state);
-  state.exec(nvbench::exec_tag::sync,
-             [&](nvbench::launch&) { auto packed = cudf::pack(table_view, stream, phmr); });
+  run_pack(state, phmr);
 }
 
 void bench_host_unpack(nvbench::state& state)
 {
-  auto const table      = setup_bench(state);
-  auto const table_view = table->view();
-  auto stream           = cudf::get_default_stream();
   rmm::mr::pinned_host_memory_resource phmr;
-  auto packed = cudf::pack(table_view, stream, phmr);
-  state.exec(nvbench::exec_tag::sync,
-             [&](nvbench::launch&) { auto unpacked = cudf::unpack(packed); });
+  run_unpack(state, phmr, /*access_column=*/false);
 }
 
 void bench_host_unpack_and_column_access(nvbench::state& state)
 {
-  auto const table      = setup_bench(state);
-  auto const table_view = table->view();
-  auto stream           = cudf::get_default_stream();
   rmm::mr::pinned_host_memory_resource phmr;
-  auto packed = cudf::pack(table_view, stream, phmr);
-  state.exec(nvbench::exec_tag::sync, [&](nvbench::launch&) {
-    auto unpacked = cudf::unpack(packed);
-    column_sum(unpacked.column(0));
-  });
+  run_unpack(state, phmr, /*access_column=*/true);
 }
 
 }  // namespace

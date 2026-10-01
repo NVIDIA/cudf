@@ -18,6 +18,7 @@
 #include <rmm/device_buffer.hpp>
 #include <rmm/device_uvector.hpp>
 
+#include <cuda/buffer>
 #include <cuda/iterator>
 
 #include <src/io/comp/nvcomp_adapter.hpp>
@@ -75,11 +76,17 @@ struct DecompressTest
   {
     auto stream = cudf::get_default_stream();
     std::vector<uint8_t> decompressed(uncompressed_size);
-    rmm::device_buffer src{compressed.data(), compressed.size(), stream};
+    cuda::device_buffer<std::uint8_t> src(stream, cudf::get_current_device_resource_ref());
+    if (not compressed.empty()) {
+      src = cuda::device_buffer<std::uint8_t>{stream,
+                                              cudf::get_current_device_resource_ref(),
+                                              compressed.data(),
+                                              compressed.data() + compressed.size()};
+    }
     rmm::device_uvector<uint8_t> dst{decompressed.size(), stream};
 
     cudf::detail::hostdevice_vector<device_span<uint8_t const>> inf_in(1, stream);
-    inf_in[0] = {static_cast<uint8_t const*>(src.data()), src.size()};
+    inf_in[0] = {src.data(), src.size()};
     inf_in.host_to_device_async(stream);
 
     cudf::detail::hostdevice_vector<device_span<uint8_t>> inf_out(1, stream);
@@ -228,8 +235,10 @@ struct BrotliDecompressTest : public DecompressTest<BrotliDecompressTest> {
                        device_span<device_span<uint8_t>> d_inf_out,
                        device_span<codec_exec_result> d_inf_stat)
   {
-    rmm::device_buffer d_scratch{cudf::io::detail::get_gpu_debrotli_scratch_size(1),
-                                 cudf::get_default_stream()};
+    cuda::device_buffer<std::byte> d_scratch{cudf::get_default_stream(),
+                                             cudf::get_current_device_resource_ref(),
+                                             cudf::io::detail::get_gpu_debrotli_scratch_size(1),
+                                             cuda::no_init};
 
     cudf::io::detail::gpu_debrotli(d_inf_in, d_inf_out, d_inf_stat, cudf::get_default_stream());
   }

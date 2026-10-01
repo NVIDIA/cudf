@@ -1186,11 +1186,25 @@ def indices_to_names(indices: tuple[int, ...], schema: Schema) -> tuple[str, ...
 
 
 @dataclass(frozen=True)
-class TableSizeStats:
-    """Sampled chunks and aggregate size/row stats for a table channel."""
+class TableSample:
+    """Exact local prefix buffered while sampling a table channel."""
 
     chunks: ChunkStore
     """The sampled chunks/messages in replay order."""
+    size: int = 0
+    """Bytes in the buffered chunks."""
+    rows: int = 0
+    """Rows in the buffered chunks."""
+    is_complete: bool = False
+    """Whether the buffered prefix contains this rank's entire input."""
+
+
+@dataclass(frozen=True)
+class TableSizeStats:
+    """Local sample and complete-table size estimates for a table channel."""
+
+    local_sample: TableSample
+    """The exact local buffered sample."""
     total_size: int = 0
     """The estimated table size in bytes for the represented scope."""
     total_rows: int = 0
@@ -1243,7 +1257,7 @@ async def aggregate_table_size_stats(
     totals_iter = iter(totals)
     return tuple(
         TableSizeStats(
-            chunks=sample.chunks,
+            local_sample=sample.local_sample,
             total_size=next(totals_iter),
             total_rows=next(totals_iter),
             total_chunks=next(totals_iter),
@@ -1373,7 +1387,12 @@ class ChunkSampler:
             total_size = sample_bytes
             total_rows = sample_rows
         return TableSizeStats(
-            chunks=chunks,
+            local_sample=TableSample(
+                chunks=chunks,
+                size=sample_bytes,
+                rows=sample_rows,
+                is_complete=is_complete,
+            ),
             total_size=total_size,
             total_rows=total_rows,
             total_chunks=(sample_count if is_complete else self.ch_in_chunk_count),

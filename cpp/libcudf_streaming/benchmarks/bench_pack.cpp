@@ -11,10 +11,10 @@
 #include <cudf/utilities/span.hpp>
 
 #include <rmm/cuda_device.hpp>
-#include <rmm/device_buffer.hpp>
 #include <rmm/mr/cuda_async_memory_resource.hpp>
 #include <rmm/mr/pool_memory_resource.hpp>
 
+#include <cuda/buffer>
 #include <cuda/stream>
 
 #include <benchmark/benchmark.h>
@@ -130,21 +130,19 @@ void run_chunked_pack(benchmark::State& state,
   }
 
   // Allocate bounce buffer and destination buffer using the pack_mr
-  rmm::device_buffer bounce_buffer(bounce_buffer_size, stream, pack_mr);
-  rmm::device_buffer destination(total_size, stream, pack_mr);
+  cuda::device_buffer<std::uint8_t> bounce_buffer(
+    stream, pack_mr, bounce_buffer_size, cuda::no_init);
+  cuda::device_buffer<std::uint8_t> destination(stream, pack_mr, total_size, cuda::no_init);
 
   auto run_packer = [&] {
     cudf::chunked_pack packer(table.view(), bounce_buffer_size, stream, pack_mr);
 
     std::size_t offset = 0;
     while (packer.has_next()) {
-      auto const bytes_copied = packer.next(cudf::device_span<std::uint8_t>(
-        static_cast<std::uint8_t*>(bounce_buffer.data()), bounce_buffer_size));
-      RAPIDSMPF_CUDA_TRY(
-        rapidsmpf::cuda_memcpy_async(static_cast<std::uint8_t*>(destination.data()) + offset,
-                                     bounce_buffer.data(),
-                                     bytes_copied,
-                                     stream));
+      auto const bytes_copied =
+        packer.next(cudf::device_span<std::uint8_t>(bounce_buffer.data(), bounce_buffer_size));
+      RAPIDSMPF_CUDA_TRY(rapidsmpf::cuda_memcpy_async(
+        destination.data() + offset, bounce_buffer.data(), bytes_copied, stream));
       offset += bytes_copied;
     }
   };

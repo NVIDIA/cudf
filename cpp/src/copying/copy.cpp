@@ -165,9 +165,8 @@ std::unique_ptr<table> empty_like(table_view const& input_table)
 {
   CUDF_FUNC_RANGE();
   std::vector<std::unique_ptr<column>> columns(input_table.num_columns());
-  std::transform(input_table.begin(), input_table.end(), columns.begin(), [&](column_view in_col) {
-    return empty_like(in_col);
-  });
+  std::ranges::transform(
+    input_table, columns.begin(), [&](column_view in_col) { return empty_like(in_col); });
   return std::make_unique<table>(std::move(columns));
 }
 

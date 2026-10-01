@@ -94,6 +94,46 @@ def test_dynamic_join_right_full_reverse(left, right, streaming_engine_factory, 
     assert_gpu_result_equal(q, engine=streaming_engine, check_row_order=False)
 
 
+def test_join_with_underestimated_broadcast_input(tmp_path, streaming_engine_factory):
+    """Joining remains correct when sampling underestimates an input."""
+    large_row_count = 1_000
+    right_row_count = 10 * large_row_count + 1
+
+    left_path = tmp_path / "left"
+    left_path.mkdir()
+    # Sampling one chunk sees the small file first and underestimates the table.
+    pl.DataFrame({"key": [0], "left": [0]}).write_parquet(
+        left_path / "00-small.parquet"
+    )
+    pl.DataFrame(
+        {
+            "key": range(1, large_row_count + 1),
+            "left": range(1, large_row_count + 1),
+        }
+    ).write_parquet(left_path / "01-large.parquet")
+
+    engine = streaming_engine_factory(
+        StreamingOptions(
+            broadcast_limit=1_024,
+            target_partition_size=1 << 20,
+            max_rows_per_partition=2 * right_row_count,
+            dynamic_planning={"sample_chunk_count": 1},
+        )
+    )
+    left = pl.scan_parquet(left_path / "*.parquet")
+    right = pl.LazyFrame(
+        {
+            "key": range(right_row_count),
+            "right": range(right_row_count),
+        }
+    )
+    assert_gpu_result_equal(
+        left.join(right, on="key"),
+        engine=engine,
+        check_row_order=False,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Tests migrated from tests/streaming/test_join.py
 # ---------------------------------------------------------------------------

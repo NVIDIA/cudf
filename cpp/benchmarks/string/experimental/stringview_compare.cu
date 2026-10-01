@@ -14,11 +14,13 @@
 #include <cudf/filling.hpp>
 #include <cudf/hashing/detail/murmurhash3_x86_32.cuh>
 #include <cudf/strings/detail/strings_column_factories.cuh>
+#include <cudf/utilities/memory_resource.hpp>
 
 #include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cub/device/device_merge_sort.cuh>
+#include <cuda/buffer>
 #include <cuda/functional>
 #include <cuda/iterator>
 #include <thrust/count.h>
@@ -214,7 +216,7 @@ struct compare_sv {
 /**
  * Creates an ArrowBinaryView vector and data buffer from a strings column.
  */
-std::pair<rmm::device_uvector<ArrowBinaryView>, rmm::device_buffer> create_sv_array(
+std::pair<rmm::device_uvector<ArrowBinaryView>, cuda::device_buffer<char>> create_sv_array(
   cudf::strings_column_view const& input, cuda::stream_ref stream)
 {
   auto const d_strings = cudf::column_device_view::create(input.parent(), stream);
@@ -271,7 +273,8 @@ std::pair<rmm::device_uvector<ArrowBinaryView>, rmm::device_buffer> create_sv_ar
                      input.size(),
                      strings_to_binary_view{*d_strings, d_offsets, d_items.data()});
 
-  rmm::device_buffer data_buffer(longer_chars_size, stream);
+  cuda::device_buffer<char> data_buffer(
+    stream, cudf::get_current_device_resource_ref(), longer_chars_size, cuda::no_init);
   auto const chars_data = longer_strings.chars_begin(stream);
   CUDF_CUDA_TRY(cudaMemcpyAsync(
     data_buffer.data(), chars_data, longer_chars_size, cudaMemcpyDefault, stream.get()));
@@ -280,9 +283,9 @@ std::pair<rmm::device_uvector<ArrowBinaryView>, rmm::device_buffer> create_sv_ar
 }
 
 template <typename MapIterator>
-std::pair<rmm::device_uvector<ArrowBinaryView>, rmm::device_buffer> gather_sv_array(
+std::pair<rmm::device_uvector<ArrowBinaryView>, cuda::device_buffer<char>> gather_sv_array(
   rmm::device_uvector<ArrowBinaryView> const& d_items,
-  rmm::device_buffer const& data,
+  cuda::device_buffer<char> const& data,
   MapIterator begin,
   cudf::size_type map_size,
   cuda::stream_ref stream)
@@ -315,10 +318,11 @@ std::pair<rmm::device_uvector<ArrowBinaryView>, rmm::device_buffer> gather_sv_ar
   thrust::exclusive_scan(
     rmm::exec_policy_nosync(stream), offsets.begin(), offsets.end(), offsets.begin());
   auto total_size  = offsets.element(map_size, stream);
-  auto output_data = rmm::device_buffer(total_size, stream);
+  auto output_data = cuda::device_buffer<char>(
+    stream, cudf::get_current_device_resource_ref(), total_size, cuda::no_init);
   if (total_size > 0) {
-    auto d_output_data = static_cast<char*>(output_data.data());
-    auto d_input_data  = static_cast<char const*>(data.data());
+    auto d_output_data = output_data.data();
+    auto d_input_data  = data.data();
 
     // rebuild the data buffer with only the data from the gather
     // and reset each binary-view offset appropriately
@@ -364,7 +368,7 @@ static void BM_sv_hash(nvbench::state& state)
 
   if (std::getenv(BM_ARROWSTRINGVIEW)) {
     auto [d_items, data_buffer] = create_sv_array(col_view, stream);
-    auto const d_chars          = reinterpret_cast<char const*>(data_buffer.data());
+    auto const d_chars          = data_buffer.data();
     state.add_global_memory_reads(num_rows * sizeof(ArrowBinaryView) + data_buffer.size());
     state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
       thrust::transform(rmm::exec_policy_nosync(stream),
@@ -406,7 +410,7 @@ static void BM_sv_starts(nvbench::state& state)
 
   if (std::getenv(BM_ARROWSTRINGVIEW)) {
     auto [d_items, data_buffer] = create_sv_array(col_view, stream);
-    auto const d_chars          = reinterpret_cast<char const*>(data_buffer.data());
+    auto const d_chars          = data_buffer.data();
     state.add_global_memory_reads(num_rows * sizeof(ArrowBinaryView) + data_buffer.size());
     state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
       thrust::transform(rmm::exec_policy_nosync(stream),
@@ -465,11 +469,12 @@ static void BM_sv_sort(nvbench::state& state)
 
   if (std::getenv(BM_ARROWSTRINGVIEW)) {
     auto [d_items, data_buffer] = create_sv_array(col_view, stream);
-    auto const d_chars          = reinterpret_cast<char const*>(data_buffer.data());
+    auto const d_chars          = data_buffer.data();
     auto comparator             = compare_arrow_sv{d_items.data(), d_chars};
     cub::DeviceMergeSort::SortKeysCopy(
       nullptr, tmp_bytes, in_keys, out_keys, num_rows, comparator, stream.get());
-    auto tmp_stg = rmm::device_buffer(tmp_bytes, stream);
+    auto tmp_stg = cuda::device_buffer<std::byte>{
+      stream, cudf::get_current_device_resource_ref(), tmp_bytes, cuda::no_init};
     state.add_global_memory_reads(num_rows * sizeof(ArrowBinaryView) + data_buffer.size());
     state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
       cub::DeviceMergeSort::SortKeysCopy(
@@ -482,7 +487,8 @@ static void BM_sv_sort(nvbench::state& state)
     auto comparator = compare_sv{*d_strings};
     cub::DeviceMergeSort::SortKeysCopy(
       nullptr, tmp_bytes, in_keys, out_keys, num_rows, comparator, stream.get());
-    auto tmp_stg = rmm::device_buffer(tmp_bytes, stream);
+    auto tmp_stg = cuda::device_buffer<std::byte>{
+      stream, cudf::get_current_device_resource_ref(), tmp_bytes, cuda::no_init};
     state.add_global_memory_reads(col_size);
     state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
       cub::DeviceMergeSort::SortKeysCopy(

@@ -31,6 +31,7 @@
 
 #include <cub/block/block_store.cuh>
 #include <cub/device/device_segmented_reduce.cuh>
+#include <cuda/buffer>
 #include <cuda/functional>
 #include <cuda/iterator>
 #include <cuda/std/iterator>
@@ -427,7 +428,8 @@ rmm::device_uvector<cudf::size_type> compute_sizes(cudf::device_span<uint32_t co
   if (offset == 0) {
     cub::DeviceSegmentedReduce::Sum(
       nullptr, temp, d_in, d_out, size, offsets, offsets + 1, stream.get());
-    auto d_temp = rmm::device_buffer{temp, stream};
+    auto d_temp = cuda::device_buffer<std::byte>{
+      stream, cudf::get_current_device_resource_ref(), temp, cuda::no_init};
     cub::DeviceSegmentedReduce::Sum(
       d_temp.data(), temp, d_in, d_out, size, offsets, offsets + 1, stream.get());
   } else {
@@ -437,7 +439,8 @@ rmm::device_uvector<cudf::size_type> compute_sizes(cudf::device_span<uint32_t co
       cuda::proclaim_return_type<int64_t>([offset] __device__(auto o) { return o - offset; }));
     cub::DeviceSegmentedReduce::Sum(
       nullptr, temp, d_in, d_out, size, offsets_itr, offsets_itr + 1, stream.get());
-    auto d_temp = rmm::device_buffer{temp, stream};
+    auto d_temp = cuda::device_buffer<std::byte>{
+      stream, cudf::get_current_device_resource_ref(), temp, cuda::no_init};
     cub::DeviceSegmentedReduce::Sum(
       d_temp.data(), temp, d_in, d_out, size, offsets_itr, offsets_itr + 1, stream.get());
   }

@@ -24,13 +24,14 @@
 #include <cooperative_groups/reduce.h>
 #include <cub/block/block_reduce.cuh>
 #include <cuda/atomic>
+#include <cuda/memory_resource>
 #include <cuda/numeric>
+#include <cuda/std/execution>
 #include <cuda/stream>
 #include <thrust/execution_policy.h>
 #include <thrust/tabulate.h>
 
 #include <algorithm>
-#include <numeric>
 #include <span>
 
 namespace cudf {
@@ -74,7 +75,8 @@ cuda::device_buffer<std::byte> create_null_mask(size_type size,
 
   if (state != mask_state::UNALLOCATED) { mask_size = bitmask_allocation_size_bytes(size); }
 
-  cuda::device_buffer<std::byte> mask(stream, mr, mask_size, cuda::no_init);
+  auto env = cuda::std::execution::prop{cuda::allocation_alignment, alignof(bitmask_type)};
+  cuda::device_buffer<std::byte> mask(stream, mr, mask_size, cuda::no_init, env);
 
   if (mask_size > 0 && state != mask_state::UNINITIALIZED) {
     uint8_t fill_value = (state == mask_state::ALL_VALID) ? 0xff : 0x00;
@@ -366,7 +368,8 @@ cuda::device_buffer<std::byte> copy_bitmask(bitmask_type const* mask,
   if ((mask == nullptr) || (num_bytes == 0)) { return dest_mask; }
   if (begin_bit == 0) {
     auto const data = reinterpret_cast<uint8_t const*>(mask);
-    dest_mask       = cuda::device_buffer<std::byte>{stream, mr, data, data + num_bytes};
+    auto env        = cuda::std::execution::prop{cuda::allocation_alignment, alignof(bitmask_type)};
+    dest_mask       = cuda::device_buffer<std::byte>{stream, mr, data, data + num_bytes, env};
   } else {
     auto number_of_mask_words = num_bitmask_words(end_bit - begin_bit);
     dest_mask =

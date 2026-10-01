@@ -748,7 +748,7 @@ Collector. Workers do not need access to that path or to a shared filesystem.
 
 The `cudf-polars-quent-analyzer` project is a Rust library that's used
 by `quent-open` to visualize cudf-polars instrumentation in the Quent UI.
-See [`cudf-polars-quent-analyzer](../quent/analyzer/README.md) for details.
+See [`cudf-polars-quent-analyzer`](../quent/analyzer/README.md) for details.
 
 Ranks need to coordinate on the creation of some entities. For example, each
 actor in a `RayEngine` needs to use the same `engine_id` so that plans can be

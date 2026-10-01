@@ -27,6 +27,7 @@
 #include <cuda/iterator>
 #include <cuda/std/tuple>
 
+#include <algorithm>
 #include <bitset>
 #include <limits>
 #include <numeric>
@@ -71,10 +72,9 @@ void reader_impl::decode_page_data(read_mode mode, size_t skip_rows, size_t num_
 
     // Check for overflow in cumulative column string sizes of this pass so that the page string
     // offsets of overflowing (large) string columns are treated as 64-bit.
-    auto const threshold         = static_cast<size_t>(strings::detail::get_offset64_threshold());
-    auto const has_large_strings = std::any_of(col_string_sizes.cbegin(),
-                                               col_string_sizes.cend(),
-                                               [=](std::size_t sz) { return sz > threshold; });
+    auto const threshold = static_cast<size_t>(strings::detail::get_offset64_threshold());
+    auto const has_large_strings =
+      std::ranges::any_of(col_string_sizes, [=](std::size_t sz) { return sz > threshold; });
     if (has_large_strings and not strings::detail::is_large_strings_enabled()) {
       CUDF_FAIL("String column exceeds the column size limit", std::overflow_error);
     }
@@ -190,8 +190,7 @@ void reader_impl::decode_page_data(read_mode mode, size_t skip_rows, size_t num_
     // Host vector to initialize the initial string offsets
     auto host_offsets_vector =
       cudf::detail::make_pinned_vector_async<size_t>(_input_columns.size(), _stream);
-    std::fill(
-      host_offsets_vector.begin(), host_offsets_vector.end(), std::numeric_limits<size_t>::max());
+    std::ranges::fill(host_offsets_vector, std::numeric_limits<size_t>::max());
     // Initialize the initial string offsets vector from the host vector
     initial_str_offsets = cudf::detail::make_device_uvector(host_offsets_vector, _stream, _mr);
     chunk_nested_str_data.host_to_device_async(_stream);
@@ -587,11 +586,10 @@ reader_impl::reader_impl(std::size_t chunk_read_limit,
     select_column_names, filter_only_columns_names, make_column_selection_options(options));
 
   // Save the states of the output buffers for reuse in `chunk_read()`.
-  std::transform(
-    _output_buffers.begin(),
-    _output_buffers.end(),
-    std::back_inserter(_output_buffers_template),
-    [](auto const& buff) { return cudf::io::detail::inline_column_buffer::empty_like(buff); });
+  std::ranges::transform(
+    _output_buffers, std::back_inserter(_output_buffers_template), [](auto const& buff) {
+      return cudf::io::detail::inline_column_buffer::empty_like(buff);
+    });
 
   // Save the normalized output filter for `preprocess_file()` and `finalize_output()`.
   table_metadata metadata;
@@ -813,9 +811,8 @@ std::vector<size_t> reader_impl::calculate_output_num_rows_per_source(size_t con
   auto const& partial_sum_nrows_source = _file_itm_data.exclusive_sum_num_rows_per_source;
 
   // Binary search start_row and end_row in exclusive_sum_num_rows_per_source vector
-  auto const start_iter =
-    std::upper_bound(partial_sum_nrows_source.cbegin(), partial_sum_nrows_source.cend(), start_row);
-  auto const end_iter = std::lower_bound(start_iter, partial_sum_nrows_source.cend(), end_row);
+  auto const start_iter = std::ranges::upper_bound(partial_sum_nrows_source, start_row);
+  auto const end_iter   = std::lower_bound(start_iter, partial_sum_nrows_source.cend(), end_row);
 
   // Compute the array offset index for both iterators
   auto const start_idx   = std::distance(partial_sum_nrows_source.cbegin(), start_iter);
@@ -1100,9 +1097,7 @@ void reader_impl::update_output_nullmasks_for_pruned_pages(cudf::host_span<bool 
   CUDF_EXPECTS(pages.size() == page_mask.size(), "Page mask size mismatch");
 
   // Return early if page mask is empty or all pages are required
-  if (page_mask.empty() or std::all_of(page_mask.begin(), page_mask.end(), std::identity{})) {
-    return;
-  }
+  if (page_mask.empty() or std::ranges::all_of(page_mask, std::identity{})) { return; }
 
   auto page_and_mask_begin =
     cuda::make_zip_iterator(cuda::std::make_tuple(pages.host_begin(), page_mask.begin()));
@@ -1185,7 +1180,7 @@ void reader_impl::update_output_nullmasks_for_pruned_pages(cudf::host_span<bool 
   // Bulk update the nullmasks if the number of pages is above the threshold
   if (pinned_null_masks.size() >= min_nullmasks_for_bulk_update) {
     auto pinned_valids = cudf::detail::make_pinned_vector<bool>(pinned_null_masks.size(), _stream);
-    std::fill(pinned_valids.begin(), pinned_valids.end(), false);
+    std::ranges::fill(pinned_valids, false);
     cudf::set_null_masks_safe(
       pinned_null_masks, pinned_begin_bits, pinned_end_bits, pinned_valids, _stream);
     _stream.sync();

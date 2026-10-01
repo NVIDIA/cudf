@@ -128,8 +128,12 @@ struct byte_list_conversion_fn<T, std::enable_if_t<std::is_same_v<T, cudf::strin
 
     auto col_content = std::make_unique<column>(input, stream, mr)->release();
 
-    auto uint8_col = std::make_unique<column>(
-      output_type, num_chars, std::move(*(col_content.data)), rmm::device_buffer{}, 0);
+    auto uint8_col =
+      std::make_unique<column>(output_type,
+                               num_chars,
+                               std::move(*(col_content.data)),
+                               cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
+                               0);
 
     auto offsets_col = std::move(col_content.children[strings_column_view::offsets_column_index]);
     if (offsets_col->type().id() != type_id::INT32) {

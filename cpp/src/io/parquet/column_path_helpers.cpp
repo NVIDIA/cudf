@@ -36,9 +36,8 @@ std::string normalize_column_path(std::string_view col_path, bool case_sensitive
 {
   if (case_sensitive_names) { return std::string{col_path}; }
   auto normalized_path = std::string(col_path.size(), '\0');
-  std::transform(col_path.begin(), col_path.end(), normalized_path.begin(), [](unsigned char c) {
-    return std::tolower(c);
-  });
+  std::ranges::transform(
+    col_path, normalized_path.begin(), [](unsigned char c) { return std::tolower(c); });
   return normalized_path;
 }
 

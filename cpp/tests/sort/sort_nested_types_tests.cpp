@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -240,15 +240,19 @@ TEST_F(NestedStructTest, SimpleStructsOfListsOfStructsNoNulls)
         auto child1 = int32s_col{0, 4, 3, 2, 1, 1, 5, 1, 5, 5, 4, 2, 4, 1, 3};
         return structs_col{{child0, child1}};
       };
-      return cudf::make_lists_column(
-        8, int32s_col{0, 3, 5, 6, 6, 8, 10, 12, 15}.release(), get_structs().release(), 0, {});
+      return cudf::make_lists_column(8,
+                                     int32s_col{0, 3, 5, 6, 6, 8, 10, 12, 15}.release(),
+                                     get_structs().release(),
+                                     0,
+                                     cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
     };
 
     std::vector<std::unique_ptr<cudf::column>> children;
     children.emplace_back(make_lists_of_structs());
     children.emplace_back(make_lists_of_structs());
 
-    return cudf::make_structs_column(8, std::move(children), 0, {});
+    return cudf::make_structs_column(
+      8, std::move(children), 0, cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
   }();
 
   {
@@ -275,8 +279,11 @@ TEST_F(NestedListTest, SimpleListsOfStructsNoNulls)
       auto child1 = int32s_col{0, 4, 3, 2, 1, 1, 5, 1, 5, 5, 4, 2, 4, 1, 3};
       return structs_col{{child0, child1}};
     };
-    return cudf::make_lists_column(
-      8, int32s_col{0, 3, 5, 6, 6, 8, 10, 12, 15}.release(), get_structs().release(), 0, {});
+    return cudf::make_lists_column(8,
+                                   int32s_col{0, 3, 5, 6, 6, 8, 10, 12, 15}.release(),
+                                   get_structs().release(),
+                                   0,
+                                   cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
   }();
 
   {
@@ -305,7 +312,7 @@ TEST_F(NestedListTest, SlicedListsOfStructsNoNulls)
                                    int32s_col{0, 1, 2, 5, 7, 8, 8, 10, 12, 14, 17, 18}.release(),
                                    get_structs().release(),
                                    0,
-                                   {});
+                                   cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
   }();
   auto const input = cudf::slice(*input_original, {2, 10})[0];
 
@@ -331,8 +338,11 @@ TEST_F(NestedListTest, ListsOfEqualStructsNoNulls)
       auto child1 = strings_col{"a", "c", "a", "b"};
       return structs_col{{child0, child1}};
     };
-    return cudf::make_lists_column(
-      2, int32s_col{0, 2, 4}.release(), get_structs().release(), 0, {});
+    return cudf::make_lists_column(2,
+                                   int32s_col{0, 2, 4}.release(),
+                                   get_structs().release(),
+                                   0,
+                                   cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
   }();
 
   {
@@ -365,8 +375,11 @@ TEST_F(NestedListTest, SimpleListsOfStructsWithNulls)
       auto child1 = int32s_col{{2, null, 2, null, 2, 5, 4, 3, 0, 1, 3, 2, 2}, nulls_at({1, 3})};
       return structs_col{{child0, child1}, nulls_at({1, 3})};
     };
-    return cudf::make_lists_column(
-      8, int32s_col{0, 3, 3, 5, 5, 7, 7, 10, 13}.release(), get_structs().release(), 0, {});
+    return cudf::make_lists_column(8,
+                                   int32s_col{0, 3, 3, 5, 5, 7, 7, 10, 13}.release(),
+                                   get_structs().release(),
+                                   0,
+                                   cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
   }();
 
   {
@@ -411,9 +424,12 @@ TEST_F(NestedListTest, ListsOfListsOfStructsNoNulls)
                               int32s_col{0, 1, 3, 4, 5, 7, 9, 10, 12, 12, 14, 15, 17, 17}.release(),
                               get_structs().release(),
                               0,
-                              {});
-    return cudf::make_lists_column(
-      8, int32s_col{0, 3, 4, 6, 6, 8, 10, 10, 13}.release(), std::move(lists_of_structs), 0, {});
+                              cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
+    return cudf::make_lists_column(8,
+                                   int32s_col{0, 3, 4, 6, 6, 8, 10, 10, 13}.release(),
+                                   std::move(lists_of_structs),
+                                   0,
+                                   cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
   }();
 
   {

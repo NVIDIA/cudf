@@ -6,6 +6,7 @@ from collections.abc import Sequence
 from rmm.pylibrmm.memory_resource import DeviceMemoryResource
 
 from pylibcudf.column import Column
+from pylibcudf.io.experimental.hybrid_scan import ReadColumnsMode
 from pylibcudf.io.parquet import ParquetReaderOptions
 from pylibcudf.io.parquet_metadata import FileMetaData
 from pylibcudf.io.text import ByteRangeInfo
@@ -56,7 +57,9 @@ class HybridScanMultiFile:
     ) -> TableWithMetadata: ...
     def construct_row_group_passes(
         self,
+        columns_mode: ReadColumnsMode,
         row_group_indices: list[list[int]],
         pass_read_limit: int,
+        options: ParquetReaderOptions,
     ) -> list[list[list[int]]]: ...
     def has_next_table_chunk(self) -> bool: ...

@@ -13,7 +13,7 @@
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/iterator>
-#include <thrust/random.h>
+#include <cuda/std/random>
 #include <thrust/transform.h>
 
 #include <rapidsmpf/memory/cuda_memcpy_async.hpp>
@@ -35,16 +35,16 @@ rmm::device_uvector<std::int32_t> random_device_vector(std::size_t nelem,
   rmm::device_uvector<std::int32_t> vec(nelem, stream, mr);
   cuda::counting_iterator<index_t> const begin(0);
   cuda::counting_iterator<index_t> const end(end_index);
-  thrust::transform(rmm::exec_policy_nosync(stream),
-                    begin,
-                    end,
-                    vec.begin(),
-                    [min_val, max_val] __device__(index_t index) {
-                      thrust::default_random_engine engine(
-                        static_cast<thrust::default_random_engine::result_type>(index));
-                      thrust::uniform_int_distribution<std::int32_t> dist(min_val, max_val);
-                      return dist(engine);
-                    });
+  thrust::transform(
+    rmm::exec_policy_nosync(stream),
+    begin,
+    end,
+    vec.begin(),
+    [min_val, max_val] __device__(index_t index) {
+      cuda::std::philox4x32 engine(static_cast<cuda::std::philox4x32::result_type>(index));
+      cuda::std::uniform_int_distribution<std::int32_t> dist(min_val, max_val);
+      return dist(engine);
+    });
   return vec;
 }
 

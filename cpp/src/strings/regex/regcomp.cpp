@@ -16,6 +16,7 @@
 #include <clocale>
 #include <cwctype>
 #include <numeric>
+#include <ranges>
 #include <stack>
 #include <string>
 #include <tuple>
@@ -406,7 +407,7 @@ class regex_parser {
                      });
     }
     // sort the ranges to help with detecting overlapping entries
-    std::sort(ranges.begin(), ranges.end(), [](auto l, auto r) {
+    std::ranges::sort(ranges, [](auto l, auto r) {
       return l.first == r.first ? l.last < r.last : l.first < r.first;
     });
     // combine overlapping entries: [a-f][c-g] => [a-g]
@@ -420,9 +421,9 @@ class regex_parser {
       }
     }
     // remove any duplicates
-    auto const end = std::unique(
-      ranges.rbegin(), ranges.rend(), [](auto l, auto r) { return l.first == r.first; });
-    ranges.erase(ranges.begin(), ranges.begin() + std::distance(end, ranges.rend()));
+    auto const duplicates = std::ranges::unique(std::views::reverse(ranges),
+                                                [](auto l, auto r) { return l.first == r.first; });
+    ranges.erase(ranges.begin(), ranges.begin() + std::ranges::distance(duplicates));
 
     _cclass_id = _prog.add_class(reclass{builtins, std::move(ranges)});
     return type;
@@ -534,9 +535,8 @@ class regex_parser {
         }
         default: {
           // let valid escapable chars fall through as literal CHAR
-          if (chr &&
-              (std::find(escapable_chars.begin(), escapable_chars.end(), static_cast<char>(chr)) !=
-               escapable_chars.end())) {
+          if (chr && (std::ranges::find(escapable_chars, static_cast<char>(chr)) !=
+                      escapable_chars.end())) {
             break;
           }
           // anything else is a bad escape so throw an error
@@ -583,8 +583,7 @@ class regex_parser {
       }
     }
 
-    if (std::find(quantifiers.begin(), quantifiers.end(), static_cast<char>(chr)) ==
-        quantifiers.end()) {
+    if (std::ranges::find(quantifiers, static_cast<char>(chr)) == quantifiers.end()) {
       if (is_ignorecase(_flags)) {
         auto const swap_chr = swap_case(chr);
         _cclass_id =
@@ -615,7 +614,7 @@ class regex_parser {
       // look for matching LBRA
       auto nested_count = 1;
       auto lbra_itr =
-        std::find_if(_items.rbegin(), _items.rend(), [nested_count](auto const& item) mutable {
+        std::ranges::find_if(std::views::reverse(_items), [nested_count](auto const& item) mutable {
           auto const is_closing = (item.type == RBRA);
           auto const is_opening = (item.type == LBRA || item.type == LBRA_NC);
           nested_count += is_closing - is_opening;
@@ -632,9 +631,8 @@ class regex_parser {
       previous_type = (first_valid == lbra_itr) ? (--lbra_itr)->type : first_valid->type;
     }
 
-    if (std::find(valid_preceding_inst_types.begin(),
-                  valid_preceding_inst_types.end(),
-                  previous_type) == valid_preceding_inst_types.end()) {
+    if (std::ranges::find(valid_preceding_inst_types, previous_type) ==
+        valid_preceding_inst_types.end()) {
       CUDF_FAIL("invalid regex pattern: nothing to repeat at position " +
                 std::to_string(_expr_ptr - _pattern_begin - 1));
     }
@@ -997,8 +995,7 @@ class regex_compiler {
     if (token != RBRA) { push_operator(token, subid); }
 
     static std::vector<int> const tokens{STAR, STAR_LAZY, QUEST, QUEST_LAZY, PLUS, PLUS_LAZY, RBRA};
-    _last_was_and =
-      std::any_of(tokens.cbegin(), tokens.cend(), [token](auto t) { return t == token; });
+    _last_was_and = std::ranges::any_of(tokens, [token](auto t) { return t == token; });
   }
 
   void handle_operand(int token, int subid = 0, char32_t yy = 0, int class_id = 0)
@@ -1089,7 +1086,7 @@ void reprog::finalize() { build_start_ids(); }
 void reprog::collapse_nops()
 {
   // treat non-capturing LBRAs/RBRAs as NOP
-  std::transform(_insts.begin(), _insts.end(), _insts.begin(), [](auto inst) {
+  std::ranges::transform(_insts, _insts.begin(), [](auto inst) {
     if ((inst.type == LBRA || inst.type == RBRA) && (inst.u1.subid < 1)) { inst.type = NOP; }
     return inst;
   });
@@ -1103,7 +1100,7 @@ void reprog::collapse_nops()
   };
 
   // create new routes around NOP chains
-  std::transform(_insts.begin(), _insts.end(), _insts.begin(), [find_next_op](auto inst) {
+  std::ranges::transform(_insts, _insts.begin(), [find_next_op](auto inst) {
     if (inst.type != NOP) {
       inst.u2.next_id = find_next_op(inst.u2.next_id);
       if (inst.type == OR) { inst.u1.right_id = find_next_op(inst.u1.right_id); }
@@ -1123,11 +1120,11 @@ void reprog::collapse_nops()
     });
 
   // remove the NOP instructions
-  auto end = std::remove_if(_insts.begin(), _insts.end(), [](auto i) { return i.type == NOP; });
-  _insts.resize(std::distance(_insts.begin(), end));
+  auto const nops = std::ranges::remove_if(_insts, [](auto i) { return i.type == NOP; });
+  _insts.erase(nops.begin(), nops.end());
 
   // fix up the ids on the remaining instructions using the id_map
-  std::transform(_insts.begin(), _insts.end(), _insts.begin(), [id_map](auto inst) {
+  std::ranges::transform(_insts, _insts.begin(), [id_map](auto inst) {
     inst.u2.next_id = id_map[inst.u2.next_id];
     if (inst.type == OR) { inst.u1.right_id = id_map[inst.u1.right_id]; }
     return inst;

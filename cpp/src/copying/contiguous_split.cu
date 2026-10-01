@@ -25,6 +25,7 @@
 
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/buffer>
 #include <cuda/functional>
 #include <cuda/iterator>
 #include <cuda/std/functional>
@@ -1065,6 +1066,7 @@ struct packed_split_indices_and_src_buf_info {
       // host-side
       h_indices_and_source_info{
         detail::make_host_vector<uint8_t>(indices_size + src_buf_info_size, stream)},
+      d_indices_and_source_info{stream, temp_mr},
       h_indices{reinterpret_cast<int64_t*>(h_indices_and_source_info.data())},
       h_src_buf_info{
         reinterpret_cast<src_buf_info*>(h_indices_and_source_info.data() + indices_size)}
@@ -1082,8 +1084,8 @@ struct packed_split_indices_and_src_buf_info {
     offset_stack_size           = offset_stack_partition_size * num_partitions * sizeof(size_type);
     // device-side
     // gpu-only : stack space needed for nested list offset calculation
-    d_indices_and_source_info =
-      rmm::device_buffer(indices_size + src_buf_info_size + offset_stack_size, stream, temp_mr);
+    d_indices_and_source_info = cuda::device_buffer<std::byte>{
+      stream, temp_mr, indices_size + src_buf_info_size + offset_stack_size, cuda::no_init};
     d_indices      = reinterpret_cast<int64_t*>(d_indices_and_source_info.data());
     d_src_buf_info = reinterpret_cast<src_buf_info*>(
       reinterpret_cast<uint8_t*>(d_indices_and_source_info.data()) + indices_size);
@@ -1092,7 +1094,7 @@ struct packed_split_indices_and_src_buf_info {
                                    indices_size + src_buf_info_size);
 
     detail::cuda_memcpy_async<uint8_t>(
-      device_span<uint8_t>{static_cast<uint8_t*>(d_indices_and_source_info.data()),
+      device_span<uint8_t>{reinterpret_cast<uint8_t*>(d_indices_and_source_info.data()),
                            h_indices_and_source_info.size()},
       h_indices_and_source_info,
       stream);
@@ -1103,7 +1105,7 @@ struct packed_split_indices_and_src_buf_info {
   std::size_t offset_stack_size;
 
   detail::host_vector<uint8_t> h_indices_and_source_info;
-  rmm::device_buffer d_indices_and_source_info;
+  cuda::device_buffer<std::byte> d_indices_and_source_info;
 
   int64_t* const h_indices;
   src_buf_info* const h_src_buf_info;
@@ -1179,7 +1181,7 @@ struct packed_src_and_dst_pointers {
       h_src_bufs{reinterpret_cast<uint8_t const**>(h_src_and_dst_buffers.data())},
       h_dst_bufs{reinterpret_cast<uint8_t**>(h_src_and_dst_buffers.data() + src_bufs_size)},
       // device-side
-      d_src_and_dst_buffers{h_src_and_dst_buffers.size(), stream, temp_mr},
+      d_src_and_dst_buffers{stream, temp_mr, h_src_and_dst_buffers.size(), cuda::no_init},
       d_src_bufs{reinterpret_cast<uint8_t const**>(d_src_and_dst_buffers.data())},
       d_dst_bufs{reinterpret_cast<uint8_t**>(
         reinterpret_cast<uint8_t*>(d_src_and_dst_buffers.data()) + src_bufs_size)}
@@ -1191,7 +1193,7 @@ struct packed_src_and_dst_pointers {
   void copy_to_device()
   {
     detail::cuda_memcpy_async<uint8_t>(
-      device_span<uint8_t>{static_cast<uint8_t*>(d_src_and_dst_buffers.data()),
+      device_span<uint8_t>{reinterpret_cast<uint8_t*>(d_src_and_dst_buffers.data()),
                            d_src_and_dst_buffers.size()},
       h_src_and_dst_buffers,
       stream);
@@ -1205,7 +1207,7 @@ struct packed_src_and_dst_pointers {
   uint8_t const** const h_src_bufs;
   uint8_t** const h_dst_bufs;
 
-  rmm::device_buffer d_src_and_dst_buffers;
+  cuda::device_buffer<std::byte> d_src_and_dst_buffers;
   uint8_t const** const d_src_bufs;
   uint8_t** const d_dst_bufs;
 };

@@ -17,6 +17,7 @@
 #include <nanoarrow/nanoarrow.hpp>
 #include <nanoarrow/nanoarrow_device.h>
 
+#include <algorithm>
 #include <memory>
 #include <utility>
 
@@ -121,9 +122,8 @@ cudf::column_metadata get_column_metadata(cudf::column_view const& input)
 std::vector<cudf::column_metadata> get_table_metadata(cudf::table_view const& input)
 {
   auto meta = std::vector<cudf::column_metadata>{};
-  std::transform(input.begin(), input.end(), std::back_inserter(meta), [](auto& cv) {
-    return get_column_metadata(cv);
-  });
+  std::ranges::transform(
+    input, std::back_inserter(meta), [](auto& cv) { return get_column_metadata(cv); });
   return meta;
 }
 

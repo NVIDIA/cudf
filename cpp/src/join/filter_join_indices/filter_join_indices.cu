@@ -36,6 +36,7 @@
 #include <cub/device/device_reduce.cuh>
 #include <cub/device/device_transform.cuh>
 #include <cuco/static_set.cuh>
+#include <cuda/buffer>
 #include <cuda/functional>
 #include <cuda/iterator>
 #include <cuda/std/functional>
@@ -306,7 +307,8 @@ filter_join_indices(cudf::table_view const& left,
                              d_num_valid.data(),
                              left_indices.size(),
                              stream.get());
-      rmm::device_buffer temp_storage(temp_storage_bytes, stream);
+      cuda::device_buffer<std::byte> temp_storage(
+        stream, cudf::get_current_device_resource_ref(), temp_storage_bytes, cuda::no_init);
       cub::DeviceReduce::Sum(temp_storage.data(),
                              temp_storage_bytes,
                              predicate_it,

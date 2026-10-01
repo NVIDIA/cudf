@@ -7,13 +7,13 @@
 
 #include <benchmarks/io/cuio_common.hpp>
 
+#include <cudf/table/table_view.hpp>
 #include <cudf/types.hpp>
 
 #include <nvbench/nvbench.cuh>
 
 #include <cstdint>
 #include <optional>
-#include <vector>
 
 constexpr cudf::size_type num_cols = 64;
 
@@ -31,21 +31,11 @@ void parquet_read_common(cudf::size_type num_rows_to_read,
                          cuio_source_sink_pair& source_sink,
                          nvbench::state& state);
 
-// Writes a single-column file with an explicitly controlled row group and page layout
+// Writes `table` as exactly `num_row_groups` row groups of `pages_per_row_group` pages each,
+// dropping the trailing rows that don't fill a whole page
 [[nodiscard]] cuio_source_sink_pair write_file_shape_parquet_file(
-  cudf::type_id dtype,
-  cudf::size_type num_rows,
+  cudf::table_view const& table,
   cudf::size_type num_row_groups,
   cudf::size_type pages_per_row_group,
   io_type source_type,
   bool write_page_index);
-
-// A mix of string, integral, float, decimal and list types used to fill a schema of the
-// requested width
-[[nodiscard]] std::vector<cudf::type_id> const& mixed_dtypes();
-
-// Writes a mixed-type file with a fixed number of rows per row group
-[[nodiscard]] cuio_source_sink_pair write_mixed_dtype_parquet_file(cudf::size_type num_cols,
-                                                                   cudf::size_type num_row_groups,
-                                                                   io_type source_type,
-                                                                   bool write_page_index);

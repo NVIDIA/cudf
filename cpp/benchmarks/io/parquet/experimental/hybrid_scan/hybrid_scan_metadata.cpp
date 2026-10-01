@@ -8,6 +8,7 @@
 #include <benchmarks/io/nvbench_helpers.hpp>
 #include <benchmarks/io/parquet/parquet_common.hpp>
 
+#include <cudf/copying.hpp>
 #include <cudf/io/datasource.hpp>
 #include <cudf/io/experimental/hybrid_scan.hpp>
 #include <cudf/io/parquet.hpp>
@@ -30,12 +31,17 @@ void BM_hybrid_scan_file_shape(nvbench::state& state, nvbench::type_list<nvbench
   auto const num_pages_per_row_group =
     static_cast<cudf::size_type>(state.get_int64("pages_per_row_group"));
 
-  auto source_sink =
-    write_file_shape_parquet_file(create_random_table({DType}, table_size_bytes{data_size})->view(),
-                                  num_row_groups,
-                                  num_pages_per_row_group,
-                                  source_type,
-                                  write_page_index);
+  auto source_sink = [&]() {
+    auto const table     = create_random_table({DType}, table_size_bytes{data_size});
+    auto const num_pages = num_row_groups * num_pages_per_row_group;
+    // The writer produces the requested layout only for a multiple of `num_pages` rows
+    auto const num_rows = table->num_rows() / num_pages * num_pages;
+    return write_file_shape_parquet_file(cudf::slice(table->view(), {0, num_rows}).front(),
+                                         num_row_groups,
+                                         num_pages_per_row_group,
+                                         source_type,
+                                         write_page_index);
+  }();
 
   auto const read_opts =
     cudf::io::parquet_reader_options::builder(source_sink.make_source_info()).build();
@@ -63,8 +69,6 @@ void BM_hybrid_scan_file_shape(nvbench::state& state, nvbench::type_list<nvbench
 // of them. STRING adds `unencoded_byte_array_data_bytes` to the offset index
 using file_shape_dtypes = nvbench::enum_type_list<cudf::type_id::INT32, cudf::type_id::STRING>;
 
-// Page locations are decoded in parallel from 512 pages per chunk. One row group of 1'000 pages
-// and ten of 100 give the same page count split differently, as do one of 10'000 and ten of 1'000
 NVBENCH_BENCH_TYPES(BM_hybrid_scan_file_shape, NVBENCH_TYPE_AXES(file_shape_dtypes))
   .set_name("hybrid_scan_file_shape")
   .set_type_axes_names({"dtype"})

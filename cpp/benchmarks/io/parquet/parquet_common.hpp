@@ -31,8 +31,8 @@ void parquet_read_common(cudf::size_type num_rows_to_read,
                          cuio_source_sink_pair& source_sink,
                          nvbench::state& state);
 
-// Writes `table` as exactly `num_row_groups` row groups of `pages_per_row_group` pages each,
-// dropping the trailing rows that don't fill a whole page
+// Writes `table` as `num_row_groups` row groups of `pages_per_row_group` pages each. The layout
+// is exact only if the number of rows is a multiple of `num_row_groups * pages_per_row_group`
 [[nodiscard]] cuio_source_sink_pair write_file_shape_parquet_file(
   cudf::table_view const& table,
   cudf::size_type num_row_groups,

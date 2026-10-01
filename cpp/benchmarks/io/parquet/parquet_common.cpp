@@ -8,7 +8,6 @@
 #include <benchmarks/common/memory_stats.hpp>
 #include <benchmarks/io/cuio_common.hpp>
 
-#include <cudf/copying.hpp>
 #include <cudf/io/parquet.hpp>
 #include <cudf/table/table_view.hpp>
 #include <cudf/utilities/default_stream.hpp>
@@ -63,16 +62,12 @@ cuio_source_sink_pair write_file_shape_parquet_file(cudf::table_view const& tabl
 {
   cuio_source_sink_pair source_sink(source_type);
 
-  auto const num_pages     = num_row_groups * pages_per_row_group;
-  auto const rows_per_page = table.num_rows() / num_pages;
+  auto const num_rows      = table.num_rows();
+  auto const rows_per_page = num_rows / (num_row_groups * pages_per_row_group);
   CUDF_EXPECTS(rows_per_page > 0, "num_row_groups * pages_per_row_group must not exceed num_rows");
 
-  // Leftover rows would land in an extra row group and extra pages
-  auto const num_rows = rows_per_page * num_pages;
-  auto const view     = cudf::slice(table, {0, num_rows}).front();
-
   cudf::io::parquet_writer_options write_opts =
-    cudf::io::parquet_writer_options::builder(source_sink.make_sink_info(), view)
+    cudf::io::parquet_writer_options::builder(source_sink.make_sink_info(), table)
       .compression(cudf::io::compression_type::NONE)
       .row_group_size_rows(num_rows / num_row_groups)
       .max_page_size_rows(rows_per_page)

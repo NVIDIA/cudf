@@ -9,8 +9,9 @@ import pytest
 
 import polars as pl
 
-from cudf_polars.containers import DataFrame
-from cudf_polars.dsl.ir import Select
+from cudf_polars.containers import DataFrame, DataType
+from cudf_polars.dsl import expr
+from cudf_polars.dsl.ir import DataFrameScan, IRExecutionContext, Select
 from cudf_polars.testing.asserts import (
     assert_gpu_result_equal,
     assert_ir_translation_raises,
@@ -314,3 +315,35 @@ def test_len_of_union_exceeding_index_dtype_raises(in_memory_engine: pl.GPUEngin
         pl.exceptions.InvalidOperationError, match=r"conversion.*failed"
     ):
         q.collect(engine=in_memory_engine)
+
+
+def test_len_frame_dtype_matches_cast_not_hardcoded():
+    # Select._len_frame must take its dtype from the enclosing Cast (which
+    # reflects pl.get_index_type(), UInt32 normally or UInt64 under the
+    # polars `bigidx` feature), not a hard-coded width. bigidx itself isn't
+    # exercised here -- it's fixed by which polars-runtime package is
+    # installed, not swappable at runtime -- so this builds the IR directly
+    # with a UInt64 target to check the dtype-selection logic in isolation.
+    pydf = pl.DataFrame({"a": [1, 2, 3]})._df
+    schema = {"a": DataType(pl.Int64())}
+    scan = DataFrameScan(schema, pydf, None)
+
+    target = DataType(pl.UInt64())
+    cast_expr = expr.Cast(target, strict=True, value=expr.Len(DataType(pl.UInt32())))
+    select = Select(
+        {"len": target},
+        [expr.NamedExpr("len", cast_expr)],
+        should_broadcast=True,
+        df=scan,
+    )
+
+    context = IRExecutionContext()
+    result = select.evaluate(cache={}, timer=None, context=context)
+    (column,) = result.columns
+    assert column.dtype == target
+    assert (
+        column.obj_scalar(stream=context.get_cuda_stream()).to_py(
+            stream=context.get_cuda_stream()
+        )
+        == 3
+    )

@@ -2058,7 +2058,10 @@ class Select(IR):
     def _len_frame(self, count: int, context: IRExecutionContext) -> DataFrame:
         """Build the single-row result of a ``len`` select from a known count."""
         stream = context.get_cuda_stream()
-        dtype = DataType(pl.UInt32())
+        # The Cast's own target dtype is whatever polars decided for this
+        # query's index type (UInt32, or UInt64 under the `bigidx` feature),
+        # so use it rather than hard-coding one.
+        dtype = self.exprs[0].value.dtype
         col = Column(
             plc.Column.from_scalar(
                 plc.Scalar.from_py(count, dtype.plc_type, stream=stream),
@@ -2125,7 +2128,6 @@ class Select(IR):
             and self.children[0].typ == "parquet"
             and self.children[0].predicate is None
         ):  # pragma: no cover
-            stream = context.get_cuda_stream()
             scan = self.children[0]
             effective_rows = Scan._get_parquet_row_count_from_metadata(
                 scan.paths,
@@ -2134,17 +2136,7 @@ class Select(IR):
                 scan.parquet_options,
                 None,
             )
-            dtype = DataType(pl.UInt32())
-            col = Column(
-                plc.Column.from_scalar(
-                    plc.Scalar.from_py(effective_rows, dtype.plc_type, stream=stream),
-                    1,
-                    stream=stream,
-                ),
-                name=self.exprs[0].name or "len",
-                dtype=dtype,
-            )
-            return DataFrame([col], stream=stream)
+            return self._len_frame(effective_rows, context)
 
         if Select._is_len_expr(self.exprs):
             df_scan = Select._dataframe_scan_below_cache(self.children[0], cache)

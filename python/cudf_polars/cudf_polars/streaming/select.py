@@ -24,7 +24,7 @@ from cudf_polars.dsl.ir import (
 )
 from cudf_polars.dsl.traversal import traversal
 from cudf_polars.dsl.utils.naming import unique_names
-from cudf_polars.streaming.base import PartitionInfo
+from cudf_polars.streaming.base import CUDF_ROW_LIMIT, PartitionInfo
 from cudf_polars.streaming.dispatch import lower_ir_node
 from cudf_polars.streaming.expressions import (
     decompose_expr_graph,
@@ -82,11 +82,6 @@ def _hstack_chain_to_select(ir: Select) -> Select | None:
         expr.NamedExpr(ne.name, _sub_expr(ne.value, col_defs)) for ne in ir.exprs
     )
     return Select(ir.schema, new_exprs, ir.should_broadcast, base_input)
-
-
-# cudf::size_type is a signed 32-bit integer, so a frame with more rows than
-# this cannot be represented on the GPU at all.
-_SIZE_TYPE_MAX = 2**31 - 1
 
 
 @lower_ir_node.register(Projection)
@@ -473,7 +468,7 @@ def _(
         # fails when the empty chunk is fanned out, as it already does for
         # parquet scans. One that does not fit could never be evaluated.
         height = pl.DataFrame._from_pydf(dataframe_scan_child.df).height
-        if height > _SIZE_TYPE_MAX:
+        if height > CUDF_ROW_LIMIT:
             count = height
 
     if count is not None:

@@ -21,8 +21,6 @@
 #include <rmm/exec_policy.hpp>
 
 #include <cooperative_groups.h>
-#include <cub/block/block_reduce.cuh>
-#include <cub/block/block_scan.cuh>
 #include <cuda/iterator>
 #include <cuda/std/chrono>
 #include <cuda/std/functional>

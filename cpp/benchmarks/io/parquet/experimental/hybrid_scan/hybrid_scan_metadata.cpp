@@ -74,6 +74,6 @@ NVBENCH_BENCH_TYPES(BM_hybrid_scan_file_shape, NVBENCH_TYPE_AXES(file_shape_dtyp
   .set_type_axes_names({"dtype"})
   .set_min_samples(4)
   .add_string_axis("io_type", {"DEVICE_BUFFER"})
-  .add_int64_axis("data_size", {128 << 20})
+  .add_int64_axis("data_size", {32 << 20, 128 << 20, 512 << 20})
   .add_int64_axis("num_row_groups", {1, 10})
   .add_int64_axis("pages_per_row_group", {100, 1'000, 10'000});

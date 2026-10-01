@@ -914,7 +914,7 @@ void count_page_headers(cudf::detail::hostdevice_span<ColumnChunkDesc> chunks,
                 "Block size for decode page headers kernel must be a multiple of warp size");
 
   auto constexpr num_warps_per_block = count_page_headers_block_size / cudf::detail::warp_size;
-  auto const num_blocks              = cudf::util::div_rounding_up_unsafe<cudf::size_type>(
+  auto const num_blocks              = cudf::detail::div_rounding_up_unsafe<cudf::size_type>(
     chunks.size(), num_warps_per_block);  // 1 warp per chunk
 
   dim3 dim_block(count_page_headers_block_size, 1);
@@ -937,7 +937,7 @@ void decode_page_headers(cudf::device_span<ColumnChunkDesc const> chunks,
   auto const num_chunks              = static_cast<cudf::size_type>(chunks.size());
   auto constexpr num_warps_per_block = decode_page_headers_block_size / cudf::detail::warp_size;
   auto const num_blocks =
-    cudf::util::div_rounding_up_unsafe(num_chunks, num_warps_per_block);  // 1 warp per chunk
+    cudf::detail::div_rounding_up_unsafe(num_chunks, num_warps_per_block);  // 1 warp per chunk
 
   dim3 dim_block(decode_page_headers_block_size, 1);
   dim3 dim_grid(num_blocks, 1);
@@ -977,7 +977,7 @@ void build_string_dictionary_index(ColumnChunkDesc* chunks,
     "Block size for build string dictionary index kernel must be a multiple of warp size");
   auto constexpr num_warps_per_block = build_string_dict_index_block_size / cudf::detail::warp_size;
   auto const num_blocks =
-    cudf::util::div_rounding_up_unsafe(num_chunks, num_warps_per_block);  // 1 warp per chunk
+    cudf::detail::div_rounding_up_unsafe(num_chunks, num_warps_per_block);  // 1 warp per chunk
 
   dim3 dim_block(build_string_dict_index_block_size, 1);
   dim3 dim_grid(num_blocks, 1);

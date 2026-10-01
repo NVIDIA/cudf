@@ -64,7 +64,7 @@ std::pair<rmm::device_uvector<size_type>, bool> compute_single_pass_aggs(
     // We launch the same grid size for both kernels, thus we need to take the minimum of the two.
     auto const max_blocks    = std::min(max_blocks_mapping, max_blocks_aggs);
     auto const max_grid_size = max_blocks * cudf::detail::num_multiprocessors();
-    auto const num_blocks    = cudf::util::div_rounding_up_safe(num_rows, GROUPBY_BLOCK_SIZE);
+    auto const num_blocks    = cudf::detail::div_rounding_up_safe(num_rows, GROUPBY_BLOCK_SIZE);
     return std::min(max_grid_size, num_blocks);
   }();
 

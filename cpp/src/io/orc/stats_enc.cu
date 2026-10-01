@@ -446,9 +446,9 @@ void orc_init_statistics_groups(statistics_group* groups,
                                 device_2dspan<rowgroup_rows const> rowgroup_bounds,
                                 cuda::stream_ref stream)
 {
-  auto const num_blocks =
-    cudf::util::div_rounding_up_safe<size_t>(rowgroup_bounds.size().first, init_groups_per_block) *
-    rowgroup_bounds.size().second;
+  auto const num_blocks = cudf::detail::div_rounding_up_safe<size_t>(rowgroup_bounds.size().first,
+                                                                     init_groups_per_block) *
+                          rowgroup_bounds.size().second;
 
   dim3 dim_block(init_threads_per_group, init_groups_per_block);
   gpu_init_statistics_groups<<<num_blocks, dim_block, 0, stream.get()>>>(
@@ -490,7 +490,7 @@ void orc_encode_statistics(uint8_t* blob_bfr,
                            cuda::stream_ref stream)
 {
   auto const num_blocks =
-    cudf::util::div_rounding_up_safe(statistics_count, encode_chunks_per_block);
+    cudf::detail::div_rounding_up_safe(statistics_count, encode_chunks_per_block);
   dim3 dim_block(encode_threads_per_chunk, encode_chunks_per_block);
   gpu_encode_statistics<<<num_blocks, dim_block, 0, stream.get()>>>(
     blob_bfr, groups, chunks, statistics_count);

@@ -472,7 +472,7 @@ struct row_size_functor {
   __device__ inline size_t validity_size(size_t num_rows, bool nullable)
   {
     // TODO: Use a util from `null_mask.cuh` instead of this calculation when available
-    return nullable ? cudf::util::div_rounding_up_safe<size_type>(
+    return nullable ? cudf::detail::div_rounding_up_safe<size_type>(
                         num_rows, cudf::detail::size_in_bits<bitmask_type>()) *
                         sizeof(bitmask_type)
                     : 0;

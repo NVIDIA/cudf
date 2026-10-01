@@ -873,7 +873,7 @@ void decode_row_column_data(cudf::io::parse_options_view const& options,
   // Calculate actual block count to use based on records count
   auto const block_size = csvparse_block_dim;
   auto const num_rows   = row_offsets.size() - 1;
-  auto const grid_size  = cudf::util::div_rounding_up_safe<size_t>(num_rows, block_size);
+  auto const grid_size  = cudf::detail::div_rounding_up_safe<size_t>(num_rows, block_size);
 
   convert_csv_to_cudf<<<grid_size, block_size, 0, stream.get()>>>(options,
                                                                   data,

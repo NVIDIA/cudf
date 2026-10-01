@@ -143,7 +143,7 @@ void launch_kernel(cudf::mutable_table_view input, T** d_ptr, int work_per_threa
   int grid_size = grid_config.num_blocks;
 
   if (dispatching_type == HOST_DISPATCHING) {
-    // std::vector<cudf::util::cuda::scoped_stream> v_stream(n_cols);
+    // std::vector<cudf::detail::cuda::scoped_stream> v_stream(n_cols);
     for (int c = 0; c < n_cols; c++) {
       auto d_column = cudf::mutable_column_device_view::create(input.column(c));
       cudf::type_dispatcher(

@@ -593,7 +593,7 @@ CUDF_HOST_DEVICE constexpr inline size_t max_RLE_page_size(uint8_t value_bit_wid
   // bitwidths it's hard to get the pathological 8:2 split.
   // If the encoder starts printing the data corruption warning, then this will need to be
   // revisited.
-  return 4 + 5 + cudf::util::div_rounding_up_unsafe<size_t>(num_values * value_bit_width, 8) +
+  return 4 + 5 + cudf::detail::div_rounding_up_unsafe<size_t>(num_values * value_bit_width, 8) +
          (num_values / 8);
 }
 
@@ -604,7 +604,7 @@ constexpr uint32_t RLE_LENGTH_FIELD_LEN = sizeof(uint32_t);
 // seven payload bits. Equal to 1 (field header byte) + ceil(value_bits / 7).
 CUDF_HOST_DEVICE constexpr size_t max_thrift_field_size(size_t value_bits)
 {
-  return 1 + cudf::util::div_rounding_up_unsafe<size_t>(value_bits, 7);
+  return 1 + cudf::detail::div_rounding_up_unsafe<size_t>(value_bits, 7);
 }
 
 // Max V2 page header size excluding statistics. Equal to size of 9 `i32` fields + 2 bool fields

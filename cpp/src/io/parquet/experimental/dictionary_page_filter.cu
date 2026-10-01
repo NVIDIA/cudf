@@ -1114,7 +1114,7 @@ struct dictionary_caster {
       std::size_t const warps_per_block = DECODE_BLOCK_SIZE / cudf::detail::warp_size;
       // Number of thread blocks to get at least `total_row_groups` warps
       auto const num_blocks =
-        cudf::util::div_rounding_up_safe<std::size_t>(total_row_groups, warps_per_block);
+        cudf::detail::div_rounding_up_safe<std::size_t>(total_row_groups, warps_per_block);
 
       // Decode string dictionaries and insert them to cuco hash sets, one dictionary per
       // warp
@@ -1255,7 +1255,7 @@ struct dictionary_caster {
       std::size_t const warps_per_block = DECODE_BLOCK_SIZE / cudf::detail::warp_size;
       // Number of thread blocks to get at least `total_row_groups` warps
       auto const num_blocks =
-        cudf::util::div_rounding_up_safe<std::size_t>(total_row_groups, warps_per_block);
+        cudf::detail::div_rounding_up_safe<std::size_t>(total_row_groups, warps_per_block);
 
       // Decode string dictionaries and evaluate all literals against them, one dictionary per
       // warp

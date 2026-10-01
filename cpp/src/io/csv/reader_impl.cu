@@ -988,9 +988,9 @@ table_with_metadata read_csv(cudf::io::datasource* source,
       cudf::string_scalar dblquotechar_scalar(
         std::string(2, quotechar), true, stream, cudf::get_current_device_resource_ref());
       constexpr size_t max_tasks = 4;
-      auto const cols_per_task   = cudf::util::div_rounding_up_safe(num_string_cols, max_tasks);
-      auto const num_tasks       = cudf::util::div_rounding_up_safe(num_string_cols, cols_per_task);
-      auto streams               = cudf::detail::fork_streams(stream, num_tasks);
+      auto const cols_per_task   = cudf::detail::div_rounding_up_safe(num_string_cols, max_tasks);
+      auto const num_tasks = cudf::detail::div_rounding_up_safe(num_string_cols, cols_per_task);
+      auto streams         = cudf::detail::fork_streams(stream, num_tasks);
 
       auto process_string_column = [&](size_t str_col_idx, cuda::stream_ref col_stream) {
         auto const col_idx   = string_col_indices[str_col_idx];

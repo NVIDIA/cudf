@@ -711,7 +711,7 @@ std::unique_ptr<cudf::column> create_random_column<cudf::struct_view>(data_profi
       }();
 
       // Adopt remaining children as evenly as possible
-      auto const num_to_adopt = cudf::util::div_rounding_up_unsafe(
+      auto const num_to_adopt = cudf::detail::div_rounding_up_unsafe(
         std::distance(current_child, children.end()), std::distance(current_parent, parents.end()));
       CUDF_EXPECTS(num_to_adopt > 0, "No children columns left to adopt");
 

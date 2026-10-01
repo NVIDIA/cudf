@@ -509,7 +509,8 @@ std::unique_ptr<cudf::column> normalize_characters(cudf::strings_column_view con
 
   constexpr int64_t block_size = 256;
   cudf::detail::grid_1d grid{chars_size, block_size};
-  auto const max_new_char_total = cudf::util::round_up_safe(chars_size, block_size) * MAX_NEW_CHARS;
+  auto const max_new_char_total =
+    cudf::detail::round_up_safe(chars_size, block_size) * MAX_NEW_CHARS;
 
   auto const& parameters = normalizer._impl;
 

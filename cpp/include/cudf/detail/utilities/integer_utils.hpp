@@ -42,7 +42,7 @@
 
 namespace cudf {
 //! Utility functions
-namespace util {
+namespace detail {
 /**
  * @brief Rounds `number_to_round` up to the next multiple of modulus
  *
@@ -210,5 +210,5 @@ CUDF_HOST_DEVICE constexpr auto absolute_value(T value) -> T
   return value;
 }
 
-}  // namespace util
+}  // namespace detail
 }  // namespace cudf

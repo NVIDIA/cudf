@@ -477,7 +477,7 @@ unique_device_array_t to_arrow_host_stringview(cudf::strings_column_view const& 
 
   // using max/2 here ensures no buffer is greater than 2GB
   constexpr int64_t max_size = std::numeric_limits<int32_t>::max() / 2;
-  auto const num_buffers     = cudf::util::div_rounding_up_safe(longer_chars_size, max_size);
+  auto const num_buffers     = cudf::detail::div_rounding_up_safe(longer_chars_size, max_size);
   auto buffer_offsets        = rmm::device_uvector<int64_t>(num_buffers, stream);
   // copy the bytes for the longer strings into Arrow variadic buffers
   if (longer_chars_size > 0) {

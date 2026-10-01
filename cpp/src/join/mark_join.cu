@@ -132,7 +132,7 @@ CUDF_KERNEL __launch_bounds__(block_size) void compact_if_kernel(OutputType* out
   auto const tid               = cudf::detail::grid_1d::global_thread_id<block_size>();
   auto const stride            = cudf::detail::grid_1d::grid_stride<block_size>();
   auto const loop_bound =
-    cudf::util::round_up_unsafe(static_cast<thread_index_type>(op.num_buckets()), stride);
+    cudf::detail::round_up_unsafe(static_cast<thread_index_type>(op.num_buckets()), stride);
 
   constexpr int buffer_capacity_factor = 4;
   constexpr int buffer_capacity        = block_size * buffer_capacity_factor;
@@ -285,7 +285,7 @@ CUDF_KERNEL __launch_bounds__(block_size) void mark_retrieve_kernel(
   auto const tid    = cudf::detail::grid_1d::global_thread_id<block_size>();
   auto const stride = cudf::detail::grid_1d::grid_stride<block_size>();
   auto const loop_bound =
-    cudf::util::round_up_unsafe(static_cast<thread_index_type>(num_buckets), stride);
+    cudf::detail::round_up_unsafe(static_cast<thread_index_type>(num_buckets), stride);
 
   for (thread_index_type i = tid; i < loop_bound; i += stride) {
     bool has_match = false;
@@ -389,7 +389,7 @@ void mark_join::clear_marks(cuda::stream_ref stream)
   auto const num_buckets = static_cast<cudf::thread_index_type>(storage_ref.num_buckets());
   if (num_buckets == 0) return;
 
-  auto const grid_size = cudf::util::div_rounding_up_unsafe(num_buckets, mark_block_size);
+  auto const grid_size = cudf::detail::div_rounding_up_unsafe(num_buckets, mark_block_size);
   clear_marks_kernel<mark_block_size><<<grid_size, mark_block_size, 0, stream.get()>>>(
     storage_ref, static_cast<slot_type>(masked_empty_sentinel), num_buckets);
   CUDF_CUDA_TRY(cudaGetLastError());

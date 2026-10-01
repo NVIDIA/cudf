@@ -220,7 +220,7 @@ CUDF_KERNEL void url_decode_char_counter(column_device_view const in_strings,
     auto const in_string     = in_strings.element<string_view>(row_idx);
     auto const in_chars      = in_string.data();
     auto const string_length = in_string.size_bytes();
-    auto const nblocks       = cudf::util::div_rounding_up_unsafe(string_length, char_block_size);
+    auto const nblocks       = cudf::detail::div_rounding_up_unsafe(string_length, char_block_size);
     size_type escape_char_count = 0;
 
     for (size_type block_idx = 0; block_idx < nblocks; block_idx++) {
@@ -308,7 +308,7 @@ CUDF_KERNEL void url_decode_char_replacer(column_device_view const in_strings,
     auto const in_chars      = in_string.data();
     auto const string_length = in_string.size_bytes();
     auto out_chars_string    = out_chars + out_offsets[row_idx];
-    auto const nblocks       = cudf::util::div_rounding_up_unsafe(string_length, char_block_size);
+    auto const nblocks       = cudf::detail::div_rounding_up_unsafe(string_length, char_block_size);
 
     // Use the last thread of the warp to initialize `out_idx` to 0.
     if (warp_lane == cudf::detail::warp_size - 1) { out_idx[local_warp_id] = 0; }
@@ -385,7 +385,7 @@ std::unique_ptr<column> url_decode(strings_column_view const& strings,
   constexpr size_type threadblock_size = num_warps_per_threadblock * cudf::detail::warp_size;
   constexpr size_type char_block_size  = 256;
   auto const num_threadblocks =
-    std::min(65536, cudf::util::div_rounding_up_unsafe(strings_count, num_warps_per_threadblock));
+    std::min(65536, cudf::detail::div_rounding_up_unsafe(strings_count, num_warps_per_threadblock));
 
   auto const d_strings = column_device_view::create(strings.parent(), stream);
 

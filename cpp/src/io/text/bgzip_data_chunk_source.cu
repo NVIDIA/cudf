@@ -66,8 +66,8 @@ class bgzip_data_chunk_reader : public data_chunk_reader {
   {
     // Buffer needs to be padded.
     // Required by `inflate_kernel`.
-    device.resize(cudf::util::round_up_safe(host.size(), cudf::io::detail::BUFFER_PADDING_MULTIPLE),
-                  stream);
+    device.resize(
+      cudf::detail::round_up_safe(host.size(), cudf::io::detail::BUFFER_PADDING_MULTIPLE), stream);
     cudf::detail::cuda_memcpy_async<T>(
       device_span<T>{device}.subspan(0, host.size()), host, stream);
   }

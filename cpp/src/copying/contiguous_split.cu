@@ -1035,7 +1035,7 @@ struct batch_byte_size_function {
     auto const& buf = *(infos + i);
     std::size_t const bytes =
       static_cast<std::size_t>(buf.num_elements) * static_cast<std::size_t>(buf.element_size);
-    return util::round_up_unsafe(bytes, split_align);
+    return cudf::detail::round_up_unsafe(bytes, split_align);
   }
 };
 
@@ -1062,9 +1062,10 @@ struct packed_split_indices_and_src_buf_info {
                                         cudf::size_type num_src_bufs,
                                         cuda::stream_ref stream,
                                         rmm::device_async_resource_ref temp_mr)
-    : indices_size(cudf::util::round_up_safe((num_partitions + 1) * sizeof(int64_t), split_align)),
+    : indices_size(
+        cudf::detail::round_up_safe((num_partitions + 1) * sizeof(int64_t), split_align)),
       src_buf_info_size(
-        cudf::util::round_up_safe(num_src_bufs * sizeof(src_buf_info), split_align)),
+        cudf::detail::round_up_safe(num_src_bufs * sizeof(src_buf_info), split_align)),
       // host-side
       h_indices_and_source_info{
         detail::make_host_vector<uint8_t>(indices_size + src_buf_info_size, stream)},
@@ -1125,8 +1126,9 @@ struct packed_partition_buf_size_and_dst_buf_info {
                                              cuda::stream_ref stream,
                                              rmm::device_async_resource_ref temp_mr)
     : stream(stream),
-      buf_sizes_size{cudf::util::round_up_safe(num_partitions * sizeof(std::size_t), split_align)},
-      dst_buf_info_size{cudf::util::round_up_safe(num_bufs * sizeof(dst_buf_info), split_align)},
+      buf_sizes_size{
+        cudf::detail::round_up_safe(num_partitions * sizeof(std::size_t), split_align)},
+      dst_buf_info_size{cudf::detail::round_up_safe(num_bufs * sizeof(dst_buf_info), split_align)},
       // host-side
       h_buf_sizes_and_dst_info{
         detail::make_host_vector<uint8_t>(buf_sizes_size + dst_buf_info_size, stream)},
@@ -1175,8 +1177,8 @@ struct packed_src_and_dst_pointers {
                               cuda::stream_ref stream,
                               rmm::device_async_resource_ref temp_mr)
     : stream(stream),
-      src_bufs_size{cudf::util::round_up_safe(num_src_bufs * sizeof(uint8_t*), split_align)},
-      dst_bufs_size{cudf::util::round_up_safe(num_partitions * sizeof(uint8_t*), split_align)},
+      src_bufs_size{cudf::detail::round_up_safe(num_src_bufs * sizeof(uint8_t*), split_align)},
+      dst_bufs_size{cudf::detail::round_up_safe(num_partitions * sizeof(uint8_t*), split_align)},
       // host-side
       h_src_and_dst_buffers{
         detail::make_host_vector<uint8_t>(src_bufs_size + dst_bufs_size, stream)},
@@ -1358,7 +1360,7 @@ std::unique_ptr<packed_partition_buf_size_and_dst_buf_info> compute_splits(
       int const element_size  = cudf::type_dispatcher(data_type{src_info.type}, size_of_helper{});
       std::size_t const bytes = num_elements * static_cast<std::size_t>(element_size);
 
-      return dst_buf_info{util::round_up_unsafe(bytes, split_align),
+      return dst_buf_info{cudf::detail::round_up_unsafe(bytes, split_align),
                           num_elements,
                           element_size,
                           num_rows,
@@ -1777,7 +1779,8 @@ std::unique_ptr<chunk_iteration_state> compute_batches(int num_bufs,
 
         // The number of batches we want to subdivide this buffer into
         std::size_t const num_batches = cuda::std::max(
-          std::size_t{1}, util::round_up_unsafe(bytes, desired_batch_size) / desired_batch_size);
+          std::size_t{1},
+          cudf::detail::round_up_unsafe(bytes, desired_batch_size) / desired_batch_size);
 
         // NOTE: leaving batch size as a separate parameter for future tuning
         // possibilities, even though in the current implementation it will be a

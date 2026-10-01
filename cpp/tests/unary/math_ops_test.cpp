@@ -224,7 +224,7 @@ TYPED_TEST(UnaryMathOpsTest, ABS)
     std::begin(h_input_v), std::end(h_input_v), std::is_unsigned_v<T> ? colSize : -1 * colSize);
 
   std::transform(std::cbegin(h_input_v), std::cend(h_input_v), std::begin(h_expect_v), [](auto e) {
-    return cudf::util::absolute_value(e);
+    return cudf::detail::absolute_value(e);
   });
 
   cudf::test::fixed_width_column_wrapper<T> const input(std::cbegin(h_input_v),

@@ -84,12 +84,12 @@ void launch_hash_csr_retrieve_kernel(cuda::std::int64_t output_size,
   auto const min_blocks = size_type{2} * cudf::detail::num_multiprocessors();
   constexpr auto outputs_per_block =
     hash_csr_warps_per_block * cudf::detail::warp_size * hash_csr_outputs_per_lane;
-  auto const requested_blocks = cudf::util::div_rounding_up_safe(
+  auto const requested_blocks = cudf::detail::div_rounding_up_safe(
     output_size, static_cast<cuda::std::int64_t>(outputs_per_block));
   auto const num_blocks = static_cast<cuda::std::uint32_t>(
     cuda::std::max<cuda::std::int64_t>(requested_blocks, min_blocks));
   auto const num_warps = static_cast<cuda::std::int64_t>(num_blocks) * hash_csr_warps_per_block;
-  auto const outputs_per_warp = cudf::util::div_rounding_up_safe(output_size, num_warps);
+  auto const outputs_per_warp = cudf::detail::div_rounding_up_safe(output_size, num_warps);
 
   hash_csr_retrieve_kernel<IsOuter>
     <<<num_blocks, hash_csr_block_size, 0, stream.get()>>>(output_size,

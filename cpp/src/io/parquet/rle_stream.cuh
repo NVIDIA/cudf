@@ -87,7 +87,7 @@ __device__ inline void decode(level_t* const output,
   // we are not starting/ending exactly on a run boundary
   uint8_t const* cur;
   if (is_literal_run(level_run)) {
-    int const effective_offset = cudf::util::round_down_safe(run_offset, 8);
+    int const effective_offset = cudf::detail::round_down_safe(run_offset, 8);
     int const lead_values      = (run_offset - effective_offset);
     decode_output_pos -= lead_values;
     remain += lead_values;
@@ -319,11 +319,11 @@ struct rle_stream {
     if (is_literal_run(run.level_run)) {
       // from the parquet spec: literal runs always come in multiples of 8 values.
       run.size = (run.level_run >> 1) * 8;
-      run_bytes += util::div_rounding_up_unsafe(run.size * level_bits, 8);
+      run_bytes += cudf::detail::div_rounding_up_unsafe(run.size * level_bits, 8);
     } else {
       // repeated value run
       run.size = (run.level_run >> 1);
-      run_bytes += util::div_rounding_up_unsafe(level_bits, 8);
+      run_bytes += cudf::detail::div_rounding_up_unsafe(level_bits, 8);
     }
 
     return run_bytes;
@@ -500,7 +500,7 @@ struct rle_stream {
     int const lane        = warp.thread_rank();
     int const warp_id     = warp.meta_group_rank();
     int const num_warps   = warp.meta_group_size();
-    int const value_width = cudf::util::div_rounding_up_unsafe(level_bits, 8);
+    int const value_width = cudf::detail::div_rounding_up_unsafe(level_bits, 8);
     // Bit mask used to extract a single level from a bit-packed literal-run
     // payload word. Invariant across the whole call; hoisted out of the
     // phase-2 expand loop to keep it out of the hot register set.
@@ -581,7 +581,7 @@ struct rle_stream {
 
       if (chunk_runs == 0) { break; }
 
-      int const per = cudf::util::div_rounding_up_safe(chunk_total, num_warps);
+      int const per = cudf::detail::div_rounding_up_safe(chunk_total, num_warps);
       int const lo  = warp_id * per;
       int const hi  = min(lo + per, chunk_total);
       if (lo < hi) {

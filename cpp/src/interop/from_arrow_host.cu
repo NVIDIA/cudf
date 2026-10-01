@@ -116,7 +116,7 @@ std::pair<std::unique_ptr<cuda::device_buffer<std::byte>>, size_type> get_mask_b
   auto const mask_words   = num_bitmask_words(num_rows);
   auto const padded_words = bitmask_allocation_size_bytes(num_rows) / sizeof(bitmask_type);
   auto const bit_index    = input->offset % bits_in_byte;
-  auto const copy_size    = cudf::util::div_rounding_up_safe(num_rows + bit_index, bits_in_byte);
+  auto const copy_size    = cudf::detail::div_rounding_up_safe(num_rows + bit_index, bits_in_byte);
 
   auto mask = rmm::device_uvector<bitmask_type>(padded_words, stream, mr);
   CUDF_CUDA_TRY(cudf::detail::memcpy_async(mask.data(), bitmap + offset_index, copy_size, stream));
@@ -198,7 +198,7 @@ std::unique_ptr<column> dispatch_copy_from_arrow_host::operator()<bool>(ArrowSch
   auto const offset_index = input->offset / bits_in_byte;
   auto const data_words   = num_bitmask_words(num_rows);
   auto const bit_index    = input->offset % bits_in_byte;
-  auto const copy_size    = cudf::util::div_rounding_up_safe(num_rows + bit_index, bits_in_byte);
+  auto const copy_size    = cudf::detail::div_rounding_up_safe(num_rows + bit_index, bits_in_byte);
 
   auto data = rmm::device_uvector<bitmask_type>(data_words, stream, mr);
   CUDF_CUDA_TRY(

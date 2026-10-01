@@ -34,7 +34,7 @@ __device__ inline size_type integer_to_string(IntegerType value, char* d_buffer)
   int digits_idx = 0;
   while (value != 0) {
     assert(digits_idx < MAX_DIGITS);
-    digits[digits_idx++] = '0' + cudf::util::absolute_value(value % base);
+    digits[digits_idx++] = '0' + cudf::detail::absolute_value(value % base);
     // next digit
     value = value / base;
   }
@@ -64,7 +64,7 @@ __device__ constexpr size_type count_digits(IntegerType value)
   // for all integer types, the max() and min() values have the same number of digits
   value = (value == cuda::std::numeric_limits<IntegerType>::min())
             ? cuda::std::numeric_limits<IntegerType>::max()
-            : cudf::util::absolute_value(value);
+            : cudf::detail::absolute_value(value);
 
   auto const digits = [value] {
     // largest 8-byte  unsigned value is 18446744073709551615 (20 digits)

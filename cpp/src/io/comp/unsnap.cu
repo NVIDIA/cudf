@@ -756,7 +756,7 @@ void get_snappy_uncompressed_size(device_span<device_span<uint8_t const> const> 
 
   int threads_per_block = 128;
   auto const num_blocks =
-    cudf::util::div_rounding_up_safe<size_t>(inputs.size(), threads_per_block);
+    cudf::detail::div_rounding_up_safe<size_t>(inputs.size(), threads_per_block);
 
   get_snappy_uncompressed_size_kernel<<<num_blocks, threads_per_block, 0, stream.get()>>>(
     inputs, uncompressed_sizes);

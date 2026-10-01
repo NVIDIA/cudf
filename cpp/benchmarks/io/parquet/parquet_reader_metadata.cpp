@@ -74,7 +74,7 @@ auto write_file_data(cudf::size_type num_cols,
 
   // Compute the number of times the table needs to be written to cover the requested number of row
   // groups
-  auto num_writes = cudf::util::div_rounding_up_unsafe(num_row_groups, min_row_groups);
+  auto num_writes = cudf::detail::div_rounding_up_unsafe(num_row_groups, min_row_groups);
   std::for_each(cuda::counting_iterator<cudf::size_type>{0},
                 cuda::counting_iterator{num_writes},
                 [&](cudf::size_type) { writer.write(view); });

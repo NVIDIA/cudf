@@ -262,7 +262,7 @@ std::unique_ptr<column> concatenate(host_span<column_view const> columns,
       // Use single kernel launch to copy chars columns
       constexpr size_t block_size{256};
       // cudf::detail::grid_1d limited to size_type elements
-      auto const num_blocks = util::div_rounding_up_safe(total_bytes, block_size);
+      auto const num_blocks = cudf::detail::div_rounding_up_safe(total_bytes, block_size);
       auto const kernel     = fused_concatenate_string_chars_kernel;
       kernel<<<num_blocks, block_size, 0, stream.get()>>>(d_views,
                                                           d_partition_offsets.data(),

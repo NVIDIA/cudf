@@ -397,7 +397,7 @@ std::unique_ptr<cudf::column> multibyte_split(cudf::io::text::data_chunk_source 
       }
 
       auto tiles_in_launch =
-        cudf::util::div_rounding_up_safe(chunk->size(), static_cast<std::size_t>(ITEMS_PER_TILE));
+        cudf::detail::div_rounding_up_safe(chunk->size(), static_cast<std::size_t>(ITEMS_PER_TILE));
 
       auto row_offsets = row_offset_storage.next_output(scan_stream);
 

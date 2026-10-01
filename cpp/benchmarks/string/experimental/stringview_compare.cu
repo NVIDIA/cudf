@@ -262,7 +262,7 @@ std::pair<rmm::device_uvector<ArrowBinaryView>, cuda::device_buffer<char>> creat
   // Make sure only one buffer is needed.
   // Using a single data buffer makes the two formats more similar focusing on the layout.
   constexpr int64_t max_size = std::numeric_limits<cudf::size_type>::max() / 2;
-  auto const num_buffers     = cudf::util::div_rounding_up_safe(longer_chars_size, max_size);
+  auto const num_buffers     = cudf::detail::div_rounding_up_safe(longer_chars_size, max_size);
   CUDF_EXPECTS(num_buffers <= 1, "num_buffers must be <= 1");
 
   // now build BinaryView objects from the strings in device memory

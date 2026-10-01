@@ -335,7 +335,7 @@ std::vector<size_type> compute_fenwick_tree_level_offsets(cudf::size_type level0
   std::vector<size_type> tree_level_offsets;
   tree_level_offsets.push_back(0);
 
-  cudf::size_type current_level_size = cudf::util::div_rounding_up_safe(level0_size, 2);
+  cudf::size_type current_level_size = cudf::detail::div_rounding_up_safe(level0_size, 2);
   cudf::size_type current_level      = 1;
 
   while (current_level_size > 0) {
@@ -343,7 +343,7 @@ std::vector<size_type> compute_fenwick_tree_level_offsets(cudf::size_type level0
     if (std::cmp_greater(block_size, max_page_size)) { break; }
     tree_level_offsets.push_back(tree_level_offsets.back() + current_level_size);
     current_level_size =
-      current_level_size == 1 ? 0 : cudf::util::div_rounding_up_safe(current_level_size, 2);
+      current_level_size == 1 ? 0 : cudf::detail::div_rounding_up_safe(current_level_size, 2);
     current_level++;
   }
   return tree_level_offsets;
@@ -619,7 +619,7 @@ thrust::host_vector<bool> compute_row_range_selection_mask(
     cuda::counting_iterator<cudf::size_type>{0},
     cuda::counting_iterator<cudf::size_type>{num_levels - 1},
     [&](auto const prev_level) {
-      auto const current_level_size = cudf::util::div_rounding_up_safe(prev_level_size, 2);
+      auto const current_level_size = cudf::detail::div_rounding_up_safe(prev_level_size, 2);
       thrust::for_each(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                        cuda::counting_iterator<cudf::size_type>{0},
                        cuda::counting_iterator{current_level_size},

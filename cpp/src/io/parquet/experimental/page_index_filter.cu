@@ -402,7 +402,7 @@ thrust::host_vector<bool> aggregate_reader_metadata::compute_data_page_mask(
     std::vector<std::future<task_page_row_offsets_type>> page_row_offset_tasks{};
     page_row_offset_tasks.reserve(max_tasks);
     auto const cols_per_thread =
-      cudf::util::div_rounding_up_safe<std::size_t>(num_columns, max_tasks);
+      cudf::detail::div_rounding_up_safe<std::size_t>(num_columns, max_tasks);
 
     // Submit page row offset compute tasks
     std::transform(cuda::counting_iterator<int>{0},

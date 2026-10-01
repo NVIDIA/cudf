@@ -147,7 +147,7 @@ std::unique_ptr<column> copy_if_else(bool nullable,
   using Element = typename cuda::std::iter_value_t<LeftIter>::value_type;
 
   size_type size           = std::distance(lhs_begin, lhs_end);
-  size_type num_els        = cudf::util::round_up_safe(size, cudf::detail::warp_size);
+  size_type num_els        = cudf::detail::round_up_safe(size, cudf::detail::warp_size);
   constexpr int block_size = 256;
   cudf::detail::grid_1d grid{num_els, block_size, 1};
 

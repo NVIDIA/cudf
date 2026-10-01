@@ -491,7 +491,7 @@ void reader_impl::load_next_stripe_data(read_mode mode)
       auto const stripe_size = _file_itm_data.lvl_stripe_sizes[level][idx + stripe_start];
       stripe_data.emplace_back(_stream,
                                _mr,
-                               cudf::util::round_up_safe(stripe_size, BUFFER_PADDING_MULTIPLE),
+                               cudf::detail::round_up_safe(stripe_size, BUFFER_PADDING_MULTIPLE),
                                cuda::no_init);
     }
   }

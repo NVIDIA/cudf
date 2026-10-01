@@ -102,7 +102,7 @@ void expression_parser::move_to_device(cuda::stream_ref stream, rmm::device_asyn
                          cudf::size_type{0},
                          [buffer_alignment](auto a, auto b) {
                            // align each component of the AST program
-                           return cudf::util::round_up_safe(a + b, buffer_alignment);
+                           return cudf::detail::round_up_safe(a + b, buffer_alignment);
                          });
 
   auto const buffer_size = buffer_offsets.empty() ? 0 : (buffer_offsets.back() + sizes.back());

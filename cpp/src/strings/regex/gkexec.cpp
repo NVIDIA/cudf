@@ -59,10 +59,10 @@ std::unique_ptr<gkprog_device, std::function<void(gkprog_device*)>> gkprog_devic
 
   // make sure each section is aligned for the subsequent section's data type
   auto const memsize =
-    cudf::util::round_up_safe(pos_size, alignof(glushkov_state_t)) + smasks_size +
-    cudf::util::round_up_safe(samts_size, alignof(glushkov_state_t)) + reach_ascii_size +
-    cudf::util::round_up_safe(exc_size, alignof(reclass_device)) +
-    cudf::util::round_up_safe(cls_size, sizeof(char32_t));
+    cudf::detail::round_up_safe(pos_size, alignof(glushkov_state_t)) + smasks_size +
+    cudf::detail::round_up_safe(samts_size, alignof(glushkov_state_t)) + reach_ascii_size +
+    cudf::detail::round_up_safe(exc_size, alignof(reclass_device)) +
+    cudf::detail::round_up_safe(cls_size, sizeof(char32_t));
 
   // allocate memory to store all the prog data in a flat contiguous buffer
   auto h_buffer = cudf::detail::make_host_vector<u_char>(memsize, stream);
@@ -88,7 +88,7 @@ std::unique_ptr<gkprog_device, std::function<void(gkprog_device*)>> gkprog_devic
   d_prog->_positions = reinterpret_cast<reinst const*>(d_ptr);
 
   // advance to next section; align for glushkov_state_t
-  pos_size = cudf::util::round_up_safe(pos_size, alignof(glushkov_state_t));
+  pos_size = cudf::detail::round_up_safe(pos_size, alignof(glushkov_state_t));
   h_ptr += pos_size;
   d_ptr += pos_size;
 
@@ -103,7 +103,7 @@ std::unique_ptr<gkprog_device, std::function<void(gkprog_device*)>> gkprog_devic
   d_prog->_shift_amounts = reinterpret_cast<uint8_t const*>(d_ptr);
 
   // advance to next section; align for glushkov_state_t
-  samts_size = cudf::util::round_up_safe(samts_size, alignof(glushkov_state_t));
+  samts_size = cudf::detail::round_up_safe(samts_size, alignof(glushkov_state_t));
   h_ptr += samts_size;
   d_ptr += samts_size;
 
@@ -118,7 +118,7 @@ std::unique_ptr<gkprog_device, std::function<void(gkprog_device*)>> gkprog_devic
   d_prog->_exception_successors = reinterpret_cast<glushkov_state_t const*>(d_ptr);
 
   // advance to next section; align for reclass_device (alignas(16))
-  exc_size = cudf::util::round_up_safe(exc_size, alignof(reclass_device));
+  exc_size = cudf::detail::round_up_safe(exc_size, alignof(reclass_device));
   h_ptr += exc_size;
   d_ptr += exc_size;
 

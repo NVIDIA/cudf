@@ -130,8 +130,8 @@ void copy_range(SourceValueIterator source_value_begin,
   // this code assumes that source and target have the same type.
   CUDF_EXPECTS(type_id_matches_device_storage_type<T>(target.type().id()), "data type mismatch");
 
-  auto warp_aligned_begin_lower_bound = cudf::util::round_down_safe(target_begin, warp_size);
-  auto warp_aligned_end_upper_bound   = cudf::util::round_up_safe<int64_t>(target_end, warp_size);
+  auto warp_aligned_begin_lower_bound = cudf::detail::round_down_safe(target_begin, warp_size);
+  auto warp_aligned_end_upper_bound   = cudf::detail::round_up_safe<int64_t>(target_end, warp_size);
   auto num_items = warp_aligned_end_upper_bound - warp_aligned_begin_lower_bound;
 
   constexpr size_type block_size{256};

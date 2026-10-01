@@ -256,7 +256,7 @@ std::unique_ptr<column> compute_substrings_from_fn(strings_column_view const& in
     constexpr thread_index_type block_size = 512;
     auto const threads =
       static_cast<cudf::thread_index_type>(input.size()) * cudf::detail::warp_size;
-    auto const num_blocks = util::div_rounding_up_safe(threads, block_size);
+    auto const num_blocks = cudf::detail::div_rounding_up_safe(threads, block_size);
     substring_from_kernel<IndexIterator>
       <<<num_blocks, block_size, 0, stream.get()>>>(*d_column, starts, stops, results.data());
     CUDF_CUDA_TRY(cudaGetLastError());

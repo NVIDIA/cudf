@@ -493,7 +493,7 @@ std::unique_ptr<column> segmented_row_bit_count(table_view const& t,
   CUDF_EXPECTS(info.size() == cols.size(), "Size/info mismatch");
 
   // create output buffer and view
-  auto const num_segments = cudf::util::div_rounding_up_safe(t.num_rows(), segment_length);
+  auto const num_segments = cudf::detail::div_rounding_up_safe(t.num_rows(), segment_length);
   auto output             = cudf::make_fixed_width_column(
     data_type{type_id::INT32}, num_segments, mask_state::UNALLOCATED, stream, mr);
   mutable_column_view mcv = output->mutable_view();

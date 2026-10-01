@@ -430,7 +430,8 @@ rmm::device_uvector<size_type> inplace_segmented_bitmask_binop(
   auto constexpr block_size = 256;
 
   // Any block past this one would find no words left to process
-  auto const blocks_to_cover_segment = util::div_rounding_up_safe<int>(dest_mask_size, block_size);
+  auto const blocks_to_cover_segment =
+    cudf::detail::div_rounding_up_safe<int>(dest_mask_size, block_size);
 
   // The number of waves was chosen empirically based on Parquet and segmented bitmask benchmarks.
   auto constexpr target_waves    = 8;

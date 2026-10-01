@@ -509,12 +509,12 @@ template <typename T>
 size_t max_varint_size()
 {
   // varint encodes 7 bits in each byte
-  return cudf::util::div_rounding_up_unsafe(sizeof(T) * 8, 7);
+  return cudf::detail::div_rounding_up_unsafe(sizeof(T) * 8, 7);
 }
 
 size_t rle_stream_size(TypeKind kind, size_t count)
 {
-  using cudf::util::div_rounding_up_unsafe;
+  using cudf::detail::div_rounding_up_unsafe;
   constexpr auto byte_rle_max_len = 128;
   switch (kind) {
     case TypeKind::BOOLEAN:
@@ -1054,7 +1054,7 @@ std::pair<encoded_data, std::vector<extent_info>> encode_columns(
       if (extent.size == 0) { continue; }
       extent.is_transient = segmentation.stripes[s].size > 1 and extent.has_slack;
       auto& arena_size    = extent.is_transient ? transient_arena_size : persistent_arena_size;
-      arena_size          = util::round_up_unsafe<size_t>(arena_size, extent_alignment);
+      arena_size          = cudf::detail::round_up_unsafe<size_t>(arena_size, extent_alignment);
       extent.offset       = arena_size;
       arena_size += extent.size;
     }
@@ -1216,7 +1216,7 @@ std::vector<StripeInformation> gather_stripes(size_t num_index_streams,
     for (size_t strm_id = 0; strm_id < num_streams_in_data; ++strm_id) {
       auto& extent = gather_extents[s][strm_id];
       if (!extent.gathered) { continue; }
-      gather_total  = util::round_up_unsafe<size_t>(gather_total, extent_alignment);
+      gather_total  = cudf::detail::round_up_unsafe<size_t>(gather_total, extent_alignment);
       extent.offset = gather_total;
       gather_total += extent.size;
     }
@@ -2058,7 +2058,7 @@ hostdevice_2dvector<rowgroup_rows> calculate_rowgroup_bounds(orc_table_view cons
                                                              cuda::stream_ref stream)
 {
   auto const num_rowgroups =
-    cudf::util::div_rounding_up_unsafe<size_t, size_t>(orc_table.num_rows(), rowgroup_size);
+    cudf::detail::div_rounding_up_unsafe<size_t, size_t>(orc_table.num_rows(), rowgroup_size);
 
   hostdevice_2dvector<rowgroup_rows> rowgroup_bounds(
     num_rowgroups, orc_table.num_columns(), stream);
@@ -2571,9 +2571,9 @@ auto convert_table_to_orc_data(table_view const& input,
   auto const max_compressed_block_size =
     max_compressed_size(compression, std::min<size_t>(largest_stream_size, compression_blocksize));
   auto const padded_max_compressed_block_size =
-    util::round_up_unsafe<size_t>(max_compressed_block_size, block_align);
+    cudf::detail::round_up_unsafe<size_t>(max_compressed_block_size, block_align);
   auto const padded_block_header_size =
-    util::round_up_unsafe<size_t>(block_header_size, block_align);
+    cudf::detail::round_up_unsafe<size_t>(block_header_size, block_align);
 
   for (auto& ss : strm_descs.host_view().flat_view()) {
     size_t stream_size = ss.stream_size;

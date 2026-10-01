@@ -579,7 +579,8 @@ void decode_page_headers_impl(pass_intermediate_data& pass,
   // max level data bit size.
   auto const max_level_bits = cudf::detail::reduce(
     level_bit_size, level_bit_size + pass.chunks.size(), int{0}, cuda::maximum<int>{}, stream);
-  pass.level_type_size = std::max<int32_t>(1, cudf::util::div_rounding_up_safe(max_level_bits, 8));
+  pass.level_type_size =
+    std::max<int32_t>(1, cudf::detail::div_rounding_up_safe(max_level_bits, 8));
 
   // sort the pages in chunk/schema order.
   pass.pages =

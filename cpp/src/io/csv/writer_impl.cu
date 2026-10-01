@@ -91,7 +91,7 @@ size_t compression_block_size(compression_type compression, size_t requested_siz
   auto const size        = std::min(requested_size, codec_limit.value_or(requested_size));
 
   auto const alignment = io::detail::compress_required_chunk_alignment(compression);
-  return std::max(alignment, cudf::util::round_down_safe(size, alignment));
+  return std::max(alignment, cudf::detail::round_down_safe(size, alignment));
 }
 
 /**
@@ -110,7 +110,7 @@ void write_compressed_to_sink(data_sink* out_sink,
   if (data.empty() and tail.empty()) { return; }
 
   auto const block_size      = compression_block_size(compression, requested_block_size);
-  auto const num_data_blocks = cudf::util::div_rounding_up_safe(data.size(), block_size);
+  auto const num_data_blocks = cudf::detail::div_rounding_up_safe(data.size(), block_size);
   auto const num_blocks      = num_data_blocks + (tail.empty() ? 0 : 1);
 
   auto h_inputs =
@@ -136,8 +136,8 @@ void write_compressed_to_sink(data_sink* out_sink,
   out_offsets[0]       = 0;
   std::transform_inclusive_scan(
     h_inputs.begin(), h_inputs.end(), out_offsets.begin() + 1, std::plus{}, [&](auto const& input) {
-      return cudf::util::round_up_safe(io::detail::max_compressed_size(compression, input.size()),
-                                       alignment);
+      return cudf::detail::round_up_safe(io::detail::max_compressed_size(compression, input.size()),
+                                         alignment);
     });
   rmm::device_uvector<uint8_t> comp_buffer(out_offsets.back(), stream);
 

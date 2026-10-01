@@ -1934,14 +1934,16 @@ TEST_F(HybridScanFiltersTest, RowGroupPasses)
 
   // No pass read limit. All row groups in a single pass
   {
-    auto passes = reader->construct_row_group_passes(all_row_groups, 0);
+    auto passes = reader->construct_row_group_passes(
+      cudf::io::parquet::experimental::read_columns_mode::ALL_COLUMNS, all_row_groups, 0, options);
     EXPECT_EQ(passes.size(), 1);
     EXPECT_EQ(passes.front(), all_row_groups);
   }
 
   // Small pass limit would result in each row group in its own pass
   {
-    auto passes = reader->construct_row_group_passes(all_row_groups, 1);
+    auto passes = reader->construct_row_group_passes(
+      cudf::io::parquet::experimental::read_columns_mode::ALL_COLUMNS, all_row_groups, 1, options);
     EXPECT_EQ(passes.size(), all_row_groups.size());
     auto zipped = cuda::make_zip_iterator(passes.begin(), all_row_groups.begin());
     std::for_each(zipped, zipped + passes.size(), [&](auto const& iter) {
@@ -1954,7 +1956,11 @@ TEST_F(HybridScanFiltersTest, RowGroupPasses)
 
   // All passes should cover all row groups and be consecutive
   {
-    auto passes = reader->construct_row_group_passes(all_row_groups, 1'024);
+    auto passes = reader->construct_row_group_passes(
+      cudf::io::parquet::experimental::read_columns_mode::ALL_COLUMNS,
+      all_row_groups,
+      1'024,
+      options);
     std::vector<cudf::size_type> flattened;
     for (auto const& pass : passes) {
       EXPECT_GT(pass.size(), 0);

@@ -231,16 +231,22 @@ void hybrid_scan_reader_impl::setup_page_indexes(
   _extended_metadata->setup_page_indexes(page_index_bytes);
 }
 
-void hybrid_scan_reader_impl::select_columns(read_columns_mode read_columns_mode,
+void hybrid_scan_reader_impl::select_columns(read_columns_mode columns_mode,
                                              parquet_reader_options const& options)
 {
+  CUDF_EXPECTS(columns_mode == read_columns_mode::FILTER_COLUMNS ||
+                 columns_mode == read_columns_mode::PAYLOAD_COLUMNS ||
+                 columns_mode == read_columns_mode::ALL_COLUMNS,
+               "Invalid read columns mode",
+               std::invalid_argument);
+
   // Initialize reader configuration.
   initialize_reader_config(options);
 
   // Build column selection options directly from the user options.
   auto selection_options = make_column_selection_options(options);
 
-  if (read_columns_mode == read_columns_mode::ALL_COLUMNS) {
+  if (columns_mode == read_columns_mode::ALL_COLUMNS) {
     if (_is_all_columns_selected) { return; }
 
     // Select only columns required by the options and filter
@@ -261,7 +267,7 @@ void hybrid_scan_reader_impl::select_columns(read_columns_mode read_columns_mode
     _is_all_columns_selected     = true;
     _is_filter_columns_selected  = false;
     _is_payload_columns_selected = false;
-  } else if (read_columns_mode == read_columns_mode::FILTER_COLUMNS) {
+  } else if (columns_mode == read_columns_mode::FILTER_COLUMNS) {
     if (_is_filter_columns_selected) { return; }
     // Must not ignore missing filter columns
     selection_options.ignore_missing_columns = false;
@@ -278,6 +284,11 @@ void hybrid_scan_reader_impl::select_columns(read_columns_mode read_columns_mode
   } else {
     if (_is_payload_columns_selected) { return; }
 
+    // Ensure filter columns are already selected to be excluded from payload columns
+    if (not _filter_columns_names.has_value() and options.get_filter().has_value()) {
+      _filter_columns_names = cudf::io::parquet::detail::get_column_names_in_expression(
+        options.get_filter(), {}, options, _extended_metadata->get_schema_tree());
+    }
     auto select_column_names = get_column_projection(options);
     std::tie(_input_columns, _output_buffers, _output_column_schemas) =
       _extended_metadata->select_payload_columns(
@@ -290,6 +301,9 @@ void hybrid_scan_reader_impl::select_columns(read_columns_mode read_columns_mode
 
   // Reset the materialization step flag
   _output_chunk_produced = false;
+
+  // Reset the file preprocessed flag
+  _file_preprocessed = false;
 
   CUDF_EXPECTS(_input_columns.size() > 0 and _output_buffers.size() > 0, "No columns selected");
 
@@ -323,6 +337,7 @@ void hybrid_scan_reader_impl::reset_column_selection()
   _is_all_columns_selected     = false;
   _is_filter_columns_selected  = false;
   _is_payload_columns_selected = false;
+  _filter_columns_names.reset();
 }
 
 std::pair<parquet_filter_normalizer, std::vector<cudf::data_type>>
@@ -339,7 +354,7 @@ hybrid_scan_reader_impl::prepare_filter_and_output_types(parquet_reader_options 
   return {std::move(expr_conv), std::move(output_dtypes)};
 }
 
-void hybrid_scan_reader_impl::prepare_materialization(read_columns_mode read_columns_mode,
+void hybrid_scan_reader_impl::prepare_materialization(read_columns_mode columns_mode,
                                                       std::size_t num_sources,
                                                       parquet_reader_options const& options,
                                                       cuda::stream_ref stream,
@@ -347,7 +362,7 @@ void hybrid_scan_reader_impl::prepare_materialization(read_columns_mode read_col
 {
   reset_internal_state();
   initialize_options(options, num_sources, stream, mr);
-  select_columns(read_columns_mode, options);
+  select_columns(columns_mode, options);
   reset_output_buffers();
 }
 
@@ -1019,9 +1034,11 @@ table_with_metadata hybrid_scan_reader_impl::materialize_all_columns_chunk()
 
 std::pair<std::vector<std::vector<cudf::size_type>>, std::vector<cudf::size_type>>
 hybrid_scan_reader_impl::construct_row_group_passes(
-  cudf::host_span<std::vector<size_type> const> row_group_indices,
+  read_columns_mode columns_mode,
+  std::span<std::vector<size_type> const> row_group_indices,
   std::size_t total_row_groups,
-  std::size_t pass_read_limit) const
+  std::size_t pass_read_limit,
+  parquet_reader_options const& options)
 {
   CUDF_EXPECTS(
     total_row_groups > 0, "Empty input row group indices encountered", std::invalid_argument);
@@ -1040,6 +1057,8 @@ hybrid_scan_reader_impl::construct_row_group_passes(
   CUDF_EXPECTS(
     pass_read_limit > 0, "Pass read limit must be greater than 0", std::invalid_argument);
 
+  select_columns(columns_mode, options);
+
   auto row_group_ids   = std::vector<std::pair<size_type, size_type>>{};
   auto row_group_sizes = std::vector<cudf::io::parquet::detail::row_group_size_info>{};
   row_group_ids.reserve(total_row_groups);
@@ -1050,10 +1069,8 @@ hybrid_scan_reader_impl::construct_row_group_passes(
                 [&](auto const source_index) {
                   for (auto const rg_index : row_group_indices[source_index]) {
                     row_group_ids.emplace_back(rg_index, source_index);
-                    // TODO(mh): Compute the row group size information over the selected columns
-                    // instead
                     row_group_sizes.push_back(_extended_metadata->get_row_group_size_info(
-                      rg_index, source_index, std::nullopt));
+                      rg_index, source_index, _input_columns));
                   }
                 });
 
@@ -1211,8 +1228,9 @@ void hybrid_scan_reader_impl::prepare_data(
 }
 
 template <typename RowMaskView>
-table_with_metadata hybrid_scan_reader_impl::read_chunk_internal(
-  read_mode mode, read_columns_mode read_columns_mode, RowMaskView row_mask)
+table_with_metadata hybrid_scan_reader_impl::read_chunk_internal(read_mode mode,
+                                                                 read_columns_mode columns_mode,
+                                                                 RowMaskView row_mask)
 {
   // If `_output_metadata` has been constructed, just copy it over.
   auto out_metadata = _output_metadata ? table_metadata{*_output_metadata} : table_metadata{};
@@ -1240,7 +1258,7 @@ table_with_metadata hybrid_scan_reader_impl::read_chunk_internal(
       std::vector<std::size_t>(_file_itm_data.num_rows_per_source.size(), 0);
 
     // Finalize output
-    return finalize_output(read_columns_mode, out_metadata, out_columns, row_mask);
+    return finalize_output(columns_mode, out_metadata, out_columns, row_mask);
   }
 
   auto& pass            = *_pass_itm_data;
@@ -1309,12 +1327,12 @@ table_with_metadata hybrid_scan_reader_impl::read_chunk_internal(
   }
 
   // Add empty columns if needed. Filter output columns based on filter.
-  return finalize_output(read_columns_mode, out_metadata, out_columns, row_mask);
+  return finalize_output(columns_mode, out_metadata, out_columns, row_mask);
 }
 
 template <typename RowMaskView>
 table_with_metadata hybrid_scan_reader_impl::finalize_output(
-  read_columns_mode read_columns_mode,
+  read_columns_mode columns_mode,
   table_metadata& out_metadata,
   std::vector<std::unique_ptr<column>>& out_columns,
   RowMaskView row_mask)
@@ -1356,7 +1374,7 @@ table_with_metadata hybrid_scan_reader_impl::finalize_output(
   apply_decimal_width_cast(out_columns);
 
   // Prepend the source and row index columns to filter columns only
-  if (read_columns_mode == read_columns_mode::FILTER_COLUMNS) {
+  if (columns_mode == read_columns_mode::FILTER_COLUMNS) {
     if (_options.prepend_row_index_column) {
       out_columns.emplace(out_columns.begin(),
                           parquet::detail::synthesize_row_index_column(
@@ -1396,7 +1414,7 @@ table_with_metadata hybrid_scan_reader_impl::finalize_output(
 
   // For filter columns, apply the filter expression and update the input row mask
   if constexpr (std::is_same_v<RowMaskView, cudf::mutable_column_view>) {
-    CUDF_EXPECTS(read_columns_mode == read_columns_mode::FILTER_COLUMNS, "Invalid read mode");
+    CUDF_EXPECTS(columns_mode == read_columns_mode::FILTER_COLUMNS, "Invalid read mode");
 
     // Compute the final filter expression incorporating any column reference offsets in _expr_conv
     auto const final_filter      = compute_offset_filter();
@@ -1421,7 +1439,7 @@ table_with_metadata hybrid_scan_reader_impl::finalize_output(
   }
   // For payload columns, simply apply the input row mask to the table.
   else {
-    CUDF_EXPECTS(read_columns_mode == read_columns_mode::PAYLOAD_COLUMNS, "Invalid read mode");
+    CUDF_EXPECTS(columns_mode == read_columns_mode::PAYLOAD_COLUMNS, "Invalid read mode");
 
     CUDF_EXPECTS(mask_offset + read_table->num_rows() <= row_mask.size(),
                  "Encountered invalid sized row mask to apply");

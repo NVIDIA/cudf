@@ -198,7 +198,7 @@ def emit_plan(
     if not emit:
         return operator_by_ir_id
 
-    edges: list[dict[str, uuid.UUID]] = []
+    edges: list[quent_bindings.PlanEdgeDict] = []
     for node_id in sorted(serializable_plan.nodes.keys(), key=int):
         serializable_node = serializable_plan.nodes[node_id]
         operator_id = operator_by_ir_id[node_id]
@@ -220,7 +220,7 @@ def emit_plan(
         query=query_id,
         parent_plan=parent_plan_id,
         worker=worker_id,
-        edges=edges,  # type: ignore[arg-type]
+        edges=edges,
     )
     for node_id in sorted(serializable_plan.nodes.keys(), key=int):
         serializable_node = serializable_plan.nodes[node_id]

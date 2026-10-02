@@ -207,6 +207,9 @@ ConfigureTest(
   hashing/xxhash_32_test.cpp
   hashing/xxhash_64_test.cpp
 )
+if(CUDF_ENABLE_MURMURHASH3_RTCX_EXPERIMENT)
+  target_compile_definitions(HASHING_TEST PRIVATE CUDF_ENABLE_MURMURHASH3_RTCX_EXPERIMENT)
+endif()
 
 # ##################################################################################################
 # * partitioning tests ----------------------------------------------------------------------------

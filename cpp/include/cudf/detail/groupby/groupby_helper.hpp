@@ -10,25 +10,32 @@
 #include <cudf/table/table_view.hpp>
 #include <cudf/types.hpp>
 #include <cudf/utilities/memory_resource.hpp>
+#include <cudf/utilities/span.hpp>
 
 #include <rmm/device_uvector.hpp>
 
 #include <cuda/stream>
 
+#include <memory>
+
 namespace cudf {
-namespace groupby::detail::sort {
+namespace groupby::detail {
+namespace hash {
+struct grouped_keys;
+struct grouped_rows;
+}  // namespace hash
+
 /**
- * @brief Helper class for computing sort-based groupby
+ * @brief Helper class for computing grouped operations
  *
- * This class serves the purpose of sorting the keys and values and provides
+ * This class builds and memoizes HashCSR groups and provides
  * building blocks for aggregations. It can provide:
  * 1. On-demand grouping or sorting of a value column based on `keys`
  *   which is provided at construction
- * 2. Group offsets: starting offsets of all groups in sorted key table
- * 3. Group valid sizes: The number of valid values in each group in a sorted
- *   value column
+ * 2. Group offsets: starting offsets of all groups in grouped key table
+ * 3. Group rows: original row indices and scheduling metadata for direct reductions
  */
-struct sort_groupby_helper {
+struct groupby_helper {
   using index_vector       = rmm::device_uvector<size_type>;
   using bitmask_vector     = rmm::device_uvector<bitmask_type>;
   using column_ptr         = std::unique_ptr<column>;
@@ -45,21 +52,15 @@ struct sort_groupby_helper {
    * @param keys table to group by
    * @param include_null_keys Include rows in keys with nulls
    * @param keys_pre_sorted Indicate if the keys are already sorted. Enables
-   *                        optimizations to help skip re-sorting keys.
-   * @param null_precedence Indicates the ordering of nulls in each column.
-   *                        Default behavior for each column is
-   *                        `null_order::AFTER`
+   *                        grouping by adjacent equality without hashing.
    */
-  sort_groupby_helper(table_view const& keys,
-                      null_policy include_null_keys,
-                      sorted keys_pre_sorted,
-                      std::vector<null_order> const& null_precedence);
+  groupby_helper(table_view const& keys, null_policy include_null_keys, sorted keys_pre_sorted);
 
-  ~sort_groupby_helper()                                     = default;
-  sort_groupby_helper(sort_groupby_helper const&)            = delete;
-  sort_groupby_helper& operator=(sort_groupby_helper const&) = delete;
-  sort_groupby_helper(sort_groupby_helper&&)                 = default;
-  sort_groupby_helper& operator=(sort_groupby_helper&&)      = default;
+  ~groupby_helper();
+  groupby_helper(groupby_helper const&)            = delete;
+  groupby_helper& operator=(groupby_helper const&) = delete;
+  groupby_helper(groupby_helper&&) noexcept;
+  groupby_helper& operator=(groupby_helper&&) noexcept;
 
   /**
    * @brief Groups a column of values according to `keys` and sorts within each
@@ -97,18 +98,33 @@ struct sort_groupby_helper {
                                          rmm::device_async_resource_ref mr);
 
   /**
-   * @brief Get a table of sorted unique keys
+   * @brief Groups values without requiring their original order within each group.
    *
-   * @return a new table in which each row is a unique row in the sorted key table.
+   * Groups have the same offsets and labels as `grouped_values`. The returned column owns its
+   * gathered values, so subsequently requesting a stable grouped order does not change it.
+   *
+   * @param values The value column to group
+   * @param stream CUDA stream used for device memory operations and kernel launches
+   * @param mr Device memory resource used to allocate the returned device memory
+   * @return the grouped column with unspecified order within each group
+   */
+  std::unique_ptr<column> unordered_grouped_values(column_view const& values,
+                                                   cuda::stream_ref stream,
+                                                   rmm::device_async_resource_ref mr);
+
+  /**
+   * @brief Get a table of unique keys
+   *
+   * @return a new table in which each row is a unique row in the grouped key table.
    */
   std::unique_ptr<table> unique_keys(cuda::stream_ref stream, rmm::device_async_resource_ref mr);
 
   /**
-   * @brief Get a table of sorted keys
+   * @brief Get a table of grouped keys
    *
-   * @return a new table containing the sorted keys.
+   * @return a new table containing the grouped keys.
    */
-  std::unique_ptr<table> sorted_keys(cuda::stream_ref stream, rmm::device_async_resource_ref mr);
+  std::unique_ptr<table> grouped_keys(cuda::stream_ref stream, rmm::device_async_resource_ref mr);
 
   /**
    * @brief Get the number of groups in `keys`
@@ -116,9 +132,9 @@ struct sort_groupby_helper {
   size_type num_groups(cuda::stream_ref stream) { return group_offsets(stream).size() - 1; }
 
   /**
-   * @brief check if the groupby keys are presorted
+   * @brief Check whether grouped values can use the input order without filtering or gathering
    */
-  bool is_presorted() { return _keys_pre_sorted == sorted::YES; }
+  bool is_presorted() const { return _is_presorted; }
 
   /**
    * @brief Return the effective number of keys
@@ -130,51 +146,65 @@ struct sort_groupby_helper {
   size_type num_keys(cuda::stream_ref stream);
 
   /**
-   * @brief Get the sorted order of `keys`.
+   * @brief Get the grouped order of `keys`, retaining input order within each group.
    *
-   * Gathering `keys` by sort order indices will produce the sorted key table.
+   * Gathering `keys` by these indices produces contiguous groups.
    *
    * When ignore_null_keys = true, the result will not include indices
    * for null keys.
    *
-   * Computes and stores the key sorted order on first invocation, and returns
+   * Computes and stores a stable grouped order on first invocation, and returns
    * the stored order on subsequent calls.
    *
-   * @return the sort order indices for `keys`.
+   * @return the grouped row indices for `keys`.
    */
-  column_view key_sort_order(cuda::stream_ref stream);
+  column_view grouped_order(cuda::stream_ref stream);
 
   /**
-   * @brief Get each group's offset into the sorted order of `keys`.
+   * @brief Get grouped row indices without requiring input order within each group.
+   *
+   * The returned span is invalidated if a later request materializes stable row order.
+   */
+  device_span<size_type const> unordered_grouped_order(cuda::stream_ref stream);
+
+  /**
+   * @brief Get cached row indices, offsets, and scheduling arrays for direct reductions.
+   *
+   * The returned reference is invalidated if a later request materializes stable row order.
+   */
+  hash::grouped_rows const& reduction_groups(cuda::stream_ref stream);
+
+  /**
+   * @brief Get each group's offset into the grouped order of `keys`.
    *
    * Computes and stores the group offsets on first invocation and returns
    * the stored group offsets on subsequent calls.
    * This returns a vector of size `num_groups() + 1` such that the size of
    * group `i` is `group_offsets[i+1] - group_offsets[i]`
    *
-   * @return vector of offsets of the starting point of each group in the sorted
+   * @return vector of offsets of the starting point of each group in the grouped
    * key table
    */
   index_vector const& group_offsets(cuda::stream_ref stream);
 
   /**
-   * @brief Get the group labels corresponding to the sorted order of `keys`.
+   * @brief Get the group labels corresponding to the grouped order of `keys`.
    *
    * Each group is assigned a unique numerical "label" in
    * `[0, 1, 2, ... , num_groups() - 1, num_groups(stream))`.
-   * For a row in sorted `keys`, its corresponding group label indicates which
+   * For a row in grouped `keys`, its corresponding group label indicates which
    * group it belongs to.
    *
    * Computes and stores labels on first invocation and returns stored labels on
    * subsequent calls.
    *
-   * @return vector of group labels for each row in the sorted key column
+   * @return vector of group labels for each row in the grouped key column
    */
   index_vector const& group_labels(cuda::stream_ref stream);
 
  private:
   /**
-   * @brief Get the group labels for unsorted keys
+   * @brief Get the group labels for ungrouped keys
    *
    * Returns the group label for every row in the original `keys` table. For a
    * given unique key row, its group label is equivalent to what is returned by
@@ -185,38 +215,26 @@ struct sort_groupby_helper {
    * labels on subsequent calls.
    *
    * @return A nullable column of `INT32` containing group labels in the order
-   *         of the unsorted key table
+   *         of the ungrouped key table
    */
-  column_view unsorted_keys_labels(cuda::stream_ref stream);
+  column_view ungrouped_keys_labels(cuda::stream_ref stream);
 
-  /**
-   * @brief Get the column representing the row bitmask for the `keys`
-   *
-   * Computes a bitmask corresponding to the rows of `keys` where if bit `i` is
-   * zero, then row `i` contains one or more null values. If bit `i` is one,
-   * then row `i` does not contain null values. This bitmask is added as null
-   * mask of a column of type `INT8` where all the data values are the same and
-   * the elements differ only in validity.
-   *
-   * Computes and stores bitmask on first invocation and returns stored column
-   * on subsequent calls.
-   */
-  column_view keys_bitmask_column(cuda::stream_ref stream);
+  /// Materialize grouping metadata, optionally retaining input order within groups.
+  void build_groups(cuda::stream_ref stream, bool stable_rows = false);
 
-  column_ptr _key_sorted_order;      ///< Indices to produce _keys in sorted order
-  column_ptr _unsorted_keys_labels;  ///< Group labels for unsorted _keys
-  column_ptr _keys_bitmask_column;   ///< Column representing rows with one or more nulls values
-  table_view _keys;                  ///< Input keys to sort by
+  /// Materialize a stable row permutation only when an ordered operation needs it.
+  void make_stable(cuda::stream_ref stream);
 
-  index_vector_ptr
-    _group_offsets;  ///< Indices into sorted _keys indicating starting index of each groups
-  index_vector_ptr _group_labels;  ///< Group labels for sorted _keys
-
-  size_type _num_keys;      ///< Number of effective rows in _keys (adjusted for _include_null_keys)
-  sorted _keys_pre_sorted;  ///< Whether _keys are pre-sorted
-  null_policy _include_null_keys;  ///< Whether to use rows with nulls in _keys for grouping
-  std::vector<null_order> _null_precedence;  ///< How to sort NULLs
+  column_ptr _unsorted_keys_labels;             ///< Labels in input order, null for excluded rows
+  table_view _keys;                             ///< Input grouping keys
+  std::unique_ptr<hash::grouped_keys> _groups;  ///< HashCSR grouping metadata
+  std::unique_ptr<hash::grouped_rows> _reduction_groups;  ///< Cached reduction scheduling
+  index_vector_ptr _group_labels;                         ///< Labels in grouped order
+  sorted _keys_pre_sorted;         ///< Whether key groups are already contiguous
+  null_policy _include_null_keys;  ///< Whether to retain null key rows
+  bool _is_presorted;              ///< Whether grouped values can use the input directly
+  bool _stable{false};             ///< Whether rows within each group are in input order
 };
 
-}  // namespace groupby::detail::sort
+}  // namespace groupby::detail
 }  // namespace cudf

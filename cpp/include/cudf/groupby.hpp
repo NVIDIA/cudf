@@ -30,10 +30,7 @@ namespace CUDF_EXPORT cudf {
 //! `groupby` APIs
 namespace groupby {
 namespace detail {
-namespace sort {
-struct sort_groupby_helper;
-
-}  // namespace sort
+struct groupby_helper;
 }  // namespace detail
 
 /**
@@ -335,9 +332,9 @@ class groupby {
    * in group `j` that precedes or follows `value[i]`. If a non-null value is not found in the
    * specified direction, `value[i]` is left NULL.
    *
-   * The returned pair contains a column of the sorted keys and the result column. In result column,
-   * values of the same group are in contiguous memory. In each group, the order of values maintain
-   * their original order. The order of groups are not guaranteed.
+   * The returned pair contains a column of the grouped keys and the result column. In result
+   * column, values of the same group are in contiguous memory. In each group, the order of values
+   * maintain their original order. The order of groups are not guaranteed.
    *
    * Example:
    * @code{.pseudo}
@@ -362,7 +359,7 @@ class groupby {
    * @param[in] stream CUDA stream used for device memory operations and kernel launches.
    * @param[in] mr Device memory resource used to allocate device memory of the returned column
    *
-   * @return Pair that contains a table with the sorted keys and the result column
+   * @return Pair that contains a table with the grouped keys and the result column
    */
   std::pair<std::unique_ptr<table>, std::unique_ptr<table>> replace_nulls(
     table_view const& values,
@@ -380,34 +377,20 @@ class groupby {
   std::vector<null_order> _null_precedence{};            ///< If keys are sorted,
                                                          ///< indicates null order
                                                          ///< of each column
-  std::unique_ptr<detail::sort::sort_groupby_helper>
-    _helper;  ///< Helper object
-              ///< used by sort based implementation
+  std::unique_ptr<detail::groupby_helper> _helper;       ///< Cached grouping metadata
 
   /**
-   * @brief Get the sort helper object
+   * @brief Get the grouping helper object
    *
    * The object is constructed on first invocation and subsequent invocations
    * of this function return the memoized object.
    */
-  detail::sort::sort_groupby_helper& helper();
+  detail::groupby_helper& helper();
 
   /**
-   * @brief Dispatches to the appropriate implementation to satisfy the
-   * aggregation requests.
+   * @brief Compute scan requests over the cached groups.
    */
-  std::pair<std::unique_ptr<table>, std::vector<aggregation_result>> dispatch_aggregation(
-    std::span<aggregation_request const> requests,
-    cuda::stream_ref stream,
-    rmm::device_async_resource_ref mr);
-
-  // Sort-based groupby
-  std::pair<std::unique_ptr<table>, std::vector<aggregation_result>> sort_aggregate(
-    std::span<aggregation_request const> requests,
-    cuda::stream_ref stream,
-    rmm::device_async_resource_ref mr);
-
-  std::pair<std::unique_ptr<table>, std::vector<aggregation_result>> sort_scan(
+  std::pair<std::unique_ptr<table>, std::vector<aggregation_result>> scan_grouped(
     std::span<scan_request const> requests,
     cuda::stream_ref stream,
     rmm::device_async_resource_ref mr);

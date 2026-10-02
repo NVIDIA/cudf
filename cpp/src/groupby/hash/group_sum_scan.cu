@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#include "groupby/sort/group_scan_util.cuh"
+#include "groupby/hash/group_scan_util.cuh"
 
 #include <cudf/utilities/memory_resource.hpp>
 

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -10,7 +10,7 @@
 
 #include <source_location>
 
-enum class force_use_sort_impl : bool { NO, YES };
+enum class include_nth_aggregation : bool { NO, YES };
 enum class test_streaming : bool { NO, YES };
 
 void test_single_agg(cudf::column_view const& keys,
@@ -18,7 +18,7 @@ void test_single_agg(cudf::column_view const& keys,
                      cudf::column_view const& expect_keys,
                      cudf::column_view const& expect_vals,
                      std::unique_ptr<cudf::groupby_aggregation>&& agg,
-                     force_use_sort_impl use_sort                 = force_use_sort_impl::NO,
+                     include_nth_aggregation include_nth          = include_nth_aggregation::NO,
                      cudf::null_policy include_null_keys          = cudf::null_policy::EXCLUDE,
                      cudf::sorted keys_are_sorted                 = cudf::sorted::NO,
                      std::vector<cudf::order> const& column_order = {},

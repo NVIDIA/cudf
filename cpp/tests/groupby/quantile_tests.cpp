@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -139,7 +139,7 @@ TYPED_TEST(groupby_quantile_test, multiple_quantile)
                   expect_keys,
                   expect_vals,
                   std::move(agg),
-                  force_use_sort_impl::YES,
+                  include_nth_aggregation::YES,
                   cudf::null_policy::EXCLUDE,
                   cudf::sorted::NO,
                   {},

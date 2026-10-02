@@ -6,7 +6,7 @@
 #include <cudf/column/column_factories.hpp>
 #include <cudf/detail/aggregation/aggregation.hpp>
 #include <cudf/detail/gather.hpp>
-#include <cudf/detail/groupby/sort_helper.hpp>
+#include <cudf/detail/groupby/groupby_helper.hpp>
 #include <cudf/groupby.hpp>
 #include <cudf/reduction/detail/reduction.hpp>
 #include <cudf/scalar/scalar_factories.hpp>
@@ -71,8 +71,8 @@ std::unique_ptr<column> aggregation_based_rolling_window(table_view const& group
     group_by.aggregate(agg_requests, stream, cudf::get_current_device_resource_ref());
   auto const& aggregation_result_col = aggregation_results.second.front().results.front();
 
-  using cudf::groupby::detail::sort::sort_groupby_helper;
-  auto helper = sort_groupby_helper{group_keys, cudf::null_policy::INCLUDE, cudf::sorted::YES, {}};
+  using cudf::groupby::detail::groupby_helper;
+  auto helper = groupby_helper{group_keys, cudf::null_policy::INCLUDE, cudf::sorted::YES};
   auto const& group_labels = helper.group_labels(stream);
 
   auto result_columns = cudf::detail::gather(cudf::table_view{{*aggregation_result_col}},

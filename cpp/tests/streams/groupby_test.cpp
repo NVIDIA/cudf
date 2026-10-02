@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -22,7 +22,7 @@ struct groupby_stream_test : public cudf::test::BaseFixture {
   cudf::test::fixed_width_column_wrapper<V> vals{0, 1, 2, 3, 4, 5, 6, 7, 8, 9};
 
   void test_groupby(std::unique_ptr<cudf::groupby_aggregation>&& agg,
-                    force_use_sort_impl use_sort        = force_use_sort_impl::NO,
+                    include_nth_aggregation include_nth = include_nth_aggregation::NO,
                     cudf::null_policy include_null_keys = cudf::null_policy::INCLUDE,
                     cudf::sorted keys_are_sorted        = cudf::sorted::NO)
   {
@@ -30,7 +30,7 @@ struct groupby_stream_test : public cudf::test::BaseFixture {
       auto requests = std::vector<cudf::groupby::aggregation_request>{};
       requests.push_back(cudf::groupby::aggregation_request{});
       requests.front().values = vals;
-      if (use_sort == force_use_sort_impl::YES) {
+      if (include_nth == include_nth_aggregation::YES) {
         requests.front().aggregations.push_back(
           cudf::make_nth_element_aggregation<cudf::groupby_aggregation>(0));
       }
@@ -54,7 +54,7 @@ TYPED_TEST(groupby_stream_test, test_count)
   };
 
   this->test_groupby(make_count_agg());
-  this->test_groupby(make_count_agg(), force_use_sort_impl::YES);
+  this->test_groupby(make_count_agg(), include_nth_aggregation::YES);
   this->test_groupby(make_count_agg(cudf::null_policy::INCLUDE));
 }
 
@@ -75,7 +75,6 @@ TEST_F(GroupbyTest, Scan)
   requests[0].aggregations.push_back(std::move(agg));
 
   cudf::groupby::groupby gb_obj(cudf::table_view({keys}));
-  // cudf::groupby scan uses sort implementation
   auto result = gb_obj.scan(requests, cudf::test::get_default_stream());
 }
 

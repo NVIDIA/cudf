@@ -7,7 +7,7 @@
 #include <cudf/column/column.hpp>
 #include <cudf/column/column_view.hpp>
 #include <cudf/detail/aggregation/result_cache.hpp>
-#include <cudf/detail/groupby/sort_helper.hpp>
+#include <cudf/detail/groupby/groupby_helper.hpp>
 #include <cudf/types.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
@@ -29,17 +29,11 @@ namespace detail {
  */
 struct store_result_functor {
   store_result_functor(column_view const& values,
-                       sort::sort_groupby_helper& helper,
+                       groupby_helper& helper,
                        cudf::detail::result_cache& cache,
                        cuda::stream_ref stream,
-                       rmm::device_async_resource_ref mr,
-                       sorted keys_are_sorted = sorted::NO)
-    : helper(helper),
-      cache(cache),
-      values(values),
-      stream(stream),
-      mr(std::move(mr)),
-      keys_are_sorted(keys_are_sorted)
+                       rmm::device_async_resource_ref mr)
+    : helper(helper), cache(cache), values(values), stream(stream), mr(std::move(mr))
   {
   }
 
@@ -47,7 +41,7 @@ struct store_result_functor {
   /**
    * @brief Check if the groupby keys are presorted
    */
-  [[nodiscard]] bool is_presorted() const { return keys_are_sorted == sorted::YES; }
+  [[nodiscard]] bool is_presorted() const { return helper.is_presorted(); }
 
   /**
    * @brief Get the grouped values
@@ -59,17 +53,26 @@ struct store_result_functor {
   {
     if (is_presorted()) { return values; }
 
-    // TODO (dm): After implementing single pass multi-agg, explore making a
-    //            cache of all grouped value columns rather than one at a time
-    if (grouped_values)
-      return grouped_values->view();
-    else if (sorted_values)
-      // In scan, it wouldn't be ok to return sorted values when asked for grouped values.
-      // It's overridden in scan implementation.
-      return sorted_values->view();
-    else
-      return (grouped_values = helper.grouped_values(values, stream, mr))->view();
+    // Input order is required by NTH_ELEMENT, COLLECT_LIST and host UDFs even when a prior
+    // aggregation on the same values requested a value-sorted view.
+    return grouped_values ? grouped_values->view()
+                          : (grouped_values = helper.grouped_values(values, stream, mr))->view();
   };
+
+  /**
+   * @brief Get grouped values for aggregations that do not depend on row order.
+   */
+  column_view get_unordered_grouped_values()
+  {
+    if (is_presorted()) { return values; }
+    if (grouped_values) { return grouped_values->view(); }
+
+    // Keep this cache separate: order-sensitive aggregations must always obtain a stable view.
+    return unordered_grouped_values
+             ? unordered_grouped_values->view()
+             : (unordered_grouped_values = helper.unordered_grouped_values(values, stream, mr))
+                 ->view();
+  }
 
   /**
    * @brief Get the grouped and sorted values
@@ -84,16 +87,17 @@ struct store_result_functor {
   };
 
  protected:
-  sort::sort_groupby_helper& helper;  ///< Sort helper
+  groupby_helper& helper;             ///< Grouping helper
   cudf::detail::result_cache& cache;  ///< cache of results to store into
   column_view const& values;          ///< Column of values to group and aggregate
 
   cuda::stream_ref stream;            ///< CUDA stream on which to execute kernels
   rmm::device_async_resource_ref mr;  ///< Memory resource to allocate space for results
 
-  sorted keys_are_sorted;                  ///< Whether the keys are sorted
   std::unique_ptr<column> sorted_values;   ///< Memoised grouped and sorted values
   std::unique_ptr<column> grouped_values;  ///< Memoised grouped values
+  std::unique_ptr<column>
+    unordered_grouped_values;  ///< Memoised values with no row-order guarantee
 };
 }  // namespace detail
 }  // namespace groupby

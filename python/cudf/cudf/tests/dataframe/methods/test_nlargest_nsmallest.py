@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
 # SPDX-License-Identifier: Apache-2.0
 
 
@@ -69,4 +69,17 @@ def test_dataframe_nlargest_nsmallest_str_error(attr):
         getattr(pdf, attr),
         ([], {"n": 1, "columns": ["a", "b"]}),
         ([], {"n": 1, "columns": ["a", "b"]}),
+    )
+
+
+@pytest.mark.parametrize("op", ["nsmallest", "nlargest"])
+@pytest.mark.parametrize("keep", ["first", "last"])
+def test_dataframe_nlargest_nsmallest_with_nulls(op, keep):
+    pdf = pd.DataFrame(
+        {"a": [None, 3.0, 2.0, None, 5.0], "b": [1, 2, 3, 4, 5]}
+    )
+    gdf = cudf.DataFrame(pdf)
+    assert_eq(
+        getattr(gdf, op)(2, "a", keep=keep),
+        getattr(pdf, op)(2, "a", keep=keep),
     )

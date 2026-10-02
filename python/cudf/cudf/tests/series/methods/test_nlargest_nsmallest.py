@@ -67,3 +67,15 @@ def test_series_nsmallest(data, n):
         lfunc_args_and_kwargs=([], {"n": 3, "keep": "what"}),
         rfunc_args_and_kwargs=([], {"n": 3, "keep": "what"}),
     )
+
+
+@pytest.mark.parametrize("attr", ["nlargest", "nsmallest"])
+@pytest.mark.parametrize("keep", ["first", "last"])
+@pytest.mark.parametrize("n", [1, 2, 4])
+def test_series_nlargest_nsmallest_with_nulls(attr, keep, n):
+    data = [None, 3.0, 2.0, None, 5.0, 2.0]
+    psr = pd.Series(data)
+    sr = cudf.Series(data)
+    assert_eq(
+        getattr(sr, attr)(n, keep=keep), getattr(psr, attr)(n, keep=keep)
+    )

@@ -16,6 +16,8 @@
 namespace cudf {
 namespace jit {
 
+struct mutable_lists_column_device_view;
+
 template <int32_t Index, typename Column, typename Element, bool AsScalar, int32_t TableIndex>
 struct column_accessor {
   static constexpr int32_t index       = Index;
@@ -26,8 +28,9 @@ struct column_accessor {
 
   static constexpr bool as_scalar = AsScalar;
 
-  static constexpr bool is_mutable_string =
-    cuda::std::is_same_v<element_type, cuda::std::span<char>>;
+  static constexpr bool is_mutable_span =
+    cuda::std::is_same_v<element_type, cuda::std::span<char>> ||
+    cuda::std::is_same_v<column_type, mutable_lists_column_device_view>;
 
   static __device__ constexpr size_type map_index(size_type row)
   {
@@ -86,7 +89,7 @@ struct column_accessor {
   static __device__ element_type output_arg(auto const* __restrict__ cols, size_type row)
     requires(!as_scalar)
   {
-    if constexpr (is_mutable_string) {
+    if constexpr (is_mutable_span) {
       return element(cols, row);
     } else {
       return {};
@@ -97,7 +100,7 @@ struct column_accessor {
                                                           size_type row)
     requires(!as_scalar)
   {
-    if constexpr (is_mutable_string) {
+    if constexpr (is_mutable_span) {
       return element(cols, row);
     } else {
       return {};

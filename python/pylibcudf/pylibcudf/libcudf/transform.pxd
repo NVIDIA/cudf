@@ -46,6 +46,7 @@ cdef extern from "cudf/transform.hpp" namespace "cudf" nogil:
     cdef cppclass transform_output:
         data_type type
         output_nullability nullability
+        optional[data_type] list_element_type
 
     ctypedef const transform_output const_transform_output
 
@@ -76,7 +77,7 @@ cdef extern from "cudf/transform.hpp" namespace "cudf" nogil:
         optional[void*] user_data,
         span[const_transform_input] inputs,
         span[const_transform_output] outputs,
-        vector[unique_ptr[column]]&& string_offsets,
+        vector[unique_ptr[column]]&& output_offsets,
         optional[size_type] row_size,
         cudaStream_t stream,
         device_async_resource_ref mr

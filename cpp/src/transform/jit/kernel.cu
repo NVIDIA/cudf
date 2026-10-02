@@ -129,7 +129,12 @@ __device__ void transform_kernel(size_type row_size,
       auto row_error = operation(row, cuda::std::tuple_cat(out_ptrs, ins));
 
       OutputAccessors::map([&]<typename... A>() {
-        (A::assign(output_cols, row, *cuda::std::get<A::index>(outs)), ...);
+        (
+          [&] {
+            auto const& out = cuda::std::get<A::index>(outs);
+            if (out.has_value()) { A::assign(output_cols, row, *out); }
+          }(),
+          ...);
         (warp_compact_validity<A>(
            active_mask, output_cols, row, cuda::std::get<A::index>(outs).has_value()),
          ...);

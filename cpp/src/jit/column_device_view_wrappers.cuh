@@ -15,6 +15,69 @@
 namespace cudf {
 namespace jit {
 
+/** @brief Reads fixed-width list rows as spans of their device storage type. */
+struct lists_column_device_view : private column_device_view_core {
+  using base = column_device_view_core;
+  using base::base;
+  using base::is_null;
+  using base::is_valid;
+  using base::null_mask;
+  using base::nullable;
+  using base::offset;
+  using base::size;
+  using base::type;
+
+  template <typename Span>
+  [[nodiscard]] __device__ Span element(size_type row) const noexcept
+  {
+    auto offsets = child(0);
+    auto begin   = offsets.element<size_type>(row + offset());
+    auto end     = offsets.element<size_type>(row + offset() + 1);
+    auto values  = child(1);
+    auto data    = static_cast<typename Span::pointer>(values.head());
+    if (values.offset() != 0) { data += values.offset(); }
+    return {begin == 0 ? data : data + begin, static_cast<size_t>(end - begin)};
+  }
+
+  template <typename Span>
+  [[nodiscard]] __device__ cuda::std::optional<Span> nullable_element(size_type row) const noexcept
+  {
+    if (is_null(row)) { return cuda::std::nullopt; }
+    return element<Span>(row);
+  }
+};
+
+/** @brief Writes list rows directly into storage allocated from supplied offsets. */
+struct mutable_lists_column_device_view : private mutable_column_device_view_core {
+  using base = mutable_column_device_view_core;
+  using base::base;
+  using base::is_null;
+  using base::is_valid;
+  using base::null_mask;
+  using base::nullable;
+  using base::offset;
+  using base::size;
+  using base::type;
+
+  template <typename Span>
+  [[nodiscard]] __device__ Span element(size_type row) const noexcept
+  {
+    auto offsets = child(0);
+    auto begin   = offsets.element<size_type>(row + offset());
+    auto end     = offsets.element<size_type>(row + offset() + 1);
+    auto values  = child(1);
+    auto data    = static_cast<typename Span::pointer>(const_cast<void*>(values.head()));
+    if (values.offset() != 0) { data += values.offset(); }
+    return {begin == 0 ? data : data + begin, static_cast<size_t>(end - begin)};
+  }
+
+  template <typename Span>
+  __device__ void assign(size_type, Span) const noexcept
+  {
+    // The UDF writes directly into its allocated span.
+  }
+};
+
 /**
  * @brief A column wrapper type that treats a column as a vector of elements.
  *

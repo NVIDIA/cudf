@@ -34,9 +34,8 @@
 #include <span>
 #include <vector>
 
-// NOTE: each test in this file must be run twice - once with the AST Interpreter executor
-// (`executor_ast`) and once with the JIT executor (`executor_jit`). This is intended to ensure
-// behavioural compatibility between the two executors.
+// NOTE: each test in this file is exercised through the AST interpreter, the JIT executor, and
+// a transform program to preserve behavioural compatibility across the execution interfaces.
 
 template <typename T>
 using column_wrapper = cudf::test::fixed_width_column_wrapper<T>;
@@ -1122,22 +1121,49 @@ TYPED_TEST(TransformTest, NullLogicalAndLargeNonNullableInputs)
   constexpr cudf::size_type aligned_size = 1'048'576;
   auto const values                      = cuda::make_constant_iterator<int64_t>(1);
   auto const expected_values             = cuda::make_constant_iterator<bool>(true);
-  for (cudf::size_type tail = 0; tail < 32; ++tail) {
+  auto c0                                = cudf::ast::column_reference{0};
+  auto c1                                = cudf::ast::column_reference{1};
+  auto z0            = cudf::ast::operation{cudf::ast::ast_operator::IS_NULL, c0};
+  auto z1            = cudf::ast::operation{cudf::ast::ast_operator::IS_NULL, c1};
+  auto n0            = cudf::ast::operation{cudf::ast::ast_operator::NOT, z0};
+  auto n1            = cudf::ast::operation{cudf::ast::ast_operator::NOT, z1};
+  auto expression    = cudf::ast::operation{cudf::ast::ast_operator::NULL_LOGICAL_AND, n0, n1};
+  auto run_test_case = [&](cudf::size_type tail, auto&& compute) {
     auto const size = aligned_size + tail;
     SCOPED_TRACE(size);
-    auto input      = column_wrapper<int64_t>(values, values + size);
-    auto table      = cudf::table_view{{input, input}};
-    auto c0         = cudf::ast::column_reference{0};
-    auto c1         = cudf::ast::column_reference{1};
-    auto z0         = cudf::ast::operation{cudf::ast::ast_operator::IS_NULL, c0};
-    auto z1         = cudf::ast::operation{cudf::ast::ast_operator::IS_NULL, c1};
-    auto n0         = cudf::ast::operation{cudf::ast::ast_operator::NOT, z0};
-    auto n1         = cudf::ast::operation{cudf::ast::ast_operator::NOT, z1};
-    auto expression = cudf::ast::operation{cudf::ast::ast_operator::NULL_LOGICAL_AND, n0, n1};
-    auto result     = Executor::compute_column(table, expression);
-    auto expected   = column_wrapper<bool>(expected_values, expected_values + size);
+    auto input    = column_wrapper<int64_t>(values, values + size);
+    auto table    = cudf::table_view{{input, input}};
+    auto result   = compute(table);
+    auto expected = column_wrapper<bool>(expected_values, expected_values + size);
     EXPECT_EQ(result->null_count(), 0);
     CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(expected, result->view(), verbosity);
+  };
+
+  if constexpr (std::is_same_v<Executor, executor_transform_program>) {
+    auto construction_input = column_wrapper<int64_t>(values, values + aligned_size);
+    auto construction_table = cudf::table_view{{construction_input, construction_input}};
+    std::reference_wrapper<cudf::ast::expression const> expressions[] = {expression};
+    auto program = cudf::transform_program{construction_table, expressions};
+
+    // Retaining the compiled program isolates the partial-warp coverage from recompilation.
+    for (cudf::size_type tail = 0; tail < 32; ++tail) {
+      run_test_case(
+        tail, [&](auto const& table) { return std::move(program.run(table)->release().front()); });
+    }
+  } else {
+    auto const compute = [&](auto const& table) {
+      return Executor::compute_column(table, expression);
+    };
+    if constexpr (std::is_same_v<Executor, executor_jit>) {
+      // Transform-program execution above exercises every active-lane count with the same kernel.
+      for (auto const tail : std::array<cudf::size_type, 3>{0, 1, 31}) {
+        run_test_case(tail, compute);
+      }
+    } else {
+      for (cudf::size_type tail = 0; tail < 32; ++tail) {
+        run_test_case(tail, compute);
+      }
+    }
   }
 }
 

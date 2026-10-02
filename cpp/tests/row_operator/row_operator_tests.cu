@@ -463,8 +463,8 @@ TEST_F(RowOperatorTest, TestRowHasher64BitHash)
   auto const preprocessed =
     cudf::detail::row::hash::preprocessed_table::create(input, stream, mr.get_temporary_mr());
   auto const row_hasher = cudf::detail::row::hash::row_hasher{preprocessed};
-  auto const hasher =
-    row_hasher.device_hasher<cudf::hashing::detail::XXHash_64>(cudf::nullate::DYNAMIC{false});
+  auto const hasher     = row_hasher.device_hasher<cudf::hashing::detail::XXHash_64>(
+    cudf::nullate::DYNAMIC{false}, static_cast<std::uint64_t>(cudf::DEFAULT_HASH_SEED));
 
   auto results = cudf::test::fixed_width_column_wrapper<std::uint64_t>{{0, 0, 0}, stream, mr};
   thrust::transform(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),

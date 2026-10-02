@@ -167,9 +167,9 @@ struct insert_fn {
       slot_offsets[row_idx]   = cudf::detail::CUDF_SIZE_TYPE_SENTINEL;
       return;
     }
-    auto iter = set_ref.insert_and_find(max_distinct_keys + row_idx).first;
+    auto iter               = set_ref.insert_and_find(max_distinct_keys + row_idx).first;
     target_indices[row_idx] = *iter;
-    slot_offsets[row_idx] = static_cast<size_type>(iter - base);
+    slot_offsets[row_idx]   = static_cast<size_type>(iter - base);
   }
 };
 

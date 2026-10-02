@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+from functools import partial
 from typing import TYPE_CHECKING, Any, Literal, TypeAlias, assert_never
 
 from cudf_streaming import CardinalityEstimator
@@ -25,6 +26,7 @@ from rapidsmpf.streaming.core.memory_reserve_or_wait import (
     missing_net_memory_delta,
     reserve_memory,
 )
+from rapidsmpf.streaming.core.message import Message
 
 from cudf_polars.containers import DataFrame
 from cudf_polars.dsl.ir import IR, Join, Projection
@@ -59,8 +61,10 @@ from cudf_polars.streaming.actor_graph.utils import (
     ChunkSampler,
     ChunkStore,
     NormalizedPartitioning,
+    TableSample,
     TableSizeStats,
     _update_ordering_indices,
+    allgather_reduce,
     chunk_to_frame,
     clear_local_ordering,
     empty_table_chunk,
@@ -500,6 +504,9 @@ async def broadcast_join(
 
     small_duplicated = small_metadata.duplicated
     need_allgather = comm.nranks > 1 and not small_duplicated
+    can_join_build_chunks_separately = _can_join_build_chunks_separately(
+        comm, ir, small_metadata
+    )
     output_duplicated = (
         small_duplicated or need_allgather
     ) and large_metadata.duplicated
@@ -517,7 +524,7 @@ async def broadcast_join(
         need_allgather=need_allgather,
         collective_id=collective_id,
         ir_context=ir_context,
-        must_concatenate=ir.options[0] != "Inner",
+        must_concatenate=not can_join_build_chunks_separately,
     )
 
     # Publish output metadata only once the broadcast-side collective has
@@ -664,7 +671,7 @@ def make_prefilter_execution(
                     context,
                     candidate.key_channel,
                     candidate.domain.channel,
-                    sample.chunks,
+                    sample.local_sample.chunks,
                     candidate.domain.metadata,
                     trace_ir=ir,
                 )
@@ -908,12 +915,11 @@ async def _join_chunks(
     await ch_out.drain(context)
 
 
-def _log_shuffle_strategy_decision(
-    tracer: ActorTracer,
+def _shuffle_strategy_decision(
     strategy: ShuffleJoinStrategy,
     partitioning_left: NormalizedPartitioning,
     partitioning_right: NormalizedPartitioning,
-) -> None:
+) -> Literal["chunkwise", "shuffle_left", "shuffle_right", "shuffle"]:
     left_scheme_desired = HashScheme(strategy.left_indices, strategy.shuffle_modulus)
     right_scheme_desired = HashScheme(strategy.right_indices, strategy.shuffle_modulus)
     left_partitioned = (
@@ -925,13 +931,13 @@ def _log_shuffle_strategy_decision(
         and partitioning_right.local_scheme == "inherit"
     )
     if left_partitioned and right_partitioned:
-        tracer.decision = "chunkwise"
+        return "chunkwise"
     elif left_partitioned:
-        tracer.decision = "shuffle_right"
+        return "shuffle_right"
     elif right_partitioned:
-        tracer.decision = "shuffle_left"
+        return "shuffle_left"
     else:
-        tracer.decision = "shuffle"
+        return "shuffle"
 
 
 async def _shuffle_join(
@@ -1217,6 +1223,42 @@ def _make_shuffle_strategy(
     )
 
 
+def _broadcast_input_fits(
+    size: int,
+    rows: int,
+    broadcast_limit: int,
+    *,
+    can_join_build_chunks_separately: bool,
+) -> bool:
+    """Return whether an input is small enough to broadcast."""
+    return size < broadcast_limit and (
+        rows < MAX_ROWS_PER_PARTITION or can_join_build_chunks_separately
+    )
+
+
+def _can_join_build_chunks_separately(
+    comm: Communicator,
+    ir: Join,
+    metadata: ChannelMetadata,
+) -> bool:
+    """Return whether broadcast execution may retain separate build chunks."""
+    need_allgather = comm.nranks > 1 and not metadata.duplicated
+    return not need_allgather and ir.options[0] == "Inner"
+
+
+def _allow_decomposed_broadcast(
+    comm: Communicator,
+    ir: Join,
+    metadata: ChannelMetadata,
+) -> bool:
+    """Return whether planning may keep a broadcast input as separate chunks."""
+    return (
+        comm.nranks > 1
+        and metadata.duplicated
+        and _can_join_build_chunks_separately(comm, ir, metadata)
+    )
+
+
 def _choose_strategy_from_samples(
     comm: Communicator,
     ir: Join,
@@ -1230,8 +1272,13 @@ def _choose_strategy_from_samples(
     right_sample: TableSizeStats,
     chunkwise: bool,
     tracer: ActorTracer | None,
+    allow_broadcast: bool = True,
 ) -> JoinStrategy:
-    """Choose potential broadcast side and minimum shuffle modulus."""
+    """
+    Choose a tentative broadcast side or a committed non-broadcast plan.
+
+    When ``allow_broadcast`` is false, choose a shuffle plan.
+    """
     if chunkwise:
         if tracer is not None:
             tracer.decision = "chunkwise"
@@ -1247,10 +1294,7 @@ def _choose_strategy_from_samples(
 
     left_total, right_total = left_sample.total_size, right_sample.total_size
     left_total_rows, right_total_rows = left_sample.total_rows, right_sample.total_rows
-    left_total_chunks, right_total_chunks = (
-        left_sample.total_chunks,
-        right_sample.total_chunks,
-    )
+    how = ir.options[0]
 
     # =====================================================================
     # Broadcast-Join Strategy Selection
@@ -1261,19 +1305,33 @@ def _choose_strategy_from_samples(
     # - Full: cannot broadcast (must shuffle both to preserve both sides)
 
     # Determine which sides may be broadcasted
-    broadcast_threshold = executor.broadcast_limit
-    left_size_ok = left_total < broadcast_threshold and (
-        left_total_rows < MAX_ROWS_PER_PARTITION or left_metadata.duplicated
+    left_size_ok = _broadcast_input_fits(
+        left_total,
+        left_total_rows,
+        executor.broadcast_limit,
+        can_join_build_chunks_separately=_allow_decomposed_broadcast(
+            comm, ir, left_metadata
+        ),
     )
-    right_size_ok = right_total < broadcast_threshold and (
-        right_total_rows < MAX_ROWS_PER_PARTITION or right_metadata.duplicated
+    right_size_ok = _broadcast_input_fits(
+        right_total,
+        right_total_rows,
+        executor.broadcast_limit,
+        can_join_build_chunks_separately=_allow_decomposed_broadcast(
+            comm, ir, right_metadata
+        ),
     )
-    can_broadcast_left = left_size_ok and ir.options[0] in ("Inner", "Right")
-    can_broadcast_right = right_size_ok and ir.options[0] in (
-        "Inner",
-        "Left",
-        "Semi",
-        "Anti",
+    can_broadcast_left = allow_broadcast and left_size_ok and how in ("Inner", "Right")
+    can_broadcast_right = (
+        allow_broadcast
+        and right_size_ok
+        and how
+        in (
+            "Inner",
+            "Left",
+            "Semi",
+            "Anti",
+        )
     )
 
     broadcast_side: Literal["left", "right"] | None = None
@@ -1296,14 +1354,14 @@ def _choose_strategy_from_samples(
     # Couldn't broadcast - Use a shuffle join instead.
     estimated_output_size = max(left_total, right_total)
     ideal_output_count = max(1, estimated_output_size // executor.target_partition_size)
-    # Limit the output count to 10x the larger input side.
-    # This is an arbitrary limit to prevent an oversized sample
-    # from blowing up the chunk count.
-    max_output_chunks = 10 * max(left_total_chunks, right_total_chunks)
+    # Limit the output count to 10x the larger input side. This prevents an
+    # oversized sample from blowing up the chunk count.
+    max_output_chunks = 10 * max(left_sample.total_chunks, right_sample.total_chunks)
     min_shuffle_modulus = min(ideal_output_count, max_output_chunks)
 
-    # Stay away from cuDF's row limit
-    if (estimated_rows_count := max(left_total_rows, right_total_rows)) > 0:
+    # Stay away from cuDF's row limit.
+    estimated_rows_count = max(left_total_rows, right_total_rows)
+    if estimated_rows_count > 0:
         min_partitions_for_row_limit = (
             estimated_rows_count + MAX_ROWS_PER_PARTITION - 1
         ) // MAX_ROWS_PER_PARTITION
@@ -1314,18 +1372,15 @@ def _choose_strategy_from_samples(
         left_partitioning,
         right_partitioning,
         min_shuffle_modulus,
-    )  # Global modulus
-
+    )
     strategy = _make_shuffle_strategy(
         ir,
         shuffle_modulus,
         left_partitioning,
         right_partitioning,
     )
-
     if tracer is not None:
-        _log_shuffle_strategy_decision(
-            tracer,
+        tracer.decision = _shuffle_strategy_decision(
             strategy,
             left_partitioning,
             right_partitioning,
@@ -1502,7 +1557,7 @@ async def release_skipped_external_domains(
         if candidate.decision.method != "skip":
             continue
         if candidate.domain.sample is not None:
-            candidate.domain.sample.chunks.clear()
+            candidate.domain.sample.local_sample.chunks.clear()
         channels.append(candidate.domain.channel)
     if channels:
         await gather_in_task_group(*(channel.shutdown(context) for channel in channels))
@@ -1557,6 +1612,81 @@ async def resolve_prefilters(
     await release_skipped_external_domains(context, join_state)
 
 
+async def _validate_broadcast_candidate(
+    context: Context,
+    comm: Communicator,
+    input_: JoinInput,
+    broadcast_limit: int,
+    collective_id: int,
+    *,
+    can_join_build_chunks_separately: bool,
+) -> bool:
+    """Buffer a candidate until exhausted or proven too large to broadcast."""
+    sample = input_.sample
+    if sample is None:
+        raise ValueError("Broadcast candidate has not been sampled")
+    if sample.is_complete:
+        return True
+
+    local_sample = sample.local_sample
+    local_size = local_sample.size
+    local_rows = local_sample.rows
+    local_is_complete = local_sample.is_complete
+    fits_broadcast = partial(
+        _broadcast_input_fits,
+        broadcast_limit=broadcast_limit,
+        can_join_build_chunks_separately=can_join_build_chunks_separately,
+    )
+
+    while not local_is_complete and fits_broadcast(local_size, local_rows):
+        msg = await input_.channel.recv(context)
+        if msg is None:
+            local_is_complete = True
+            break
+        chunk = TableChunk.from_message(msg, br=context.br())
+        local_size += chunk.data_alloc_size()
+        local_rows += chunk.shape[0]
+        local_sample.chunks.insert(Message(msg.sequence_number, chunk))
+
+    local_fits = fits_broadcast(local_size, local_rows)
+    (
+        total_size,
+        total_rows,
+        complete_rank_count,
+        fitting_rank_count,
+    ) = await allgather_reduce(
+        context,
+        comm,
+        collective_id,
+        local_size,
+        local_rows,
+        int(local_is_complete),
+        int(local_fits),
+    )
+    is_complete = complete_rank_count == comm.nranks
+
+    if input_.metadata.duplicated:
+        # Avoid counting a duplicated input once per rank.
+        is_safe = is_complete and fitting_rank_count == comm.nranks
+    else:
+        is_safe = is_complete and fits_broadcast(total_size, total_rows)
+
+    # Preserve estimates when validation stops before exhausting the input.
+    input_.sample = replace(
+        sample,
+        local_sample=replace(
+            local_sample,
+            size=local_size,
+            rows=local_rows,
+            is_complete=local_is_complete,
+        ),
+        total_size=total_size if is_complete else max(sample.total_size, total_size),
+        total_rows=total_rows if is_complete else max(sample.total_rows, total_rows),
+        is_complete=is_complete,
+    )
+    return is_safe
+
+
 async def choose_strategy(
     context: Context,
     comm: Communicator,
@@ -1591,11 +1721,11 @@ async def choose_strategy(
 
     if chunkwise:
         join_state.left.sample = TableSizeStats(
-            chunks=ChunkStore(context),
+            local_sample=TableSample(ChunkStore(context)),
             total_chunks=left_metadata.local_count,
         )
         join_state.right.sample = TableSizeStats(
-            chunks=ChunkStore(context),
+            local_sample=TableSample(ChunkStore(context)),
             total_chunks=right_metadata.local_count,
         )
     elif (
@@ -1613,11 +1743,11 @@ async def choose_strategy(
         if tracer is not None:
             tracer.decision = "ordered"
         join_state.left.sample = TableSizeStats(
-            chunks=ChunkStore(context),
+            local_sample=TableSample(ChunkStore(context)),
             total_chunks=left_metadata.local_count,
         )
         join_state.right.sample = TableSizeStats(
-            chunks=ChunkStore(context),
+            local_sample=TableSample(ChunkStore(context)),
             total_chunks=right_metadata.local_count,
         )
         await resolve_prefilters(
@@ -1647,7 +1777,7 @@ async def choose_strategy(
     right_sample = join_state.right.sample
     if left_sample is None or right_sample is None:
         raise ValueError("Join inputs have not been sampled")
-    strategy = _choose_strategy_from_samples(
+    proposed_strategy = _choose_strategy_from_samples(
         comm,
         ir,
         left_metadata,
@@ -1660,6 +1790,53 @@ async def choose_strategy(
         chunkwise=chunkwise,
         tracer=tracer,
     )
+    if isinstance(proposed_strategy, BroadcastJoinStrategy):
+        broadcast_candidate = proposed_strategy
+        candidate_input = (
+            join_state.left if broadcast_candidate.side == "left" else join_state.right
+        )
+        if await _validate_broadcast_candidate(
+            context,
+            comm,
+            candidate_input,
+            executor.broadcast_limit,
+            collective_ids.size_estimate,
+            can_join_build_chunks_separately=_allow_decomposed_broadcast(
+                comm, ir, candidate_input.metadata
+            ),
+        ):
+            strategy: JoinStrategy = broadcast_candidate
+        else:
+            left_sample = join_state.left.sample
+            right_sample = join_state.right.sample
+            if left_sample is None or right_sample is None:
+                raise ValueError("Join inputs have not been sampled")
+            strategy = _choose_strategy_from_samples(
+                comm,
+                ir,
+                left_metadata,
+                right_metadata,
+                left_partitioning,
+                right_partitioning,
+                executor,
+                left_sample=left_sample,
+                right_sample=right_sample,
+                chunkwise=False,
+                tracer=None,
+                allow_broadcast=False,
+            )
+            assert isinstance(strategy, ShuffleJoinStrategy)
+            if tracer is not None:
+                shuffle_decision = _shuffle_strategy_decision(
+                    strategy,
+                    left_partitioning,
+                    right_partitioning,
+                )
+                tracer.decision = (
+                    f"broadcast_{broadcast_candidate.side}_rejected_{shuffle_decision}"
+                )
+    else:
+        strategy = proposed_strategy
     await resolve_prefilters(
         context,
         comm,
@@ -1793,7 +1970,7 @@ async def join_actor(
                     context,
                     ch_left_replay,
                     ch_left,
-                    left_sample.chunks,
+                    left_sample.local_sample.chunks,
                     left_metadata,
                     trace_ir=ir,
                 ),
@@ -1801,7 +1978,7 @@ async def join_actor(
                     context,
                     ch_right_replay,
                     ch_right,
-                    right_sample.chunks,
+                    right_sample.local_sample.chunks,
                     right_metadata,
                     trace_ir=ir,
                 ),

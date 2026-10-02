@@ -15,6 +15,31 @@ constexpr cudf::test::debug_output_level verbosity{cudf::test::debug_output_leve
 
 class MurmurHashTest : public cudf::test::BaseFixture {};
 
+TEST_F(MurmurHashTest, NonCanonicalBool)
+{
+  // BOOL8 is documented as "0 == false, else true", so any non-zero byte must hash as true.
+  // `fixed_width_column_wrapper<bool>` normalizes on construction, so build the column from raw
+  // bytes to get values the wrapper cannot express.
+  auto const stream = cudf::get_default_stream();
+  std::vector<uint8_t> const raw{0, 1, 2, 255};
+  auto data = rmm::device_buffer{raw.data(), raw.size(), stream};
+  auto const col =
+    std::make_unique<cudf::column>(cudf::data_type{cudf::type_id::BOOL8},
+                                   static_cast<cudf::size_type>(raw.size()),
+                                   std::move(data),
+                                   cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
+                                   0);
+
+  auto const output = cudf::hashing::murmurhash3_x86_32(cudf::table_view({col->view()}));
+  auto const host   = cudf::test::to_host<uint32_t>(output->view()).first;
+
+  ASSERT_EQ(raw.size(), host.size());
+  ASSERT_GT(host.size(), 3);
+  EXPECT_EQ(host[1], host[2]) << "byte 2 must hash the same as byte 1";
+  EXPECT_EQ(host[1], host[3]) << "byte 255 must hash the same as byte 1";
+  EXPECT_NE(host[0], host[1]) << "false and true must differ";
+}
+
 TEST_F(MurmurHashTest, MultiValue)
 {
   cudf::test::strings_column_wrapper const strings_col(
@@ -28,9 +53,7 @@ TEST_F(MurmurHashTest, MultiValue)
   cudf::test::fixed_width_column_wrapper<int32_t> const ints_col(
     {0, 100, -100, limits::min(), limits::max()});
 
-  // Different truth values should be equal
-  cudf::test::fixed_width_column_wrapper<bool> const bools_col1({0, 1, 1, 1, 0});
-  cudf::test::fixed_width_column_wrapper<bool> const bools_col2({0, 1, 2, 255, 0});
+  cudf::test::fixed_width_column_wrapper<bool> const bools_col({0, 1, 1, 1, 0});
 
   using ts = cudf::timestamp_s;
   cudf::test::fixed_width_column_wrapper<ts, ts::duration> const secs_col(
@@ -40,14 +63,15 @@ TEST_F(MurmurHashTest, MultiValue)
      ts::duration::min(),
      ts::duration::max()});
 
-  auto const input1 = cudf::table_view({strings_col, ints_col, bools_col1, secs_col});
-  auto const input2 = cudf::table_view({strings_col, ints_col, bools_col2, secs_col});
+  auto const input  = cudf::table_view({strings_col, ints_col, bools_col, secs_col});
+  auto const output = cudf::hashing::murmurhash3_x86_32(input);
 
-  auto const output1 = cudf::hashing::murmurhash3_x86_32(input1);
-  auto const output2 = cudf::hashing::murmurhash3_x86_32(input2);
-
-  EXPECT_EQ(input1.num_rows(), output1->size());
-  CUDF_TEST_EXPECT_COLUMNS_EQUAL(output1->view(), output2->view());
+  // Reference MurmurHash3 x86_32 hashes of each field, combined in column order.
+  // Reference values: each field hashed with Python `mmh3.hash(bytes, 0, signed=False)` over its
+  // little-endian storage bytes, then folded left to right with cudf's `hash_combine`.
+  cudf::test::fixed_width_column_wrapper<uint32_t> const expected{
+    2672053335u, 2034548305u, 1118886796u, 3154173071u, 1263010015u};
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, output->view());
 }
 
 TEST_F(MurmurHashTest, MultiValueNulls)
@@ -75,11 +99,11 @@ TEST_F(MurmurHashTest, MultiValueNulls)
   cudf::test::fixed_width_column_wrapper<int32_t> const ints_col2(
     {0, -200, 200, limits::min(), limits::max()}, {true, false, false, true, true});
 
-  // Nulls with different values should be equal
-  // Different truth values should be equal
+  // Nulls with different values should be equal. Use canonical bool values here; the differing
+  // values are hidden by the null masks. `NonCanonicalBool` covers hasher canonicalization.
   cudf::test::fixed_width_column_wrapper<bool> const bools_col1({0, 1, 0, 1, 1},
                                                                 {true, true, false, false, true});
-  cudf::test::fixed_width_column_wrapper<bool> const bools_col2({0, 2, 1, 0, 255},
+  cudf::test::fixed_width_column_wrapper<bool> const bools_col2({0, 1, 1, 0, 1},
                                                                 {true, true, false, false, true});
 
   // Nulls with different values should be equal

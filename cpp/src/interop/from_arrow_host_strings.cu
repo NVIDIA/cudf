@@ -26,6 +26,7 @@
 #include <rmm/device_buffer.hpp>
 #include <rmm/device_uvector.hpp>
 
+#include <cuda/buffer>
 #include <cuda/iterator>
 #include <cuda/stream>
 #include <thrust/transform.h>
@@ -83,11 +84,19 @@ std::unique_ptr<column> from_arrow_stringview(
     d_items.data(), items + input->offset, input->length * sizeof(ArrowBinaryView), stream));
 
   // then copy variadic buffers to device
-  auto variadics     = std::vector<rmm::device_buffer>();
+  auto variadics     = std::vector<cuda::device_buffer<char>>();
   auto variadic_ptrs = std::vector<char const*>();
   for (auto i = 0L; i < view.n_variadic_buffers; ++i) {
-    variadics.emplace_back(view.variadic_buffers[i], view.variadic_buffer_sizes[i], stream);
-    variadic_ptrs.push_back(static_cast<char const*>(variadics.back().data()));
+    auto const* const data = static_cast<char const*>(view.variadic_buffers[i]);
+    if (view.variadic_buffer_sizes[i] == 0) {
+      variadics.emplace_back(stream, cudf::get_current_device_resource_ref());
+    } else {
+      variadics.emplace_back(stream,
+                             cudf::get_current_device_resource_ref(),
+                             data,
+                             data + view.variadic_buffer_sizes[i]);
+    }
+    variadic_ptrs.push_back(variadics.back().data());
   }
 
   // copy variadic device pointers to device

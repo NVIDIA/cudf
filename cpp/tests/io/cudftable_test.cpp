@@ -19,9 +19,9 @@
 #include <cudf/table/table_view.hpp>
 #include <cudf/types.hpp>
 #include <cudf/utilities/error.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/device_buffer.hpp>
-
+#include <cuda/buffer>
 #include <cuda_runtime.h>
 
 #include <fstream>
@@ -541,7 +541,10 @@ TEST_F(CudftableTest, DeviceBufferSource)
                                             cudf::io::sink_info{&buffer}, expected)
                                             .build());
 
-  rmm::device_buffer device_buffer(buffer.size(), cudf::get_default_stream());
+  cuda::device_buffer<std::byte> device_buffer(cudf::get_default_stream(),
+                                               cudf::get_current_device_resource_ref(),
+                                               buffer.size(),
+                                               cuda::no_init);
   auto const stream = cudf::get_default_stream();
   CUDF_CUDA_TRY(cudaMemcpyAsync(
     device_buffer.data(), buffer.data(), buffer.size(), cudaMemcpyDefault, stream.get()));
@@ -549,9 +552,8 @@ TEST_F(CudftableTest, DeviceBufferSource)
   // take the stream
   stream.sync();
 
-  auto device_span = cudf::device_span<std::byte const>(
-    static_cast<std::byte const*>(device_buffer.data()), device_buffer.size());
-  auto result = cudf::io::experimental::read_cudftable(
+  auto device_span = cudf::device_span<std::byte const>(device_buffer.data(), device_buffer.size());
+  auto result      = cudf::io::experimental::read_cudftable(
     cudf::io::experimental::cudftable_reader_options::builder(cudf::io::source_info{device_span})
       .build());
 

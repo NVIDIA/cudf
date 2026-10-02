@@ -287,7 +287,7 @@ void BM_page_stats_row_mask(nvbench::state& state)
 
   auto const filter  = make_filter_expression(expr_depth, dtypes);
   auto const options = cudf::io::parquet_reader_options::builder().filter(filter.root()).build();
-  auto const reader = cudf::io::parquet::experimental::hybrid_scan_multifile{footer_spans, options};
+  auto reader = cudf::io::parquet::experimental::hybrid_scan_multifile{footer_spans, options};
 
   // Setup page indexes for page-statistics filtering
   {

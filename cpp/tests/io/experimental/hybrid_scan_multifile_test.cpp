@@ -528,7 +528,7 @@ TEST_F(HybridScanMultifileTest, MismatchedSchemaNullabilityDoesNotLeakIntoMetada
 
   auto const options =
     cudf::io::parquet_reader_options::builder().allow_mismatched_pq_schemas(true).build();
-  auto const reader =
+  auto reader =
     cudf::io::parquet::experimental::hybrid_scan_multifile{inputs.footer_byte_spans, options};
 
   // `col0` is REQUIRED in the first source, and stays REQUIRED in the reported metadata even
@@ -556,7 +556,7 @@ TEST_F(HybridScanMultifileTest, MismatchedSchemaNullabilityDoesNotLeakIntoMetada
 
   // A reader built from that metadata must produce the same table, i.e. no fabricated nullability
   // carried over from the first reader
-  auto const reader_from_metadata =
+  auto reader_from_metadata =
     cudf::io::parquet::experimental::hybrid_scan_multifile{std::move(metadatas), options};
   auto downstream_column_data = fetch_multisource_device_data(
     inputs, reader_from_metadata.all_column_chunks_byte_ranges(row_groups, options), stream, mr);
@@ -597,7 +597,7 @@ TEST_F(HybridScanMultifileTest, ReadColumnsFromMismatchedSchemas)
 
   auto options =
     cudf::io::parquet_reader_options::builder().allow_mismatched_pq_schemas(true).build();
-  auto const reader =
+  auto reader =
     cudf::io::parquet::experimental::hybrid_scan_multifile{inputs.footer_byte_spans, options};
   auto const row_groups = reader.all_row_groups(options);
 

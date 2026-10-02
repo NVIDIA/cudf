@@ -804,11 +804,19 @@ TEST_F(FromArrowDeviceTest, StringViewType)
                                 input.length * sizeof(ArrowBinaryView),
                                 cudaMemcpyDefault,
                                 stream.get()));
-  auto variadics     = std::vector<rmm::device_buffer>();
+  auto variadics     = std::vector<cuda::device_buffer<char>>();
   auto variadic_ptrs = std::vector<char*>();
   for (auto i = 0L; i < view.n_variadic_buffers; ++i) {
-    variadics.emplace_back(view.variadic_buffers[i], view.variadic_buffer_sizes[i], stream);
-    variadic_ptrs.push_back(static_cast<char*>(variadics.back().data()));
+    auto const* const data = static_cast<char const*>(view.variadic_buffers[i]);
+    if (view.variadic_buffer_sizes[i] == 0) {
+      variadics.emplace_back(stream, cudf::get_current_device_resource_ref());
+    } else {
+      variadics.emplace_back(stream,
+                             cudf::get_current_device_resource_ref(),
+                             data,
+                             data + view.variadic_buffer_sizes[i]);
+    }
+    variadic_ptrs.push_back(variadics.back().data());
   }
 
   stream.sync();
@@ -906,11 +914,19 @@ TEST_F(FromArrowDeviceTest, StringViewTypeWithProducerOwnedPrivateData)
                                 input->length * sizeof(ArrowBinaryView),
                                 cudaMemcpyDefault,
                                 stream.get()));
-  auto variadics     = std::vector<rmm::device_buffer>();
+  auto variadics     = std::vector<cuda::device_buffer<char>>();
   auto variadic_ptrs = std::vector<char*>();
   for (auto i = 0L; i < view.n_variadic_buffers; ++i) {
-    variadics.emplace_back(view.variadic_buffers[i], view.variadic_buffer_sizes[i], stream);
-    variadic_ptrs.push_back(static_cast<char*>(variadics.back().data()));
+    auto const* const data = static_cast<char const*>(view.variadic_buffers[i]);
+    if (view.variadic_buffer_sizes[i] == 0) {
+      variadics.emplace_back(stream, cudf::get_current_device_resource_ref());
+    } else {
+      variadics.emplace_back(stream,
+                             cudf::get_current_device_resource_ref(),
+                             data,
+                             data + view.variadic_buffer_sizes[i]);
+    }
+    variadic_ptrs.push_back(variadics.back().data());
   }
   stream.sync();
 

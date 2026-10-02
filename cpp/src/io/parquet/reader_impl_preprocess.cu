@@ -322,11 +322,11 @@ void reader_impl::allocate_level_decode_space()
   }
 
   // Allocate the total buffer
-  subpass.level_decode_data =
-    rmm::device_buffer(total_memory_size, _stream, cudf::get_current_device_resource_ref());
+  subpass.level_decode_data = cuda::device_buffer<std::byte>{
+    _stream, cudf::get_current_device_resource_ref(), total_memory_size, cuda::no_init};
 
   // Set buffer pointers and decoded count for each page using running offsets
-  auto* current_ptr = static_cast<uint8_t*>(subpass.level_decode_data.data());
+  auto* current_ptr = reinterpret_cast<uint8_t*>(subpass.level_decode_data.data());
   for (size_t idx = 0; idx < num_pages; idx++) {
     if (def_level_sizes[idx] == 0) {
       pages[idx].lvl_decode_buf[level_type::DEFINITION] = nullptr;

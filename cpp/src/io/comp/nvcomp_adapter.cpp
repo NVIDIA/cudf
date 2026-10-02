@@ -12,6 +12,8 @@
 #include <cudf/logger.hpp>
 #include <cudf/utilities/error.hpp>
 
+#include <cuda/buffer>
+
 #include <io/utilities/hostdevice_vector.hpp>
 #include <nvcomp/deflate.h>
 #include <nvcomp/gzip.h>
@@ -19,6 +21,7 @@
 #include <nvcomp/snappy.h>
 #include <nvcomp/zstd.h>
 
+#include <algorithm>
 #include <mutex>
 
 #define CUDF_NVCOMP_HAS_GZIP_COMPRESSION (NVCOMP_VER >= MAKE_SEMANTIC_VERSION(5, 3, 0))
@@ -83,8 +86,7 @@ namespace {
   auto const env = getenv("LIBCUDF_HW_DECOMPRESSION");
   if (env == nullptr) { return std::nullopt; }
   std::string val{env};
-  std::transform(
-    val.begin(), val.end(), val.begin(), [](unsigned char c) { return std::toupper(c); });
+  std::ranges::transform(val, val.begin(), [](unsigned char c) { return std::toupper(c); });
   return val == "ON";
 }
 
@@ -540,11 +542,9 @@ size_t batched_decompress_temp_size_ex(compression_type compression,
                                             d_statuses.data(),
                                             stream.get());
     if (nvcomp_status == nvcompStatus_t::nvcompSuccess) {
-      auto const h_statuses = cudf::detail::make_host_vector(d_statuses, stream);
-      auto const are_all_success =
-        std::all_of(h_statuses.begin(), h_statuses.end(), [](nvcompStatus_t status) {
-          return status == nvcompStatus_t::nvcompSuccess;
-        });
+      auto const h_statuses      = cudf::detail::make_host_vector(d_statuses, stream);
+      auto const are_all_success = std::ranges::all_of(
+        h_statuses, [](nvcompStatus_t status) { return status == nvcompStatus_t::nvcompSuccess; });
       if (are_all_success) { return temp_size; }
     }
     CUDF_LOG_WARN(
@@ -615,7 +615,8 @@ void batched_decompress(compression_type compression,
                                                          max_uncomp_chunk_size,
                                                          max_total_uncomp_size,
                                                          stream);
-  rmm::device_buffer scratch(temp_size, stream);
+  cuda::device_buffer<std::byte> scratch(
+    stream, cudf::get_current_device_resource_ref(), temp_size, cuda::no_init);
 
   auto const nvcomp_status = batched_decompress_async(compression,
                                                       use_hw_decompression(),
@@ -703,7 +704,8 @@ void batched_compress(compression_type compression,
   auto const temp_size = batched_compress_temp_size(
     compression, num_chunks, max_uncomp_chunk_size, total_uncomp_size, stream);
 
-  rmm::device_buffer scratch(temp_size, stream);
+  cuda::device_buffer<std::byte> scratch(
+    stream, cudf::get_current_device_resource_ref(), temp_size, cuda::no_init);
   CUDF_EXPECTS(is_aligned(scratch.data(), 8), "Compression failed, misaligned scratch buffer");
 
   rmm::device_uvector<size_t> actual_compressed_data_sizes(num_chunks, stream);

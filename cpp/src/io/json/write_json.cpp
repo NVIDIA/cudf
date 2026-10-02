@@ -76,10 +76,9 @@ std::unique_ptr<column> make_column_names_column(host_span<column_name_info cons
       return std::to_string(v++);
     });
   } else {
-    std::transform(column_names.begin(),
-                   column_names.end(),
-                   std::back_inserter(unescaped_column_names),
-                   [](column_name_info const& name_info) { return name_info.name; });
+    std::ranges::transform(column_names,
+                           std::back_inserter(unescaped_column_names),
+                           [](column_name_info const& name_info) { return name_info.name; });
   }
   auto unescaped_string_col = make_strings_column_from_host(unescaped_column_names, stream);
   auto d_column             = column_device_view::create(*unescaped_string_col, stream);

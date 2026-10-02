@@ -18,6 +18,7 @@
 
 #include <cub/device/device_copy.cuh>
 #include <cuda/atomic>
+#include <cuda/buffer>
 #include <cuda/functional>
 #include <cuda/iterator>
 #include <cuda/std/functional>
@@ -375,7 +376,8 @@ std::
                              inbuf_lengths.begin(),
                              inbuf_lengths_size,
                              stream.get());
-    rmm::device_buffer temp_storage(temp_storage_bytes, stream);
+    cuda::device_buffer<std::byte> temp_storage(
+      stream, cudf::get_current_device_resource_ref(), temp_storage_bytes, cuda::no_init);
     cub::DeviceCopy::Batched(temp_storage.data(),
                              temp_storage_bytes,
                              input_it,

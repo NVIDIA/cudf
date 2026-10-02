@@ -45,12 +45,12 @@ constexpr int delta_length_block_size  = 32;
  * @return pair containing start and end value indexes
  * @tparam level_t Type used to store decoded repetition and definition levels
  */
-template <typename level_t>
+template <typename level_t, int block_size>
 __device__ cuda::std::pair<int, int> page_bounds(
   auto* const s, size_t min_row, size_t num_rows, bool is_bounds_pg, bool has_repetition)
 {
-  using block_reduce = cub::BlockReduce<int, preprocess_block_size>;
-  using block_scan   = cub::BlockScan<int, preprocess_block_size>;
+  using block_reduce = cub::BlockReduce<int, block_size>;
+  using block_scan   = cub::BlockScan<int, block_size>;
   __shared__ union {
     typename block_reduce::TempStorage reduce_storage;
     typename block_scan::TempStorage scan_storage;
@@ -215,7 +215,7 @@ __device__ cuda::std::pair<int, int> page_bounds(
 
       row_count += block_row_count;
       leaf_count += block_leaf_count;
-      processed += preprocess_block_size;
+      processed += block_size;
     }
 
     // Sync shared variables like end_val_idx, skipped_leaf_values, etc.
@@ -239,7 +239,7 @@ __device__ cuda::std::pair<int, int> page_bounds(
     int idx_t     = t;
     while (idx_t < actual_num_values) {
       if (def_decode[idx_t] < max_def) { num_nulls++; }
-      idx_t += preprocess_block_size;
+      idx_t += block_size;
     }
 
     int const null_count = block_reduce(temp_storage.reduce_storage).Sum(num_nulls);
@@ -501,6 +501,22 @@ __device__ cuda::std::pair<size_t, size_t> totalDeltaByteArraySize(uint8_t const
   return {final_bytes, temp_bytes};
 }
 
+// Also used for dictionary and empty/pruned descriptors that have no string encoding mask.
+__device__ void reset_string_page_bounds(PageInfo* pp)
+{
+  if (threadIdx.x == 0) {
+    // don't clobber these if they're already computed from the index
+    if (!pp->has_value_info) {
+      pp->num_nulls  = 0;
+      pp->num_valids = 0;
+    }
+    // reset str_bytes to 0 in case it's already been calculated (esp needed for chunked reads).
+    pp->str_bytes = 0;
+    pp->start_val = 0;
+    pp->end_val   = 0;
+  }
+}
+
 /**
  * @brief Kernel for computing string page bounds information.
  *
@@ -517,33 +533,21 @@ __device__ cuda::std::pair<size_t, size_t> totalDeltaByteArraySize(uint8_t const
  * @param all_rows If true, all rows will be read, regardless of `min_row` and `num_rows`
  * @tparam level_t Type used to store decoded repetition and definition levels
  */
-template <typename level_t>
-CUDF_KERNEL void __launch_bounds__(preprocess_block_size)
-  compute_string_page_bounds_kernel(PageInfo* pages,
-                                    device_span<ColumnChunkDesc const> chunks,
-                                    device_span<bool const> page_mask,
-                                    size_t min_row,
-                                    size_t num_rows,
-                                    bool all_rows)
+template <typename level_t, int block_size>
+__device__ bool compute_string_page_bounds(full_page_decode_state* s,
+                                           PageInfo* pages,
+                                           device_span<ColumnChunkDesc const> chunks,
+                                           device_span<bool const> page_mask,
+                                           size_t min_row,
+                                           size_t num_rows,
+                                           bool all_rows)
 {
-  __shared__ __align__(16) full_page_decode_state state_g;
-
-  auto* const s      = &state_g;
   int const page_idx = blockIdx.x;
   int const t        = threadIdx.x;
   PageInfo* const pp = &pages[page_idx];
 
-  if (t == 0) {
-    // don't clobber these if they're already computed from the index
-    if (!pp->has_value_info) {
-      pp->num_nulls  = 0;
-      pp->num_valids = 0;
-    }
-    // reset str_bytes to 0 in case it's already been calculated (esp needed for chunked reads).
-    pp->str_bytes = 0;
-    pp->start_val = 0;
-    pp->end_val   = 0;
-  }
+  reset_string_page_bounds(pp);
+  __syncthreads();
 
   if (all_rows) {
     min_row  = chunks[pp->chunk_idx].start_row + pp->chunk_row;
@@ -561,14 +565,14 @@ CUDF_KERNEL void __launch_bounds__(preprocess_block_size)
                              num_rows,
                              mask_filter{STRINGS_MASK},
                              page_processing_stage::STRING_BOUNDS)) {
-    return;
+    return false;
   }
 
   bool const is_bounds_pg =
     is_bounds_page(s->setup.page, s->setup.col.start_row, min_row, num_rows, has_repetition);
 
   // if we have size info, then we only need to do this for bounds pages
-  if (pp->has_value_info && !is_bounds_pg) { return; }
+  if (pp->has_value_info && !is_bounds_pg) { return true; }
 
   // Zero out everything and return early if the page is pruned
   if (not page_mask.empty() and not page_mask[page_idx]) {
@@ -578,12 +582,12 @@ CUDF_KERNEL void __launch_bounds__(preprocess_block_size)
       pp->start_val  = 0;
       pp->end_val    = 0;
     }
-    return;
+    return false;
   }
 
   // find start/end value indices
   auto const [start_value, end_value] =
-    page_bounds<level_t>(s, min_row, num_rows, is_bounds_pg, has_repetition);
+    page_bounds<level_t, block_size>(s, min_row, num_rows, is_bounds_pg, has_repetition);
 
   // need to save num_nulls and num_valids calculated in page_bounds in this page
   if (t == 0) {
@@ -592,6 +596,7 @@ CUDF_KERNEL void __launch_bounds__(preprocess_block_size)
     pp->start_val  = start_value;
     pp->end_val    = end_value;
   }
+  return true;
 }
 
 /**
@@ -607,33 +612,53 @@ CUDF_KERNEL void __launch_bounds__(preprocess_block_size)
  * @param min_rows crop all rows below min_row
  * @param num_rows Maximum number of rows to read
  */
+template <typename level_t>
 CUDF_KERNEL void __launch_bounds__(delta_preproc_block_size)
   compute_delta_page_string_sizes_kernel(PageInfo* pages,
                                          device_span<ColumnChunkDesc const> chunks,
                                          device_span<bool const> page_mask,
                                          size_t min_row,
-                                         size_t num_rows)
+                                         size_t num_rows,
+                                         bool all_rows,
+                                         bool reset_other_pages)
 {
-  __shared__ __align__(16) string_size_scan_state state_g;
+  __shared__ __align__(16) full_page_decode_state state_g;
 
   auto* const s      = &state_g;
   int const page_idx = blockIdx.x;
   int const t        = threadIdx.x;
   PageInfo* const pp = &pages[page_idx];
 
-  // whether or not we have repetition levels (lists)
-  bool const has_repetition = chunks[pp->chunk_idx].max_level[level_type::REPETITION] > 0;
-
-  // setup page info
-  if (!setup_local_page_info(s,
-                             pp,
-                             chunks,
-                             min_row,
-                             num_rows,
-                             mask_filter{decode_kernel_mask::DELTA_BYTE_ARRAY},
-                             page_processing_stage::STRING_BOUNDS)) {
+  // Encoding kernels may run concurrently. Reject other pages before bounds resets fields.
+  if ((pp->flags & PAGEINFO_FLAGS_DICTIONARY) != 0 ||
+      !mask_filter{decode_kernel_mask::DELTA_BYTE_ARRAY}(*pp)) {
+    // Exactly one family clears descriptors that no sizing family owns. In particular,
+    // pruned page spans can carry index byte counts despite having a zero kernel mask.
+    if (reset_other_pages &&
+        ((pp->flags & PAGEINFO_FLAGS_DICTIONARY) != 0 || !mask_filter{STRINGS_MASK}(*pp))) {
+      reset_string_page_bounds(pp);
+    }
     return;
   }
+
+  bool const has_repetition = chunks[pp->chunk_idx].max_level[level_type::REPETITION] > 0;
+  auto ready                = compute_string_page_bounds<level_t, delta_preproc_block_size>(
+    s, pages, chunks, page_mask, min_row, num_rows, all_rows);
+  __syncthreads();
+
+  // Full-page bounds can differ from the requested sizing range in the chunking pass.
+  // Otherwise the stream and conversion setup from bounds is already ready to use.
+  if (all_rows) {
+    ready = setup_local_page_info(s,
+                                  pp,
+                                  chunks,
+                                  min_row,
+                                  num_rows,
+                                  mask_filter{decode_kernel_mask::DELTA_BYTE_ARRAY},
+                                  page_processing_stage::STRING_BOUNDS);
+  }
+  if (!ready) { return; }
+
   // Return early if the page is pruned
   if (page_mask.size() > 0 && not page_mask[page_idx]) {
     pp->str_bytes = 0;
@@ -698,15 +723,18 @@ CUDF_KERNEL void __launch_bounds__(delta_preproc_block_size)
  * @param min_rows crop all rows below min_row
  * @param num_rows Maximum number of rows to read
  */
+template <typename level_t>
 CUDF_KERNEL void __launch_bounds__(delta_length_block_size)
   compute_delta_length_page_string_sizes_kernel(PageInfo* pages,
                                                 device_span<ColumnChunkDesc const> chunks,
                                                 device_span<bool const> page_mask,
                                                 size_t min_row,
-                                                size_t num_rows)
+                                                size_t num_rows,
+                                                bool all_rows,
+                                                bool reset_other_pages)
 {
   using cudf::detail::warp_size;
-  __shared__ __align__(16) string_size_scan_state state_g;
+  __shared__ __align__(16) full_page_decode_state state_g;
   __shared__ __align__(16) delta_binary_decoder string_lengths;
 
   auto const warp    = cg::tiled_partition<cudf::detail::warp_size>(cg::this_thread_block());
@@ -715,19 +743,35 @@ CUDF_KERNEL void __launch_bounds__(delta_length_block_size)
   int const t        = threadIdx.x;
   PageInfo* const pp = &pages[page_idx];
 
-  // whether or not we have repetition levels (lists)
-  bool const has_repetition = chunks[pp->chunk_idx].max_level[level_type::REPETITION] > 0;
-
-  // setup page info
-  if (!setup_local_page_info(s,
-                             pp,
-                             chunks,
-                             min_row,
-                             num_rows,
-                             mask_filter{decode_kernel_mask::DELTA_LENGTH_BA},
-                             page_processing_stage::STRING_BOUNDS)) {
+  // Encoding kernels may run concurrently. Reject other pages before bounds resets fields.
+  if ((pp->flags & PAGEINFO_FLAGS_DICTIONARY) != 0 ||
+      !mask_filter{decode_kernel_mask::DELTA_LENGTH_BA}(*pp)) {
+    // Exactly one family clears descriptors that no sizing family owns. In particular,
+    // pruned page spans can carry index byte counts despite having a zero kernel mask.
+    if (reset_other_pages &&
+        ((pp->flags & PAGEINFO_FLAGS_DICTIONARY) != 0 || !mask_filter{STRINGS_MASK}(*pp))) {
+      reset_string_page_bounds(pp);
+    }
     return;
   }
+
+  bool const has_repetition = chunks[pp->chunk_idx].max_level[level_type::REPETITION] > 0;
+  auto ready                = compute_string_page_bounds<level_t, delta_length_block_size>(
+    s, pages, chunks, page_mask, min_row, num_rows, all_rows);
+  __syncthreads();
+
+  // Full-page bounds can differ from the requested sizing range in the chunking pass.
+  // Otherwise the stream and conversion setup from bounds is already ready to use.
+  if (all_rows) {
+    ready = setup_local_page_info(s,
+                                  pp,
+                                  chunks,
+                                  min_row,
+                                  num_rows,
+                                  mask_filter{decode_kernel_mask::DELTA_LENGTH_BA},
+                                  page_processing_stage::STRING_BOUNDS);
+  }
+  if (!ready) { return; }
 
   // Return early if the page is pruned
   if (page_mask.size() > 0 && not page_mask[page_idx]) {
@@ -821,34 +865,52 @@ CUDF_KERNEL void __launch_bounds__(delta_length_block_size)
  * @param min_rows crop all rows below min_row
  * @param num_rows Maximum number of rows to read
  */
+template <typename level_t>
 CUDF_KERNEL void __launch_bounds__(preprocess_block_size)
   compute_page_string_sizes_kernel(PageInfo* pages,
                                    device_span<ColumnChunkDesc const> chunks,
                                    device_span<bool const> page_mask,
                                    device_span<size_t const> page_string_offset_indices,
                                    size_t min_row,
-                                   size_t num_rows)
+                                   size_t num_rows,
+                                   bool all_rows,
+                                   bool reset_other_pages)
 {
-  __shared__ __align__(16) string_size_scan_state state_g;
+  __shared__ __align__(16) full_page_decode_state state_g;
 
   auto* const s      = &state_g;
   int const page_idx = blockIdx.x;
   int const t        = threadIdx.x;
   PageInfo* const pp = &pages[page_idx];
 
-  // whether or not we have repetition levels (lists)
-  bool const has_repetition = chunks[pp->chunk_idx].max_level[level_type::REPETITION] > 0;
-
-  // setup page info
-  if (!setup_local_page_info(s,
-                             pp,
-                             chunks,
-                             min_row,
-                             num_rows,
-                             mask_filter{STRINGS_MASK_NON_DELTA},
-                             page_processing_stage::STRING_BOUNDS)) {
+  // Encoding kernels may run concurrently. Reject other pages before bounds resets fields.
+  if ((pp->flags & PAGEINFO_FLAGS_DICTIONARY) != 0 || !mask_filter{STRINGS_MASK_NON_DELTA}(*pp)) {
+    // Exactly one family clears descriptors that no sizing family owns. In particular,
+    // pruned page spans can carry index byte counts despite having a zero kernel mask.
+    if (reset_other_pages &&
+        ((pp->flags & PAGEINFO_FLAGS_DICTIONARY) != 0 || !mask_filter{STRINGS_MASK}(*pp))) {
+      reset_string_page_bounds(pp);
+    }
     return;
   }
+
+  bool const has_repetition = chunks[pp->chunk_idx].max_level[level_type::REPETITION] > 0;
+  auto ready                = compute_string_page_bounds<level_t, preprocess_block_size>(
+    s, pages, chunks, page_mask, min_row, num_rows, all_rows);
+  __syncthreads();
+
+  // Full-page bounds can differ from the requested sizing range in the chunking pass.
+  // Otherwise the stream and conversion setup from bounds is already ready to use.
+  if (all_rows) {
+    ready = setup_local_page_info(s,
+                                  pp,
+                                  chunks,
+                                  min_row,
+                                  num_rows,
+                                  mask_filter{STRINGS_MASK_NON_DELTA},
+                                  page_processing_stage::STRING_BOUNDS);
+  }
+  if (!ready) { return; }
 
   // Return early if the page is pruned
   if (page_mask.size() > 0 && not page_mask[page_idx]) {
@@ -967,41 +1029,47 @@ void compute_page_string_sizes_pass1(cudf::detail::hostdevice_span<PageInfo> pag
   dim3 const dim_block(preprocess_block_size, 1);
   dim3 const dim_grid(pages.size(), 1);  // 1 threadblock per page
 
-  if (level_type_size == 1) {
-    compute_string_page_bounds_kernel<uint8_t><<<dim_grid, dim_block, 0, stream.get()>>>(
-      pages.device_ptr(), chunks, page_mask, min_row, num_rows, all_rows);
-    CUDF_CUDA_TRY(cudaGetLastError());
-  } else {
-    compute_string_page_bounds_kernel<uint16_t><<<dim_grid, dim_block, 0, stream.get()>>>(
-      pages.device_ptr(), chunks, page_mask, min_row, num_rows, all_rows);
-    CUDF_CUDA_TRY(cudaGetLastError());
-  }
-
   // kernel mask may contain other kernels we don't need to count
   int const count_mask = kernel_mask & STRINGS_MASK;
   int const nkernels   = std::bitset<32>(count_mask).count();
   auto const streams   = cudf::detail::fork_streams(stream, nkernels);
 
-  int s_idx = 0;
-  if (BitAnd(kernel_mask, decode_kernel_mask::DELTA_BYTE_ARRAY) != 0) {
-    dim3 dim_delta(delta_preproc_block_size, 1);
-    compute_delta_page_string_sizes_kernel<<<dim_grid, dim_delta, 0, streams[s_idx++].get()>>>(
-      pages.device_ptr(), chunks, page_mask, min_row, num_rows);
-    CUDF_CUDA_TRY(cudaGetLastError());
-  }
-  if (BitAnd(kernel_mask, decode_kernel_mask::DELTA_LENGTH_BA) != 0) {
-    dim3 dim_delta(delta_length_block_size, 1);
-    compute_delta_length_page_string_sizes_kernel<<<dim_grid,
-                                                    dim_delta,
-                                                    0,
-                                                    streams[s_idx++].get()>>>(
-      pages.device_ptr(), chunks, page_mask, min_row, num_rows);
-    CUDF_CUDA_TRY(cudaGetLastError());
-  }
-  if (BitAnd(kernel_mask, STRINGS_MASK_NON_DELTA) != 0) {
-    compute_page_string_sizes_kernel<<<dim_grid, dim_block, 0, streams[s_idx++].get()>>>(
-      pages.device_ptr(), chunks, page_mask, page_string_offset_indices, min_row, num_rows);
-    CUDF_CUDA_TRY(cudaGetLastError());
+  auto launch = [&]<typename level_t>() {
+    int s_idx              = 0;
+    bool reset_other_pages = true;
+    if (BitAnd(kernel_mask, decode_kernel_mask::DELTA_BYTE_ARRAY) != 0) {
+      dim3 dim_delta(delta_preproc_block_size, 1);
+      compute_delta_page_string_sizes_kernel<level_t>
+        <<<dim_grid, dim_delta, 0, streams[s_idx++].get()>>>(
+          pages.device_ptr(), chunks, page_mask, min_row, num_rows, all_rows, reset_other_pages);
+      CUDF_CUDA_TRY(cudaGetLastError());
+      reset_other_pages = false;
+    }
+    if (BitAnd(kernel_mask, decode_kernel_mask::DELTA_LENGTH_BA) != 0) {
+      dim3 dim_delta(delta_length_block_size, 1);
+      compute_delta_length_page_string_sizes_kernel<level_t>
+        <<<dim_grid, dim_delta, 0, streams[s_idx++].get()>>>(
+          pages.device_ptr(), chunks, page_mask, min_row, num_rows, all_rows, reset_other_pages);
+      CUDF_CUDA_TRY(cudaGetLastError());
+      reset_other_pages = false;
+    }
+    if (BitAnd(kernel_mask, STRINGS_MASK_NON_DELTA) != 0) {
+      compute_page_string_sizes_kernel<level_t>
+        <<<dim_grid, dim_block, 0, streams[s_idx++].get()>>>(pages.device_ptr(),
+                                                             chunks,
+                                                             page_mask,
+                                                             page_string_offset_indices,
+                                                             min_row,
+                                                             num_rows,
+                                                             all_rows,
+                                                             reset_other_pages);
+      CUDF_CUDA_TRY(cudaGetLastError());
+    }
+  };
+  if (level_type_size == 1) {
+    launch.template operator()<uint8_t>();
+  } else {
+    launch.template operator()<uint16_t>();
   }
 
   // synchronize the streams

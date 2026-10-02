@@ -4097,6 +4097,69 @@ TEST_F(ParquetReaderTest, DeltaByteArrayMapSkipRows)
 }
 
 // test that using page stats is working for full reads and various skip rows
+TEST_F(ParquetReaderTest, MixedStringEncodingsWithPageBounds)
+{
+  constexpr cudf::size_type num_rows = 257;
+  std::vector<std::string> values;
+  std::vector<bool> validity;
+  for (cudf::size_type i = 0; i < num_rows; ++i) {
+    values.push_back(i % 7 == 0 ? ""
+                                : "common_prefix_" + std::to_string(i) +
+                                    std::string(static_cast<size_t>(i % 23), 'x'));
+    // Include an entirely null page and nulls on both sides of page boundaries.
+    validity.push_back(i % 4 != 0 && (i < 31 || i >= 62));
+  }
+  cudf::test::strings_column_wrapper strings(values.begin(), values.end(), validity.begin());
+  cudf::table_view const input{{strings, strings, strings}};
+  std::array encodings{cudf::io::column_encoding::PLAIN,
+                       cudf::io::column_encoding::DELTA_BYTE_ARRAY,
+                       cudf::io::column_encoding::DELTA_LENGTH_BYTE_ARRAY};
+  auto const filepath = temp_env->get_temp_filepath("MixedStringEncodingsWithPageBounds.parquet");
+
+  for (bool const v2 : {false, true}) {
+    SCOPED_TRACE(v2);
+    cudf::io::table_input_metadata metadata(input);
+    for (size_t c = 0; c < encodings.size(); ++c) {
+      metadata.column_metadata[c].set_encoding(encodings[c]);
+    }
+    cudf::io::write_parquet(
+      cudf::io::parquet_writer_options::builder(cudf::io::sink_info{filepath}, input)
+        .metadata(std::move(metadata))
+        .compression(cudf::io::compression_type::NONE)
+        .dictionary_policy(cudf::io::dictionary_policy::NEVER)
+        .write_v2_headers(v2)
+        .stats_level(cudf::io::statistics_freq::STATISTICS_ROWGROUP)
+        .max_page_size_rows(31)
+        .max_page_fragment_size(31));
+
+    for (auto const [skip, count] : std::array<std::pair<cudf::size_type, cudf::size_type>, 3>{
+           {{0, num_rows}, {29, 197}, {31, 31}}}) {
+      auto const options =
+        cudf::io::parquet_reader_options::builder(cudf::io::source_info{filepath})
+          .skip_rows(skip)
+          .num_rows(count)
+          .build();
+      auto const result   = cudf::io::read_parquet(options);
+      auto const expected = cudf::slice(input, {skip, skip + count});
+      CUDF_TEST_EXPECT_TABLES_EQUAL(expected.front(), result.tbl->view());
+
+      // Exercise output chunking separately from partial one-shot reads above. Combining
+      // chunked reads and these row bounds currently fails even without the fusion changes.
+      if (skip != 0 || count != num_rows) { continue; }
+      cudf::io::chunked_parquet_reader reader(4096, 0, options);
+      cudf::size_type rows_read = 0;
+      do {
+        auto const chunk          = reader.read_chunk();
+        auto const rows           = chunk.tbl->num_rows();
+        auto const expected_chunk = cudf::slice(input, {skip + rows_read, skip + rows_read + rows});
+        CUDF_TEST_EXPECT_TABLES_EQUAL(expected_chunk.front(), chunk.tbl->view());
+        rows_read += rows;
+      } while (reader.has_next());
+      EXPECT_EQ(rows_read, count);
+    }
+  }
+}
+
 TEST_F(ParquetReaderTest, StringsWithPageStats)
 {
   constexpr int num_rows = 10'000;

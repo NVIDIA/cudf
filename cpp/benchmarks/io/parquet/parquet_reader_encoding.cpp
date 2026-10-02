@@ -12,6 +12,7 @@
 #include <cudf/column/column_view.hpp>
 #include <cudf/io/parquet.hpp>
 #include <cudf/types.hpp>
+#include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/error.hpp>
 
 #include <nvbench/nvbench.cuh>
@@ -111,7 +112,8 @@ std::unique_ptr<cudf::table> create_nested_table(std::vector<cudf::type_id> cons
 
 void bench_read_encoding(nvbench::state& state,
                          std::vector<cudf::type_id> const& d_types,
-                         bool const use_nullable_page_size_matrix = false)
+                         bool const use_nullable_page_size_matrix = false,
+                         bool const use_row_bounds                = false)
 {
   auto const encoding    = retrieve_column_encoding_enum(state.get_string("encoding"));
   auto const source_type = retrieve_io_type_enum(state.get_string("io_type"));
@@ -154,11 +156,36 @@ void bench_read_encoding(nvbench::state& state,
         .dictionary_policy(cudf::io::dictionary_policy::NEVER)
         .write_v2_headers(true);
     if (use_nullable_page_size_matrix) { write_opts.set_max_page_size_rows(page_rows); }
+    if (use_row_bounds) {
+      write_opts.set_max_page_fragment_size(page_rows);
+      write_opts.set_max_page_size_bytes(1UL << 30);
+      write_opts.set_stats_level(cudf::io::statistics_freq::STATISTICS_ROWGROUP);
+    }
     cudf::io::write_parquet(write_opts);
     return view.num_rows();
   }();
 
-  parquet_read_common(num_rows_written, num_cols, source_sink, state);
+  if (!use_row_bounds) {
+    parquet_read_common(num_rows_written, num_cols, source_sink, state);
+    return;
+  }
+
+  // Clip both ends of the file to exercise bounds scans, including nullable delta pages.
+  auto const rows_to_read = num_rows_written / 2;
+  auto const read_opts = cudf::io::parquet_reader_options::builder(source_sink.make_source_info())
+                           .skip_rows(num_rows_written / 4)
+                           .num_rows(rows_to_read)
+                           .build();
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().get()));
+  state.exec(nvbench::exec_tag::sync | nvbench::exec_tag::timer,
+             [&](nvbench::launch&, auto& timer) {
+               timer.start();
+               auto const result = cudf::io::read_parquet(read_opts);
+               timer.stop();
+               CUDF_EXPECTS(result.tbl->num_columns() == num_cols, "Unexpected number of columns");
+               CUDF_EXPECTS(result.tbl->num_rows() == rows_to_read, "Unexpected number of rows");
+             });
+  state.add_buffer_size(source_sink.size(), "encoded_file_size", "encoded_file_size");
 }
 
 }  // namespace
@@ -224,3 +251,21 @@ NVBENCH_BENCH(BM_parquet_read_delta_string_nullable_page_sizes)
   .add_int64_axis("run_length", {1})
   .add_int64_axis("page_rows", {31, 32, 33, 255, 256, 257})
   .add_int64_axis("data_size", {8 << 20});
+
+// Match the existing encoding benchmark's data generation and timing, but force large pages
+// and crop rows so the level scans cannot be replaced with full-page index metadata.
+void BM_parquet_read_delta_string_bounds(nvbench::state& state)
+{
+  bench_read_encoding(state, {cudf::type_id::STRING}, true, true);
+}
+
+NVBENCH_BENCH(BM_parquet_read_delta_string_bounds)
+  .set_name("parquet_read_delta_string_bounds")
+  .add_string_axis("encoding", {"PLAIN", "DELTA_LENGTH_BYTE_ARRAY", "DELTA_BYTE_ARRAY"})
+  .add_string_axis("io_type", {"DEVICE_BUFFER"})
+  .add_string_axis("validity", {"nullable_50"})
+  .set_min_samples(4)
+  .add_int64_axis("cardinality", {0})
+  .add_int64_axis("run_length", {1})
+  .add_int64_axis("page_rows", {65536})
+  .add_int64_axis("data_size", {64 << 20});

@@ -457,7 +457,7 @@ async def _choose_modulus(
     metadata_in: ChannelMetadata,
     collective_id: int,
     target_partition_size: int,
-    sample_chunk_count: int,
+    sample_byte_count: int,
 ) -> tuple[TableSizeStats, int]:
     """
     Sample input, AllGather size estimates, and derive the forward-shuffle modulus.
@@ -468,8 +468,7 @@ async def _choose_modulus(
     sample = await _sample_chunks(
         context,
         ch_in,
-        sample_chunk_count,
-        target_partition_size,
+        sample_byte_count,
         metadata_in.local_count,
     )
     if comm.nranks > 1 and not metadata_in.duplicated:
@@ -636,7 +635,7 @@ async def _shuffle_and_reassemble(
     forward_shuffle_collective_id: int,
     return_shuffle_collective_id: int,
     target_partition_size: int,
-    sample_chunk_count: int,
+    sample_byte_count: int,
 ) -> None:
     """Hash-shuffle by partition keys, evaluate, then route rows back to their origin rank."""
     stamps = _origin_stamps_for(ir)
@@ -659,7 +658,7 @@ async def _shuffle_and_reassemble(
         metadata_in,
         size_collective_id,
         target_partition_size,
-        sample_chunk_count,
+        sample_byte_count,
     )
 
     forward_shuffle = ShuffleManager(
@@ -723,7 +722,7 @@ async def over_actor(
     ch_in: Channel[TableChunk],
     collective_ids: list[int],
     target_partition_size: int,
-    sample_chunk_count: int,
+    sample_byte_count: int,
     scalar_plan: _ScalarOverPlan | None,
 ) -> None:
     """
@@ -751,8 +750,8 @@ async def over_actor(
     target_partition_size
         Target output partition size in bytes, used to compute the shuffle
         modulus for the non-scalar path.
-    sample_chunk_count
-        Maximum number of input chunks to sample when estimating the shuffle
+    sample_byte_count
+        Maximum number of input bytes to sample when estimating the shuffle
         modulus on the non-scalar path.
     scalar_plan
         Pre-computed IR rewrites for the scalar Over path, built at planning
@@ -826,7 +825,7 @@ async def over_actor(
                 forward_shuffle_collective_id=collective_ids[0],
                 return_shuffle_collective_id=collective_ids[1],
                 target_partition_size=target_partition_size,
-                sample_chunk_count=sample_chunk_count,
+                sample_byte_count=sample_byte_count,
             )
 
 
@@ -844,8 +843,8 @@ def _(
             "shuffle. Enable it via StreamingExecutor(dynamic_planning=...) "
             "or the --dynamic-planning CLI flag."
         )
-    sample_chunk_count = (
-        executor.dynamic_planning.sample_chunk_count
+    sample_byte_count = (
+        executor.dynamic_planning.sample_byte_count
         if executor.dynamic_planning is not None
         else 0
     )
@@ -861,7 +860,7 @@ def _(
             channels[ir.children[0]].reserve_output_slot(),
             collective_ids,
             executor.target_partition_size,
-            sample_chunk_count,
+            sample_byte_count,
             scalar_plan,
         )
     ]

@@ -737,9 +737,9 @@ class DynamicPlanningOptions:
 
     Parameters
     ----------
-    sample_chunk_count
+    sample_byte_count
         The maximum number of chunks to sample before making
-        dynamic-planning decisions. Default is 2.
+        dynamic-planning decisions. Defaults to ``target_partition_size``.
     infer_ordering
         Whether to infer scan ordering from input metadata. Parquet scans use
         footer min/max statistics. For floating-point columns, this assumes row
@@ -750,9 +750,9 @@ class DynamicPlanningOptions:
 
     _env_prefix = "CUDF_POLARS__EXECUTOR__DYNAMIC_PLANNING"
 
-    sample_chunk_count: int = dataclasses.field(
+    sample_byte_count: int = dataclasses.field(
         default_factory=_make_default_factory(
-            f"{_env_prefix}__SAMPLE_CHUNK_COUNT", int, default=2
+            f"{_env_prefix}__SAMPLE_BYTE_COUNT", int, default=0
         )
     )
     infer_ordering: bool = dataclasses.field(
@@ -762,10 +762,10 @@ class DynamicPlanningOptions:
     )
 
     def __post_init__(self) -> None:  # noqa: D105
-        if not isinstance(self.sample_chunk_count, int):
-            raise TypeError("sample_chunk_count must be an int")
-        if self.sample_chunk_count < 1:
-            raise ValueError("sample_chunk_count must be at least 1")
+        if not isinstance(self.sample_byte_count, int):
+            raise TypeError("sample_byte_count must be an int if specified")
+        if self.sample_byte_count < 0:
+            raise ValueError("sample_byte_count must be at least 0")
         if not isinstance(self.infer_ordering, bool):
             raise TypeError("infer_ordering must be a bool")
 
@@ -1364,7 +1364,16 @@ class StreamingExecutor:
                 "dynamic_planning",
                 DynamicPlanningOptions(**self.dynamic_planning),
             )
-
+        if (
+            planning := self.dynamic_planning
+        ) is not None and planning.sample_byte_count == 0:
+            object.__setattr__(
+                self,
+                "dynamic_planning",
+                dataclasses.replace(
+                    planning, sample_byte_count=self.target_partition_size
+                ),
+            )
         if isinstance(self.join_filter_pushdown, dict):
             object.__setattr__(
                 self,

@@ -256,13 +256,6 @@ ConfigureNVBench(
 ConfigureNVBench(HASHING_NVBENCH hashing/hash.cpp hashing/partition.cpp)
 
 # ##################################################################################################
-# * hybrid scan projection benchmark
-# ----------------------------------------------------------------------
-ConfigureNVBench(
-  HYBRID_SCAN_PROJECTION_NVBENCH io/parquet/experimental/hybrid_scan/hybrid_scan_projection.cpp
-)
-
-# ##################################################################################################
 # * hybrid scan filters benchmark
 # ----------------------------------------------------------------------
 ConfigureNVBench(

@@ -1319,7 +1319,7 @@ template <typename PeriodT>
 __device__ auto julian_days_with_time(int64_t v)
 {
   using namespace cuda::std::chrono;
-  auto const dur_total             = duration<int64_t, PeriodT>{v};
+  auto const dur_total             = cuda::std::chrono::duration<int64_t, PeriodT>{v};
   auto const dur_days              = floor<days>(dur_total);
   auto const dur_time_of_day       = dur_total - dur_days;
   auto const dur_time_of_day_nanos = duration_cast<nanoseconds>(dur_time_of_day);

@@ -181,4 +181,40 @@ TEST_F(TraitsTest, CvQualifiedBoolIsNotAnInteger)
   EXPECT_TRUE(cudf::is_boolean<bool volatile>());
 }
 
+template <typename T>
+constexpr bool concepts_match_traits()
+{
+  static_assert(cudf::arithmetic<T> == cudf::is_numeric<T>());
+  static_assert(cudf::arithmetic_not_bool<T> == cudf::is_numeric_not_bool<T>());
+  static_assert(cudf::integral_not_bool<T> == cudf::is_integral_not_bool<T>());
+  static_assert(cudf::integral_not_bool<T> == cudf::is_index_type<T>());
+  static_assert(cudf::unsigned_integral_not_bool<T> ==
+                (cudf::is_integral_not_bool<T>() && cudf::is_unsigned<T>()));
+  static_assert(cudf::floating_point<T> == cudf::is_floating_point<T>());
+  static_assert(cudf::boolean<T> == cudf::is_boolean<T>());
+  static_assert(cudf::byte<T> == cudf::is_byte<T>());
+  static_assert(cudf::timestamp<T> == cudf::is_timestamp<T>());
+  static_assert(cudf::duration<T> == cudf::is_duration<T>());
+  static_assert(cudf::chrono<T> == cudf::is_chrono<T>());
+  static_assert(cudf::fixed_point<T> == cudf::is_fixed_point<T>());
+  static_assert(cudf::fixed_width<T> == cudf::is_fixed_width<T>());
+  static_assert(cudf::rep_layout_compatible<T> == cudf::is_rep_layout_compatible<T>());
+  static_assert(cudf::dictionary_type<T> == cudf::is_dictionary<T>());
+  static_assert(cudf::dictionary_key<T> == cudf::is_dictionary_key<T>());
+  static_assert(cudf::nested<T> == cudf::is_nested<T>());
+  static_assert(cudf::compound<T> == cudf::is_compound<T>());
+  return true;
+}
+
+TYPED_TEST(CvQualifiedTraitsTest, ConceptsMatchTraits)
+{
+  using T = TypeParam;
+  static_assert(concepts_match_traits<T>());
+  static_assert(concepts_match_traits<T const>());
+  static_assert(concepts_match_traits<T volatile>());
+  static_assert(concepts_match_traits<T const volatile>());
+  static_assert(concepts_match_traits<std::byte>());
+  static_assert(concepts_match_traits<std::byte const>());
+}
+
 CUDF_TEST_PROGRAM_MAIN()

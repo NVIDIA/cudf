@@ -14,6 +14,7 @@
 #include <cudf/detail/offsets_iterator_factory.cuh>
 #include <cudf/detail/utilities/cuda.hpp>
 #include <cudf/detail/utilities/cuda_memcpy.hpp>
+#include <cudf/detail/utilities/host_memory.hpp>
 #include <cudf/detail/utilities/integer_utils.hpp>
 #include <cudf/dictionary/dictionary_column_view.hpp>
 #include <cudf/interop.hpp>
@@ -43,6 +44,8 @@
 #include <nanoarrow/nanoarrow_device.h>
 #include <sys/mman.h>
 
+#include <algorithm>
+#include <cstring>
 #include <iostream>
 
 namespace cudf {
@@ -74,6 +77,72 @@ void enable_hugepage(ArrowBuffer* buffer)
 #endif
 }
 
+/*
+  ArrowBufferAllocator callbacks that route host buffer allocations through
+  cudf's existing pinned-memory-resource policy
+  (cudf::detail::get_host_allocator): allocations at or under
+  cudf::get_allocate_host_as_pinned_threshold() come from the shared pinned
+  pool (the same pool used by --pinned-memory / rapidsmpf's shuffle
+  buffers), larger ones fall back to pageable memory, matching the policy
+  cudf already applies elsewhere (e.g. cudf::detail::host_vector
+  consumers). The allocating stream is threaded through
+  ArrowBufferAllocator::private_data, since nanoarrow's C callback
+  signature has no capture.
+*/
+uint8_t* pinned_or_pageable_reallocate(ArrowBufferAllocator* allocator,
+                                       uint8_t* ptr,
+                                       int64_t old_size,
+                                       int64_t new_size)
+{
+  auto const stream = cuda::stream_ref{static_cast<cudaStream_t>(allocator->private_data)};
+
+  uint8_t* new_ptr = nullptr;
+  try {
+    auto new_allocator =
+      cudf::detail::get_host_allocator<uint8_t>(static_cast<std::size_t>(new_size), stream);
+    new_ptr = new_allocator.allocate(static_cast<std::size_t>(new_size));
+  } catch (...) {
+    return nullptr;
+  }
+
+  if (ptr != nullptr) {
+    if (new_ptr != nullptr) {
+      std::memcpy(
+        new_ptr, ptr, static_cast<std::size_t>(std::min<int64_t>(old_size, new_size)));
+    }
+    auto old_allocator =
+      cudf::detail::get_host_allocator<uint8_t>(static_cast<std::size_t>(old_size), stream);
+    old_allocator.deallocate(ptr, static_cast<std::size_t>(old_size));
+  }
+
+  return new_ptr;
+}
+
+void pinned_or_pageable_free(ArrowBufferAllocator* allocator, uint8_t* ptr, int64_t size)
+{
+  if (ptr == nullptr) { return; }
+  auto const stream = cuda::stream_ref{static_cast<cudaStream_t>(allocator->private_data)};
+  auto host_allocator =
+    cudf::detail::get_host_allocator<uint8_t>(static_cast<std::size_t>(size), stream);
+  host_allocator.deallocate(ptr, static_cast<std::size_t>(size));
+}
+
+/*
+  Build an ArrowBufferAllocator that allocates/frees host memory through
+  cudf's pinned-memory-resource policy on `stream`. Must be assigned to a
+  buffer (via ArrowBufferSetAllocator) before that buffer's first resize
+  call — nanoarrow rejects setting the allocator once a buffer already has
+  data.
+*/
+ArrowBufferAllocator make_pinned_arrow_buffer_allocator(cuda::stream_ref stream)
+{
+  ArrowBufferAllocator allocator;
+  allocator.reallocate   = &pinned_or_pageable_reallocate;
+  allocator.free         = &pinned_or_pageable_free;
+  allocator.private_data = static_cast<void*>(stream.get());
+  return allocator;
+}
+
 struct dispatch_to_arrow_host {
   cudf::column_view column;
   cuda::stream_ref stream;
@@ -83,6 +152,8 @@ struct dispatch_to_arrow_host {
   {
     if (!column.has_nulls()) { return NANOARROW_OK; }
 
+    NANOARROW_RETURN_NOT_OK(
+      ArrowBufferSetAllocator(&bitmap->buffer, make_pinned_arrow_buffer_allocator(stream)));
     NANOARROW_RETURN_NOT_OK(ArrowBitmapResize(bitmap, static_cast<int64_t>(column.size()), 0));
     enable_hugepage(&bitmap->buffer);
     CUDF_CUDA_TRY(cudf::detail::memcpy_async(
@@ -100,6 +171,8 @@ struct dispatch_to_arrow_host {
   template <typename T>
   int populate_data_buffer(device_span<T const> input, ArrowBuffer* buffer) const
   {
+    NANOARROW_RETURN_NOT_OK(
+      ArrowBufferSetAllocator(buffer, make_pinned_arrow_buffer_allocator(stream)));
     NANOARROW_RETURN_NOT_OK(ArrowBufferResize(buffer, input.size_bytes(), 1));
     enable_hugepage(buffer);
     CUDF_CUDA_TRY(

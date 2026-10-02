@@ -193,10 +193,26 @@ class StreamingOptions:
         Env: ``RAPIDSMPF_SPILL_DEVICE_LIMIT``.
         Default: ``"80%"``.
         Category: rapidsmpf.
+    spill_host_limit
+        Cap on pageable host memory the rapidsmpf BufferResource may use as a
+        spill tier, per GPU (e.g. ``"96GiB"`` or ``"10%"`` of host memory).
+        Only meaningful when the shuffler's spillable memory types include
+        ``host`` (``RAPIDSMPF_SHUFFLER_SPILLABLE_MEM_TYPES=host,disk``): spilled
+        buffers then go to host RAM up to this cap and to disk beyond it.
+        Budget it together with ``pinned_max_pool_size``.
+        Env: ``RAPIDSMPF_SPILL_HOST_LIMIT``.
+        Default: unlimited.
+        Category: rapidsmpf.
     periodic_spill_check
         Interval between spill checks (e.g. ``"1ms"``).
         Env: ``RAPIDSMPF_PERIODIC_SPILL_CHECK``.
         Default: ``"1ms"``.
+        Category: rapidsmpf.
+    disk_spill_dir
+        Directory for spilling to disk. Enables the shuffler's disk tier and
+        is where the streaming sort keeps its external-merge run pages.
+        Env: ``RAPIDSMPF_DISK_SPILL_DIR``.
+        Default: disabled.
         Category: rapidsmpf.
     unbounded_file_read_cache
         Cache file-read results in the Context's message storage.
@@ -301,6 +317,23 @@ class StreamingOptions:
         ``CUDF_POLARS__EXECUTOR__JOIN_FILTER_PUSHDOWN__*``.
         Default: disabled.
         Category: executor.
+    sort_strategy
+        How multi-partition ``Sort`` nodes execute. ``"in-memory"`` buffers the
+        local input, range-shuffles it and sorts each received partition in
+        device memory. ``"external"`` streams the input into the (disk-spilling)
+        shuffler as it arrives and sorts each partition with an external merge
+        sort (sorted runs on disk under ``disk_spill_dir``), so neither the shard
+        nor a partition is ever resident whole.
+        Env: ``CUDF_POLARS__EXECUTOR__SORT_STRATEGY``.
+        Default: ``"in-memory"``.
+        Category: executor.
+    sort_run_dir
+        Directory for the external sort's run pages; defaults to
+        ``disk_spill_dir``. Use a GDS-capable filesystem when the spill
+        directory is not one.
+        Env: ``CUDF_POLARS__EXECUTOR__SORT_RUN_DIR``.
+        Default: ``None`` (``disk_spill_dir``).
+        Category: executor.
     sink_to_directory
         Whether multi-partition sink operations should write to a directory
         rather than a single file. The ``spmd``/``ray``/``dask`` engines
@@ -374,9 +407,13 @@ class StreamingOptions:
     spill_device_limit: str | Unspecified = _opt(
         "rapidsmpf", "RAPIDSMPF_SPILL_DEVICE_LIMIT"
     )
+    spill_host_limit: str | Unspecified = _opt(
+        "rapidsmpf", "RAPIDSMPF_SPILL_HOST_LIMIT"
+    )
     periodic_spill_check: str | Unspecified = _opt(
         "rapidsmpf", "RAPIDSMPF_PERIODIC_SPILL_CHECK"
     )
+    disk_spill_dir: str | Unspecified = _opt("rapidsmpf", "RAPIDSMPF_DISK_SPILL_DIR")
     unbounded_file_read_cache: str | Unspecified = _opt(
         "rapidsmpf", "RAPIDSMPF_UNBOUNDED_FILE_READ_CACHE"
     )
@@ -432,16 +469,22 @@ class StreamingOptions:
     target_partition_size: int | Unspecified = _opt(
         "executor", "CUDF_POLARS__EXECUTOR__TARGET_PARTITION_SIZE", int
     )
-    dynamic_planning: dict[str, Any] | DynamicPlanningOptions | None | Unspecified = (
+    dynamic_planning: dict[str, Any] | DynamicPlanningOptions | Unspecified | None = (
         _opt("executor")
     )
     join_filter_pushdown: (
-        dict[str, Any] | JoinFilterPushdownOptions | None | Unspecified
+        dict[str, Any] | JoinFilterPushdownOptions | Unspecified | None
     ) = _opt("executor")
     sink_to_directory: bool | Unspecified = _opt(
         "executor", "CUDF_POLARS__EXECUTOR__SINK_TO_DIRECTORY", parse_boolean
     )
-    quent_context: QuentContext | None | Unspecified = _opt(
+    sort_strategy: Literal["in-memory", "external"] | Unspecified = _opt(
+        "executor", "CUDF_POLARS__EXECUTOR__SORT_STRATEGY"
+    )
+    sort_run_dir: str | Unspecified | None = _opt(
+        "executor", "CUDF_POLARS__EXECUTOR__SORT_RUN_DIR"
+    )
+    quent_context: QuentContext | Unspecified | None = _opt(
         "executor",
     )
 
@@ -754,6 +797,27 @@ class StreamingOptions:
                 Env: RAPIDSMPF_PERIODIC_SPILL_CHECK. Built-in default: 1ms."""),
         )
         g.add_argument(
+            "--spill-host-limit",
+            dest="spill_host_limit",
+            default=None,
+            type=str,
+            help=textwrap.dedent("""\
+                Cap on host RAM used as a spill tier per GPU (e.g. "96GiB" or
+                "10%%"); takes effect when RAPIDSMPF_SHUFFLER_SPILLABLE_MEM_TYPES
+                includes host. Env: RAPIDSMPF_SPILL_HOST_LIMIT. Built-in
+                default: unlimited."""),
+        )
+        g.add_argument(
+            "--disk-spill-dir",
+            dest="disk_spill_dir",
+            default=None,
+            type=str,
+            help=textwrap.dedent("""\
+                Directory for spilling to disk (shuffler disk tier and streaming
+                sort run pages). Env: RAPIDSMPF_DISK_SPILL_DIR. Built-in default:
+                disabled."""),
+        )
+        g.add_argument(
             "--unbounded-file-read-cache",
             dest="unbounded_file_read_cache",
             default=None,
@@ -851,6 +915,26 @@ class StreamingOptions:
             help=textwrap.dedent("""\
                 Target IO partition size in bytes. 0 = auto.
                 Env: CUDF_POLARS__EXECUTOR__TARGET_PARTITION_SIZE. Built-in default: auto."""),
+        )
+        g.add_argument(
+            "--sort-run-dir",
+            dest="sort_run_dir",
+            default=None,
+            type=str,
+            help=textwrap.dedent("""\
+                Directory for the external sort's run pages (default: the
+                rapidsmpf disk_spill_dir). Env: CUDF_POLARS__EXECUTOR__SORT_RUN_DIR."""),
+        )
+        g.add_argument(
+            "--sort-strategy",
+            dest="sort_strategy",
+            default=None,
+            type=str,
+            choices=["in-memory", "external"],
+            help=textwrap.dedent("""\
+                Multi-partition Sort strategy: "in-memory" (default) or "external"
+                (stream into the shuffler; external merge sort per partition with
+                runs on disk). Env: CUDF_POLARS__EXECUTOR__SORT_STRATEGY."""),
         )
         g.add_argument(
             "--dynamic-planning",

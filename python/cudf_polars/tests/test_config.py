@@ -340,6 +340,7 @@ def test_validate_cluster() -> None:
         "max_concurrent_io_tasks",
         "num_py_executors",
         "kvikio_nthreads",
+        "sort_strategy",
     ],
 )
 def test_validate_streaming_executor_options(option: str) -> None:
@@ -350,6 +351,27 @@ def test_validate_streaming_executor_options(option: str) -> None:
                 executor_options={option: object()},
             )
         )
+
+
+def test_sort_strategy_invalid_value_raises() -> None:
+    with pytest.raises(
+        ValueError, match="sort_strategy must be 'in-memory' or 'external'"
+    ):
+        ConfigOptions.from_polars_engine(
+            pl.GPUEngine(
+                executor="streaming",
+                executor_options={"sort_strategy": "bogus"},
+            )
+        )
+
+
+def test_sort_strategy_default_and_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    config = ConfigOptions.from_polars_engine(pl.GPUEngine(executor="streaming"))
+    assert config.executor.sort_strategy == "in-memory"
+    with monkeypatch.context() as m:
+        m.setenv("CUDF_POLARS__EXECUTOR__SORT_STRATEGY", "external")
+        config = ConfigOptions.from_polars_engine(pl.GPUEngine(executor="streaming"))
+        assert config.executor.sort_strategy == "external"
 
 
 def test_kvikio_nthreads_non_positive_raises() -> None:

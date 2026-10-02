@@ -66,11 +66,8 @@ void BM_hybrid_scan_projection(nvbench::state& state)
 
   state.exec(nvbench::exec_tag::sync | nvbench::exec_tag::timer,
              [&](nvbench::launch& launch, auto& timer) {
-               drop_page_cache_if_enabled(source_info.filepaths());
+               // Clear the cached selection so each iteration selects the payload columns again
                reader->reset_column_selection();
-               // Select the filter columns first, as a real read does, so the timed call covers
-               // only the payload selection
-               std::ignore = reader->filter_column_chunks_byte_ranges(row_groups, read_opts);
 
                timer.start();
                std::ignore = reader->payload_column_chunks_byte_ranges(row_groups, read_opts);

@@ -188,8 +188,9 @@ void BM_parquet_reader_construction(nvbench::state& state)
 // Benchmark to measure parquet column selection time
 void BM_parquet_column_selection(nvbench::state& state)
 {
-  auto const num_cols    = static_cast<cudf::size_type>(state.get_int64("num_cols"));
-  auto const source_type = retrieve_io_type_enum(state.get_string("io_type"));
+  auto const num_cols       = static_cast<cudf::size_type>(state.get_int64("num_cols"));
+  auto const source_type    = retrieve_io_type_enum(state.get_string("io_type"));
+  auto const select_by_name = state.get_string("selection_method") == "names";
 
   cuio_source_sink_pair source_sink(source_type);
 
@@ -208,9 +209,17 @@ void BM_parquet_column_selection(nvbench::state& state)
   auto constexpr chunk_read_limit = 0;
   auto constexpr pass_read_limit  = 0;
 
-  auto const read_opts = cudf::io::parquet_reader_options::builder(source_sink.make_source_info())
-                           .use_arrow_schema(false)
-                           .build();
+  auto read_opts = cudf::io::parquet_reader_options::builder(source_sink.make_source_info())
+                     .use_arrow_schema(false)
+                     .build();
+  if (select_by_name) {
+    // Without metadata, the writer names the columns _col0.._col{n-1}
+    std::vector<std::string> column_names(num_cols);
+    for (cudf::size_type i = 0; i < num_cols; i++) {
+      column_names[i] = "_col" + std::to_string(i);
+    }
+    read_opts.set_column_names(std::move(column_names));
+  }
   state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().get()));
   auto const mem_stats_logger = cudf::memory_stats_logger();
 
@@ -342,57 +351,6 @@ void BM_parquet_filter_name_resolution(nvbench::state& state)
     mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
 }
 
-// Benchmark full-projection column-name resolution during naive reader construction.
-void BM_parquet_read_column_projection(nvbench::state& state)
-{
-  auto const num_cols    = static_cast<cudf::size_type>(state.get_int64("num_cols"));
-  auto const source_type = retrieve_io_type_enum(state.get_string("io_type"));
-
-  cuio_source_sink_pair source_sink(source_type);
-
-  // Flat, single-row table of INT32 columns. Without metadata, the writer names them
-  // _col0.._col{n-1}
-  constexpr cudf::size_type num_rows = 1;
-  auto const tbl =
-    create_random_table(cycle_dtypes({cudf::type_id::INT32}, num_cols),
-                        row_count{num_rows},
-                        data_profile_builder().cardinality(0).avg_run_length(1).no_validity());
-
-  cudf::io::parquet_writer_options write_opts =
-    cudf::io::parquet_writer_options::builder(source_sink.make_sink_info(), tbl->view())
-      .compression(cudf::io::compression_type::NONE);
-  cudf::io::write_parquet(write_opts);
-
-  std::vector<std::string> column_names(num_cols);
-  for (cudf::size_type i = 0; i < num_cols; i++) {
-    column_names[i] = "_col" + std::to_string(i);
-  }
-  auto read_opts = cudf::io::parquet_reader_options::builder(source_sink.make_source_info())
-                     .column_names(std::move(column_names))
-                     .build();
-
-  state.add_element_count(num_cols, "schema_columns");
-  auto const mem_stats_logger = cudf::memory_stats_logger();
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().get()));
-  state.exec(
-    nvbench::exec_tag::sync | nvbench::exec_tag::timer, [&](nvbench::launch& launch, auto& timer) {
-      auto const source_info = source_sink.make_source_info();
-      drop_page_cache_if_enabled(source_info.filepaths());
-      auto sources   = cudf::io::make_datasources(source_info);
-      auto metadatas = cudf::io::read_parquet_footers(sources);
-
-      // Constructing chunked parquet reader with existing datasource and metadata spends almost
-      // entire time in column selection
-      timer.start();
-      [[maybe_unused]] auto const reader =
-        cudf::io::chunked_parquet_reader(0, 0, std::move(sources), std::move(metadatas), read_opts);
-      timer.stop();
-    });
-
-  state.add_buffer_size(
-    mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
-}
-
 NVBENCH_BENCH(BM_parquet_read_footer)
   .set_name("parquet_read_footer")
   .set_min_samples(4)
@@ -413,6 +371,7 @@ NVBENCH_BENCH(BM_parquet_column_selection)
   .set_name("parquet_column_selection")
   .set_min_samples(4)
   .add_string_axis("io_type", {"FILEPATH"})
+  .add_string_axis("selection_method", {"none", "names"})
   .add_int64_axis("num_cols", {64, 512, 2048});
 
 NVBENCH_BENCH(BM_parquet_filter_name_resolution)
@@ -422,9 +381,3 @@ NVBENCH_BENCH(BM_parquet_filter_name_resolution)
   .add_int64_axis("num_cols", {64, 128, 256, 512, 1024, 1536, 2048, 4096})
   .add_int64_axis("case_sensitive", {1, 0})
   .add_int64_axis("heavy_filter", {0, 1});
-
-NVBENCH_BENCH(BM_parquet_read_column_projection)
-  .set_name("parquet_read_column_projection")
-  .set_min_samples(4)
-  .add_string_axis("io_type", {"FILEPATH"})
-  .add_int64_axis("num_cols", {64, 512, 2048, 4096});

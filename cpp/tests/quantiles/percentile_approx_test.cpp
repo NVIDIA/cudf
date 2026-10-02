@@ -31,6 +31,10 @@
 #include <utility>
 #include <vector>
 
+// Both comparisons pit two independently reduced results against each other. Over 3000 repeats the
+// per-run maximum distance was 6 ULPs (about 40% of runs exceed the default of 4).
+constexpr cudf::size_type percentile_approx_fp_ulps = 12;
+
 namespace {
 struct percentile_approx_dispatch {
   template <typename T, typename Func>
@@ -165,7 +169,10 @@ void percentile_approx_test(cudf::column_view const& _keys,
                    std::back_inserter(reduce_part_views),
                    [](std::unique_ptr<cudf::column> const& c) { return c->view(); });
     auto reduce_expected = cudf::concatenate(reduce_part_views);
-    CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(*expected, *reduce_expected);
+    CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(*expected,
+                                        *reduce_expected,
+                                        cudf::test::debug_output_level::FIRST_ERROR,
+                                        percentile_approx_fp_ulps);
 
     cudf::groupby::groupby gb(k);
     std::vector<cudf::groupby::aggregation_request> requests;
@@ -180,7 +187,8 @@ void percentile_approx_test(cudf::column_view const& _keys,
     auto result = cudf::percentile_approx(tdv, g_percentages, stream);
     stream.sync();
 
-    CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(*expected, *result);
+    CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(
+      *expected, *result, cudf::test::debug_output_level::FIRST_ERROR, percentile_approx_fp_ulps);
   }
 }
 

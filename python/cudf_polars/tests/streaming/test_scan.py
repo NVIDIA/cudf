@@ -778,6 +778,7 @@ def test_scan_path_mismatch_raises() -> None:
             scan.parquet_options,
             scan.hive_parts,
             [],
+            None,
             context=ctx,
         )
 
@@ -815,6 +816,7 @@ def test_parquet_split_task_fetches_missing_metadata(tmp_path: Path) -> None:
         2,
         scan.parquet_options,
         scan.hive_parts,
+        scan.lake_options,
         context=IRExecutionContext(),
     )
 

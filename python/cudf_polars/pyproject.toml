@@ -26,7 +26,7 @@ dependencies = [
     "kvikio==26.12.*,>=0.0.0a0",
     "nvidia-ml-py>=12",
     "packaging",
-    "polars>=1.35,<1.45",
+    "polars>=2.0.0rc2,<2.1",
     "pylibcudf==26.12.*,>=0.0.0a0",
     "rapidsmpf==26.12.*,>=0.0.0a0",
     "typing_extensions>=4.0.0",
@@ -45,8 +45,10 @@ classifiers = [
 [project.optional-dependencies]
 test = [
     "dask-cuda==26.12.*,>=0.0.0a0",
+    "deltalake>=1.6.0",
     "pandas>=3.0.0,<3.1.0",
     "psutil",
+    "pyiceberg>=0.12.0",
     "pytest-cov",
     "pytest-httpserver",
     "pytest-xdist",

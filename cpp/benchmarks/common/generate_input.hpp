@@ -520,8 +520,10 @@ class data_profile_builder {
    *
    * Characters are uniformly distributed in the range [lower, upper].
    * Values > 126 will produce multi-byte UTF-8 characters.
+   * The `create_ascii_string_column` function limits the upper bound to 126.
    *
-   * @param lower Lower bound of character range (inclusive, must be >= 32)
+   * @param lower Lower bound of character range (inclusive, must be >= 32 and < 127 so that
+   *              strings can always end with a single-byte character)
    * @param upper Upper bound of character range (inclusive)
    * @return this for chaining
    */

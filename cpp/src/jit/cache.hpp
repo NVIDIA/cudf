@@ -99,12 +99,14 @@ kernel get_kernel(std::string const& name,
  * @param headers Contents of any additional embedded header files to include during compilation
  * @param kernel_instance String identifier for the specific kernel instance being requested (used
  * for caching)
+ * @param name_expressions Global kernel expressions that must be retained in the fragment
  */
 rtcx::blob get_kernel_fragment(std::string const& name,
                                std::string const& source_file_id,
                                std::span<char const* const> header_include_names,
                                std::span<char const* const> headers,
-                               std::string const& kernel_instance);
+                               std::string const& kernel_instance,
+                               std::span<char const* const> name_expressions = {});
 
 /**
  * @brief Gets a kernel by linking together embedded binary fragments
@@ -116,5 +118,14 @@ rtcx::blob get_kernel_fragment(std::string const& name,
 kernel get_lto_linked_kernel(std::string const& name,
                              std::span<rtcx::file_fragment const> file_fragments,
                              std::span<rtcx::memory_fragment const> memory_fragments);
+
+/**
+ * @brief Gets the runtime-descriptor AST kernel from its generated operation source.
+ *
+ * Source and embedded-bundle identity allow a linked-kernel hit without resolving its LTO
+ * fragments. Fragment compilation and linking use the same context cache on a miss.
+ * @param cuda_source Generated operation and typed column-access source
+ */
+kernel get_ast_runtime_kernel(std::string const& cuda_source);
 
 }  // namespace CUDF_EXPORT cudf

@@ -32,6 +32,7 @@
 #include <rmm/device_buffer.hpp>
 #include <rmm/device_uvector.hpp>
 
+#include <cuda/cmath>
 #include <cuda/functional>
 #include <cuda/iterator>
 #include <cuda/std/functional>
@@ -711,8 +712,8 @@ std::unique_ptr<cudf::column> create_random_column<cudf::struct_view>(data_profi
       }();
 
       // Adopt remaining children as evenly as possible
-      auto const num_to_adopt = cudf::util::div_rounding_up_unsafe(
-        std::distance(current_child, children.end()), std::distance(current_parent, parents.end()));
+      auto const num_to_adopt = cuda::ceil_div(std::distance(current_child, children.end()),
+                                               std::distance(current_parent, parents.end()));
       CUDF_EXPECTS(num_to_adopt > 0, "No children columns left to adopt");
 
       std::vector<std::unique_ptr<cudf::column>> children_to_adopt;

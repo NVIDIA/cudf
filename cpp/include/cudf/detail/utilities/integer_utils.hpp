@@ -31,6 +31,8 @@
 #include <cudf/fixed_point/temporary.hpp>
 #include <cudf/types.hpp>
 
+#include <cuda/cmath>
+
 #ifndef __CUDACC_RTC__
 #include <cudf/utilities/error.hpp>
 
@@ -109,24 +111,6 @@ CUDF_HOST_DEVICE constexpr S round_up_unsafe(S number_to_round, S modulus) noexc
   return rounded_up;
 }
 
-/**
- * Divides the left-hand-side by the right-hand-side, rounding up
- * to an integral multiple of the right-hand-side, e.g. (9,5) -> 2 , (10,5) -> 2, (11,5) -> 3.
- *
- * @param dividend the number to divide
- * @param divisor the number by which to divide
- * @return The least integer multiple of {@link divisor} which is greater than or equal to
- * the non-integral division dividend/divisor.
- *
- * @note sensitive to overflow, i.e. if dividend > std::numeric_limits<S>::max() - divisor,
- * the result will be incorrect
- */
-template <typename S, typename T>
-CUDF_HOST_DEVICE constexpr S div_rounding_up_unsafe(S const& dividend, T const& divisor) noexcept
-{
-  return (dividend + divisor - 1) / divisor;
-}
-
 namespace detail {
 template <typename I>
 CUDF_HOST_DEVICE constexpr I div_rounding_up_safe(cuda::std::false_type,
@@ -134,8 +118,7 @@ CUDF_HOST_DEVICE constexpr I div_rounding_up_safe(cuda::std::false_type,
                                                   I divisor) noexcept
 {
   // TODO: This could probably be implemented faster
-  return (dividend > divisor) ? 1 + div_rounding_up_unsafe(dividend - divisor, divisor)
-                              : (dividend > 0);
+  return (dividend > divisor) ? 1 + cuda::ceil_div(dividend - divisor, divisor) : (dividend > 0);
 }
 
 template <typename I>

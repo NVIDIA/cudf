@@ -9,9 +9,11 @@ import uuid
 from itertools import pairwise
 from pathlib import Path
 from typing import TYPE_CHECKING
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
+import cuda.core
 import pytest
+from cuda.bindings.driver import CUresult
 
 import polars as pl
 from polars import polars as plrs  # type: ignore[attr-defined]
@@ -28,6 +30,7 @@ from cudf_polars.engine.options import StreamingOptions
 from cudf_polars.engine.spmd import (
     SPMDEngine,
     allgather_polars_dataframe,
+    use_gpu,
 )
 from cudf_polars.streaming.actor_graph.collectives.common import reserve_op_id
 from cudf_polars.testing.asserts import assert_gpu_result_equal
@@ -890,3 +893,118 @@ def test_memory_error_hint(spmd_engine: SPMDEngine) -> None:
             pytest.raises(MemoryError, match="target_partition_size"),
         ):
             q.collect(engine=spmd_engine)
+
+
+def test_engine_rejects_gpu_selected_by_ordinal() -> None:
+    """A process that selected a GPU by ordinal is rejected when the engine is built."""
+    with (
+        patch("cuda.core.Device", return_value=MagicMock(device_id=1)),
+        pytest.raises(RuntimeError, match="ordinal 0, but"),
+    ):
+        SPMDEngine()
+
+
+@pytest.fixture
+def cuda_not_initialized(monkeypatch: pytest.MonkeyPatch) -> None:
+    """
+    Present `use_gpu` with a process in which CUDA has not started yet.
+
+    CUDA is already running in the test process, so the probe is mocked. The
+    visible-device mask is cleared so the worker's own mask cannot leak in.
+    """
+    # setenv first so the variable is restored even when it was unset, since
+    # delenv of a missing variable records nothing and `use_gpu` sets it.
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "")
+    monkeypatch.delenv("CUDA_VISIBLE_DEVICES")
+    monkeypatch.setattr(
+        "cudf_polars.engine.spmd.cuda_driver.cuCtxGetCurrent",
+        lambda: (CUresult.CUDA_ERROR_NOT_INITIALIZED, None),
+    )
+
+
+def _device_count(count: int | None):
+    """Make CUDA report ``count`` visible GPUs, or fail to find any for ``None``."""
+    if count is None:
+        return patch.object(
+            cuda.core.Device,
+            "get_all_devices",
+            side_effect=RuntimeError("CUDA_ERROR_NO_DEVICE"),
+        )
+    return patch.object(
+        cuda.core.Device, "get_all_devices", return_value=[MagicMock()] * count
+    )
+
+
+@pytest.mark.usefixtures("cuda_not_initialized")
+@pytest.mark.parametrize(
+    "mask,index,expected",
+    [(None, 1, "1"), ("1,0", 1, "0")],
+    ids=["no-mask", "index-into-mask"],
+)
+def test_use_gpu_sets_visible_devices(
+    monkeypatch: pytest.MonkeyPatch, mask: str | None, index: int, expected: str
+) -> None:
+    """An index selects from the visible devices, and becomes the only one."""
+    if mask is not None:
+        monkeypatch.setenv("CUDA_VISIBLE_DEVICES", mask)
+    with _device_count(1):
+        use_gpu(index)
+    assert os.environ["CUDA_VISIBLE_DEVICES"] == expected
+
+
+@pytest.mark.usefixtures("cuda_not_initialized")
+@pytest.mark.parametrize(
+    "mask,index,count,match",
+    [
+        (None, 9, None, "no GPU matches"),
+        (None, "0,1", 2, "exactly one"),
+        ("3", 1, 1, "out of range"),
+        ("", 0, 1, "out of range"),
+    ],
+    ids=["unknown-gpu", "several-gpus", "index-outside-mask", "empty-mask"],
+)
+def test_use_gpu_rejects_invalid_selection(
+    monkeypatch: pytest.MonkeyPatch,
+    mask: str | None,
+    index: int | str,
+    count: int | None,
+    match: str,
+) -> None:
+    """A selection that does not name exactly one visible GPU is reported."""
+    if mask is not None:
+        monkeypatch.setenv("CUDA_VISIBLE_DEVICES", mask)
+    with _device_count(count), pytest.raises(RuntimeError, match=match):
+        use_gpu(index)
+
+
+def test_use_gpu_rejects_already_initialized_cuda(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """
+    Once CUDA is up the mask is fixed, and that is reported before touching it.
+
+    Checking the device count afterwards could not catch this: CUDA already
+    running with one different GPU also reports a count of one.
+    """
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "0")
+    monkeypatch.setattr(
+        "cudf_polars.engine.spmd.cuda_driver.cuCtxGetCurrent",
+        lambda: (CUresult.CUDA_SUCCESS, None),
+    )
+    with (
+        _device_count(1),
+        pytest.raises(RuntimeError, match="already initialized"),
+    ):
+        use_gpu("GPU-00000000-0000-0000-0000-000000000001")
+    assert os.environ["CUDA_VISIBLE_DEVICES"] == "0"
+
+
+def test_persisted_result_take_local_and_duplicated(spmd_engine: SPMDEngine) -> None:
+    """`take_local` hands back the partition once, and reports its layout."""
+    result = spmd_engine.execute(pl.LazyFrame({"a": [1.0, 2.0]}).select("a"))
+    assert result.local_is_duplicated(spmd_engine.rank) is False
+
+    df = result.take_local(spmd_engine.rank)
+    assert df.num_rows == 2
+    with pytest.raises(RuntimeError, match="consumed on read"):
+        result.take_local(spmd_engine.rank)

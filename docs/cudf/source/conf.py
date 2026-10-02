@@ -480,6 +480,7 @@ intersphinx_mapping = {
         f"https://docs.nvidia.com/rapidsmpf/{intersphinx_version}/",
         None,
     ),
+    "torch": ("https://docs.pytorch.org/docs/stable/", None),
     "typing_extensions": (
         "https://typing-extensions.readthedocs.io/en/stable/",
         None,
@@ -850,6 +851,7 @@ nitpick_ignore = [
     ("py:class", "Value"),
     ("py:class", "polars.lazyframe.frame.LazyFrame"),
     ("py:class", "cudf_polars.engine.persisted_result.PersistedBackend"),
+    ("py:class", "cudf_polars.containers.DataFrame"),
     # pylibcudf typing aliases rendered as bare names in autodoc signatures.
     ("py:class", "ColumnNameSpec"),
     ("py:class", "CudaStreamLike"),

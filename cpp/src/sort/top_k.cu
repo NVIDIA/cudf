@@ -417,6 +417,17 @@ std::unique_ptr<column> top_k(column_view const& col,
   return detail::top_k(col, k, topk_order, stream, mr);
 }
 
+std::unique_ptr<column> top_k(column_view const& col,
+                              size_type k,
+                              order topk_order,
+                              null_order null_precedence,
+                              cuda::stream_ref stream,
+                              rmm::device_async_resource_ref mr)
+{
+  CUDF_FUNC_RANGE();
+  return detail::top_k(col, k, topk_order, null_precedence, stream, mr);
+}
+
 std::unique_ptr<column> top_k_order(column_view const& col,
                                     size_type k,
                                     order topk_order,
@@ -425,6 +436,17 @@ std::unique_ptr<column> top_k_order(column_view const& col,
 {
   CUDF_FUNC_RANGE();
   return detail::top_k_order(col, k, topk_order, stream, mr);
+}
+
+std::unique_ptr<column> top_k_order(column_view const& col,
+                                    size_type k,
+                                    order topk_order,
+                                    null_order null_precedence,
+                                    cuda::stream_ref stream,
+                                    rmm::device_async_resource_ref mr)
+{
+  CUDF_FUNC_RANGE();
+  return detail::top_k_order(col, k, topk_order, null_precedence, stream, mr);
 }
 
 }  // namespace cudf

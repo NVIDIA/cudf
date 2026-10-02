@@ -141,6 +141,8 @@ extensions = [
 ]
 
 # configuration for 'sphinx-llm'
+llms_txt_summary_enabled = False
+llms_txt_suppress_unknown_node_warnings = True
 # cudf doc builds run notebooks that use GPU resources parallel builds and can have
 # CUDA context initialization failures and MyST-NB warnings
 llms_txt_build_parallel = False

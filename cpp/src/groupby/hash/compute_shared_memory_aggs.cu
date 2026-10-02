@@ -22,6 +22,7 @@
 #include <cudf/utilities/type_dispatcher.hpp>
 
 #include <cooperative_groups.h>
+#include <cuda/cmath>
 #include <cuda/std/algorithm>
 #include <cuda/std/cstddef>
 #include <cuda/std/type_traits>
@@ -361,8 +362,7 @@ size_type get_available_shared_memory_size(cudf::size_type grid_size)
   size_t dynamic_shmem_size = 0;
   CUDF_CUDA_TRY(cudaOccupancyAvailableDynamicSMemPerBlock(
     &dynamic_shmem_size, single_pass_shmem_aggs_kernel, active_blocks_per_sm, GROUPBY_BLOCK_SIZE));
-  return cudf::util::round_down_safe(static_cast<cudf::size_type>(0.5 * dynamic_shmem_size),
-                                     ALIGNMENT);
+  return cuda::round_down(static_cast<cudf::size_type>(0.5 * dynamic_shmem_size), ALIGNMENT);
 }
 
 int32_t max_active_blocks_shmem_aggs_kernel()

@@ -51,7 +51,7 @@ class element_hasher {
    */
   __device__ element_hasher(
     Nullate nulls,
-    result_type seed      = DEFAULT_HASH_SEED,
+    result_type seed,
     result_type null_hash = cuda::std::numeric_limits<result_type>::max()) noexcept
     : _check_nulls(nulls), _seed(seed), _null_hash(null_hash)
   {
@@ -215,9 +215,10 @@ class device_row_hasher {
     Nullate const _check_nulls;
   };
 
-  CUDF_HOST_DEVICE device_row_hasher(Nullate check_nulls,
-                                     table_device_view t,
-                                     result_type seed = DEFAULT_HASH_SEED) noexcept
+  CUDF_HOST_DEVICE device_row_hasher(
+    Nullate check_nulls,
+    table_device_view t,
+    result_type seed = hashing::detail::DEFAULT_ALGORITHM_HASH_SEED) noexcept
     : _check_nulls{check_nulls}, _table{t}, _seed(seed)
   {
   }
@@ -276,8 +277,9 @@ class row_hasher {
     template <template <typename> class, typename> class DeviceRowHasher = device_row_hasher,
     typename Nullate>
   DeviceRowHasher<hash_function, Nullate> device_hasher(
-    Nullate nullate                                                  = {},
-    cuda::std::invoke_result_t<hash_function<int32_t>, int32_t> seed = DEFAULT_HASH_SEED) const
+    Nullate nullate = {},
+    cuda::std::invoke_result_t<hash_function<int32_t>, int32_t> seed =
+      hashing::detail::DEFAULT_ALGORITHM_HASH_SEED) const
   {
     return DeviceRowHasher<hash_function, Nullate>(nullate, *d_t, seed);
   }

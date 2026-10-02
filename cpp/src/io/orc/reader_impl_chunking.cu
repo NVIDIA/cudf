@@ -25,7 +25,9 @@
 #include <thrust/scan.h>
 
 #include <algorithm>
+#include <format>
 #include <numeric>
+#include <ranges>
 #include <tuple>
 
 namespace cudf::io::orc::detail {
@@ -242,23 +244,34 @@ void reader_impl::preprocess_file(read_mode mode)
   auto const num_total_stripes = selected_stripes.size();
   auto const num_levels        = _selected_columns.num_levels();
 
-  // Set up table for converting timestamp columns from local to UTC time
-  _file_itm_data.tz_table = [&] {
-    auto const has_timestamp_column = std::any_of(
-      _selected_columns.levels.cbegin(), _selected_columns.levels.cend(), [&](auto const& col_lvl) {
-        return std::any_of(col_lvl.cbegin(), col_lvl.cend(), [&](auto const& col_meta) {
-          return _metadata.get_col_type(col_meta.id).kind == TypeKind::TIMESTAMP;
-        });
-      });
+  auto const has_timestamp_column =
+    std::ranges::any_of(_selected_columns.levels | std::views::join, [&](auto const& col_meta) {
+      return _metadata.get_col_type(col_meta.id).kind == TypeKind::TIMESTAMP;
+    });
+  auto const writer_timezone =
+    has_timestamp_column ? std::string_view{selected_stripes[0].stripe_footer->writerTimezone}
+                         : std::string_view{};
 
-    return (has_timestamp_column && !_options.ignore_timezone_in_stripe_footer)
-             ? cudf::detail::make_timezone_transition_table(
-                 {},
-                 selected_stripes[0].stripe_footer->writerTimezone,
-                 _stream,
-                 cudf::get_current_device_resource_ref())
-             : std::make_unique<cudf::table>();
-  }();
+  // Set up table for converting timestamp columns from local to UTC time
+  _file_itm_data.tz_table =
+    (has_timestamp_column && !_options.ignore_timezone_in_stripe_footer)
+      ? cudf::detail::make_timezone_transition_table(
+          {}, writer_timezone, _stream, cudf::get_current_device_resource_ref())
+      : std::make_unique<cudf::table>();
+
+  // The ORC epoch as it occurs in the writer's timezone. The data stream is stored relative to it,
+  // so the negative timestamp borrow must be decided in that frame even with the timezone ignored
+  try {
+    _file_itm_data.orc_base_epoch = base_epoch_in_timezone(writer_timezone);
+  } catch (cudf::logic_error const& e) {
+    if (!_options.ignore_timezone_in_stripe_footer) { throw; }
+    // Don't throw if the timezone is only used for negative timestamp borrow.
+    CUDF_LOG_WARN(std::format(
+      "Could not resolve the ORC writer timezone '{}'; the negative timestamp borrow falls back "
+      "to UTC, so timestamps within the timezone's offset of 1970-01-01 may be one second off. {}",
+      writer_timezone,
+      e.what()));
+  }
 
   //
   // Pre allocate necessary memory for data processed in the other reading steps:

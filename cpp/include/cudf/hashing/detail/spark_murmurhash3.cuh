@@ -62,10 +62,10 @@ struct Spark_MurmurHash3_x86_32 {
   [[nodiscard]] __device__ static inline uint32_t mix_block(uint32_t k1, uint32_t h)
   {
     k1 *= c1;
-    k1 = rotate_bits_left(k1, rot_c1);
+    k1 = cuda::std::rotl(k1, rot_c1);
     k1 *= c2;
     h ^= k1;
-    h = rotate_bits_left(h, rot_c2);
+    h = cuda::std::rotl(h, rot_c2);
     h = h * 5 + c3;
     return h;
   }

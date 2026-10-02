@@ -140,6 +140,7 @@ extensions = [
     "myst_nb",
 ]
 
+# configuration for 'sphinx-llm'
 # cudf doc builds run notebooks that use GPU resources parallel builds and can have
 # CUDA context initialization failures and MyST-NB warnings
 llms_txt_build_parallel = False

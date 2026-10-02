@@ -400,8 +400,14 @@ ConfigureTest(TYPE_INFERENCE_TEST io/type_inference_test.cpp)
 # ##################################################################################################
 # * sort tests ------------------------------------------------------------------------------------
 ConfigureTest(
-  SORT_TEST sort/rank_test.cpp sort/segmented_sort_tests.cpp sort/sort_nested_types_tests.cpp
-  sort/sort_test.cpp sort/stable_sort_tests.cpp sort/top_k_tests.cpp
+  SORT_TEST
+  sort/rank_test.cpp
+  sort/segmented_sort_tests.cpp
+  sort/sort_nested_types_tests.cpp
+  sort/sort_test.cpp
+  sort/stable_sort_tests.cpp
+  sort/string_sort_prefix_test.cpp
+  sort/top_k_tests.cpp
   GPUS 1
   PERCENT 70
 )

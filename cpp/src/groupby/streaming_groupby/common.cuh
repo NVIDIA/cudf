@@ -152,7 +152,7 @@ struct n_table_comparator {
  * target_indices via slot_offsets in a single transform.
  */
 template <typename SetRef>
-struct insert_and_check_fn {
+struct insert_fn {
   mutable SetRef set_ref;
   bitmask_type const* row_bitmask;
   size_type max_distinct_keys;
@@ -160,17 +160,26 @@ struct insert_and_check_fn {
   size_type* target_indices;
   size_type* slot_offsets;
 
-  __device__ bool operator()(size_type row_idx) const
+  __device__ void operator()(size_type row_idx) const
   {
     if (row_bitmask && !cudf::bit_is_set(row_bitmask, row_idx)) {
       target_indices[row_idx] = cudf::detail::CUDF_SIZE_TYPE_SENTINEL;
       slot_offsets[row_idx]   = cudf::detail::CUDF_SIZE_TYPE_SENTINEL;
-      return false;
+      return;
     }
-    auto const [iter, inserted] = set_ref.insert_and_find(max_distinct_keys + row_idx);
-    target_indices[row_idx]     = *iter;
-    slot_offsets[row_idx]       = static_cast<size_type>(iter - base);
-    return inserted;
+    auto iter               = set_ref.insert_and_find(max_distinct_keys + row_idx).first;
+    target_indices[row_idx] = *iter;
+    slot_offsets[row_idx]   = static_cast<size_type>(iter - base);
+  }
+};
+
+struct is_new_key_fn {
+  size_type const* target_indices;
+  size_type max_distinct_keys;
+
+  __device__ bool operator()(size_type row_idx) const noexcept
+  {
+    return target_indices[row_idx] == max_distinct_keys + row_idx;
   }
 };
 

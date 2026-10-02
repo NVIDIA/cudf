@@ -605,7 +605,11 @@ std::unique_ptr<cudf::column> create_string_column(cudf::size_type num_rows,
                                                    int32_t hit_rate);
 
 /**
- * @brief Generates an string column filled with ASCII characters only
+ * @brief Generates a string column filled with ASCII characters only
+ *
+ * Only the string length distribution and null probability of the profile are used.
+ * The cardinality and average run length settings are ignored, so every row is
+ * generated independently.
  *
  * @param profile Data profile for the output column
  * @param num_rows Number of rows in the output column

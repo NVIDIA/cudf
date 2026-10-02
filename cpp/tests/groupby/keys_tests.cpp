@@ -1,16 +1,27 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
 #include <tests/groupby/groupby_test_util.hpp>
 
 #include <cudf_test/base_fixture.hpp>
+#include <cudf_test/column_utilities.hpp>
 #include <cudf_test/column_wrapper.hpp>
+#include <cudf_test/default_stream.hpp>
 #include <cudf_test/iterator_utilities.hpp>
+#include <cudf_test/memory_resource_utilities.hpp>
+#include <cudf_test/table_utilities.hpp>
 #include <cudf_test/type_lists.hpp>
 
 #include <cudf/aggregation.hpp>
+#include <cudf/copying.hpp>
+#include <cudf/groupby.hpp>
+#include <cudf/sorting.hpp>
+
+#include <cuda/iterator>
+
+#include <vector>
 
 using namespace cudf::test::iterators;
 
@@ -406,4 +417,353 @@ TEST_F(groupby_cache_test, duplicate_columns)
   requests[0].aggregations.push_back(
     cudf::make_nth_element_aggregation<cudf::groupby_aggregation>(0));
   EXPECT_NO_THROW(gb_obj.aggregate(requests));
+}
+
+using groupby_key_shape_test = groupby_keys_test<int32_t>;
+
+TEST_F(groupby_key_shape_test, NearlyDistinctSampleUnderestimatesPopulation)
+{
+  constexpr cudf::size_type num_rows    = 1 << 21;
+  constexpr cudf::size_type stride      = 64;
+  constexpr cudf::size_type sample_keys = 31'000;
+  constexpr cudf::size_type num_samples = num_rows / stride;
+
+  // The periodic sample is almost entirely distinct, but still has far fewer keys than the
+  // complete input. Every row outside the sample has a unique key. An undersized table must
+  // restart the build without dropping rows or duplicating groups.
+  std::vector<int32_t> keys_data(num_rows);
+  std::vector<int32_t> expected_keys;
+  std::vector<cudf::size_type> expected_counts;
+  std::vector<int32_t> expected_maxima;
+  expected_keys.reserve(num_rows - num_samples + sample_keys);
+  expected_counts.reserve(num_rows - num_samples + sample_keys);
+  expected_maxima.reserve(num_rows - num_samples + sample_keys);
+  for (cudf::size_type key = 0; key < sample_keys; ++key) {
+    expected_keys.push_back(key);
+    expected_counts.push_back(num_samples / sample_keys + (key < num_samples % sample_keys));
+    auto const last_sample = key + ((num_samples - 1 - key) / sample_keys) * sample_keys;
+    expected_maxima.push_back(last_sample * stride);
+  }
+  for (cudf::size_type row = 0; row < num_rows; ++row) {
+    if (row % stride == 0) {
+      keys_data[row] = (row / stride) % sample_keys;
+    } else {
+      keys_data[row] = sample_keys + row;
+      expected_keys.push_back(keys_data[row]);
+      expected_counts.push_back(1);
+      expected_maxima.push_back(row);
+    }
+  }
+
+  auto const keys =
+    cudf::test::fixed_width_column_wrapper<int32_t>(keys_data.begin(), keys_data.end());
+  auto const expect_keys =
+    cudf::test::fixed_width_column_wrapper<int32_t>(expected_keys.begin(), expected_keys.end());
+  auto const expect_counts = cudf::test::fixed_width_column_wrapper<cudf::size_type>(
+    expected_counts.begin(), expected_counts.end());
+  test_single_agg(keys,
+                  keys,
+                  expect_keys,
+                  expect_counts,
+                  cudf::make_count_aggregation<cudf::groupby_aggregation>());
+
+  // COUNT only needs the group offsets. MAX of the row indices also verifies that the retry
+  // rebuilt the row positions and filled the grouped row order correctly.
+  auto const values = cudf::test::fixed_width_column_wrapper<int32_t>(
+    cuda::counting_iterator<int32_t>{0}, cuda::counting_iterator<int32_t>{num_rows});
+  auto const expect_maxima =
+    cudf::test::fixed_width_column_wrapper<int32_t>(expected_maxima.begin(), expected_maxima.end());
+  test_single_agg(keys,
+                  values,
+                  expect_keys,
+                  expect_maxima,
+                  cudf::make_max_aggregation<cudf::groupby_aggregation>());
+
+  // Without requests the retry rebuilds the representative key rows instead of group slots.
+  cudf::groupby::groupby gb_obj(cudf::table_view({keys}));
+  auto const result = gb_obj.aggregate({}, cudf::test::get_default_stream());
+  auto const sorted_keys =
+    cudf::sort(result.first->view(), {}, {}, cudf::test::get_default_stream());
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expect_keys, sorted_keys->view().column(0));
+  EXPECT_TRUE(result.second.empty());
+}
+
+TEST_F(groupby_key_shape_test, MixedGroupSizeReductions)
+{
+  std::vector<int32_t> const sizes{1, 32, 33, 1024, 1025, 262145};
+  std::vector<int32_t> keys_data, values_data;
+  std::vector<bool> validity;
+  for (std::size_t group = 0; group < sizes.size(); ++group) {
+    for (int32_t value = 1; value <= sizes[group]; ++value) {
+      keys_data.push_back(static_cast<int32_t>(group));
+      values_data.push_back(value);
+      validity.push_back(sizes[group] != 1 && value == sizes[group]);
+    }
+  }
+  auto const keys =
+    cudf::test::fixed_width_column_wrapper<int32_t>(keys_data.begin(), keys_data.end());
+  auto const values =
+    cudf::test::fixed_width_column_wrapper<int32_t>(values_data.begin(), values_data.end());
+  auto const nullable_values = cudf::test::fixed_width_column_wrapper<int32_t>(
+    values_data.begin(), values_data.end(), validity.begin());
+  std::vector<cudf::groupby::aggregation_request> requests(2);
+  requests[0].values = values;
+  requests[1].values = nullable_values;
+  for (auto& request : requests) {
+    request.aggregations.push_back(cudf::make_min_aggregation<cudf::groupby_aggregation>());
+    request.aggregations.push_back(cudf::make_max_aggregation<cudf::groupby_aggregation>());
+    request.aggregations.push_back(cudf::make_sum_aggregation<cudf::groupby_aggregation>());
+  }
+
+  // Mixed sizes exercise direct and chunked reductions. Only the last input row is valid in
+  // the nullable column, except for the all-null singleton; CSR row order is unspecified.
+  cudf::groupby::groupby gb(cudf::table_view{{keys}});
+  auto const [result_keys, results] = gb.aggregate(requests, cudf::test::get_default_stream());
+  ASSERT_EQ(results.size(), 2);
+  auto const expected_keys = cudf::test::fixed_width_column_wrapper<int32_t>(
+    cuda::counting_iterator<int32_t>{0},
+    cuda::counting_iterator<int32_t>{static_cast<int32_t>(sizes.size())});
+  for (std::size_t i = 0; i < results.size(); ++i) {
+    ASSERT_EQ(results[i].results.size(), 3);
+    std::vector<int32_t> minima;
+    std::vector<int64_t> sums;
+    std::vector<bool> expected_validity;
+    for (auto const size : sizes) {
+      minima.push_back(i == 0 ? 1 : size);
+      sums.push_back(i == 0 ? static_cast<int64_t>(size) * (size + 1) / 2 : size);
+      expected_validity.push_back(i == 0 || size != 1);
+    }
+    auto const expected_min = cudf::test::fixed_width_column_wrapper<int32_t>(
+      minima.begin(), minima.end(), expected_validity.begin());
+    auto const expected_max = cudf::test::fixed_width_column_wrapper<int32_t>(
+      sizes.begin(), sizes.end(), expected_validity.begin());
+    auto const expected_sum = cudf::test::fixed_width_column_wrapper<int64_t>(
+      sums.begin(), sums.end(), expected_validity.begin());
+    auto const actual = cudf::table_view{{result_keys->view().column(0),
+                                          *results[i].results[0],
+                                          *results[i].results[1],
+                                          *results[i].results[2]}};
+    auto const sorted = cudf::sort(actual, {}, {}, cudf::test::get_default_stream());
+    CUDF_TEST_EXPECT_TABLES_EQUIVALENT(
+      cudf::table_view{{expected_keys, expected_min, expected_max, expected_sum}}, sorted->view());
+  }
+}
+
+TEST_F(groupby_key_shape_test, BatchedNullableSumUsesOutputAndTemporaryResources)
+{
+  auto const stream         = cudf::test::get_default_stream();
+  constexpr int num_columns = 2;
+  constexpr int num_rows    = 2'074;
+  std::vector<int32_t> keys_data(num_rows);
+  std::vector<std::vector<int32_t>> data(num_columns, std::vector<int32_t>(num_rows));
+  std::vector<std::vector<bool>> valid(num_columns, std::vector<bool>(num_rows));
+  std::vector<std::vector<int64_t>> sums(num_columns, std::vector<int64_t>(3));
+  // Groups of 2,000, 73 and 1 rows exercise each reduction stage. The columns have different
+  // all-null groups, so their partial values and output masks must remain independent.
+  for (int row = 0; row < num_rows; ++row) {
+    auto const group = row < 2'000 ? 0 : row < 2'073 ? 1 : 2;
+    keys_data[row]   = group == 0 ? -7 : group == 1 ? 41 : 99;
+    for (int column = 0; column < num_columns; ++column) {
+      data[column][row]  = (column == 0 ? 200'000'000 : -300'000'000) + row % 17;
+      valid[column][row] = group != 2 - 2 * column && row % 5 != column;
+      if (valid[column][row]) { sums[column][group] += data[column][row]; }
+    }
+  }
+  auto const keys =
+    cudf::test::fixed_width_column_wrapper<int32_t>(keys_data.begin(), keys_data.end());
+  cudf::test::fixed_width_column_wrapper<int32_t> expect_keys{-7, 41, 99};
+  std::vector<cudf::test::fixed_width_column_wrapper<int32_t>> columns;
+  std::vector<cudf::test::fixed_width_column_wrapper<int64_t>> expected;
+  std::vector<cudf::groupby::aggregation_request> requests(num_columns);
+  columns.reserve(num_columns);
+  for (int column = 0; column < num_columns; ++column) {
+    columns.emplace_back(data[column].begin(), data[column].end(), valid[column].begin());
+    requests[column].values = columns.back();
+    requests[column].aggregations.push_back(
+      cudf::make_sum_aggregation<cudf::groupby_aggregation>());
+    std::vector<bool> expected_valid{column != 1, true, column != 0};
+    expected.emplace_back(sums[column].begin(), sums[column].end(), expected_valid.begin());
+  }
+
+  auto harness = cudf::test::memory_resource_test_harness{this->mr()};
+  {
+    auto result = [&] {
+      cudf::test::scoped_current_device_resource temporary_scope{harness.temporary_mr()};
+      cudf::groupby::groupby gb(cudf::table_view{{keys}});
+      return gb.aggregate(requests, stream, harness.output_mr());
+    }();
+    ASSERT_EQ(result.second.size(), num_columns);
+    auto output_bytes = result.first->alloc_size();
+    for (auto const& request : result.second) {
+      ASSERT_EQ(request.results.size(), 1);
+      output_bytes += request.results.front()->alloc_size();
+    }
+    harness.expect_resource_usage(output_bytes,
+                                  {cudf::test::output_allocation_expectation::EXACT,
+                                   cudf::test::temporary_allocation_expectation::SOME},
+                                  stream);
+    for (int column = 0; column < num_columns; ++column) {
+      auto const actual =
+        cudf::table_view{{result.first->view().column(0), *result.second[column].results[0]}};
+      auto const sorted = cudf::sort(actual, {}, {}, stream);
+      CUDF_TEST_EXPECT_TABLES_EQUAL(cudf::table_view{{expect_keys, expected[column]}},
+                                    sorted->view());
+    }
+  }
+  harness.expect_no_live_allocations(stream);
+}
+
+TEST_F(groupby_key_shape_test, OutputAndTemporaryResourcesForCompoundAndFusedAggregations)
+{
+  auto const stream = cudf::test::get_default_stream();
+  cudf::test::fixed_width_column_wrapper<int32_t> keys_a{{0, 0, 1, 1, 2, 2},
+                                                         {true, true, true, true, false, true}};
+  cudf::test::fixed_width_column_wrapper<int32_t> keys_b{{0, 0, 0, 0, 0, 0},
+                                                         {true, true, true, true, true, false}};
+  cudf::test::fixed_width_column_wrapper<int32_t> values{1, 3, 2, 4, 5, 6};
+  cudf::test::fixed_width_column_wrapper<int32_t> null_values{
+    {1, 3, 2, 4, 5, 6}, {true, true, false, false, true, true}};
+  cudf::test::structs_column_wrapper nested_keys{{keys_a, keys_b},
+                                                 {true, true, true, true, false, true}};
+  cudf::test::strings_column_wrapper string_keys{{"a", "a", "b", "b", "c", "c"},
+                                                 {true, true, true, true, false, true}};
+  cudf::test::structs_column_wrapper nested_string_keys{{string_keys, keys_a},
+                                                        {true, false, true, true, true, true}};
+  // A sliced nullable string child exercises null counting and nonempty-null sanitization.
+  auto const sliced_nested_keys = cudf::slice(nested_string_keys, {1, 5}).front();
+  std::vector<cudf::table_view> key_tables{cudf::table_view{{keys_a, keys_b}},
+                                           cudf::table_view{{nested_keys}},
+                                           cudf::table_view{{string_keys}},
+                                           cudf::table_view{{nested_string_keys}},
+                                           cudf::table_view{{sliced_nested_keys}}};
+  for (auto const& keys : key_tables) {
+    for (bool nullable : {false, true}) {
+      for (int mode = 0; mode < 4; ++mode) {
+        SCOPED_TRACE(::testing::Message() << "nullable=" << nullable << " mode=" << mode);
+        auto const input = nullable ? cudf::column_view(null_values) : cudf::column_view(values);
+        std::vector<cudf::groupby::aggregation_request> requests(1);
+        requests[0].values = cudf::slice(input, {0, keys.num_rows()}).front();
+        auto& aggs         = requests[0].aggregations;
+        if (mode == 0) {
+          aggs.push_back(cudf::make_mean_aggregation<cudf::groupby_aggregation>());
+          aggs.push_back(cudf::make_variance_aggregation<cudf::groupby_aggregation>());
+          aggs.push_back(cudf::make_std_aggregation<cudf::groupby_aggregation>());
+          aggs.push_back(cudf::make_m2_aggregation<cudf::groupby_aggregation>());
+        } else if (mode == 1) {
+          aggs.push_back(cudf::make_min_aggregation<cudf::groupby_aggregation>());
+          aggs.push_back(cudf::make_max_aggregation<cudf::groupby_aggregation>());
+          aggs.push_back(cudf::make_sum_aggregation<cudf::groupby_aggregation>());
+        } else if (mode == 2) {
+          aggs.push_back(cudf::make_argmin_aggregation<cudf::groupby_aggregation>());
+          aggs.push_back(cudf::make_argmax_aggregation<cudf::groupby_aggregation>());
+          aggs.push_back(cudf::make_product_aggregation<cudf::groupby_aggregation>());
+        } else {
+          aggs.push_back(cudf::make_sum_overflow_aggregation<cudf::groupby_aggregation>());
+        }
+        cudf::groupby::groupby expected_gb(keys);
+        auto expected = expected_gb.aggregate(requests, stream, this->mr());
+        auto harness  = cudf::test::memory_resource_test_harness{this->mr()};
+        {
+          auto result = [&] {
+            cudf::test::scoped_current_device_resource temporary_scope{harness.temporary_mr()};
+            cudf::groupby::groupby gb(keys);
+            auto result = gb.aggregate(requests, stream, harness.output_mr());
+            harness.synchronize(stream);
+            return result;
+          }();
+          auto output_bytes = result.first->alloc_size();
+          for (auto const& column : result.second[0].results) {
+            output_bytes += column->alloc_size();
+          }
+          // The existing variance/std helpers may discard masks allocated on the output resource.
+          auto const output_expectation =
+            mode == 0 ? cudf::test::output_allocation_expectation::AT_LEAST_LIVE
+                      : cudf::test::output_allocation_expectation::EXACT;
+          harness.expect_resource_usage(
+            output_bytes,
+            {output_expectation, cudf::test::temporary_allocation_expectation::SOME},
+            stream);
+          auto actual_keys = result.first->view();
+          std::vector<cudf::column_view> actual_views(actual_keys.begin(), actual_keys.end());
+          auto expected_keys = expected.first->view();
+          std::vector<cudf::column_view> expected_views(expected_keys.begin(), expected_keys.end());
+          for (auto const& column : result.second[0].results) {
+            actual_views.push_back(column->view());
+          }
+          for (auto const& column : expected.second[0].results) {
+            expected_views.push_back(column->view());
+          }
+          auto actual_sorted   = cudf::sort(cudf::table_view{actual_views}, {}, {}, stream);
+          auto expected_sorted = cudf::sort(cudf::table_view{expected_views}, {}, {}, stream);
+          CUDF_TEST_EXPECT_TABLES_EQUAL(expected_sorted->view(), actual_sorted->view());
+        }
+        harness.expect_no_live_allocations(stream);
+      }
+    }
+  }
+}
+
+TEST_F(groupby_key_shape_test, FusedValidityAcrossReductionBoundaries)
+{
+  // Adjacent groups share mask words; sizes cross warp, block, and long-segment boundaries.
+  std::vector<cudf::size_type> const sizes{1, 31, 32, 33, 255, 256, 257, 4097};
+  constexpr cudf::size_type num_groups = 65;
+  std::vector<int32_t> keys;
+  std::vector<int64_t> values;
+  std::vector<bool> valid;
+  std::vector<cudf::size_type> minima, maxima;
+  std::vector<int64_t> sums;
+  std::vector<bool> group_valid;
+  for (cudf::size_type group = 0; group < num_groups; ++group) {
+    auto const size  = sizes[group % sizes.size()];
+    auto const start = static_cast<cudf::size_type>(keys.size());
+    int64_t sum{0};
+    for (cudf::size_type row = 0; row < size; ++row) {
+      // All-null, all-valid, and only-the-last-row-valid groups exercise partial merging.
+      bool const is_valid = group % 3 == 1 || (group % 3 == 2 && row == size - 1);
+      keys.push_back(group);
+      values.push_back(row + 1);
+      valid.push_back(is_valid);
+      if (is_valid) { sum += row + 1; }
+    }
+    minima.push_back(group % 3 == 1 ? start : start + size - 1);
+    maxima.push_back(start + size - 1);
+    sums.push_back(sum);
+    group_valid.push_back(group % 3 != 0);
+  }
+  cudf::test::fixed_width_column_wrapper<int32_t> key_column(keys.begin(), keys.end());
+  cudf::test::fixed_width_column_wrapper<int64_t> value_column(
+    values.begin(), values.end(), valid.begin());
+  auto const group_ids = cuda::counting_iterator<cudf::size_type>{0};
+  cudf::test::fixed_width_column_wrapper<int32_t> expected_keys(group_ids, group_ids + num_groups);
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> expected_min(
+    minima.begin(), minima.end(), group_valid.begin());
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> expected_max(
+    maxima.begin(), maxima.end(), group_valid.begin());
+  cudf::test::fixed_width_column_wrapper<int64_t> expected_sum(sums.begin(), sums.end());
+  auto const no_overflow = cuda::make_constant_iterator(false);
+  cudf::test::fixed_width_column_wrapper<bool> expected_flags(no_overflow,
+                                                              no_overflow + num_groups);
+  std::vector<std::unique_ptr<cudf::column>> children;
+  children.push_back(expected_sum.release());
+  children.push_back(expected_flags.release());
+  auto [mask, null_count] =
+    cudf::test::detail::make_null_mask(group_valid.begin(), group_valid.end());
+  auto expected_overflow =
+    cudf::create_structs_hierarchy(num_groups, std::move(children), null_count, std::move(mask));
+  test_single_agg(key_column,
+                  value_column,
+                  expected_keys,
+                  expected_min,
+                  cudf::make_argmin_aggregation<cudf::groupby_aggregation>());
+  test_single_agg(key_column,
+                  value_column,
+                  expected_keys,
+                  expected_max,
+                  cudf::make_argmax_aggregation<cudf::groupby_aggregation>());
+  test_single_agg(key_column,
+                  value_column,
+                  expected_keys,
+                  *expected_overflow,
+                  cudf::make_sum_overflow_aggregation<cudf::groupby_aggregation>());
 }

@@ -3,7 +3,6 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#include "helpers.cuh"
 #include "output_utils.hpp"
 
 #include <cudf/aggregation.hpp>
@@ -17,14 +16,7 @@
 #include <cudf/types.hpp>
 #include <cudf/utilities/span.hpp>
 
-#include <rmm/device_uvector.hpp>
-#include <rmm/exec_policy.hpp>
-
-#include <cuco/static_set.cuh>
-#include <cuda/iterator>
 #include <cuda/stream>
-#include <thrust/scatter.h>
-#include <thrust/transform.h>
 
 #include <algorithm>
 #include <cstddef>
@@ -134,65 +126,6 @@ std::unique_ptr<table> create_results_table(size_type output_size,
   auto result_table = std::make_unique<table>(std::move(output_cols));
   cudf::detail::initialize_with_identity(result_table->mutable_view(), agg_kinds, stream);
   return result_table;
-}
-
-template <typename SetType>
-rmm::device_uvector<size_type> extract_populated_keys(SetType const& key_set,
-                                                      size_type num_total_keys,
-                                                      cuda::stream_ref stream,
-                                                      rmm::device_async_resource_ref mr)
-{
-  rmm::device_uvector<size_type> unique_key_indices(num_total_keys, stream, mr);
-  auto const keys_end = key_set.retrieve_all(unique_key_indices.begin(), stream.get());
-  unique_key_indices.resize(std::distance(unique_key_indices.begin(), keys_end), stream);
-  return unique_key_indices;
-}
-
-template rmm::device_uvector<size_type> extract_populated_keys<global_set_t>(
-  global_set_t const& key_set,
-  size_type num_total_keys,
-  cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr);
-
-template rmm::device_uvector<size_type> extract_populated_keys<nullable_global_set_t>(
-  nullable_global_set_t const& key_set,
-  size_type num_total_keys,
-  cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr);
-
-rmm::device_uvector<size_type> compute_key_transform_map(
-  size_type num_total_keys,
-  device_span<size_type const> unique_key_indices,
-  cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
-{
-  // Map from old key indices (index of the keys in the original input keys table) to new key
-  // indices (indices of the keys in the final output table, which contains only the extracted
-  // unique keys). Only these extracted unique keys are mapped.
-  rmm::device_uvector<size_type> key_transform_map(num_total_keys, stream, mr);
-  thrust::scatter(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-                  cuda::counting_iterator<cudf::size_type>{0},
-                  cuda::counting_iterator{static_cast<size_type>(unique_key_indices.size())},
-                  unique_key_indices.begin(),
-                  key_transform_map.begin());
-
-  return key_transform_map;
-}
-
-rmm::device_uvector<size_type> compute_target_indices(device_span<size_type const> input,
-                                                      device_span<size_type const> transform_map,
-                                                      cuda::stream_ref stream,
-                                                      rmm::device_async_resource_ref mr)
-{
-  rmm::device_uvector<size_type> target_indices(input.size(), stream, mr);
-  thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-                    input.begin(),
-                    input.end(),
-                    target_indices.begin(),
-                    [new_indices = transform_map.begin()] __device__(size_type const idx) {
-                      return idx == cudf::detail::CUDF_SIZE_TYPE_SENTINEL ? idx : new_indices[idx];
-                    });
-  return target_indices;
 }
 
 void finalize_output(table_view const& values,

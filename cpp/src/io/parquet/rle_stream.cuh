@@ -5,7 +5,6 @@
 
 #pragma once
 
-#include "io/utilities/block_utils.cuh"
 #include "parquet_gpu.hpp"
 
 #include <cudf/detail/utilities/cuda.cuh>
@@ -13,14 +12,13 @@
 
 #include <cooperative_groups.h>
 #include <cuda/barrier>
+#include <cuda/pipeline>
 #include <cuda/std/algorithm>
 #include <cuda/std/iterator>
 #include <cuda/std/memory>
 #include <cuda/std/span>
 
 namespace cudf::io::parquet::detail {
-
-namespace cg = cooperative_groups;
 
 template <int num_threads>
 __device__ constexpr int rle_stream_required_run_buffer_size()
@@ -30,7 +28,43 @@ __device__ constexpr int rle_stream_required_run_buffer_size()
 }
 
 /**
- * @brief Read a 32-bit varint integer
+ * @brief Read a 32-bit varint integer from an arbitrary byte source.
+ *
+ * The byte source is provided via an accessor `read(int off) -> uint8_t`, so
+ * callers can read directly from a global pointer, from a shared-memory
+ * staging buffer, or dispatch between the two per-byte (chunked staging).
+ *
+ * @param[in,out] offset The current byte offset into the stream; advanced past the varint
+ * @param[in] end_offset One past the last valid byte offset
+ * @param[in] read Byte accessor: `read(int off) -> uint8_t`
+ *
+ * @return The 32-bit value read
+ */
+template <typename Accessor>
+__device__ inline uint32_t get_vlq32(int& offset, int const end_offset, Accessor read)
+{
+  uint32_t v = read(offset++);
+  if (v >= 0x80 && offset < end_offset) {
+    v = (v & 0x7f) | (read(offset++) << 7);
+    if (v >= (0x80 << 7) && offset < end_offset) {
+      v = (v & ((0x7f << 7) | 0x7f)) | (read(offset++) << 14);
+      if (v >= (0x80 << 14) && offset < end_offset) {
+        v = (v & ((0x7f << 14) | (0x7f << 7) | 0x7f)) | (read(offset++) << 21);
+        if (v >= (0x80 << 21) && offset < end_offset) {
+          v = (v & ((0x7f << 21) | (0x7f << 14) | (0x7f << 7) | 0x7f)) | (read(offset++) << 28);
+        }
+      }
+    }
+  }
+  return v;
+}
+
+/**
+ * @brief Read a 32-bit varint integer via a raw pointer cursor.
+ *
+ * Thin adapter over the offset-based `get_vlq32` for callers that already
+ * track a moving pointer. The lambda is trivial (`base[off]`) and inlines to
+ * the same load sequence as a direct `*cur++` walk.
  *
  * @param[in,out] cur The current data position, updated after the read
  * @param[in] end The end data position
@@ -39,19 +73,11 @@ __device__ constexpr int rle_stream_required_run_buffer_size()
  */
 inline __device__ uint32_t get_vlq32(uint8_t const*& cur, uint8_t const* end)
 {
-  uint32_t v = *cur++;
-  if (v >= 0x80 && cur < end) {
-    v = (v & 0x7f) | ((*cur++) << 7);
-    if (v >= (0x80 << 7) && cur < end) {
-      v = (v & ((0x7f << 7) | 0x7f)) | ((*cur++) << 14);
-      if (v >= (0x80 << 14) && cur < end) {
-        v = (v & ((0x7f << 14) | (0x7f << 7) | 0x7f)) | ((*cur++) << 21);
-        if (v >= (0x80 << 21) && cur < end) {
-          v = (v & ((0x7f << 21) | (0x7f << 14) | (0x7f << 7) | 0x7f)) | ((*cur++) << 28);
-        }
-      }
-    }
-  }
+  uint8_t const* const base = cur;
+  int offset                = 0;
+  int const end_offset      = static_cast<int>(end - cur);
+  uint32_t const v          = get_vlq32(offset, end_offset, [base](int off) { return base[off]; });
+  cur += offset;
   return v;
 }
 
@@ -162,7 +188,7 @@ struct rle_run {
 // Controls the number of run headers parsed per chunk in the chunked-expand path.
 // SMEM cost is (2 * max_runs_per_chunk + 1) * 4 bytes. Increasing max_runs_per_chunk reduces the
 // number of outer-loop iterations in decode_next_chunked (each with a serial
-// header-parse phase and a group.sync() at the end), but competes with occupancy in
+// header-parse phase and a __syncthreads() at the end), but competes with occupancy in
 // preprocess_levels_kernel.
 //
 // 1024 was chosen empirically for sm_80+. Sweeps of {256, 512, 1024, 2048,
@@ -181,8 +207,12 @@ template <typename level_t,
           int decode_threads,
           int max_output_values,
           bool use_chunked_expand   = false,
-          int smem_stage_size_bytes = 8 * 1024>
+          bool use_smem_staging     = false,
+          int smem_stage_size_bytes = 8 * 1024,
+          int chunk_size_bytes      = 4096>
 struct rle_stream {
+  static_assert(!(use_smem_staging && !use_chunked_expand),
+                "use_smem_staging requires use_chunked_expand");
   static constexpr int num_rle_stream_decode_threads = decode_threads;
   // the -1 here is for the look-ahead warp that fills in the list of runs to be decoded
   // in an overlapped manner. so if we had 16 total warps:
@@ -192,20 +222,6 @@ struct rle_stream {
     (num_rle_stream_decode_threads / cudf::detail::warp_size) - 1;
 
   static constexpr int run_buffer_size = rle_stream_required_run_buffer_size<decode_threads>();
-
-  // Bit packing of `run_desc` (chunked-expand path). The 32-bit descriptor
-  // stores a byte offset into the encoded level stream (`cur - s_start`) in
-  // its low 31 bits and uses the top bit as a flag: 1 = literal (bit-packed)
-  // run, 0 = RLE (repeated-value) run. Keeping both in one word lets Phase 1
-  // publish a single 32-bit value per run into shared memory and lets Phase 2
-  // dispatch on the flag without a second load.
-  //
-  // Invariant enforced by `cudf_assert` at parse time: (cur - s_start) fits in
-  // 31 bits, i.e. the encoded level stream for a single Parquet page is < 2
-  // GiB. Parquet page payloads are orders of magnitude smaller than this in
-  // practice.
-  static constexpr uint32_t run_desc_literal_flag = 1u << 31;
-  static constexpr uint32_t run_desc_offset_mask  = 0x7fffffffu;
 
   int level_bits;
   uint8_t const* s_start;
@@ -233,22 +249,26 @@ struct rle_stream {
   // level_bits-agnostic: definition/repetition levels, dictionary indices, and
   // boolean streams all benefit with identical code. Streams that do not fit
   // the budget transparently fall back to parsing from global.
+  //
+  // The chunked-expand path instead uses double-buffered SMEM staging via
+  // cuda::pipeline in decode_next_chunked, addressed by chunk_size (4096 B).
+  static constexpr int chunk_size      = 4096;
   static constexpr int smem_stage_size = smem_stage_size_bytes;
 
-  // Ring-mode streams need a shared-memory ring buffer of run headers to
-  // coordinate the producer/consumer warps in decode_next_ring. Chunked-expand
-  // streams parse run headers directly into per-chunk shared tables and never
-  // touch `runs`, so we forbid supplying one to catch accidental waste.
-  __device__ rle_stream(rle_run* _runs)
-    requires(!use_chunked_expand)
-    : runs(_runs)
-  {
-  }
-  __device__ rle_stream()
-    requires(use_chunked_expand)
-    : runs(nullptr)
-  {
-  }
+  uint8_t* smem_stage;
+  int smem_stage_capacity;
+  cuda::pipeline<cuda::thread_scope_block>* smem_pipe;
+
+  // Chunked-expand cross-call partial-run state.
+  // When a run straddles a decode_next_chunked boundary we record its meta,
+  // total count, and how many values were already emitted so the next call
+  // can resume from the correct payload offset.  partial_run_meta == -1
+  // means no pending partial run.
+  int partial_run_meta;   // meta word for the split run (-1 = none)
+  int partial_run_total;  // full value count of that run
+  int partial_run_done;   // values already emitted from it
+
+  __device__ rle_stream(rle_run* _runs) : runs(_runs) {}
 
   __device__ inline bool is_last_decode_warp(int warp_id)
   {
@@ -282,31 +302,37 @@ struct rle_stream {
     fill_index   = 0;
     decode_index = -1;  // signals the first iteration. Nothing to decode.
 
-    cudf_assert(stage_capacity >= 0 and stage_capacity <= smem_stage_size);
+    cudf_assert(stage_capacity >= 0);
+    static_cast<void>(group);
+    static_cast<void>(_copy_barrier);
+    smem_stage          = _smem_stage;
+    smem_stage_capacity = stage_capacity;
+    smem_pipe           = nullptr;
 
-    // If smem staging is active, use cuda::memcpy_async for a
-    // block-cooperative global-to-shared copy that automatically dispatches to
-    // the best copy path (cp.async, cp.async.bulk, or TMA) depending on the
-    // hardware. Callers must provide a copy_barrier when using smem staging,
-    // and must issue copy_barrier->arrive_and_wait() after init() to complete
-    // the async copy.
     if (_smem_stage != nullptr) {
-      auto* const smem_stage =
-        static_cast<uint8_t const*>(cuda::std::assume_aligned<16>(_smem_stage));
       auto const len = static_cast<int>(cuda::std::distance(_start, _end));
-      cudf_assert(len >= 0 && "rle_stream::init: _end must be >= _start");
-      if (len > 0 && len <= stage_capacity) {
-        cuda::memcpy_async(group, _smem_stage, _start, static_cast<size_t>(len), *_copy_barrier);
-        // Rebase the parse cursor and end onto the shared copy. All downstream
-        // reads (get_rle_run_info, decode, skip_runs) follow cur/end and now hit
-        // shared memory with no other changes required.
-        cur = smem_stage;
-        end = smem_stage + len;
+      if constexpr (!use_chunked_expand) {
+        cudf_assert(_copy_barrier != nullptr);
+        auto* const smem_stage_ptr =
+          static_cast<uint8_t const*>(cuda::std::assume_aligned<16>(_smem_stage));
+        if (len > 0 && len <= stage_capacity) {
+          cuda::memcpy_async(group, _smem_stage, _start, static_cast<size_t>(len), *_copy_barrier);
+          cur = smem_stage_ptr;
+          end = smem_stage_ptr + len;
+        }
       }
     }
-    // Anchor s_start to the (possibly rebased) cur so chunked-expand meta
-    // offsets index into the same memory space that the parse cursor uses.
+    // Chunked-expand keeps s_start global; non-chunked one-shot staging may rebase it to smem.
     s_start = cur;
+
+    partial_run_meta  = -1;
+    partial_run_total = 0;
+    partial_run_done  = 0;
+  }
+
+  __device__ inline void set_pipeline(cuda::pipeline<cuda::thread_scope_block>& pipe)
+  {
+    if constexpr (use_smem_staging) { smem_pipe = &pipe; }
   }
 
   __device__ inline int get_rle_run_info(rle_run& run)
@@ -353,42 +379,37 @@ struct rle_stream {
     }
   }
 
-  template <typename Group>
-  __device__ inline int decode_next_ring(Group const& group, int count)
+  __device__ inline int decode_next_ring(int t, int count)
   {
     int const output_count = min(count, total_values - cur_values);
 
-    auto const warp          = cg::tiled_partition<cudf::detail::warp_size>(group);
-    int const warp_id        = warp.meta_group_rank();
+    // otherwise, full decode.
+    int const warp_id        = t / cudf::detail::warp_size;
     int const warp_decode_id = warp_id - 1;
-    int const warp_lane      = warp.thread_rank();
+    int const warp_lane      = t % cudf::detail::warp_size;
 
     __shared__ int values_processed_shared;
     __shared__ int decode_index_shared;
     __shared__ int fill_index_shared;
-    // Do not use cg::invoke_one here: rle_stream member state is per-thread,
-    // so persistent state must be owned by a stable, well-defined thread.
-    if (group.thread_rank() == 0) {
+    if (t == 0) {
       values_processed_shared = 0;
       decode_index_shared     = decode_index;
       fill_index_shared       = fill_index;
     }
 
-    group.sync();
+    __syncthreads();
 
     fill_index = fill_index_shared;
 
-    while (true) {
+    do {
       // protect against threads advancing past the end of this loop
       // and updating shared variables.
-      group.sync();
+      __syncthreads();
 
       // warp 0 reads ahead and fills `runs` array to be decoded by remaining warps.
       if (warp_id == 0) {
         // fill the next set of runs. fill_runs will generally be the bottleneck for any
         // kernel that uses an rle_stream.
-        // Do not use cg::invoke_one here: fill_run_batch() advances per-thread
-        // stream cursors, so the ring producer must always be lane 0.
         if (warp_lane == 0) {
           fill_run_batch();
           if (decode_index == -1) {
@@ -402,7 +423,7 @@ struct rle_stream {
       // remaining warps decode the runs, starting on the second iteration of this. the pipeline of
       // runs is also persistent across calls to decode_next, so on the second call to decode_next,
       // this branch will start doing work immediately.
-      // decode_index == -1 means "first iteration", so we should skip decoding.
+      // do/while loop (decode_index == -1 means "first iteration", so we should skip decoding)
       else if (decode_index >= 0 && decode_index + warp_decode_id < fill_index) {
         int const run_index = decode_index + warp_decode_id;
         auto& run           = runs[rolling_index<run_buffer_size>(run_index)];
@@ -432,7 +453,7 @@ struct rle_stream {
                                              level_bits,
                                              warp_lane);
 
-          warp.sync();
+          __syncwarp();
           if (warp_lane == 0) {
             // after writing this batch, are we at the end of the output buffer?
             auto const at_end = ((last_run_pos + batch_len - cur_values) == output_count);
@@ -450,11 +471,10 @@ struct rle_stream {
           }
         }
       }
-      group.sync();
+      __syncthreads();
       decode_index = decode_index_shared;
       fill_index   = fill_index_shared;
-      if (values_processed_shared >= output_count) { break; }
-    }
+    } while (values_processed_shared < output_count);
 
     cur_values += values_processed_shared;
 
@@ -472,14 +492,12 @@ struct rle_stream {
    * every warp busy even when runs are highly non-uniform in size, at the
    * cost of an extra intra-block sync per chunk.
    *
-   * The current sole caller passes max_output_values = INT_MAX, so a single
-   * RLE run can never exceed the requested `count`. A cudf_assert in the
-   * header-parse loop enforces this invariant; a future caller that needs to
-   * split runs across calls must restore the partial-run resume machinery
-   * removed in this commit.
+   * A single RLE run may exceed the requested `count`. In that case we emit
+   * as much as fits, stash `partial_run_{meta,total,done}` in class state,
+   * and resume it as slot 0 of the next invocation without re-parsing its
+   * header (cur has already advanced past the payload).
    */
-  template <typename Group>
-  __device__ inline int decode_next_chunked(Group const& group, int count)
+  __device__ inline int decode_next_chunked(int t, int count)
   {
     int const output_count = min(count, total_values - cur_values);
 
@@ -489,192 +507,270 @@ struct rle_stream {
     // `chunk_meta[i]` encodes both the payload offset (into s_start) and,
     // in the top bit, whether the run is literal (1) or RLE (0).
     __shared__ int chunk_out_off[max_runs_per_chunk + 1];
-    __shared__ uint32_t chunk_meta[max_runs_per_chunk];
+    __shared__ int chunk_meta[max_runs_per_chunk];
     cuda::std::span<int> const chunk_out_off_v{chunk_out_off, max_runs_per_chunk + 1};
-    cuda::std::span<uint32_t> const chunk_meta_v{chunk_meta, max_runs_per_chunk};
-    __shared__ int s_chunk_runs;   // number of runs parsed in this chunk (num_runs)
-    __shared__ int s_chunk_total;  // sum of run lengths in this chunk (run_prefix_end)
+    cuda::std::span<int> const chunk_meta_v{chunk_meta, max_runs_per_chunk};
+    // Payload offset within run slot 0: non-zero only when continuing a run
+    // that was split across two decode_next_chunked calls.
+    __shared__ int s_run0_payload_offset;
+    __shared__ int s_chunk_runs;   // number of runs parsed in this chunk (n)
+    __shared__ int s_chunk_total;  // sum of run lengths in this chunk (co)
     __shared__ int s_base_out;     // absolute output pos where this chunk starts
+    __shared__ int s_load_cur_offset;
 
-    auto const warp       = cg::tiled_partition<cudf::detail::warp_size>(group);
-    int const lane        = warp.thread_rank();
-    int const warp_id     = warp.meta_group_rank();
-    int const num_warps   = warp.meta_group_size();
-    int const value_width = cudf::util::div_rounding_up_unsafe(level_bits, 8);
+    int const lane          = t & 31;
+    int const warp          = t >> 5;
+    int constexpr num_warps = num_rle_stream_decode_threads / cudf::detail::warp_size;
+    int const value_width   = (level_bits + 7) >> 3;
     // Bit mask used to extract a single level from a bit-packed literal-run
     // payload word. Invariant across the whole call; hoisted out of the
     // phase-2 expand loop to keep it out of the hot register set.
     uint32_t const level_mask = (level_bits == 32) ? 0xffffffffu : ((1u << level_bits) - 1);
     int out_pos_total         = cur_values;
     int const out_end         = cur_values + output_count;
+    int const stream_len      = static_cast<int>(cuda::std::distance(s_start, end));
+    bool const use_smem       = use_smem_staging && smem_stage != nullptr && smem_pipe != nullptr &&
+                          smem_stage_capacity >= smem_stage_size && stream_len > 0;
+    auto const block  = cooperative_groups::this_thread_block();
+    int loaded_chunk0 = -1;
+    int loaded_chunk1 = -1;
+
+    auto is_loaded   = [&](int chunk) { return chunk == loaded_chunk0 || chunk == loaded_chunk1; };
+    auto mark_loaded = [&](int chunk) {
+      if ((chunk & 1) == 0) {
+        loaded_chunk0 = chunk;
+      } else {
+        loaded_chunk1 = chunk;
+      }
+    };
+    auto stage_ptr = [&](int chunk) {
+      return static_cast<uint8_t*>(cuda::std::assume_aligned<16>(smem_stage)) +
+             (chunk & 1) * chunk_size;
+    };
+    auto load_chunk = [&](int chunk) {
+      if constexpr (!use_smem_staging) { return false; }
+      if (!use_smem || chunk < 0 || chunk * chunk_size >= stream_len || is_loaded(chunk)) {
+        return false;
+      }
+      int const offset = chunk * chunk_size;
+      int const bytes  = min(chunk_size, stream_len - offset);
+      smem_pipe->producer_acquire();
+      cuda::memcpy_async(
+        block, stage_ptr(chunk), s_start + offset, static_cast<size_t>(bytes), *smem_pipe);
+      smem_pipe->producer_commit();
+      return true;
+    };
+    auto staged_byte = [&](int offset) {
+      if constexpr (!use_smem_staging) { return s_start[offset]; }
+      int const chunk = offset / chunk_size;
+      return (use_smem && is_loaded(chunk)) ? stage_ptr(chunk)[offset - chunk * chunk_size]
+                                            : s_start[offset];
+    };
 
     // Outer loop: process the requested output range in chunks of up to
     // `max_runs_per_chunk` runs at a time until we have emitted `output_count`
     // values or run out of encoded input.
     while (out_pos_total < out_end) {
+      if (t == 0) { s_load_cur_offset = static_cast<int>(cuda::std::distance(s_start, cur)); }
+      __syncthreads();
+
+      int const cur_offset       = s_load_cur_offset;
+      int const current_chunk    = cur_offset / chunk_size;
+      bool const current_pending = load_chunk(current_chunk);
+      if (current_pending) {
+        smem_pipe->consumer_wait();
+        mark_loaded(current_chunk);
+      }
+      bool const next_pending = load_chunk(current_chunk + 1);
+
       // ----- Phase 1: single-thread run-header parse ------------------
       // Thread 0 walks the encoded stream, decoding VLQ run headers and
-      // filling chunk_out_off / chunk_meta. Do not use cg::invoke_one here:
-      // it may choose different threads across calls, but `cur` is per-thread
-      // rle_stream state that must persist on thread 0.
-      // The other threads wait at the group.sync() below. This is cheap because
-      // it is bounded by max_runs_per_chunk headers and header parsing is
-      // inherently serial.
-      if (group.thread_rank() == 0) {
-        int run_prefix_end = 0;
-        int num_runs       = 0;
-        int out_base       = out_pos_total;
-        chunk_out_off_v[0] = 0;
+      // filling chunk_out_off / chunk_meta. The other threads wait at the
+      // __syncthreads() below. This is cheap because it is bounded by
+      // max_runs_per_chunk headers and header parsing is inherently serial.
+      if (t == 0) {
+        int co                = 0;
+        int n                 = 0;
+        int out_base          = out_pos_total;
+        int cur_offset        = static_cast<int>(cuda::std::distance(s_start, cur));
+        chunk_out_off_v[0]    = 0;
+        s_run0_payload_offset = 0;
+
+        // Slot 0 special case: resume a run that was split by the previous
+        // call. `cur` already points past this run's payload (fully
+        // consumed last call), so we do NOT re-parse its header - we just
+        // reuse the saved meta and continue emitting values.
+        if (partial_run_meta != -1) {
+          int const remaining   = partial_run_total - partial_run_done;
+          int const room        = out_end - out_base;
+          int const cnt         = min(remaining, room);
+          chunk_meta_v[0]       = partial_run_meta;
+          chunk_out_off_v[1]    = cnt;
+          s_run0_payload_offset = partial_run_done;
+          n                     = 1;
+          co                    = cnt;
+          if (cnt < remaining) {
+            partial_run_done += cnt;
+          } else {
+            partial_run_meta = -1;
+          }
+        }
+
         // Parse up to max_runs_per_chunk headers, stopping early if the output range
         // fills up or the encoded stream is exhausted.
-        while (num_runs < max_runs_per_chunk && (out_base + run_prefix_end) < out_end &&
-               cur < end) {
-          uint32_t const level_run = get_vlq32(cur, end);
+        while (n < max_runs_per_chunk && (out_base + co) < out_end && cur_offset < stream_len) {
+          uint32_t const level_run = get_vlq32(cur_offset, stream_len, staged_byte);
+          int cnt;
+          int meta;
 
           // Parquet RLE header format: LSB selects the encoding.
           //   bit 0 = 1  -> literal (bit-packed) run of `groups*8` values
           //   bit 0 = 0  -> RLE run of `level_run >> 1` copies of one value
-          // The high bit of `run_desc` distinguishes the two at expand time;
-          // see `run_desc_literal_flag` / `run_desc_offset_mask` for the
-          // bit layout and the 31-bit offset invariant enforced below.
-          cudf_assert(static_cast<uint64_t>(cur - s_start) < (uint64_t{run_desc_offset_mask} + 1));
-          int run_len;
-          uint32_t run_desc;
+          // The high bit of `meta` distinguishes the two at expand time.
+          //
+          // Assumption: (cur - s_start) fits in 31 bits, i.e. the encoded
+          // level stream for a single Parquet page is < 2 GiB. This is
+          // guaranteed by the Parquet format in practice (page payloads are
+          // orders of magnitude smaller than 2 GiB) and is independent of
+          // max_runs_per_chunk.
           if (level_run & 1u) {
             int const groups = level_run >> 1;
-            run_len          = groups * 8;
-            run_desc         = static_cast<uint32_t>(cur - s_start) | run_desc_literal_flag;
-            cur += groups * level_bits;
+            cnt              = groups * 8;
+            meta             = cur_offset | (1u << 31);
+            cur_offset += groups * level_bits;
           } else {
-            run_len  = level_run >> 1;
-            run_desc = static_cast<uint32_t>(cur - s_start);
-            cur += value_width;
+            cnt  = level_run >> 1;
+            meta = cur_offset;
+            cur_offset += value_width;
           }
-          // Clamp the run to the remaining output window. A run can legally
-          // straddle out_end when row-range filtering makes output_count
-          // smaller than INT_MAX (e.g. skip_rows / num_rows / bounds-page
-          // filtering in preprocess_levels_kernel). Without clamping, Phase 2
-          // would write past the output buffer causing silent data corruption.
-          // `cur` has already been advanced past the full payload above, which
-          // is correct: we emit only `run_len` values but do not need to
-          // re-parse the header on any subsequent call (the outer loop exits
-          // after this chunk because out_pos_total will equal out_end).
-          int const room = out_end - (out_base + run_prefix_end);
-          run_len        = min(run_len, room);
-          run_prefix_end += run_len;
-          chunk_meta_v[num_runs]      = run_desc;
-          chunk_out_off_v[++num_runs] = run_prefix_end;
+
+          // If this run overflows the requested output window, clamp it and
+          // stash the remainder as a pending partial run for the next call.
+          // Note `cur` has already been advanced past the *full* payload
+          // above, which is what we want - the resumed call reads the
+          // payload out of s_start via the saved meta offset.
+          int const room = out_end - (out_base + co);
+          if (cnt > room) {
+            partial_run_meta  = meta;
+            partial_run_total = cnt;
+            partial_run_done  = room;
+            cnt               = room;
+          }
+          co += cnt;
+          chunk_meta_v[n]      = meta;
+          chunk_out_off_v[++n] = co;
+          if (partial_run_meta != -1) { break; }
         }
-        s_chunk_runs  = num_runs;
-        s_chunk_total = run_prefix_end;
+        cur           = s_start + cur_offset;
+        s_chunk_runs  = n;
+        s_chunk_total = co;
         s_base_out    = out_base;
       }
-      group.sync();
+      __syncthreads();
 
       // ----- Phase 2: cooperative expand ------------------------------
       // All warps see the same chunk_out_off / chunk_meta tables. We split
       // the flat output range [0, chunk_total) into `num_warps` equal-ish
       // slices and each warp writes its slice.
-      int const chunk_runs  = s_chunk_runs;
-      int const chunk_total = s_chunk_total;
-      int const base_out    = s_base_out;
+      int const chunk_runs          = s_chunk_runs;
+      int const chunk_total         = s_chunk_total;
+      int const base_out            = s_base_out;
+      int const run0_payload_offset = s_run0_payload_offset;
 
       if (chunk_runs == 0) { break; }
 
-      int const per = cudf::util::div_rounding_up_safe(chunk_total, num_warps);
-      int const lo  = warp_id * per;
+      int const per = (chunk_total + num_warps - 1) / num_warps;
+      int const lo  = warp * per;
       int const hi  = min(lo + per, chunk_total);
       if (lo < hi) {
-        // Per-lane expand: each lane owns output positions
-        //   out_pos = lo + lane, lo + lane + 32, lo + lane + 64, ...
-        // and finds its own run. run_idx starts by binary-search on the
-        // lane's first out_pos, then advances forward by linear walk (usually
-        // 0 steps when still in the same run). Across all 32 lanes the
-        // linear walks amortize to <= (num_runs_in_slice / 32) warp cycles
-        // total.
-        //
-        // This keeps all 32 lanes writing on every iteration, instead of the
-        // per-run loop where only lanes 0..(run_len-1) do useful work on
-        // short runs.
-        int out_pos = lo + lane;
-        int run_idx =
-          static_cast<int>(cuda::std::upper_bound(chunk_out_off_v.begin(),
-                                                  chunk_out_off_v.begin() + chunk_runs + 1,
-                                                  out_pos) -
-                           chunk_out_off_v.begin()) -
-          1;
-        while (out_pos < hi) {
-          // Linear walk forward: no iterations if we're still in the same
-          // run (long run case), 1+ iterations only when out_pos crosses one
-          // or more short-run boundaries.
-          while (run_idx < chunk_runs && chunk_out_off_v[run_idx + 1] <= out_pos) {
-            ++run_idx;
-          }
-          int const run_start_out = chunk_out_off_v[run_idx];
-          uint32_t const run_desc = chunk_meta_v[run_idx];
+        // Binary-search chunk_out_off to find the first run that intersects
+        // this warp's slice, then iterate forward until we pass `hi`.
+        int const a = static_cast<int>(
+                        cuda::std::upper_bound(
+                          chunk_out_off_v.begin(), chunk_out_off_v.begin() + chunk_runs + 1, lo) -
+                        chunk_out_off_v.begin()) -
+                      1;
+        for (int r = a; r < chunk_runs && chunk_out_off_v[r] < hi; ++r) {
+          int const r_lo   = chunk_out_off_v[r];
+          int const r_hi   = chunk_out_off_v[r + 1];
+          int const seg_lo = max(r_lo, lo);
+          int const seg_hi = min(r_hi, hi);
+          int const meta   = chunk_meta_v[r];
+          // For slot 0 of a resumed partial run add the already-emitted offset
+          // so we read from the correct position in the payload.
+          int const run_payload_off = (r == 0) ? run0_payload_offset : 0;
 
-          if (run_desc & run_desc_literal_flag) {
-            // Literal (bit-packed) run: bit-field extract for this lane's
-            // out_pos.
-            uint32_t const payload_off = run_desc & run_desc_offset_mask;
-            uint8_t const* payload     = s_start + payload_off;
-            int const local            = out_pos - run_start_out;
-            int bitpos                 = local * level_bits;
-            uint8_t const* source      = payload + (bitpos >> 3);
-            bitpos &= 7;
-            uint32_t level_val;
-            if (source + sizeof(uint32_t) <= end) {
-              // Fast path: whole 32-bit field is in-bounds, so one unaligned
-              // load replaces up to four dependent byte reads.
-              level_val = cudf::io::unaligned_load<uint32_t>(source);
-            } else {
-              // Tail path: within the last 4 bytes of the encoded stream, so
-              // fall back to per-byte reads and guard each against `end`.
-              level_val = 0;
-              if (source < end) { level_val = source[0]; }
-              if (level_bits > 8 - bitpos && (source + 1) < end) {
-                level_val |= static_cast<uint32_t>(source[1]) << 8;
-                if (level_bits > 16 - bitpos && (source + 2) < end) {
-                  level_val |= static_cast<uint32_t>(source[2]) << 16;
-                  if (level_bits > 24 - bitpos && (source + 3) < end) {
-                    level_val |= static_cast<uint32_t>(source[3]) << 24;
+          // Two expand kernels, selected by the meta top-bit:
+          //   literal (bit 31 set) -> each output position needs its own
+          //     bit-field extract from the packed payload.
+          //   RLE    (bit 31 clear) -> single value read once, broadcast
+          //     across [seg_lo, seg_hi) by all lanes.
+          // Note that we don't pay any divergence cost here since all threads
+          // in the warp are processing the same run (meta), but we do lose
+          // some occupancy due to carrying around the local registers needed
+          // for both branches.
+          if (meta & (1u << 31)) {
+            int const payload_off = meta & 0x7fffffff;
+            for (int p = seg_lo + lane; p < seg_hi; p += 32) {
+              int const local = (p - r_lo) + run_payload_off;
+              int bitpos      = local * level_bits;
+              int source      = payload_off + (bitpos >> 3);
+              bitpos &= 7;
+              uint32_t level_val = 0;
+              if (source < stream_len) { level_val = staged_byte(source); }
+              ++source;
+              if (level_bits > 8 - bitpos && source < stream_len) {
+                level_val |= static_cast<uint32_t>(staged_byte(source)) << 8;
+                ++source;
+                if (level_bits > 16 - bitpos && source < stream_len) {
+                  level_val |= static_cast<uint32_t>(staged_byte(source)) << 16;
+                  ++source;
+                  if (level_bits > 24 - bitpos && source < stream_len) {
+                    level_val |= static_cast<uint32_t>(staged_byte(source)) << 24;
                   }
                 }
               }
+              level_val = (level_val >> bitpos) & level_mask;
+              output[rolling_index<max_output_values>(base_out + p)] =
+                static_cast<level_t>(level_val);
             }
-            level_val = (level_val >> bitpos) & level_mask;
-            output[rolling_index<max_output_values>(base_out + out_pos)] =
-              static_cast<level_t>(level_val);
           } else {
-            // RLE run: read the single repeated value from s_start.
-            // Guard each byte against `end` to match the literal path, since a
-            // truncated Parquet page can leave `run_desc`'s payload offset
-            // pointing within [s_start, end) while `level_bits > 8` implies
-            // vptr[1..3] may lie past `end`.
-            uint8_t const* vptr = s_start + (run_desc & run_desc_offset_mask);
-            uint32_t level_val  = 0;
-            if (vptr < end) { level_val = vptr[0]; }
+            // RLE run: read the single repeated value once from s_start,
+            // assembling up to 4 payload bytes into `level_val` based on
+            // level_bits, then warp_fill the whole segment.
+            int const value_off = meta & 0x7fffffff;
+            uint32_t level_val  = staged_byte(value_off);
             if constexpr (sizeof(level_t) > 1) {
-              if (level_bits > 8 && (vptr + 1) < end) {
-                level_val |= static_cast<uint32_t>(vptr[1]) << 8;
+              if (level_bits > 8) {
+                level_val |= static_cast<uint32_t>(staged_byte(value_off + 1)) << 8;
                 if constexpr (sizeof(level_t) > 2) {
-                  if (level_bits > 16 && (vptr + 2) < end) {
-                    level_val |= static_cast<uint32_t>(vptr[2]) << 16;
-                    if (level_bits > 24 && (vptr + 3) < end) {
-                      level_val |= static_cast<uint32_t>(vptr[3]) << 24;
+                  if (level_bits > 16) {
+                    level_val |= static_cast<uint32_t>(staged_byte(value_off + 2)) << 16;
+                    if (level_bits > 24) {
+                      level_val |= static_cast<uint32_t>(staged_byte(value_off + 3)) << 24;
                     }
                   }
                 }
               }
             }
-            output[rolling_index<max_output_values>(base_out + out_pos)] =
-              static_cast<level_t>(level_val);
+            level_t const fill = static_cast<level_t>(level_val);
+            for (int q = base_out + seg_lo + lane; q < base_out + seg_hi; q += 32) {
+              output[rolling_index<max_output_values>(q)] = fill;
+            }
           }
-          out_pos += warp.size();
         }
       }
       // Barrier before rewriting the shared tables on the next iteration.
-      group.sync();
+      __syncthreads();
+
+      // Pipeline consumer_wait/release is the only staging barrier here; adding
+      // a per-chunk block-wide sync repeats the BSS staging regression pattern.
+      if (current_pending) { smem_pipe->consumer_release(); }
+      if (next_pending) {
+        smem_pipe->consumer_wait();
+        mark_loaded(current_chunk + 1);
+        smem_pipe->consumer_release();
+      }
 
       out_pos_total = base_out + chunk_total;
     }
@@ -691,16 +787,6 @@ struct rle_stream {
     // with no nulls (especially non-nested ones) have all-zero definition
     // levels. Handled here so both decode_next_ring and decode_next_chunked
     // stay focused on the general RLE path.
-    //
-    // The write uses `cur_values + written + t` rather than `written + t` so it
-    // targets the correct ring slots regardless of how many times decode_next
-    // has already been called. No current caller enters this fast path with
-    // cur_values > 0 -- the writer floors dict_rle_bits >= 1 in chunk_dict.cu,
-    // and the REPETITION/DEFINITION decoders in decode_preprocess.cu are
-    // single-call -- so all reachable end-to-end tests still pass with the
-    // simpler `written + t` form. This invariant is preserved defensively so
-    // any future caller that iterates decode_next with level_bits == 0 stays
-    // correct without a silent off-by-one in the ring buffer.
     int const output_count = min(count, total_values - cur_values);
     if (level_bits == 0) {
       int written = 0;
@@ -715,9 +801,9 @@ struct rle_stream {
       return output_count;
     }
     if constexpr (use_chunked_expand) {
-      return decode_next_chunked(cg::this_thread_block(), count);
+      return decode_next_chunked(t, count);
     } else {
-      return decode_next_ring(cg::this_thread_block(), count);
+      return decode_next_ring(t, count);
     }
   }
 
@@ -746,7 +832,6 @@ struct rle_stream {
 
   __device__ inline int skip_decode(int t, int count)
   {
-    static_assert(not use_chunked_expand, "skip_decode is not supported by chunked-expand");
     int const output_count = min(count, total_values - cur_values);
 
     // if level_bits == 0, there's nothing to do
@@ -759,6 +844,6 @@ struct rle_stream {
 };
 
 template <typename level_t, int decode_threads, int max_output_values>
-using rle_stream_chunked = rle_stream<level_t, decode_threads, max_output_values, true>;
+using rle_stream_chunked = rle_stream<level_t, decode_threads, max_output_values, true, false>;
 
 }  // namespace cudf::io::parquet::detail

@@ -1,0 +1,498 @@
+; SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+; SPDX-License-Identifier: Apache-2.0
+
+; Records hold a state ID and only the observable capture slots.
+; BEGIN candidate_functions
+define internal i1 @{0}(i32 %byte) alwaysinline nounwind readnone {{
+entry:
+  %word = lshr i32 %byte, 6
+  %zero = icmp eq i32 %word, 0
+  %one = icmp eq i32 %word, 1
+  %two = icmp eq i32 %word, 2
+  %upper = select i1 %two, i64 {3}, i64 {4}
+  %middle = select i1 %one, i64 {2}, i64 %upper
+  %bitmap = select i1 %zero, i64 {1}, i64 %middle
+  %bit32 = and i32 %byte, 63
+  %bit = zext i32 %bit32 to i64
+  %mask = shl i64 1, %bit
+  %present = and i64 %bitmap, %mask
+  %result = icmp ne i64 %present, 0
+  ret i1 %result
+}}
+define internal i64 @{5}(i8* %data, i64 %size, i64 %start) alwaysinline nounwind readonly {{
+entry:
+  br label %scan
+scan:
+  %pos = phi i64 [ %start, %entry ], [ %next, %advance ]
+  %available = icmp ult i64 %pos, %size
+  br i1 %available, label %test, label %done
+test:
+  %ptr = getelementptr i8, i8* %data, i64 %pos
+  %byte8 = load i8, i8* %ptr, align 1
+  %byte = zext i8 %byte8 to i32
+  %candidate = call i1 @{0}(i32 %byte)
+  br i1 %candidate, label %done, label %advance
+advance:
+  %next = add i64 %pos, 1
+  br label %scan
+done:
+  ret i64 %pos
+}}
+; END candidate_functions
+; BEGIN copy
+define internal void @{0}(i64* %dst, i64* %src) alwaysinline nounwind {{
+entry:
+  br label %loop
+loop:
+  %i = phi i64 [ 0, %entry ], [ %next, %loop ]
+  %s = getelementptr i64, i64* %src, i64 %i
+  %d = getelementptr i64, i64* %dst, i64 %i
+  %v = load i64, i64* %s, align 8
+  store i64 %v, i64* %d, align 8
+  %next = add i64 %i, 1
+  %more = icmp ult i64 %next, {1}
+  br i1 %more, label %loop, label %done
+done:
+  ret void
+}}
+; END copy
+
+; BEGIN run
+define internal i1 @{0}(@workspace@i32 %block, i8* %data, i64 %size, i64* %position, i64* %captures) {1} nounwind {{
+entry:
+{2}
+  %base = bitcast i8* %storage to i64*
+  %other = getelementptr i64, i64* %base, i64 {3}
+  %stack = getelementptr i64, i64* %base, i64 {4}
+  %active = getelementptr i64, i64* %base, i64 {5}
+  %seen = getelementptr i64, i64* %base, i64 {6}
+  %queued = getelementptr i64, i64* %base, i64 {7}
+  %sp = alloca i64, align 8
+  %next_count = alloca i64, align 8
+  %root = zext i32 %block to i64
+  store i64 %root, i64* %base, align 8
+{8}
+  %initial_position = load i64, i64* %position, align 8
+  br label %iteration
+iteration:
+  %current = phi i64* [ %base, %entry ], [ %next_list, %advance ]
+  %next_list = phi i64* [ %other, %entry ], [ %current, %advance ]
+  %count = phi i64 [ 1, %entry ], [ %produced, %advance ]
+  %iteration_pos = phi i64 [ %initial_position, %entry ], [ %advanced, %advance ]
+  %found = phi i1 [ false, %entry ], [ %accepted, %advance ]
+  %front_state = load i64, i64* %current, align 8
+  %pos = call i64 @{16}(i8* %data, i64 %size, i64 %iteration_pos, {18}, i64 %count)
+  %cp = call i32 @{17}(i8* %data, i64 %size, i64 %pos)
+  store i64 0, i64* %next_count, align 8
+  br label %clear
+clear:
+  %clear_i = phi i64 [ 0, %iteration ], [ %clear_next, %clear ]
+  %seen_ptr = getelementptr i64, i64* %seen, i64 %clear_i
+  %queued_ptr = getelementptr i64, i64* %queued, i64 %clear_i
+  store i64 0, i64* %seen_ptr, align 8
+  store i64 0, i64* %queued_ptr, align 8
+  %clear_next = add i64 %clear_i, 1
+  %clear_more = icmp ult i64 %clear_next, {9}
+  br i1 %clear_more, label %clear, label %seed
+seed:
+  %seed_i = phi i64 [ 0, %clear ], [ %seed_next, %next_seed ]
+  %seed_offset = mul i64 %seed_i, {10}
+  %seed_ptr = getelementptr i64, i64* %current, i64 %seed_offset
+  call void @{11}(i64* %active, i64* %seed_ptr)
+  store i64 0, i64* %sp, align 8
+  br label %active_state
+pop:
+  %depth = load i64, i64* %sp, align 8
+  %empty = icmp eq i64 %depth, 0
+  br i1 %empty, label %next_seed, label %take
+take:
+  %top = sub i64 %depth, 1
+  store i64 %top, i64* %sp, align 8
+  %top_offset = mul i64 %top, {10}
+  %top_ptr = getelementptr i64, i64* %stack, i64 %top_offset
+  call void @{11}(i64* %active, i64* %top_ptr)
+  br label %active_state
+active_state:
+  %state = load i64, i64* %active, align 8
+  %state_word = lshr i64 %state, 6
+  %state_bit = and i64 %state, 63
+  %state_mask = shl i64 1, %state_bit
+  %visited_ptr = getelementptr i64, i64* %seen, i64 %state_word
+  %visited = load i64, i64* %visited_ptr, align 8
+  %visited_bit = and i64 %visited, %state_mask
+  %duplicate = icmp ne i64 %visited_bit, 0
+  br i1 %duplicate, label %pop, label %dispatch
+dispatch:
+  %visited_next = or i64 %visited, %state_mask
+  store i64 %visited_next, i64* %visited_ptr, align 8
+  switch i64 %state, label %pop [
+{12}  ]
+{13}
+accept:
+  store i64 %pos, i64* %position, align 8
+{14}
+  br label %finish_position
+next_seed:
+  %seed_next = add i64 %seed_i, 1
+  %seeds_left = icmp ult i64 %seed_next, %count
+  br i1 %seeds_left, label %seed, label %finish_position
+finish_position:
+  %accepted = phi i1 [ true, %accept ], [ %found, %next_seed ]
+  %produced = load i64, i64* %next_count, align 8
+  %live = icmp ne i64 %produced, 0
+  br i1 %live, label %advance, label %done
+advance:
+  %advanced = call i64 @{15}(i8* %data, i64 %size, i64 %pos, i64 1)
+  br label %iteration
+done:
+  ret i1 %accepted
+}}
+; END run
+
+; BEGIN single_run_scanner
+define internal i64 @{0}(i8* %data, i64 %size, i64 %pos, i64 %state, i64 %count) alwaysinline nounwind readonly {{
+entry:
+  %single = icmp eq i64 %count, 1
+  br i1 %single, label %dispatch, label %unchanged
+dispatch:
+  switch i64 %state, label %unchanged [
+{1}  ]
+{2}
+unchanged:
+  ret i64 %pos
+}}
+; END single_run_scanner
+
+; BEGIN run_scanner
+define internal i64 @{0}(i8* %data, i64 %size, i64 %pos, i64* %current, i64 %count) alwaysinline nounwind readonly {{
+entry:
+  %single = icmp eq i64 %count, 1
+  br i1 %single, label %single_dispatch, label %multi_entry
+single_dispatch:
+  %single_state = load i64, i64* %current, align 8
+  switch i64 %single_state, label %unchanged [
+{4}  ]
+{5}
+multi_entry:
+  %bounded = icmp ule i64 %count, 8
+  br i1 %bounded, label %check_state, label %unchanged
+check_state:
+  %index = phi i64 [ 0, %multi_entry ], [ %next_index, %next_state ]
+  %low = phi i64 [ -1, %multi_entry ], [ %low_next, %next_state ]
+  %high = phi i64 [ -1, %multi_entry ], [ %high_next, %next_state ]
+  %offset = mul i64 %index, {3}
+  %record = getelementptr i64, i64* %current, i64 %offset
+  %state = load i64, i64* %record, align 8
+  br label %dispatch
+dispatch:
+  switch i64 %state, label %unchanged [
+{1}  ]
+{2}
+next_state:
+  %low_next = phi i64 {6}
+  %high_next = phi i64 {7}
+  %next_index = add i64 %index, 1
+  %more = icmp ult i64 %next_index, %count
+  br i1 %more, label %check_state, label %scan
+scan:
+  %cursor = phi i64 [ %pos, %next_state ], [ %next_cursor, %step ]
+  %in_bounds = icmp ult i64 %cursor, %size
+  br i1 %in_bounds, label %byte, label %done
+byte:
+  %ptr = getelementptr i8, i8* %data, i64 %cursor
+  %value = load i8, i8* %ptr, align 1
+  %ascii = icmp ult i8 %value, 128
+  %lower = icmp ult i8 %value, 64
+  %bits = select i1 %lower, i64 %low_next, i64 %high_next
+  %cp = zext i8 %value to i64
+  %bit = and i64 %cp, 63
+  %shifted = lshr i64 %bits, %bit
+  %matches = trunc i64 %shifted to i1
+  %advance_byte = and i1 %ascii, %matches
+  br i1 %advance_byte, label %step, label %done
+step:
+  %next_cursor = add i64 %cursor, 1
+  br label %scan
+done:
+  ret i64 %cursor
+unchanged:
+  ret i64 %pos
+}}
+; END run_scanner
+
+; BEGIN run_scanner_empty
+define internal i64 @{0}(i8* %data, i64 %size, i64 %pos, i64* %current, i64 %count) alwaysinline nounwind readnone {{
+entry:
+  ret i64 %pos
+}}
+; END run_scanner_empty
+
+; BEGIN multi_scan_case
+multi_run_{0}:
+  %low_{0} = and i64 %low, {1}
+  %high_{0} = and i64 %high, {2}
+  br label %next_state
+; END multi_scan_case
+
+; BEGIN scan_case
+run_{0}:
+  br label %scan_{0}
+scan_{0}:
+  %cursor_{0} = phi i64 [ %pos, %run_{0} ], [ %next_{0}, %step_{0} ]
+  %in_bounds_{0} = icmp ult i64 %cursor_{0}, %size
+  br i1 %in_bounds_{0}, label %byte_{0}, label %done_{0}
+byte_{0}:
+  %ptr_{0} = getelementptr i8, i8* %data, i64 %cursor_{0}
+  %value_{0} = load i8, i8* %ptr_{0}, align 1
+  %ascii_{0} = icmp ult i8 %value_{0}, 128
+  br i1 %ascii_{0}, label %test_{0}, label %done_{0}
+test_{0}:
+  %cp_{0} = zext i8 %value_{0} to i32
+  %matches_{0} = call i1 @{1}(i32 %cp_{0})
+  br i1 %matches_{0}, label %step_{0}, label %done_{0}
+step_{0}:
+  %next_{0} = add i64 %cursor_{0}, 1
+  br label %scan_{0}
+done_{0}:
+  ret i64 %cursor_{0}
+; END scan_case
+
+; BEGIN local_storage
+  %local = alloca [{0} x i8], align 8
+  %storage = getelementptr [{0} x i8], [{0} x i8]* %local, i32 0, i32 0
+; END local_storage
+
+; BEGIN external_storage
+  %storage = getelementptr i8, i8* %workspace, i64 0
+; END external_storage
+
+; BEGIN initial_capture
+  %initial_src_{0} = getelementptr i64, i64* %captures, i64 {1}
+  %initial_dst_{0} = getelementptr i64, i64* %base, i64 {2}
+  %initial_value_{0} = load i64, i64* %initial_src_{0}, align 8
+  store i64 %initial_value_{0}, i64* %initial_dst_{0}, align 8
+; END initial_capture
+
+; BEGIN accepted_capture
+  %accepted_src_{0} = getelementptr i64, i64* %active, i64 {2}
+  %accepted_dst_{0} = getelementptr i64, i64* %captures, i64 {1}
+  %accepted_value_{0} = load i64, i64* %accepted_src_{0}, align 8
+  store i64 %accepted_value_{0}, i64* %accepted_dst_{0}, align 8
+; END accepted_capture
+
+; BEGIN capture
+  %capture_{0}_{1} = getelementptr i64, i64* %active, i64 {2}
+  store i64 {3}, i64* %capture_{0}_{1}, align 8
+; END capture
+
+; BEGIN consume
+  %has_char_{0} = icmp ult i64 %pos, %size
+  br i1 %has_char_{0}, label %match_{0}, label %pop
+match_{0}:
+  %matches_{0} = call i1 @{1}(i32 %cp)
+  br i1 %matches_{0}, label %edges_{0}, label %pop
+edges_{0}:
+; END consume
+
+; BEGIN assertion
+  %assert_{0} = call i1 @{1}(i8* %data, i64 %size, i64 %pos, i32 {2}, i1 {3}, i1 {4})
+  br i1 %assert_{0}, label %edges_{0}, label %pop
+edges_{0}:
+; END assertion
+
+; BEGIN accept_end
+  %at_end_{0} = icmp eq i64 %pos, %size
+  br i1 %at_end_{0}, label %accept, label %pop
+; END accept_end
+
+; BEGIN push
+  %depth_{0} = load i64, i64* %sp, align 8
+  %offset_{0} = mul i64 %depth_{0}, {1}
+  %dst_{0} = getelementptr i64, i64* %stack, i64 %offset_{0}
+  call void @{2}(i64* %dst_{0}, i64* %active)
+  store i64 {3}, i64* %dst_{0}, align 8
+  %depth_next_{0} = add i64 %depth_{0}, 1
+  store i64 %depth_next_{0}, i64* %sp, align 8
+; END push
+
+; BEGIN direct
+  %direct_word_{0} = lshr i64 {1}, 6
+  %direct_bit_{0} = and i64 {1}, 63
+  %direct_mask_{0} = shl i64 1, %direct_bit_{0}
+  %direct_seen_ptr_{0} = getelementptr i64, i64* %seen, i64 %direct_word_{0}
+  %direct_seen_{0} = load i64, i64* %direct_seen_ptr_{0}, align 8
+  %direct_visited_{0} = and i64 %direct_seen_{0}, %direct_mask_{0}
+  %direct_duplicate_{0} = icmp ne i64 %direct_visited_{0}, 0
+  br i1 %direct_duplicate_{0}, label %pop, label %direct_{0}
+direct_{0}:
+  %direct_next_{0} = or i64 %direct_seen_{0}, %direct_mask_{0}
+  store i64 %direct_next_{0}, i64* %direct_seen_ptr_{0}, align 8
+  br label %state_{1}
+; END direct
+
+; BEGIN enqueue
+  %queued_word_{0} = lshr i64 {3}, 6
+  %queued_bit_{0} = and i64 {3}, 63
+  %queued_mask_{0} = shl i64 1, %queued_bit_{0}
+  %queued_ptr_{0} = getelementptr i64, i64* %queued, i64 %queued_word_{0}
+  %queued_{0} = load i64, i64* %queued_ptr_{0}, align 8
+  %queued_visited_{0} = and i64 %queued_{0}, %queued_mask_{0}
+  %is_queued_{0} = icmp ne i64 %queued_visited_{0}, 0
+  br i1 %is_queued_{0}, label %after_{0}, label %enqueue_{0}
+enqueue_{0}:
+  %queued_next_{0} = or i64 %queued_{0}, %queued_mask_{0}
+  store i64 %queued_next_{0}, i64* %queued_ptr_{0}, align 8
+  %count_{0} = load i64, i64* %next_count, align 8
+  %offset_{0} = mul i64 %count_{0}, {1}
+  %dst_{0} = getelementptr i64, i64* %next_list, i64 %offset_{0}
+  call void @{2}(i64* %dst_{0}, i64* %active)
+  store i64 {3}, i64* %dst_{0}, align 8
+  %count_next_{0} = add i64 %count_{0}, 1
+  store i64 %count_next_{0}, i64* %next_count, align 8
+  br label %after_{0}
+after_{0}:
+; END enqueue
+
+; BEGIN boolean_execute_prefix
+define zeroext i1 @{0}(@workspace@i8* %data, i64 %size) nounwind readonly {{
+entry:
+  %position = alloca i64, align 8
+; END boolean_execute_prefix
+
+; BEGIN find_from_prefix
+define internal i1 @{0}(@workspace@i8* %data, i64 %size, i64 %search_start, i64* %match_begin, i64* %match_end, i64* %captures) nounwind {{
+entry:
+  %position = alloca i64, align 8
+{1}search:
+  %start = phi i64 [ %search_start, {2} ], [ %next_start, %continue ]
+  %in_range = icmp ule i64 %start, %size
+; END find_from_prefix
+
+; BEGIN thompson_execute_prefix_search
+  br label %search
+search:
+  %start = phi i64 [ 0, {6} ], [ %next_start, %next ]
+  %at_end = icmp eq i64 %start, %size
+  br i1 %at_end, label %attempt, label %filter
+filter:
+  %start_ptr = getelementptr i8, i8* %data, i64 %start
+  %start_byte = call i32 @{0}(i8* %start_ptr)
+  %candidate = {1}
+{2}  br i1 {3}, label %attempt, label %skip
+skip:
+  %is_ascii = icmp ult i32 %start_byte, 128
+  br i1 %is_ascii, label %continue_ascii, label %continue_utf8
+attempt:
+  store i64 %start, i64* %position, align 8
+  %matched = call i1 @{4}(@workspace@i32 {5}, i8* %data, i64 %size, i64* %position, i64* null)
+  br i1 %matched, label %yes, label %check_end
+check_end:
+  br i1 %at_end, label %no, label %continue_ascii
+continue_ascii:
+  %prefix_seek_start = add nuw i64 %start, 1
+  %ascii_next = call i64 @{7}(i8* %data, i64 %size, i64 %prefix_seek_start{8})
+  br label %next
+continue_utf8:
+  br label %continue_ascii
+next:
+  %next_start = phi i64 [ %ascii_next, %continue_ascii ]
+  br label %search
+yes:
+  ret i1 true
+no:
+  ret i1 false
+}}
+; END thompson_execute_prefix_search
+
+; BEGIN thompson_execute_suffix
+  br label %search
+search:
+  %start = phi i64 [ 0, {3} ], [ %next_start, %continue ]
+  store i64 %start, i64* %position, align 8
+  %matched = call i1 @{0}(@workspace@i32 {1}, i8* %data, i64 %size, i64* %position, i64* null)
+  br i1 %matched, label %yes, label %check_end
+check_end:
+  %at_end = icmp eq i64 %start, %size
+  br i1 %at_end, label %no, label %continue
+continue:
+  %next_start = call i64 @{2}(i8* %data, i64 %size, i64 %start, i64 1)
+  br label %search
+yes:
+  ret i1 true
+no:
+  ret i1 false
+}}
+; END thompson_execute_suffix
+
+; BEGIN store_store_i64_0_i64_position_align_8
+  store i64 0, i64* %position, align 8
+  %matched = call i1 @{0}(@workspace@i32 {1}, i8* %data, i64 %size, i64* %position, i64* null)
+  ret i1 %matched
+}}
+; END store_store_i64_0_i64_position_align_8
+
+; BEGIN mandatory_at_begin
+  %mandatory_at_begin = icmp eq i64 %search_start, 0
+  br i1 %mandatory_at_begin, label %mandatory_filter, label %mandatory_filter_done
+mandatory_filter:
+  %mandatory_present = call i1 @{}(i8* %data, i64 %size, i64 %search_start)
+  br i1 %mandatory_present, label %mandatory_filter_done, label %no
+mandatory_filter_done:
+  br label %search
+; END mandatory_at_begin
+
+; BEGIN branch_br_i1_in_range_label_prefix_end_label_no
+  br i1 %in_range, label %prefix_end, label %no
+prefix_end:
+  %at_end = icmp eq i64 %start, %size
+  br i1 %at_end, label %initialize, label %prefix_filter
+prefix_filter:
+  %prefix_ptr = getelementptr i8, i8* %data, i64 %start
+  %prefix_byte = call i32 @{0}(i8* %prefix_ptr)
+  %prefix_candidate = {1}
+{2}  br i1 {3}, label %initialize, label %continue
+; END branch_br_i1_in_range_label_prefix_end_label_no
+
+; BEGIN find_capture_ptr_0
+  %find_capture_ptr_0 = getelementptr i64, i64* %captures, i64 0
+  %find_capture_ptr_1 = getelementptr i64, i64* %captures, i64 1
+; END find_capture_ptr_0
+
+; BEGIN find_capture_ptr_n
+  %find_capture_ptr_{0} = getelementptr i64, i64* %captures, i64 {0}
+  store i64 -1, i64* %find_capture_ptr_{0}, align 8
+; END find_capture_ptr_n
+
+; BEGIN store_store_i64_start_i64_position_align_8
+  store i64 %start, i64* %position, align 8
+  %matched = call i1 @{0}(@workspace@i32 {1}, i8* %data, i64 %size, i64* %position, i64* {2})
+  br i1 %matched, label %yes, label %check_end
+check_end:
+; END store_store_i64_start_i64_position_align_8
+
+; BEGIN at_end
+  %at_end = icmp eq i64 %start, %size
+  br i1 %at_end, label %no, label %continue
+; END at_end
+
+; BEGIN prefix_seek_start
+  %prefix_seek_start = add nuw i64 %start, 1
+  %next_start = call i64 @{0}(i8* %data, i64 %size, i64 %prefix_seek_start{1})
+; END prefix_seek_start
+
+; BEGIN continue
+continue:
+{0}
+  br label %search
+yes:
+  %accepted_end = load i64, i64* %position, align 8
+  store i64 %start, i64* %match_begin, align 8
+  store i64 %accepted_end, i64* %match_end, align 8
+; END continue
+
+; BEGIN return_ret_i1_true
+  ret i1 true
+no:
+  ret i1 false
+}}
+; END return_ret_i1_true

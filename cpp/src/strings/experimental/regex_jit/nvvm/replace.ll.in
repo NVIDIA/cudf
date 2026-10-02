@@ -1,0 +1,353 @@
+; SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+; SPDX-License-Identifier: Apache-2.0
+
+; BEGIN limited_replace_cached
+
+define internal i64 @regex_ir_replace_cached(i8* %data, i64 %size, i8* %output, i64* %cache, i32 %row, i32 %capacity, i32 %match_count, i32 %capture_slots) nounwind {
+entry:
+  %row64 = zext i32 %row to i64
+  %capacity64 = zext i32 %capacity to i64
+  %slots64 = zext i32 %capture_slots to i64
+  %row_records = mul i64 %row64, %capacity64
+  %row_base = mul i64 %row_records, %slots64
+  br label %loop
+loop:
+  %match = phi i32 [ 0, %entry ], [ %next_match, %copy_match ]
+  %copied = phi i64 [ 0, %entry ], [ %match_end, %copy_match ]
+  %cursor = phi i64 [ 0, %entry ], [ %replacement_cursor, %copy_match ]
+  %finished = icmp eq i32 %match, %match_count
+  br i1 %finished, label %finish, label %copy_match
+copy_match:
+  %match64 = zext i32 %match to i64
+  %record_offset = mul i64 %match64, %slots64
+  %capture_offset = add i64 %row_base, %record_offset
+  %captures = getelementptr i64, i64* %cache, i64 %capture_offset
+  %match_begin_ptr = getelementptr i64, i64* %captures, i64 0
+  %match_end_ptr = getelementptr i64, i64* %captures, i64 1
+  %match_begin = load i64, i64* %match_begin_ptr, align 8
+  %match_end = load i64, i64* %match_end_ptr, align 8
+  %cursor_unmatched = call i64 @regex_ir_append_range(i8* %data, i64 %copied, i64 %match_begin, i8* %output, i64 %cursor)
+@REPLACEMENT_STEPS@  %next_match = add i32 %match, 1
+  br label %loop
+finish:
+  %final_cursor = call i64 @regex_ir_append_range(i8* %data, i64 %copied, i64 %size, i8* %output, i64 %cursor)
+  ret i64 %final_cursor
+}
+; END limited_replace_cached
+
+; BEGIN limited_replace_cached_emit
+define void @KERNEL_ENTRY@(@workspace_parameters@i8* %chars, i8* %offsets, i32* %validity, i32 %row_offset, i32 %rows, i8* %output, i8* %output_offsets, i8* %cache_buffer, i32 %capacity, i8* %overflow, i8* %match_counts) nounwind {
+entry:
+@workspace_entry@
+  %dummy_count = alloca i32, align 4
+  %row = @row_index@
+  %in_bounds = icmp slt i32 %row, %rows
+  br i1 %in_bounds, label %work, label %done
+work:
+  %physical = add i32 %row_offset, %row
+  %valid = call i1 @regex_ir_is_valid(i32* %validity, i32 %physical)
+  br i1 %valid, label %replace, label %done
+replace:
+  %string = call %regex_ir_string @regex_ir_load_string(i8* %chars, i8* %offsets, i32 %physical)
+  %data = extractvalue %regex_ir_string %string, 0
+  %size = extractvalue %regex_ir_string %string, 1
+  %output_offset64 = call i64 @regex_ir_load_offset_for_width(i8* %output_offsets, i32 %row, i1 @OUTPUT_OFFSET64@)
+  %output_ptr = getelementptr i8, i8* %output, i64 %output_offset64
+  %overflow_ptr = getelementptr i8, i8* %overflow, i32 %row
+  %row_overflow = load i8, i8* %overflow_ptr, align 1
+  %did_overflow = icmp ne i8 %row_overflow, 0
+  br i1 %did_overflow, label %rematch, label %cached
+rematch:
+  %rematched = call i64 @regex_ir_replace_execute(@workspace@i8* %data, i64 %size, i8* %output_ptr, i64* null, i32 %row, i32 %capacity, i8* %overflow_ptr, i32* %dummy_count)
+  br label %done
+cached:
+  %typed_cache = bitcast i8* %cache_buffer to i64*
+  %typed_counts = bitcast i8* %match_counts to i32*
+  %count_ptr = getelementptr i32, i32* %typed_counts, i32 %row
+  %match_count = load i32, i32* %count_ptr, align 4
+  %written = call i64 @regex_ir_replace_cached(i8* %data, i64 %size, i8* %output_ptr, i64* %typed_cache, i32 %row, i32 %capacity, i32 %match_count, i32 @CAPTURE_SLOTS@)
+  br label %done
+done:
+  ret void
+}
+; END limited_replace_cached_emit
+
+; BEGIN limited_replace_cached_size
+define void @KERNEL_ENTRY@(@workspace_parameters@i8* %chars, i8* %offsets, i32* %validity, i32 %row_offset, i32 %rows, i8* %output, i8* %cache_buffer, i32 %capacity, i8* %overflow, i8* %match_counts, i32* %size_overflow) nounwind {
+entry:
+@workspace_entry@
+  %typed_counts = bitcast i8* %match_counts to i32*
+  %row = @row_index@
+  %in_bounds = icmp slt i32 %row, %rows
+  br i1 %in_bounds, label %work, label %done
+work:
+  %physical = add i32 %row_offset, %row
+  %valid = call i1 @regex_ir_is_valid(i32* %validity, i32 %physical)
+  br i1 %valid, label %replace, label %store_zero
+replace:
+  %string = call %regex_ir_string @regex_ir_load_string(i8* %chars, i8* %offsets, i32 %physical)
+  %data = extractvalue %regex_ir_string %string, 0
+  %size = extractvalue %regex_ir_string %string, 1
+  %typed_cache = bitcast i8* %cache_buffer to i64*
+  %overflow_ptr = getelementptr i8, i8* %overflow, i32 %row
+  %count_ptr = getelementptr i32, i32* %typed_counts, i32 %row
+  %result_size = call i64 @regex_ir_replace_execute(@workspace@i8* %data, i64 %size, i8* null, i64* %typed_cache, i32 %row, i32 %capacity, i8* %overflow_ptr, i32* %count_ptr)
+  %too_large = icmp ugt i64 %result_size, 2147483647
+  br i1 %too_large, label %mark_overflow, label %size_fits
+mark_overflow:
+  %overflow_old = atomicrmw max i32* %size_overflow, i32 1 monotonic
+  br label %size_fits
+size_fits:
+  %stored_size = trunc i64 %result_size to i32
+  br label %store
+store_zero:
+  %invalid_count_ptr = getelementptr i32, i32* %typed_counts, i32 %row
+  store i32 0, i32* %invalid_count_ptr, align 4
+  br label %store
+store:
+  %value = phi i32 [ %stored_size, %size_fits ], [ 0, %store_zero ]
+  %typed_output = bitcast i8* %output to i32*
+  %out = getelementptr i32, i32* %typed_output, i32 %row
+  store i32 %value, i32* %out, align 4
+  br label %done
+done:
+  ret void
+}
+; END limited_replace_cached_size
+
+; BEGIN limited_replace_emit
+
+define void @KERNEL_ENTRY@(@workspace_parameters@i8* %chars, i8* %offsets, i32* %validity, i32 %row_offset, i32 %rows, i8* %output, i8* %output_offsets) nounwind {
+entry:
+@workspace_entry@
+  %row = @row_index@
+  %in_bounds = icmp slt i32 %row, %rows
+  br i1 %in_bounds, label %work, label %done
+work:
+  %physical = add i32 %row_offset, %row
+  %valid = call i1 @regex_ir_is_valid(i32* %validity, i32 %physical)
+  br i1 %valid, label %replace, label %done
+replace:
+  %string = call %regex_ir_string @regex_ir_load_string(i8* %chars, i8* %offsets, i32 %physical)
+  %data = extractvalue %regex_ir_string %string, 0
+  %size = extractvalue %regex_ir_string %string, 1
+  %output_offset64 = call i64 @regex_ir_load_offset_for_width(i8* %output_offsets, i32 %row, i1 @OUTPUT_OFFSET64@)
+  %output_ptr = getelementptr i8, i8* %output, i64 %output_offset64
+  %written = call i64 @regex_ir_replace_execute(@workspace@i8* %data, i64 %size, i8* %output_ptr)
+  br label %done
+done:
+  ret void
+}
+; END limited_replace_emit
+
+; BEGIN limited_replace_execute
+
+define internal i64 @regex_ir_replace_execute(@workspace@i8* %data, i64 %size, i8* %output) nounwind {
+entry:
+  %capture_array = alloca [@CAPTURE_SLOTS@ x i64], align 8
+  %captures = getelementptr [@CAPTURE_SLOTS@ x i64], [@CAPTURE_SLOTS@ x i64]* %capture_array, i32 0, i32 0
+  br label %loop
+loop:
+  %search_start = phi i64 [ 0, %entry ], [ %match_end, %continue_nonempty ], [ %advanced_start, %continue_empty ]
+  %copied = phi i64 [ 0, %entry ], [ %match_end, %continue_nonempty ], [ %match_end, %continue_empty ]
+  %cursor = phi i64 [ 0, %entry ], [ %replacement_cursor, %continue_nonempty ], [ %replacement_cursor, %continue_empty ]
+  %replacement_count = phi i64 [ 0, %entry ], [ %next_replacement_count, %continue_nonempty ], [ %next_replacement_count, %continue_empty ]
+  %limit_reached = @LIMIT_REACHED@
+  br i1 %limit_reached, label %finish_limit, label %search
+search:
+  %matched = call i1 @regex_ir_execute(@workspace@i8* %data, i64 %size, i64 %search_start, i64* %captures)
+  br i1 %matched, label %found, label %no_match
+found:
+  %match_begin_ptr = getelementptr [@CAPTURE_SLOTS@ x i64], [@CAPTURE_SLOTS@ x i64]* %capture_array, i32 0, i32 0
+  %match_end_ptr = getelementptr [@CAPTURE_SLOTS@ x i64], [@CAPTURE_SLOTS@ x i64]* %capture_array, i32 0, i32 1
+  %match_begin = load i64, i64* %match_begin_ptr, align 8
+  %match_end = load i64, i64* %match_end_ptr, align 8
+  %cursor_unmatched = call i64 @regex_ir_append_range(i8* %data, i64 %copied, i64 %match_begin, i8* %output, i64 %cursor)
+@REPLACEMENT_STEPS@  %next_replacement_count = add i64 %replacement_count, 1
+  %nonempty = icmp ne i64 %match_begin, %match_end
+  br i1 %nonempty, label %continue_nonempty, label %empty
+continue_nonempty:
+  br label %loop
+empty:
+  %empty_at_end = icmp eq i64 %match_end, %size
+  br i1 %empty_at_end, label %finish_empty, label %continue_empty
+continue_empty:
+  %advanced_start = call i64 @regex_ir_advance_utf8(i8* %data, i64 %size, i64 %match_end)
+  br label %loop
+finish_limit:
+  br label %finish
+no_match:
+  br label %finish
+finish_empty:
+  br label %finish
+finish:
+  %tail_begin = phi i64 [ %copied, %finish_limit ], [ %copied, %no_match ], [ %match_end, %finish_empty ]
+  %tail_cursor = phi i64 [ %cursor, %finish_limit ], [ %cursor, %no_match ], [ %replacement_cursor, %finish_empty ]
+  %final_cursor = call i64 @regex_ir_append_range(i8* %data, i64 %tail_begin, i64 %size, i8* %output, i64 %tail_cursor)
+  ret i64 %final_cursor
+}
+; END limited_replace_execute
+
+; BEGIN limited_replace_execute_cached
+define internal i64 @regex_ir_replace_execute(@workspace@i8* %data, i64 %size, i8* %output, i64* %cache, i32 %row, i32 %capacity, i8* %overflow, i32* %count_out) nounwind {
+entry:
+  %capture_array = alloca [@CAPTURE_SLOTS@ x i64], align 8
+  %captures = getelementptr [@CAPTURE_SLOTS@ x i64], [@CAPTURE_SLOTS@ x i64]* %capture_array, i32 0, i32 0
+  br label %loop
+loop:
+  %search_start = phi i64 [ 0, %entry ], [ %match_end, %continue_nonempty ], [ %advanced_start, %continue_empty ]
+  %copied = phi i64 [ 0, %entry ], [ %match_end, %continue_nonempty ], [ %match_end, %continue_empty ]
+  %cursor = phi i64 [ 0, %entry ], [ %replacement_cursor, %continue_nonempty ], [ %replacement_cursor, %continue_empty ]
+  %replacement_count = phi i64 [ 0, %entry ], [ %next_replacement_count, %continue_nonempty ], [ %next_replacement_count, %continue_empty ]
+  %limit_reached = @LIMIT_REACHED@
+  br i1 %limit_reached, label %finish_limit, label %search
+search:
+  %matched = call i1 @regex_ir_execute(@workspace@i8* %data, i64 %size, i64 %search_start, i64* %captures)
+  br i1 %matched, label %found, label %no_match
+found:
+  %match_begin_ptr = getelementptr [@CAPTURE_SLOTS@ x i64], [@CAPTURE_SLOTS@ x i64]* %capture_array, i32 0, i32 0
+  %match_end_ptr = getelementptr [@CAPTURE_SLOTS@ x i64], [@CAPTURE_SLOTS@ x i64]* %capture_array, i32 0, i32 1
+  %match_begin = load i64, i64* %match_begin_ptr, align 8
+  %match_end = load i64, i64* %match_end_ptr, align 8
+  call void @regex_ir_cache_captures(i64* %captures, i64* %cache, i32 %row, i32 %capacity, i32 @CAPTURE_SLOTS@, i64 %replacement_count, i8* %overflow)
+  %cursor_unmatched = call i64 @regex_ir_append_range(i8* %data, i64 %copied, i64 %match_begin, i8* %output, i64 %cursor)
+@REPLACEMENT_STEPS@  %next_replacement_count = add i64 %replacement_count, 1
+  %nonempty = icmp ne i64 %match_begin, %match_end
+  br i1 %nonempty, label %continue_nonempty, label %empty
+continue_nonempty:
+  br label %loop
+empty:
+  %empty_at_end = icmp eq i64 %match_end, %size
+  br i1 %empty_at_end, label %finish_empty, label %continue_empty
+continue_empty:
+  %advanced_start = call i64 @regex_ir_advance_utf8(i8* %data, i64 %size, i64 %match_end)
+  br label %loop
+finish_limit:
+  br label %finish
+no_match:
+  br label %finish
+finish_empty:
+  br label %finish
+finish:
+  %tail_begin = phi i64 [ %copied, %finish_limit ], [ %copied, %no_match ], [ %match_end, %finish_empty ]
+  %tail_cursor = phi i64 [ %cursor, %finish_limit ], [ %cursor, %no_match ], [ %replacement_cursor, %finish_empty ]
+  %final_count = phi i64 [ %replacement_count, %finish_limit ], [ %replacement_count, %no_match ], [ %next_replacement_count, %finish_empty ]
+  %stored_count = trunc i64 %final_count to i32
+  store i32 %stored_count, i32* %count_out, align 4
+  %final_cursor = call i64 @regex_ir_append_range(i8* %data, i64 %tail_begin, i64 %size, i8* %output, i64 %tail_cursor)
+  ret i64 %final_cursor
+}
+; END limited_replace_execute_cached
+
+; BEGIN limited_replace_size
+
+define void @KERNEL_ENTRY@(@workspace_parameters@i8* %chars, i8* %offsets, i32* %validity, i32 %row_offset, i32 %rows, i8* %output, i32* %size_overflow) nounwind {
+entry:
+@workspace_entry@
+  %row = @row_index@
+  %in_bounds = icmp slt i32 %row, %rows
+  br i1 %in_bounds, label %work, label %done
+work:
+  %physical = add i32 %row_offset, %row
+  %valid = call i1 @regex_ir_is_valid(i32* %validity, i32 %physical)
+  br i1 %valid, label %replace, label %store_zero
+replace:
+  %string = call %regex_ir_string @regex_ir_load_string(i8* %chars, i8* %offsets, i32 %physical)
+  %data = extractvalue %regex_ir_string %string, 0
+  %size = extractvalue %regex_ir_string %string, 1
+  %result_size = call i64 @regex_ir_replace_execute(@workspace@i8* %data, i64 %size, i8* null)
+  %too_large = icmp ugt i64 %result_size, 2147483647
+  br i1 %too_large, label %mark_overflow, label %size_fits
+mark_overflow:
+  %overflow_old = atomicrmw max i32* %size_overflow, i32 1 monotonic
+  br label %size_fits
+size_fits:
+  %stored_size = trunc i64 %result_size to i32
+  br label %store
+store_zero:
+  br label %store
+store:
+  %value = phi i32 [ %stored_size, %size_fits ], [ 0, %store_zero ]
+  %typed_output = bitcast i8* %output to i32*
+  %out = getelementptr i32, i32* %typed_output, i32 %row
+  store i32 %value, i32* %out, align 4
+  br label %done
+done:
+  ret void
+}
+; END limited_replace_size
+
+; BEGIN replace_emit
+
+define void @KERNEL_ENTRY@(@workspace_parameters@i8* %chars, i8* %offsets, i32* %validity, i32 %row_offset, i32 %rows, i8* %output, i8* %output_offsets) nounwind {
+entry:
+@workspace_entry@
+  %row = @row_index@
+  %in_bounds = icmp slt i32 %row, %rows
+  br i1 %in_bounds, label %work, label %done
+work:
+  %physical = add i32 %row_offset, %row
+  %valid = call i1 @regex_ir_is_valid(i32* %validity, i32 %physical)
+  br i1 %valid, label %replace, label %done
+replace:
+  %string = call %regex_ir_string @regex_ir_load_string(i8* %chars, i8* %offsets, i32 %physical)
+  %data = extractvalue %regex_ir_string %string, 0
+  %size = extractvalue %regex_ir_string %string, 1
+  %output_offset = call i64 @regex_ir_load_offset_for_width(i8* %output_offsets, i32 %row, i1 @OUTPUT_OFFSET64@)
+  %output_ptr = getelementptr i8, i8* %output, i64 %output_offset
+  %written = call i64 @regex_ir_execute(@workspace@i8* %data, i64 %size, i8* %output_ptr)
+  br label %done
+done:
+  ret void
+}
+; END replace_emit
+
+; BEGIN replace_size
+
+define void @KERNEL_ENTRY@(@workspace_parameters@i8* %chars, i8* %offsets, i32* %validity, i32 %row_offset, i32 %rows, i8* %output) nounwind {
+entry:
+@workspace_entry@
+  %row = @row_index@
+  %in_bounds = icmp slt i32 %row, %rows
+  br i1 %in_bounds, label %work, label %done
+work:
+  %physical = add i32 %row_offset, %row
+  %valid = call i1 @regex_ir_is_valid(i32* %validity, i32 %physical)
+  br i1 %valid, label %replace, label %store_zero
+replace:
+  %string = call %regex_ir_string @regex_ir_load_string(i8* %chars, i8* %offsets, i32 %physical)
+  %data = extractvalue %regex_ir_string %string, 0
+  %size = extractvalue %regex_ir_string %string, 1
+  %result_size = call i64 @regex_ir_execute(@workspace@i8* %data, i64 %size, i8* null)
+  %stored_size = trunc i64 %result_size to i32
+  br label %store
+store_zero:
+  br label %store
+store:
+  %value = phi i32 [ %stored_size, %replace ], [ 0, %store_zero ]
+  %typed_output = bitcast i8* %output to i32*
+  %out = getelementptr i32, i32* %typed_output, i32 %row
+  store i32 %value, i32* %out, align 4
+  br label %done
+done:
+  ret void
+}
+; END replace_size
+
+; BEGIN capture_begin_ptr_n
+  %capture_begin_ptr_{0} = getelementptr i64, i64* %captures, i64 {2}
+  %capture_end_ptr_{0} = getelementptr i64, i64* %captures, i64 {3}
+  %capture_begin_{0} = load i64, i64* %capture_begin_ptr_{0}, align 8
+  %capture_end_{0} = load i64, i64* %capture_end_ptr_{0}, align 8
+  %capture_has_begin_{0} = icmp sge i64 %capture_begin_{0}, 0
+  %capture_has_end_{0} = icmp sge i64 %capture_end_{0}, 0
+  %capture_present_{0} = and i1 %capture_has_begin_{0}, %capture_has_end_{0}
+  %capture_selected_begin_{0} = select i1 %capture_present_{0}, i64 %capture_begin_{0}, i64 0
+  %capture_selected_end_{0} = select i1 %capture_present_{0}, i64 %capture_end_{0}, i64 0
+  {4} = call i64 @regex_ir_append_range(i8* %data, i64 %capture_selected_begin_{0}, i64 %capture_selected_end_{0}, i8* %output, i64 {5})
+; END capture_begin_ptr_n
+
+; BEGIN literal_n
+  %literal_{0} = getelementptr [{1} x i8], [{1} x i8]* @regex_ir_replacement_{0}, i32 0, i32 0
+  {2} = call i64 @regex_ir_append_range(i8* %literal_{0}, i64 0, i64 {1}, i8* %output, i64 {3})
+; END literal_n

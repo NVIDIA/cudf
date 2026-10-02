@@ -1,0 +1,143 @@
+; SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+; SPDX-License-Identifier: Apache-2.0
+
+; BEGIN span_cache_sample_split
+
+define void @KERNEL_ENTRY@(@workspace_parameters@i8* %chars, i8* %offsets, i32* %validity, i32 %row_offset, i32 %rows, i32 %samples, i32 %capacity, i8* %statistics) nounwind {
+entry:
+@workspace_entry@
+  %sample = @row_index@
+  %in_bounds = icmp slt i32 %sample, %samples
+  br i1 %in_bounds, label %select, label %done
+select:
+  %sample64 = zext i32 %sample to i64
+  %rows64 = zext i32 %rows to i64
+  %samples64 = zext i32 %samples to i64
+  %scaled = mul i64 %sample64, %rows64
+  %selected64 = udiv i64 %scaled, %samples64
+  %selected = trunc i64 %selected64 to i32
+  %physical = add i32 %row_offset, %selected
+  %valid = call i1 @regex_ir_is_valid(i32* %validity, i32 %physical)
+  br i1 %valid, label %sample_row, label %done
+sample_row:
+  %string = call %regex_ir_string @regex_ir_load_string(i8* %chars, i8* %offsets, i32 %physical)
+  %data = extractvalue %regex_ir_string %string, 0
+  %size = extractvalue %regex_ir_string %string, 1
+  %fields = call i64 @regex_ir_split_execute_limited(@workspace@i8* %data, i64 %size, i64* null, i64 @MATCH_LIMIT@, i64 -1, i8* null)
+  %matches = sub i64 %fields, 1
+  br label %record
+record:
+  call void @regex_ir_record_span_cache_sample(i8* %statistics, i64 %size, i64 %matches, i32 %capacity)
+  br label %done
+done:
+  ret void
+}
+; END span_cache_sample_split
+
+; BEGIN split_emit
+
+define void @KERNEL_ENTRY@(@workspace_parameters@i8* %chars, i8* %offsets, i32* %validity, i32 %row_offset, i32 %rows, i8* %output, i8* %effective_offsets, i8* %full_offsets, i64* %spans@OVERFLOW_PARAMETER@) nounwind {
+entry:
+@workspace_entry@
+  %row = @row_index@
+  %in_bounds = icmp slt i32 %row, %rows
+  br i1 %in_bounds, label %work, label %done
+work:
+  %physical = add i32 %row_offset, %row
+  %valid = call i1 @regex_ir_is_valid(i32* %validity, i32 %physical)
+@OVERFLOW_GUARD@
+setup:
+  %string = call %regex_ir_string @regex_ir_load_string(i8* %chars, i8* %offsets, i32 %physical)
+  %data = extractvalue %regex_ir_string %string, 0
+  %size = extractvalue %regex_ir_string %string, 1
+  %typed_effective_offsets = bitcast i8* %effective_offsets to i32*
+  %effective_begin_ptr = getelementptr i32, i32* %typed_effective_offsets, i32 %row
+  %effective_next = add i32 %row, 1
+  %effective_end_ptr = getelementptr i32, i32* %typed_effective_offsets, i32 %effective_next
+  %effective_begin = load i32, i32* %effective_begin_ptr, align 4
+  %effective_end = load i32, i32* %effective_end_ptr, align 4
+  %effective_count = sub i32 %effective_end, %effective_begin
+  %typed_full_offsets = bitcast i8* %full_offsets to i32*
+  %full_begin_ptr = getelementptr i32, i32* %typed_full_offsets, i32 %row
+  %full_next = add i32 %row, 1
+  %full_end_ptr = getelementptr i32, i32* %typed_full_offsets, i32 %full_next
+  %full_begin = load i32, i32* %full_begin_ptr, align 4
+  %full_end = load i32, i32* %full_end_ptr, align 4
+  %full_count = sub i32 %full_end, %full_begin
+  %full_begin64 = sext i32 %full_begin to i64
+  %span_base_index = shl i64 %full_begin64, 1
+  %row_spans = getelementptr i64, i64* %spans, i64 %span_base_index
+  %written_fields = call i64 @regex_ir_split_execute_limited(@workspace@i8* %data, i64 %size, i64* %row_spans, i64 @MAXSPLIT@, i64 -1, i8* null)
+  %typed_output = getelementptr i8, i8* %output, i64 0
+  %effective_begin64 = sext i32 %effective_begin to i64
+  %truncated = icmp sgt i32 %full_count, %effective_count
+  br label %token_loop
+token_loop:
+  %token = phi i32 [ 0, %setup ], [ %next_token, %token_loop ]
+  @SOURCE_INDEX@
+  %source64 = sext i32 %source to i64
+  %source_base = shl i64 %source64, 1
+  %source_end_index = add i64 %source_base, 1
+  %source_begin_ptr = getelementptr i64, i64* %row_spans, i64 %source_base
+  %source_end_ptr = getelementptr i64, i64* %row_spans, i64 %source_end_index
+  %source_begin = load i64, i64* %source_begin_ptr, align 8
+  %source_end = load i64, i64* %source_end_ptr, align 8
+  @SELECT_SPAN@
+  %token64 = sext i32 %token to i64
+  %pair_index = add i64 %effective_begin64, %token64
+  call void @regex_ir_write_pair(i8* %typed_output, i64 %pair_index, i8* %data, i8* %offsets, i64 %selected_begin, i64 %selected_end, i1 true)
+  %next_token = add i32 %token, 1
+  %finished = icmp eq i32 %next_token, %effective_count
+  br i1 %finished, label %done, label %token_loop
+done:
+  ret void
+}
+; END split_emit
+
+; BEGIN split_size
+; specialized maxsplit: @MAXSPLIT@
+
+define void @KERNEL_ENTRY@(@workspace_parameters@i8* %chars, i8* %offsets, i32* %validity, i32 %row_offset, i32 %rows, i8* %output@CACHE_PARAMETERS@) nounwind {
+entry:
+@workspace_entry@
+  %row = @row_index@
+  %in_bounds = icmp slt i32 %row, %rows
+  br i1 %in_bounds, label %work, label %done
+work:
+  %physical = add i32 %row_offset, %row
+  %valid = call i1 @regex_ir_is_valid(i32* %validity, i32 %physical)
+  br i1 %valid, label %split, label %store_zero
+split:
+  %string = call %regex_ir_string @regex_ir_load_string(i8* %chars, i8* %offsets, i32 %physical)
+  %data = extractvalue %regex_ir_string %string, 0
+  %size = extractvalue %regex_ir_string %string, 1
+@SPLIT_CALL@
+  %count = trunc i64 %count64 to i32
+  br label %store
+store_zero:
+  br label %store
+store:
+  %stored_count = phi i32 [ %count, %split ], [ 0, %store_zero ]
+  %typed_output = bitcast i8* %output to i32*
+  %out = getelementptr i32, i32* %typed_output, i32 %row
+  store i32 %stored_count, i32* %out, align 4
+  br label %done
+done:
+  ret void
+}
+; END split_size
+
+; BEGIN selected
+  %selected = call i1 @regex_ir_split_row_selected(i1 %valid, i8* %overflow, i32 %row)
+  br i1 %selected, label %setup, label %done
+; END selected
+
+; BEGIN selected_begin
+%selected_begin = add i64 %source_begin, 0
+  %selected_end = call i64 @regex_ir_reverse_split_end(i64* %row_spans, i32 %full_count, i32 %effective_count, i32 %token, i1 %truncated, i64 %source_end)
+; END selected_begin
+
+; BEGIN selected_begin_2
+%selected_begin = add i64 %source_begin, 0
+  %selected_end = call i64 @regex_ir_forward_split_end(i32 %effective_count, i32 %token, i1 %truncated, i64 %size, i64 %source_end)
+; END selected_begin_2

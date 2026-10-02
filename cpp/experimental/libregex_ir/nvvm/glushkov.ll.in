@@ -1,0 +1,447 @@
+; SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+; SPDX-License-Identifier: Apache-2.0
+
+; BEGIN glushkov_reach_constant
+define internal i64 @{0}(i32 %character_class) alwaysinline nounwind readnone {{
+entry:
+  ret i64 {1}
+}}
+; END glushkov_reach_constant
+
+; BEGIN glushkov_reach_select
+define internal i64 @{0}(i32 %character_class) alwaysinline nounwind readnone {{
+entry:
+{1}  ret i64 {2}
+}}
+; END glushkov_reach_select
+
+; BEGIN glushkov_reach_table
+define internal i64 @{0}(i32 %character_class) alwaysinline nounwind readonly {{
+entry:
+  %reach_index = zext i32 %character_class to i64
+  %reach_ptr = getelementptr [{1} x i64], [{1} x i64] addrspace(4)* @{2}, i64 0, i64 %reach_index
+  %reach = load i64, i64 addrspace(4)* %reach_ptr, align 8
+  ret i64 %reach
+}}
+; END glushkov_reach_table
+
+; BEGIN glushkov_follow
+define internal i64 @{0}(i64 %state) alwaysinline nounwind readnone {{
+entry:
+{1}  ret i64 {2}
+}}
+; END glushkov_follow
+
+; BEGIN glushkov_execute
+define zeroext i1 @{0}(i8* %data, i64 %size) nounwind readonly {{
+entry:
+  br label %loop
+loop:
+  %position = phi i64 [ 0, %entry ], [ %next_position, %continue ]{1}
+  %state = phi i64 [ 0, %entry ], [ %next_state, %continue ]{2}
+  %at_end = icmp eq i64 %position, %size
+  br i1 %at_end, label %done, label %load
+load:
+  %input_ptr = getelementptr i8, i8* %data, i64 %position
+  %first = call i32 @{3}(i8* %input_ptr)
+  %is_ascii = icmp ult i32 %first, 128
+  br i1 %is_ascii, label %ascii, label %unicode
+{4}
+unicode:
+  %codepoint = call i32 @{5}(i8* %data, i64 %size, i64 %position)
+  %unicode_width = call i64 @{6}(i8* %data, i64 %size, i64 %position)
+  %unicode_class = call i32 @{7}(i32 %codepoint)
+  br label %transition
+transition:
+  %character_class = phi i32 [ %ascii_class, {8} ], [ %unicode_class, %unicode ]
+  %character_width = phi i64 [ 1, {8} ], [ %unicode_width, %unicode ]
+  %reach = call i64 @{9}(i32 %character_class)
+  %follow = call i64 @{10}(i64 %state)
+{11}  %next_state = and i64 %candidates, %reach
+  %next_position = add nuw i64 %position, %character_width
+; END glushkov_execute
+
+; BEGIN glushkov_ascii_prefix
+ascii:
+  %prefix_state_empty = icmp eq i64 %state, 0
+  %prefix_equal = icmp eq i32 %first, {0}
+  %prefix_mismatch = xor i1 %prefix_equal, true
+  %prefix_skip_candidate = and i1 %prefix_state_empty, %prefix_mismatch
+  br i1 %prefix_skip_candidate, label %prefix_skip, label %ascii_classify
+ascii_classify:
+  %ascii_class = call i32 @{1}(i32 %first)
+  br label %transition
+prefix_skip:
+  %prefix_next_position = add nuw i64 %position, 1
+  br label %loop
+; END glushkov_ascii_prefix
+
+; BEGIN glushkov_accept_end
+  %dead = icmp eq i64 %next_state, 0
+  br i1 %dead, label %reject, label %continue
+continue:
+  br label %loop
+done:
+  %accept_bits = and i64 %state, {0}
+  %accepted = icmp ne i64 %accept_bits, 0
+  ret i1 %accepted
+reject:
+  ret i1 false
+}}
+; END glushkov_accept_end
+
+; BEGIN glushkov_find_fixed
+define internal i64 @{0}(i64 %state) alwaysinline nounwind readnone {{
+entry:
+  %accept_bits = and i64 %state, {9}
+  %accepted = icmp ne i64 %accept_bits, 0
+  br i1 %accepted, label %trim, label %done
+trim:
+  %first_accept = call i64 @llvm.cttz.i64(i64 %accept_bits, i1 false)
+  %last_bit = icmp eq i64 %first_accept, 63
+  %next_bit = add nuw nsw i64 %first_accept, 1
+  %safe_shift = select i1 %last_bit, i64 63, i64 %next_bit
+  %one_past = shl i64 1, %safe_shift
+  %priority_mask = sub i64 %one_past, 1
+  %trimmed = and i64 %state, %priority_mask
+  %priority_state = select i1 %last_bit, i64 %state, i64 %trimmed
+  br label %done
+done:
+  %result = phi i64 [ %state, %entry ], [ %priority_state, %trim ]
+  ret i64 %result
+}}
+
+define internal i1 @{1}(i8* %data, i64 %size, i64 %search_start, i64* %match_begin, i64* %match_end, i64* %captures) nounwind {{
+entry:
+  %has_input = icmp ult i64 %search_start, %size
+  br i1 %has_input, label %loop, label %no
+loop:
+  %position = phi i64 [ %search_start, %entry ], [ %next_position, %continue ]
+  %state = phi i64 [ 0, %entry ], [ %next_state, %continue ]
+  %saved_end = phi i64 [ -1, %entry ], [ %next_saved_end, %continue ]
+{12}  %input_ptr = getelementptr i8, i8* %data, i64 %current_position
+  %first = call i32 @{2}(i8* %input_ptr)
+  %ascii = icmp ult i32 %first, 128
+  br i1 %ascii, label %ascii_path, label %unicode_path
+ascii_path:
+  %ascii_class = call i32 @{5}(i32 %first)
+  br label %transition
+unicode_path:
+  %codepoint = call i32 @{3}(i8* %data, i64 %size, i64 %current_position)
+  %unicode_width = call i64 @{4}(i8* %data, i64 %size, i64 %current_position)
+  %unicode_class = call i32 @{5}(i32 %codepoint)
+  br label %transition
+transition:
+  %character_class = phi i32 [ %ascii_class, %ascii_path ], [ %unicode_class, %unicode_path ]
+  %character_width = phi i64 [ 1, %ascii_path ], [ %unicode_width, %unicode_path ]
+  %reach = call i64 @{6}(i32 %character_class)
+  %follow = call i64 @{7}(i64 %state)
+  %no_saved_match = icmp eq i64 %saved_end, -1
+  %seed = select i1 %no_saved_match, i64 {8}, i64 0
+  %candidates = or i64 %follow, %seed
+  %raw_state = and i64 %candidates, %reach
+  %next_position = add nuw i64 %current_position, %character_width
+  %accept_bits = and i64 %raw_state, {9}
+  %has_accept = icmp ne i64 %accept_bits, 0
+  %at_end = icmp eq i64 %next_position, %size
+  %accepted = and i1 %has_accept, {10}
+  %next_saved_end = select i1 %accepted, i64 %next_position, i64 %saved_end
+  %next_state = call i64 @{0}(i64 %raw_state)
+  %dead = icmp eq i64 %next_state, 0
+  %has_saved_match = icmp ne i64 %next_saved_end, -1
+  %greedy_done = and i1 %dead, %has_saved_match
+  %done = or i1 %greedy_done, %at_end
+  br i1 %done, label %finish, label %continue
+continue:
+  br label %loop
+finish:
+  br i1 %has_saved_match, label %yes, label %no
+yes:
+  %begin = sub nuw i64 %next_saved_end, {11}
+  store i64 %begin, i64* %match_begin, align 8
+  store i64 %next_saved_end, i64* %match_end, align 8
+  ret i1 true
+no:
+  ret i1 false
+}}
+; END glushkov_find_fixed
+
+; BEGIN predicate_repeat_builtin_find
+declare i1 @regex_ir_repeated_builtin(i32, i8*) nounwind readonly
+
+define internal i1 @{0}(i8* %data, i64 %size, i64 %search_start, i64* %match_begin, i64* %match_end, i64* %captures, i8* %character_flags) nounwind readonly {{
+entry:
+  br label %loop
+loop:
+  %position = phi i64 [ %search_start, %entry ], [ %next_position, %matched_continue ], [ %next_position, %mismatch ]
+  %run_begin = phi i64 [ %search_start, %entry ], [ %run_begin, %matched_continue ], [ %next_position, %mismatch ]
+  %run_count = phi i32 [ 0, %entry ], [ %next_count, %matched_continue ], [ 0, %mismatch ]
+  %in_range = icmp ult i64 %position, %size
+  br i1 %in_range, label %load, label %no
+load:
+  %input_ptr = getelementptr i8, i8* %data, i64 %position
+  %first = call i32 @{1}(i8* %input_ptr)
+  %ascii = icmp ult i32 %first, 128
+  br i1 %ascii, label %ascii_path, label %unicode_path
+ascii_path:
+  br label %classify
+unicode_path:
+  %decoded = call i64 @{2}(i8* %data, i64 %size, i64 %position, i32 %first)
+  %unicode_width = and i64 %decoded, 7
+  %shifted_codepoint = lshr i64 %decoded, 32
+  %codepoint = trunc i64 %shifted_codepoint to i32
+  br label %classify
+classify:
+  %character = phi i32 [ %first, %ascii_path ], [ %codepoint, %unicode_path ]
+  %character_width = phi i64 [ 1, %ascii_path ], [ %unicode_width, %unicode_path ]
+  %matches = call i1 @regex_ir_repeated_builtin(i32 %character, i8* %character_flags)
+  %next_position = add nuw i64 %position, %character_width
+  br i1 %matches, label %matched, label %mismatch
+matched:
+  %next_count = add nuw i32 %run_count, 1
+  %complete = icmp eq i32 %next_count, {3}
+  br i1 %complete, label %yes, label %matched_continue
+matched_continue:
+  br label %loop
+mismatch:
+  br label %loop
+yes:
+  store i64 %run_begin, i64* %match_begin, align 8
+  store i64 %next_position, i64* %match_end, align 8
+  ret i1 true
+no:
+  ret i1 false
+}}
+; END predicate_repeat_builtin_find
+
+; BEGIN glushkov_find
+define internal i64 @{0}(i64 %state) alwaysinline nounwind readnone {{
+entry:
+  %accept_bits = and i64 %state, {9}
+  %accepted = icmp ne i64 %accept_bits, 0
+  br i1 %accepted, label %trim, label %done
+trim:
+  %first_accept = call i64 @llvm.cttz.i64(i64 %accept_bits, i1 false)
+  %last_bit = icmp eq i64 %first_accept, 63
+  %next_bit = add nuw nsw i64 %first_accept, 1
+  %safe_shift = select i1 %last_bit, i64 63, i64 %next_bit
+  %one_past = shl i64 1, %safe_shift
+  %priority_mask = sub i64 %one_past, 1
+  %trimmed = and i64 %state, %priority_mask
+  %priority_state = select i1 %last_bit, i64 %state, i64 %trimmed
+  br label %done
+done:
+  %result = phi i64 [ %state, %entry ], [ %priority_state, %trim ]
+  ret i64 %result
+}}
+
+define internal i1 @{1}(i8* %data, i64 %size, i64 %search_start, i64* %match_begin, i64* %match_end, i64* %captures) nounwind {{
+entry:
+  %has_input = icmp ult i64 %search_start, %size
+  br i1 %has_input, label %phase1_loop, label %no
+
+phase1_loop:
+  %phase1_position = phi i64 [ %search_start, %entry ], [ %phase1_next_position, %phase1_continue ]
+  %phase1_state = phi i64 [ 0, %entry ], [ %phase1_next_state, %phase1_continue ]
+  %phase1_match_end = phi i64 [ -1, %entry ], [ %phase1_next_match_end, %phase1_continue ]
+  %phase1_inject_start = phi i64 [ %search_start, %entry ], [ %phase1_next_inject_start, %phase1_continue ]
+  %phase1_ptr = getelementptr i8, i8* %data, i64 %phase1_position
+  %phase1_first = call i32 @{2}(i8* %phase1_ptr)
+  %phase1_ascii = icmp ult i32 %phase1_first, 128
+  br i1 %phase1_ascii, label %phase1_ascii_path, label %phase1_unicode_path
+
+phase1_ascii_path:
+  %phase1_ascii_class = call i32 @{5}(i32 %phase1_first)
+  br label %phase1_transition
+
+phase1_unicode_path:
+  %phase1_codepoint = call i32 @{3}(i8* %data, i64 %size, i64 %phase1_position)
+  %phase1_unicode_width = call i64 @{4}(i8* %data, i64 %size, i64 %phase1_position)
+  %phase1_unicode_class = call i32 @{5}(i32 %phase1_codepoint)
+  br label %phase1_transition
+
+phase1_transition:
+  %phase1_class = phi i32 [ %phase1_ascii_class, %phase1_ascii_path ], [ %phase1_unicode_class, %phase1_unicode_path ]
+  %phase1_width = phi i64 [ 1, %phase1_ascii_path ], [ %phase1_unicode_width, %phase1_unicode_path ]
+  %phase1_reach = call i64 @{6}(i32 %phase1_class)
+  %phase1_follow = call i64 @{7}(i64 %phase1_state)
+  %phase1_no_match = icmp eq i64 %phase1_match_end, -1
+  %phase1_seed = select i1 %phase1_no_match, i64 {8}, i64 0
+  %phase1_candidates = or i64 %phase1_follow, %phase1_seed
+  %phase1_raw_state = and i64 %phase1_candidates, %phase1_reach
+  %phase1_next_position = add nuw i64 %phase1_position, %phase1_width
+  %phase1_accept_bits = and i64 %phase1_raw_state, {9}
+  %phase1_accept_bits_nonzero = icmp ne i64 %phase1_accept_bits, 0
+  %phase1_at_input_end = icmp eq i64 %phase1_next_position, %size
+  %phase1_accepted = and i1 %phase1_accept_bits_nonzero, {10}
+  %phase1_next_match_end = select i1 %phase1_accepted, i64 %phase1_next_position, i64 %phase1_match_end
+  %phase1_state_empty = icmp eq i64 %phase1_state, 0
+  %phase1_new_window = and i1 %phase1_state_empty, %phase1_no_match
+  %phase1_next_inject_start = select i1 %phase1_new_window, i64 %phase1_position, i64 %phase1_inject_start
+  %phase1_next_state = call i64 @{0}(i64 %phase1_raw_state)
+  %phase1_dead = icmp eq i64 %phase1_next_state, 0
+  %phase1_has_match = icmp ne i64 %phase1_next_match_end, -1
+  %phase1_greedy_done = and i1 %phase1_dead, %phase1_has_match
+  %phase1_done = or i1 %phase1_greedy_done, %phase1_at_input_end
+  br i1 %phase1_done, label %phase1_finish, label %phase1_continue
+
+phase1_continue:
+  br label %phase1_loop
+
+phase1_finish:
+  br i1 %phase1_has_match, label %rescan_search, label %no
+
+rescan_search:
+  %candidate_start = phi i64 [ %phase1_next_inject_start, %phase1_finish ], [ %next_candidate, %rescan_advance ]
+  %candidate_in_range = icmp ult i64 %candidate_start, %phase1_next_match_end
+  br i1 %candidate_in_range, label %rescan_seed, label %no
+
+rescan_seed:
+  %rescan_ptr = getelementptr i8, i8* %data, i64 %candidate_start
+  %rescan_first = call i32 @{2}(i8* %rescan_ptr)
+  %rescan_ascii = icmp ult i32 %rescan_first, 128
+  br i1 %rescan_ascii, label %rescan_ascii_path, label %rescan_unicode_path
+
+rescan_ascii_path:
+  %rescan_ascii_class = call i32 @{5}(i32 %rescan_first)
+  br label %rescan_seed_transition
+
+rescan_unicode_path:
+  %rescan_codepoint = call i32 @{3}(i8* %data, i64 %size, i64 %candidate_start)
+  %rescan_unicode_width = call i64 @{4}(i8* %data, i64 %size, i64 %candidate_start)
+  %rescan_unicode_class = call i32 @{5}(i32 %rescan_codepoint)
+  br label %rescan_seed_transition
+
+rescan_seed_transition:
+  %rescan_class = phi i32 [ %rescan_ascii_class, %rescan_ascii_path ], [ %rescan_unicode_class, %rescan_unicode_path ]
+  %rescan_width = phi i64 [ 1, %rescan_ascii_path ], [ %rescan_unicode_width, %rescan_unicode_path ]
+  %rescan_reach = call i64 @{6}(i32 %rescan_class)
+  %rescan_seed_state = and i64 %rescan_reach, {8}
+  %rescan_seed_empty = icmp eq i64 %rescan_seed_state, 0
+  br i1 %rescan_seed_empty, label %rescan_advance, label %rescan_seed_live
+
+rescan_seed_live:
+  %rescan_next_position = add nuw i64 %candidate_start, %rescan_width
+  %rescan_accept_bits = and i64 %rescan_seed_state, {9}
+  %rescan_accept_bits_nonzero = icmp ne i64 %rescan_accept_bits, 0
+  %rescan_at_input_end = icmp eq i64 %rescan_next_position, %size
+  %rescan_accepted = and i1 %rescan_accept_bits_nonzero, {11}
+  %rescan_initial_end = select i1 %rescan_accepted, i64 %rescan_next_position, i64 -1
+  %rescan_initial_state = call i64 @{0}(i64 %rescan_seed_state)
+  br label %rescan_loop
+
+rescan_loop:
+  %rescan_position = phi i64 [ %rescan_next_position, %rescan_seed_live ], [ %rescan_advanced_position, %rescan_transition ]
+  %rescan_state = phi i64 [ %rescan_initial_state, %rescan_seed_live ], [ %rescan_advanced_state, %rescan_transition ]
+  %rescan_match_end = phi i64 [ %rescan_initial_end, %rescan_seed_live ], [ %rescan_advanced_match_end, %rescan_transition ]
+  %rescan_dead = icmp eq i64 %rescan_state, 0
+  %rescan_end = icmp eq i64 %rescan_position, %size
+  %rescan_stop = or i1 %rescan_dead, %rescan_end
+  br i1 %rescan_stop, label %rescan_candidate_done, label %rescan_load
+
+rescan_load:
+  %rescan_loop_ptr = getelementptr i8, i8* %data, i64 %rescan_position
+  %rescan_loop_first = call i32 @{2}(i8* %rescan_loop_ptr)
+  %rescan_loop_ascii = icmp ult i32 %rescan_loop_first, 128
+  br i1 %rescan_loop_ascii, label %rescan_loop_ascii_path, label %rescan_loop_unicode_path
+
+rescan_loop_ascii_path:
+  %rescan_loop_ascii_class = call i32 @{5}(i32 %rescan_loop_first)
+  br label %rescan_transition
+
+rescan_loop_unicode_path:
+  %rescan_loop_codepoint = call i32 @{3}(i8* %data, i64 %size, i64 %rescan_position)
+  %rescan_loop_unicode_width = call i64 @{4}(i8* %data, i64 %size, i64 %rescan_position)
+  %rescan_loop_unicode_class = call i32 @{5}(i32 %rescan_loop_codepoint)
+  br label %rescan_transition
+
+rescan_transition:
+  %rescan_loop_class = phi i32 [ %rescan_loop_ascii_class, %rescan_loop_ascii_path ], [ %rescan_loop_unicode_class, %rescan_loop_unicode_path ]
+  %rescan_loop_width = phi i64 [ 1, %rescan_loop_ascii_path ], [ %rescan_loop_unicode_width, %rescan_loop_unicode_path ]
+  %rescan_loop_reach = call i64 @{6}(i32 %rescan_loop_class)
+  %rescan_loop_follow = call i64 @{7}(i64 %rescan_state)
+  %rescan_raw_state = and i64 %rescan_loop_follow, %rescan_loop_reach
+  %rescan_advanced_position = add nuw i64 %rescan_position, %rescan_loop_width
+  %rescan_loop_accept_bits = and i64 %rescan_raw_state, {9}
+  %rescan_loop_accept_bits_nonzero = icmp ne i64 %rescan_loop_accept_bits, 0
+  %rescan_loop_at_input_end = icmp eq i64 %rescan_advanced_position, %size
+  %rescan_loop_accepted = and i1 %rescan_loop_accept_bits_nonzero, {12}
+  %rescan_advanced_match_end = select i1 %rescan_loop_accepted, i64 %rescan_advanced_position, i64 %rescan_match_end
+  %rescan_advanced_state = call i64 @{0}(i64 %rescan_raw_state)
+  br label %rescan_loop
+
+rescan_candidate_done:
+  %candidate_matched = icmp ne i64 %rescan_match_end, -1
+  br i1 %candidate_matched, label %yes, label %rescan_advance
+
+rescan_advance:
+  %next_candidate = add nuw i64 %candidate_start, %rescan_width
+  br label %rescan_search
+
+yes:
+  store i64 %candidate_start, i64* %match_begin, align 8
+  store i64 %rescan_match_end, i64* %match_end, align 8
+  ret i1 true
+
+no:
+  ret i1 false
+}}
+; END glushkov_find
+
+; BEGIN reach_is_n
+  %reach_is_{0} = icmp eq i32 %character_class, {0}
+  %reach_{0} = select i1 %reach_is_{0}, i64 {1}, i64 {2}
+; END reach_is_n
+
+; BEGIN shift_source_n
+  %shift_source_{0} = and i64 %state, {1}
+  %shift_value_{0} = shl i64 %shift_source_{0}, {2}
+; END shift_source_n
+
+; BEGIN exception_bit_n
+  %exception_bit_{0} = and i64 %state, {1}
+  %exception_active_{0} = icmp ne i64 %exception_bit_{0}, 0
+  %exception_value_{0} = select i1 %exception_active_{0}, i64 {2}, i64 0
+; END exception_bit_n
+
+; BEGIN ascii
+ascii:
+  %ascii_class = call i32 @{0}(i32 %first)
+  br label %transition
+; END ascii
+
+; BEGIN at_start
+  %at_start = icmp eq i64 %position, 0
+  %initial_positions = select i1 %at_start, i64 {0}, i64 0
+  %candidates = or i64 %follow, %initial_positions
+; END at_start
+
+; BEGIN accept_bits
+  %accept_bits = and i64 %next_state, {0}
+  %accepted = icmp ne i64 %accept_bits, 0
+  br i1 %accepted, label %yes, label %continue
+continue:
+  br label %loop
+done:
+  ret i1 false
+yes:
+  ret i1 true
+}}
+; END accept_bits
+
+; BEGIN state_empty
+  %state_empty = icmp eq i64 %state, 0
+  %no_saved_end = icmp eq i64 %saved_end, -1
+  %can_seek = and i1 %state_empty, %no_saved_end
+  br i1 %can_seek, label %seek_start, label %direct_position
+seek_start:
+  %sought_position = call i64 @regex_ir_seek_byte(i8* %data, i64 %size, i64 %position, i32 {})
+  br label %select_position
+direct_position:
+  br label %select_position
+select_position:
+  %current_position = phi i64 [ %sought_position, %seek_start ], [ %position, %direct_position ]
+  %position_in_range = icmp ult i64 %current_position, %size
+  br i1 %position_in_range, label %load_position, label %no
+load_position:
+; END state_empty

@@ -1,0 +1,322 @@
+; SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+; SPDX-License-Identifier: Apache-2.0
+
+; BEGIN capture
+
+define void @KERNEL_ENTRY@(@workspace_parameters@i8* %chars, i8* %offsets, i32* %validity, i32 %row_offset, i32 %rows, i8* %output) nounwind {
+entry:
+@workspace_entry@
+  %captures = alloca [@CAPTURE_SLOTS@ x i64], align 8
+  %row = @row_index@
+  %in_bounds = icmp slt i32 %row, %rows
+  br i1 %in_bounds, label %work, label %done
+work:
+  %physical = add i32 %row_offset, %row
+  %valid = call i1 @regex_ir_is_valid(i32* %validity, i32 %physical)
+  br i1 %valid, label %match, label %output_begin
+match:
+  %string = call %regex_ir_string @regex_ir_load_string(i8* %chars, i8* %offsets, i32 %physical)
+  %data = extractvalue %regex_ir_string %string, 0
+  %size = extractvalue %regex_ir_string %string, 1
+  %capture_ptr = getelementptr [@CAPTURE_SLOTS@ x i64], [@CAPTURE_SLOTS@ x i64]* %captures, i32 0, i32 0
+  %matched = call i1 @regex_ir_execute(@workspace@i8* %data, i64 %size, i64 0, i64* %capture_ptr)
+  br label %output_begin
+output_begin:
+  %row_data = phi i8* [ %data, %match ], [ %chars, %work ]
+  %row_matched = phi i1 [ %matched, %match ], [ false, %work ]
+  %typed_output = getelementptr i8, i8* %output, i64 0
+  @COLUMN_SETUP@
+  br label %group_loop
+group_loop:
+  %group = phi i32 [ 0, %output_begin ], [ %next_group, %group_done ]
+  br i1 %row_matched, label %group_found, label %group_missing
+group_found:
+  %capture_group = add i32 %group, @FIRST_GROUP@
+  %capture_plus_whole = add i32 %capture_group, 1
+  %capture_slot = shl i32 %capture_plus_whole, 1
+  %capture_begin_ptr = getelementptr [@CAPTURE_SLOTS@ x i64], [@CAPTURE_SLOTS@ x i64]* %captures, i32 0, i32 %capture_slot
+  %capture_end_slot = add i32 %capture_slot, 1
+  %capture_end_ptr = getelementptr [@CAPTURE_SLOTS@ x i64], [@CAPTURE_SLOTS@ x i64]* %captures, i32 0, i32 %capture_end_slot
+  %capture_begin = load i64, i64* %capture_begin_ptr, align 8
+  %capture_end = load i64, i64* %capture_end_ptr, align 8
+  %has_begin = icmp sge i64 %capture_begin, 0
+  %has_end = icmp sge i64 %capture_end, 0
+  %present = and i1 %has_begin, %has_end
+  br label %group_write
+group_missing:
+  br label %group_write
+group_write:
+  %stored_begin = phi i64 [ %capture_begin, %group_found ], [ 0, %group_missing ]
+  %stored_end = phi i64 [ %capture_end, %group_found ], [ 0, %group_missing ]
+  %stored_present = phi i1 [ %present, %group_found ], [ false, %group_missing ]
+  %group64 = sext i32 %group to i64
+  @PAIR_INDEX@
+  call void @regex_ir_write_pair(i8* %typed_output, i64 %pair_index, i8* %row_data, i8* %offsets, i64 %stored_begin, i64 %stored_end, i1 %stored_present)
+  br label %group_done
+group_done:
+  %next_group = add i32 %group, 1
+  %finished = icmp eq i32 %next_group, @OUTPUT_GROUPS@
+  br i1 %finished, label %done, label %group_loop
+done:
+  ret void
+}
+; END capture
+
+; BEGIN enumeration_emit
+
+define void @KERNEL_ENTRY@(@workspace_parameters@i8* %chars, i8* %offsets, i32* %validity, i32 %row_offset, i32 %rows, i8* %output, i8* %output_offsets@OVERFLOW_PARAMETER@) nounwind {
+entry:
+@workspace_entry@
+  %captures = alloca [@CAPTURE_SLOTS@ x i64], align 8
+  %row = @row_index@
+  %in_bounds = icmp slt i32 %row, %rows
+  br i1 %in_bounds, label %work, label %done
+work:
+  %physical = add i32 %row_offset, %row
+  %valid = call i1 @regex_ir_is_valid(i32* %validity, i32 %physical)
+  @OVERFLOW_GUARD@
+setup:
+  %string = call %regex_ir_string @regex_ir_load_string(i8* %chars, i8* %offsets, i32 %physical)
+  %data = extractvalue %regex_ir_string %string, 0
+  %size = extractvalue %regex_ir_string %string, 1
+  %capture_ptr = getelementptr [@CAPTURE_SLOTS@ x i64], [@CAPTURE_SLOTS@ x i64]* %captures, i32 0, i32 0
+  %typed_offsets = bitcast i8* %output_offsets to i32*
+  %row_output_ptr = getelementptr i32, i32* %typed_offsets, i32 %row
+  %row_output = load i32, i32* %row_output_ptr, align 4
+  %row_output64 = sext i32 %row_output to i64
+  %typed_output = getelementptr i8, i8* %output, i64 0
+  br label %match_loop
+match_loop:
+  %search = phi i64 [ 0, %setup ], [ %match_end, %continue_nonempty ], [ %advanced, %continue_empty ]
+  %output_index = phi i64 [ 0, %setup ], [ %next_output_index, %continue_nonempty ], [ %next_output_index, %continue_empty ]
+  %matched = call i1 @regex_ir_execute(@workspace@i8* %data, i64 %size, i64 %search, i64* %capture_ptr)
+  br i1 %matched, label %found, label %done
+found:
+  %match_begin_ptr = getelementptr [@CAPTURE_SLOTS@ x i64], [@CAPTURE_SLOTS@ x i64]* %captures, i32 0, i32 0
+  %match_end_ptr = getelementptr [@CAPTURE_SLOTS@ x i64], [@CAPTURE_SLOTS@ x i64]* %captures, i32 0, i32 1
+  %match_begin = load i64, i64* %match_begin_ptr, align 8
+  %match_end = load i64, i64* %match_end_ptr, align 8
+  @WRITE_MATCH@
+after_write:
+  %nonempty = icmp ne i64 %match_begin, %match_end
+  br i1 %nonempty, label %continue_nonempty, label %empty
+continue_nonempty:
+  br label %match_loop
+empty:
+  %empty_at_end = icmp eq i64 %match_end, %size
+  br i1 %empty_at_end, label %done, label %continue_empty
+continue_empty:
+  %advanced = call i64 @regex_ir_advance_utf8(i8* %data, i64 %size, i64 %match_end)
+  br label %match_loop
+done:
+  ret void
+}
+; END enumeration_emit
+
+; BEGIN enumeration_size
+
+define void @KERNEL_ENTRY@(@workspace_parameters@i8* %chars, i8* %offsets, i32* %validity, i32 %row_offset, i32 %rows, i8* %output, i8* %output_validity@CACHE_PARAMETERS@) nounwind {
+entry:
+@workspace_entry@
+  %captures = alloca [@CAPTURE_SLOTS@ x i64], align 8
+  %row = @row_index@
+  %in_bounds = icmp slt i32 %row, %rows
+  br i1 %in_bounds, label %work, label %done
+work:
+  %physical = add i32 %row_offset, %row
+  %valid = call i1 @regex_ir_is_valid(i32* %validity, i32 %physical)
+  br i1 %valid, label %setup, label %store_invalid
+setup:
+  %string = call %regex_ir_string @regex_ir_load_string(i8* %chars, i8* %offsets, i32 %physical)
+  %data = extractvalue %regex_ir_string %string, 0
+  %size = extractvalue %regex_ir_string %string, 1
+  %capture_ptr = getelementptr [@CAPTURE_SLOTS@ x i64], [@CAPTURE_SLOTS@ x i64]* %captures, i32 0, i32 0
+  br label %match_loop
+match_loop:
+  %search = phi i64 [ 0, %setup ], [ %match_end, %continue_nonempty ], [ %advanced, %continue_empty ]
+  %count = phi i64 [ 0, %setup ], [ %next_count, %continue_nonempty ], [ %next_count, %continue_empty ]
+  %matched = call i1 @regex_ir_execute(@workspace@i8* %data, i64 %size, i64 %search, i64* %capture_ptr)
+  br i1 %matched, label %found, label %store_count
+found:
+  %match_begin_ptr = getelementptr [@CAPTURE_SLOTS@ x i64], [@CAPTURE_SLOTS@ x i64]* %captures, i32 0, i32 0
+  %match_end_ptr = getelementptr [@CAPTURE_SLOTS@ x i64], [@CAPTURE_SLOTS@ x i64]* %captures, i32 0, i32 1
+  %match_begin = load i64, i64* %match_begin_ptr, align 8
+  %match_end = load i64, i64* %match_end_ptr, align 8
+  @CACHE_MATCH@
+  %next_count = add i64 %count, 1
+  %nonempty = icmp ne i64 %match_begin, %match_end
+  br i1 %nonempty, label %continue_nonempty, label %empty
+continue_nonempty:
+  br label %match_loop
+empty:
+  %empty_at_end = icmp eq i64 %match_end, %size
+  br i1 %empty_at_end, label %store_after_match, label %continue_empty
+continue_empty:
+  %advanced = call i64 @regex_ir_advance_utf8(i8* %data, i64 %size, i64 %match_end)
+  br label %match_loop
+store_after_match:
+  br label %store
+store_count:
+  br label %store
+store_invalid:
+  br label %store
+store:
+  %matches = phi i64 [ %next_count, %store_after_match ], [ %count, %store_count ], [ 0, %store_invalid ]
+  %scaled = mul i64 %matches, @MULTIPLIER@
+  %stored_count = trunc i64 %scaled to i32
+  %typed_output = bitcast i8* %output to i32*
+  %out = getelementptr i32, i32* %typed_output, i32 %row
+  store i32 %stored_count, i32* %out, align 4
+  %has_match = icmp ne i64 %matches, 0
+  %row_valid = @ROW_VALID@
+  %valid_byte = zext i1 %row_valid to i8
+  %valid_out = getelementptr i8, i8* %output_validity, i32 %row
+  store i8 %valid_byte, i8* %valid_out, align 1
+  br label %done
+done:
+  ret void
+}
+; END enumeration_size
+
+; BEGIN span_cache_sample_enumeration
+
+define void @KERNEL_ENTRY@(@workspace_parameters@i8* %chars, i8* %offsets, i32* %validity, i32 %row_offset, i32 %rows, i32 %samples, i32 %capacity, i8* %statistics) nounwind {
+entry:
+@workspace_entry@
+  %captures = alloca [@CAPTURE_SLOTS@ x i64], align 8
+  %sample = @row_index@
+  %in_bounds = icmp slt i32 %sample, %samples
+  br i1 %in_bounds, label %select, label %done
+select:
+  %sample64 = zext i32 %sample to i64
+  %rows64 = zext i32 %rows to i64
+  %samples64 = zext i32 %samples to i64
+  %scaled = mul i64 %sample64, %rows64
+  %selected64 = udiv i64 %scaled, %samples64
+  %selected = trunc i64 %selected64 to i32
+  %physical = add i32 %row_offset, %selected
+  %valid = call i1 @regex_ir_is_valid(i32* %validity, i32 %physical)
+  br i1 %valid, label %sample_row, label %done
+sample_row:
+  %string = call %regex_ir_string @regex_ir_load_string(i8* %chars, i8* %offsets, i32 %physical)
+  %data = extractvalue %regex_ir_string %string, 0
+  %size = extractvalue %regex_ir_string %string, 1
+  %capture_ptr = getelementptr [@CAPTURE_SLOTS@ x i64], [@CAPTURE_SLOTS@ x i64]* %captures, i32 0, i32 0
+  br label %match_loop
+match_loop:
+  %search = phi i64 [ 0, %sample_row ], [ %match_end, %continue_nonempty ], [ %advanced, %continue_empty ]
+  %count = phi i64 [ 0, %sample_row ], [ %next_count, %continue_nonempty ], [ %next_count, %continue_empty ]
+  %semantic_limited = icmp sge i64 @MATCH_LIMIT@, 0
+  %at_semantic_limit = icmp eq i64 %count, @MATCH_LIMIT@
+  %semantic_done = and i1 %semantic_limited, %at_semantic_limit
+  br i1 %semantic_done, label %record, label %search_match
+search_match:
+  %matched = call i1 @regex_ir_execute(@workspace@i8* %data, i64 %size, i64 %search, i64* %capture_ptr)
+  br i1 %matched, label %found, label %record
+found:
+  %match_begin_ptr = getelementptr [@CAPTURE_SLOTS@ x i64], [@CAPTURE_SLOTS@ x i64]* %captures, i32 0, i32 0
+  %match_end_ptr = getelementptr [@CAPTURE_SLOTS@ x i64], [@CAPTURE_SLOTS@ x i64]* %captures, i32 0, i32 1
+  %match_begin = load i64, i64* %match_begin_ptr, align 8
+  %match_end = load i64, i64* %match_end_ptr, align 8
+  %next_count = add i64 %count, 1
+  %capacity64_found = zext i32 %capacity to i64
+  %overflow_found = icmp ugt i64 %next_count, %capacity64_found
+  br i1 %overflow_found, label %record_overflow, label %check_empty
+check_empty:
+  %nonempty = icmp ne i64 %match_begin, %match_end
+  br i1 %nonempty, label %continue_nonempty, label %empty
+continue_nonempty:
+  br label %match_loop
+empty:
+  %empty_at_end = icmp eq i64 %match_end, %size
+  br i1 %empty_at_end, label %record_after_match, label %continue_empty
+continue_empty:
+  %advanced = call i64 @regex_ir_advance_utf8(i8* %data, i64 %size, i64 %match_end)
+  br label %match_loop
+record_after_match:
+  br label %record
+record_overflow:
+  br label %record
+record:
+  %matches = phi i64 [ %count, %match_loop ], [ %count, %search_match ], [ %next_count, %record_after_match ], [ %next_count, %record_overflow ]
+  call void @regex_ir_record_span_cache_sample(i8* %statistics, i64 %size, i64 %matches, i32 %capacity)
+  br label %done
+done:
+  ret void
+}
+; END span_cache_sample_enumeration
+
+; BEGIN write_extract
+
+br label %group_loop
+group_loop:
+  %group = phi i32 [ 0, %found ], [ %next_group, %group_write ]
+  %capture_plus_whole = add i32 %group, 1
+  %capture_slot = shl i32 %capture_plus_whole, 1
+  %capture_begin_ptr = getelementptr [@CAPTURE_SLOTS@ x i64], [@CAPTURE_SLOTS@ x i64]* %captures, i32 0, i32 %capture_slot
+  %capture_end_slot = add i32 %capture_slot, 1
+  %capture_end_ptr = getelementptr [@CAPTURE_SLOTS@ x i64], [@CAPTURE_SLOTS@ x i64]* %captures, i32 0, i32 %capture_end_slot
+  %capture_begin = load i64, i64* %capture_begin_ptr, align 8
+  %capture_end = load i64, i64* %capture_end_ptr, align 8
+  %has_begin = icmp sge i64 %capture_begin, 0
+  %has_end = icmp sge i64 %capture_end, 0
+  %present = and i1 %has_begin, %has_end
+  %group64 = sext i32 %group to i64
+  %group_output = add i64 %output_index, %group64
+  %pair_index = add i64 %row_output64, %group_output
+  call void @regex_ir_write_pair(i8* %typed_output, i64 %pair_index, i8* %data, i8* %offsets, i64 %capture_begin, i64 %capture_end, i1 %present)
+  br label %group_write
+group_write:
+  %next_group = add i32 %group, 1
+  %groups_done = icmp eq i32 %next_group, @GROUPS@
+  br i1 %groups_done, label %groups_finished, label %group_loop
+groups_finished:
+  %next_output_index = add i64 %output_index, @GROUPS@
+  br label %after_write
+; END write_extract
+
+; BEGIN write_findall_capture
+
+%selected_begin_ptr = getelementptr [@CAPTURE_SLOTS@ x i64], [@CAPTURE_SLOTS@ x i64]* %captures, i32 0, i32 2
+  %selected_end_ptr = getelementptr [@CAPTURE_SLOTS@ x i64], [@CAPTURE_SLOTS@ x i64]* %captures, i32 0, i32 3
+  %selected_begin = load i64, i64* %selected_begin_ptr, align 8
+  %selected_end = load i64, i64* %selected_end_ptr, align 8
+  %has_begin = icmp sge i64 %selected_begin, 0
+  %has_end = icmp sge i64 %selected_end, 0
+  %present = and i1 %has_begin, %has_end
+  %pair_index = add i64 %row_output64, %output_index
+  call void @regex_ir_write_pair(i8* %typed_output, i64 %pair_index, i8* %data, i8* %offsets, i64 %selected_begin, i64 %selected_end, i1 %present)
+  %next_output_index = add i64 %output_index, 1
+  br label %after_write
+; END write_findall_capture
+
+; BEGIN write_findall_whole
+
+%selected_begin = add i64 %match_begin, 0
+  %selected_end = add i64 %match_end, 0
+  %present = icmp sge i64 %selected_begin, 0
+  %pair_index = add i64 %row_output64, %output_index
+  call void @regex_ir_write_pair(i8* %typed_output, i64 %pair_index, i8* %data, i8* %offsets, i64 %selected_begin, i64 %selected_end, i1 %present)
+  %next_output_index = add i64 %output_index, 1
+  br label %after_write
+; END write_findall_whole
+
+; BEGIN group_base
+%group_base = mul i64 %group64, %rows64
+  %row64 = sext i32 %row to i64
+  %pair_index = add i64 %group_base, %row64
+; END group_base
+
+; BEGIN typed_cache
+%typed_cache = bitcast i8* %cache_buffer to i64*
+  %overflow_ptr = getelementptr i8, i8* %overflow, i32 %row
+  call void @regex_ir_cache_captures(i64* %capture_ptr, i64* %typed_cache, i32 %row, i32 %capacity, i32 {}, i64 %count, i8* %overflow_ptr)
+; END typed_cache
+
+; BEGIN overflow_ptr
+%overflow_ptr = getelementptr i8, i8* %overflow, i32 %row
+  %overflow_value = load i8, i8* %overflow_ptr, align 1
+  %did_overflow = icmp ne i8 %overflow_value, 0
+  %selected = and i1 %valid, %did_overflow
+  br i1 %selected, label %setup, label %done
+; END overflow_ptr

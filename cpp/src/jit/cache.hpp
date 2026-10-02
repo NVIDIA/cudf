@@ -10,6 +10,8 @@
 
 #include <rtcx/rtcx.hpp>
 
+#include <string_view>
+
 namespace CUDF_EXPORT cudf {
 
 struct [[nodiscard]] jit_bundle_t {
@@ -105,6 +107,18 @@ rtcx::blob get_kernel_fragment(std::string const& name,
                                std::span<char const* const> header_include_names,
                                std::span<char const* const> headers,
                                std::string const& kernel_instance);
+
+/**
+ * @brief Compiles textual NVVM IR to a cached LTO IR fragment
+ *
+ * The generated fragment is cached by the cuDF RTCX cache using the complete
+ * source module and target architecture.
+ *
+ * @param name Debug name for the compilation unit
+ * @param nvvm_ir Complete textual NVVM IR module
+ * @return Cached LTO IR fragment
+ */
+rtcx::blob get_nvvm_fragment(std::string const& name, std::string_view nvvm_ir);
 
 /**
  * @brief Gets a kernel by linking together embedded binary fragments

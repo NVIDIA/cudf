@@ -1,0 +1,107 @@
+; SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+; SPDX-License-Identifier: Apache-2.0
+
+; BEGIN warp_literal_contains
+
+declare i1 @llvm.nvvm.vote.any.sync(i32, i1) nounwind convergent
+
+define void @KERNEL_ENTRY@(i8* %chars, i8* %offsets, i32* %validity, i32 %row_offset, i32 %rows, i8* %output) nounwind {
+entry:
+  %thread = call i32 @llvm.nvvm.read.ptx.sreg.tid.x()
+  %width = call i32 @llvm.nvvm.read.ptx.sreg.ntid.x()
+  %block = call i32 @llvm.nvvm.read.ptx.sreg.ctaid.x()
+  %base = mul i32 %block, %width
+  %global = add i32 %base, %thread
+  %lane = and i32 %thread, 31
+  %row = lshr i32 %global, 5
+  %in_bounds = icmp slt i32 %row, %rows
+  br i1 %in_bounds, label %work, label %done
+work:
+  %physical = add i32 %row_offset, %row
+  %valid = call i1 @regex_ir_is_valid(i32* %validity, i32 %physical)
+  %string = call %regex_ir_string @regex_ir_load_string(i8* %chars, i8* %offsets, i32 %physical)
+  %data = extractvalue %regex_ir_string %string, 0
+  %size = extractvalue %regex_ir_string %string, 1
+  %lane64 = zext i32 %lane to i64
+  %lane_base = mul nuw i64 %lane64, 4
+  br label %search
+search:
+  %round = phi i64 [ 0, %work ], [ %next_round, %continue ]
+  %first_round = icmp eq i64 %round, 0
+  %round_lane = select i1 %first_round, i64 %lane64, i64 %lane_base
+  %candidate_limit = select i1 %first_round, i64 1, i64 4
+  %lane_position = add i64 %round, %round_lane
+  br label %inner
+inner:
+  %candidate_offset = phi i64 [ 0, %search ], [ %next_candidate, %inner_continue ]
+  %position = add i64 %lane_position, %candidate_offset
+  %candidate_end = add i64 %position, @LITERAL_SIZE@
+  %candidate = icmp ule i64 %candidate_end, %size
+  br i1 %candidate, label %compare, label %inner_done
+compare:
+@ANCHOR_CHECK@
+@VERIFY@inner_continue:
+  %next_candidate = add nuw i64 %candidate_offset, 1
+  %more_candidates = icmp ult i64 %next_candidate, %candidate_limit
+  br i1 %more_candidates, label %inner, label %inner_done
+local_yes:
+  br label %inner_done
+inner_done:
+  %local_match = phi i1 [ true, %local_yes ], [ false, %inner ], [ false, %inner_continue ]
+  br label %vote
+vote:
+  %warp_match = call i1 @llvm.nvvm.vote.any.sync(i32 -1, i1 %local_match)
+  br i1 %warp_match, label %store_true, label %continue
+continue:
+  %later_round = add i64 %round, 128
+  %next_round = select i1 %first_round, i64 32, i64 %later_round
+  %round_possible = icmp ult i64 %next_round, %size
+  br i1 %round_possible, label %search, label %store_false
+store_true:
+  br label %store
+store_false:
+  br label %store
+store:
+  %value = phi i8 [ 1, %store_true ], [ 0, %store_false ]
+  %lane_zero = icmp eq i32 %lane, 0
+  %write = and i1 %lane_zero, %valid
+  br i1 %write, label %write_value, label %done
+write_value:
+  %out = getelementptr i8, i8* %output, i32 %row
+  store i8 %value, i8* %out, align 1
+  br label %done
+done:
+  ret void
+}
+; END warp_literal_contains
+
+; BEGIN warp_literal_verify
+
+  br i1 %first_equal, label %verify, label %inner_continue
+verify:
+@OFFSETS@@COMPARISONS@  br i1 @MATCHED@, label %local_yes, label %inner_continue
+; END warp_literal_verify
+
+; BEGIN literal_chunk_ptr_n
+  %literal_chunk_ptr_{0} = bitcast i8* %literal_ptr_{0} to i{1}*
+  %literal_chunk_{0} = load i{1}, i{1}* %literal_chunk_ptr_{0}, align 1
+; END literal_chunk_ptr_n
+
+; BEGIN pivot_ptr
+  %pivot_ptr = getelementptr i8, i8* %data, i64 %position
+  %pivot = load i8, i8* %pivot_ptr, align 1
+  %first_equal = icmp eq i8 %pivot, {}
+; END pivot_ptr
+
+; BEGIN pivot_position
+  %pivot_position = add i64 %position, {0}
+  %pivot_ptr = getelementptr i8, i8* %data, i64 %pivot_position
+  %pivot = load i8, i8* %pivot_ptr, align 1
+  %pivot_equal = icmp eq i8 %pivot, {1}
+  br i1 %pivot_equal, label %anchor_guard, label %inner_continue
+anchor_guard:
+  %guard_position = add i64 %position, {2}
+  %guard_ptr = getelementptr i8, i8* %data, i64 %guard_position
+  %guard = load i8, i8* %guard_ptr, align 1
+  %first_equal = icmp eq i8 %guard, {3}
+; END pivot_position

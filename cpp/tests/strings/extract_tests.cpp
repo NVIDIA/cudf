@@ -3,6 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+#include "regex_test_utilities.hpp"
 #include "special_chars.h"
 
 #include <cudf_test/base_fixture.hpp>
@@ -19,9 +20,12 @@
 
 #include <vector>
 
+template <typename RegexBackend>
 struct StringsExtractTests : public cudf::test::BaseFixture {};
 
-TEST_F(StringsExtractTests, ExtractTest)
+TYPED_TEST_SUITE(StringsExtractTests, cudf::test::regex_backends);
+
+TYPED_TEST(StringsExtractTests, ExtractTest)
 {
   std::vector<char const*> h_strings{
     "First Last", "Joe Schmoe", "John Smith", "Jane Smith", "Beyonce", "Sting", nullptr, ""};
@@ -65,12 +69,12 @@ TEST_F(StringsExtractTests, ExtractTest)
   columns.push_back(expected2.release());
   cudf::table expected(std::move(columns));
 
-  auto prog    = cudf::strings::regex_program::create(pattern);
-  auto results = cudf::strings::extract(strings_view, *prog);
+  auto prog    = TypeParam::create(cudf::experimental::regex_operation::EXTRACT, pattern);
+  auto results = TypeParam::extract(strings_view, *prog);
   CUDF_TEST_EXPECT_TABLES_EQUAL(*results, expected);
 }
 
-TEST_F(StringsExtractTests, ExtractDomainTest)
+TYPED_TEST(StringsExtractTests, ExtractDomainTest)
 {
   cudf::test::strings_column_wrapper strings({"http://www.google.com",
                                               "gmail.com",
@@ -108,12 +112,12 @@ TEST_F(StringsExtractTests, ExtractDomainTest)
   });
   cudf::table_view expected{{expected1}};
 
-  auto prog    = cudf::strings::regex_program::create(pattern);
-  auto results = cudf::strings::extract(strings_view, *prog);
+  auto prog    = TypeParam::create(cudf::experimental::regex_operation::EXTRACT, pattern);
+  auto results = TypeParam::extract(strings_view, *prog);
   CUDF_TEST_EXPECT_TABLES_EQUAL(*results, expected);
 }
 
-TEST_F(StringsExtractTests, ExtractEventTest)
+TYPED_TEST(StringsExtractTests, ExtractEventTest)
 {
   std::vector<std::string> patterns({"(^[0-9]+\\.?[0-9]*),",
                                      R"(search_name="([0-9A-Za-z\s\-\(\)]+))",
@@ -140,13 +144,13 @@ TEST_F(StringsExtractTests, ExtractEventTest)
   for (std::size_t idx = 0; idx < patterns.size(); ++idx) {
     auto pattern = patterns[idx];
     cudf::test::strings_column_wrapper expected({expecteds[idx]});
-    auto prog    = cudf::strings::regex_program::create(pattern);
-    auto results = cudf::strings::extract(strings_view, *prog);
+    auto prog    = TypeParam::create(cudf::experimental::regex_operation::EXTRACT, pattern);
+    auto results = TypeParam::extract(strings_view, *prog);
     CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(results->view().column(0), expected);
   }
 }
 
-TEST_F(StringsExtractTests, MultiLine)
+TYPED_TEST(StringsExtractTests, MultiLine)
 {
   auto input = cudf::test::strings_column_wrapper(
     {"abc\nfff\nabc", "fff\nabc\nlll", "abc", "", "abc\n", "abé\nabc\n"});
@@ -156,20 +160,21 @@ TEST_F(StringsExtractTests, MultiLine)
   cudf::test::strings_column_wrapper expected_multiline({"abc", "abc", "abc", "", "abc", "abc"},
                                                         {true, true, true, false, true, true});
   auto expected = cudf::table_view{{expected_multiline}};
-  auto prog = cudf::strings::regex_program::create(pattern, cudf::strings::regex_flags::MULTILINE);
-  auto results = cudf::strings::extract(view, *prog);
+  auto prog     = TypeParam::create(
+    cudf::experimental::regex_operation::EXTRACT, pattern, cudf::strings::regex_flags::MULTILINE);
+  auto results = TypeParam::extract(view, *prog);
   CUDF_TEST_EXPECT_TABLES_EQUAL(*results, expected);
 
   pattern = std::string("^([a-c]+)$");
   cudf::test::strings_column_wrapper expected_default({"", "", "abc", "", "abc", ""},
                                                       {false, false, true, false, true, false});
   expected = cudf::table_view{{expected_default}};
-  prog     = cudf::strings::regex_program::create(pattern);
-  results  = cudf::strings::extract(view, *prog);
+  prog     = TypeParam::create(cudf::experimental::regex_operation::EXTRACT, pattern);
+  results  = TypeParam::extract(view, *prog);
   CUDF_TEST_EXPECT_TABLES_EQUAL(*results, expected);
 }
 
-TEST_F(StringsExtractTests, DotAll)
+TYPED_TEST(StringsExtractTests, DotAll)
 {
   auto input = cudf::test::strings_column_wrapper({"abc\nfa\nef", "fff\nabbc\nfff", "abcdef", ""});
   auto view  = cudf::strings_column_view(input);
@@ -178,19 +183,20 @@ TEST_F(StringsExtractTests, DotAll)
   cudf::test::strings_column_wrapper expected_dotall({"abc\nfa\nef", "abbc\nfff", "abcdef", ""},
                                                      {true, true, true, false});
   auto expected = cudf::table_view{{expected_dotall}};
-  auto prog     = cudf::strings::regex_program::create(pattern, cudf::strings::regex_flags::DOTALL);
-  auto results  = cudf::strings::extract(view, *prog);
+  auto prog     = TypeParam::create(
+    cudf::experimental::regex_operation::EXTRACT, pattern, cudf::strings::regex_flags::DOTALL);
+  auto results = TypeParam::extract(view, *prog);
   CUDF_TEST_EXPECT_TABLES_EQUAL(*results, expected);
 
   cudf::test::strings_column_wrapper expected_default({"", "", "abcdef", ""},
                                                       {false, false, true, false});
   expected = cudf::table_view{{expected_default}};
-  prog     = cudf::strings::regex_program::create(pattern);
-  results  = cudf::strings::extract(view, *prog);
+  prog     = TypeParam::create(cudf::experimental::regex_operation::EXTRACT, pattern);
+  results  = TypeParam::extract(view, *prog);
   CUDF_TEST_EXPECT_TABLES_EQUAL(*results, expected);
 }
 
-TEST_F(StringsExtractTests, SpecialNewLines)
+TYPED_TEST(StringsExtractTests, SpecialNewLines)
 {
   auto input = cudf::test::strings_column_wrapper({"zzé" NEXT_LINE "qqq" LINE_SEPARATOR "zzé",
                                                    "qqq" LINE_SEPARATOR "zzé\rlll",
@@ -200,34 +206,38 @@ TEST_F(StringsExtractTests, SpecialNewLines)
                                                    "abc" PARAGRAPH_SEPARATOR "zzé\n"});
   auto view  = cudf::strings_column_view(input);
 
-  auto prog =
-    cudf::strings::regex_program::create("(^zzé$)", cudf::strings::regex_flags::EXT_NEWLINE);
-  auto results = cudf::strings::extract(view, *prog);
+  auto prog    = TypeParam::create(cudf::experimental::regex_operation::EXTRACT,
+                                "(^zzé$)",
+                                cudf::strings::regex_flags::EXT_NEWLINE);
+  auto results = TypeParam::extract(view, *prog);
   auto expected =
     cudf::test::strings_column_wrapper({"", "", "zzé", "", "zzé", ""}, {0, 0, 1, 0, 1, 0});
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(results->view().column(0), expected);
 
   auto both_flags = static_cast<cudf::strings::regex_flags>(
     cudf::strings::regex_flags::EXT_NEWLINE | cudf::strings::regex_flags::MULTILINE);
-  auto prog_ml = cudf::strings::regex_program::create("^(zzé)$", both_flags);
-  results      = cudf::strings::extract(view, *prog_ml);
+  auto prog_ml =
+    TypeParam::create(cudf::experimental::regex_operation::EXTRACT, "^(zzé)$", both_flags);
+  results = TypeParam::extract(view, *prog_ml);
   expected =
     cudf::test::strings_column_wrapper({"zzé", "zzé", "zzé", "", "zzé", "zzé"}, {1, 1, 1, 0, 1, 1});
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(results->view().column(0), expected);
 
-  prog     = cudf::strings::regex_program::create("q(q.*l)l");
+  prog     = TypeParam::create(cudf::experimental::regex_operation::EXTRACT, "q(q.*l)l");
   expected = cudf::test::strings_column_wrapper({"", "qq" LINE_SEPARATOR "zzé\rll", "", "", "", ""},
                                                 {0, 1, 0, 0, 0, 0});
-  results  = cudf::strings::extract(view, *prog);
+  results  = TypeParam::extract(view, *prog);
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(results->view().column(0), expected);
   // expect no matches here since the newline(s) interrupts the pattern
-  prog = cudf::strings::regex_program::create("q(q.*l)l", cudf::strings::regex_flags::EXT_NEWLINE);
+  prog     = TypeParam::create(cudf::experimental::regex_operation::EXTRACT,
+                           "q(q.*l)l",
+                           cudf::strings::regex_flags::EXT_NEWLINE);
   expected = cudf::test::strings_column_wrapper({"", "", "", "", "", ""}, {0, 0, 0, 0, 0, 0});
-  results  = cudf::strings::extract(view, *prog);
+  results  = TypeParam::extract(view, *prog);
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(results->view().column(0), expected);
 }
 
-TEST_F(StringsExtractTests, NestedQuantifier)
+TYPED_TEST(StringsExtractTests, NestedQuantifier)
 {
   auto input   = cudf::test::strings_column_wrapper({"TEST12 1111 2222 3333 4444 5555",
                                                      "0000 AAAA 9999 BBBB 8888",
@@ -235,14 +245,14 @@ TEST_F(StringsExtractTests, NestedQuantifier)
                                                      "12345 3333 4444 1111 ABCD"});
   auto sv      = cudf::strings_column_view(input);
   auto pattern = std::string(R"((\d{4}\s){4})");
-  auto prog    = cudf::strings::regex_program::create(pattern);
-  auto results = cudf::strings::extract(sv, *prog);
+  auto prog    = TypeParam::create(cudf::experimental::regex_operation::EXTRACT, pattern);
+  auto results = TypeParam::extract(sv, *prog);
   // fixed quantifier on capture group only honors the last group
   auto expected = cudf::test::strings_column_wrapper({"4444 ", "", "", "1111 "}, {1, 0, 0, 1});
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(results->view().column(0), expected);
 }
 
-TEST_F(StringsExtractTests, EmptyExtractTest)
+TYPED_TEST(StringsExtractTests, EmptyExtractTest)
 {
   std::vector<char const*> h_strings{nullptr, "AAA", "AAA_A", "AAA_AAA_", "A__", ""};
   cudf::test::strings_column_wrapper strings(
@@ -261,20 +271,20 @@ TEST_F(StringsExtractTests, EmptyExtractTest)
   std::vector<std::unique_ptr<cudf::column>> columns;
   columns.push_back(expected.release());
   cudf::table table_expected(std::move(columns));
-  auto prog    = cudf::strings::regex_program::create(pattern);
-  auto results = cudf::strings::extract(strings_view, *prog);
+  auto prog    = TypeParam::create(cudf::experimental::regex_operation::EXTRACT, pattern);
+  auto results = TypeParam::extract(strings_view, *prog);
   CUDF_TEST_EXPECT_TABLES_EQUAL(*results, table_expected);
 }
 
-TEST_F(StringsExtractTests, NonParticipatingGroup)
+TYPED_TEST(StringsExtractTests, NonParticipatingGroup)
 {
   auto input = cudf::test::strings_column_wrapper({"A1", "B2", "C"});
   auto sv    = cudf::strings_column_view(input);
 
   // the optional group does not participate in the match for "C" and must
   // result in null, not an empty string
-  auto prog    = cudf::strings::regex_program::create("(\\D)(\\d)?");
-  auto results = cudf::strings::extract(sv, *prog);
+  auto prog    = TypeParam::create(cudf::experimental::regex_operation::EXTRACT, "(\\D)(\\d)?");
+  auto results = TypeParam::extract(sv, *prog);
 
   std::vector<std::unique_ptr<cudf::column>> columns;
   columns.push_back(cudf::test::strings_column_wrapper({"A", "B", "C"}).release());
@@ -283,8 +293,8 @@ TEST_F(StringsExtractTests, NonParticipatingGroup)
   CUDF_TEST_EXPECT_TABLES_EQUAL(*results, expected);
 
   // a group that participates with an empty match remains an empty string
-  auto prog2    = cudf::strings::regex_program::create("(\\D)(\\d*)");
-  auto results2 = cudf::strings::extract(sv, *prog2);
+  auto prog2    = TypeParam::create(cudf::experimental::regex_operation::EXTRACT, "(\\D)(\\d*)");
+  auto results2 = TypeParam::extract(sv, *prog2);
 
   std::vector<std::unique_ptr<cudf::column>> columns2;
   columns2.push_back(cudf::test::strings_column_wrapper({"A", "B", "C"}).release());
@@ -293,7 +303,7 @@ TEST_F(StringsExtractTests, NonParticipatingGroup)
   CUDF_TEST_EXPECT_TABLES_EQUAL(*results2, expected2);
 }
 
-TEST_F(StringsExtractTests, ExtractAllTest)
+TYPED_TEST(StringsExtractTests, ExtractAllTest)
 {
   std::vector<char const*> h_input(
     {"123 banana 7 eleven", "41 apple", "6 péar 0 pair", nullptr, "", "bees", "4 paré"});
@@ -314,12 +324,12 @@ TEST_F(StringsExtractTests, ExtractAllTest)
                 LCW{},
                 LCW{"4", "paré"}},
                valids.data());
-  auto prog    = cudf::strings::regex_program::create(pattern);
-  auto results = cudf::strings::extract_all_record(sv, *prog);
+  auto prog = TypeParam::create(cudf::experimental::regex_operation::EXTRACT_ALL_RECORD, pattern);
+  auto results = TypeParam::extract_all_record(sv, *prog);
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(results->view(), expected);
 }
 
-TEST_F(StringsExtractTests, ExtractSingle)
+TYPED_TEST(StringsExtractTests, ExtractSingle)
 {
   auto input = cudf::test::strings_column_wrapper(
     {"123 banana 7 eleven", "41 apple", "6 péar 0 pair", "", "", "bees", "4 paré"},
@@ -327,58 +337,79 @@ TEST_F(StringsExtractTests, ExtractSingle)
   auto sv = cudf::strings_column_view(input);
 
   auto pattern = std::string("(\\d+) (\\w+)");
-  auto prog    = cudf::strings::regex_program::create(pattern);
+  auto prog    = TypeParam::create(cudf::experimental::regex_operation::EXTRACT_SINGLE,
+                                pattern,
+                                cudf::strings::regex_flags::DEFAULT,
+                                cudf::strings::capture_groups::EXTRACT,
+                                   {.group = 1});
 
-  auto results  = cudf::strings::extract_single(sv, *prog, 1);
+  auto results  = TypeParam::extract_single(sv, *prog, 1);
   auto expected = cudf::test::strings_column_wrapper(
     {"banana", "apple", "péar", "", "", "", "paré"}, {1, 1, 1, 0, 0, 0, 1});
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(results->view(), expected);
 
-  results = cudf::strings::extract_single(sv, *prog, 0);
+  prog    = TypeParam::create(cudf::experimental::regex_operation::EXTRACT_SINGLE,
+                           pattern,
+                           cudf::strings::regex_flags::DEFAULT,
+                           cudf::strings::capture_groups::EXTRACT,
+                              {.group = 0});
+  results = TypeParam::extract_single(sv, *prog, 0);
   expected =
     cudf::test::strings_column_wrapper({"123", "41", "6", "", "", "", "4"}, {1, 1, 1, 0, 0, 0, 1});
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(results->view(), expected);
 
-  EXPECT_THROW(cudf::strings::extract_single(sv, *prog, 2), std::invalid_argument);
+  prog = TypeParam::create(cudf::experimental::regex_operation::EXTRACT_SINGLE,
+                           pattern,
+                           cudf::strings::regex_flags::DEFAULT,
+                           cudf::strings::capture_groups::EXTRACT,
+                           {.group = 2});
+  EXPECT_THROW(TypeParam::extract_single(sv, *prog, 2), std::invalid_argument);
 }
 
-TEST_F(StringsExtractTests, Errors)
+TYPED_TEST(StringsExtractTests, Errors)
 {
   cudf::test::strings_column_wrapper input({"this column intentionally left blank"});
   auto sv = cudf::strings_column_view(input);
 
   auto pattern = std::string("\\w+");
-  auto prog    = cudf::strings::regex_program::create(pattern);
+  auto prog    = TypeParam::create(cudf::experimental::regex_operation::EXTRACT, pattern);
+  EXPECT_THROW(TypeParam::extract(sv, *prog), cudf::logic_error);
 
-  EXPECT_THROW(cudf::strings::extract(sv, *prog), cudf::logic_error);
-  EXPECT_THROW(cudf::strings::extract_all_record(sv, *prog), cudf::logic_error);
+  prog = TypeParam::create(cudf::experimental::regex_operation::EXTRACT_ALL_RECORD, pattern);
+  EXPECT_THROW(TypeParam::extract_all_record(sv, *prog), cudf::logic_error);
 }
 
-TEST_F(StringsExtractTests, EmptyInput)
+TYPED_TEST(StringsExtractTests, EmptyInput)
 {
   auto const input   = cudf::test::strings_column_wrapper();
   auto const sv      = cudf::strings_column_view(input);
   auto const pattern = std::string("(\\w+)");
-  auto const prog    = cudf::strings::regex_program::create(pattern);
+  auto prog          = TypeParam::create(cudf::experimental::regex_operation::EXTRACT, pattern);
 
-  auto rt = cudf::strings::extract(sv, *prog);
+  auto rt = TypeParam::extract(sv, *prog);
   EXPECT_EQ(1, rt->num_columns());
   EXPECT_EQ(0, rt->num_rows());
 
-  auto rl = cudf::strings::extract_all_record(sv, *prog);
+  prog    = TypeParam::create(cudf::experimental::regex_operation::EXTRACT_ALL_RECORD, pattern);
+  auto rl = TypeParam::extract_all_record(sv, *prog);
   EXPECT_EQ(0, rl->size());
 
-  auto rs = cudf::strings::extract_single(sv, *prog, 1);
+  prog    = TypeParam::create(cudf::experimental::regex_operation::EXTRACT_SINGLE,
+                           pattern,
+                           cudf::strings::regex_flags::DEFAULT,
+                           cudf::strings::capture_groups::EXTRACT,
+                              {.group = 1});
+  auto rs = TypeParam::extract_single(sv, *prog, 1);
   EXPECT_EQ(0, rs->size());
 }
 
-TEST_F(StringsExtractTests, MediumRegex)
+TYPED_TEST(StringsExtractTests, MediumRegex)
 {
   // This results in 95 regex instructions and falls in the 'medium' range.
   std::string medium_regex =
     "hello @abc @def (world) The quick brown @fox jumps over the lazy @dog hello "
     "http://www.world.com";
-  auto prog = cudf::strings::regex_program::create(medium_regex);
+  auto prog = TypeParam::create(cudf::experimental::regex_operation::EXTRACT, medium_regex);
 
   std::vector<char const*> h_strings{
     "hello @abc @def world The quick brown @fox jumps over the lazy @dog hello "
@@ -393,7 +424,7 @@ TEST_F(StringsExtractTests, MediumRegex)
     }));
 
   auto strings_view = cudf::strings_column_view(strings);
-  auto results      = cudf::strings::extract(strings_view, *prog);
+  auto results      = TypeParam::extract(strings_view, *prog);
   std::vector<char const*> h_expected{"world", nullptr, nullptr};
   cudf::test::strings_column_wrapper expected(
     h_expected.begin(),
@@ -402,13 +433,13 @@ TEST_F(StringsExtractTests, MediumRegex)
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(results->get_column(0), expected);
 }
 
-TEST_F(StringsExtractTests, LargeRegex)
+TYPED_TEST(StringsExtractTests, LargeRegex)
 {
   // This results in 115 regex instructions and falls in the 'large' range.
   std::string large_regex =
     "hello @abc @def world The (quick) brown @fox jumps over the lazy @dog hello "
     "http://www.world.com I'm here @home zzzz";
-  auto prog = cudf::strings::regex_program::create(large_regex);
+  auto prog = TypeParam::create(cudf::experimental::regex_operation::EXTRACT, large_regex);
 
   std::vector<char const*> h_strings{
     "hello @abc @def world The quick brown @fox jumps over the lazy @dog hello "
@@ -423,7 +454,7 @@ TEST_F(StringsExtractTests, LargeRegex)
     }));
 
   auto strings_view = cudf::strings_column_view(strings);
-  auto results      = cudf::strings::extract(strings_view, *prog);
+  auto results      = TypeParam::extract(strings_view, *prog);
   std::vector<char const*> h_expected{"quick", nullptr, nullptr};
   cudf::test::strings_column_wrapper expected(
     h_expected.begin(),
@@ -432,28 +463,29 @@ TEST_F(StringsExtractTests, LargeRegex)
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(results->get_column(0), expected);
 }
 
-TEST_F(StringsExtractTests, CrlfLineAnchorExtNewline)
+TYPED_TEST(StringsExtractTests, CrlfLineAnchorExtNewline)
 {
   // extract group 1 of ([a-z]+)$ at \r\n line ends; null where no match.
   // Verified vs OpenJDK 17 group(1) of first match.
-  auto input = cudf::test::strings_column_wrapper({"abc\r\n",
-                                                   "abc\n",
-                                                   "abc\r",
-                                                   "abc",
-                                                   "a\r\nb",
-                                                   "abc\r\n\r\n",
-                                                   "",
-                                                   "abc" NEXT_LINE,
-                                                   "a\nb\r\nc",
-                                                   "\r\n",
-                                                   "\r\nabc",
-                                                   "x\n\r",
-                                                   "a\r\rb",
-                                                   "a\n\nb"});
-  auto view  = cudf::strings_column_view(input);
-  auto prog =
-    cudf::strings::regex_program::create("([a-z]+)$", cudf::strings::regex_flags::EXT_NEWLINE);
-  auto results = cudf::strings::extract(view, *prog);
+  auto input   = cudf::test::strings_column_wrapper({"abc\r\n",
+                                                     "abc\n",
+                                                     "abc\r",
+                                                     "abc",
+                                                     "a\r\nb",
+                                                     "abc\r\n\r\n",
+                                                     "",
+                                                     "abc" NEXT_LINE,
+                                                     "a\nb\r\nc",
+                                                     "\r\n",
+                                                     "\r\nabc",
+                                                     "x\n\r",
+                                                     "a\r\rb",
+                                                     "a\n\nb"});
+  auto view    = cudf::strings_column_view(input);
+  auto prog    = TypeParam::create(cudf::experimental::regex_operation::EXTRACT,
+                                "([a-z]+)$",
+                                cudf::strings::regex_flags::EXT_NEWLINE);
+  auto results = TypeParam::extract(view, *prog);
 
   std::vector<char const*> h_expected{"abc",
                                       "abc",

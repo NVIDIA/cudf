@@ -1,0 +1,319 @@
+; SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+; SPDX-License-Identifier: Apache-2.0
+
+; BEGIN workspace_entry
+  %workspace_row = call i32 @regex_ir_row_index()
+  %workspace_rows = sub i32 %tile_end, %tile_begin
+  %workspace_active = icmp ult i32 %workspace_row, %workspace_rows
+  br i1 %workspace_active, label %workspace_ready, label %done
+workspace_ready:
+  %workspace_row64 = zext i32 %workspace_row to i64
+  %workspace_offset = mul i64 %workspace_row64, {0}
+  %workspace = getelementptr i8, i8* %scratch, i64 %workspace_offset
+; END workspace_entry
+
+; BEGIN matcher_boolean_declaration
+declare i1 @regex_ir_execute(@workspace@i8*, i64) nounwind readonly
+; END matcher_boolean_declaration
+
+; BEGIN matcher_count_declaration
+declare i64 @regex_ir_execute(@workspace@i8*, i64) nounwind readonly
+; END matcher_count_declaration
+
+; BEGIN matcher_builtin_count_declaration
+declare i64 @regex_ir_execute(@workspace@i8*, i64, i8*) nounwind readonly
+; END matcher_builtin_count_declaration
+
+; BEGIN repeated_builtin_adapter
+define i1 @regex_ir_repeated_builtin(i32 %codepoint, i8* %character_flags) alwaysinline nounwind readonly {{
+entry:
+  %in_table = icmp ult i32 %codepoint, 65536
+  br i1 %in_table, label %load, label %classify
+load:
+  %index = zext i32 %codepoint to i64
+  %flag_ptr = getelementptr i8, i8* %character_flags, i64 %index
+  %loaded_flags = load i8, i8* %flag_ptr, align 1
+  br label %classify
+classify:
+  %flags = phi i8 [ %loaded_flags, %load ], [ 0, %entry ]
+  %digit_bits = and i8 %flags, 4
+  %digit = icmp ne i8 %digit_bits, 0
+  %word_bits = and i8 %flags, 15
+  %alphanumeric = icmp ne i8 %word_bits, 0
+  %underscore = icmp eq i32 %codepoint, 95
+  %word = or i1 %alphanumeric, %underscore
+  %space_bits = and i8 %flags, 16
+  %space = icmp ne i8 %space_bits, 0
+  %base_is_digit = icmp ult i8 {0}, 2
+  %base_is_word = icmp ult i8 {0}, 4
+  %word_or_space = select i1 %base_is_word, i1 %word, i1 %space
+  %positive = select i1 %base_is_digit, i1 %digit, i1 %word_or_space
+  %negated_class = and i8 {0}, 1
+  %negated = icmp ne i8 %negated_class, 0
+  %inverted = xor i1 %positive, true
+  %newline = icmp eq i32 %codepoint, 10
+  %nonspace_negated = icmp ult i8 {0}, 4
+  %exclude_newline = and i1 %nonspace_negated, %newline
+  %not_excluded = xor i1 %exclude_newline, true
+  %valid_inverted = and i1 %inverted, %not_excluded
+  %result = select i1 %negated, i1 %valid_inverted, i1 %positive
+  ret i1 %result
+}}
+; END repeated_builtin_adapter
+
+; BEGIN matcher_find_declaration
+declare i1 @regex_ir_execute(@workspace@i8*, i64, i64*) nounwind
+; END matcher_find_declaration
+
+; BEGIN matcher_captures_declaration
+declare i1 @regex_ir_execute(@workspace@i8*, i64, i64, i64*) nounwind
+; END matcher_captures_declaration
+
+; BEGIN matcher_replace_declaration
+declare i64 @regex_ir_execute(@workspace@i8*, i64, i8*) nounwind
+; END matcher_replace_declaration
+
+; BEGIN kernel_annotation
+@llvm.used = appending global [1 x i8*] [i8* bitcast (void (@workspace_types@{0})* @{1} to i8*)], section "llvm.metadata"
+!nvvm.annotations = !{{!900000}}
+!900000 = !{{void (@workspace_types@{0})* @{1}, !"kernel", i32 1}}
+; END kernel_annotation
+
+; BEGIN core
+declare i32 @llvm.nvvm.read.ptx.sreg.tid.x() nounwind readnone
+declare i32 @llvm.nvvm.read.ptx.sreg.ntid.x() nounwind readnone
+declare i32 @llvm.nvvm.read.ptx.sreg.ctaid.x() nounwind readnone
+
+define internal i32 @regex_ir_row_index() alwaysinline nounwind readnone {
+entry:
+  %thread = call i32 @llvm.nvvm.read.ptx.sreg.tid.x()
+  %width = call i32 @llvm.nvvm.read.ptx.sreg.ntid.x()
+  %block = call i32 @llvm.nvvm.read.ptx.sreg.ctaid.x()
+  %base = mul i32 %block, %width
+  %row = add i32 %base, %thread
+  ret i32 %row
+}
+
+define internal i1 @regex_ir_is_valid(i32* %mask, i32 %row) alwaysinline nounwind readonly {
+entry:
+  %all_valid = icmp eq i32* %mask, null
+  br i1 %all_valid, label %yes, label %check
+check:
+  %word_index = lshr i32 %row, 5
+  %word_ptr = getelementptr i32, i32* %mask, i32 %word_index
+  %word = load i32, i32* %word_ptr, align 4
+  %bit_index = and i32 %row, 31
+  %shifted = lshr i32 %word, %bit_index
+  %bit = and i32 %shifted, 1
+  %valid = icmp ne i32 %bit, 0
+  ret i1 %valid
+yes:
+  ret i1 true
+}
+
+define internal i64 @regex_ir_load_offset_for_width(i8* %offsets, i32 %index, i1 %offset64) alwaysinline nounwind readonly {
+entry:
+  br i1 %offset64, label %wide, label %narrow
+wide:
+  %wide_offsets = bitcast i8* %offsets to i64*
+  %wide_ptr = getelementptr i64, i64* %wide_offsets, i32 %index
+  %wide_value = load i64, i64* %wide_ptr, align 8
+  ret i64 %wide_value
+narrow:
+  %narrow_offsets = bitcast i8* %offsets to i32*
+  %narrow_ptr = getelementptr i32, i32* %narrow_offsets, i32 %index
+  %narrow_value = load i32, i32* %narrow_ptr, align 4
+  %value = sext i32 %narrow_value to i64
+  ret i64 %value
+}
+
+define internal i64 @regex_ir_load_offset(i8* %offsets, i32 %index) alwaysinline nounwind readonly {
+entry:
+  %value = call i64 @regex_ir_load_offset_for_width(i8* %offsets, i32 %index, i1 @INPUT_OFFSET64@)
+  ret i64 %value
+}
+
+%regex_ir_string = type { i8*, i64 }
+
+define internal %regex_ir_string @regex_ir_load_string(i8* %chars, i8* %offsets, i32 %row) alwaysinline nounwind readonly {
+entry:
+  %begin = call i64 @regex_ir_load_offset(i8* %offsets, i32 %row)
+  %next = add i32 %row, 1
+  %end = call i64 @regex_ir_load_offset(i8* %offsets, i32 %next)
+  %size = sub i64 %end, %begin
+  %data = getelementptr i8, i8* %chars, i64 %begin
+  %with_data = insertvalue %regex_ir_string undef, i8* %data, 0
+  %result = insertvalue %regex_ir_string %with_data, i64 %size, 1
+  ret %regex_ir_string %result
+}
+
+define internal i64 @regex_ir_advance_utf8(i8* %data, i64 %size, i64 %position) alwaysinline nounwind readonly {
+entry:
+  %at_end = icmp uge i64 %position, %size
+  br i1 %at_end, label %done, label %read
+read:
+  %ptr = getelementptr i8, i8* %data, i64 %position
+  %byte = load i8, i8* %ptr, align 1
+  %unsigned = zext i8 %byte to i32
+  %ascii = icmp ult i32 %unsigned, 128
+  %two_test = and i32 %unsigned, 224
+  %is_two = icmp eq i32 %two_test, 192
+  %three_test = and i32 %unsigned, 240
+  %is_three = icmp eq i32 %three_test, 224
+  %wide = select i1 %is_three, i64 3, i64 4
+  %non_ascii = select i1 %is_two, i64 2, i64 %wide
+  %width = select i1 %ascii, i64 1, i64 %non_ascii
+  %advanced = add i64 %position, %width
+  %clamped_test = icmp ult i64 %advanced, %size
+  %clamped = select i1 %clamped_test, i64 %advanced, i64 %size
+  ret i64 %clamped
+done:
+  ret i64 %size
+}
+; END core
+
+; BEGIN write_pair
+%regex_ir_pair = type { i8*, i32 }
+
+define internal void @regex_ir_write_pair(i8* %output, i64 %index, i8* %data, i8* %empty, i64 %begin, i64 %end, i1 %present) alwaysinline nounwind {
+entry:
+  %size64 = sub i64 %end, %begin
+  %size = trunc i64 %size64 to i32
+  %data_ptr = getelementptr i8, i8* %data, i64 %begin
+  %is_empty = icmp eq i64 %size64, 0
+  %empty_ptr = select i1 %is_empty, i8* %empty, i8* %data_ptr
+  %pointer = select i1 %present, i8* %empty_ptr, i8* null
+  %stored_size = select i1 %present, i32 %size, i32 0
+  %typed_output = bitcast i8* %output to %regex_ir_pair*
+  %pair_ptr = getelementptr %regex_ir_pair, %regex_ir_pair* %typed_output, i64 %index
+  %pointer_ptr = getelementptr %regex_ir_pair, %regex_ir_pair* %pair_ptr, i32 0, i32 0
+  %size_ptr = getelementptr %regex_ir_pair, %regex_ir_pair* %pair_ptr, i32 0, i32 1
+  store i8* %pointer, i8** %pointer_ptr, align 8
+  store i32 %stored_size, i32* %size_ptr, align 4
+  ret void
+}
+; END write_pair
+
+; BEGIN capture_cache
+define internal void @regex_ir_cache_captures(i64* %captures, i64* %cache, i32 %row, i32 %capacity, i32 %values, i64 %match, i8* %overflow) nounwind {
+entry:
+  %missing = icmp eq i64* %cache, null
+  br i1 %missing, label %done, label %check_capacity
+check_capacity:
+  %capacity64 = zext i32 %capacity to i64
+  %fits = icmp ult i64 %match, %capacity64
+  br i1 %fits, label %copy_setup, label %mark_overflow
+mark_overflow:
+  store i8 1, i8* %overflow, align 1
+  br label %done
+copy_setup:
+  %row64 = zext i32 %row to i64
+  %values64 = zext i32 %values to i64
+  %row_matches = mul i64 %row64, %capacity64
+  %record = add i64 %row_matches, %match
+  %base = mul i64 %record, %values64
+  br label %copy_loop
+copy_loop:
+  %slot = phi i32 [ 0, %copy_setup ], [ %next_slot, %copy_loop ]
+  %slot64 = zext i32 %slot to i64
+  %source = getelementptr i64, i64* %captures, i64 %slot64
+  %value = load i64, i64* %source, align 8
+  %index = add i64 %base, %slot64
+  %destination = getelementptr i64, i64* %cache, i64 %index
+  store i64 %value, i64* %destination, align 8
+  %next_slot = add i32 %slot, 1
+  %finished = icmp eq i32 %next_slot, %values
+  br i1 %finished, label %done, label %copy_loop
+done:
+  ret void
+}
+; END capture_cache
+
+; BEGIN span_cache_sample
+define internal void @regex_ir_record_span_cache_sample(i8* %statistics, i64 %size, i64 %matches, i32 %capacity) alwaysinline nounwind {
+entry:
+  %capacity64 = zext i32 %capacity to i64
+  %overflow = icmp ugt i64 %matches, %capacity64
+  %capacity_plus_one = add i64 %capacity64, 1
+  %sampled_matches = select i1 %overflow, i64 %capacity_plus_one, i64 %matches
+  %stats = bitcast i8* %statistics to i64*
+  %valid_ptr = getelementptr i64, i64* %stats, i64 0
+  %bytes_ptr = getelementptr i64, i64* %stats, i64 1
+  %matches_ptr = getelementptr i64, i64* %stats, i64 2
+  %overflow_ptr = getelementptr i64, i64* %stats, i64 3
+  %valid_old = atomicrmw add i64* %valid_ptr, i64 1 monotonic
+  %bytes_old = atomicrmw add i64* %bytes_ptr, i64 %size monotonic
+  %matches_old = atomicrmw add i64* %matches_ptr, i64 %sampled_matches monotonic
+  %overflow64 = zext i1 %overflow to i64
+  %overflow_old = atomicrmw add i64* %overflow_ptr, i64 %overflow64 monotonic
+  ret void
+}
+; END span_cache_sample
+
+; BEGIN split_execute
+declare i64 @regex_ir_split_execute_limited(@workspace@i8*, i64, i64*, i64, i64, i8*) nounwind
+; END split_execute
+
+; BEGIN split_cached
+define internal i64 @regex_ir_split_cached(@workspace@i8* %data, i64 %size, i8* %cache_buffer, i32 %row, i32 %capacity, i8* %overflow, i64 %maxsplit) alwaysinline nounwind {
+entry:
+  %typed_cache = bitcast i8* %cache_buffer to i64*
+  %row64 = zext i32 %row to i64
+  %fields_per_row = add i32 %capacity, 1
+  %fields_per_row64 = zext i32 %fields_per_row to i64
+  %row_fields = mul i64 %row64, %fields_per_row64
+  %row_base = shl i64 %row_fields, 1
+  %row_spans = getelementptr i64, i64* %typed_cache, i64 %row_base
+  %overflow_ptr = getelementptr i8, i8* %overflow, i32 %row
+  %count = call i64 @regex_ir_split_execute_limited(@workspace@i8* %data, i64 %size, i64* %row_spans, i64 %maxsplit, i64 %fields_per_row64, i8* %overflow_ptr)
+  ret i64 %count
+}
+; END split_cached
+
+; BEGIN split_overflow
+define internal zeroext i1 @regex_ir_split_row_selected(i1 %valid, i8* %overflow, i32 %row) alwaysinline nounwind readonly {
+entry:
+  %overflow_ptr = getelementptr i8, i8* %overflow, i32 %row
+  %overflow_value = load i8, i8* %overflow_ptr, align 1
+  %did_overflow = icmp ne i8 %overflow_value, 0
+  %selected = and i1 %valid, %did_overflow
+  ret i1 %selected
+}
+; END split_overflow
+
+; BEGIN split_reverse
+define internal i32 @regex_ir_reverse_split_source(i32 %full_count, i32 %effective_count, i32 %token, i1 %truncated) alwaysinline nounwind readnone {
+entry:
+  %removed = sub i32 %full_count, %effective_count
+  %is_first = icmp eq i32 %token, 0
+  %shifted = add i32 %removed, %token
+  %truncated_source = select i1 %is_first, i32 0, i32 %shifted
+  %source = select i1 %truncated, i32 %truncated_source, i32 %token
+  ret i32 %source
+}
+
+define internal i64 @regex_ir_reverse_split_end(i64* %row_spans, i32 %full_count, i32 %effective_count, i32 %token, i1 %truncated, i64 %source_end) alwaysinline nounwind readonly {
+entry:
+  %merged_field = sub i32 %full_count, %effective_count
+  %merged_field64 = sext i32 %merged_field to i64
+  %merged_field_base = shl i64 %merged_field64, 1
+  %merged_end_index = add i64 %merged_field_base, 1
+  %merged_end_ptr = getelementptr i64, i64* %row_spans, i64 %merged_end_index
+  %merged_end = load i64, i64* %merged_end_ptr, align 8
+  %is_first = icmp eq i32 %token, 0
+  %is_first_selected = and i1 %truncated, %is_first
+  %selected_end = select i1 %is_first_selected, i64 %merged_end, i64 %source_end
+  ret i64 %selected_end
+}
+; END split_reverse
+
+; BEGIN split_forward
+define internal i64 @regex_ir_forward_split_end(i32 %effective_count, i32 %token, i1 %truncated, i64 %size, i64 %source_end) alwaysinline nounwind readnone {
+entry:
+  %last_token = sub i32 %effective_count, 1
+  %is_last = icmp eq i32 %token, %last_token
+  %merge_tail = and i1 %truncated, %is_last
+  %selected_end = select i1 %merge_tail, i64 %size, i64 %source_end
+  ret i64 %selected_end
+}
+; END split_forward

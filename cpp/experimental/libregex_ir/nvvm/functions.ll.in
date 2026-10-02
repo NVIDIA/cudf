@@ -1,0 +1,906 @@
+; SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+; SPDX-License-Identifier: Apache-2.0
+
+; BEGIN previous_position_bytes
+define internal i64 @{0}(i8* %data, i64 %size, i64 %target) alwaysinline nounwind readonly {{
+entry:
+  %at_begin = icmp eq i64 %target, 0
+  %previous = sub i64 %target, 1
+  %result = select i1 %at_begin, i64 0, i64 %previous
+  ret i64 %result
+}}
+; END previous_position_bytes
+
+; BEGIN module_metadata
+!nvvmir.version = !{!0}
+!0 = !{i32 2, i32 0}
+; END module_metadata
+
+; BEGIN predicate_prefix
+define internal i1 @{0}(i32 %cp) alwaysinline nounwind readnone {{
+entry:
+; END predicate_prefix
+
+; BEGIN function_suffix
+}
+; END function_suffix
+
+
+
+
+; BEGIN core
+declare i64 @llvm.cttz.i64(i64, i1)
+
+define internal i32 @regex_ir_load_byte(i8* %ptr) alwaysinline nounwind readonly {
+entry:
+  %byte = load i8, i8* %ptr, align 1
+  %value = zext i8 %byte to i32
+  ret i32 %value
+}
+; END core
+
+; BEGIN decode_width_bytes
+define internal i64 @regex_ir_decode_width_bytes(i8* %data, i64 %size, i64 %pos) alwaysinline nounwind readnone {
+entry:
+  %in_bounds = icmp ult i64 %pos, %size
+  %width = zext i1 %in_bounds to i64
+  ret i64 %width
+}
+; END decode_width_bytes
+
+; BEGIN decode_width_utf8
+define internal i64 @regex_ir_decode_width_utf8(i8* %data, i64 %size, i64 %pos) alwaysinline nounwind readonly {
+entry:
+  %in_bounds = icmp ult i64 %pos, %size
+  br i1 %in_bounds, label %load, label %missing
+missing:
+  ret i64 0
+load:
+  %ptr = getelementptr i8, i8* %data, i64 %pos
+  %first = call i32 @regex_ir_load_byte(i8* %ptr)
+  %ascii = icmp ult i32 %first, 128
+  br i1 %ascii, label %one, label %classify
+one:
+  ret i64 1
+classify:
+  %ge2 = icmp uge i32 %first, 194
+  %le2 = icmp ule i32 %first, 223
+  %is2 = and i1 %ge2, %le2
+  %ge3 = icmp uge i32 %first, 224
+  %le3 = icmp ule i32 %first, 239
+  %is3 = and i1 %ge3, %le3
+  %ge4 = icmp uge i32 %first, 240
+  %le4 = icmp ule i32 %first, 244
+  %is4 = and i1 %ge4, %le4
+  %maybe3 = select i1 %is3, i64 3, i64 1
+  %maybe4 = select i1 %is4, i64 4, i64 %maybe3
+  %required = select i1 %is2, i64 2, i64 %maybe4
+  %is_multibyte = icmp ugt i64 %required, 1
+  br i1 %is_multibyte, label %bounds, label %invalid
+invalid:
+  ret i64 1
+bounds:
+  %end = add i64 %pos, %required
+  %enough = icmp ule i64 %end, %size
+  br i1 %enough, label %continuation_loop, label %invalid_short
+invalid_short:
+  ret i64 1
+continuation_loop:
+  %index = phi i64 [ 1, %bounds ], [ %next_index, %continuation_ok ]
+  %continuation_pos = add i64 %pos, %index
+  %continuation_ptr = getelementptr i8, i8* %data, i64 %continuation_pos
+  %continuation = call i32 @regex_ir_load_byte(i8* %continuation_ptr)
+  %tag = and i32 %continuation, 192
+  %valid = icmp eq i32 %tag, 128
+  br i1 %valid, label %continuation_ok, label %invalid_continuation
+invalid_continuation:
+  ret i64 1
+continuation_ok:
+  %next_index = add i64 %index, 1
+  %done = icmp eq i64 %next_index, %required
+  br i1 %done, label %valid_multibyte, label %continuation_loop
+valid_multibyte:
+  ret i64 %required
+}
+; END decode_width_utf8
+
+; BEGIN decode_codepoint_bytes
+define internal i32 @regex_ir_decode_codepoint_bytes(i8* %data, i64 %size, i64 %pos) alwaysinline nounwind readonly {
+entry:
+  %available = icmp ult i64 %pos, %size
+  br i1 %available, label %load, label %missing
+missing:
+  ret i32 0
+load:
+  %ptr = getelementptr i8, i8* %data, i64 %pos
+  %value = call i32 @regex_ir_load_byte(i8* %ptr)
+  ret i32 %value
+}
+; END decode_codepoint_bytes
+
+; BEGIN decode_codepoint_utf8
+define internal i32 @regex_ir_decode_codepoint_utf8(i8* %data, i64 %size, i64 %pos) alwaysinline nounwind readonly {
+entry:
+  %available = icmp ult i64 %pos, %size
+  br i1 %available, label %load, label %missing
+missing:
+  ret i32 0
+load:
+  %ptr = getelementptr i8, i8* %data, i64 %pos
+  %first = call i32 @regex_ir_load_byte(i8* %ptr)
+  %width = call i64 @regex_ir_decode_width_utf8(i8* %data, i64 %size, i64 %pos)
+  %single = icmp eq i64 %width, 1
+  br i1 %single, label %single_byte, label %initialize
+single_byte:
+  ret i32 %first
+initialize:
+  %is2 = icmp eq i64 %width, 2
+  %is3 = icmp eq i64 %width, 3
+  %mask3 = select i1 %is3, i32 15, i32 7
+  %mask = select i1 %is2, i32 31, i32 %mask3
+  %initial = and i32 %first, %mask
+  br label %loop
+loop:
+  %index = phi i64 [ 1, %initialize ], [ %next_index, %body ]
+  %value = phi i32 [ %initial, %initialize ], [ %combined, %body ]
+  %done = icmp uge i64 %index, %width
+  br i1 %done, label %exit, label %body
+body:
+  %byte_pos = add i64 %pos, %index
+  %byte_ptr = getelementptr i8, i8* %data, i64 %byte_pos
+  %byte = call i32 @regex_ir_load_byte(i8* %byte_ptr)
+  %payload = and i32 %byte, 63
+  %shifted = shl i32 %value, 6
+  %combined = or i32 %shifted, %payload
+  %next_index = add i64 %index, 1
+  br label %loop
+exit:
+  ret i32 %value
+}
+; END decode_codepoint_utf8
+
+; BEGIN decode_utf8_packed
+define internal i64 @regex_ir_decode_utf8_packed(i8* %data, i64 %size, i64 %pos, i32 %first) alwaysinline nounwind readonly {
+entry:
+  %ascii = icmp ult i32 %first, 128
+  br i1 %ascii, label %invalid_or_single, label %classify
+classify:
+  %prefix2 = and i32 %first, 192
+  %is2 = icmp eq i32 %prefix2, 192
+  %prefix3 = and i32 %first, 224
+  %is3 = icmp eq i32 %prefix3, 224
+  %prefix4 = and i32 %first, 240
+  %is4 = icmp eq i32 %prefix4, 240
+  %continuation = icmp eq i32 %prefix2, 128
+  %two = zext i1 %is2 to i64
+  %three = zext i1 %is3 to i64
+  %four = zext i1 %is4 to i64
+  %continuation_adjustment = zext i1 %continuation to i64
+  %through_two = add i64 1, %two
+  %through_three = add i64 %through_two, %three
+  %through_four = add i64 %through_three, %four
+  %raw_width = sub i64 %through_four, %continuation_adjustment
+  %zero_width = icmp eq i64 %raw_width, 0
+  %required = select i1 %zero_width, i64 1, i64 %raw_width
+  %is_multibyte = icmp ugt i64 %required, 1
+  br i1 %is_multibyte, label %initialize, label %invalid_or_single
+initialize:
+  %mask3 = select i1 %is3, i32 15, i32 7
+  %mask = select i1 %is2, i32 31, i32 %mask3
+  %initial = and i32 %first, %mask
+  br label %loop
+loop:
+  %index = phi i64 [ 1, %initialize ], [ %next_index, %body ]
+  %value = phi i32 [ %initial, %initialize ], [ %combined, %body ]
+  %done = icmp uge i64 %index, %required
+  br i1 %done, label %decoded, label %body
+body:
+  %byte_pos = add i64 %pos, %index
+  %byte_ptr = getelementptr i8, i8* %data, i64 %byte_pos
+  %byte = call i32 @regex_ir_load_byte(i8* %byte_ptr)
+  %payload = and i32 %byte, 63
+  %shifted = shl i32 %value, 6
+  %combined = or i32 %shifted, %payload
+  %next_index = add i64 %index, 1
+  br label %loop
+decoded:
+  %codepoint64 = zext i32 %value to i64
+  %shifted_codepoint = shl i64 %codepoint64, 32
+  %packed = or i64 %shifted_codepoint, %required
+  ret i64 %packed
+invalid_or_single:
+  %first64 = zext i32 %first to i64
+  %shifted_first = shl i64 %first64, 32
+  %single = or i64 %shifted_first, 1
+  ret i64 %single
+}
+; END decode_utf8_packed
+
+; BEGIN seek_byte
+define internal i64 @regex_ir_seek_byte(i8* %data, i64 %size, i64 %start, i32 %needle) alwaysinline nounwind readonly {
+entry:
+  %needle64 = zext i32 %needle to i64
+  %repeated = mul i64 %needle64, 72340172838076673
+  br label %chunks
+chunks:
+  %position = phi i64 [ %start, %entry ], [ %next_chunk, %chunk_continue ]
+  %chunk_end = add i64 %position, 8
+  %full_chunk = icmp ule i64 %chunk_end, %size
+  br i1 %full_chunk, label %load_chunk, label %tail
+load_chunk:
+  %chunk_byte_ptr = getelementptr i8, i8* %data, i64 %position
+  %chunk_ptr = bitcast i8* %chunk_byte_ptr to i64*
+  %chunk = load i64, i64* %chunk_ptr, align 1
+  %candidate_x = xor i64 %chunk, %repeated
+  %candidate_minus_ones = sub i64 %candidate_x, 72340172838076673
+  %candidate_not = xor i64 %candidate_x, -1
+  %candidate_zero_bytes = and i64 %candidate_minus_ones, %candidate_not
+  %candidate_mask = and i64 %candidate_zero_bytes, -9187201950435737472
+  %has_candidate = icmp ne i64 %candidate_mask, 0
+  br i1 %has_candidate, label %candidate, label %chunk_continue
+candidate:
+  %remaining_candidates = phi i64 [ %candidate_mask, %load_chunk ], [ %next_candidates, %candidate_continue ]
+  %candidate_bit = call i64 @llvm.cttz.i64(i64 %remaining_candidates, i1 false)
+  %candidate_byte = lshr i64 %candidate_bit, 3
+  %candidate_position = add i64 %position, %candidate_byte
+  %candidate_ptr = getelementptr i8, i8* %data, i64 %candidate_position
+  %candidate_value = call i32 @regex_ir_load_byte(i8* %candidate_ptr)
+  %candidate_exact = icmp eq i32 %candidate_value, %needle
+  br i1 %candidate_exact, label %found_candidate, label %candidate_continue
+candidate_continue:
+  %candidate_mask_minus_one = sub i64 %remaining_candidates, 1
+  %next_candidates = and i64 %remaining_candidates, %candidate_mask_minus_one
+  %has_more_candidates = icmp ne i64 %next_candidates, 0
+  br i1 %has_more_candidates, label %candidate, label %chunk_continue
+chunk_continue:
+  %next_chunk = add nuw i64 %position, 8
+  br label %chunks
+tail:
+  %tail_position = phi i64 [ %position, %chunks ], [ %tail_next, %tail_continue ]
+  %tail_in_range = icmp ult i64 %tail_position, %size
+  br i1 %tail_in_range, label %tail_load, label %not_found
+tail_load:
+  %tail_ptr = getelementptr i8, i8* %data, i64 %tail_position
+  %tail_value = call i32 @regex_ir_load_byte(i8* %tail_ptr)
+  %tail_match = icmp eq i32 %tail_value, %needle
+  br i1 %tail_match, label %found_tail, label %tail_continue
+tail_continue:
+  %tail_next = add nuw i64 %tail_position, 1
+  br label %tail
+found_candidate:
+  ret i64 %candidate_position
+found_tail:
+  ret i64 %tail_position
+not_found:
+  ret i64 %size
+}
+; END seek_byte
+
+; BEGIN seek_byte_words
+define internal i64 @regex_ir_seek_byte(i8* %data, i64 %size, i64 %start, i32 %needle) alwaysinline nounwind readonly {
+entry:
+  %needle64 = zext i32 %needle to i64
+  %repeated = mul i64 %needle64, 72340172838076673
+  br label %chunks
+chunks:
+  %position = phi i64 [ %start, %entry ], [ %next_chunk, %chunk_continue ]
+  %chunk_end = add i64 %position, 8
+  %full_chunk = icmp ule i64 %chunk_end, %size
+  br i1 %full_chunk, label %load_chunk, label %tail
+load_chunk:
+  %chunk = call i64 @regex_ir_load_search_word(i8* %data, i64 %size, i64 %position)
+  %candidate_x = xor i64 %chunk, %repeated
+  %candidate_minus_ones = sub i64 %candidate_x, 72340172838076673
+  %candidate_not = xor i64 %candidate_x, -1
+  %candidate_zero_bytes = and i64 %candidate_minus_ones, %candidate_not
+  %candidate_mask = and i64 %candidate_zero_bytes, -9187201950435737472
+  %has_candidate = icmp ne i64 %candidate_mask, 0
+  br i1 %has_candidate, label %candidate, label %chunk_continue
+candidate:
+  %remaining_candidates = phi i64 [ %candidate_mask, %load_chunk ], [ %next_candidates, %candidate_continue ]
+  %candidate_bit = call i64 @llvm.cttz.i64(i64 %remaining_candidates, i1 false)
+  %candidate_byte = lshr i64 %candidate_bit, 3
+  %candidate_position = add i64 %position, %candidate_byte
+  %candidate_ptr = getelementptr i8, i8* %data, i64 %candidate_position
+  %candidate_value = call i32 @regex_ir_load_byte(i8* %candidate_ptr)
+  %candidate_exact = icmp eq i32 %candidate_value, %needle
+  br i1 %candidate_exact, label %found_candidate, label %candidate_continue
+candidate_continue:
+  %candidate_mask_minus_one = sub i64 %remaining_candidates, 1
+  %next_candidates = and i64 %remaining_candidates, %candidate_mask_minus_one
+  %has_more_candidates = icmp ne i64 %next_candidates, 0
+  br i1 %has_more_candidates, label %candidate, label %chunk_continue
+chunk_continue:
+  %next_chunk = add nuw i64 %position, 8
+  br label %chunks
+tail:
+  %tail_position = phi i64 [ %position, %chunks ], [ %tail_next, %tail_continue ]
+  %tail_in_range = icmp ult i64 %tail_position, %size
+  br i1 %tail_in_range, label %tail_load, label %not_found
+tail_load:
+  %tail_ptr = getelementptr i8, i8* %data, i64 %tail_position
+  %tail_value = call i32 @regex_ir_load_byte(i8* %tail_ptr)
+  %tail_match = icmp eq i32 %tail_value, %needle
+  br i1 %tail_match, label %found_tail, label %tail_continue
+tail_continue:
+  %tail_next = add nuw i64 %tail_position, 1
+  br label %tail
+found_candidate:
+  ret i64 %candidate_position
+found_tail:
+  ret i64 %tail_position
+not_found:
+  ret i64 %size
+}
+
+; Called only after position + 8 <= size. Aligned accesses must remain inside this row.
+define internal i64 @regex_ir_load_search_word(i8* %data, i64 %size, i64 %position) alwaysinline nounwind readonly {
+entry:
+  %ptr = getelementptr i8, i8* %data, i64 %position
+  %address = ptrtoint i8* %ptr to i64
+  %base = ptrtoint i8* %data to i64
+  %row_end = add i64 %base, %size
+  %aligned_address = and i64 %address, -4
+  %byte_offset = and i64 %address, 3
+  %already_aligned = icmp eq i64 %byte_offset, 0
+  %required = select i1 %already_aligned, i64 8, i64 12
+  %aligned_end = add i64 %aligned_address, %required
+  %after_begin = icmp uge i64 %aligned_address, %base
+  %before_end = icmp ule i64 %aligned_end, %row_end
+  %safe = and i1 %after_begin, %before_end
+  br i1 %safe, label %words, label %fallback
+words:
+  %aligned_position = sub i64 %position, %byte_offset
+  %word0_byte_ptr = getelementptr i8, i8* %data, i64 %aligned_position
+  %word0_ptr = bitcast i8* %word0_byte_ptr to i32*
+  %word1_ptr = getelementptr i32, i32* %word0_ptr, i64 1
+  %word0 = load i32, i32* %word0_ptr, align 4
+  %word1 = load i32, i32* %word1_ptr, align 4
+  %low = zext i32 %word0 to i64
+  %middle = zext i32 %word1 to i64
+  %middle_shifted = shl i64 %middle, 32
+  %first_eight = or i64 %low, %middle_shifted
+  br i1 %already_aligned, label %aligned, label %assemble
+aligned:
+  ret i64 %first_eight
+assemble:
+  %word2_ptr = getelementptr i32, i32* %word0_ptr, i64 2
+  %word2 = load i32, i32* %word2_ptr, align 4
+  %high = zext i32 %word2 to i64
+  %shift = shl i64 %byte_offset, 3
+  %high_shift = sub i64 64, %shift
+  %first_shifted = lshr i64 %first_eight, %shift
+  %last_shifted = shl i64 %high, %high_shift
+  %result = or i64 %first_shifted, %last_shifted
+  ret i64 %result
+fallback:
+  %fallback_ptr = bitcast i8* %ptr to i64*
+  %fallback_word = load i64, i64* %fallback_ptr, align 1
+  ret i64 %fallback_word
+}
+
+; END seek_byte_words
+
+; BEGIN unicode_class
+define internal i32 @regex_ir_unicode_class(i32 %cp, i32 addrspace(1)* %range_ends, i16 addrspace(1)* %classes, i32 %count) alwaysinline nounwind readonly {
+entry:
+  br label %search
+search:
+  %low = phi i32 [ 0, %entry ], [ %next_low, %step ]
+  %high = phi i32 [ %count, %entry ], [ %next_high, %step ]
+  %more = icmp ult i32 %low, %high
+  br i1 %more, label %probe, label %found
+probe:
+  %span = sub i32 %high, %low
+  %half = lshr i32 %span, 1
+  %mid = add i32 %low, %half
+  %mid64 = zext i32 %mid to i64
+  %end_ptr = getelementptr i32, i32 addrspace(1)* %range_ends, i64 %mid64
+  %range_end = load i32, i32 addrspace(1)* %end_ptr, align 4
+  %before_end = icmp ule i32 %cp, %range_end
+  %after_mid = add i32 %mid, 1
+  %next_low = select i1 %before_end, i32 %low, i32 %after_mid
+  %next_high = select i1 %before_end, i32 %mid, i32 %high
+  br label %step
+step:
+  br label %search
+found:
+  %index64 = zext i32 %low to i64
+  %class_ptr = getelementptr i16, i16 addrspace(1)* %classes, i64 %index64
+  %class16 = load i16, i16 addrspace(1)* %class_ptr, align 2
+  %class = zext i16 %class16 to i32
+  ret i32 %class
+}
+; END unicode_class
+
+; BEGIN extended_newline
+define internal i8 @regex_ir_extended_newline_flags(i32 %previous_cp, i32 %current_cp) alwaysinline nounwind readnone {
+entry:
+  %current_lf = icmp eq i32 %current_cp, 10
+  %current_cr = icmp eq i32 %current_cp, 13
+  %current_nel = icmp eq i32 %current_cp, 133
+  %current_ls = icmp eq i32 %current_cp, 8232
+  %current_ps = icmp eq i32 %current_cp, 8233
+  %current_crlf = or i1 %current_lf, %current_cr
+  %current_extended_0 = or i1 %current_crlf, %current_nel
+  %current_extended_1 = or i1 %current_ls, %current_ps
+  %current_newline = or i1 %current_extended_0, %current_extended_1
+  %previous_lf = icmp eq i32 %previous_cp, 10
+  %previous_cr = icmp eq i32 %previous_cp, 13
+  %previous_nel = icmp eq i32 %previous_cp, 133
+  %previous_ls = icmp eq i32 %previous_cp, 8232
+  %previous_ps = icmp eq i32 %previous_cp, 8233
+  %previous_crlf = or i1 %previous_lf, %previous_cr
+  %previous_extended_0 = or i1 %previous_crlf, %previous_nel
+  %previous_extended_1 = or i1 %previous_ls, %previous_ps
+  %previous_newline = or i1 %previous_extended_0, %previous_extended_1
+  %mid_crlf = and i1 %previous_cr, %current_lf
+  %not_mid_crlf = xor i1 %mid_crlf, true
+  %current_bit = zext i1 %current_newline to i8
+  %previous_raw = zext i1 %previous_newline to i8
+  %previous_bit = shl i8 %previous_raw, 1
+  %not_mid_raw = zext i1 %not_mid_crlf to i8
+  %not_mid_bit = shl i8 %not_mid_raw, 2
+  %newline_bits = or i8 %current_bit, %previous_bit
+  %result = or i8 %newline_bits, %not_mid_bit
+  ret i8 %result
+}
+; END extended_newline
+
+; BEGIN advance
+define internal i64 @{0}(i8* %data, i64 %size, i64 %pos, i64 %count) alwaysinline nounwind readonly {{
+entry:
+  br label %loop
+loop:
+  %cursor = phi i64 [ %pos, %entry ], [ %next_cursor, %step ]
+  %index = phi i64 [ 0, %entry ], [ %next_index, %step ]
+  %done = icmp uge i64 %index, %count
+  br i1 %done, label %exit, label %check
+check:
+  %width = call i64 @{1}(i8* %data, i64 %size, i64 %cursor)
+  %missing = icmp eq i64 %width, 0
+  br i1 %missing, label %exit, label %step
+step:
+  %next_cursor = add i64 %cursor, %width
+  %next_index = add i64 %index, 1
+  br label %loop
+exit:
+  ret i64 %cursor
+}}
+; END advance
+
+; BEGIN append_range
+define internal i64 @regex_ir_append_range(i8* %source, i64 %begin, i64 %end, i8* %output, i64 %cursor) alwaysinline nounwind {
+entry:
+  %length = sub i64 %end, %begin
+  %next_cursor = add i64 %cursor, %length
+  %output_missing = icmp eq i8* %output, null
+  %empty = icmp eq i64 %length, 0
+  %skip = or i1 %output_missing, %empty
+  br i1 %skip, label %done, label %copy
+copy:
+  %source_ptr = getelementptr i8, i8* %source, i64 %begin
+  %output_ptr = getelementptr i8, i8* %output, i64 %cursor
+  %bulk_length = and i64 %length, -8
+  br label %copy_wide_check
+copy_wide_check:
+  %wide_offset = phi i64 [ 0, %copy ], [ %wide_next, %copy_wide ]
+  %wide_done = icmp uge i64 %wide_offset, %bulk_length
+  br i1 %wide_done, label %copy_tail_check, label %copy_wide
+copy_wide:
+  %wide_source_byte = getelementptr i8, i8* %source_ptr, i64 %wide_offset
+  %wide_source = bitcast i8* %wide_source_byte to i64*
+  %wide_value = load i64, i64* %wide_source, align 1
+  %wide_output_byte = getelementptr i8, i8* %output_ptr, i64 %wide_offset
+  %wide_output = bitcast i8* %wide_output_byte to i64*
+  store i64 %wide_value, i64* %wide_output, align 1
+  %wide_next = add nuw i64 %wide_offset, 8
+  br label %copy_wide_check
+copy_tail_check:
+  %tail_offset = phi i64 [ %bulk_length, %copy_wide_check ], [ %tail_next, %copy_tail ]
+  %tail_done = icmp uge i64 %tail_offset, %length
+  br i1 %tail_done, label %done, label %copy_tail
+copy_tail:
+  %tail_source = getelementptr i8, i8* %source_ptr, i64 %tail_offset
+  %tail_value = load i8, i8* %tail_source, align 1
+  %tail_output = getelementptr i8, i8* %output_ptr, i64 %tail_offset
+  store i8 %tail_value, i8* %tail_output, align 1
+  %tail_next = add nuw i64 %tail_offset, 1
+  br label %copy_tail_check
+done:
+  ret i64 %next_cursor
+}
+; END append_range
+
+; BEGIN ascii_word_run
+define internal zeroext i1 @{0}(i8* %data, i64 %size, i64 %start, i64* %begin_out, i64* %end_out, i64 %minimum) alwaysinline nounwind readonly {{
+entry:
+  br label %search
+search:
+  %position = phi i64 [ %start, %entry ], [ %next_position, %advance ], [ %resume, %short ]
+  %in_range = icmp ult i64 %position, %size
+  br i1 %in_range, label %load, label %no
+load:
+  %byte_ptr = getelementptr i8, i8* %data, i64 %position
+  %byte = call i32 @{1}(i8* %byte_ptr)
+  %word = call i1 @regex_ir_is_ascii_word(i32 %byte)
+  br i1 %word, label %run, label %advance
+advance:
+  %next_position = add nuw i64 %position, 1
+  br label %search
+run:
+  br label %scan
+scan:
+  %run_position = phi i64 [ %position, %run ], [ %run_next, %run_continue ]
+  %run_at_end = icmp eq i64 %run_position, %size
+  br i1 %run_at_end, label %run_done_end, label %run_load
+run_load:
+  %run_byte_ptr = getelementptr i8, i8* %data, i64 %run_position
+  %run_byte = call i32 @{1}(i8* %run_byte_ptr)
+  %run_word = call i1 @regex_ir_is_ascii_word(i32 %run_byte)
+  br i1 %run_word, label %run_continue, label %run_done_nonword
+run_continue:
+  %run_next = add nuw i64 %run_position, 1
+  br label %scan
+run_done_end:
+  br label %evaluate
+run_done_nonword:
+  br label %evaluate
+evaluate:
+  %run_end = phi i64 [ %size, %run_done_end ], [ %run_position, %run_done_nonword ]
+  %run_length = sub i64 %run_end, %position
+  %qualifies = icmp uge i64 %run_length, %minimum
+  br i1 %qualifies, label %yes, label %short
+short:
+  %short_at_end = icmp eq i64 %run_end, %size
+  %after_delimiter = add i64 %run_end, 1
+  %resume = select i1 %short_at_end, i64 %size, i64 %after_delimiter
+  br label %search
+yes:
+  store i64 %position, i64* %begin_out, align 8
+  store i64 %run_end, i64* %end_out, align 8
+  ret i1 true
+no:
+  ret i1 false
+}}
+; END ascii_word_run
+
+; BEGIN assertion_execute
+define internal i1 @{3}(i8* %data, i64 %size, i64 %pos, i32 %kind, i1 %multiline, i1 %extended_newline) inlinehint nounwind readonly {{
+entry:
+  switch i32 %kind, label %not_boundary [
+    i32 0, label %begin_input
+    i32 1, label %end_input
+    i32 2, label %boundary
+    i32 4, label %begin_line
+    i32 5, label %end_line
+  ]
+begin_input:
+  %is_begin_input = icmp eq i64 %pos, 0
+  ret i1 %is_begin_input
+end_input:
+  %is_end_input = icmp eq i64 %pos, %size
+  ret i1 %is_end_input
+begin_line:
+  %is_begin_line_input = icmp eq i64 %pos, 0
+  br i1 %is_begin_line_input, label %true, label %begin_line_nonzero
+begin_line_nonzero:
+  br i1 %multiline, label %begin_line_previous, label %false
+begin_line_previous:
+  %begin_prev_pos = call i64 @{2}(i8* %data, i64 %size, i64 %pos)
+  %begin_prev = call i32 @{0}(i8* %data, i64 %size, i64 %begin_prev_pos)
+  %begin_prev_lf = icmp eq i32 %begin_prev, 10
+  %begin_prev_cr = icmp eq i32 %begin_prev, 13
+  %begin_prev_nel = icmp eq i32 %begin_prev, 133
+  %begin_prev_ls = icmp eq i32 %begin_prev, 8232
+  %begin_prev_ps = icmp eq i32 %begin_prev, 8233
+  %begin_prev_crlf = or i1 %begin_prev_lf, %begin_prev_cr
+  %begin_prev_extended_0 = or i1 %begin_prev_crlf, %begin_prev_nel
+  %begin_prev_extended_1 = or i1 %begin_prev_ls, %begin_prev_ps
+  %begin_prev_extended = or i1 %begin_prev_extended_0, %begin_prev_extended_1
+  %begin_prev_newline = select i1 %extended_newline, i1 %begin_prev_extended, i1 %begin_prev_lf
+  %begin_current = call i32 @{0}(i8* %data, i64 %size, i64 %pos)
+  %begin_current_lf = icmp eq i32 %begin_current, 10
+  %begin_mid_crlf_0 = and i1 %begin_prev_cr, %begin_current_lf
+  %begin_mid_crlf = and i1 %extended_newline, %begin_mid_crlf_0
+  %begin_not_mid_crlf = xor i1 %begin_mid_crlf, true
+  %begin_line_result = and i1 %begin_prev_newline, %begin_not_mid_crlf
+  ret i1 %begin_line_result
+end_line:
+  %is_end_line_input = icmp eq i64 %pos, %size
+  br i1 %is_end_line_input, label %true, label %end_line_current
+end_line_current:
+  %end_cp = call i32 @{0}(i8* %data, i64 %size, i64 %pos)
+  %end_lf = icmp eq i32 %end_cp, 10
+  %end_cr = icmp eq i32 %end_cp, 13
+  %end_nel = icmp eq i32 %end_cp, 133
+  %end_ls = icmp eq i32 %end_cp, 8232
+  %end_ps = icmp eq i32 %end_cp, 8233
+  %end_crlf = or i1 %end_lf, %end_cr
+  %end_extended_0 = or i1 %end_crlf, %end_nel
+  %end_extended_1 = or i1 %end_ls, %end_ps
+  %end_extended = or i1 %end_extended_0, %end_extended_1
+  %end_newline = select i1 %extended_newline, i1 %end_extended, i1 %end_lf
+  br i1 %end_newline, label %end_line_newline, label %false
+end_line_newline:
+  %end_prev_pos = call i64 @{2}(i8* %data, i64 %size, i64 %pos)
+  %end_prev = call i32 @{0}(i8* %data, i64 %size, i64 %end_prev_pos)
+  %end_prev_cr = icmp eq i32 %end_prev, 13
+  %end_mid_crlf_0 = and i1 %end_prev_cr, %end_lf
+  %end_mid_crlf = and i1 %extended_newline, %end_mid_crlf_0
+  br i1 %end_mid_crlf, label %false, label %end_line_not_mid
+end_line_not_mid:
+  br i1 %multiline, label %true, label %end_line_final
+end_line_final:
+  %end_next = call i64 @{4}(i8* %data, i64 %size, i64 %pos, i64 1)
+  %end_is_final = icmp eq i64 %end_next, %size
+  br i1 %end_is_final, label %true, label %end_line_possible_crlf
+end_line_possible_crlf:
+  %end_can_be_crlf = and i1 %extended_newline, %end_cr
+  br i1 %end_can_be_crlf, label %end_line_after_cr, label %false
+end_line_after_cr:
+  %end_next_cp = call i32 @{0}(i8* %data, i64 %size, i64 %end_next)
+  %end_next_lf = icmp eq i32 %end_next_cp, 10
+  %end_after_lf = call i64 @{4}(i8* %data, i64 %size, i64 %end_next, i64 1)
+  %end_lf_is_final = icmp eq i64 %end_after_lf, %size
+  %end_final_crlf = and i1 %end_next_lf, %end_lf_is_final
+  ret i1 %end_final_crlf
+boundary:
+  %current_in_bounds = icmp ult i64 %pos, %size
+  br i1 %current_in_bounds, label %current_decode, label %current_missing
+current_decode:
+  %current_cp = call i32 @{0}(i8* %data, i64 %size, i64 %pos)
+  %current_word_value = call i1 @{1}(i32 %current_cp)
+  br label %current_join
+current_missing:
+  br label %current_join
+current_join:
+  %current_word = phi i1 [ %current_word_value, %current_decode ], [ false, %current_missing ]
+  %has_previous = icmp ugt i64 %pos, 0
+  br i1 %has_previous, label %previous_decode, label %previous_missing
+previous_decode:
+  %previous_pos = call i64 @{2}(i8* %data, i64 %size, i64 %pos)
+  %previous_cp = call i32 @{0}(i8* %data, i64 %size, i64 %previous_pos)
+  %previous_word_value = call i1 @{1}(i32 %previous_cp)
+  br label %previous_join
+previous_missing:
+  br label %previous_join
+previous_join:
+  %previous_word = phi i1 [ %previous_word_value, %previous_decode ], [ false, %previous_missing ]
+  %is_boundary = xor i1 %previous_word, %current_word
+  ret i1 %is_boundary
+not_boundary:
+  %boundary_value = call i1 @{3}(i8* %data, i64 %size, i64 %pos, i32 2, i1 %multiline, i1 %extended_newline)
+  %not_boundary_value = xor i1 %boundary_value, true
+  ret i1 %not_boundary_value
+true:
+  ret i1 true
+false:
+  ret i1 false
+}}
+; END assertion_execute
+
+
+; BEGIN is_word
+define internal i1 @regex_ir_is_word_unicode(i32 %cp, i32 %max_codepoint, i32 %range_count, i32 addrspace(4)* %range_ends, i32 addrspace(4)* %range_firsts) alwaysinline nounwind readonly {
+entry:
+  %is_ascii = icmp ult i32 %cp, 128
+  br i1 %is_ascii, label %ascii, label %unicode_bounds
+ascii:
+  %digit_low = icmp uge i32 %cp, 48
+  %digit_high = icmp ule i32 %cp, 57
+  %digit = and i1 %digit_low, %digit_high
+  %upper_low = icmp uge i32 %cp, 65
+  %upper_high = icmp ule i32 %cp, 90
+  %upper = and i1 %upper_low, %upper_high
+  %lower_low = icmp uge i32 %cp, 97
+  %lower_high = icmp ule i32 %cp, 122
+  %lower = and i1 %lower_low, %lower_high
+  %underscore = icmp eq i32 %cp, 95
+  %alpha = or i1 %upper, %lower
+  %alnum = or i1 %alpha, %digit
+  %ascii_result = or i1 %alnum, %underscore
+  ret i1 %ascii_result
+unicode_bounds:
+  %in_table = icmp ule i32 %cp, %max_codepoint
+  br i1 %in_table, label %unicode_search, label %no
+unicode_search:
+  %low = phi i32 [ 0, %unicode_bounds ], [ %next_low, %search_step ]
+  %high = phi i32 [ %range_count, %unicode_bounds ], [ %next_high, %search_step ]
+  %more = icmp ult i32 %low, %high
+  br i1 %more, label %probe, label %found
+probe:
+  %span = sub i32 %high, %low
+  %half = lshr i32 %span, 1
+  %mid = add i32 %low, %half
+  %mid_i64 = zext i32 %mid to i64
+  %end_ptr = getelementptr i32, i32 addrspace(4)* %range_ends, i64 %mid_i64
+  %range_end = load i32, i32 addrspace(4)* %end_ptr, align 4
+  %before_end = icmp ule i32 %cp, %range_end
+  %after_mid = add i32 %mid, 1
+  %next_low = select i1 %before_end, i32 %low, i32 %after_mid
+  %next_high = select i1 %before_end, i32 %mid, i32 %high
+  br label %search_step
+search_step:
+  br label %unicode_search
+found:
+  %index_i64 = zext i32 %low to i64
+  %first_ptr = getelementptr i32, i32 addrspace(4)* %range_firsts, i64 %index_i64
+  %range_first = load i32, i32 addrspace(4)* %first_ptr, align 4
+  %word = icmp uge i32 %cp, %range_first
+  ret i1 %word
+no:
+  ret i1 false
+}
+; END is_word
+
+; BEGIN is_word_adapter
+define internal i1 @{0}(i32 %cp) alwaysinline nounwind readonly {{
+entry:
+  %range_ends = getelementptr [{2} x i32], [{2} x i32] addrspace(4)* @{3}, i64 0, i64 0
+  %range_firsts = getelementptr [{2} x i32], [{2} x i32] addrspace(4)* @{4}, i64 0, i64 0
+  %word = call i1 @regex_ir_is_word_unicode(i32 %cp, i32 {1}, i32 {2}, i32 addrspace(4)* %range_ends, i32 addrspace(4)* %range_firsts)
+  ret i1 %word
+}}
+; END is_word_adapter
+
+; BEGIN is_ascii_word
+define internal i1 @regex_ir_is_ascii_word(i32 %cp) alwaysinline nounwind readnone {
+entry:
+  %ge_lower = icmp uge i32 %cp, 97
+  %le_lower = icmp ule i32 %cp, 122
+  %lower = and i1 %ge_lower, %le_lower
+  %ge_upper = icmp uge i32 %cp, 65
+  %le_upper = icmp ule i32 %cp, 90
+  %upper = and i1 %ge_upper, %le_upper
+  %ge_digit = icmp uge i32 %cp, 48
+  %le_digit = icmp ule i32 %cp, 57
+  %digit = and i1 %ge_digit, %le_digit
+  %alpha = or i1 %lower, %upper
+  %alnum = or i1 %alpha, %digit
+  %underscore = icmp eq i32 %cp, 95
+  %result = or i1 %alnum, %underscore
+  ret i1 %result
+}
+; END is_ascii_word
+
+; BEGIN simple_assertion
+define internal i64 @{0}(i8* %data, i64 %size, i64 %target) alwaysinline nounwind readonly {{
+entry:
+  %at_begin = icmp eq i64 %target, 0
+  br i1 %at_begin, label %zero, label %start
+zero:
+  ret i64 0
+start:
+  %initial = sub i64 %target, 1
+  br label %loop
+loop:
+  %cursor = phi i64 [ %initial, %start ], [ %previous, %continue ]
+  %pointer = getelementptr i8, i8* %data, i64 %cursor
+  %byte = call i32 @{1}(i8* %pointer)
+  %prefix = and i32 %byte, 192
+  %continuation = icmp eq i32 %prefix, 128
+  %at_zero = icmp eq i64 %cursor, 0
+  %leading = xor i1 %continuation, true
+  %done = or i1 %leading, %at_zero
+  br i1 %done, label %found, label %continue
+continue:
+  %previous = sub i64 %cursor, 1
+  br label %loop
+found:
+  ret i64 %cursor
+}}
+; END simple_assertion
+
+; BEGIN unicode_word_run
+define internal zeroext i1 @{0}(i8* %data, i64 %size, i64 %start, i64* %begin_out, i64* %end_out, i64 %minimum) alwaysinline nounwind readonly {{
+entry:
+  br label %search
+search:
+  %position = phi i64 [ %start, %entry ], [ %next_position, %advance ], [ %resume, %short ]
+  %in_range = icmp ult i64 %position, %size
+  br i1 %in_range, label %load, label %no
+load:
+  %cp = call i32 @{1}(i8* %data, i64 %size, i64 %position)
+  %width = call i64 @{2}(i8* %data, i64 %size, i64 %position)
+  %word = call i1 @{3}(i32 %cp)
+  br i1 %word, label %run, label %advance
+advance:
+  %next_position = add nuw i64 %position, %width
+  br label %search
+run:
+  br label %scan
+scan:
+  %run_position = phi i64 [ %position, %run ], [ %run_next, %run_continue ]
+  %run_count = phi i64 [ 0, %run ], [ %run_next_count, %run_continue ]
+  %run_at_end = icmp eq i64 %run_position, %size
+  br i1 %run_at_end, label %run_done_end, label %run_load
+run_load:
+  %run_cp = call i32 @{1}(i8* %data, i64 %size, i64 %run_position)
+  %run_width = call i64 @{2}(i8* %data, i64 %size, i64 %run_position)
+  %run_word = call i1 @{3}(i32 %run_cp)
+  br i1 %run_word, label %run_continue, label %run_done_nonword
+run_continue:
+  %run_next = add nuw i64 %run_position, %run_width
+  %run_next_count = add nuw i64 %run_count, 1
+  br label %scan
+run_done_end:
+  br label %evaluate
+run_done_nonword:
+  br label %evaluate
+evaluate:
+  %run_end = phi i64 [ %size, %run_done_end ], [ %run_position, %run_done_nonword ]
+  %word_count = phi i64 [ %run_count, %run_done_end ], [ %run_count, %run_done_nonword ]
+  %delimiter_width = phi i64 [ 0, %run_done_end ], [ %run_width, %run_done_nonword ]
+  %qualifies = icmp uge i64 %word_count, %minimum
+  br i1 %qualifies, label %yes, label %short
+short:
+  %resume = add nuw i64 %run_end, %delimiter_width
+  br label %search
+yes:
+  store i64 %position, i64* %begin_out, align 8
+  store i64 %run_end, i64* %end_out, align 8
+  ret i1 true
+no:
+  ret i1 false
+}}
+; END unicode_word_run
+
+; BEGIN write_span
+define internal void @regex_ir_write_span(i64* %spans, i64 %index, i64 %begin, i64 %end, i64 %capacity, i8* %overflow) alwaysinline nounwind {
+entry:
+  %unbounded = icmp slt i64 %capacity, 0
+  %fits = icmp ult i64 %index, %capacity
+  %allowed = or i1 %unbounded, %fits
+  br i1 %allowed, label %check_missing, label %mark_overflow
+mark_overflow:
+  store i8 1, i8* %overflow, align 1
+  br label %done
+check_missing:
+  %missing = icmp eq i64* %spans, null
+  br i1 %missing, label %done, label %write
+write:
+  %base = shl i64 %index, 1
+  %end_index = add i64 %base, 1
+  %begin_ptr = getelementptr i64, i64* %spans, i64 %base
+  %end_ptr = getelementptr i64, i64* %spans, i64 %end_index
+  store i64 %begin, i64* %begin_ptr, align 8
+  store i64 %end, i64* %end_ptr, align 8
+  br label %done
+done:
+  ret void
+}
+; END write_span
+
+; BEGIN llvm_expect_declaration
+declare i1 @llvm.expect.i1(i1, i1)
+; END llvm_expect_declaration
+
+; BEGIN not_lf
+  %not_lf = icmp ne i32 %cp, 10
+  %not_cr = icmp ne i32 %cp, 13
+  %not_nel = icmp ne i32 %cp, 133
+  %not_ls = icmp ne i32 %cp, 8232
+  %not_ps = icmp ne i32 %cp, 8233
+  %not_crlf = and i1 %not_lf, %not_cr
+  %not_extended_0 = and i1 %not_nel, %not_ls
+  %not_extended_1 = and i1 %not_extended_0, %not_ps
+  %result = and i1 %not_crlf, %not_extended_1
+  ret i1 %result
+; END not_lf
+
+; BEGIN not_lf_2
+  %not_lf = icmp ne i32 %cp, 10
+  ret i1 %not_lf
+; END not_lf_2
+
+; BEGIN n
+  %{0} = icmp uge i32 %cp, {3}
+  %{1} = icmp ule i32 %cp, {4}
+  %{2} = and i1 %{0}, %{1}
+; END n
+
+; BEGIN negated
+  %negated = xor i1 %{}, true
+  ret i1 %negated
+; END negated

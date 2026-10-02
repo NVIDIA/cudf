@@ -1,0 +1,367 @@
+; SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+; SPDX-License-Identifier: Apache-2.0
+
+; BEGIN exact_ascii_execute
+define zeroext i1 @{0}(i8* %data, i64 %size) nounwind readonly {{
+entry:
+{1}  %literal_match = call i1 @{2}(i8* %data, i64 %size, i64 0)
+  %matched = and i1 %required_size, %literal_match
+  ret i1 %matched
+}}
+; END exact_ascii_execute
+
+; BEGIN ascii_literal_at
+define zeroext i1 @{0}(i8* %data, i64 %size) nounwind readonly {{
+entry:
+  br label %search
+search:
+  %position = phi i64 [ 0, %entry ], [ %next_chunk, %chunk_continue ]
+  %candidate_end = add i64 %position, {1}
+  %in_range = icmp ule i64 %candidate_end, %size
+  br i1 %in_range, label %load_chunk, label %no
+load_chunk:
+  %chunk_byte_ptr = getelementptr i8, i8* %data, i64 %position
+  %chunk_ptr = bitcast i8* %chunk_byte_ptr to i64*
+  %chunk = load i64, i64* %chunk_ptr, align 1
+  %candidate_x = xor i64 %chunk, {2}
+  %candidate_minus_ones = sub i64 %candidate_x, 72340172838076673
+  %candidate_not = xor i64 %candidate_x, -1
+  %candidate_zero_bytes = and i64 %candidate_minus_ones, %candidate_not
+  %candidate_mask = and i64 %candidate_zero_bytes, -9187201950435737472
+  %has_candidate = icmp ne i64 %candidate_mask, 0
+  br i1 %has_candidate, label %candidate, label %chunk_continue
+candidate:
+  %remaining_candidates = phi i64 [ %candidate_mask, %load_chunk ], [ %next_candidates, %verify_continue ]
+  %candidate_bit = call i64 @llvm.cttz.i64(i64 %remaining_candidates, i1 false)
+  %candidate_byte = lshr i64 %candidate_bit, 3
+  %candidate_position = add i64 %position, %candidate_byte
+  %matched = call i1 @{3}(i8* %data, i64 %size, i64 %candidate_position)
+  br i1 %matched, label %yes, label %verify_continue
+verify_continue:
+  %candidate_mask_minus_one = sub i64 %remaining_candidates, 1
+  %next_candidates = and i64 %remaining_candidates, %candidate_mask_minus_one
+  %has_more_candidates = icmp ne i64 %next_candidates, 0
+  br i1 %has_more_candidates, label %candidate, label %chunk_continue
+chunk_continue:
+  %next_chunk = add nuw i64 %position, 8
+  br label %search
+yes:
+  ret i1 true
+no:
+  ret i1 false
+}}
+; END ascii_literal_at
+
+; BEGIN ascii_literal_find
+define internal i1 @{0}(i8* %data, i64 %size, i64 %search_start, i64* %match_begin, i64* %match_end, i64* %captures) alwaysinline nounwind {{
+entry:
+  %remaining = sub i64 %size, %search_start
+  %use_vector_seek = icmp uge i64 %remaining, {6}
+  br i1 %use_vector_seek, label %search, label %scalar_search
+scalar_search:
+  %scalar_position = phi i64 [ %search_start, %entry ], [ %scalar_next_position, %scalar_continue ]
+  %scalar_candidate_end = add i64 %scalar_position, {1}
+  %scalar_in_range = icmp ule i64 %scalar_candidate_end, %size
+  br i1 %scalar_in_range, label %scalar_load, label %no
+scalar_load:
+  %scalar_pivot_position = add i64 %scalar_position, {3}
+  %scalar_input_ptr = getelementptr i8, i8* %data, i64 %scalar_pivot_position
+  %scalar_first = call i32 @{2}(i8* %scalar_input_ptr)
+  %scalar_candidate = icmp eq i32 %scalar_first, {4}
+  br i1 %scalar_candidate, label %scalar_guard, label %scalar_continue
+scalar_guard:
+  %scalar_guard_position = sub nuw i64 %scalar_pivot_position, 1
+  %scalar_guard_ptr = getelementptr i8, i8* %data, i64 %scalar_guard_position
+  %scalar_guard_byte = call i32 @{2}(i8* %scalar_guard_ptr)
+  %scalar_guard_matches = icmp eq i32 %scalar_guard_byte, {7}
+  br i1 %scalar_guard_matches, label %scalar_verify, label %scalar_continue
+scalar_verify:
+  %scalar_matched = call i1 @{5}(i8* %data, i64 %size, i64 %scalar_position)
+  br i1 %scalar_matched, label %scalar_yes, label %scalar_continue
+scalar_continue:
+  %scalar_next_position = add nuw i64 %scalar_position, 1
+  br label %scalar_search
+scalar_yes:
+  store i64 %scalar_position, i64* %match_begin, align 8
+  store i64 %scalar_candidate_end, i64* %match_end, align 8
+  ret i1 true
+search:
+  %initial_pivot = add i64 %search_start, {3}
+  br label %vector_search
+vector_search:
+  %pivot_start = phi i64 [ %initial_pivot, %search ], [ %next_pivot, %continue ]
+  %pivot_position = call i64 @regex_ir_seek_byte(i8* %data, i64 %size, i64 %pivot_start, i32 {4})
+  %pivot_found = icmp ult i64 %pivot_position, %size
+  br i1 %pivot_found, label %vector_candidate, label %no
+vector_candidate:
+  %candidate_position = sub nuw i64 %pivot_position, {3}
+  %candidate_end = add i64 %candidate_position, {1}
+  %in_range = icmp ule i64 %candidate_end, %size
+  br i1 %in_range, label %guard, label %no
+guard:
+  %guard_position = sub nuw i64 %pivot_position, 1
+  %guard_ptr = getelementptr i8, i8* %data, i64 %guard_position
+  %guard_byte = call i32 @{2}(i8* %guard_ptr)
+  %guard_matches = icmp eq i32 %guard_byte, {7}
+  br i1 %guard_matches, label %verify, label %continue
+verify:
+  %matched = call i1 @{5}(i8* %data, i64 %size, i64 %candidate_position)
+  br i1 %matched, label %yes, label %continue
+continue:
+  %next_pivot = add nuw i64 %pivot_position, 1
+  br label %vector_search
+yes:
+  store i64 %candidate_position, i64* %match_begin, align 8
+  store i64 %candidate_end, i64* %match_end, align 8
+  ret i1 true
+no:
+  ret i1 false
+}}
+; END ascii_literal_find
+
+; BEGIN ascii_pivot_seek
+define zeroext i1 @{0}(i8* %data, i64 %size) nounwind readonly {{
+entry:
+  br label %search
+search:
+  %position = phi i64 [ 0, %entry ], [ %next_position, %continue ]
+  %candidate_end = add i64 %position, {1}
+  %in_range = icmp ule i64 %candidate_end, %size
+  br i1 %in_range, label %load, label %no
+load:
+  %input_ptr = getelementptr i8, i8* %data, i64 %position
+  %first = call i32 @{2}(i8* %input_ptr)
+  %candidate = icmp eq i32 %first, {3}
+{4}continue:
+  %next_position = add nuw i64 %position, 1
+  br label %search
+yes:
+  ret i1 true
+no:
+  ret i1 false
+}}
+; END ascii_pivot_seek
+
+; BEGIN line_tail_execute
+define internal zeroext i1 @{0}(i8* %data, i64 %size, i64 %search_start, i64* %match_begin, i64* %match_end, i64* %captures) alwaysinline nounwind readonly {{
+entry:
+  %empty = icmp eq i64 %size, 0
+  br i1 %empty, label %no, label %load_last
+load_last:
+  %last_position = sub i64 %size, 1
+  %last_ptr = getelementptr i8, i8* %data, i64 %last_position
+  %last = call i32 @{1}(i8* %last_ptr)
+  %trailing_lf = icmp eq i32 %last, 10
+  %line_end = select i1 %trailing_lf, i64 %last_position, i64 %size
+  br label %reverse
+reverse:
+  %reverse_position = phi i64 [ %line_end, %load_last ], [ %previous_position, %reverse_continue ]
+  %at_begin = icmp eq i64 %reverse_position, 0
+  br i1 %at_begin, label %line_start_zero, label %reverse_load
+reverse_load:
+  %previous_position = sub i64 %reverse_position, 1
+  %previous_ptr = getelementptr i8, i8* %data, i64 %previous_position
+  %previous = call i32 @{1}(i8* %previous_ptr)
+  %previous_lf = icmp eq i32 %previous, 10
+  br i1 %previous_lf, label %line_start_after_lf, label %reverse_continue
+reverse_continue:
+  br label %reverse
+line_start_zero:
+  br label %search_setup
+line_start_after_lf:
+  %after_lf = add nuw i64 %previous_position, 1
+  br label %search_setup
+search_setup:
+  %line_start = phi i64 [ 0, %line_start_zero ], [ %after_lf, %line_start_after_lf ]
+  %start_before_line = icmp ult i64 %search_start, %line_start
+  %effective_start = select i1 %start_before_line, i64 %line_start, i64 %search_start
+  br label %search
+search:
+  %candidate_start = phi i64 [ %effective_start, %search_setup ], [ %next_start, %mismatch ]
+  %candidate = call i64 @regex_ir_seek_byte(i8* %data, i64 %line_end, i64 %candidate_start, i32 {2})
+  %candidate_end = add i64 %candidate, {3}
+  %in_range = icmp ule i64 %candidate_end, %line_end
+  br i1 %in_range, label %verify, label %no
+verify:
+  %matched = call i1 @{4}(i8* %data, i64 %line_end, i64 %candidate)
+  br i1 %matched, label %yes, label %mismatch
+mismatch:
+  %next_start = add nuw i64 %candidate, 1
+  br label %search
+yes:
+  store i64 %candidate, i64* %match_begin, align 8
+  store i64 %line_end, i64* %match_end, align 8
+  ret i1 true
+no:
+  ret i1 false
+}}
+; END line_tail_execute
+
+; BEGIN mandatory_literal_filter
+define internal i1 @{0}(i8* %data, i64 %size, i64 %search_start) alwaysinline nounwind readonly {{
+entry:
+  br label %search
+search:
+  %position = phi i64 [ %search_start, %entry ], [ %next_position, %continue ]
+  %candidate_end = add i64 %position, {1}
+  %in_range = icmp ule i64 %candidate_end, %size
+  br i1 %in_range, label %load, label %no
+load:
+  %input_ptr = getelementptr i8, i8* %data, i64 %position
+  %first = call i32 @{2}(i8* %input_ptr)
+  %candidate = icmp eq i32 %first, {3}
+  br i1 %candidate, label %verify, label %continue
+verify:
+  %matched = call i1 @{4}(i8* %data, i64 %size, i64 %position)
+  br i1 %matched, label %yes, label %continue
+continue:
+  %next_position = add nuw i64 %position, 1
+  br label %search
+yes:
+  ret i1 true
+no:
+  ret i1 false
+}}
+; END mandatory_literal_filter
+
+; BEGIN single_byte_find
+define internal i1 @{0}(i8* %data, i64 %size, i64 %search_start, i64* %match_begin, i64* %match_end, i64* %captures) alwaysinline nounwind {{
+entry:
+  %remaining = sub i64 %size, %search_start
+  %use_vector_seek = icmp uge i64 %remaining, 64
+  br i1 %use_vector_seek, label %vector, label %scalar_search
+vector:
+  %position = call i64 @regex_ir_seek_byte(i8* %data, i64 %size, i64 %search_start, i32 {2})
+  %matched = icmp ult i64 %position, %size
+  br i1 %matched, label %yes, label %no
+scalar_search:
+  %scalar_position = phi i64 [ %search_start, %entry ], [ %scalar_next, %scalar_continue ]
+  %scalar_in_range = icmp ult i64 %scalar_position, %size
+  br i1 %scalar_in_range, label %scalar_load, label %no
+scalar_load:
+  %scalar_ptr = getelementptr i8, i8* %data, i64 %scalar_position
+  %scalar_value = call i32 @{1}(i8* %scalar_ptr)
+  %scalar_matched = icmp eq i32 %scalar_value, {2}
+  br i1 %scalar_matched, label %scalar_yes, label %scalar_continue
+scalar_continue:
+  %scalar_next = add nuw i64 %scalar_position, 1
+  br label %scalar_search
+scalar_yes:
+  %scalar_end = add nuw i64 %scalar_position, 1
+  store i64 %scalar_position, i64* %match_begin, align 8
+  store i64 %scalar_end, i64* %match_end, align 8
+  ret i1 true
+yes:
+  %end = add nuw i64 %position, 1
+  store i64 %position, i64* %match_begin, align 8
+  store i64 %end, i64* %match_end, align 8
+  ret i1 true
+no:
+  ret i1 false
+}}
+; END single_byte_find
+
+; BEGIN utf8_kmp_seek
+define internal i1 @{0}(i8* %data, i64 %size, i64 %search_start, i64* %match_begin, i64* %match_end, i64* %captures) alwaysinline nounwind {{
+entry:
+  br label %search
+search:
+  %position = phi i64 [ %search_start, %entry ], [ %position, %fallback ], [ %next_position, %matched_continue ], [ %mismatch_next, %mismatch_zero ]
+  %matched = phi i32 [ 0, %entry ], [ %fallback_matched, %fallback ], [ %next_matched, %matched_continue ], [ 0, %mismatch_zero ]
+  %in_range = icmp ult i64 %position, %size
+  br i1 %in_range, label %compare, label %no
+compare:
+  %input_ptr = getelementptr i8, i8* %data, i64 %position
+  %input = call i32 @{1}(i8* %input_ptr)
+  %literal_index = zext i32 %matched to i64
+  %literal_ptr = getelementptr [{2} x i8], [{2} x i8] addrspace(4)* @{3}, i64 0, i64 %literal_index
+  %expected_i8 = load i8, i8 addrspace(4)* %literal_ptr, align 1
+  %expected = zext i8 %expected_i8 to i32
+  %equal = icmp eq i32 %input, %expected
+  br i1 %equal, label %matched_byte, label %mismatch
+matched_byte:
+  %next_position = add nuw i64 %position, 1
+  %next_matched = add nuw i32 %matched, 1
+  %complete = icmp eq i32 %next_matched, {2}
+  br i1 %complete, label %yes, label %matched_continue
+matched_continue:
+  br label %search
+mismatch:
+  %has_prefix = icmp ne i32 %matched, 0
+  br i1 %has_prefix, label %fallback, label %mismatch_zero
+fallback:
+  %fallback_index = sub nuw i32 %matched, 1
+  %fallback_index_i64 = zext i32 %fallback_index to i64
+  %failure_ptr = getelementptr [{2} x i32], [{2} x i32] addrspace(4)* @{4}, i64 0, i64 %fallback_index_i64
+  %fallback_matched = load i32, i32 addrspace(4)* %failure_ptr, align 4
+  br label %search
+mismatch_zero:
+  %mismatch_next = add nuw i64 %position, 1
+  br label %search
+yes:
+  %begin = sub nuw i64 %next_position, {2}
+  store i64 %begin, i64* %match_begin, align 8
+  store i64 %next_position, i64* %match_end, align 8
+  ret i1 true
+no:
+  ret i1 false
+}}
+; END utf8_kmp_seek
+
+; BEGIN utf8_literal_find_adapter
+define internal i1 @{0}(i8* %data, i64 %size, i64 %search_start, i64* %match_begin, i64* %match_end, i64* %captures) alwaysinline nounwind readonly {{
+entry:
+  %long_row = icmp uge i64 %size, 256
+  br i1 %long_row, label %kmp, label %pivot
+pivot:
+  %pivot_result = call i1 @{1}(i8* %data, i64 %size, i64 %search_start, i64* %match_begin, i64* %match_end, i64* %captures)
+  ret i1 %pivot_result
+kmp:
+  %kmp_result = call i1 @{2}(i8* %data, i64 %size, i64 %search_start, i64* %match_begin, i64* %match_end, i64* %captures)
+  ret i1 %kmp_result
+}}
+; END utf8_literal_find_adapter
+
+; BEGIN utf8_pivot_seek
+define internal i1 @{0}(i8* %data, i64 %size, i64 %search_start, i64* %match_begin, i64* %match_end, i64* %captures) alwaysinline nounwind readonly {{
+entry:
+  %initial_pivot = add i64 %search_start, {1}
+  br label %search
+search:
+  %pivot_start = phi i64 [ %initial_pivot, %entry ], [ %next_pivot, %mismatch ]
+  %pivot_position = call i64 @regex_ir_seek_byte(i8* %data, i64 %size, i64 %pivot_start, i32 {2})
+  %pivot_found = icmp ult i64 %pivot_position, %size
+  br i1 %pivot_found, label %candidate, label %no
+candidate:
+  %begin = sub nuw i64 %pivot_position, {1}
+  %end = add i64 %begin, {3}
+  %in_range = icmp ule i64 %end, %size
+  br i1 %in_range, label %guard, label %no
+guard:
+  %guard_position = add i64 %begin, {5}
+  %guard_byte_ptr = getelementptr i8, i8* %data, i64 %guard_position
+  %guard_ptr = bitcast i8* %guard_byte_ptr to i64*
+  %guard_value = load i64, i64* %guard_ptr, align 1
+  %guard_matches = icmp eq i64 %guard_value, {6}
+  br i1 %guard_matches, label %verify, label %mismatch
+verify:
+  %matched = call i1 @{4}(i8* %data, i64 %size, i64 %begin)
+  br i1 %matched, label %yes, label %mismatch
+mismatch:
+  %next_pivot = add nuw i64 %pivot_position, 1
+  br label %search
+yes:
+  store i64 %begin, i64* %match_begin, align 8
+  store i64 %end, i64* %match_end, align 8
+  ret i1 true
+no:
+  ret i1 false
+}}
+; END utf8_pivot_seek
+
+; BEGIN branch_br_i1_candidate_label_verify_label_conti
+  br i1 %candidate, label %verify, label %continue
+verify:
+  %matched = call i1 @{0}(i8* %data, i64 %size, i64 %position)
+  br i1 %matched, label %yes, label %continue
+; END branch_br_i1_candidate_label_verify_label_conti

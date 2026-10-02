@@ -10,6 +10,7 @@
 
 #include <cudf_cuda_embed.hpp>
 #include <jit/cache.hpp>
+#include <jit/nvvm.hpp>
 #include <rtcx/rtcx.hpp>
 #include <runtime/context.hpp>
 
@@ -20,6 +21,9 @@
 #include <format>
 #include <fstream>
 #include <future>
+#include <string>
+#include <string_view>
+#include <vector>
 
 namespace CUDF_EXPORT cudf {
 
@@ -487,6 +491,32 @@ kernel_instance={}
   auto fut = cache.get_or_add_blob(key, rtcx::blob_compile_func::from_functor(compile));
 
   return fut.get();
+}
+
+rtcx::blob get_nvvm_fragment(std::string const& name, std::string_view nvvm_ir)
+{
+  CUDF_FUNC_RANGE();
+
+  auto& ctx   = cudf::get_context();
+  auto& cache = ctx.rtcx_cache();
+  auto& nvvm  = jit::nvvm_api::get();
+  auto spec   = std::format("NVVM LTO IR\nname={}\nversion={}\narch=compute_{}\n",
+                          name,
+                          nvvm.version_string(),
+                          LTO_ARCHITECTURE);
+
+  XXH3_state_t state;
+  XXH3_INITSTATE(&state);
+  XXH3_128bits_reset(&state);
+  hash(&state, spec);
+  hash(&state, std::span{nvvm_ir.data(), nvvm_ir.size()});
+
+  auto digest = XXH3_128bits_digest(&state);
+  auto key    = rtcx::hash128{digest.high64, digest.low64};
+
+  auto compile = [&] { return jit::compile_nvvm(name, nvvm_ir, LTO_ARCHITECTURE); };
+
+  return cache.get_or_add_blob(key, rtcx::blob_compile_func::from_functor(compile)).get();
 }
 
 std::tuple<rtcx::library, rtcx::blob> link_library_uncached(

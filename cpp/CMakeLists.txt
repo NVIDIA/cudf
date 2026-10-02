@@ -88,6 +88,17 @@ else()
   )
 endif()
 
+set(DEFAULT_CUDF_STATIC_LINK_NVVM OFF)
+if(CUDF_BUILD_STATIC_DEPS STREQUAL "FORCE")
+  set(DEFAULT_CUDF_STATIC_LINK_NVVM ON)
+endif()
+option(CUDF_STATIC_LINK_NVVM "Use static linking for libNVVM" ${DEFAULT_CUDF_STATIC_LINK_NVVM})
+set(CUDF_NVVM_STATIC_LIBRARY
+    ""
+    CACHE FILEPATH "Path to the static libNVVM archive"
+)
+mark_as_advanced(CUDF_NVVM_STATIC_LIBRARY)
+
 set(DEFAULT_CUDF_BUILD_STREAMS_TEST_UTIL ON)
 
 if(NOT BUILD_SHARED_LIBS)
@@ -493,6 +504,39 @@ foreach(INC_DIR IN LISTS LIBCUDACXX_RAW_INCLUDE_DIRS)
 endforeach()
 
 rtcx_embed(cudf_cuda_embed COMPRESSION zstd OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/embed")
+
+rtcx_add_embed(regex_ir_nvvm_templates)
+
+# Add an NVVM IR template to the embedded regex template bundle.
+function(add_regex_ir_nvvm_template TEMPLATE_ID TEMPLATE_PATH)
+  rtcx_embed_blob(
+    regex_ir_nvvm_templates ID ${TEMPLATE_ID} FILE "${CMAKE_CURRENT_SOURCE_DIR}/${TEMPLATE_PATH}"
+    DEST "${TEMPLATE_PATH}"
+  )
+endfunction()
+
+add_regex_ir_nvvm_template(regex_module experimental/libregex_ir/nvvm/module.ll.in)
+add_regex_ir_nvvm_template(regex_functions experimental/libregex_ir/nvvm/functions.ll.in)
+add_regex_ir_nvvm_template(regex_literals experimental/libregex_ir/nvvm/literals.ll.in)
+add_regex_ir_nvvm_template(regex_glushkov experimental/libregex_ir/nvvm/glushkov.ll.in)
+add_regex_ir_nvvm_template(regex_dfa experimental/libregex_ir/nvvm/dfa.ll.in)
+add_regex_ir_nvvm_template(regex_thompson experimental/libregex_ir/nvvm/thompson.ll.in)
+add_regex_ir_nvvm_template(regex_operations experimental/libregex_ir/nvvm/operations.ll.in)
+add_regex_ir_nvvm_template(kernel_module src/strings/experimental/regex_jit/nvvm/module.ll.in)
+add_regex_ir_nvvm_template(kernel_functions src/strings/experimental/regex_jit/nvvm/functions.ll.in)
+add_regex_ir_nvvm_template(kernel_fixed src/strings/experimental/regex_jit/nvvm/fixed.ll.in)
+add_regex_ir_nvvm_template(
+  kernel_enumeration src/strings/experimental/regex_jit/nvvm/enumeration.ll.in
+)
+add_regex_ir_nvvm_template(kernel_replace src/strings/experimental/regex_jit/nvvm/replace.ll.in)
+add_regex_ir_nvvm_template(kernel_split src/strings/experimental/regex_jit/nvvm/split.ll.in)
+add_regex_ir_nvvm_template(
+  kernel_warp_literal src/strings/experimental/regex_jit/nvvm/warp_literal.ll.in
+)
+
+rtcx_embed(
+  regex_ir_nvvm_templates COMPRESSION none OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/embed"
+)
 
 rtcx_add_embed(cudf_fragments)
 
@@ -918,6 +962,7 @@ add_library(
   src/io/utilities/trie.cu
   src/jit/cache.cpp
   src/jit/helpers.cpp
+  src/jit/nvvm.cpp
   src/jit/parser.cpp
   src/jit/row_ir.cpp
   src/jit/util.cpp
@@ -1136,6 +1181,9 @@ add_library(
   src/strings/merge/merge.cu
   src/strings/padding.cu
   src/strings/positions.cu
+  experimental/libregex_ir/regex_ir.cpp
+  src/strings/experimental/regex_jit/kernel_ir.cpp
+  src/strings/experimental/regex_jit/regex.cu
   src/strings/regex/gkexec.cpp
   src/strings/regex/glushkov_regcomp.cpp
   src/strings/regex/regcomp.cpp
@@ -1228,10 +1276,11 @@ add_library(
   src/utilities/type_checks.cpp
   src/utilities/type_dispatcher.cpp
   ${cudf_cuda_embed_SOURCE_DIR}/cudf_cuda_embed.s
+  ${regex_ir_nvvm_templates_SOURCE_DIR}/regex_ir_nvvm_templates.s
   ${cudf_fragments_SOURCE_DIR}/cudf_fragments.s
 )
 
-add_dependencies(cudf cudf_cuda_embed cudf_fragments)
+add_dependencies(cudf cudf_cuda_embed regex_ir_nvvm_templates cudf_fragments)
 
 set_property(
   SOURCE src/io/parquet/writer_impl.cu
@@ -1239,10 +1288,16 @@ set_property(
   PROPERTY COMPILE_DEFINITIONS "CUDF_VERSION=${PROJECT_VERSION}"
 )
 
+set_property(
+  SOURCE src/jit/nvvm.cpp
+  APPEND
+  PROPERTY COMPILE_DEFINITIONS "CUDF_STATIC_LINK_NVVM=$<BOOL:${CUDF_STATIC_LINK_NVVM}>"
+)
+
 set_target_properties(
   cudf
-  PROPERTIES BUILD_RPATH "\$ORIGIN"
-             INSTALL_RPATH "\$ORIGIN"
+  PROPERTIES BUILD_RPATH "\$ORIGIN;${CUDAToolkit_LIBRARY_ROOT}/nvvm/lib64"
+             INSTALL_RPATH "\$ORIGIN;\$ORIGIN/../nvvm/lib64"
              # set target compile options
              CXX_STANDARD 20
              CXX_STANDARD_REQUIRED ON
@@ -1299,10 +1354,13 @@ target_include_directories(
   PUBLIC "$<BUILD_INTERFACE:${DLPACK_INCLUDE_DIR}>" "$<BUILD_INTERFACE:${CUDF_SOURCE_DIR}/include>"
          "$<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}/include>"
   PRIVATE "$<BUILD_INTERFACE:${CUDF_SOURCE_DIR}/src>"
+          "$<BUILD_INTERFACE:${CUDF_SOURCE_DIR}/experimental/libregex_ir>"
+          "$<BUILD_INTERFACE:${CUDAToolkit_LIBRARY_ROOT}/nvvm/include>"
           "$<BUILD_INTERFACE:${nanoarrow_SOURCE_DIR}/src>"
           "$<BUILD_INTERFACE:${FlatBuffers_SOURCE_DIR}/include>"
           "$<BUILD_INTERFACE:${ZSTD_INCLUDE_DIR}>"
           "$<BUILD_INTERFACE:${cudf_cuda_embed_INCLUDE_DIRS}>"
+          "$<BUILD_INTERFACE:${regex_ir_nvvm_templates_INCLUDE_DIRS}>"
           "$<BUILD_INTERFACE:${cudf_fragments_INCLUDE_DIRS}>"
   INTERFACE "$<INSTALL_INTERFACE:include>"
 )
@@ -1467,6 +1525,15 @@ target_link_libraries(
   PRIVATE $<BUILD_LOCAL_INTERFACE:nvtx3::nvtx3-cpp> $<BUILD_LOCAL_INTERFACE:cuco::cuco> ZLIB::ZLIB
           kvikio::kvikio ${CUDF_nanoarrow_TARGET} zstd $<BUILD_LOCAL_INTERFACE:xxhash> rtcx::rtcx
 )
+
+if(CUDF_STATIC_LINK_NVVM)
+  if(NOT CUDF_NVVM_STATIC_LIBRARY)
+    message(FATAL_ERROR "CUDF_STATIC_LINK_NVVM=ON requires CUDF_NVVM_STATIC_LIBRARY")
+  endif()
+  target_link_libraries(cudf PRIVATE "${CUDF_NVVM_STATIC_LIBRARY}")
+else()
+  target_link_libraries(cudf PRIVATE ${CMAKE_DL_LIBS})
+endif()
 
 if(NOT _absorbed_nvcomp)
   target_link_libraries(cudf PRIVATE ${CUDF_nvcomp_TARGET})

@@ -1,0 +1,110 @@
+; SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+; SPDX-License-Identifier: Apache-2.0
+
+; BEGIN fixed_boolean
+
+define void @KERNEL_ENTRY@(@workspace_parameters@i8* %chars, i8* %offsets, i32* %validity, i32 %row_offset, i32 %rows, i8* %output) nounwind {
+entry:
+@workspace_entry@
+  %row = @row_index@
+  %in_bounds = icmp slt i32 %row, %rows
+  br i1 %in_bounds, label %work, label %done
+work:
+  %physical = add i32 %row_offset, %row
+  %valid = call i1 @regex_ir_is_valid(i32* %validity, i32 %physical)
+  br i1 %valid, label %match, label %store_false
+match:
+  %string = call %regex_ir_string @regex_ir_load_string(i8* %chars, i8* %offsets, i32 %physical)
+  %data = extractvalue %regex_ir_string %string, 0
+  %size = extractvalue %regex_ir_string %string, 1
+  %matched = call i1 @regex_ir_execute(@workspace@i8* %data, i64 %size)
+  %value = zext i1 %matched to i8
+  br label %store
+store_false:
+  br label %store
+store:
+  %result = phi i8 [ %value, %match ], [ 0, %store_false ]
+  %out = getelementptr i8, i8* %output, i32 %row
+  store i8 %result, i8* %out, align 1
+  br label %done
+done:
+  ret void
+}
+; END fixed_boolean
+
+; BEGIN fixed_count
+
+define void @KERNEL_ENTRY@(@workspace_parameters@i8* %chars, i8* %offsets, i32* %validity, i32 %row_offset, i32 %rows, i8* %output@FLAGS_PARAMETER@) nounwind {
+entry:
+@workspace_entry@
+  %row = @row_index@
+  %in_bounds = icmp slt i32 %row, %rows
+  br i1 %in_bounds, label %work, label %done
+work:
+  %physical = add i32 %row_offset, %row
+  %valid = call i1 @regex_ir_is_valid(i32* %validity, i32 %physical)
+  br i1 %valid, label %count, label %store_zero
+count:
+  %string = call %regex_ir_string @regex_ir_load_string(i8* %chars, i8* %offsets, i32 %physical)
+  %data = extractvalue %regex_ir_string %string, 0
+  %size = extractvalue %regex_ir_string %string, 1
+  %count64 = call i64 @regex_ir_execute(@workspace@i8* %data, i64 %size@FLAGS_ARGUMENT@)
+  %value = trunc i64 %count64 to i32
+  br label %store
+store_zero:
+  br label %store
+store:
+  %result = phi i32 [ %value, %count ], [ 0, %store_zero ]
+  %typed_output = bitcast i8* %output to i32*
+  %out = getelementptr i32, i32* %typed_output, i32 %row
+  store i32 %result, i32* %out, align 4
+  br label %done
+done:
+  ret void
+}
+; END fixed_count
+
+; BEGIN fixed_find
+
+define void @KERNEL_ENTRY@(@workspace_parameters@i8* %chars, i8* %offsets, i32* %validity, i32 %row_offset, i32 %rows, i8* %output) nounwind {
+entry:
+@workspace_entry@
+  %span = alloca [2 x i64], align 8
+  %row = @row_index@
+  %in_bounds = icmp slt i32 %row, %rows
+  br i1 %in_bounds, label %work, label %done
+work:
+  %physical = add i32 %row_offset, %row
+  %valid = call i1 @regex_ir_is_valid(i32* %validity, i32 %physical)
+  br i1 %valid, label %find, label %store_missing
+find:
+  %string = call %regex_ir_string @regex_ir_load_string(i8* %chars, i8* %offsets, i32 %physical)
+  %data = extractvalue %regex_ir_string %string, 0
+  %size = extractvalue %regex_ir_string %string, 1
+  %span_ptr = getelementptr [2 x i64], [2 x i64]* %span, i32 0, i32 0
+  %matched = call i1 @regex_ir_execute(@workspace@i8* %data, i64 %size, i64* %span_ptr)
+  br i1 %matched, label %convert, label %store_missing
+convert:
+  %match_begin = load i64, i64* %span_ptr, align 8
+  br label %utf8_loop
+utf8_loop:
+  %position = phi i64 [ 0, %convert ], [ %advanced, %utf8_loop ]
+  %characters = phi i32 [ 0, %convert ], [ %next_characters, %utf8_loop ]
+  %at_match = icmp uge i64 %position, %match_begin
+  %advanced = call i64 @regex_ir_advance_utf8(i8* %data, i64 %size, i64 %position)
+  %next_characters = add i32 %characters, 1
+  br i1 %at_match, label %store_found, label %utf8_loop
+store_found:
+  br label %store
+store_missing:
+  br label %store
+store:
+  %result = phi i32 [ %characters, %store_found ], [ -1, %store_missing ]
+  %typed_output = bitcast i8* %output to i32*
+  %out = getelementptr i32, i32* %typed_output, i32 %row
+  store i32 %result, i32* %out, align 4
+  br label %done
+done:
+  ret void
+}
+; END fixed_find

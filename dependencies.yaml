@@ -130,6 +130,11 @@ files:
       - depends_on_cudf_polars
       - depends_on_ray
       - depends_on_cudf_streaming
+  build_cudf_polars_quent:
+    output: none
+    includes:
+      - py_version
+      - build_cudf_polars_quent
   build_java:
     # Toolchain for building static libcudf from source and packaging the cuDF
     # Java JAR. `depends_on_libcudf` is excluded because the Java build links
@@ -941,7 +946,6 @@ dependencies:
           - cuda-nvtx-dev
           - cuda-sanitizer-api
           - libcufile-dev
-          - libcurand-dev
           - libnvjitlink-dev
     specific:
       - output_types: [requirements, constraints, pyproject]
@@ -1304,6 +1308,12 @@ dependencies:
         packages:
           # Used by timeout_with_stack.py utility
           - gdb
+  build_cudf_polars_quent:
+    common:
+      - output_types: conda
+        packages:
+          - maturin>=1.14,<2
+          - rust=1.97
   test_python_narwhals:
     common:
       - output_types: [conda, requirements, constraints, pyproject]

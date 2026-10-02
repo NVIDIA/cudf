@@ -12,6 +12,8 @@
 #include <cudf/logger.hpp>
 #include <cudf/utilities/error.hpp>
 
+#include <cuda/buffer>
+
 #include <io/utilities/hostdevice_vector.hpp>
 #include <nvcomp/deflate.h>
 #include <nvcomp/gzip.h>
@@ -613,7 +615,8 @@ void batched_decompress(compression_type compression,
                                                          max_uncomp_chunk_size,
                                                          max_total_uncomp_size,
                                                          stream);
-  rmm::device_buffer scratch(temp_size, stream);
+  cuda::device_buffer<std::byte> scratch(
+    stream, cudf::get_current_device_resource_ref(), temp_size, cuda::no_init);
 
   auto const nvcomp_status = batched_decompress_async(compression,
                                                       use_hw_decompression(),
@@ -701,7 +704,8 @@ void batched_compress(compression_type compression,
   auto const temp_size = batched_compress_temp_size(
     compression, num_chunks, max_uncomp_chunk_size, total_uncomp_size, stream);
 
-  rmm::device_buffer scratch(temp_size, stream);
+  cuda::device_buffer<std::byte> scratch(
+    stream, cudf::get_current_device_resource_ref(), temp_size, cuda::no_init);
   CUDF_EXPECTS(is_aligned(scratch.data(), 8), "Compression failed, misaligned scratch buffer");
 
   rmm::device_uvector<size_t> actual_compressed_data_sizes(num_chunks, stream);

@@ -597,13 +597,17 @@ class StringColumn(ColumnBase, Scannable):
                 other.type
             ):
                 if op in {"__eq__", "__ne__"}:
-                    return as_column(
+                    result = as_column(
                         op == "__ne__",
                         length=len(self),
                         dtype=get_dtype_of_same_kind(
                             self.dtype, np.dtype(np.bool_)
                         ),
                     ).set_mask(self.mask, self.null_count)
+                    if self._PANDAS_NA_VALUE in {np.nan, None}:
+                        fill = op == "__ne__"
+                        result = result.fillna(fill)
+                    return result
                 else:
                     return NotImplemented
 
@@ -629,7 +633,7 @@ class StringColumn(ColumnBase, Scannable):
                 if isinstance(other, pa.Scalar):
                     other = pa_scalar_to_plc_scalar(other)
                 lhs_op, rhs_op = (other, self) if reflect else (self, other)
-                return binaryop.binaryop(
+                result = binaryop.binaryop(
                     lhs=lhs_op,
                     rhs=rhs_op,
                     op=op,
@@ -637,6 +641,14 @@ class StringColumn(ColumnBase, Scannable):
                         self.dtype, np.dtype(np.bool_)
                     ),
                 )
+                if (
+                    self._PANDAS_NA_VALUE in {np.nan, None}
+                    and op
+                    not in {"NULL_EQUALS", "NULL_NOT_EQUALS"}
+                ):
+                    fill = op == "__ne__"
+                    result = result.fillna(fill)
+                return result
         return NotImplemented
 
     def minhash(

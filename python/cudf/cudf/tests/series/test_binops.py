@@ -1259,6 +1259,26 @@ def test_str_series_compare_num_reflected(comparison_op, cmp_scalar):
         assert_eq(expect, got)
 
 
+def test_str_nan_semantics_comparison_fills_nulls(comparison_op):
+    # GH#24393 — comparison operators on dtype="str" (NaN-semantics) should
+    # fill null rows with False (or True for !=), matching str.contains etc.
+    data = ["1", None, ""]
+    ps = pd.Series(data)  # pandas default string dtype uses NaN semantics
+    cs = cudf.Series(data)  # cudf "str" dtype
+
+    expect = comparison_op(ps, "").tolist()
+    got = comparison_op(cs, "").to_arrow().to_pylist()
+    assert got == expect, f"{comparison_op.__name__}: expected {expect}, got {got}"
+
+    # Second inconsistency from the issue: mixed-null column should behave
+    # the same as all-null column — no nulls in the result.
+    mixed = cudf.Series([None, None, "x"], dtype="str")
+    result = comparison_op(mixed, "").to_arrow().to_pylist()
+    assert None not in result, (
+        f"{comparison_op.__name__} on mixed-null str Series produced nulls: {result}"
+    )
+
+
 @pytest.mark.parametrize("obj_class", ["Series", "Index"])
 def test_series_compare_scalar(
     request, comparison_op, obj_class, numeric_and_temporal_types_as_str

@@ -12,7 +12,10 @@
 #include <BS_thread_pool.hpp>
 
 #include <cstddef>
+#include <exception>
+#include <future>
 #include <memory>
+#include <vector>
 
 namespace cudf::detail {
 
@@ -114,4 +117,28 @@ class CUDF_EXPORT hierarchical_thread_pool {
  * @return Reference to the thread pool
  */
 hierarchical_thread_pool& host_worker_pool();
+
+/**
+ * @brief Waits for every task and returns the first failure without rethrowing it.
+ *
+ * Tasks often borrow the caller's locals, so returning on the first failure would leave the
+ * remaining tasks running against destroyed state.
+ *
+ * @tparam T Task result type
+ * @param tasks Futures of the submitted tasks
+ * @return The first exception thrown by a task, or null if all tasks succeeded
+ */
+template <typename T>
+[[nodiscard]] std::exception_ptr wait_for_all_tasks(std::vector<std::future<T>>& tasks)
+{
+  std::exception_ptr first_error;
+  for (auto& task : tasks) {
+    try {
+      task.get();
+    } catch (...) {
+      if (!first_error) { first_error = std::current_exception(); }
+    }
+  }
+  return first_error;
+}
 }  // namespace cudf::detail

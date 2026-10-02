@@ -299,16 +299,19 @@ CUDF_KERNEL void __launch_bounds__(csvparse_block_dim)
  *
  * Data is processed one record at a time
  *
+ * @tparam StringOffsetPair Staging entry type written for string columns
+ *
  * @param[in] options A set of parsing options
  * @param[in] data The entire CSV data to read
  * @param[in] column_flags Per-column parsing behavior flags
  * @param[in] row_offsets The start the CSV data of interest
  * @param[in] dtypes The data type of the column
- * @param[out] columns The output column data
+ * @param[out] columns The output column data; `StringOffsetPair` arrays for string columns
  * @param[out] valids The bitmaps indicating whether column fields are valid
  * @param[out] valid_counts The number of valid fields in each column
  * @param[out] is_quoted_flags Per-column boolean arrays tracking which rows were quoted fields
  */
+template <typename StringOffsetPair>
 CUDF_KERNEL void __launch_bounds__(csvparse_block_dim)
   convert_csv_to_cudf(cudf::io::parse_options_view options,
                       device_span<char const> data,
@@ -384,9 +387,10 @@ CUDF_KERNEL void __launch_bounds__(csvparse_block_dim)
           }
           // Track whether this field was quoted (for doublequote unescaping)
           if (is_quoted_output != nullptr) { is_quoted_output[rec_id] = was_quoted; }
-          auto str_list = static_cast<std::pair<char const*, size_t>*>(columns[actual_col]);
-          str_list[rec_id].first  = field_start;
-          str_list[rec_id].second = end - field_start;
+          auto str_list    = static_cast<StringOffsetPair*>(columns[actual_col]);
+          str_list[rec_id] = {
+            static_cast<typename StringOffsetPair::offset_type>(field_start - raw_csv),
+            static_cast<uint32_t>(end - field_start)};
         } else {
           if (cudf::type_dispatcher(dtypes[actual_col],
                                     ConvertFunctor{},
@@ -403,9 +407,7 @@ CUDF_KERNEL void __launch_bounds__(csvparse_block_dim)
           }
         }
       } else if (dtypes[actual_col].id() == cudf::type_id::STRING) {
-        auto str_list           = static_cast<std::pair<char const*, size_t>*>(columns[actual_col]);
-        str_list[rec_id].first  = nullptr;
-        str_list[rec_id].second = 0;
+        static_cast<StringOffsetPair*>(columns[actual_col])[rec_id] = {};
         if (is_quoted_output != nullptr) { is_quoted_output[rec_id] = false; }
       }
       ++actual_col;
@@ -868,6 +870,7 @@ void decode_row_column_data(cudf::io::parse_options_view const& options,
                             device_span<cudf::bitmask_type* const> valids,
                             device_span<size_type> valid_counts,
                             device_span<bool* const> is_quoted_flags,
+                            bool compact_strings,
                             cuda::stream_ref stream)
 {
   // Calculate actual block count to use based on records count
@@ -875,15 +878,22 @@ void decode_row_column_data(cudf::io::parse_options_view const& options,
   auto const num_rows   = row_offsets.size() - 1;
   auto const grid_size  = cudf::util::div_rounding_up_safe<size_t>(num_rows, block_size);
 
-  convert_csv_to_cudf<<<grid_size, block_size, 0, stream.get()>>>(options,
-                                                                  data,
-                                                                  column_flags,
-                                                                  row_offsets,
-                                                                  dtypes,
-                                                                  columns,
-                                                                  valids,
-                                                                  valid_counts,
-                                                                  is_quoted_flags);
+  auto const launch = [&](auto kernel) {
+    kernel<<<grid_size, block_size, 0, stream.get()>>>(options,
+                                                       data,
+                                                       column_flags,
+                                                       row_offsets,
+                                                       dtypes,
+                                                       columns,
+                                                       valids,
+                                                       valid_counts,
+                                                       is_quoted_flags);
+  };
+  if (compact_strings) {
+    launch(convert_csv_to_cudf<compact_string_offset_pair>);
+  } else {
+    launch(convert_csv_to_cudf<wide_string_offset_pair>);
+  }
   CUDF_CUDA_TRY(cudaGetLastError());
 }
 

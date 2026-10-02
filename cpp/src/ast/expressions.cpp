@@ -8,15 +8,23 @@
 #include <cudf/ast/detail/expression_transformer.hpp>
 #include <cudf/ast/detail/operators.hpp>
 #include <cudf/ast/expressions.hpp>
+#include <cudf/column/column_view.hpp>
+#include <cudf/table/table_view.hpp>
 #include <cudf/types.hpp>
 #include <cudf/utilities/error.hpp>
 
+#include <cuda/stream>
+
 #include <algorithm>
+#include <functional>
+#include <memory>
+#include <span>
 #include <stdexcept>
+#include <string>
+#include <vector>
 
 namespace cudf {
 namespace ast {
-
 operation::operation(ast_operator op, expression const& input) : op{op}, operands{input}
 {
   CUDF_EXPECTS(cudf::ast::detail::ast_operator_arity(op) == 1,

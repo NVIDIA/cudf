@@ -1962,7 +1962,7 @@ def test_string_partition_fail():
         ],
     ],
 )
-@pytest.mark.parametrize("n", [-1, 2, 9])
+@pytest.mark.parametrize("n", [-1, 2, 9, None])
 @pytest.mark.parametrize("expand", [True, False])
 def test_strings_rsplit(data, n, expand):
     gs = cudf.Series(data, dtype=pd.StringDtype("pyarrow"))

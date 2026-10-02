@@ -13,6 +13,7 @@
 
 #include <rmm/device_buffer.hpp>
 
+#include <cuda/memory>
 #include <cuda/stream>
 
 #include <memory>
@@ -68,8 +69,8 @@ std::pair<std::unique_ptr<rmm::device_buffer>, ColumnDeviceView*> create_column_
   // align both h_ptr, d_ptr
   auto descendant_storage =
     std::make_unique<rmm::device_buffer>(padded_views_size_bytes, stream, mr);
-  void* h_ptr    = detail::align_ptr_for_type<ColumnDeviceView>(h_buffer.data());
-  void* d_ptr    = detail::align_ptr_for_type<ColumnDeviceView>(descendant_storage->data());
+  void* h_ptr    = cuda::align_up(h_buffer.data(), alignof(ColumnDeviceView));
+  void* d_ptr    = cuda::align_up(descendant_storage->data(), alignof(ColumnDeviceView));
   auto d_columns = detail::child_columns_to_device_array<ColumnDeviceView>(
     source_view.begin(), source_view.end(), h_ptr, d_ptr);
 

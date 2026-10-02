@@ -25,7 +25,7 @@ from rapidsmpf.streaming.core.memory_reserve_or_wait import reserve_memory
 from rapidsmpf.streaming.core.message import Message
 
 from cudf_polars.containers import DataFrame
-from cudf_polars.dsl.ir import IR, DataFrameScan, PythonScan, Sink
+from cudf_polars.dsl.ir import IR, CallbackSink, DataFrameScan, PythonScan, Sink
 from cudf_polars.dsl.tracing import Scope, log
 from cudf_polars.streaming.actor_graph.dispatch import (
     generate_ir_sub_network,
@@ -800,6 +800,84 @@ def _(
             estimated_chunk_bytes=(
                 plan.estimated_chunk_bytes or executor.target_partition_size
             ),
+        )
+    ]
+    return nodes, channels
+
+
+@define_actor()
+async def callback_sink_actor(
+    context: Context,
+    comm: Communicator,
+    ir: CallbackSink,
+    ir_context: IRExecutionContext,
+    ch_in: Channel[TableChunk],
+    ch_out: Channel[TableChunk],
+) -> None:
+    """Invoke a Polars callback for each host batch, then return an empty result."""
+    async with shutdown_on_error(
+        context,
+        chs_in=(ch_in,),
+        chs_out=(ch_out,),
+        ir_context=ir_context,
+        trace_ir=ir,
+    ):
+        metadata = await recv_metadata(ch_in, context)
+        await send_metadata(
+            ch_out, context, ChannelMetadata(local_count=1, duplicated=True)
+        )
+        callback = CallbackSink.load_function(ir.function)
+        skip_callback = metadata.duplicated and comm.rank != 0
+        stopped = False
+        pending: pl.DataFrame | None = None
+        while (msg := await ch_in.recv(context)) is not None:
+            if skip_callback or stopped:
+                continue
+            chunk = TableChunk.from_message(msg, br=context.br())
+            chunk, _ = await make_table_chunks_available_or_wait(
+                context,
+                chunk,
+                reserve_extra=0,
+                net_memory_delta=-chunk.data_alloc_size(),
+            )
+            df = chunk_to_frame(chunk, ir.children[0])
+            host_df = await ir_context.to_thread(df.to_polars)
+            if ir.chunk_size is None:
+                stopped = bool(await ir_context.to_thread(callback, host_df._df))
+            else:
+                pending = (
+                    host_df
+                    if pending is None
+                    else pl.concat((pending, host_df), rechunk=False)
+                )
+                while pending.height >= ir.chunk_size:
+                    batch = pending.slice(0, ir.chunk_size)
+                    pending = pending.slice(ir.chunk_size)
+                    if await ir_context.to_thread(callback, batch._df):
+                        stopped = True
+                        break
+        if not skip_callback and not stopped and pending is not None and pending.height:
+            await ir_context.to_thread(callback, pending._df)
+
+        empty_chunk = empty_table_chunk(ir, context, ir_context.get_cuda_stream())
+        await ch_out.send(context, Message(0, empty_chunk))
+        await ch_out.drain(context)
+
+
+@generate_ir_sub_network.register(CallbackSink)
+def _(
+    ir: CallbackSink, rec: SubNetGenerator
+) -> tuple[dict[IR, list[Any]], dict[IR, ChannelManager]]:
+    nodes, channels = process_children(ir, rec)
+    channels[ir] = ChannelManager(rec.state["context"])
+    nodes[ir] = [
+        callback_sink_actor(
+            rec.state["context"],
+            rec.state["comm"],
+            ir,
+            ir_context_for_node(rec, ir),
+            channels[ir.children[0]].reserve_output_slot(),
+            channels[ir].reserve_input_slot(),
         )
     ]
     return nodes, channels

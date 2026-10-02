@@ -1,14 +1,18 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from __future__ import annotations
 
+import json
+import pickle
+import sys
 from pathlib import Path
 
 import pytest
 
 import polars as pl
 
+from cudf_polars.dsl.ir import CallbackSink
 from cudf_polars.engine.options import StreamingOptions
 from cudf_polars.testing.asserts import assert_sink_result_equal
 
@@ -148,3 +152,64 @@ def test_sink_ndjson(df, streaming_engine_factory, tmp_path, max_rows_per_partit
         tmp_path / "out.ndjson",
         engine=engine,
     )
+
+
+def test_callback_sink_batches(df, spmd_engine_factory, tmp_path):
+    engine = spmd_engine_factory(
+        StreamingOptions(max_rows_per_partition=10, raise_on_fail=True)
+    )
+    output = tmp_path / "batches.jsonl"
+
+    def write_batch(batch: pl.DataFrame) -> None:
+        with output.open("a") as file:
+            file.write(json.dumps(batch.to_dict(as_series=False)) + "\n")
+
+    sink = df.sink_batches(write_batch, chunk_size=7, lazy=True)
+    assert not output.exists()
+    assert sink.collect(engine=engine).shape == (0, 0)
+
+    batches = [json.loads(line) for line in output.read_text().splitlines()]
+    assert [len(batch["x"]) for batch in batches] == [7, 7, 7, 7, 2]
+    assert [x for batch in batches for x in batch["x"]] == list(range(30))
+
+
+def test_callback_sink_stops_after_true(df, spmd_engine_factory, tmp_path):
+    engine = spmd_engine_factory(
+        StreamingOptions(max_rows_per_partition=10, raise_on_fail=True)
+    )
+    output = tmp_path / "seen.txt"
+
+    def stop_after_first(batch: pl.DataFrame) -> bool:
+        with output.open("a") as file:
+            file.write(f"{batch.height}\n")
+        return True
+
+    assert df.sink_batches(stop_after_first, chunk_size=7, engine=engine) is None
+    assert output.read_text().splitlines() == ["7"]
+
+
+@pytest.mark.spmd
+def test_callback_sink_rejects_multiple_ranks(spmd_engine_factory):
+    engine = spmd_engine_factory(StreamingOptions(raise_on_fail=True))
+    if engine.comm.nranks == 1:
+        pytest.skip("requires multiple SPMD ranks")
+
+    sink = pl.LazyFrame({"x": [1]}).sink_batches(lambda batch: None, lazy=True)
+    with pytest.raises(
+        NotImplementedError,
+        match="Callback sinks are not yet supported for multiple ranks",
+    ):
+        sink.collect(engine=engine)
+
+
+def test_callback_sink_pickle_metadata():
+    payload = pickle.dumps(bool)
+    version = bytes(sys.version_info[1:3])
+    assert CallbackSink.load_function(b"\x01" + version + payload) is bool
+    assert CallbackSink.load_function(b"\x00\x00\x00" + payload) is bool
+
+    other_minor = (sys.version_info.minor + 1) % 256
+    with pytest.raises(ValueError, match="different Python version"):
+        CallbackSink.load_function(bytes((1, other_minor, 0)) + payload)
+    with pytest.raises(ValueError, match="Invalid Polars callback serialization"):
+        CallbackSink.load_function(b"\x02" + version + payload)

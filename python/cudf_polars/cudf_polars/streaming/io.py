@@ -20,6 +20,7 @@ import pylibcudf as plc
 from cudf_polars.containers import Column, DataFrame
 from cudf_polars.dsl.ir import (
     IR,
+    CallbackSink,
     DataFrameScan,
     Empty,
     PythonScan,
@@ -900,6 +901,20 @@ class StreamingSink(IR):
     def get_hashable(self) -> Hashable:
         """Hashable representation of the node."""
         return (type(self), self.sink, *self.children)
+
+
+@lower_ir_node.register(CallbackSink)
+def _(
+    ir: CallbackSink, rec: LowerIRTransformer
+) -> tuple[IR, MutableMapping[IR, PartitionInfo]]:
+    child, partition_info = rec(ir.children[0])
+    if rec.state["nranks"] > 1:
+        raise NotImplementedError(
+            "Callback sinks are not yet supported for multiple ranks."
+        )
+    result = ir.reconstruct([child])
+    partition_info[result] = PartitionInfo(count=1)
+    return result, partition_info
 
 
 @lower_ir_node.register(Sink)

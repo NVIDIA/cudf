@@ -113,6 +113,18 @@ template <operator_transform mode>
 [[nodiscard]] bool is_boolean_valued(ast::expression const& expr);
 
 /**
+ * @brief Whether a bloom filter or a dictionary page can be queried for a `col == lit` predicate
+ *
+ * @throws cudf::logic_error if the column and literal types mismatch
+ *
+ * @param column_type Output type of the column
+ * @param literal Literal compared against the column
+ * @return Whether the predicate can be queried
+ */
+[[nodiscard]] bool is_membership_queryable(cudf::data_type column_type,
+                                           ast::literal const& literal);
+
+/**
  * @brief Collects column names from the expression ignoring the `skip_names`
  */
 class names_from_expression : public ast::detail::expression_transformer {
@@ -364,11 +376,6 @@ class parquet_expression_simplifier {
    */
   void validate_column_reference(ast::column_reference const& col_ref) const;
 
-  /**
-   * @brief Returns a placeholder column reference for collectors to preserve logical folding
-   */
-  [[nodiscard]] ast::expression const& placeholder_expr();
-
   std::span<cudf::data_type const> _output_dtypes;
   ast::tree _tree;
 
@@ -433,7 +440,9 @@ class equality_literals_collector : public parquet_expression_simplifier {
                               std::span<SchemaElement const> schema_tree);
 
   /**
-   * @brief Walks `expr` and records if the filter can prune any row groups
+   * @brief Simplifies `expr` and collects literals and operators from it
+   *
+   * @param expr Filter expression to simplify and collect from
    */
   void collect(ast::expression const& expr);
 
@@ -448,8 +457,16 @@ class equality_literals_collector : public parquet_expression_simplifier {
                                                               ast::literal const& literal) override;
 
   std::vector<std::vector<ast::literal*>> _literals;
+  std::vector<std::vector<ast::ast_operator>> _operators;
 
  private:
+  /**
+   * @brief Collects literals and operators from the simplified expression
+   *
+   * @param simplified_expr Simplified expression whose leaves are `col op lit` comparisons
+   */
+  void collect_surviving_predicates(ast::expression const& simplified_expr);
+
   std::span<cudf::size_type const> _output_column_schemas;
   std::span<SchemaElement const> _schema_tree;
   bool _can_filter{false};

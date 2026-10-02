@@ -679,16 +679,17 @@ aggregate_reader_metadata::filter_row_groups_with_bloom_filters(
         reinterpret_cast<cuda::std::byte const*>(data.data()), data.size()};
     });
 
-  auto const bloom_filtered_row_groups =
-    apply_bloom_filters(transformed_bloom_filter_data,
-                        host_span<std::vector<cudf::size_type> const>{row_group_indices.data(),
-                                                                      row_group_indices.size()},
-                        literals,
-                        total_row_groups,
-                        host_span<data_type const>{output_dtypes.data(), output_dtypes.size()},
-                        bloom_filter_col_schemas,
-                        filter,
-                        stream);
+  auto const bloom_filtered_row_groups = apply_bloom_filters(
+    transformed_bloom_filter_data,
+    host_span<std::vector<cudf::size_type> const>{row_group_indices.data(),
+                                                  row_group_indices.size()},
+    literals,
+    total_row_groups,
+    host_span<data_type const>{output_dtypes.data(), output_dtypes.size()},
+    host_span<cudf::size_type const>{output_column_schemas.data(), output_column_schemas.size()},
+    bloom_filter_col_schemas,
+    filter,
+    stream);
 
   return bloom_filtered_row_groups.value_or(all_row_group_indices(row_group_indices));
 }

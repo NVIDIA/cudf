@@ -403,9 +403,6 @@ class dictionary_literals_collector final : public equality_literals_collector {
   [[nodiscard]] simplified_expression_opt simplify_comparison(ast::ast_operator op,
                                                               ast::column_reference const& col_ref,
                                                               ast::literal const& literal) override;
-
- private:
-  std::vector<std::vector<ast::ast_operator>> _operators;
 };
 
 /**

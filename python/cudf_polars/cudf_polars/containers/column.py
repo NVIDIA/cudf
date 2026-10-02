@@ -483,13 +483,12 @@ class Column:
                 raise InvalidOperationError(
                     f"Conversion from {self.dtype.id()} to {dtype.id()} failed."
                 )
-            else:
-                values = self.obj.with_mask(
-                    *plc.transform.bools_to_mask(castable, stream=stream)
-                )
-        else:
-            values = self.obj
-        return type_caster(values, dtype, stream=stream)
+            # Mask the cast result rather than self.obj: castable starts at
+            # bit 0, while self.obj may be a slice with a nonzero offset.
+            return type_caster(self.obj, dtype, stream=stream).with_mask(
+                *plc.transform.bools_to_mask(castable, stream=stream)
+            )
+        return type_caster(self.obj, dtype, stream=stream)
 
     def copy_metadata(self, from_: pl_Series, /) -> Self:
         """
@@ -624,6 +623,37 @@ class Column:
     def null_count(self) -> int:
         """Return the number of Null values in the column."""
         return self.obj.null_count()
+
+    def apply_null_mask(self, target: plc.Column, stream: Stream) -> plc.Column:
+        """
+        Return ``target`` with the null mask of this column.
+
+        A null mask is read from its column's offset, so the mask buffer of
+        ``self.obj`` is only reused when ``target`` has the same offset.
+        Otherwise ``self`` is a slice and the mask of its rows is copied to a
+        new buffer starting at bit 0, which ``target`` must also start at.
+
+        Parameters
+        ----------
+        target
+            Column with the same number of rows as ``self``.
+        stream
+            CUDA stream used for device memory operations and kernel launches.
+            ``self.obj`` and ``target`` must be valid on this stream, and the
+            result will be valid on this stream.
+
+        Returns
+        -------
+        ``target`` with the nulls of ``self``.
+        """
+        if self.null_count == 0:
+            return target.with_mask(None, 0)
+        if target.offset() == self.obj.offset():
+            return target.with_mask(self.obj.null_mask(), self.null_count)
+        assert target.offset() == 0
+        return target.with_mask(
+            plc.null_mask.copy_bitmask(self.obj, stream=stream), self.null_count
+        )
 
     def slice(self, zlice: Slice | None, stream: Stream) -> Self:
         """

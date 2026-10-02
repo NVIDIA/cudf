@@ -14,7 +14,7 @@ import pylibcudf as plc
 
 import cudf_polars.containers.column
 import cudf_polars.containers.datatype
-from cudf_polars.containers import Column, DataType
+from cudf_polars.containers import Column, DataFrame, DataType
 from cudf_polars.utils.cuda_stream import get_cuda_stream
 
 if TYPE_CHECKING:
@@ -162,6 +162,28 @@ def test_mask_nans_float():
     assert masked.nan_count(stream=stream) == 0
     assert masked.slice((0, 2), stream=stream).null_count == 0
     assert masked.slice((2, 1), stream=stream).null_count == 1
+
+
+@pytest.mark.parametrize(
+    "offset, expect",
+    [(0, [10, None, 12, None]), (3, [None, 11, 12, None])],
+)
+def test_apply_null_mask(offset, expect):
+    stream = get_cuda_stream()
+    df = pl.DataFrame({"a": pl.Series([1, None, 3, None, 5, 6, None], dtype=pl.Int32)})
+    column = (
+        DataFrame.from_polars(df, stream=stream)
+        .column_map["a"]
+        .slice((offset, 4), stream=stream)
+    )
+    target = plc.Column.from_iterable_of_py(
+        [10, 11, 12, 13], dtype=column.dtype.plc_type, stream=stream
+    )
+    result = column.apply_null_mask(target, stream)
+    assert result.to_pylist() == expect
+    # The mask buffer is only shared when the offsets line up
+    shared = result.null_mask().ptr == column.obj.null_mask().ptr
+    assert shared == (column.obj.offset() == 0)
 
 
 def test_slice_none_returns_self():

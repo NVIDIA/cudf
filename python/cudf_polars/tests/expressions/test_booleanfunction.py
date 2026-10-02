@@ -146,6 +146,33 @@ def test_boolean_finite(engine: pl.GPUEngine, expr):
     assert_gpu_result_equal(q, engine=engine)
 
 
+@pytest.mark.parametrize(
+    "expr",
+    [
+        pl.col("a").is_finite(),
+        pl.col("a").is_infinite(),
+        pl.col("a").is_nan(),
+        pl.col("a").is_not_nan(),
+        pl.col("b").is_finite(),
+        pl.col("b").is_infinite(),
+        pl.col("b").is_nan(),
+        pl.col("b").is_not_nan(),
+        pl.col("b").is_in(pl.Series([], dtype=pl.Int64())),
+    ],
+)
+def test_boolean_sliced_input(engine: pl.GPUEngine, expr):
+    # sort().slice() hands the expression a column with a nonzero offset.
+    df = pl.LazyFrame(
+        {
+            "a": [0.0, None, 2.0, 3.0, float("inf"), float("nan"), None, 7.0, 8.0],
+            "b": [0, None, 2, 3, 4, 5, None, 7, 8],
+            "k": range(9),
+        }
+    )
+    q = df.sort("k").slice(3, 6).select(expr)
+    assert_gpu_result_equal(q, engine=engine)
+
+
 @pytest.mark.parametrize("closed", ["both", "left", "right", "none"])
 @pytest.mark.parametrize(
     "bounds", [(1, 2), (-1, 10), (11, 10), (pl.col("lo"), pl.col("hi"))]

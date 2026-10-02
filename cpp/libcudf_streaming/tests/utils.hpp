@@ -138,6 +138,20 @@ template <std::integral T = std::int64_t>
   return cudf::table(std::move(cols));
 }
 
+[[nodiscard]] inline cudf::table random_table(
+  std::int64_t seed,
+  std::size_t nrows,
+  std::size_t ncols,
+  std::int64_t min = std::numeric_limits<std::int64_t>::min(),
+  std::int64_t max = std::numeric_limits<std::int64_t>::max())
+{
+  std::vector<std::unique_ptr<cudf::column>> cols;
+  for (std::size_t i = 0; i < ncols; ++i) {
+    cols.emplace_back(random_column(seed, nrows, min, max));
+  }
+  return cudf::table(std::move(cols), nrows);
+}
+
 [[nodiscard]] inline cudf::table sort_table(
   cudf::table_view const& table, std::vector<cudf::size_type> const& /* column_indices */ = {0})
 {

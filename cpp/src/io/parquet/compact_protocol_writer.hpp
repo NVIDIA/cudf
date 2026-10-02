@@ -32,6 +32,9 @@ class CompactProtocolWriter {
   size_t write(TimeType const&);
   size_t write(TimestampType const&);
   size_t write(IntType const&);
+  size_t write(VariantType const&);
+  size_t write(GeometryType const&);
+  size_t write(GeographyType const&);
   size_t write(LogicalType const&);
   size_t write(SchemaElement const&);
   size_t write(RowGroup const&);

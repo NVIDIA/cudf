@@ -668,7 +668,7 @@ aggregate_reader_metadata::collect_keyval_metadata() const
     std::transform(pfm.key_value_metadata.cbegin(),
                    pfm.key_value_metadata.cend(),
                    std::inserter(kv_map, kv_map.end()),
-                   [](auto const& kv) { return std::pair{kv.key, kv.value}; });
+                   [](auto const& kv) { return std::pair{kv.key, kv.value.value_or("")}; });
     return kv_map;
   });
 

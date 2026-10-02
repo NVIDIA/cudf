@@ -22,6 +22,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <format>
+#include <optional>
 #include <vector>
 
 using namespace cudf::io::parquet;
@@ -94,8 +95,8 @@ FileMetaData const& make_test_footer()
 
     meta.key_value_metadata = {
       {"pandas", "{\"index\": 1}"},
-      // Empty value re-serializes as absent and reads back empty (a documented delta).
-      {"empty", ""},
+      {"empty", std::string("")},
+      {"novalue", std::nullopt},
     };
     meta.column_orders = {{{ColumnOrder::TYPE_ORDER}, {ColumnOrder::TYPE_ORDER}}};
 
@@ -187,7 +188,10 @@ void expect_footer_semantic_equal(FileMetaData const& e, FileMetaData const& a)
   for (size_t i = 0; i < e.key_value_metadata.size(); ++i) {
     SCOPED_TRACE(std::format("key/value index {}", i));
     EXPECT_EQ(e.key_value_metadata[i].key, a.key_value_metadata[i].key);
-    EXPECT_EQ(e.key_value_metadata[i].value, a.key_value_metadata[i].value);
+    EXPECT_EQ(e.key_value_metadata[i].value.has_value(), a.key_value_metadata[i].value.has_value());
+    if (e.key_value_metadata[i].value.has_value() && a.key_value_metadata[i].value.has_value()) {
+      EXPECT_EQ(e.key_value_metadata[i].value.value(), a.key_value_metadata[i].value.value());
+    }
   }
 
   EXPECT_EQ(e.column_orders.has_value(), a.column_orders.has_value());
@@ -270,6 +274,29 @@ TEST_F(ParquetFooterFacadeTest, RealFooterRoundTrip)
   auto const bytes    = experimental::write_parquet_footer_bytes(original);
   auto const reparsed = experimental::read_parquet_footer_bytes(bytes);
   expect_footer_semantic_equal(original, reparsed);
+}
+
+// Spark's empty LEGACY-rebase marker values must remain present after a footer round trip.
+TEST_F(ParquetFooterFacadeTest, EmptyKeyValueValueRoundTrip)
+{
+  FileMetaData meta;
+  meta.version            = 2;
+  meta.num_rows           = 1;
+  meta.key_value_metadata = {
+    {"org.apache.spark.legacyDateTime", std::string("")},
+    {"org.apache.spark.legacyINT96", std::string("")},
+  };
+
+  auto const bytes = experimental::write_parquet_footer_bytes(meta);
+  ASSERT_FALSE(bytes.empty());
+  auto const reparsed = experimental::read_parquet_footer_bytes(bytes);
+  ASSERT_EQ(reparsed.key_value_metadata.size(), 2);
+  EXPECT_EQ(reparsed.key_value_metadata[0].key, "org.apache.spark.legacyDateTime");
+  ASSERT_TRUE(reparsed.key_value_metadata[0].value.has_value());
+  EXPECT_EQ(reparsed.key_value_metadata[0].value.value(), "");
+  EXPECT_EQ(reparsed.key_value_metadata[1].key, "org.apache.spark.legacyINT96");
+  ASSERT_TRUE(reparsed.key_value_metadata[1].value.has_value());
+  EXPECT_EQ(reparsed.key_value_metadata[1].value.value(), "");
 }
 
 // A footer with no schema or row groups round-trips; an absent column_orders stays absent.

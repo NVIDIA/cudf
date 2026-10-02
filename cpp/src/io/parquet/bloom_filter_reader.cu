@@ -62,16 +62,6 @@ template <class Key>
 using arrow_filter_policy =
   cudf::arrow_bloom_filter_policy<Key, cudf::hashing::detail::XXHash_64<Key>>;
 
-template <typename T>
-constexpr bool is_string_probe = cuda::std::is_same_v<T, cudf::string_view>;
-
-template <typename T>
-constexpr bool is_floating_point_probe = cudf::is_floating_point<T>();
-
-template <typename T>
-constexpr bool is_fixed_width_probe =
-  cudf::is_integral_not_bool<T>() or cuda::std::is_same_v<T, __int128_t> or cudf::is_chrono<T>();
-
 /**
  * @brief Type hashed into the bloom filter. INT32, INT64, FLOAT and DOUBLE values are hashed as
  * their physical type, while INT96, BYTE_ARRAY and FIXED_LEN_BYTE_ARRAY values are hashed as
@@ -227,8 +217,6 @@ struct bloom_filter_caster {
 
   // Booleans and compound types are not supported
   template <typename T>
-    requires(not is_string_probe<T> and not is_floating_point_probe<T> and
-             not is_fixed_width_probe<T>)
   std::unique_ptr<cudf::column> operator()(cudf::size_type,
                                            cudf::data_type,
                                            ast::literal const* const,
@@ -240,7 +228,7 @@ struct bloom_filter_caster {
 
   // BYTE_ARRAYS are probed as their bytes
   template <typename T>
-    requires(is_string_probe<T>)
+    requires(cuda::std::is_same_v<T, cudf::string_view>)
   std::unique_ptr<cudf::column> operator()(cudf::size_type equality_col_idx,
                                            cudf::data_type,
                                            ast::literal const* const literal,
@@ -253,7 +241,7 @@ struct bloom_filter_caster {
 
   // Floating point types are probed as their physical type
   template <typename T>
-    requires(is_floating_point_probe<T>)
+    requires(cudf::is_floating_point<T>())
   std::unique_ptr<cudf::column> operator()(cudf::size_type equality_col_idx,
                                            cudf::data_type,
                                            ast::literal const* const literal,
@@ -264,9 +252,9 @@ struct bloom_filter_caster {
     return query_bloom_filter<T, physical_type>(equality_col_idx, literal->get_value(), stream, mr);
   }
 
-  // Fixed width types are probed as their physical type
+  // Integers, decimal storage types and chrono types are probed as their physical type
   template <typename T>
-    requires(is_fixed_width_probe<T>)
+    requires(cudf::is_integral_not_bool<T>() or cudf::is_chrono<T>())
   std::unique_ptr<cudf::column> operator()(cudf::size_type equality_col_idx,
                                            cudf::data_type dtype,
                                            ast::literal const* const literal,

@@ -26,9 +26,10 @@
 
 namespace {
 
-auto const pack_num_rows_axis = std::vector<nvbench::int64_t>{4096, 32768, 262144};
-auto const pack_num_cols_axis = std::vector<nvbench::int64_t>{64, 512, 1024};
-auto const pack_nulls_axis    = std::vector<nvbench::float64_t>{0.0, 0.3};
+auto const pack_num_rows_axis      = std::vector<nvbench::int64_t>{4096, 32768, 262144};
+auto const pack_num_cols_axis      = std::vector<nvbench::int64_t>{64, 512, 1024};
+auto const pack_nulls_axis         = std::vector<nvbench::float64_t>{0.0, 0.3};
+auto const pack_access_column_axis = std::vector<nvbench::int64_t>{0, 1};
 
 // Registers the default CUDA stream on `state` and builds the input table
 // from the axis parameters.
@@ -100,12 +101,8 @@ void bench_device_pack(nvbench::state& state)
 
 void bench_device_unpack(nvbench::state& state)
 {
-  run_unpack(state, cudf::get_current_device_resource_ref(), /*access_column=*/false);
-}
-
-void bench_device_unpack_and_column_access(nvbench::state& state)
-{
-  run_unpack(state, cudf::get_current_device_resource_ref(), /*access_column=*/true);
+  auto const access_column = state.get_int64("access_column") != 0;
+  run_unpack(state, cudf::get_current_device_resource_ref(), access_column);
 }
 
 // Host Pack and Unpack
@@ -117,14 +114,9 @@ void bench_host_pack(nvbench::state& state)
 
 void bench_host_unpack(nvbench::state& state)
 {
+  auto const access_column = state.get_int64("access_column") != 0;
   rmm::mr::pinned_host_memory_resource phmr;
-  run_unpack(state, phmr, /*access_column=*/false);
-}
-
-void bench_host_unpack_and_column_access(nvbench::state& state)
-{
-  rmm::mr::pinned_host_memory_resource phmr;
-  run_unpack(state, phmr, /*access_column=*/true);
+  run_unpack(state, phmr, access_column);
 }
 
 }  // namespace
@@ -139,13 +131,8 @@ NVBENCH_BENCH(bench_device_unpack)
   .set_name("device_unpack")
   .add_int64_axis("num_rows", pack_num_rows_axis)
   .add_int64_axis("num_cols", pack_num_cols_axis)
-  .add_float64_axis("nulls", pack_nulls_axis);
-
-NVBENCH_BENCH(bench_device_unpack_and_column_access)
-  .set_name("device_unpack_and_column_access")
-  .add_int64_axis("num_rows", pack_num_rows_axis)
-  .add_int64_axis("num_cols", pack_num_cols_axis)
-  .add_float64_axis("nulls", pack_nulls_axis);
+  .add_float64_axis("nulls", pack_nulls_axis)
+  .add_int64_axis("access_column", pack_access_column_axis);
 
 NVBENCH_BENCH(bench_host_pack)
   .set_name("host_pack")
@@ -157,10 +144,5 @@ NVBENCH_BENCH(bench_host_unpack)
   .set_name("host_unpack")
   .add_int64_axis("num_rows", pack_num_rows_axis)
   .add_int64_axis("num_cols", pack_num_cols_axis)
-  .add_float64_axis("nulls", pack_nulls_axis);
-
-NVBENCH_BENCH(bench_host_unpack_and_column_access)
-  .set_name("host_unpack_and_column_access")
-  .add_int64_axis("num_rows", pack_num_rows_axis)
-  .add_int64_axis("num_cols", pack_num_cols_axis)
-  .add_float64_axis("nulls", pack_nulls_axis);
+  .add_float64_axis("nulls", pack_nulls_axis)
+  .add_int64_axis("access_column", pack_access_column_axis);

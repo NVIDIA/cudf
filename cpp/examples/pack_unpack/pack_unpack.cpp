@@ -7,6 +7,7 @@
 #include <cudf/contiguous_split.hpp>
 #include <cudf/io/csv.hpp>
 #include <cudf/null_mask.hpp>
+#include <cudf/table/equality.hpp>
 #include <cudf/table/table.hpp>
 #include <cudf/table/table_view.hpp>
 #include <cudf/types.hpp>
@@ -29,6 +30,7 @@
 #include <memory>
 #include <numeric>
 #include <span>
+#include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
@@ -86,11 +88,22 @@ void print_table(std::string const& header, cudf::table_view const& tbl_view)
   std::cout << header << ":\n" << table_view_to_string(tbl_view) << "\n";
 }
 
+void check_tables_equal(cudf::table_view const& expected,
+                        cudf::table_view const& actual,
+                        cuda::stream_ref stream = cudf::get_default_stream())
+{
+  auto const equal = cudf::tables_equal(expected, actual, cudf::null_equality::EQUAL, stream);
+  std::cout << "Tables identical: " << std::boolalpha << equal << "\n\n";
+  if (not equal) { throw std::logic_error("Table equality check failed"); }
+}
+
 // Pack and unpack a table entirely on the device.
 void device_pack_unpack(cudf::table_view input)
 {
   cudf::packed_columns packed = cudf::pack(input);
-  print_table("Device Unpacked Table", cudf::unpack(packed));
+  auto const unpacked         = cudf::unpack(packed);
+  print_table("Device Unpacked Table", unpacked);
+  check_tables_equal(input, unpacked);
 }
 
 // Pack a table into pinned host memory, then unpack it.
@@ -98,7 +111,9 @@ void host_pack_unpack(cudf::table_view input)
 {
   rmm::mr::pinned_host_memory_resource phmr;
   cudf::packed_columns packed = cudf::pack(input, cudf::get_default_stream(), phmr);
-  print_table("Host Unpacked Table", cudf::unpack(packed));
+  auto const unpacked         = cudf::unpack(packed);
+  print_table("Host Unpacked Table", unpacked);
+  check_tables_equal(input, unpacked);
 }
 
 // Pack into pinned host memory, copy the packed bytes to another host buffer
@@ -121,7 +136,9 @@ void host_pack_copy_unpack(cudf::table_view input)
     std::make_unique<rmm::device_buffer>(copied_data.data(), copied_data.size(), stream, phmr);
   cudf::packed_columns copied_packed(std::move(copied_metadata), std::move(copied_buffer));
 
-  print_table("Host Copied Unpacked Table", cudf::unpack(copied_packed));
+  auto const unpacked = cudf::unpack(copied_packed);
+  print_table("Host Copied Unpacked Table", unpacked);
+  check_tables_equal(input, unpacked, stream);
 }
 
 }  // namespace

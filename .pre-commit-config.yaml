@@ -180,6 +180,15 @@ repos:
         pass_filenames: true
         verbose: true
         types: [python]
+      - id: cudf-polars-version-compat
+        name: cudf-polars-version-compat
+        description: 'Check that cudf-polars polars version-compat flags are not stale.'
+        entry: python ci/checks/versions_compat.py
+        language: python
+        additional_dependencies: [packaging]
+        files: ^python/cudf_polars/(pyproject\.toml|cudf_polars/utils/versions\.py)$
+        pass_filenames: false
+        verbose: true
       - id: cmake-format
         name: cmake-format
         entry: ./cpp/scripts/run-cmake-format.sh cmake-format

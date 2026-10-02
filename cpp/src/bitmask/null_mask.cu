@@ -24,6 +24,7 @@
 #include <cooperative_groups/reduce.h>
 #include <cub/block/block_reduce.cuh>
 #include <cuda/atomic>
+#include <cuda/bit>
 #include <cuda/memory_resource>
 #include <cuda/numeric>
 #include <cuda/std/execution>
@@ -126,10 +127,10 @@ __device__ void set_null_mask_impl(bitmask_type* __restrict__ destination,
     if (destination_word_index == 0 || destination_word_index == last_word) {
       bitmask_type mask = ~bitmask_type{0};
       if (destination_word_index == 0) {
-        mask = ~(set_least_significant_bits(intra_word_index(begin_bit)));
+        mask = ~(cuda::bitmask<bitmask_type>(0, intra_word_index(begin_bit)));
       }
       if (destination_word_index == last_word) {
-        mask = mask & set_least_significant_bits(intra_word_index(end_bit));
+        mask = mask & cuda::bitmask<bitmask_type>(0, intra_word_index(end_bit));
       }
       if constexpr (MODE == mask_set_mode::SAFE) {
         // Atomic ref to the destination word. Using thread block scope as this case is only
@@ -456,8 +457,9 @@ CUDF_KERNEL void count_set_bits_kernel(device_span<bitmask_type const* const> bi
 
     if (num_slack_bits > 0) {
       bitmask_type word = bitmask[word_index];
-      auto slack_mask   = (first) ? set_least_significant_bits(num_slack_bits)
-                                  : set_most_significant_bits(num_slack_bits);
+      auto slack_mask   = (first)
+                            ? cuda::bitmask<bitmask_type>(0, num_slack_bits)
+                            : cuda::bitmask<bitmask_type>(word_size - num_slack_bits, num_slack_bits);
 
       thread_count -= cuda::std::popcount(word & slack_mask);
     }

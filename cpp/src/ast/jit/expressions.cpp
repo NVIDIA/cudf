@@ -7,8 +7,15 @@
 #include "jit/row_ir.hpp"
 
 #include <cudf/ast/expressions.hpp>
+#include <cudf/detail/row_ir/opcode.hpp>
+#include <cudf/utilities/error.hpp>
 
 #include <cuda/stream>
+
+#include <initializer_list>
+#include <memory>
+#include <stdexcept>
+#include <string>
 
 namespace cudf {
 namespace ast {

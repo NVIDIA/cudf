@@ -21,7 +21,8 @@
 
 // Measure how page-index setup cost scales with file shape.
 template <cudf::type_id DType>
-void BM_hybrid_scan_file_shape(nvbench::state& state, nvbench::type_list<nvbench::enum_type<DType>>)
+void BM_hybrid_scan_setup_page_index(nvbench::state& state,
+                                     nvbench::type_list<nvbench::enum_type<DType>>)
 {
   auto constexpr write_page_index = true;
 
@@ -46,31 +47,32 @@ void BM_hybrid_scan_file_shape(nvbench::state& state, nvbench::type_list<nvbench
   auto const read_opts =
     cudf::io::parquet_reader_options::builder(source_sink.make_source_info()).build();
 
-  state.exec(
-    nvbench::exec_tag::sync | nvbench::exec_tag::timer, [&](nvbench::launch& launch, auto& timer) {
-      drop_page_cache_if_enabled(read_opts.get_source().filepaths());
-      auto datasource   = std::move(cudf::io::make_datasources(read_opts.get_source()).front());
-      auto const footer = cudf::io::parquet::fetch_footer_to_host(*datasource);
-      // A reader sets up its page index only once, so every sample needs a new reader
-      auto const reader =
-        std::make_unique<cudf::io::parquet::experimental::hybrid_scan_reader>(*footer, read_opts);
-      auto const page_index =
-        cudf::io::parquet::fetch_page_index_to_host(*datasource, reader->page_index_byte_range());
+  auto const datasource = std::move(cudf::io::make_datasources(read_opts.get_source()).front());
+  auto const footer     = cudf::io::parquet::fetch_footer_to_host(*datasource);
+  auto const page_index_byte_range =
+    cudf::io::parquet::experimental::hybrid_scan_reader(*footer, read_opts).page_index_byte_range();
+  auto const page_index =
+    cudf::io::parquet::fetch_page_index_to_host(*datasource, page_index_byte_range);
 
-      timer.start();
-      reader->setup_page_index(*page_index);
-      timer.stop();
-    });
+  state.exec(nvbench::exec_tag::sync | nvbench::exec_tag::timer,
+             [&](nvbench::launch& launch, auto& timer) {
+               // A reader sets up its page index only once, so every sample needs a new reader
+               cudf::io::parquet::experimental::hybrid_scan_reader reader(*footer, read_opts);
+
+               timer.start();
+               reader.setup_page_index(*page_index);
+               timer.stop();
+             });
 
   state.add_buffer_size(source_sink.size(), "encoded_file_size", "encoded_file_size");
 }
 
 // Fixed-width types differ only in the size of their min/max values, so INT32 stands in for all
 // of them. STRING adds `unencoded_byte_array_data_bytes` to the offset index
-using file_shape_dtypes = nvbench::enum_type_list<cudf::type_id::INT32, cudf::type_id::STRING>;
+using page_index_dtypes = nvbench::enum_type_list<cudf::type_id::INT32, cudf::type_id::STRING>;
 
-NVBENCH_BENCH_TYPES(BM_hybrid_scan_file_shape, NVBENCH_TYPE_AXES(file_shape_dtypes))
-  .set_name("hybrid_scan_file_shape")
+NVBENCH_BENCH_TYPES(BM_hybrid_scan_setup_page_index, NVBENCH_TYPE_AXES(page_index_dtypes))
+  .set_name("hybrid_scan_setup_page_index")
   .set_type_axes_names({"dtype"})
   .set_min_samples(4)
   .add_string_axis("io_type", {"DEVICE_BUFFER"})

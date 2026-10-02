@@ -15,8 +15,11 @@
 #include <cuda/iterator>
 #include <cuda/std/array>
 #include <cuda/std/limits>
+#include <cuda/std/type_traits>
 #include <cuda/stream>
 #include <thrust/for_each.h>
+
+#include <cstdint>
 
 namespace cudf {
 namespace hashing {
@@ -78,7 +81,12 @@ class murmur_device_row_hasher {
                 cuda::std::numeric_limits<uint64_t>::max()};
       }
       auto const hasher = MurmurHash3_x64_128<T>{seed[0]};
-      return hasher(col.element<T>(row_index));
+      if constexpr (cuda::std::is_same_v<T, bool>) {
+        // Normalize the stored byte before loading it as bool, as in the shared row hasher.
+        return hasher(col.data<uint8_t>()[row_index] != 0);
+      } else {
+        return hasher(col.element<T>(row_index));
+      }
     }
 
     template <typename T, CUDF_ENABLE_IF(not column_device_view::has_element_accessor<T>())>

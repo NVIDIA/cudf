@@ -25,6 +25,7 @@
 
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/bit>
 #include <cuda/buffer>
 #include <cuda/functional>
 #include <cuda/iterator>
@@ -277,7 +278,8 @@ __device__ void copy_buffer(uint8_t* __restrict__ dst,
         // considered during the copy step.
         std::size_t const max_row    = (num_bytes * 8);
         std::size_t const slack_bits = max_row > num_rows ? max_row - num_rows : 0;
-        auto const slack_mask        = set_most_significant_bits(slack_bits);
+        auto const slack_mask        = cuda::bitmask<bitmask_type>(
+          detail::size_in_bits<bitmask_type>() - slack_bits, slack_bits);
         if (slack_mask > 0) {
           uint32_t const last_word = reinterpret_cast<uint32_t*>(dst + (num_bytes - 4))[0];
           block_valid_count -= __popc(last_word & slack_mask);

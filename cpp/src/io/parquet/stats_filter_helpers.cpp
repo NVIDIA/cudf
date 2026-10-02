@@ -65,35 +65,49 @@ stats_columns_collector::stats_columns_collector(ast::expression const& expr,
                                                  std::span<cudf::data_type const> output_dtypes)
   : parquet_expression_simplifier{output_dtypes}
 {
-  _columns_mask.resize(_output_dtypes.size(), false);
   // Return an empty mask if statistics cannot prune anything with this filter
-  if (not simplify_expr(expr).has_value()) { _columns_mask.clear(); }
+  auto const simplified_expr = simplify_expr(expr);
+  if (not simplified_expr.has_value()) { return; }
+
+  _columns_mask.resize(_output_dtypes.size(), false);
+
+  // Walk the simplified tree and collect columns references
+  collect_surviving_predicates(simplified_expr.value().get());
+}
+
+void stats_columns_collector::collect_surviving_predicates(ast::expression const& simplified_expr)
+{
+  if (auto const* col_ref = dynamic_cast<ast::column_reference const*>(&simplified_expr);
+      col_ref != nullptr) {
+    _columns_mask[col_ref->get_column_index()] = true;
+    return;
+  }
+  for (auto const& operand : dynamic_cast<ast::operation const&>(simplified_expr).get_operands()) {
+    collect_surviving_predicates(operand.get());
+  }
 }
 
 simplified_expression_opt stats_columns_collector::simplify_comparison(
   ast::ast_operator op, ast::column_reference const& col_ref, ast::literal const&)
 {
-  auto const col_index = col_ref.get_column_index();
-  if (not is_prunable_comparison(op, _output_dtypes[col_index])) { return std::nullopt; }
-  _columns_mask[col_index] = true;
-  return placeholder_expr();
+  if (not is_prunable_comparison(op, _output_dtypes[col_ref.get_column_index()])) {
+    return std::nullopt;
+  }
+  return col_ref;
 }
 
 simplified_expression_opt stats_columns_collector::simplify_unary_op(
   ast::ast_operator op, ast::column_reference const& col_ref)
 {
   if (op != ast::ast_operator::IS_NULL) { return std::nullopt; }
-  _columns_mask[col_ref.get_column_index()] = true;
-  return placeholder_expr();
+  return col_ref;
 }
 
 simplified_expression_opt stats_columns_collector::simplify_negated_unary_op(
   ast::ast_operator op, ast::column_reference const& col_ref)
 {
   if (op != ast::ast_operator::IS_NULL) { return std::nullopt; }
-  _columns_mask[col_ref.get_column_index()] = true;
-
-  return placeholder_expr();
+  return col_ref;
 }
 
 simplified_expression_opt stats_columns_collector::simplify_negated_comparison(

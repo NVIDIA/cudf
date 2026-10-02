@@ -235,6 +235,7 @@ aggregate_reader_metadata::filter_row_groups(
                                                              equality_literals,
                                                              num_stats_filtered_row_groups,
                                                              output_dtypes,
+                                                             output_column_schemas,
                                                              equality_col_schemas,
                                                              filter,
                                                              stream);

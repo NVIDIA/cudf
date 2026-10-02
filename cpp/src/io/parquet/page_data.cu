@@ -176,16 +176,16 @@ CUDF_KERNEL void __launch_bounds__(decode_block_size)
             case Type::INT64: gpuOutputByteStreamSplit<int64_t>(dst, src, num_values); break;
             case Type::FIXED_LEN_BYTE_ARRAY:
               if (s->output_cvt.dtype_len_in <= sizeof(int32_t)) {
-                gpuOutputSplitFixedLenByteArrayAsInt(
-                  reinterpret_cast<int32_t*>(dst), src, num_values, s->output_cvt.dtype_len_in);
+                *reinterpret_cast<int32_t*>(dst) =
+                  decode_big_endian_decimal<int32_t>(src, s->output_cvt.dtype_len_in, num_values);
                 break;
               } else if (s->output_cvt.dtype_len_in <= sizeof(int64_t)) {
-                gpuOutputSplitFixedLenByteArrayAsInt(
-                  reinterpret_cast<int64_t*>(dst), src, num_values, s->output_cvt.dtype_len_in);
+                *reinterpret_cast<int64_t*>(dst) =
+                  decode_big_endian_decimal<int64_t>(src, s->output_cvt.dtype_len_in, num_values);
                 break;
               } else if (s->output_cvt.dtype_len_in <= sizeof(__int128_t)) {
-                gpuOutputSplitFixedLenByteArrayAsInt(
-                  reinterpret_cast<__int128_t*>(dst), src, num_values, s->output_cvt.dtype_len_in);
+                *reinterpret_cast<__int128_t*>(dst) = decode_big_endian_decimal<__int128_t>(
+                  src, s->output_cvt.dtype_len_in, num_values);
                 break;
               }
               // unsupported decimal precision
@@ -409,13 +409,14 @@ CUDF_KERNEL void __launch_bounds__(decode_block_size)
         if (dtype == Type::BYTE_ARRAY) {
           if (is_decimal) {
             auto const [ptr, len]        = gpuGetStringData(s, sb, val_src_pos);
+            auto const bytes             = reinterpret_cast<uint8_t const*>(ptr);
             auto const decimal_precision = s->setup.col.logical_type->precision();
             if (decimal_precision <= MAX_DECIMAL32_PRECISION) {
-              gpuOutputByteArrayAsInt(ptr, len, static_cast<int32_t*>(dst));
+              *static_cast<int32_t*>(dst) = decode_big_endian_decimal<int32_t>(bytes, len);
             } else if (decimal_precision <= MAX_DECIMAL64_PRECISION) {
-              gpuOutputByteArrayAsInt(ptr, len, static_cast<int64_t*>(dst));
+              *static_cast<int64_t*>(dst) = decode_big_endian_decimal<int64_t>(bytes, len);
             } else {
-              gpuOutputByteArrayAsInt(ptr, len, static_cast<__int128_t*>(dst));
+              *static_cast<__int128_t*>(dst) = decode_big_endian_decimal<__int128_t>(bytes, len);
             }
           } else {
             gpuOutputString(s, sb, val_src_pos, dst);

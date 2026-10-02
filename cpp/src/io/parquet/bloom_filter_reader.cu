@@ -307,26 +307,42 @@ struct bloom_filter_caster {
 };
 
 /**
- * @brief Whether a bloom filter can be queried for a col equal literal predicate
+ * @brief Whether a bloom filter can be queried for a `col op lit` predicate
  *
- * @throws cudf::logic_error if the literal's type differs from the column's
+ * @throws cudf::logic_error if the column and literal types mismatch
  *
- * @param column_type Output type of the column
+ * @param op Comparison operator
+ * @param col_idx Index of the column in the output table
  * @param literal Literal compared against the column
+ * @param output_dtypes Output data types of the table columns
+ * @param output_column_schemas Schema indices of the table columns, or empty to skip the timestamp
+ *        precision check
+ * @param schema_tree Parquet schema tree
  * @return Whether the bloom filter can be queried
  */
-[[nodiscard]] bool is_bloom_filterable(cudf::data_type column_type, ast::literal const& literal)
+[[nodiscard]] bool is_bloom_filterable(ast::ast_operator op,
+                                       cudf::size_type col_idx,
+                                       ast::literal const& literal,
+                                       std::span<cudf::data_type const> output_dtypes,
+                                       std::span<cudf::size_type const> output_column_schemas,
+                                       std::span<SchemaElement const> schema_tree)
 {
-  CUDF_EXPECTS(column_type.id() == literal.get_data_type().id(),
-               "Mismatched predicate column and literal types");
-  // Booleans and non-comparable compound types cannot be queried
-  if (column_type.id() == cudf::type_id::BOOL8 or
-      (cudf::is_compound(column_type) and column_type.id() != cudf::type_id::STRING)) {
-    return false;
+  // A bloom filter answers only "might this value be present", so only equality can be evaluated
+  if (op != ast::ast_operator::EQUAL) { return false; }
+
+  // A timestamp literal of another precision than the column's native one would never match the
+  // values hashed into the bloom filter
+  auto const& dtype = output_dtypes[col_idx];
+  if (not output_column_schemas.empty() and cudf::is_timestamp(dtype)) {
+    auto const& schema   = schema_tree[output_column_schemas[col_idx]];
+    auto const clockrate = cudf::io::detail::to_clockrate(dtype.id());
+    if (schema.logical_type.has_value() and
+        calc_timestamp_scale(schema.logical_type, clockrate) != 0) {
+      return false;
+    }
   }
-  // A decimal literal with a different scale cannot be queried
-  return not cudf::is_fixed_point(column_type) or
-         column_type.scale() == literal.get_data_type().scale();
+
+  return is_membership_queryable(dtype, literal);
 }
 
 /**
@@ -337,8 +353,13 @@ class bloom_filter_expression_converter final : public parquet_expression_simpli
  public:
   bloom_filter_expression_converter(ast::expression const& expr,
                                     std::span<cudf::data_type const> output_dtypes,
+                                    std::span<cudf::size_type const> output_column_schemas,
+                                    std::span<SchemaElement const> schema_tree,
                                     std::span<std::vector<ast::literal*> const> equality_literals)
-    : parquet_expression_simplifier{output_dtypes}, _equality_literals{equality_literals}
+    : parquet_expression_simplifier{output_dtypes},
+      _output_column_schemas{output_column_schemas},
+      _schema_tree{schema_tree},
+      _equality_literals{equality_literals}
   {
     // Compute and store columns literals offsets
     _col_literals_offsets.reserve(static_cast<cudf::size_type>(_output_dtypes.size()) + 1);
@@ -380,15 +401,19 @@ class bloom_filter_expression_converter final : public parquet_expression_simpli
   {
     using cudf::ast::ast_operator;
 
-    if (op != ast_operator::EQUAL) { return std::nullopt; }
+    auto const col_idx = col_ref.get_column_index();
 
-    auto const col_idx            = col_ref.get_column_index();
+    // Return early if the bloom filter cannot be queried for the column and literal
+    if (not is_bloom_filterable(
+          op, col_idx, literal, _output_dtypes, _output_column_schemas, _schema_tree)) {
+      return std::nullopt;
+    }
+
     auto const& equality_literals = _equality_literals[col_idx];
-
     auto const literal_iter =
       std::find(equality_literals.cbegin(), equality_literals.cend(), &literal);
 
-    // Skip bloom filter probing for literals not collected by the equality literals collector
+    // Supported comparisons in discarded OR branches were not collected.
     if (literal_iter == equality_literals.cend()) { return std::nullopt; }
 
     auto const col_literal_offset =
@@ -400,6 +425,8 @@ class bloom_filter_expression_converter final : public parquet_expression_simpli
 
  private:
   std::vector<cudf::size_type> _col_literals_offsets;
+  std::span<cudf::size_type const> _output_column_schemas;
+  std::span<SchemaElement const> _schema_tree;
   std::span<std::vector<ast::literal*> const> _equality_literals;
   simplified_expression_opt _bloom_filter_expr;
 };
@@ -515,21 +542,20 @@ aggregate_reader_metadata::read_bloom_filters(
 }
 
 std::optional<std::vector<std::vector<size_type>>> aggregate_reader_metadata::apply_bloom_filters(
-  cudf::host_span<cudf::device_span<cuda::std::byte const> const> bloom_filter_data,
-  host_span<std::vector<size_type> const> input_row_group_indices,
-  host_span<std::vector<ast::literal*> const> literals,
+  std::span<cudf::device_span<cuda::std::byte const> const> bloom_filter_data,
+  std::span<std::vector<size_type> const> input_row_group_indices,
+  std::span<std::vector<ast::literal*> const> literals,
   size_type total_row_groups,
-  host_span<data_type const> output_dtypes,
-  host_span<cudf::size_type const> bloom_filter_col_schemas,
+  std::span<data_type const> output_dtypes,
+  std::span<cudf::size_type const> output_column_schemas,
+  std::span<cudf::size_type const> bloom_filter_col_schemas,
   std::reference_wrapper<ast::expression const> filter,
   cuda::stream_ref stream) const
 {
   // Convert AST to BloomfilterAST expression with reference to bloom filter membership
   // in above `bloom_filter_membership_table`
   bloom_filter_expression_converter bloom_filter_expr_converter{
-    filter.get(),
-    std::span{output_dtypes.data(), output_dtypes.size()},
-    std::span{literals.data(), literals.size()}};
+    filter.get(), output_dtypes, output_column_schemas, per_file_metadata[0].schema, literals};
 
   // Return early if bloom filters cannot prune any row groups using the filter
   auto const bloom_filter_expr = bloom_filter_expr_converter.get_bloom_filter_expr();
@@ -539,7 +565,7 @@ std::optional<std::vector<std::vector<size_type>>> aggregate_reader_metadata::ap
   auto const num_input_columns = static_cast<cudf::size_type>(output_dtypes.size());
 
   // Get parquet types for the predicate columns
-  auto const parquet_types = get_parquet_types(input_row_group_indices, bloom_filter_col_schemas);
+  auto const parquet_types = get_parquet_types(bloom_filter_col_schemas);
 
   // Byte lengths of the FIXED_LEN_BYTE_ARRAY predicate columns
   std::vector<int32_t> parquet_type_lengths(bloom_filter_col_schemas.size());
@@ -551,8 +577,10 @@ std::optional<std::vector<std::vector<size_type>>> aggregate_reader_metadata::ap
   auto const mr = cudf::memory_resources{cudf::get_current_device_resource_ref()};
 
   // Copy bloom filter bitset spans to device
-  auto const device_bloom_filter_data =
-    cudf::detail::make_device_uvector_async(bloom_filter_data, stream, mr.get_temporary_mr());
+  auto const device_bloom_filter_data = cudf::detail::make_device_uvector_async(
+    cudf::host_span{bloom_filter_data.data(), bloom_filter_data.size()},
+    stream,
+    mr.get_temporary_mr());
 
   // Create a bloom filter query table caster
   bloom_filter_caster const bloom_filter_col{device_bloom_filter_data,
@@ -577,9 +605,6 @@ std::optional<std::vector<std::vector<size_type>>> aggregate_reader_metadata::ap
 
       // Add a column for all literals associated with an equality column
       for (auto const& literal : literals[input_col_idx]) {
-        // Non-bloom-filterable literals are not collected by `equality_literals_collector`
-        CUDF_EXPECTS(is_bloom_filterable(dtype, *literal),
-                     "Bloom filters cannot be queried for the predicate column and literal");
         bloom_filter_membership_columns.emplace_back(cudf::type_dispatcher<dispatch_storage_type>(
           dtype, bloom_filter_col, equality_col_idx, dtype, literal, stream, mr));
       }
@@ -607,6 +632,7 @@ equality_literals_collector::equality_literals_collector(
     _output_column_schemas.empty() or _output_column_schemas.size() == output_dtypes.size(),
     "output_column_schemas must have the same size as output_dtypes when provided");
   _literals.resize(static_cast<size_type>(output_dtypes.size()));
+  _operators.resize(static_cast<size_type>(output_dtypes.size()));
 }
 
 equality_literals_collector::equality_literals_collector(
@@ -621,7 +647,31 @@ equality_literals_collector::equality_literals_collector(
 
 void equality_literals_collector::collect(ast::expression const& expr)
 {
-  _can_filter = simplify_expr(expr).has_value();
+  auto const simplified_expr = simplify_expr(expr);
+  _can_filter                = simplified_expr.has_value();
+  if (not _can_filter) { return; }
+
+  // Walk the simplified tree and collect literals and operators
+  collect_surviving_predicates(simplified_expr.value().get());
+}
+
+void equality_literals_collector::collect_surviving_predicates(
+  ast::expression const& simplified_expr)
+{
+  auto const& operation = dynamic_cast<ast::operation const&>(simplified_expr);
+  auto const op         = operation.get_operator();
+  auto const& operands  = operation.get_operands();
+  if (op == ast::ast_operator::NULL_LOGICAL_AND or op == ast::ast_operator::NULL_LOGICAL_OR) {
+    for (auto const& operand : operands) {
+      collect_surviving_predicates(operand.get());
+    }
+    return;
+  }
+  auto const col_idx =
+    dynamic_cast<ast::column_reference const&>(operands.front().get()).get_column_index();
+  _literals[col_idx].emplace_back(
+    const_cast<ast::literal*>(&dynamic_cast<ast::literal const&>(operands.back().get())));
+  _operators[col_idx].emplace_back(op);
 }
 
 bool equality_literals_collector::can_filter() const { return _can_filter; }
@@ -629,27 +679,15 @@ bool equality_literals_collector::can_filter() const { return _can_filter; }
 simplified_expression_opt equality_literals_collector::simplify_comparison(
   ast::ast_operator op, ast::column_reference const& col_ref, ast::literal const& literal)
 {
-  if (op != ast::ast_operator::EQUAL) { return std::nullopt; }
-
   auto const col_idx = col_ref.get_column_index();
 
-  // Do not collect literals for timestamp columns whose output precision differs from the column's
-  // native precision as the literal would never match the native values.
-  if (not _output_column_schemas.empty() and cudf::is_timestamp(_output_dtypes[col_idx])) {
-    auto const schema_idx = _output_column_schemas[col_idx];
-    auto const& schema    = _schema_tree[schema_idx];
-    auto const clockrate  = cudf::io::detail::to_clockrate(_output_dtypes[col_idx].id());
-    if (schema.logical_type.has_value() and
-        calc_timestamp_scale(schema.logical_type, clockrate) != 0) {
-      return std::nullopt;
-    }
+  // Do not collect literals that cannot be evaluated with bloom filters
+  if (not is_bloom_filterable(
+        op, col_idx, literal, _output_dtypes, _output_column_schemas, _schema_tree)) {
+    return std::nullopt;
   }
 
-  // Do not collect non-bloom-filterable literals
-  if (not is_bloom_filterable(_output_dtypes[col_idx], literal)) { return std::nullopt; }
-
-  _literals[col_idx].emplace_back(const_cast<ast::literal*>(&literal));
-  return placeholder_expr();
+  return _tree.push(ast::operation{op, col_ref, literal});
 }
 
 std::vector<std::vector<ast::literal*>> equality_literals_collector::get_literals() &&

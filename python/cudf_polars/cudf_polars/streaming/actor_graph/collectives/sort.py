@@ -821,7 +821,9 @@ async def sort_actor(
         chs_aux=(ch_sample_replay, ch_chunk_store),
         trace_ir=ir,
         ir_context=ir_context,
-    ) as tracer:
+    ) as actor_scope:
+        tracer = actor_scope.tracer
+        ir_context = actor_scope.require_ir_context()
         # TODO: Skip sort if OrderScheme metadata is present and compatible.
         metadata_in = await recv_metadata(ch_in, context)
 

@@ -11,13 +11,13 @@ from typing import TYPE_CHECKING, Any, NamedTuple, TypeAlias, TypedDict
 from cudf_polars.typing import GenericTransformer
 
 if TYPE_CHECKING:
+    import uuid
     from collections.abc import MutableMapping
 
     from rapidsmpf.communicator.communicator import Communicator
     from rapidsmpf.streaming.core.context import Context
 
     import cudf_polars.quent._context
-    import cudf_polars.quent._types
     from cudf_polars.dsl.ir import IR, IRExecutionContext
     from cudf_polars.streaming.actor_graph.utils import ChannelManager
     from cudf_polars.streaming.base import (
@@ -83,7 +83,7 @@ class GenState(TypedDict):
     stats: StatsCollector
     collective_id_map: dict[IR, list[int]]
     partitioning_requests: dict[IR, tuple[PartitioningRequest, ...]]
-    quent_operator_map: dict[IR, cudf_polars.quent._types.Operator] | None
+    quent_operator_map: dict[IR, uuid.UUID] | None
     quent_execution_context: cudf_polars.quent._context.LocalQuentContext | None
 
 
@@ -110,12 +110,12 @@ def ir_context_for_node(rec: SubNetGenerator, ir: IR) -> IRExecutionContext:
     quent_operator_map = rec.state["quent_operator_map"]
     quent_execution_context = rec.state["quent_execution_context"]
     if quent_operator_map is not None and quent_execution_context is not None:
-        quent_operator = quent_operator_map[ir]
+        operator_id = quent_operator_map[ir]
         return dataclasses.replace(
             ir_context,
             quent_ir_execution_context=cudf_polars.quent._context.QuentIRExecutionContext.from_execution_context(
                 execution_context=quent_execution_context,
-                quent_operator=quent_operator,
+                operator_id=operator_id,
             ),
         )
     return ir_context

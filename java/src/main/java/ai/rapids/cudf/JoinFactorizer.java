@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -23,7 +23,7 @@ import org.slf4j.LoggerFactory;
  * affected and the caller retains ownership of it.
  * </p>
  * <p>
- * For advanced memory management (e.g., spilling), use {@link #releaseBuildKeys()} to take
+ * For advanced memory management (e.g., spilling), use {@link #releaseRightKeys()} to take
  * ownership of the internal build keys table. After calling this method, the caller is
  * responsible for ensuring the returned table remains valid for the lifetime of this object
  * and for closing it when appropriate.
@@ -31,11 +31,11 @@ import org.slf4j.LoggerFactory;
  * <p>
  * <b>Usage pattern:</b>
  * <pre>{@code
- * try (KeyRemapping remap = new KeyRemapping(buildKeys, true)) {
+ * try (JoinFactorizer remap = new JoinFactorizer(rightKeys, true)) {
  *   // Remap build keys (recomputes from cached build table)
- *   try (ColumnVector remappedBuild = remap.remapBuildKeys()) {
+ *   try (ColumnVector remappedBuild = remap.factorizeRightKeys()) {
  *     // Remap probe keys
- *     try (ColumnVector remappedProbe = remap.remapProbeKeys(probeKeys)) {
+ *     try (ColumnVector remappedProbe = remap.factorizeLeftKeys(leftKeys)) {
  *       // Use remapped integer keys
  *     }
  *   }
@@ -43,18 +43,18 @@ import org.slf4j.LoggerFactory;
  * }</pre>
  * </p>
  */
-public class KeyRemapping implements AutoCloseable {
+public class JoinFactorizer implements AutoCloseable {
   static {
     NativeDepsLoader.loadNativeDeps();
   }
 
-  private static final Logger log = LoggerFactory.getLogger(KeyRemapping.class);
+  private static final Logger log = LoggerFactory.getLogger(JoinFactorizer.class);
 
   /**
    * Sentinel value for probe-side keys not found in build table.
    * <p>
    * This constant is primarily exposed for testing purposes.
-   * It must be kept in sync with KEY_REMAP_NOT_FOUND in cudf/join/key_remapping.hpp.
+   * It must be kept in sync with FACTORIZE_NOT_FOUND in cudf/join/join_factorizer.hpp.
    * </p>
    */
   public static final int NOT_FOUND_SENTINEL = -1;
@@ -63,18 +63,18 @@ public class KeyRemapping implements AutoCloseable {
    * Sentinel value for build-side rows with null keys (when nulls are not equal).
    * <p>
    * This constant is primarily exposed for testing purposes.
-   * It must be kept in sync with KEY_REMAP_RIGHT_NULL in cudf/join/key_remapping.hpp.
+   * It must be kept in sync with FACTORIZE_RIGHT_NULL in cudf/join/join_factorizer.hpp.
    * </p>
    */
-  public static final int BUILD_NULL_SENTINEL = -2;
+  public static final int RIGHT_NULL_SENTINEL = -2;
 
-  private static class KeyRemappingCleaner extends MemoryCleaner.Cleaner {
-    private Table buildKeys;
+  private static class JoinFactorizerCleaner extends MemoryCleaner.Cleaner {
+    private Table rightKeys;
     private long nativeHandle;
-    private boolean buildKeysReleased = false;
+    private boolean rightKeysReleased = false;
 
-    KeyRemappingCleaner(Table buildKeys, long nativeHandle) {
-      this.buildKeys = buildKeys;
+    JoinFactorizerCleaner(Table rightKeys, long nativeHandle) {
+      this.rightKeys = rightKeys;
       this.nativeHandle = nativeHandle;
       addRef();
     }
@@ -86,11 +86,11 @@ public class KeyRemapping implements AutoCloseable {
       if (neededCleanup) {
         try {
           destroy(nativeHandle);
-          // Only close buildKeys if it wasn't released to the caller
-          if (!buildKeysReleased && buildKeys != null) {
-            buildKeys.close();
+          // Only close rightKeys if it wasn't released to the caller
+          if (!rightKeysReleased && rightKeys != null) {
+            rightKeys.close();
           }
-          buildKeys = null;
+          rightKeys = null;
         } finally {
           nativeHandle = 0;
         }
@@ -107,7 +107,7 @@ public class KeyRemapping implements AutoCloseable {
     }
   }
 
-  private final KeyRemappingCleaner cleaner;
+  private final JoinFactorizerCleaner cleaner;
   private final NullEquality nullEquality;
   private final boolean computeMetrics;
   private boolean isClosed = false;
@@ -120,22 +120,22 @@ public class KeyRemapping implements AutoCloseable {
    * affected and the caller retains ownership of it.
    * </p>
    *
-   * @param buildKeys table containing the keys to build from. The column reference counts
+   * @param rightKeys table containing the keys to build from. The column reference counts
    *        will be incremented; the caller retains ownership of this table.
    * @param nullEquality how null key values should be compared.
    *        When EQUAL, null keys are treated as equal and assigned a valid non-negative ID.
    *        When UNEQUAL, rows with null keys receive a negative sentinel value.
    * @param computeMetrics if true, compute distinctCount and maxDuplicateCount.
    *        If false, skip metrics computation for better performance; calling
-   *        {@link #getDistinctCount()} or {@link #getMaxDuplicateCount()} will throw.
+   *        {@link #getDistinctCount()} or {@link #getMaxMultiplicity()} will throw.
    */
-  public KeyRemapping(Table buildKeys, NullEquality nullEquality, boolean computeMetrics) {
+  public JoinFactorizer(Table rightKeys, NullEquality nullEquality, boolean computeMetrics) {
     this.nullEquality = nullEquality;
     this.computeMetrics = computeMetrics;
-    Table buildTable = new Table(buildKeys.getColumns());
+    Table buildTable = new Table(rightKeys.getColumns());
     try {
       long handle = create(buildTable.getNativeView(), nullEquality.nullsEqual, computeMetrics);
-      this.cleaner = new KeyRemappingCleaner(buildTable, handle);
+      this.cleaner = new JoinFactorizerCleaner(buildTable, handle);
       MemoryCleaner.register(this, cleaner);
     } catch (Throwable t) {
       try {
@@ -150,21 +150,21 @@ public class KeyRemapping implements AutoCloseable {
   /**
    * Construct a key remapping structure from build keys with metrics computation enabled.
    *
-   * @param buildKeys table containing the keys to build from
+   * @param rightKeys table containing the keys to build from
    * @param nullEquality how null key values should be compared
    */
-  public KeyRemapping(Table buildKeys, NullEquality nullEquality) {
-    this(buildKeys, nullEquality, true);
+  public JoinFactorizer(Table rightKeys, NullEquality nullEquality) {
+    this(rightKeys, nullEquality, true);
   }
 
   /**
    * Construct a key remapping structure from build keys with nulls comparing equal
    * and metrics computation enabled.
    *
-   * @param buildKeys table containing the keys to build from
+   * @param rightKeys table containing the keys to build from
    */
-  public KeyRemapping(Table buildKeys) {
-    this(buildKeys, NullEquality.EQUAL, true);
+  public JoinFactorizer(Table rightKeys) {
+    this(rightKeys, NullEquality.EQUAL, true);
   }
 
   @Override
@@ -184,7 +184,7 @@ public class KeyRemapping implements AutoCloseable {
    */
   long getNativeHandle() {
     if (isClosed) {
-      throw new IllegalStateException("KeyRemapping is already closed");
+      throw new IllegalStateException("JoinFactorizer is already closed");
     }
     return cleaner.nativeHandle;
   }
@@ -203,7 +203,7 @@ public class KeyRemapping implements AutoCloseable {
    *
    * @return true if metrics are available, false if computeMetrics was false during construction
    */
-  public boolean hasMetrics() {
+  public boolean hasStatistics() {
     return computeMetrics;
   }
 
@@ -215,7 +215,7 @@ public class KeyRemapping implements AutoCloseable {
    */
   public int getDistinctCount() {
     if (isClosed) {
-      throw new IllegalStateException("KeyRemapping is already closed");
+      throw new IllegalStateException("JoinFactorizer is already closed");
     }
     return getDistinctCount(cleaner.nativeHandle);
   }
@@ -226,11 +226,11 @@ public class KeyRemapping implements AutoCloseable {
    * @return The maximum duplicate count across all distinct keys
    * @throws IllegalStateException if computeMetrics was false during construction
    */
-  public int getMaxDuplicateCount() {
+  public int getMaxMultiplicity() {
     if (isClosed) {
-      throw new IllegalStateException("KeyRemapping is already closed");
+      throw new IllegalStateException("JoinFactorizer is already closed");
     }
-    return getMaxDuplicateCount(cleaner.nativeHandle);
+    return getMaxMultiplicity(cleaner.nativeHandle);
   }
 
   /**
@@ -243,8 +243,8 @@ public class KeyRemapping implements AutoCloseable {
    * <ul>
    *   <li>The caller owns the returned Table and is responsible for closing it</li>
    *   <li>The caller must ensure the returned Table remains valid (not closed, not spilled)
-   *       for as long as this KeyRemapping object is in use</li>
-   *   <li>When this KeyRemapping is closed, it will NOT close the build keys table</li>
+   *       for as long as this JoinFactorizer object is in use</li>
+   *   <li>When this JoinFactorizer is closed, it will NOT close the build keys table</li>
    *   <li>This method can only be called once; subsequent calls will throw an exception</li>
    * </ul>
    * </p>
@@ -257,27 +257,27 @@ public class KeyRemapping implements AutoCloseable {
    * @return The build keys Table. The caller takes ownership and must close it when done.
    * @throws IllegalStateException if already closed or if build keys were already released
    */
-  public synchronized Table releaseBuildKeys() {
+  public synchronized Table releaseRightKeys() {
     if (isClosed) {
-      throw new IllegalStateException("KeyRemapping is already closed");
+      throw new IllegalStateException("JoinFactorizer is already closed");
     }
-    if (cleaner.buildKeysReleased) {
+    if (cleaner.rightKeysReleased) {
       throw new IllegalStateException("Build keys have already been released");
     }
-    if (cleaner.buildKeys == null) {
+    if (cleaner.rightKeys == null) {
       throw new IllegalStateException("Build keys are not available");
     }
-    cleaner.buildKeysReleased = true;
-    return cleaner.buildKeys;
+    cleaner.rightKeysReleased = true;
+    return cleaner.rightKeys;
   }
 
   /**
-   * Check if the build keys have been released via {@link #releaseBuildKeys()}.
+   * Check if the build keys have been released via {@link #releaseRightKeys()}.
    *
    * @return true if build keys have been released, false otherwise
    */
-  public boolean isBuildKeysReleased() {
-    return cleaner.buildKeysReleased;
+  public boolean isRightKeysReleased() {
+    return cleaner.rightKeysReleased;
   }
 
   /**
@@ -294,11 +294,11 @@ public class KeyRemapping implements AutoCloseable {
    *
    * @return A column of INT32 values with the remapped key IDs (caller must close)
    */
-  public ColumnVector remapBuildKeys() {
+  public ColumnVector factorizeRightKeys() {
     if (isClosed) {
-      throw new IllegalStateException("KeyRemapping is already closed");
+      throw new IllegalStateException("JoinFactorizer is already closed");
     }
-    return new ColumnVector(remapBuildKeys(cleaner.nativeHandle));
+    return new ColumnVector(factorizeRightKeys(cleaner.nativeHandle));
   }
 
   /**
@@ -319,18 +319,18 @@ public class KeyRemapping implements AutoCloseable {
    * @throws IllegalArgumentException if keys has different number of columns than build table
    * @throws CudfException if keys has different column types than build table
    */
-  public ColumnVector remapProbeKeys(Table keys) {
+  public ColumnVector factorizeLeftKeys(Table keys) {
     if (isClosed) {
-      throw new IllegalStateException("KeyRemapping is already closed");
+      throw new IllegalStateException("JoinFactorizer is already closed");
     }
-    return new ColumnVector(remapProbeKeys(cleaner.nativeHandle, keys.getNativeView()));
+    return new ColumnVector(factorizeLeftKeys(cleaner.nativeHandle, keys.getNativeView()));
   }
 
   // Native methods
   private static native long create(long tableView, boolean compareNulls, boolean computeMetrics);
   private static native void destroy(long handle);
   private static native int getDistinctCount(long handle);
-  private static native int getMaxDuplicateCount(long handle);
-  private static native long remapBuildKeys(long handle);
-  private static native long remapProbeKeys(long handle, long keysTableView);
+  private static native int getMaxMultiplicity(long handle);
+  private static native long factorizeRightKeys(long handle);
+  private static native long factorizeLeftKeys(long handle, long keysTableView);
 }

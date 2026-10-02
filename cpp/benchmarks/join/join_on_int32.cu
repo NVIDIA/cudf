@@ -26,7 +26,7 @@
  * @brief Benchmark for join performance on INT32 keys.
  *
  * This simulates the join phase after key remapping, where complex keys have
- * been converted to simple INT32 IDs. Comparing this with key_remap_build times
+ * been converted to simple INT32 IDs. Comparing this with join_factorizer_build times
  * shows what percentage of total join time is spent on metrics computation.
  *
  * Note that we use divisor-based generation instead of create_random_table primarily
@@ -42,7 +42,7 @@
  * - SINGLE_KEY: All rows have the same key
  */
 
-// Cardinality distributions (same as key_remap_build)
+// Cardinality distributions (same as join_factorizer_build)
 enum class key_cardinality { ALL_UNIQUE, HIGH_UNIQUE, MED_UNIQUE, LOW_UNIQUE, SINGLE_KEY };
 
 NVBENCH_DECLARE_ENUM_TYPE_STRINGS(

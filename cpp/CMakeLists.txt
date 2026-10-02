@@ -961,7 +961,7 @@ add_library(
   src/join/hash_join/partitioned_left_join.cu
   src/join/join.cu
   src/join/join_utils.cu
-  src/join/key_remapping.cu
+  src/join/join_factorizer.cu
   src/join/mark_join.cu
   src/join/mixed_join.cu
   src/join/mixed_join_kernels_semi.cu

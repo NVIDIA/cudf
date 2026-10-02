@@ -16,7 +16,7 @@
 #include <cudf/detail/utilities/grid_1d.cuh>
 #include <cudf/detail/utilities/integer_utils.hpp>
 #include <cudf/hashing.hpp>
-#include <cudf/join/key_remapping.hpp>
+#include <cudf/join/join_factorizer.hpp>
 #include <cudf/table/table_view.hpp>
 #include <cudf/types.hpp>
 #include <cudf/utilities/error.hpp>
@@ -244,9 +244,9 @@ class key_remap_table_interface {
     cuda::stream_ref stream,
     rmm::device_async_resource_ref mr) const = 0;
 
-  virtual bool has_metrics() const                        = 0;
-  virtual cudf::size_type get_distinct_count() const      = 0;
-  virtual cudf::size_type get_max_duplicate_count() const = 0;
+  virtual bool has_statistics() const              = 0;
+  virtual cudf::size_type distinct_count() const   = 0;
+  virtual cudf::size_type max_multiplicity() const = 0;
 };
 
 /**
@@ -296,7 +296,7 @@ class key_remap_table : public key_remap_table_interface {
                   cuco_storage_type{},
                   rmm::mr::polymorphic_allocator<char>{std::move(mr)},
                   stream.get()},
-      _has_metrics{compute_metrics},
+      _has_statistics{compute_metrics},
       _distinct_count{0},
       _max_duplicate_count{0}
   {
@@ -433,17 +433,17 @@ class key_remap_table : public key_remap_table_interface {
     return result;
   }
 
-  bool has_metrics() const override { return _has_metrics; }
+  bool has_statistics() const override { return _has_statistics; }
 
-  cudf::size_type get_distinct_count() const override
+  cudf::size_type distinct_count() const override
   {
-    CUDF_EXPECTS(_has_metrics, "Metrics were not computed during construction");
+    CUDF_EXPECTS(_has_statistics, "Metrics were not computed during construction");
     return _distinct_count;
   }
 
-  cudf::size_type get_max_duplicate_count() const override
+  cudf::size_type max_multiplicity() const override
   {
-    CUDF_EXPECTS(_has_metrics, "Metrics were not computed during construction");
+    CUDF_EXPECTS(_has_statistics, "Metrics were not computed during construction");
     return _max_duplicate_count;
   }
 
@@ -484,7 +484,7 @@ class key_remap_table : public key_remap_table_interface {
   cudf::table_view _right;
   std::shared_ptr<cudf::detail::row::equality::preprocessed_table> _preprocessed_right;
   hash_table_type _hash_table;
-  bool _has_metrics;
+  bool _has_statistics;
   cudf::size_type _distinct_count;
   cudf::size_type _max_duplicate_count;
 };
@@ -560,17 +560,17 @@ std::unique_ptr<key_remap_table_interface> create_key_remap_table(
 }  // namespace
 
 /**
- * @brief Implementation class for key_remapping
+ * @brief Implementation class for join_factorizer
  */
-class key_remapping_impl {
-  friend class cudf::key_remapping;
+class join_factorizer_impl {
+  friend class cudf::join_factorizer;
 
  public:
-  key_remapping_impl(cudf::table_view const& right,
-                     cudf::null_equality compare_nulls,
-                     bool compute_metrics,
-                     cuda::stream_ref stream,
-                     cuda::mr::any_resource<cuda::mr::device_accessible> mr)
+  join_factorizer_impl(cudf::table_view const& right,
+                       cudf::null_equality compare_nulls,
+                       bool compute_metrics,
+                       cuda::stream_ref stream,
+                       cuda::mr::any_resource<cuda::mr::device_accessible> mr)
     : _right{right},
       _compare_nulls{compare_nulls},
       _compute_metrics{compute_metrics},
@@ -605,18 +605,18 @@ class key_remapping_impl {
     return _table->probe(keys, stream, mr);
   }
 
-  bool has_metrics() const { return _table ? _table->has_metrics() : _compute_metrics; }
+  bool has_statistics() const { return _table ? _table->has_statistics() : _compute_metrics; }
 
-  cudf::size_type get_distinct_count() const
+  cudf::size_type distinct_count() const
   {
-    if (_table) { return _table->get_distinct_count(); }
+    if (_table) { return _table->distinct_count(); }
     CUDF_EXPECTS(_compute_metrics, "Metrics were not computed during construction");
     return 0;
   }
 
-  cudf::size_type get_max_duplicate_count() const
+  cudf::size_type max_multiplicity() const
   {
-    if (_table) { return _table->get_max_duplicate_count(); }
+    if (_table) { return _table->max_multiplicity(); }
     CUDF_EXPECTS(_compute_metrics, "Metrics were not computed during construction");
     return 0;
   }
@@ -636,21 +636,21 @@ class key_remapping_impl {
 
 // Public API implementation
 
-key_remapping::key_remapping(cudf::table_view const& right,
-                             null_equality compare_nulls,
-                             cudf::compute_metrics metrics,
-                             cuda::stream_ref stream,
-                             cuda::mr::any_resource<cuda::mr::device_accessible> mr)
-  : _impl{std::make_unique<detail::key_remapping_impl>(
+join_factorizer::join_factorizer(cudf::table_view const& right,
+                                 null_equality compare_nulls,
+                                 cudf::join_statistics metrics,
+                                 cuda::stream_ref stream,
+                                 cuda::mr::any_resource<cuda::mr::device_accessible> mr)
+  : _impl{std::make_unique<detail::join_factorizer_impl>(
       right, compare_nulls, static_cast<bool>(metrics), stream, std::move(mr))}
 {
   CUDF_EXPECTS(right.num_columns() > 0, "Right table must have at least one column");
 }
 
-key_remapping::~key_remapping() = default;
+join_factorizer::~join_factorizer() = default;
 
 namespace {
-std::unique_ptr<cudf::column> remap_keys_internal(detail::key_remapping_impl const& impl,
+std::unique_ptr<cudf::column> remap_keys_internal(detail::join_factorizer_impl const& impl,
                                                   cudf::table_view const& keys,
                                                   cudf::size_type not_found_sentinel,
                                                   cuda::stream_ref stream,
@@ -675,28 +675,25 @@ std::unique_ptr<cudf::column> remap_keys_internal(detail::key_remapping_impl con
 }
 }  // namespace
 
-std::unique_ptr<cudf::column> key_remapping::remap_right_keys(
+std::unique_ptr<cudf::column> join_factorizer::factorize_right_keys(
   cuda::stream_ref stream, rmm::device_async_resource_ref mr) const
 {
   CUDF_FUNC_RANGE();
   // Use the cached right table from the implementation
-  return remap_keys_internal(*_impl, _impl->get_right(), KEY_REMAP_RIGHT_NULL, stream, mr);
+  return remap_keys_internal(*_impl, _impl->get_right(), FACTORIZE_RIGHT_NULL, stream, mr);
 }
 
-std::unique_ptr<cudf::column> key_remapping::remap_left_keys(
+std::unique_ptr<cudf::column> join_factorizer::factorize_left_keys(
   cudf::table_view const& keys, cuda::stream_ref stream, rmm::device_async_resource_ref mr) const
 {
   CUDF_FUNC_RANGE();
-  return remap_keys_internal(*_impl, keys, KEY_REMAP_NOT_FOUND, stream, mr);
+  return remap_keys_internal(*_impl, keys, FACTORIZE_NOT_FOUND, stream, mr);
 }
 
-bool key_remapping::has_metrics() const { return _impl->has_metrics(); }
+bool join_factorizer::has_statistics() const { return _impl->has_statistics(); }
 
-size_type key_remapping::get_distinct_count() const { return _impl->get_distinct_count(); }
+size_type join_factorizer::distinct_count() const { return _impl->distinct_count(); }
 
-size_type key_remapping::get_max_duplicate_count() const
-{
-  return _impl->get_max_duplicate_count();
-}
+size_type join_factorizer::max_multiplicity() const { return _impl->max_multiplicity(); }
 
 }  // namespace cudf

@@ -7,15 +7,15 @@
 #include <benchmarks/common/table_utilities.hpp>
 #include <benchmarks/join/join_common.hpp>
 
-#include <cudf/join/key_remapping.hpp>
+#include <cudf/join/join_factorizer.hpp>
 #include <cudf/utilities/default_stream.hpp>
 
 #include <nvbench/nvbench.cuh>
 
 /**
- * @brief Benchmark for key_remapping build phase with metrics computation.
+ * @brief Benchmark for join_factorizer build phase with metrics computation.
  *
- * This benchmark isolates the key_remapping construction time (including metrics)
+ * This benchmark isolates the join_factorizer construction time (including metrics)
  * to measure performance across various data types and distributions.
  *
  * Cardinality distributions:
@@ -98,11 +98,11 @@ void nvbench_key_remap_build(nvbench::state& state,
   state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().get()));
 
   state.exec(nvbench::exec_tag::sync, [&](nvbench::launch&) {
-    cudf::key_remapping remap(
-      keys, cudf::null_equality::EQUAL, cudf::compute_metrics::YES, cudf::get_default_stream());
+    cudf::join_factorizer remap(
+      keys, cudf::null_equality::EQUAL, cudf::join_statistics::COMPUTE, cudf::get_default_stream());
     // Access metrics to ensure they're computed
-    [[maybe_unused]] auto dc = remap.get_distinct_count();
-    [[maybe_unused]] auto mc = remap.get_max_duplicate_count();
+    [[maybe_unused]] auto dc = remap.distinct_count();
+    [[maybe_unused]] auto mc = remap.max_multiplicity();
   });
 }
 

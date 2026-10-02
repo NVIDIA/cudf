@@ -159,7 +159,7 @@ ConfigureNVBench(
   join/join_dictionary.cpp
   join/join_heuristics.cpp
   join/join_on_int32.cu
-  join/key_remap_build.cpp
+  join/join_factorizer_build.cpp
   join/left_join.cpp
   join/mixed_join.cpp
   join/multiplicity_join.cpp

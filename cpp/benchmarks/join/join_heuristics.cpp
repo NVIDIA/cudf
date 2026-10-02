@@ -11,7 +11,7 @@
 #include <cudf/aggregation.hpp>
 #include <cudf/column/column_view.hpp>
 #include <cudf/groupby.hpp>
-#include <cudf/join/key_remapping.hpp>
+#include <cudf/join/join_factorizer.hpp>
 #include <cudf/reduction.hpp>
 #include <cudf/reduction/distinct_count.hpp>
 #include <cudf/table/table.hpp>
@@ -27,17 +27,17 @@
  * Compares three approaches for computing join decision metrics:
  * 1. cudf::distinct_count - for deciding if distinct join should be used
  * 2. groupby + max reduction - for getting max duplicate count
- * 3. key_remapping with metrics - computes both in a single hash table build
+ * 3. join_factorizer with metrics - computes both in a single hash table build
  *
  * The metrics help decide:
  * - distinct_count: Whether to use a distinct join optimization
- * - max_duplicate_count: Whether hash join will suffer from key collisions
+ * - max_multiplicity: Whether hash join will suffer from key collisions
  */
 
 enum class heuristic_method : int32_t {
-  DISTINCT_COUNT = 0,  // cudf::distinct_count API
-  GROUPBY_MAX    = 1,  // groupby count + max reduction
-  KEY_REMAPPING  = 2   // key_remapping with metrics
+  DISTINCT_COUNT  = 0,  // cudf::distinct_count API
+  GROUPBY_MAX     = 1,  // groupby count + max reduction
+  JOIN_FACTORIZER = 2   // join_factorizer with metrics
 };
 
 NVBENCH_DECLARE_ENUM_TYPE_STRINGS(
@@ -46,7 +46,7 @@ NVBENCH_DECLARE_ENUM_TYPE_STRINGS(
     switch (value) {
       case heuristic_method::DISTINCT_COUNT: return "DISTINCT_COUNT";
       case heuristic_method::GROUPBY_MAX: return "GROUPBY_MAX";
-      case heuristic_method::KEY_REMAPPING: return "KEY_REMAPPING";
+      case heuristic_method::JOIN_FACTORIZER: return "JOIN_FACTORIZER";
       default: return "Unknown";
     }
   },
@@ -75,7 +75,7 @@ NVBENCH_DECLARE_ENUM_TYPE_STRINGS(
 
 using HEURISTIC_METHODS = nvbench::enum_type_list<heuristic_method::DISTINCT_COUNT,
                                                   heuristic_method::GROUPBY_MAX,
-                                                  heuristic_method::KEY_REMAPPING>;
+                                                  heuristic_method::JOIN_FACTORIZER>;
 
 using CARDINALITY_RATIOS = nvbench::enum_type_list<cardinality_ratio::ALL_UNIQUE,
                                                    cardinality_ratio::HIGH_UNIQUE,
@@ -161,14 +161,16 @@ void nvbench_join_heuristics(nvbench::state& state,
         cudf::reduce(*counts_column,
                      *cudf::make_max_aggregation<cudf::reduce_aggregation>(),
                      counts_column->type());
-    } else if constexpr (Method == heuristic_method::KEY_REMAPPING) {
-      // Approach 3: key_remapping with metrics
-      cudf::key_remapping remap(
-        keys, cudf::null_equality::EQUAL, cudf::compute_metrics::YES, cudf::get_default_stream());
+    } else if constexpr (Method == heuristic_method::JOIN_FACTORIZER) {
+      // Approach 3: join_factorizer with metrics
+      cudf::join_factorizer remap(keys,
+                                  cudf::null_equality::EQUAL,
+                                  cudf::join_statistics::COMPUTE,
+                                  cudf::get_default_stream());
 
       // Get both metrics
-      [[maybe_unused]] auto distinct_count = remap.get_distinct_count();
-      [[maybe_unused]] auto max_dup_count  = remap.get_max_duplicate_count();
+      [[maybe_unused]] auto distinct_count = remap.distinct_count();
+      [[maybe_unused]] auto max_dup_count  = remap.max_multiplicity();
     }
   });
 

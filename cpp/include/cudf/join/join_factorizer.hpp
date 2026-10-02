@@ -31,13 +31,13 @@ namespace CUDF_EXPORT cudf {
 /**
  * @brief Enum to control whether key remapping metrics should be computed
  */
-enum class compute_metrics : bool { NO = false, YES = true };
+enum class join_statistics : bool { SKIP = false, COMPUTE = true };
 
 namespace detail {
 /**
  * @brief Forward declaration for key remapping implementation
  */
-class key_remapping_impl;
+class join_factorizer_impl;
 }  // namespace detail
 
 /**
@@ -47,7 +47,7 @@ class key_remapping_impl;
  * Application code should check for negative values rather than relying on specific sentinel
  * values.
  */
-constexpr size_type KEY_REMAP_NOT_FOUND = -1;
+constexpr size_type FACTORIZE_NOT_FOUND = -1;
 
 /**
  * @brief Sentinel value for right-side rows with null keys (when nulls are not equal)
@@ -56,7 +56,7 @@ constexpr size_type KEY_REMAP_NOT_FOUND = -1;
  * Application code should check for negative values rather than relying on specific sentinel
  * values.
  */
-constexpr size_type KEY_REMAP_RIGHT_NULL = -2;
+constexpr size_type FACTORIZE_RIGHT_NULL = -2;
 
 /**
  * @brief Remaps keys to unique integer IDs
@@ -67,19 +67,19 @@ constexpr size_type KEY_REMAP_RIGHT_NULL = -2;
  * The specific ID values are stable for the lifetime of this object but are otherwise unspecified.
  *
  * @note The right table is the build side: the internal hash table is built from its keys, and
- *       keys passed to remap_left_keys() form the probe side matched against it.
+ *       keys passed to factorize_left_keys() form the probe side matched against it.
  * @note The right table must remain valid for the lifetime of this object,
  *       as the hash table references it directly without copying.
  * @note All NaNs are considered equal
  */
-class key_remapping {
+class join_factorizer {
  public:
-  key_remapping() = delete;
-  ~key_remapping();
-  key_remapping(key_remapping const&)            = delete;
-  key_remapping(key_remapping&&)                 = delete;
-  key_remapping& operator=(key_remapping const&) = delete;
-  key_remapping& operator=(key_remapping&&)      = delete;
+  join_factorizer() = delete;
+  ~join_factorizer();
+  join_factorizer(join_factorizer const&)            = delete;
+  join_factorizer(join_factorizer&&)                 = delete;
+  join_factorizer& operator=(join_factorizer const&) = delete;
+  join_factorizer& operator=(join_factorizer&&)      = delete;
 
   /**
    * @brief Constructs a key remapping structure from the given right keys.
@@ -92,18 +92,18 @@ class key_remapping {
    *        When EQUAL, null keys are treated as equal and assigned a valid non-negative ID.
    *        When UNEQUAL, rows with null keys receive a negative sentinel value.
    * @param metrics Controls whether to compute distinct_count and max_duplicate_count.
-   *        If YES (default), compute metrics for later retrieval via get_distinct_count()
-   *        and get_max_duplicate_count(). If NO, skip metrics computation for better performance;
-   *        calling get_distinct_count() or get_max_duplicate_count() will throw.
+   *        If COMPUTE (default), compute metrics for later retrieval via distinct_count()
+   *        and max_multiplicity(). If SKIP, skip metrics computation for better performance;
+   *        calling distinct_count() or max_multiplicity() will throw.
    * @param stream CUDA stream used for device memory operations and kernel launches
    * @param mr Device memory resource used to allocate the internal hash table
    */
-  key_remapping(cudf::table_view const& right,
-                null_equality compare_nulls   = null_equality::EQUAL,
-                cudf::compute_metrics metrics = cudf::compute_metrics::YES,
-                cuda::stream_ref stream       = cudf::get_default_stream(),
-                cuda::mr::any_resource<cuda::mr::device_accessible> mr =
-                  cudf::get_current_device_resource_ref());
+  join_factorizer(cudf::table_view const& right,
+                  null_equality compare_nulls   = null_equality::EQUAL,
+                  cudf::join_statistics metrics = cudf::join_statistics::COMPUTE,
+                  cuda::stream_ref stream       = cudf::get_default_stream(),
+                  cuda::mr::any_resource<cuda::mr::device_accessible> mr =
+                    cudf::get_current_device_resource_ref());
 
   /**
    * @brief Remap right keys to integer IDs.
@@ -120,7 +120,7 @@ class key_remapping {
    *
    * @return A column of INT32 values with the remapped key IDs
    */
-  [[nodiscard]] std::unique_ptr<cudf::column> remap_right_keys(
+  [[nodiscard]] std::unique_ptr<cudf::column> factorize_right_keys(
     cuda::stream_ref stream           = cudf::get_default_stream(),
     rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref()) const;
 
@@ -141,7 +141,7 @@ class key_remapping {
    *
    * @return A column of INT32 values with the remapped key IDs
    */
-  [[nodiscard]] std::unique_ptr<cudf::column> remap_left_keys(
+  [[nodiscard]] std::unique_ptr<cudf::column> factorize_left_keys(
     cudf::table_view const& keys,
     cuda::stream_ref stream           = cudf::get_default_stream(),
     rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref()) const;
@@ -151,7 +151,7 @@ class key_remapping {
    *
    * @return true if metrics are available, false if metrics was NO during construction
    */
-  [[nodiscard]] bool has_metrics() const;
+  [[nodiscard]] bool has_statistics() const;
 
   /**
    * @brief Get the number of distinct keys in the right table
@@ -160,7 +160,7 @@ class key_remapping {
    *
    * @return The count of unique key combinations found during build
    */
-  [[nodiscard]] size_type get_distinct_count() const;
+  [[nodiscard]] size_type distinct_count() const;
 
   /**
    * @brief Get the maximum number of times any single key appears
@@ -169,10 +169,10 @@ class key_remapping {
    *
    * @return The maximum duplicate count across all distinct keys
    */
-  [[nodiscard]] size_type get_max_duplicate_count() const;
+  [[nodiscard]] size_type max_multiplicity() const;
 
  private:
-  using impl_type = cudf::detail::key_remapping_impl;
+  using impl_type = cudf::detail::join_factorizer_impl;
 
   std::unique_ptr<impl_type> _impl;
 };

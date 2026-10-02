@@ -5,6 +5,7 @@
 
 #pragma once
 
+#include "groupby/sort/group_validity.cuh"
 #include "reductions/nested_types_extrema_utils.cuh"
 
 #include <cudf/column/column.hpp>
@@ -29,6 +30,26 @@
 namespace cudf {
 namespace groupby {
 namespace detail {
+
+/**
+ * @brief Computes a nested ARGMIN or ARGMAX for each sorted group.
+ *
+ * The row comparator's min/max choice is runtime state, allowing the paired
+ * aggregation entry points to share one CUB/Thrust reduction instantiation.
+ */
+std::unique_ptr<column> group_nested_argminmax(column_view const& values,
+                                               size_type num_groups,
+                                               cudf::device_span<size_type const> group_labels,
+                                               bool is_argmin,
+                                               cuda::stream_ref stream,
+                                               rmm::device_async_resource_ref mr);
+
+std::unique_ptr<column> group_argminmax(column_view const& values,
+                                        size_type num_groups,
+                                        cudf::device_span<size_type const> group_labels,
+                                        bool is_argmin,
+                                        cuda::stream_ref stream,
+                                        rmm::device_async_resource_ref mr);
 
 /**
  * @brief Value accessor for column which supports dictionary column too.
@@ -187,15 +208,90 @@ struct group_reduction_functor<
 
     if (values.has_nulls()) {
       rmm::device_uvector<bool> validity(num_groups, stream);
-      do_reduction(cudf::detail::make_validity_iterator(*d_values_ptr),
-                   validity.begin(),
-                   cuda::std::logical_or{});
+      reduce_group_validity(group_labels, *d_values_ptr, validity.data(), stream);
 
       auto [null_mask, null_count] =
         cudf::detail::valid_if(validity.begin(), validity.end(), cuda::std::identity{}, stream, mr);
       result->set_null_mask(std::move(null_mask), null_count);
     }
     return result;
+  }
+};
+
+template <typename T, typename Enable = void>
+struct group_argminmax_functor {
+  static std::unique_ptr<column> invoke(column_view const&,
+                                        size_type,
+                                        cudf::device_span<size_type const>,
+                                        bool,
+                                        cuda::stream_ref,
+                                        rmm::device_async_resource_ref)
+  {
+    CUDF_FAIL("Unsupported groupby ARGMIN/ARGMAX type.");
+  }
+};
+
+template <typename T>
+struct group_argminmax_functor<
+  T,
+  std::enable_if_t<(is_relationally_comparable<T, T>() && !cudf::is_nested<T>())>> {
+  static std::unique_ptr<column> invoke(column_view const& values,
+                                        size_type num_groups,
+                                        cudf::device_span<size_type const> group_labels,
+                                        bool is_argmin,
+                                        cuda::stream_ref stream,
+                                        rmm::device_async_resource_ref mr)
+  {
+    auto result = make_fixed_width_column(
+      data_type{type_id::INT32}, num_groups, mask_state::UNALLOCATED, stream, mr);
+    if (values.is_empty()) { return result; }
+
+    auto const d_values_ptr = column_device_view::create(values, stream);
+    thrust::reduce_by_key(
+      rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+      group_labels.data(),
+      group_labels.data() + group_labels.size(),
+      cuda::counting_iterator<size_type>{0},
+      cuda::make_discard_iterator(),
+      result->mutable_view().begin<size_type>(),
+      cuda::std::equal_to{},
+      cudf::detail::element_argminmax_fn<T>{*d_values_ptr, values.has_nulls(), is_argmin});
+
+    if (values.has_nulls()) {
+      rmm::device_uvector<bool> validity(num_groups, stream);
+      reduce_group_validity(group_labels, *d_values_ptr, validity.data(), stream);
+      auto [null_mask, null_count] =
+        cudf::detail::valid_if(validity.begin(), validity.end(), cuda::std::identity{}, stream, mr);
+      result->set_null_mask(std::move(null_mask), null_count);
+    }
+    return result;
+  }
+};
+
+template <typename T>
+struct group_argminmax_functor<T, std::enable_if_t<cudf::is_nested<T>()>> {
+  static std::unique_ptr<column> invoke(column_view const& values,
+                                        size_type num_groups,
+                                        cudf::device_span<size_type const> group_labels,
+                                        bool is_argmin,
+                                        cuda::stream_ref stream,
+                                        rmm::device_async_resource_ref mr)
+  {
+    return group_nested_argminmax(values, num_groups, group_labels, is_argmin, stream, mr);
+  }
+};
+
+struct group_argminmax_dispatcher {
+  template <typename T>
+  std::unique_ptr<column> operator()(column_view const& values,
+                                     size_type num_groups,
+                                     cudf::device_span<size_type const> group_labels,
+                                     bool is_argmin,
+                                     cuda::stream_ref stream,
+                                     rmm::device_async_resource_ref mr)
+  {
+    return group_argminmax_functor<T>::invoke(
+      values, num_groups, group_labels, is_argmin, stream, mr);
   }
 };
 
@@ -210,47 +306,8 @@ struct group_reduction_functor<
                                         cuda::stream_ref stream,
                                         rmm::device_async_resource_ref mr)
   {
-    // This is be expected to be size_type.
-    using ResultType = cudf::detail::target_type_t<T, K>;
-
-    auto result = make_fixed_width_column(
-      data_type{type_to_id<ResultType>()}, num_groups, mask_state::UNALLOCATED, stream, mr);
-
-    if (values.is_empty()) { return result; }
-
-    // Perform segmented reduction to find ARGMIN/ARGMAX.
-    auto const do_reduction = [&](auto const& inp_iter, auto const& out_iter, auto const& binop) {
-      thrust::reduce_by_key(
-        rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-        group_labels.data(),
-        group_labels.data() + group_labels.size(),
-        inp_iter,
-        cuda::make_discard_iterator(),
-        out_iter,
-        cuda::std::equal_to{},
-        binop);
-    };
-
-    auto const count_iter   = cuda::counting_iterator<ResultType>{0};
-    auto const result_begin = result->mutable_view().template begin<ResultType>();
-    auto const binop_generator =
-      cudf::reduction::detail::arg_minmax_binop_generator::create<K>(values, stream);
-    do_reduction(count_iter, result_begin, binop_generator.binop());
-
-    if (values.has_nulls()) {
-      // Generate bitmask for the output by segmented reduction of the input bitmask.
-      auto const d_values_ptr = column_device_view::create(values, stream);
-      auto validity           = rmm::device_uvector<bool>(num_groups, stream);
-      do_reduction(cudf::detail::make_validity_iterator(*d_values_ptr),
-                   validity.begin(),
-                   cuda::std::logical_or{});
-
-      auto [null_mask, null_count] =
-        cudf::detail::valid_if(validity.begin(), validity.end(), cuda::std::identity{}, stream, mr);
-      result->set_null_mask(std::move(null_mask), null_count);
-    }
-
-    return result;
+    return group_nested_argminmax(
+      values, num_groups, group_labels, K == aggregation::ARGMIN, stream, mr);
   }
 };
 

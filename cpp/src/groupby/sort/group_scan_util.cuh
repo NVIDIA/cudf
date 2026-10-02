@@ -33,6 +33,14 @@
 namespace cudf {
 namespace groupby {
 namespace detail {
+
+std::unique_ptr<column> group_nested_minmax_scan(
+  column_view const& values,
+  cudf::device_span<cudf::size_type const> group_labels,
+  bool is_min,
+  cuda::stream_ref stream,
+  rmm::device_async_resource_ref mr);
+
 // Error case when no other overload or specialization is available
 template <aggregation::Kind K, typename T, typename Enable = void>
 struct group_scan_functor {
@@ -188,54 +196,7 @@ struct group_scan_functor<K,
                                         cuda::stream_ref stream,
                                         rmm::device_async_resource_ref mr)
   {
-    if (values.is_empty()) { return cudf::empty_like(values); }
-
-    // Create a gather map containing indices of the prefix min/max elements within each group.
-    auto gather_map = rmm::device_uvector<size_type>(values.size(), stream);
-
-    auto const binop_generator =
-      cudf::reduction::detail::arg_minmax_binop_generator::create<K>(values, stream);
-    thrust::inclusive_scan_by_key(
-      rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-      group_labels.begin(),
-      group_labels.end(),
-      cuda::counting_iterator<size_type>{0},
-      gather_map.begin(),
-      cuda::std::equal_to{},
-      binop_generator.binop());
-
-    //
-    // Gather the children elements of the prefix min/max struct elements first.
-    //
-    // Typically, we should use `get_sliced_child` for each child column to properly handle the
-    // input if it is a sliced view. However, since the input to this function is just generated
-    // from groupby internal APIs which is never a sliced view, we just use `child_begin` and
-    // `child_end` iterators for simplicity.
-    auto scanned_children =
-      cudf::detail::gather(
-        table_view(std::vector<column_view>{values.child_begin(), values.child_end()}),
-        gather_map,
-        cudf::out_of_bounds_policy::DONT_CHECK,
-        cudf::negative_index_policy::NOT_ALLOWED,
-        stream,
-        mr)
-        ->release();
-
-    // After gathering the children elements, we need to push down nulls from the root structs
-    // column to them.
-    if (values.has_nulls()) {
-      for (std::unique_ptr<column>& child : scanned_children) {
-        child = structs::detail::superimpose_and_sanitize_nulls(
-          values.null_mask(), values.null_count(), std::move(child), stream, mr);
-      }
-    }
-
-    return create_structs_hierarchy(values.size(),
-                                    std::move(scanned_children),
-                                    values.null_count(),
-                                    cudf::detail::copy_bitmask(values, stream, mr),
-                                    stream,
-                                    mr);
+    return group_nested_minmax_scan(values, group_labels, K == aggregation::MIN, stream, mr);
   }
 };
 

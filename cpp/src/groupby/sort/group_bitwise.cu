@@ -3,6 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+#include "groupby/sort/group_validity.cuh"
+
 #include <cudf/aggregation.hpp>
 #include <cudf/column/column_device_view.cuh>
 #include <cudf/column/column_factories.hpp>
@@ -69,9 +71,7 @@ struct bitwise_group_reduction_functor {
 
     if (values.has_nulls()) {
       rmm::device_uvector<bool> validity(num_groups, stream);
-      do_reduction(cudf::detail::make_validity_iterator(*d_values_ptr),
-                   validity.begin(),
-                   cuda::std::logical_or{});
+      reduce_group_validity(group_labels, *d_values_ptr, validity.data(), stream);
 
       auto [null_mask, null_count] =
         cudf::detail::valid_if(validity.begin(), validity.end(), cuda::std::identity{}, stream, mr);

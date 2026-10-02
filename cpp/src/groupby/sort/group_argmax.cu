@@ -22,16 +22,7 @@ std::unique_ptr<column> group_argmax(column_view const& values,
                                      cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr)
 {
-  auto dispatch_type = cudf::is_dictionary(values.type())
-                         ? dictionary_column_view(values).keys().type()
-                         : values.type();
-  auto indices       = type_dispatcher(dispatch_type,
-                                 group_reduction_dispatcher<aggregation::ARGMAX>{},
-                                 values,
-                                 num_groups,
-                                 group_labels,
-                                 stream,
-                                 mr);
+  auto indices = group_argminmax(values, num_groups, group_labels, false, stream, mr);
 
   // The functor returns the indices of maximums based on the sorted keys.
   // We need the indices of maximums from the original unsorted keys

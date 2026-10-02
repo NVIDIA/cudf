@@ -14,6 +14,8 @@ from typing import TYPE_CHECKING, Any, cast
 import kvikio
 import kvikio.defaults
 
+import polars as pl
+
 import pylibcudf as plc
 import rmm.mr
 from cudf_streaming.partition_utils import (
@@ -34,6 +36,7 @@ from rapidsmpf.streaming.core.context import Context
 import cudf_polars.quent
 import cudf_polars.quent._logging
 from cudf_polars.containers import DataFrame, DataType
+from cudf_polars.containers.dataframe import categoricals_to_physical
 from cudf_polars.engine import persisted_result, rank_local_store
 from cudf_polars.engine.core import (
     ClusterInfo,
@@ -73,8 +76,6 @@ from cudf_polars.utils.config import (
 
 if TYPE_CHECKING:
     from collections.abc import Callable
-
-    import polars as pl
 
     from cudf_streaming.channel_metadata import ChannelMetadata
     from rapidsmpf.communicator.communicator import Communicator
@@ -219,8 +220,15 @@ def allgather_polars_dataframe(
     stream = ctx.br().stream_pool.get_stream()
     col_names = local_df.columns
     dtypes = [DataType(dtype) for dtype in local_df.dtypes]
+    if comm.nranks > 1 and any(
+        isinstance(dtype.polars_type, pl.Categorical) for dtype in dtypes
+    ):
+        # TODO: Need to decide how all ranks use the same physical Categorical type.
+        raise NotImplementedError(
+            "Categorical columns cannot be gathered across ranks yet."
+        )
 
-    plc_table = plc.Table.from_arrow(local_df, stream=stream)
+    plc_table = plc.Table.from_arrow(categoricals_to_physical(local_df), stream=stream)
 
     packed_data = packed_data_from_cudf_packed_columns(
         pack(plc_table, stream),

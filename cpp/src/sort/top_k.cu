@@ -13,6 +13,7 @@
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/sequence.hpp>
 #include <cudf/detail/sorting.hpp>
+#include <cudf/detail/utilities/cuda_memcpy.hpp>
 #include <cudf/scalar/scalar.hpp>
 #include <cudf/sorting.hpp>
 #include <cudf/table/table_view.hpp>
@@ -291,11 +292,8 @@ rmm::device_uvector<size_type> select_top_k_rows(column_view const& col,
     rmm::device_uvector<size_type>(num_nulls_out > 0 ? null_count : 0, stream, temp_mr);
   if (num_nulls_out > 0) {
     compact(null_rows.data(), false);
-    CUDF_CUDA_TRY(cudaMemcpyAsync(nulls_out,
-                                  null_rows.data(),
-                                  num_nulls_out * sizeof(size_type),
-                                  cudaMemcpyDeviceToDevice,
-                                  stream.get()));
+    CUDF_CUDA_TRY(cudf::detail::memcpy_async(
+      nulls_out, null_rows.data(), num_nulls_out * sizeof(size_type), stream));
   }
 
   if (num_valid_out == 0) { return output; }
@@ -310,11 +308,8 @@ rmm::device_uvector<size_type> select_top_k_rows(column_view const& col,
   if (num_valid_out == num_valid) {
     // Every non-null row is in the answer, so there is no order statistic to find. This also
     // keeps the selection off cub's k == num_items edge case.
-    CUDF_CUDA_TRY(cudaMemcpyAsync(valid_out,
-                                  valid_rows.data(),
-                                  num_valid_out * sizeof(size_type),
-                                  cudaMemcpyDeviceToDevice,
-                                  stream.get()));
+    CUDF_CUDA_TRY(cudf::detail::memcpy_async(
+      valid_out, valid_rows.data(), num_valid_out * sizeof(size_type), stream));
     return output;
   }
 
@@ -422,17 +417,6 @@ std::unique_ptr<column> top_k(column_view const& col,
   return detail::top_k(col, k, topk_order, stream, mr);
 }
 
-std::unique_ptr<column> top_k(column_view const& col,
-                              size_type k,
-                              order topk_order,
-                              null_order null_precedence,
-                              cuda::stream_ref stream,
-                              rmm::device_async_resource_ref mr)
-{
-  CUDF_FUNC_RANGE();
-  return detail::top_k(col, k, topk_order, null_precedence, stream, mr);
-}
-
 std::unique_ptr<column> top_k_order(column_view const& col,
                                     size_type k,
                                     order topk_order,
@@ -441,17 +425,6 @@ std::unique_ptr<column> top_k_order(column_view const& col,
 {
   CUDF_FUNC_RANGE();
   return detail::top_k_order(col, k, topk_order, stream, mr);
-}
-
-std::unique_ptr<column> top_k_order(column_view const& col,
-                                    size_type k,
-                                    order topk_order,
-                                    null_order null_precedence,
-                                    cuda::stream_ref stream,
-                                    rmm::device_async_resource_ref mr)
-{
-  CUDF_FUNC_RANGE();
-  return detail::top_k_order(col, k, topk_order, null_precedence, stream, mr);
 }
 
 }  // namespace cudf

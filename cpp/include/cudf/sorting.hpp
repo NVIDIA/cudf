@@ -374,10 +374,8 @@ std::unique_ptr<table> stable_segmented_sort_by_key(
  * However, the returned column may or may not necessarily be sorted.
  *
  * @note Among keys that compare equal at the k-th boundary, which of the tied rows are returned is
- * unspecified and may vary between runs (`cub::DeviceTopK` requests `determinism::not_guaranteed`).
- * The result is always a valid top-k: the row count and the multiset of returned keys are fixed;
- * only the choice among equal-keyed rows is not. A determinism control may be added if and when
- * `cub::DeviceTopK` supports it.
+ * unspecified and may vary between runs. The result is always a valid top-k: the row count and the
+ * multiset of returned keys are fixed; only the choice among equal-keyed rows is not.
  *
  * @throw std::invalid_argument if k is greater than the number of rows in the column
  *
@@ -393,32 +391,6 @@ std::unique_ptr<column> top_k(
   column_view const& col,
   size_type k,
   order topk_order                  = order::DESCENDING,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
-
-/**
- * @brief Computes the top k values of a column, placing nulls as requested
- *
- * Behaves as the overload above but takes the null precedence rather than deriving it. The derived
- * value is `AFTER` for an ascending order and `BEFORE` for a descending one, which places nulls at
- * the far end of the requested direction; pass `null_precedence` explicitly to place them at the
- * near end instead, as `ORDER BY ... NULLS FIRST` does.
- *
- * @throw std::invalid_argument if k is greater than the number of rows in the column
- *
- * @param col Column to compute top k
- * @param k Number of values to return
- * @param topk_order The desired sort order for the top k values
- * @param null_precedence How null values compare against all other values
- * @param stream CUDA stream used for device memory operations and kernel launches
- * @param mr Device memory resource used to allocate the returned column's device memory
- * @return A column with the top k values of the input column.
- */
-std::unique_ptr<column> top_k(
-  column_view const& col,
-  size_type k,
-  order topk_order,
-  null_order null_precedence,
   cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
@@ -429,10 +401,8 @@ std::unique_ptr<column> top_k(
  * those elements as k sorted values.
  *
  * @note Among keys that compare equal at the k-th boundary, which of the tied rows are returned is
- * unspecified and may vary between runs (`cub::DeviceTopK` requests `determinism::not_guaranteed`).
- * The result is always a valid top-k: the row count and the multiset of returned keys are fixed;
- * only the choice among equal-keyed rows is not. A determinism control may be added if and when
- * `cub::DeviceTopK` supports it.
+ * unspecified and may vary between runs. The result is always a valid top-k: the row count and the
+ * multiset of returned keys are fixed; only the choice among equal-keyed rows is not.
  *
  * @throw std::invalid_argument if k is greater than the number of rows in the column
  *
@@ -448,32 +418,6 @@ std::unique_ptr<column> top_k_order(
   column_view const& col,
   size_type k,
   order topk_order                  = order::DESCENDING,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
-
-/**
- * @brief Computes the indices of the top k values of a column, placing nulls as requested
- *
- * Behaves as the overload above but takes the null precedence rather than deriving it. The derived
- * value is `AFTER` for an ascending order and `BEFORE` for a descending one, which places nulls at
- * the far end of the requested direction; pass `null_precedence` explicitly to place them at the
- * near end instead, as `ORDER BY ... NULLS FIRST` does.
- *
- * @throw std::invalid_argument if k is greater than the number of rows in the column
- *
- * @param col Column to compute top k
- * @param k Number of values to return
- * @param topk_order The desired sort order for the top k values
- * @param null_precedence How null values compare against all other values
- * @param stream CUDA stream used for device memory operations and kernel launches
- * @param mr Device memory resource used to allocate the returned column's device memory
- * @return Indices of the top k values of the input column
- */
-std::unique_ptr<column> top_k_order(
-  column_view const& col,
-  size_type k,
-  order topk_order,
-  null_order null_precedence,
   cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 

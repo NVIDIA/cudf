@@ -28,8 +28,6 @@
 
 #include <rmm/exec_policy.hpp>
 
-#include <cub/block/block_load.cuh>
-#include <cub/block/block_scan.cuh>
 #include <cuda/functional>
 #include <cuda/iterator>
 #include <cuda/std/utility>

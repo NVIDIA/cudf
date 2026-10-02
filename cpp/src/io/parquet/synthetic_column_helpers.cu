@@ -17,7 +17,6 @@
 #include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
-#include <cub/device/device_transform.cuh>
 #include <cuda/iterator>
 #include <thrust/binary_search.h>
 #include <thrust/scan.h>

@@ -16,7 +16,6 @@
 
 #include <cooperative_groups.h>
 #include <cooperative_groups/reduce.h>
-#include <cub/block/block_scan.cuh>
 #include <cuco/static_map_ref.cuh>
 #include <cuda/atomic>
 #include <cuda/functional>

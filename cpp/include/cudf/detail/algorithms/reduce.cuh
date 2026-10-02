@@ -11,7 +11,6 @@
 #include <rmm/device_buffer.hpp>
 #include <rmm/exec_policy.hpp>
 
-#include <cub/device/device_reduce.cuh>
 #include <cuda/iterator>
 #include <cuda/std/functional>
 #include <cuda/stream>

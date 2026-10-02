@@ -50,10 +50,38 @@ jobs:
     uses: rapidsai/shared-workflows/.github/workflows/conda-cpp-tests.yaml@main
     with:
       build_type: ${{ inputs.build_type }}
+      matrix_type: nightly,pull-request
       branch: ${{ inputs.branch }}
       date: ${{ inputs.date }}
       script: ci/test_cpp.sh
       sha: ${{ inputs.sha }}
+      cache-paths: .cache/libcudf
+      cache-key-prefix: libcudf-rtcx-v2
+      # Caches are immutable. Re-key when the embedded JIT runtime or its tests change so a
+      # completed run can save newly compiled entries; restore a compatible earlier archive first.
+      cache-key-files: |
+        cpp/CMakeLists.txt
+        cpp/cmake/**
+        cpp/include/cudf/**
+        cpp/src/jit/**
+        cpp/src/binaryop/jit/**
+        cpp/src/join/jit/**
+        cpp/src/transform/jit/**
+        cpp/tests/**
+        dependencies.yaml
+      # The JIT cache is independent of the Python interpreter used to run C++ tests.
+      cache-key-matrix-fields: |
+        CUDA_VER
+        ARCH
+        LINUX_VER
+        GPU
+        DRIVER
+        DEPENDENCIES
+      # Only main builds populate the cache shared by PRs.
+      cache-read-only: ${{ inputs.branch != 'main' }}
+      cache-environment: |
+        LIBCUDF_KERNEL_CACHE_PATH=.cache/libcudf
+        LIBCUDF_KERNEL_CACHE_PRELOAD=1
       # https://github.com/NVIDIA/cudf/issues/23498
       matrix_filter: map(select(.GPU != "gb300" and .GPU != "gh200"))
   conda-cpp-benchmark-tests:
@@ -72,7 +100,7 @@ jobs:
       sha: ${{ inputs.sha }}
       node_type: "gpu-rtxpro6000-latest-1"
       arch: "amd64"
-      container_image: "rapidsai/ci-conda:26.10-latest"
+      container_image: "rapidsai/ci-conda:26.12-latest"
       script: ci/test_cpp_benchmarks.sh
   conda-cpp-memcheck-tests:
     permissions:
@@ -90,7 +118,7 @@ jobs:
       sha: ${{ inputs.sha }}
       node_type: "gpu-rtxpro6000-latest-1"
       arch: "amd64"
-      container_image: "rapidsai/ci-conda:26.10-latest"
+      container_image: "rapidsai/ci-conda:26.12-latest"
       script: "ci/test_cpp_memcheck.sh"
   cpp-linters:
     permissions:
@@ -172,7 +200,7 @@ jobs:
       sha: ${{ inputs.sha }}
       arch: ${{ matrix.ARCH }}
       node_type: ${{ matrix.ARCH == 'amd64' && 'gpu-rtxpro6000-latest-1' || 'gpu-l4-latest-1' }}
-      container_image: "rapidsai/ci-wheel:26.10-cuda${{ matrix.CUDA_VER }}-${{ matrix.LINUX_VER }}-py${{ matrix.PY_VER }}"
+      container_image: "rapidsai/ci-wheel:26.12-cuda${{ matrix.CUDA_VER }}-${{ matrix.LINUX_VER }}-py${{ matrix.PY_VER }}"
       script: "ci/test_packaged_java.sh"
   conda-notebook-tests:
     permissions:
@@ -190,7 +218,7 @@ jobs:
       sha: ${{ inputs.sha }}
       node_type: "gpu-rtxpro6000-latest-1"
       arch: "amd64"
-      container_image: "rapidsai/ci-conda:26.10-latest"
+      container_image: "rapidsai/ci-conda:26.12-latest"
       script: "ci/test_notebooks.sh"
   wheel-tests-cudf:
     permissions:
@@ -254,7 +282,7 @@ jobs:
       date: ${{ inputs.date }}
       sha: ${{ inputs.sha }}
       node_type: "gpu-rtxpro6000-latest-1"
-      container_image: "rapidsai/ci-conda:26.10-latest"
+      container_image: "rapidsai/ci-conda:26.12-latest"
       script: |
         ci/cudf_pandas_scripts/third-party-integration/test.sh python/cudf/cudf_pandas_tests/third_party_integration_tests/dependencies.yaml
       continue-on-error: true
@@ -274,7 +302,7 @@ jobs:
       sha: ${{ inputs.sha }}
       node_type: "gpu-rtxpro6000-latest-1"
       continue-on-error: true
-      container_image: "rapidsai/ci-conda:26.10-latest"
+      container_image: "rapidsai/ci-conda:26.12-latest"
       script: "ci/test_cuml_compat.sh"
   wheel-tests-cudf-polars:
     permissions:
@@ -304,13 +332,10 @@ jobs:
             num_shards: 1
           - engine: spmd
             shard_id: 0
-            num_shards: 3
+            num_shards: 2
           - engine: spmd
             shard_id: 1
-            num_shards: 3
-          - engine: spmd
-            shard_id: 2
-            num_shards: 3
+            num_shards: 2
     permissions:
       actions: read
       contents: read
@@ -326,6 +351,8 @@ jobs:
       sha: ${{ inputs.sha }}
       script: >-
         ci/test_cudf_polars_polars_tests.sh --engine ${{ matrix.engine }}
+        --inject-gpu-engine-blocksize small
+        --run-slow
         --cudf-polars-shard-id ${{ matrix.shard_id }}
         --cudf-polars-num-shards ${{ matrix.num_shards }}
       # https://github.com/NVIDIA/cudf/issues/23498
@@ -345,7 +372,7 @@ jobs:
       date: ${{ inputs.date }}
       sha: ${{ inputs.sha }}
       node_type: "gpu-rtxpro6000-latest-1"
-      container_image: "rapidsai/ci-conda:26.10-latest"
+      container_image: "rapidsai/ci-conda:26.12-latest"
       script: ci/test_narwhals.sh
   cudf-spark-jni:
     permissions:

@@ -156,6 +156,7 @@ add_library(
   cudfjni
   src/Aggregation128UtilsJni.cpp
   src/AggregationJni.cpp
+  src/AstJitProgram.cpp
   src/ChunkedPackJni.cpp
   src/ChunkedReaderJni.cpp
   src/CudfJni.cpp
@@ -168,6 +169,7 @@ add_library(
   src/DataSourceHelperJni.cpp
   src/DeletionVectorJni.cpp
   src/DistinctHashJoinJni.cpp
+  src/FilteredJoinJni.cpp
   src/HashJoinJni.cpp
   src/HostMemoryBufferNativeUtilsJni.cpp
   src/HybridScanReaderJni.cpp

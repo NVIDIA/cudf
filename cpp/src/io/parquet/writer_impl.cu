@@ -35,10 +35,10 @@
 #include <cudf/table/table_device_view.cuh>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/device_buffer.hpp>
 #include <rmm/device_uvector.hpp>
 #include <rmm/mr/polymorphic_allocator.hpp>
 
+#include <cuda/buffer>
 #include <cuda/iterator>
 #include <cuda/numeric>
 #include <cuda/stream>
@@ -2190,12 +2190,19 @@ auto convert_table_to_parquet_data(table_input_metadata& table_meta,
 
   // Buffers need to be padded.
   // Required by `gpuGatherPages`.
-  rmm::device_buffer uncomp_bfr(
-    cudf::util::round_up_safe(max_uncomp_bfr_size, BUFFER_PADDING_MULTIPLE), stream);
-  rmm::device_buffer comp_bfr(cudf::util::round_up_safe(max_comp_bfr_size, BUFFER_PADDING_MULTIPLE),
-                              stream);
+  cuda::device_buffer<std::uint8_t> uncomp_bfr(
+    stream,
+    cudf::get_current_device_resource_ref(),
+    cudf::util::round_up_safe(max_uncomp_bfr_size, BUFFER_PADDING_MULTIPLE),
+    cuda::no_init);
+  cuda::device_buffer<std::uint8_t> comp_bfr(
+    stream,
+    cudf::get_current_device_resource_ref(),
+    cudf::util::round_up_safe(max_comp_bfr_size, BUFFER_PADDING_MULTIPLE),
+    cuda::no_init);
 
-  rmm::device_buffer col_idx_bfr(column_index_bfr_size, stream);
+  cuda::device_buffer<std::uint8_t> col_idx_bfr(
+    stream, cudf::get_current_device_resource_ref(), column_index_bfr_size, cuda::no_init);
   rmm::device_uvector<EncPage> pages(num_pages, stream);
   rmm::device_uvector<uint32_t> def_level_histogram(def_histogram_bfr_size, stream);
   rmm::device_uvector<uint32_t> rep_level_histogram(rep_histogram_bfr_size, stream);
@@ -2213,12 +2220,12 @@ auto convert_table_to_parquet_data(table_input_metadata& table_meta,
 
   // This contains stats for both the pages and the rowgroups. TODO: make them separate.
   rmm::device_uvector<statistics_chunk> page_stats(num_stats_bfr, stream);
-  auto bfr_i = static_cast<uint8_t*>(col_idx_bfr.data());
+  auto bfr_i = col_idx_bfr.data();
   auto bfr_r = rep_level_histogram.data();
   auto bfr_d = def_level_histogram.data();
   if (num_rowgroups != 0) {
-    auto bfr   = static_cast<uint8_t*>(uncomp_bfr.data());
-    auto bfr_c = static_cast<uint8_t*>(comp_bfr.data());
+    auto bfr   = uncomp_bfr.data();
+    auto bfr_c = comp_bfr.data();
     for (auto r = 0; r < num_rowgroups; r++) {
       for (auto i = 0; i < num_columns; i++) {
         EncColumnChunk& ck   = chunks[r][i];
@@ -2854,15 +2861,17 @@ std::unique_ptr<std::vector<uint8_t>> writer::merge_row_group_metadata(
 
   md.row_groups.reserve(metadata_list.size());
   for (auto const& blob : metadata_list) {
-    CompactProtocolReader cpreader(
-      blob.get()->data(),
-      std::max<size_t>(blob.get()->size(), sizeof(file_ender_s)) - sizeof(file_ender_s));
-    cpreader.skip_bytes(sizeof(file_header_s));  // Skip over file header
+    // The blob is header + thrift metadata + ender; parse the metadata span and reject overreads.
+    auto const& md_blob = *blob.get();
+    CUDF_EXPECTS(md_blob.size() >= sizeof(file_header_s) + sizeof(file_ender_s),
+                 "Parquet row-group metadata blob is too small");
+    auto const begin = md_blob.data() + sizeof(file_header_s);
+    auto const len   = md_blob.size() - sizeof(file_header_s) - sizeof(file_ender_s);
     if (md.num_rows == 0) {
-      cpreader.read(&md);
+      decode_footer_bytes({begin, len}, &md);
     } else {
       FileMetaData tmp;
-      cpreader.read(&tmp);
+      decode_footer_bytes({begin, len}, &tmp);
       md.row_groups.insert(md.row_groups.end(),
                            std::make_move_iterator(tmp.row_groups.begin()),
                            std::make_move_iterator(tmp.row_groups.end()));

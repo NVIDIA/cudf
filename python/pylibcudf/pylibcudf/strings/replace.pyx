@@ -67,7 +67,7 @@ cpdef Column replace(
     target_str = <string_scalar *>(target.c_obj.get())
     repl_str = <string_scalar *>(repl.c_obj.get())
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
     cdef column_view c_input = input.view()
     with nogil:
@@ -117,7 +117,7 @@ cpdef Column replace_multiple(
     """
     cdef unique_ptr[column] c_result
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
     cdef column_view c_input = input.view()
     cdef column_view c_target = target.view()
@@ -173,13 +173,13 @@ cpdef Column replace_slice(
     """
     cdef unique_ptr[column] c_result
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
     cdef column_view c_input
 
     if repl is None:
         repl = Scalar.from_libcudf(
-            cpp_make_string_scalar("".encode(), _stream.view().value(), mr.get_mr())
+            cpp_make_string_scalar("".encode(), _stream.view().get(), mr.get_mr())
         )
 
     cdef const string_scalar* scalar_str = <string_scalar*>(repl.c_obj.get())

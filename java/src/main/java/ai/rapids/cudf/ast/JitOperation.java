@@ -9,8 +9,8 @@ import java.nio.ByteBuffer;
 import java.util.Objects;
 
 /**
- * A libcudf JIT operation. Expressions containing a JIT operation must be evaluated with
- * {@link CompiledExpression#computeColumnJit}.
+ * A libcudf JIT operation. Expressions containing a JIT operation must be compiled with
+ * {@link AstExpression#compileJit()}.
  * Operator arity, error policy, and target-scale constraints are validated when the expression
  * is compiled.
  */

@@ -63,8 +63,12 @@ std::unique_ptr<column> scan_inclusive(column_view const& input,
                             ->release();
 
   // Don't need to set a null mask because that will be handled at the caller.
-  return make_structs_column(
-    input.size(), std::move(scanned_children), 0, rmm::device_buffer{0, stream, mr}, stream, mr);
+  return make_structs_column(input.size(),
+                             std::move(scanned_children),
+                             0,
+                             cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED, stream, mr),
+                             stream,
+                             mr);
 }
 
 template std::unique_ptr<column> scan_inclusive<DeviceMin>(column_view const& input_view,

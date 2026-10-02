@@ -7,18 +7,25 @@ from __future__ import annotations
 import dataclasses
 from typing import TYPE_CHECKING, Any
 
+from rapidsmpf.memory.buffer import MemoryType
 from rapidsmpf.streaming.core.message import Message
 
 from cudf_polars.dsl.tracing import LOG_TRACES, Scope
 from cudf_polars.streaming.explain import SerializablePlan
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from cudf_streaming.table_chunk import TableChunk
     from rapidsmpf.streaming.core.channel import Channel
     from rapidsmpf.streaming.core.context import Context
 
     from cudf_polars.dsl.ir import IR
     from cudf_polars.utils.config import ConfigOptions
+
+
+def _zero_bytes_by_tier() -> dict[MemoryType, int]:
+    return dict.fromkeys(MemoryType, 0)
 
 
 @dataclasses.dataclass(slots=True)
@@ -39,6 +46,10 @@ class ActorTracer:
         None if row counting is not available for this node.
     chunk_count
         Total chunk count produced by this node during execution.
+    input_bytes
+        Bytes received on boundary input channels, stratified by memory tier.
+    output_bytes
+        Bytes sent on the boundary output channel, stratified by memory tier.
     decision
         The algorithm decision made at runtime for this node
         (e.g., "broadcast_left", "shuffle", "tree", etc.).
@@ -51,6 +62,12 @@ class ActorTracer:
     ir_type: str | None = None
     row_count: int | None = None
     chunk_count: int = 0
+    input_bytes: dict[MemoryType, int] = dataclasses.field(
+        default_factory=_zero_bytes_by_tier
+    )
+    output_bytes: dict[MemoryType, int] = dataclasses.field(
+        default_factory=_zero_bytes_by_tier
+    )
     decision: str | None = None
     duplicated: bool = False
     extra: dict[str, Any] = dataclasses.field(default_factory=dict)
@@ -83,6 +100,32 @@ class ActorTracer:
         separate IR node, but should still be logged with their parent actor.
         """
         self.extra[key] = value
+
+
+def record_channel_metrics(
+    tracer: ActorTracer,
+    *,
+    chs_in: Sequence[Channel[Any]],
+    chs_out: Sequence[Channel[Any]],
+) -> None:
+    """
+    Record boundary channel byte volumes on an actor tracer.
+
+    Parameters
+    ----------
+    tracer
+        The actor tracer to update.
+    chs_in
+        Input boundary channels. ``recv_bytes`` are summed per memory tier.
+    chs_out
+        Output boundary channels. ``send_bytes`` are summed per memory tier.
+    """
+    for ch in chs_in:
+        for mem_type, nbytes in ch.metrics().recv_bytes.items():
+            tracer.input_bytes[mem_type] += nbytes
+    for ch in chs_out:
+        for mem_type, nbytes in ch.metrics().send_bytes.items():
+            tracer.output_bytes[mem_type] += nbytes
 
 
 async def send_chunk(

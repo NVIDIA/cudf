@@ -10,14 +10,14 @@
 
     <groupId>ai.rapids</groupId>
     <artifactId>cudf</artifactId>
-    <version>26.10.0-SNAPSHOT</version>
+    <version>26.12.0-SNAPSHOT</version>
 
     <name>cudfjni</name>
     <description>
         This project provides java bindings for cudf, to be able to process large amounts of data on a GPU.
         This is still a work in progress so some APIs may change until the 1.0 release.
     </description>
-    <url>https://rapids.ai/</url>
+    <url>https://docs.nvidia.com/cudf/</url>
 
     <licenses>
         <license>

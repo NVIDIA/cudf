@@ -31,7 +31,6 @@ fi
 export HOST_UID="${HOST_UID:-$(id -u)}"
 export HOST_GID="${HOST_GID:-$(id -g)}"
 
-RAPIDS_CUDA_VERSION="$(cudf_java_normalize_cuda_version "${RAPIDS_CUDA_VERSION}")"
 export RAPIDS_CUDA_VERSION
 CLASSIFIER="$(cudf_java_maven_classifier "${RAPIDS_CUDA_VERSION}")"
 

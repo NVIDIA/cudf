@@ -197,7 +197,7 @@ implementation. See `references/api-patterns.md` for nullable dtype examples.
 
 Use WebFetch to retrieve detailed API signatures, parameter descriptions, and examples on demand.
 
-- **cuDF Documentation:** https://docs.rapids.ai/api/cudf/stable/
-- **dask-cuDF API Reference:** https://docs.rapids.ai/api/dask-cudf/stable/api/
+- **cuDF Documentation:** https://docs.nvidia.com/cudf/
+- **dask-cuDF API Reference:** https://docs.nvidia.com/dask-cudf/
 - **GitHub:** https://github.com/NVIDIA/cudf
 - **CHANGELOG:** https://github.com/NVIDIA/cudf/blob/main/CHANGELOG.md

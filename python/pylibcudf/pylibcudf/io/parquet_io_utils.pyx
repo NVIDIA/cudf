@@ -104,7 +104,7 @@ cpdef list fetch_byte_ranges_to_device(
             dereference(sources[0]),
             host_span[const_byte_range_info](ranges_vec.data(), ranges_vec.size()),
             policy,
-            _stream.view().value(),
+            _stream.view().get(),
             _mr.get_mr(),
         )
 

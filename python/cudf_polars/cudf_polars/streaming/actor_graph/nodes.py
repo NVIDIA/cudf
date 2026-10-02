@@ -21,6 +21,7 @@ from rapidsmpf.streaming.core.spillable_messages import SpillableMessages
 from cudf_polars.dsl.ir import IR, Empty, Join
 from cudf_polars.streaming.actor_graph.dispatch import (
     generate_ir_sub_network,
+    ir_context_for_node,
 )
 from cudf_polars.streaming.actor_graph.tracing import send_chunk
 from cudf_polars.streaming.actor_graph.utils import (
@@ -90,7 +91,11 @@ async def default_node_single(
     Chunks are processed in the order they are received.
     """
     async with shutdown_on_error(
-        context, ch_in, ch_out, trace_ir=ir, ir_context=ir_context
+        context,
+        chs_in=(ch_in,),
+        chs_out=(ch_out,),
+        trace_ir=ir,
+        ir_context=ir_context,
     ) as tracer:
         # Recv metadata and prepare output metadata
         metadata_in = await recv_metadata(ch_in, context)
@@ -104,6 +109,9 @@ async def default_node_single(
             partitioning=partitioning,
             duplicated=metadata_in.duplicated,
         )
+        import dataclasses
+
+        ir_context = dataclasses.replace(ir_context, tracer=tracer)
 
         # Process chunks (handle empty input for aggregation-like operations)
         await chunkwise_evaluate(
@@ -149,7 +157,11 @@ async def default_node_multi(
         If None, no partitioning information is preserved.
     """
     async with shutdown_on_error(
-        context, *chs_in, ch_out, trace_ir=ir, ir_context=ir_context
+        context,
+        chs_in=chs_in,
+        chs_out=(ch_out,),
+        trace_ir=ir,
+        ir_context=ir_context,
     ) as tracer:
         # Merge and forward basic metadata.
         local_count = 1
@@ -300,7 +312,11 @@ async def fanout_node_bounded(
     # See: https://github.com/rapidsai/rapidsmpf/issues/560
     # TODO: Use ir_context
     async with shutdown_on_error(
-        context, ch_in, *chs_out, trace_ir=trace_ir, ir_context=ir_context
+        context,
+        chs_in=(ch_in,),
+        chs_out=chs_out,
+        trace_ir=trace_ir,
+        ir_context=ir_context,
     ):
         # Forward metadata to all outputs.
         metadata = await recv_metadata(ch_in, context)
@@ -376,7 +392,11 @@ async def fanout_node_unbounded(
     # See: https://github.com/rapidsai/rapidsmpf/issues/560
     # TODO: Use ir_context
     async with shutdown_on_error(
-        context, ch_in, *chs_out, trace_ir=trace_ir, ir_context=ir_context
+        context,
+        chs_in=(ch_in,),
+        chs_out=chs_out,
+        trace_ir=trace_ir,
+        ir_context=ir_context,
     ):
         # Forward metadata to all outputs.
         metadata = await recv_metadata(ch_in, context)
@@ -562,6 +582,7 @@ def _(
 
     # Create output ChannelManager
     channels[ir] = ChannelManager(rec.state["context"])
+    ir_context = ir_context_for_node(rec, ir)
 
     if len(ir.children) == 1:
         # Single-channel default node
@@ -569,7 +590,7 @@ def _(
             default_node_single(
                 rec.state["context"],
                 ir,
-                rec.state["ir_context"],
+                ir_context,
                 channels[ir].reserve_input_slot(),
                 channels[ir.children[0]].reserve_output_slot(),
             )
@@ -580,7 +601,7 @@ def _(
             default_node_multi(
                 rec.state["context"],
                 ir,
-                rec.state["ir_context"],
+                ir_context,
                 channels[ir].reserve_input_slot(),
                 tuple(channels[c].reserve_output_slot() for c in ir.children),
             )
@@ -610,7 +631,12 @@ async def empty_node(
     ch_out
         The output Channel[TableChunk].
     """
-    async with shutdown_on_error(context, ch_out, ir_context=ir_context, trace_ir=ir):
+    async with shutdown_on_error(
+        context,
+        chs_out=(ch_out,),
+        ir_context=ir_context,
+        trace_ir=ir,
+    ) as tracer:
         # Send metadata indicating a single empty chunk
         await send_metadata(
             ch_out,
@@ -626,7 +652,7 @@ async def empty_node(
         chunk = TableChunk.from_pylibcudf_table(
             df.table, df.stream, exclusive_view=True, br=context.br()
         )
-        await ch_out.send(context, Message(0, chunk))
+        await send_chunk(context, ch_out, chunk, 0, tracer=tracer)
 
         await ch_out.drain(context)
 
@@ -637,7 +663,7 @@ def _(
 ) -> tuple[dict[IR, list[Any]], dict[IR, ChannelManager]]:
     """Generate network for Empty node - produces one empty chunk."""
     context = rec.state["context"]
-    ir_context = rec.state["ir_context"]
+    ir_context = ir_context_for_node(rec, ir)
     channels: dict[IR, ChannelManager] = {ir: ChannelManager(rec.state["context"])}
     nodes: dict[IR, list[Any]] = {
         ir: [empty_node(context, ir, ir_context, channels[ir].reserve_input_slot())]
@@ -672,6 +698,7 @@ def generate_ir_sub_network_wrapper(
     if (fanout_info := rec.state["fanout_nodes"].get(ir)) is not None:
         count = fanout_info.num_consumers
         manager = ChannelManager(rec.state["context"], count=count)
+        ir_context = ir_context_for_node(rec, ir)
         fanout_node: Any
         if fanout_info.unbounded:
             fanout_node = fanout_node_unbounded(
@@ -679,7 +706,7 @@ def generate_ir_sub_network_wrapper(
                 channels[ir].reserve_output_slot(),
                 *[manager.reserve_input_slot() for _ in range(count)],
                 trace_ir=ir,
-                ir_context=rec.state["ir_context"],
+                ir_context=ir_context,
             )
         else:  # "bounded"
             fanout_node = fanout_node_bounded(
@@ -687,7 +714,7 @@ def generate_ir_sub_network_wrapper(
                 channels[ir].reserve_output_slot(),
                 *[manager.reserve_input_slot() for _ in range(count)],
                 trace_ir=ir,
-                ir_context=rec.state["ir_context"],
+                ir_context=ir_context,
             )
         nodes[ir].append(fanout_node)
         channels[ir] = manager
@@ -723,7 +750,11 @@ async def metadata_feeder_node(
     """
     # TODO: Use ir_context
     async with shutdown_on_error(
-        context, ch_in, ch_out, trace_ir=ir, ir_context=ir_context
+        context,
+        chs_in=(ch_in,),
+        chs_out=(ch_out,),
+        trace_ir=ir,
+        ir_context=ir_context,
     ):
         await send_metadata(ch_out, context, metadata)
         while (msg := await ch_in.recv(context)) is not None:
@@ -764,7 +795,11 @@ async def metadata_drain_node(
         If None, metadata will not be collected.
     """
     async with shutdown_on_error(
-        context, ch_in, ch_out, ir_context=ir_context, trace_ir=ir
+        context,
+        chs_in=(ch_in,),
+        chs_out=(ch_out,),
+        ir_context=ir_context,
+        trace_ir=ir,
     ):
         # Drain metadata channel (we don't need it after this point)
         msg = await ch_in.recv_metadata(context)

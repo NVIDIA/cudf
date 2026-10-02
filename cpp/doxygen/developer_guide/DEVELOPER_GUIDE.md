@@ -26,7 +26,7 @@ A column is an array of data of a single type. Along with Tables, columns are th
 structures used in libcudf. Most libcudf algorithms operate on columns. Columns may have a validity
 mask representing whether each element is valid or null (invalid). Columns of nested types are
 supported, meaning that a column may have child columns. A column is the C++ equivalent to a cuDF
-Python [Series](https://docs.rapids.ai/api/cudf/stable/user_guide/api_docs/api/cudf.series/).
+Python [Series](https://docs.nvidia.com/cudf/latest/cudf/api_docs/series/).
 
 ### Element
 
@@ -41,7 +41,7 @@ A type representing a single element of a data type.
 A table is a collection of columns that all have the same number of elements (rows). A table may
 also have zero columns while still carrying a row count, mirroring an `(N, 0)` DataFrame. A table is
 the C++ equivalent to a cuDF Python
-[DataFrame](https://docs.rapids.ai/api/cudf/stable/user_guide/api_docs/api/cudf.dataframe/).
+[DataFrame](https://docs.nvidia.com/cudf/latest/cudf/api_docs/dataframe/).
 
 ### View
 
@@ -196,7 +196,7 @@ The following guidelines apply to organizing `#include` lines.
    groupings and sort the individual includes within a group lexicographically.
  * Separate groups by a blank line.
  * Order the groups from "nearest" to "farthest". In other words, local includes, then includes
-   from other RAPIDS libraries, then includes from related libraries, like `<thrust/...>`, then
+   from other NVIDIA CUDA-X libraries, then includes from related libraries, like `<thrust/...>`, then
    includes from dependencies installed with cuDF, and then standard headers (for example
    `<string>`, `<iostream>`).
  * We use clang-format for grouping and sorting headers automatically. See the
@@ -674,7 +674,7 @@ cudf::detail::copy_if(
 
 ## Memory Allocation
 
-Device [memory resources](#rmmdevice_memory_resource) are used in libcudf to abstract and control
+Device [memory resources](#memory-resources) are used in libcudf to abstract and control
 how device memory is allocated.
 
 ### Output Memory
@@ -1721,7 +1721,7 @@ formats commonly used in data analytics, including CSV, Parquet, ORC, Avro, and 
 
 Here are some tools that can help with debugging libcudf (besides printf of course):
 1. `cuda-gdb`\
-   Follow the instructions in the [Contributor to cuDF guide](../../../CONTRIBUTING.md#debugging-cudf) to build
+   Follow the instructions in the [Contributor to cuDF guide](https://github.com/NVIDIA/cudf/blob/main/CONTRIBUTING.md#debugging-cudf) to build
    and run libcudf with debug symbols.
 2. `compute-sanitizer`\
    The [CUDA Compute Sanitizer](https://docs.nvidia.com/compute-sanitizer/ComputeSanitizer/index.html)

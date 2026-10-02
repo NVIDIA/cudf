@@ -830,8 +830,6 @@ CUDF_KERNEL void __launch_bounds__(decode_block_size)
 
   int const leaf_level_index = s->setup.col.max_nesting_depth - 1;
 
-  // db->init_binary_block below resets db->values_per_mb
-  block.sync();
   // if this is a bounds page, then we need to decode up to the first mini-block
   // that has a value we need, and set string_offset to the position of the first value in the
   // string data block.
@@ -847,6 +845,10 @@ CUDF_KERNEL void __launch_bounds__(decode_block_size)
     resumes_mid_page ? cudf::detail::warp_size
                      : min(db->values_per_mb, static_cast<uint32_t>(delta_max_batch_size));
   uint32_t const passes_per_batch = batch_size / cudf::detail::warp_size;
+
+  // db->init_binary_block below resets db->values_per_mb, so make sure every thread has read it
+  // for batch_size above before warp 0 re-initializes the decoder
+  block.sync();
 
   if (is_skip_resume) {
     if (warp.meta_group_rank() == 0) {

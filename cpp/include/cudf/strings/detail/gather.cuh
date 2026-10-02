@@ -21,7 +21,7 @@
 #include <rmm/device_buffer.hpp>
 #include <rmm/exec_policy.hpp>
 
-#include <cub/cub.cuh>
+#include <cub/device/device_memcpy.cuh>
 #include <cuda/functional>
 #include <cuda/iterator>
 #include <cuda/std/iterator>
@@ -338,7 +338,7 @@ std::unique_ptr<cudf::column> gather(strings_column_view const& strings,
                              std::move(out_offsets_column),
                              out_chars_data.release(),
                              0,  // caller sets these
-                             rmm::device_buffer{});
+                             cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 }
 
 /**

@@ -20,6 +20,7 @@
 #include <rmm/exec_policy.hpp>
 
 #include <cub/device/device_merge_sort.cuh>
+#include <cuda/buffer>
 #include <cuda/iterator>
 #include <cuda/stream>
 #include <thrust/gather.h>
@@ -37,11 +38,11 @@ struct simple_comparator {
   __device__ bool operator()(size_type lhs, size_type rhs)
   {
     if (has_nulls) {
-      bool lhs_null{d_column.is_null(lhs)};
-      bool rhs_null{d_column.is_null(rhs)};
+      bool const lhs_null{d_column.is_null(lhs)};
+      bool const rhs_null{d_column.is_null(rhs)};
       if (lhs_null || rhs_null) {
-        if (!ascending) { cuda::std::swap(lhs_null, rhs_null); }
-        return (null_precedence == cudf::null_order::BEFORE ? !rhs_null : !lhs_null);
+        return null_compare(lhs_null, rhs_null, null_precedence) ==
+               (ascending ? weak_ordering::LESS : weak_ordering::GREATER);
       }
     }
 
@@ -84,13 +85,15 @@ struct column_sorted_order_fn {
     if constexpr (method == sort_method::STABLE) {
       cub::DeviceMergeSort::StableSortKeysCopy(
         nullptr, tmp_bytes, in_keys, out_keys, indices.size(), comp, stream.get());
-      auto tmp_stg = rmm::device_buffer(tmp_bytes, stream);
+      auto tmp_stg = cuda::device_buffer<std::byte>(
+        stream, cudf::get_current_device_resource_ref(), tmp_bytes, cuda::no_init);
       cub::DeviceMergeSort::StableSortKeysCopy(
         tmp_stg.data(), tmp_bytes, in_keys, out_keys, indices.size(), comp, stream.get());
     } else {
       cub::DeviceMergeSort::SortKeysCopy(
         nullptr, tmp_bytes, in_keys, out_keys, indices.size(), comp, stream.get());
-      auto tmp_stg = rmm::device_buffer(tmp_bytes, stream);
+      auto tmp_stg = cuda::device_buffer<std::byte>(
+        stream, cudf::get_current_device_resource_ref(), tmp_bytes, cuda::no_init);
       cub::DeviceMergeSort::SortKeysCopy(
         tmp_stg.data(), tmp_bytes, in_keys, out_keys, indices.size(), comp, stream.get());
     }

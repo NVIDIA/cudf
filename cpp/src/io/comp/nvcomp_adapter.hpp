@@ -46,12 +46,14 @@ void batched_decompress(compression_type compression,
  * @param[in] num_chunks The number of decompression chunks to be processed
  * @param[in] max_uncomp_chunk_size Maximum size of any single uncompressed chunk
  * @param[in] max_total_uncomp_size Maximum total size of uncompressed data
+ * @param[in] stream CUDA stream that the decompression will run on
  * @returns The total required size in bytes
  */
 size_t batched_decompress_temp_size(compression_type compression,
                                     size_t num_chunks,
                                     size_t max_uncomp_chunk_size,
-                                    size_t max_total_uncomp_size);
+                                    size_t max_total_uncomp_size,
+                                    cuda::stream_ref stream);
 
 /**
  * @brief Return the amount of temporary space required in bytes for a given decompression

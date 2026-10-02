@@ -95,7 +95,6 @@ class PDSHQueries:
             "lineitem",
             run_config.suffix,
             columns=[
-                "l_orderkey",
                 "l_quantity",
                 "l_extendedprice",
                 "l_discount",
@@ -114,9 +113,7 @@ class PDSHQueries:
         # that this could be computed before the groupby aggregation.
         # Other implementations don't enjoy this benefit.
         filt["disc_price"] = filt.l_extendedprice * (1.0 - filt.l_discount)
-        filt["charge"] = (
-            filt.l_extendedprice * (1.0 - filt.l_discount) * (1.0 + filt.l_tax)
-        )
+        filt["charge"] = filt["disc_price"] * (1.0 + filt.l_tax)
 
         gb = filt.groupby(["l_returnflag", "l_linestatus"], as_index=False)
         agg = gb.agg(
@@ -126,15 +123,32 @@ class PDSHQueries:
             ),
             sum_disc_price=pd.NamedAgg(column="disc_price", aggfunc="sum"),
             sum_charge=pd.NamedAgg(column="charge", aggfunc="sum"),
-            avg_qty=pd.NamedAgg(column="l_quantity", aggfunc="mean"),
-            avg_price=pd.NamedAgg(column="l_extendedprice", aggfunc="mean"),
-            avg_disc=pd.NamedAgg(column="l_discount", aggfunc="mean"),
-            count_order=pd.NamedAgg(column="l_orderkey", aggfunc="size"),
+            sum_disc=pd.NamedAgg(column="l_discount", aggfunc="sum"),
+            count_order=pd.NamedAgg(column="l_quantity", aggfunc="size"),
+        )
+        agg["avg_qty"] = agg["sum_qty"].astype("float64") / agg["count_order"]
+        agg["avg_price"] = (
+            agg["sum_base_price"].astype("float64") / agg["count_order"]
+        )
+        agg["avg_disc"] = (
+            agg["sum_disc"].astype("float64") / agg["count_order"]
         )
 
-        return agg.sort_values(
-            ["l_returnflag", "l_linestatus"], ignore_index=True
-        )
+        return agg.loc[
+            :,
+            [
+                "l_returnflag",
+                "l_linestatus",
+                "sum_qty",
+                "sum_base_price",
+                "sum_disc_price",
+                "sum_charge",
+                "avg_qty",
+                "avg_price",
+                "avg_disc",
+                "count_order",
+            ],
+        ].sort_values(["l_returnflag", "l_linestatus"], ignore_index=True)
 
     @staticmethod
     def q2(run_config: RunConfig) -> pd.DataFrame:
@@ -244,13 +258,15 @@ class PDSHQueries:
         var2 = datetime64("1995-03-15")
 
         fcustomer = customer[customer["c_mktsegment"] == var1]
-        orders = orders[orders["o_orderdate"] < var2]
+        orders = orders[
+            (orders["o_orderdate"] < var2)
+            & orders["o_custkey"].isin(fcustomer["c_custkey"])
+        ]
         lineitem = lineitem[lineitem["l_shipdate"] > var2]
 
-        jn1 = fcustomer.merge(
-            orders, left_on="c_custkey", right_on="o_custkey"
+        jn2 = orders.merge(
+            lineitem, left_on="o_orderkey", right_on="l_orderkey"
         )
-        jn2 = jn1.merge(lineitem, left_on="o_orderkey", right_on="l_orderkey")
         jn2["revenue"] = jn2.l_extendedprice * (1 - jn2.l_discount)
 
         gb = jn2.groupby(
@@ -293,16 +309,12 @@ class PDSHQueries:
             (orders["o_orderdate"] >= var1) & (orders["o_orderdate"] < var2)
         ]
         lineitem = lineitem[
-            lineitem["l_commitdate"] < lineitem["l_receiptdate"]
+            (lineitem["l_commitdate"] < lineitem["l_receiptdate"])
+            & lineitem["l_orderkey"].isin(orders["o_orderkey"])
         ]
+        orders = orders[orders["o_orderkey"].isin(lineitem["l_orderkey"])]
 
-        jn = lineitem.merge(
-            orders, left_on="l_orderkey", right_on="o_orderkey"
-        )
-
-        jn = jn.drop_duplicates(subset=["o_orderpriority", "l_orderkey"])
-
-        gb = jn.groupby("o_orderpriority", as_index=False)
+        gb = orders.groupby("o_orderpriority", as_index=False)
         agg = gb.agg(
             order_count=pd.NamedAgg(column="o_orderkey", aggfunc="count")
         )
@@ -361,6 +373,9 @@ class PDSHQueries:
         var3 = datetime64("1995-01-01")
 
         region = region[region["r_name"] == var1]
+        orders = orders[
+            (orders["o_orderdate"] >= var2) & (orders["o_orderdate"] < var3)
+        ]
 
         jn1 = region.merge(
             nation, left_on="r_regionkey", right_on="n_regionkey"
@@ -368,7 +383,7 @@ class PDSHQueries:
         jn2 = jn1.merge(
             customer, left_on="n_nationkey", right_on="c_nationkey"
         )
-        jn3 = jn2.merge(orders, left_on="c_custkey", right_on="o_custkey")
+        jn3 = orders.merge(jn2, left_on="o_custkey", right_on="c_custkey")
         jn4 = jn3.merge(lineitem, left_on="o_orderkey", right_on="l_orderkey")
         jn5 = jn4.merge(
             supplier,
@@ -376,7 +391,6 @@ class PDSHQueries:
             right_on=["s_suppkey", "s_nationkey"],
         )
 
-        jn5 = jn5[(jn5["o_orderdate"] >= var2) & (jn5["o_orderdate"] < var3)]
         jn5["revenue"] = jn5.l_extendedprice * (1.0 - jn5.l_discount)
 
         gb = jn5.groupby("n_name", as_index=False)["revenue"].sum()
@@ -460,33 +474,30 @@ class PDSHQueries:
         var3 = datetime64("1995-01-01")
         var4 = datetime64("1996-12-31")
 
-        n1 = nation[(nation["n_name"] == var1)]
-        n2 = nation[(nation["n_name"] == var2)]
-
-        # Part 1
-        jn1 = customer.merge(n1, left_on="c_nationkey", right_on="n_nationkey")
-        jn2 = jn1.merge(orders, left_on="c_custkey", right_on="o_custkey")
-        jn2 = jn2.rename(columns={"n_name": "cust_nation"})
-        jn3 = jn2.merge(lineitem, left_on="o_orderkey", right_on="l_orderkey")
-        jn4 = jn3.merge(supplier, left_on="l_suppkey", right_on="s_suppkey")
-        jn5 = jn4.merge(n2, left_on="s_nationkey", right_on="n_nationkey")
-        df1 = jn5.rename(columns={"n_name": "supp_nation"})
-
-        # Part 2
-        jn1 = customer.merge(n2, left_on="c_nationkey", right_on="n_nationkey")
-        jn2 = jn1.merge(orders, left_on="c_custkey", right_on="o_custkey")
-        jn2 = jn2.rename(columns={"n_name": "cust_nation"})
-        jn3 = jn2.merge(lineitem, left_on="o_orderkey", right_on="l_orderkey")
-        jn4 = jn3.merge(supplier, left_on="l_suppkey", right_on="s_suppkey")
-        jn5 = jn4.merge(n1, left_on="s_nationkey", right_on="n_nationkey")
-        df2 = jn5.rename(columns={"n_name": "supp_nation"})
-
-        # Combine
-        total = pd.concat([df1, df2])
-
-        total = total[
-            (total["l_shipdate"] >= var3) & (total["l_shipdate"] <= var4)
+        nation = nation[nation["n_name"].isin([var1, var2])]
+        supplier = supplier.merge(
+            nation, left_on="s_nationkey", right_on="n_nationkey"
+        ).rename(columns={"n_name": "supp_nation"})
+        customer = customer.merge(
+            nation, left_on="c_nationkey", right_on="n_nationkey"
+        ).rename(columns={"n_name": "cust_nation"})
+        lineitem = lineitem[
+            (lineitem["l_shipdate"] >= var3) & (lineitem["l_shipdate"] <= var4)
         ]
+
+        jn1 = lineitem.merge(
+            supplier.loc[:, ["s_suppkey", "supp_nation"]],
+            left_on="l_suppkey",
+            right_on="s_suppkey",
+        )
+        jn2 = jn1.merge(orders, left_on="l_orderkey", right_on="o_orderkey")
+        jn3 = jn2.merge(
+            customer.loc[:, ["c_custkey", "cust_nation"]],
+            left_on="o_custkey",
+            right_on="c_custkey",
+        )
+        total = jn3[jn3["supp_nation"] != jn3["cust_nation"]]
+
         total["volume"] = total["l_extendedprice"] * (
             1.0 - total["l_discount"]
         )
@@ -549,38 +560,40 @@ class PDSHQueries:
         var4 = datetime64("1995-01-01")
         var5 = datetime64("1996-12-31")
 
-        n1 = nation.loc[:, ["n_nationkey", "n_regionkey"]]
-        n2 = nation.loc[:, ["n_nationkey", "n_name"]]
         region = region[region["r_name"] == var2]
-        n1 = n1.merge(region, left_on="n_regionkey", right_on="r_regionkey")[
-            ["n_nationkey"]
+        n1 = nation.merge(
+            region, left_on="n_regionkey", right_on="r_regionkey"
+        )
+        n2 = nation.loc[:, ["n_nationkey", "n_name"]]
+
+        part = part[part["p_type"] == var3].loc[:, ["p_partkey"]]
+        orders = orders[
+            (orders["o_orderdate"] >= var4) & (orders["o_orderdate"] <= var5)
         ]
+        customer = customer[customer["c_nationkey"].isin(n1["n_nationkey"])]
 
         jn1 = part.merge(lineitem, left_on="p_partkey", right_on="l_partkey")
-        jn2 = jn1.merge(supplier, left_on="l_suppkey", right_on="s_suppkey")
-        jn3 = jn2.merge(orders, left_on="l_orderkey", right_on="o_orderkey")
-        jn4 = jn3.merge(customer, left_on="o_custkey", right_on="c_custkey")
-        jn6 = jn4.merge(n1, left_on="c_nationkey", right_on="n_nationkey")
+        jn2 = jn1.merge(orders, left_on="l_orderkey", right_on="o_orderkey")
+        jn3 = jn2.merge(customer, left_on="o_custkey", right_on="c_custkey")
+        jn4 = jn3.merge(supplier, left_on="l_suppkey", right_on="s_suppkey")
+        jn5 = jn4.merge(n2, left_on="s_nationkey", right_on="n_nationkey")
 
-        jn7 = jn6.merge(n2, left_on="s_nationkey", right_on="n_nationkey")
+        jn5["o_year"] = jn5["o_orderdate"].dt.year
+        jn5["volume"] = jn5["l_extendedprice"] * (1.0 - jn5["l_discount"])
+        jn5["nation_volume"] = jn5["volume"].where(jn5["n_name"] == var1, 0)
 
-        jn7 = jn7[(jn7["o_orderdate"] >= var4) & (jn7["o_orderdate"] <= var5)]
-        jn7 = jn7[jn7["p_type"] == var3]
-
-        jn7["o_year"] = jn7["o_orderdate"].dt.year
-        jn7["volume"] = jn7["l_extendedprice"] * (1.0 - jn7["l_discount"])
-        jn7 = jn7.rename(columns={"n_name": "nation"})
-
-        def udf(df: pd.DataFrame) -> float:
-            demonimator: float = df["volume"].sum()
-            df = df[df["nation"] == var1]
-            numerator: float = df["volume"].sum()
-            return round(numerator / demonimator, 2)
-
-        gb = jn7.groupby("o_year", as_index=False)
-        agg = gb.apply(udf, include_groups=False)
-        agg.columns = ["o_year", "mkt_share"]
-        return agg.sort_values("o_year", ignore_index=True)
+        gb = jn5.groupby("o_year", as_index=False)
+        agg = gb.agg(
+            nation_volume=pd.NamedAgg(column="nation_volume", aggfunc="sum"),
+            volume=pd.NamedAgg(column="volume", aggfunc="sum"),
+        )
+        agg["mkt_share"] = (
+            agg["nation_volume"].astype("float64")
+            / agg["volume"].astype("float64")
+        ).round(2)
+        return agg.loc[:, ["o_year", "mkt_share"]].sort_values(
+            "o_year", ignore_index=True
+        )
 
     @staticmethod
     def q9(run_config: RunConfig) -> pd.DataFrame:
@@ -631,27 +644,29 @@ class PDSHQueries:
             columns=["s_suppkey", "s_nationkey"],
         )
 
-        jn1 = part.merge(partsupp, left_on="p_partkey", right_on="ps_partkey")
-        jn2 = jn1.merge(supplier, left_on="ps_suppkey", right_on="s_suppkey")
-        jn3 = jn2.merge(
-            lineitem,
-            left_on=["p_partkey", "ps_suppkey"],
-            right_on=["l_partkey", "l_suppkey"],
+        part = part[part["p_name"].str.contains("green", regex=False)].loc[
+            :, ["p_partkey"]
+        ]
+
+        jn1 = part.merge(lineitem, left_on="p_partkey", right_on="l_partkey")
+        jn2 = jn1.merge(
+            partsupp,
+            left_on=["l_partkey", "l_suppkey"],
+            right_on=["ps_partkey", "ps_suppkey"],
         )
+        jn3 = jn2.merge(supplier, left_on="l_suppkey", right_on="s_suppkey")
         jn4 = jn3.merge(orders, left_on="l_orderkey", right_on="o_orderkey")
-        jn5 = jn4.merge(nation, left_on="s_nationkey", right_on="n_nationkey")
 
-        jn5 = jn5[jn5["p_name"].str.contains("green", regex=False)]
-
-        jn5["o_year"] = jn5["o_orderdate"].dt.year
-        jn5["amount"] = jn5["l_extendedprice"] * (1.0 - jn5["l_discount"]) - (
-            jn5["ps_supplycost"] * jn5["l_quantity"]
+        jn4["o_year"] = jn4["o_orderdate"].dt.year
+        jn4["amount"] = jn4["l_extendedprice"] * (1.0 - jn4["l_discount"]) - (
+            jn4["ps_supplycost"] * jn4["l_quantity"]
         )
-        jn5 = jn5.rename(columns={"n_name": "nation"})
 
-        gb = jn5.groupby(["nation", "o_year"], as_index=False, sort=False)
+        gb = jn4.groupby(["s_nationkey", "o_year"], as_index=False, sort=False)
         agg = gb.agg(sum_profit=pd.NamedAgg(column="amount", aggfunc="sum"))
-        return agg.sort_values(
+        agg = agg.merge(nation, left_on="s_nationkey", right_on="n_nationkey")
+        agg = agg.rename(columns={"n_name": "nation"})
+        return agg.loc[:, ["nation", "o_year", "sum_profit"]].sort_values(
             by=["nation", "o_year"], ascending=[True, False], ignore_index=True
         )
 
@@ -701,30 +716,24 @@ class PDSHQueries:
         var1 = datetime64("1993-10-01")
         var2 = datetime64("1994-01-01")
 
-        jn1 = customer.merge(orders, left_on="c_custkey", right_on="o_custkey")
-        jn2 = jn1.merge(lineitem, left_on="o_orderkey", right_on="l_orderkey")
+        orders = orders[
+            (orders["o_orderdate"] >= var1) & (orders["o_orderdate"] < var2)
+        ]
+        lineitem = lineitem[lineitem["l_returnflag"] == "R"]
+
+        jn1 = orders.merge(
+            lineitem, left_on="o_orderkey", right_on="l_orderkey"
+        )
+        jn1["revenue"] = jn1["l_extendedprice"] * (1 - jn1["l_discount"])
+
+        gb = jn1.groupby("o_custkey", as_index=False)
+        agg = gb.agg(revenue=pd.NamedAgg(column="revenue", aggfunc="sum"))
+        agg = agg.sort_values("revenue", ascending=False).head(20)
+
+        jn2 = agg.merge(customer, left_on="o_custkey", right_on="c_custkey")
         jn3 = jn2.merge(nation, left_on="c_nationkey", right_on="n_nationkey")
 
-        jn3 = jn3[(jn3["o_orderdate"] >= var1) & (jn3["o_orderdate"] < var2)]
-        jn3 = jn3[jn3["l_returnflag"] == "R"]
-
-        jn3["revenue"] = jn3["l_extendedprice"] * (1 - jn3["l_discount"])
-
-        gb = jn3.groupby(
-            [
-                "c_custkey",
-                "c_name",
-                "c_acctbal",
-                "c_phone",
-                "n_name",
-                "c_address",
-                "c_comment",
-            ],
-            as_index=False,
-        )
-        agg = gb.agg(revenue=pd.NamedAgg(column="revenue", aggfunc="sum"))
-
-        sel = agg.loc[
+        sel = jn3.loc[
             :,
             [
                 "c_custkey",
@@ -773,11 +782,13 @@ class PDSHQueries:
         var2 = float(f"{0.0001 / run_config.scale_factor:.12f}")
 
         nation = nation[nation["n_name"] == var1]
+        supplier = supplier[
+            supplier["s_nationkey"].isin(nation["n_nationkey"])
+        ]
 
-        jn1 = partsupp.merge(
+        jn2 = partsupp.merge(
             supplier, left_on="ps_suppkey", right_on="s_suppkey"
         )
-        jn2 = jn1.merge(nation, left_on="s_nationkey", right_on="n_nationkey")
 
         jn2["value"] = jn2["ps_supplycost"] * jn2["ps_availqty"]
 
@@ -820,26 +831,22 @@ class PDSHQueries:
         var3 = datetime64("1994-01-01")
         var4 = datetime64("1995-01-01")
 
-        lineitem = lineitem[lineitem["l_shipmode"].isin([var1, var2])]
         lineitem = lineitem[
-            lineitem["l_commitdate"] < lineitem["l_receiptdate"]
-        ]
-        lineitem = lineitem[lineitem["l_shipdate"] < lineitem["l_commitdate"]]
-        lineitem = lineitem[
-            (lineitem["l_receiptdate"] >= var3)
+            lineitem["l_shipmode"].isin([var1, var2])
+            & (lineitem["l_commitdate"] < lineitem["l_receiptdate"])
+            & (lineitem["l_shipdate"] < lineitem["l_commitdate"])
+            & (lineitem["l_receiptdate"] >= var3)
             & (lineitem["l_receiptdate"] < var4)
         ]
 
-        jn = orders.merge(
-            lineitem, left_on="o_orderkey", right_on="l_orderkey"
+        jn = lineitem.merge(
+            orders, left_on="l_orderkey", right_on="o_orderkey"
         )
 
         jn["high_line_count"] = jn["o_orderpriority"].isin(
             ["1-URGENT", "2-HIGH"]
         )
-        jn["low_line_count"] = ~jn["o_orderpriority"].isin(
-            ["1-URGENT", "2-HIGH"]
-        )
+        jn["low_line_count"] = ~jn["high_line_count"]
 
         gb = jn.groupby("l_shipmode", as_index=False)
         agg = gb.agg(
@@ -870,25 +877,22 @@ class PDSHQueries:
         var1 = "special"
         var2 = "requests"
 
+        var1_pos = orders["o_comment"].str.find(var1)
+        var2_pos = orders["o_comment"].str.rfind(var2)
         filtered_orders = orders[
-            ~orders["o_comment"].str.contains(
-                f"{var1}.*{var2}", regex=True, na=False
-            )
+            (var1_pos == -1) | (var2_pos < var1_pos + len(var1))
         ]
 
-        jn = customer.merge(
-            filtered_orders,
-            left_on="c_custkey",
-            right_on="o_custkey",
-            how="left",
-        )
-
-        gb1 = jn.groupby("c_custkey", as_index=False)
+        gb1 = filtered_orders.groupby("o_custkey", as_index=False)
         agg1 = gb1.agg(
             c_count=pd.NamedAgg(column="o_orderkey", aggfunc="count")
         )
+        jn = customer.merge(
+            agg1, left_on="c_custkey", right_on="o_custkey", how="left"
+        )
+        jn["c_count"] = jn["c_count"].fillna(0).astype("int64")
 
-        gb2 = agg1.groupby("c_count", as_index=False)
+        gb2 = jn.groupby("c_count", as_index=False)
         agg2 = gb2.size()
         agg2.columns = ["c_count", "custdist"]
 
@@ -979,12 +983,13 @@ class PDSHQueries:
         )
         revenue = revenue.rename(columns={"l_suppkey": "supplier_no"})
 
-        max_revenue = revenue["total_revenue"].max()
+        revenue = revenue[
+            revenue["total_revenue"] == revenue["total_revenue"].max()
+        ]
 
         jn = supplier.merge(
             revenue, left_on="s_suppkey", right_on="supplier_no"
         )
-        jn = jn[jn["total_revenue"] == max_revenue]
 
         result = jn.loc[
             :, ["s_suppkey", "s_name", "s_address", "s_phone", "total_revenue"]
@@ -1027,16 +1032,11 @@ class PDSHQueries:
         part = part[~part["p_type"].str.startswith("MEDIUM POLISHED")]
         part = part[part["p_size"].isin([49, 14, 23, 45, 19, 3, 36, 9])]
 
-        jn = part.merge(partsupp, left_on="p_partkey", right_on="ps_partkey")
+        partsupp = partsupp[
+            ~partsupp["ps_suppkey"].isin(filtered_supplier["s_suppkey"])
+        ]
 
-        # Left join to exclude suppliers with complaints
-        jn2 = jn.merge(
-            filtered_supplier,
-            left_on="ps_suppkey",
-            right_on="s_suppkey",
-            how="left",
-        )
-        jn2 = jn2[jn2["s_suppkey"].isna()]
+        jn2 = part.merge(partsupp, left_on="p_partkey", right_on="ps_partkey")
 
         gb = jn2.groupby(["p_brand", "p_type", "p_size"], as_index=False)
         agg = gb.agg(
@@ -1124,48 +1124,25 @@ class PDSHQueries:
         qty_by_order = lineitem.groupby("l_orderkey", as_index=False).agg(
             sum_quantity=pd.NamedAgg(column="l_quantity", aggfunc="sum")
         )
-        large_orders = qty_by_order[qty_by_order["sum_quantity"] > var1][
-            ["l_orderkey"]
-        ]
+        large_orders = qty_by_order[qty_by_order["sum_quantity"] > var1]
 
-        # Semi join: keep only orders that are in large_orders
         jn1 = orders.merge(
             large_orders, left_on="o_orderkey", right_on="l_orderkey"
         )
-        jn2 = jn1.merge(lineitem, left_on="o_orderkey", right_on="l_orderkey")
-        jn3 = jn2.merge(customer, left_on="o_custkey", right_on="c_custkey")
+        jn2 = jn1.merge(customer, left_on="o_custkey", right_on="c_custkey")
 
-        gb = jn3.groupby(
-            [
-                "c_name",
-                "o_custkey",
-                "o_orderkey",
-                "o_orderdate",
-                "o_totalprice",
-            ],
-            as_index=False,
-        )
-        agg = gb.agg(
-            l_quantity=pd.NamedAgg(column="l_quantity", aggfunc="sum")
-        )
-
-        result = agg.loc[
+        result = jn2.loc[
             :,
             [
                 "c_name",
-                "o_custkey",
+                "c_custkey",
                 "o_orderkey",
                 "o_orderdate",
                 "o_totalprice",
-                "l_quantity",
+                "sum_quantity",
             ],
         ]
-        result = result.rename(
-            columns={
-                "o_custkey": "c_custkey",
-                "l_quantity": "sum(l_quantity)",
-            },
-        )
+        result = result.rename(columns={"sum_quantity": "sum(l_quantity)"})
 
         return result.sort_values(
             by=["o_totalprice", "o_orderdate"],
@@ -1196,8 +1173,17 @@ class PDSHQueries:
             columns=["p_partkey", "p_brand", "p_container", "p_size"],
         )
 
-        lineitem = lineitem[lineitem["l_shipmode"].isin(["AIR", "AIR REG"])]
-        lineitem = lineitem[lineitem["l_shipinstruct"] == "DELIVER IN PERSON"]
+        lineitem = lineitem[
+            lineitem["l_shipmode"].isin(["AIR", "AIR REG"])
+            & (lineitem["l_shipinstruct"] == "DELIVER IN PERSON")
+            & (lineitem["l_quantity"] >= 1)
+            & (lineitem["l_quantity"] <= 30)
+        ]
+        part = part[
+            part["p_brand"].isin(["Brand#12", "Brand#23", "Brand#34"])
+            & (part["p_size"] >= 1)
+            & (part["p_size"] <= 15)
+        ]
 
         jn = part.merge(lineitem, left_on="p_partkey", right_on="l_partkey")
 
@@ -1283,50 +1269,39 @@ class PDSHQueries:
         var3 = "CANADA"
         var4 = "forest"
 
-        # Aggregate lineitem by partkey and suppkey
+        filtered_nation = nation[nation["n_name"] == var3]
+        supplier = supplier[
+            supplier["s_nationkey"].isin(filtered_nation["n_nationkey"])
+        ]
+
+        filtered_part = part[part["p_name"].str.startswith(var4)]
+
+        partsupp = partsupp[
+            partsupp["ps_partkey"].isin(filtered_part["p_partkey"])
+            & partsupp["ps_suppkey"].isin(supplier["s_suppkey"])
+        ]
+
         filtered_lineitem = lineitem[
-            (lineitem["l_shipdate"] >= var1) & (lineitem["l_shipdate"] < var2)
+            (lineitem["l_shipdate"] >= var1)
+            & (lineitem["l_shipdate"] < var2)
+            & lineitem["l_partkey"].isin(filtered_part["p_partkey"])
+            & lineitem["l_suppkey"].isin(supplier["s_suppkey"])
         ]
         qty_agg = filtered_lineitem.groupby(
             ["l_partkey", "l_suppkey"], as_index=False
         ).agg(sum_quantity=pd.NamedAgg(column="l_quantity", aggfunc="sum"))
         qty_agg["sum_quantity"] = qty_agg["sum_quantity"] * 0.5
 
-        # Filter nation
-        filtered_nation = nation[nation["n_name"] == var3]
-
-        # Filter parts starting with "forest"
-        filtered_part = part[part["p_name"].str.startswith(var4)][
-            ["p_partkey"]
-        ].drop_duplicates()
-
-        # Join partsupp with filtered parts
-        jn1 = filtered_part.merge(
-            partsupp, left_on="p_partkey", right_on="ps_partkey"
-        )
-
-        # Join with quantity aggregation
-        jn2 = jn1.merge(
+        jn1 = partsupp.merge(
             qty_agg,
-            left_on=["ps_suppkey", "p_partkey"],
+            left_on=["ps_suppkey", "ps_partkey"],
             right_on=["l_suppkey", "l_partkey"],
         )
+        jn1 = jn1[jn1["ps_availqty"] > jn1["sum_quantity"]]
 
-        # Filter by availqty > sum_quantity
-        jn2 = jn2[jn2["ps_availqty"] > jn2["sum_quantity"]]
-
-        # Get unique suppliers
-        unique_suppliers = jn2[["ps_suppkey"]].drop_duplicates()
-
-        # Join with supplier and nation
-        jn3 = unique_suppliers.merge(
-            supplier, left_on="ps_suppkey", right_on="s_suppkey"
-        )
-        jn4 = jn3.merge(
-            filtered_nation, left_on="s_nationkey", right_on="n_nationkey"
-        )
-
-        result = jn4.loc[:, ["s_name", "s_address"]]
+        result = supplier[supplier["s_suppkey"].isin(jn1["ps_suppkey"])].loc[
+            :, ["s_name", "s_address"]
+        ]
 
         return result.sort_values("s_name", ignore_index=True)
 
@@ -1367,41 +1342,45 @@ class PDSHQueries:
 
         nation = nation[nation["n_name"] == var1]
         orders = orders[orders["o_orderstatus"] == "F"]
-
-        # Find orders with multiple suppliers
-        supp_per_order = lineitem.groupby("l_orderkey", as_index=False).agg(
-            n_supp_by_order=pd.NamedAgg(column="l_suppkey", aggfunc="count")
-        )
-        multi_supp_orders = supp_per_order[
-            supp_per_order["n_supp_by_order"] > 1
+        supplier = supplier[
+            supplier["s_nationkey"].isin(nation["n_nationkey"])
         ]
 
-        # Join with lineitem where receiptdate > commitdate
-        late_lineitem = lineitem[
-            lineitem["l_receiptdate"] > lineitem["l_commitdate"]
+        lineitem["late"] = lineitem["l_receiptdate"] > lineitem["l_commitdate"]
+
+        candidates = lineitem[
+            lineitem["late"]
+            & lineitem["l_suppkey"].isin(supplier["s_suppkey"])
         ]
-        jn1 = multi_supp_orders.merge(
-            late_lineitem, on="l_orderkey", how="inner"
+        candidates = candidates[
+            candidates["l_orderkey"].isin(orders["o_orderkey"])
+        ]
+        order_lines = lineitem[
+            lineitem["l_orderkey"].isin(candidates["l_orderkey"])
+        ]
+
+        gb1 = order_lines.groupby("l_orderkey", as_index=False)
+        n_supp = gb1.agg(
+            n_supp_by_order=pd.NamedAgg(column="l_suppkey", aggfunc="nunique")
         )
-
-        # Re-calculate suppliers per order for the late items
-        supp_per_order2 = jn1.groupby("l_orderkey", as_index=False).agg(
-            n_supp_by_order=pd.NamedAgg(column="l_suppkey", aggfunc="count")
+        gb2 = order_lines[order_lines["late"]].groupby(
+            "l_orderkey", as_index=False
         )
+        n_late_supp = gb2.agg(
+            n_late_supp_by_order=pd.NamedAgg(
+                column="l_suppkey", aggfunc="nunique"
+            )
+        )
+        per_order = n_supp.merge(n_late_supp, on="l_orderkey")
+        per_order = per_order[
+            (per_order["n_supp_by_order"] > 1)
+            & (per_order["n_late_supp_by_order"] == 1)
+        ]
 
-        # Join back with lineitem data
-        jn2 = supp_per_order2.merge(jn1, on="l_orderkey")
+        jn1 = candidates.merge(per_order, on="l_orderkey")
+        jn2 = jn1.merge(supplier, left_on="l_suppkey", right_on="s_suppkey")
 
-        # Filter to orders where only one supplier was late
-        jn2 = jn2[jn2["n_supp_by_order_x"] == 1]
-
-        # Join with supplier, nation, and orders
-        jn3 = jn2.merge(supplier, left_on="l_suppkey", right_on="s_suppkey")
-        jn4 = jn3.merge(nation, left_on="s_nationkey", right_on="n_nationkey")
-        jn5 = jn4.merge(orders, left_on="l_orderkey", right_on="o_orderkey")
-
-        # Group by supplier name and count
-        gb = jn5.groupby("s_name", as_index=False)
+        gb = jn2.groupby("s_name", as_index=False)
         agg = gb.size()
         agg.columns = ["s_name", "numwait"]
 
@@ -1428,15 +1407,12 @@ class PDSHQueries:
         )
 
         # Extract country code (first 2 chars of phone)
-        customer_with_cntry = customer.copy()
-        customer_with_cntry["cntrycode"] = customer_with_cntry[
-            "c_phone"
-        ].str.slice(0, 2)
+        customer["cntrycode"] = customer["c_phone"].str.slice(0, 2)
 
         # Filter by country codes
-        filtered_customer = customer_with_cntry[
-            customer_with_cntry["cntrycode"].str.match(
-                "13|31|23|29|30|18|17", na=False
+        filtered_customer = customer[
+            customer["cntrycode"].isin(
+                ["13", "31", "23", "29", "30", "18", "17"]
             )
         ][["c_acctbal", "c_custkey", "cntrycode"]]
 
@@ -1445,20 +1421,10 @@ class PDSHQueries:
             "c_acctbal"
         ].mean()
 
-        # Get unique customer keys from orders
-        customers_with_orders = orders[["o_custkey"]].drop_duplicates()
-
-        # Left join to find customers without orders
-        jn = filtered_customer.merge(
-            customers_with_orders,
-            left_on="c_custkey",
-            right_on="o_custkey",
-            how="left",
-        )
-        jn = jn[jn["o_custkey"].isna()]
-
-        # Filter by account balance > average
-        jn = jn[jn["c_acctbal"] > avg_acctbal]
+        jn = filtered_customer[
+            ~filtered_customer["c_custkey"].isin(orders["o_custkey"])
+            & (filtered_customer["c_acctbal"] > avg_acctbal)
+        ]
 
         # Group by country code
         gb = jn.groupby("cntrycode", as_index=False)

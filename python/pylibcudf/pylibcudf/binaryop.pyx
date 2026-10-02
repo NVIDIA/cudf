@@ -68,7 +68,7 @@ cpdef Column binary_operation(
     """
     cdef unique_ptr[column] result
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     cdef column_view c_lhs_column
     cdef column_view c_rhs_column
 

@@ -20,10 +20,11 @@
 #include <cudf/scalar/scalar.hpp>
 #include <cudf/table/table_view.hpp>
 #include <cudf/transform.hpp>
-
-#include <rmm/cuda_stream.hpp>
+#include <cudf/utilities/error.hpp>
 
 #include <cuda/iterator>
+#include <cuda/stream>
+#include <cuda_runtime_api.h>
 
 #include <algorithm>
 #include <array>
@@ -108,6 +109,82 @@ TEST_F(TransformProgramTest, ReusesAstWithCompatibleTable)
   auto result   = std::move(program.run(table)->release().front());
 
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, result->view(), verbosity);
+}
+
+TEST_F(TransformProgramTest, OwnsScalarColumnViewLiterals)
+{
+  auto program = []() {
+    auto construction_input = column_wrapper<int32_t>{3, 20, 1, 50};
+    auto construction_table = cudf::table_view{{construction_input}};
+    auto literal_column     = column_wrapper<int32_t>{2};
+    auto column_ref         = cudf::ast::column_reference{0};
+    auto literal            = cudf::ast::literal{cudf::scalar_column_view{literal_column}};
+    auto expression = cudf::ast::operation{cudf::ast::ast_operator::ADD, column_ref, literal};
+    std::reference_wrapper<cudf::ast::expression const> expressions[] = {expression};
+
+    return std::make_unique<cudf::transform_program>(construction_table, expressions);
+  }();
+
+  auto input    = column_wrapper<int32_t>{10, 20, 30};
+  auto table    = cudf::table_view{{input}};
+  auto expected = column_wrapper<int32_t>{12, 22, 32};
+  auto result   = std::move(program->run(table)->release().front());
+
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, result->view(), verbosity);
+}
+
+TEST_F(TransformProgramTest, OwnsStringScalarColumnViewLiterals)
+{
+  auto program = []() {
+    auto construction_input = cudf::test::strings_column_wrapper{"a", "ccc"};
+    auto construction_table = cudf::table_view{{construction_input}};
+    auto literal_column     = cudf::test::strings_column_wrapper{"ccc"};
+    auto column_ref         = cudf::ast::column_reference{0};
+    auto literal            = cudf::ast::literal{cudf::scalar_column_view{literal_column}};
+    auto expression = cudf::ast::operation{cudf::ast::ast_operator::LESS, column_ref, literal};
+    std::reference_wrapper<cudf::ast::expression const> expressions[] = {expression};
+
+    return std::make_unique<cudf::transform_program>(construction_table, expressions);
+  }();
+
+  auto input    = cudf::test::strings_column_wrapper{"a", "ccc", "dddd"};
+  auto table    = cudf::table_view{{input}};
+  auto expected = column_wrapper<bool>{true, false, false};
+  auto result   = std::move(program->run(table)->release().front());
+
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, result->view(), verbosity);
+}
+
+TEST_F(TransformProgramTest, OwnsMixedLiteralRepresentationsInInputOrder)
+{
+  for (bool scalar_first : {false, true}) {
+    SCOPED_TRACE(scalar_first ? "scalar first" : "column first");
+    auto program = [scalar_first]() {
+      auto construction_input = column_wrapper<int32_t>{0};
+      auto construction_table = cudf::table_view{{construction_input}};
+      auto scalar_value       = cudf::numeric_scalar<int32_t>{7};
+      auto literal_column     = column_wrapper<int32_t>{2};
+      auto scalar_literal     = cudf::ast::literal{scalar_value};
+      auto column_literal     = cudf::ast::literal{cudf::scalar_column_view{literal_column}};
+      auto column_ref         = cudf::ast::column_reference{0};
+      auto difference         = cudf::ast::operation{cudf::ast::ast_operator::SUB,
+                                             scalar_first ? scalar_literal : column_literal,
+                                             scalar_first ? column_literal : scalar_literal};
+      auto expression = cudf::ast::operation{cudf::ast::ast_operator::ADD, column_ref, difference};
+      std::reference_wrapper<cudf::ast::expression const> expressions[] = {expression};
+      return std::make_unique<cudf::transform_program>(construction_table, expressions);
+    }();
+
+    for (int32_t base : {10, 30}) {
+      SCOPED_TRACE(base);
+      auto input    = column_wrapper<int32_t>{base, base + 10};
+      auto table    = cudf::table_view{{input}};
+      auto offset   = scalar_first ? 5 : -5;
+      auto expected = column_wrapper<int32_t>{base + offset, base + 10 + offset};
+      auto result   = std::move(program->run(table)->release().front());
+      CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, result->view(), verbosity);
+    }
+  }
 }
 
 TEST_F(TransformProgramTest, RejectsIncompatibleTable)
@@ -1038,6 +1115,32 @@ TYPED_TEST(TransformTest, NullLogicalAnd)
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, result->view(), verbosity);
 }
 
+// Exercise multiple grid-stride iterations and every partial-warp tail.
+TYPED_TEST(TransformTest, NullLogicalAndLargeNonNullableInputs)
+{
+  using Executor                         = TypeParam;
+  constexpr cudf::size_type aligned_size = 1'048'576;
+  auto const values                      = cuda::make_constant_iterator<int64_t>(1);
+  auto const expected_values             = cuda::make_constant_iterator<bool>(true);
+  for (cudf::size_type tail = 0; tail < 32; ++tail) {
+    auto const size = aligned_size + tail;
+    SCOPED_TRACE(size);
+    auto input      = column_wrapper<int64_t>(values, values + size);
+    auto table      = cudf::table_view{{input, input}};
+    auto c0         = cudf::ast::column_reference{0};
+    auto c1         = cudf::ast::column_reference{1};
+    auto z0         = cudf::ast::operation{cudf::ast::ast_operator::IS_NULL, c0};
+    auto z1         = cudf::ast::operation{cudf::ast::ast_operator::IS_NULL, c1};
+    auto n0         = cudf::ast::operation{cudf::ast::ast_operator::NOT, z0};
+    auto n1         = cudf::ast::operation{cudf::ast::ast_operator::NOT, z1};
+    auto expression = cudf::ast::operation{cudf::ast::ast_operator::NULL_LOGICAL_AND, n0, n1};
+    auto result     = Executor::compute_column(table, expression);
+    auto expected   = column_wrapper<bool>(expected_values, expected_values + size);
+    EXPECT_EQ(result->null_count(), 0);
+    CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(expected, result->view(), verbosity);
+  }
+}
+
 TYPED_TEST(TransformTest, NullLogicalOr)
 {
   using Executor = TypeParam;
@@ -1553,7 +1656,9 @@ TYPED_TEST(TransformTest, NonDefaultStream)
 
   using Executor = TypeParam;
 
-  rmm::cuda_stream stream;
+  int device{};
+  CUDF_CUDA_TRY(cudaGetDevice(&device));
+  cuda::stream stream{cuda::device_ref{device}};
 
   auto c_0   = column_wrapper<int32_t>{3, 20, 1, 50};
   auto c_1   = column_wrapper<int32_t>{10, 7, 20, 0};
@@ -1565,7 +1670,7 @@ TYPED_TEST(TransformTest, NonDefaultStream)
 
   auto expected = column_wrapper<int32_t>{13, 27, 21, 50};
   auto result   = Executor::compute_column(table, expression, stream);
-  stream.synchronize();
+  stream.sync();
 
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, result->view(), verbosity);
 }

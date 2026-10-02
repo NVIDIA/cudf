@@ -414,19 +414,6 @@ class reader_impl {
   }
 
   /**
-   * @brief Check if the user has specified columns from mismatched sources
-   *
-   * @param options Reader options
-   * @return True if the user has specified columns from mismatched sources
-   */
-  [[nodiscard]] bool has_cols_from_mismatched_sources(parquet_reader_options const& options) const
-  {
-    return (options.get_column_names().has_value() or
-            options.get_column_field_ids().has_value()) and
-           options.is_enabled_allow_mismatched_pq_schemas();
-  }
-
-  /**
    * @brief Effective `ignore_missing_columns` policy for column selection
    *
    * This flag would be disabled when multiple sources use mismatched-schema column selection.
@@ -438,6 +425,20 @@ class reader_impl {
   {
     return options.is_enabled_ignore_missing_columns() and
            not(has_cols_from_mismatched_sources(options) and _metadata->get_num_sources() > 1);
+  }
+
+ private:
+  /**
+   * @brief Check if the user has specified columns from mismatched sources
+   *
+   * @param options Reader options
+   * @return True if the user has specified columns from mismatched sources
+   */
+  [[nodiscard]] bool has_cols_from_mismatched_sources(parquet_reader_options const& options) const
+  {
+    return (options.get_column_names().has_value() or
+            options.get_column_field_ids().has_value()) and
+           options.is_enabled_allow_mismatched_pq_schemas();
   }
 
  protected:

@@ -194,7 +194,7 @@ void remap_dict_indices_by_chunk(cudf::device_span<int32_t> indices,
                                  cudf::device_span<size_type const> row_offsets,
                                  cudf::device_span<size_type const> key_counts_prefix,
                                  cudf::device_span<int32_t const> stacked_to_unique,
-                                 rmm::cuda_stream_view stream)
+                                 cuda::stream_ref stream)
 {
   thrust::for_each(
     rmm::exec_policy_nosync(stream, get_current_device_resource_ref()),

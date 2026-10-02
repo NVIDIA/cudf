@@ -362,6 +362,7 @@ public final class Table implements AutoCloseable {
    * @param precisions      precision list containing all the precisions of the decimal types in
    *                        the columns
    * @param isMapValues     true if a column is a map
+   * @param writerTimezone  timezone that the written timestamps are relative to
    * @param filename        local output path
    * @return a handle that is used in later calls to writeORCChunk and writeORCEnd.
    */
@@ -375,6 +376,7 @@ public final class Table implements AutoCloseable {
                                                int[] precisions,
                                                boolean[] isMapValues,
                                                int stripeSizeRows,
+                                               String writerTimezone,
                                                String filename) throws CudfException;
 
   /**
@@ -389,6 +391,7 @@ public final class Table implements AutoCloseable {
    * @param precisions      precision list containing all the precisions of the decimal types in
    *                        the columns
    * @param isMapValues     true if a column is a map
+   * @param writerTimezone  timezone that the written timestamps are relative to
    * @param consumer        consumer of host buffers produced.
    * @return a handle that is used in later calls to writeORCChunk and writeORCEnd.
    */
@@ -402,6 +405,7 @@ public final class Table implements AutoCloseable {
                                                  int[] precisions,
                                                  boolean[] isMapValues,
                                                  int stripeSizeRows,
+                                                 String writerTimezone,
                                                  HostBufferConsumer consumer,
                                                  HostMemoryAllocator hostMemoryAllocator
                                                  ) throws CudfException;
@@ -603,11 +607,26 @@ public final class Table implements AutoCloseable {
   private static native long[] fullHashJoinGatherMapsWithCount(long leftTable, long rightHashJoin,
                                                                long outputRowCount) throws CudfException;
 
+  private static native long[] filterJoinGatherMaps(long leftGatherMapAddress,
+                                                    long leftGatherMapLength,
+                                                    long rightGatherMapAddress,
+                                                    long rightGatherMapLength,
+                                                    long leftTable,
+                                                    long rightTable,
+                                                    long condition,
+                                                    int joinKind) throws CudfException;
+
   private static native long[] leftSemiJoinGatherMap(long leftKeys, long rightKeys,
                                                      boolean compareNullsEqual) throws CudfException;
 
+  private static native long[] leftSemiFilteredJoinGatherMap(long leftKeys,
+                                                            long rightFilteredJoin);
+
   private static native long[] leftAntiJoinGatherMap(long leftKeys, long rightKeys,
                                                      boolean compareNullsEqual) throws CudfException;
+
+  private static native long[] leftAntiFilteredJoinGatherMap(long leftKeys,
+                                                            long rightFilteredJoin);
 
   private static native long conditionalLeftJoinRowCount(long leftTable, long rightTable,
                                                          long condition) throws CudfException;
@@ -1678,6 +1697,7 @@ public final class Table implements AutoCloseable {
           options.getFlatPrecision(),
           options.getFlatIsMap(),
           options.getStripeSizeRows(),
+          options.getWriterTimezone(),
           outputFile.getAbsolutePath()));
       this.consumer = null;
     }
@@ -1694,6 +1714,7 @@ public final class Table implements AutoCloseable {
           options.getFlatPrecision(),
           options.getFlatIsMap(),
           options.getStripeSizeRows(),
+          options.getWriterTimezone(),
           consumer, hostMemoryAllocator));
       this.consumer = consumer;
     }
@@ -2768,6 +2789,63 @@ public final class Table implements AutoCloseable {
   }
 
   /**
+   * Filters a pair of join gather maps by evaluating a conditional expression on the
+   * corresponding rows from the left and right tables.
+   *
+   * <p>The maps must be the paired results of an equality join of the same kind as
+   * {@code joinKind}: INNER maps for {@link JoinKind#INNER}, LEFT maps for {@link JoinKind#LEFT},
+   * and FULL maps for {@link JoinKind#FULL}. For example, maps from
+   * {@link #leftJoinGatherMaps(HashJoin)} can be filtered with {@code JoinKind.LEFT}. Equivalent
+   * equality-join maps from other producers are also supported. Each conditional table must have
+   * the same row count and row numbering as its corresponding equality-join source table; its
+   * columns may differ. The maps must have the same length, and entries at the same position
+   * identify a candidate row pair. The join origin and index validity are not checked, and
+   * converting maps between join kinds is unsupported.
+   *
+   * <p>{@link Integer#MIN_VALUE} denotes an unmatched row in an outer-join map. Such pairs pass
+   * through without evaluating the condition. For pairs with two valid indices, the condition
+   * must produce a Boolean result; false or null means no match. LEFT and FULL retain one
+   * unmatched entry for each retained-side row with no passing candidate. Empty input maps
+   * produce empty output maps; this method does not complete an outer join from empty INNER
+   * maps. In particular, LEFT maps for a nonempty left table and an empty right table must
+   * already contain the unmatched left rows.
+   *
+   * <p>The input gather maps are not modified or closed. Two new {@link GatherMap} instances
+   * with independent storage are returned for the left and right tables, respectively. The
+   * outputs remain valid after closing the inputs, and closing the outputs does not prevent
+   * reusing the inputs. Output row order is unspecified.
+   *
+   * <p>It is the responsibility of the caller to close the resulting gather map instances.
+   *
+   * @param leftGatherMap input gather map for the left table
+   * @param rightGatherMap input gather map for the right table
+   * @param leftTable left table containing the columns referenced by the condition
+   * @param rightTable right table containing the columns referenced by the condition
+   * @param condition Boolean conditional expression to evaluate for each valid pair
+   * @param joinKind kind of the input equality join and the filtered output join
+   * @return filtered left and right table gather maps
+   * @throws IllegalArgumentException if the input gather maps have different lengths
+   */
+  public static GatherMap[] filterJoinGatherMaps(GatherMap leftGatherMap,
+                                                 GatherMap rightGatherMap,
+                                                 Table leftTable,
+                                                 Table rightTable,
+                                                 CompiledExpression condition,
+                                                 JoinKind joinKind) {
+    long leftLength = leftGatherMap.getBufferLength();
+    long rightLength = rightGatherMap.getBufferLength();
+    if (leftLength != rightLength) {
+      throw new IllegalArgumentException("left and right gather maps must have the same length");
+    }
+    long[] gatherMapData = filterJoinGatherMaps(
+        leftGatherMap.getBufferAddress(), leftLength,
+        rightGatherMap.getBufferAddress(), rightLength,
+        leftTable.getNativeView(), rightTable.getNativeView(),
+        condition.getNativeHandle(), joinKind.nativeId);
+    return buildJoinGatherMaps(gatherMapData);
+  }
+
+  /**
    * Computes the gather maps that can be used to manifest the result of a left equi-join between
    * two tables. It is assumed this table instance holds the key columns from the left table, and
    * the table argument represents the key columns from the right table. Two {@link GatherMap}
@@ -3527,6 +3605,26 @@ public final class Table implements AutoCloseable {
   }
 
   /**
+   * Computes the gather map that can be used to manifest the result of a left semi-join between
+   * two tables. It is assumed this table instance holds the key columns from the left table, and
+   * the {@link FilteredJoin} argument represents a reusable lookup built from the key columns
+   * from the right table. The {@link GatherMap} instance returned can be used to gather the left
+   * table to produce the result of the left semi-join.
+   * It is the responsibility of the caller to close the resulting gather map instance.
+   * @param rightFilter reusable lookup built from join key columns from the right table
+   * @return left table gather map
+   */
+  public GatherMap leftSemiJoinGatherMap(FilteredJoin rightFilter) {
+    if (getNumberOfColumns() != rightFilter.getNumberOfColumns()) {
+      throw new IllegalArgumentException("Column count mismatch, this: " + getNumberOfColumns() +
+          " rightKeys: " + rightFilter.getNumberOfColumns());
+    }
+    long[] gatherMapData =
+        leftSemiFilteredJoinGatherMap(getNativeView(), rightFilter.getNativeView());
+    return buildSingleJoinGatherMap(gatherMapData);
+  }
+
+  /**
    * Computes the number of rows from the result of a left semi join between two tables when a
    * conditional expression is true. It is assumed this table instance holds the columns from
    * the left table, and the table argument represents the columns from the right table.
@@ -3631,6 +3729,26 @@ public final class Table implements AutoCloseable {
     }
     long[] gatherMapData =
         leftAntiJoinGatherMap(getNativeView(), rightKeys.getNativeView(), compareNullsEqual);
+    return buildSingleJoinGatherMap(gatherMapData);
+  }
+
+  /**
+   * Computes the gather map that can be used to manifest the result of a left anti-join between
+   * two tables. It is assumed this table instance holds the key columns from the left table, and
+   * the {@link FilteredJoin} argument represents a reusable lookup built from the key columns
+   * from the right table. The {@link GatherMap} instance returned can be used to gather the left
+   * table to produce the result of the left anti-join.
+   * It is the responsibility of the caller to close the resulting gather map instance.
+   * @param rightFilter reusable lookup built from join key columns from the right table
+   * @return left table gather map
+   */
+  public GatherMap leftAntiJoinGatherMap(FilteredJoin rightFilter) {
+    if (getNumberOfColumns() != rightFilter.getNumberOfColumns()) {
+      throw new IllegalArgumentException("Column count mismatch, this: " + getNumberOfColumns() +
+          " rightKeys: " + rightFilter.getNumberOfColumns());
+    }
+    long[] gatherMapData =
+        leftAntiFilteredJoinGatherMap(getNativeView(), rightFilter.getNativeView());
     return buildSingleJoinGatherMap(gatherMapData);
   }
 

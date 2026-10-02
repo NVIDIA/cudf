@@ -55,7 +55,7 @@ def datadir(datadir):
     return datadir / "parquet"
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def simple_pdf():
     nrows = 10
     rng = np.random.default_rng(seed=0)
@@ -90,7 +90,7 @@ def simple_pdf():
     return test_pdf
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def simple_gdf(simple_pdf):
     return cudf.DataFrame(simple_pdf)
 
@@ -176,22 +176,22 @@ def build_pdf(num_columns, day_resolution_timestamps):
     return test_pdf
 
 
-@pytest.fixture(params=[0, 10])
+@pytest.fixture(scope="module", params=[0, 10])
 def pdf(request):
     return build_pdf(request.param, False)
 
 
-@pytest.fixture(params=[0, 10])
+@pytest.fixture(scope="module", params=[0, 10])
 def pdf_day_timestamps(request):
     return build_pdf(request.param, True)
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def gdf(pdf):
     return cudf.DataFrame(pdf)
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def gdf_day_timestamps(pdf_day_timestamps):
     return cudf.DataFrame(pdf_day_timestamps)
 
@@ -2981,6 +2981,7 @@ def test_parquet_writer_column_validation():
 
 
 def test_parquet_writer_nulls_pandas_read(tmp_path, pdf):
+    pdf = pdf.copy()
     if "col_bool" in pdf.columns:
         pdf.drop(columns="col_bool", inplace=True)
     if "col_category" in pdf.columns:

@@ -33,6 +33,7 @@ class StructFunction(Expr):
         """Internal and picklable representation of polars' `StructFunction`."""
 
         FieldByName = auto()
+        DropFields = auto()
         RenameFields = auto()
         PrefixFields = auto()
         SuffixFields = auto()

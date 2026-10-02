@@ -62,7 +62,10 @@ from cudf_polars.streaming.actor_graph.collectives.shuffle import (
     LocalRepartitioner,
     ShuffleManager,
 )
-from cudf_polars.streaming.actor_graph.dispatch import generate_ir_sub_network
+from cudf_polars.streaming.actor_graph.dispatch import (
+    generate_ir_sub_network,
+    ir_context_for_node,
+)
 from cudf_polars.streaming.actor_graph.tracing import send_chunk
 from cudf_polars.streaming.actor_graph.utils import (
     ChannelManager,
@@ -685,7 +688,12 @@ async def _shuffle_and_reassemble(
             skip_insert,
         ),
         replay_buffered_channel(
-            context, ch_replay, ch_in, sample.chunks, metadata_in, trace_ir=ir
+            context,
+            ch_replay,
+            ch_in,
+            sample.local_sample.chunks,
+            metadata_in,
+            trace_ir=ir,
         ),
     )
 
@@ -751,7 +759,11 @@ async def over_actor(
         time. ``None`` for non-scalar Over nodes.
     """
     async with shutdown_on_error(
-        context, ch_in, ch_out, trace_ir=ir, ir_context=ir_context
+        context,
+        chs_in=(ch_in,),
+        chs_out=(ch_out,),
+        trace_ir=ir,
+        ir_context=ir_context,
     ) as tracer:
         metadata_in = await recv_metadata(ch_in, context)
 
@@ -838,12 +850,13 @@ def _(
         else 0
     )
     scalar_plan = _build_scalar_over_plan(ir) if ir.is_scalar else None
+    ir_context = ir_context_for_node(rec, ir)
     actors[ir] = [
         over_actor(
             rec.state["context"],
             rec.state["comm"],
             ir,
-            rec.state["ir_context"],
+            ir_context,
             channels[ir].reserve_input_slot(),
             channels[ir.children[0]].reserve_output_slot(),
             collective_ids,

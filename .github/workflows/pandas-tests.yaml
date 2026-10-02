@@ -33,7 +33,7 @@ jobs:
     steps:
       - id: shards
         env:
-          NUM_SHARDS: 2
+          NUM_SHARDS: 3
         run: |
           {
             echo "num_shards=${NUM_SHARDS}"
@@ -59,7 +59,7 @@ jobs:
       date: ${{ inputs.date }}
       sha: ${{ inputs.sha }}
       node_type: "gpu-rtxpro6000-latest-1"
-      container_image: "rapidsai/citestwheel:26.10-latest"
+      container_image: "rapidsai/citestwheel:26.12-latest"
       script: "ci/cudf_pandas_scripts/pandas-tests/run.sh main ${{ matrix.shard_id }} ${{ needs.pandas-tests-shards.outputs.num_shards }}"
       file_to_upload: ./main-results.json
       artifact-name: "pandas-test-main-results-${{ matrix.shard_id }}"
@@ -82,7 +82,7 @@ jobs:
       date: ${{ inputs.date }}
       sha: ${{ inputs.sha }}
       node_type: "cpu8"
-      container_image: "rapidsai/citestwheel:26.10-latest"
+      container_image: "rapidsai/citestwheel:26.12-latest"
       script: "ci/cudf_pandas_scripts/pandas-tests/merge-nightly.sh ${{ needs.pandas-tests-shards.outputs.num_shards }}"
       file_to_upload: ./main-results.json
       artifact-name: main-results.json

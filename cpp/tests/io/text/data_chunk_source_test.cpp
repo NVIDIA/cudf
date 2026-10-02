@@ -157,6 +157,19 @@ enum class compression { ENABLED, DISABLED };
 
 enum class eof { ADD_EOF_BLOCK, NO_EOF_BLOCK };
 
+// 40 MiB exercises two full 16 MiB BGZIP reader loads plus a partial third load.
+constexpr int bgzip_input_doublings = 22;
+
+std::string make_bgzip_test_input()
+{
+  std::string input{"bananarama"};
+  input.reserve(input.size() << bgzip_input_doublings);
+  for (int i = 0; i < bgzip_input_doublings; ++i) {
+    input += input;
+  }
+  return input;
+}
+
 uint64_t virtual_offset(std::size_t block_offset, std::size_t local_offset)
 {
   return (block_offset << 16) | local_offset;
@@ -225,11 +238,7 @@ using DataChunkDecompressionTest = DecompressionTest<DataChunkSourceTest>;
 TEST_P(DataChunkDecompressionTest, BgzipSource)
 {
   auto const filename = temp_env->get_temp_filepath("bgzip_source");
-  std::string input{"bananarama"};
-  input.reserve(input.size() << 25);
-  for (int i = 0; i < 24; i++) {
-    input = input + input;
-  }
+  auto const input    = make_bgzip_test_input();
   {
     std::ofstream output_stream{filename};
     std::default_random_engine rng{};
@@ -244,11 +253,7 @@ TEST_P(DataChunkDecompressionTest, BgzipSource)
 TEST_F(DataChunkSourceTest, BgzipSourceVirtualOffsets)
 {
   auto const filename = temp_env->get_temp_filepath("bgzip_source_offsets");
-  std::string input{"bananarama"};
-  input.reserve(input.size() << 25);
-  for (int i = 0; i < 24; i++) {
-    input = input + input;
-  }
+  auto input          = make_bgzip_test_input();
   std::string const padding_garbage(10000, 'g');
   std::string const data_garbage{"GARBAGE"};
   std::string const begininput{"begin of bananarama"};
@@ -332,11 +337,7 @@ TEST_F(DataChunkSourceTest, BgzipSourceVirtualOffsetsSingleChunk)
 TEST_F(DataChunkSourceTest, BgzipCompressedSourceVirtualOffsets)
 {
   auto const filename = temp_env->get_temp_filepath("bgzip_source_compressed_offsets");
-  std::string input{"bananarama"};
-  input.reserve(input.size() << 25);
-  for (int i = 0; i < 24; i++) {
-    input = input + input;
-  }
+  auto input          = make_bgzip_test_input();
   std::string const padding_garbage(10000, 'g');
   std::string const data_garbage{"GARBAGE"};
   std::string const begininput{"begin of bananarama"};

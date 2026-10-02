@@ -619,7 +619,8 @@ size_t get_uncompressed_size(compression_type compression, host_span<uint8_t con
   return get_source_properties(compression, src).uncomp_len;
 }
 
-[[nodiscard]] size_t get_decompression_scratch_size(decompression_info const& di)
+[[nodiscard]] size_t get_decompression_scratch_size(decompression_info const& di,
+                                                    cuda::stream_ref stream)
 {
   if (di.type == compression_type::NONE or
       get_host_engine_state(di.type) == host_engine_state::ON) {
@@ -631,8 +632,11 @@ size_t get_uncompressed_size(compression_type compression, host_span<uint8_t con
                                  ? nvcomp::is_decompression_disabled(*nvcomp_type)
                                  : "invalid compression type";
   if (not nvcomp_disabled) {
-    return nvcomp::batched_decompress_temp_size(
-      nvcomp_type.value(), di.num_pages, di.max_page_decompressed_size, di.total_decompressed_size);
+    return nvcomp::batched_decompress_temp_size(nvcomp_type.value(),
+                                                di.num_pages,
+                                                di.max_page_decompressed_size,
+                                                di.total_decompressed_size,
+                                                stream);
   }
 
   if (di.type == compression_type::BROTLI) return get_gpu_debrotli_scratch_size(di.num_pages);

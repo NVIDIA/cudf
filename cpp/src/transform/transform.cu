@@ -21,6 +21,7 @@
 #include <cudf/utilities/traits.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
+#include <cuda/buffer>
 #include <cuda/iterator>
 #include <cuda/stream>
 
@@ -29,7 +30,6 @@
 #include <jit/helpers.hpp>
 #include <jit/parser.hpp>
 #include <jit/row_ir.hpp>
-#include <jit/span.cuh>
 #include <jit/util.hpp>
 
 #include <algorithm>
@@ -59,7 +59,7 @@ struct fixed_width_column {
 
   static auto make(data_type type,
                    size_type size,
-                   rmm::device_buffer null_mask,
+                   cuda::device_buffer<std::byte> null_mask,
                    size_type null_count,
                    cuda::stream_ref stream,
                    rmm::device_async_resource_ref mr)
@@ -95,36 +95,37 @@ struct mutable_string_views_column_view {
 };
 
 struct string_views_column {
-  rmm::device_buffer _data;
+  cuda::device_buffer<string_view> _data;
   size_type _size{0};
-  rmm::device_buffer _null_mask{};
+  cuda::device_buffer<std::byte> _null_mask =
+    cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED);
   size_type _null_count{0};
 
   static auto make(size_type size,
-                   rmm::device_buffer null_mask,
+                   cuda::device_buffer<std::byte> null_mask,
                    size_type null_count,
                    cuda::stream_ref stream,
                    rmm::device_async_resource_ref mr)
   {
-    rmm::device_buffer data{static_cast<size_t>(size) * sizeof(string_view), stream, mr};
+    cuda::device_buffer<string_view> data{stream, mr, static_cast<size_t>(size), cuda::no_init};
     return string_views_column{std::move(data), size, std::move(null_mask), null_count};
   }
 
-  auto mutable_view() const
+  auto mutable_view()
   {
     return mutable_string_views_column_view{
-      const_cast<void*>(_data.data()),
+      _data.data(),
       _size,
-      static_cast<bitmask_type*>(const_cast<void*>(_null_mask.data())),
+      reinterpret_cast<bitmask_type const*>(_null_mask.data()),
       0,
       _null_count};
   }
 
   void set_null_count(size_type count) { _null_count = count; }
 
-  bool nullable() const { return !_null_mask.is_empty(); }
+  bool nullable() const { return _null_mask.size() != 0; }
 
-  bitmask_type* null_mask() { return static_cast<bitmask_type*>(_null_mask.data()); }
+  bitmask_type* null_mask() { return reinterpret_cast<bitmask_type*>(_null_mask.data()); }
 };
 
 struct mutable_strings_column_view {
@@ -142,7 +143,7 @@ struct mutable_strings_column {
   static auto make(size_type size,
                    rmm::device_buffer chars,
                    std::unique_ptr<column> offsets,
-                   rmm::device_buffer null_mask,
+                   cuda::device_buffer<std::byte> null_mask,
                    size_type null_count)
   {
     return mutable_strings_column{make_strings_column(
@@ -453,16 +454,20 @@ std::string reflect_udf_signature(bool is_null_aware,
   }
 
   std::vector<std::string> params;
-  if (has_user_data) { params.push_back("void*"); }
+  if (has_user_data) {
+    params.emplace_back("void*");
+    params.emplace_back("cudf::size_type");
+  }
   params.insert(params.end(), out_types.begin(), out_types.end());
   params.insert(params.end(), in_types.begin(), in_types.end());
 
   auto joined =
     params.empty()
       ? ""
-      : std::accumulate(std::next(params.begin()), params.end(), params[0], [](auto a, auto b) {
-          return std::format("{}, {}", a, b);
-        });
+      : std::accumulate(
+          std::next(params.begin()), params.end(), params[0], [](auto const& a, auto const& b) {
+            return std::format("{}, {}", a, b);
+          });
 
   return std::format("int({})", joined);
 }
@@ -504,7 +509,7 @@ std::tuple<rtcx::blob, lto_binary_type, std::string> instantiate_fragment(
 }
 
 auto to_args(std::span<input_column_view const> inputs,
-             std::span<output_column const> outputs,
+             std::span<output_column> outputs,
              cuda::stream_ref stream,
              rmm::device_async_resource_ref mr)
 {
@@ -583,7 +588,7 @@ void run(bool is_null_aware,
          bitmask_type const* d_stencil,
          void* user_data,
          std::span<input_column_view const> inputs,
-         std::span<output_column const> outputs,
+         std::span<output_column> outputs,
          int32_t* d_max_error,
          std::string const& udf,
          udf_source_type source_type,
@@ -604,7 +609,7 @@ void run(kernel const& kernel,
          bitmask_type const* d_stencil,
          void* user_data,
          std::span<input_column_view const> inputs,
-         std::span<output_column const> outputs,
+         std::span<output_column> outputs,
          int32_t* d_max_error,
          cuda::stream_ref stream,
          rmm::device_async_resource_ref mr)
@@ -637,7 +642,7 @@ void run_lto(std::optional<std::tuple<std::span<uint8_t const>, lto_binary_type,
              bitmask_type const* d_stencil,
              void* user_data,
              std::span<input_column_view const> inputs,
-             std::span<output_column const> outputs,
+             std::span<output_column> outputs,
              int32_t* d_max_error,
              std::span<uint8_t const> udf_binary,
              lto_binary_type source_type,
@@ -986,7 +991,8 @@ rmm::device_uvector<char> make_chars_buffer(column_view const& offsets_view,
   size_t temp_storage_bytes = 0;
   CUDF_CUDA_TRY(cub::DeviceMemcpy::Batched(
     nullptr, temp_storage_bytes, srcs, dsts, src_sizes, size, stream.get()));
-  rmm::device_buffer d_temp_storage(temp_storage_bytes, stream);
+  cuda::device_buffer<std::byte> d_temp_storage(
+    stream, cudf::get_current_device_resource_ref(), temp_storage_bytes, cuda::no_init);
   CUDF_CUDA_TRY(cub::DeviceMemcpy::Batched(
     d_temp_storage.data(), temp_storage_bytes, srcs, dsts, src_sizes, size, stream.get()));
 
@@ -994,7 +1000,7 @@ rmm::device_uvector<char> make_chars_buffer(column_view const& offsets_view,
 }
 
 std::unique_ptr<column> make_strings_column(device_span<string_view const> strings,
-                                            rmm::device_buffer null_mask,
+                                            cuda::device_buffer<std::byte> null_mask,
                                             size_type null_count,
                                             cuda::stream_ref stream,
                                             rmm::device_async_resource_ref mr)
@@ -1003,7 +1009,7 @@ std::unique_ptr<column> make_strings_column(device_span<string_view const> strin
   auto size = static_cast<size_type>(strings.size());
   if (size == 0) return make_empty_column(type_id::STRING);
 
-  auto stencil = static_cast<bitmask_type const*>(null_mask.data());
+  auto stencil = reinterpret_cast<bitmask_type const*>(null_mask.data());
 
   // build offsets column from the strings sizes
   auto sizes = detail::make_counting_transform_iterator(
@@ -1111,8 +1117,7 @@ auto finalize_output(string_views_column&& c,
                      rmm::device_async_resource_ref mr)
 {
   return make_strings_column(
-    device_span<string_view const>{static_cast<string_view const*>(c._data.data()),
-                                   static_cast<size_t>(c._size)},
+    device_span<string_view const>{c._data.data(), static_cast<size_t>(c._size)},
     std::move(c._null_mask),
     c._null_count,
     stream,
@@ -1517,12 +1522,23 @@ transform_program::transform_program(
                            args.user_data,
                            jit_transform::make_input_specs(args.inputs),
                            jit_transform::make_output_specs(args.outputs, args.string_offsets));
-  for (auto& input : args.inputs) {
+  CUDF_EXPECTS(args.inputs.size() == args.input_column_indices.size(),
+               "AST transform input metadata size mismatch");
+  for (auto i = std::size_t{0}; i < args.inputs.size(); ++i) {
+    auto& input = args.inputs[i];
+    CUDF_EXPECTS(
+      args.input_column_indices[i].has_value() == std::holds_alternative<column_view>(input),
+      "AST transform inputs must be table columns or scalar literals");
     impl_->ast_input_types_.push_back(std::visit([](auto& view) { return view.type(); }, input));
     impl_->ast_input_nullable_.push_back(
       std::visit([](auto& view) { return view.nullable(); }, input));
+    if (auto const* scalar = std::get_if<scalar_column_view>(&input)) {
+      // The program must outlive non-owning scalar-column literals in the source AST.
+      // TODO: Reuse converter-owned scalar columns to avoid copies while preserving input order.
+      impl_->ast_scalar_columns_.push_back(
+        std::make_unique<column>(scalar->as_column_view(), stream, mr));
+    }
   }
-  impl_->ast_scalar_columns_       = std::move(args.scalar_columns);
   impl_->ast_input_column_indices_ = std::move(args.input_column_indices);
   impl_->ast_outputs_              = std::move(args.outputs);
 }
@@ -1576,9 +1592,13 @@ std::unique_ptr<table> transform_program::run(table_view const& table,
                    std::invalid_argument);
       inputs.emplace_back(input);
     } else {
+      CUDF_EXPECTS(scalar_index < impl_->ast_scalar_columns_.size(),
+                   "AST transform scalar input metadata mismatch");
       inputs.emplace_back(scalar_column_view{impl_->ast_scalar_columns_[scalar_index++]->view()});
     }
   }
+  CUDF_EXPECTS(scalar_index == impl_->ast_scalar_columns_.size(),
+               "AST transform scalar input metadata mismatch");
   return run(inputs, impl_->ast_outputs_, {}, table.num_rows(), stream, mr);
 }
 

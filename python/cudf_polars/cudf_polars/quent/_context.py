@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import threading
 import uuid
 from typing import TYPE_CHECKING
 
@@ -15,28 +16,80 @@ from cudf_polars.quent._plan import (
     build_plan,
 )
 from cudf_polars.quent._types import (
+    Channel,
     Engine,
     Implementation,
+    Memory,
+    Network,
+    Processor,
     Query,
     QueryGroup,
+    ThreadPool,
 )
+from cudf_polars.utils.config import get_total_device_memory
 
 if TYPE_CHECKING:
     from typing import Self
 
+    from cudf_polars.containers import DataFrame
     from cudf_polars.dsl.ir import IR
     from cudf_polars.quent._logging import QuentLogger
     from cudf_polars.quent._types import (
         Operator,
         Plan,
         Port,
+        Task,
         Worker,
     )
     from cudf_polars.utils.config import ConfigOptions, StreamingExecutor
 
 __all__ = [
+    "LocalQuentContext",
+    "ProcessorRegistry",
     "QuentContext",
+    "QuentIRExecutionContext",
 ]
+
+
+class ProcessorRegistry:
+    """
+    Engine/worker-scoped registry of dynamically declared Quent Processors.
+
+    One registry is owned by the object that owns the Python
+    :class:`~concurrent.futures.ThreadPoolExecutor` (e.g. ``SPMDEngine``,
+    a Dask worker, or a Ray actor).
+
+    Processors (thread resources) are declared on-demand in ``get_or_declare_processor``.
+    Call ``_emit_processor_exit_events`` on engine shutdown to emit finalizing/exit events
+    for all declared processors.
+    """
+
+    def __init__(self) -> None:
+        self._processors: dict[int, Processor] = {}
+        self._lock = threading.Lock()
+
+    def get_or_declare_processor(
+        self, logger: QuentLogger, thread_ident: int, pool_id: uuid.UUID
+    ) -> Processor:
+        """Get (or declare a new) Quent Processor for a CPU thread."""
+        with self._lock:
+            if thread_ident in self._processors:
+                return self._processors[thread_ident]
+            processor = Processor(pool_id=pool_id)
+            self._processors[thread_ident] = processor
+
+        logger.emit(processor.initializing())
+        logger.emit(processor.operating())
+        return processor
+
+    def _emit_processor_exit_events(self, logger: QuentLogger) -> None:
+        """Emit finalizing/exit events for all declared processors."""
+        with self._lock:
+            processors = list(self._processors.values())
+
+        for processor in processors:
+            logger.emit(processor.finalizing())
+            logger.emit(processor.exit())
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
@@ -312,8 +365,224 @@ class QuentContext:
             parent_operators_by_node_id=parent_operators_by_node_id,
         )
 
+    def _emit_task_begin_events(
+        self,
+        ir_type: type[IR],
+        quent_task: Task,
+        quent_ir_execution_context: QuentIRExecutionContext,
+        input_frames_bytes: int,
+    ) -> None:
+        """
+        Emit begin events for a Quent Task.
 
-@dataclasses.dataclass(frozen=True, kw_only=True)
+        Parameters
+        ----------
+        ir_type: type[IR]
+            The IR type of the operator.
+        quent_task: Task
+            The Quent Task to emit events for.
+        quent_ir_execution_context: QuentIRExecutionContext
+            The Quent IR execution context.
+        input_frames_bytes: int
+            The total size of the input dataframes in bytes.
+
+        Notes
+        -----
+        This emits the following events:
+
+        - queueing
+        - allocating (with the Quent Processor for the current thread)
+        - loading (I/O nodes only)
+        - computing (non-I/O nodes only)
+        """
+        quent_processor = quent_ir_execution_context.get_or_declare_processor(
+            thread_ident=threading.get_ident(),
+        )
+        quent_ir_execution_context.logger.emit(quent_task.queueing())
+        quent_ir_execution_context.logger.emit(
+            quent_task.allocating(resource_id=quent_processor.id)
+        )
+        if ir_type.is_io_node:
+            quent_ir_execution_context.logger.emit(
+                quent_task.loading(
+                    use_thread=quent_processor,
+                    use_channel=quent_ir_execution_context.worker_resources.disk_to_device_channel,
+                    channel_capacity_bytes=input_frames_bytes,
+                    use_memory=quent_ir_execution_context.worker_resources.device_memory,
+                    memory_capacity_bytes=input_frames_bytes,
+                )
+            )
+        else:
+            quent_ir_execution_context.logger.emit(
+                quent_task.computing(
+                    use_thread=quent_processor,
+                    use_memory=quent_ir_execution_context.worker_resources.device_memory,
+                    input_bytes=input_frames_bytes,
+                    memory_capacity_bytes=input_frames_bytes,
+                )
+            )
+
+    def _emit_task_end_events(
+        self,
+        ir_type: type[IR],
+        quent_task: Task,
+        quent_ir_execution_context: QuentIRExecutionContext,
+        result: DataFrame | None,
+    ) -> None:
+        """
+        Build and emit Quent events for the end of an IR node's evaluation.
+
+        The timestamp here represents when the IR node completed **host**-side
+        processing.  Work work may be happening asynchronously on the GPU.
+
+        Parameters
+        ----------
+        ir_type: type[IR]
+            The IR type of the operator.
+        quent_task: Task
+            The Quent Task to emit events for.
+        quent_ir_execution_context: QuentIRExecutionContext
+            The Quent IR execution context.
+        result
+            The output dataframe returned from the IR node. This will be ``None``
+            if an exception was raised while evaluating the IR node.
+        ir_execution_context
+            The IR execution context. To emit any events, this must have a
+            quent_ir_execution_context bound.
+
+        Notes
+        -----
+        This emits the following events:
+
+        - computing (I/O nodes only)
+        - exit
+        """
+        if quent_ir_execution_context is None:  # pragma: no cover;
+            return
+
+        if result is not None:
+            output_capacity_bytes = result._size_bytes
+        else:  # pragma: no cover;
+            output_capacity_bytes = 0
+        if ir_type.is_io_node:
+            quent_processor = quent_ir_execution_context.get_or_declare_processor(
+                thread_ident=threading.get_ident(),
+            )
+            quent_ir_execution_context.logger.emit(
+                quent_task.computing(
+                    use_thread=quent_processor,
+                    use_memory=quent_ir_execution_context.worker_resources.device_memory,
+                    memory_capacity_bytes=output_capacity_bytes,
+                )
+            )
+        quent_ir_execution_context.logger.emit(quent_task.exit())
+
+        # TODO: Figure out how to emit some chunk/task-level statistics.
+        # We can't do it directly on the Task object, because that (seems to)
+        # break operator-level aggregation like duration_s.
+
+
+@dataclasses.dataclass(kw_only=True)
+class WorkerResources:
+    """A simple container for per-worker Quent resources."""
+
+    thread_pool: ThreadPool
+    processor_registry: ProcessorRegistry
+    device_memory: Memory
+    filesystem: Memory
+    disk_to_device_channel: Channel
+    device_memory_capacity: int
+    network: Network
+    link_channels: dict[int, Channel]
+
+    @classmethod
+    def build(
+        cls,
+        instance_suffix: str,
+        engine_id: uuid.UUID,
+        worker_id: uuid.UUID,
+        rank: int,
+        nranks: int,
+    ) -> Self:
+        processor_registry = ProcessorRegistry()
+        device_memory = Memory(
+            instance_name=f"{instance_suffix} device memory",
+            resource_type_name="memory",
+            parent_group_id=engine_id,
+        )
+        filesystem = Memory(
+            instance_name=f"{instance_suffix} filesystem",
+            resource_type_name="filesystem",
+            parent_group_id=worker_id,
+        )
+        disk_to_device_channel = Channel(
+            instance_name=f"{instance_suffix} disk -> device",
+            resource_type_name="DiskToDevice",
+            parent_group_id=worker_id,
+            source=filesystem,
+            target=device_memory,
+        )
+        thread_pool = ThreadPool(worker_id=worker_id)
+
+        # Network / Link Channels
+        network = Network(engine_id=engine_id)
+        link_channels: dict[int, Channel] = {}
+        for target_rank in range(nranks):
+            if target_rank == rank:
+                continue
+            link = Channel(
+                instance_name=f"rank-{rank} -> rank-{target_rank}",
+                resource_type_name="Link",
+                parent_group_id=network.id,
+                source=device_memory,
+                target=device_memory,
+            )
+            link_channels[target_rank] = link
+
+        return cls(
+            processor_registry=processor_registry,
+            device_memory=device_memory,
+            filesystem=filesystem,
+            disk_to_device_channel=disk_to_device_channel,
+            thread_pool=thread_pool,
+            device_memory_capacity=get_total_device_memory() or 0,
+            network=network,
+            link_channels=link_channels,
+        )
+
+    def declare(self, logger: QuentLogger) -> None:
+        logger.emit(self.device_memory.initializing())
+        logger.emit(self.device_memory.operating(self.device_memory_capacity))
+        logger.emit(self.filesystem.initializing())
+        # Filesystem capacity is unknown; declare as unbounded.
+        logger.emit(self.filesystem.operating(None))
+        logger.emit(self.disk_to_device_channel.initializing())
+        # Channel capacity is a rate bound; unbounded when unknown.
+        logger.emit(self.disk_to_device_channel.operating(None))
+        logger.emit(self.thread_pool.declare())
+
+        logger.emit(self.network.declare())
+        for link in self.link_channels.values():
+            logger.emit(link.initializing())
+            logger.emit(link.operating(None))
+
+    def finalize(self, logger: QuentLogger) -> None:
+        self.processor_registry._emit_processor_exit_events(logger)
+
+        logger.emit(self.disk_to_device_channel.finalizing())
+        logger.emit(self.disk_to_device_channel.exit())
+        logger.emit(self.disk_to_device_channel.source.finalizing())
+        logger.emit(self.disk_to_device_channel.source.exit())
+        logger.emit(self.device_memory.finalizing())
+        logger.emit(self.device_memory.exit())
+
+        # Network / Link Channels
+        for link in self.link_channels.values():
+            logger.emit(link.finalizing())
+            logger.emit(link.exit())
+
+
+@dataclasses.dataclass(kw_only=True)
 class LocalQuentContext:
     """
     A Quent Context that is only ever used on the local worker rank.
@@ -325,9 +594,47 @@ class LocalQuentContext:
     :class:`Query` from its unique ``query_id`` (see
     :meth:`QuentContext.query_for`), rather than reusing the shared
     ``context.query``.
+
+    The ``worker_resources`` (device memory, disk-to-device channel, network,
+    link channels, thread pool, and processor registry) are engine/worker-scoped:
+    they are declared once at worker setup via :class:`WorkerResources` and
+    injected into each per-collect context, rather than being declared per query.
     """
 
     context: QuentContext
     query: Query
     worker: Worker
     logger: QuentLogger
+    worker_resources: WorkerResources
+
+    def get_or_declare_processor(
+        self,
+        thread_ident: int,
+    ) -> Processor:
+        """Get (or declare a new) Quent Processor for a CPU thread."""
+        return self.worker_resources.processor_registry.get_or_declare_processor(
+            self.logger,
+            thread_ident=thread_ident,
+            pool_id=self.worker_resources.thread_pool.id,
+        )
+
+
+@dataclasses.dataclass(kw_only=True)
+class QuentIRExecutionContext(LocalQuentContext):
+    """Like ``LocalQuentContext``, but with a Quent Operator bound too."""
+
+    quent_operator: Operator
+
+    @classmethod
+    def from_execution_context(
+        cls, execution_context: LocalQuentContext, quent_operator: Operator
+    ) -> Self:
+        """Create a ``QuentIRExecutionContext`` from a ``LocalQuentContext``."""
+        return cls(
+            quent_operator=quent_operator,
+            context=execution_context.context,
+            query=execution_context.query,
+            worker=execution_context.worker,
+            logger=execution_context.logger,
+            worker_resources=execution_context.worker_resources,
+        )

@@ -26,6 +26,7 @@
 #include <zlib.h>  // GZIP compression
 #include <zstd.h>
 
+#include <algorithm>
 #include <numeric>
 
 namespace cudf::io::detail {
@@ -112,7 +113,7 @@ class hash_table {
  public:
   hash_table() : tbl(1 << hash_table_bits, 0) {}
 
-  void clear() { std::fill(tbl.begin(), tbl.end(), 0); }
+  void clear() { std::ranges::fill(tbl, 0); }
 
   [[nodiscard]] uint16_t* entry(uint32_t bytes)
   {

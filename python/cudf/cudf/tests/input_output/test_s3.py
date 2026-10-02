@@ -1,8 +1,6 @@
-# SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-import subprocess
-import sys
 import uuid
 from io import BytesIO, StringIO
 
@@ -84,7 +82,7 @@ def kvikio_remote_io(request):
         yield request.param
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def pdf():
     return pd.DataFrame(
         {
@@ -97,7 +95,7 @@ def pdf():
     )
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def pdf_ext():
     size = 10
     return pd.DataFrame(
@@ -481,15 +479,3 @@ def test_write_chunked_parquet(s3_bucket_public, s3so):
         actual.sort_values(["b"]).reset_index(drop=True),
         cudf.concat([df1, df2]).sort_values(["b"]).reset_index(drop=True),
     )
-
-
-def test_no_s3fs_on_cudf_import():
-    output = subprocess.check_call(
-        [
-            sys.executable,
-            "-c",
-            "import cudf, sys; assert 'pyarrow._s3fs' not in sys.modules",
-        ],
-        cwd="/",
-    )
-    assert output == 0

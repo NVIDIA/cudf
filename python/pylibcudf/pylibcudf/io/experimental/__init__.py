@@ -4,13 +4,17 @@
 from pylibcudf.io.experimental.hybrid_scan import (
     HybridScanMetadata,
     HybridScanReader,
+    ReadColumnsMode,
     UseDataPageMask,
 )
+from pylibcudf.io.experimental.hybrid_scan_multifile import HybridScanMultiFile
 from pylibcudf.io.parquet_metadata import FileMetaData
 
 __all__ = [
     "FileMetaData",  # backwards compatibility
     "HybridScanMetadata",
+    "HybridScanMultiFile",
     "HybridScanReader",
+    "ReadColumnsMode",
     "UseDataPageMask",
 ]

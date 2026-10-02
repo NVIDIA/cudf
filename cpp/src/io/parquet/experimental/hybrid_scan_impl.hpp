@@ -59,6 +59,15 @@ class hybrid_scan_reader_impl : public parquet::detail::reader_impl {
                                    parquet_reader_options const& options);
 
   /**
+   * @brief Constructor that takes ownership of pre-populated Parquet file metadata
+   *
+   * @param parquet_metadatas Pre-populated Parquet file metadata, one per source
+   * @param options Parquet reader options
+   */
+  explicit hybrid_scan_reader_impl(std::vector<FileMetaData>&& parquet_metadatas,
+                                   parquet_reader_options const& options);
+
+  /**
    * @brief Constructor that takes shared ownership of pre-parsed Parquet metadata
    *
    * @param metadata Shared, pre-parsed Parquet file metadata. Must not be null.
@@ -314,23 +323,22 @@ class hybrid_scan_reader_impl : public parquet::detail::reader_impl {
   [[nodiscard]] table_with_metadata materialize_all_columns_chunk();
 
   /**
-   * @brief Partition per-source row groups into read passes
+   * @brief Partition per-source row groups into read passes for the specified column selection
    *
-   * @throws std::invalid_argument if @p row_group_indices.size() is all empty or not equal to the
-   * number of input datasources
-   *
+   * @param columns_mode Columns selection to use for pass memory estimation
    * @param row_group_indices Span of vectors of input row group indices, one per source
    * @param total_row_groups Total number of row groups across all sources
-   * @param pass_read_limit Memory limit to read and decompress row
-   * group data
-   *
-   * @return Pair of a vector of flattened row group passes and a source index map. The source index
-   * map is empty for single source input
+   * @param pass_read_limit Memory limit to read and decompress pass column chunks
+   * @param options Parquet reader options
+   * @return A pair of per-pass row group indices and source index map. Source indices map is empty
+   * for single source input
    */
   [[nodiscard]] std::pair<std::vector<std::vector<cudf::size_type>>, std::vector<cudf::size_type>>
-  construct_row_group_passes(cudf::host_span<std::vector<size_type> const> row_group_indices,
+  construct_row_group_passes(read_columns_mode columns_mode,
+                             std::span<std::vector<size_type> const> row_group_indices,
                              std::size_t total_row_groups,
-                             std::size_t pass_read_limit) const;
+                             std::size_t pass_read_limit,
+                             parquet_reader_options const& options);
 
   /**
    * @copydoc cudf::io::parquet::experimental::hybrid_scan_multifile::has_next_table_chunk
@@ -338,11 +346,6 @@ class hybrid_scan_reader_impl : public parquet::detail::reader_impl {
   [[nodiscard]] bool has_next_table_chunk();
 
  private:
-  /**
-   * @brief Enum indicating whether we are reading the filter, payload, or all columns
-   */
-  enum class read_columns_mode { FILTER_COLUMNS, PAYLOAD_COLUMNS, ALL_COLUMNS };
-
   /**
    * @brief Populate the reader's `_options` config (and related members) from the user options.
    *
@@ -388,22 +391,30 @@ class hybrid_scan_reader_impl : public parquet::detail::reader_impl {
   void set_sparse_pass_page_mask(std::span<cudf::device_span<uint8_t const> const> page_data);
 
   /**
+   * @brief Compute a data page mask from the decoded page headers.
+   *
+   * @param row_mask Boolean column indicating which rows need to be read
+   */
+  [[nodiscard]] thrust::host_vector<bool> compute_data_page_mask_with_page_headers(
+    cudf::column_view const& row_mask);
+
+  /**
    * @brief Mark output buffers nullable when page pruning synthesizes null rows
    */
   void mark_buffers_nullable_for_pruned_pages();
 
   /**
-   * @brief Initialize the mutable output-buffer template for this materialization
+   * @brief Reset the output buffers and their template from the original selected-columns schema
    */
-  void reset_output_buffers_template();
+  void reset_output_buffers();
 
   /**
    * @brief Select the columns to be read based on the read mode
    *
-   * @param read_columns_mode Read mode indicating if we are reading filter or payload columns
+   * @param columns_mode Columns to select
    * @param options Reader options
    */
-  void select_columns(read_columns_mode read_columns_mode, parquet_reader_options const& options);
+  void select_columns(read_columns_mode columns_mode, parquet_reader_options const& options);
 
   /**
    * @brief Get the byte ranges for the input column chunks
@@ -427,13 +438,13 @@ class hybrid_scan_reader_impl : public parquet::detail::reader_impl {
   /**
    * @brief Helper to prepare column materialization
    *
-   * @param read_columns_mode Read mode indicating if we are reading filter or payload columns
+   * @param columns_mode Columns to materialize
    * @param num_sources Number of input sources
    * @param options Parquet reader options
    * @param stream CUDA stream used for device memory operations and kernel launches
    * @param mr Device memory resource used to allocate the device memory for the output columns
    */
-  void prepare_materialization(read_columns_mode read_columns_mode,
+  void prepare_materialization(read_columns_mode columns_mode,
                                std::size_t num_sources,
                                parquet_reader_options const& options,
                                cuda::stream_ref stream,
@@ -450,14 +461,15 @@ class hybrid_scan_reader_impl : public parquet::detail::reader_impl {
    * @param row_group_indices Row group indices to read
    * @param column_chunk_data Device spans containing column chunk data, or page data when sparse
    *        page I/O is enabled
-   * @param data_page_mask Input data page mask from page-pruning step
+   * @param row_mask Optional boolean column indicating surviving rows. `std::nullopt` indicates all
+   * rows are surviving
    */
   void prepare_data(read_mode mode,
                     std::span<std::vector<size_type> const> row_group_indices,
                     std::span<cudf::device_span<uint8_t const> const> column_chunk_data,
-                    host_span<bool const> data_page_mask);
+                    std::optional<cudf::column_view> row_mask);
 
-  /**
+  /**row_mask
    * @brief Create descriptors for filter column chunks and decode dictionary page headers
    *
    * @param row_group_indices The row groups to read
@@ -495,10 +507,13 @@ class hybrid_scan_reader_impl : public parquet::detail::reader_impl {
    * @param column_chunk_data Device spans containing column chunk data, or page data when sparse
    *        page I/O is enabled
    * @param data_page_mask Input data page mask for the current pass
+   * @param row_mask Optional boolean column indicating surviving rows. `std::nullopt` indicates all
+   * rows are surviving
    */
   void handle_chunking(read_mode mode,
                        std::span<cudf::device_span<uint8_t const> const> column_chunk_data,
-                       host_span<bool const> data_page_mask);
+                       host_span<bool const> data_page_mask,
+                       std::optional<cudf::column_view> row_mask);
 
   /**
    * @brief Setup step for the next input read pass.
@@ -509,9 +524,12 @@ class hybrid_scan_reader_impl : public parquet::detail::reader_impl {
    * @param column_chunk_data Device spans containing column chunk data, or page data when sparse
    *        page I/O is enabled
    * @param data_page_mask Input data page mask for the current pass
+   * @param row_mask Optional boolean column indicating surviving rows. `std::nullopt` indicates all
+   * rows are surviving
    */
   void setup_next_pass(std::span<cudf::device_span<uint8_t const> const> column_chunk_data,
-                       std::span<bool const> data_page_mask);
+                       std::span<bool const> data_page_mask,
+                       std::optional<cudf::column_view> row_mask);
 
   /**
    * @brief Setup pointers to columns chunks to be processed for this pass.
@@ -548,7 +566,7 @@ class hybrid_scan_reader_impl : public parquet::detail::reader_impl {
    *
    * @tparam RowMaskView View type of the row mask column
    *
-   * @param[in] read_columns_mode Read mode indicating if we are reading filter or payload columns
+   * @param[in] columns_mode Columns to materialize
    * @param[in,out] out_metadata The output table metadata
    * @param[in,out] out_columns The columns for building the output table
    * @param[in,out] row_mask Boolean column indicating which rows need to be read after page-pruning
@@ -556,7 +574,7 @@ class hybrid_scan_reader_impl : public parquet::detail::reader_impl {
    * @return The output table along with columns' metadata
    */
   template <typename RowMaskView>
-  table_with_metadata finalize_output(read_columns_mode read_columns_mode,
+  table_with_metadata finalize_output(read_columns_mode columns_mode,
                                       table_metadata& out_metadata,
                                       std::vector<std::unique_ptr<column>>& out_columns,
                                       RowMaskView row_mask);
@@ -568,14 +586,14 @@ class hybrid_scan_reader_impl : public parquet::detail::reader_impl {
    *
    * @tparam RowMaskView View type of the row mask column
    * @param mode Value indicating if the data sources are read all at once or chunk by chunk
-   * @param[in] read_columns_mode Read mode indicating if we are reading filter or payload columns
+   * @param[in] columns_mode Columns to materialize
    * @param[in,out] row_mask Boolean column indicating which rows need to be read after page-pruning
    *                         for filter columns, or after materialize step for payload columns
    * @return The output table along with columns' metadata
    */
   template <typename RowMaskView>
   table_with_metadata read_chunk_internal(read_mode mode,
-                                          read_columns_mode read_columns_mode,
+                                          read_columns_mode columns_mode,
                                           RowMaskView row_mask);
 
   /**

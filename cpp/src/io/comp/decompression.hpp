@@ -39,7 +39,8 @@ struct decompression_info {
 /**
  * @brief Returns total scratch space required based on computed decompression_info data.
  */
-[[nodiscard]] size_t get_decompression_scratch_size(decompression_info const& di);
+[[nodiscard]] size_t get_decompression_scratch_size(decompression_info const& di,
+                                                    cuda::stream_ref stream);
 
 /**
  * @brief Returns total scratch space required based on the compressed input data.

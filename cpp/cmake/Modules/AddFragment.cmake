@@ -34,7 +34,7 @@ macro(add_fragment)
     target_compile_options(${OBJECT_ID} PRIVATE -Xnvlink=--kernels-used=cudf_kernel_entry)
   endif()
 
-  set(INSTANTIATION_DIR "${CUDF_GENERATED_INCLUDE_DIR}/${TARGET}/instantiations/${ARG_FRAGMENT}")
+  set(INSTANTIATION_DIR "${CMAKE_CURRENT_BINARY_DIR}/${TARGET}/instantiations/${ARG_FRAGMENT}")
   target_include_directories(${OBJECT_ID} PRIVATE ${INSTANTIATION_DIR})
 
   if(ARG_KERNEL_INSTANCE)
@@ -53,7 +53,7 @@ macro(add_fragment)
     )
   endif()
 
-  target_compile_definitions(${OBJECT_ID} PRIVATE CUDF_DISABLE_EXPORTS ${ARG_DEFINITIONS})
+  target_compile_definitions(${OBJECT_ID} PRIVATE ${ARG_DEFINITIONS})
   set_target_properties(
     ${OBJECT_ID}
     PROPERTIES CUDA_SEPARABLE_COMPILATION ON

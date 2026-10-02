@@ -62,7 +62,7 @@ cpdef Column interleave_columns(
     """
     cdef unique_ptr[column] c_result
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
 
     cdef table_view c_source_table = source_table.view()
@@ -102,7 +102,7 @@ cpdef Table tile(
     """
     cdef unique_ptr[table] c_result
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
 
     cdef table_view c_source_table = source_table.view()
@@ -140,7 +140,7 @@ cpdef void table_to_array(
             "Size exceeds the size_t limit."
         )
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
 
     cdef device_span[byte] span = device_span[byte](
         <byte*> ptr, size

@@ -504,8 +504,11 @@ struct agg_specific_empty_output {
     }
 
     if constexpr (op == aggregation::COLLECT_LIST) {
-      return cudf::make_lists_column(
-        0, make_empty_column(type_id::INT32), empty_like(input), 0, {});
+      return cudf::make_lists_column(0,
+                                     make_empty_column(type_id::INT32),
+                                     empty_like(input),
+                                     0,
+                                     cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
     }
 
     return empty_like(input);

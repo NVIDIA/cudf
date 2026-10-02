@@ -78,7 +78,7 @@ cpdef Column fill(
     cdef unique_ptr[column] result
 
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
 
     cdef column_view c_destination = destination.view()
@@ -124,7 +124,7 @@ cpdef void fill_in_place(
     """
 
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
 
     cdef mutable_column_view c_destination = destination.mutable_view()
     with nogil:
@@ -170,7 +170,7 @@ cpdef Column sequence(
     cdef size_type c_size = size
 
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
 
     with nogil:
@@ -217,7 +217,7 @@ cpdef Table repeat(
     cdef unique_ptr[table] result
 
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     cdef table_view c_input_table
     cdef column_view c_count_column
 
@@ -277,7 +277,7 @@ cpdef Column calendrical_month_sequence(
     cdef unique_ptr[column] c_result
 
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
 
     with nogil:

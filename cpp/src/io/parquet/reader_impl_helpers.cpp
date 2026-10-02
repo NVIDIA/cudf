@@ -31,6 +31,7 @@
 #include <cuda/numeric>
 #include <cuda/std/tuple>
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <format>
@@ -103,10 +104,8 @@ size_type find_colchunk_iter_offset(RowGroup const& row_group,
       row_group.columns[cached_offset.value()].schema_idx == schema_idx) {
     return cached_offset.value();
   }
-  auto const& colchunk_iter =
-    std::find_if(row_group.columns.begin(), row_group.columns.end(), [schema_idx](auto const& col) {
-      return col.schema_idx == schema_idx;
-    });
+  auto const& colchunk_iter = std::ranges::find_if(
+    row_group.columns, [schema_idx](auto const& col) { return col.schema_idx == schema_idx; });
   CUDF_EXPECTS(colchunk_iter != row_group.columns.end(),
                std::format("Column chunk with schema index {} not found in row group", schema_idx),
                std::invalid_argument);
@@ -539,15 +538,21 @@ void metadata::sanitize_schema()
   process(0);
 }
 
-metadata::metadata(FileMetaData&& other) : FileMetaData(std::move(other)) {}
+metadata::metadata(FileMetaData&& other) : FileMetaData(std::move(other))
+{
+  // Since page index is set up for all or no row groups, just check if any column chunk has it set.
+  // Update this check if this behavior changes in the future.
+  is_page_index_setup_ = std::ranges::any_of(row_groups, [](auto const& row_group) {
+    return std::any_of(row_group.columns.cbegin(), row_group.columns.cend(), [](auto const& col) {
+      return col.column_index.has_value() or col.offset_index.has_value();
+    });
+  });
+}
 
 metadata::metadata(datasource* source, bool read_page_indexes)
 {
   auto const buffer = cudf::io::parquet::fetch_footer_to_host(*source);
-  CompactProtocolReader cp(buffer->data(), buffer->size());
-  cp.read(this);
-  auto const is_schema_initialized = cp.InitSchema(this);
-  CUDF_EXPECTS(is_schema_initialized, "Cannot initialize schema");
+  decode_footer_and_init_schema({buffer->data(), buffer->size()}, this);
 
   // Reading the page indexes is somewhat expensive, so skip if there are no byte array columns.
   // Currently the indexes are only used for the string size calculations.
@@ -555,8 +560,8 @@ metadata::metadata(datasource* source, bool read_page_indexes)
   // where we're trying to determine if we have the indexes or not.
   // Note: This will have to be modified if there are other uses in the future (e.g. calculating
   // chunk/pass boundaries).
-  auto const has_strings = std::any_of(
-    schema.begin(), schema.end(), [](auto const& elem) { return elem.type == Type::BYTE_ARRAY; });
+  auto const has_strings =
+    std::ranges::any_of(schema, [](auto const& elem) { return elem.type == Type::BYTE_ARRAY; });
 
   // Without offset indexes the decode paths cannot use column-index-derived information.
   auto const has_offset_index =
@@ -582,6 +587,8 @@ metadata::metadata(datasource* source, bool read_page_indexes)
 
 void metadata::setup_page_index(cudf::host_span<uint8_t const> page_index_bytes, int64_t min_offset)
 {
+  if (is_page_index_setup_) { return; }
+
   CUDF_FUNC_RANGE();
 
   // Flatten all columns into a single vector for easier task distribution
@@ -657,6 +664,8 @@ void metadata::setup_page_index(cudf::host_span<uint8_t const> page_index_bytes,
       read_column_indexes(cp, col_ref.get());
     }
   }
+
+  is_page_index_setup_ = true;
 }
 
 metadata::~metadata()
@@ -677,43 +686,23 @@ metadata::~metadata()
 std::vector<metadata> aggregate_reader_metadata::metadatas_from_sources(
   host_span<std::unique_ptr<datasource> const> sources, bool read_page_indexes)
 {
-  // Avoid using the thread pool for a single source
-  if (sources.size() == 1) {
-    std::vector<metadata> result;
-    result.emplace_back(sources[0].get(), read_page_indexes);
-    return result;
-  }
-
-  std::vector<std::future<metadata>> metadata_ctor_tasks;
-  metadata_ctor_tasks.reserve(sources.size());
-  for (auto const& source : sources) {
-    metadata_ctor_tasks.emplace_back(cudf::detail::host_worker_pool().submit_task(
-      [source = source.get(), read_page_indexes] { return metadata{source, read_page_indexes}; }));
-  }
-  std::vector<metadata> metadatas;
-  metadatas.reserve(sources.size());
-  std::transform(metadata_ctor_tasks.begin(),
-                 metadata_ctor_tasks.end(),
-                 std::back_inserter(metadatas),
-                 [](std::future<metadata>& task) { return std::move(task).get(); });
-  return metadatas;
+  return parallel_construct_metadatas(sources, [read_page_indexes](auto const& source) {
+    return metadata{source.get(), read_page_indexes};
+  });
 }
 
 std::vector<std::unordered_map<std::string, std::string>>
 aggregate_reader_metadata::collect_keyval_metadata() const
 {
   std::vector<std::unordered_map<std::string, std::string>> kv_maps;
-  std::transform(per_file_metadata.cbegin(),
-                 per_file_metadata.cend(),
-                 std::back_inserter(kv_maps),
-                 [](auto const& pfm) {
-                   std::unordered_map<std::string, std::string> kv_map;
-                   std::transform(pfm.key_value_metadata.cbegin(),
-                                  pfm.key_value_metadata.cend(),
-                                  std::inserter(kv_map, kv_map.end()),
-                                  [](auto const& kv) { return std::pair{kv.key, kv.value}; });
-                   return kv_map;
-                 });
+  std::ranges::transform(per_file_metadata, std::back_inserter(kv_maps), [](auto const& pfm) {
+    std::unordered_map<std::string, std::string> kv_map;
+    std::transform(pfm.key_value_metadata.cbegin(),
+                   pfm.key_value_metadata.cend(),
+                   std::inserter(kv_map, kv_map.end()),
+                   [](auto const& kv) { return std::pair{kv.key, kv.value}; });
+    return kv_map;
+  });
 
   return kv_maps;
 }
@@ -760,10 +749,9 @@ size_type aggregate_reader_metadata::calc_num_row_groups() const
 std::vector<size_type> aggregate_reader_metadata::get_num_row_groups_per_file() const
 {
   std::vector<size_type> per_file_num_row_groups(per_file_metadata.size());
-  std::transform(per_file_metadata.begin(),
-                 per_file_metadata.end(),
-                 per_file_num_row_groups.begin(),
-                 [](auto const& pfm) { return pfm.row_groups.size(); });
+  std::ranges::transform(per_file_metadata, per_file_num_row_groups.begin(), [](auto const& pfm) {
+    return pfm.row_groups.size();
+  });
   return per_file_num_row_groups;
 }
 
@@ -933,15 +921,22 @@ bool aggregate_reader_metadata::has_offset_index(
   return true;
 }
 
+void aggregate_reader_metadata::propagate_optional_field(int schema_idx, SchemaElement const& src)
+{
+  if (per_file_metadata.front().schema[schema_idx].repetition_type ==
+        FieldRepetitionType::REQUIRED and
+      src.repetition_type != FieldRepetitionType::REQUIRED) {
+    nullable_across_sources.insert(schema_idx);
+  }
+}
+
 void aggregate_reader_metadata::initialize_internals(bool use_arrow_schema,
                                                      bool has_cols_from_mismatched_srcs)
 {
   if (per_file_metadata.size() > 1) {
-    auto& first_meta = per_file_metadata.front();
-    auto const first_nonempty_source_iter =
-      std::find_if(per_file_metadata.begin(), per_file_metadata.end(), [&](auto const& pfm) {
-        return pfm.row_groups.size() > 0;
-      });
+    auto& first_meta                      = per_file_metadata.front();
+    auto const first_nonempty_source_iter = std::ranges::find_if(
+      per_file_metadata, [&](auto const& pfm) { return pfm.row_groups.size() > 0; });
     auto const num_cols = first_nonempty_source_iter != per_file_metadata.end()
                             ? first_nonempty_source_iter->row_groups.front().columns.size()
                             : 0;
@@ -958,37 +953,35 @@ void aggregate_reader_metadata::initialize_internals(bool use_arrow_schema,
         }
         CUDF_EXPECTS(schema == pfm.schema, "All sources must have the same schema");
       }
-    }
 
-    // Mark the column schema in the first (default) source as nullable if it is nullable in any of
-    // the input sources. This avoids recomputing this within build_column() and
-    // populate_metadata().
-    std::for_each(
-      cuda::counting_iterator{static_cast<size_t>(1)},
-      cuda::counting_iterator{schema.size()},
-      [&](auto const schema_idx) {
-        if (schema[schema_idx].repetition_type == FieldRepetitionType::REQUIRED and
-            std::any_of(
-              per_file_metadata.begin() + 1, per_file_metadata.end(), [&](auto const& pfm) {
-                return pfm.schema[schema_idx].repetition_type != FieldRepetitionType::REQUIRED;
-              })) {
-          schema[schema_idx].repetition_type = FieldRepetitionType::OPTIONAL;
-        }
-      });
+      // Record fields that are nullable in any source other than the first one
+      std::for_each(
+        cuda::counting_iterator{static_cast<size_t>(1)},
+        cuda::counting_iterator{schema.size()},
+        [&](auto const schema_idx) {
+          std::for_each(
+            per_file_metadata.begin() + 1, per_file_metadata.end(), [&](auto const& pfm) {
+              propagate_optional_field(static_cast<int>(schema_idx), pfm.schema[schema_idx]);
+            });
+        });
+    }
   }
 
   // Collect and apply arrow:schema from Parquet's key value metadata section
   if (use_arrow_schema) { apply_arrow_schema(); }
 
   // Erase ARROW_SCHEMA_KEY from the output pfm if exists
-  std::for_each(
-    keyval_maps.begin(), keyval_maps.end(), [](auto& pfm) { pfm.erase(ARROW_SCHEMA_KEY); });
+  std::ranges::for_each(keyval_maps, [](auto& pfm) { pfm.erase(ARROW_SCHEMA_KEY); });
 }
 
 aggregate_reader_metadata::aggregate_reader_metadata(std::vector<FileMetaData>&& parquet_metadatas,
                                                      bool use_arrow_schema,
                                                      bool has_cols_from_mismatched_srcs)
 {
+  CUDF_EXPECTS(not parquet_metadatas.empty(),
+               "Cannot construct aggregate Parquet reader metadata without source metadata",
+               std::invalid_argument);
+
   per_file_metadata.reserve(parquet_metadatas.size());
   std::transform(std::make_move_iterator(parquet_metadatas.begin()),
                  std::make_move_iterator(parquet_metadatas.end()),
@@ -1014,6 +1007,10 @@ aggregate_reader_metadata::aggregate_reader_metadata(
     num_rows(calc_num_rows()),
     num_row_groups(calc_num_row_groups())
 {
+  CUDF_EXPECTS(not per_file_metadata.empty(),
+               "Encountered an empty vector of parquet sources",
+               std::invalid_argument);
+
   initialize_internals(use_arrow_schema, has_cols_from_mismatched_srcs);
 }
 
@@ -1373,18 +1370,17 @@ aggregate_reader_metadata::get_rowgroup_metadata() const
 {
   std::vector<std::unordered_map<std::string, int64_t>> rg_metadata;
 
-  std::for_each(
-    per_file_metadata.cbegin(), per_file_metadata.cend(), [&rg_metadata](auto const& pfm) {
-      std::transform(pfm.row_groups.cbegin(),
-                     pfm.row_groups.cend(),
-                     std::back_inserter(rg_metadata),
-                     [](auto const& rg) {
-                       std::unordered_map<std::string, int64_t> rg_meta_map;
-                       rg_meta_map["num_rows"]        = rg.num_rows;
-                       rg_meta_map["total_byte_size"] = rg.total_byte_size;
-                       return rg_meta_map;
-                     });
-    });
+  std::ranges::for_each(per_file_metadata, [&rg_metadata](auto const& pfm) {
+    std::transform(pfm.row_groups.cbegin(),
+                   pfm.row_groups.cend(),
+                   std::back_inserter(rg_metadata),
+                   [](auto const& rg) {
+                     std::unordered_map<std::string, int64_t> rg_meta_map;
+                     rg_meta_map["num_rows"]        = rg.num_rows;
+                     rg_meta_map["total_byte_size"] = rg.total_byte_size;
+                     return rg_meta_map;
+                   });
+  });
   return rg_metadata;
 }
 
@@ -1457,10 +1453,9 @@ std::unique_ptr<table> aggregate_reader_metadata::read_column_chunk_bounds(
   auto const num_row_groups_per_file = get_num_row_groups_per_file();
   auto num_row_groups_per_source     = std::vector<std::size_t>{};
   num_row_groups_per_source.reserve(num_row_groups_per_file.size());
-  std::transform(num_row_groups_per_file.begin(),
-                 num_row_groups_per_file.end(),
-                 std::back_inserter(num_row_groups_per_source),
-                 [](auto count) { return static_cast<std::size_t>(count); });
+  std::ranges::transform(num_row_groups_per_file,
+                         std::back_inserter(num_row_groups_per_source),
+                         [](auto count) { return static_cast<std::size_t>(count); });
 
   auto input_row_group_indices = std::vector<std::vector<size_type>>(per_file_metadata.size());
   for (auto src_idx = size_type{0}; std::cmp_less(src_idx, per_file_metadata.size()); ++src_idx) {
@@ -1588,7 +1583,7 @@ std::vector<std::string> aggregate_reader_metadata::get_pandas_index_names() con
     std::smatch sm;
     while (std::regex_search(str, sm, index_name_expr)) {
       if (sm.size() == 2) {  // 2 = whole match, first item
-        if (std::find(names.begin(), names.end(), sm[1].str()) == names.end()) {
+        if (std::ranges::find(names, sm[1].str()) == names.end()) {
           std::regex const esc_quote{R"(\\")"};
           names.emplace_back(std::regex_replace(sm[1].str(), esc_quote, R"(")"));
         }
@@ -1784,14 +1779,12 @@ aggregate_reader_metadata::select_row_groups(
   // If input row group indices are not specified, populate the vector of all row group indices
   if (row_group_indices.empty()) {
     all_row_group_indices.reserve(per_file_metadata.size());
-    std::transform(per_file_metadata.cbegin(),
-                   per_file_metadata.cend(),
-                   std::back_inserter(all_row_group_indices),
-                   [](auto const& file_meta) {
-                     std::vector<size_type> rg_idx(file_meta.row_groups.size());
-                     std::iota(rg_idx.begin(), rg_idx.end(), 0);
-                     return rg_idx;
-                   });
+    std::ranges::transform(
+      per_file_metadata, std::back_inserter(all_row_group_indices), [](auto const& file_meta) {
+        std::vector<size_type> rg_idx(file_meta.row_groups.size());
+        std::iota(rg_idx.begin(), rg_idx.end(), 0);
+        return rg_idx;
+      });
 
     // Set the current span of row group indices to the vector of all row group indices
     current_row_group_indices = host_span<std::vector<size_type> const>(all_row_group_indices);
@@ -1877,11 +1870,10 @@ aggregate_reader_metadata::select_row_groups(
       // if row bounds were previously applied
       if (is_row_bounded_row_groups) {
         // Find the source index of the first non-empty row group
-        auto const first_non_empty_source_idx =
-          std::distance(current_row_group_indices.begin(),
-                        std::find_if(current_row_group_indices.begin(),
-                                     current_row_group_indices.end(),
-                                     [](auto const& indices) { return not indices.empty(); }));
+        auto const first_non_empty_source_idx = std::distance(
+          current_row_group_indices.begin(),
+          std::ranges::find_if(current_row_group_indices,
+                               [](auto const& indices) { return not indices.empty(); }));
 
         // Update the rows to skip relative to the first surviving row group
         if (std::cmp_less(first_non_empty_source_idx, current_row_group_indices.size())) {
@@ -1999,6 +1991,8 @@ aggregate_reader_metadata::select_columns(
   auto const case_sensitive_names   = selection_options.case_sensitive_names;
   auto const selection_mode         = selection_options.selection_mode;
 
+  auto constexpr root_idx = 0;
+
   // Setup schema lookup helper
   auto schema_lookup =
     schema_child_lookup{[&](int const schema_idx, int const src_idx) -> SchemaElement const& {
@@ -2043,7 +2037,9 @@ aggregate_reader_metadata::select_columns(
       auto const dtype = to_data_type(col_type, schema_elem);
 
       cudf::io::detail::inline_column_buffer output_col(
-        dtype, schema_elem.repetition_type == FieldRepetitionType::OPTIONAL);
+        dtype,
+        schema_elem.repetition_type == FieldRepetitionType::OPTIONAL or
+          is_nullable_across_sources(schema_idx));
       if (has_list_parent) { output_col.user_data |= PARQUET_COLUMN_BUFFER_FLAG_HAS_LIST_PARENT; }
       // store the index of this element if inserted in out_col_array
       nesting.push_back(static_cast<int>(out_col_array.size()));
@@ -2084,7 +2080,9 @@ aggregate_reader_metadata::select_columns(
           auto const element_dtype = to_data_type(element_type, schema_elem);
 
           cudf::io::detail::inline_column_buffer element_col(
-            element_dtype, schema_elem.repetition_type == FieldRepetitionType::OPTIONAL);
+            element_dtype,
+            schema_elem.repetition_type == FieldRepetitionType::OPTIONAL or
+              is_nullable_across_sources(schema_idx));
           if (has_list_parent || col_type == type_id::LIST) {
             element_col.user_data |= PARQUET_COLUMN_BUFFER_FLAG_HAS_LIST_PARENT;
           }
@@ -2096,7 +2094,7 @@ aggregate_reader_metadata::select_columns(
           output_col.children.push_back(std::move(element_col));
         }
 
-        std::copy(nesting.cbegin(), nesting.cend(), std::back_inserter(input_col.nesting));
+        std::ranges::copy(nesting, std::back_inserter(input_col.nesting));
 
         // pop off the extra nesting element.
         if (one_level_list) { nesting.pop_back(); }
@@ -2119,18 +2117,19 @@ aggregate_reader_metadata::select_columns(
     };
 
   // Compares two schema elements to be equal except their number of children
-  auto const equal_to_except_num_children = [selection_mode](SchemaElement const& lhs,
-                                                             SchemaElement const& rhs) {
-    // Match by field ID if enabled, otherwise match by name
+  auto const equal_to_except_num_children = [selection_mode, case_sensitive_names](
+                                              SchemaElement const& lhs, SchemaElement const& rhs) {
+    // Match by field ID only when it is the selection method, otherwise match by name. Field IDs
+    // are optional in Parquet and may not be present in all sources.
     auto const match_schema_by_field_id = selection_mode == column_selection_mode::BY_FIELD_ID;
-    auto const names_match =
+    auto const identities_match =
       (match_schema_by_field_id and lhs.field_id.has_value() and rhs.field_id.has_value())
         ? lhs.field_id == rhs.field_id
-        : lhs.name == rhs.name;
+        : are_column_paths_equal(lhs.name, rhs.name, case_sensitive_names);
     return lhs.type == rhs.type and lhs.converted_type == rhs.converted_type and
-           lhs.type_length == rhs.type_length and names_match and
+           lhs.type_length == rhs.type_length and identities_match and
            lhs.decimal_scale == rhs.decimal_scale and
-           lhs.decimal_precision == rhs.decimal_precision and lhs.field_id == rhs.field_id;
+           lhs.decimal_precision == rhs.decimal_precision;
   };
 
   // Maps a projected column's schema_idx in the zeroth per_file_metadata (source) to the
@@ -2158,6 +2157,9 @@ aggregate_reader_metadata::select_columns(
       auto& schema_idx_map = schema_idx_maps[src_idx - 1];
       // Map the schema index from 0th tree (src) to the one in the current (dst) tree.
       schema_idx_map[src_schema_idx] = dst_schema_idx;
+
+      // Mark the field as nullable if it is nullable in the current tree.
+      propagate_optional_field(src_schema_idx, dst_schema_elem);
 
       // If src_schema_elem is a stub, it does not exist in the column_name_info and column_buffer
       // hierarchy. So continue on with mapping.
@@ -2223,6 +2225,29 @@ aggregate_reader_metadata::select_columns(
       }
     };
 
+  // Maps a top-level column's schema_idx across the rest of the data sources if we are reading from
+  // mismatched Parquet sources. `col_name_info` is null when all of the column's children are
+  // selected.
+  auto map_column_across_sources = [&](column_name_info const* col_name_info,
+                                       std::string const& col_name,
+                                       int const src_schema_idx) {
+    if (per_file_metadata.size() == 1 or schema_idx_maps.empty()) { return; }
+
+    std::for_each(
+      cuda::counting_iterator{static_cast<size_t>(1)},
+      cuda::counting_iterator{per_file_metadata.size()},
+      [&](auto const src_idx) {
+        // Ensure that each top level column exists in the destination schema tree.
+        auto const dst_schema_idx =
+          schema_lookup.find_target_schema_child(root_idx, root_idx, col_name, src_idx);
+        CUDF_EXPECTS(
+          dst_schema_idx != -1,
+          std::format("Encountered missing top-level column '{}' across Parquet sources", col_name),
+          std::invalid_argument);
+        map_column(col_name_info, src_schema_idx, dst_schema_idx, src_idx);
+      });
+  };
+
   std::vector<int> output_column_schemas;
 
   //
@@ -2247,6 +2272,7 @@ aggregate_reader_metadata::select_columns(
   auto const& root = get_schema(0);
   if (not use_names.has_value()) {
     for (auto const& schema_idx : root.children_idx) {
+      map_column_across_sources(nullptr, get_schema(schema_idx).name, schema_idx);
       build_column(nullptr, schema_idx, output_columns, false);
       output_column_schemas.push_back(schema_idx);
     }
@@ -2280,11 +2306,9 @@ aggregate_reader_metadata::select_columns(
       *use_names, filter_columns_names.has_value() ? *filter_columns_names : empty_names};
     for (auto const& used_column_names : column_names) {
       for (auto const& selected_path : used_column_names.get()) {
-        auto found_path =
-          std::find_if(all_paths.begin(), all_paths.end(), [&](path_info& valid_path) {
-            return are_column_paths_equal(
-              valid_path.full_path, selected_path, case_sensitive_names);
-          });
+        auto found_path = std::ranges::find_if(all_paths, [&](path_info& valid_path) {
+          return are_column_paths_equal(valid_path.full_path, selected_path, case_sensitive_names);
+        });
         // Ensure that selected path matches a path in all_paths
         CUDF_EXPECTS(
           found_path != all_paths.end() or ignore_missing_columns,
@@ -2299,27 +2323,25 @@ aggregate_reader_metadata::select_columns(
 
     // Now construct paths as vector of strings for further consumption
     std::vector<std::vector<std::string>> use_names3;
-    std::transform(valid_selected_paths.cbegin(),
-                   valid_selected_paths.cend(),
-                   std::back_inserter(use_names3),
-                   [&](path_info const& valid_path) {
-                     auto schema_idx = valid_path.schema_idx;
-                     std::vector<std::string> result_path;
-                     do {
-                       SchemaElement const& elem = get_schema(schema_idx);
-                       result_path.push_back(elem.name);
-                       schema_idx = elem.parent_idx;
-                     } while (schema_idx > 0);
-                     return std::vector<std::string>(result_path.rbegin(), result_path.rend());
-                   });
+    std::ranges::transform(
+      valid_selected_paths, std::back_inserter(use_names3), [&](path_info const& valid_path) {
+        auto schema_idx = valid_path.schema_idx;
+        std::vector<std::string> result_path;
+        do {
+          SchemaElement const& elem = get_schema(schema_idx);
+          result_path.push_back(elem.name);
+          schema_idx = elem.parent_idx;
+        } while (schema_idx > 0);
+        return std::vector<std::string>(result_path.rbegin(), result_path.rend());
+      });
 
     std::vector<column_name_info> selected_columns;
     if (include_index) {
       std::vector<std::string> const index_names = get_pandas_index_names();
-      std::transform(index_names.cbegin(),
-                     index_names.cend(),
-                     std::back_inserter(selected_columns),
-                     [](std::string const& name) { return column_name_info{.name = name}; });
+      std::ranges::transform(
+        index_names, std::back_inserter(selected_columns), [](std::string const& name) {
+          return column_name_info{.name = name};
+        });
     }
     // Merge the vector use_names into a set of hierarchical column_name_info objects
     /* This is because if we have columns like this:
@@ -2349,9 +2371,8 @@ aggregate_reader_metadata::select_columns(
       auto array_to_find_in = &selected_columns;
       for (auto const& name_to_find : path) {
         // Check if the path exists in our selected_columns and if not, add it.
-        auto found_col = std::find_if(
-          array_to_find_in->begin(),
-          array_to_find_in->end(),
+        auto found_col = std::ranges::find_if(
+          *array_to_find_in,
           [&name_to_find](column_name_info const& col) { return col.name == name_to_find; });
         if (found_col == array_to_find_in->end()) {
           auto& col        = array_to_find_in->emplace_back(name_to_find);
@@ -2362,31 +2383,14 @@ aggregate_reader_metadata::select_columns(
         }
       }
     }
-    for (auto& col : selected_columns) {
-      auto constexpr root_idx = 0;
-      auto const& top_level_col_schema_idx =
-        schema_lookup.find_schema_child_by_name(root_idx, col.name);
-      bool const valid_column = build_column(&col, top_level_col_schema_idx, output_columns, false);
-      if (valid_column) {
-        output_column_schemas.push_back(top_level_col_schema_idx);
 
-        // Map the column's schema_idx across the rest of the data sources if required.
-        if (per_file_metadata.size() > 1 and not schema_idx_maps.empty()) {
-          std::for_each(
-            cuda::counting_iterator{static_cast<size_t>(1)},
-            cuda::counting_iterator{per_file_metadata.size()},
-            [&](auto const src_idx) {
-              // Ensure that each top level column exists in the destination schema tree.
-              auto const dst_col_schema_idx =
-                schema_lookup.find_target_schema_child(root_idx, root_idx, col.name, src_idx);
-              CUDF_EXPECTS(
-                dst_col_schema_idx != -1,
-                std::format("Encountered missing top-level column '{}' across Parquet sources",
-                            col.name),
-                std::invalid_argument);
-              map_column(&col, top_level_col_schema_idx, dst_col_schema_idx, src_idx);
-            });
-        }
+    // Map the column's schema_idx across the rest of the data sources and propagate nullability.
+    for (auto& col : selected_columns) {
+      auto const top_level_col_schema_idx =
+        schema_lookup.find_schema_child_by_name(root_idx, col.name);
+      map_column_across_sources(&col, col.name, top_level_col_schema_idx);
+      if (build_column(&col, top_level_col_schema_idx, output_columns, false)) {
+        output_column_schemas.push_back(top_level_col_schema_idx);
       }
     }
   }
@@ -2401,9 +2405,8 @@ std::vector<Type> aggregate_reader_metadata::get_parquet_types(
 {
   std::vector<Type> parquet_types(column_schemas.size());
   // Find a source with at least one row group
-  auto const src_iter = std::find_if(row_group_indices.begin(),
-                                     row_group_indices.end(),
-                                     [](auto const& rg) { return rg.size() > 0; });
+  auto const src_iter =
+    std::ranges::find_if(row_group_indices, [](auto const& rg) { return rg.size() > 0; });
   CUDF_EXPECTS(src_iter != row_group_indices.end(),
                "Cannot determine Parquet types as no source has any selected row groups.",
                std::invalid_argument);
@@ -2412,12 +2415,9 @@ std::vector<Type> aggregate_reader_metadata::get_parquet_types(
   auto const src_index = std::distance(row_group_indices.begin(), src_iter);
   // Use the first row group in this source
   auto const first_row_group_index = row_group_indices[src_index].front();
-  std::transform(column_schemas.begin(),
-                 column_schemas.end(),
-                 parquet_types.begin(),
-                 [&](auto const schema_idx) {
-                   return get_column_metadata(first_row_group_index, src_index, schema_idx).type;
-                 });
+  std::ranges::transform(column_schemas, parquet_types.begin(), [&](auto const schema_idx) {
+    return get_column_metadata(first_row_group_index, src_index, schema_idx).type;
+  });
 
   return parquet_types;
 }

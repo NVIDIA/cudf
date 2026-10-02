@@ -60,7 +60,7 @@ cdef class UnicodeNormalizer:
     ):
         cdef table_view c_data = unicode_data.view()
         cdef Stream _stream = _get_stream(stream)
-        cdef cudaStream_t _cs = _stream.view().value()
+        cdef cudaStream_t _cs = _stream.view().get()
         cdef DeviceMemoryResource _mr = _get_memory_resource(mr)
         with nogil:
             self.c_obj = move(
@@ -103,7 +103,7 @@ cpdef Column normalize_unicode(
         raise TypeError("normalizer must not be None")
     cdef unique_ptr[column] c_result
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     cdef DeviceMemoryResource _mr = _get_memory_resource(mr)
 
     cdef column_view c_input = input.view()

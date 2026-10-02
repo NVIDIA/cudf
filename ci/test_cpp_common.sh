@@ -1,5 +1,5 @@
 #!/bin/bash
-# SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 set -euo pipefail
@@ -32,6 +32,15 @@ set -u
 RESULTS_DIR=${RAPIDS_TESTS_DIR:-"$(mktemp -d)"}
 RAPIDS_TESTS_DIR=${RAPIDS_TESTS_DIR:-"${RESULTS_DIR}/test-results"}/
 mkdir -p "${RAPIDS_TESTS_DIR}"
+
+# CI provides LIBCUDF_KERNEL_CACHE_PATH through the reusable workflow's cache-environment input.
+# Resolve a workspace-relative value before CTest changes its working directory.
+LIBCUDF_KERNEL_CACHE_PATH="${LIBCUDF_KERNEL_CACHE_PATH:-.cache/libcudf}"
+if [[ "${LIBCUDF_KERNEL_CACHE_PATH}" != /* ]]; then
+  LIBCUDF_KERNEL_CACHE_PATH="$(realpath -m "${LIBCUDF_KERNEL_CACHE_PATH}")"
+fi
+export LIBCUDF_KERNEL_CACHE_PATH
+mkdir -p "${LIBCUDF_KERNEL_CACHE_PATH}"
 
 rapids-print-env
 

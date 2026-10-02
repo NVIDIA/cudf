@@ -12,8 +12,7 @@ the cuDF library directly should be considered.
   from increased performance by using cuDF directly.
 
 - cuDF does offer some functions and methods that pandas does not. For
-  example, cuDF has a [`.list`
-  accessor](https://docs.rapids.ai/api/cudf/stable/user_guide/api_docs/series/#list-handling)
+  example, cuDF has a {ref}`.list accessor <cudf/api_docs/series:list-handling>`
   for working with list-like data. If you need access to the
   additional functionality in cuDF, you will need to use the cuDF
   package directly.
@@ -139,7 +138,7 @@ Both Dask and Apache Spark support accelerated computing through configuration
 based interfaces. Dask allows you to [configure the dataframe
 backend](https://docs.dask.org/en/latest/how-to/selecting-the-collection-backend.html) to use
 cuDF (learn more in [this
-blog](https://medium.com/rapids-ai/easy-cpu-gpu-arrays-and-dataframes-run-your-dask-code-where-youd-like-e349d92351d)) and the [RAPIDS Accelerator for Apache Spark](https://nvidia.github.io/spark-rapids/)
+blog](https://medium.com/rapids-ai/easy-cpu-gpu-arrays-and-dataframes-run-your-dask-code-where-youd-like-e349d92351d)) and the [RAPIDS Accelerator for Apache Spark](https://docs.nvidia.com/spark-rapids/)
 provides a similar configuration-based plugin for Spark.
 
 ## How do I know if an object is a `cudf.pandas` proxy object?

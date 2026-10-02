@@ -21,7 +21,9 @@
 #include <rmm/exec_policy.hpp>
 
 #include <cooperative_groups.h>
-#include <cub/cub.cuh>
+#include <cub/block/block_reduce.cuh>
+#include <cub/block/block_scan.cuh>
+#include <cub/warp/warp_reduce.cuh>
 #include <cuda/iterator>
 #include <cuda/std/chrono>
 #include <cuda/std/functional>
@@ -729,6 +731,9 @@ CUDF_KERNEL void __launch_bounds__(128)
         if (ck_g.use_dictionary) {
           // Additional byte to store entry bit width
           page_size = 1 + max_RLE_page_size(ck_g.dict_rle_bits, values_in_page);
+        } else if (write_v2_headers && col_g.physical_type == Type::BOOLEAN) {
+          // V2 BOOLEAN data is RLE encoded, so one byte per value is not enough for tiny pages
+          page_size = max(page_size, max_RLE_page_size(1, leaf_values_in_page));
         }
         if (!t) {
           page_g.num_fragments  = fragments_in_chunk - page_start;

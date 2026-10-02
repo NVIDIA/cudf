@@ -40,8 +40,9 @@ Java_ai_rapids_cudf_HybridScanReader_createFromFooter(JNIEnv* env,
   JNI_TRY
   {
     cudf::jni::auto_set_device(env);
-    auto const len         = checked_size_t(env, footer_length, "footerLength");
-    auto opts              = build_options(env, j_column_names, j_binary_as_str, time_unit_type_id);
+    auto const len = checked_size_t(env, footer_length, "footerLength");
+    (void)j_binary_as_str;
+    auto opts              = build_options(env, j_column_names, time_unit_type_id);
     auto const* footer_ptr = reinterpret_cast<uint8_t const*>(footer_address);
     cudf::host_span<uint8_t const> footer_bytes{footer_ptr, len};
     auto wrapper = std::make_unique<hybrid_scan_reader_wrapper>(footer_bytes, std::move(opts));

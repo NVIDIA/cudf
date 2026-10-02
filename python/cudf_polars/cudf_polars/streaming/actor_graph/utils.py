@@ -7,12 +7,13 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import itertools
+import math
 import operator
 import struct
 import time
 from collections import defaultdict, deque
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from functools import reduce
 from typing import TYPE_CHECKING, Any, Literal, TypeAlias, cast
 
@@ -31,20 +32,33 @@ from cudf_streaming.table_chunk import (
     TableChunk,
     make_table_chunks_available_or_wait,
 )
+from rapidsmpf.memory.buffer import MemoryType
 from rapidsmpf.memory.memory_reservation import opaque_memory_usage
 from rapidsmpf.memory.packed_data import PackedData
 from rapidsmpf.streaming.coll.allgather import AllGather
 from rapidsmpf.streaming.core.message import Message
 
 import cudf_polars.dsl.tracing
+import cudf_polars.quent._types
 from cudf_polars.containers import DataFrame
 from cudf_polars.dsl.expr import Cast, Col, NamedExpr, TemporalFunction
-from cudf_polars.dsl.ir import Filter, GroupBy, HStack, Join, Projection, Select
+from cudf_polars.dsl.ir import (
+    Filter,
+    GroupBy,
+    HStack,
+    Join,
+    Projection,
+    Select,
+)
 from cudf_polars.dsl.tracing import Scope
 from cudf_polars.dsl.utils.column_domain import column_domain_bindings
 from cudf_polars.dsl.utils.naming import names_to_indices
 from cudf_polars.streaming.actor_graph.collectives.allgather import AllGatherManager
-from cudf_polars.streaming.actor_graph.tracing import ActorTracer, send_chunk
+from cudf_polars.streaming.actor_graph.tracing import (
+    ActorTracer,
+    record_channel_metrics,
+    send_chunk,
+)
 from cudf_polars.streaming.utils import _concat
 from cudf_polars.utils.dtypes import make_empty_column
 
@@ -175,7 +189,7 @@ def _keys_match(
 
 
 class ChunkStore:
-    """Ordered spillable buffer for TableChunk messages."""
+    """Ordered spillable buffer for Messages."""
 
     def __init__(self, ctx: Context) -> None:
         self._mids: deque[int] = deque()
@@ -184,6 +198,12 @@ class ChunkStore:
     def __len__(self) -> int:
         """Return the number of messages in the store."""
         return len(self._mids)
+
+    def clear(self) -> None:
+        """Discard all messages in the store."""
+        for mid in self._mids:
+            self._store.extract(mid=mid)
+        self._mids.clear()
 
     def insert(self, msg: Message) -> None:
         """Insert a message into the store."""
@@ -259,10 +279,13 @@ async def shutdown_channels_on_error(
 @asynccontextmanager
 async def shutdown_on_error(
     context: Context,
-    *channels: Channel[Any],
+    *,
+    chs_in: Sequence[Channel[Any]] = (),
+    chs_out: Sequence[Channel[Any]] = (),
+    chs_aux: Sequence[Channel[Any]] = (),
     trace_ir: IR,
     ir_context: IRExecutionContext | None = None,
-) -> AsyncIterator[ActorTracer | None]:
+) -> AsyncIterator[ActorTracer]:
     """
     Actor-level shutdown and tracing for rapidsmpf.
 
@@ -273,8 +296,15 @@ async def shutdown_on_error(
     ----------
     context
         The rapidsmpf context.
-    channels
-        The channels to shutdown on error.
+    chs_in
+        Boundary input channels. Shut down on error, and used to record
+        ``input_bytes`` from ``Channel.metrics().recv_bytes``.
+    chs_out
+        Boundary output channels. Shut down on error, and used to record
+        ``output_bytes`` from ``Channel.metrics().send_bytes``.
+    chs_aux
+        Auxiliary channels. Shut down on error, but not included in
+        byte-volume tracing.
     trace_ir
         Optional IR node to enable tracing for this streaming actor.
         When provided and LOG_TRACES is enabled, an ActorTracer
@@ -289,8 +319,8 @@ async def shutdown_on_error(
     ActorTracer | None
         An actor tracer for collecting stats (if tracing enabled), else None.
     """
+    channels = (*chs_in, *chs_out, *chs_aux)
     # Create tracer only if LOG_TRACES is enabled and IR is provided
-    tracer: ActorTracer | None = None
     contextvars: dict[str, Any] = {}
 
     ir_id = trace_ir.get_stable_id()
@@ -300,6 +330,7 @@ async def shutdown_on_error(
 
     if ir_context is not None:
         contextvars["cudf_polars_query_id"] = str(ir_context.query_id)
+        ir_context = replace(ir_context, tracer=tracer)
 
     with cudf_polars.dsl.tracing.bound_contextvars(**contextvars):
         start = time.monotonic_ns()
@@ -310,6 +341,7 @@ async def shutdown_on_error(
             raise
         finally:
             stop = time.monotonic_ns()
+            record_channel_metrics(tracer, chs_in=chs_in, chs_out=chs_out)
             record: dict[str, Any] = {
                 "scope": Scope.ACTOR.value,
             }
@@ -324,9 +356,81 @@ async def shutdown_on_error(
                     record["row_count"] = tracer.row_count
                 if tracer.decision is not None:
                     record["decision"] = tracer.decision
+                record.update(tracer.extra)
             cudf_polars.dsl.tracing.log(
                 "Streaming Actor", start=start, stop=stop, **record
             )
+
+            if (
+                ir_context is not None
+                and (
+                    quent_ir_execution_context := ir_context.quent_ir_execution_context
+                )
+                is not None
+            ):
+                custom_attributes = []
+                if tracer is not None and tracer.chunk_count is not None:
+                    custom_attributes.append(
+                        cudf_polars.quent._types.StatisticsAttribute(
+                            key="chunk_count",
+                            value_type="U64",
+                            value=tracer.chunk_count,
+                        )
+                    )
+                if tracer is not None and tracer.duplicated is not None:
+                    custom_attributes.append(
+                        cudf_polars.quent._types.StatisticsAttribute(
+                            key="duplicated",
+                            value_type="U64",
+                            value=1 if tracer.duplicated else 0,
+                        )
+                    )
+                if tracer is not None and tracer.decision is not None:
+                    custom_attributes.append(
+                        cudf_polars.quent._types.StatisticsAttribute(
+                            key="decision",
+                            value_type="String",
+                            value=tracer.decision,
+                        )
+                    )
+                if tracer is not None:
+                    for mem_type in MemoryType:
+                        tier = mem_type.name.lower()
+                        custom_attributes.append(
+                            cudf_polars.quent._types.StatisticsAttribute(
+                                key=f"input_bytes_{tier}",
+                                value_type="U64",
+                                value=tracer.input_bytes[mem_type],
+                            )
+                        )
+                        custom_attributes.append(
+                            cudf_polars.quent._types.StatisticsAttribute(
+                                key=f"output_bytes_{tier}",
+                                value_type="U64",
+                                value=tracer.output_bytes[mem_type],
+                            )
+                        )
+                if tracer is None or tracer.row_count is None:
+                    # TODO: See if `output_rows` is nullable.
+                    output_rows = 0
+                else:
+                    output_rows = tracer.row_count
+                input_bytes = (
+                    sum(tracer.input_bytes.values()) if tracer is not None else 0
+                )
+                output_bytes = (
+                    sum(tracer.output_bytes.values()) if tracer is not None else 0
+                )
+                stats = quent_ir_execution_context.quent_operator.statistics(
+                    statistics=cudf_polars.quent._types.Statistics(
+                        output_rows=output_rows,
+                        input_bytes=input_bytes,
+                        output_bytes=output_bytes,
+                        custom_attributes=custom_attributes,
+                    )
+                )
+
+                quent_ir_execution_context.logger.emit(stats)
 
 
 def _update_ordering_indices(
@@ -1082,11 +1186,25 @@ def indices_to_names(indices: tuple[int, ...], schema: Schema) -> tuple[str, ...
 
 
 @dataclass(frozen=True)
-class TableSizeStats:
-    """Sampled chunks and aggregate size/row stats for a table channel."""
+class TableSample:
+    """Exact local prefix buffered while sampling a table channel."""
 
     chunks: ChunkStore
     """The sampled chunks/messages in replay order."""
+    size: int = 0
+    """Bytes in the buffered chunks."""
+    rows: int = 0
+    """Rows in the buffered chunks."""
+    is_complete: bool = False
+    """Whether the buffered prefix contains this rank's entire input."""
+
+
+@dataclass(frozen=True)
+class TableSizeStats:
+    """Local sample and complete-table size estimates for a table channel."""
+
+    local_sample: TableSample
+    """The exact local buffered sample."""
     total_size: int = 0
     """The estimated table size in bytes for the represented scope."""
     total_rows: int = 0
@@ -1097,6 +1215,57 @@ class TableSizeStats:
     """Whether the sample contains the entire table for the represented scope."""
     cardinality: CardinalityEstimate | None = None
     """Global cardinality statistics for the sampled rows, when requested."""
+
+    def distinct_count(self) -> int | None:
+        """Extrapolate sampled distinct count to the estimated full row count."""
+        if self.total_rows == 0:
+            return 0
+        if self.cardinality is None or self.cardinality.row_count == 0:
+            return None
+        return min(
+            self.total_rows,
+            math.ceil(
+                self.cardinality.distinct_count
+                * self.total_rows
+                / self.cardinality.row_count
+            ),
+        )
+
+
+async def aggregate_table_size_stats(
+    context: Context,
+    comm: Communicator,
+    samples: tuple[TableSizeStats, ...],
+    collective_id: int,
+) -> tuple[TableSizeStats, ...]:
+    """Aggregate table-size and row estimates across ranks."""
+    totals = await allgather_reduce(
+        context,
+        comm,
+        collective_id,
+        *(
+            value
+            for sample in samples
+            for value in (
+                sample.total_size,
+                sample.total_rows,
+                sample.total_chunks,
+                int(sample.is_complete),
+            )
+        ),
+    )
+    totals_iter = iter(totals)
+    return tuple(
+        TableSizeStats(
+            local_sample=sample.local_sample,
+            total_size=next(totals_iter),
+            total_rows=next(totals_iter),
+            total_chunks=next(totals_iter),
+            is_complete=next(totals_iter) == comm.nranks,
+            cardinality=sample.cardinality,
+        )
+        for sample in samples
+    )
 
 
 @dataclass(frozen=True)
@@ -1218,13 +1387,38 @@ class ChunkSampler:
             total_size = sample_bytes
             total_rows = sample_rows
         return TableSizeStats(
-            chunks=chunks,
+            local_sample=TableSample(
+                chunks=chunks,
+                size=sample_bytes,
+                rows=sample_rows,
+                is_complete=is_complete,
+            ),
             total_size=total_size,
             total_rows=total_rows,
             total_chunks=(sample_count if is_complete else self.ch_in_chunk_count),
             is_complete=is_complete,
             cardinality=cardinality,
         )
+
+
+async def sample_inputs(
+    context: Context,
+    comm: Communicator,
+    samplers: Sequence[ChunkSampler],
+    collective_id: int,
+) -> tuple[TableSizeStats, ...]:
+    """Sample input channels concurrently and aggregate their statistics."""
+    if not samplers:
+        return ()
+    local_samples = await gather_in_task_group(
+        *(sampler.sample() for sampler in samplers)
+    )
+    return await aggregate_table_size_stats(
+        context,
+        comm,
+        tuple(local_samples),
+        collective_id,
+    )
 
 
 async def _sample_chunks(
@@ -1295,19 +1489,28 @@ async def replay_buffered_channel(
     ch_in
         The buffered input channel.
     buffered_chunks
-        The buffered chunks to yield first.
+        The buffered chunks to yield first. The store is empty when this
+        coroutine exits, including on cancellation or error.
     metadata
         The metadata to send to the output channel.
     trace_ir
         The IR node to trace. Passed through to shutdown_on_error.
     """
-    async with shutdown_on_error(context, ch_out, ch_in, trace_ir=trace_ir):
-        await send_metadata(ch_out, context, metadata)
-        for msg in buffered_chunks:
-            await ch_out.send(context, msg)
-        while (msg := await ch_in.recv(context)) is not None:
-            await ch_out.send(context, msg)
-        await ch_out.drain(context)
+    try:
+        async with shutdown_on_error(
+            context,
+            chs_in=(ch_in,),
+            chs_out=(ch_out,),
+            trace_ir=trace_ir,
+        ):
+            await send_metadata(ch_out, context, metadata)
+            for msg in buffered_chunks:
+                await ch_out.send(context, msg)
+            while (msg := await ch_in.recv(context)) is not None:
+                await ch_out.send(context, msg)
+            await ch_out.drain(context)
+    finally:
+        buffered_chunks.clear()
 
 
 @dataclass(frozen=True)
@@ -1358,29 +1561,6 @@ class NormalizedPartitioning:  # noqa: PLW1641 (frozen=True generates __hash__ e
             return scheme.orderings[0].strict_boundaries
         return True
 
-    @staticmethod
-    def _ordering_covers_keys(
-        ordering: Ordering,
-        order_keys: Sequence[int | OrderKey],
-    ) -> bool:
-        """True when an ordering covers the requested sort keys."""
-        ordering_keys = ordering.keys
-        if len(ordering.keys) < len(order_keys):
-            # If we are only sorted on a subset of the keys, we need strict
-            # boundaries to know later keys cannot interleave across chunks.
-            if not ordering.strict_boundaries:
-                return False
-            order_keys = order_keys[: len(ordering.keys)]
-        else:
-            ordering_keys = ordering.keys[: len(order_keys)]
-        for current, target in zip(ordering_keys, order_keys, strict=True):
-            if isinstance(target, OrderKey):
-                if current != target:
-                    return False
-            elif current.column_index != target:
-                return False
-        return True
-
     def is_strictly_partitioned(
         self,
         *,
@@ -1389,17 +1569,10 @@ class NormalizedPartitioning:  # noqa: PLW1641 (frozen=True generates __hash__ e
         """True if data is strictly partitioned at the requested level."""
         return self._scheme_is_strict(self._scheme_for_level(level))
 
-    def is_ordered(
-        self,
-        order_keys: Sequence[int | OrderKey],
-        *,
-        level: PartitioningLevel = "flat",
-    ) -> bool:
-        """True if the selected ordering covers order_keys."""
+    def get_ordering(self, *, level: PartitioningLevel = "flat") -> Ordering | None:
+        """Return the normalized ordering for the requested partitioning level."""
         scheme = self._scheme_for_level(level)
-        if not isinstance(scheme, OrderScheme):
-            return False
-        return self._ordering_covers_keys(scheme.orderings[0], order_keys)
+        return scheme.orderings[0] if isinstance(scheme, OrderScheme) else None
 
     def is_aligned_with(
         self, other: NormalizedPartitioning, br: BufferResource

@@ -15,6 +15,7 @@
 #include <cudf/detail/structs/utilities.hpp>
 #include <cudf/detail/transform.hpp>
 #include <cudf/detail/utilities/stream_pool.hpp>
+#include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/dictionary/detail/encode.hpp>
 #include <cudf/io/parquet_schema.hpp>
 #include <cudf/logger.hpp>
@@ -36,7 +37,10 @@
 
 namespace cudf::io::parquet::detail {
 
-void reader_impl::decode_page_data(read_mode mode, size_t skip_rows, size_t num_rows)
+void reader_impl::decode_page_data(read_mode mode,
+                                   size_t skip_rows,
+                                   size_t num_rows,
+                                   cudf::device_span<int32_t const* const> dict_index_maps)
 {
   CUDF_FUNC_RANGE();
 
@@ -215,6 +219,7 @@ void reader_impl::decode_page_data(read_mode mode, size_t skip_rows, size_t num_
                              subpass_page_mask_span(),
                              initial_str_offsets,
                              subpass.page_string_offset_indices,
+                             dict_index_maps,
                              error_code.data(),
                              streams[s_idx++]);
   };
@@ -715,7 +720,7 @@ table_with_metadata reader_impl::read_chunk_internal(read_mode mode)
   // eligibility and mutate `_output_buffers` / `subpass.pages` before we allocate column buffers
   // or dispatch decode kernels. This has to happen before `preprocess_chunk_strings` /
   // `allocate_columns` because those branch on `subpass.kernel_mask` and on `out_buf.type`.
-  prepare_dict_transcode(mode);
+  auto dict_plan = prepare_dict_transcode(mode);
 
   // computes:
   // PageNestingInfo::batch_size for each level of nesting, for each page, taking row bounds into
@@ -739,8 +744,12 @@ table_with_metadata reader_impl::read_chunk_internal(read_mode mode)
   // Allocate memory buffers for the output columns.
   allocate_columns(mode, read_info.skip_rows, read_info.num_rows);
 
+  // Prepare output keys before decoding so each valid row is written directly in unique-key
+  // space. Both the pointer array and its map owners remain alive until decode streams join.
+  prepare_dict_transcode_keys(dict_plan);
+
   // Parse data into the output buffers.
-  decode_page_data(mode, read_info.skip_rows, read_info.num_rows);
+  decode_page_data(mode, read_info.skip_rows, read_info.num_rows, dict_plan.index_maps());
 
   // Create the final output cudf columns.
   for (size_t i = 0; i < _output_buffers.size(); ++i) {
@@ -768,9 +777,8 @@ table_with_metadata reader_impl::read_chunk_internal(read_mode mode)
 
   // For any columns that were selected for direct parquet-dict → DICTIONARY32 transcode in
   // `prepare_dict_transcode`, the entries in `out_columns` are currently INT32 indices columns.
-  // Assemble them into DICTIONARY32 columns here by attaching per-chunk keys; concatenate
-  // remaps indices to the unified keys child.
-  assemble_dict_transcoded_columns(out_columns);
+  // Attach the prepared unique keys; the decoder has already remapped the indices.
+  assemble_dict_transcoded_columns(out_columns, dict_plan);
 
   out_columns =
     cudf::structs::detail::enforce_null_consistency(std::move(out_columns), _stream, _mr);

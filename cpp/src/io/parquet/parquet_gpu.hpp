@@ -1219,6 +1219,7 @@ void fill_pruned_offsets(cudf::device_span<PageInfo> pages,
  * @param[in] page_mask Boolean vector indicating which pages need to be decoded
  * @param[out] initial_str_offsets Vector to store the initial offsets for large nested string cols
  * @param[in] page_string_offset_indices Device span of page string offset indices
+ * @param[in] dict_index_maps Per-chunk dictionary ID maps; empty or null entries mean identity
  * @param[out] error_code Error code for kernel failures
  * @param[in] stream CUDA stream to use
  */
@@ -1231,6 +1232,7 @@ void decode_page_data(cudf::detail::hostdevice_span<PageInfo> pages,
                       cudf::device_span<bool const> page_mask,
                       cudf::device_span<size_t> initial_str_offsets,
                       cudf::device_span<size_t const> page_string_offset_indices,
+                      cudf::device_span<int32_t const* const> dict_index_maps,
                       kernel_error::pointer error_code,
                       cuda::stream_ref stream);
 

@@ -36,11 +36,13 @@
 #include <array>
 #include <cstring>
 #include <limits>
+#include <locale>
 #include <memory>
 #include <optional>
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <tuple>
 #include <utility>
 
 using ParquetDecompressionTest = DecompressionTest<ParquetReaderTest>;
@@ -6228,20 +6230,56 @@ TEST_F(ParquetReaderTest, DecimalTypeOption)
   }
 }
 
+TEST_F(ParquetReaderTest, CaseInsensitiveInvalidUtf8ColumnSelection)
+{
+  // Invalid UTF-8: only ASCII characters are lowercased, other bytes are unchanged
+  std::vector<std::string> const col_names{"a\x80",              // stray
+                                           "a\xC3",              // truncated
+                                           "a\xC3\x61",          // bad continuation
+                                           "a\xC1\x81",          // overlong
+                                           "a\xF4\x90\x80\x80",  // > U+10FFFF
+                                           "ab\xE9"};            // Latin-1
+  std::vector<std::string> const selected_names{
+    "A\x80", "A\xC3", "A\xC3\x41", "A\xC1\x81", "A\xF4\x90\x80\x80", "AB\xE9"};
+
+  std::vector<cudf::test::fixed_width_column_wrapper<int32_t>> cols;
+  for (int32_t i = 0; i < static_cast<int32_t>(col_names.size()); ++i) {
+    cols.emplace_back(std::initializer_list<int32_t>{i, i + 1, i + 2});
+  }
+  std::vector<cudf::column_view> views(cols.begin(), cols.end());
+  cudf::table_view tbl{views};
+  auto const filepath =
+    write_parquet_temp_file(tbl, "CaseInsensitiveInvalidUtf8ColumnSelection.parquet", col_names);
+
+  auto const read_opts = cudf::io::parquet_reader_options::builder(cudf::io::source_info{filepath})
+                           .case_sensitive_names(false)
+                           .column_names(selected_names)
+                           .build();
+
+  auto const result = cudf::io::read_parquet(read_opts);
+
+  ASSERT_EQ(result.tbl->num_columns(), static_cast<cudf::size_type>(col_names.size()));
+  for (std::size_t i = 0; i < col_names.size(); ++i) {
+    EXPECT_EQ(result.metadata.schema_info[i].name, col_names[i]);
+  }
+  CUDF_TEST_EXPECT_TABLES_EQUAL(result.tbl->view(), tbl);
+}
+
 TEST_F(ParquetReaderTest, CaseInsensitiveColumnSelection)
 {
   auto col0 = cudf::test::fixed_width_column_wrapper<int32_t>{1, 2, 3, 4, 5};
   auto col1 = cudf::test::fixed_width_column_wrapper<int32_t>{10, 20, 30, 40, 50};
-  cudf::table_view tbl{{col0, col1}};
+  auto col2 = cudf::test::fixed_width_column_wrapper<int32_t>{100, 200, 300, 400, 500};
+  cudf::table_view tbl{{col0, col1, col2}};
 
   auto filepath =
-    write_parquet_temp_file(tbl, "CaseInsensitiveColumnSelection.parquet", {"col0", "col1"});
+    write_parquet_temp_file(tbl, "CaseInsensitiveColumnSelection.parquet", {"col0", "äpfel", "k"});
 
-  // Case-sensitive: "col0" is ignored
+  // Case-sensitive: "col0" and "äpfel" are ignored
   {
     auto read_opts =
       cudf::io::parquet_reader_options::builder(cudf::io::source_info{filepath}).build();
-    read_opts.set_column_names({"Col0"});
+    read_opts.set_column_names({"Col0", "ÄPFEL"});
     // ignore_missing_columns defaults to true, so result should be empty
     auto result = cudf::io::read_parquet(read_opts);
     EXPECT_EQ(result.tbl->view().num_columns(), 0);
@@ -6260,18 +6298,44 @@ TEST_F(ParquetReaderTest, CaseInsensitiveColumnSelection)
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(result.tbl->view().column(0), col0);
   }
 
-  // Case-insensitive: "COL0" -> "col0", "Col1" -> "col1"
+  // Skip the remaining tests if the C.UTF-8 locale is unavailable
+  try {
+    std::ignore = std::locale("C.UTF-8");
+  } catch (std::runtime_error const&) {
+    GTEST_SKIP() << "C.UTF-8 locale unavailable";
+  }
+
+  // Case-insensitive: "COL0" -> "col0", "ÄPFEL" -> "äpfel", KELVIN SIGN (U+212A) -> "k"
   {
     auto read_opts = cudf::io::parquet_reader_options::builder(cudf::io::source_info{filepath})
                        .case_sensitive_names(false)
                        .build();
-    read_opts.set_column_names({"COL0", "Col1"});
+    read_opts.set_column_names({"COL0", "ÄPFEL", "\u212A"});
     auto result = cudf::io::read_parquet(read_opts);
-    ASSERT_EQ(result.tbl->view().num_columns(), 2);
+    ASSERT_EQ(result.tbl->view().num_columns(), 3);
     EXPECT_EQ(result.metadata.schema_info[0].name, "col0");
-    EXPECT_EQ(result.metadata.schema_info[1].name, "col1");
-    CUDF_TEST_EXPECT_COLUMNS_EQUAL(result.tbl->view().column(0), col0);
-    CUDF_TEST_EXPECT_COLUMNS_EQUAL(result.tbl->view().column(1), col1);
+    EXPECT_EQ(result.metadata.schema_info[1].name, "äpfel");
+    EXPECT_EQ(result.metadata.schema_info[2].name, "k");
+    CUDF_TEST_EXPECT_TABLES_EQUAL(result.tbl->view(), tbl);
+  }
+
+  // Case-insensitive filter referencing a non-ASCII column name
+  {
+    auto const col_ref = cudf::ast::column_name_reference("ÄpFeL");
+    auto scalar        = cudf::numeric_scalar<int32_t>(30, true);
+    auto literal       = cudf::ast::literal(scalar);
+    auto filter_expr = cudf::ast::operation(cudf::ast::ast_operator::LESS_EQUAL, col_ref, literal);
+    auto const predicate =
+      cudf::test::fixed_width_column_wrapper<bool>{true, true, true, false, false}.release();
+    auto const expected = cudf::apply_retention_mask(tbl, predicate->view());
+
+    auto const read_opts =
+      cudf::io::parquet_reader_options::builder(cudf::io::source_info{filepath})
+        .case_sensitive_names(false)
+        .filter(filter_expr)
+        .build();
+    auto const read = cudf::io::read_parquet(read_opts).tbl;
+    CUDF_TEST_EXPECT_TABLES_EQUAL(read->view(), expected->view());
   }
 }
 

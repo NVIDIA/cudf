@@ -1549,6 +1549,18 @@ def _(
             ),
         )
 
+    if (
+        node.options == 0  # strict, not wrap_numerical
+        and isinstance(translator.visitor.get_dtype(node.expr), pl.UInt128)
+        and _is_len_sum_uint128_node(
+            translator.visitor, translator.visitor.view_expression(node.expr)
+        )
+    ):
+        # Narrowing the widened sum of polars' rewrite of
+        # concat(...).select(len()) back to IDX_DTYPE. The sum is held as
+        # UInt64 (see translate_expr), and polars raises if it does not fit.
+        return expr.OverflowCheckedCast(dtype, strict, inner)
+
     # Push casts into literals so we can handle Cast(Literal(Null))
     if isinstance(inner, expr.Literal):
         return inner.astype(dtype)

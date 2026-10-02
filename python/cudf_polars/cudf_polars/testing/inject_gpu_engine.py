@@ -306,8 +306,6 @@ EXPECTED_FAILURES: dict[str, str] = {
     "tests/unit/lazyframe/test_query_monitoring.py::test_config_enable_monitoring": "This plugin forces engine=<injected GPU engine> on LazyFrame.collect via partialmethod, so Config.enable_monitoring's streaming-affinity/observer hooks don't see the expected call counts",
     "tests/unit/lazyframe/test_query_monitoring.py::test_config_scope_monitoring": "This plugin forces engine=<injected GPU engine> on LazyFrame.collect via partialmethod, so Config.enable_monitoring's streaming-affinity/observer hooks don't see the expected call counts",
     "tests/unit/lazyframe/test_query_monitoring.py::test_engine_affinity_object_carries_monitoring": "This plugin forces engine=<injected GPU engine> on LazyFrame.collect via partialmethod, so Config.engine_affinity's streaming-affinity/observer hooks don't see the expected call counts",
-    "tests/unit/lazyframe/test_projections.py::test_projection_pushdown_union_len_pushdown_28657[concat]": "https://github.com/NVIDIA/cudf/issues/24112",
-    "tests/unit/lazyframe/test_projections.py::test_projection_pushdown_union_len_pushdown_28657[union]": "https://github.com/NVIDIA/cudf/issues/24112",
     "tests/unit/lazyframe/test_lazyframe.py::test_round[dtype2-123.55-1-123.6]": "libcudf HALF_EVEN rounding bug for Float64 with decimal_places > 0. See https://github.com/NVIDIA/cudf/issues/21319",
     "tests/unit/lazyframe/test_lazyframe.py::test_cast_frame": "Casting that raises not supported on GPU",
     "tests/unit/lazyframe/test_lazyframe.py::test_lazy_cache_hit": "Debug output on stderr doesn't match",
@@ -483,11 +481,6 @@ if packaging.version.parse(sqlite3.sqlite_version) <= packaging.version.parse("3
 
 STREAMING_ENGINE_TESTS_TO_SKIP: Mapping[str, str] = {
     "tests/unit/operations/aggregation/test_aggregations.py::test_boolean_aggs": "float difference in std/var in the unit of least precision",
-    # Crashes the worker instead of raising cleanly; skip rather than xfail
-    # since a crashed worker never reports a result. See
-    # https://github.com/NVIDIA/cudf/issues/24112
-    "tests/unit/lazyframe/test_projections.py::test_projection_pushdown_union_len_pushdown_28657[concat]": "Materializing a huge virtual literal frame crashes the worker under the streaming engine",
-    "tests/unit/lazyframe/test_projections.py::test_projection_pushdown_union_len_pushdown_28657[union]": "Materializing a huge virtual literal frame crashes the worker under the streaming engine",
     # No deterministic key sort (https://github.com/NVIDIA/cudf/issues/21641):
     # passes on some streaming runs and fails on others, so skip rather than
     # xfail to avoid a flaky XPASS/FAIL.
@@ -562,6 +555,8 @@ STREAMING_ENGINE_EXPECTED_FAILURES: Mapping[str, str] = {
     "tests/unit/functions/test_when_then.py::test_mismatched_height_should_raise[ternary_expr0-df1]": "Correct polars.exceptions.ShapeError raised but it's in a ExceptionGroup",
     "tests/unit/functions/test_when_then.py::test_mismatched_height_should_raise[ternary_expr1-df0]": "Correct polars.exceptions.ShapeError raised but it's in a ExceptionGroup",
     "tests/unit/functions/test_when_then.py::test_mismatched_height_should_raise[ternary_expr1-df1]": "Correct polars.exceptions.ShapeError raised but it's in a ExceptionGroup",
+    "tests/unit/lazyframe/test_projections.py::test_projection_pushdown_union_len_pushdown_28657[concat]": "Correct InvalidOperationError raised but it's in an ExceptionGroup",
+    "tests/unit/lazyframe/test_projections.py::test_projection_pushdown_union_len_pushdown_28657[union]": "Correct InvalidOperationError raised but it's in an ExceptionGroup",
     "tests/unit/operations/test_group_by.py::test_group_by_lit_series": "Incorrect broadcasting of literals in groupby-agg",
     "tests/unit/operations/aggregation/test_aggregations.py::test_item_too_many": "Correct polars.exceptions.ComputeError raised but it's in an ExceptionGroup",
     "tests/unit/operations/aggregation/test_aggregations.py::test_single_empty": "Correct polars.exceptions.ComputeError raised but it's in an ExceptionGroup",

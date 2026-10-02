@@ -358,3 +358,52 @@ def test_astype_to_string_unsupported():
     )
     with pytest.raises(pl.exceptions.InvalidOperationError):
         col.astype(DataType(pl.String()), stream=stream)
+
+
+@pytest.mark.parametrize(
+    "values, src, dst, overflows",
+    [
+        ([0, 2**32 - 1], pl.UInt64(), pl.UInt32(), False),
+        ([0, 2**32], pl.UInt64(), pl.UInt32(), True),
+        ([-1], pl.Int64(), pl.UInt32(), True),
+        ([2**31], pl.Int64(), pl.Int32(), True),
+        ([-(2**31), 2**31 - 1], pl.Int64(), pl.Int32(), False),
+        ([2**63], pl.UInt64(), pl.Int64(), True),
+        # Widening casts can never overflow.
+        ([1, 2], pl.Int32(), pl.Int64(), False),
+        ([], pl.Int64(), pl.Int32(), False),
+        # Nulls are ignored.
+        ([None, 5], pl.Int64(), pl.Int8(), False),
+        ([None, 500], pl.Int64(), pl.Int8(), True),
+        ([None, None], pl.Int64(), pl.Int8(), False),
+    ],
+)
+def test_astype_check_overflow(values, src, dst, overflows):
+    stream = get_cuda_stream()
+    col = Column(
+        plc.Column.from_arrow(pl.Series(values, dtype=src), stream=stream),
+        dtype=DataType(src),
+    )
+    target_dtype = DataType(dst)
+    if overflows:
+        with pytest.raises(
+            pl.exceptions.InvalidOperationError, match=r"conversion.*failed"
+        ):
+            col.astype(target_dtype, stream=stream, check_overflow=True)
+    else:
+        result = col.astype(target_dtype, stream=stream, check_overflow=True)
+        assert result.dtype == target_dtype
+
+
+def test_astype_wraps_without_check_overflow():
+    # libcudf's cast wraps; the overflow check is opt-in.
+    stream = get_cuda_stream()
+    col = Column(
+        plc.Column.from_iterable_of_py(
+            [2**32 + 1], plc.DataType(plc.TypeId.UINT64), stream=stream
+        ),
+        dtype=DataType(pl.UInt64()),
+    )
+    result = col.astype(DataType(pl.UInt32()), stream=stream)
+    assert result.obj.type().id() == plc.TypeId.UINT32
+    assert result.obj_scalar(stream=stream).to_py(stream=stream) == 1

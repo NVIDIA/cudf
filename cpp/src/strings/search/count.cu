@@ -17,6 +17,7 @@
 
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/memory_resource>
 #include <cuda/stream>
 #include <thrust/transform.h>
 
@@ -55,7 +56,7 @@ struct counter_fn {
 std::unique_ptr<column> count(strings_column_view const& input,
                               string_scalar const& target,
                               cuda::stream_ref stream,
-                              rmm::device_async_resource_ref mr)
+                              cuda::mr::device_resource_ref mr)
 {
   CUDF_EXPECTS(target.is_valid(stream), "parameter target must be valid", std::invalid_argument);
   auto d_target = string_view(target.data(), target.size());
@@ -87,7 +88,7 @@ std::unique_ptr<column> count(strings_column_view const& input,
 std::unique_ptr<column> count(strings_column_view const& strings,
                               string_scalar const& target,
                               cuda::stream_ref stream,
-                              rmm::device_async_resource_ref mr)
+                              cuda::mr::device_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
   return detail::count(strings, target, stream, mr);

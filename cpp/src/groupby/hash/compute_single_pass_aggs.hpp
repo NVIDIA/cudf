@@ -11,6 +11,7 @@
 
 #include <rmm/device_uvector.hpp>
 
+#include <cuda/memory_resource>
 #include <cuda/stream>
 
 namespace cudf::groupby::detail::hash {
@@ -42,6 +43,6 @@ std::pair<rmm::device_uvector<size_type>, bool> compute_single_pass_aggs(
   std::span<aggregation_request const> requests,
   cudf::detail::result_cache* cache,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr);
+  cuda::mr::device_resource_ref mr);
 
 }  // namespace cudf::groupby::detail::hash

@@ -9,6 +9,8 @@
 #include <cudf/strings/strings_column_view.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
+#include <cuda/memory_resource>
+
 #include <optional>
 
 /**
@@ -55,10 +57,10 @@ namespace strings {
 std::unique_ptr<column> slice_strings(
   strings_column_view const& input,
   std::optional<size_type> start,
-  std::optional<size_type> stop     = std::nullopt,
-  std::optional<size_type> step     = std::nullopt,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  std::optional<size_type> stop    = std::nullopt,
+  std::optional<size_type> step    = std::nullopt,
+  cuda::stream_ref stream          = cudf::get_default_stream(),
+  cuda::mr::device_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Returns a new strings column that contains substrings of the
@@ -102,8 +104,8 @@ std::unique_ptr<column> slice_strings(
   strings_column_view const& input,
   column_view const& starts,
   column_view const& stops,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream          = cudf::get_default_stream(),
+  cuda::mr::device_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /** @} */  // end of doxygen group
 }  // namespace strings

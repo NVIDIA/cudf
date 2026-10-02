@@ -18,7 +18,7 @@ from pylibcudf.libcudf.types cimport size_type
 
 from rmm.librmm.device_buffer cimport device_buffer
 from cuda.bindings.cyruntime cimport cudaStream_t
-from rmm.librmm.memory_resource cimport device_async_resource_ref
+from pylibcudf.libcudf.utilities.memory_resource cimport device_resource_ref
 
 ctypedef const scalar constscalar
 
@@ -32,7 +32,7 @@ cdef extern from "cudf/copying.hpp" namespace "cudf" nogil:
         const column_view& gather_map,
         out_of_bounds_policy policy,
         cudaStream_t stream,
-        device_async_resource_ref mr
+        device_resource_ref mr
     ) except +libcudf_exception_handler
 
     cdef unique_ptr[column] shift(
@@ -40,19 +40,19 @@ cdef extern from "cudf/copying.hpp" namespace "cudf" nogil:
         size_type offset,
         const scalar& fill_values,
         cudaStream_t stream,
-        device_async_resource_ref mr
+        device_resource_ref mr
     ) except +libcudf_exception_handler
 
     cdef unique_ptr[table] reverse(
         const table_view& source_table,
         cudaStream_t stream,
-        device_async_resource_ref mr
+        device_resource_ref mr
     ) except +libcudf_exception_handler
 
     cdef unique_ptr[column] reverse(
         const column_view& source_column,
         cudaStream_t stream,
-        device_async_resource_ref mr
+        device_resource_ref mr
     ) except +libcudf_exception_handler
 
     cdef unique_ptr[table] scatter (
@@ -60,7 +60,7 @@ cdef extern from "cudf/copying.hpp" namespace "cudf" nogil:
         const column_view& scatter_map,
         const table_view& target_table,
         cudaStream_t stream,
-        device_async_resource_ref mr
+        device_resource_ref mr
     ) except +libcudf_exception_handler
 
     cdef unique_ptr[table] scatter (
@@ -68,7 +68,7 @@ cdef extern from "cudf/copying.hpp" namespace "cudf" nogil:
         const column_view& indices,
         const table_view& target,
         cudaStream_t stream,
-        device_async_resource_ref mr
+        device_resource_ref mr
     ) except +libcudf_exception_handler
 
     cpdef enum class mask_allocation_policy(int32_t):
@@ -84,7 +84,7 @@ cdef extern from "cudf/copying.hpp" namespace "cudf" nogil:
         const column_view& input_column,
         mask_allocation_policy policy,
         cudaStream_t stream,
-        device_async_resource_ref mr
+        device_resource_ref mr
     ) except +libcudf_exception_handler
 
     cdef unique_ptr[column] allocate_like (
@@ -92,7 +92,7 @@ cdef extern from "cudf/copying.hpp" namespace "cudf" nogil:
         size_type size,
         mask_allocation_policy policy,
         cudaStream_t stream,
-        device_async_resource_ref mr
+        device_resource_ref mr
     ) except +libcudf_exception_handler
 
     cdef unique_ptr[table] empty_like (
@@ -115,7 +115,7 @@ cdef extern from "cudf/copying.hpp" namespace "cudf" nogil:
         size_type input_end,
         size_type target_begin,
         cudaStream_t stream,
-        device_async_resource_ref mr
+        device_resource_ref mr
     ) except +libcudf_exception_handler
 
     cdef vector[column_view] slice (
@@ -147,7 +147,7 @@ cdef extern from "cudf/copying.hpp" namespace "cudf" nogil:
         const column_view& rhs,
         const column_view& boolean_mask,
         cudaStream_t stream,
-        device_async_resource_ref mr
+        device_resource_ref mr
     ) except +libcudf_exception_handler
 
     cdef unique_ptr[column] copy_if_else (
@@ -155,7 +155,7 @@ cdef extern from "cudf/copying.hpp" namespace "cudf" nogil:
         const column_view& rhs,
         const column_view& boolean_mask,
         cudaStream_t stream,
-        device_async_resource_ref mr
+        device_resource_ref mr
     ) except +libcudf_exception_handler
 
     cdef unique_ptr[column] copy_if_else (
@@ -163,7 +163,7 @@ cdef extern from "cudf/copying.hpp" namespace "cudf" nogil:
         const scalar& rhs,
         const column_view boolean_mask,
         cudaStream_t stream,
-        device_async_resource_ref mr
+        device_resource_ref mr
     ) except +libcudf_exception_handler
 
     cdef unique_ptr[column] copy_if_else (
@@ -171,7 +171,7 @@ cdef extern from "cudf/copying.hpp" namespace "cudf" nogil:
         const scalar& rhs,
         const column_view boolean_mask,
         cudaStream_t stream,
-        device_async_resource_ref mr
+        device_resource_ref mr
     ) except +libcudf_exception_handler
 
     cdef unique_ptr[table] boolean_mask_scatter (
@@ -179,7 +179,7 @@ cdef extern from "cudf/copying.hpp" namespace "cudf" nogil:
         const table_view& target,
         const column_view& boolean_mask,
         cudaStream_t stream,
-        device_async_resource_ref mr
+        device_resource_ref mr
     ) except +libcudf_exception_handler
 
     cdef unique_ptr[table] boolean_mask_scatter (
@@ -187,14 +187,14 @@ cdef extern from "cudf/copying.hpp" namespace "cudf" nogil:
         const table_view& target,
         const column_view& boolean_mask,
         cudaStream_t stream,
-        device_async_resource_ref mr
+        device_resource_ref mr
     ) except +libcudf_exception_handler
 
     cdef unique_ptr[scalar] get_element (
         const column_view& input,
         size_type index,
         cudaStream_t stream,
-        device_async_resource_ref mr
+        device_resource_ref mr
     ) except +libcudf_exception_handler
 
     cpdef enum class sample_with_replacement(bool):

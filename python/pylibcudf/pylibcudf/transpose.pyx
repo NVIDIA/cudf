@@ -8,6 +8,7 @@ from pylibcudf.libcudf.column.column cimport column
 from pylibcudf.libcudf.table.table_view cimport table_view
 
 from rmm.pylibrmm.stream cimport Stream
+from pylibcudf.libcudf.utilities.memory_resource cimport to_device_resource_ref
 from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 
 from .column cimport Column
@@ -51,7 +52,7 @@ cpdef Table transpose(
     cdef table_view c_input_table = input_table.view()
     with nogil:
         c_result = cpp_transpose.transpose(
-            c_input_table, _cs, mr.get_mr()
+            c_input_table, _cs, to_device_resource_ref(mr.get_mr())
         )
 
     owner_table = Table(

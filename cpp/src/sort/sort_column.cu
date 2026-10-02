@@ -12,19 +12,21 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
+#include <cuda/memory_resource>
+
 namespace cudf {
 namespace detail {
 
 /**
  * @copydoc
- * sorted_order(column_view&,order,null_order,cuda::stream_ref,rmm::device_async_resource_ref)
+ * sorted_order(column_view&,order,null_order,cuda::stream_ref,cuda::mr::device_resource_ref)
  */
 template <>
 std::unique_ptr<column> sorted_order<sort_method::UNSTABLE>(column_view const& input,
                                                             order column_order,
                                                             null_order null_precedence,
                                                             cuda::stream_ref stream,
-                                                            rmm::device_async_resource_ref mr)
+                                                            cuda::mr::device_resource_ref mr)
 {
   auto sorted_indices = cudf::make_numeric_column(
     data_type(type_to_id<size_type>()), input.size(), mask_state::UNALLOCATED, stream, mr);
@@ -45,14 +47,14 @@ std::unique_ptr<column> sorted_order<sort_method::UNSTABLE>(column_view const& i
 
 /**
  * @copydoc
- * stable_sorted_order(column_view&,order,null_order,cuda::stream_ref,rmm::device_async_resource_ref)
+ * stable_sorted_order(column_view&,order,null_order,cuda::stream_ref,cuda::mr::device_resource_ref)
  */
 template <>
 std::unique_ptr<column> sorted_order<sort_method::STABLE>(column_view const& input,
                                                           order column_order,
                                                           null_order null_precedence,
                                                           cuda::stream_ref stream,
-                                                          rmm::device_async_resource_ref mr)
+                                                          cuda::mr::device_resource_ref mr)
 {
   auto sorted_indices = cudf::make_numeric_column(
     data_type(type_to_id<size_type>()), input.size(), mask_state::UNALLOCATED, stream, mr);

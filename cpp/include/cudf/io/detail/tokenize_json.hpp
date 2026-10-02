@@ -12,6 +12,7 @@
 
 #include <rmm/device_uvector.hpp>
 
+#include <cuda/memory_resource>
 #include <cuda/stream>
 
 namespace cudf::io::json {
@@ -125,7 +126,7 @@ std::pair<rmm::device_uvector<PdaTokenT>, rmm::device_uvector<SymbolOffsetT>> ge
   device_span<SymbolT const> json_in,
   cudf::io::json_reader_options const& options,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr);
+  cuda::mr::device_resource_ref mr);
 
 }  // namespace CUDF_EXPORT detail
 

@@ -21,6 +21,7 @@
 #include <cuda/buffer>
 #include <cuda/functional>
 #include <cuda/iterator>
+#include <cuda/memory_resource>
 #include <cuda/std/functional>
 #include <cuda/std/iterator>
 #include <cuda/stream>
@@ -297,7 +298,7 @@ namespace detail {
 void normalize_single_quotes(datasource::owning_buffer<rmm::device_buffer>& indata,
                              char delimiter,
                              cuda::stream_ref stream,
-                             rmm::device_async_resource_ref mr)
+                             cuda::mr::device_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
   static constexpr std::int32_t min_out = 0;
@@ -330,7 +331,7 @@ std::
                        device_span<size_type const> col_offsets,
                        device_span<size_type const> col_lengths,
                        cuda::stream_ref stream,
-                       rmm::device_async_resource_ref mr)
+                       cuda::mr::device_resource_ref mr)
 {
   /*
    * Algorithm:

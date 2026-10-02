@@ -13,6 +13,7 @@
 #include <cudf/io/orc.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
+#include <cuda/memory_resource>
 #include <cuda/stream>
 
 #include <io/utilities/column_buffer.hpp>
@@ -44,22 +45,22 @@ class reader_impl {
   explicit reader_impl(std::vector<std::unique_ptr<datasource>>&& sources,
                        orc_reader_options const& options,
                        cuda::stream_ref stream,
-                       rmm::device_async_resource_ref mr);
+                       cuda::mr::device_resource_ref mr);
 
   /**
    * @copydoc cudf::io::orc::detail::chunked_reader::chunked_reader(std::size_t, std::size_t,
-   * orc_reader_options const&, cuda::stream_ref, rmm::device_async_resource_ref)
+   * orc_reader_options const&, cuda::stream_ref, cuda::mr::device_resource_ref)
    */
   explicit reader_impl(std::size_t chunk_read_limit,
                        std::size_t pass_read_limit,
                        std::vector<std::unique_ptr<datasource>>&& sources,
                        orc_reader_options const& options,
                        cuda::stream_ref stream,
-                       rmm::device_async_resource_ref mr);
+                       cuda::mr::device_resource_ref mr);
 
   /**
    * @copydoc cudf::io::orc::detail::chunked_reader::chunked_reader(std::size_t, std::size_t,
-   * size_type, orc_reader_options const&, cuda::stream_ref, rmm::device_async_resource_ref)
+   * size_type, orc_reader_options const&, cuda::stream_ref, cuda::mr::device_resource_ref)
    */
   explicit reader_impl(std::size_t chunk_read_limit,
                        std::size_t pass_read_limit,
@@ -67,7 +68,7 @@ class reader_impl {
                        std::vector<std::unique_ptr<datasource>>&& sources,
                        orc_reader_options const& options,
                        cuda::stream_ref stream,
-                       rmm::device_async_resource_ref mr);
+                       cuda::mr::device_resource_ref mr);
 
   reader_impl(reader_impl const&)            = delete;
   reader_impl& operator=(reader_impl const&) = delete;
@@ -159,7 +160,7 @@ class reader_impl {
   table_metadata get_meta_with_user_data();
 
   cuda::stream_ref const _stream;
-  rmm::device_async_resource_ref const _mr;
+  cuda::mr::device_resource_ref const _mr;
 
   // Reader configs.
   struct {

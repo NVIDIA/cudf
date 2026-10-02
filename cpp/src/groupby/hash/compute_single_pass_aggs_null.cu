@@ -6,6 +6,8 @@
 #include "compute_single_pass_aggs.cuh"
 #include "compute_single_pass_aggs.hpp"
 
+#include <cuda/memory_resource>
+
 namespace cudf::groupby::detail::hash {
 template std::pair<rmm::device_uvector<size_type>, bool>
 compute_single_pass_aggs<nullable_global_set_t>(nullable_global_set_t& global_set,
@@ -13,5 +15,5 @@ compute_single_pass_aggs<nullable_global_set_t>(nullable_global_set_t& global_se
                                                 std::span<aggregation_request const> requests,
                                                 cudf::detail::result_cache* cache,
                                                 cuda::stream_ref stream,
-                                                rmm::device_async_resource_ref mr);
+                                                cuda::mr::device_resource_ref mr);
 }  // namespace cudf::groupby::detail::hash

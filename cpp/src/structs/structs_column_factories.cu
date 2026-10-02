@@ -8,6 +8,7 @@
 #include <cudf/types.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
+#include <cuda/memory_resource>
 #include <cuda/stream>
 
 #include <algorithm>
@@ -21,7 +22,7 @@ std::unique_ptr<cudf::column> make_structs_column(
   size_type null_count,
   cuda::device_buffer<std::byte>&& null_mask,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cuda::mr::device_resource_ref mr)
 {
   CUDF_EXPECTS(null_count <= 0 || null_mask.size() > 0,
                "Struct column with nulls must be nullable.");
@@ -57,7 +58,7 @@ std::unique_ptr<cudf::column> create_structs_hierarchy(
   size_type null_count,
   cuda::device_buffer<std::byte>&& null_mask,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cuda::mr::device_resource_ref mr)
 {
   CUDF_EXPECTS(null_count <= 0 || null_mask.size() > 0,
                "Struct column with nulls must be nullable.");

@@ -9,6 +9,8 @@
 
 #include <cudf/io/types.hpp>
 
+#include <cuda/memory_resource>
+
 #include <optional>
 
 namespace cudf::io::detail {
@@ -74,7 +76,7 @@ struct sorted_codec_parameters {
   device_span<device_span<uint8_t const> const> inputs,
   device_span<device_span<uint8_t> const> outputs,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr);
+  cuda::mr::device_resource_ref mr);
 
 /**
  * @brief Finds the split index for decompression tasks
@@ -115,7 +117,7 @@ struct sorted_codec_parameters {
   device_span<device_span<uint8_t const> const> inputs,
   device_span<device_span<uint8_t> const> outputs,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr);
+  cuda::mr::device_resource_ref mr);
 
 /**
  * @brief Finds the split index for compression tasks

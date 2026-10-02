@@ -11,6 +11,8 @@
 #include <cudf/utilities/export.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
+#include <cuda/memory_resource>
+
 /**
  * @file
  * @brief APIs for segmented gather of elements within each row of a list column
@@ -68,7 +70,7 @@ std::unique_ptr<column> segmented_gather(
   lists_column_view const& gather_map_list,
   out_of_bounds_policy bounds_policy = out_of_bounds_policy::DONT_CHECK,
   cuda::stream_ref stream            = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr  = cudf::get_current_device_resource_ref());
+  cuda::mr::device_resource_ref mr   = cudf::get_current_device_resource_ref());
 
 /** @} */  // end of group
 }  // namespace lists

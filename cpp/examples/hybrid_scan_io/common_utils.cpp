@@ -14,6 +14,7 @@
 #include <rmm/mr/pool_memory_resource.hpp>
 
 #include <cuda/iterator>
+#include <cuda/memory_resource>
 #include <cuda/stream>
 
 #include <filesystem>
@@ -33,7 +34,7 @@ bool get_boolean(std::string input)
   return input == "ON" or input == "TRUE" or input == "YES" or input == "Y" or input == "T";
 }
 
-cuda::mr::any_resource<cuda::mr::device_accessible> create_memory_resource(bool is_pool_used)
+cuda::mr::any_device_resource create_memory_resource(bool is_pool_used)
 {
   if (is_pool_used) {
     return rmm::mr::pool_memory_resource{rmm::mr::cuda_memory_resource{},

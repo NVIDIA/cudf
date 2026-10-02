@@ -9,6 +9,7 @@
 #include "io/orc/orc.hpp"
 #include "io/utilities/column_buffer.hpp"
 
+#include <cuda/memory_resource>
 #include <cuda/stream>
 
 #include <algorithm>
@@ -134,6 +135,6 @@ column_buffer assemble_buffer(size_type orc_col_id,
                               column_hierarchy const& selected_columns,
                               std::vector<std::vector<column_buffer>>& col_buffers,
                               cuda::stream_ref stream,
-                              rmm::device_async_resource_ref mr);
+                              cuda::mr::device_resource_ref mr);
 
 }  // namespace cudf::io::orc::detail

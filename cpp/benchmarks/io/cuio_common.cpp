@@ -14,6 +14,8 @@
 
 #include <rmm/mr/pinned_host_memory_resource.hpp>
 
+#include <cuda/memory_resource>
+
 #include <unistd.h>
 
 #include <array>
@@ -27,7 +29,7 @@
 temp_directory const cuio_source_sink_pair::tmpdir{"cudf_bench"};
 
 // Don't use cudf's pinned pool for the source data
-rmm::host_async_resource_ref pinned_memory_resource()
+cuda::mr::host_resource_ref pinned_memory_resource()
 {
   static auto mr = rmm::mr::pinned_host_memory_resource{};
 

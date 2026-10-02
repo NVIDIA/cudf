@@ -17,6 +17,7 @@
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/iterator>
+#include <cuda/memory_resource>
 #include <cuda/stream>
 #include <thrust/extrema.h>
 
@@ -165,7 +166,7 @@ class arg_minmax_dispatcher {
   template <typename ElementType>
   [[nodiscard]] std::unique_ptr<scalar> operator()(column_view const& input,
                                                    cuda::stream_ref stream,
-                                                   rmm::device_async_resource_ref mr) const
+                                                   cuda::mr::device_resource_ref mr) const
     requires(is_supported<ElementType>())
   {
     auto const idx = find_arg_minmax<ElementType>(input, stream);
@@ -175,7 +176,7 @@ class arg_minmax_dispatcher {
   template <typename ElementType>
   std::unique_ptr<scalar> operator()(column_view const&,
                                      cuda::stream_ref,
-                                     rmm::device_async_resource_ref) const
+                                     cuda::mr::device_resource_ref) const
     requires(not is_supported<ElementType>())
   {
     CUDF_FAIL("ARGMIN/ARGMAX is not supported for this type");

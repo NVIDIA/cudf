@@ -22,8 +22,8 @@
 #include <cudf/utilities/type_dispatcher.hpp>
 
 #include <rmm/exec_policy.hpp>
-#include <rmm/resource_ref.hpp>
 
+#include <cuda/memory_resource>
 #include <cuda/stream>
 #include <thrust/sequence.h>
 #include <thrust/sort.h>
@@ -37,7 +37,7 @@ namespace detail {
 
 /**
  * @copydoc
- * sorted_order(table_view&,std::vector<order>,std::vector<null_order>,rmm::device_async_resource_ref
+ * sorted_order(table_view&,std::vector<order>,std::vector<null_order>,cuda::mr::device_resource_ref
  * )
  *
  * @tparam stable Whether to use stable sort
@@ -48,7 +48,7 @@ std::unique_ptr<column> sorted_order(table_view input,
                                      std::vector<order> const& column_order,
                                      std::vector<null_order> const& null_precedence,
                                      cuda::stream_ref stream,
-                                     rmm::device_async_resource_ref mr)
+                                     cuda::mr::device_resource_ref mr)
 {
   if (input.num_rows() == 0 or input.num_columns() == 0) {
     return cudf::make_numeric_column(

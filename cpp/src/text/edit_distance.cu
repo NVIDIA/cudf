@@ -25,6 +25,7 @@
 
 #include <cooperative_groups.h>
 #include <cuda/iterator>
+#include <cuda/memory_resource>
 #include <cuda/std/functional>
 #include <cuda/stream>
 #include <thrust/execution_policy.h>
@@ -234,7 +235,7 @@ CUDF_KERNEL void levenshtein_kernel(cudf::column_device_view d_strings,
 std::unique_ptr<cudf::column> edit_distance(cudf::strings_column_view const& input,
                                             cudf::strings_column_view const& targets,
                                             cuda::stream_ref stream,
-                                            rmm::device_async_resource_ref mr)
+                                            cuda::mr::device_resource_ref mr)
 {
   auto const output_type = cudf::data_type{cudf::type_to_id<cudf::size_type>()};
   if (input.is_empty()) { return cudf::make_empty_column(output_type); }
@@ -294,7 +295,7 @@ std::unique_ptr<cudf::column> edit_distance(cudf::strings_column_view const& inp
 std::unique_ptr<cudf::column> edit_distance(cudf::strings_column_view const& input,
                                             cudf::strings_column_view const& targets,
                                             cuda::stream_ref stream,
-                                            rmm::device_async_resource_ref mr)
+                                            cuda::mr::device_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
   return detail::edit_distance(input, targets, stream, mr);

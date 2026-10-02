@@ -9,6 +9,7 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 
+#include <cuda/memory_resource>
 #include <cuda/stream>
 
 namespace cudf {
@@ -18,7 +19,7 @@ std::unique_ptr<column> group_product(column_view const& values,
                                       size_type num_groups,
                                       cudf::device_span<size_type const> group_labels,
                                       cuda::stream_ref stream,
-                                      rmm::device_async_resource_ref mr)
+                                      cuda::mr::device_resource_ref mr)
 {
   auto values_type = cudf::is_dictionary(values.type())
                        ? dictionary_column_view(values).keys().type()

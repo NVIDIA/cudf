@@ -9,6 +9,7 @@
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
+#include <cuda/memory_resource>
 #include <cuda/stream>
 
 namespace cudf {
@@ -19,14 +20,14 @@ namespace detail {
  */
 std::unique_ptr<table> from_dlpack(DLManagedTensor const* managed_tensor,
                                    cuda::stream_ref stream,
-                                   rmm::device_async_resource_ref mr);
+                                   cuda::mr::device_resource_ref mr);
 
 /**
  * @copydoc cudf::to_dlpack
  */
 DLManagedTensor* to_dlpack(table_view const& input,
                            cuda::stream_ref stream,
-                           rmm::device_async_resource_ref mr);
+                           cuda::mr::device_resource_ref mr);
 
 }  // namespace detail
 }  // namespace cudf

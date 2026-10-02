@@ -24,6 +24,7 @@
 #include <cuda/atomic>
 #include <cuda/functional>
 #include <cuda/iterator>
+#include <cuda/memory_resource>
 #include <cuda/std/utility>
 #include <cuda/stream>
 #include <thrust/for_each.h>
@@ -289,7 +290,7 @@ std::pair<std::unique_ptr<column>, std::vector<column_name_info>> device_json_co
   bool prune_columns,
   std::optional<schema_element> schema,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cuda::mr::device_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
   auto validity_size_check = [](device_json_column& json_col) {
@@ -516,7 +517,7 @@ table_with_metadata device_parse_nested_json_impl(
   device_span<SymbolT const> d_input,
   cudf::io::json_reader_options const& options,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr,
+  cuda::mr::device_resource_ref mr,
   std::vector<std::string>* mismatched_columns_out,
   std::vector<schema_mismatch_rows>* mismatched_rows_out = nullptr)
 {
@@ -746,7 +747,7 @@ table_with_metadata device_parse_nested_json_impl(
 table_with_metadata device_parse_nested_json(device_span<SymbolT const> d_input,
                                              cudf::io::json_reader_options const& options,
                                              cuda::stream_ref stream,
-                                             rmm::device_async_resource_ref mr)
+                                             cuda::mr::device_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
   return device_parse_nested_json_impl(
@@ -758,7 +759,7 @@ device_parse_nested_json_result device_parse_nested_json_with_diagnostics(
   cudf::io::json_reader_options const& options,
   bool collect_schema_mismatch_rows,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cuda::mr::device_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
   std::vector<std::string> mismatched_columns;

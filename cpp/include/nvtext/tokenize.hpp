@@ -10,6 +10,8 @@
 #include <cudf/utilities/export.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
+#include <cuda/memory_resource>
+
 namespace CUDF_EXPORT nvtext {
 /**
  * @addtogroup nvtext_tokenize
@@ -52,7 +54,7 @@ std::unique_ptr<cudf::column> tokenize(
   cudf::strings_column_view const& input,
   cudf::string_scalar const& delimiter = cudf::string_scalar{""},
   cuda::stream_ref stream              = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr    = cudf::get_current_device_resource_ref());
+  cuda::mr::device_resource_ref mr     = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Returns a single column of strings by tokenizing the input strings
@@ -87,8 +89,8 @@ std::unique_ptr<cudf::column> tokenize(
 std::unique_ptr<cudf::column> tokenize(
   cudf::strings_column_view const& input,
   cudf::strings_column_view const& delimiters,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream          = cudf::get_default_stream(),
+  cuda::mr::device_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Returns the number of tokens in each string of a strings column.
@@ -119,7 +121,7 @@ std::unique_ptr<cudf::column> count_tokens(
   cudf::strings_column_view const& input,
   cudf::string_scalar const& delimiter = cudf::string_scalar{""},
   cuda::stream_ref stream              = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr    = cudf::get_current_device_resource_ref());
+  cuda::mr::device_resource_ref mr     = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Returns the number of tokens in each string of a strings column
@@ -150,8 +152,8 @@ std::unique_ptr<cudf::column> count_tokens(
 std::unique_ptr<cudf::column> count_tokens(
   cudf::strings_column_view const& input,
   cudf::strings_column_view const& delimiters,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream          = cudf::get_default_stream(),
+  cuda::mr::device_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Returns a single column of strings by converting each character to a string.
@@ -176,8 +178,8 @@ std::unique_ptr<cudf::column> count_tokens(
  */
 std::unique_ptr<cudf::column> character_tokenize(
   cudf::strings_column_view const& input,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream          = cudf::get_default_stream(),
+  cuda::mr::device_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Creates a strings column from a strings column of tokens and an
@@ -218,7 +220,7 @@ std::unique_ptr<cudf::column> detokenize(
   cudf::column_view const& row_indices,
   cudf::string_scalar const& separator = cudf::string_scalar(" "),
   cuda::stream_ref stream              = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr    = cudf::get_current_device_resource_ref());
+  cuda::mr::device_resource_ref mr     = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Vocabulary object to be used with nvtext::tokenize_with_vocabulary
@@ -239,8 +241,8 @@ struct tokenize_vocabulary {
    * @param mr Device memory resource used to allocate the returned column's device memory
    */
   tokenize_vocabulary(cudf::strings_column_view const& input,
-                      cuda::stream_ref stream           = cudf::get_default_stream(),
-                      rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+                      cuda::stream_ref stream          = cudf::get_default_stream(),
+                      cuda::mr::device_resource_ref mr = cudf::get_current_device_resource_ref());
   ~tokenize_vocabulary();
 
   struct tokenize_vocabulary_impl;
@@ -262,8 +264,8 @@ struct tokenize_vocabulary {
  */
 std::unique_ptr<tokenize_vocabulary> load_vocabulary(
   cudf::strings_column_view const& input,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream          = cudf::get_default_stream(),
+  cuda::mr::device_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Returns the token ids for the input string by looking up each delimited
@@ -294,9 +296,9 @@ std::unique_ptr<cudf::column> tokenize_with_vocabulary(
   cudf::strings_column_view const& input,
   tokenize_vocabulary const& vocabulary,
   cudf::string_scalar const& delimiter,
-  cudf::size_type default_id        = -1,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cudf::size_type default_id       = -1,
+  cuda::stream_ref stream          = cudf::get_default_stream(),
+  cuda::mr::device_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /** @} */  // end of tokenize group
 }  // namespace CUDF_EXPORT nvtext

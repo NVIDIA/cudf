@@ -14,6 +14,7 @@
 
 #include <rmm/device_uvector.hpp>
 
+#include <cuda/memory_resource>
 #include <cuda/std/limits>
 #include <cuda/stream>
 
@@ -169,9 +170,9 @@ std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
           std::unique_ptr<rmm::device_uvector<size_type>>>
 inner_join(cudf::table_view const& left_keys,
            cudf::table_view const& right_keys,
-           null_equality compare_nulls       = null_equality::EQUAL,
-           cuda::stream_ref stream           = cudf::get_default_stream(),
-           rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+           null_equality compare_nulls      = null_equality::EQUAL,
+           cuda::stream_ref stream          = cudf::get_default_stream(),
+           cuda::mr::device_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Returns a pair of row index vectors corresponding to a
@@ -210,9 +211,9 @@ std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
           std::unique_ptr<rmm::device_uvector<size_type>>>
 left_join(cudf::table_view const& left_keys,
           cudf::table_view const& right_keys,
-          null_equality compare_nulls       = null_equality::EQUAL,
-          cuda::stream_ref stream           = cudf::get_default_stream(),
-          rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+          null_equality compare_nulls      = null_equality::EQUAL,
+          cuda::stream_ref stream          = cudf::get_default_stream(),
+          cuda::mr::device_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Returns a pair of row index vectors corresponding to a
@@ -251,9 +252,9 @@ std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
           std::unique_ptr<rmm::device_uvector<size_type>>>
 full_join(cudf::table_view const& left_keys,
           cudf::table_view const& right_keys,
-          null_equality compare_nulls       = null_equality::EQUAL,
-          cuda::stream_ref stream           = cudf::get_default_stream(),
-          rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+          null_equality compare_nulls      = null_equality::EQUAL,
+          cuda::stream_ref stream          = cudf::get_default_stream(),
+          cuda::mr::device_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Performs a cross join on two tables (`left`, `right`)
@@ -286,8 +287,8 @@ full_join(cudf::table_view const& left_keys,
 std::unique_ptr<cudf::table> cross_join(
   cudf::table_view const& left,
   cudf::table_view const& right,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream          = cudf::get_default_stream(),
+  cuda::mr::device_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Filters join result indices based on a conditional predicate and join type.
@@ -373,7 +374,7 @@ filter_join_indices(cudf::table_view const& left,
                     cudf::join_kind join_kind,
                     std::optional<std::size_t> output_size = std::nullopt,
                     cuda::stream_ref stream                = cudf::get_default_stream(),
-                    rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+                    cuda::mr::device_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Returns the exact output size of `filter_join_indices` without materializing
@@ -420,8 +421,8 @@ filter_join_indices_output_size(
   cudf::device_span<size_type const> right_indices,
   cudf::ast::expression const& predicate,
   cudf::join_kind join_kind,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream          = cudf::get_default_stream(),
+  cuda::mr::device_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief JIT-based filtering of join result indices using string predicate.
@@ -490,16 +491,15 @@ filter_join_indices_output_size(
  */
 std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
           std::unique_ptr<rmm::device_uvector<size_type>>>
-filter_join_indices_jit(
-  cudf::table_view const& left,
-  cudf::table_view const& right,
-  cudf::device_span<size_type const> left_indices,
-  cudf::device_span<size_type const> right_indices,
-  std::string const& predicate_code,
-  cudf::join_kind join_kind,
-  bool is_ptx                       = false,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+filter_join_indices_jit(cudf::table_view const& left,
+                        cudf::table_view const& right,
+                        cudf::device_span<size_type const> left_indices,
+                        cudf::device_span<size_type const> right_indices,
+                        std::string const& predicate_code,
+                        cudf::join_kind join_kind,
+                        bool is_ptx                      = false,
+                        cuda::stream_ref stream          = cudf::get_default_stream(),
+                        cuda::mr::device_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Filters join indices using a JIT-compiled predicate from an AST expression.
@@ -522,15 +522,14 @@ filter_join_indices_jit(
  */
 std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
           std::unique_ptr<rmm::device_uvector<size_type>>>
-filter_join_indices_jit(
-  cudf::table_view const& left,
-  cudf::table_view const& right,
-  cudf::device_span<size_type const> left_indices,
-  cudf::device_span<size_type const> right_indices,
-  cudf::ast::expression const& predicate,
-  cudf::join_kind join_kind,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+filter_join_indices_jit(cudf::table_view const& left,
+                        cudf::table_view const& right,
+                        cudf::device_span<size_type const> left_indices,
+                        cudf::device_span<size_type const> right_indices,
+                        cudf::ast::expression const& predicate,
+                        cudf::join_kind join_kind,
+                        cuda::stream_ref stream          = cudf::get_default_stream(),
+                        cuda::mr::device_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /** @} */  // end of group
 

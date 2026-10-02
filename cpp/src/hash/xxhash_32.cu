@@ -10,6 +10,7 @@
 #include <cudf/utilities/error.hpp>
 
 #include <cub/device/device_for.cuh>
+#include <cuda/memory_resource>
 #include <cuda/stream>
 
 namespace cudf {
@@ -19,7 +20,7 @@ namespace detail {
 std::unique_ptr<column> xxhash_32(table_view const& input,
                                   uint32_t seed,
                                   cuda::stream_ref stream,
-                                  rmm::device_async_resource_ref mr)
+                                  cuda::mr::device_resource_ref mr)
 {
   auto output = make_numeric_column(data_type(type_to_id<hash_value_type>()),
                                     input.num_rows(),
@@ -51,7 +52,7 @@ std::unique_ptr<column> xxhash_32(table_view const& input,
 std::unique_ptr<column> xxhash_32(table_view const& input,
                                   uint32_t seed,
                                   cuda::stream_ref stream,
-                                  rmm::device_async_resource_ref mr)
+                                  cuda::mr::device_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
   return detail::xxhash_32(input, seed, stream, mr);

@@ -10,6 +10,8 @@
 #include <cudf/strings/strings_column_view.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
+#include <cuda/memory_resource>
+
 /**
  * @file
  * @brief Strings column APIs for converting a lists column into a formatted strings column.
@@ -55,7 +57,7 @@ std::unique_ptr<column> format_list_column(
   strings_column_view const& separators = strings_column_view(column_view{
     data_type{type_id::STRING}, 0, nullptr, nullptr, 0}),
   cuda::stream_ref stream               = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr     = cudf::get_current_device_resource_ref());
+  cuda::mr::device_resource_ref mr      = cudf::get_current_device_resource_ref());
 
 /** @} */  // end of doxygen group
 }  // namespace strings

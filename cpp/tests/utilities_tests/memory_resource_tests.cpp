@@ -12,6 +12,7 @@
 #include <rmm/mr/statistics_resource_adaptor.hpp>
 
 #include <cuda/buffer>
+#include <cuda/memory_resource>
 
 #include <stdexcept>
 #include <type_traits>
@@ -19,7 +20,7 @@
 
 using cudf::test::scoped_current_device_resource;
 
-static rmm::device_async_resource_ref get_output_mr(cudf::memory_resources resources)
+static cuda::mr::device_resource_ref get_output_mr(cudf::memory_resources resources)
 {
   return resources.get_output_mr();
 }
@@ -39,14 +40,14 @@ TEST(MemoryResourcesTest, OneResourceUsesCurrentResourceAtConstruction)
   scoped_current_device_resource temporary_scope{temporary_mr};
   cudf::memory_resources resources{output_mr};
 
-  EXPECT_TRUE(resources.get_output_mr() == rmm::device_async_resource_ref{output_mr});
-  EXPECT_TRUE(resources.get_temporary_mr() == rmm::device_async_resource_ref{temporary_mr});
+  EXPECT_TRUE(resources.get_output_mr() == cuda::mr::device_resource_ref{output_mr});
+  EXPECT_TRUE(resources.get_temporary_mr() == cuda::mr::device_resource_ref{temporary_mr});
 
   {
     scoped_current_device_resource replacement_scope{replacement_mr};
     cudf::memory_resources replacement_resources{output_mr};
     EXPECT_TRUE(replacement_resources.get_temporary_mr() ==
-                rmm::device_async_resource_ref{replacement_mr});
+                cuda::mr::device_resource_ref{replacement_mr});
   }
 }
 
@@ -60,8 +61,8 @@ TEST(MemoryResourcesTest, TwoResourcesIgnoreCurrentResource)
   scoped_current_device_resource current_scope{unrelated_mr};
   cudf::memory_resources resources{output_mr, temporary_mr};
 
-  EXPECT_TRUE(resources.get_output_mr() == rmm::device_async_resource_ref{output_mr});
-  EXPECT_TRUE(resources.get_temporary_mr() == rmm::device_async_resource_ref{temporary_mr});
+  EXPECT_TRUE(resources.get_output_mr() == cuda::mr::device_resource_ref{output_mr});
+  EXPECT_TRUE(resources.get_temporary_mr() == cuda::mr::device_resource_ref{temporary_mr});
   EXPECT_FALSE(resources.get_temporary_mr() == cudf::get_current_device_resource_ref());
 }
 
@@ -69,11 +70,11 @@ TEST(MemoryResourcesTest, ResourceObjectAndRefCompatibility)
 {
   auto output_mr    = rmm::mr::statistics_resource_adaptor{cudf::get_current_device_resource_ref()};
   auto temporary_mr = rmm::mr::statistics_resource_adaptor{cudf::get_current_device_resource_ref()};
-  auto output_ref   = rmm::device_async_resource_ref{output_mr};
-  auto temporary_ref = rmm::device_async_resource_ref{temporary_mr};
+  auto output_ref   = cuda::mr::device_resource_ref{output_mr};
+  auto temporary_ref = cuda::mr::device_resource_ref{temporary_mr};
 
   static_assert(std::is_convertible_v<decltype(output_mr)&, cudf::memory_resources>);
-  static_assert(std::is_convertible_v<rmm::device_async_resource_ref, cudf::memory_resources>);
+  static_assert(std::is_convertible_v<cuda::mr::device_resource_ref, cudf::memory_resources>);
   static_assert(
     std::is_constructible_v<cudf::memory_resources, decltype(output_mr)&, decltype(temporary_mr)&>);
 
@@ -98,7 +99,7 @@ TEST(MemoryResourceTestHarness, RestoresCurrentResourceDuringStackUnwinding)
     {
       scoped_current_device_resource current_scope{replacement_mr};
       EXPECT_TRUE(cudf::get_current_device_resource_ref() ==
-                  rmm::device_async_resource_ref{replacement_mr});
+                  cuda::mr::device_resource_ref{replacement_mr});
       throw std::runtime_error{"test exception"};
     },
     std::runtime_error);
@@ -148,7 +149,7 @@ TEST(MemoryResourceTestHarness, TracksSetupOutputAndTemporaryLifetimes)
   auto harness = cudf::test::memory_resource_test_harness{};
   auto stream  = cudf::test::get_default_stream();
   auto setup   = cuda::device_buffer<std::byte>{
-    stream, rmm::device_async_resource_ref{harness.setup_mr()}, 16, cuda::no_init};
+    stream, cuda::mr::device_resource_ref{harness.setup_mr()}, 16, cuda::no_init};
 
   {
     auto resources = harness.resources();

@@ -10,6 +10,8 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 
+#include <cuda/memory_resource>
+
 namespace cudf {
 namespace structs::detail {
 
@@ -39,7 +41,7 @@ namespace structs::detail {
  */
 std::unique_ptr<column> concatenate(host_span<column_view const> columns,
                                     cuda::stream_ref stream,
-                                    rmm::device_async_resource_ref mr);
+                                    cuda::mr::device_resource_ref mr);
 
 }  // namespace structs::detail
 }  // namespace cudf

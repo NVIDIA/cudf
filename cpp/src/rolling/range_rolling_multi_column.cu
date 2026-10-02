@@ -23,10 +23,10 @@
 #include <cudf/utilities/type_dispatcher.hpp>
 
 #include <rmm/exec_policy.hpp>
-#include <rmm/resource_ref.hpp>
 
 #include <cuda/functional>
 #include <cuda/iterator>
+#include <cuda/memory_resource>
 #include <cuda/std/tuple>
 #include <cuda/stream>
 #include <thrust/copy.h>
@@ -160,7 +160,7 @@ std::pair<std::unique_ptr<column>, std::unique_ptr<column>> make_range_windows(
   range_window_type preceding,
   range_window_type following,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cuda::mr::device_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
   CUDF_EXPECTS(orderby.num_columns() > 0, "orderby must be non-empty");

@@ -20,11 +20,11 @@
 
 #include <rmm/device_buffer.hpp>
 #include <rmm/device_uvector.hpp>
-#include <rmm/resource_ref.hpp>
 
 #include <cub/device/device_segmented_reduce.cuh>
 #include <cuda/buffer>
 #include <cuda/functional>
+#include <cuda/memory_resource>
 #include <cuda/stream>
 
 #include <cstddef>
@@ -80,7 +80,7 @@ std::unique_ptr<column> make_range_window(
   null_order null_order,
   range_window_type window,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cuda::mr::device_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
   bool const nulls_at_start = (order == order::ASCENDING && null_order == null_order::BEFORE) ||
@@ -111,7 +111,7 @@ std::pair<std::unique_ptr<column>, std::unique_ptr<column>> make_range_windows(
   range_window_type preceding,
   range_window_type following,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cuda::mr::device_resource_ref mr)
 {
   if (group_keys.num_columns() > 0) {
     using sort_helper = cudf::groupby::detail::sort::sort_groupby_helper;
@@ -162,7 +162,7 @@ std::pair<std::unique_ptr<column>, std::unique_ptr<column>> make_range_windows(
   range_window_type preceding,
   range_window_type following,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cuda::mr::device_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
   CUDF_EXPECTS(

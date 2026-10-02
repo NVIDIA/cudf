@@ -24,6 +24,7 @@
 
 #include <cuda/functional>
 #include <cuda/iterator>
+#include <cuda/memory_resource>
 #include <cuda/std/iterator>
 #include <cuda/std/tuple>
 #include <cuda/stream>
@@ -282,7 +283,7 @@ struct build_tree_result {
                                            bool is_array_of_arrays,
                                            cudf::io::json_reader_options const& options,
                                            cuda::stream_ref stream,
-                                           rmm::device_async_resource_ref mr);
+                                           cuda::mr::device_resource_ref mr);
 
 void scatter_offsets(tree_meta_t const& tree,
                      device_span<NodeIndexT const> col_ids,
@@ -353,7 +354,7 @@ void make_device_json_column(device_span<SymbolT const> input,
                              bool collect_schema_mismatch_rows,
                              cudf::io::json_reader_options const& options,
                              cuda::stream_ref stream,
-                             rmm::device_async_resource_ref mr)
+                             cuda::mr::device_resource_ref mr)
 {
   bool const is_enabled_lines                 = options.is_enabled_lines();
   bool const is_enabled_mixed_types_as_string = options.is_enabled_mixed_types_as_string();
@@ -507,7 +508,7 @@ void make_device_json_column(device_span<SymbolT const> input,
                                            bool is_array_of_arrays,
                                            cudf::io::json_reader_options const& options,
                                            cuda::stream_ref stream,
-                                           rmm::device_async_resource_ref mr)
+                                           cuda::mr::device_resource_ref mr)
 {
   bool const is_enabled_lines                 = options.is_enabled_lines();
   bool const is_enabled_mixed_types_as_string = options.is_enabled_mixed_types_as_string();

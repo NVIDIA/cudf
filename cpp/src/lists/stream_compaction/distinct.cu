@@ -17,6 +17,7 @@
 #include <cudf/table/table_view.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
+#include <cuda/memory_resource>
 #include <cuda/stream>
 
 #include <memory>
@@ -30,7 +31,7 @@ std::unique_ptr<column> distinct(lists_column_view const& input,
                                  nan_equality nans_equal,
                                  duplicate_keep_option keep_option,
                                  cuda::stream_ref stream,
-                                 rmm::device_async_resource_ref mr)
+                                 cuda::mr::device_resource_ref mr)
 {
   // Algorithm:
   // - Generate labels for the child elements.
@@ -69,7 +70,7 @@ std::unique_ptr<column> distinct(lists_column_view const& input,
                                  nan_equality nans_equal,
                                  duplicate_keep_option keep_option,
                                  cuda::stream_ref stream,
-                                 rmm::device_async_resource_ref mr)
+                                 cuda::mr::device_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
   return detail::distinct(input, nulls_equal, nans_equal, keep_option, stream, mr);

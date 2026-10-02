@@ -7,6 +7,7 @@
 #include <cudf/column/column_view.hpp>
 #include <cudf/types.hpp>
 
+#include <cuda/memory_resource>
 #include <cuda/stream>
 
 namespace cudf {
@@ -34,7 +35,7 @@ bool is_radix_sortable(column_view const& column);
 std::unique_ptr<column> sort_radix(column_view const& input,
                                    bool ascending,
                                    cuda::stream_ref stream,
-                                   rmm::device_async_resource_ref mr);
+                                   cuda::mr::device_resource_ref mr);
 
 /**
  * @brief Sort a column using radix sort

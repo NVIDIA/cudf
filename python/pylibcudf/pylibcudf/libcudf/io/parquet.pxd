@@ -25,7 +25,7 @@ from pylibcudf.libcudf.io.types cimport (
 from pylibcudf.libcudf.table.table_view cimport table_view
 from pylibcudf.libcudf.types cimport data_type, size_type, type_id
 from cuda.bindings.cyruntime cimport cudaStream_t
-from rmm.librmm.memory_resource cimport device_async_resource_ref
+from pylibcudf.libcudf.utilities.memory_resource cimport device_resource_ref
 
 
 cdef extern from "cudf/io/parquet.hpp" namespace "cudf::io" nogil:
@@ -138,14 +138,14 @@ cdef extern from "cudf/io/parquet.hpp" namespace "cudf::io" nogil:
     cdef table_with_metadata read_parquet(
         parquet_reader_options args,
         cudaStream_t stream,
-        device_async_resource_ref mr
+        device_resource_ref mr
     ) except +libcudf_exception_handler
     cdef table_with_metadata read_parquet(
         vector[unique_ptr[datasource]] sources,
         vector[FileMetaData] parquet_metadatas,
         const parquet_reader_options& args,
         cudaStream_t stream,
-        device_async_resource_ref mr
+        device_resource_ref mr
     ) except +libcudf_exception_handler
 
     cdef cppclass parquet_writer_options_base:
@@ -324,7 +324,7 @@ cdef extern from "cudf/io/parquet.hpp" namespace "cudf::io" nogil:
             size_t chunk_read_limit,
             const parquet_reader_options& options,
             cudaStream_t stream,
-            device_async_resource_ref mr
+            device_resource_ref mr
         ) except +libcudf_exception_handler
         chunked_parquet_reader(
             size_t chunk_read_limit,
@@ -332,14 +332,14 @@ cdef extern from "cudf/io/parquet.hpp" namespace "cudf::io" nogil:
             vector[FileMetaData] parquet_metadatas,
             const parquet_reader_options& options,
             cudaStream_t stream,
-            device_async_resource_ref mr
+            device_resource_ref mr
         ) except +libcudf_exception_handler
         chunked_parquet_reader(
             size_t chunk_read_limit,
             size_t pass_read_limit,
             const parquet_reader_options& options,
             cudaStream_t stream,
-            device_async_resource_ref mr
+            device_resource_ref mr
         ) except +libcudf_exception_handler
         chunked_parquet_reader(
             size_t chunk_read_limit,
@@ -348,7 +348,7 @@ cdef extern from "cudf/io/parquet.hpp" namespace "cudf::io" nogil:
             vector[FileMetaData] parquet_metadatas,
             const parquet_reader_options& options,
             cudaStream_t stream,
-            device_async_resource_ref mr
+            device_resource_ref mr
         ) except +libcudf_exception_handler
         bool has_next() except +libcudf_exception_handler
         table_with_metadata read_chunk() except +libcudf_exception_handler

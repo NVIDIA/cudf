@@ -11,6 +11,7 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 
+#include <cuda/memory_resource>
 #include <cuda/stream>
 
 #include <span>
@@ -19,46 +20,46 @@ namespace cudf {
 namespace dictionary::detail {
 /**
  * @copydoc cudf::dictionary::add_keys(dictionary_column_view const&,column_view
- * const&,rmm::device_async_resource_ref)
+ * const&,cuda::mr::device_resource_ref)
  *
  * @param stream CUDA stream used for device memory operations and kernel launches.
  */
 std::unique_ptr<column> add_keys(dictionary_column_view const& dictionary_column,
                                  column_view const& new_keys,
                                  cuda::stream_ref stream,
-                                 rmm::device_async_resource_ref mr);
+                                 cuda::mr::device_resource_ref mr);
 
 /**
  * @copydoc cudf::dictionary::remove_keys(dictionary_column_view const&,column_view
- * const&,rmm::device_async_resource_ref)
+ * const&,cuda::mr::device_resource_ref)
  *
  * @param stream CUDA stream used for device memory operations and kernel launches.
  */
 std::unique_ptr<column> remove_keys(dictionary_column_view const& dictionary_column,
                                     column_view const& keys_to_remove,
                                     cuda::stream_ref stream,
-                                    rmm::device_async_resource_ref mr);
+                                    cuda::mr::device_resource_ref mr);
 
 /**
  * @copydoc cudf::dictionary::remove_unused_keys(dictionary_column_view
- * const&,rmm::device_async_resource_ref)
+ * const&,cuda::mr::device_resource_ref)
  *
  * @param stream CUDA stream used for device memory operations and kernel launches.
  */
 std::unique_ptr<column> remove_unused_keys(dictionary_column_view const& dictionary_column,
                                            cuda::stream_ref stream,
-                                           rmm::device_async_resource_ref mr);
+                                           cuda::mr::device_resource_ref mr);
 
 /**
  * @copydoc cudf::dictionary::set_keys(dictionary_column_view
- * const&,rmm::device_async_resource_ref)
+ * const&,cuda::mr::device_resource_ref)
  *
  * @param stream CUDA stream used for device memory operations and kernel launches.
  */
 std::unique_ptr<column> set_keys(dictionary_column_view const& dictionary_column,
                                  column_view const& keys,
                                  cuda::stream_ref stream,
-                                 rmm::device_async_resource_ref mr);
+                                 cuda::mr::device_resource_ref mr);
 
 /**
  * @brief Remap the indices of a dictionary column to a new key set, returning
@@ -80,16 +81,16 @@ std::unique_ptr<column> set_keys(dictionary_column_view const& dictionary_column
 std::unique_ptr<column> remap_indices(dictionary_column_view const& input,
                                       column_view const& new_keys,
                                       cuda::stream_ref stream,
-                                      rmm::device_async_resource_ref mr);
+                                      cuda::mr::device_resource_ref mr);
 
 /**
  * @copydoc
- * cudf::dictionary::match_dictionaries(std::vector<cudf::dictionary_column_view>,rmm::device_async_resource_ref)
+ * cudf::dictionary::match_dictionaries(std::vector<cudf::dictionary_column_view>,cuda::mr::device_resource_ref)
  */
 std::vector<std::unique_ptr<column>> match_dictionaries(
   std::span<dictionary_column_view const> input,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr);
+  cuda::mr::device_resource_ref mr);
 
 /**
  * @brief Create new dictionaries that have keys merged from dictionary columns
@@ -111,7 +112,7 @@ std::vector<std::unique_ptr<column>> match_dictionaries(
  * @return New dictionary columns and updated cudf::table_views.
  */
 std::pair<std::vector<std::unique_ptr<column>>, std::vector<table_view>> match_dictionaries(
-  std::vector<table_view> tables, cuda::stream_ref stream, rmm::device_async_resource_ref mr);
+  std::vector<table_view> tables, cuda::stream_ref stream, cuda::mr::device_resource_ref mr);
 
 /**
  * @brief Like match_dictionaries() but returns index columns in place of the
@@ -134,7 +135,7 @@ std::pair<std::vector<std::unique_ptr<column>>, std::vector<table_view>> match_d
 std::vector<std::unique_ptr<column>> match_dictionaries_to_indices(
   std::span<dictionary_column_view const> input,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr);
+  cuda::mr::device_resource_ref mr);
 
 /**
  * @brief Like match_dictionaries() but substitutes index columns in place
@@ -155,7 +156,7 @@ std::vector<std::unique_ptr<column>> match_dictionaries_to_indices(
 std::pair<std::vector<std::unique_ptr<column>>, std::vector<table_view>>
 match_dictionaries_to_indices(std::vector<table_view> tables,
                               cuda::stream_ref stream,
-                              rmm::device_async_resource_ref mr);
+                              cuda::mr::device_resource_ref mr);
 
 }  // namespace dictionary::detail
 }  // namespace cudf

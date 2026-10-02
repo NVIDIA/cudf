@@ -21,6 +21,7 @@
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/iterator>
+#include <cuda/memory_resource>
 #include <cuda/stream>
 #include <thrust/for_each.h>
 #include <thrust/transform.h>
@@ -88,7 +89,7 @@ std::unique_ptr<cudf::column> is_letter(cudf::strings_column_view const& strings
                                         letter_type ltype,
                                         PositionIterator position_itr,
                                         cuda::stream_ref stream,
-                                        rmm::device_async_resource_ref mr)
+                                        cuda::mr::device_resource_ref mr)
 {
   if (strings.is_empty()) return cudf::make_empty_column(cudf::data_type{cudf::type_id::BOOL8});
 
@@ -122,7 +123,7 @@ struct dispatch_is_letter_fn {
                                            letter_type ltype,
                                            cudf::column_view const& indices,
                                            cuda::stream_ref stream,
-                                           rmm::device_async_resource_ref mr) const
+                                           cuda::mr::device_resource_ref mr) const
     requires(cudf::is_index_type<T>())
   {
     CUDF_EXPECTS(strings.size() == indices.size(),
@@ -202,7 +203,7 @@ struct porter_stemmer_measure_fn {
 
 std::unique_ptr<cudf::column> porter_stemmer_measure(cudf::strings_column_view const& strings,
                                                      cuda::stream_ref stream,
-                                                     rmm::device_async_resource_ref mr)
+                                                     cuda::mr::device_resource_ref mr)
 {
   if (strings.is_empty()) {
     return cudf::make_empty_column(cudf::data_type{cudf::type_to_id<cudf::size_type>()});
@@ -231,7 +232,7 @@ std::unique_ptr<cudf::column> is_letter(cudf::strings_column_view const& strings
                                         letter_type ltype,
                                         cudf::column_view const& indices,
                                         cuda::stream_ref stream,
-                                        rmm::device_async_resource_ref mr)
+                                        cuda::mr::device_resource_ref mr)
 {
   return cudf::type_dispatcher(
     indices.type(), dispatch_is_letter_fn{}, strings, ltype, indices, stream, mr);
@@ -245,7 +246,7 @@ std::unique_ptr<cudf::column> is_letter(cudf::strings_column_view const& input,
                                         letter_type ltype,
                                         cudf::size_type character_index,
                                         cuda::stream_ref stream,
-                                        rmm::device_async_resource_ref mr)
+                                        cuda::mr::device_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
   return detail::is_letter(
@@ -256,7 +257,7 @@ std::unique_ptr<cudf::column> is_letter(cudf::strings_column_view const& input,
                                         letter_type ltype,
                                         cudf::column_view const& indices,
                                         cuda::stream_ref stream,
-                                        rmm::device_async_resource_ref mr)
+                                        cuda::mr::device_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
   return detail::is_letter(input, ltype, indices, stream, mr);
@@ -267,7 +268,7 @@ std::unique_ptr<cudf::column> is_letter(cudf::strings_column_view const& input,
  */
 std::unique_ptr<cudf::column> porter_stemmer_measure(cudf::strings_column_view const& input,
                                                      cuda::stream_ref stream,
-                                                     rmm::device_async_resource_ref mr)
+                                                     cuda::mr::device_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
   return detail::porter_stemmer_measure(input, stream, mr);

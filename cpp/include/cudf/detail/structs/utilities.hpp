@@ -13,6 +13,7 @@
 
 #include <rmm/device_buffer.hpp>
 
+#include <cuda/memory_resource>
 #include <cuda/stream>
 
 namespace CUDF_EXPORT cudf {
@@ -168,7 +169,7 @@ class flattened_table {
   std::vector<cudf::null_order> const& null_precedence,
   cudf::structs::detail::column_nullability nullability,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr);
+  cuda::mr::device_resource_ref mr);
 
 /**
  * @brief Superimpose nulls from a given null mask into the input column, using bitwise AND.
@@ -190,7 +191,7 @@ class flattened_table {
   cudf::size_type null_count,
   std::unique_ptr<cudf::column>&& input,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr);
+  cuda::mr::device_resource_ref mr);
 
 /**
  * @brief Superimpose nulls from multiple null masks into corresponding input columns
@@ -213,7 +214,7 @@ class flattened_table {
   host_span<bitmask_type const* const> null_masks,
   std::vector<std::unique_ptr<column>> inputs,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr);
+  cuda::mr::device_resource_ref mr);
 
 /**
  * @brief Enforces null consistency in struct columns by propagating nulls from parent to
@@ -234,7 +235,7 @@ class flattened_table {
 [[nodiscard]] std::vector<std::unique_ptr<column>> enforce_null_consistency(
   std::vector<std::unique_ptr<column>> columns,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr);
+  cuda::mr::device_resource_ref mr);
 
 /**
  * @brief Push down nulls from the given input column into its children columns, using bitwise AND.
@@ -259,7 +260,7 @@ class flattened_table {
  *         to be kept alive.
  */
 [[nodiscard]] std::pair<column_view, temporary_nullable_data> push_down_nulls(
-  column_view const& input, cuda::stream_ref stream, rmm::device_async_resource_ref mr);
+  column_view const& input, cuda::stream_ref stream, cuda::mr::device_resource_ref mr);
 
 /**
  * @brief Push down nulls from columns of the input table into their children columns, using
@@ -286,7 +287,7 @@ class flattened_table {
  *         to be kept alive.
  */
 [[nodiscard]] std::pair<table_view, temporary_nullable_data> push_down_nulls(
-  table_view const& input, cuda::stream_ref stream, rmm::device_async_resource_ref mr);
+  table_view const& input, cuda::stream_ref stream, cuda::mr::device_resource_ref mr);
 
 /**
  * @brief Checks if a column or any of its children is a struct column with structs that are null.

@@ -9,8 +9,7 @@
 #include <cudf/types.hpp>
 #include <cudf/utilities/span.hpp>
 
-#include <rmm/resource_ref.hpp>
-
+#include <cuda/memory_resource>
 #include <cuda/stream>
 
 #include <cstdint>
@@ -28,5 +27,5 @@ std::pair<std::unique_ptr<table>, rmm::device_uvector<size_type>> compute_global
   device_span<aggregation::Kind const> d_agg_kinds,
   std::span<int8_t const> is_agg_intermediate,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr);
+  cuda::mr::device_resource_ref mr);
 }  // namespace cudf::groupby::detail::hash

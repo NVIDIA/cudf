@@ -16,6 +16,7 @@
 #include <cudf/utilities/memory_resource.hpp>
 
 #include <cuda/iterator>
+#include <cuda/memory_resource>
 #include <cuda/stream>
 #include <thrust/transform.h>
 
@@ -63,7 +64,7 @@ struct ipv4_to_integers_fn {
 // Convert strings column of IPv4 addresses to integers column
 std::unique_ptr<column> ipv4_to_integers(strings_column_view const& input,
                                          cuda::stream_ref stream,
-                                         rmm::device_async_resource_ref mr)
+                                         cuda::mr::device_resource_ref mr)
 {
   size_type strings_count = input.size();
   if (strings_count == 0) {
@@ -95,7 +96,7 @@ std::unique_ptr<column> ipv4_to_integers(strings_column_view const& input,
 // external API
 std::unique_ptr<column> ipv4_to_integers(strings_column_view const& input,
                                          cuda::stream_ref stream,
-                                         rmm::device_async_resource_ref mr)
+                                         cuda::mr::device_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
   return detail::ipv4_to_integers(input, stream, mr);
@@ -149,7 +150,7 @@ struct integers_to_ipv4_fn {
 // Convert integers into IPv4 addresses
 std::unique_ptr<column> integers_to_ipv4(column_view const& integers,
                                          cuda::stream_ref stream,
-                                         rmm::device_async_resource_ref mr)
+                                         cuda::mr::device_resource_ref mr)
 {
   if (integers.is_empty()) return make_empty_column(type_id::STRING);
 
@@ -168,7 +169,7 @@ std::unique_ptr<column> integers_to_ipv4(column_view const& integers,
 
 std::unique_ptr<column> is_ipv4(strings_column_view const& input,
                                 cuda::stream_ref stream,
-                                rmm::device_async_resource_ref mr)
+                                cuda::mr::device_resource_ref mr)
 {
   auto strings_column = column_device_view::create(input.parent(), stream);
   auto d_column       = *strings_column;
@@ -217,7 +218,7 @@ std::unique_ptr<column> is_ipv4(strings_column_view const& input,
 
 std::unique_ptr<column> integers_to_ipv4(column_view const& integers,
                                          cuda::stream_ref stream,
-                                         rmm::device_async_resource_ref mr)
+                                         cuda::mr::device_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
   return detail::integers_to_ipv4(integers, stream, mr);
@@ -225,7 +226,7 @@ std::unique_ptr<column> integers_to_ipv4(column_view const& integers,
 
 std::unique_ptr<column> is_ipv4(strings_column_view const& input,
                                 cuda::stream_ref stream,
-                                rmm::device_async_resource_ref mr)
+                                cuda::mr::device_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
   return detail::is_ipv4(input, stream, mr);

@@ -23,6 +23,7 @@
 #include <cuda/atomic>
 #include <cuda/functional>
 #include <cuda/iterator>
+#include <cuda/memory_resource>
 #include <cuda/std/tuple>
 #include <thrust/uninitialized_fill.h>
 
@@ -64,7 +65,7 @@ auto gather_histogram(table_view const& input,
                       device_span<size_type const> distinct_indices,
                       std::unique_ptr<column>&& distinct_counts,
                       cuda::stream_ref stream,
-                      rmm::device_async_resource_ref mr)
+                      cuda::mr::device_resource_ref mr)
 {
   auto distinct_rows = cudf::detail::gather(input,
                                             distinct_indices,
@@ -107,7 +108,7 @@ std::pair<std::unique_ptr<rmm::device_uvector<size_type>>, std::unique_ptr<colum
 compute_row_frequencies(table_view const& input,
                         std::optional<column_view> const& partial_counts,
                         cuda::stream_ref stream,
-                        rmm::device_async_resource_ref mr)
+                        cuda::mr::device_resource_ref mr)
 {
   auto const has_nested_columns = cudf::detail::has_nested_columns(input);
 
@@ -200,7 +201,7 @@ compute_row_frequencies(table_view const& input,
 
 std::unique_ptr<cudf::scalar> histogram(column_view const& input,
                                         cuda::stream_ref stream,
-                                        rmm::device_async_resource_ref mr)
+                                        cuda::mr::device_resource_ref mr)
 {
   // Empty group should be handled before reaching here.
   CUDF_EXPECTS(input.size() > 0, "Input should not be empty.", std::invalid_argument);
@@ -213,7 +214,7 @@ std::unique_ptr<cudf::scalar> histogram(column_view const& input,
 
 std::unique_ptr<cudf::scalar> merge_histogram(column_view const& input,
                                               cuda::stream_ref stream,
-                                              rmm::device_async_resource_ref mr)
+                                              cuda::mr::device_resource_ref mr)
 {
   // Empty group should be handled before reaching here.
   CUDF_EXPECTS(input.size() > 0, "Input should not be empty.", std::invalid_argument);

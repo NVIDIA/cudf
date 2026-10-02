@@ -25,6 +25,7 @@
 #include <cuda/bit>
 #include <cuda/functional>
 #include <cuda/iterator>
+#include <cuda/memory_resource>
 #include <cuda/std/tuple>
 #include <cuda/stream>
 #include <thrust/for_each.h>
@@ -245,11 +246,11 @@ rmm::device_uvector<size_type> inplace_segmented_bitmask_binop(
   host_span<size_type const> segment_offsets,
   bitmask_type identity,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr);
+  cuda::mr::device_resource_ref mr);
 
 /**
  * @copydoc bitmask_binop(Binop op, host_span<bitmask_type const* const>, host_span<size_type>
- * const, size_type, rmm::device_async_resource_ref)
+ * const, size_type, cuda::mr::device_resource_ref)
  *
  * @param stream CUDA stream used for device memory operations and kernel launches
  */
@@ -260,7 +261,7 @@ std::pair<cuda::device_buffer<std::byte>, size_type> bitmask_binop(
   host_span<size_type const> masks_begin_bits,
   size_type mask_size_bits,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cuda::mr::device_resource_ref mr)
 {
   auto dest_mask =
     cudf::create_null_mask(mask_size_bits, cudf::mask_state::UNINITIALIZED, stream, mr);
@@ -286,7 +287,7 @@ segmented_bitmask_binop(Binop op,
                         host_span<size_type const> segment_offsets,
                         bitmask_type identity,
                         cuda::stream_ref stream,
-                        rmm::device_async_resource_ref mr)
+                        cuda::mr::device_resource_ref mr)
 {
   auto const num_bytes = bitmask_allocation_size_bytes(mask_size_bits);
   CUDF_EXPECTS(
@@ -355,7 +356,7 @@ size_type inplace_bitmask_binop(Binop op,
   CUDF_EXPECTS(std::all_of(masks.begin(), masks.end(), [](auto p) { return p != nullptr; }),
                "Mask pointer cannot be null");
 
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref();
+  cuda::mr::device_resource_ref mr = cudf::get_current_device_resource_ref();
   cudf::detail::device_scalar<size_type> d_counter{0, stream, mr};
 
   auto d_masks      = cudf::detail::make_device_uvector_async(masks, stream, mr);
@@ -405,7 +406,7 @@ rmm::device_uvector<size_type> inplace_segmented_bitmask_binop(
   host_span<size_type const> segment_offsets,
   bitmask_type identity,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cuda::mr::device_resource_ref mr)
 {
   CUDF_EXPECTS(
     std::all_of(masks_begin_bits.begin(), masks_begin_bits.end(), [](auto b) { return b >= 0; }),
@@ -557,7 +558,7 @@ rmm::device_uvector<size_type> segmented_count_bits(bitmask_type const* bitmask,
                                                     OffsetIterator last_bit_indices_begin,
                                                     count_bits_policy count_bits,
                                                     cuda::stream_ref stream,
-                                                    rmm::device_async_resource_ref mr)
+                                                    cuda::mr::device_resource_ref mr)
 {
   auto const num_ranges =
     static_cast<size_type>(std::distance(first_bit_indices_begin, first_bit_indices_end));
@@ -817,7 +818,7 @@ std::pair<cuda::device_buffer<std::byte>, size_type> segmented_null_mask_reducti
   null_policy null_handling,
   std::optional<bool> valid_initial_value,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cuda::mr::device_resource_ref mr)
 {
   auto const segments_begin =
     cuda::make_zip_iterator(first_bit_indices_begin, last_bit_indices_begin);

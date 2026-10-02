@@ -13,6 +13,7 @@
 
 #include <rmm/device_uvector.hpp>
 
+#include <cuda/memory_resource>
 #include <cuda/stream>
 
 #include <memory>
@@ -35,7 +36,7 @@ namespace reduction::detail {
 compute_row_frequencies(table_view const& input,
                         std::optional<column_view> const& partial_counts,
                         cuda::stream_ref stream,
-                        rmm::device_async_resource_ref mr);
+                        cuda::mr::device_resource_ref mr);
 
 /**
  * @brief Create an empty histogram column.

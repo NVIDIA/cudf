@@ -20,6 +20,7 @@
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/iterator>
+#include <cuda/memory_resource>
 #include <cuda/std/utility>
 #include <cuda/stream>
 #include <thrust/for_each.h>
@@ -275,7 +276,7 @@ inline bool md5_leaf_type_check(data_type dt)
 
 std::unique_ptr<column> md5(table_view const& input,
                             cuda::stream_ref stream,
-                            rmm::device_async_resource_ref mr)
+                            cuda::mr::device_resource_ref mr)
 {
   if (input.num_columns() == 0 || input.num_rows() == 0) {
     // Return the MD5 hash of a zero-length input.
@@ -346,7 +347,7 @@ std::unique_ptr<column> md5(table_view const& input,
 
 std::unique_ptr<column> md5(table_view const& input,
                             cuda::stream_ref stream,
-                            rmm::device_async_resource_ref mr)
+                            cuda::mr::device_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
   return detail::md5(input, stream, mr);

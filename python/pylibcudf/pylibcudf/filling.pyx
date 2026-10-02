@@ -20,6 +20,7 @@ from pylibcudf.libcudf.table.table cimport table
 from pylibcudf.libcudf.table.table_view cimport table_view
 from pylibcudf.libcudf.types cimport size_type
 from rmm.pylibrmm.stream cimport Stream
+from pylibcudf.libcudf.utilities.memory_resource cimport to_device_resource_ref
 from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 
 from .column cimport Column
@@ -89,7 +90,7 @@ cpdef Column fill(
             end,
             dereference((<Scalar> value).c_obj),
             _cs,
-            mr.get_mr()
+            to_device_resource_ref(mr.get_mr())
         )
     return Column.from_libcudf(move(result), _stream, mr)
 
@@ -179,7 +180,7 @@ cpdef Column sequence(
             dereference(init.c_obj),
             dereference(step.c_obj),
             _cs,
-            mr.get_mr()
+            to_device_resource_ref(mr.get_mr())
         )
     return Column.from_libcudf(move(result), _stream, mr)
 
@@ -231,7 +232,7 @@ cpdef Table repeat(
                 c_input_table,
                 c_count_column,
                 _cs,
-                mr.get_mr()
+                to_device_resource_ref(mr.get_mr())
             )
     if ColumnOrSize is size_type:
         c_input_table = input_table.view()
@@ -240,7 +241,7 @@ cpdef Table repeat(
                 c_input_table,
                 count,
                 _cs,
-                mr.get_mr()
+                to_device_resource_ref(mr.get_mr())
             )
     return Table.from_libcudf(move(result), _stream, mr)
 
@@ -286,6 +287,6 @@ cpdef Column calendrical_month_sequence(
             dereference(init.c_obj),
             months,
             _cs,
-            mr.get_mr()
+            to_device_resource_ref(mr.get_mr())
         )
     return Column.from_libcudf(move(c_result), _stream, mr)

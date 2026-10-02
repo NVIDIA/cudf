@@ -15,6 +15,7 @@
 
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/memory_resource>
 #include <cuda/stream>
 #include <thrust/transform.h>
 
@@ -26,7 +27,7 @@ std::unique_ptr<column> merge(dictionary_column_view const& lcol,
                               dictionary_column_view const& rcol,
                               cudf::detail::index_vector const& row_order,
                               cuda::stream_ref stream,
-                              rmm::device_async_resource_ref mr)
+                              cuda::mr::device_resource_ref mr)
 {
   auto const lcol_iter = cudf::detail::indexalator_factory::make_input_iterator(lcol.indices());
   auto const rcol_iter = cudf::detail::indexalator_factory::make_input_iterator(rcol.indices());

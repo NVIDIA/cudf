@@ -10,6 +10,7 @@ from pylibcudf.libcudf.column.column_view cimport column_view
 from pylibcudf.libcudf.strings cimport substring as cpp_slice
 from pylibcudf.libcudf.types cimport size_type
 
+from pylibcudf.libcudf.utilities.memory_resource cimport to_device_resource_ref
 from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 from rmm.pylibrmm.stream cimport Stream
 
@@ -91,7 +92,7 @@ cpdef Column slice_strings(
                 c_start,
                 c_stop,
                 _cs,
-                mr.get_mr()
+                to_device_resource_ref(mr.get_mr())
             )
 
     else:
@@ -117,7 +118,7 @@ cpdef Column slice_strings(
                 c_stop_scalar,
                 c_step_scalar,
                 _cs,
-                mr.get_mr()
+                to_device_resource_ref(mr.get_mr())
             )
 
     return Column.from_libcudf(move(c_result), _stream, mr)

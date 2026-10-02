@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -14,11 +14,11 @@
 #include <cudf/sorting.hpp>
 #include <cudf/stream_compaction.hpp>
 #include <cudf/table/table_view.hpp>
+#include <cudf/types.hpp>
 
 #include <rmm/cuda_device.hpp>
 #include <rmm/mr/cuda_memory_resource.hpp>
 #include <rmm/mr/pool_memory_resource.hpp>
-#include <rmm/resource_ref.hpp>
 
 #include <cuda/memory_resource>
 
@@ -45,7 +45,7 @@
  * @param pool Whether to use a pool memory resource.
  * @return Memory resource instance
  */
-cuda::mr::any_resource<cuda::mr::device_accessible> create_memory_resource(bool pool)
+cuda::mr::any_device_resource create_memory_resource(bool pool)
 {
   rmm::mr::cuda_memory_resource cuda_mr{};
   if (pool) {

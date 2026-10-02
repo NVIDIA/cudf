@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 cimport pylibcudf.libcudf.io.types as cudf_io_types
 from libcpp.string cimport string
@@ -6,7 +6,7 @@ from libcpp.vector cimport vector
 from pylibcudf.exception_handler cimport libcudf_exception_handler
 from pylibcudf.libcudf.types cimport size_type
 from cuda.bindings.cyruntime cimport cudaStream_t
-from rmm.librmm.memory_resource cimport device_async_resource_ref
+from pylibcudf.libcudf.utilities.memory_resource cimport device_resource_ref
 
 
 cdef extern from "cudf/io/avro.hpp" namespace "cudf::io" nogil:
@@ -50,5 +50,5 @@ cdef extern from "cudf/io/avro.hpp" namespace "cudf::io" nogil:
     cdef cudf_io_types.table_with_metadata read_avro(
         avro_reader_options &options,
         cudaStream_t stream,
-        device_async_resource_ref mr
+        device_resource_ref mr
     ) except +libcudf_exception_handler

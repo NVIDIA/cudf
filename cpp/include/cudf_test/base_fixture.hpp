@@ -10,11 +10,10 @@
 #include <cudf_test/file_utilities.hpp>
 #include <cudf_test/memory_resource_utilities.hpp>
 
+#include <cudf/types.hpp>
 #include <cudf/utilities/export.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/traits.hpp>
-
-#include <rmm/resource_ref.hpp>
 
 #include <cuda/memory_resource>
 #include <cuda/stream>
@@ -31,7 +30,7 @@ namespace test {
  * ```
  */
 class BaseFixture : public ::testing::Test {
-  cuda::mr::any_resource<cuda::mr::device_accessible> _mr{cudf::get_current_device_resource_ref()};
+  cuda::mr::any_device_resource _mr{cudf::get_current_device_resource_ref()};
 
  public:
   /**
@@ -39,7 +38,7 @@ class BaseFixture : public ::testing::Test {
    * all tests inheriting from this fixture
    * @return reference to memory resource
    */
-  rmm::device_async_resource_ref mr() { return _mr; }
+  cuda::mr::device_resource_ref mr() { return _mr; }
 };
 
 /**
@@ -84,7 +83,7 @@ struct BaseFixtureWithHarness : public BaseFixture {
  */
 template <typename T>
 class BaseFixtureWithParam : public ::testing::TestWithParam<T> {
-  cuda::mr::any_resource<cuda::mr::device_accessible> _mr{cudf::get_current_device_resource_ref()};
+  cuda::mr::any_device_resource _mr{cudf::get_current_device_resource_ref()};
 
  public:
   /**
@@ -92,7 +91,7 @@ class BaseFixtureWithParam : public ::testing::TestWithParam<T> {
    * all tests inheriting from this fixture
    * @return reference to memory resource
    */
-  [[nodiscard]] rmm::device_async_resource_ref mr() { return _mr; }
+  [[nodiscard]] cuda::mr::device_resource_ref mr() { return _mr; }
 };
 
 /**

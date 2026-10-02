@@ -9,6 +9,8 @@
 #include <cudf/io/experimental/hybrid_scan_multifile.hpp>
 #include <cudf/utilities/error.hpp>
 
+#include <cuda/memory_resource>
+
 #include <numeric>
 
 namespace cudf::io::parquet::experimental {
@@ -105,7 +107,7 @@ std::vector<std::vector<size_type>> hybrid_scan_multifile::filter_row_groups_wit
 std::unique_ptr<cudf::column> hybrid_scan_multifile::build_all_true_row_mask(
   cudf::host_span<std::vector<size_type> const> row_group_indices,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cuda::mr::device_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
   return _impl->build_all_true_row_mask(row_group_indices, stream, mr);
@@ -115,7 +117,7 @@ std::unique_ptr<cudf::column> hybrid_scan_multifile::build_row_mask_with_page_in
   cudf::host_span<std::vector<size_type> const> row_group_indices,
   parquet_reader_options const& options,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cuda::mr::device_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
   return _impl->build_row_mask_with_page_index_stats(row_group_indices, options, stream, mr);
@@ -137,7 +139,7 @@ table_with_metadata hybrid_scan_multifile::materialize_filter_columns(
   use_data_page_mask mask_data_pages,
   parquet_reader_options const& options,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cuda::mr::device_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
   return _impl->materialize_filter_columns(
@@ -171,7 +173,7 @@ table_with_metadata hybrid_scan_multifile::materialize_payload_columns(
   use_data_page_mask mask_data_pages,
   parquet_reader_options const& options,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cuda::mr::device_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
   return _impl->materialize_payload_columns(
@@ -192,7 +194,7 @@ table_with_metadata hybrid_scan_multifile::materialize_all_columns(
   cudf::host_span<cudf::device_span<uint8_t const> const> column_chunk_data,
   parquet_reader_options const& options,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cuda::mr::device_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
   return _impl->materialize_all_columns(row_group_indices, column_chunk_data, options, stream, mr);
@@ -207,7 +209,7 @@ void hybrid_scan_multifile::setup_chunking_for_filter_columns(
   cudf::host_span<cudf::device_span<uint8_t const> const> column_chunk_data,
   parquet_reader_options const& options,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cuda::mr::device_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
   _impl->setup_chunking_for_filter_columns(chunk_read_limit,
@@ -237,7 +239,7 @@ void hybrid_scan_multifile::setup_chunking_for_payload_columns(
   cudf::host_span<cudf::device_span<uint8_t const> const> column_chunk_data,
   parquet_reader_options const& options,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cuda::mr::device_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
   _impl->setup_chunking_for_payload_columns(chunk_read_limit,
@@ -259,7 +261,7 @@ void hybrid_scan_multifile::setup_chunking_for_payload_columns(
   cudf::host_span<cudf::device_span<uint8_t const> const> page_data,
   parquet_reader_options const& options,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cuda::mr::device_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
   _impl->setup_chunking_for_payload_columns(
@@ -280,7 +282,7 @@ void hybrid_scan_multifile::setup_chunking_for_all_columns(
   cudf::host_span<cudf::device_span<uint8_t const> const> column_chunk_data,
   parquet_reader_options const& options,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cuda::mr::device_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
   _impl->setup_chunking_for_all_columns(

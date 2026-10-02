@@ -10,6 +10,8 @@
 #include <cudf/strings/strings_column_view.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
+#include <cuda/memory_resource>
+
 #include <optional>
 
 /**
@@ -51,7 +53,7 @@ std::unique_ptr<column> replace_re(
   string_scalar const& replacement           = string_scalar(""),
   std::optional<size_type> max_replace_count = std::nullopt,
   cuda::stream_ref stream                    = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr          = cudf::get_current_device_resource_ref());
+  cuda::mr::device_resource_ref mr           = cudf::get_current_device_resource_ref());
 
 /**
  * @brief For each string, replaces any character sequence matching the given regex
@@ -75,8 +77,8 @@ std::unique_ptr<column> replace_with_backrefs(
   strings_column_view const& input,
   regex_program const& prog,
   std::string_view replacement,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream          = cudf::get_default_stream(),
+  cuda::mr::device_resource_ref mr = cudf::get_current_device_resource_ref());
 
 }  // namespace strings
 }  // namespace CUDF_EXPORT cudf

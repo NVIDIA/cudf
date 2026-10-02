@@ -12,6 +12,7 @@
 #include <cudf/utilities/memory_resource.hpp>
 
 #include <cuda/iterator>
+#include <cuda/memory_resource>
 #include <cuda/stream>
 #include <thrust/transform.h>
 
@@ -48,7 +49,7 @@ std::unique_ptr<column> fill(strings_column_view const& input,
                              size_type end,
                              string_scalar const& value,
                              cuda::stream_ref stream,
-                             rmm::device_async_resource_ref mr)
+                             cuda::mr::device_resource_ref mr)
 {
   auto const strings_count = input.size();
   if (strings_count == 0) { return make_empty_column(type_id::STRING); }

@@ -32,6 +32,7 @@
 
 #include <cuda/functional>
 #include <cuda/iterator>
+#include <cuda/memory_resource>
 #include <cuda/std/algorithm>
 #include <cuda/std/span>
 #include <cuda/stream>
@@ -304,7 +305,7 @@ struct unicode_normalizer::unicode_normalizer_impl {
 unicode_normalizer::unicode_normalizer(cudf::table_view const& unicode_data,
                                        unicode_normalization_form form,
                                        cuda::stream_ref stream,
-                                       rmm::device_async_resource_ref mr)
+                                       cuda::mr::device_resource_ref mr)
 {
   CUDF_EXPECTS(unicode_data.num_columns() == 3,
                "unicode_data table must have exactly 3 columns",
@@ -441,7 +442,7 @@ unicode_normalizer::~unicode_normalizer() {}
 std::unique_ptr<unicode_normalizer> create_unicode_normalizer(cudf::table_view const& unicode_data,
                                                               unicode_normalization_form form,
                                                               cuda::stream_ref stream,
-                                                              rmm::device_async_resource_ref mr)
+                                                              cuda::mr::device_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
   return std::make_unique<unicode_normalizer>(unicode_data, form, stream, mr);
@@ -770,7 +771,7 @@ struct output_fn {
 std::unique_ptr<cudf::column> normalize_unicode(cudf::strings_column_view const& input,
                                                 unicode_normalizer const& normalizer,
                                                 cuda::stream_ref stream,
-                                                rmm::device_async_resource_ref mr)
+                                                cuda::mr::device_resource_ref mr)
 {
   if (input.is_empty()) { return cudf::make_empty_column(cudf::data_type{cudf::type_id::STRING}); }
 
@@ -877,7 +878,7 @@ std::unique_ptr<cudf::column> normalize_unicode(cudf::strings_column_view const&
 std::unique_ptr<cudf::column> normalize_unicode(cudf::strings_column_view const& input,
                                                 unicode_normalizer const& normalizer,
                                                 cuda::stream_ref stream,
-                                                rmm::device_async_resource_ref mr)
+                                                cuda::mr::device_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
   return detail::normalize_unicode(input, normalizer, stream, mr);

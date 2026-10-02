@@ -35,6 +35,7 @@
 #include <cub/device/device_transform.cuh>
 #include <cuda/functional>
 #include <cuda/iterator>
+#include <cuda/memory_resource>
 #include <cuda/std/algorithm>
 #include <cuda/std/execution>
 #include <cuda/std/iterator>
@@ -360,25 +361,25 @@ class merge {
       smaller, larger, column_order, null_precedence, stream);
   }
 
-  std::unique_ptr<rmm::device_uvector<size_type>> matches_per_row(
-    cuda::stream_ref stream, rmm::device_async_resource_ref mr);
+  std::unique_ptr<rmm::device_uvector<size_type>> matches_per_row(cuda::stream_ref stream,
+                                                                  cuda::mr::device_resource_ref mr);
 
   match_ranges find_match_ranges(compute_match_starts compute_starts,
                                  cuda::stream_ref stream,
-                                 rmm::device_async_resource_ref mr);
+                                 cuda::mr::device_resource_ref mr);
 
   std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
             std::unique_ptr<rmm::device_uvector<size_type>>>
-  inner(cuda::stream_ref stream, rmm::device_async_resource_ref mr);
+  inner(cuda::stream_ref stream, cuda::mr::device_resource_ref mr);
 
   std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
             std::unique_ptr<rmm::device_uvector<size_type>>>
-  left(cuda::stream_ref stream, rmm::device_async_resource_ref mr);
+  left(cuda::stream_ref stream, cuda::mr::device_resource_ref mr);
 };
 
 template <typename SmallerIterator>
 typename merge<SmallerIterator>::match_ranges merge<SmallerIterator>::find_match_ranges(
-  compute_match_starts compute_starts, cuda::stream_ref stream, rmm::device_async_resource_ref mr)
+  compute_match_starts compute_starts, cuda::stream_ref stream, cuda::mr::device_resource_ref mr)
 {
   auto const has_nulls        = has_nested_nulls(smaller) or has_nested_nulls(larger);
   auto const larger_numrows   = larger.num_rows();
@@ -428,7 +429,7 @@ typename merge<SmallerIterator>::match_ranges merge<SmallerIterator>::find_match
 
 template <typename SmallerIterator>
 std::unique_ptr<rmm::device_uvector<size_type>> merge<SmallerIterator>::matches_per_row(
-  cuda::stream_ref stream, rmm::device_async_resource_ref mr)
+  cuda::stream_ref stream, cuda::mr::device_resource_ref mr)
 {
   return find_match_ranges(compute_match_starts::NO, stream, mr).counts;
 }
@@ -436,7 +437,7 @@ std::unique_ptr<rmm::device_uvector<size_type>> merge<SmallerIterator>::matches_
 template <typename SmallerIterator>
 std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
           std::unique_ptr<rmm::device_uvector<size_type>>>
-merge<SmallerIterator>::inner(cuda::stream_ref stream, rmm::device_async_resource_ref mr)
+merge<SmallerIterator>::inner(cuda::stream_ref stream, cuda::mr::device_resource_ref mr)
 {
   auto temp_mr              = cudf::get_current_device_resource_ref();
   auto const larger_numrows = larger.num_rows();
@@ -489,7 +490,7 @@ merge<SmallerIterator>::inner(cuda::stream_ref stream, rmm::device_async_resourc
 template <typename SmallerIterator>
 std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
           std::unique_ptr<rmm::device_uvector<size_type>>>
-merge<SmallerIterator>::left(cuda::stream_ref stream, rmm::device_async_resource_ref mr)
+merge<SmallerIterator>::left(cuda::stream_ref stream, cuda::mr::device_resource_ref mr)
 {
   auto temp_mr              = cudf::get_current_device_resource_ref();
   auto const larger_numrows = larger.num_rows();
@@ -797,7 +798,7 @@ std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
           std::unique_ptr<rmm::device_uvector<size_type>>>
 sort_merge_join::inner_join(table_view const& left,
                             cuda::stream_ref stream,
-                            rmm::device_async_resource_ref mr) const
+                            cuda::mr::device_resource_ref mr) const
 {
   cudf::scoped_range range{"sort_merge_join::inner_join"};
   // Sanity checks
@@ -828,7 +829,7 @@ std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
           std::unique_ptr<rmm::device_uvector<size_type>>>
 sort_merge_join::left_join(table_view const& left,
                            cuda::stream_ref stream,
-                           rmm::device_async_resource_ref mr) const
+                           cuda::mr::device_resource_ref mr) const
 {
   cudf::scoped_range range{"sort_merge_join::left_join"};
   // Sanity checks
@@ -902,7 +903,7 @@ sort_merge_join::left_join(table_view const& left,
 }
 
 std::unique_ptr<cudf::join_match_context> sort_merge_join::inner_join_match_context(
-  table_view const& left, cuda::stream_ref stream, rmm::device_async_resource_ref mr) const
+  table_view const& left, cuda::stream_ref stream, cuda::mr::device_resource_ref mr) const
 {
   cudf::scoped_range range{"sort_merge_join::inner_join_match_context"};
   // Sanity checks
@@ -952,7 +953,7 @@ std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
           std::unique_ptr<rmm::device_uvector<size_type>>>
 sort_merge_join::partitioned_inner_join(cudf::join_partition_context const& context,
                                         cuda::stream_ref stream,
-                                        rmm::device_async_resource_ref mr) const
+                                        cuda::mr::device_resource_ref mr) const
 {
   cudf::scoped_range range{"sort_merge_join::partitioned_inner_join"};
 
@@ -1022,7 +1023,7 @@ std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
           std::unique_ptr<rmm::device_uvector<size_type>>>
 sort_merge_join::inner_join(table_view const& left,
                             cuda::stream_ref stream,
-                            rmm::device_async_resource_ref mr) const
+                            cuda::mr::device_resource_ref mr) const
 {
   return _impl->inner_join(left, stream, mr);
 }
@@ -1031,13 +1032,13 @@ std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
           std::unique_ptr<rmm::device_uvector<size_type>>>
 sort_merge_join::left_join(table_view const& left,
                            cuda::stream_ref stream,
-                           rmm::device_async_resource_ref mr) const
+                           cuda::mr::device_resource_ref mr) const
 {
   return _impl->left_join(left, stream, mr);
 }
 
 std::unique_ptr<join_match_context> sort_merge_join::inner_join_match_context(
-  table_view const& left, cuda::stream_ref stream, rmm::device_async_resource_ref mr) const
+  table_view const& left, cuda::stream_ref stream, cuda::mr::device_resource_ref mr) const
 {
   return _impl->inner_join_match_context(left, stream, mr);
 }
@@ -1046,7 +1047,7 @@ std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
           std::unique_ptr<rmm::device_uvector<size_type>>>
 sort_merge_join::partitioned_inner_join(cudf::join_partition_context const& context,
                                         cuda::stream_ref stream,
-                                        rmm::device_async_resource_ref mr) const
+                                        cuda::mr::device_resource_ref mr) const
 {
   return _impl->partitioned_inner_join(context, stream, mr);
 }

@@ -12,6 +12,7 @@
 #include <cudf/table/table_view.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
+#include <cuda/memory_resource>
 #include <cuda/stream>
 
 namespace cudf {
@@ -22,7 +23,7 @@ namespace {
 std::unique_ptr<column> contains_dictionary(column_view const& haystack_in,
                                             column_view const& needles_in,
                                             cuda::stream_ref stream,
-                                            rmm::device_async_resource_ref mr)
+                                            cuda::mr::device_resource_ref mr)
 {
   dictionary_column_view const haystack(haystack_in);
   dictionary_column_view const needles(needles_in);
@@ -53,7 +54,7 @@ std::unique_ptr<column> contains_dictionary(column_view const& haystack_in,
 std::unique_ptr<column> contains(column_view const& haystack,
                                  column_view const& needles,
                                  cuda::stream_ref stream,
-                                 rmm::device_async_resource_ref mr)
+                                 cuda::mr::device_resource_ref mr)
 {
   // Dictionary columns require key normalization; all other types share the type-erased path.
   if (haystack.type().id() == type_id::DICTIONARY32) {
@@ -74,7 +75,7 @@ std::unique_ptr<column> contains(column_view const& haystack,
 std::unique_ptr<column> contains(column_view const& haystack,
                                  column_view const& needles,
                                  cuda::stream_ref stream,
-                                 rmm::device_async_resource_ref mr)
+                                 cuda::mr::device_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
   return detail::contains(haystack, needles, stream, mr);

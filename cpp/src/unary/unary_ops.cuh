@@ -14,6 +14,7 @@
 
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/memory_resource>
 #include <cuda/stream>
 #include <thrust/transform.h>
 
@@ -24,7 +25,7 @@ struct launcher {
   static std::unique_ptr<cudf::column> launch(cudf::column_view const& input,
                                               cudf::unary_operator op,
                                               cuda::stream_ref stream,
-                                              rmm::device_async_resource_ref mr)
+                                              cuda::mr::device_resource_ref mr)
   {
     std::unique_ptr<cudf::column> output = [&] {
       if (op == cudf::unary_operator::NOT) {

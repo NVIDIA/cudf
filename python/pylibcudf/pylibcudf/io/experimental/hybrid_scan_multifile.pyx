@@ -10,6 +10,7 @@ from libcpp.span cimport span as std_span
 from libcpp.utility cimport move
 from libcpp.vector cimport vector
 
+from pylibcudf.libcudf.utilities.memory_resource cimport to_device_resource_ref
 from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 from rmm.pylibrmm.stream cimport Stream
 
@@ -330,7 +331,7 @@ cdef class HybridScanMultiFile:
                 ),
                 options.c_obj,
                 self._stream.view().get(),
-                self.mr.get_mr()
+                to_device_resource_ref(self.mr.get_mr())
             )
 
     def materialize_payload_columns_chunk(

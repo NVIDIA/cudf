@@ -7,10 +7,10 @@
 
 #include <cudf/io/datasource.hpp>
 #include <cudf/io/text/byte_range_info.hpp>
+#include <cudf/types.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
 #include <rmm/device_buffer.hpp>
-#include <rmm/resource_ref.hpp>
 
 #include <cuda/stream>
 

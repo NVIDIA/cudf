@@ -14,6 +14,8 @@
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
+#include <cuda/memory_resource>
+
 #include <map>
 #include <string>
 #include <utility>
@@ -925,8 +927,8 @@ class json_reader_options_builder {
  */
 table_with_metadata read_json(
   json_reader_options options,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream          = cudf::get_default_stream(),
+  cuda::mr::device_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Optional diagnostics produced by `read_json_with_diagnostics`.
@@ -1020,8 +1022,8 @@ struct json_reader_result_with_row_diagnostics {
  */
 json_reader_result read_json_with_diagnostics(
   json_reader_options options,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream          = cudf::get_default_stream(),
+  cuda::mr::device_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Reads a JSON dataset into a set of columns, additionally reporting reader
@@ -1040,8 +1042,8 @@ json_reader_result read_json_with_diagnostics(
  */
 json_reader_result_with_row_diagnostics read_json_with_row_diagnostics(
   json_reader_options options,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream          = cudf::get_default_stream(),
+  cuda::mr::device_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /** @} */  // end of group
 

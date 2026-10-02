@@ -10,6 +10,8 @@
 #include <cudf/strings/strings_column_view.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
+#include <cuda/memory_resource>
+
 #include <span>
 #include <vector>
 
@@ -49,8 +51,8 @@ namespace strings {
 [[deprecated("Use std::span version instead")]] std::unique_ptr<column> translate(
   strings_column_view const& input,
   std::vector<std::pair<char_utf8, char_utf8>> const& chars_table,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream          = cudf::get_default_stream(),
+  cuda::mr::device_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Translates individual characters within each string.
@@ -76,8 +78,8 @@ namespace strings {
 std::unique_ptr<column> translate(
   strings_column_view const& input,
   std::span<std::pair<char_utf8, char_utf8> const> chars_table,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream          = cudf::get_default_stream(),
+  cuda::mr::device_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Removes or keeps the specified character ranges in cudf::strings::filter_characters
@@ -121,10 +123,10 @@ enum class filter_type : bool {
 std::unique_ptr<column> filter_characters(
   strings_column_view const& input,
   std::vector<std::pair<cudf::char_utf8, cudf::char_utf8>> characters_to_filter,
-  filter_type keep_characters       = filter_type::KEEP,
-  string_scalar const& replacement  = string_scalar(""),
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  filter_type keep_characters      = filter_type::KEEP,
+  string_scalar const& replacement = string_scalar(""),
+  cuda::stream_ref stream          = cudf::get_default_stream(),
+  cuda::mr::device_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /** @} */  // end of doxygen group
 }  // namespace strings

@@ -25,6 +25,7 @@
 #include <cudf/utilities/type_checks.hpp>
 
 #include <cuda/iterator>
+#include <cuda/memory_resource>
 #include <cuda/stream>
 
 #include <memory>
@@ -88,7 +89,7 @@ struct out_of_place_copy_range_dispatch {
     cudf::size_type source_end,
     cudf::size_type target_begin,
     cuda::stream_ref stream,
-    rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref())
+    cuda::mr::device_resource_ref mr = cudf::get_current_device_resource_ref())
   {
     auto p_ret = std::make_unique<cudf::column>(target, stream, mr);
     if ((!p_ret->nullable()) && source.has_nulls(source_begin, source_end, stream)) {
@@ -119,7 +120,7 @@ std::unique_ptr<cudf::column> out_of_place_copy_range_dispatch::operator()<cudf:
   cudf::size_type source_end,
   cudf::size_type target_begin,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cuda::mr::device_resource_ref mr)
 {
   return cudf::strings::detail::copy_range(
     source, target, source_begin, source_end, target_begin, stream, mr);
@@ -131,7 +132,7 @@ std::unique_ptr<cudf::column> out_of_place_copy_range_dispatch::operator()<cudf:
   cudf::size_type source_end,
   cudf::size_type target_begin,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cuda::mr::device_resource_ref mr)
 {
   // check the keys in the source and target
   cudf::dictionary_column_view const dict_source(source);
@@ -222,7 +223,7 @@ std::unique_ptr<column> copy_range(column_view const& source,
                                    size_type source_end,
                                    size_type target_begin,
                                    cuda::stream_ref stream,
-                                   rmm::device_async_resource_ref mr)
+                                   cuda::mr::device_resource_ref mr)
 {
   CUDF_EXPECTS((source_begin >= 0) && (source_end <= source.size()) &&
                  (source_begin <= source_end) && (target_begin >= 0) &&
@@ -261,7 +262,7 @@ std::unique_ptr<column> copy_range(column_view const& source,
                                    size_type source_end,
                                    size_type target_begin,
                                    cuda::stream_ref stream,
-                                   rmm::device_async_resource_ref mr)
+                                   cuda::mr::device_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
   return detail::copy_range(source, target, source_begin, source_end, target_begin, stream, mr);

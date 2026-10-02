@@ -20,6 +20,7 @@ from pylibcudf.libcudf.types cimport size_type
 from pylibcudf.libcudf.utilities.span cimport device_span
 
 from rmm.pylibrmm.stream cimport Stream
+from pylibcudf.libcudf.utilities.memory_resource cimport to_device_resource_ref
 from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 
 from .column cimport Column
@@ -68,7 +69,7 @@ cpdef Column interleave_columns(
     cdef table_view c_source_table = source_table.view()
     with nogil:
         c_result = cpp_interleave_columns(
-            c_source_table, _cs, mr.get_mr()
+            c_source_table, _cs, to_device_resource_ref(mr.get_mr())
         )
 
     return Column.from_libcudf(move(c_result), _stream, mr)
@@ -108,7 +109,7 @@ cpdef Table tile(
     cdef table_view c_source_table = source_table.view()
     with nogil:
         c_result = cpp_tile(
-            c_source_table, count, _cs, mr.get_mr()
+            c_source_table, count, _cs, to_device_resource_ref(mr.get_mr())
         )
 
     return Table.from_libcudf(move(c_result), _stream, mr)

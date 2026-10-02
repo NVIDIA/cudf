@@ -15,6 +15,7 @@
 
 #include <cuda/functional>
 #include <cuda/iterator>
+#include <cuda/memory_resource>
 #include <cuda/stream>
 #include <thrust/adjacent_difference.h>
 
@@ -25,7 +26,7 @@ std::unique_ptr<column> group_count_valid(column_view const& values,
                                           cudf::device_span<size_type const> group_labels,
                                           size_type num_groups,
                                           cuda::stream_ref stream,
-                                          rmm::device_async_resource_ref mr)
+                                          cuda::mr::device_resource_ref mr)
 {
   CUDF_EXPECTS(num_groups >= 0, "number of groups cannot be negative");
   CUDF_EXPECTS(static_cast<size_t>(values.size()) == group_labels.size(),
@@ -69,7 +70,7 @@ std::unique_ptr<column> group_count_valid(column_view const& values,
 std::unique_ptr<column> group_count_all(cudf::device_span<size_type const> group_offsets,
                                         size_type num_groups,
                                         cuda::stream_ref stream,
-                                        rmm::device_async_resource_ref mr)
+                                        cuda::mr::device_resource_ref mr)
 {
   CUDF_EXPECTS(num_groups >= 0, "number of groups cannot be negative");
 

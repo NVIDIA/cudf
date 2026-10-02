@@ -9,6 +9,7 @@
 
 #include <rmm/device_uvector.hpp>
 
+#include <cuda/memory_resource>
 #include <cuda/std/utility>
 
 namespace cudf {
@@ -37,7 +38,7 @@ using index_vector = rmm::device_uvector<index_type>;
  *            std::vector<cudf::order> const& column_order,
  *            std::vector<cudf::null_order> const& null_precedence,
  *            cuda::stream_ref stream,
- *            rmm::device_async_resource_ref mr)
+ *            cuda::mr::device_resource_ref mr)
  *
  * @param stream CUDA stream used for device memory operations and kernel launches
  */
@@ -46,7 +47,7 @@ std::unique_ptr<cudf::table> merge(std::vector<table_view> const& tables_to_merg
                                    std::vector<cudf::order> const& column_order,
                                    std::vector<cudf::null_order> const& null_precedence,
                                    cuda::stream_ref stream,
-                                   rmm::device_async_resource_ref mr);
+                                   cuda::mr::device_resource_ref mr);
 
 }  // namespace detail
 }  // namespace cudf

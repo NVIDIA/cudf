@@ -8,6 +8,7 @@ from pylibcudf.libcudf.column.column_view cimport column_view
 from pylibcudf.libcudf.strings cimport repeat as cpp_repeat
 from pylibcudf.libcudf.types cimport size_type
 
+from pylibcudf.libcudf.utilities.memory_resource cimport to_device_resource_ref
 from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 from rmm.pylibrmm.stream cimport Stream
 
@@ -64,7 +65,7 @@ cpdef Column repeat_strings(
                 c_input,
                 c_repeat_times,
                 _cs,
-                mr.get_mr()
+                to_device_resource_ref(mr.get_mr())
             )
     elif ColumnorSizeType is size_type:
         c_input = input.view()
@@ -73,7 +74,7 @@ cpdef Column repeat_strings(
                 c_input,
                 repeat_times,
                 _cs,
-                mr.get_mr()
+                to_device_resource_ref(mr.get_mr())
             )
     else:
         raise ValueError("repeat_times must be size_type or integer")

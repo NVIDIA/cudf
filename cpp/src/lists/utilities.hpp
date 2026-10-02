@@ -9,6 +9,7 @@
 #include <cudf/lists/lists_column_view.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
+#include <cuda/memory_resource>
 #include <cuda/stream>
 
 namespace cudf::lists::detail {
@@ -25,7 +26,7 @@ namespace cudf::lists::detail {
 std::unique_ptr<column> generate_labels(lists_column_view const& input,
                                         size_type n_elements,
                                         cuda::stream_ref stream,
-                                        rmm::device_async_resource_ref mr);
+                                        cuda::mr::device_resource_ref mr);
 
 /**
  * @brief Reconstruct an offsets column from the input list labels column.
@@ -39,7 +40,7 @@ std::unique_ptr<column> generate_labels(lists_column_view const& input,
 std::unique_ptr<column> reconstruct_offsets(column_view const& labels,
                                             size_type n_lists,
                                             cuda::stream_ref stream,
-                                            rmm::device_async_resource_ref mr);
+                                            cuda::mr::device_resource_ref mr);
 
 /**
  * @brief Generate 0-based list offsets from the offsets of the input lists column.
@@ -51,6 +52,6 @@ std::unique_ptr<column> reconstruct_offsets(column_view const& labels,
  */
 std::unique_ptr<column> get_normalized_offsets(lists_column_view const& input,
                                                cuda::stream_ref stream,
-                                               rmm::device_async_resource_ref mr);
+                                               cuda::mr::device_resource_ref mr);
 
 }  // namespace cudf::lists::detail

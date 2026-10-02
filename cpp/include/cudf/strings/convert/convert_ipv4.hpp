@@ -8,6 +8,8 @@
 #include <cudf/strings/strings_column_view.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
+#include <cuda/memory_resource>
+
 /**
  * @file
  * @brief Strings column APIs for converting IPv4 addresses to/from integers.
@@ -44,8 +46,8 @@ namespace strings {
  */
 std::unique_ptr<column> ipv4_to_integers(
   strings_column_view const& input,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream          = cudf::get_default_stream(),
+  cuda::mr::device_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Converts integers into IPv4 addresses as strings.
@@ -67,8 +69,8 @@ std::unique_ptr<column> ipv4_to_integers(
  */
 std::unique_ptr<column> integers_to_ipv4(
   column_view const& integers,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream          = cudf::get_default_stream(),
+  cuda::mr::device_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Returns a boolean column identifying strings in which all
@@ -94,8 +96,8 @@ std::unique_ptr<column> integers_to_ipv4(
  */
 std::unique_ptr<column> is_ipv4(
   strings_column_view const& input,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream          = cudf::get_default_stream(),
+  cuda::mr::device_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /** @} */  // end of doxygen group
 }  // namespace strings

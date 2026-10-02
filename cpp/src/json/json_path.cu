@@ -31,6 +31,7 @@
 #include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/memory_resource>
 #include <cuda/std/optional>
 #include <cuda/std/utility>
 #include <thrust/scan.h>
@@ -970,7 +971,7 @@ std::unique_ptr<cudf::column> get_json_object(cudf::strings_column_view const& c
                                               cudf::string_scalar const& json_path,
                                               get_json_object_options options,
                                               cuda::stream_ref stream,
-                                              rmm::device_async_resource_ref mr)
+                                              cuda::mr::device_resource_ref mr)
 {
   // preprocess the json_path into a command buffer
   auto preprocess = build_command_buffer(json_path, stream);
@@ -1064,7 +1065,7 @@ std::unique_ptr<cudf::column> get_json_object(cudf::strings_column_view const& c
                                               cudf::string_scalar const& json_path,
                                               get_json_object_options options,
                                               cuda::stream_ref stream,
-                                              rmm::device_async_resource_ref mr)
+                                              cuda::mr::device_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
   return detail::get_json_object(col, json_path, options, stream, mr);

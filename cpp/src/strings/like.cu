@@ -22,6 +22,7 @@
 #include <cooperative_groups.h>
 #include <cooperative_groups/reduce.h>
 #include <cuda/iterator>
+#include <cuda/memory_resource>
 #include <cuda/stream>
 #include <thrust/copy.h>
 #include <thrust/count.h>
@@ -306,7 +307,7 @@ std::unique_ptr<column> like(strings_column_view const& input,
                              PatternIterator const patterns_itr,
                              string_view const& d_escape,
                              cuda::stream_ref stream,
-                             rmm::device_async_resource_ref mr)
+                             cuda::mr::device_resource_ref mr)
 {
   auto results = make_numeric_column(data_type{type_id::BOOL8},
                                      input.size(),
@@ -348,7 +349,7 @@ std::unique_ptr<column> like(strings_column_view const& input,
                              string_scalar const& pattern,
                              string_scalar const& escape_character,
                              cuda::stream_ref stream,
-                             rmm::device_async_resource_ref mr)
+                             cuda::mr::device_resource_ref mr)
 {
   CUDF_EXPECTS(pattern.is_valid(stream), "Parameter pattern must be valid", std::invalid_argument);
   CUDF_EXPECTS(escape_character.is_valid(stream),
@@ -369,7 +370,7 @@ std::unique_ptr<column> like(strings_column_view const& input,
                              std::string_view const& pattern,
                              std::string_view const& escape_character,
                              cuda::stream_ref stream,
-                             rmm::device_async_resource_ref mr)
+                             cuda::mr::device_resource_ref mr)
 {
   auto const ptn = string_scalar(pattern, true, stream, cudf::get_current_device_resource_ref());
   auto const esc =
@@ -381,7 +382,7 @@ std::unique_ptr<column> like(strings_column_view const& input,
                              strings_column_view const& patterns,
                              string_scalar const& escape_character,
                              cuda::stream_ref stream,
-                             rmm::device_async_resource_ref mr)
+                             cuda::mr::device_resource_ref mr)
 {
   CUDF_EXPECTS(patterns.size() == input.size(),
                "Number of patterns must match the input size",
@@ -411,7 +412,7 @@ std::unique_ptr<column> like(strings_column_view const& input,
                              std::string_view const& pattern,
                              std::string_view const& escape_character,
                              cuda::stream_ref stream,
-                             rmm::device_async_resource_ref mr)
+                             cuda::mr::device_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
   return detail::like(input, pattern, escape_character, stream, mr);
@@ -421,7 +422,7 @@ std::unique_ptr<column> like(strings_column_view const& input,
                              strings_column_view const& patterns,
                              string_scalar const& escape_character,
                              cuda::stream_ref stream,
-                             rmm::device_async_resource_ref mr)
+                             cuda::mr::device_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
   return detail::like(input, patterns, escape_character, stream, mr);

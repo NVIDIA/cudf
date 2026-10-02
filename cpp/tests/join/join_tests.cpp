@@ -31,6 +31,7 @@
 #include <rmm/mr/statistics_resource_adaptor.hpp>
 
 #include <cuda/buffer>
+#include <cuda/memory_resource>
 #include <cuda/stream>
 
 #include <algorithm>
@@ -78,8 +79,8 @@ std::unique_ptr<cudf::table> join_and_gather(
   std::vector<cudf::size_type> const& left_on,
   std::vector<cudf::size_type> const& right_on,
   cudf::null_equality compare_nulls,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref())
+  cuda::stream_ref stream          = cudf::get_default_stream(),
+  cuda::mr::device_resource_ref mr = cudf::get_current_device_resource_ref())
 {
   auto left_selected  = left_input.select(left_on);
   auto right_selected = right_input.select(right_on);
@@ -117,7 +118,7 @@ std::unique_ptr<cudf::table> inner_join(
          cudf::table_view const& right,
          cudf::null_equality compare_nulls,
          cuda::stream_ref stream,
-         rmm::device_async_resource_ref mr) {
+         cuda::mr::device_resource_ref mr) {
         cudf::sort_merge_join obj(right, cudf::sorted::NO, compare_nulls, stream);
         return obj.inner_join(left, stream, mr);
       },
@@ -132,7 +133,7 @@ std::unique_ptr<cudf::table> inner_join(
          cudf::table_view const& right,
          cudf::null_equality compare_nulls,
          cuda::stream_ref stream,
-         rmm::device_async_resource_ref mr) {
+         cuda::mr::device_resource_ref mr) {
         cudf::sort_merge_join obj(right, cudf::sorted::YES, compare_nulls, stream);
         return obj.inner_join(left, stream, mr);
       },
@@ -147,7 +148,7 @@ std::unique_ptr<cudf::table> inner_join(
          cudf::table_view const& right,
          cudf::null_equality compare_nulls,
          cuda::stream_ref stream,
-         rmm::device_async_resource_ref mr) {
+         cuda::mr::device_resource_ref mr) {
         cudf::hash_join hash_joiner(right, compare_nulls, stream);
         auto match_ctx = hash_joiner.inner_join_match_context(left, stream, mr);
         auto part_ctx  = cudf::join_partition_context{
@@ -165,7 +166,7 @@ std::unique_ptr<cudf::table> inner_join(
          cudf::table_view const& right,
          cudf::null_equality compare_nulls,
          cuda::stream_ref stream,
-         rmm::device_async_resource_ref mr) {
+         cuda::mr::device_resource_ref mr) {
         std::vector<cudf::size_type> right_key_indices(right.num_columns());
         std::iota(right_key_indices.begin(), right_key_indices.end(), 0);
 
@@ -199,7 +200,7 @@ std::unique_ptr<cudf::table> inner_join(
        cudf::table_view const& right,
        cudf::null_equality compare_nulls,
        cuda::stream_ref stream,
-       rmm::device_async_resource_ref mr) {
+       cuda::mr::device_resource_ref mr) {
       return cudf::inner_join(left, right, compare_nulls, stream, mr);
     },
     left_input,
@@ -242,7 +243,7 @@ std::unique_ptr<cudf::table> left_join(
          cudf::table_view const& right,
          cudf::null_equality compare_nulls,
          cuda::stream_ref stream,
-         rmm::device_async_resource_ref mr) {
+         cuda::mr::device_resource_ref mr) {
         cudf::sort_merge_join obj(right, cudf::sorted::NO, compare_nulls, stream);
         return obj.left_join(left, stream, mr);
       },
@@ -257,7 +258,7 @@ std::unique_ptr<cudf::table> left_join(
          cudf::table_view const& right,
          cudf::null_equality compare_nulls,
          cuda::stream_ref stream,
-         rmm::device_async_resource_ref mr) {
+         cuda::mr::device_resource_ref mr) {
         cudf::sort_merge_join obj(right, cudf::sorted::YES, compare_nulls, stream);
         return obj.left_join(left, stream, mr);
       },
@@ -272,7 +273,7 @@ std::unique_ptr<cudf::table> left_join(
          cudf::table_view const& right,
          cudf::null_equality compare_nulls,
          cuda::stream_ref stream,
-         rmm::device_async_resource_ref mr) {
+         cuda::mr::device_resource_ref mr) {
         cudf::hash_join hash_joiner(right, compare_nulls, stream);
         auto match_ctx = hash_joiner.left_join_match_context(left, stream, mr);
         auto part_ctx  = cudf::join_partition_context{
@@ -290,7 +291,7 @@ std::unique_ptr<cudf::table> left_join(
        cudf::table_view const& right,
        cudf::null_equality compare_nulls,
        cuda::stream_ref stream,
-       rmm::device_async_resource_ref mr) {
+       cuda::mr::device_resource_ref mr) {
       return cudf::left_join(left, right, compare_nulls, stream, mr);
     },
     left_input,
@@ -314,7 +315,7 @@ std::unique_ptr<cudf::table> full_join(
          cudf::table_view const& right,
          cudf::null_equality compare_nulls,
          cuda::stream_ref stream,
-         rmm::device_async_resource_ref mr) {
+         cuda::mr::device_resource_ref mr) {
         cudf::hash_join hash_joiner(right, compare_nulls, stream);
         auto match_ctx = hash_joiner.full_join_match_context(left, stream, mr);
         auto part_ctx  = cudf::join_partition_context{
@@ -339,7 +340,7 @@ std::unique_ptr<cudf::table> full_join(
        cudf::table_view const& right,
        cudf::null_equality compare_nulls,
        cuda::stream_ref stream,
-       rmm::device_async_resource_ref mr) {
+       cuda::mr::device_resource_ref mr) {
       return cudf::full_join(left, right, compare_nulls, stream, mr);
     },
     full_input,
@@ -3283,7 +3284,7 @@ struct JoinParameterizedTestLists : public JoinTestLists,
                           cudf::table_view const& right,
                           cudf::null_equality compare_nulls,
                           cuda::stream_ref stream,
-                          rmm::device_async_resource_ref mr) -> JoinResult {
+                          cuda::mr::device_resource_ref mr) -> JoinResult {
       cudf::sort_merge_join obj(right, cudf::sorted::NO, compare_nulls, stream);
       return obj.inner_join(left, stream, mr);
     };
@@ -3303,7 +3304,7 @@ struct JoinParameterizedTestLists : public JoinTestLists,
                           cudf::table_view const& right,
                           cudf::null_equality compare_nulls,
                           cuda::stream_ref stream,
-                          rmm::device_async_resource_ref mr) -> JoinResult {
+                          cuda::mr::device_resource_ref mr) -> JoinResult {
       cudf::sort_merge_join obj(right, cudf::sorted::NO, compare_nulls, stream);
       return obj.left_join(left, stream, mr);
     };

@@ -9,6 +9,7 @@
 #include <cudf/strings/strings_column_view.hpp>
 #include <cudf/utilities/span.hpp>
 
+#include <cuda/memory_resource>
 #include <cuda/stream>
 
 namespace cudf::strings::detail {
@@ -28,6 +29,6 @@ namespace cudf::strings::detail {
 std::unique_ptr<column> create_offsets_from_positions(strings_column_view const& input,
                                                       device_span<int64_t const> const& positions,
                                                       cuda::stream_ref stream,
-                                                      rmm::device_async_resource_ref mr);
+                                                      cuda::mr::device_resource_ref mr);
 
 }  // namespace cudf::strings::detail

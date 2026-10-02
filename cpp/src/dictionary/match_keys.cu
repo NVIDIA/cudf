@@ -24,6 +24,7 @@
 
 #include <cuco/static_set.cuh>
 #include <cuda/iterator>
+#include <cuda/memory_resource>
 #include <cuda/std/iterator>
 #include <cuda/stream>
 
@@ -40,7 +41,7 @@ struct unique_keys_dispatch_fn {
   template <typename T>
   std::unique_ptr<cudf::column> operator()(cudf::column_view const& all_keys,
                                            cuda::stream_ref stream,
-                                           rmm::device_async_resource_ref mr)
+                                           cuda::mr::device_resource_ref mr)
     requires(cudf::is_dictionary_key<T>())
   {
     using probe_t = cuco::linear_probing<
@@ -83,7 +84,7 @@ struct unique_keys_dispatch_fn {
   template <typename T>
   std::unique_ptr<cudf::column> operator()(cudf::column_view const&,
                                            cuda::stream_ref,
-                                           rmm::device_async_resource_ref)
+                                           cuda::mr::device_resource_ref)
     requires(not cudf::is_dictionary_key<T>())
   {
     CUDF_UNREACHABLE("invalid dictionary key type");
@@ -94,7 +95,7 @@ struct unique_keys_dispatch_fn {
 std::vector<std::unique_ptr<column>> match_dictionaries(
   std::span<dictionary_column_view const> input,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cuda::mr::device_resource_ref mr)
 {
   CUDF_EXPECTS(not input.empty(), "expect at least one dictionary", std::invalid_argument);
 
@@ -115,7 +116,7 @@ std::vector<std::unique_ptr<column>> match_dictionaries(
 }
 
 std::pair<std::vector<std::unique_ptr<column>>, std::vector<table_view>> match_dictionaries(
-  std::vector<table_view> tables, cuda::stream_ref stream, rmm::device_async_resource_ref mr)
+  std::vector<table_view> tables, cuda::stream_ref stream, cuda::mr::device_resource_ref mr)
 {
   // Make a copy of all the column views from each table_view
   std::vector<std::vector<column_view>> updated_columns;
@@ -162,7 +163,7 @@ std::pair<std::vector<std::unique_ptr<column>>, std::vector<table_view>> match_d
 std::vector<std::unique_ptr<column>> match_dictionaries_to_indices(
   std::span<dictionary_column_view const> input,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cuda::mr::device_resource_ref mr)
 {
   CUDF_EXPECTS(not input.empty(), "expect at least one dictionary", std::invalid_argument);
 
@@ -185,7 +186,7 @@ std::vector<std::unique_ptr<column>> match_dictionaries_to_indices(
 std::pair<std::vector<std::unique_ptr<column>>, std::vector<table_view>>
 match_dictionaries_to_indices(std::vector<table_view> tables,
                               cuda::stream_ref stream,
-                              rmm::device_async_resource_ref mr)
+                              cuda::mr::device_resource_ref mr)
 {
   CUDF_EXPECTS(not tables.empty(), "expect at least one table", std::invalid_argument);
 
@@ -238,7 +239,7 @@ match_dictionaries_to_indices(std::vector<table_view> tables,
 std::vector<std::unique_ptr<column>> match_dictionaries(
   std::span<dictionary_column_view const> input,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cuda::mr::device_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
   return detail::match_dictionaries(input, stream, mr);

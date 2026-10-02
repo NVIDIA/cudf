@@ -16,6 +16,7 @@
 
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/memory_resource>
 #include <cuda/stream>
 #include <thrust/binary_search.h>
 
@@ -29,7 +30,7 @@ std::unique_ptr<column> search_ordered(table_view const& haystack,
                                        std::vector<order> const& column_order,
                                        std::vector<null_order> const& null_precedence,
                                        cuda::stream_ref stream,
-                                       rmm::device_async_resource_ref mr)
+                                       cuda::mr::device_resource_ref mr)
 {
   CUDF_EXPECTS(
     column_order.empty() or static_cast<std::size_t>(haystack.num_columns()) == column_order.size(),
@@ -111,7 +112,7 @@ std::unique_ptr<column> lower_bound(table_view const& haystack,
                                     std::vector<order> const& column_order,
                                     std::vector<null_order> const& null_precedence,
                                     cuda::stream_ref stream,
-                                    rmm::device_async_resource_ref mr)
+                                    cuda::mr::device_resource_ref mr)
 {
   return search_ordered(haystack, needles, true, column_order, null_precedence, stream, mr);
 }
@@ -121,7 +122,7 @@ std::unique_ptr<column> upper_bound(table_view const& haystack,
                                     std::vector<order> const& column_order,
                                     std::vector<null_order> const& null_precedence,
                                     cuda::stream_ref stream,
-                                    rmm::device_async_resource_ref mr)
+                                    cuda::mr::device_resource_ref mr)
 {
   return search_ordered(haystack, needles, false, column_order, null_precedence, stream, mr);
 }
@@ -135,7 +136,7 @@ std::unique_ptr<column> lower_bound(table_view const& haystack,
                                     std::vector<order> const& column_order,
                                     std::vector<null_order> const& null_precedence,
                                     cuda::stream_ref stream,
-                                    rmm::device_async_resource_ref mr)
+                                    cuda::mr::device_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
   return detail::lower_bound(haystack, needles, column_order, null_precedence, stream, mr);
@@ -146,7 +147,7 @@ std::unique_ptr<column> upper_bound(table_view const& haystack,
                                     std::vector<order> const& column_order,
                                     std::vector<null_order> const& null_precedence,
                                     cuda::stream_ref stream,
-                                    rmm::device_async_resource_ref mr)
+                                    cuda::mr::device_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
   return detail::upper_bound(haystack, needles, column_order, null_precedence, stream, mr);

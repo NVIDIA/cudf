@@ -10,6 +10,7 @@
 
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/memory_resource>
 #include <cuda/stream>
 #include <thrust/transform.h>
 
@@ -39,7 +40,7 @@ std::unique_ptr<column> true_if(InputIterator begin,
                                 size_type size,
                                 Predicate p,
                                 cuda::stream_ref stream,
-                                rmm::device_async_resource_ref mr)
+                                cuda::mr::device_resource_ref mr)
 {
   auto output =
     make_numeric_column(data_type(type_id::BOOL8), size, mask_state::UNALLOCATED, stream, mr);

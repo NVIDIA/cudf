@@ -14,6 +14,7 @@
 #include <cudf/utilities/roaring_bitmap.hpp>
 #include <cudf/utilities/span.hpp>
 
+#include <cuda/memory_resource>
 #include <cuda/stream>
 
 #include <functional>
@@ -57,7 +58,7 @@ void prepend_index_column_to_table_metadata(table_metadata& metadata);
   std::optional<size_t> start_row,
   size_type num_rows,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr);
+  cuda::mr::device_resource_ref mr);
 
 /**
  * @brief Computes a chunk of the row index column by consuming row group data from queues
@@ -79,7 +80,7 @@ void prepend_index_column_to_table_metadata(table_metadata& metadata);
   size_type num_rows,
   bool is_unspecified_row_group_data,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr);
+  cuda::mr::device_resource_ref mr);
 
 /**
  * @brief Computes a BOOL8 row mask column from the specified row index column and deletion vectors
@@ -97,7 +98,7 @@ void prepend_index_column_to_table_metadata(table_metadata& metadata);
   cudf::host_span<std::reference_wrapper<cudf::roaring_bitmap const> const> deletion_vector_refs,
   cudf::host_span<size_type const> rows_per_deletion_vector,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr);
+  cuda::mr::device_resource_ref mr);
 
 /**
  * @brief Computes the number of rows deleted by the deletion vectors
@@ -131,7 +132,7 @@ void prepend_index_column_to_table_metadata(table_metadata& metadata);
   std::queue<cudf::roaring_bitmap>& deletion_vectors,
   std::queue<size_type>& deletion_vector_row_counts,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr);
+  cuda::mr::device_resource_ref mr);
 
 /**
  * @brief Computes the number of deleted rows for a chunk by consuming deletion vectors from queues

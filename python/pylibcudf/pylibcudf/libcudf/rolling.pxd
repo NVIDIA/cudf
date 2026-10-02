@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 from libcpp cimport bool
 from libcpp.memory cimport unique_ptr
@@ -13,7 +13,7 @@ from pylibcudf.libcudf.table.table cimport table
 from pylibcudf.libcudf.table.table_view cimport table_view
 from pylibcudf.libcudf.types cimport data_type, null_order, order, size_type
 from cuda.bindings.cyruntime cimport cudaStream_t
-from rmm.librmm.memory_resource cimport device_async_resource_ref
+from pylibcudf.libcudf.utilities.memory_resource cimport device_resource_ref
 
 
 cdef extern from "cudf/rolling.hpp" namespace "cudf" nogil:
@@ -45,7 +45,7 @@ cdef extern from "cudf/rolling.hpp" namespace "cudf" nogil:
         range_window_type following,
         vector[rolling_request]& requests,
         cudaStream_t stream,
-        device_async_resource_ref mr
+        device_resource_ref mr
     ) except +libcudf_exception_handler
 
     cdef unique_ptr[column] rolling_window(
@@ -55,7 +55,7 @@ cdef extern from "cudf/rolling.hpp" namespace "cudf" nogil:
         size_type min_periods,
         rolling_aggregation& agg,
         cudaStream_t stream,
-        device_async_resource_ref mr) except +libcudf_exception_handler
+        device_resource_ref mr) except +libcudf_exception_handler
 
     cdef unique_ptr[column] rolling_window(
         column_view source,
@@ -64,7 +64,7 @@ cdef extern from "cudf/rolling.hpp" namespace "cudf" nogil:
         size_type min_periods,
         rolling_aggregation& agg,
         cudaStream_t stream,
-        device_async_resource_ref mr) except +libcudf_exception_handler
+        device_resource_ref mr) except +libcudf_exception_handler
 
     cdef pair[unique_ptr[column], unique_ptr[column]] make_range_windows(
         const table_view& group_keys,
@@ -74,7 +74,7 @@ cdef extern from "cudf/rolling.hpp" namespace "cudf" nogil:
         range_window_type preceding,
         range_window_type following,
         cudaStream_t stream,
-        device_async_resource_ref mr
+        device_resource_ref mr
     ) except +libcudf_exception_handler
 
     bool is_valid_rolling_aggregation(

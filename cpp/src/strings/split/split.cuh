@@ -28,6 +28,7 @@
 
 #include <cuda/atomic>
 #include <cuda/iterator>
+#include <cuda/memory_resource>
 #include <cuda/std/functional>
 #include <cuda/stream>
 #include <thrust/copy.h>
@@ -687,7 +688,7 @@ std::pair<std::unique_ptr<column>, rmm::device_uvector<string_index_pair>> split
   CountFn count_fn,
   MakeExtractFn make_extract,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cuda::mr::device_resource_ref mr)
 {
   auto const strings_count = d_strings.size();
   auto const temp_mr       = cudf::get_current_device_resource_ref();
@@ -766,7 +767,7 @@ std::pair<std::unique_ptr<column>, rmm::device_uvector<string_index_pair>> split
   Tokenizer tokenizer,
   DelimiterFn delimiter_fn,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cuda::mr::device_resource_ref mr)
 {
   auto [first_offset, last_offset] = get_first_and_last_offset(input, stream);
   auto const chars_bytes           = last_offset - first_offset;

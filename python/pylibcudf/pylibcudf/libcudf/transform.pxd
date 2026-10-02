@@ -24,7 +24,7 @@ from pylibcudf.libcudf.types cimport (
 
 from pylibcudf.libcudf.utilities.device_buffer cimport byte, device_buffer
 from cuda.bindings.cyruntime cimport cudaStream_t
-from rmm.librmm.memory_resource cimport device_async_resource_ref
+from pylibcudf.libcudf.utilities.memory_resource cimport device_resource_ref
 
 
 cdef extern from "cudf/transform.hpp" namespace "cudf" nogil:
@@ -52,7 +52,7 @@ cdef extern from "cudf/transform.hpp" namespace "cudf" nogil:
     cdef pair[unique_ptr[device_buffer[byte]], size_type] bools_to_mask (
         const column_view& input,
         cudaStream_t stream,
-        device_async_resource_ref mr
+        device_resource_ref mr
     ) except +libcudf_exception_handler
 
     cdef unique_ptr[column] mask_to_bools (
@@ -60,13 +60,13 @@ cdef extern from "cudf/transform.hpp" namespace "cudf" nogil:
         size_type begin_bit,
         size_type end_bit,
         cudaStream_t stream,
-        device_async_resource_ref mr
+        device_resource_ref mr
     ) except +libcudf_exception_handler
 
     cdef unique_ptr[column] column_nans_to_nulls(
         const column_view& input,
         cudaStream_t stream,
-        device_async_resource_ref mr
+        device_resource_ref mr
     ) except +libcudf_exception_handler
 
     cdef unique_ptr[table] transform(
@@ -79,32 +79,32 @@ cdef extern from "cudf/transform.hpp" namespace "cudf" nogil:
         vector[unique_ptr[column]]&& string_offsets,
         optional[size_type] row_size,
         cudaStream_t stream,
-        device_async_resource_ref mr
+        device_resource_ref mr
     ) except +libcudf_exception_handler
 
     cdef pair[unique_ptr[table], unique_ptr[column]] encode(
         table_view input,
         cudaStream_t stream,
-        device_async_resource_ref mr
+        device_resource_ref mr
     ) except +libcudf_exception_handler
 
     cdef pair[unique_ptr[column], table_view] one_hot_encode(
         column_view input_column,
         column_view categories,
         cudaStream_t stream,
-        device_async_resource_ref mr
+        device_resource_ref mr
     ) except +libcudf_exception_handler
 
     cdef unique_ptr[column] compute_column(
         const table_view table,
         const expression& expr,
         cudaStream_t stream,
-        device_async_resource_ref mr
+        device_resource_ref mr
     ) except +libcudf_exception_handler
 
     cdef unique_ptr[column] compute_column_jit(
         const table_view table,
         const expression& expr,
         cudaStream_t stream,
-        device_async_resource_ref mr
+        device_resource_ref mr
     ) except +libcudf_exception_handler

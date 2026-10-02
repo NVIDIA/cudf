@@ -13,6 +13,7 @@
 
 #include <rmm/device_uvector.hpp>
 
+#include <cuda/memory_resource>
 #include <cuda/stream>
 
 namespace cudf {
@@ -78,7 +79,7 @@ struct sort_groupby_helper {
    */
   std::unique_ptr<column> sorted_values(column_view const& values,
                                         cuda::stream_ref stream,
-                                        rmm::device_async_resource_ref mr);
+                                        cuda::mr::device_resource_ref mr);
 
   /**
    * @brief Groups a column of values according to `keys`
@@ -94,21 +95,21 @@ struct sort_groupby_helper {
    */
   std::unique_ptr<column> grouped_values(column_view const& values,
                                          cuda::stream_ref stream,
-                                         rmm::device_async_resource_ref mr);
+                                         cuda::mr::device_resource_ref mr);
 
   /**
    * @brief Get a table of sorted unique keys
    *
    * @return a new table in which each row is a unique row in the sorted key table.
    */
-  std::unique_ptr<table> unique_keys(cuda::stream_ref stream, rmm::device_async_resource_ref mr);
+  std::unique_ptr<table> unique_keys(cuda::stream_ref stream, cuda::mr::device_resource_ref mr);
 
   /**
    * @brief Get a table of sorted keys
    *
    * @return a new table containing the sorted keys.
    */
-  std::unique_ptr<table> sorted_keys(cuda::stream_ref stream, rmm::device_async_resource_ref mr);
+  std::unique_ptr<table> sorted_keys(cuda::stream_ref stream, cuda::mr::device_resource_ref mr);
 
   /**
    * @brief Get the number of groups in `keys`

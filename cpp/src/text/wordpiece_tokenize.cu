@@ -34,6 +34,7 @@
 #include <cuda/buffer>
 #include <cuda/functional>
 #include <cuda/iterator>
+#include <cuda/memory_resource>
 #include <cuda/std/functional>
 #include <cuda/std/iterator>
 #include <cuda/std/limits>
@@ -138,7 +139,7 @@ using sub_vocabulary_map_type = cuco::static_map<cudf::size_type,
 using col_device_view = std::invoke_result_t<decltype(&cudf::column_device_view::create),
                                              cudf::column_view,
                                              cuda::stream_ref,
-                                             rmm::device_async_resource_ref>;
+                                             cuda::mr::device_resource_ref>;
 
 /**
  * @brief Internal class manages all the data held by the vocabulary object
@@ -213,7 +214,7 @@ struct resolve_unk_id {
 
 wordpiece_vocabulary::wordpiece_vocabulary(cudf::strings_column_view const& input,
                                            cuda::stream_ref stream,
-                                           rmm::device_async_resource_ref mr)
+                                           cuda::mr::device_resource_ref mr)
 {
   CUDF_EXPECTS(not input.is_empty(), "vocabulary must not be empty", std::invalid_argument);
   CUDF_EXPECTS(not input.has_nulls(), "vocabulary must not have nulls", std::invalid_argument);
@@ -285,9 +286,7 @@ wordpiece_vocabulary::wordpiece_vocabulary(cudf::strings_column_view const& inpu
 wordpiece_vocabulary::~wordpiece_vocabulary() {}
 
 std::unique_ptr<wordpiece_vocabulary> load_wordpiece_vocabulary(
-  cudf::strings_column_view const& input,
-  cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cudf::strings_column_view const& input, cuda::stream_ref stream, cuda::mr::device_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
   return std::make_unique<wordpiece_vocabulary>(input, stream, mr);
@@ -846,7 +845,7 @@ std::unique_ptr<cudf::column> wordpiece_tokenize(cudf::strings_column_view const
                                                  wordpiece_vocabulary const& vocabulary,
                                                  cudf::size_type max_words_per_row,
                                                  cuda::stream_ref stream,
-                                                 rmm::device_async_resource_ref mr)
+                                                 cuda::mr::device_resource_ref mr)
 {
   CUDF_EXPECTS(
     max_words_per_row >= 0, "Invalid value for max_words_per_row argument", std::invalid_argument);
@@ -898,7 +897,7 @@ std::unique_ptr<cudf::column> wordpiece_tokenize(cudf::strings_column_view const
                                                  wordpiece_vocabulary const& vocabulary,
                                                  cudf::size_type max_words_per_row,
                                                  cuda::stream_ref stream,
-                                                 rmm::device_async_resource_ref mr)
+                                                 cuda::mr::device_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
   return detail::wordpiece_tokenize(input, vocabulary, max_words_per_row, stream, mr);

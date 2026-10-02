@@ -27,6 +27,7 @@
 #include <cooperative_groups/scan.h>
 #include <cub/warp/warp_reduce.cuh>
 #include <cub/warp/warp_scan.cuh>
+#include <cuda/memory_resource>
 #include <cuda/std/algorithm>
 #include <cuda/stream>
 
@@ -122,7 +123,7 @@ struct url_encoder_fn {
 //
 std::unique_ptr<column> url_encode(strings_column_view const& input,
                                    cuda::stream_ref stream,
-                                   rmm::device_async_resource_ref mr)
+                                   cuda::mr::device_resource_ref mr)
 {
   if (input.is_empty()) return make_empty_column(type_id::STRING);
 
@@ -143,7 +144,7 @@ std::unique_ptr<column> url_encode(strings_column_view const& input,
 // external API
 std::unique_ptr<column> url_encode(strings_column_view const& input,
                                    cuda::stream_ref stream,
-                                   rmm::device_async_resource_ref mr)
+                                   cuda::mr::device_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
   return detail::url_encode(input, stream, mr);
@@ -376,7 +377,7 @@ CUDF_KERNEL void url_decode_char_replacer(column_device_view const in_strings,
 //
 std::unique_ptr<column> url_decode(strings_column_view const& strings,
                                    cuda::stream_ref stream,
-                                   rmm::device_async_resource_ref mr)
+                                   cuda::mr::device_resource_ref mr)
 {
   size_type strings_count = strings.size();
   if (strings_count == 0) return make_empty_column(type_id::STRING);
@@ -426,7 +427,7 @@ std::unique_ptr<column> url_decode(strings_column_view const& strings,
 
 std::unique_ptr<column> url_decode(strings_column_view const& input,
                                    cuda::stream_ref stream,
-                                   rmm::device_async_resource_ref mr)
+                                   cuda::mr::device_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
   return detail::url_decode(input, stream, mr);

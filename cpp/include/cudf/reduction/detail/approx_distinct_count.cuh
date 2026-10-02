@@ -15,6 +15,7 @@
 
 #include <cuco/hyperloglog_ref.cuh>
 #include <cuda/functional>
+#include <cuda/memory_resource>
 #include <cuda/std/span>
 #include <cuda/stream>
 
@@ -86,7 +87,7 @@ class approx_distinct_count {
                         null_policy null_handling,
                         nan_policy nan_handling,
                         cuda::stream_ref stream,
-                        cuda::mr::any_resource<cuda::mr::device_accessible> mr);
+                        cuda::mr::any_device_resource mr);
 
   /**
    * @brief Constructs an owning approximate distinct count sketch from a table with standard
@@ -112,7 +113,7 @@ class approx_distinct_count {
                         null_policy null_handling,
                         nan_policy nan_handling,
                         cuda::stream_ref stream,
-                        cuda::mr::any_resource<cuda::mr::device_accessible> mr);
+                        cuda::mr::any_device_resource mr);
 
   /**
    * @brief Constructs a non-owning approximate distinct count sketch from user-allocated storage
@@ -134,7 +135,7 @@ class approx_distinct_count {
                         std::int32_t precision,
                         null_policy null_handling,
                         nan_policy nan_handling,
-                        cuda::mr::any_resource<cuda::mr::device_accessible> mr);
+                        cuda::mr::any_device_resource mr);
 
   approx_distinct_count()                                        = delete;
   ~approx_distinct_count()                                       = default;
@@ -272,11 +273,11 @@ class approx_distinct_count {
 
   // Declared before `_storage` so it outlives the owning `device_uvector`, which only holds a
   // reference to this resource. Unused in non-owning (span) mode.
-  cuda::mr::any_resource<cuda::mr::device_accessible> _mr;  ///< Owns the sketch storage resource
-  storage_type _storage;       ///< Sketch register storage (owning or non-owning)
-  std::int32_t _precision;     ///< HLL precision parameter (determines 2^p registers)
-  null_policy _null_handling;  ///< Null handling policy (immutable after construction)
-  nan_policy _nan_handling;    ///< NaN handling policy (immutable after construction)
+  cuda::mr::any_device_resource _mr;  ///< Owns the sketch storage resource
+  storage_type _storage;              ///< Sketch register storage (owning or non-owning)
+  std::int32_t _precision;            ///< HLL precision parameter (determines 2^p registers)
+  null_policy _null_handling;         ///< Null handling policy (immutable after construction)
+  nan_policy _nan_handling;           ///< NaN handling policy (immutable after construction)
 };
 
 }  // namespace detail

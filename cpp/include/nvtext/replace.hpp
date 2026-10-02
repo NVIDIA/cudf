@@ -10,6 +10,8 @@
 #include <cudf/utilities/export.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
+#include <cuda/memory_resource>
+
 //! NVText APIs
 namespace CUDF_EXPORT nvtext {
 /**
@@ -80,7 +82,7 @@ std::unique_ptr<cudf::column> replace_tokens(
   cudf::strings_column_view const& replacements,
   cudf::string_scalar const& delimiter = cudf::string_scalar{""},
   cuda::stream_ref stream              = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr    = cudf::get_current_device_resource_ref());
+  cuda::mr::device_resource_ref mr     = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Removes tokens whose lengths are less than a specified number of characters.
@@ -129,7 +131,7 @@ std::unique_ptr<cudf::column> filter_tokens(
   cudf::string_scalar const& replacement = cudf::string_scalar{""},
   cudf::string_scalar const& delimiter   = cudf::string_scalar{""},
   cuda::stream_ref stream                = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr      = cudf::get_current_device_resource_ref());
+  cuda::mr::device_resource_ref mr       = cudf::get_current_device_resource_ref());
 
 /** @} */  // end of group
 }  // namespace CUDF_EXPORT nvtext

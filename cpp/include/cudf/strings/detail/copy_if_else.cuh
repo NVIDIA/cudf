@@ -14,6 +14,7 @@
 
 #include <cuda/functional>
 #include <cuda/iterator>
+#include <cuda/memory_resource>
 #include <cuda/std/optional>
 #include <cuda/stream>
 #include <thrust/transform.h>
@@ -49,7 +50,7 @@ std::unique_ptr<cudf::column> copy_if_else(StringIterLeft lhs_begin,
                                            StringIterRight rhs_begin,
                                            Filter filter_fn,
                                            cuda::stream_ref stream,
-                                           rmm::device_async_resource_ref mr)
+                                           cuda::mr::device_resource_ref mr)
 {
   auto strings_count = std::distance(lhs_begin, lhs_end);
   if (strings_count == 0) { return make_empty_column(type_id::STRING); }

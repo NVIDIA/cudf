@@ -28,6 +28,7 @@
 #include <cuco/extent.cuh>
 #include <cuco/static_set.cuh>
 #include <cuda/iterator>
+#include <cuda/memory_resource>
 #include <cuda/stream>
 
 #include <optional>
@@ -971,7 +972,7 @@ struct dictionary_caster {
   [[nodiscard]] std::vector<std::unique_ptr<cudf::column>> build_columns(
     cudf::host_span<rmm::device_buffer> results_buffers,
     cuda::stream_ref stream,
-    rmm::device_async_resource_ref mr)
+    cuda::mr::device_resource_ref mr)
   {
     auto columns = std::vector<std::unique_ptr<cudf::column>>{};
     columns.reserve(results_buffers.size());
@@ -1006,7 +1007,7 @@ struct dictionary_caster {
     cudf::host_span<ast::literal* const> literals,
     cudf::host_span<ast::ast_operator const> operators,
     cuda::stream_ref stream,
-    rmm::device_async_resource_ref mr)
+    cuda::mr::device_resource_ref mr)
   {
     // Host vectors to store the running number of hash set slots and decoded values for all
     // dictionaries
@@ -1191,7 +1192,7 @@ struct dictionary_caster {
     cudf::host_span<ast::literal* const> literals,
     cudf::host_span<ast::ast_operator const> operators,
     cuda::stream_ref stream,
-    rmm::device_async_resource_ref mr)
+    cuda::mr::device_resource_ref mr)
   {
     // Get the total number of scalars and literals
     auto const total_num_literals = static_cast<cudf::size_type>(literals.size());
@@ -1287,7 +1288,7 @@ struct dictionary_caster {
     cudf::host_span<ast::literal* const> literals,
     cudf::host_span<ast::ast_operator const> operators,
     cuda::stream_ref stream,
-    rmm::device_async_resource_ref mr)
+    cuda::mr::device_resource_ref mr)
   {
     // Boolean, List, Struct, Dictionary types are not supported
     if constexpr (not is_supported_dictionary_type<T>) {

@@ -11,6 +11,7 @@
 #include <cudf/utilities/memory_resource.hpp>
 
 #include <cuda/iterator>
+#include <cuda/memory_resource>
 
 namespace cudf {
 namespace detail {
@@ -78,7 +79,7 @@ bool has_nonempty_nulls(cudf::column_view const& input, cuda::stream_ref stream)
 
 std::unique_ptr<column> purge_nonempty_nulls(column_view const& input,
                                              cuda::stream_ref stream,
-                                             rmm::device_async_resource_ref mr)
+                                             cuda::mr::device_resource_ref mr)
 {
   // If not compound types (LIST/STRING/STRUCT/DICTIONARY) then just copy the input into output.
   if (!cudf::is_compound(input.type())) { return std::make_unique<column>(input, stream, mr); }
@@ -123,11 +124,11 @@ bool has_nonempty_nulls(column_view const& input, cuda::stream_ref stream)
 }
 
 /**
- * @copydoc cudf::purge_nonempty_nulls(column_view const&, rmm::device_async_resource_ref)
+ * @copydoc cudf::purge_nonempty_nulls(column_view const&, cuda::mr::device_resource_ref)
  */
 std::unique_ptr<cudf::column> purge_nonempty_nulls(column_view const& input,
                                                    cuda::stream_ref stream,
-                                                   rmm::device_async_resource_ref mr)
+                                                   cuda::mr::device_resource_ref mr)
 {
   return detail::purge_nonempty_nulls(input, stream, mr);
 }

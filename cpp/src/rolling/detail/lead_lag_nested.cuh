@@ -22,6 +22,7 @@
 
 #include <cuda/functional>
 #include <cuda/iterator>
+#include <cuda/memory_resource>
 #include <cuda/std/iterator>
 #include <thrust/binary_search.h>
 #include <thrust/transform.h>
@@ -82,7 +83,7 @@ std::unique_ptr<column> compute_lead_lag_for_nested(aggregation::Kind op,
                                                     FollowingIter following,
                                                     size_type row_offset,
                                                     cuda::stream_ref stream,
-                                                    rmm::device_async_resource_ref mr)
+                                                    cuda::mr::device_resource_ref mr)
 {
   CUDF_EXPECTS(op == aggregation::LEAD || op == aggregation::LAG,
                "Unexpected aggregation type in compute_lead_lag_for_nested");

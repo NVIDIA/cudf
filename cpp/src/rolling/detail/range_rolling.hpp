@@ -13,8 +13,7 @@
 #include <cudf/table/table_view.hpp>
 #include <cudf/types.hpp>
 
-#include <rmm/resource_ref.hpp>
-
+#include <cuda/memory_resource>
 #include <cuda/stream>
 
 #include <concepts>
@@ -82,7 +81,7 @@ template <typename Window>
   range_window_type preceding,
   range_window_type following,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr);
+  cuda::mr::device_resource_ref mr);
 
 /**
  * @brief Dispatches computation of an unbounded RANGE window-size column.
@@ -107,7 +106,7 @@ template <typename Window>
   bool nulls_at_start,
   range_window_delta const& delta,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr);
+  cuda::mr::device_resource_ref mr);
 
 /**
  * @brief Dispatches computation of a current-row RANGE window-size column.
@@ -132,7 +131,7 @@ template <typename Window>
   bool nulls_at_start,
   range_window_delta const& delta,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr);
+  cuda::mr::device_resource_ref mr);
 
 /**
  * @brief Dispatches computation of a bounded-closed RANGE window-size column.
@@ -157,7 +156,7 @@ template <typename Window>
   bool nulls_at_start,
   range_window_delta const& delta,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr);
+  cuda::mr::device_resource_ref mr);
 
 /**
  * @brief Dispatches computation of a bounded-open RANGE window-size column.
@@ -182,7 +181,7 @@ template <typename Window>
   bool nulls_at_start,
   range_window_delta const& delta,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr);
+  cuda::mr::device_resource_ref mr);
 
 /**
  * @brief Dispatches computation of a bounded-closed RANGE window-size column with a per-row delta.
@@ -207,7 +206,7 @@ template <typename Window>
   bool nulls_at_start,
   range_window_delta const& delta,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr);
+  cuda::mr::device_resource_ref mr);
 
 /**
  * @brief Dispatches computation of a bounded-open RANGE window-size column with a per-row delta.
@@ -232,6 +231,6 @@ template <typename Window>
   bool nulls_at_start,
   range_window_delta const& delta,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr);
+  cuda::mr::device_resource_ref mr);
 
 }  // namespace cudf::detail

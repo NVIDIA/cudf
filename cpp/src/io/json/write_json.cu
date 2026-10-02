@@ -40,6 +40,7 @@
 
 #include <cuda/functional>
 #include <cuda/iterator>
+#include <cuda/memory_resource>
 #include <cuda/std/tuple>
 #include <cuda/stream>
 #include <thrust/for_each.h>
@@ -160,7 +161,7 @@ struct escape_strings_fn {
                                               size_type null_count,
                                               cuda::device_buffer<std::byte> null_mask,
                                               cuda::stream_ref stream,
-                                              rmm::device_async_resource_ref mr)
+                                              cuda::mr::device_resource_ref mr)
   {
     if (size == 0) {  // empty begets empty
       return make_empty_column(type_id::STRING);
@@ -182,7 +183,7 @@ std::unique_ptr<column> make_escaped_json_strings(column_device_view const& d_co
                                                   bool append_colon,
                                                   bool escaped_utf8,
                                                   cuda::stream_ref stream,
-                                                  rmm::device_async_resource_ref mr)
+                                                  cuda::mr::device_resource_ref mr)
 {
   return escape_strings_fn{d_column, append_colon, escaped_utf8}.make_strings_column(
     size, null_count, std::move(null_mask), stream, mr);
@@ -270,7 +271,7 @@ std::unique_ptr<column> struct_to_strings(table_view const& strings_columns,
                                           string_scalar const& narep,
                                           bool include_nulls,
                                           cuda::stream_ref stream,
-                                          rmm::device_async_resource_ref mr)
+                                          cuda::mr::device_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
   CUDF_EXPECTS(column_names.type().id() == type_id::STRING, "Column names must be of type string");
@@ -445,7 +446,7 @@ std::unique_ptr<column> join_list_of_strings(lists_column_view const& lists_stri
                                              string_view const element_separator,
                                              string_view const element_narep,
                                              cuda::stream_ref stream,
-                                             rmm::device_async_resource_ref mr)
+                                             cuda::mr::device_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
 

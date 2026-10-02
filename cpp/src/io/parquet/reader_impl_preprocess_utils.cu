@@ -18,6 +18,7 @@
 
 #include <cuda/functional>
 #include <cuda/iterator>
+#include <cuda/memory_resource>
 #include <cuda/std/algorithm>
 #include <thrust/for_each.h>
 #include <thrust/gather.h>
@@ -175,7 +176,7 @@ void generate_depth_remappings(
   std::vector<size_t> const& column_chunk_offsets,
   std::vector<size_type> const& chunk_source_map,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cuda::mr::device_resource_ref mr)
 {
   // Construct per source byte ranges in chunk iteration order
   std::vector<std::vector<byte_range_info>> source_byte_ranges(sources.size());

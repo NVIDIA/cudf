@@ -9,6 +9,8 @@
 #include <cudf/utilities/export.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
+#include <cuda/memory_resource>
+
 /**
  * @file
  * @brief API for counting the number of elements in each row of a list column
@@ -44,8 +46,8 @@ namespace lists {
  */
 std::unique_ptr<column> count_elements(
   lists_column_view const& input,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream          = cudf::get_default_stream(),
+  cuda::mr::device_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /** @} */  // end of lists_elements group
 

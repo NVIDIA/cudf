@@ -23,6 +23,7 @@
 
 #include <cuco/static_set.cuh>
 #include <cuda/iterator>
+#include <cuda/memory_resource>
 #include <cuda/stream>
 #include <thrust/for_each.h>
 
@@ -35,7 +36,7 @@ std::pair<rmm::device_uvector<size_type>, bool> compute_single_pass_aggs(
   std::span<aggregation_request const> requests,
   cudf::detail::result_cache* cache,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cuda::mr::device_resource_ref mr)
 {
   // Collect the single-pass aggregations that can be processed in this function.
   // The compound aggregations that require multiple passes will be handled separately later on.

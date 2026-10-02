@@ -12,6 +12,7 @@
 #include <rmm/mr/polymorphic_allocator.hpp>
 
 #include <cuco/static_set.cuh>
+#include <cuda/memory_resource>
 #include <cuda/stream>
 
 #include <cstddef>
@@ -116,11 +117,11 @@ class distinct_hash_join {
   distinct_hash_join(cudf::table_view const& right,
                      cudf::null_equality compare_nulls,
                      cuda::stream_ref stream,
-                     cuda::mr::any_resource<cuda::mr::device_accessible> mr);
+                     cuda::mr::any_device_resource mr);
 
   /**
    * @copydoc distinct_hash_join(cudf::table_view const&, null_equality, cuda::stream_ref,
-   * cuda::mr::any_resource<cuda::mr::device_accessible>)
+   * cuda::mr::any_device_resource)
    *
    * @param load_factor The hash table occupancy ratio in (0,1]. A value of 0.5 means 50% occupancy.
    */
@@ -128,7 +129,7 @@ class distinct_hash_join {
                      cudf::null_equality compare_nulls,
                      double load_factor,
                      cuda::stream_ref stream,
-                     cuda::mr::any_resource<cuda::mr::device_accessible> mr);
+                     cuda::mr::any_device_resource mr);
 
   /**
    * @copydoc cudf::distinct_hash_join::inner_join
@@ -137,13 +138,14 @@ class distinct_hash_join {
             std::unique_ptr<rmm::device_uvector<size_type>>>
   inner_join(cudf::table_view const& left,
              cuda::stream_ref stream,
-             rmm::device_async_resource_ref mr) const;
+             cuda::mr::device_resource_ref mr) const;
 
   /**
    * @copydoc cudf::distinct_hash_join::left_join
    */
-  std::unique_ptr<rmm::device_uvector<size_type>> left_join(
-    cudf::table_view const& left, cuda::stream_ref stream, rmm::device_async_resource_ref mr) const;
+  std::unique_ptr<rmm::device_uvector<size_type>> left_join(cudf::table_view const& left,
+                                                            cuda::stream_ref stream,
+                                                            cuda::mr::device_resource_ref mr) const;
 
  private:
   using probing_scheme_type = cuco::linear_probing<1, hasher>;

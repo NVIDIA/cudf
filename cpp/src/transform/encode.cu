@@ -21,6 +21,7 @@
 #include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/memory_resource>
 #include <cuda/stream>
 
 #include <memory>
@@ -33,7 +34,7 @@ namespace detail {
 
 std::pair<std::unique_ptr<table>, std::unique_ptr<column>> encode(table_view const& input_table,
                                                                   cuda::stream_ref stream,
-                                                                  rmm::device_async_resource_ref mr)
+                                                                  cuda::mr::device_resource_ref mr)
 {
   auto const num_cols = input_table.num_columns();
 
@@ -62,7 +63,7 @@ std::pair<std::unique_ptr<table>, std::unique_ptr<column>> encode(table_view con
 }  // namespace detail
 
 std::pair<std::unique_ptr<cudf::table>, std::unique_ptr<cudf::column>> encode(
-  cudf::table_view const& input, cuda::stream_ref stream, rmm::device_async_resource_ref mr)
+  cudf::table_view const& input, cuda::stream_ref stream, cuda::mr::device_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
   return detail::encode(input, stream, mr);

@@ -9,6 +9,8 @@
 #include <cudf/detail/aggregation/result_cache.hpp>
 #include <cudf/types.hpp>
 
+#include <cuda/memory_resource>
+
 namespace cudf::groupby::detail::hash {
 
 /**
@@ -20,13 +22,13 @@ struct hash_compound_agg_finalizer {
   cudf::detail::result_cache* const cache;
   bitmask_type const* const d_row_bitmask;
   cuda::stream_ref const stream;
-  rmm::device_async_resource_ref const mr;
+  cuda::mr::device_resource_ref const mr;
 
   hash_compound_agg_finalizer(column_view const& col,
                               cudf::detail::result_cache* cache,
                               bitmask_type const* d_row_bitmask,
                               cuda::stream_ref stream,
-                              rmm::device_async_resource_ref mr);
+                              cuda::mr::device_resource_ref mr);
 
   // Default case: no-op
   template <aggregation::Kind k>

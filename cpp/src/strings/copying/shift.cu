@@ -16,6 +16,7 @@
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/iterator>
+#include <cuda/memory_resource>
 #include <cuda/stream>
 #include <thrust/transform.h>
 
@@ -82,7 +83,7 @@ std::unique_ptr<column> shift(strings_column_view const& input,
                               size_type offset,
                               scalar const& fill_value,
                               cuda::stream_ref stream,
-                              rmm::device_async_resource_ref mr)
+                              cuda::mr::device_resource_ref mr)
 {
   auto d_fill_str = static_cast<string_scalar const&>(fill_value).value(stream);
 

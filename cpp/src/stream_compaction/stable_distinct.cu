@@ -12,6 +12,7 @@
 #include <cudf/utilities/span.hpp>
 
 #include <cuda/iterator>
+#include <cuda/memory_resource>
 #include <thrust/scatter.h>
 #include <thrust/uninitialized_fill.h>
 
@@ -24,7 +25,7 @@ std::unique_ptr<table> stable_distinct(table_view const& input,
                                        null_equality nulls_equal,
                                        nan_equality nans_equal,
                                        cuda::stream_ref stream,
-                                       rmm::device_async_resource_ref mr)
+                                       cuda::mr::device_resource_ref mr)
 {
   if (input.num_rows() == 0 or input.num_columns() == 0 or keys.empty()) {
     return empty_like(input);
@@ -72,7 +73,7 @@ std::unique_ptr<table> stable_distinct(table_view const& input,
                                        null_equality nulls_equal,
                                        nan_equality nans_equal,
                                        cuda::stream_ref stream,
-                                       rmm::device_async_resource_ref mr)
+                                       cuda::mr::device_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
   return detail::stable_distinct(input, keys, keep, nulls_equal, nans_equal, stream, mr);

@@ -31,6 +31,7 @@
 #include <cuco/static_set.cuh>
 #include <cuda/functional>
 #include <cuda/iterator>
+#include <cuda/memory_resource>
 #include <cuda/std/utility>
 #include <cuda/stream>
 #include <thrust/binary_search.h>
@@ -111,7 +112,7 @@ struct compute_children_offsets_fn {
    * @return Vector of offsets_pair objects for keys and indices.
    */
   rmm::device_uvector<offsets_pair> create_children_offsets(cuda::stream_ref stream,
-                                                            rmm::device_async_resource_ref mr)
+                                                            cuda::mr::device_resource_ref mr)
   {
     auto offsets = cudf::detail::make_host_vector<offsets_pair>(columns_ptrs.size(), stream);
     thrust::transform_exclusive_scan(
@@ -164,7 +165,7 @@ struct map_indices_fn {
 
 std::unique_ptr<column> concatenate(host_span<column_view const> columns,
                                     cuda::stream_ref stream,
-                                    rmm::device_async_resource_ref mr)
+                                    cuda::mr::device_resource_ref mr)
 {
   // exception here is the same behavior as in cudf::concatenate
   CUDF_EXPECTS(not columns.empty(), "Unexpected empty list of columns to concatenate.");

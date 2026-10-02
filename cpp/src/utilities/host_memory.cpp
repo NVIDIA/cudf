@@ -5,6 +5,7 @@
 
 #include <cudf/detail/utilities/getenv_or.hpp>
 #include <cudf/logger.hpp>
+#include <cudf/types.hpp>
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/export.hpp>
 #include <cudf/utilities/pinned_memory.hpp>
@@ -13,8 +14,8 @@
 #include <rmm/detail/aligned.hpp>
 #include <rmm/mr/pinned_host_memory_resource.hpp>
 #include <rmm/mr/pool_memory_resource.hpp>
-#include <rmm/resource_ref.hpp>
 
+#include <cuda/memory_resource>
 #include <cuda/stream>
 
 #include <algorithm>
@@ -201,7 +202,7 @@ static_assert(cuda::mr::resource_with<pinned_pool_with_fallback_memory_resource,
                                       cuda::mr::host_accessible>,
               "Pinned pool mr must be accessible from both host and device");
 
-CUDF_EXPORT rmm::host_device_async_resource_ref& make_default_pinned_mr(
+CUDF_EXPORT cuda::mr::host_device_resource_ref& make_default_pinned_mr(
   std::optional<size_t> config_size)
 {
   static pinned_pool_with_fallback_memory_resource mr = [config_size]() {
@@ -227,7 +228,7 @@ CUDF_EXPORT rmm::host_device_async_resource_ref& make_default_pinned_mr(
     return pinned_pool_with_fallback_memory_resource{initial_size, max_size};
   }();
 
-  static rmm::host_device_async_resource_ref mr_ref{mr};
+  static cuda::mr::host_device_resource_ref mr_ref{mr};
   return mr_ref;
 }
 
@@ -238,11 +239,11 @@ CUDF_EXPORT std::mutex& host_mr_mutex()
 }
 
 // Must be called with the host_mr_mutex mutex held
-CUDF_EXPORT rmm::host_device_async_resource_ref& make_host_mr(
+CUDF_EXPORT cuda::mr::host_device_resource_ref& make_host_mr(
   std::optional<pinned_mr_options> const& opts, bool* did_configure = nullptr)
 {
-  static rmm::host_device_async_resource_ref* mr_ref = nullptr;
-  bool configured                                    = false;
+  static cuda::mr::host_device_resource_ref* mr_ref = nullptr;
+  bool configured                                   = false;
   if (mr_ref == nullptr) {
     configured = true;
     mr_ref     = &make_default_pinned_mr(opts ? opts->pool_size : std::nullopt);
@@ -256,9 +257,9 @@ CUDF_EXPORT rmm::host_device_async_resource_ref& make_host_mr(
 }
 
 // Must be called with the host_mr_mutex mutex held
-CUDF_EXPORT rmm::host_device_async_resource_ref& host_mr()
+CUDF_EXPORT cuda::mr::host_device_resource_ref& host_mr()
 {
-  static rmm::host_device_async_resource_ref mr_ref = make_host_mr(std::nullopt);
+  static cuda::mr::host_device_resource_ref mr_ref = make_host_mr(std::nullopt);
   return mr_ref;
 }
 
@@ -309,8 +310,7 @@ static_assert(cuda::mr::resource_with<new_delete_memory_resource, cuda::mr::host
 
 }  // namespace
 
-rmm::host_device_async_resource_ref set_pinned_memory_resource(
-  rmm::host_device_async_resource_ref mr)
+cuda::mr::host_device_resource_ref set_pinned_memory_resource(cuda::mr::host_device_resource_ref mr)
 {
   std::scoped_lock lock{host_mr_mutex()};
   auto last_mr = host_mr();
@@ -318,7 +318,7 @@ rmm::host_device_async_resource_ref set_pinned_memory_resource(
   return last_mr;
 }
 
-rmm::host_device_async_resource_ref get_pinned_memory_resource()
+cuda::mr::host_device_resource_ref get_pinned_memory_resource()
 {
   std::scoped_lock lock{host_mr_mutex()};
   return host_mr();
@@ -364,10 +364,10 @@ size_t get_allocate_host_as_pinned_threshold() { return allocate_host_as_pinned_
 
 namespace detail {
 
-CUDF_EXPORT rmm::host_async_resource_ref get_pageable_memory_resource()
+CUDF_EXPORT cuda::mr::host_resource_ref get_pageable_memory_resource()
 {
   static new_delete_memory_resource mr{};
-  static rmm::host_async_resource_ref mr_ref{mr};
+  static cuda::mr::host_resource_ref mr_ref{mr};
   return mr_ref;
 }
 

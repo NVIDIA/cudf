@@ -22,6 +22,7 @@
 
 #include <cuco/static_set.cuh>
 #include <cuda/iterator>
+#include <cuda/memory_resource>
 #include <cuda/stream>
 #include <thrust/scatter.h>
 #include <thrust/transform.h>
@@ -49,11 +50,11 @@ namespace {
 struct result_column_creator {
   size_type output_size;
   cuda::stream_ref stream;
-  rmm::device_async_resource_ref mr;
+  cuda::mr::device_resource_ref mr;
 
   explicit result_column_creator(size_type output_size_,
                                  cuda::stream_ref stream_,
-                                 rmm::device_async_resource_ref mr_)
+                                 cuda::mr::device_resource_ref mr_)
     : output_size{output_size_}, stream{stream_}, mr{mr_}
   {
   }
@@ -117,7 +118,7 @@ std::unique_ptr<table> create_results_table(size_type output_size,
                                             host_span<aggregation::Kind const> agg_kinds,
                                             std::span<int8_t const> is_agg_intermediate,
                                             cuda::stream_ref stream,
-                                            rmm::device_async_resource_ref mr)
+                                            cuda::mr::device_resource_ref mr)
 {
   CUDF_EXPECTS(values.num_columns() == static_cast<size_type>(agg_kinds.size()),
                "The number of values columns and size of agg_kinds vector must be the same.");
@@ -140,7 +141,7 @@ template <typename SetType>
 rmm::device_uvector<size_type> extract_populated_keys(SetType const& key_set,
                                                       size_type num_total_keys,
                                                       cuda::stream_ref stream,
-                                                      rmm::device_async_resource_ref mr)
+                                                      cuda::mr::device_resource_ref mr)
 {
   rmm::device_uvector<size_type> unique_key_indices(num_total_keys, stream, mr);
   auto const keys_end = key_set.retrieve_all(unique_key_indices.begin(), stream.get());
@@ -152,19 +153,19 @@ template rmm::device_uvector<size_type> extract_populated_keys<global_set_t>(
   global_set_t const& key_set,
   size_type num_total_keys,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr);
+  cuda::mr::device_resource_ref mr);
 
 template rmm::device_uvector<size_type> extract_populated_keys<nullable_global_set_t>(
   nullable_global_set_t const& key_set,
   size_type num_total_keys,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr);
+  cuda::mr::device_resource_ref mr);
 
 rmm::device_uvector<size_type> compute_key_transform_map(
   size_type num_total_keys,
   device_span<size_type const> unique_key_indices,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cuda::mr::device_resource_ref mr)
 {
   // Map from old key indices (index of the keys in the original input keys table) to new key
   // indices (indices of the keys in the final output table, which contains only the extracted
@@ -182,7 +183,7 @@ rmm::device_uvector<size_type> compute_key_transform_map(
 rmm::device_uvector<size_type> compute_target_indices(device_span<size_type const> input,
                                                       device_span<size_type const> transform_map,
                                                       cuda::stream_ref stream,
-                                                      rmm::device_async_resource_ref mr)
+                                                      cuda::mr::device_resource_ref mr)
 {
   rmm::device_uvector<size_type> target_indices(input.size(), stream, mr);
   thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),

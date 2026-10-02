@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from pylibcudf.typing import CudaStreamLike
+from pylibcudf.libcudf.utilities.memory_resource cimport to_device_resource_ref
 from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 from rmm.pylibrmm.stream cimport Stream
 from cuda.bindings.cyruntime cimport cudaStream_t
@@ -64,7 +65,7 @@ cdef class UnicodeNormalizer:
         cdef DeviceMemoryResource _mr = _get_memory_resource(mr)
         with nogil:
             self.c_obj = move(
-                cpp_create_unicode_normalizer(c_data, form, _cs, _mr.get_mr())
+                cpp_create_unicode_normalizer(c_data, form, _cs, to_device_resource_ref(_mr.get_mr()))
             )
 
     __hash__ = None
@@ -112,7 +113,7 @@ cpdef Column normalize_unicode(
             c_input,
             dereference(normalizer.c_obj.get()),
             _cs,
-            _mr.get_mr(),
+            to_device_resource_ref(_mr.get_mr()),
         )
 
     return Column.from_libcudf(move(c_result), _stream, _mr)

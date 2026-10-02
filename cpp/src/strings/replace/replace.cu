@@ -30,6 +30,7 @@
 #include <cuda/atomic>
 #include <cuda/functional>
 #include <cuda/iterator>
+#include <cuda/memory_resource>
 #include <cuda/std/iterator>
 #include <cuda/stream>
 #include <thrust/binary_search.h>
@@ -263,7 +264,7 @@ std::unique_ptr<column> replace_character_parallel(strings_column_view const& in
                                                    string_view const& d_replacement,
                                                    cudf::size_type maxrepl,
                                                    cuda::stream_ref stream,
-                                                   rmm::device_async_resource_ref mr)
+                                                   cuda::mr::device_resource_ref mr)
 {
   auto d_strings = column_device_view::create(input.parent(), stream);
 
@@ -453,7 +454,7 @@ std::unique_ptr<column> replace_string_parallel(strings_column_view const& input
                                                 cudf::size_type maxrepl,
                                                 bitmask_type const* d_valid_mask,
                                                 cuda::stream_ref stream,
-                                                rmm::device_async_resource_ref mr)
+                                                cuda::mr::device_resource_ref mr)
 {
   auto d_strings = column_device_view::create(input.parent(), stream);
 
@@ -477,7 +478,7 @@ std::unique_ptr<column> replace(strings_column_view const& input,
                                 string_scalar const& repl,
                                 cudf::size_type maxrepl,
                                 cuda::stream_ref stream,
-                                rmm::device_async_resource_ref mr)
+                                cuda::mr::device_resource_ref mr)
 {
   if (input.is_empty()) { return make_empty_column(type_id::STRING); }
   if (maxrepl == 0) { return std::make_unique<cudf::column>(input.parent(), stream, mr); }
@@ -511,7 +512,7 @@ std::unique_ptr<column> replace(strings_column_view const& input,
                                 strings_column_view const& targets,
                                 strings_column_view const& repls,
                                 cuda::stream_ref stream,
-                                rmm::device_async_resource_ref mr)
+                                cuda::mr::device_resource_ref mr)
 {
   CUDF_EXPECTS(targets.size() == input.size(),
                "targets column must have the same number of rows as input",
@@ -560,7 +561,7 @@ std::unique_ptr<column> replace(strings_column_view const& strings,
                                 string_scalar const& repl,
                                 cudf::size_type maxrepl,
                                 cuda::stream_ref stream,
-                                rmm::device_async_resource_ref mr)
+                                cuda::mr::device_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
   return detail::replace(strings, target, repl, maxrepl, stream, mr);
@@ -570,7 +571,7 @@ std::unique_ptr<column> replace(strings_column_view const& strings,
                                 strings_column_view const& targets,
                                 strings_column_view const& repls,
                                 cuda::stream_ref stream,
-                                rmm::device_async_resource_ref mr)
+                                cuda::mr::device_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
   return detail::replace(strings, targets, repls, stream, mr);

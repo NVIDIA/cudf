@@ -9,6 +9,7 @@
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
+#include <cuda/memory_resource>
 #include <cuda/stream>
 
 #include <memory>
@@ -47,8 +48,8 @@ class table {
    * @param mr Device memory resource to use for all device memory allocations
    */
   explicit table(table const& other,
-                 cuda::stream_ref stream           = cudf::get_default_stream(),
-                 rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+                 cuda::stream_ref stream          = cudf::get_default_stream(),
+                 cuda::mr::device_resource_ref mr = cudf::get_current_device_resource_ref());
   /**
    * @brief Moves the contents from a vector of `unique_ptr`s to columns to
    * construct a new table.
@@ -85,8 +86,8 @@ class table {
    * @param mr Device memory resource used for allocating the device memory for the new columns
    */
   table(table_view view,
-        cuda::stream_ref stream           = cudf::get_default_stream(),
-        rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+        cuda::stream_ref stream          = cudf::get_default_stream(),
+        cuda::mr::device_resource_ref mr = cudf::get_current_device_resource_ref());
 
   /**
    * @brief Returns the number of columns in the table

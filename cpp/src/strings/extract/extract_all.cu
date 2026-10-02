@@ -21,6 +21,7 @@
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/functional>
+#include <cuda/memory_resource>
 #include <cuda/stream>
 #include <thrust/transform_scan.h>
 
@@ -94,7 +95,7 @@ struct extract_fn {
 std::unique_ptr<column> extract_all_record(strings_column_view const& input,
                                            regex_program const& prog,
                                            cuda::stream_ref stream,
-                                           rmm::device_async_resource_ref mr)
+                                           cuda::mr::device_resource_ref mr)
 {
   auto const strings_count = input.size();
   auto const d_strings     = column_device_view::create(input.parent(), stream);
@@ -150,7 +151,7 @@ std::unique_ptr<column> extract_all_record(strings_column_view const& input,
 std::unique_ptr<column> extract_all_record(strings_column_view const& input,
                                            regex_program const& prog,
                                            cuda::stream_ref stream,
-                                           rmm::device_async_resource_ref mr)
+                                           cuda::mr::device_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
   return detail::extract_all_record(input, prog, stream, mr);

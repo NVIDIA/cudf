@@ -18,6 +18,7 @@
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/iterator>
+#include <cuda/memory_resource>
 #include <cuda/std/limits>
 #include <cuda/std/tuple>
 #include <thrust/transform.h>
@@ -40,7 +41,7 @@ struct host_udf_reduction_example : cudf::reduce_host_udf {
     cudf::data_type output_dtype,
     std::optional<std::reference_wrapper<cudf::scalar const>> init,
     cuda::stream_ref stream,
-    rmm::device_async_resource_ref mr) const override
+    cuda::mr::device_resource_ref mr) const override
   {
     return cudf::double_type_dispatcher(
       input.type(), output_dtype, reduce_fn{}, input, output_dtype, init, stream, mr);
@@ -79,7 +80,7 @@ struct host_udf_reduction_example : cudf::reduce_host_udf {
       cudf::data_type output_dtype,
       std::optional<std::reference_wrapper<cudf::scalar const>> init,
       cuda::stream_ref stream,
-      rmm::device_async_resource_ref mr) const
+      cuda::mr::device_resource_ref mr) const
     {
       CUDF_EXPECTS(output_dtype == cudf::data_type{cudf::type_to_id<OutputType>()},
                    "Invalid output type.");
@@ -175,7 +176,7 @@ struct host_udf_segmented_reduction_example : cudf::segmented_reduce_host_udf {
     cudf::null_policy null_handling,
     std::optional<std::reference_wrapper<cudf::scalar const>> init,
     cuda::stream_ref stream,
-    rmm::device_async_resource_ref mr) const override
+    cuda::mr::device_resource_ref mr) const override
   {
     return cudf::double_type_dispatcher(input.type(),
                                         output_dtype,
@@ -224,7 +225,7 @@ struct host_udf_segmented_reduction_example : cudf::segmented_reduce_host_udf {
       cudf::null_policy null_handling,
       std::optional<std::reference_wrapper<cudf::scalar const>> init,
       cuda::stream_ref stream,
-      rmm::device_async_resource_ref mr) const
+      cuda::mr::device_resource_ref mr) const
     {
       CUDF_EXPECTS(output_dtype == cudf::data_type{cudf::type_to_id<OutputType>()},
                    "Invalid output type.");

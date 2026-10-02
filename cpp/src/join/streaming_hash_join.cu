@@ -30,6 +30,7 @@
 #include <cuco/pair.cuh>
 #include <cuco/static_multiset.cuh>
 #include <cuda/iterator>
+#include <cuda/memory_resource>
 #include <cuda/std/functional>
 #include <cuda/std/tuple>
 #include <cuda/stream>
@@ -57,7 +58,7 @@ auto make_device_comparators(
   std::span<std::shared_ptr<row::equality::preprocessed_table> const> preprocessed_right,
   Factory factory,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref temp_mr)
+  cuda::mr::device_resource_ref temp_mr)
 {
   using allocator_type  = cudf::detail::rmm_host_allocator<Equality>;
   auto host_comparators = std::vector<Equality, allocator_type>{
@@ -83,7 +84,7 @@ auto make_device_row_comparators(
   nullate::DYNAMIC has_nulls,
   null_equality compare_nulls,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref temp_mr)
+  cuda::mr::device_resource_ref temp_mr)
 {
   using equality_type =
     row::equality::device_row_comparator<has_nested,
@@ -106,7 +107,7 @@ auto make_device_primitive_row_comparators(
   nullate::DYNAMIC has_nulls,
   null_equality compare_nulls,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref temp_mr)
+  cuda::mr::device_resource_ref temp_mr)
 {
   using equality_type = row::primitive::row_equality_comparator;
 

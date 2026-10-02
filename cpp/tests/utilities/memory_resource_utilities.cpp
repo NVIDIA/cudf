@@ -9,6 +9,7 @@
 
 #include <rmm/error.hpp>
 
+#include <cuda/memory_resource>
 #include <cuda/stream>
 
 #include <cstddef>
@@ -17,7 +18,7 @@
 namespace cudf::test {
 
 scoped_current_device_resource::scoped_current_device_resource(
-  cuda::mr::any_resource<cuda::mr::device_accessible> resource)
+  cuda::mr::any_device_resource resource)
   : _previous{cudf::set_current_device_resource(std::move(resource))}
 {
 }
@@ -27,7 +28,7 @@ scoped_current_device_resource::~scoped_current_device_resource()
   std::ignore = cudf::set_current_device_resource(std::move(_previous));
 }
 
-memory_resource_test_harness::memory_resource_test_harness(rmm::device_async_resource_ref upstream)
+memory_resource_test_harness::memory_resource_test_harness(cuda::mr::device_resource_ref upstream)
   : _setup_mr{upstream},
     _output_mr{upstream},
     _temporary_mr{upstream},

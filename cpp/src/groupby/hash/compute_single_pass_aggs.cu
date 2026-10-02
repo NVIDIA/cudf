@@ -9,6 +9,8 @@
 
 #include <rmm/device_uvector.hpp>
 
+#include <cuda/memory_resource>
+
 namespace cudf::groupby::detail::hash {
 
 std::pair<bool, size_type> is_shared_memory_compatible(host_span<aggregation::Kind const> agg_kinds,
@@ -43,6 +45,6 @@ template std::pair<rmm::device_uvector<size_type>, bool> compute_single_pass_agg
   std::span<aggregation_request const> requests,
   cudf::detail::result_cache* cache,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr);
+  cuda::mr::device_resource_ref mr);
 
 }  // namespace cudf::groupby::detail::hash

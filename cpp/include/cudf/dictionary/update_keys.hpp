@@ -9,6 +9,8 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 
+#include <cuda/memory_resource>
+
 #include <span>
 
 /**
@@ -52,8 +54,8 @@ namespace dictionary {
 std::unique_ptr<column> add_keys(
   dictionary_column_view const& dictionary_column,
   column_view const& new_keys,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream          = cudf::get_default_stream(),
+  cuda::mr::device_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Create a new dictionary column by removing the specified keys
@@ -84,8 +86,8 @@ std::unique_ptr<column> add_keys(
 std::unique_ptr<column> remove_keys(
   dictionary_column_view const& dictionary_column,
   column_view const& keys_to_remove,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream          = cudf::get_default_stream(),
+  cuda::mr::device_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Create a new dictionary column by removing any keys
@@ -106,8 +108,8 @@ std::unique_ptr<column> remove_keys(
  */
 std::unique_ptr<column> remove_unused_keys(
   dictionary_column_view const& dictionary_column,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream          = cudf::get_default_stream(),
+  cuda::mr::device_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Create a new dictionary column by applying only the specified keys
@@ -143,8 +145,8 @@ std::unique_ptr<column> remove_unused_keys(
 std::unique_ptr<column> set_keys(
   dictionary_column_view const& dictionary_column,
   column_view const& keys,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream          = cudf::get_default_stream(),
+  cuda::mr::device_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Create new dictionaries that have keys merged from the input dictionaries.
@@ -159,8 +161,8 @@ std::unique_ptr<column> set_keys(
  */
 std::vector<std::unique_ptr<column>> match_dictionaries(
   std::span<dictionary_column_view const> input,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream          = cudf::get_default_stream(),
+  cuda::mr::device_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /** @} */  // end of group
 }  // namespace dictionary

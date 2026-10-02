@@ -10,6 +10,8 @@
 #include <cudf/utilities/export.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
+#include <cuda/memory_resource>
+
 /**
  * @file
  * @brief APIs for filtering elements from each row of a list column using a boolean mask
@@ -57,8 +59,8 @@ namespace lists {
 std::unique_ptr<column> apply_retention_mask(
   lists_column_view const& input,
   lists_column_view const& retention_mask,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream          = cudf::get_default_stream(),
+  cuda::mr::device_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Filters elements in each row of `input` LIST column using `boolean_mask`
@@ -75,8 +77,8 @@ std::unique_ptr<column> apply_retention_mask(
 [[deprecated("Use apply_retention_mask() instead")]] std::unique_ptr<column> apply_boolean_mask(
   lists_column_view const& input,
   lists_column_view const& boolean_mask,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream          = cudf::get_default_stream(),
+  cuda::mr::device_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Filters elements in each row of `input` LIST column using `deletion_mask`
@@ -112,8 +114,8 @@ std::unique_ptr<column> apply_retention_mask(
 std::unique_ptr<column> apply_deletion_mask(
   lists_column_view const& input,
   lists_column_view const& deletion_mask,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream          = cudf::get_default_stream(),
+  cuda::mr::device_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Create a new list column without duplicate elements in each list.
@@ -142,7 +144,7 @@ std::unique_ptr<column> distinct(
   nan_equality nans_equal           = nan_equality::ALL_EQUAL,
   duplicate_keep_option keep_option = duplicate_keep_option::KEEP_ANY,
   cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::mr::device_resource_ref mr  = cudf::get_current_device_resource_ref());
 
 /** @} */  // end of group
 

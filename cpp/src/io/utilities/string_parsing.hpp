@@ -13,6 +13,7 @@
 
 #include <cuda/buffer>
 #include <cuda/iterator>
+#include <cuda/memory_resource>
 #include <cuda/std/tuple>
 #include <cuda/stream>
 
@@ -148,6 +149,6 @@ CUDF_EXPORT std::unique_ptr<column> parse_data(
   size_type null_count,
   cudf::io::parse_options_view const& options,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr);
+  cuda::mr::device_resource_ref mr);
 }  // namespace json::detail
 }  // namespace cudf::io

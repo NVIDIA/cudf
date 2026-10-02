@@ -17,6 +17,7 @@
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/iterator>
+#include <cuda/memory_resource>
 #include <cuda/std/limits>
 #include <cuda/std/tuple>
 #include <thrust/transform.h>
@@ -35,14 +36,14 @@ struct host_udf_groupby_example : cudf::groupby_host_udf {
   host_udf_groupby_example() = default;
 
   [[nodiscard]] std::unique_ptr<cudf::column> get_empty_output(
-    cuda::stream_ref, rmm::device_async_resource_ref) const override
+    cuda::stream_ref, cuda::mr::device_resource_ref) const override
   {
     return cudf::make_empty_column(
       cudf::data_type{cudf::type_to_id<typename groupby_fn::OutputType>()});
   }
 
   [[nodiscard]] std::unique_ptr<cudf::column> operator()(
-    cuda::stream_ref stream, rmm::device_async_resource_ref mr) const override
+    cuda::stream_ref stream, cuda::mr::device_resource_ref mr) const override
   {
     auto const values = get_grouped_values();
     return cudf::type_dispatcher(values.type(), groupby_fn{*this}, stream, mr);
@@ -75,7 +76,7 @@ struct host_udf_groupby_example : cudf::groupby_host_udf {
 
     template <typename T, CUDF_ENABLE_IF(std::is_same_v<InputType, T>)>
     std::unique_ptr<cudf::column> operator()(cuda::stream_ref stream,
-                                             rmm::device_async_resource_ref mr) const
+                                             cuda::mr::device_resource_ref mr) const
     {
       auto const values = parent.get_grouped_values();
       if (values.size() == 0) { return parent.get_empty_output(stream, mr); }

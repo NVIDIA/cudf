@@ -11,9 +11,9 @@
 #include <cudf/hashing/detail/murmurhash3_x86_32.cuh>
 #include <cudf/join/join.hpp>
 #include <cudf/table/table_view.hpp>
+#include <cudf/types.hpp>
 
 #include <rmm/device_uvector.hpp>
-#include <rmm/resource_ref.hpp>
 
 #include <cuda/stream>
 

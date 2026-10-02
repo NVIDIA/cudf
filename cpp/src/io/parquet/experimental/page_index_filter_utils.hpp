@@ -16,6 +16,7 @@
 #include <cudf/types.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
+#include <cuda/memory_resource>
 #include <cuda/stream>
 
 #include <functional>
@@ -114,6 +115,6 @@ compute_page_row_offsets_and_colchunk_page_offsets(
   size_type total_rows,
   std::reference_wrapper<ast::expression const> stats_expression,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr);
+  cuda::mr::device_resource_ref mr);
 
 }  // namespace cudf::io::parquet::experimental::detail

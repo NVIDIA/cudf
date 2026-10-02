@@ -18,6 +18,7 @@
 
 #include <cuda/functional>
 #include <cuda/iterator>
+#include <cuda/memory_resource>
 #include <thrust/count.h>
 #include <thrust/fill.h>
 #include <thrust/scatter.h>
@@ -65,7 +66,7 @@ std::unique_ptr<cudf::column> compute_row_index_column(
   std::optional<size_t> start_row,
   size_type num_rows,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cuda::mr::device_resource_ref mr)
 {
   auto const num_row_groups = static_cast<size_type>(row_group_num_rows.size());
 
@@ -149,7 +150,7 @@ std::unique_ptr<cudf::column> compute_partial_row_index_column(
   size_type num_rows,
   bool is_unspecified_row_group_data,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cuda::mr::device_resource_ref mr)
 {
   if (is_unspecified_row_group_data) {
     return compute_row_index_column({}, {}, start_row, num_rows, stream, mr);
@@ -256,7 +257,7 @@ std::unique_ptr<cudf::column> compute_row_mask_column(
   cudf::host_span<std::reference_wrapper<cudf::roaring_bitmap const> const> deletion_vector_refs,
   cudf::host_span<size_type const> rows_per_deletion_vector,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cuda::mr::device_resource_ref mr)
 {
   auto const num_rows  = row_index_column.size();
   auto row_mask_column = cudf::make_fixed_width_column(
@@ -359,7 +360,7 @@ std::unique_ptr<cudf::column> compute_partial_row_mask_column(
   std::queue<cudf::roaring_bitmap>& deletion_vectors,
   std::queue<size_type>& deletion_vector_row_counts,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cuda::mr::device_resource_ref mr)
 {
   auto [_, dv_refs, dv_row_counts] =
     consume_deletion_vectors(row_index_column.size(), deletion_vectors, deletion_vector_row_counts);

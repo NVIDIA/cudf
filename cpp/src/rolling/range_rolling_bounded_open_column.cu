@@ -14,8 +14,7 @@
 #include <cudf/types.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
-#include <rmm/resource_ref.hpp>
-
+#include <cuda/memory_resource>
 #include <cuda/stream>
 
 #include <memory>
@@ -32,7 +31,7 @@ std::unique_ptr<column> dispatch_range_window(
   bool nulls_at_start,
   range_window_delta const& delta,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cuda::mr::device_resource_ref mr)
 {
   return type_dispatcher(orderby.type(),
                          rolling::range_window_clamper<bounded_open_column>{},

@@ -22,6 +22,8 @@
 
 #include <rmm/mr/statistics_resource_adaptor.hpp>
 
+#include <cuda/memory_resource>
+
 #include <url_log_fragments.hpp>
 
 #include <chrono>
@@ -234,7 +236,7 @@ constexpr std::string_view usage =
   "       url_log_transforms <usage|--help>\n";
 
 // warmup the PCH cache
-void warmup_pch(cudf::column_view input, cuda::stream_ref stream, rmm::device_async_resource_ref mr)
+void warmup_pch(cudf::column_view input, cuda::stream_ref stream, cuda::mr::device_resource_ref mr)
 {
   constexpr char udf[]           = R"***(
 __device__ int transform(int32_t* output, cudf::string_view input) {
@@ -262,7 +264,7 @@ __device__ int transform(int32_t* output, cudf::string_view input) {
 // Extracts RFC 3986-style hierarchical URI components from unstructured log lines.
 [[nodiscard]] std::unique_ptr<cudf::table> run_regex(cudf::column_view input,
                                                      cuda::stream_ref stream,
-                                                     rmm::device_async_resource_ref mr)
+                                                     cuda::mr::device_resource_ref mr)
 {
   // Derived from RFC 3986 Appendix B (https://www.rfc-editor.org/info/rfc3986/#page-50). The
   // authority capture is expanded into optional userinfo plus host and port, and Appendix C
@@ -281,7 +283,7 @@ __device__ int transform(int32_t* output, cudf::string_view input) {
 // Decomposes key-value URL tokens using only precompiled libcudf string primitives.
 [[nodiscard]] std::unique_ptr<cudf::table> run_precompiled(cudf::column_view input,
                                                            cuda::stream_ref stream,
-                                                           rmm::device_async_resource_ref mr)
+                                                           cuda::mr::device_resource_ref mr)
 {
   // Materialize the delimiters used by each partitioning stage.
   auto empty            = cudf::string_scalar{"", true, stream, mr};
@@ -409,7 +411,7 @@ __device__ int transform(int32_t* output, cudf::string_view input) {
 [[nodiscard]] std::unique_ptr<cudf::table> run_jit(cudf::column_view input,
                                                    bool use_lto,
                                                    cuda::stream_ref stream,
-                                                   rmm::device_async_resource_ref mr)
+                                                   cuda::mr::device_resource_ref mr)
 {
   cudf::transform_output const size_spec{cudf::data_type{cudf::type_id::INT32},
                                          cudf::output_nullability::ALL_VALID};
@@ -530,7 +532,7 @@ try {
   auto upstream_mr   = cudf::get_current_device_resource_ref();
   // Tracks setup, measured work, and output
   rmm::mr::statistics_resource_adaptor whole_stats{upstream_mr};
-  auto whole_mr = rmm::device_async_resource_ref{whole_stats};
+  auto whole_mr = cuda::mr::device_resource_ref{whole_stats};
   cudf::set_current_device_resource(whole_mr);
 
   nvtxRangePush("url_log_setup");
@@ -550,8 +552,8 @@ try {
 
   // Tracks measured work; nested allocations also update whole_stats.
   rmm::mr::statistics_resource_adaptor measured_stats{whole_mr};
-  auto measured_mr   = rmm::device_async_resource_ref{measured_stats};
-  auto run_transform = [&](rmm::device_async_resource_ref mr) {
+  auto measured_mr   = cuda::mr::device_resource_ref{measured_stats};
+  auto run_transform = [&](cuda::mr::device_resource_ref mr) {
     if (impl == "regex") {
       return run_regex(input_view, stream, mr);
     } else if (impl == "precompiled") {

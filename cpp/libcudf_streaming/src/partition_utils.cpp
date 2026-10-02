@@ -14,6 +14,7 @@
 
 #include <rmm/device_buffer.hpp>
 
+#include <cuda/memory_resource>
 #include <cuda/stream>
 
 #include <rapidsmpf/cuda_stream.hpp>
@@ -66,7 +67,7 @@ void check_reservation(rapidsmpf::MemoryReservation const& reservation, std::siz
 [[nodiscard]] std::pair<std::size_t, std::size_t> packed_and_total_size(
   cudf::table_view const& table,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref temp_mr,
+  cuda::mr::device_resource_ref temp_mr,
   std::optional<std::size_t> packed_bytes = std::nullopt)
 {
   if (!packed_bytes.has_value()) { packed_bytes = cudf::packed_size(table, stream, temp_mr); }
@@ -144,7 +145,7 @@ std::pair<std::vector<cudf::table_view>, std::unique_ptr<cudf::table>> partition
 
 std::size_t partition_and_pack_cost(cudf::table_view const& table,
                                     cuda::stream_ref stream,
-                                    rmm::device_async_resource_ref temp_mr)
+                                    cuda::mr::device_resource_ref temp_mr)
 {
   return packed_and_total_size(table, stream, temp_mr).second;
 }
@@ -210,7 +211,7 @@ std::unordered_map<rapidsmpf::shuffler::PartID, rapidsmpf::PackedData> partition
 
 std::size_t split_and_pack_cost(cudf::table_view const& table,
                                 cuda::stream_ref stream,
-                                rmm::device_async_resource_ref temp_mr)
+                                cuda::mr::device_resource_ref temp_mr)
 {
   return packed_and_total_size(table, stream, temp_mr).first;
 }

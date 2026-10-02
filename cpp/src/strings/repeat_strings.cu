@@ -19,6 +19,7 @@
 #include <cudf/utilities/memory_resource.hpp>
 
 #include <cuda/iterator>
+#include <cuda/memory_resource>
 #include <cuda/std/algorithm>
 #include <cuda/stream>
 #include <thrust/for_each.h>
@@ -32,7 +33,7 @@ namespace detail {
 std::unique_ptr<string_scalar> repeat_string(string_scalar const& input,
                                              size_type repeat_times,
                                              cuda::stream_ref stream,
-                                             rmm::device_async_resource_ref mr)
+                                             cuda::mr::device_resource_ref mr)
 {
   if (!input.is_valid(stream)) { return std::make_unique<string_scalar>("", false, stream, mr); }
   if (input.size() == 0 || repeat_times <= 0) {
@@ -69,7 +70,7 @@ namespace {
 auto generate_empty_output(strings_column_view const& input,
                            size_type strings_count,
                            cuda::stream_ref stream,
-                           rmm::device_async_resource_ref mr)
+                           cuda::mr::device_resource_ref mr)
 {
   auto offsets_column = make_numeric_column(
     data_type{type_id::INT32}, strings_count + 1, mask_state::UNALLOCATED, stream, mr);
@@ -137,7 +138,7 @@ struct compute_size_and_repeat_fn {
 std::unique_ptr<column> repeat_strings(strings_column_view const& input,
                                        size_type repeat_times,
                                        cuda::stream_ref stream,
-                                       rmm::device_async_resource_ref mr)
+                                       cuda::mr::device_resource_ref mr)
 {
   auto const strings_count = input.size();
   if (strings_count == 0) { return make_empty_column(type_id::STRING); }
@@ -219,7 +220,7 @@ struct compute_sizes_and_repeat_fn {
 std::unique_ptr<column> repeat_strings(strings_column_view const& input,
                                        column_view const& repeat_times,
                                        cuda::stream_ref stream,
-                                       rmm::device_async_resource_ref mr)
+                                       cuda::mr::device_resource_ref mr)
 {
   CUDF_EXPECTS(input.size() == repeat_times.size(), "The input columns must have the same size.");
   CUDF_EXPECTS(cudf::is_index_type(repeat_times.type()),
@@ -255,7 +256,7 @@ std::unique_ptr<column> repeat_strings(strings_column_view const& input,
 std::unique_ptr<string_scalar> repeat_string(string_scalar const& input,
                                              size_type repeat_times,
                                              cuda::stream_ref stream,
-                                             rmm::device_async_resource_ref mr)
+                                             cuda::mr::device_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
   return detail::repeat_string(input, repeat_times, stream, mr);
@@ -264,7 +265,7 @@ std::unique_ptr<string_scalar> repeat_string(string_scalar const& input,
 std::unique_ptr<column> repeat_strings(strings_column_view const& input,
                                        size_type repeat_times,
                                        cuda::stream_ref stream,
-                                       rmm::device_async_resource_ref mr)
+                                       cuda::mr::device_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
   return detail::repeat_strings(input, repeat_times, stream, mr);
@@ -273,7 +274,7 @@ std::unique_ptr<column> repeat_strings(strings_column_view const& input,
 std::unique_ptr<column> repeat_strings(strings_column_view const& input,
                                        column_view const& repeat_times,
                                        cuda::stream_ref stream,
-                                       rmm::device_async_resource_ref mr)
+                                       cuda::mr::device_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
   return detail::repeat_strings(input, repeat_times, stream, mr);

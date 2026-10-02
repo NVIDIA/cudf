@@ -22,6 +22,7 @@
 
 #include <cuda/functional>
 #include <cuda/iterator>
+#include <cuda/memory_resource>
 #include <cuda/std/algorithm>
 #include <cuda/std/type_traits>
 #include <cuda/std/utility>
@@ -257,7 +258,7 @@ std::unique_ptr<column> rank(column_view const& input,
                              null_order null_precedence,
                              bool percentage,
                              cuda::stream_ref stream,
-                             rmm::device_async_resource_ref mr)
+                             cuda::mr::device_resource_ref mr)
 {
   data_type const output_type         = (percentage or method == rank_method::AVERAGE)
                                           ? data_type(type_id::FLOAT64)
@@ -360,7 +361,7 @@ std::unique_ptr<column> rank(column_view const& input,
                              null_order null_precedence,
                              bool percentage,
                              cuda::stream_ref stream,
-                             rmm::device_async_resource_ref mr)
+                             cuda::mr::device_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
   return detail::rank(

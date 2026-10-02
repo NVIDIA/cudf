@@ -15,6 +15,7 @@
 
 #include <rmm/device_buffer.hpp>
 
+#include <cuda/memory_resource>
 #include <cuda/stream>
 
 #include <memory>
@@ -28,7 +29,7 @@ template <typename RequestType>
 inline std::vector<aggregation_result> extract_results(std::span<RequestType const> requests,
                                                        cudf::detail::result_cache& cache,
                                                        cuda::stream_ref stream,
-                                                       rmm::device_async_resource_ref mr)
+                                                       cuda::mr::device_resource_ref mr)
 {
   std::vector<aggregation_result> results(requests.size());
   std::unordered_map<std::pair<column_view, std::reference_wrapper<aggregation const>>,

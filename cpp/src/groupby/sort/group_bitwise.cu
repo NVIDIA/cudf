@@ -11,12 +11,12 @@
 #include <cudf/detail/iterator.cuh>
 #include <cudf/detail/utilities/device_operators.cuh>
 #include <cudf/detail/valid_if.cuh>
+#include <cudf/types.hpp>
 #include <cudf/utilities/span.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
-#include <rmm/resource_ref.hpp>
-
 #include <cuda/iterator>
+#include <cuda/memory_resource>
 #include <cuda/std/functional>
 #include <cuda/stream>
 
@@ -31,7 +31,7 @@ struct bitwise_group_reduction_functor {
                                      device_span<size_type const> group_labels,
                                      size_type num_groups,
                                      cuda::stream_ref stream,
-                                     rmm::device_async_resource_ref mr) const
+                                     cuda::mr::device_resource_ref mr) const
 
   {
     auto result =
@@ -94,7 +94,7 @@ std::unique_ptr<column> group_bitwise(bitwise_op bit_op,
                                       device_span<size_type const> group_labels,
                                       size_type num_groups,
                                       cuda::stream_ref stream,
-                                      rmm::device_async_resource_ref mr)
+                                      cuda::mr::device_resource_ref mr)
 {
   return cudf::type_dispatcher(values.type(),
                                bitwise_group_reduction_functor{},

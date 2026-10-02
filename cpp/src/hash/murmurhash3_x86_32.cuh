@@ -7,8 +7,7 @@
 
 #include <cudf/types.hpp>
 
-#include <rmm/resource_ref.hpp>
-
+#include <cuda/memory_resource>
 #include <cuda/stream>
 
 #include <cstdint>
@@ -28,7 +27,7 @@ std::unique_ptr<column> murmurhash3_x86_32(
   size_type num_rows,
   uint32_t seed,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr);
+  cuda::mr::device_resource_ref mr);
 
 }  // namespace hashing::detail
 }  // namespace cudf

@@ -10,6 +10,8 @@
 #include <cudf/utilities/export.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
+#include <cuda/memory_resource>
+
 #include <optional>
 
 /**
@@ -97,7 +99,7 @@ std::unique_ptr<scalar> reduce(
   reduce_aggregation const& agg,
   data_type output_type,
   cuda::stream_ref stream      = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::mr::device_resource_ref mr = cudf::get_current_device_resource_ref());
 // clang-format on
 
 /**
@@ -108,7 +110,7 @@ std::unique_ptr<scalar> reduce(
  * detection is performed throughout the entire computation.
  *
  * @see cudf::reduce(column_view const&,reduce_aggregation
- * const&,data_type,cuda::stream_ref,rmm::device_async_resource_ref) for more details
+ * const&,data_type,cuda::stream_ref,cuda::mr::device_resource_ref) for more details
  *
  * @throw std::invalid_argument if reduction is not `sum`, `product`, `min`, `max`, `any`, `all`,
  * or `sum_overflow` and `init` is specified.
@@ -126,8 +128,8 @@ std::unique_ptr<scalar> reduce(
   reduce_aggregation const& agg,
   data_type output_type,
   std::optional<std::reference_wrapper<scalar const>> init,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream          = cudf::get_default_stream(),
+  cuda::mr::device_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief  Compute reduction of each segment in the input column
@@ -178,8 +180,8 @@ std::unique_ptr<column> segmented_reduce(
   segmented_reduce_aggregation const& agg,
   data_type output_type,
   null_policy null_handling,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream          = cudf::get_default_stream(),
+  cuda::mr::device_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief  Compute reduction of each segment in the input column with an initial value. Only SUM,
@@ -205,8 +207,8 @@ std::unique_ptr<column> segmented_reduce(
   data_type output_type,
   null_policy null_handling,
   std::optional<std::reference_wrapper<scalar const>> init,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream          = cudf::get_default_stream(),
+  cuda::mr::device_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief  Computes the scan of a column.
@@ -230,9 +232,9 @@ std::unique_ptr<column> scan(
   column_view const& input,
   scan_aggregation const& agg,
   scan_type inclusive,
-  null_policy null_handling         = null_policy::EXCLUDE,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  null_policy null_handling        = null_policy::EXCLUDE,
+  cuda::stream_ref stream          = cudf::get_default_stream(),
+  cuda::mr::device_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Determines the minimum and maximum values of a column.
@@ -246,8 +248,8 @@ std::unique_ptr<column> scan(
  */
 std::pair<std::unique_ptr<scalar>, std::unique_ptr<scalar>> minmax(
   column_view const& col,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream          = cudf::get_default_stream(),
+  cuda::mr::device_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Reduction namespace

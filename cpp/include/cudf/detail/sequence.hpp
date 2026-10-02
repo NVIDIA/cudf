@@ -10,40 +10,41 @@
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
+#include <cuda/memory_resource>
 #include <cuda/stream>
 
 namespace cudf {
 namespace detail {
 /**
  * @copydoc cudf::sequence(size_type, scalar const&, scalar const&,cuda::stream_ref
- * stream,rmm::device_async_resource_ref)
+ * stream,cuda::mr::device_resource_ref)
  */
 std::unique_ptr<column> sequence(size_type size,
                                  scalar const& init,
                                  scalar const& step,
                                  cuda::stream_ref stream,
-                                 rmm::device_async_resource_ref mr);
+                                 cuda::mr::device_resource_ref mr);
 
 /**
  * @copydoc cudf::sequence(size_type, scalar const&, cuda::stream_ref,
- * rmm::device_async_resource_ref)
+ * cuda::mr::device_resource_ref)
  */
 std::unique_ptr<column> sequence(size_type size,
                                  scalar const& init,
                                  cuda::stream_ref stream,
-                                 rmm::device_async_resource_ref mr);
+                                 cuda::mr::device_resource_ref mr);
 
 /**
  * @copydoc cudf::calendrical_month_sequence(size_type size,
  *                                           scalar const& init,
  *                                           size_type months,
- *                                           rmm::device_async_resource_ref mr)
+ *                                           cuda::mr::device_resource_ref mr)
  */
 std::unique_ptr<cudf::column> calendrical_month_sequence(size_type size,
                                                          scalar const& init,
                                                          size_type months,
                                                          cuda::stream_ref stream,
-                                                         rmm::device_async_resource_ref mr);
+                                                         cuda::mr::device_resource_ref mr);
 
 }  // namespace detail
 }  // namespace cudf

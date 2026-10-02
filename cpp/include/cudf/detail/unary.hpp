@@ -10,6 +10,7 @@
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
+#include <cuda/memory_resource>
 #include <cuda/stream>
 
 namespace cudf {
@@ -21,14 +22,14 @@ namespace detail {
 std::unique_ptr<cudf::column> unary_operation(cudf::column_view const& input,
                                               cudf::unary_operator op,
                                               cuda::stream_ref stream,
-                                              rmm::device_async_resource_ref mr);
+                                              cuda::mr::device_resource_ref mr);
 
 /**
  * @copydoc cudf::is_valid
  */
 std::unique_ptr<cudf::column> is_valid(cudf::column_view const& input,
                                        cuda::stream_ref stream,
-                                       rmm::device_async_resource_ref mr);
+                                       cuda::mr::device_resource_ref mr);
 
 /**
  * @copydoc cudf::cast
@@ -36,21 +37,21 @@ std::unique_ptr<cudf::column> is_valid(cudf::column_view const& input,
 std::unique_ptr<column> cast(column_view const& input,
                              data_type type,
                              cuda::stream_ref stream,
-                             rmm::device_async_resource_ref mr);
+                             cuda::mr::device_resource_ref mr);
 
 /**
  * @copydoc cudf::is_nan
  */
 std::unique_ptr<column> is_nan(cudf::column_view const& input,
                                cuda::stream_ref stream,
-                               rmm::device_async_resource_ref mr);
+                               cuda::mr::device_resource_ref mr);
 
 /**
  * @copydoc cudf::is_not_nan
  */
 std::unique_ptr<column> is_not_nan(cudf::column_view const& input,
                                    cuda::stream_ref stream,
-                                   rmm::device_async_resource_ref mr);
+                                   cuda::mr::device_resource_ref mr);
 
 }  // namespace detail
 }  // namespace cudf

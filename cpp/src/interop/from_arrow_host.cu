@@ -30,6 +30,7 @@
 #include <rmm/device_buffer.hpp>
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/memory_resource>
 #include <cuda/stream>
 #include <thrust/sequence.h>
 
@@ -94,7 +95,7 @@ CUDF_KERNEL void copy_shifted_bitmask(bitmask_type* __restrict__ destination,
 
 // copies the bitmask to device and automatically applies the offset
 std::pair<std::unique_ptr<cuda::device_buffer<std::byte>>, size_type> get_mask_buffer(
-  ArrowArray const* input, cuda::stream_ref stream, rmm::device_async_resource_ref mr)
+  ArrowArray const* input, cuda::stream_ref stream, cuda::mr::device_resource_ref mr)
 {
   if (input->length == 0) {
     return {std::make_unique<cuda::device_buffer<std::byte>>(
@@ -144,11 +145,11 @@ std::unique_ptr<column> get_column_copy(ArrowSchemaView const* schema,
                                         data_type type,
                                         bool skip_mask,
                                         cuda::stream_ref stream,
-                                        rmm::device_async_resource_ref mr);
+                                        cuda::mr::device_resource_ref mr);
 
 struct dispatch_copy_from_arrow_host {
   cuda::stream_ref stream;
-  rmm::device_async_resource_ref mr;
+  cuda::mr::device_resource_ref mr;
 
   template <typename T, CUDF_ENABLE_IF(not is_rep_layout_compatible<T>() && !is_fixed_point<T>())>
   std::unique_ptr<column> operator()(ArrowSchemaView const*, ArrowArray const*, data_type, bool)
@@ -312,7 +313,7 @@ std::tuple<std::unique_ptr<column>, int64_t, int64_t> get_fixed_size_list_offset
   ArrowSchemaView const* schema,
   ArrowArray const* input,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cuda::mr::device_resource_ref mr)
 {
   auto const layout = get_fixed_size_list_layout(schema, input);
   CUDF_EXPECTS(input->children[0]->length >= layout.child_end,
@@ -391,7 +392,7 @@ std::unique_ptr<column> get_column_copy(ArrowSchemaView const* schema,
                                         data_type type,
                                         bool skip_mask,
                                         cuda::stream_ref stream,
-                                        rmm::device_async_resource_ref mr)
+                                        cuda::mr::device_resource_ref mr)
 {
   CUDF_EXPECTS(
     input->length <= static_cast<std::int64_t>(std::numeric_limits<cudf::size_type>::max()),
@@ -424,7 +425,7 @@ std::tuple<std::unique_ptr<column>, int64_t, int64_t> copy_offsets_column(
   ArrowSchemaView const* schema,
   ArrowArray const* offsets,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cuda::mr::device_resource_ref mr)
 {
   auto offsets_buffer =
     static_cast<OffsetType const*>(offsets->buffers[fixed_width_data_buffer_idx]);
@@ -451,7 +452,7 @@ std::tuple<std::unique_ptr<column>, int64_t, int64_t> copy_offsets_column(
 std::unique_ptr<column> make_fixed_size_list_offsets(size_type num_offsets,
                                                      int32_t width,
                                                      cuda::stream_ref stream,
-                                                     rmm::device_async_resource_ref mr)
+                                                     cuda::mr::device_resource_ref mr)
 {
   auto offsets = make_numeric_column(
     data_type{type_id::INT32}, num_offsets, mask_state::UNALLOCATED, stream, mr);
@@ -474,7 +475,7 @@ std::tuple<std::unique_ptr<column>, int64_t, int64_t> get_offsets_column(
   ArrowSchemaView const* schema,
   ArrowArray const* input,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cuda::mr::device_resource_ref mr)
 {
   void const* offsets_buffer     = input->buffers[fixed_width_data_buffer_idx];
   void const* offsets_buffers[2] = {nullptr, offsets_buffer};
@@ -524,7 +525,7 @@ std::tuple<std::unique_ptr<column>, int64_t, int64_t> get_offsets_column(
 std::unique_ptr<table> from_arrow_host(ArrowSchema const* schema,
                                        ArrowDeviceArray const* input,
                                        cuda::stream_ref stream,
-                                       rmm::device_async_resource_ref mr)
+                                       cuda::mr::device_resource_ref mr)
 {
   CUDF_EXPECTS(schema != nullptr && input != nullptr,
                "input ArrowSchema and ArrowDeviceArray must not be NULL",
@@ -569,7 +570,7 @@ std::unique_ptr<table> from_arrow_host(ArrowSchema const* schema,
 std::unique_ptr<column> from_arrow_host_column(ArrowSchema const* schema,
                                                ArrowDeviceArray const* input,
                                                cuda::stream_ref stream,
-                                               rmm::device_async_resource_ref mr)
+                                               cuda::mr::device_resource_ref mr)
 {
   CUDF_EXPECTS(schema != nullptr && input != nullptr,
                "input ArrowSchema and ArrowDeviceArray must not be NULL",
@@ -592,7 +593,7 @@ std::unique_ptr<column> get_column_from_host_copy(ArrowSchemaView const* schema,
                                                   data_type type,
                                                   bool skip_mask,
                                                   cuda::stream_ref stream,
-                                                  rmm::device_async_resource_ref mr)
+                                                  cuda::mr::device_resource_ref mr)
 {
   return get_column_copy(schema, input, type, skip_mask, stream, mr);
 }
@@ -602,7 +603,7 @@ std::unique_ptr<column> get_column_from_host_copy(ArrowSchemaView const* schema,
 std::unique_ptr<table> from_arrow_host(ArrowSchema const* schema,
                                        ArrowDeviceArray const* input,
                                        cuda::stream_ref stream,
-                                       rmm::device_async_resource_ref mr)
+                                       cuda::mr::device_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
 
@@ -612,7 +613,7 @@ std::unique_ptr<table> from_arrow_host(ArrowSchema const* schema,
 std::unique_ptr<column> from_arrow_host_column(ArrowSchema const* schema,
                                                ArrowDeviceArray const* input,
                                                cuda::stream_ref stream,
-                                               rmm::device_async_resource_ref mr)
+                                               cuda::mr::device_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
 
@@ -622,7 +623,7 @@ std::unique_ptr<column> from_arrow_host_column(ArrowSchema const* schema,
 std::unique_ptr<table> from_arrow(ArrowSchema const* schema,
                                   ArrowArray const* input,
                                   cuda::stream_ref stream,
-                                  rmm::device_async_resource_ref mr)
+                                  cuda::mr::device_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
 
@@ -637,7 +638,7 @@ std::unique_ptr<table> from_arrow(ArrowSchema const* schema,
 std::unique_ptr<column> from_arrow_column(ArrowSchema const* schema,
                                           ArrowArray const* input,
                                           cuda::stream_ref stream,
-                                          rmm::device_async_resource_ref mr)
+                                          cuda::mr::device_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
 

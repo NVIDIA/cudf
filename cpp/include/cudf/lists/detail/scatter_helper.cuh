@@ -14,6 +14,8 @@
 #include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/memory_resource>
+
 #include <memory>
 
 namespace cudf {
@@ -126,7 +128,7 @@ std::unique_ptr<column> build_lists_child_column_recursive(
   cudf::lists_column_view const& source_lists_column_view,
   cudf::lists_column_view const& target_lists_column_view,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr);
+  cuda::mr::device_resource_ref mr);
 
 }  // namespace detail
 }  // namespace lists

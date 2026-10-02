@@ -48,6 +48,7 @@
 #include <cudf/utilities/type_checks.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
+#include <cuda/memory_resource>
 #include <cuda/std/iterator>
 #include <cuda/std/utility>
 #include <cuda/stream>
@@ -169,7 +170,7 @@ struct replace_kernel_forwarder {
                                            cudf::column_view const& values_to_replace,
                                            cudf::column_view const& replacement_values,
                                            cuda::stream_ref stream,
-                                           rmm::device_async_resource_ref mr)
+                                           cuda::mr::device_resource_ref mr)
   {
     cudf::detail::device_scalar<cudf::size_type> valid_counter(
       0, stream, cudf::get_current_device_resource_ref());
@@ -219,7 +220,7 @@ struct replace_kernel_forwarder {
                                            cudf::column_view const&,
                                            cudf::column_view const&,
                                            cuda::stream_ref,
-                                           rmm::device_async_resource_ref)
+                                           cuda::mr::device_resource_ref)
   {
     CUDF_FAIL("No specialization exists for this type");
   }
@@ -231,7 +232,7 @@ std::unique_ptr<cudf::column> replace_kernel_forwarder::operator()<cudf::string_
   cudf::column_view const& values_to_replace,
   cudf::column_view const& replacement_values,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cuda::mr::device_resource_ref mr)
 {
   return cudf::strings::detail::find_and_replace_all(
     input_col, values_to_replace, replacement_values, stream, mr);
@@ -243,7 +244,7 @@ std::unique_ptr<cudf::column> replace_kernel_forwarder::operator()<cudf::diction
   cudf::column_view const& values_to_replace,
   cudf::column_view const& replacement_values,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cuda::mr::device_resource_ref mr)
 {
   auto input        = cudf::dictionary_column_view(input_col);
   auto values       = cudf::dictionary_column_view(values_to_replace);
@@ -285,7 +286,7 @@ std::unique_ptr<cudf::column> find_and_replace_all(cudf::column_view const& inpu
                                                    cudf::column_view const& values_to_replace,
                                                    cudf::column_view const& replacement_values,
                                                    cuda::stream_ref stream,
-                                                   rmm::device_async_resource_ref mr)
+                                                   cuda::mr::device_resource_ref mr)
 {
   CUDF_EXPECTS(values_to_replace.size() == replacement_values.size(),
                "values_to_replace and replacement_values size mismatch.");
@@ -328,7 +329,7 @@ std::unique_ptr<cudf::column> find_and_replace_all(cudf::column_view const& inpu
                                                    cudf::column_view const& values_to_replace,
                                                    cudf::column_view const& replacement_values,
                                                    cuda::stream_ref stream,
-                                                   rmm::device_async_resource_ref mr)
+                                                   cuda::mr::device_resource_ref mr)
 {
   return detail::find_and_replace_all(input_col, values_to_replace, replacement_values, stream, mr);
 }

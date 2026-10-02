@@ -8,6 +8,7 @@
 #include <cudf/types.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
+#include <cuda/memory_resource>
 #include <cuda/stream>
 
 #include <memory>
@@ -19,7 +20,7 @@ namespace csv {
 
 std::unique_ptr<column> pandas_format_durations(column_view const& durations,
                                                 cuda::stream_ref stream,
-                                                rmm::device_async_resource_ref mr);
+                                                cuda::mr::device_resource_ref mr);
 
 }  // namespace csv
 }  // namespace detail

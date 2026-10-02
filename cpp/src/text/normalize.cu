@@ -34,6 +34,7 @@
 #include <cuda/buffer>
 #include <cuda/functional>
 #include <cuda/iterator>
+#include <cuda/memory_resource>
 #include <cuda/std/iterator>
 #include <cuda/stream>
 #include <thrust/binary_search.h>
@@ -109,7 +110,7 @@ __device__ int8_t cp_to_utf8(uint32_t codepoint, char* out)
 // detail API
 std::unique_ptr<cudf::column> normalize_spaces(cudf::strings_column_view const& strings,
                                                cuda::stream_ref stream,
-                                               rmm::device_async_resource_ref mr)
+                                               cuda::mr::device_resource_ref mr)
 {
   if (strings.is_empty()) return cudf::make_empty_column(cudf::data_type{cudf::type_id::STRING});
 
@@ -187,7 +188,7 @@ rmm::device_uvector<aux_codepoint_data_type> get_aux_codepoint_data(cuda::stream
 
 std::unique_ptr<cudf::column> normalize_spaces(cudf::strings_column_view const& input,
                                                cuda::stream_ref stream,
-                                               rmm::device_async_resource_ref mr)
+                                               cuda::mr::device_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
   return detail::normalize_spaces(input, stream, mr);
@@ -222,7 +223,7 @@ struct character_normalizer::character_normalizer_impl {
 character_normalizer::character_normalizer(bool do_lower_case,
                                            cudf::strings_column_view const& special_tokens,
                                            cuda::stream_ref stream,
-                                           rmm::device_async_resource_ref)
+                                           cuda::mr::device_resource_ref)
 {
   auto cp_metadata = nvtext::detail::get_codepoint_metadata(stream);
   auto aux_table   = nvtext::detail::get_aux_codepoint_data(stream);
@@ -252,7 +253,7 @@ std::unique_ptr<character_normalizer> create_character_normalizer(
   bool do_lower_case,
   cudf::strings_column_view const& special_tokens,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cuda::mr::device_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
   return std::make_unique<character_normalizer>(do_lower_case, special_tokens, stream, mr);
@@ -496,7 +497,7 @@ Iterator remove_safe(Iterator first, Iterator last, T const& value, cuda::stream
 std::unique_ptr<cudf::column> normalize_characters(cudf::strings_column_view const& input,
                                                    character_normalizer const& normalizer,
                                                    cuda::stream_ref stream,
-                                                   rmm::device_async_resource_ref mr)
+                                                   cuda::mr::device_resource_ref mr)
 {
   if (input.is_empty()) { return cudf::make_empty_column(cudf::data_type{cudf::type_id::STRING}); }
 
@@ -561,7 +562,7 @@ std::unique_ptr<cudf::column> normalize_characters(cudf::strings_column_view con
 std::unique_ptr<cudf::column> normalize_characters(cudf::strings_column_view const& input,
                                                    character_normalizer const& normalizer,
                                                    cuda::stream_ref stream,
-                                                   rmm::device_async_resource_ref mr)
+                                                   cuda::mr::device_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
   return detail::normalize_characters(input, normalizer, stream, mr);

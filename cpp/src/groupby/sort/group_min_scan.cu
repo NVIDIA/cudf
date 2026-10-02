@@ -7,6 +7,7 @@
 
 #include <cudf/utilities/memory_resource.hpp>
 
+#include <cuda/memory_resource>
 #include <cuda/stream>
 
 namespace cudf {
@@ -16,7 +17,7 @@ std::unique_ptr<column> min_scan(column_view const& values,
                                  size_type num_groups,
                                  cudf::device_span<size_type const> group_labels,
                                  cuda::stream_ref stream,
-                                 rmm::device_async_resource_ref mr)
+                                 cuda::mr::device_resource_ref mr)
 {
   return type_dispatcher(values.type(),
                          group_scan_dispatcher<aggregation::MIN>{},

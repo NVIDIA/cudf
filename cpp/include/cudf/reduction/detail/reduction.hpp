@@ -10,6 +10,8 @@
 #include <cudf/types.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
+#include <cuda/memory_resource>
+
 #include <optional>
 
 namespace cudf {
@@ -17,7 +19,7 @@ namespace reduction::detail {
 
 /**
  * @copydoc cudf::reduce(column_view const&, reduce_aggregation const&, data_type,
- * std::optional<std::reference_wrapper<scalar const>>, rmm::device_async_resource_ref)
+ * std::optional<std::reference_wrapper<scalar const>>, cuda::mr::device_resource_ref)
  *
  * @param stream CUDA stream used for device memory operations and kernel launches.
  */
@@ -26,7 +28,7 @@ std::unique_ptr<scalar> reduce(column_view const& col,
                                data_type output_dtype,
                                std::optional<std::reference_wrapper<scalar const>> init,
                                cuda::stream_ref stream,
-                               rmm::device_async_resource_ref mr);
+                               cuda::mr::device_resource_ref mr);
 
 }  // namespace reduction::detail
 }  // namespace cudf

@@ -10,6 +10,7 @@
 #include <cudf/utilities/export.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
+#include <cuda/memory_resource>
 #include <cuda/stream>
 
 namespace CUDF_EXPORT cudf {
@@ -28,7 +29,7 @@ namespace io::json::detail {
 table_with_metadata read_json(host_span<std::unique_ptr<datasource>> sources,
                               json_reader_options const& options,
                               cuda::stream_ref stream,
-                              rmm::device_async_resource_ref mr);
+                              cuda::mr::device_resource_ref mr);
 
 /**
  * @brief Reads and returns the entire data set along with reader-specific diagnostics.
@@ -43,7 +44,7 @@ table_with_metadata read_json(host_span<std::unique_ptr<datasource>> sources,
 json_reader_result read_json_with_diagnostics(host_span<std::unique_ptr<datasource>> sources,
                                               json_reader_options const& options,
                                               cuda::stream_ref stream,
-                                              rmm::device_async_resource_ref mr);
+                                              cuda::mr::device_resource_ref mr);
 
 /**
  * @brief Reads and returns the entire data set along with reader-specific row-level diagnostics.
@@ -59,7 +60,7 @@ json_reader_result_with_row_diagnostics read_json_with_row_diagnostics(
   host_span<std::unique_ptr<datasource>> sources,
   json_reader_options const& options,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr);
+  cuda::mr::device_resource_ref mr);
 
 /**
  * @brief Write an entire dataset to JSON format.
@@ -85,7 +86,7 @@ void write_json(data_sink* sink,
 void normalize_single_quotes(datasource::owning_buffer<rmm::device_buffer>& indata,
                              char delimiter,
                              cuda::stream_ref stream,
-                             rmm::device_async_resource_ref mr);
+                             cuda::mr::device_resource_ref mr);
 
 /**
  * @brief Normalize unquoted whitespace (space and tab characters) using FST
@@ -105,7 +106,7 @@ std::
                        device_span<size_type const> col_offsets,
                        device_span<size_type const> col_lengths,
                        cuda::stream_ref stream,
-                       rmm::device_async_resource_ref mr);
+                       cuda::mr::device_resource_ref mr);
 
 }  // namespace io::json::detail
 }  // namespace CUDF_EXPORT cudf

@@ -18,6 +18,7 @@
 #include <rmm/device_buffer.hpp>
 #include <rmm/device_uvector.hpp>
 
+#include <cuda/memory_resource>
 #include <cuda/std/utility>
 #include <cuda/stream>
 
@@ -41,7 +42,7 @@ inline rmm::device_buffer create_data(data_type type,
                                       size_type size,
                                       bool memset_data,
                                       cuda::stream_ref stream,
-                                      rmm::device_async_resource_ref mr)
+                                      cuda::mr::device_resource_ref mr)
 {
   std::size_t data_size = size_of(type) * size;
 
@@ -53,7 +54,7 @@ inline rmm::device_buffer create_data(data_type type,
 inline rmm::device_buffer create_data(data_type type,
                                       size_type size,
                                       cuda::stream_ref stream,
-                                      rmm::device_async_resource_ref mr)
+                                      cuda::mr::device_resource_ref mr)
 {
   return create_data(type, size, true, stream, mr);
 }
@@ -94,7 +95,7 @@ class column_buffer_base {
                      size_type _size,
                      bool _is_nullable,
                      cuda::stream_ref stream,
-                     rmm::device_async_resource_ref mr)
+                     cuda::mr::device_resource_ref mr)
     : column_buffer_base(_type, _is_nullable)
   {
   }
@@ -112,9 +113,9 @@ class column_buffer_base {
   void create(size_type _size,
               bool memset_data,
               cuda::stream_ref stream,
-              rmm::device_async_resource_ref mr);
+              cuda::mr::device_resource_ref mr);
 
-  void create(size_type _size, cuda::stream_ref stream, rmm::device_async_resource_ref mr);
+  void create(size_type _size, cuda::stream_ref stream, cuda::mr::device_resource_ref mr);
 
   // like create(), but also takes a `cudf::mask_state` to allow initializing the null mask as
   // something other than `ALL_NULL`
@@ -122,7 +123,7 @@ class column_buffer_base {
                         cudf::mask_state null_mask_state,
                         bool memset_data,
                         cuda::stream_ref stream,
-                        rmm::device_async_resource_ref mr);
+                        cuda::mr::device_resource_ref mr);
 
   // Create a new column_buffer that has empty data but with the same basic information as the
   // input column, including same type, nullability, name, and user_data.
@@ -155,7 +156,7 @@ class column_buffer_base {
   cuda::device_buffer<std::byte> _null_mask =
     cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED);
   size_type _null_count{0};
-  rmm::device_async_resource_ref _mr{cudf::get_current_device_resource_ref()};
+  cuda::mr::device_resource_ref _mr{cudf::get_current_device_resource_ref()};
 
  public:
   data_type type{type_id::EMPTY};
@@ -191,7 +192,7 @@ class gather_column_buffer : public column_buffer_base<gather_column_buffer> {
                        size_type _size,
                        bool _is_nullable,
                        cuda::stream_ref stream,
-                       rmm::device_async_resource_ref mr)
+                       cuda::mr::device_resource_ref mr)
     : column_buffer_base<gather_column_buffer>(_type, _size, _is_nullable, stream, mr)
   {
     create(_size, stream, mr);
@@ -225,7 +226,7 @@ class inline_column_buffer : public column_buffer_base<inline_column_buffer> {
                        size_type _size,
                        bool _is_nullable,
                        cuda::stream_ref stream,
-                       rmm::device_async_resource_ref mr)
+                       cuda::mr::device_resource_ref mr)
     : column_buffer_base<inline_column_buffer>(_type, _size, _is_nullable, stream, mr)
   {
     create(_size, stream, mr);
@@ -273,7 +274,7 @@ template <class string_policy>
 std::unique_ptr<column> empty_like(column_buffer_base<string_policy>& buffer,
                                    column_name_info* schema_info,
                                    cuda::stream_ref stream,
-                                   rmm::device_async_resource_ref mr);
+                                   cuda::mr::device_resource_ref mr);
 
 /**
  * @brief Given a column_buffer, produce a formatted name string describing the type.

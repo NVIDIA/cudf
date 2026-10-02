@@ -13,6 +13,7 @@
 #include <rmm/device_buffer.hpp>
 #include <rmm/device_uvector.hpp>
 
+#include <cuda/memory_resource>
 #include <cuda/stream>
 
 #include <memory>
@@ -53,8 +54,8 @@ class column {
    * @param mr Device memory resource to use for all device memory allocations
    */
   column(column const& other,
-         cuda::stream_ref stream           = cudf::get_default_stream(),
-         rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+         cuda::stream_ref stream          = cudf::get_default_stream(),
+         cuda::mr::device_resource_ref mr = cudf::get_current_device_resource_ref());
 
   /**
    * @brief Move the contents from `other` to create a new column.
@@ -133,8 +134,8 @@ class column {
    * @param mr Device memory resource to use for all device memory allocations
    */
   explicit column(column_view view,
-                  cuda::stream_ref stream           = cudf::get_default_stream(),
-                  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+                  cuda::stream_ref stream          = cudf::get_default_stream(),
+                  cuda::mr::device_resource_ref mr = cudf::get_current_device_resource_ref());
 
   /**
    * @brief Returns the column's logical element type

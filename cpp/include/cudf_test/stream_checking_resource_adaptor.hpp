@@ -6,10 +6,10 @@
 
 #include <cudf_test/default_stream.hpp>
 
+#include <cudf/types.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
 #include <rmm/aligned.hpp>
-#include <rmm/resource_ref.hpp>
 
 #include <cuda/memory_resource>
 #include <cuda/stream>
@@ -31,7 +31,7 @@ class stream_checking_resource_adaptor final {
    * @param error_on_invalid_stream Whether to error on invalid streams
    * @param check_default_stream Whether to check for the default stream
    */
-  stream_checking_resource_adaptor(cuda::mr::any_resource<cuda::mr::device_accessible> upstream,
+  stream_checking_resource_adaptor(cuda::mr::any_device_resource upstream,
                                    bool error_on_invalid_stream,
                                    bool check_default_stream)
     : upstream_{std::move(upstream)},
@@ -53,10 +53,9 @@ class stream_checking_resource_adaptor final {
    *
    * @return The wrapped upstream resource
    */
-  [[nodiscard]] rmm::device_async_resource_ref get_upstream_resource() const noexcept
+  [[nodiscard]] cuda::mr::device_resource_ref get_upstream_resource() const noexcept
   {
-    return rmm::device_async_resource_ref{
-      const_cast<cuda::mr::any_resource<cuda::mr::device_accessible>&>(upstream_)};
+    return cuda::mr::device_resource_ref{const_cast<cuda::mr::any_device_resource&>(upstream_)};
   }
 
   void* allocate_sync(std::size_t bytes, std::size_t alignment = rmm::CUDA_ALLOCATION_ALIGNMENT)
@@ -132,7 +131,7 @@ class stream_checking_resource_adaptor final {
     }
   }
 
-  cuda::mr::any_resource<cuda::mr::device_accessible>
+  cuda::mr::any_device_resource
     upstream_;                    // the upstream resource used for satisfying allocation requests
   bool error_on_invalid_stream_;  // If true, throw an exception when the wrong stream is detected.
                                   // If false, simply print to stdout.

@@ -19,6 +19,7 @@
 
 #include <rmm/device_uvector.hpp>
 
+#include <cuda/memory_resource>
 #include <cuda/std/cstdint>
 
 #include <memory>
@@ -36,7 +37,7 @@ std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
 hash_join<Hasher>::join_retrieve(cudf::table_view const& left,
                                  std::optional<std::size_t> output_size,
                                  cuda::stream_ref stream,
-                                 rmm::device_async_resource_ref mr) const
+                                 cuda::mr::device_resource_ref mr) const
 {
   CUDF_FUNC_RANGE();
 
@@ -193,20 +194,20 @@ hash_join<hash_join_hasher>::join_retrieve<join_kind::INNER_JOIN>(
   cudf::table_view const&,
   std::optional<std::size_t>,
   cuda::stream_ref,
-  rmm::device_async_resource_ref) const;
+  cuda::mr::device_resource_ref) const;
 template std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
                    std::unique_ptr<rmm::device_uvector<size_type>>>
 hash_join<hash_join_hasher>::join_retrieve<join_kind::LEFT_JOIN>(
   cudf::table_view const&,
   std::optional<std::size_t>,
   cuda::stream_ref,
-  rmm::device_async_resource_ref) const;
+  cuda::mr::device_resource_ref) const;
 template std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
                    std::unique_ptr<rmm::device_uvector<size_type>>>
 hash_join<hash_join_hasher>::join_retrieve<join_kind::FULL_JOIN>(
   cudf::table_view const&,
   std::optional<std::size_t>,
   cuda::stream_ref,
-  rmm::device_async_resource_ref) const;
+  cuda::mr::device_resource_ref) const;
 
 }  // namespace cudf::detail

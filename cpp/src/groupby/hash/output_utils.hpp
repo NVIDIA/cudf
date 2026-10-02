@@ -14,6 +14,7 @@
 
 #include <rmm/device_uvector.hpp>
 
+#include <cuda/memory_resource>
 #include <cuda/stream>
 
 #include <cstdint>
@@ -44,7 +45,7 @@ std::unique_ptr<table> create_results_table(size_type output_size,
                                             host_span<aggregation::Kind const> agg_kinds,
                                             std::span<int8_t const> is_agg_intermediate,
                                             cuda::stream_ref stream,
-                                            rmm::device_async_resource_ref mr);
+                                            cuda::mr::device_resource_ref mr);
 
 /**
  * @brief Return an array containing indices of (unique) keys in `key_set`.
@@ -61,7 +62,7 @@ template <typename SetType>
 rmm::device_uvector<size_type> extract_populated_keys(SetType const& key_set,
                                                       size_type num_total_keys,
                                                       cuda::stream_ref stream,
-                                                      rmm::device_async_resource_ref mr);
+                                                      cuda::mr::device_resource_ref mr);
 
 /**
  * @brief Compute and return a mapping array that maps from the original input keys to their
@@ -80,7 +81,7 @@ rmm::device_uvector<size_type> compute_key_transform_map(
   size_type num_total_keys,
   device_span<size_type const> unique_key_indices,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr);
+  cuda::mr::device_resource_ref mr);
 
 /**
  * @brief Transform from row indices of the keys in the input keys table into indices of these keys
@@ -98,7 +99,7 @@ rmm::device_uvector<size_type> compute_key_transform_map(
 rmm::device_uvector<size_type> compute_target_indices(device_span<size_type const> input,
                                                       device_span<size_type const> transform_map,
                                                       cuda::stream_ref stream,
-                                                      rmm::device_async_resource_ref mr);
+                                                      cuda::mr::device_resource_ref mr);
 
 /**
  * @brief Perform some final computation for the aggregation results such as null count and move

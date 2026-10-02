@@ -7,6 +7,7 @@
 #include "jni_cccl_any_resource.hpp"
 
 #include <cudf/logger.hpp>
+#include <cudf/types.hpp>
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/pinned_memory.hpp>
@@ -24,7 +25,6 @@
 #include <rmm/mr/pinned_host_memory_resource.hpp>
 #include <rmm/mr/pool_memory_resource.hpp>
 #include <rmm/mr/tracking_resource_adaptor.hpp>
-#include <rmm/resource_ref.hpp>
 
 #include <cuda/memory_resource>
 #include <cuda/stream>
@@ -68,8 +68,7 @@ constexpr char const* RMM_EXCEPTION_CLASS = "ai/rapids/cudf/RmmException";
  */
 class tracking_resource_adaptor_impl {
  public:
-  tracking_resource_adaptor_impl(cuda::mr::any_resource<cuda::mr::device_accessible> upstream,
-                                 std::size_t size_alignment)
+  tracking_resource_adaptor_impl(cuda::mr::any_device_resource upstream, std::size_t size_alignment)
     : upstream_{std::move(upstream)}, size_align{size_alignment}
   {
   }
@@ -141,7 +140,7 @@ class tracking_resource_adaptor_impl {
   }
 
  private:
-  cuda::mr::any_resource<cuda::mr::device_accessible> upstream_;
+  cuda::mr::any_device_resource upstream_;
   std::size_t const size_align;
   // sum of what is currently allocated
   std::atomic_size_t total_allocated{0};
@@ -164,8 +163,7 @@ static_assert(cuda::mr::resource_with<tracking_resource_adaptor_impl, cuda::mr::
  */
 class tracking_resource_adaptor {
  public:
-  tracking_resource_adaptor(cuda::mr::any_resource<cuda::mr::device_accessible> upstream,
-                            std::size_t size_alignment)
+  tracking_resource_adaptor(cuda::mr::any_device_resource upstream, std::size_t size_alignment)
     : impl_{std::make_shared<tracking_resource_adaptor_impl>(std::move(upstream), size_alignment)}
   {
   }
@@ -225,13 +223,12 @@ static_assert(cuda::mr::resource_with<tracking_resource_adaptor, cuda::mr::devic
  */
 class java_event_handler_memory_resource_impl {
  public:
-  java_event_handler_memory_resource_impl(
-    JNIEnv* env,
-    jobject jhandler,
-    jlongArray jalloc_thresholds,
-    jlongArray jdealloc_thresholds,
-    cuda::mr::any_resource<cuda::mr::device_accessible> upstream,
-    tracking_resource_adaptor tracker)
+  java_event_handler_memory_resource_impl(JNIEnv* env,
+                                          jobject jhandler,
+                                          jlongArray jalloc_thresholds,
+                                          jlongArray jdealloc_thresholds,
+                                          cuda::mr::any_device_resource upstream,
+                                          tracking_resource_adaptor tracker)
     : upstream_{std::move(upstream)}, tracker_(std::move(tracker))
   {
     if (env->GetJavaVM(&jvm) < 0) { throw std::runtime_error("GetJavaVM failed"); }
@@ -329,7 +326,7 @@ class java_event_handler_memory_resource_impl {
   }
 
  protected:
-  cuda::mr::any_resource<cuda::mr::device_accessible> upstream_;
+  cuda::mr::any_device_resource upstream_;
   tracking_resource_adaptor tracker_;
   jmethodID on_alloc_fail_method;
   bool use_old_alloc_fail_interface;
@@ -400,13 +397,12 @@ class java_event_handler_memory_resource_impl {
 class java_debug_event_handler_memory_resource_impl final
   : public java_event_handler_memory_resource_impl {
  public:
-  java_debug_event_handler_memory_resource_impl(
-    JNIEnv* env,
-    jobject jhandler,
-    jlongArray jalloc_thresholds,
-    jlongArray jdealloc_thresholds,
-    cuda::mr::any_resource<cuda::mr::device_accessible> upstream,
-    tracking_resource_adaptor tracker)
+  java_debug_event_handler_memory_resource_impl(JNIEnv* env,
+                                                jobject jhandler,
+                                                jlongArray jalloc_thresholds,
+                                                jlongArray jdealloc_thresholds,
+                                                cuda::mr::any_device_resource upstream,
+                                                tracking_resource_adaptor tracker)
     : java_event_handler_memory_resource_impl(env,
                                               jhandler,
                                               jalloc_thresholds,
@@ -474,7 +470,7 @@ class java_event_handler_memory_resource {
                                      jobject jhandler,
                                      jlongArray jalloc_thresholds,
                                      jlongArray jdealloc_thresholds,
-                                     cuda::mr::any_resource<cuda::mr::device_accessible> upstream,
+                                     cuda::mr::any_device_resource upstream,
                                      tracking_resource_adaptor tracker,
                                      bool enable_debug)
     : impl_(enable_debug
@@ -804,8 +800,8 @@ static_assert(cuda::mr::resource_with<parallel_init_pinned_host_memory_resource,
 
 inline auto& prior_cudf_pinned_mr()
 {
-  static cuda::mr::resource_ref<cuda::mr::host_accessible, cuda::mr::device_accessible>
-    _prior_cudf_pinned_mr = cudf::get_pinned_memory_resource();
+  static cuda::mr::host_device_resource_ref _prior_cudf_pinned_mr =
+    cudf::get_pinned_memory_resource();
   return _prior_cudf_pinned_mr;
 }
 
@@ -936,9 +932,9 @@ JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_Rmm_allocInternal(JNIEnv* env,
   JNI_TRY
   {
     cudf::jni::auto_set_device(env);
-    rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref();
-    auto c_stream                     = cuda::stream_ref(reinterpret_cast<cudaStream_t>(stream));
-    void* ret                         = mr.allocate(c_stream, size, rmm::CUDA_ALLOCATION_ALIGNMENT);
+    cuda::mr::device_resource_ref mr = cudf::get_current_device_resource_ref();
+    auto c_stream                    = cuda::stream_ref(reinterpret_cast<cudaStream_t>(stream));
+    void* ret                        = mr.allocate(c_stream, size, rmm::CUDA_ALLOCATION_ALIGNMENT);
     return reinterpret_cast<jlong>(ret);
   }
   JNI_CATCH(env, 0);
@@ -950,9 +946,9 @@ Java_ai_rapids_cudf_Rmm_free(JNIEnv* env, jclass clazz, jlong ptr, jlong size, j
   JNI_TRY
   {
     cudf::jni::auto_set_device(env);
-    rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref();
-    void* cptr                        = reinterpret_cast<void*>(ptr);
-    auto c_stream                     = cuda::stream_ref(reinterpret_cast<cudaStream_t>(stream));
+    cuda::mr::device_resource_ref mr = cudf::get_current_device_resource_ref();
+    void* cptr                       = reinterpret_cast<void*>(ptr);
+    auto c_stream                    = cuda::stream_ref(reinterpret_cast<cudaStream_t>(stream));
     mr.deallocate(c_stream, cptr, size, rmm::CUDA_ALLOCATION_ALIGNMENT);
   }
   JNI_CATCH(env, );

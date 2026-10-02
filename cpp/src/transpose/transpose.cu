@@ -16,6 +16,7 @@
 #include <cudf/utilities/type_dispatcher.hpp>
 
 #include <cuda/iterator>
+#include <cuda/memory_resource>
 #include <cuda/stream>
 #include <thrust/iterator/transform_iterator.h>
 
@@ -23,7 +24,7 @@ namespace cudf {
 namespace detail {
 std::pair<std::unique_ptr<column>, table_view> transpose(table_view const& input,
                                                          cuda::stream_ref stream,
-                                                         rmm::device_async_resource_ref mr)
+                                                         cuda::mr::device_resource_ref mr)
 {
   // If there are no rows in the input, return successfully
   if (input.num_columns() == 0 || input.num_rows() == 0) {
@@ -50,7 +51,7 @@ std::pair<std::unique_ptr<column>, table_view> transpose(table_view const& input
 
 std::pair<std::unique_ptr<column>, table_view> transpose(table_view const& input,
                                                          cuda::stream_ref stream,
-                                                         rmm::device_async_resource_ref mr)
+                                                         cuda::mr::device_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
   return detail::transpose(input, stream, mr);

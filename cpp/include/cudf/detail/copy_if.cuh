@@ -18,6 +18,7 @@
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/iterator>
+#include <cuda/memory_resource>
 #include <cuda/std/iterator>
 #include <cuda/stream>
 #include <thrust/copy.h>
@@ -44,7 +45,7 @@ template <typename Filter>
 std::unique_ptr<table> copy_if(table_view const& input,
                                Filter filter,
                                cuda::stream_ref stream,
-                               rmm::device_async_resource_ref mr)
+                               cuda::mr::device_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
 

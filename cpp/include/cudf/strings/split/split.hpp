@@ -9,6 +9,8 @@
 #include <cudf/table/table.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
+#include <cuda/memory_resource>
+
 /**
  * @file
  * @brief Strings column APIs for splitting strings using a delimiter string.
@@ -46,10 +48,10 @@ namespace strings {
  */
 std::unique_ptr<table> split(
   strings_column_view const& strings_column,
-  string_scalar const& delimiter    = string_scalar(""),
-  size_type maxsplit                = -1,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  string_scalar const& delimiter   = string_scalar(""),
+  size_type maxsplit               = -1,
+  cuda::stream_ref stream          = cudf::get_default_stream(),
+  cuda::mr::device_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Returns a list of columns by splitting each string using the
@@ -76,10 +78,10 @@ std::unique_ptr<table> split(
  */
 std::unique_ptr<table> rsplit(
   strings_column_view const& strings_column,
-  string_scalar const& delimiter    = string_scalar(""),
-  size_type maxsplit                = -1,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  string_scalar const& delimiter   = string_scalar(""),
+  size_type maxsplit               = -1,
+  cuda::stream_ref stream          = cudf::get_default_stream(),
+  cuda::mr::device_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Splits individual strings elements into a list of strings.
@@ -150,10 +152,10 @@ std::unique_ptr<table> rsplit(
  */
 std::unique_ptr<column> split_record(
   strings_column_view const& strings,
-  string_scalar const& delimiter    = string_scalar(""),
-  size_type maxsplit                = -1,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  string_scalar const& delimiter   = string_scalar(""),
+  size_type maxsplit               = -1,
+  cuda::stream_ref stream          = cudf::get_default_stream(),
+  cuda::mr::device_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief  Splits individual strings elements into a list of strings starting
@@ -229,10 +231,10 @@ std::unique_ptr<column> split_record(
  */
 std::unique_ptr<column> rsplit_record(
   strings_column_view const& strings,
-  string_scalar const& delimiter    = string_scalar(""),
-  size_type maxsplit                = -1,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  string_scalar const& delimiter   = string_scalar(""),
+  size_type maxsplit               = -1,
+  cuda::stream_ref stream          = cudf::get_default_stream(),
+  cuda::mr::device_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Returns a columns of strings by splitting each input string using the
@@ -252,10 +254,10 @@ std::unique_ptr<column> rsplit_record(
  */
 std::unique_ptr<column> split_part(
   strings_column_view const& input,
-  string_scalar const& delimiter    = string_scalar(""),
-  size_type index                   = 0,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  string_scalar const& delimiter   = string_scalar(""),
+  size_type index                  = 0,
+  cuda::stream_ref stream          = cudf::get_default_stream(),
+  cuda::mr::device_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /** @} */  // end of doxygen group
 }  // namespace strings

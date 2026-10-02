@@ -9,6 +9,7 @@
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
+#include <cuda/memory_resource>
 #include <cuda/stream>
 
 namespace cudf {
@@ -17,14 +18,14 @@ namespace detail {
 
 /**
  * @copydoc cudf::dictionary::get_index(dictionary_column_view const&,scalar
- * const&,rmm::device_async_resource_ref)
+ * const&,cuda::mr::device_resource_ref)
  *
  * @param stream CUDA stream used for device memory operations and kernel launches.
  */
 std::unique_ptr<scalar> get_index(dictionary_column_view const& dictionary,
                                   scalar const& key,
                                   cuda::stream_ref stream,
-                                  rmm::device_async_resource_ref mr);
+                                  cuda::mr::device_resource_ref mr);
 
 }  // namespace detail
 }  // namespace dictionary

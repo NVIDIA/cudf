@@ -15,6 +15,7 @@
 
 #include <cuda/functional>
 #include <cuda/iterator>
+#include <cuda/memory_resource>
 #include <cuda/std/iterator>
 #include <thrust/binary_search.h>
 #include <thrust/execution_policy.h>
@@ -44,7 +45,7 @@ std::pair<cuda::device_buffer<std::byte>, size_type> construct_child_nullmask(
   cudf::lists_column_device_view const& target_lists,
   size_type num_child_rows,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cuda::mr::device_resource_ref mr)
 {
   auto is_valid_predicate = [d_list_vector  = parent_list_vector.begin(),
                              d_offsets      = parent_list_offsets.template data<int32_t>(),
@@ -149,7 +150,7 @@ struct list_child_constructor {
                                      cudf::lists_column_view const& source_lists_column_view,
                                      cudf::lists_column_view const& target_lists_column_view,
                                      cuda::stream_ref stream,
-                                     rmm::device_async_resource_ref mr) const
+                                     cuda::mr::device_resource_ref mr) const
     requires(cudf::is_fixed_width<T>())
   {
     auto source_column_device_view =
@@ -208,7 +209,7 @@ struct list_child_constructor {
                                      cudf::lists_column_view const& source_lists_column_view,
                                      cudf::lists_column_view const& target_lists_column_view,
                                      cuda::stream_ref stream,
-                                     rmm::device_async_resource_ref mr) const
+                                     cuda::mr::device_resource_ref mr) const
     requires(std::is_same_v<T, string_view>)
   {
     auto source_column_device_view =
@@ -271,7 +272,7 @@ struct list_child_constructor {
                                      cudf::lists_column_view const& source_lists_column_view,
                                      cudf::lists_column_view const& target_lists_column_view,
                                      cuda::stream_ref stream,
-                                     rmm::device_async_resource_ref mr) const
+                                     cuda::mr::device_resource_ref mr) const
     requires(std::is_same_v<T, list_view>)
   {
     auto source_column_device_view =
@@ -365,7 +366,7 @@ struct list_child_constructor {
                                      cudf::lists_column_view const& source_lists_column_view,
                                      cudf::lists_column_view const& target_lists_column_view,
                                      cuda::stream_ref stream,
-                                     rmm::device_async_resource_ref mr) const
+                                     cuda::mr::device_resource_ref mr) const
     requires(std::is_same_v<T, struct_view>)
   {
     auto const source_column_device_view =
@@ -456,7 +457,7 @@ std::unique_ptr<column> build_lists_child_column_recursive(
   cudf::lists_column_view const& source_lists_column_view,
   cudf::lists_column_view const& target_lists_column_view,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cuda::mr::device_resource_ref mr)
 {
   return cudf::type_dispatcher<dispatch_storage_type>(child_column_type,
                                                       list_child_constructor{},

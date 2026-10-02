@@ -9,6 +9,7 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 
+#include <cuda/memory_resource>
 #include <cuda/stream>
 
 #include <memory>
@@ -33,6 +34,6 @@ std::pair<std::unique_ptr<table>, std::vector<aggregation_result>> groupby(
   std::span<aggregation_request const> requests,
   null_policy include_null_keys,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr);
+  cuda::mr::device_resource_ref mr);
 }  // namespace groupby::detail::hash
 }  // namespace cudf

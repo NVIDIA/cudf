@@ -27,6 +27,7 @@
 #include <rmm/device_buffer.hpp>
 
 #include <cuda/iterator>
+#include <cuda/memory_resource>
 #include <cuda/stream>
 
 #include <algorithm>
@@ -37,7 +38,7 @@
 namespace cudf {
 
 // Copy ctor w/ optional stream/mr
-column::column(column const& other, cuda::stream_ref stream, rmm::device_async_resource_ref mr)
+column::column(column const& other, cuda::stream_ref stream, cuda::mr::device_resource_ref mr)
   : _type{other._type},
     _size{other._size},
     _data{other._data, stream, mr},
@@ -160,7 +161,7 @@ namespace {
 struct create_column_from_view {
   cudf::column_view view;
   cuda::stream_ref stream;
-  rmm::device_async_resource_ref mr;
+  cuda::mr::device_resource_ref mr;
 
   template <typename ColumnType>
   std::unique_ptr<column> operator()()
@@ -255,7 +256,7 @@ struct create_column_from_view {
 }  // anonymous namespace
 
 // Copy from a view
-column::column(column_view view, cuda::stream_ref stream, rmm::device_async_resource_ref mr)
+column::column(column_view view, cuda::stream_ref stream, cuda::mr::device_resource_ref mr)
   :  // Move is needed here because the dereference operator of unique_ptr returns
      // an lvalue reference, which would otherwise dispatch to the copy constructor
     column{std::move(*type_dispatcher(view.type(), create_column_from_view{view, stream, mr}))}

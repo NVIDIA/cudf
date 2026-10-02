@@ -17,6 +17,7 @@
 
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/memory_resource>
 #include <cuda/stream>
 #include <thrust/transform.h>
 
@@ -33,7 +34,7 @@ namespace {
  */
 std::unique_ptr<column> build_output_offsets(lists_column_view const& input,
                                              cuda::stream_ref stream,
-                                             rmm::device_async_resource_ref mr)
+                                             cuda::mr::device_resource_ref mr)
 {
   auto output_offset = make_numeric_column(
     input.offsets().type(), input.size() + 1, mask_state::UNALLOCATED, stream, mr);
@@ -53,7 +54,7 @@ std::unique_ptr<column> sort_lists(lists_column_view const& input,
                                    order column_order,
                                    null_order null_precedence,
                                    cuda::stream_ref stream,
-                                   rmm::device_async_resource_ref mr)
+                                   cuda::mr::device_resource_ref mr)
 {
   if (input.is_empty()) return empty_like(input.parent());
 
@@ -79,7 +80,7 @@ std::unique_ptr<column> stable_sort_lists(lists_column_view const& input,
                                           order column_order,
                                           null_order null_precedence,
                                           cuda::stream_ref stream,
-                                          rmm::device_async_resource_ref mr)
+                                          cuda::mr::device_resource_ref mr)
 {
   if (input.is_empty()) { return empty_like(input.parent()); }
 
@@ -106,7 +107,7 @@ std::unique_ptr<column> sort_lists(lists_column_view const& input,
                                    order column_order,
                                    null_order null_precedence,
                                    cuda::stream_ref stream,
-                                   rmm::device_async_resource_ref mr)
+                                   cuda::mr::device_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
   return detail::sort_lists(input, column_order, null_precedence, stream, mr);
@@ -116,7 +117,7 @@ std::unique_ptr<column> stable_sort_lists(lists_column_view const& input,
                                           order column_order,
                                           null_order null_precedence,
                                           cuda::stream_ref stream,
-                                          rmm::device_async_resource_ref mr)
+                                          cuda::mr::device_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
   return detail::stable_sort_lists(input, column_order, null_precedence, stream, mr);

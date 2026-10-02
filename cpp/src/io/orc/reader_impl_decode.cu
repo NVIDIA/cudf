@@ -29,6 +29,7 @@
 
 #include <cuda/buffer>
 #include <cuda/iterator>
+#include <cuda/memory_resource>
 #include <cuda/std/utility>
 #include <cuda/stream>
 #include <thrust/fill.h>
@@ -284,7 +285,7 @@ cuda::device_buffer<std::uint8_t> decompress_stripe_data(
 void update_null_mask(cudf::detail::hostdevice_2dvector<column_desc>& chunks,
                       host_span<column_buffer> out_buffers,
                       cuda::stream_ref stream,
-                      rmm::device_async_resource_ref mr)
+                      cuda::mr::device_resource_ref mr)
 {
   auto const num_stripes = chunks.size().first;
   auto const num_columns = chunks.size().second;
@@ -377,7 +378,7 @@ void decode_stream_data(int64_t num_dicts,
                         cudf::detail::device_2dspan<row_group> row_groups,
                         std::vector<column_buffer>& out_buffers,
                         cuda::stream_ref stream,
-                        rmm::device_async_resource_ref mr)
+                        cuda::mr::device_resource_ref mr)
 {
   auto const num_stripes = chunks.size().first;
   auto const num_columns = chunks.size().second;

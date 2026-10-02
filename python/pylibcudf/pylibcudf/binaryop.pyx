@@ -14,6 +14,7 @@ from pylibcudf.libcudf.column.column_view cimport column_view
 from pylibcudf.libcudf.binaryop import \
     binary_operator as BinaryOperator  # no-cython-lint
 
+from pylibcudf.libcudf.utilities.memory_resource cimport to_device_resource_ref
 from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 from rmm.pylibrmm.stream cimport Stream
 
@@ -84,7 +85,7 @@ cpdef Column binary_operation(
                 op,
                 output_type.c_obj,
                 _cs,
-                mr.get_mr()
+                to_device_resource_ref(mr.get_mr())
             )
     elif LeftBinaryOperand is Column and RightBinaryOperand is Scalar:
         c_lhs_column = lhs.view()
@@ -95,7 +96,7 @@ cpdef Column binary_operation(
                 op,
                 output_type.c_obj,
                 _cs,
-                mr.get_mr()
+                to_device_resource_ref(mr.get_mr())
             )
     elif LeftBinaryOperand is Scalar and RightBinaryOperand is Column:
         c_rhs_column = rhs.view()
@@ -106,7 +107,7 @@ cpdef Column binary_operation(
                 op,
                 output_type.c_obj,
                 _cs,
-                mr.get_mr()
+                to_device_resource_ref(mr.get_mr())
             )
     else:
         raise ValueError(f"Invalid arguments {lhs} and {rhs}")

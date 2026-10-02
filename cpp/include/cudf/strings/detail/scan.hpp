@@ -8,6 +8,7 @@
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
+#include <cuda/memory_resource>
 #include <cuda/stream>
 
 namespace cudf {
@@ -29,7 +30,7 @@ template <typename Op>
 std::unique_ptr<column> scan_inclusive(column_view const& input,
                                        bitmask_type const* mask,
                                        cuda::stream_ref stream,
-                                       rmm::device_async_resource_ref mr);
+                                       cuda::mr::device_resource_ref mr);
 
 }  // namespace strings::detail
 }  // namespace cudf

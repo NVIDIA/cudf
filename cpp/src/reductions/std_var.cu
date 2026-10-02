@@ -9,6 +9,7 @@
 #include <cudf/reduction/detail/reduction_functions.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
+#include <cuda/memory_resource>
 #include <cuda/stream>
 
 namespace cudf {
@@ -22,7 +23,7 @@ std::unique_ptr<cudf::scalar> standard_deviation(column_view const& col,
                                                  cudf::data_type const output_dtype,
                                                  size_type ddof,
                                                  cuda::stream_ref stream,
-                                                 rmm::device_async_resource_ref mr)
+                                                 cuda::mr::device_resource_ref mr)
 {
   using reducer = compound::detail::element_type_dispatcher<op::standard_deviation>;
   auto col_type =
@@ -34,7 +35,7 @@ std::unique_ptr<cudf::scalar> variance(column_view const& col,
                                        cudf::data_type const output_dtype,
                                        size_type ddof,
                                        cuda::stream_ref stream,
-                                       rmm::device_async_resource_ref mr)
+                                       cuda::mr::device_resource_ref mr)
 {
   using reducer = compound::detail::element_type_dispatcher<op::variance>;
   auto col_type =

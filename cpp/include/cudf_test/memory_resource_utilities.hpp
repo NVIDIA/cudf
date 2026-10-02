@@ -9,11 +9,11 @@
 #include <cudf_test/cudf_gtest.hpp>
 #include <cudf_test/default_stream.hpp>
 
+#include <cudf/types.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
 #include <rmm/mr/callback_memory_resource.hpp>
 #include <rmm/mr/statistics_resource_adaptor.hpp>
-#include <rmm/resource_ref.hpp>
 
 #include <cuda/memory_resource>
 #include <cuda/stream>
@@ -41,8 +41,7 @@ class scoped_current_device_resource {
    *
    * @param resource Owning type-erased resource value to install
    */
-  explicit scoped_current_device_resource(
-    cuda::mr::any_resource<cuda::mr::device_accessible> resource);
+  explicit scoped_current_device_resource(cuda::mr::any_device_resource resource);
 
   ~scoped_current_device_resource();
 
@@ -52,7 +51,7 @@ class scoped_current_device_resource {
   scoped_current_device_resource& operator=(scoped_current_device_resource&&)      = delete;
 
  private:
-  cuda::mr::any_resource<cuda::mr::device_accessible> _previous;
+  cuda::mr::any_device_resource _previous;
 };
 
 /** @brief Expected relationship between live and total output-resource allocations. */
@@ -89,7 +88,7 @@ class memory_resource_test_harness {
    * @param upstream Resource used by each independent statistics adaptor
    */
   explicit memory_resource_test_harness(
-    rmm::device_async_resource_ref upstream = cudf::get_current_device_resource_ref());
+    cuda::mr::device_resource_ref upstream = cudf::get_current_device_resource_ref());
 
   /** @brief Return the statistics resource used to construct test inputs and expected results. */
   [[nodiscard]] rmm::mr::statistics_resource_adaptor& setup_mr() noexcept;

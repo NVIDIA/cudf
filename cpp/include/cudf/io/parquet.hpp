@@ -13,6 +13,8 @@
 #include <cudf/utilities/export.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
+#include <cuda/memory_resource>
+
 #include <memory>
 #include <optional>
 #include <string>
@@ -1008,8 +1010,8 @@ class parquet_reader_options_builder {
  */
 table_with_metadata read_parquet(
   parquet_reader_options const& options,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream          = cudf::get_default_stream(),
+  cuda::mr::device_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Reads a Parquet dataset into a set of columns using pre-existing Parquet datasources and
@@ -1039,8 +1041,8 @@ table_with_metadata read_parquet(
   std::vector<std::unique_ptr<cudf::io::datasource>>&& sources,
   std::vector<parquet::FileMetaData>&& parquet_metadatas,
   parquet_reader_options const& options,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream          = cudf::get_default_stream(),
+  cuda::mr::device_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief The chunked parquet reader class to read Parquet file iteratively in to a series of
@@ -1077,8 +1079,8 @@ class chunked_parquet_reader {
   chunked_parquet_reader(
     std::size_t chunk_read_limit,
     parquet_reader_options const& options,
-    cuda::stream_ref stream           = cudf::get_default_stream(),
-    rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+    cuda::stream_ref stream          = cudf::get_default_stream(),
+    cuda::mr::device_resource_ref mr = cudf::get_current_device_resource_ref());
 
   /**
    * @brief Constructor for chunked reader using pre-existing Parquet datasources and
@@ -1101,8 +1103,8 @@ class chunked_parquet_reader {
     std::vector<std::unique_ptr<cudf::io::datasource>>&& sources,
     std::vector<parquet::FileMetaData>&& parquet_metadatas,
     parquet_reader_options const& options,
-    cuda::stream_ref stream           = cudf::get_default_stream(),
-    rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+    cuda::stream_ref stream          = cudf::get_default_stream(),
+    cuda::mr::device_resource_ref mr = cudf::get_current_device_resource_ref());
 
   /**
    * @brief Constructor for chunked reader.
@@ -1127,8 +1129,8 @@ class chunked_parquet_reader {
     std::size_t chunk_read_limit,
     std::size_t pass_read_limit,
     parquet_reader_options const& options,
-    cuda::stream_ref stream           = cudf::get_default_stream(),
-    rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+    cuda::stream_ref stream          = cudf::get_default_stream(),
+    cuda::mr::device_resource_ref mr = cudf::get_current_device_resource_ref());
 
   /**
    * @brief Constructor for chunked reader using pre-existing Parquet datasources and
@@ -1158,8 +1160,8 @@ class chunked_parquet_reader {
     std::vector<std::unique_ptr<cudf::io::datasource>>&& sources,
     std::vector<parquet::FileMetaData>&& parquet_metadatas,
     parquet_reader_options const& options,
-    cuda::stream_ref stream           = cudf::get_default_stream(),
-    rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+    cuda::stream_ref stream          = cudf::get_default_stream(),
+    cuda::mr::device_resource_ref mr = cudf::get_current_device_resource_ref());
 
   /**
    * @brief Destructor, destroying the internal reader instance.

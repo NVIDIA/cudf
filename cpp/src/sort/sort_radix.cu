@@ -13,6 +13,7 @@
 #include <cub/device/device_radix_sort.cuh>
 #include <cuda/buffer>
 #include <cuda/iterator>
+#include <cuda/memory_resource>
 #include <cuda/stream>
 #include <thrust/transform.h>
 
@@ -156,7 +157,7 @@ bool is_radix_sortable(column_view const& column)
 std::unique_ptr<column> sort_radix(column_view const& input,
                                    bool ascending,
                                    cuda::stream_ref stream,
-                                   rmm::device_async_resource_ref mr)
+                                   cuda::mr::device_resource_ref mr)
 {
   auto result   = std::make_unique<column>(input, stream, mr);
   auto out_view = result->mutable_view();

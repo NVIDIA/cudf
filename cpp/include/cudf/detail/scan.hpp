@@ -8,6 +8,7 @@
 #include <cudf/detail/aggregation/aggregation.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
+#include <cuda/memory_resource>
 #include <cuda/stream>
 
 namespace cudf {
@@ -40,7 +41,7 @@ std::unique_ptr<column> scan_exclusive(column_view const& input,
                                        scan_aggregation const& agg,
                                        null_policy null_handling,
                                        cuda::stream_ref stream,
-                                       rmm::device_async_resource_ref mr);
+                                       cuda::mr::device_resource_ref mr);
 
 /**
  * @brief Computes the inclusive scan of a column.
@@ -66,7 +67,7 @@ std::unique_ptr<column> scan_inclusive(column_view const& input,
                                        scan_aggregation const& agg,
                                        null_policy null_handling,
                                        cuda::stream_ref stream,
-                                       rmm::device_async_resource_ref mr);
+                                       cuda::mr::device_resource_ref mr);
 
 /**
  * @brief Generate row ranks for a column.
@@ -78,7 +79,7 @@ std::unique_ptr<column> scan_inclusive(column_view const& input,
  */
 std::unique_ptr<column> inclusive_rank_scan(column_view const& order_by,
                                             cuda::stream_ref stream,
-                                            rmm::device_async_resource_ref mr);
+                                            cuda::mr::device_resource_ref mr);
 
 /**
  * @brief Generate row dense ranks for a column.
@@ -91,7 +92,7 @@ std::unique_ptr<column> inclusive_rank_scan(column_view const& order_by,
 CUDF_EXPORT
 std::unique_ptr<column> inclusive_dense_rank_scan(column_view const& order_by,
                                                   cuda::stream_ref stream,
-                                                  rmm::device_async_resource_ref mr);
+                                                  cuda::mr::device_resource_ref mr);
 
 /**
  * @brief Generate row ONE_NORMALIZED percent ranks for a column.
@@ -104,7 +105,7 @@ std::unique_ptr<column> inclusive_dense_rank_scan(column_view const& order_by,
  * @return rank values.
  */
 std::unique_ptr<column> inclusive_one_normalized_percent_rank_scan(
-  column_view const& order_by, cuda::stream_ref stream, rmm::device_async_resource_ref mr);
+  column_view const& order_by, cuda::stream_ref stream, cuda::mr::device_resource_ref mr);
 
 }  // namespace detail
 }  // namespace cudf

@@ -373,12 +373,9 @@ class json_state : private parser {
     }
 
     // a name is present, so the next non-whitespace char must be a ':'
-    if (!parse_whitespace()) { return parse_result::ERROR; }
-    if (*pos == ':') {
-      pos++;
-      return parse_result::SUCCESS;
-    }
-    return parse_result::EMPTY;
+    if (!parse_whitespace() || *pos != ':') { return parse_result::ERROR; }
+    pos++;
+    return parse_result::SUCCESS;
   }
 
  private:

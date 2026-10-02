@@ -75,7 +75,8 @@ for example_name in \
   nested_types \
   parquet_inspect \
   parquet_io \
-  billion_rows; do
+  billion_rows \
+  pack_unpack; do
   build_example "${example_name}" &
   example_build_pids+=("$!")
 done

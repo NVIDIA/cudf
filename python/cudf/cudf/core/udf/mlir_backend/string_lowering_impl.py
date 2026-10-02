@@ -103,3 +103,57 @@ def _lower_len(str_view: ir.Value) -> ir.Value:
         )
         scf.yield_([arith.addi(acc, inc)])
     return loop.results[0]
+
+
+def _lower_compare(lhs: ir.Value, rhs: ir.Value) -> ir.Value:
+    """Byte-wise lexicographic compare of two views -> ``i32`` (sign gives order).
+
+    Matches ``cudf::string_view::compare``: the signed difference of the first
+    differing byte, else a length comparison. Callers turn the sign into the
+    boolean result for a specific comparison operator.
+    """
+    i32 = ir.IntegerType.get_signless(32)
+    i1 = ir.IntegerType.get_signless(1)
+    lhs_data = _view_data(lhs)
+    rhs_data = _view_data(rhs)
+    lhs_nb = llvm.zext(T.i64(), _view_nbytes(lhs))
+    rhs_nb = llvm.zext(T.i64(), _view_nbytes(rhs))
+    zero_i32 = arith.constant(i32, 0)
+
+    min_len = arith.select(
+        arith.cmpi(arith.CmpIPredicate.slt, lhs_nb, rhs_nb), lhs_nb, rhs_nb
+    )
+    loop = scf.ForOp(
+        arith.constant(T.i64(), 0),
+        min_len,
+        arith.constant(T.i64(), 1),
+        [zero_i32, arith.constant(i1, 0)],
+    )
+    with ir.InsertionPoint(loop.body):
+        idx = loop.induction_variable
+        acc_diff = loop.inner_iter_args[0]
+        acc_found = loop.inner_iter_args[1]
+        b1 = arith.extui(i32, _byte_at(lhs_data, idx))
+        b2 = arith.extui(i32, _byte_at(rhs_data, idx))
+        diff = arith.subi(b1, b2)
+        ne = arith.cmpi(arith.CmpIPredicate.ne, diff, zero_i32)
+        first_diff = arith.andi(
+            ne, arith.xori(acc_found, arith.constant(i1, 1))
+        )
+        scf.yield_(
+            [
+                arith.select(first_diff, diff, acc_diff),
+                arith.ori(acc_found, ne),
+            ]
+        )
+
+    byte_diff = loop.results[0]
+    found = loop.results[1]
+    lhs_longer = arith.cmpi(arith.CmpIPredicate.sgt, lhs_nb, rhs_nb)
+    rhs_longer = arith.cmpi(arith.CmpIPredicate.slt, lhs_nb, rhs_nb)
+    len_cmp = arith.select(
+        lhs_longer,
+        arith.constant(i32, 1),
+        arith.select(rhs_longer, arith.constant(i32, -1), zero_i32),
+    )
+    return arith.select(found, byte_diff, len_cmp)

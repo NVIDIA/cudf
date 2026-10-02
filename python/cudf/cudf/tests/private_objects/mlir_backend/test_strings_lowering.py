@@ -2,6 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 from __future__ import annotations
 
+import operator
+
 import cupy as cp
 import numpy as np
 import pytest
@@ -192,3 +194,124 @@ def test_masked_len_mixed_null_rows():
     for s, v, value in zip(strings, got_valid, got_value, strict=True):
         if v:
             assert value == len(s)
+
+
+_CMP_OPS = [
+    operator.eq,
+    operator.ne,
+    operator.lt,
+    operator.le,
+    operator.gt,
+    operator.ge,
+]
+
+
+@pytest.mark.parametrize("op", _CMP_OPS)
+def test_string_comparison_arrays(op):
+    """``str <cmp> str`` element-wise over two ``mlir_string`` arrays."""
+    left = ["abc", "abc", "abd", "ab", "abcd", "", "h\u00e9llo"]
+    right = ["abc", "abd", "abc", "abc", "abc", "", "h\u00e9llo"]
+    la, _k1 = _make_mlir_string_array(left)
+    ra, _k2 = _make_mlir_string_array(right)
+    n = len(left)
+    out = cp.zeros(n, dtype=np.bool_)
+
+    @cuda.jit(
+        types.void(
+            types.boolean[::1],
+            types.CPointer(mlir_string),
+            types.CPointer(mlir_string),
+        ),
+        extensions=[mlir_string_arg_handler],
+    )
+    def k(o, a, b):
+        i = cuda.grid(1)
+        if i < o.size:
+            o[i] = op(a[i], b[i])
+
+    with MLIRNumbaCudaConfig():
+        k[1, n](out, la, ra)
+    cuda.synchronize()
+    assert out.get().tolist() == [
+        op(x, y) for x, y in zip(left, right, strict=True)
+    ]
+
+
+@pytest.mark.parametrize("op", _CMP_OPS)
+def test_string_comparison_literal(op):
+    """``str <cmp> "literal"`` and the reflected form over an array."""
+    strings = ["foo", "fop", "fon", "fo", "foobar", ""]
+    arr, _k = _make_mlir_string_array(strings)
+    n = len(strings)
+    out = cp.zeros(n, dtype=np.bool_)
+    out_r = cp.zeros(n, dtype=np.bool_)
+
+    @cuda.jit(
+        types.void(
+            types.boolean[::1],
+            types.boolean[::1],
+            types.CPointer(mlir_string),
+        ),
+        extensions=[mlir_string_arg_handler],
+    )
+    def k(o, orev, s):
+        i = cuda.grid(1)
+        if i < o.size:
+            o[i] = op(s[i], "foo")
+            orev[i] = op("foo", s[i])
+
+    with MLIRNumbaCudaConfig():
+        k[1, n](out, out_r, arr)
+    cuda.synchronize()
+    assert out.get().tolist() == [op(s, "foo") for s in strings]
+    assert out_r.get().tolist() == [op("foo", s) for s in strings]
+
+
+def test_masked_string_comparison_propagates_validity():
+    """``Masked(str) == Masked(str)`` -> ``Masked(bool)``; valid iff both valid.
+
+    The result value is only asserted on rows whose result is valid.
+    """
+    a = ["abc", "abd", "xyz", "ab"]
+    av = [True, False, True, True]
+    b = ["abc", "abd", "xyw", "abc"]
+    bv = [True, True, False, True]
+    arr_a, _ka = _make_mlir_string_array(a)
+    arr_b, _kb = _make_mlir_string_array(b)
+    n = len(a)
+    out = cp.zeros(n, dtype=np.bool_)
+    out_valid = cp.zeros(n, dtype=np.bool_)
+
+    @cuda.jit(
+        types.void(
+            types.boolean[::1],
+            types.boolean[::1],
+            types.CPointer(mlir_string),
+            types.boolean[::1],
+            types.CPointer(mlir_string),
+            types.boolean[::1],
+        ),
+        extensions=[mlir_string_arg_handler],
+    )
+    def k(o, ov, sa, sav, sb, sbv):
+        i = cuda.grid(1)
+        if i < o.size:
+            r = Masked(sa[i], sav[i]) == Masked(sb[i], sbv[i])
+            o[i] = r.value
+            ov[i] = r.valid
+
+    with MLIRNumbaCudaConfig():
+        k[1, n](
+            out,
+            out_valid,
+            arr_a,
+            cp.array(av, dtype=np.bool_),
+            arr_b,
+            cp.array(bv, dtype=np.bool_),
+        )
+    cuda.synchronize()
+    got_valid = out_valid.get().tolist()
+    assert got_valid == [x and y for x, y in zip(av, bv, strict=True)]
+    for i in range(n):
+        if got_valid[i]:
+            assert bool(out.get()[i]) is (a[i] == b[i])

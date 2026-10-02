@@ -1381,6 +1381,28 @@ TEST_F(CastVariantTest, ApachePrimitiveFloats)
   cast(avf::primitive_double, double{1234567890.1234});
 }
 
+TEST_F(CastVariantTest, ApachePrimitiveTimestamps)
+{
+  using us          = cudf::timestamp_us;
+  using ns          = cudf::timestamp_ns;
+  auto const expect = [](auto got, auto expected) {
+    cudf::test::fixed_width_column_wrapper<decltype(expected)> col{expected};
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(*got, col);
+  };
+  // The timezone-adjusted and NTZ encodings both decode into the timestamp of the same unit.
+  expect(cast_apache_primitive<us>(avf::primitive_timestamp), us{us::duration{0x000632E7DD9752E0}});
+  expect(cast_apache_primitive<us>(avf::primitive_timestampntz),
+         us{us::duration{0x000632E48348C2E0}});
+  expect(cast_apache_primitive<ns>(avf::primitive_timestamp_nanos),
+         ns{ns::duration{0x1805AFB76C3A4115}});
+  expect(cast_apache_primitive<ns>(avf::primitive_timestampntz_nanos),
+         ns{ns::duration{0x1805AFB76C3A4115}});
+  // No unit conversion: a mismatched unit or a plain int64 yields null.
+  EXPECT_EQ(cast_apache_primitive<ns>(avf::primitive_timestamp)->null_count(), 1);
+  EXPECT_EQ(cast_apache_primitive<us>(avf::primitive_timestamp_nanos)->null_count(), 1);
+  EXPECT_EQ(cast_apache_primitive<us>(avf::primitive_int64)->null_count(), 1);
+}
+
 TEST_F(CastVariantTest, ApachePrimitiveBooleans)
 {
   auto stream     = cudf::test::get_default_stream();
@@ -1741,7 +1763,7 @@ TEST_F(CastVariantTest, UnsupportedTypeThrows)
                                        cudf::type_id::UINT64,
                                        cudf::type_id::TIMESTAMP_DAYS,
                                        cudf::type_id::TIMESTAMP_SECONDS,
-                                       cudf::type_id::TIMESTAMP_MICROSECONDS,
+                                       cudf::type_id::TIMESTAMP_MILLISECONDS,
                                        cudf::type_id::DURATION_SECONDS};
 
   // Empty input: the early-return path must still validate the type.

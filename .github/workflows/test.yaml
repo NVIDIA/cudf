@@ -172,16 +172,7 @@ jobs:
       # https://github.com/NVIDIA/cudf/issues/23498
       matrix_filter: map(select(.GPU != "gb300" and .GPU != "gh200"))
   # Test the packaged cuDF Java JAR built by build.yaml java-build for every Maven classifier.
-  java-build-matrix:
-    permissions:
-      contents: read
-    uses: rapidsai/shared-workflows/.github/workflows/compute-matrix.yaml@main
-    with:
-      build_type: ${{ inputs.build_type }}
-      matrix_name: conda-cpp-build
-      matrix_filter: 'map(. + {CUDA_MAJOR: (.CUDA_VER | split(".") | .[0])})'
-  java-tests:
-    needs: [java-build-matrix]
+  java-test:
     permissions:
       actions: read
       contents: read
@@ -189,19 +180,14 @@ jobs:
       packages: read
       pull-requests: read
     secrets: inherit # zizmor: ignore[secrets-inherit]
-    uses: rapidsai/shared-workflows/.github/workflows/custom-job.yaml@main
-    strategy:
-      fail-fast: false
-      matrix: ${{ fromJSON(needs.java-build-matrix.outputs.matrix) }}
+    uses: ./.github/workflows/java-test.yaml
     with:
       build_type: ${{ inputs.build_type }}
       branch: ${{ inputs.branch }}
       date: ${{ inputs.date }}
       sha: ${{ inputs.sha }}
-      arch: ${{ matrix.ARCH }}
-      node_type: ${{ matrix.ARCH == 'amd64' && 'gpu-rtxpro6000-latest-1' || 'gpu-l4-latest-1' }}
-      container_image: "rapidsai/ci-wheel:26.12-cuda${{ matrix.CUDA_VER }}-${{ matrix.LINUX_VER }}-py${{ matrix.PY_VER }}"
       script: "ci/test_packaged_java.sh"
+      matrix_filter: 'map(.GPU = (if .ARCH == "amd64" then "rtxpro6000" else "l4" end))'
   conda-notebook-tests:
     permissions:
       actions: read

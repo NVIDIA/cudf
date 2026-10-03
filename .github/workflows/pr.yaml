@@ -26,9 +26,8 @@ jobs:
       - conda-python-cudf-tests
       - conda-python-cudf-polars-tests
       - conda-python-other-tests
-      - java-build-matrix
       - java-build
-      - java-tests
+      - java-test
       - conda-notebook-tests
       - docs-build
       - docs-build-matrix
@@ -522,17 +521,8 @@ jobs:
       # https://github.com/NVIDIA/cudf/issues/23498
       matrix_filter: map(select(.GPU != "gb300" and .GPU != "gh200"))
   # Build and test the cuDF Java JAR for every Maven classifier.
-  java-build-matrix:
-    needs: [checks]
-    permissions:
-      contents: read
-    uses: rapidsai/shared-workflows/.github/workflows/compute-matrix.yaml@main
-    with:
-      build_type: pull-request
-      matrix_name: conda-cpp-build
-      matrix_filter: 'map(. + {CUDA_MAJOR: (.CUDA_VER | split(".") | .[0])})'
   java-build:
-    needs: [build-details, java-build-matrix, changed-files]
+    needs: [build-details, checks, changed-files]
     permissions:
       actions: read
       contents: read
@@ -540,25 +530,20 @@ jobs:
       packages: read
       pull-requests: read
     secrets: inherit # zizmor: ignore[secrets-inherit]
-    uses: rapidsai/shared-workflows/.github/workflows/custom-job.yaml@main
+    uses: ./.github/workflows/java-build.yaml
     if: >
       fromJSON(needs.changed-files.outputs.changed_file_groups).cpp_build_inputs ||
       fromJSON(needs.changed-files.outputs.changed_file_groups).test_java ||
       fromJSON(needs.changed-files.outputs.changed_file_groups).test_java_packaged
-    strategy:
-      fail-fast: false
-      matrix: ${{ fromJSON(needs.java-build-matrix.outputs.matrix) }}
     with:
       build_type: pull-request
       build-datetime: ${{ needs.build-details.outputs.build-datetime }}
-      arch: ${{ matrix.ARCH }}
       node_type: cpu16
-      container_image: "rapidsai/ci-wheel:26.12-cuda${{ matrix.CUDA_VER }}-${{ matrix.LINUX_VER }}-py${{ matrix.PY_VER }}"
       script: "ci/build_java.sh"
-      file_to_upload: output_jars
-      artifact-name: cudf_java_${{ matrix.ARCH }}_cu${{ matrix.CUDA_MAJOR }}
-  java-tests:
-    needs: [java-build, java-build-matrix]
+      file-to-upload: output_jars
+      artifact-name-prefix: cudf_java
+  java-test:
+    needs: [java-build]
     if: ${{ !cancelled() && needs.java-build.result == 'success' }}
     permissions:
       actions: read
@@ -567,16 +552,11 @@ jobs:
       packages: read
       pull-requests: read
     secrets: inherit # zizmor: ignore[secrets-inherit]
-    uses: rapidsai/shared-workflows/.github/workflows/custom-job.yaml@main
-    strategy:
-      fail-fast: false
-      matrix: ${{ fromJSON(needs.java-build-matrix.outputs.matrix) }}
+    uses: ./.github/workflows/java-test.yaml
     with:
       build_type: pull-request
-      arch: ${{ matrix.ARCH }}
-      node_type: ${{ matrix.ARCH == 'amd64' && 'gpu-rtxpro6000-latest-1' || 'gpu-l4-latest-1' }}
-      container_image: "rapidsai/ci-wheel:26.12-cuda${{ matrix.CUDA_VER }}-${{ matrix.LINUX_VER }}-py${{ matrix.PY_VER }}"
       script: "ci/test_packaged_java.sh"
+      matrix_filter: 'map(.GPU = (if .ARCH == "amd64" then "rtxpro6000" else "l4" end))'
   conda-notebook-tests:
     needs: [conda-python-build, conda-python-build-noarch, changed-files]
     permissions:

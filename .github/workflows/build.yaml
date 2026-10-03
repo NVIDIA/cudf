@@ -414,17 +414,8 @@ jobs:
       push: true
       cuda: '["12.9", "13.3"]'
   # Build the cuDF Java JAR for every Maven classifier.
-  java-build-matrix:
-    needs: [telemetry-setup]
-    permissions:
-      contents: read
-    uses: rapidsai/shared-workflows/.github/workflows/compute-matrix.yaml@main
-    with:
-      build_type: ${{ inputs.build_type || 'branch' }}
-      matrix_name: conda-cpp-build
-      matrix_filter: 'map(. + {CUDA_MAJOR: (.CUDA_VER | split(".") | .[0])})'
   java-build:
-    needs: [build-details, telemetry-setup, java-build-matrix]
+    needs: [build-details, telemetry-setup]
     permissions:
       actions: read
       contents: read
@@ -432,22 +423,17 @@ jobs:
       packages: read
       pull-requests: read
     secrets: inherit # zizmor: ignore[secrets-inherit]
-    uses: rapidsai/shared-workflows/.github/workflows/custom-job.yaml@main
-    strategy:
-      fail-fast: false
-      matrix: ${{ fromJSON(needs.java-build-matrix.outputs.matrix) }}
+    uses: ./.github/workflows/java-build.yaml
     with:
       build_type: ${{ inputs.build_type || 'branch' }}
       branch: ${{ inputs.branch }}
       date: ${{ inputs.date }}
       sha: ${{ inputs.sha }}
       build-datetime: ${{ needs.build-details.outputs.build-datetime }}
-      arch: ${{ matrix.ARCH }}
       node_type: cpu16
-      container_image: "rapidsai/ci-wheel:26.12-cuda${{ matrix.CUDA_VER }}-${{ matrix.LINUX_VER }}-py${{ matrix.PY_VER }}"
       script: "ci/build_java.sh"
-      file_to_upload: output_jars
-      artifact-name: cudf_java_${{ matrix.ARCH }}_cu${{ matrix.CUDA_MAJOR }}
+      file-to-upload: output_jars
+      artifact-name-prefix: cudf_java
   # Assemble the per-classifier JARs into one Maven-repository layout.
   java-gather:
     needs: [java-build]

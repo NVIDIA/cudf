@@ -15,6 +15,9 @@ import java.io.UncheckedIOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Comparator;
+import java.util.HashSet;
+import java.util.Set;
+import java.util.concurrent.CompletableFuture;
 import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -129,5 +132,40 @@ class NativeDepsLoaderTest {
     NativeDepsLoader.loadNativeDeps();
     assertFalse(NativeDepsLoader.getLoaded(),
         "loaded flag should remain false after a failed load");
+  }
+
+  @Test
+  void stagedLoadFailure_doesNotLeakExecutorThreads() throws IOException {
+    Files.createFile(libDir.resolve("libcudf.so"));
+    Files.createFile(libDir.resolve("libcudfjni.so"));
+    Set<Thread> threadsBefore = new HashSet<>(Thread.getAllStackTraces().keySet());
+
+    NativeDepsLoader.loadNativeDeps();
+
+    assertFalse(NativeDepsLoader.getLoaded(),
+        "loaded flag should remain false after a failed load");
+    Set<String> newNonDaemonThreads = new HashSet<>();
+    for (Thread thread : Thread.getAllStackTraces().keySet()) {
+      if (thread.isAlive() && !thread.isDaemon() && !threadsBefore.contains(thread)) {
+        newNonDaemonThreads.add(thread.getName());
+      }
+    }
+    assertTrue(newNonDaemonThreads.isEmpty(),
+        "native dependency loading leaked threads: " + newNonDaemonThreads);
+  }
+
+  @Test
+  void awaitLoadCompletion_preservesInterrupt() {
+    CompletableFuture<Void> incomplete = new CompletableFuture<>();
+    Thread.currentThread().interrupt();
+    try {
+      IOException ex = assertThrows(IOException.class,
+          () -> NativeDepsLoader.awaitLoadCompletion(incomplete));
+      assertTrue(ex.getCause() instanceof InterruptedException);
+      assertTrue(Thread.currentThread().isInterrupted(),
+          "interrupted status should be restored");
+    } finally {
+      Thread.interrupted();
+    }
   }
 }

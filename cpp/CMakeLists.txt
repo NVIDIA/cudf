@@ -240,7 +240,7 @@ if(CUDF_CLANG_TIDY)
   # versions are skipped so we don't want to constrain to a patch version that the user can't
   # install.
   set(LLVM_VERSION "${CMAKE_MATCH_1}")
-  set(expected_clang_tidy_version 20.1)
+  set(expected_clang_tidy_version 22.1)
 
   if(NOT expected_clang_tidy_version VERSION_EQUAL LLVM_VERSION)
     message(

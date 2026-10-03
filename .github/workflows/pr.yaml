@@ -334,6 +334,8 @@ jobs:
       fromJSON(needs.changed-files.outputs.changed_file_groups).cpp_linters
     with:
       build_type: pull-request
+      # CPU profiling needs access to performance-monitoring events on the runner.
+      container-options: "--cap-add CAP_PERFMON"
       script: "ci/cpp_linters.sh"
   conda-cpp-checks:
     needs: conda-cpp-build

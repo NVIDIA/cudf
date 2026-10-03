@@ -134,6 +134,8 @@ jobs:
       branch: ${{ inputs.branch }}
       date: ${{ inputs.date }}
       sha: ${{ inputs.sha }}
+      # CPU profiling needs access to performance-monitoring events on the runner.
+      container-options: "--cap-add CAP_PERFMON"
       script: "ci/cpp_linters.sh"
       file_to_upload: iwyu_results.txt
   conda-python-cudf-tests:

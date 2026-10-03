@@ -13,7 +13,6 @@ files:
       - build_all
       - build_cpp
       - build_python_common
-      - clang
       - cuda
       - cuda_version
       - cudf_polars_trace
@@ -35,7 +34,6 @@ files:
       - depends_on_ucxx
       - develop
       - docs
-      - iwyu
       - notebooks
       - numpy_run
       - py_version
@@ -172,16 +170,15 @@ files:
       - cuda_version
       - develop
       - py_version
-  clang_tidy:
+  cpp_linters:
     output: none
     includes:
       - build_all
       - build_base
-      - clang
+      - cpp_linters
       - cuda
       - cuda_version
       - develop
-      - iwyu
       - py_version
   docs:
     output: none
@@ -998,17 +995,17 @@ dependencies:
       - output_types: conda
         packages:
           - &doxygen doxygen=1.18.0 # pre-commit hook needs a specific version.
-  clang:
+  cpp_linters:
     common:
       - output_types: conda
         packages:
-          - clang==20.1.8
-          - clang-tools==20.1.8
-  iwyu:
-    common:
-      - output_types: conda
-        packages:
-          - include-what-you-use==0.24.0
+          - clang==22.1.8
+          - clang-tools==22.1.8
+          - gdb
+          - include-what-you-use==0.26
+          - linux-perf
+          - strace
+          - time
   docs:
     common:
       - output_types: [conda]

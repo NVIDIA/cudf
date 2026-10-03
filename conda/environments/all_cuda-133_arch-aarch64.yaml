@@ -12,8 +12,6 @@ dependencies:
 - breathe>=4.35.0
 - c-compiler
 - cachetools
-- clang-tools==20.1.8
-- clang==20.1.8
 - cmake>=4.0
 - cramjam
 - croaring==4.4.2
@@ -39,7 +37,6 @@ dependencies:
 - gdb
 - hypothesis>=6.131.7
 - identify>=2.5.20
-- include-what-you-use==0.24.0
 - ipykernel
 - ipython
 - jupyter_client

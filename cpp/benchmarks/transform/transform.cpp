@@ -123,3 +123,5 @@ AST_TRANSFORM_BENCHMARK_DEFINE(
   transform_int32_imbalanced_reuse, int32_t, TreeType::IMBALANCED_LEFT, true, false);
 AST_TRANSFORM_BENCHMARK_DEFINE(
   transform_double_imbalanced_unique, double, TreeType::IMBALANCED_LEFT, false, false);
+AST_TRANSFORM_BENCHMARK_DEFINE(
+  transform_int32_imbalanced_unique_nullable, int32_t, TreeType::IMBALANCED_LEFT, false, true);

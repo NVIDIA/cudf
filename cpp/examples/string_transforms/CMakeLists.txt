@@ -140,6 +140,130 @@ add_fragment(
   url_log_fragments FRAGMENT url_component_output SOURCE url_logs/fragments.cu DEFINITIONS
   UDF_WRITE_OUTPUT INCLUDE_DIRECTORIES ${CMAKE_CURRENT_LIST_DIR}/url_logs LINK_LIBRARIES cudf::cudf
 )
+
+# This function builds a fully linked transform kernel ahead of time. It compiles the libcudf
+# transform kernel instance and the UDF to LTO-IR for every target architecture, device-links them
+# into a fatbin with nvcc, and embeds that fatbin so cudf::transform_lto can load it directly with
+# lto_binary_type::LINKED_KERNEL instead of JIT-linking at runtime. KERNEL_INSTANCE must match the
+# instance libcudf reflects for the transform's inputs and outputs.
+function(add_linked_kernel TARGET)
+  set(ONE_VALUE_ARGS FRAGMENT SOURCE KERNEL_INSTANCE UDF_TYPE)
+  set(MULTI_VALUE_ARGS DEFINITIONS)
+  cmake_parse_arguments(ARG "" "${ONE_VALUE_ARGS}" "${MULTI_VALUE_ARGS}" ${ARGN})
+
+  set(KERNEL_ID ${TARGET}_${ARG_FRAGMENT}_kernel)
+  set(INSTANTIATION_DIR "${CMAKE_CURRENT_BINARY_DIR}/${TARGET}/instantiations/${ARG_FRAGMENT}")
+  file(
+    GENERATE
+    OUTPUT "${INSTANTIATION_DIR}/cudf/detail/kernel_instance.cuh"
+    CONTENT "#pragma once\n#define CUDF_KERNEL_INSTANCE ${ARG_KERNEL_INSTANCE}"
+  )
+  file(
+    GENERATE
+    OUTPUT "${INSTANTIATION_DIR}/cudf/detail/operation_udf.cuh"
+    CONTENT "#pragma once\n#define CUDF_UDF_TYPE ${ARG_UDF_TYPE}"
+  )
+  add_library(${KERNEL_ID} OBJECT ${CMAKE_CURRENT_LIST_DIR}/../../src/transform/jit/kernel.cu)
+  target_include_directories(
+    ${KERNEL_ID} BEFORE PRIVATE ${INSTANTIATION_DIR} ${CMAKE_CURRENT_LIST_DIR}/../../src
+  )
+  target_compile_definitions(${KERNEL_ID} PRIVATE CUDF_LTO_MODE)
+
+  set(UDF_ID ${TARGET}_${ARG_FRAGMENT}_udf)
+  add_library(${UDF_ID} OBJECT ${ARG_SOURCE})
+  target_include_directories(${UDF_ID} PRIVATE ${CMAKE_CURRENT_LIST_DIR}/url_logs)
+  target_compile_definitions(${UDF_ID} PRIVATE ${ARG_DEFINITIONS})
+
+  foreach(OBJECT_ID IN ITEMS ${KERNEL_ID} ${UDF_ID})
+    target_link_libraries(${OBJECT_ID} PRIVATE cudf::cudf)
+    target_compile_options(${OBJECT_ID} PRIVATE "$<$<COMPILE_LANGUAGE:CUDA>:${CUDF_CUDA_FLAGS}>")
+    set_target_properties(
+      ${OBJECT_ID}
+      PROPERTIES CUDA_SEPARABLE_COMPILATION ON
+                 INTERPROCEDURAL_OPTIMIZATION ON
+                 POSITION_INDEPENDENT_CODE ON
+                 CXX_STANDARD 20
+                 CXX_STANDARD_REQUIRED ON
+                 CUDA_STANDARD 20
+                 CUDA_STANDARD_REQUIRED ON
+                 CUDA_VISIBILITY_PRESET hidden
+    )
+  endforeach()
+
+  set(GENCODE_FLAGS)
+  foreach(ARCH IN LISTS CMAKE_CUDA_ARCHITECTURES)
+    string(REGEX REPLACE "-(real|virtual)$" "" SM "${ARCH}")
+    list(APPEND GENCODE_FLAGS "-gencode=arch=compute_${SM},code=sm_${SM}")
+  endforeach()
+
+  set(LINKED_FATBIN "${CMAKE_CURRENT_BINARY_DIR}/${TARGET}/linked/${ARG_FRAGMENT}.fatbin")
+  # rtcx_embed_blob requires plain files to exist at configure time; the command below replaces it.
+  if(NOT EXISTS "${LINKED_FATBIN}")
+    file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/${TARGET}/linked")
+    file(TOUCH "${LINKED_FATBIN}")
+  endif()
+  add_custom_command(
+    OUTPUT "${LINKED_FATBIN}"
+    # Without --kernels-used, whole-program LTO drops the entry point because no host stub uses it.
+    COMMAND ${CMAKE_CUDA_COMPILER} -dlink -dlto ${GENCODE_FLAGS} --fatbin
+            -Xnvlink=--kernels-used=cudf_kernel_entry $<TARGET_OBJECTS:${KERNEL_ID}>
+            $<TARGET_OBJECTS:${UDF_ID}> -o "${LINKED_FATBIN}"
+    DEPENDS ${KERNEL_ID} ${UDF_ID} $<TARGET_OBJECTS:${KERNEL_ID}> $<TARGET_OBJECTS:${UDF_ID}>
+    COMMENT "Device-linking ${ARG_FRAGMENT} ahead of time"
+    COMMAND_EXPAND_LISTS VERBATIM
+  )
+  rtcx_embed_blob(
+    ${TARGET} FILE "${LINKED_FATBIN}" DEST linked/${ARG_FRAGMENT}.fatbin ID ${ARG_FRAGMENT}
+  )
+endfunction()
+
+set(URL_LOG_INPUT_ACCESSOR
+    "cudf::jit::column_accessor<0ULL, cudf::column_device_view_core, cudf::string_view, false, 0>"
+)
+set(URL_LOG_SIZE_ACCESSORS "")
+set(URL_LOG_OUTPUT_ACCESSORS "")
+foreach(OUTPUT_INDEX RANGE 5)
+  list(
+    APPEND
+    URL_LOG_SIZE_ACCESSORS
+    "cudf::jit::column_accessor<${OUTPUT_INDEX}ULL, cudf::mutable_column_device_view_core, uint32_t, false, 0>"
+  )
+  list(
+    APPEND
+    URL_LOG_OUTPUT_ACCESSORS
+    "cudf::jit::column_accessor<${OUTPUT_INDEX}ULL, cudf::jit::mutable_strings_column_device_view, cuda::std::span<char>, false, 0>"
+  )
+endforeach()
+list(JOIN URL_LOG_SIZE_ACCESSORS ", " URL_LOG_SIZE_ACCESSORS)
+list(JOIN URL_LOG_OUTPUT_ACCESSORS ", " URL_LOG_OUTPUT_ACCESSORS)
+
+add_linked_kernel(
+  url_log_fragments
+  FRAGMENT
+  url_component_sizes_linked
+  SOURCE
+  url_logs/fragments.cu
+  DEFINITIONS
+  UDF_COMPUTE_SIZES
+  KERNEL_INSTANCE
+  "cudf::jit::transform_kernel<false, false, cudf::jit::type_list<${URL_LOG_INPUT_ACCESSOR}>, cudf::jit::type_list<${URL_LOG_SIZE_ACCESSORS}>>"
+  UDF_TYPE
+  "int(uint32_t *, uint32_t *, uint32_t *, uint32_t *, uint32_t *, uint32_t *, cudf::string_view)"
+)
+add_linked_kernel(
+  url_log_fragments
+  FRAGMENT
+  url_component_output_linked
+  SOURCE
+  url_logs/fragments.cu
+  DEFINITIONS
+  UDF_WRITE_OUTPUT
+  KERNEL_INSTANCE
+  "cudf::jit::transform_kernel<false, false, cudf::jit::type_list<${URL_LOG_INPUT_ACCESSOR}>, cudf::jit::type_list<${URL_LOG_OUTPUT_ACCESSORS}>>"
+  UDF_TYPE
+  "int(cuda::std::span<char> *, cuda::std::span<char> *, cuda::std::span<char> *, cuda::std::span<char> *, cuda::std::span<char> *, cuda::std::span<char> *, cudf::string_view)"
+)
+
 rtcx_embed(url_log_fragments COMPRESSION none OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/embed")
 
 add_string_transforms_example(url_log_transforms url_logs/transforms.cpp)

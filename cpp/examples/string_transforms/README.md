@@ -23,6 +23,11 @@ The following examples are included:
      per-row output sizes; scans create offsets and a second pass writes all six output columns.
    - `lto`: the same fused parser ABI, AOT-compiled to embedded fatbins and JIT-linked with
      libcudf's precompiled transform kernels.
+   - `lto-aot`: the same fused parser, device-linked with the matching libcudf transform kernel
+     instance at build time (`add_linked_kernel` in `CMakeLists.txt`). The embedded fatbin is
+     passed as `cudf::lto_binary_type::LINKED_KERNEL`, so no runtime linking occurs and the cold
+     start stays close to the warm run. The fatbin only contains the architectures in
+     `CMAKE_CUDA_ARCHITECTURES`.
 
 ## Compile and execute
 

@@ -5,7 +5,7 @@ from __future__ import annotations
 import csv
 import itertools
 import os
-from collections.abc import Collection, Mapping
+from collections.abc import Collection, Mapping, Sequence
 from io import BytesIO, StringIO, TextIOBase
 from typing import TYPE_CHECKING, cast
 
@@ -176,9 +176,6 @@ def read_csv(
 
     if byte_range is None:
         byte_range = (0, 0)
-
-    # We need this later when setting index cols
-    orig_header = header
 
     if names is not None:
         # explicitly mentioned name, so don't check header
@@ -358,7 +355,7 @@ def read_csv(
             if (
                 isinstance(index_col_name, str)
                 and names is None
-                and orig_header == "infer"
+                and header != -1
             ):
                 if index_col_name.startswith("Unnamed:"):
                     # TODO: Try to upstream it to libcudf
@@ -366,6 +363,20 @@ def read_csv(
                     df.index.name = None
             elif names is None:
                 df.index.name = index_col
+        elif isinstance(index_col, Sequence) and all(
+            isinstance(col, int) for col in index_col
+        ):
+            index_col_labels = list(df._data.get_labels_by_index(index_col))
+            df = df.set_index(index_col_labels)
+            if names is None:
+                df.index.names = [
+                    (None if label.startswith("Unnamed:") else label)
+                    if isinstance(label, str) and header != -1
+                    else position
+                    for label, position in zip(
+                        index_col_labels, index_col, strict=True
+                    )
+                ]
         else:
             df = df.set_index(index_col)
 

@@ -60,47 +60,6 @@ namespace {
   return static_cast<cudf::size_type>(total_row_groups);
 }
 
-// Compute the page index (column index and/or offset index) byte range
-[[nodiscard]] byte_range_info page_index_byte_range(parquet::detail::metadata const& file_metadata)
-{
-  if (file_metadata.is_page_index_setup()) { return {}; }
-
-  auto const& row_groups = file_metadata.row_groups;
-  if (row_groups.empty() or row_groups.front().columns.empty()) { return {}; }
-
-  // Helpers to check if a column chunk has a column index or offset index
-  auto const has_column_index = [](ColumnChunk const& col) {
-    return col.column_index_offset > 0 and col.column_index_length > 0;
-  };
-  auto const has_offset_index = [](ColumnChunk const& col) {
-    return col.offset_index_offset > 0 and col.offset_index_length > 0;
-  };
-
-  auto const min_offset = [&]() -> int64_t {
-    auto const& first_col = row_groups.front().columns.front();
-    if (has_column_index(first_col)) {
-      return first_col.column_index_offset;
-    } else if (has_offset_index(first_col)) {
-      return first_col.offset_index_offset;
-    }
-    return int64_t{0};
-  }();
-
-  auto const max_offset = [&]() -> int64_t {
-    auto const& last_col = row_groups.back().columns.back();
-    if (has_offset_index(last_col)) {
-      return last_col.offset_index_offset + last_col.offset_index_length;
-    } else if (has_column_index(last_col)) {
-      return last_col.column_index_offset + last_col.column_index_length;
-    }
-    return int64_t{0};
-  }();
-
-  return (min_offset > 0 and max_offset > min_offset)
-           ? byte_range_info{min_offset, max_offset - min_offset}
-           : byte_range_info{};
-}
-
 }  // namespace
 
 metadata::metadata(cudf::host_span<uint8_t const> footer_bytes)
@@ -148,7 +107,7 @@ std::vector<text::byte_range_info> aggregate_reader_metadata::page_index_byte_ra
   std::ranges::transform(per_file_metadata,
                          std::back_inserter(page_index_byte_ranges),
                          [](auto const& file_metadata) -> text::byte_range_info {
-                           return page_index_byte_range(file_metadata);
+                           return parquet::detail::page_index_byte_range(file_metadata);
                          });
 
   return page_index_byte_ranges;
@@ -216,7 +175,7 @@ void aggregate_reader_metadata::setup_page_indexes(
     CUDF_EXPECTS(not row_groups.empty() and not row_groups.front().columns.empty(),
                  "No column chunks in Parquet schema to read page index for");
 
-    auto const expected_byte_range = page_index_byte_range(file_metadata);
+    auto const expected_byte_range = parquet::detail::page_index_byte_range(file_metadata);
 
     CUDF_EXPECTS(not expected_byte_range.is_empty() and
                    std::cmp_equal(pgidx_bytes.size(), expected_byte_range.size()),

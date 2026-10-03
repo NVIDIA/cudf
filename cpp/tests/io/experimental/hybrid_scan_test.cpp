@@ -1035,6 +1035,39 @@ TEST_F(HybridScanTest, SharedMetadataReaderMatchesReadParquet)
   CUDF_TEST_EXPECT_TABLES_EQUIVALENT(expected->view(), table_b->view());
 }
 
+TEST_F(HybridScanTest, PageIndexByteRangeWithMissingIndexes)
+{
+  auto [written_table, parquet_buffer] = create_parquet_with_stats<int32_t, 2>();
+
+  auto const options       = cudf::io::parquet_reader_options::builder().build();
+  auto const datasource    = cudf::io::datasource::create(cudf::host_span<std::byte const>(
+    reinterpret_cast<std::byte const*>(parquet_buffer.data()), parquet_buffer.size()));
+  auto const footer_buffer = cudf::io::parquet::fetch_footer_to_host(*datasource);
+  auto file_metadata =
+    cudf::io::parquet::experimental::hybrid_scan_reader{*footer_buffer, options}.parquet_metadata();
+
+  // Writer emits all column indexes followed by all offset indexes. Drop the first column index
+  // and the last offset index so that neither the first nor the last chunk bounds the range.
+  auto& first_rg = file_metadata.row_groups.front().columns;
+  auto& last_rg  = file_metadata.row_groups.back().columns;
+  ASSERT_GE(first_rg.size(), 2);
+  auto const expected_start = first_rg[1].column_index_offset;
+  auto const& second_last   = last_rg[last_rg.size() - 2];
+  auto const expected_end   = second_last.offset_index_offset + second_last.offset_index_length;
+  first_rg.front().column_index_offset = 0;
+  first_rg.front().column_index_length = 0;
+  last_rg.back().offset_index_offset   = 0;
+  last_rg.back().offset_index_length   = 0;
+
+  auto const reader = cudf::io::parquet::experimental::hybrid_scan_reader{
+    cudf::io::parquet::experimental::hybrid_scan_metadata{file_metadata, options}};
+  auto const page_index_byte_range = reader.page_index_byte_range();
+  EXPECT_EQ(page_index_byte_range.offset(), expected_start);
+  EXPECT_EQ(page_index_byte_range.offset() + page_index_byte_range.size(), expected_end);
+  EXPECT_NO_THROW(reader.setup_page_index(
+    *cudf::io::parquet::fetch_page_index_to_host(*datasource, page_index_byte_range)));
+}
+
 TEST_F(HybridScanTest, SharedMetadataFromFileMetaDataMatchesReadParquet)
 {
   using T                              = int32_t;

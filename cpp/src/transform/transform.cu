@@ -200,11 +200,13 @@ void launch(cudf::kernel const& kernel,
             column_device_view_core const* input_cols,
             mutable_column_device_view_core const* output_cols,
             int32_t* max_error,
+            size_type* null_count,
             cuda::stream_ref stream)
 {
   CUDF_FUNC_RANGE();
-  void* args[] = {&row_size, &stencil, &user_data, &input_cols, &output_cols, &max_error};
-  auto cfg     = kernel.max_occupancy_config(0, 0);
+  void* args[] = {
+    &row_size, &stencil, &user_data, &input_cols, &output_cols, &max_error, &null_count};
+  auto cfg = kernel.max_occupancy_config(0, 0);
   CUDF_EXPECTS(cfg.block_size % cudf::detail::warp_size == 0,
                "Expected block size to be a multiple of warp size",
                std::runtime_error);
@@ -590,6 +592,7 @@ void run(bool is_null_aware,
          std::span<input_column_view const> inputs,
          std::span<output_column> outputs,
          int32_t* d_max_error,
+         size_type* d_null_count,
          std::string const& udf,
          udf_source_type source_type,
          cuda::stream_ref stream,
@@ -600,8 +603,15 @@ void run(bool is_null_aware,
   auto* input_cols     = reinterpret_cast<column_device_view_core const*>(cols.data());
   auto* output_cols =
     reinterpret_cast<mutable_column_device_view_core const*>(input_cols + inputs.size());
-  return launch(
-    kernel, row_size, d_stencil, user_data, input_cols, output_cols, d_max_error, stream);
+  return launch(kernel,
+                row_size,
+                d_stencil,
+                user_data,
+                input_cols,
+                output_cols,
+                d_max_error,
+                d_null_count,
+                stream);
 }
 
 void run(kernel const& kernel,
@@ -611,6 +621,7 @@ void run(kernel const& kernel,
          std::span<input_column_view const> inputs,
          std::span<output_column> outputs,
          int32_t* d_max_error,
+         size_type* d_null_count,
          cuda::stream_ref stream,
          rmm::device_async_resource_ref mr)
 {
@@ -618,8 +629,15 @@ void run(kernel const& kernel,
   auto* input_cols     = reinterpret_cast<column_device_view_core const*>(cols.data());
   auto* output_cols =
     reinterpret_cast<mutable_column_device_view_core const*>(input_cols + inputs.size());
-  return launch(
-    kernel, row_size, d_stencil, user_data, input_cols, output_cols, d_max_error, stream);
+  return launch(kernel,
+                row_size,
+                d_stencil,
+                user_data,
+                input_cols,
+                output_cols,
+                d_max_error,
+                d_null_count,
+                stream);
 }
 
 rtcx::binary_type as_rtcx_binary_type(lto_binary_type type)
@@ -644,6 +662,7 @@ void run_lto(std::optional<std::tuple<std::span<uint8_t const>, lto_binary_type,
              std::span<input_column_view const> inputs,
              std::span<output_column> outputs,
              int32_t* d_max_error,
+             size_type* d_null_count,
              std::span<uint8_t const> udf_binary,
              lto_binary_type source_type,
              cuda::stream_ref stream,
@@ -683,8 +702,15 @@ void run_lto(std::optional<std::tuple<std::span<uint8_t const>, lto_binary_type,
   auto* input_cols     = reinterpret_cast<column_device_view_core const*>(cols.data());
   auto* output_cols =
     reinterpret_cast<mutable_column_device_view_core const*>(input_cols + inputs.size());
-  return launch(
-    kernel, row_size, d_stencil, user_data, input_cols, output_cols, d_max_error, stream);
+  return launch(kernel,
+                row_size,
+                d_stencil,
+                user_data,
+                input_cols,
+                output_cols,
+                d_max_error,
+                d_null_count,
+                stream);
 }
 
 }  // namespace jit_transform
@@ -704,10 +730,17 @@ CUDF_KERNEL void copy_offset_bitmask(bitmask_type* __restrict__ destination,
   }
 }
 
-size_type inplace_null_mask_and(bitmask_type* null_mask,
-                                size_type row_size,
-                                std::span<transform_input const> inputs,
-                                cuda::stream_ref stream)
+/**
+ * @brief Computes the output null mask of a null-unaware transform from its inputs
+ *
+ * @return The null count of the mask, or `std::nullopt` if more than one input is nullable. In
+ * that case the mask is left uninitialized and the transform kernel computes it while evaluating
+ * the rows, which avoids a separate pass over the input masks.
+ */
+std::optional<size_type> inplace_null_mask_and(bitmask_type* null_mask,
+                                               size_type row_size,
+                                               std::span<transform_input const> inputs,
+                                               cuda::stream_ref stream)
 {
   CUDF_FUNC_RANGE();
 
@@ -788,14 +821,7 @@ size_type inplace_null_mask_and(bitmask_type* null_mask,
     return nullable_null_counts[0];
   }
 
-  auto num_valid = detail::inplace_bitmask_and(
-    device_span<bitmask_type>{null_mask, static_cast<size_t>(num_words)},
-    nullable_masks,
-    nullable_offsets,
-    row_size,
-    stream);
-
-  return row_size - std::min(num_valid, row_size);
+  return std::nullopt;
 }
 
 /**
@@ -924,12 +950,17 @@ void perform_checks(std::variant<udf_source_type, lto_binary_type> source_type,
                std::invalid_argument);
 }
 
-std::optional<std::pair<bitmask_type*, size_type>> make_stencil(
-  null_aware is_null_aware,
-  size_type row_size,
-  std::span<transform_input const> inputs,
-  std::span<output_column> outputs,
-  cuda::stream_ref stream)
+struct stencil_info {
+  bitmask_type* mask;      ///< validity of the rows the kernel should evaluate, or nullptr
+  size_type null_count;    ///< null count of `mask`
+  bool compute_in_kernel;  ///< the kernel computes the output validity and null count itself
+};
+
+std::optional<stencil_info> make_stencil(null_aware is_null_aware,
+                                         size_type row_size,
+                                         std::span<transform_input const> inputs,
+                                         std::span<output_column> outputs,
+                                         cuda::stream_ref stream)
 {
   CUDF_FUNC_RANGE();
 
@@ -943,9 +974,14 @@ std::optional<std::pair<bitmask_type*, size_type>> make_stencil(
   }
 
   // no nullable outputs
-  if (!stencil.has_value()) { return std::pair<bitmask_type*, size_type>{nullptr, 0}; }
+  if (!stencil.has_value()) { return stencil_info{nullptr, 0, false}; }
 
-  auto stencil_null_count = inplace_null_mask_and(*stencil, row_size, inputs, stream);
+  auto maybe_null_count = inplace_null_mask_and(*stencil, row_size, inputs, stream);
+
+  // the kernel writes the validity of every nullable output and counts the nulls
+  if (!maybe_null_count.has_value()) { return stencil_info{nullptr, 0, true}; }
+
+  auto stencil_null_count = *maybe_null_count;
 
   for (auto& out : outputs) {
     auto* mask = std::visit([&](auto& c) { return c.null_mask(); }, out);
@@ -960,7 +996,7 @@ std::optional<std::pair<bitmask_type*, size_type>> make_stencil(
     std::visit([&](auto& c) { c.set_null_count(null_count); }, out);
   }
 
-  return std::pair<bitmask_type*, size_type>{*stencil, stencil_null_count};
+  return stencil_info{*stencil, stencil_null_count, false};
 }
 
 rmm::device_uvector<char> make_chars_buffer(column_view const& offsets_view,
@@ -1143,6 +1179,57 @@ auto finalize_outputs(null_aware is_null_aware,
   return results;
 }
 
+/**
+ * @brief Device side status of a transform launch
+ *
+ * Holds the max UDF error and, when the kernel computes the output validity, the output null
+ * count, so both are read back with a single copy.
+ */
+struct launch_status {
+  static_assert(static_cast<int32_t>(errc::SUCCESS) == 0);
+
+  explicit launch_status(cuda::stream_ref stream)
+    : data(2, stream, cudf::get_current_device_resource_ref())
+  {
+    CUDF_CUDA_TRY(cudaMemsetAsync(data.data(), 0, data.size() * sizeof(int32_t), stream.get()));
+  }
+
+  int32_t* max_error() { return data.data(); }
+  size_type* null_count() { return data.data() + 1; }
+
+  rmm::device_uvector<int32_t> data;
+};
+
+/**
+ * @brief Throws if the UDF reported an error and sets the output null counts computed by the
+ * kernel
+ */
+void finish_launch(launch_status const& status,
+                   std::optional<stencil_info> const& stencil,
+                   std::span<output_column> outputs,
+                   cuda::stream_ref stream)
+{
+  auto h_status = cudf::detail::make_host_vector(status.data, stream);
+  auto error    = static_cast<errc>(h_status[0]);
+
+  switch (error) {
+    case errc::SUCCESS: break;
+    default:
+      throw evaluation_error(
+        error, std::format("Transform UDF evaluation failed with error `{}`", to_string(error)));
+  }
+
+  if (stencil.has_value() && stencil->compute_in_kernel) {
+    for (auto& out : outputs) {
+      std::visit(
+        [&](auto& c) {
+          if (c.nullable()) { c.set_null_count(h_status[1]); }
+        },
+        out);
+    }
+  }
+}
+
 std::unique_ptr<table> execute_transform(std::string const& udf,
                                          udf_source_type source_type,
                                          null_aware is_null_aware,
@@ -1166,11 +1253,12 @@ std::unique_ptr<table> execute_transform(std::string const& udf,
                                                 stream,
                                                 mr);
 
-  auto stencil_arg       = stencil.has_value() ? stencil->first : nullptr;
-  auto stencil_has_nulls = stencil.has_value() ? (stencil->second > 0) : false;
+  auto stencil_arg       = stencil.has_value() ? stencil->mask : nullptr;
+  auto stencil_has_nulls = stencil.has_value() ? (stencil->null_count > 0) : false;
 
-  cudf::detail::device_scalar<int32_t> d_max_error(
-    static_cast<int32_t>(errc::SUCCESS), stream, cudf::get_current_device_resource_ref());
+  launch_status status(stream);
+  auto d_null_count =
+    (stencil.has_value() && stencil->compute_in_kernel) ? status.null_count() : nullptr;
 
   if (compiled_kernel == nullptr) {
     jit_transform::run(is_null_aware == null_aware::YES,
@@ -1180,7 +1268,8 @@ std::unique_ptr<table> execute_transform(std::string const& udf,
                        user_data.value_or(nullptr),
                        inputs,
                        output_columns,
-                       d_max_error.data(),
+                       status.max_error(),
+                       d_null_count,
                        udf,
                        source_type,
                        stream,
@@ -1192,19 +1281,13 @@ std::unique_ptr<table> execute_transform(std::string const& udf,
                        user_data.value_or(nullptr),
                        inputs,
                        output_columns,
-                       d_max_error.data(),
+                       status.max_error(),
+                       d_null_count,
                        stream,
                        mr);
   }
 
-  auto error = static_cast<errc>(d_max_error.value(stream));
-
-  switch (error) {
-    case errc::SUCCESS: break;
-    default:
-      throw evaluation_error(
-        error, std::format("Transform UDF evaluation failed with error `{}`", to_string(error)));
-  }
+  finish_launch(status, stencil, output_columns, stream);
 
   auto finalized = finalize_outputs(is_null_aware, row_size, std::move(output_columns), stream, mr);
   return std::make_unique<table>(std::move(finalized));
@@ -1391,14 +1474,15 @@ std::unique_ptr<table> transform_lto(std::span<uint8_t const> udf,
                                                 std::move(string_offsets),
                                                 stream,
                                                 mr);
-  auto stencil_arg               = stencil.has_value() ? stencil->first : nullptr;
-  auto stencil_has_nulls         = stencil.has_value() ? (stencil->second > 0) : false;
+  auto stencil_arg               = stencil.has_value() ? stencil->mask : nullptr;
+  auto stencil_has_nulls         = stencil.has_value() ? (stencil->null_count > 0) : false;
 
   auto precompiled_kernel_fragment = dispatch_lto_kernel_fragment(
     is_null_aware == null_aware::YES, user_data.has_value(), inputs, output_columns);
 
-  cudf::detail::device_scalar<int32_t> d_max_error(
-    static_cast<int32_t>(errc::SUCCESS), stream, cudf::get_current_device_resource_ref());
+  launch_status status(stream);
+  auto d_null_count =
+    (stencil.has_value() && stencil->compute_in_kernel) ? status.null_count() : nullptr;
 
   jit_transform::run_lto(precompiled_kernel_fragment,
                          is_null_aware == null_aware::YES,
@@ -1408,19 +1492,14 @@ std::unique_ptr<table> transform_lto(std::span<uint8_t const> udf,
                          user_data.value_or(nullptr),
                          inputs,
                          output_columns,
-                         d_max_error.data(),
+                         status.max_error(),
+                         d_null_count,
                          udf,
                          binary_type,
                          stream,
                          mr);
 
-  auto error = static_cast<errc>(d_max_error.value(stream));
-  switch (error) {
-    case errc::SUCCESS: break;
-    default:
-      throw evaluation_error(
-        error, std::format("Transform UDF evaluation failed with error `{}`", to_string(error)));
-  }
+  finish_launch(status, stencil, output_columns, stream);
 
   auto finalized = finalize_outputs(is_null_aware, row_size, std::move(output_columns), stream, mr);
   return std::make_unique<table>(std::move(finalized));

@@ -64,7 +64,8 @@ __device__ void transform_kernel(size_type row_size,
                                  void* __restrict__ user_data,
                                  column_device_view_core const* __restrict__ input_cols,
                                  mutable_column_device_view_core const* __restrict__ output_cols,
-                                 int32_t* __restrict__ max_error)
+                                 int32_t* __restrict__ max_error,
+                                 size_type* __restrict__ null_count)
 {
   auto start        = detail::grid_1d::global_thread_id();
   auto stride       = detail::grid_1d::grid_stride();
@@ -89,25 +90,65 @@ __device__ void transform_kernel(size_type row_size,
   };
 
   if constexpr (!is_null_aware) {
-    for (auto row = start; row < row_size; row += stride) {
-      if (stencil != nullptr && !bit_is_set(stencil, row)) { continue; }
+    if (null_count != nullptr) {
+      // The output validity is the AND of the input validities. Compute it here instead of in a
+      // separate pass, write it to every nullable output, and count the nulls.
+      auto warp_padded_size = util::round_up_safe<thread_index_type>(row_size, detail::warp_size);
+      size_type thread_null_count = 0;
+      for (auto row = start; row < warp_padded_size; row += stride) {
+        auto active_mask = __ballot_sync(0xffff'ffffu, row < row_size);
+        if (row >= row_size) { continue; }
+        auto row_is_valid = InputAccessors::map(
+          [&]<typename... A>() { return (A::is_valid(input_cols, row) && ...); });
+        OutputAccessors::map([&]<typename... A>() {
+          (warp_compact_validity<A>(active_mask, output_cols, row, row_is_valid), ...);
+        });
+        if (!row_is_valid) {
+          thread_null_count++;
+          continue;
+        }
+        auto ins = InputAccessors::map(
+          [&]<typename... A>() { return cuda::std::tuple{A::element(input_cols, row)...}; });
+        auto outs = OutputAccessors::map(
+          [&]<typename... A>() { return cuda::std::tuple{A::output_arg(output_cols, row)...}; });
+        auto out_ptrs =
+          cuda::std::apply([&](auto&... args) { return cuda::std::tuple{&args...}; }, outs);
+        auto row_error = operation(row, cuda::std::tuple_cat(out_ptrs, ins));
+        OutputAccessors::map([&]<typename... A>() {
+          (A::assign(output_cols, row, cuda::std::get<A::index>(outs)), ...);
+        });
+        thread_error = cuda::std::max(thread_error, row_error);
+      }
 
-      auto ins = InputAccessors::map(
-        [&]<typename... A>() { return cuda::std::tuple{A::element(input_cols, row)...}; });
+      // every lane of the warp runs the same number of iterations above, so the warp is converged
+      for (int offset = detail::warp_size / 2; offset > 0; offset /= 2) {
+        thread_null_count += __shfl_down_sync(0xffff'ffffu, thread_null_count, offset);
+      }
+      if ((threadIdx.x % detail::warp_size) == 0 && thread_null_count != 0) {
+        cuda::atomic_ref ref(*null_count);
+        ref.fetch_add(thread_null_count, cuda::std::memory_order_relaxed);
+      }
+    } else {
+      for (auto row = start; row < row_size; row += stride) {
+        if (stencil != nullptr && !bit_is_set(stencil, row)) { continue; }
 
-      auto outs = OutputAccessors::map(
-        [&]<typename... A>() { return cuda::std::tuple{A::output_arg(output_cols, row)...}; });
+        auto ins = InputAccessors::map(
+          [&]<typename... A>() { return cuda::std::tuple{A::element(input_cols, row)...}; });
 
-      auto out_ptrs =
-        cuda::std::apply([&](auto&... args) { return cuda::std::tuple{&args...}; }, outs);
+        auto outs = OutputAccessors::map(
+          [&]<typename... A>() { return cuda::std::tuple{A::output_arg(output_cols, row)...}; });
 
-      auto row_error = operation(row, cuda::std::tuple_cat(out_ptrs, ins));
+        auto out_ptrs =
+          cuda::std::apply([&](auto&... args) { return cuda::std::tuple{&args...}; }, outs);
 
-      OutputAccessors::map([&]<typename... A>() {
-        (A::assign(output_cols, row, cuda::std::get<A::index>(outs)), ...);
-      });
+        auto row_error = operation(row, cuda::std::tuple_cat(out_ptrs, ins));
 
-      thread_error = cuda::std::max(thread_error, row_error);
+        OutputAccessors::map([&]<typename... A>() {
+          (A::assign(output_cols, row, cuda::std::get<A::index>(outs)), ...);
+        });
+
+        thread_error = cuda::std::max(thread_error, row_error);
+      }
     }
   } else {
     // Keep every lane in a warp on the same loop iteration when writing validity.
@@ -164,7 +205,9 @@ extern "C" __global__ void cudf_kernel_entry(
   void* __restrict__ user_data,
   cudf::column_device_view_core const* __restrict__ input_cols,
   cudf::mutable_column_device_view_core const* __restrict__ output_cols,
-  int32_t* __restrict__ max_error)
+  int32_t* __restrict__ max_error,
+  cudf::size_type* __restrict__ null_count)
 {
-  CUDF_KERNEL_INSTANCE(row_size, stencil, user_data, input_cols, output_cols, max_error);
+  CUDF_KERNEL_INSTANCE(
+    row_size, stencil, user_data, input_cols, output_cols, max_error, null_count);
 }

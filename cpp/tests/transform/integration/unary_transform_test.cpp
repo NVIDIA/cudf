@@ -30,6 +30,7 @@
 #include <cudf_test/table_utilities.hpp>
 #include <cudf_test/type_lists.hpp>
 
+#include <cudf/copying.hpp>
 #include <cudf/detail/iterator.cuh>
 #include <cudf/dictionary/encode.hpp>
 #include <cudf/transform.hpp>
@@ -1782,6 +1783,64 @@ return l - t * l + t * h;
       .front());
 
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*cuda_result, *expected);
+}
+
+TEST_F(NullTest, ColumnNulls_SlicedMultiOutput)
+{
+  auto udf = R"***(
+__device__ inline void sum_diff(int* sum, int* diff, int a, int b)
+{
+  *sum  = a + b;
+  *diff = a - b;
+}
+)***";
+
+  // the slice offset is not a multiple of 32 and the size spans several blocks and a partial warp
+  cudf::size_type const num_rows = 10'007;
+  cudf::size_type const offset   = 13;
+
+  auto a_iter = cudf::detail::make_counting_transform_iterator(0, [](auto i) { return i; });
+  auto b_iter = cudf::detail::make_counting_transform_iterator(0, [](auto i) { return 3 * i; });
+  auto a_full = cudf::test::fixed_width_column_wrapper<int32_t>(
+    a_iter, a_iter + offset + num_rows, cudf::test::iterators::valids_at_multiples_of(3));
+  auto b_full = cudf::test::fixed_width_column_wrapper<int32_t>(
+    b_iter, b_iter + offset + num_rows, cudf::test::iterators::valids_at_multiples_of(7));
+  auto a = cudf::slice(a_full, {offset, offset + num_rows}).front();
+  auto b = cudf::slice(b_full, {offset, offset + num_rows}).front();
+
+  auto is_valid       = [&](auto i) { return ((i + offset) % 3 == 0) && ((i + offset) % 7 == 0); };
+  auto expected_valid = cudf::detail::make_counting_transform_iterator(0, is_valid);
+  auto sum_iter       = cudf::detail::make_counting_transform_iterator(
+    0, [&](auto i) { return is_valid(i) ? 4 * (i + offset) : 0; });
+  auto diff_iter = cudf::detail::make_counting_transform_iterator(
+    0, [&](auto i) { return is_valid(i) ? -2 * (i + offset) : 0; });
+  auto expected_sum =
+    cudf::test::fixed_width_column_wrapper<int32_t>(sum_iter, sum_iter + num_rows, expected_valid);
+  auto expected_diff = cudf::test::fixed_width_column_wrapper<int32_t>(
+    diff_iter, diff_iter + num_rows, expected_valid);
+
+  cudf::transform_input inputs[]   = {a, b};
+  cudf::transform_output outputs[] = {
+    {cudf::data_type(cudf::type_id::INT32), cudf::output_nullability::PRESERVE},
+    {cudf::data_type(cudf::type_id::INT32), cudf::output_nullability::PRESERVE}};
+  auto result = cudf::transform(udf,
+                                cudf::udf_source_type::CUDA,
+                                cudf::null_aware::NO,
+                                std::nullopt,
+                                inputs,
+                                outputs,
+                                {},
+                                std::nullopt);
+
+  cudf::size_type expected_null_count = 0;
+  for (cudf::size_type i = 0; i < num_rows; i++) {
+    if (!is_valid(i)) { expected_null_count++; }
+  }
+
+  EXPECT_EQ(result->get_column(0).null_count(), expected_null_count);
+  EXPECT_EQ(result->get_column(1).null_count(), expected_null_count);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(result->get_column(0), expected_sum);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(result->get_column(1), expected_diff);
 }
 
 TEST_F(UnaryOperationIntegrationTest, Transform_ErrorHandling)

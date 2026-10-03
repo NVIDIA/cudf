@@ -83,7 +83,7 @@ class IntervalColumn(ColumnBase):
     @functools.cached_property
     def left(self) -> ColumnBase:
         return ColumnBase.create(
-            self.plc_column.children()[0],
+            self.plc_column.struct_view().get_sliced_child(0),
             self.subtype,
         )
 
@@ -98,7 +98,7 @@ class IntervalColumn(ColumnBase):
     @functools.cached_property
     def right(self) -> ColumnBase:
         return ColumnBase.create(
-            self.plc_column.children()[1],
+            self.plc_column.struct_view().get_sliced_child(1),
             self.subtype,
         )
 
@@ -193,7 +193,12 @@ class IntervalColumn(ColumnBase):
                 f"pandas does not have a native nullable type for {self.dtype}."
             )
         pd_type = cast("IntervalDtype", self.dtype).to_pandas()
-        return pd.Index(pd_type.__from_arrow__(self.to_arrow()), dtype=pd_type)
+        return pd.IntervalIndex.from_arrays(
+            self.left.to_pandas(),
+            self.right.to_pandas(),
+            closed=self.closed,
+            dtype=pd_type,
+        )
 
     def element_indexing(self, index: int) -> pd.Interval | None:
         result = super().element_indexing(index)

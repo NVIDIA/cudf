@@ -22,6 +22,58 @@ def test_interval_to_arrow():
     assert_eq(expect, got)
 
 
+@pytest.mark.parametrize("closed", ["left", "right", "both", "neither"])
+@pytest.mark.parametrize("unit", ["s", "ms", "us", "ns"])
+@pytest.mark.parametrize("tz", [None, "US/Eastern", "Asia/Kolkata"])
+@pytest.mark.parametrize("selection", [slice(None), slice(1, 3), slice(0, 0)])
+def test_interval_to_pandas_datetime(closed, unit, tz, selection):
+    breaks = pd.date_range("2025-03-08", periods=5, tz=tz, unit=unit)
+    expected = pd.Series(
+        pd.IntervalIndex.from_breaks(breaks, closed=closed), name="intervals"
+    ).iloc[selection]
+    intervals = cudf.IntervalIndex.from_breaks(
+        cudf.from_pandas(breaks), closed=closed, name="intervals"
+    )
+    result = cudf.Series(intervals, name="intervals").iloc[selection]
+
+    assert_eq(result.to_pandas(), expected)
+    assert_eq(
+        cudf.IntervalIndex(result, name="intervals").to_pandas(),
+        pd.IntervalIndex(expected, name="intervals"),
+    )
+
+
+@pytest.mark.parametrize("closed", ["left", "right", "both", "neither"])
+@pytest.mark.parametrize("subtype", ["Float64", "float64[pyarrow]"])
+def test_interval_to_pandas_extension_subtype(closed, subtype):
+    breaks = pd.Series([0.0, 0.4, 0.6], dtype=subtype)
+    expected = pd.IntervalIndex.from_breaks(
+        breaks, closed=closed, dtype=pd.IntervalDtype(subtype, closed)
+    )
+    result = cudf.IntervalIndex.from_breaks(
+        cudf.from_pandas(breaks), closed=closed
+    )
+
+    assert_eq(result.to_pandas(), expected)
+
+
+@pytest.mark.parametrize("closed", ["left", "right", "both", "neither"])
+@pytest.mark.parametrize(
+    "subtype", ["float64", "datetime64[ns]", "timedelta64[ns]"]
+)
+def test_interval_to_pandas_nulls(closed, subtype):
+    expected = pd.Series(
+        pd.IntervalIndex.from_breaks(
+            np.arange(5).astype(subtype), closed=closed
+        )
+    )
+    expected.iloc[1] = None
+    result = cudf.from_pandas(expected)
+
+    assert_eq(result.to_pandas(), expected)
+    assert_eq(result.iloc[1:3].to_pandas(), expected.iloc[1:3])
+
+
 INTERVAL_BOUNDARY_TYPES = [
     int,
     np.int8,

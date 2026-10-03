@@ -33,16 +33,6 @@
 namespace cudf::io::parquet::detail {
 
 /**
- * @brief Computes the byte range containing the column and/or offset indexes.
- *
- * @throws std::invalid_argument if an index end exceeds the supported offset range
- *
- * @param file_metadata Parquet file metadata
- * @return Page-index byte range, or an empty range when no indexes are available
- */
-[[nodiscard]] text::byte_range_info page_index_byte_range(FileMetaData const& file_metadata);
-
-/**
  * @brief Construct metadatas from inputs using the host worker pool for multiple inputs
  *
  * All submitted tasks are waited on before any exception is propagated.
@@ -222,6 +212,15 @@ struct metadata : public FileMetaData {
  private:
   bool is_page_index_setup_ = false;
 };
+
+/**
+ * @brief Computes the byte range spanning all column and offset indexes in the file
+ *
+ * @param file_metadata Parquet file metadata
+ * @return Page-index byte range, or an empty range if no indexes are available or the page index
+ * is already set up
+ */
+[[nodiscard]] text::byte_range_info page_index_byte_range(metadata const& file_metadata);
 
 /**
  * @brief Class to extract data types from arrow schema tree

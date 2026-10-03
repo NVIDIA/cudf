@@ -49,22 +49,21 @@
 namespace cudf::io::parquet::detail {
 
 // Compute the page index (column index and/or offset index) byte range
-text::byte_range_info page_index_byte_range(FileMetaData const& file_metadata)
+text::byte_range_info page_index_byte_range(metadata const& file_metadata)
 {
+  if (file_metadata.is_page_index_setup()) { return {}; }
+
   int64_t min_offset       = std::numeric_limits<int64_t>::max();
   int64_t max_offset       = 0;
   auto const include_index = [&](int64_t offset, int32_t length) {
     if (offset > 0 and length > 0) {
-      CUDF_EXPECTS(offset <= std::numeric_limits<int64_t>::max() - length,
-                   "Parquet page index range exceeds the supported offset range",
-                   std::invalid_argument);
       min_offset = std::min(min_offset, offset);
       max_offset = std::max(max_offset, offset + length);
     }
   };
 
-  // Indexes are optional for each column chunk. The first and last chunks need not have either
-  // index, so inspect all chunks to include every index that setup_page_index will parse.
+  // Column and offset indexes are optional per column chunk (e.g. offset index only when no
+  // statistics are written), so the first and last chunks need not bound the page index range.
   for (auto const& row_group : file_metadata.row_groups) {
     for (auto const& column : row_group.columns) {
       include_index(column.column_index_offset, column.column_index_length);
@@ -563,13 +562,12 @@ metadata::metadata(datasource* source, bool read_page_indexes)
   auto const has_strings =
     std::ranges::any_of(schema, [](auto const& elem) { return elem.type == Type::BYTE_ARRAY; });
 
-  // Without offset indexes the decode paths cannot use column-index-derived information.
-  auto const has_offset_index =
-    std::any_of(row_groups.begin(), row_groups.end(), [](auto const& rg) {
-      return std::any_of(rg.columns.begin(), rg.columns.end(), [](auto const& col) {
-        return col.offset_index_offset > 0 and col.offset_index_length > 0;
-      });
+  // Column indexes are only used alongside offset indexes, so skip if there are no offset indexes
+  auto const has_offset_index = std::ranges::any_of(row_groups, [](auto const& rg) {
+    return std::ranges::any_of(rg.columns, [](auto const& col) {
+      return col.offset_index_offset > 0 and col.offset_index_length > 0;
     });
+  });
 
   if (read_page_indexes and has_strings and has_offset_index) {
     auto const page_index_range = page_index_byte_range(*this);

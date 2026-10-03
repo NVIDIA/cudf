@@ -2103,7 +2103,7 @@ def _apply_predicate(op, val, col_stats):
             return False
         col_range = None
         if isinstance(col_min, int):
-            col_range = range(col_min, col_max)
+            col_range = range(col_min, col_max + 1)
         elif isinstance(col_min, datetime.datetime):
             col_range = pd.date_range(col_min, col_max)
         if col_range and all(elem in val for elem in col_range):

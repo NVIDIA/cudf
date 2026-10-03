@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from __future__ import annotations
@@ -89,6 +89,10 @@ class BaseAccessor(NotIterable):
                 table = new_col
 
                 if isinstance(self._parent, cudf.Index):
+                    if len(table) == 0:
+                        raise TypeError(
+                            "Cannot infer number of levels from empty list"
+                        )
                     idx = self._parent._constructor_expanddim._from_data(table)
                     idx.names = None
                     return idx

@@ -128,7 +128,7 @@ class TestCleanOptions:
             raise ValueError("Invalid option value")
 
         context = cudf.option_context("odd_option", 3, "even_option", 2)
-        with context:
+        with cudf.option_context("odd_option", 5, "even_option", 4):
             with monkeypatch.context() as m:
                 m.setattr(
                     cudf.options._OPTIONS["even_option"],
@@ -138,6 +138,9 @@ class TestCleanOptions:
                 with pytest.raises(ValueError, match="Invalid option value"):
                     with context:
                         pass
+
+                assert cudf.get_option("odd_option") == 5
+                assert cudf.get_option("even_option") == 4
 
         assert cudf.get_option("odd_option") == 1
         assert cudf.get_option("even_option") == 0

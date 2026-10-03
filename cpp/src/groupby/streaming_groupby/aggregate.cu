@@ -92,7 +92,6 @@ void streaming_groupby::impl::do_aggregate(table_view const& data, cuda::stream_
 
     _insert_done.wait(stream);
     auto inserted = probe_and_insert(batch_keys, stream);
-    _insert_done.record(stream);
 
     mutable_table_device_view const* replicas = nullptr;
     if (_distinct_keys.load() <= _replica_rows) {
@@ -101,6 +100,7 @@ void streaming_groupby::impl::do_aggregate(table_view const& data, cuda::stream_
       }
       replicas = _d_agg_replicas.get();
     }
+    _insert_done.record(stream);
     return std::pair{std::move(inserted), replicas};
   }();
 

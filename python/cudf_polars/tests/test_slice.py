@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 from __future__ import annotations
 
@@ -8,14 +8,17 @@ import polars as pl
 
 from cudf_polars.testing.asserts import assert_gpu_result_equal
 
+SLICE_OFFSETS = [0, 1, 2, -10, -1, -2, 20]
+SLICE_LENGTHS = [0, 2, 11]
+
 
 @pytest.mark.parametrize(
     "offset",
-    [0, 1, 2, -10, -20, -1, -2, 20],
+    SLICE_OFFSETS,
 )
 @pytest.mark.parametrize(
     "length",
-    [0, 2, 12, 11],
+    SLICE_LENGTHS,
 )
 @pytest.mark.parametrize("slice_pushdown", [False, True])
 def test_slice(engine: pl.GPUEngine, offset, length, slice_pushdown):

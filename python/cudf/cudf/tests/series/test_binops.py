@@ -3243,17 +3243,28 @@ def test_binops_comparisons_datatime_with_scalars(scalars, comparison_op):
         assert_eq(expect, got)
 
 
-def test_timedelta_arrow_backed_comparisions_pandas_compat():
+@pytest.mark.parametrize("pa_type", [pa.timestamp, pa.duration])
+@pytest.mark.parametrize("unit", ["s", "ms", "us", "ns"])
+@pytest.mark.parametrize("other_kind", ["series", "scalar"])
+def test_datetimelike_arrow_backed_comparisons_pandas_compat(
+    pa_type, unit, other_kind, comparison_op
+):
+    dtype = pa_type(unit)
     s = pd.Series(
-        pd.arrays.ArrowExtensionArray(
-            pa.array([1, None, 3], type=pa.duration("ns"))
-        )
+        pd.arrays.ArrowExtensionArray(pa.array([1, None, 3], type=dtype))
+    )
+    other = pd.Series(
+        pd.arrays.ArrowExtensionArray(pa.array([None, 2, 3], type=dtype))
     )
 
     with cudf.option_context("mode.pandas_compatible", True):
         gs = cudf.from_pandas(s)
-        assert_eq(s == s, gs == gs)
-        assert_eq(s != s, gs != gs)
+        if other_kind == "scalar":
+            other = other.iloc[-1]
+            gother = other
+        else:
+            gother = cudf.from_pandas(other)
+        assert_eq(comparison_op(s, other), comparison_op(gs, gother))
 
 
 def test_decimal_arrow_backed_comparisons_pandas_compat(comparison_op):

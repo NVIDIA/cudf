@@ -8,6 +8,7 @@
 #include <cudf/detail/utilities/cuda.cuh>
 #include <cudf/types.hpp>
 
+#include <cuda/atomic>
 #include <cuda/ptx>
 #include <cuda/std/bit>
 
@@ -38,6 +39,25 @@ __device__ void warp_compact_validity(unsigned int active_mask,
   // use warp-elect to make sure we only issue one memory transaction per warp
   if (warp_elect(active_mask)) {
     Out::set_null_mask_word(outcols, row / cudf::detail::warp_size, null_word);
+  }
+}
+
+/**
+ * @brief Sums `value` across the warp and adds the total to `result` with a single atomic
+ *
+ * Must be called by every lane of the warp.
+ */
+__device__ inline void warp_add(size_type value, size_type* result)
+{
+  for (int offset = cudf::detail::warp_size / 2; offset > 0; offset /= 2) {
+    value += __shfl_down_sync(0xffff'ffffu, value, offset);
+  }
+
+  auto lane = threadIdx.x % cudf::detail::warp_size;
+
+  if (lane == 0 && value != 0) {
+    cuda::atomic_ref ref(*result);
+    ref.fetch_add(value, cuda::std::memory_order_relaxed);
   }
 }
 

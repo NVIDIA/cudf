@@ -90,65 +90,61 @@ __device__ void transform_kernel(size_type row_size,
   };
 
   if constexpr (!is_null_aware) {
-    if (null_count != nullptr) {
-      // The output validity is the AND of the input validities. Compute it here instead of in a
-      // separate pass, write it to every nullable output, and count the nulls.
-      auto warp_padded_size = util::round_up_safe<thread_index_type>(row_size, detail::warp_size);
-      size_type thread_null_count = 0;
-      for (auto row = start; row < warp_padded_size; row += stride) {
-        auto active_mask = __ballot_sync(0xffff'ffffu, row < row_size);
-        if (row >= row_size) { continue; }
-        auto row_is_valid = InputAccessors::map(
-          [&]<typename... A>() { return (A::is_valid(input_cols, row) && ...); });
-        OutputAccessors::map([&]<typename... A>() {
-          (warp_compact_validity<A>(active_mask, output_cols, row, row_is_valid), ...);
-        });
-        if (!row_is_valid) {
-          thread_null_count++;
-          continue;
-        }
-        auto ins = InputAccessors::map(
-          [&]<typename... A>() { return cuda::std::tuple{A::element(input_cols, row)...}; });
-        auto outs = OutputAccessors::map(
-          [&]<typename... A>() { return cuda::std::tuple{A::output_arg(output_cols, row)...}; });
-        auto out_ptrs =
-          cuda::std::apply([&](auto&... args) { return cuda::std::tuple{&args...}; }, outs);
-        auto row_error = operation(row, cuda::std::tuple_cat(out_ptrs, ins));
-        OutputAccessors::map([&]<typename... A>() {
-          (A::assign(output_cols, row, cuda::std::get<A::index>(outs)), ...);
-        });
-        thread_error = cuda::std::max(thread_error, row_error);
-      }
+    // evaluates the UDF on a row whose inputs are all valid
+    auto evaluate_row = [&](thread_index_type row) {
+      auto ins = InputAccessors::map(
+        [&]<typename... A>() { return cuda::std::tuple{A::element(input_cols, row)...}; });
 
-      // every lane of the warp runs the same number of iterations above, so the warp is converged
-      for (int offset = detail::warp_size / 2; offset > 0; offset /= 2) {
-        thread_null_count += __shfl_down_sync(0xffff'ffffu, thread_null_count, offset);
-      }
-      if ((threadIdx.x % detail::warp_size) == 0 && thread_null_count != 0) {
-        cuda::atomic_ref ref(*null_count);
-        ref.fetch_add(thread_null_count, cuda::std::memory_order_relaxed);
-      }
-    } else {
+      auto outs = OutputAccessors::map(
+        [&]<typename... A>() { return cuda::std::tuple{A::output_arg(output_cols, row)...}; });
+
+      auto out_ptrs =
+        cuda::std::apply([&](auto&... args) { return cuda::std::tuple{&args...}; }, outs);
+
+      auto row_error = operation(row, cuda::std::tuple_cat(out_ptrs, ins));
+
+      OutputAccessors::map([&]<typename... A>() {
+        (A::assign(output_cols, row, cuda::std::get<A::index>(outs)), ...);
+      });
+
+      thread_error = cuda::std::max(thread_error, row_error);
+    };
+
+    if (null_count == nullptr) {
+      // the output validity was computed before the launch
       for (auto row = start; row < row_size; row += stride) {
         if (stencil != nullptr && !bit_is_set(stencil, row)) { continue; }
 
-        auto ins = InputAccessors::map(
-          [&]<typename... A>() { return cuda::std::tuple{A::element(input_cols, row)...}; });
+        evaluate_row(row);
+      }
+    } else {
+      // A row is valid only if all of its inputs are valid. Compute that here, write it to every
+      // nullable output, and count the nulls, instead of combining the input masks in a separate
+      // pass before the launch.
+      size_type thread_null_count = 0;
 
-        auto outs = OutputAccessors::map(
-          [&]<typename... A>() { return cuda::std::tuple{A::output_arg(output_cols, row)...}; });
+      // Keep every lane in a warp on the same loop iteration when writing validity.
+      auto warp_padded_size = util::round_up_safe<thread_index_type>(row_size, detail::warp_size);
 
-        auto out_ptrs =
-          cuda::std::apply([&](auto&... args) { return cuda::std::tuple{&args...}; }, outs);
+      for (auto row = start; row < warp_padded_size; row += stride) {
+        auto active_mask = __ballot_sync(0xffff'ffffu, row < row_size);
+        if (row >= row_size) { continue; }
 
-        auto row_error = operation(row, cuda::std::tuple_cat(out_ptrs, ins));
+        auto is_valid = InputAccessors::map(
+          [&]<typename... A>() { return (A::is_valid(input_cols, row) && ...); });
 
         OutputAccessors::map([&]<typename... A>() {
-          (A::assign(output_cols, row, cuda::std::get<A::index>(outs)), ...);
+          (warp_compact_validity<A>(active_mask, output_cols, row, is_valid), ...);
         });
 
-        thread_error = cuda::std::max(thread_error, row_error);
+        if (is_valid) {
+          evaluate_row(row);
+        } else {
+          thread_null_count++;
+        }
       }
+
+      warp_add(thread_null_count, null_count);
     }
   } else {
     // Keep every lane in a warp on the same loop iteration when writing validity.

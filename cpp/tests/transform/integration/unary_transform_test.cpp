@@ -37,6 +37,7 @@
 
 #include <array>
 #include <utility>
+#include <vector>
 
 namespace transformation {
 
@@ -1795,34 +1796,62 @@ __device__ inline void sum_diff(int* sum, int* diff, int a, int b)
 }
 )***";
 
-  // the slice offset is not a multiple of 32 and the size spans several blocks and a partial warp
-  cudf::size_type const num_rows = 10'007;
+  // The slice offset is not a multiple of 32, so the input masks are not word aligned. The row
+  // count spans several blocks and ends in a partial warp.
   cudf::size_type const offset   = 13;
+  cudf::size_type const num_rows = 10'007;
+  cudf::size_type const total    = offset + num_rows;
 
-  auto a_iter = cudf::detail::make_counting_transform_iterator(0, [](auto i) { return i; });
-  auto b_iter = cudf::detail::make_counting_transform_iterator(0, [](auto i) { return 3 * i; });
+  // a[i] = i, valid at multiples of 3
+  // b[i] = 3i, valid at multiples of 7
+  std::vector<int32_t> a_values(total);
+  std::vector<int32_t> b_values(total);
+  std::vector<bool> a_valid(total);
+  std::vector<bool> b_valid(total);
+
+  for (cudf::size_type i = 0; i < total; i++) {
+    a_values[i] = i;
+    b_values[i] = 3 * i;
+    a_valid[i]  = (i % 3 == 0);
+    b_valid[i]  = (i % 7 == 0);
+  }
+
   auto a_full = cudf::test::fixed_width_column_wrapper<int32_t>(
-    a_iter, a_iter + offset + num_rows, cudf::test::iterators::valids_at_multiples_of(3));
+    a_values.begin(), a_values.end(), a_valid.begin());
   auto b_full = cudf::test::fixed_width_column_wrapper<int32_t>(
-    b_iter, b_iter + offset + num_rows, cudf::test::iterators::valids_at_multiples_of(7));
-  auto a = cudf::slice(a_full, {offset, offset + num_rows}).front();
-  auto b = cudf::slice(b_full, {offset, offset + num_rows}).front();
+    b_values.begin(), b_values.end(), b_valid.begin());
 
-  auto is_valid       = [&](auto i) { return ((i + offset) % 3 == 0) && ((i + offset) % 7 == 0); };
-  auto expected_valid = cudf::detail::make_counting_transform_iterator(0, is_valid);
-  auto sum_iter       = cudf::detail::make_counting_transform_iterator(
-    0, [&](auto i) { return is_valid(i) ? 4 * (i + offset) : 0; });
-  auto diff_iter = cudf::detail::make_counting_transform_iterator(
-    0, [&](auto i) { return is_valid(i) ? -2 * (i + offset) : 0; });
-  auto expected_sum =
-    cudf::test::fixed_width_column_wrapper<int32_t>(sum_iter, sum_iter + num_rows, expected_valid);
+  auto a = cudf::slice(a_full, {offset, total}).front();
+  auto b = cudf::slice(b_full, {offset, total}).front();
+
+  // a row is valid only if both inputs are valid
+  std::vector<int32_t> sum_values(num_rows, 0);
+  std::vector<int32_t> diff_values(num_rows, 0);
+  std::vector<bool> expected_valid(num_rows);
+  cudf::size_type expected_null_count = 0;
+
+  for (cudf::size_type i = 0; i < num_rows; i++) {
+    auto row          = offset + i;
+    expected_valid[i] = a_valid[row] && b_valid[row];
+
+    if (expected_valid[i]) {
+      sum_values[i]  = a_values[row] + b_values[row];
+      diff_values[i] = a_values[row] - b_values[row];
+    } else {
+      expected_null_count++;
+    }
+  }
+
+  auto expected_sum = cudf::test::fixed_width_column_wrapper<int32_t>(
+    sum_values.begin(), sum_values.end(), expected_valid.begin());
   auto expected_diff = cudf::test::fixed_width_column_wrapper<int32_t>(
-    diff_iter, diff_iter + num_rows, expected_valid);
+    diff_values.begin(), diff_values.end(), expected_valid.begin());
 
   cudf::transform_input inputs[]   = {a, b};
   cudf::transform_output outputs[] = {
     {cudf::data_type(cudf::type_id::INT32), cudf::output_nullability::PRESERVE},
     {cudf::data_type(cudf::type_id::INT32), cudf::output_nullability::PRESERVE}};
+
   auto result = cudf::transform(udf,
                                 cudf::udf_source_type::CUDA,
                                 cudf::null_aware::NO,
@@ -1832,13 +1861,9 @@ __device__ inline void sum_diff(int* sum, int* diff, int a, int b)
                                 {},
                                 std::nullopt);
 
-  cudf::size_type expected_null_count = 0;
-  for (cudf::size_type i = 0; i < num_rows; i++) {
-    if (!is_valid(i)) { expected_null_count++; }
-  }
-
   EXPECT_EQ(result->get_column(0).null_count(), expected_null_count);
   EXPECT_EQ(result->get_column(1).null_count(), expected_null_count);
+
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(result->get_column(0), expected_sum);
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(result->get_column(1), expected_diff);
 }

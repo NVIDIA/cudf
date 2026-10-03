@@ -950,10 +950,18 @@ void perform_checks(std::variant<udf_source_type, lto_binary_type> source_type,
                std::invalid_argument);
 }
 
+/**
+ * @brief The output validity of a null-unaware transform, as prepared before the launch
+ */
 struct stencil_info {
-  bitmask_type* mask;      ///< validity of the rows the kernel should evaluate, or nullptr
-  size_type null_count;    ///< null count of `mask`
-  bool compute_in_kernel;  ///< the kernel computes the output validity and null count itself
+  /// Validity of the rows the kernel should evaluate, or nullptr if every row is evaluated
+  bitmask_type* mask;
+
+  /// Null count of `mask`
+  size_type null_count;
+
+  /// True if the kernel computes the output validity and null count itself
+  bool compute_in_kernel;
 };
 
 std::optional<stencil_info> make_stencil(null_aware is_null_aware,
@@ -1219,14 +1227,17 @@ void finish_launch(launch_status const& status,
         error, std::format("Transform UDF evaluation failed with error `{}`", to_string(error)));
   }
 
-  if (stencil.has_value() && stencil->compute_in_kernel) {
-    for (auto& out : outputs) {
-      std::visit(
-        [&](auto& c) {
-          if (c.nullable()) { c.set_null_count(h_status[1]); }
-        },
-        out);
-    }
+  auto computed_in_kernel = stencil.has_value() && stencil->compute_in_kernel;
+  if (!computed_in_kernel) { return; }
+
+  auto null_count = h_status[1];
+
+  auto set_null_count = [&](auto& col) {
+    if (col.nullable()) { col.set_null_count(null_count); }
+  };
+
+  for (auto& out : outputs) {
+    std::visit(set_null_count, out);
   }
 }
 

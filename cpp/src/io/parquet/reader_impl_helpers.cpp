@@ -55,24 +55,23 @@ text::byte_range_info page_index_byte_range(metadata const& file_metadata)
 
   int64_t min_offset       = std::numeric_limits<int64_t>::max();
   int64_t max_offset       = 0;
-  auto const include_index = [&](int64_t offset, int32_t length) {
-    if (offset > 0 and length > 0) {
-      min_offset = std::min(min_offset, offset);
-      max_offset = std::max(max_offset, offset + length);
-    }
+  auto const update_extent = [&](int64_t offset, int32_t length) {
+    if (offset <= 0 or length <= 0) { return; }
+    min_offset = std::min(min_offset, offset);
+    max_offset = std::max(max_offset, offset + length);
   };
 
   // Column and offset indexes are optional per column chunk (e.g. offset index only when no
   // statistics are written), so the first and last chunks need not bound the page index range.
   for (auto const& row_group : file_metadata.row_groups) {
     for (auto const& column : row_group.columns) {
-      include_index(column.column_index_offset, column.column_index_length);
-      include_index(column.offset_index_offset, column.offset_index_length);
+      update_extent(column.column_index_offset, column.column_index_length);
+      update_extent(column.offset_index_offset, column.offset_index_length);
     }
   }
 
-  return max_offset > min_offset ? text::byte_range_info{min_offset, max_offset - min_offset}
-                                 : text::byte_range_info{};
+  if (max_offset <= min_offset) { return {}; }
+  return {min_offset, max_offset - min_offset};
 }
 
 std::size_t derive_pass_read_limit(std::size_t chunk_read_limit)
@@ -563,21 +562,21 @@ metadata::metadata(datasource* source, bool read_page_indexes)
     std::ranges::any_of(schema, [](auto const& elem) { return elem.type == Type::BYTE_ARRAY; });
 
   // Column indexes are only used alongside offset indexes, so skip if there are no offset indexes
-  auto const has_offset_index = std::ranges::any_of(row_groups, [](auto const& rg) {
-    return std::ranges::any_of(rg.columns, [](auto const& col) {
-      return col.offset_index_offset > 0 and col.offset_index_length > 0;
+  auto const has_offset_index = [this] {
+    return std::ranges::any_of(row_groups, [](auto const& rg) {
+      return std::ranges::any_of(rg.columns, [](auto const& col) {
+        return col.offset_index_offset > 0 and col.offset_index_length > 0;
+      });
     });
-  });
+  };
 
-  if (read_page_indexes and has_strings and has_offset_index) {
+  if (read_page_indexes and has_strings and has_offset_index()) {
     auto const page_index_range = page_index_byte_range(*this);
-    if (not page_index_range.is_empty()) {
-      auto const page_idx_buf =
-        source->host_read(page_index_range.offset(), page_index_range.size());
-      CUDF_EXPECTS(std::cmp_equal(page_idx_buf->size(), page_index_range.size()),
-                   "Encountered an invalid page index buffer");
-      setup_page_index({page_idx_buf->data(), page_idx_buf->size()}, page_index_range.offset());
-    }
+    CUDF_EXPECTS(
+      std::cmp_less_equal(page_index_range.offset() + page_index_range.size(), source->size()),
+      "Parquet page index range exceeds the source size");
+    auto const page_idx_buf = source->host_read(page_index_range.offset(), page_index_range.size());
+    setup_page_index({page_idx_buf->data(), page_idx_buf->size()}, page_index_range.offset());
   }
 
   sanitize_schema();

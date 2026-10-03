@@ -38,6 +38,14 @@ rapids-print-env
 RAPIDS_DOCS_DIR="$(mktemp -d)"
 export RAPIDS_DOCS_DIR
 
+rapids-logger "Build cuDF Java docs"
+pushd java
+export JDK17_HOME="${CONDA_PREFIX}"
+mvn -B -Pjavadoc-jdk17 -DskipTests javadoc:javadoc-no-fork
+mkdir -p "${RAPIDS_DOCS_DIR}/cudf-java/html"
+mv target/site/apidocs/* "${RAPIDS_DOCS_DIR}/cudf-java/html"
+popd
+
 EXITCODE=0
 trap "EXITCODE=1" ERR
 set +e
@@ -63,6 +71,11 @@ make dirhtml
 mkdir -p "${RAPIDS_DOCS_DIR}/dask-cudf/html"
 mv build/dirhtml/* "${RAPIDS_DOCS_DIR}/dask-cudf/html"
 popd
+
+if (( EXITCODE != 0 )); then
+  rapids-logger "Documentation build failed; skipping upload"
+  exit "${EXITCODE}"
+fi
 
 RAPIDS_VERSION_NUMBER="${RAPIDS_VERSION_MAJOR_MINOR}" rapids-upload-docs
 

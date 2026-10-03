@@ -7,6 +7,7 @@ import itertools
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
+import pandas as pd
 from pandas.errors import MergeError
 
 import pylibcudf as plc
@@ -19,6 +20,7 @@ from cudf.core.dtype.validators import (
     is_dtype_obj_numeric,
     is_dtype_obj_string,
 )
+from cudf.core.dtypes import Decimal32Dtype, Decimal64Dtype, Decimal128Dtype
 from cudf.core.join._join_helpers import (
     _coerce_to_tuple,
     _ColumnIndexer,
@@ -31,6 +33,24 @@ from cudf.utils.dtypes import SIZE_TYPE_DTYPE
 if TYPE_CHECKING:
     from cudf.core.dataframe import DataFrame
     from cudf.core.index import Index
+
+_DECIMAL_TYPES = (Decimal32Dtype, Decimal64Dtype, Decimal128Dtype)
+
+
+def _mixed_timezone_awareness(ltype, rtype) -> bool:
+    """Check two datetime key dtypes for mixed timezone awareness.
+
+    Return True if both dtypes are datetimes and exactly one of them has a
+    timezone. pandas refuses to join such keys.
+    """
+    if (
+        getattr(ltype, "kind", None) != "M"
+        or getattr(rtype, "kind", None) != "M"
+    ):
+        return False
+    return isinstance(ltype, pd.DatetimeTZDtype) != isinstance(
+        rtype, pd.DatetimeTZDtype
+    )
 
 
 class Merge:
@@ -76,6 +96,7 @@ class Merge:
         sort,
         indicator,
         suffixes,
+        from_right_join=False,
     ):
         """
         Manage the merging of two Frames.
@@ -110,6 +131,8 @@ class Merge:
         suffixes : list like
             Left and right suffixes specified together, unpacked into lsuffix
             and rsuffix.
+        from_right_join : bool
+            True if this left join is a right join with the operands swapped.
         """
         self._validate_merge_params(
             lhs,
@@ -126,6 +149,7 @@ class Merge:
         self.lhs = lhs.copy(deep=False)
         self.rhs = rhs.copy(deep=False)
         self.how = how
+        self._from_right_join = from_right_join
         # Whether the join maps contain unmatched (nullifying) entries for
         # each side; computed in ``perform_merge``. Only nulls *introduced*
         # by the join trigger pandas' int -> float64 upcast (a column may
@@ -337,7 +361,49 @@ class Merge:
                         f"{rcol.dtype} columns for key '{left_key.name}'. "
                         "If you wish to proceed you should use pd.concat"
                     )
-            lcol_casted, rcol_casted = _match_join_keys(lcol, rcol, self.how)
+            # https://github.com/rapidsai/cudf/issues/9981
+            # In a right or outer join on one shared key column, where
+            # exactly one side has no rows, the output key holds only values
+            # of the non-empty side. Cast just the empty side to the dtype of
+            # the non-empty side. The common type from _match_join_keys can
+            # change the key values (for example int64 to float64) or raise
+            # (for example an empty datetime key against an int key).
+            # DataFrame.merge sets the final key dtype.
+            # Three cases are left out, because there the non-empty side does
+            # not own the output key:
+            # - index keys, since DataFrame.merge does not set their dtype,
+            # - keys with different names, since both keys stay in the output
+            #   and each keeps the dtype of its own frame,
+            # - a timezone aware key against a timezone naive key, which
+            #   pandas refuses to join.
+            # Decimal dtypes are also left out, so mismatched precision or
+            # scale still raises, as it does when both sides have rows.
+            one_side_empty = (len(lcol) == 0) != (len(rcol) == 0)
+            shared_key_column = (
+                isinstance(left_key, _ColumnIndexer)
+                and isinstance(right_key, _ColumnIndexer)
+                and left_key.name == right_key.name
+            )
+            nonempty_side_wins = (
+                one_side_empty
+                and shared_key_column
+                and (self.how == "outer" or self._from_right_join)
+                and not _mixed_timezone_awareness(lcol.dtype, rcol.dtype)
+            )
+            if (
+                nonempty_side_wins
+                and lcol.dtype != rcol.dtype
+                and not isinstance(lcol.dtype, _DECIMAL_TYPES)
+                and not isinstance(rcol.dtype, _DECIMAL_TYPES)
+            ):
+                if len(lcol):
+                    lcol_casted, rcol_casted = lcol, rcol.astype(lcol.dtype)
+                else:
+                    lcol_casted, rcol_casted = lcol.astype(rcol.dtype), rcol
+            else:
+                lcol_casted, rcol_casted = _match_join_keys(
+                    lcol, rcol, self.how
+                )
             # The common-typed columns are always used to compute the join
             # maps; the columns written into the output frame may differ.
             left_join_cols.append(lcol_casted)
@@ -352,7 +418,14 @@ class Merge:
             # the other (empty) side has a different numeric/object dtype;
             # cudf's common-type cast would otherwise change it. The join maps
             # are unaffected (an empty side yields an empty gather map).
-            if (len(lcol) == 0 or len(rcol) == 0) and lcol.dtype != rcol.dtype:
+            # Keys cast to the non-empty side above are excluded. If the
+            # original columns were kept here, the outer fillna would change
+            # the key values to strings.
+            if (
+                not nonempty_side_wins
+                and (len(lcol) == 0 or len(rcol) == 0)
+                and lcol.dtype != rcol.dtype
+            ):
                 l_numeric = is_dtype_obj_numeric(lcol.dtype)
                 r_numeric = is_dtype_obj_numeric(rcol.dtype)
                 l_objlike = is_dtype_obj_string(lcol.dtype) or (

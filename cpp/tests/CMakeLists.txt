@@ -17,30 +17,30 @@ rapids_cmake_install_lib_dir(lib_dir)
 # This function takes in a test name and test source and handles setting all of the associated
 # properties and linking to build the test
 function(ConfigureTest CMAKE_TEST_NAME)
-  set(options)
-  set(one_value GPUS PERCENT STREAM_MODE)
-  set(multi_value EXTRA_LIBS EXTRA_COMPILE_DEFINITIONS)
-  cmake_parse_arguments(_CUDF_TEST "${options}" "${one_value}" "${multi_value}" ${ARGN})
+    set(options)
+    set(one_value GPUS PERCENT STREAM_MODE)
+    set(multi_value EXTRA_LIBS EXTRA_COMPILE_DEFINITIONS)
+    cmake_parse_arguments(_CUDF_TEST "${options}" "${one_value}" "${multi_value}" ${ARGN})
 
-  if(NOT DEFINED _CUDF_TEST_GPUS AND NOT DEFINED _CUDF_TEST_PERCENT)
-    set(_CUDF_TEST_GPUS 1)
-    set(_CUDF_TEST_PERCENT 15)
-  endif()
+    if(NOT DEFINED _CUDF_TEST_GPUS AND NOT DEFINED _CUDF_TEST_PERCENT)
+        set(_CUDF_TEST_GPUS 1)
+        set(_CUDF_TEST_PERCENT 15)
+    endif()
 
-  if(NOT DEFINED _CUDF_TEST_GPUS)
-    set(_CUDF_TEST_GPUS 1)
-  endif()
+    if(NOT DEFINED _CUDF_TEST_GPUS)
+        set(_CUDF_TEST_GPUS 1)
+    endif()
 
-  if(NOT DEFINED _CUDF_TEST_PERCENT)
-    set(_CUDF_TEST_PERCENT 100)
-  endif()
+    if(NOT DEFINED _CUDF_TEST_PERCENT)
+        set(_CUDF_TEST_PERCENT 100)
+    endif()
 
-  if(NOT DEFINED _CUDF_TEST_STREAM_MODE)
-    set(_CUDF_TEST_STREAM_MODE cudf)
-  endif()
+    if(NOT DEFINED _CUDF_TEST_STREAM_MODE)
+        set(_CUDF_TEST_STREAM_MODE cudf)
+    endif()
 
-  add_executable(${CMAKE_TEST_NAME} ${_CUDF_TEST_UNPARSED_ARGUMENTS})
-  set_target_properties(
+    add_executable(${CMAKE_TEST_NAME} ${_CUDF_TEST_UNPARSED_ARGUMENTS})
+    set_target_properties(
     ${CMAKE_TEST_NAME}
     PROPERTIES RUNTIME_OUTPUT_DIRECTORY "$<BUILD_INTERFACE:${CUDF_BINARY_DIR}/gtests>"
                INSTALL_RPATH "\$ORIGIN/../../../${lib_dir}"
@@ -52,17 +52,17 @@ function(ConfigureTest CMAKE_TEST_NAME)
                CUDA_STANDARD_REQUIRED ON
   )
 
-  target_compile_definitions(
+    target_compile_definitions(
     ${CMAKE_TEST_NAME} PRIVATE THRUST_FORCE_32_BIT_OFFSET_TYPE=1 CCCL_AVOID_SORT_UNROLL=1
                                ${_CUDF_TEST_EXTRA_COMPILE_DEFINITIONS}
   )
 
-  target_link_libraries(
+    target_link_libraries(
     ${CMAKE_TEST_NAME} PRIVATE cudf::cudftestutil_objects nvtx3::nvtx3-cpp
                                $<TARGET_NAME_IF_EXISTS:conda_env> "${_CUDF_TEST_EXTRA_LIBS}"
   )
-  rapids_cuda_set_runtime(${CMAKE_TEST_NAME} USE_STATIC ON)
-  rapids_test_add(
+    rapids_cuda_set_runtime(${CMAKE_TEST_NAME} USE_STATIC ON)
+    rapids_test_add(
     NAME ${CMAKE_TEST_NAME}
     COMMAND ${CMAKE_TEST_NAME}
     GPUS ${_CUDF_TEST_GPUS}
@@ -70,14 +70,14 @@ function(ConfigureTest CMAKE_TEST_NAME)
     INSTALL_COMPONENT_SET testing
   )
 
-  if(CUDF_BUILD_STREAMS_TEST_UTIL)
-    set_tests_properties(
+    if(CUDF_BUILD_STREAMS_TEST_UTIL)
+        set_tests_properties(
       ${CMAKE_TEST_NAME}
       PROPERTIES
         ENVIRONMENT
         "GTEST_CUDF_STREAM_MODE=new_${_CUDF_TEST_STREAM_MODE}_default;LD_PRELOAD=$<TARGET_FILE:cudf_identify_stream_usage_mode_${_CUDF_TEST_STREAM_MODE}>"
     )
-  endif()
+    endif()
 endfunction()
 
 # ##################################################################################################
@@ -764,7 +764,7 @@ ConfigureTest(ROW_IR_TEST jit/row_ir.cpp)
 # ##################################################################################################
 # * stream testing ---------------------------------------------------------------------------------
 if(CUDF_BUILD_STREAMS_TEST_UTIL)
-  ConfigureTest(
+    ConfigureTest(
     STREAM_IDENTIFICATION_TEST identify_stream_usage/test_default_stream_identification.cu
   )
 endif()
@@ -866,6 +866,95 @@ ConfigureTest(
   ROARING_DISABLE_AVX=1
   CROARING_COMPILER_SUPPORTS_AVX512=0
 )
+
+# ##################################################################################################
+# * NDS-H support tests ---------------------------------------------------------------------------
+ConfigureTest(
+  MEMORY_STATS_LOGGER_TEST utilities_tests/memory_stats_logger_test.cpp
+  GPUS 1
+  PERCENT 100
+)
+ConfigureTest(
+  NDSH_QUERY_TEST
+  io/ndsh_q1_test.cpp
+  io/ndsh_q5_test.cpp
+  io/ndsh_q9_test.cpp
+  io/ndsh_q10_test.cpp
+  ../benchmarks/ndsh/utilities.cpp
+  ../benchmarks/ndsh/parquet/parquet_io.cpp
+  ../benchmarks/io/cuio_common.cpp
+  ../benchmarks/common/table_utilities.cpp
+  EXTRA_LIBS
+  ndsh_data_generator
+  kvikio::kvikio
+  GPUS 1
+  PERCENT 100
+)
+
+add_executable(NDSH_FIXTURE_CACHE_TEST utilities_tests/ndsh_fixture_cache_test.cpp)
+target_include_directories(NDSH_FIXTURE_CACHE_TEST PRIVATE "${CUDF_SOURCE_DIR}")
+target_link_libraries(NDSH_FIXTURE_CACHE_TEST PRIVATE GTest::gtest_main)
+target_compile_features(NDSH_FIXTURE_CACHE_TEST PRIVATE cxx_std_20)
+set_target_properties(
+  NDSH_FIXTURE_CACHE_TEST PROPERTIES RUNTIME_OUTPUT_DIRECTORY
+                                     "$<BUILD_INTERFACE:${CUDF_BINARY_DIR}/gtests>"
+)
+rapids_test_add(NAME NDSH_FIXTURE_CACHE_TEST COMMAND NDSH_FIXTURE_CACHE_TEST)
+
+if(CUDF_WITH_VORTEX)
+    add_executable(NDSH_VORTEX_WRITER_TEST io/vortex_writer_test.cpp)
+    target_link_libraries(
+    NDSH_VORTEX_WRITER_TEST PRIVATE cudf::cudftestutil_objects $<TARGET_NAME_IF_EXISTS:conda_env>
+  )
+    rapids_cuda_set_runtime(NDSH_VORTEX_WRITER_TEST USE_STATIC ON)
+    add_executable(NDSH_VORTEX_IO_TEST io/vortex_io_test.cpp)
+    target_link_libraries(
+    NDSH_VORTEX_IO_TEST PRIVATE cudf::cudftestutil_objects CUDA::cudart nvtx3::nvtx3-cpp
+                                $<TARGET_NAME_IF_EXISTS:conda_env>
+  )
+    foreach(test IN ITEMS NDSH_VORTEX_WRITER_TEST NDSH_VORTEX_IO_TEST)
+        target_compile_options(${test} PRIVATE ${CUDF_CXX_FLAGS})
+        target_link_libraries(${test} PRIVATE NDSH_VORTEX_IO nanoarrow::nanoarrow)
+        set_target_properties(
+      ${test} PROPERTIES RUNTIME_OUTPUT_DIRECTORY "$<BUILD_INTERFACE:${CUDF_BINARY_DIR}/gtests>"
+    )
+        rapids_test_add(
+      NAME ${test}
+      COMMAND ${test}
+      GPUS 1
+      PERCENT 100
+    )
+        set_tests_properties(${test} PROPERTIES TIMEOUT 600 RUN_SERIAL TRUE LABELS "ndsh;vortex;smoke")
+    endforeach()
+
+    if(CUDF_BUILD_BENCHMARKS)
+        foreach(query IN ITEMS 01 05 06 09 10)
+            string(REGEX REPLACE "^0" "" query_number "${query}")
+            set(ndsh_smoke_options)
+            if(query STREQUAL "09")
+                list(APPEND ndsh_smoke_options --axis "engine=[binaryop,ast,transform]")
+            endif()
+            # Benchmark targets are defined later; resolve their paths at generation time.
+            rapids_test_add(
+        NAME NDSH_Q${query}_VORTEX_SMOKE
+        COMMAND
+          $<TARGET_FILE:NDSH_Q${query}_NVBENCH> --benchmark ndsh_q${query_number}_local --devices 0
+          --axis scale_factor=0.01 --axis "format=[parquet,vortex]" --axis workload=q${query_number}
+          --axis cache=warm --axis io=buffered ${ndsh_smoke_options}
+        GPUS 1
+        PERCENT 100
+      )
+            # NVBench may report failed or skipped states without a nonzero exit status.
+            set_tests_properties(
+        NDSH_Q${query}_VORTEX_SMOKE
+        PROPERTIES TIMEOUT 600 RUN_SERIAL TRUE LABELS "ndsh;vortex;smoke" FAIL_REGULAR_EXPRESSION
+                   "Fail:;Skip:"
+      )
+        endforeach()
+        unset(ndsh_smoke_options)
+        unset(query_number)
+    endif()
+endif()
 
 # ##################################################################################################
 # Install tests ####################################################################################

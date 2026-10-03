@@ -3,17 +3,31 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+#include "parquet/parquet_io.hpp"
+#include "q10_query.hpp"
 #include "utilities.hpp"
 
 #include <benchmarks/common/memory_stats.hpp>
 
-#include <cudf/ast/expressions.hpp>
-#include <cudf/binaryop.hpp>
-#include <cudf/column/column.hpp>
-#include <cudf/scalar/scalar.hpp>
-#include <cudf/utilities/memory_resource.hpp>
-
 #include <nvbench/nvbench.cuh>
+
+#include <algorithm>
+#include <cstddef>
+#include <iterator>
+#include <memory>
+#include <string>
+#include <unordered_map>
+#include <utility>
+#include <vector>
+
+#ifdef CUDF_WITH_VORTEX
+#include "local_io.hpp"
+#include "reference/q10_reference.hpp"
+#include "vortex/vortex_io.hpp"
+#endif
+
+using ndsh::q10::execute_q10;
+using ndsh::q10::q10_projections;
 
 /**
  * @file q10.cpp
@@ -57,98 +71,17 @@
  *     revenue desc;
  */
 
-/**
- * @brief Calculate the revenue column
- *
- * @param extendedprice The extended price column
- * @param discount The discount column
- * @param stream The CUDA stream used for device memory operations and kernel launches.
- * @param mr Device memory resource used to allocate the returned column's device memory.
- */
-[[nodiscard]] std::unique_ptr<cudf::column> calculate_revenue(
-  cudf::column_view const& extendedprice,
-  cudf::column_view const& discount,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref())
-{
-  auto const one = cudf::numeric_scalar<double>(1);
-  auto const one_minus_discount =
-    cudf::binary_operation(one, discount, cudf::binary_operator::SUB, discount.type(), stream, mr);
-  auto const revenue_type = cudf::data_type{cudf::type_id::FLOAT64};
-  auto revenue            = cudf::binary_operation(extendedprice,
-                                        one_minus_discount->view(),
-                                        cudf::binary_operator::MUL,
-                                        revenue_type,
-                                        stream,
-                                        mr);
-  return revenue;
-}
-
 void run_ndsh_q10(nvbench::state& state,
                   std::unordered_map<std::string, cuio_source_sink_pair>& sources)
 {
-  // Define the column projection and filter predicate for the `orders` table
-  std::vector<std::string> const orders_cols = {"o_custkey", "o_orderkey", "o_orderdate"};
-  auto const o_orderdate_ref                 = cudf::ast::column_reference(std::distance(
-    orders_cols.begin(), std::find(orders_cols.begin(), orders_cols.end(), "o_orderdate")));
-  auto o_orderdate_lower =
-    cudf::timestamp_scalar<cudf::timestamp_D>(days_since_epoch(1993, 10, 1), true);
-  auto const o_orderdate_lower_limit = cudf::ast::literal(o_orderdate_lower);
-  auto const o_orderdate_pred_lower  = cudf::ast::operation(
-    cudf::ast::ast_operator::GREATER_EQUAL, o_orderdate_ref, o_orderdate_lower_limit);
-  auto o_orderdate_upper =
-    cudf::timestamp_scalar<cudf::timestamp_D>(days_since_epoch(1994, 1, 1), true);
-  auto const o_orderdate_upper_limit = cudf::ast::literal(o_orderdate_upper);
-  auto const o_orderdate_pred_upper =
-    cudf::ast::operation(cudf::ast::ast_operator::LESS, o_orderdate_ref, o_orderdate_upper_limit);
-  auto const orders_pred = std::make_unique<cudf::ast::operation>(
-    cudf::ast::ast_operator::LOGICAL_AND, o_orderdate_pred_lower, o_orderdate_pred_upper);
-
-  auto const l_returnflag_ref = cudf::ast::column_reference(3);
-  auto r_scalar               = cudf::string_scalar("R");
-  auto const r_literal        = cudf::ast::literal(r_scalar);
-  auto const lineitem_pred    = std::make_unique<cudf::ast::operation>(
-    cudf::ast::ast_operator::EQUAL, l_returnflag_ref, r_literal);
-
-  // Read out the tables from parquet files
-  // while pushing down the column projections and filter predicates
-  auto const customer = read_parquet(
-    sources.at("customer").make_source_info(),
-    {"c_custkey", "c_name", "c_nationkey", "c_acctbal", "c_address", "c_phone", "c_comment"});
-  auto const orders =
-    read_parquet(sources.at("orders").make_source_info(), orders_cols, std::move(orders_pred));
-  auto const lineitem =
-    read_parquet(sources.at("lineitem").make_source_info(),
-                 {"l_extendedprice", "l_discount", "l_orderkey", "l_returnflag"},
-                 std::move(lineitem_pred));
-  auto const nation =
-    read_parquet(sources.at("nation").make_source_info(), {"n_name", "n_nationkey"});
-
-  // Perform the joins
-  auto const join_a       = apply_inner_join(customer, nation, {"c_nationkey"}, {"n_nationkey"});
-  auto const join_b       = apply_inner_join(lineitem, orders, {"l_orderkey"}, {"o_orderkey"});
-  auto const joined_table = apply_inner_join(join_a, join_b, {"c_custkey"}, {"o_custkey"});
-
-  // Calculate and append the `revenue` column
-  auto revenue =
-    calculate_revenue(joined_table->column("l_extendedprice"), joined_table->column("l_discount"));
-  (*joined_table).append(revenue, "revenue");
-
-  // Perform the groupby operation
-  auto const groupedby_table = apply_groupby(
-    joined_table,
-    groupby_context_t{
-      {"c_custkey", "c_name", "c_acctbal", "c_phone", "n_name", "c_address", "c_comment"},
-      {
-        {"revenue", {{cudf::aggregation::Kind::SUM, "revenue"}}},
-      }});
-
-  // Perform the order by operation
-  auto const orderedby_table =
-    apply_orderby(groupedby_table, {"revenue"}, {cudf::order::DESCENDING});
-
-  // Write query result to a parquet file
-  orderedby_table->to_parquet("q10.parquet");
+  execute_q10(
+    [&](std::string const& name,
+        std::vector<std::string> const& columns,
+        std::unique_ptr<cudf::ast::operation> const& predicate) {
+      return read_parquet(sources.at(name).make_source_info(), columns, predicate);
+    },
+    false,
+    [](auto const& result) { result->to_parquet("q10.parquet"); });
 }
 
 void ndsh_q10(nvbench::state& state)
@@ -169,3 +102,81 @@ void ndsh_q10(nvbench::state& state)
 }
 
 NVBENCH_BENCH(ndsh_q10).set_name("ndsh_q10").add_float64_axis("scale_factor", {0.01, 0.1, 1});
+
+#ifdef CUDF_WITH_VORTEX
+namespace {
+
+std::vector<std::string> const q10_tables{"customer", "orders", "lineitem", "nation"};
+
+struct q10_files {
+  ndsh::local_table_files tables;
+  ndsh::q10_reference_result reference;
+
+  explicit q10_files(double scale_factor)
+  {
+    ndsh::make_reference_files<ndsh::q10_reference_builder>(
+      scale_factor,
+      tables,
+      reference,
+      q10_tables,
+      q10_projections,
+      [&](auto&& read, cuda::stream_ref stream) {
+        auto result = execute_q10(read, true, ndsh::take_result);
+        ndsh::check_q10_result(reference, *result, stream);
+      });
+  }
+};
+
+void ndsh_q10_local(nvbench::state& state)
+{
+  auto const options = ndsh::local_options{state, 10};
+  if (!options.supported(state)) { return; }
+  auto const& files = ndsh::local_fixture<q10_files>(state.get_float64("scale_factor"));
+  ndsh::local_benchmark benchmark{state, files.tables, options};
+  auto read = [&](auto const& name, auto const& columns, auto const&) {
+    return benchmark.read(name, columns);
+  };
+  auto read_inputs = [&] {
+    return ndsh::read_local_tables(q10_tables, q10_projections, read, options.use_vortex);
+  };
+  auto query = [&] {
+    if (!options.use_vortex) { return execute_q10(read, true, ndsh::take_result); }
+    auto inputs = read_inputs();
+    return execute_q10(
+      [&](std::string const& name, auto const&...) {
+        auto const index =
+          std::distance(q10_tables.begin(), std::find(q10_tables.begin(), q10_tables.end(), name));
+        return std::move(inputs.at(index));
+      },
+      true,
+      ndsh::take_result);
+  };
+  {
+    {
+      auto inputs = read_inputs();
+      for (std::size_t i = 0; i < q10_tables.size(); ++i) {
+        auto const& name = q10_tables[i];
+        benchmark.check_projection(name, q10_projections.at(name), *inputs[i]);
+      }
+      CUDF_CUDA_TRY(cudaStreamSynchronize(benchmark.stream.get()));
+    }
+    auto result = query();
+    ndsh::check_q10_result(files.reference, *result, benchmark.stream);
+    CUDF_CUDA_TRY(cudaDeviceSynchronize());
+  }
+  benchmark.exec(read_inputs, query, "Total file size", "ndsh_q10_local_timed");
+  ndsh::add_count(state, "ndsh/q10/matched_rows", "Q10 matched rows", files.reference.matched);
+  ndsh::add_count(state, "ndsh/q10/customers", "Q10 customers", files.reference.customers.size());
+}
+
+}  // namespace
+
+// NVBench varies the first axis fastest; keep scale last to reuse the one-scale fixture cache.
+NVBENCH_BENCH(ndsh_q10_local)
+  .set_name("ndsh_q10_local")
+  .add_string_axis("format", {"parquet", "vortex"})
+  .add_string_axis("workload", {"read", "q10"})
+  .add_string_axis("cache", {"warm", "cold"})
+  .add_string_axis("io", {"buffered"})
+  .add_float64_axis("scale_factor", {0.01, 0.1, 1, 10});
+#endif

@@ -735,6 +735,7 @@ add_library(
   src/filling/sequence.cu
   src/groupby/common/m2_var_std.cu
   src/groupby/common/utils.cpp
+  src/groupby/direct/direct_groupby.cu
   src/groupby/groupby.cu
   src/groupby/hash/compute_global_memory_aggs.cu
   src/groupby/hash/compute_global_memory_aggs_null.cu

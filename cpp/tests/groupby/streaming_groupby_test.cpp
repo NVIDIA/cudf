@@ -12,6 +12,7 @@
 #include <cudf/aggregation.hpp>
 #include <cudf/concatenate.hpp>
 #include <cudf/copying.hpp>
+#include <cudf/dictionary/encode.hpp>
 #include <cudf/groupby.hpp>
 #include <cudf/sorting.hpp>
 #include <cudf/table/table.hpp>
@@ -103,11 +104,17 @@ void verify_against_groupby(
 void check(std::unique_ptr<cudf::table>& keys,
            std::vector<cudf::groupby::aggregation_result>& results,
            cudf::table_view expect_keys,
-           std::vector<cudf::column_view> const& expect_vals)
+           std::vector<cudf::column_view> const& expect_vals,
+           bool equivalent_keys = false)
 {
   auto const order       = cudf::sorted_order(keys->view());
   auto const sorted_keys = cudf::gather(keys->view(), *order);
-  CUDF_TEST_EXPECT_TABLES_EQUAL(expect_keys, sorted_keys->view());
+  if (equivalent_keys) {
+    // All-valid masks may be normalized differently without changing logical key values.
+    CUDF_TEST_EXPECT_TABLES_EQUIVALENT(expect_keys, sorted_keys->view());
+  } else {
+    CUDF_TEST_EXPECT_TABLES_EQUAL(expect_keys, sorted_keys->view());
+  }
 
   size_t val_idx = 0;
   for (auto& agg_res : results) {
@@ -1601,4 +1608,75 @@ TEST_F(StreamingGroupbyTest, StructKeySumTwoBatches)
   auto [keys, results] = streaming_agg.finalize();
 
   verify_against_groupby(keys, results, {batch1, batch2}, KEY_COL, reqs);
+}
+
+TEST_F(StreamingGroupbyTest, DenseAggregationsNullableFlatAndNestedKeys)
+{
+  // Stable nullability layouts isolate launcher delegation from cross-batch schema transitions.
+  cudf::test::fixed_width_column_wrapper<int32_t> keys1{{1, 2, 1}, {true, true, true}};
+  cudf::test::fixed_width_column_wrapper<int32_t> keys2{{2, 3, 0}, {true, true, false}};
+  cudf::test::fixed_width_column_wrapper<int32_t> values1{{10, 0, 30}, {true, false, true}};
+  cudf::test::fixed_width_column_wrapper<int32_t> values2{40, 50, 60};
+  cudf::test::structs_column_wrapper nested_keys1{{keys1}, {true, true, true}};
+  cudf::test::structs_column_wrapper nested_keys2{{keys2}, {true, true, false}};
+
+  cudf::test::fixed_width_column_wrapper<int32_t> expected_keys{{1, 2, 3}, {true, true, true}};
+  cudf::test::structs_column_wrapper expected_nested_keys{{expected_keys}};
+  cudf::test::fixed_width_column_wrapper<int64_t> expected_sum{40, 40, 50};
+  cudf::test::fixed_width_column_wrapper<int32_t> expected_min{10, 40, 50};
+  cudf::test::fixed_width_column_wrapper<int32_t> expected_max{30, 40, 50};
+  cudf::test::fixed_width_column_wrapper<int32_t> expected_count{2, 1, 1};
+
+  std::vector<cudf::groupby::streaming_aggregation_request> requests;
+  requests.push_back(make_req(1, cudf::make_sum_aggregation<cudf::groupby_aggregation>()));
+  requests.push_back(make_req(1, cudf::make_min_aggregation<cudf::groupby_aggregation>()));
+  requests.push_back(make_req(1, cudf::make_max_aggregation<cudf::groupby_aggregation>()));
+  requests.push_back(make_req(
+    1, cudf::make_count_aggregation<cudf::groupby_aggregation>(cudf::null_policy::EXCLUDE)));
+
+  // Multiple kinds exercise concurrent updates by streaming's dense-output kernel.
+  // Explicit expectations make the regression independent of the reference implementation.
+  for (bool const nested : {false, true}) {
+    auto const first_keys  = nested ? cudf::column_view{nested_keys1} : cudf::column_view{keys1};
+    auto const second_keys = nested ? cudf::column_view{nested_keys2} : cudf::column_view{keys2};
+    cudf::table_view const batch1{{first_keys, values1}};
+    cudf::table_view const batch2{{second_keys, values2}};
+    cudf::groupby::streaming_groupby streaming_agg(KEY_COL, requests, DEFAULT_MAX_DISTINCT_KEYS);
+    streaming_agg.aggregate(batch1);
+    streaming_agg.aggregate(batch2);
+    auto [keys, results] = streaming_agg.finalize();
+
+    ASSERT_EQ(results.size(), requests.size());
+    for (auto const& result : results) {
+      ASSERT_EQ(result.results.size(), 1);
+    }
+    auto const expected_key_view =
+      nested ? cudf::column_view{expected_nested_keys} : cudf::column_view{expected_keys};
+    check(keys,
+          results,
+          cudf::table_view{{expected_key_view}},
+          {expected_sum, expected_min, expected_max, expected_count},
+          true);
+    verify_against_groupby(keys, results, {batch1, batch2}, KEY_COL, requests);
+
+    // Dictionary values force global-memory aggregation, where four kinds select dense output.
+    // This exercises the stateless callers even when the small raw-value case uses shared memory.
+    auto const all_data       = cudf::concatenate(std::vector<cudf::table_view>{batch1, batch2});
+    auto const encoded_values = cudf::dictionary::encode(all_data->view().column(1));
+    std::vector<cudf::groupby::aggregation_request> dense_requests(1);
+    dense_requests.front().values = encoded_values->view();
+    for (auto const& request : requests) {
+      dense_requests.front().aggregations.push_back(std::unique_ptr<cudf::groupby_aggregation>{
+        dynamic_cast<cudf::groupby_aggregation*>(request.aggregation->clone().release())});
+    }
+    cudf::groupby::groupby dense_groupby{cudf::table_view{{all_data->view().column(0)}}};
+    auto [dense_keys, dense_results] = dense_groupby.aggregate(dense_requests);
+    ASSERT_EQ(dense_results.size(), 1);
+    ASSERT_EQ(dense_results.front().results.size(), requests.size());
+    check(dense_keys,
+          dense_results,
+          cudf::table_view{{expected_key_view}},
+          {expected_sum, expected_min, expected_max, expected_count},
+          true);
+  }
 }

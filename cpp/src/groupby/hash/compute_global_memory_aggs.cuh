@@ -5,6 +5,7 @@
 
 #pragma once
 
+#include "compute_dense_aggs.hpp"
 #include "compute_global_memory_aggs.hpp"
 #include "output_utils.hpp"
 #include "single_pass_functors.cuh"
@@ -102,11 +103,12 @@ std::pair<std::unique_ptr<table>, rmm::device_uvector<size_type>> compute_aggs_d
                                           mr);
   auto d_results_ptr  = mutable_table_device_view::create(*agg_results, stream);
 
-  thrust::for_each_n(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-                     cuda::counting_iterator<int64_t>{0},
-                     num_rows * static_cast<int64_t>(h_agg_kinds.size()),
-                     compute_single_pass_aggs_dense_output_fn{
-                       target_indices.begin(), d_agg_kinds.data(), *d_values, *d_results_ptr});
+  compute_single_pass_aggs_dense_output(target_indices.begin(),
+                                        d_agg_kinds.data(),
+                                        *d_values,
+                                        *d_results_ptr,
+                                        num_rows * static_cast<int64_t>(h_agg_kinds.size()),
+                                        stream);
 
   return {std::move(agg_results), std::move(unique_keys)};
 }

@@ -165,9 +165,12 @@ std::size_t estimate_capacity(size_type num_rows,
       cudf::detail::make_pinned_vector(device_span<size_type const>{counts}, stream);
     return std::pair{static_cast<double>(h_counts[0]), static_cast<double>(h_counts[1])};
   };
-  // One row in 64 is sampled, fewer when that would fill more than half of the sample table.
-  auto const stride = std::max<size_type>(
-    64, cudf::util::div_rounding_up_safe<size_type>(num_rows, hash_csr_sample_capacity / 2));
+  // Sample with a prime stride of 67, or a larger odd stride to keep the sample table at most
+  // half full. Odd strides avoid repeatedly sampling the same phase of power-of-two patterns.
+  auto const stride =
+    std::max<size_type>(
+      67, cudf::util::div_rounding_up_safe<size_type>(num_rows, hash_csr_sample_capacity / 2)) |
+    1;
   auto const max_capacity =
     static_cast<std::size_t>(std::numeric_limits<cuda::std::uint32_t>::max());
   auto [sampled, distinct] = sample(stride);

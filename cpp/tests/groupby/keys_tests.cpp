@@ -424,9 +424,9 @@ using groupby_key_shape_test = groupby_keys_test<int32_t>;
 TEST_F(groupby_key_shape_test, NearlyDistinctSampleUnderestimatesPopulation)
 {
   constexpr cudf::size_type num_rows    = 1 << 21;
-  constexpr cudf::size_type stride      = 64;
-  constexpr cudf::size_type sample_keys = 31'000;
-  constexpr cudf::size_type num_samples = num_rows / stride;
+  constexpr cudf::size_type stride      = 67;
+  constexpr cudf::size_type sample_keys = 29'500;
+  constexpr cudf::size_type num_samples = (num_rows + stride - 1) / stride;
 
   // The periodic sample is almost entirely distinct, but still has far fewer keys than the
   // complete input. Every row outside the sample has a unique key. An undersized table must

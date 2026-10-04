@@ -197,7 +197,7 @@ std::vector<std::unique_ptr<column>> compute_single_pass_aggs(
                                  is_agg_intermediate.subspan(i, end - i),
                                  stream,
                                  mr);
-      std::move(fused.begin(), fused.end(), std::back_inserter(results));
+      std::ranges::move(fused, std::back_inserter(results));
     } else if (end = batch_end(i, values_type, nullable); end > i + 1) {
       std::vector<decltype(d_col)> device_views;
       std::vector<reduction_context> contexts;
@@ -213,7 +213,7 @@ std::vector<std::unique_ptr<column>> compute_single_pass_aggs(
       }
       auto batch = cudf::detail::aggregation_dispatcher(
         kind, compute_reductions_fn{contexts, is_agg_intermediate.subspan(i, end - i)}, stream, mr);
-      std::move(batch.begin(), batch.end(), std::back_inserter(results));
+      std::ranges::move(batch, std::back_inserter(results));
     } else {
       auto const resources = is_agg_intermediate[i] ? cudf::memory_resources{mr.get_temporary_mr(),
                                                                              mr.get_temporary_mr()}

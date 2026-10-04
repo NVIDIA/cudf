@@ -4,7 +4,7 @@ Contributions to cuDF fall into the following categories:
 
 1. To report a bug, request a new feature, or report a problem with documentation, please file an
    [issue](https://github.com/NVIDIA/cudf/issues/new/choose) describing the problem or new feature
-   in detail. The RAPIDS team evaluates and triages issues, and schedules them for a release. If you
+   in detail. The maintainers evaluate and triage issues, and schedule them for a release. If you
    believe the issue needs priority attention, please comment on the issue to notify the team.
 2. To propose and implement a new feature, please file a new feature request
    [issue](https://github.com/NVIDIA/cudf/issues/new/choose). Describe the intended feature and
@@ -58,7 +58,7 @@ documentation docs](https://docs.nvidia.com/cudf/latest/cudf/developer_guide/doc
    merging.
    Changes limited to libcudf_streaming C++ files require at least 1 approval from the
    rapidsmpf-cpp-codeowners before merging.
-10. Once reviewed and approved, a RAPIDS developer will merge your pull request.
+10. Once reviewed and approved, a maintainer will merge your pull request.
 
 If you are unsure about anything, don't hesitate to comment on issues and ask for clarification!
 
@@ -70,7 +70,7 @@ prioritized issues for our next release in our
 
 **Note:** Always look at the release board that is
 [currently under development](https://docs.nvidia.com/datascience/maintainers/) for issues to work on. This is
-where RAPIDS developers also focus their efforts.
+where maintainers also focus their efforts.
 
 Look at the unassigned issues, and find an issue to which you are comfortable contributing. Start
 with _Step 3_ above, commenting on the issue to let others know you are working on it. If you have

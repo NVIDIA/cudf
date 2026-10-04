@@ -379,6 +379,10 @@ __device__ int skip_validity_and_row_indices_nonlist(
 
     value_count += batch_size;
     max_depth_valid_count += block_valid_count;
+
+    // Required before the next iteration reuses `scan_storage`: CUB needs a barrier between the
+    // last read of a collective's TempStorage and its reuse.
+    __syncthreads();
   }  // end loop
 
   return max_depth_valid_count;
@@ -488,6 +492,10 @@ __device__ int update_validity_and_row_indices_nested(
         max_depth_valid_count += block_valid_count;
       }
 
+      // Required before `scan_storage` is reused: CUB needs a barrier between the last read of a
+      // collective's TempStorage and its reuse. At the end of the depth loop it also covers the
+      // enclosing value loop's back edge, since the depth loop always runs at least once.
+      __syncthreads();
     }  // end depth loop
 
     value_count += block_value_count;
@@ -601,6 +609,10 @@ __device__ int update_validity_and_row_indices_flat(
     // update stuff
     value_count += block_value_count;
     valid_count += block_valid_count;
+
+    // Required before the next iteration reuses `scan_storage`: CUB needs a barrier between the
+    // last read of a collective's TempStorage and its reuse.
+    __syncthreads();
   }
 
   if (t == 0) {

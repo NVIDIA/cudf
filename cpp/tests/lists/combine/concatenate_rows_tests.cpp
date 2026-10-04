@@ -676,7 +676,11 @@ TEST_F(ListConcatenateRowsNestedTypesTest, Struct)
   cudf::test::structs_column_wrapper s0(std::move(s0_children));
   cudf::test::fixed_width_column_wrapper<int> l0_offsets{0, 2, 2, 5, 6, 8};
   auto const l0_size = static_cast<cudf::column_view>(l0_offsets).size() - 1;
-  auto l0            = cudf::make_lists_column(l0_size, l0_offsets.release(), s0.release(), 0, {});
+  auto l0            = cudf::make_lists_column(l0_size,
+                                    l0_offsets.release(),
+                                    s0.release(),
+                                    0,
+                                    cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
   // col1
   cudf::test::fixed_width_column_wrapper<int> s1_0{
@@ -702,7 +706,11 @@ TEST_F(ListConcatenateRowsNestedTypesTest, Struct)
   cudf::test::structs_column_wrapper s1(std::move(s1_children));
   cudf::test::fixed_width_column_wrapper<int> l1_offsets{0, 0, 4, 7, 15, 15};
   auto const l1_size = static_cast<cudf::column_view>(l1_offsets).size() - 1;
-  auto l1            = cudf::make_lists_column(l1_size, l1_offsets.release(), s1.release(), 0, {});
+  auto l1            = cudf::make_lists_column(l1_size,
+                                    l1_offsets.release(),
+                                    s1.release(),
+                                    0,
+                                    cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
   // perform the concatenate
   cudf::table_view t({*l0, *l1});
@@ -721,7 +729,11 @@ TEST_F(ListConcatenateRowsNestedTypesTest, Struct)
   cudf::test::structs_column_wrapper se(std::move(se_children));
   cudf::test::fixed_width_column_wrapper<int> le_offsets{0, 2, 6, 12, 21, 23};
   auto const le_size = static_cast<cudf::column_view>(le_offsets).size() - 1;
-  auto expected      = cudf::make_lists_column(le_size, le_offsets.release(), se.release(), 0, {});
+  auto expected      = cudf::make_lists_column(le_size,
+                                          le_offsets.release(),
+                                          se.release(),
+                                          0,
+                                          cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*result, *expected);
 }

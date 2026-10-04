@@ -15,6 +15,7 @@
 #include <cudf/detail/row_operator/hashing.cuh>
 #include <cudf/detail/stream_compaction.hpp>
 #include <cudf/hashing.hpp>
+#include <cudf/hashing/detail/hashing.hpp>
 #include <cudf/stream_compaction.hpp>
 #include <cudf/table/table.hpp>
 #include <cudf/table/table_view.hpp>
@@ -113,8 +114,12 @@ rmm::device_uvector<size_type> distinct_indices(table_view const& input,
 
   if (has_nested_columns) {
     if (keep == duplicate_keep_option::KEEP_ANY) {
-      auto const hashes = cudf::hashing::detail::murmurhash3_x86_32(
-        preprocessed_input, num_rows, cudf::DEFAULT_HASH_SEED, stream, temp_mr);
+      auto const hashes =
+        cudf::hashing::detail::murmurhash3_x86_32(preprocessed_input,
+                                                  num_rows,
+                                                  hashing::detail::DEFAULT_ALGORITHM_HASH_SEED,
+                                                  stream,
+                                                  temp_mr);
       auto const d_hash = distinct_precomputed_hash{hashes->view().data<hash_value_type>()};
       return dispatch_row_equal<true>(
         nulls_equal, nans_equal, has_nulls, row_equal, [&](auto const& d_equal) {
@@ -191,7 +196,8 @@ std::unique_ptr<column> distinct_indices(table_view const& input,
 {
   CUDF_FUNC_RANGE();
   auto indices = detail::distinct_indices(input, keep, nulls_equal, nans_equal, stream, mr);
-  return std::make_unique<column>(std::move(indices), rmm::device_buffer{}, 0);
+  return std::make_unique<column>(
+    std::move(indices), cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED), 0);
 }
 
 }  // namespace cudf

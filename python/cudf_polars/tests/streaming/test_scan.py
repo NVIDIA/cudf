@@ -103,6 +103,21 @@ def test_parallel_scan(
     assert_gpu_result_equal(q, engine=streaming_engine)
 
 
+def test_parquet_scan_filter_over_fallback_preserves_scan_plan(
+    tmp_path: Path,
+    df: pl.DataFrame,
+    spmd_engine_factory: Callable[[StreamingOptions], StreamingEngine],
+) -> None:
+    path = tmp_path / "data.parquet"
+    df.write_parquet(path)
+    engine = spmd_engine_factory(
+        StreamingOptions(target_partition_size=1_000, fallback_mode="warn")
+    )
+    q = pl.scan_parquet(path).filter(pl.col("x") == pl.col("x").max().over("y"))
+    with pytest.warns(UserWarning, match=r"over\(\.\.\.\) inside filter"):
+        assert_gpu_result_equal(q, engine=engine, check_row_order=False)
+
+
 @pytest.mark.parametrize(
     "target_partition_size_and_n_files", [(1_000, 1), (1_000, 2), (1_000_000, 5)]
 )
@@ -414,13 +429,14 @@ def _make_parquet_scan(
     paths: list[str],
     parquet_options: ParquetOptions | None = None,
     *,
+    schema: dict[str, DataType] | None = None,
     skip_rows: int = 0,
     n_rows: int = -1,
     row_index: tuple[str, int] | None = None,
 ) -> Scan:
     parquet_options = parquet_options or ParquetOptions()
     return Scan(
-        {"x": DataType(pl.Int64())},
+        schema or {"x": DataType(pl.Int64())},
         "parquet",
         {},
         None,
@@ -517,6 +533,27 @@ def test_expand_scan_for_rank_fused_and_single_read(
         assert scan.split_index == 0
         assert scan.total_splits == 1
         assert scan.paths == expected_paths
+
+
+def test_expand_scan_for_rank_matches_ordered_partition_ownership() -> None:
+    paths = [f"f{i}" for i in range(6)]
+    expected_by_rank = [
+        [["f0"], ["f1"]],
+        [["f2"]],
+        [["f3"], ["f4"]],
+        [["f5"]],
+    ]
+
+    for rank, expected_path_groups in enumerate(expected_by_rank):
+        streaming_scan = expand_scan_for_rank(
+            _make_parquet_scan(paths),
+            IOPartitionPlan(1, IOPartitionFlavor.SINGLE_FILE),
+            partition_count=len(paths),
+            rank=rank,
+            nranks=len(expected_by_rank),
+            parquet_options=ParquetOptions(),
+        )
+        assert [task.paths for task in streaming_scan.tasks] == expected_path_groups
 
 
 @pytest.mark.parametrize(

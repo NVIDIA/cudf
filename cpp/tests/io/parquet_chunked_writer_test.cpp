@@ -213,8 +213,12 @@ TEST_F(ParquetChunkedWriterTest, ListOfStruct)
     cudf::test::fixed_width_column_wrapper<int32_t>{0, 2, 3, 3}.release();
   auto num_list_rows_1 = list_offsets_column_1->size() - 1;
 
-  auto list_col_1 = cudf::make_lists_column(
-    num_list_rows_1, std::move(list_offsets_column_1), struct_2_1.release(), 0, {});
+  auto list_col_1 =
+    cudf::make_lists_column(num_list_rows_1,
+                            std::move(list_offsets_column_1),
+                            struct_2_1.release(),
+                            0,
+                            cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
   auto table_1 = table_view({*list_col_1});
 
@@ -231,8 +235,12 @@ TEST_F(ParquetChunkedWriterTest, ListOfStruct)
     cudf::test::fixed_width_column_wrapper<int32_t>{0, 1, 2, 3}.release();
   auto num_list_rows_2 = list_offsets_column_2->size() - 1;
 
-  auto list_col_2 = cudf::make_lists_column(
-    num_list_rows_2, std::move(list_offsets_column_2), struct_2_2.release(), 0, {});
+  auto list_col_2 =
+    cudf::make_lists_column(num_list_rows_2,
+                            std::move(list_offsets_column_2),
+                            struct_2_2.release(),
+                            0,
+                            cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
   auto table_2 = table_view({*list_col_2});
 
@@ -291,8 +299,12 @@ TEST_F(ParquetChunkedWriterTest, ListOfStructOfStructOfListOfList)
     cudf::test::fixed_width_column_wrapper<int32_t>{0, 2, 3, 4}.release();
   auto num_list_rows_1 = list_offsets_column_1->size() - 1;
 
-  auto list_col_1 = cudf::make_lists_column(
-    num_list_rows_1, std::move(list_offsets_column_1), struct_2_1.release(), 0, {});
+  auto list_col_1 =
+    cudf::make_lists_column(num_list_rows_1,
+                            std::move(list_offsets_column_1),
+                            struct_2_1.release(),
+                            0,
+                            cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
   auto table_1 = table_view({*list_col_1});
 
@@ -316,8 +328,12 @@ TEST_F(ParquetChunkedWriterTest, ListOfStructOfStructOfListOfList)
   auto list_offsets_column_2 = cudf::test::fixed_width_column_wrapper<int32_t>{0, 1, 2}.release();
   auto num_list_rows_2       = list_offsets_column_2->size() - 1;
 
-  auto list_col_2 = cudf::make_lists_column(
-    num_list_rows_2, std::move(list_offsets_column_2), struct_2_2.release(), 0, {});
+  auto list_col_2 =
+    cudf::make_lists_column(num_list_rows_2,
+                            std::move(list_offsets_column_2),
+                            struct_2_2.release(),
+                            0,
+                            cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
   auto table_2 = table_view({*list_col_2});
 

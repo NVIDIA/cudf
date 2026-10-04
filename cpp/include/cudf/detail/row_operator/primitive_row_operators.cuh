@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -29,8 +29,7 @@ namespace detail {
 /**
  * @brief Checks if a table is compatible with primitive row operations
  *
- * A table is compatible with primitive row operations if it contains exactly one column
- * and that column contains only numeric data types.
+ * A table is compatible with primitive row operations if all its columns have numeric data types.
  *
  * @param table The table to check for compatibility
  * @return Boolean indicating if the table is compatible with primitive row operations
@@ -219,7 +218,7 @@ class row_hasher {
    */
   row_hasher(cudf::nullate::DYNAMIC const& has_nulls,
              table_device_view t,
-             result_type seed = DEFAULT_HASH_SEED)
+             result_type seed = hashing::detail::DEFAULT_ALGORITHM_HASH_SEED)
     : _has_nulls{has_nulls}, _table{t}, _seed{seed}
   {
   }
@@ -233,7 +232,7 @@ class row_hasher {
    */
   row_hasher(cudf::nullate::DYNAMIC const& has_nulls,
              std::shared_ptr<cudf::detail::row::equality::preprocessed_table> t,
-             result_type seed = DEFAULT_HASH_SEED)
+             result_type seed = hashing::detail::DEFAULT_ALGORITHM_HASH_SEED)
     : _has_nulls{has_nulls}, _table{*t}, _seed{seed}
   {
   }

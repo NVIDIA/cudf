@@ -14,6 +14,7 @@
 
 #include <cudf/column/column_factories.hpp>
 #include <cudf/merge.hpp>
+#include <cudf/null_mask.hpp>
 #include <cudf/sorting.hpp>
 #include <cudf/table/table.hpp>
 #include <cudf/table/table_view.hpp>
@@ -906,7 +907,7 @@ TEST_F(MergeTest, NestedListsofStructs)
       cudf::test::fixed_width_column_wrapper<int32_t>{0, 3, 4, 6, 7}.release(),
       get_structs().release(),
       0,
-      {});
+      cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
   }();
 
   // [ {4}                ]
@@ -923,7 +924,7 @@ TEST_F(MergeTest, NestedListsofStructs)
       cudf::test::fixed_width_column_wrapper<int32_t>{0, 1, 2, 3, 4}.release(),
       get_structs().release(),
       0,
-      {});
+      cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
   }();
 
   auto tbl1 = cudf::table_view{{*col1}};
@@ -950,7 +951,7 @@ TEST_F(MergeTest, NestedListsofStructs)
       cudf::test::fixed_width_column_wrapper<int32_t>{0, 3, 4, 5, 6, 8, 9, 10, 11}.release(),
       get_structs().release(),
       0,
-      {});
+      cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
   }();
   auto expected_tbl = cudf::table_view{{*expected_col}};
 

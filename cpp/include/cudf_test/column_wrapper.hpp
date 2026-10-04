@@ -1453,14 +1453,21 @@ class dictionary_column_wrapper<std::string> : public detail::column_wrapper {
   }
 };
 
-//! @cond Doxygen_Suppress
-
+/**
+ * @brief True when `Iterator` can be dereferenced and incremented.
+ */
 template <typename Iterator>
 concept iterator_like = requires(Iterator i) {
   *i;
   ++i;
 };
 
+/**
+ * @brief True when `Iterator` yields values convertible to `bool` and is not a string.
+ *
+ * Excludes string-like iterators (such as `char const*`) so that string values are not mistaken
+ * for validity.
+ */
 template <typename Iterator>
 concept validity_iterator =
   iterator_like<Iterator> && !std::is_convertible_v<Iterator, std::string_view> &&
@@ -1468,8 +1475,6 @@ concept validity_iterator =
     static_cast<bool>(*i);
     requires(!std::is_convertible_v<decltype(*i), std::string_view>);
   };
-
-//! @endcond
 
 /**
  * @brief Host-side recursive initializer tree for constructing list columns with an

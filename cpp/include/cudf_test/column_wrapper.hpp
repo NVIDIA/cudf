@@ -1461,6 +1461,8 @@ concept validity_iterator =
     requires(!std::is_convertible_v<decltype(*i), std::string_view>);
   };
 
+//! @endcond
+
 /**
  * @brief Host-side recursive initializer tree for constructing list columns with an
  * explicit stream and memory resources at every nesting level.
@@ -1479,6 +1481,9 @@ concept validity_iterator =
 template <typename T>
 class lists_column_initializer {
  public:
+  /**
+   * @brief Host leaf element type.
+   */
   using value_type = T;
 
   /**
@@ -1499,6 +1504,12 @@ class lists_column_initializer {
   {
   }
 
+  /**
+   * @brief Construct a leaf from two or more scalar values.
+   *
+   * @param first First leaf element value
+   * @param rest Remaining leaf element values
+   */
   template <typename First, typename... Rest>
   lists_column_initializer(First first, Rest... rest)
     requires(sizeof...(Rest) > 0 && std::is_convertible_v<First, T> &&
@@ -1507,6 +1518,13 @@ class lists_column_initializer {
   {
   }
 
+  /**
+   * @brief Construct a leaf from an iterator range of values.
+   *
+   * @tparam InputIterator Iterator whose elements are convertible to `T`
+   * @param begin Beginning of the leaf values
+   * @param end End of the leaf values
+   */
   template <iterator_like InputIterator>
   lists_column_initializer(InputIterator begin, std::type_identity_t<InputIterator> end)
     requires(std::is_constructible_v<T, std::iter_reference_t<InputIterator>>)
@@ -1527,6 +1545,13 @@ class lists_column_initializer {
   {
   }
 
+  /**
+   * @brief Construct a leaf or nested node with validity from an initializer list.
+   *
+   * @tparam Validity Element type convertible to `bool`
+   * @param values Leaf values or child initializers
+   * @param validity Validity of each value or child row
+   */
   template <typename Validity>
   lists_column_initializer(lists_column_initializer values,
                            std::initializer_list<Validity> validity)
@@ -1636,6 +1661,9 @@ class lists_column_wrapper : public detail::column_wrapper {
    */
   using host_element_t =
     std::conditional_t<std::is_same_v<T, cudf::string_view>, std::string, SourceElementT>;
+  /**
+   * @brief Host-side initializer type accepted by the constructors.
+   */
   using initializer_type = lists_column_initializer<host_element_t>;
 
   /**
@@ -1673,6 +1701,19 @@ class lists_column_wrapper : public detail::column_wrapper {
   {
   }
 
+  /**
+   * @brief Construct a lists column containing a single list from two or more values.
+   *
+   * Example:
+   * @code{.cpp}
+   * // Creates a LIST column with 1 list composed of 3 total integers
+   * // [{0, 1, 2}]
+   * lists_column_wrapper l(0, 1, 2);
+   * @endcode
+   *
+   * @param first First list element
+   * @param rest Remaining list elements
+   */
   template <typename First, typename... Rest>
   lists_column_wrapper(First first, Rest... rest)
     requires(cudf::is_fixed_width<T>() && (std::is_convertible_v<First, SourceElementT> && ... &&
@@ -1963,6 +2004,26 @@ class lists_column_wrapper : public detail::column_wrapper {
     build_from_nested(children, validity, stream, mr);
   }
 
+  /**
+   * @brief Construct a lists column from a host-side initializer and a validity iterator.
+   *
+   * For a leaf initializer, `validity` applies to the leaf values. For a nested initializer,
+   * it applies to the child rows.
+   *
+   * Example:
+   * @code{.cpp}
+   * // [{1, NULL, 3}]
+   * lists_column_wrapper<int> leaf({1, 2, 3}, cudf::test::iterators::null_at(1), stream, mr);
+   * // [{1, 2}, NULL]
+   * lists_column_wrapper<int> nested({{1, 2}, {}}, cudf::test::iterators::null_at(1), stream, mr);
+   * @endcode
+   *
+   * @tparam ValidityIterator Iterator whose elements are convertible to `bool`
+   * @param init Host-side leaf values or child initializers
+   * @param validity Validity of each leaf value or child row
+   * @param stream CUDA stream used for device memory operations
+   * @param mr Memory resources used to allocate the returned column
+   */
   template <validity_iterator ValidityIterator>
   lists_column_wrapper(initializer_type init,
                        ValidityIterator validity,
@@ -2254,8 +2315,6 @@ class lists_column_wrapper : public detail::column_wrapper {
   int depth = 0;
   bool root = false;
 };
-
-//! @endcond
 
 /**
  * @brief True when `T` is convertible to `cuda::stream_ref`.

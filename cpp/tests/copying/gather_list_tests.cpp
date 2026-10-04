@@ -30,9 +30,6 @@ class GatherTestList : public cudf::test::BaseFixtureWithHarness {};
 template <typename T>
 using LCW = cudf::test::lists_column_wrapper<T, int32_t>;
 
-// Nested list values. Passing these to lists_column_wrapper builds every nesting level with the
-// explicit stream and memory resources instead of the current device resource.
-
 TYPED_TEST(GatherTestListTyped, Gather)
 {
   using T = TypeParam;

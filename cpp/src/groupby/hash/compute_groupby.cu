@@ -204,6 +204,7 @@ grouped_keys group_keys(size_type num_rows,
                         bitmask_type const* row_bitmask,
                         Equal const& d_row_equal,
                         Hash const& d_row_hash,
+                        bool need_group_offsets,
                         bool need_grouped_rows,
                         cuda::stream_ref stream,
                         cudf::memory_resources mr)
@@ -239,14 +240,14 @@ grouped_keys group_keys(size_type num_rows,
 
   while (true) {
     auto const is_full_size = capacity == full_capacity;
-    count_by_representative = need_grouped_rows && static_cast<std::size_t>(num_rows) < capacity;
+    count_by_representative = need_group_offsets && static_cast<std::size_t>(num_rows) < capacity;
     auto const count_capacity =
       count_by_representative ? static_cast<std::size_t>(num_rows) : capacity;
 
     slots.resize(capacity, stream);
     thrust::uninitialized_fill(
       policy, slots.begin(), slots.end(), cudf::detail::CUDF_SIZE_TYPE_SENTINEL);
-    if (need_grouped_rows) {
+    if (need_group_offsets) {
       slot_counts.resize(count_capacity, stream);
       if (count_capacity != 0) {
         CUDF_CUDA_TRY(cudaMemsetAsync(
@@ -261,7 +262,7 @@ grouped_keys group_keys(size_type num_rows,
     launch_hash_csr_build_kernel(num_rows,
                                  row_bitmask,
                                  need_grouped_rows ? positions.data() : nullptr,
-                                 need_grouped_rows ? slot_counts.data() : nullptr,
+                                 need_group_offsets ? slot_counts.data() : nullptr,
                                  count_by_representative,
                                  set,
                                  d_row_equal,
@@ -275,7 +276,7 @@ grouped_keys group_keys(size_type num_rows,
       slots.shrink_to_fit(stream);
     }
 
-    if (!need_grouped_rows) {
+    if (!need_group_offsets) {
       key_rows.resize(std::min<std::size_t>(num_rows, capacity), stream);
       auto const key_rows_end =
         thrust::copy_if(policy, slots.begin(), slots.end(), key_rows.begin(), is_occupied_fn{});
@@ -309,7 +310,7 @@ grouped_keys group_keys(size_type num_rows,
     capacity = full_capacity;
   }
 
-  if (!need_grouped_rows) {
+  if (!need_group_offsets) {
     return {std::move(key_rows),
             rmm::device_uvector<size_type>{0, stream, mr.get_output_mr()},
             rmm::device_uvector<size_type>{0, stream, mr.get_output_mr()}};
@@ -331,7 +332,8 @@ grouped_keys group_keys(size_type num_rows,
     key_rows.resize(num_rows, stream);
     rmm::device_uvector<size_type> group_offsets(
       static_cast<std::size_t>(num_rows) + 1, stream, mr.get_output_mr());
-    rmm::device_uvector<size_type> grouped_rows(num_rows, stream, mr.get_output_mr());
+    rmm::device_uvector<size_type> grouped_rows(
+      need_grouped_rows ? num_rows : 0, stream, mr.get_output_mr());
     auto const singleton_outputs = cuda::tabulate_output_iterator{
       [key_rows      = key_rows.data(),
        group_offsets = group_offsets.data(),
@@ -339,8 +341,8 @@ grouped_keys group_keys(size_type num_rows,
        num_rows] __device__(cuda::std::ptrdiff_t index, size_type value) -> void {
         group_offsets[index] = value;
         if (index < num_rows) {
-          key_rows[index]     = value;
-          grouped_rows[index] = value;
+          key_rows[index] = value;
+          if (grouped_rows != nullptr) { grouped_rows[index] = value; }
         }
       }};
     thrust::sequence(
@@ -364,6 +366,12 @@ grouped_keys group_keys(size_type num_rows,
     cuda::make_permutation_iterator(slot_counts.begin(), group_slots.begin());
   thrust::inclusive_scan(
     policy, group_counts, group_counts + num_groups, group_offsets.begin() + 1);
+  if (!need_grouped_rows) {
+    return {std::move(key_rows),
+            std::move(group_offsets),
+            rmm::device_uvector<size_type>{0, stream, mr.get_output_mr()}};
+  }
+
   auto const num_grouped_rows =
     row_bitmask == nullptr ? num_rows : group_offsets.back_element(stream);
 
@@ -405,22 +413,7 @@ std::unique_ptr<table> compute_groupby(table_view const& keys,
       : std::pair<cuda::device_buffer<std::byte>, bitmask_type const*>{
           cudf::create_null_mask(0, mask_state::UNALLOCATED, stream, temp_mr), nullptr};
 
-  auto const groups = group_keys(
-    num_rows, row_bitmask, d_row_equal, d_row_hash, !requests.empty(), stream, temporary_resources);
-
-  auto const gather_keys = [&] {
-    return cudf::detail::gather(keys,
-                                groups.key_rows,
-                                out_of_bounds_policy::DONT_CHECK,
-                                cudf::negative_index_policy::NOT_ALLOWED,
-                                stream,
-                                mr);
-  };
-
-  // In case of no requests, we still need to generate a set of unique keys.
-  if (requests.empty()) { return gather_keys(); }
-
-  // Compute all single pass aggs first.
+  // Determine which grouping outputs the requested aggregations need.
   auto const [values, agg_kinds, aggs, is_agg_intermediate, has_compound_aggs] =
     extract_hash_groupby_aggs(requests, stream);
 
@@ -434,6 +427,27 @@ std::unique_ptr<table> compute_groupby(table_view const& keys,
     }
     return false;
   }();
+  auto const groups = group_keys(num_rows,
+                                 row_bitmask,
+                                 d_row_equal,
+                                 d_row_hash,
+                                 !requests.empty(),
+                                 needs_reduction,
+                                 stream,
+                                 temporary_resources);
+
+  auto const gather_keys = [&] {
+    return cudf::detail::gather(keys,
+                                groups.key_rows,
+                                out_of_bounds_policy::DONT_CHECK,
+                                cudf::negative_index_policy::NOT_ALLOWED,
+                                stream,
+                                mr);
+  };
+
+  // In case of no requests, we still need to generate a set of unique keys.
+  if (requests.empty()) { return gather_keys(); }
+
   auto const grouped =
     needs_reduction
       ? make_grouped_rows(groups.grouped_rows, groups.group_offsets, stream, temporary_resources)

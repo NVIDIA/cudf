@@ -92,7 +92,7 @@ struct hash_set_ref {
 
 /**
  * @brief Inserts every valid row into the set and, when `positions` is given, records the slot
- * of each row and its rank within that slot.
+ * of each row and its rank within that slot. Counts can also be computed without row positions.
  *
  * Ranks are handed out by one atomic per distinct slot per warp: lanes that landed in the same
  * slot combine their increments, which keeps low-cardinality inputs from serializing on a few
@@ -147,7 +147,7 @@ CUDF_KERNEL void hash_csr_build_kernel(size_type num_rows,
       }
     }
     // Without aggregations only the distinct keys matter, and the set alone provides them.
-    if (positions == nullptr) { continue; }
+    if (slot_counts == nullptr) { continue; }
 
     auto const peers = cooperative_groups::labeled_partition(warp, slot);
     if (slot != hash_csr_no_slot) {
@@ -157,9 +157,11 @@ CUDF_KERNEL void hash_csr_build_kernel(size_type num_rows,
           cuda::atomic_ref<size_type, cuda::thread_scope_device>{slot_counts[slot]}.fetch_add(
             static_cast<size_type>(peers.size()), cuda::memory_order_relaxed);
       }
-      first_rank     = peers.shfl(first_rank, 0);
-      positions[row] = {slot, first_rank + static_cast<size_type>(peers.thread_rank())};
-    } else if (row < num_rows) {
+      if (positions != nullptr) {
+        first_rank     = peers.shfl(first_rank, 0);
+        positions[row] = {slot, first_rank + static_cast<size_type>(peers.thread_rank())};
+      }
+    } else if (positions != nullptr && row < num_rows) {
       // Materialize values to avoid binding references to host constants.
       positions[row] = {cuda::std::uint32_t{hash_csr_no_slot},
                         size_type{cudf::detail::CUDF_SIZE_TYPE_SENTINEL}};

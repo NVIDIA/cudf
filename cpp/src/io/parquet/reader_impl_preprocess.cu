@@ -414,30 +414,28 @@ void reader_impl::allocate_level_decode_space()
   subpass.prepass_state_buf =
     cudf::detail::hostdevice_vector<PagePrepassState>(num_claimed, _stream);
 
-  // `PageInfo` travels to the device, so it must carry the device address, while the host-side
-  // seeding below goes through `host_state()`.
-  for (size_t idx = 0; idx < num_pages; ++idx) {
-    if (prepass_slot[idx] != std::numeric_limits<size_t>::max()) {
-      pages[idx].prepass_state = subpass.prepass_state_buf.device_ptr(prepass_slot[idx]);
-    }
-  }
   auto host_state = [&](size_t idx) -> PagePrepassState* {
     return prepass_slot[idx] != std::numeric_limits<size_t>::max()
              ? subpass.prepass_state_buf.host_ptr(prepass_slot[idx])
              : nullptr;
   };
 
-  // Size the flat valid-rank maps. A required page needs no map at all since its rank map is the
-  // identity, which the consumer synthesizes rather than reading. The sizes are stored rather than
-  // recomputed so that the loop below, which hands out the slices, cannot disagree with the one
-  // that sized them.
+  // Point each claimed page at its scratch and size the flat valid-rank maps in a single walk.
+  // `PageInfo` travels to the device, so the page carries the device address while the seeding
+  // here goes through `host_state()`. A required page needs no map at all since its rank map is
+  // the identity, which the consumer synthesizes rather than reading. The sizes are stored rather
+  // than recomputed so that the loop below, which hands out the slices, cannot disagree with this
+  // one.
   std::vector<size_t> flat_map_sizes(num_pages, 0);
   size_t flat_prepass_size = 0;
   for (size_t idx = 0; idx < num_pages; ++idx) {
-    auto const& page = pages[idx];
+    auto* const state = host_state(idx);
+    if (state == nullptr) { continue; }
+    auto& page         = pages[idx];
+    page.prepass_state = subpass.prepass_state_buf.device_ptr(prepass_slot[idx]);
     if (page.is_prepass_family(level_prepass_family::DELTA_FLAT)) {
-      auto const& chunk         = pass.chunks[page.chunk_idx];
-      host_state(idx)->nz_count = PagePrepassState::not_yet_produced;
+      auto const& chunk = pass.chunks[page.chunk_idx];
+      state->nz_count   = PagePrepassState::not_yet_produced;
       if (chunk.max_level[level_type::DEFINITION] != 0) {
         flat_map_sizes[idx] = static_cast<size_t>(page.num_input_values) * sizeof(uint32_t);
         flat_prepass_size += flat_map_sizes[idx];

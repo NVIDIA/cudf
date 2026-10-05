@@ -15,7 +15,6 @@ from cudf_polars.testing.asserts import (
 # One partial result exercises selection; full and overfull requests cover the
 # separate "all rows" behavior without repeating intermediate result lengths.
 K_CASES = [0, 1, 4, 5]
-K_BY_CASES = [0, 1, 4, 5]
 
 
 @pytest.fixture
@@ -46,7 +45,7 @@ def test_bottom_k(engine: pl.GPUEngine, df, col, k):
 
 
 @pytest.mark.parametrize("by", ["val", "str_value", "col_with_nulls"])
-@pytest.mark.parametrize("k", K_BY_CASES)
+@pytest.mark.parametrize("k", K_CASES)
 @pytest.mark.parametrize("reverse", [False, True])
 def test_top_k_by(engine: pl.GPUEngine, df, by, k, reverse):
     q = df.select(pl.col("test").top_k_by(by, k, reverse=reverse))
@@ -54,7 +53,7 @@ def test_top_k_by(engine: pl.GPUEngine, df, by, k, reverse):
 
 
 @pytest.mark.parametrize("by", ["val", "str_value", "col_with_nulls"])
-@pytest.mark.parametrize("k", K_BY_CASES)
+@pytest.mark.parametrize("k", K_CASES)
 @pytest.mark.parametrize("reverse", [False, True])
 def test_bottom_k_by(engine: pl.GPUEngine, df, by, k, reverse):
     q = df.select(pl.col("test").bottom_k_by(by, k, reverse=reverse))

@@ -8,18 +8,9 @@ import polars as pl
 
 from cudf_polars.testing.asserts import assert_gpu_result_equal
 
-SLICE_OFFSETS = [0, 1, 2, -10, -1, -2, 20]
-SLICE_LENGTHS = [0, 2, 11]
 
-
-@pytest.mark.parametrize(
-    "offset",
-    SLICE_OFFSETS,
-)
-@pytest.mark.parametrize(
-    "length",
-    SLICE_LENGTHS,
-)
+@pytest.mark.parametrize("offset", [0, 1, 2, -10, -1, -2, 20])
+@pytest.mark.parametrize("length", [0, 2, 11])
 @pytest.mark.parametrize("slice_pushdown", [False, True])
 def test_slice(engine: pl.GPUEngine, offset, length, slice_pushdown):
     ldf = pl.DataFrame(

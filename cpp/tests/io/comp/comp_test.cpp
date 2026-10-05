@@ -76,11 +76,17 @@ struct DecompressTest
   {
     auto stream = cudf::get_default_stream();
     std::vector<uint8_t> decompressed(uncompressed_size);
-    rmm::device_buffer src{compressed.data(), compressed.size(), stream};
+    cuda::device_buffer<std::uint8_t> src(stream, cudf::get_current_device_resource_ref());
+    if (not compressed.empty()) {
+      src = cuda::device_buffer<std::uint8_t>{stream,
+                                              cudf::get_current_device_resource_ref(),
+                                              compressed.data(),
+                                              compressed.data() + compressed.size()};
+    }
     rmm::device_uvector<uint8_t> dst{decompressed.size(), stream};
 
     cudf::detail::hostdevice_vector<device_span<uint8_t const>> inf_in(1, stream);
-    inf_in[0] = {static_cast<uint8_t const*>(src.data()), src.size()};
+    inf_in[0] = {src.data(), src.size()};
     inf_in.host_to_device_async(stream);
 
     cudf::detail::hostdevice_vector<device_span<uint8_t>> inf_out(1, stream);

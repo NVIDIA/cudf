@@ -103,6 +103,21 @@ def test_parallel_scan(
     assert_gpu_result_equal(q, engine=streaming_engine)
 
 
+def test_parquet_scan_filter_over_fallback_preserves_scan_plan(
+    tmp_path: Path,
+    df: pl.DataFrame,
+    spmd_engine_factory: Callable[[StreamingOptions], StreamingEngine],
+) -> None:
+    path = tmp_path / "data.parquet"
+    df.write_parquet(path)
+    engine = spmd_engine_factory(
+        StreamingOptions(target_partition_size=1_000, fallback_mode="warn")
+    )
+    q = pl.scan_parquet(path).filter(pl.col("x") == pl.col("x").max().over("y"))
+    with pytest.warns(UserWarning, match=r"over\(\.\.\.\) inside filter"):
+        assert_gpu_result_equal(q, engine=engine, check_row_order=False)
+
+
 @pytest.mark.parametrize(
     "target_partition_size_and_n_files", [(1_000, 1), (1_000, 2), (1_000_000, 5)]
 )

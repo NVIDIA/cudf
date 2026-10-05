@@ -95,7 +95,7 @@ struct mutable_string_views_column_view {
 };
 
 struct string_views_column {
-  rmm::device_buffer _data;
+  cuda::device_buffer<string_view> _data;
   size_type _size{0};
   cuda::device_buffer<std::byte> _null_mask =
     cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED);
@@ -107,14 +107,14 @@ struct string_views_column {
                    cuda::stream_ref stream,
                    rmm::device_async_resource_ref mr)
   {
-    rmm::device_buffer data{static_cast<size_t>(size) * sizeof(string_view), stream, mr};
+    cuda::device_buffer<string_view> data{stream, mr, static_cast<size_t>(size), cuda::no_init};
     return string_views_column{std::move(data), size, std::move(null_mask), null_count};
   }
 
-  auto mutable_view() const
+  auto mutable_view()
   {
     return mutable_string_views_column_view{
-      const_cast<void*>(_data.data()),
+      _data.data(),
       _size,
       reinterpret_cast<bitmask_type const*>(_null_mask.data()),
       0,
@@ -509,7 +509,7 @@ std::tuple<rtcx::blob, lto_binary_type, std::string> instantiate_fragment(
 }
 
 auto to_args(std::span<input_column_view const> inputs,
-             std::span<output_column const> outputs,
+             std::span<output_column> outputs,
              cuda::stream_ref stream,
              rmm::device_async_resource_ref mr)
 {
@@ -588,7 +588,7 @@ void run(bool is_null_aware,
          bitmask_type const* d_stencil,
          void* user_data,
          std::span<input_column_view const> inputs,
-         std::span<output_column const> outputs,
+         std::span<output_column> outputs,
          int32_t* d_max_error,
          std::string const& udf,
          udf_source_type source_type,
@@ -609,7 +609,7 @@ void run(kernel const& kernel,
          bitmask_type const* d_stencil,
          void* user_data,
          std::span<input_column_view const> inputs,
-         std::span<output_column const> outputs,
+         std::span<output_column> outputs,
          int32_t* d_max_error,
          cuda::stream_ref stream,
          rmm::device_async_resource_ref mr)
@@ -642,7 +642,7 @@ void run_lto(std::optional<std::tuple<std::span<uint8_t const>, lto_binary_type,
              bitmask_type const* d_stencil,
              void* user_data,
              std::span<input_column_view const> inputs,
-             std::span<output_column const> outputs,
+             std::span<output_column> outputs,
              int32_t* d_max_error,
              std::span<uint8_t const> udf_binary,
              lto_binary_type source_type,
@@ -1117,8 +1117,7 @@ auto finalize_output(string_views_column&& c,
                      rmm::device_async_resource_ref mr)
 {
   return make_strings_column(
-    device_span<string_view const>{static_cast<string_view const*>(c._data.data()),
-                                   static_cast<size_t>(c._size)},
+    device_span<string_view const>{c._data.data(), static_cast<size_t>(c._size)},
     std::move(c._null_mask),
     c._null_count,
     stream,

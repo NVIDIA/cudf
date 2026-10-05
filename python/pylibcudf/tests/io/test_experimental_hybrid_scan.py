@@ -5,7 +5,11 @@ import io
 import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
-from utils import synchronize_stream
+from utils import (
+    extract_parquet_footer,
+    synchronize_stream,
+    write_hybrid_scan_parquet_bytes,
+)
 
 import rmm
 from rmm.pylibrmm.stream import Stream
@@ -19,6 +23,7 @@ from pylibcudf.expressions import (
 )
 from pylibcudf.io.experimental import (
     HybridScanReader,
+    ReadColumnsMode,
     UseDataPageMask,
 )
 
@@ -57,16 +62,9 @@ def simple_parquet_bytes(
     simple_parquet_table: pa.Table, row_group_size: int
 ) -> bytes:
     """Create parquet bytes from the simple table."""
-    buf = io.BytesIO()
-    pq.write_table(
-        simple_parquet_table,
-        buf,
-        row_group_size=row_group_size,
-        use_dictionary=True,
-        write_statistics=True,
-        write_page_index=True,
+    return write_hybrid_scan_parquet_bytes(
+        simple_parquet_table, row_group_size
     )
-    return buf.getvalue()
 
 
 @pytest.fixture
@@ -91,23 +89,7 @@ def simple_hybrid_scan_reader(
     Note: This is function-scoped (not module-scoped) because it depends on
     the function-scoped simple_parquet_options fixture.
     """
-    # Extract footer bytes from the parquet file
-    # According to Parquet file format specification:
-    # https://parquet.apache.org/docs/file-format/
-    PARQUET_FOOTER_SIZE_BYTES = 4  # Number of bytes encoding footer length
-    PARQUET_MAGIC_BYTES = 4  # Number of bytes for "PAR1" magic number
-    PARQUET_SUFFIX_BYTES = PARQUET_FOOTER_SIZE_BYTES + PARQUET_MAGIC_BYTES
-
-    simple_parquet_mv = memoryview(simple_parquet_bytes)
-
-    footer_size = int.from_bytes(
-        simple_parquet_mv[-PARQUET_SUFFIX_BYTES:-PARQUET_MAGIC_BYTES],
-        byteorder="little",
-    )
-    footer_start = len(simple_parquet_mv) - PARQUET_SUFFIX_BYTES - footer_size
-    footer_end = len(simple_parquet_mv) - PARQUET_SUFFIX_BYTES
-    footer_mv = simple_parquet_mv[footer_start:footer_end]
-
+    footer_mv = extract_parquet_footer(simple_parquet_bytes)
     return HybridScanReader(footer_mv, simple_parquet_options)
 
 
@@ -753,21 +735,30 @@ def test_hybrid_scan_construct_row_group_passes(
     # zero pass read limit => single pass with all row groups
     pass_read_limit = 0
     passes = simple_hybrid_scan_reader.construct_row_group_passes(
-        all_row_groups, pass_read_limit
+        ReadColumnsMode.ALL_COLUMNS,
+        all_row_groups,
+        pass_read_limit,
+        simple_parquet_options,
     )
     assert passes == [all_row_groups]
 
     # small pass read limit => each row group in its own pass
     pass_read_limit = 1
     passes = simple_hybrid_scan_reader.construct_row_group_passes(
-        all_row_groups, pass_read_limit
+        ReadColumnsMode.ALL_COLUMNS,
+        all_row_groups,
+        pass_read_limit,
+        simple_parquet_options,
     )
     assert passes == [[rg] for rg in all_row_groups]
 
     # Passes should flatten to all row groups
     pass_read_limit = 1024
     passes = simple_hybrid_scan_reader.construct_row_group_passes(
-        all_row_groups, pass_read_limit
+        ReadColumnsMode.ALL_COLUMNS,
+        all_row_groups,
+        pass_read_limit,
+        simple_parquet_options,
     )
     assert [rg for p in passes for rg in p] == all_row_groups
     assert all(passes)
@@ -777,7 +768,10 @@ def test_hybrid_scan_construct_row_group_passes(
         ValueError, match="Empty input row group indices encountered"
     ):
         simple_hybrid_scan_reader.construct_row_group_passes(
-            [], pass_read_limit
+            ReadColumnsMode.ALL_COLUMNS,
+            [],
+            pass_read_limit,
+            simple_parquet_options,
         )
 
 

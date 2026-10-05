@@ -9,17 +9,24 @@
 #include <cudf/column/column_factories.hpp>
 #include <cudf/detail/iterator.cuh>
 #include <cudf/detail/nvtx/ranges.hpp>
-#include <cudf/dictionary/detail/encode.hpp>
-#include <cudf/dictionary/dictionary_column_view.hpp>
 #include <cudf/dictionary/dictionary_factories.hpp>
-#include <cudf/reduction/detail/distinct_count.hpp>
+#include <cudf/hashing/detail/default_hash.cuh>
 #include <cudf/strings/detail/strings_column_factories.cuh>
+#include <cudf/strings/string_view.cuh>
 #include <cudf/types.hpp>
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/span.hpp>
 
+#include <rmm/device_uvector.hpp>
+#include <rmm/exec_policy.hpp>
+#include <rmm/mr/polymorphic_allocator.hpp>
+
+#include <cuco/static_set.cuh>
+#include <cuda/iterator>
 #include <thrust/binary_search.h>
 #include <thrust/execution_policy.h>
+#include <thrust/sort.h>
+#include <thrust/transform.h>
 
 #include <algorithm>
 #include <functional>
@@ -133,23 +140,111 @@ void update_from_chunk(column_eligibility& e, ColumnChunkDesc const& chunk)
   return elig;
 }
 
+/** @brief Hash a stacked key's characters directly in its dictionary page. */
+template <typename KeyIterator>
+struct dictionary_key_hash {
+  KeyIterator keys;
+
+  __device__ auto operator()(size_type index) const
+  {
+    auto const key = keys[index];
+    return cudf::hashing::detail::default_hash<string_view>{}(string_view{key.first, key.second});
+  }
+};
+
+/** @brief Compare dictionary entries by content, including entries from different chunks. */
+template <typename KeyIterator>
+struct dictionary_key_equal {
+  KeyIterator keys;
+
+  __device__ bool operator()(size_type lhs, size_type rhs) const
+  {
+    auto const left  = keys[lhs];
+    auto const right = keys[rhs];
+    return string_view{left.first, left.second} == string_view{right.first, right.second};
+  }
+};
+
+/** @brief Owned unique keys and their stacked-to-unique indices map. */
+struct dictionary_keys {
+  std::unique_ptr<column> keys;
+  std::unique_ptr<column> index_map;  ///< Null only when all chunk-local IDs can be preserved
+};
+
 /**
- * @brief Build a STRING keys column from a chunk's dictionary entries.
+ * @brief Deduplicate page descriptors and materialize only the unique dictionary strings.
  *
- * @param begin Pointer to the first `string_index_pair` entry for this chunk's dictionary
- * @param entry_count Number of dictionary entries (keys) for this chunk
- * @param stream CUDA stream used for device memory operations and kernel launches
- * @param mr Device memory resource used to allocate the returned column's memory
- * @return A STRING column holding this chunk's dictionary keys (empty if `entry_count <= 0`)
+ * The set stores stacked positions and compares the referenced characters. Insertion publishes
+ * a representative position atomically; compact IDs are assigned in a subsequent pass, so no
+ * thread can observe a key whose compact ID has not yet been initialized.
+ *
+ * @param keys Iterator over non-null dictionary entries in stacked-key order
+ * @param total_keys Number of stacked entries
+ * @param single_chunk Whether local IDs already address the entire stacked-key space
+ * @param stream CUDA stream used for device operations
+ * @param mr Resource for the output keys and indices map
+ * @return Unique STRING keys and the map consumed by the fused data-page decoder
  */
-[[nodiscard]] std::unique_ptr<column> make_keys_column_from_index_pairs(
-  string_index_pair const* begin,
-  size_type entry_count,
-  cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+template <typename KeyIterator>
+dictionary_keys build_dictionary_keys(KeyIterator keys,
+                                      size_type total_keys,
+                                      bool single_chunk,
+                                      cuda::stream_ref stream,
+                                      rmm::device_async_resource_ref mr)
 {
-  if (entry_count <= 0) { return cudf::make_empty_column(data_type{type_id::STRING}); }
-  return cudf::strings::detail::make_strings_column(begin, begin + entry_count, stream, mr);
+  if (total_keys == 0) { return {cudf::make_empty_column(data_type{type_id::STRING}), nullptr}; }
+
+  auto const temp_mr   = get_current_device_resource_ref();
+  auto set             = cuco::static_set{total_keys,
+                              0.5,
+                              cuco::empty_key<size_type>{-1},
+                              dictionary_key_equal<KeyIterator>{keys},
+                              cuco::linear_probing<1, dictionary_key_hash<KeyIterator>>{
+                                dictionary_key_hash<KeyIterator>{keys}},
+                                          {},
+                                          {},
+                              rmm::mr::polymorphic_allocator<char>{temp_mr},
+                              stream.get()};
+  auto set_ref         = set.ref(cuco::insert_and_find);
+  auto representatives = rmm::device_uvector<size_type>(total_keys, stream, temp_mr);
+  thrust::transform(rmm::exec_policy_nosync(stream, temp_mr),
+                    cuda::counting_iterator<size_type>{0},
+                    cuda::counting_iterator<size_type>{total_keys},
+                    representatives.begin(),
+                    [set_ref] __device__(size_type index) mutable -> size_type {
+                      return *cuda::std::get<0>(set_ref.insert_and_find(index));
+                    });
+
+  auto unique_positions = rmm::device_uvector<size_type>(total_keys, stream, temp_mr);
+  auto const unique_end = set.retrieve_all(unique_positions.begin(), stream.get());
+  auto const num_unique = static_cast<size_type>(unique_end - unique_positions.begin());
+  unique_positions.resize(num_unique, stream);
+
+  // Keep the existing single-chunk identity fast path, without materializing before deduplication.
+  if (single_chunk and num_unique == total_keys) {
+    return {cudf::strings::detail::make_strings_column(keys, keys + total_keys, stream, mr),
+            nullptr};
+  }
+
+  // Match dictionary::detail::encode: order keys by representative position, not string value.
+  thrust::sort(
+    rmm::exec_policy_nosync(stream, temp_mr), unique_positions.begin(), unique_positions.end());
+  auto const unique_keys = cuda::transform_iterator(
+    unique_positions.begin(),
+    [keys] __device__(size_type index) -> cudf::strings::detail::string_index_pair {
+      return keys[index];
+    });
+  auto output_keys =
+    cudf::strings::detail::make_strings_column(unique_keys, unique_keys + num_unique, stream, mr);
+  auto index_map = cudf::make_numeric_column(
+    data_type{type_id::INT32}, total_keys, mask_state::UNALLOCATED, stream, mr);
+  thrust::lower_bound(rmm::exec_policy_nosync(stream, temp_mr),
+                      unique_positions.begin(),
+                      unique_positions.end(),
+                      representatives.begin(),
+                      representatives.end(),
+                      index_map->mutable_view().data<size_type>());
+  return {std::move(output_keys), std::move(index_map)};
 }
 
 /**
@@ -302,23 +397,12 @@ void reader_impl::prepare_dict_transcode_keys(dict_transcode_plan& plan)
   for (auto& column_plan : plan.columns) {
     auto const total_keys = column_plan.key_counts_prefix.back();
     auto const num_chunks = column_plan.chunks.size();
-    std::unique_ptr<column> stacked_keys;
-    if (num_chunks == 1) {
-      stacked_keys = make_keys_column_from_index_pairs(
-        pass.chunks[column_plan.chunks.front()].str_dict_index, total_keys, _stream, _mr);
-      auto const num_distinct_keys = cudf::detail::distinct_count(
-        stacked_keys->view(), null_policy::INCLUDE, nan_policy::NAN_IS_VALID, _stream);
-      if (num_distinct_keys == total_keys) {
-        column_plan.keys = std::move(stacked_keys);
-        continue;  // A null map pointer preserves this chunk's local IDs.
-      }
-      // Reuse the already materialized keys when a single dictionary contains duplicates.
-    } else if (column_plan.contiguous) {
+    dictionary_keys result;
+    if (column_plan.contiguous) {
       // Avoid pointer arithmetic on an empty descriptor allocation.
       auto const* begin =
         total_keys == 0 ? nullptr : pass.str_dict_index.data() + column_plan.key_base_offset;
-      stacked_keys = make_keys_column_from_index_pairs(
-        begin, total_keys, _stream, get_current_device_resource_ref());
+      result = build_dictionary_keys(begin, total_keys, num_chunks == 1, _stream, _mr);
     } else {
       auto const metadata   = cudf::device_span<size_t const>{plan.gather_metadata.device_ptr(),
                                                               plan.gather_metadata.size()};
@@ -328,16 +412,12 @@ void reader_impl::prepare_dict_transcode_keys(dict_transcode_plan& plan)
           pass.str_dict_index.data(),
           metadata.subspan(column_plan.gather_offset, num_chunks + 1),
           metadata.subspan(column_plan.gather_offset + num_chunks + 1, num_chunks)});
-      stacked_keys = cudf::strings::detail::make_strings_column(
-        keys_begin, keys_begin + total_keys, _stream, get_current_device_resource_ref());
+      result = build_dictionary_keys(keys_begin, total_keys, num_chunks == 1, _stream, _mr);
     }
 
-    auto encoded = cudf::dictionary::detail::encode(
-      stacked_keys->view(), data_type{type_id::INT32}, _stream, _mr);
-    auto contents = encoded->release();
-    column_plan.index_map =
-      std::move(contents.children[dictionary_column_view::indices_column_index]);
-    column_plan.keys = std::move(contents.children[dictionary_column_view::keys_column_index]);
+    column_plan.keys      = std::move(result.keys);
+    column_plan.index_map = std::move(result.index_map);
+    if (column_plan.index_map == nullptr) { continue; }
 
     auto const* map = column_plan.index_map->view().data<int32_t>();
     for (size_t k = 0; k < num_chunks; ++k) {

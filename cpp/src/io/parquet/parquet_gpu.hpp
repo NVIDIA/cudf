@@ -357,7 +357,7 @@ enum class level_prepass_family : uint8_t {
  */
 struct page_prepass_state {
   // `nz_count` value meaning "claimed, but the producer has not run yet".
-  static constexpr int32_t not_yet_produced = -2;
+  static constexpr int32_t not_yet_produced = -1;
 
   // Valid-rank map: `nz_idx[rank]` is the input position of the rank-th valid value. Null for a
   // required page, whose map is the identity and is synthesized by the consumer.

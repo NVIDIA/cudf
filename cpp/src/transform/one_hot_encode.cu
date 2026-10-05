@@ -19,6 +19,7 @@
 
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/functional>
 #include <cuda/iterator>
 #include <cuda/stream>
 #include <thrust/transform.h>
@@ -79,7 +80,8 @@ std::pair<std::unique_ptr<column>, table_view> one_hot_encode(column_view const&
                       cuda::counting_iterator<cudf::size_type>{0},
                       cuda::counting_iterator{total_size},
                       all_encodings->mutable_view().begin<bool>(),
-                      ohe_equality_functor<decltype(d_equal)>(input.size(), d_equal));
+                      cuda::proclaim_copyable_arguments(
+                        ohe_equality_functor<decltype(d_equal)>(input.size(), d_equal)));
   };
 
   if (cudf::detail::has_nested_columns(t_lhs) or cudf::detail::has_nested_columns(t_rhs)) {

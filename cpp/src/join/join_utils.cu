@@ -93,7 +93,7 @@ struct unmatched_flag {
 struct to_no_match_pair {
   __device__ cuda::std::tuple<size_type, size_type> operator()(size_type idx) const noexcept
   {
-    return cuda::std::make_tuple(cudf::JoinNoMatch, idx);
+    return cuda::std::make_tuple(size_type{cudf::JoinNoMatch}, idx);
   }
 };
 

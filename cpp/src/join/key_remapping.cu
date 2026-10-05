@@ -164,7 +164,7 @@ struct build_comparator {
 // ============================================================================
 
 /// Block size for key remapping kernel
-CUDF_HOST_DEVICE auto constexpr KEY_REMAP_BLOCK_SIZE = 128;
+auto constexpr KEY_REMAP_BLOCK_SIZE = 128;
 
 /**
  * @brief Kernel for inserting keys with counting using block-scoped atomics.

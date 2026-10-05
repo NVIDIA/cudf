@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -16,17 +16,17 @@
 
 namespace cudf::groupby::detail::hash {
 /// Number of threads to handle each input element
-CUDF_HOST_DEVICE auto constexpr GROUPBY_CG_SIZE = 1;
+auto constexpr GROUPBY_CG_SIZE = 1;
 
 /// Number of slots per thread
-CUDF_HOST_DEVICE auto constexpr GROUPBY_BUCKET_SIZE = 1;
+auto constexpr GROUPBY_BUCKET_SIZE = 1;
 
 /// Thread block size
-CUDF_HOST_DEVICE auto constexpr GROUPBY_BLOCK_SIZE = 128;
+auto constexpr GROUPBY_BLOCK_SIZE = 128;
 
 /// Threshold cardinality to switch between shared memory aggregations and global memory
 /// aggregations
-CUDF_HOST_DEVICE auto constexpr GROUPBY_CARDINALITY_THRESHOLD = 128;
+auto constexpr GROUPBY_CARDINALITY_THRESHOLD = 128;
 
 /// Threshold to switch between two strategies: one is to output the aggregation results directly to
 /// the final dense output columns, the other is to output the results to sparse intermediate
@@ -36,8 +36,7 @@ auto constexpr GROUPBY_DENSE_OUTPUT_THRESHOLD = 2;
 // We add additional `block_size`, because after the number of elements in the local hash set
 // exceeds the threshold, all threads in the thread block can still insert one more element.
 /// The maximum number of elements handled per block
-CUDF_HOST_DEVICE auto constexpr GROUPBY_SHM_MAX_ELEMENTS =
-  GROUPBY_CARDINALITY_THRESHOLD + GROUPBY_BLOCK_SIZE;
+auto constexpr GROUPBY_SHM_MAX_ELEMENTS = GROUPBY_CARDINALITY_THRESHOLD + GROUPBY_BLOCK_SIZE;
 
 // GROUPBY_SHM_MAX_ELEMENTS with 0.7 occupancy
 /// Shared memory hash set extent type
@@ -46,7 +45,7 @@ using shmem_extent_t =
                static_cast<cudf::size_type>(static_cast<double>(GROUPBY_SHM_MAX_ELEMENTS) * 1.43)>;
 
 /// Number of slots needed by each shared memory hash set
-CUDF_HOST_DEVICE auto constexpr valid_extent =
+auto constexpr valid_extent =
   cuco::make_valid_extent<GROUPBY_CG_SIZE, GROUPBY_BUCKET_SIZE>(shmem_extent_t{});
 
 using row_hash_t = cudf::detail::row::hash::device_row_hasher<cudf::hashing::detail::default_hash,

@@ -34,7 +34,7 @@
 namespace cudf::groupby::detail::hash {
 namespace {
 /// Shared memory data alignment
-CUDF_HOST_DEVICE cudf::size_type constexpr ALIGNMENT = 16;
+cudf::size_type constexpr ALIGNMENT = 16;
 
 // Dictionary and nested value columns are rejected before this kernel is launched.
 struct unsupported_shared_memory_type {};

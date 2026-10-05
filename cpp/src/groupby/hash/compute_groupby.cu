@@ -118,6 +118,35 @@ std::size_t hash_csr_capacity(size_type num_rows)
   return requested;
 }
 
+// Bound only small scalar domains whose non-null combinations fit the existing capacity floor.
+// Null states are independent per column when null keys are included. Stop before either product
+// can overflow or make a sparse observed domain allocate a much larger table than the sampler.
+std::optional<std::size_t> small_key_domain_capacity(table_view const& keys,
+                                                     bool skip_rows_with_nulls)
+{
+  constexpr std::size_t max_value_domain    = hash_csr_min_estimated_capacity / 4;
+  constexpr std::size_t max_nullable_domain = 2 * max_value_domain;
+  std::size_t value_domain                  = 1;
+  std::size_t domain                        = 1;
+  for (auto const& key : keys) {
+    std::size_t column_domain;
+    switch (key.type().id()) {
+      case type_id::BOOL8: column_domain = 2; break;
+      case type_id::INT8:
+      case type_id::UINT8: column_domain = 1u << 8; break;
+      case type_id::INT16:
+      case type_id::UINT16: column_domain = 1u << 16; break;
+      default: return std::nullopt;
+    }
+    if (value_domain > max_value_domain / column_domain) { return std::nullopt; }
+    value_domain *= column_domain;
+    if (!skip_rows_with_nulls && key.nullable()) { ++column_domain; }
+    if (domain > max_nullable_domain / column_domain) { return std::nullopt; }
+    domain *= column_domain;
+  }
+  return std::max<std::size_t>(hash_csr_min_estimated_capacity, 4 * domain);
+}
+
 struct is_occupied_fn {
   __device__ bool operator()(slot_type slot) const
   {
@@ -207,6 +236,7 @@ grouped_keys group_keys(size_type num_rows,
                         Hash const& d_row_hash,
                         bool need_group_offsets,
                         bool need_grouped_rows,
+                        std::optional<std::size_t> domain_capacity,
                         cuda::stream_ref stream,
                         cudf::memory_resources mr)
 {
@@ -218,11 +248,16 @@ grouped_keys group_keys(size_type num_rows,
   // inputs, so large inputs get a table sized from an estimate of their number of distinct keys.
   // Should the estimate fall short, the build restarts with the table sized for every row.
   auto const full_capacity = hash_csr_capacity(num_rows);
-  auto capacity =
-    num_rows < hash_csr_min_rows_to_estimate
-      ? full_capacity
-      : std::min(full_capacity,
-                 estimate_capacity(num_rows, row_bitmask, d_row_equal, d_row_hash, stream, mr));
+  auto capacity            = full_capacity;
+  if (num_rows >= hash_csr_min_rows_to_estimate) {
+    // A small finite key domain gives an upper bound without allocating or sampling on device.
+    // Keep the same capacity floor and four slots per possible key as the sampled estimate.
+    auto const estimated_capacity =
+      domain_capacity
+        ? *domain_capacity
+        : estimate_capacity(num_rows, row_bitmask, d_row_equal, d_row_hash, stream, mr);
+    capacity = std::min(full_capacity, estimated_capacity);
+  }
 
   cuda::device_buffer<slot_type> slots(stream, temp_mr);
   cuda::device_buffer<size_type> slot_counts(stream, temp_mr);
@@ -434,6 +469,9 @@ std::unique_ptr<table> compute_groupby(table_view const& keys,
                                  d_row_hash,
                                  !requests.empty(),
                                  needs_reduction,
+                                 num_rows < hash_csr_min_rows_to_estimate
+                                   ? std::nullopt
+                                   : small_key_domain_capacity(keys, skip_rows_with_nulls),
                                  stream,
                                  temporary_resources);
 

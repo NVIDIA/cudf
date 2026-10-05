@@ -21,6 +21,8 @@
 
 #include <cuda/iterator>
 
+#include <limits>
+#include <type_traits>
 #include <vector>
 
 using namespace cudf::test::iterators;
@@ -420,6 +422,160 @@ TEST_F(groupby_cache_test, duplicate_columns)
 }
 
 using groupby_key_shape_test = groupby_keys_test<int32_t>;
+
+template <typename T>
+struct groupby_small_key_domain_test : public cudf::test::BaseFixture {};
+
+using small_domain_types = cudf::test::Types<bool, int16_t, uint16_t>;
+TYPED_TEST_SUITE(groupby_small_key_domain_test, small_domain_types);
+
+TYPED_TEST(groupby_small_key_domain_test, CompleteNullableDomain)
+{
+  using K                            = TypeParam;
+  constexpr cudf::size_type domain   = std::is_same_v<K, bool> ? 2 : 1 << 16;
+  constexpr cudf::size_type states   = domain + 1;
+  constexpr cudf::size_type repeats  = (1 << 21) / states + 1;
+  constexpr cudf::size_type num_rows = states * repeats;
+  static_assert(num_rows > (1 << 21));
+
+  auto const key_at = [](cudf::size_type i) {
+    auto const state = (i % states) % domain;
+    return static_cast<K>(std::numeric_limits<K>::lowest() + state);
+  };
+  auto const valid_at = [](cudf::size_type i) { return i % states < domain; };
+  auto const key_it   = cudf::detail::make_counting_transform_iterator(0, key_at);
+  auto const valid_it = cudf::detail::make_counting_transform_iterator(0, valid_at);
+  auto const keys = cudf::test::fixed_width_column_wrapper<K>(key_it, key_it + num_rows, valid_it);
+  auto const counts = cuda::make_constant_iterator(repeats);
+
+  // The full domain, including its null state, exceeds the sampling threshold. Both null
+  // policies must retain all groups and their counts when sizing from the domain bound.
+  for (auto const policy : {cudf::null_policy::INCLUDE, cudf::null_policy::EXCLUDE}) {
+    SCOPED_TRACE(static_cast<int>(policy));
+    auto const num_groups = domain + (policy == cudf::null_policy::INCLUDE);
+    auto const expected_keys =
+      cudf::test::fixed_width_column_wrapper<K>(key_it, key_it + num_groups, valid_it);
+    auto const expected_counts =
+      cudf::test::fixed_width_column_wrapper<cudf::size_type>(counts, counts + num_groups);
+    test_single_agg(
+      keys,
+      keys,
+      expected_keys,
+      expected_counts,
+      cudf::make_count_aggregation<cudf::groupby_aggregation>(cudf::null_policy::INCLUDE),
+      force_use_sort_impl::NO,
+      policy);
+  }
+}
+
+TEST_F(groupby_key_shape_test, CompleteNullableByteKeyDomains)
+{
+  constexpr cudf::size_type states   = 257;
+  constexpr cudf::size_type domain   = states * states;
+  constexpr cudf::size_type repeats  = 32;
+  constexpr cudf::size_type num_rows = domain * repeats;
+  static_assert(num_rows > (1 << 21));
+  auto const first = cudf::detail::make_counting_transform_iterator(
+    0, [](auto i) { return static_cast<uint8_t>((i / states) % states); });
+  auto const second = cudf::detail::make_counting_transform_iterator(
+    0, [](auto i) { return static_cast<int8_t>(i % states - 128); });
+  auto const first_valid = cudf::detail::make_counting_transform_iterator(
+    0, [](auto i) { return (i / states) % states < 256; });
+  auto const second_valid =
+    cudf::detail::make_counting_transform_iterator(0, [](auto i) { return i % states < 256; });
+  auto const keys_a =
+    cudf::test::fixed_width_column_wrapper<uint8_t>(first, first + num_rows, first_valid);
+  auto const keys_b =
+    cudf::test::fixed_width_column_wrapper<int8_t>(second, second + num_rows, second_valid);
+  auto const counts = cuda::make_constant_iterator(repeats);
+  auto const stream = cudf::test::get_default_stream();
+
+  for (auto const policy : {cudf::null_policy::INCLUDE, cudf::null_policy::EXCLUDE}) {
+    SCOPED_TRACE(static_cast<int>(policy));
+    auto const expected_states = policy == cudf::null_policy::INCLUDE ? states : 256;
+    auto const num_groups      = expected_states * expected_states;
+    auto const expected_row    = cudf::detail::make_counting_transform_iterator(
+      0,
+      [expected_states](auto i) { return (i / expected_states) * states + i % expected_states; });
+    auto const expected_a = cudf::test::fixed_width_column_wrapper<uint8_t>(
+      cuda::make_permutation_iterator(first, expected_row),
+      cuda::make_permutation_iterator(first, expected_row + num_groups),
+      cuda::make_permutation_iterator(first_valid, expected_row));
+    auto const expected_b = cudf::test::fixed_width_column_wrapper<int8_t>(
+      cuda::make_permutation_iterator(second, expected_row),
+      cuda::make_permutation_iterator(second, expected_row + num_groups),
+      cuda::make_permutation_iterator(second_valid, expected_row));
+    auto const expected_counts =
+      cudf::test::fixed_width_column_wrapper<cudf::size_type>(counts, counts + num_groups);
+    std::vector<cudf::groupby::aggregation_request> requests(1);
+    requests[0].values = keys_a;
+    requests[0].aggregations.push_back(
+      cudf::make_count_aggregation<cudf::groupby_aggregation>(cudf::null_policy::INCLUDE));
+    cudf::groupby::groupby gb(cudf::table_view{{keys_a, keys_b}}, policy);
+    auto const [keys, result] = gb.aggregate(requests, stream);
+    auto const actual         = cudf::sort(
+      cudf::table_view{{keys->view().column(0), keys->view().column(1), *result[0].results[0]}},
+      {},
+      {},
+      stream);
+    auto const expected =
+      cudf::sort(cudf::table_view{{expected_a, expected_b, expected_counts}}, {}, {}, stream);
+    CUDF_TEST_EXPECT_TABLES_EQUIVALENT(expected->view(), actual->view());
+  }
+}
+
+TEST_F(groupby_key_shape_test, SmallKeyDomainFallback)
+{
+  constexpr cudf::size_type num_groups = 1 << 17;
+  constexpr cudf::size_type repeats    = 17;
+  constexpr cudf::size_type num_rows   = num_groups * repeats;
+  static_assert(num_rows > (1 << 21));
+  auto const first = cudf::detail::make_counting_transform_iterator(
+    0, [](auto i) { return static_cast<uint8_t>(i % 256); });
+  auto const second = cudf::detail::make_counting_transform_iterator(
+    0, [](auto i) { return static_cast<uint8_t>((i / 256) % 256); });
+  auto const third = cudf::detail::make_counting_transform_iterator(
+    0, [](auto i) { return static_cast<uint8_t>((i % num_groups) / 65536); });
+  auto const wide = cudf::detail::make_counting_transform_iterator(
+    0, [](auto i) { return static_cast<int64_t>((i % num_groups) / 256); });
+  auto const keys_a    = cudf::test::fixed_width_column_wrapper<uint8_t>(first, first + num_rows);
+  auto const keys_b    = cudf::test::fixed_width_column_wrapper<uint8_t>(second, second + num_rows);
+  auto const keys_c    = cudf::test::fixed_width_column_wrapper<uint8_t>(third, third + num_rows);
+  auto const keys_wide = cudf::test::fixed_width_column_wrapper<int64_t>(wide, wide + num_rows);
+  auto const expected_a =
+    cudf::test::fixed_width_column_wrapper<uint8_t>(first, first + num_groups);
+  auto const expected_b =
+    cudf::test::fixed_width_column_wrapper<uint8_t>(second, second + num_groups);
+  auto const expected_c =
+    cudf::test::fixed_width_column_wrapper<uint8_t>(third, third + num_groups);
+  auto const expected_wide =
+    cudf::test::fixed_width_column_wrapper<int64_t>(wide, wide + num_groups);
+  auto const counts = cuda::make_constant_iterator(repeats);
+  auto const expected_counts =
+    cudf::test::fixed_width_column_wrapper<cudf::size_type>(counts, counts + num_groups);
+  auto const stream = cudf::test::get_default_stream();
+
+  // An unsupported wide type and a product of three small domains both retain sampling.
+  std::vector<cudf::table_view> key_tables{cudf::table_view{{keys_a, keys_wide}},
+                                           cudf::table_view{{keys_a, keys_b, keys_c}}};
+  std::vector<cudf::table_view> expected_tables{
+    cudf::table_view{{expected_a, expected_wide, expected_counts}},
+    cudf::table_view{{expected_a, expected_b, expected_c, expected_counts}}};
+  for (std::size_t i = 0; i < key_tables.size(); ++i) {
+    SCOPED_TRACE(i);
+    std::vector<cudf::groupby::aggregation_request> requests(1);
+    requests[0].values = keys_a;
+    requests[0].aggregations.push_back(cudf::make_count_aggregation<cudf::groupby_aggregation>());
+    cudf::groupby::groupby gb(key_tables[i]);
+    auto const [keys, result] = gb.aggregate(requests, stream);
+    auto const key_view       = keys->view();
+    std::vector<cudf::column_view> actual_columns(key_view.begin(), key_view.end());
+    actual_columns.push_back(result[0].results[0]->view());
+    auto const actual   = cudf::sort(cudf::table_view{actual_columns}, {}, {}, stream);
+    auto const expected = cudf::sort(expected_tables[i], {}, {}, stream);
+    CUDF_TEST_EXPECT_TABLES_EQUIVALENT(expected->view(), actual->view());
+  }
+}
 
 TEST_F(groupby_key_shape_test, NearlyDistinctSampleUnderestimatesPopulation)
 {

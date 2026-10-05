@@ -145,8 +145,16 @@ std::vector<std::unique_ptr<column>> compute_single_pass_aggs(
     auto const sum =
       std::find(agg_kinds.begin() + begin, agg_kinds.begin() + end, aggregation::SUM);
     auto const sum_index = static_cast<std::size_t>(sum - agg_kinds.begin());
-    // Do not consume a SUM that already participates in the existing additive fusion.
-    if (sum == agg_kinds.begin() + end || fused_end(sum_index, values_type) > sum_index + 1) {
+    // Without SUM, fuse only direct groups to avoid enlarging long-group partials.
+    if (sum == agg_kinds.begin() + end) {
+      if (!grouped.group_chunks.empty()) { return begin + 1; }
+      // Keep neighboring same-kind batches intact instead of adding reduction launches.
+      if ((begin > 0 && agg_kinds[begin - 1] == agg_kinds[begin]) ||
+          (end < num_aggs && agg_kinds[end - 1] == agg_kinds[end])) {
+        return begin + 1;
+      }
+    } else if (fused_end(sum_index, values_type) > sum_index + 1) {
+      // Preserve a SUM that already participates in the existing additive fusion.
       return begin + 1;
     }
     return end;

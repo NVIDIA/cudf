@@ -21,6 +21,7 @@
 
 #include <cuda/iterator>
 
+#include <cmath>
 #include <limits>
 #include <type_traits>
 #include <vector>
@@ -644,6 +645,187 @@ TEST_F(groupby_key_shape_test, NearlyDistinctSampleUnderestimatesPopulation)
   EXPECT_TRUE(result.second.empty());
 }
 
+struct groupby_minmax_fusion_test : public groupby_key_shape_test {
+  void test_minmax(std::vector<int32_t> const& sizes)
+  {
+    auto const stream = cudf::test::get_default_stream();
+    std::vector<int32_t> keys_data, values_data;
+    std::vector<bool> validity;
+    for (std::size_t group = 0; group < sizes.size(); ++group) {
+      for (int32_t row = 0; row < sizes[group]; ++row) {
+        keys_data.push_back(static_cast<int32_t>(group));
+        values_data.push_back(row + 1);
+        validity.push_back(group % 3 == 1 || (group % 3 == 2 && row == sizes[group] - 1));
+      }
+    }
+    cudf::test::fixed_width_column_wrapper<int32_t> keys(keys_data.begin(), keys_data.end());
+    cudf::test::fixed_width_column_wrapper<int32_t> values(values_data.begin(), values_data.end());
+    cudf::test::fixed_width_column_wrapper<int32_t> nullable_values(
+      values_data.begin(), values_data.end(), validity.begin());
+    auto const group_ids = cuda::counting_iterator<int32_t>{0};
+    cudf::test::fixed_width_column_wrapper<int32_t> expected_keys(
+      group_ids, group_ids + static_cast<int32_t>(sizes.size()));
+
+    for (bool nullable : {false, true}) {
+      std::vector<int32_t> minima;
+      std::vector<bool> expected_validity;
+      for (std::size_t group = 0; group < sizes.size(); ++group) {
+        minima.push_back(nullable && group % 3 == 2 ? sizes[group] : 1);
+        expected_validity.push_back(!nullable || group % 3 != 0);
+      }
+      using wrapper     = cudf::test::fixed_width_column_wrapper<int32_t>;
+      auto expected_min = nullable
+                            ? wrapper(minima.begin(), minima.end(), expected_validity.begin())
+                            : wrapper(minima.begin(), minima.end());
+      auto expected_max = nullable ? wrapper(sizes.begin(), sizes.end(), expected_validity.begin())
+                                   : wrapper(sizes.begin(), sizes.end());
+      for (bool reverse : {false, true}) {
+        SCOPED_TRACE(::testing::Message() << "nullable=" << nullable << " reverse=" << reverse);
+        std::vector<cudf::groupby::aggregation_request> requests(1);
+        requests[0].values =
+          nullable ? cudf::column_view(nullable_values) : cudf::column_view(values);
+        auto& aggs = requests[0].aggregations;
+        aggs.push_back(reverse ? cudf::make_max_aggregation<cudf::groupby_aggregation>()
+                               : cudf::make_min_aggregation<cudf::groupby_aggregation>());
+        aggs.push_back(reverse ? cudf::make_min_aggregation<cudf::groupby_aggregation>()
+                               : cudf::make_max_aggregation<cudf::groupby_aggregation>());
+        cudf::groupby::groupby gb(cudf::table_view{{keys}});
+        auto const [result_keys, results] = gb.aggregate(requests, stream);
+        ASSERT_EQ(results.size(), 1);
+        ASSERT_EQ(results[0].results.size(), 2);
+        auto const actual = cudf::table_view{{result_keys->view().column(0),
+                                              *results[0].results[reverse ? 1 : 0],
+                                              *results[0].results[reverse ? 0 : 1]}};
+        auto const sorted = cudf::sort(actual, {}, {}, stream);
+        CUDF_TEST_EXPECT_TABLES_EQUAL(
+          (cudf::table_view{{expected_keys, expected_min, expected_max}}), sorted->view());
+      }
+    }
+  }
+};
+
+TEST_F(groupby_minmax_fusion_test, FusedMinMaxWithoutPartialReductions)
+{
+  test_minmax({1, 2, 31, 32, 33, 1024});
+}
+
+TEST_F(groupby_minmax_fusion_test, MinMaxWithLongGroupFallback)
+{
+  test_minmax({1, 31, 32, 33, 1024, 1025, 4097});
+}
+
+TEST_F(groupby_minmax_fusion_test, InterleavedRequestsPreserveResultOrder)
+{
+  auto const stream = cudf::test::get_default_stream();
+  cudf::test::fixed_width_column_wrapper<int32_t> keys{2, 0, 1, 0, 2, 1, 0, 1, 2};
+  cudf::test::fixed_width_column_wrapper<int32_t> values_a{3, 8, -2, 4, 1, 7, 6, 5, 9};
+  cudf::test::fixed_width_column_wrapper<int32_t> values_b{10, 2, 6, -8, 15, 3, 0, 11, 14};
+  std::vector<cudf::groupby::aggregation_request> requests(3);
+  requests[0].values = values_a;
+  requests[0].aggregations.push_back(cudf::make_min_aggregation<cudf::groupby_aggregation>());
+  requests[1].values = values_b;
+  requests[1].aggregations.push_back(cudf::make_min_aggregation<cudf::groupby_aggregation>());
+  requests[1].aggregations.push_back(cudf::make_max_aggregation<cudf::groupby_aggregation>());
+  requests[2].values = values_a;
+  requests[2].aggregations.push_back(cudf::make_max_aggregation<cudf::groupby_aggregation>());
+
+  // MIN(A), MIN(B), MAX(B), MAX(A) retains the two same-kind batches instead of splitting
+  // them around a fused pair for B. A appears in two requests, so verify reconstruction too.
+  cudf::groupby::groupby gb(cudf::table_view{{keys}});
+  auto const [result_keys, results] = gb.aggregate(requests, stream);
+  ASSERT_EQ(results.size(), 3);
+  ASSERT_EQ(results[0].results.size(), 1);
+  ASSERT_EQ(results[1].results.size(), 2);
+  ASSERT_EQ(results[2].results.size(), 1);
+  auto const actual = cudf::sort(cudf::table_view{{result_keys->view().column(0),
+                                                   *results[0].results[0],
+                                                   *results[1].results[0],
+                                                   *results[1].results[1],
+                                                   *results[2].results[0]}},
+                                 {},
+                                 {},
+                                 stream);
+  cudf::test::fixed_width_column_wrapper<int32_t> expected_keys{0, 1, 2};
+  cudf::test::fixed_width_column_wrapper<int32_t> expected_min_a{4, -2, 1};
+  cudf::test::fixed_width_column_wrapper<int32_t> expected_min_b{-8, 3, 10};
+  cudf::test::fixed_width_column_wrapper<int32_t> expected_max_b{2, 11, 15};
+  cudf::test::fixed_width_column_wrapper<int32_t> expected_max_a{8, 7, 9};
+  CUDF_TEST_EXPECT_TABLES_EQUAL(
+    (cudf::table_view{
+      {expected_keys, expected_min_a, expected_min_b, expected_max_b, expected_max_a}}),
+    actual->view());
+}
+
+TEST_F(groupby_minmax_fusion_test, FloatingPointSpecialValuesMatchSeparateReductions)
+{
+  auto const stream  = cudf::test::get_default_stream();
+  auto constexpr nan = std::numeric_limits<double>::quiet_NaN();
+  auto constexpr inf = std::numeric_limits<double>::infinity();
+  std::vector<std::vector<double>> const patterns{{nan, nan},
+                                                  {nan, -inf, -3.0, 0.0, -0.0, 3.0, inf, nan},
+                                                  {0.0, 0.0},
+                                                  {-0.0, -0.0},
+                                                  {0.0, -0.0},
+                                                  {nan, inf, -inf},
+                                                  {nan, 2.0, inf, -inf}};
+  std::vector<int32_t> keys_data;
+  std::vector<double> values_data;
+  std::vector<bool> validity;
+  for (std::size_t group = 0; group < patterns.size(); ++group) {
+    // Repetition exercises both scalar and warp reductions without long-group partials.
+    for (int repeat = 0; repeat < 5; ++repeat) {
+      for (auto const value : patterns[group]) {
+        keys_data.push_back(static_cast<int32_t>(group));
+        values_data.push_back(value);
+        validity.push_back(group != 5 && (group != 6 || value == 2.0));
+      }
+    }
+  }
+  cudf::test::fixed_width_column_wrapper<int32_t> keys(keys_data.begin(), keys_data.end());
+  cudf::test::fixed_width_column_wrapper<double> values(values_data.begin(), values_data.end());
+  cudf::test::fixed_width_column_wrapper<double> nullable_values(
+    values_data.begin(), values_data.end(), validity.begin());
+  for (bool nullable : {false, true}) {
+    SCOPED_TRACE(::testing::Message() << "nullable=" << nullable);
+    auto const aggregate = [&](bool minimum, bool maximum) {
+      std::vector<cudf::groupby::aggregation_request> requests(1);
+      requests[0].values =
+        nullable ? cudf::column_view(nullable_values) : cudf::column_view(values);
+      if (minimum) {
+        requests[0].aggregations.push_back(cudf::make_min_aggregation<cudf::groupby_aggregation>());
+      }
+      if (maximum) {
+        requests[0].aggregations.push_back(cudf::make_max_aggregation<cudf::groupby_aggregation>());
+      }
+      cudf::groupby::groupby gb(cudf::table_view{{keys}});
+      auto const [result_keys, results] = gb.aggregate(requests, stream);
+      std::vector<cudf::column_view> columns{result_keys->view().column(0)};
+      for (auto const& result : results[0].results) {
+        columns.push_back(result->view());
+      }
+      return cudf::sort(cudf::table_view{columns}, {}, {}, stream);
+    };
+    auto const fused   = aggregate(true, true);
+    auto const minimum = aggregate(true, false);
+    auto const maximum = aggregate(false, true);
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(minimum->view().column(0), fused->view().column(0));
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(maximum->view().column(0), fused->view().column(0));
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(minimum->view().column(1), fused->view().column(1));
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(maximum->view().column(1), fused->view().column(2));
+    // Column equality treats signed zeros as equal. Uniform zero groups have unambiguous signs.
+    for (auto const index : {1, 2}) {
+      auto const fused_values =
+        cudf::test::to_host<double>(fused->view().column(index), stream).first;
+      auto const separate_values =
+        cudf::test::to_host<double>((index == 1 ? minimum : maximum)->view().column(1), stream)
+          .first;
+      for (auto const group : {2, 3}) {
+        EXPECT_EQ(std::signbit(separate_values[group]), std::signbit(fused_values[group]));
+      }
+    }
+  }
+}
+
 TEST_F(groupby_key_shape_test, MixedGroupSizeReductions)
 {
   std::vector<int32_t> const sizes{1, 32, 33, 1024, 1025, 262145};
@@ -794,7 +976,7 @@ TEST_F(groupby_key_shape_test, OutputAndTemporaryResourcesForCompoundAndFusedAgg
                                            cudf::table_view{{sliced_nested_keys}}};
   for (auto const& keys : key_tables) {
     for (bool nullable : {false, true}) {
-      for (int mode = 0; mode < 4; ++mode) {
+      for (int mode = 0; mode < 5; ++mode) {
         SCOPED_TRACE(::testing::Message() << "nullable=" << nullable << " mode=" << mode);
         auto const input = nullable ? cudf::column_view(null_values) : cudf::column_view(values);
         std::vector<cudf::groupby::aggregation_request> requests(1);
@@ -813,8 +995,11 @@ TEST_F(groupby_key_shape_test, OutputAndTemporaryResourcesForCompoundAndFusedAgg
           aggs.push_back(cudf::make_argmin_aggregation<cudf::groupby_aggregation>());
           aggs.push_back(cudf::make_argmax_aggregation<cudf::groupby_aggregation>());
           aggs.push_back(cudf::make_product_aggregation<cudf::groupby_aggregation>());
-        } else {
+        } else if (mode == 3) {
           aggs.push_back(cudf::make_sum_overflow_aggregation<cudf::groupby_aggregation>());
+        } else {
+          aggs.push_back(cudf::make_min_aggregation<cudf::groupby_aggregation>());
+          aggs.push_back(cudf::make_max_aggregation<cudf::groupby_aggregation>());
         }
         cudf::groupby::groupby expected_gb(keys);
         auto expected = expected_gb.aggregate(requests, stream, this->mr());

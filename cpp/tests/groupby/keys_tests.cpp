@@ -761,15 +761,18 @@ TEST_F(groupby_minmax_fusion_test, FloatingPointSpecialValuesMatchSeparateReduct
   auto const stream  = cudf::test::get_default_stream();
   auto constexpr nan = std::numeric_limits<double>::quiet_NaN();
   auto constexpr inf = std::numeric_limits<double>::infinity();
+  // Separate groupby calls can reduce rows in different orders. Exact comparisons must not mix
+  // valid NaNs with other values, since the MIN/MAX operators are order-sensitive for NaNs.
   std::vector<std::vector<double>> const patterns{{nan, nan},
-                                                  {nan, -inf, -3.0, 0.0, -0.0, 3.0, inf, nan},
+                                                  {-5.0, -inf, -3.0, 0.0, -0.0, 3.0, inf, 5.0},
                                                   {0.0, 0.0},
                                                   {-0.0, -0.0},
                                                   {0.0, -0.0},
-                                                  {nan, inf, -inf},
-                                                  {nan, 2.0, inf, -inf}};
+                                                  {inf, -inf},
+                                                  {2.0, inf, -inf}};
   std::vector<int32_t> keys_data;
   std::vector<double> values_data;
+  std::vector<double> nullable_values_data;
   std::vector<bool> validity;
   for (std::size_t group = 0; group < patterns.size(); ++group) {
     // Repetition exercises both scalar and warp reductions without long-group partials.
@@ -778,13 +781,15 @@ TEST_F(groupby_minmax_fusion_test, FloatingPointSpecialValuesMatchSeparateReduct
         keys_data.push_back(static_cast<int32_t>(group));
         values_data.push_back(value);
         validity.push_back(group != 5 && (group != 6 || value == 2.0));
+        // Invalid NaN payloads must not affect the valid finite reduction results.
+        nullable_values_data.push_back(validity.back() ? value : nan);
       }
     }
   }
   cudf::test::fixed_width_column_wrapper<int32_t> keys(keys_data.begin(), keys_data.end());
   cudf::test::fixed_width_column_wrapper<double> values(values_data.begin(), values_data.end());
   cudf::test::fixed_width_column_wrapper<double> nullable_values(
-    values_data.begin(), values_data.end(), validity.begin());
+    nullable_values_data.begin(), nullable_values_data.end(), validity.begin());
   for (bool nullable : {false, true}) {
     SCOPED_TRACE(::testing::Message() << "nullable=" << nullable);
     auto const aggregate = [&](bool minimum, bool maximum) {
@@ -823,6 +828,43 @@ TEST_F(groupby_minmax_fusion_test, FloatingPointSpecialValuesMatchSeparateReduct
         EXPECT_EQ(std::signbit(separate_values[group]), std::signbit(fused_values[group]));
       }
     }
+  }
+}
+
+TEST_F(groupby_minmax_fusion_test, MixedNanValuesComplete)
+{
+  auto const stream  = cudf::test::get_default_stream();
+  auto constexpr nan = std::numeric_limits<double>::quiet_NaN();
+  auto constexpr inf = std::numeric_limits<double>::infinity();
+  std::vector<double> const pattern{nan, -inf, -3.0, 0.0, -0.0, 3.0, inf, nan};
+  std::vector<int32_t> keys_data;
+  std::vector<double> values_data;
+  // Exercise scalar and warp reductions with mixed valid NaNs, without comparing order-sensitive
+  // values. Like the existing MIN/MAX NaN tests, verify that aggregation completes successfully.
+  for (int32_t group = 0; group < 2; ++group) {
+    for (int repeat = 0; repeat < (group == 0 ? 1 : 5); ++repeat) {
+      for (auto const value : pattern) {
+        keys_data.push_back(group);
+        values_data.push_back(value);
+      }
+    }
+  }
+  cudf::test::fixed_width_column_wrapper<int32_t> keys(keys_data.begin(), keys_data.end());
+  cudf::test::fixed_width_column_wrapper<double> values(values_data.begin(), values_data.end());
+  std::vector<cudf::groupby::aggregation_request> requests(1);
+  requests[0].values = values;
+  requests[0].aggregations.push_back(cudf::make_min_aggregation<cudf::groupby_aggregation>());
+  requests[0].aggregations.push_back(cudf::make_max_aggregation<cudf::groupby_aggregation>());
+  cudf::groupby::groupby gb(cudf::table_view{{keys}});
+  auto const [result_keys, results] = gb.aggregate(requests, stream);
+  auto const sorted_keys            = cudf::sort(result_keys->view(), {}, {}, stream);
+  cudf::test::fixed_width_column_wrapper<int32_t> expected_keys{0, 1};
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_keys, sorted_keys->view().column(0));
+  ASSERT_EQ(results.size(), 1);
+  ASSERT_EQ(results[0].results.size(), 2);
+  for (auto const& result : results[0].results) {
+    EXPECT_EQ(result->size(), 2);
+    EXPECT_EQ(result->null_count(), 0);
   }
 }
 

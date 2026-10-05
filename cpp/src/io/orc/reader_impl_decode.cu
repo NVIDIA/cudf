@@ -190,7 +190,8 @@ cuda::device_buffer<std::uint8_t> decompress_stripe_data(
     inflate_res,
     max_uncomp_block_size,
     total_decomp_size,
-    stream);
+    stream,
+    cudf::get_current_device_resource_ref());
 
   // Check if any block has been failed to decompress.
   // Not using `thrust::any` or `thrust::count_if` to defer stream sync.
@@ -360,6 +361,7 @@ void update_null_mask(cudf::detail::hostdevice_2dvector<column_desc>& chunks,
  * @param row_index_stride Distance between each row index
  * @param level Current nesting level being processed
  * @param d_tz_table Local time to UTC conversion table
+ * @param orc_base_epoch ORC epoch in the writer's timezone
  * @param chunks Vector of list of column chunk descriptors
  * @param row_groups Vector of list of row index descriptors
  * @param out_buffers Output columns' device buffers
@@ -371,6 +373,7 @@ void decode_stream_data(int64_t num_dicts,
                         size_type row_index_stride,
                         std::size_t level,
                         table_device_view const& d_tz_table,
+                        duration_s orc_base_epoch,
                         cudf::detail::hostdevice_2dvector<column_desc>& chunks,
                         cudf::detail::device_2dspan<row_group> row_groups,
                         std::vector<column_buffer>& out_buffers,
@@ -420,6 +423,7 @@ void decode_stream_data(int64_t num_dicts,
                      num_stripes,
                      skip_rows,
                      d_tz_table,
+                     orc_base_epoch,
                      row_groups.size().first,
                      row_index_stride,
                      level,
@@ -973,6 +977,7 @@ void reader_impl::decompress_and_decode_stripes(read_mode mode)
                        _metadata.get_row_index_stride(),
                        level,
                        *tz_table_dptr,
+                       _file_itm_data.orc_base_epoch,
                        chunks,
                        row_groups,
                        _out_buffers[level],

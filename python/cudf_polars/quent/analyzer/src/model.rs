@@ -12,7 +12,7 @@ use quent_analyzer::{
     },
     resource::{Usage, Using},
 };
-use quent_dynamic_attributes::DynamicAttributes;
+use quent_dynamic_attributes::{DynamicAttributes, DynamicValue};
 use quent_events::Event;
 use quent_query_engine_analyzer::{
     EngineEntity, OperatorEntity, OperatorEntityMut, PlanEntity, PortEntity, QueryEngineModel,
@@ -23,7 +23,8 @@ use quent_time::{TimeUnixNanoSec, Timestamp, span::SpanUnixNanoSec, try_to_secs_
 use uuid::Uuid;
 
 use crate::generated::{
-    EngineEvent, OperatorEvent, PlanEvent, PortEvent, QueryEvent, QueryGroupEvent, WorkerEvent,
+    EngineEvent, OperatorEvent, OperatorStatistics, PlanEvent, PortEvent, QueryEvent,
+    QueryGroupEvent, WorkerEvent,
 };
 
 macro_rules! entity_impl {
@@ -387,7 +388,7 @@ struct OperatorData {
     instance_name: Option<String>,
     type_name: Option<String>,
     custom_attributes: DynamicAttributes,
-    statistics: Option<DynamicAttributes>,
+    statistics: Option<OperatorStatistics>,
 }
 
 impl OperatorData {
@@ -419,20 +420,7 @@ impl EntityEventAccumulator for OperatorData {
                 self.type_name = Some(type_name);
                 self.custom_attributes.add("node_id", node_id);
             }
-            OperatorEvent::Statistics { values } => {
-                let mut attributes = DynamicAttributes::new();
-                attributes.add("input_bytes", values.input_bytes);
-                attributes.add("output_bytes", values.output_bytes);
-                if let Some(value) = values.output_rows {
-                    attributes.add("output_rows", value);
-                }
-                attributes.add("chunk_count", values.chunk_count);
-                attributes.add("duplicated", values.duplicated);
-                if let Some(value) = values.decision {
-                    attributes.add("decision", value);
-                }
-                self.statistics = Some(attributes);
-            }
+            OperatorEvent::Statistics { values } => self.statistics = Some(values),
             OperatorEvent::ScanDetails { values } => {
                 self.add_serialized_attribute("scan_details", &values);
             }
@@ -468,6 +456,41 @@ impl EntityEventAccumulator for OperatorData {
             }
         }
     }
+}
+
+fn to_ui_operator_statistics(statistics: &OperatorStatistics) -> ui::OperatorStatistics {
+    let statistic = |value: DynamicValue, quantity: Option<&str>| ui::OperatorStatistic {
+        value: Some(value),
+        quantity: quantity.map(str::to_owned),
+    };
+    let mut custom_statistics = HashMap::from([
+        (
+            "input_bytes".to_owned(),
+            statistic(statistics.input_bytes.into(), Some("bytes")),
+        ),
+        (
+            "output_bytes".to_owned(),
+            statistic(statistics.output_bytes.into(), Some("bytes")),
+        ),
+        (
+            "chunk_count".to_owned(),
+            statistic(statistics.chunk_count.into(), None),
+        ),
+        (
+            "duplicated".to_owned(),
+            statistic(statistics.duplicated.into(), None),
+        ),
+    ]);
+    if let Some(value) = statistics.output_rows {
+        custom_statistics.insert("output_rows".to_owned(), statistic(value.into(), None));
+    }
+    if let Some(value) = &statistics.decision {
+        custom_statistics.insert(
+            "decision".to_owned(),
+            statistic(value.as_str().into(), None),
+        );
+    }
+    ui::OperatorStatistics { custom_statistics }
 }
 
 #[derive(Debug)]
@@ -521,23 +544,7 @@ impl OperatorEntity for Operator {
                 .iter()
                 .map(|attribute| (attribute.key.clone(), attribute.value.clone()))
                 .collect(),
-            statistics: data
-                .statistics
-                .as_ref()
-                .map(|statistics| ui::OperatorStatistics {
-                    custom_statistics: statistics
-                        .iter()
-                        .map(|attribute| {
-                            (
-                                attribute.key.clone(),
-                                ui::OperatorStatistic {
-                                    value: attribute.value.clone(),
-                                    quantity: None,
-                                },
-                            )
-                        })
-                        .collect(),
-                }),
+            statistics: data.statistics.as_ref().map(to_ui_operator_statistics),
             active_span: self
                 .active_span
                 .and_then(|span| span.try_to_secs_relative(epoch).ok()),

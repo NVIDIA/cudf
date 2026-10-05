@@ -261,6 +261,20 @@ fn builds_query_bundle_from_generated_events() {
             }),
         ),
         Event::new(
+            operator_id,
+            20,
+            CudfPolarsEvent::Operator(OperatorEvent::Statistics {
+                values: OperatorStatistics {
+                    input_bytes: 10,
+                    output_bytes: 20,
+                    output_rows: Some(1),
+                    chunk_count: 1,
+                    duplicated: false,
+                    decision: None,
+                },
+            }),
+        ),
+        Event::new(
             incomplete_actor_id,
             20,
             CudfPolarsEvent::Actor(ActorEvent::Started {
@@ -328,6 +342,27 @@ fn builds_query_bundle_from_generated_events() {
         bundle.entities.operators[&operator_id]
             .active_span
             .is_some()
+    );
+    let statistics = bundle.entities.operators[&operator_id]
+        .statistics
+        .as_ref()
+        .expect("operator statistics should be present");
+    assert_eq!(
+        statistics.custom_statistics["input_bytes"]
+            .quantity
+            .as_deref(),
+        Some("bytes")
+    );
+    assert_eq!(
+        statistics.custom_statistics["output_bytes"]
+            .quantity
+            .as_deref(),
+        Some("bytes")
+    );
+    assert!(
+        statistics.custom_statistics["chunk_count"]
+            .quantity
+            .is_none()
     );
     assert!(bundle.entities.resources.contains_key(&processor_id));
     assert!(

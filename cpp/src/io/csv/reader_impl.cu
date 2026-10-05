@@ -433,11 +433,7 @@ std::pair<rmm::device_uvector<char>, selected_rows_offsets> load_data_and_gather
     }
     if (header_rows > 0) { row_offsets.erase_first_n(header_rows); }
   }
-  // Apply num_rows limit. `row_offsets` holds one offset per row plus a trailing one
-  // marking the end of the last row, so the count to compare against is `num_rows + 1`.
-  // Comparing against `row_offsets.size() - 1` instead wraps around to SIZE_MAX when
-  // there are no offsets (every row discarded by skiprows), which then fails the
-  // bounds check inside `shrink`.
+  // Apply num_rows limit. Use addition to prevent underflow for empty `row_offsets`.
   if (num_rows >= 0 && static_cast<size_t>(num_rows) + 1 < row_offsets.size()) {
     row_offsets.shrink(num_rows + 1);
   }

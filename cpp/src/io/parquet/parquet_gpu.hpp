@@ -343,8 +343,8 @@ struct PageNestingInfo {
  * uint8_t to minimize the overhead in PageInfo
  */
 enum class level_prepass_family : uint8_t {
-  NONE,
-  DELTA_FLAT,
+  NONE       = 0,
+  DELTA_FLAT = 1,
 };
 
 /**
@@ -352,22 +352,20 @@ enum class level_prepass_family : uint8_t {
  *
  * Contains a valid-rank map computed from the rep and def levels for later decode kernels to use
  *
- * Reached through a pointer on `PageInfo`, the same way `PageNestingInfo` is,
- * since the map is indexed straight out of global memory by rank, so there's
- * no need to cache it in shared memory or be as careful about the total memory
- * usage when the values will already be in registers.
+ * Reached through a pointer on `PageInfo`, like `PageNestingInfo`, rather than copied into a
+ * per-kernel shared-memory struct: the map is indexed by rank straight out of global memory.
  */
-struct PagePrepassState {
-  /// `nz_count` value meaning "claimed, but the producer has not run yet".
+struct page_prepass_state {
+  // `nz_count` value meaning "claimed, but the producer has not run yet".
   static constexpr int32_t not_yet_produced = -2;
 
-  /// Valid-rank map: `nz_idx[rank]` is the input position of the rank-th valid value. Null for a
-  /// required page, whose map is the identity and is synthesized by the consumer.
+  // Valid-rank map: `nz_idx[rank]` is the input position of the rank-th valid value. Null for a
+  // required page, whose map is the identity and is synthesized by the consumer.
   uint32_t* nz_idx{};
-  /// Negative until the producer runs; the page's valid count afterwards.
+  // Negative until the producer runs; the page's valid count afterwards.
   int32_t nz_count{not_yet_produced};
-  /// Producer-written count whose meaning depends on the page's family, which is why it is not
-  /// named for one of them. `DELTA_FLAT`, the only family here, uses it for the page's null count.
+  // Producer-written count whose meaning depends on the page's family, which is why it is not
+  // named for one of them. `DELTA_FLAT`, the only family here, uses it for the page's null count.
   int32_t aux_count{};
 };
 
@@ -453,7 +451,7 @@ struct PageInfo {
   // `prepass_state` is null when the selector did not claim this page -- non-null *is* the
   // selection flag.
   level_prepass_family prepass_family{level_prepass_family::NONE};
-  PagePrepassState* prepass_state{};
+  page_prepass_state* prepass_state{};
 
   /**
    * @brief True when this page was selected for @p family's prepass.

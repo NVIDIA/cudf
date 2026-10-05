@@ -103,8 +103,8 @@ struct subpass_intermediate_data {
   // sub-allocates one slice of this per claimed page. Empty unless the prepass claimed a page.
   cuda::device_buffer<std::byte> flat_prepass_data;
   // Out-of-line prepass scratch, one entry per page. Empty unless the selector claimed at least
-  // one page of this subpass. See PagePrepassState.
-  cudf::detail::hostdevice_vector<PagePrepassState> prepass_state_buf;
+  // one page of this subpass. See page_prepass_state.
+  cudf::detail::hostdevice_vector<page_prepass_state> prepass_state_buf;
   cudf::detail::hostdevice_span<PageInfo> pages{};
 
   cudf::detail::hostdevice_vector<PageInfo> page_buf;

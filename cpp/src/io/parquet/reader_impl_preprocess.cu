@@ -412,9 +412,9 @@ void reader_impl::allocate_level_decode_space()
   if (num_claimed == 0) { return; }
 
   subpass.prepass_state_buf =
-    cudf::detail::hostdevice_vector<PagePrepassState>(num_claimed, _stream);
+    cudf::detail::hostdevice_vector<page_prepass_state>(num_claimed, _stream);
 
-  auto host_state = [&](size_t idx) -> PagePrepassState* {
+  auto host_state = [&](size_t idx) -> page_prepass_state* {
     return prepass_slot[idx] != std::numeric_limits<size_t>::max()
              ? subpass.prepass_state_buf.host_ptr(prepass_slot[idx])
              : nullptr;
@@ -435,7 +435,7 @@ void reader_impl::allocate_level_decode_space()
     page.prepass_state = subpass.prepass_state_buf.device_ptr(prepass_slot[idx]);
     if (page.is_prepass_family(level_prepass_family::DELTA_FLAT)) {
       auto const& chunk = pass.chunks[page.chunk_idx];
-      state->nz_count   = PagePrepassState::not_yet_produced;
+      state->nz_count   = page_prepass_state::not_yet_produced;
       if (chunk.max_level[level_type::DEFINITION] != 0) {
         flat_map_sizes[idx] = static_cast<size_t>(page.num_input_values) * sizeof(uint32_t);
         flat_prepass_size += flat_map_sizes[idx];

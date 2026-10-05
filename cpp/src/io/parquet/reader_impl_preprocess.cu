@@ -45,8 +45,9 @@ namespace {
 /**
  * @brief Decide which level-prepass consumer, if any, can decode @p page.
  *
- * This function does not answer whether the prepass is enabled, it only answers whether there is a
- * prepass consumer for a given page's shape and encoding. The caller decides whether to ask at all.
+ * @param page Page to classify
+ * @param chunk Column chunk the page belongs to
+ * @return The page's prepass family, or `NONE` if no consumer can decode it
  */
 [[nodiscard]] level_prepass_family classify_prepass_family(PageInfo const& page,
                                                            ColumnChunkDesc const& chunk)
@@ -391,7 +392,7 @@ void reader_impl::allocate_level_decode_space()
   // default.
   //
   // For now, both `level_decode_data` above and the allocations below are not tracked in the
-  // chunked-read budged. We will fix that once we start actually leveraging the prepass and
+  // chunked-read budget. We will fix that once we start actually leveraging the prepass and
   // therefore introduce some of the machinery that will be needed to calculate the memory usage.
   //
   // Hand out the out-of-line prepass scratch. There is exactly one for each claimed page, so most
@@ -423,13 +424,14 @@ void reader_impl::allocate_level_decode_space()
   };
 
   // Size the flat valid-rank maps. A required page needs no map at all since its rank map is the
-  // identity, which the consumer synthesizes rather than reading. Sizes are kept so the carve below
-  // cannot drift from the predicate that produced them.
+  // identity, which the consumer synthesizes rather than reading. The sizes are stored rather than
+  // recomputed so that the loop below, which hands out the slices, cannot disagree with the one
+  // that sized them.
   std::vector<size_t> flat_map_sizes(num_pages, 0);
   size_t flat_prepass_size = 0;
   for (size_t idx = 0; idx < num_pages; ++idx) {
     auto const& page = pages[idx];
-    if (page.prepass_is(level_prepass_family::DELTA_FLAT)) {
+    if (page.is_prepass_family(level_prepass_family::DELTA_FLAT)) {
       auto const& chunk         = pass.chunks[page.chunk_idx];
       host_state(idx)->nz_count = PagePrepassState::not_yet_produced;
       if (chunk.max_level[level_type::DEFINITION] != 0) {

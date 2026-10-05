@@ -461,7 +461,7 @@ struct PageInfo {
    * @param family Prepass family to test against
    * @return True if the page carries prepass scratch for @p family
    */
-  [[nodiscard]] CUDF_HOST_DEVICE constexpr bool prepass_is(level_prepass_family family) const
+  [[nodiscard]] CUDF_HOST_DEVICE constexpr bool is_prepass_family(level_prepass_family family) const
   {
     return prepass_state != nullptr && prepass_family == family;
   }

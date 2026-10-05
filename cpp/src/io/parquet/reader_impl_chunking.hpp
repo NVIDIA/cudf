@@ -99,8 +99,8 @@ struct subpass_intermediate_data {
   cuda::device_buffer<std::uint8_t> decomp_page_data;
 
   cuda::device_buffer<std::byte> level_decode_data;
-  // Backing store for the flat level-prepass valid-rank maps, carved per page in
-  // `allocate_level_decode_space`. Empty unless the prepass claimed at least one page.
+  // Backing store for the flat level-prepass valid-rank maps. `allocate_level_decode_space`
+  // sub-allocates one slice of this per claimed page. Empty unless the prepass claimed a page.
   cuda::device_buffer<std::byte> flat_prepass_data;
   // Out-of-line prepass scratch, one entry per page. Empty unless the selector claimed at least
   // one page of this subpass. See PagePrepassState.

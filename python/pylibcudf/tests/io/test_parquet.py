@@ -1,5 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+import datetime
+import decimal
 import io
 import os
 import struct
@@ -243,6 +245,192 @@ def test_read_parquet_filters(
     assert_table_and_meta_eq(
         exp, plc_table_w_meta, check_field_nullability=False
     )
+
+
+def _read_parquet_equal_to(path, column, value, and_expr=None):
+    options = plc.io.parquet.ParquetReaderOptions.builder(
+        plc.io.SourceInfo([path])
+    ).build()
+    expr = Operation(
+        ASTOperator.EQUAL,
+        ColumnNameReference(column),
+        Literal(plc.Scalar.from_arrow(value)),
+    )
+    if and_expr is not None:
+        expr = Operation(ASTOperator.LOGICAL_AND, expr, and_expr)
+    options.set_filter(expr)
+    return plc.io.parquet.read_parquet(options)
+
+
+requires_pyarrow_bloom_filters = pytest.mark.skipif(
+    int(pa.__version__.split(".", 1)[0]) < 24,
+    reason="pyarrow writes Parquet bloom filters from 24.0",
+)
+
+# Sized so that absent values are practically never false positives
+_BLOOM_FILTER = {"ndv": 1000, "fpp": 0.0001}
+
+
+# The default 28-digit context would round 38-digit decimals
+_DECIMAL_CONTEXT = decimal.Context(prec=40)
+
+
+def _decimal(offset):
+    return lambda v: decimal.Decimal(v + offset).scaleb(-2, _DECIMAL_CONTEXT)
+
+
+def _timestamp(start):
+    return lambda v: start + datetime.timedelta(seconds=v)
+
+
+@requires_pyarrow_bloom_filters
+@pytest.mark.parametrize(
+    "arrow_type,literal_type,to_value,write_kwargs",
+    [
+        (pa.int8(), pa.int8(), lambda v: v - 60, {}),
+        (pa.int16(), pa.int16(), lambda v: v - 20_000, {}),
+        (pa.int32(), pa.int32(), lambda v: v - 2**31, {}),
+        (pa.uint8(), pa.uint8(), lambda v: v + 150, {}),
+        (pa.uint16(), pa.uint16(), lambda v: v + 60_000, {}),
+        (pa.uint32(), pa.uint32(), lambda v: v + 3_000_000_000, {}),
+        (pa.time32("ms"), pa.duration("ms"), lambda v: v, {}),
+        (pa.decimal128(5, 2), pa.decimal32(5, 2), _decimal(-60), {}),
+        (
+            pa.decimal128(9, 2),
+            pa.decimal32(9, 2),
+            _decimal(-60),
+            {"store_decimal_as_integer": True},
+        ),
+        (pa.decimal128(12, 2), pa.decimal64(12, 2), _decimal(-60), {}),
+        (
+            pa.decimal128(18, 2),
+            pa.decimal64(18, 2),
+            _decimal(-60),
+            {"store_decimal_as_integer": True},
+        ),
+        (pa.decimal128(20, 2), pa.decimal128(20, 2), _decimal(-60), {}),
+        (pa.decimal128(38, 2), pa.decimal128(38, 2), _decimal(-60), {}),
+        # Unscaled values beyond the int64 range
+        (
+            pa.decimal128(20, 2),
+            pa.decimal128(20, 2),
+            _decimal(9_500_000_000_000_000_000),
+            {},
+        ),
+        (
+            pa.decimal128(20, 2),
+            pa.decimal128(20, 2),
+            _decimal(-9_500_000_000_000_000_000),
+            {},
+        ),
+        (pa.decimal128(38, 2), pa.decimal128(38, 2), _decimal(10**37), {}),
+        (pa.decimal128(38, 2), pa.decimal128(38, 2), _decimal(-(10**37)), {}),
+        (
+            pa.decimal128(38, 2),
+            pa.decimal128(38, 2),
+            _decimal(0x0102030405060708090A0B0C0D0E0F),
+            {},
+        ),
+        (
+            pa.timestamp("ns"),
+            pa.timestamp("ns"),
+            _timestamp(datetime.datetime(2020, 1, 1, 6, 30)),
+            {"use_deprecated_int96_timestamps": True},
+        ),
+        (
+            pa.timestamp("ns"),
+            pa.timestamp("ns"),
+            _timestamp(datetime.datetime(1965, 6, 1, 12)),
+            {"use_deprecated_int96_timestamps": True},
+        ),
+    ],
+)
+def test_read_parquet_bloom_filter_physical_types(
+    tmp_path, arrow_type, literal_type, to_value, write_kwargs
+):
+    # Bloom filters hash the physical type's plain encoding: INT32 for 8 and
+    # 16-bit integers and TIME(MILLIS), big-endian bytes for
+    # FIXED_LEN_BYTE_ARRAY decimals, and nanoseconds of the day followed by
+    # the Julian day for INT96. Both row groups have the same min and max, so
+    # only the bloom filter can prune the one without the value.
+    evens = [to_value((i % 50) * 2) for i in range(1000)]
+    with_five = [
+        to_value(5) if i % 50 == 1 else v for i, v in enumerate(evens)
+    ]
+    path = tmp_path / "bloom.parquet"
+    write_table(
+        pa.table(
+            {
+                "c": pa.array(with_five + evens, arrow_type),
+                "b": pa.array([True] * (2 * len(evens))),
+            }
+        ),
+        path,
+        row_group_size=len(evens),
+        bloom_filter_options={"c": _BLOOM_FILTER},
+        **write_kwargs,
+    )
+
+    # Bools have no bloom filters, and an equality on one must not stop "c"
+    # from using its bloom filters
+    b_is_true = Operation(
+        ASTOperator.EQUAL,
+        ColumnNameReference("b"),
+        Literal(plc.Scalar.from_arrow(pa.scalar(True))),
+    )
+    for value, num_rows, num_row_groups in [(5, 20, 1), (7, 0, 0)]:
+        literal = pa.array([to_value(value)], literal_type)[0]
+        result = _read_parquet_equal_to(path, "c", literal, b_is_true)
+        assert result.tbl.num_rows() == num_rows
+        assert result.num_row_groups_after_stats_filter == 2
+        assert result.num_row_groups_after_bloom_filter == num_row_groups
+
+
+@requires_pyarrow_bloom_filters
+def test_read_parquet_bloom_filter_decimal_scale_mismatch(tmp_path):
+    # A literal whose scale differs from the column's is not probed, so no
+    # row group is pruned by the bloom filter
+    to_value = _decimal(-60)
+    evens = [to_value((i % 50) * 2) for i in range(1000)]
+    with_five = [
+        to_value(5) if i % 50 == 1 else v for i, v in enumerate(evens)
+    ]
+    path = tmp_path / "bloom.parquet"
+    write_table(
+        pa.table({"c": pa.array(with_five + evens, pa.decimal128(5, 2))}),
+        path,
+        row_group_size=len(evens),
+        bloom_filter_options={"c": _BLOOM_FILTER},
+    )
+
+    for value, num_rows in [(5, 20), (7, 0)]:
+        literal = pa.array([to_value(value)], pa.decimal32(5, 3))[0]
+        result = _read_parquet_equal_to(path, "c", literal)
+        assert result.tbl.num_rows() == num_rows
+        assert result.num_row_groups_after_stats_filter == 2
+        assert result.num_row_groups_after_bloom_filter is None
+
+
+@requires_pyarrow_bloom_filters
+@pytest.mark.parametrize("arrow_type", [pa.float32(), pa.float64()])
+@pytest.mark.parametrize("zero,literal", [(-0.0, 0.0), (0.0, -0.0)])
+def test_read_parquet_bloom_filter_signed_zero(
+    tmp_path, arrow_type, zero, literal
+):
+    # +0.0 and -0.0 compare equal but have different bloom filter hashes
+    odds = [(i % 50) * 2 - 49.0 for i in range(1000)]
+    with_zero = [zero if i % 50 == 1 else v for i, v in enumerate(odds)]
+    path = tmp_path / "bloom.parquet"
+    write_table(
+        pa.table({"c": pa.array(with_zero + odds, arrow_type)}),
+        path,
+        row_group_size=len(odds),
+        bloom_filter_options={"c": _BLOOM_FILTER},
+    )
+
+    result = _read_parquet_equal_to(path, "c", pa.scalar(literal, arrow_type))
+    assert result.tbl.num_rows() == 20
+    assert result.num_row_groups_after_bloom_filter == 1
 
 
 class FooSpan:

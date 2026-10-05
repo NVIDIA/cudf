@@ -17,6 +17,7 @@
 #include <cuda/iterator>
 #include <cuda/stream>
 #include <thrust/copy.h>
+#include <thrust/for_each.h>
 
 #include <cstddef>
 #include <cstring>
@@ -73,17 +74,20 @@ size_type streaming_groupby::impl::probe_and_insert_first_batch(
     indirect_row_equality<decltype(batch_self_eq)>{d_batch_self_eq_ptr}, _max_distinct_keys};
   auto* const base = _key_set->data();
 
-  auto const out_end =
-    thrust::copy_if(rmm::exec_policy_nosync(stream, temp_mr),
-                    cuda::counting_iterator<size_type>(0),
-                    cuda::counting_iterator<size_type>(batch_size),
-                    batch_local_indices,
-                    insert_and_check_fn{set_ref_base.rebind_key_eq(first_batch_cmp),
-                                        batch_bitmask,
-                                        _max_distinct_keys,
-                                        base,
-                                        target_indices,
-                                        slot_offsets});
+  thrust::for_each_n(rmm::exec_policy_nosync(stream, temp_mr),
+                     cuda::counting_iterator<size_type>(0),
+                     batch_size,
+                     insert_fn{set_ref_base.rebind_key_eq(first_batch_cmp),
+                               batch_bitmask,
+                               _max_distinct_keys,
+                               base,
+                               target_indices,
+                               slot_offsets});
+  auto const out_end = thrust::copy_if(rmm::exec_policy_nosync(stream, temp_mr),
+                                       cuda::counting_iterator<size_type>(0),
+                                       cuda::counting_iterator<size_type>(batch_size),
+                                       batch_local_indices,
+                                       is_new_key_fn{target_indices, _max_distinct_keys});
   return static_cast<size_type>(out_end - batch_local_indices);
 }
 

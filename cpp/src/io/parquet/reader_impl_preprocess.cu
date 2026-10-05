@@ -388,6 +388,10 @@ void reader_impl::allocate_level_decode_space()
       std::max(def_level_sizes[idx], rep_level_sizes[idx]) / pass.level_type_size;
   }
 
+  // Nothing below can do anything with the prepass disabled: `classify_prepass_family` is not
+  // called in that case, so every page is `NONE`. Return before allocating or scanning anything.
+  if (!_level_prepass_enabled) { return; }
+
   // TODO: count the prepass scratch in the chunked-read budget, before the prepass is enabled by
   // default.
   //

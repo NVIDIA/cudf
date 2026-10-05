@@ -30,8 +30,9 @@ namespace cudf::io::parquet::detail {
  * @brief Returns a normalized (UTF8-aware lowercased) column name or path when case-insensitive
  * matching is enabled
  *
- * @note Uses per-codepoint `std::ctype<wchar_t>::tolower` from `C.UTF-8` locale. Falls back to the classic locale if
- * `C.UTF-8` is unavailable. Column paths that are not valid UTF-8 are returned unchanged.
+ * @note Uses per-codepoint `std::ctype<wchar_t>::tolower` from `C.UTF-8` locale. Falls back to the
+ * classic locale if `C.UTF-8` is unavailable. Column paths that are not valid UTF-8 are returned
+ * unchanged.
  *
  * @param col_path The column name or path to normalize
  * @param case_sensitive_names Whether to normalize the column path case-insensitively

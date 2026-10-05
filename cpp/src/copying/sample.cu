@@ -58,10 +58,10 @@ std::unique_ptr<table> sample(table_view const& input,
     return detail::gather(input, begin, begin + n, out_of_bounds_policy::DONT_CHECK, stream, mr);
   } else {
     auto gather_map              = make_numeric_column(data_type{type_id::INT32},
-                                          num_rows,
-                                          mask_state::UNALLOCATED,
-                                          stream,
-                                          cudf::get_current_device_resource_ref());
+                                                       num_rows,
+                                                       mask_state::UNALLOCATED,
+                                                       stream,
+                                                       cudf::get_current_device_resource_ref());
     auto gather_map_mutable_view = gather_map->mutable_view();
     // Shuffle all the row indices
     thrust::shuffle_copy(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),

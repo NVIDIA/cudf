@@ -36,9 +36,7 @@ CUDF_KERNEL void test_set_value(ScalarDeviceViewType s, ScalarDeviceViewType s1)
 
 template <typename ScalarDeviceViewType>
 CUDF_KERNEL void test_value(ScalarDeviceViewType s, ScalarDeviceViewType s1, bool* result)
-{
-  *result = (s.value() == s1.value());
-}
+{ *result = (s.value() == s1.value()); }
 
 TYPED_TEST(TypedScalarDeviceViewTest, Value)
 {
@@ -67,9 +65,7 @@ TYPED_TEST(TypedScalarDeviceViewTest, Value)
 
 template <typename ScalarDeviceViewType>
 CUDF_KERNEL void test_null(ScalarDeviceViewType s, bool* result)
-{
-  *result = s.is_valid();
-}
+{ *result = s.is_valid(); }
 
 TYPED_TEST(TypedScalarDeviceViewTest, ConstructNull)
 {
@@ -86,9 +82,7 @@ TYPED_TEST(TypedScalarDeviceViewTest, ConstructNull)
 
 template <typename ScalarDeviceViewType>
 CUDF_KERNEL void test_setnull(ScalarDeviceViewType s)
-{
-  s.set_valid(false);
-}
+{ s.set_valid(false); }
 
 TYPED_TEST(TypedScalarDeviceViewTest, SetNull)
 {
@@ -110,9 +104,7 @@ CUDF_KERNEL void test_string_value(cudf::string_scalar_device_view s,
                                    char const* value,
                                    cudf::size_type size,
                                    bool* result)
-{
-  *result = (s.value() == cudf::string_view(value, size));
-}
+{ *result = (s.value() == cudf::string_view(value, size)); }
 
 TEST_F(StringScalarDeviceViewTest, Value)
 {

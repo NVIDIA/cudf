@@ -142,11 +142,11 @@ rapidsmpf::streaming::Actor filter_lineitem(std::shared_ptr<rapidsmpf::streaming
     auto l_commitdate  = table.column(0);
     auto l_receiptdate = table.column(1);
     auto mask          = cudf::binary_operation(l_commitdate,
-                                       l_receiptdate,
-                                       cudf::binary_operator::LESS,
-                                       cudf::data_type(cudf::type_id::BOOL8),
-                                       chunk_stream,
-                                       mr);
+                                                l_receiptdate,
+                                                cudf::binary_operator::LESS,
+                                                cudf::data_type(cudf::type_id::BOOL8),
+                                                chunk_stream,
+                                                mr);
     auto filtered_table =
       cudf::apply_retention_mask(table.select({2}), mask->view(), chunk_stream, mr);
     co_await ch_out->send(cudf_streaming::to_message(

@@ -50,21 +50,15 @@ auto to_string(T value) -> std::string
 
 template <typename T>
 CUDF_HOST_DEVICE constexpr auto abs(T value)
-{
-  return value >= 0 ? value : -value;
-}
+{ return value >= 0 ? value : -value; }
 
 template <typename T>
 CUDF_HOST_DEVICE inline auto min(T lhs, T rhs)
-{
-  return lhs < rhs ? lhs : rhs;
-}
+{ return lhs < rhs ? lhs : rhs; }
 
 template <typename T>
 CUDF_HOST_DEVICE inline auto max(T lhs, T rhs)
-{
-  return lhs > rhs ? lhs : rhs;
-}
+{ return lhs > rhs ? lhs : rhs; }
 
 template <typename BaseType>
 CUDF_HOST_DEVICE constexpr auto exp10(int32_t exponent)

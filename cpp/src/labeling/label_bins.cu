@@ -54,9 +54,7 @@ using InclusiveToComparator_t = typename InclusiveToComparator<T, i>::type;
 // Helper to have single point of dispatch for inclusive enum
 template <typename Func>
 auto dispatch_inclusive(inclusive i, Func&& func)
-{
-  return dispatch_enum<inclusive::YES, inclusive::NO>(i, std::forward<Func>(func));
-}
+{ return dispatch_enum<inclusive::YES, inclusive::NO>(i, std::forward<Func>(func)); }
 
 // Sentinel used to indicate that an input value should be placed in the null
 // bin.
@@ -161,17 +159,13 @@ std::unique_ptr<column> label_bins(column_view const& input,
 
 template <typename T>
 constexpr auto is_supported_bin_type()
-{
-  return cudf::is_relationally_comparable<T, T>() && cudf::is_equality_comparable<T, T>();
-}
+{ return cudf::is_relationally_comparable<T, T>() && cudf::is_equality_comparable<T, T>(); }
 
 struct bin_type_dispatcher {
   template <typename T, typename... Args>
   std::unique_ptr<column> operator()(Args&&...)
     requires(not detail::is_supported_bin_type<T>())
-  {
-    CUDF_FAIL("Type not support for cudf::bin");
-  }
+  { CUDF_FAIL("Type not support for cudf::bin"); }
 
   template <typename T>
   std::unique_ptr<column> operator()(column_view const& input,

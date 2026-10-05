@@ -188,11 +188,11 @@ TEST_F(SetDifferenceTest, StringTestsNonNull)
   // Multiple lists column.
   {
     auto const lhs      = strings_lists{strings_lists{"one", "two", "three"},
-                                   strings_lists{"four", "five", "six"},
-                                   strings_lists{"1", "2", "3"}};
+                                        strings_lists{"four", "five", "six"},
+                                        strings_lists{"1", "2", "3"}};
     auto const rhs      = strings_lists{strings_lists{"one", "banana"},
-                                   strings_lists{"apple", "kiwi", "cherry"},
-                                   strings_lists{"two", "and", "1"}};
+                                        strings_lists{"apple", "kiwi", "cherry"},
+                                        strings_lists{"two", "and", "1"}};
     auto const expected = strings_lists{
       strings_lists{"three", "two"}, strings_lists{"five", "four", "six"}, strings_lists{"2", "3"}};
 
@@ -234,7 +234,7 @@ TEST_F(SetDifferenceTest, StringTestsWithNullsEqual)
                                       strings_lists{"a", "is", "string"}},
                                      null_at(1)}
                          .release();
-      auto& child = str_lists->child(cudf::lists_column_view::child_column_index);
+      auto& child    = str_lists->child(cudf::lists_column_view::child_column_index);
       child.set_null_mask(cudf::create_null_mask(child.size(), cudf::mask_state::ALL_VALID), 0);
       return str_lists;
     }();
@@ -383,11 +383,11 @@ TYPED_TEST(SetDifferenceTypedTest, InputHaveNullsTests)
   // Nullable child and nulls are equal.
   {
     auto const lhs      = lists_col{lists_col{{null, 1, null, 3}, nulls_at({0, 2})},
-                               lists_col{{null, 5}, null_at(0)},
-                               lists_col{{null, 7, null, 9}, nulls_at({0, 2})}};
+                                    lists_col{{null, 5}, null_at(0)},
+                                    lists_col{{null, 7, null, 9}, nulls_at({0, 2})}};
     auto const rhs      = lists_col{lists_col{{null, null, 5}, nulls_at({0, 1})},
-                               lists_col{{5, null}, null_at(1)},
-                               lists_col{7, 8, 9}};
+                                    lists_col{{5, null}, null_at(1)},
+                                    lists_col{7, 8, 9}};
     auto const expected = lists_col{lists_col{1, 3}, lists_col{}, lists_col{{null}, null_at(0)}};
 
     auto const results_sorted = set_difference_sorted(lhs, rhs, NULL_EQUAL);
@@ -397,11 +397,11 @@ TYPED_TEST(SetDifferenceTypedTest, InputHaveNullsTests)
   // Nullable child and nulls are unequal.
   {
     auto const lhs      = lists_col{lists_col{{null, 1, null, 3}, nulls_at({0, 2})},
-                               lists_col{{null, 5}, null_at(0)},
-                               lists_col{{null, 7, null, 9}, nulls_at({0, 2})}};
+                                    lists_col{{null, 5}, null_at(0)},
+                                    lists_col{{null, 7, null, 9}, nulls_at({0, 2})}};
     auto const rhs      = lists_col{lists_col{{null, null, 5}, nulls_at({0, 1})},
-                               lists_col{{5, null}, null_at(1)},
-                               lists_col{7, 8, 9}};
+                                    lists_col{{5, null}, null_at(1)},
+                                    lists_col{7, 8, 9}};
     auto const expected = lists_col{lists_col{{null, null, 1, 3}, nulls_at({0, 1})},
                                     lists_col{{null}, null_at(0)},
                                     lists_col{{null, null}, nulls_at({0, 1})}};

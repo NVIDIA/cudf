@@ -129,9 +129,7 @@ std::unique_ptr<column> translate(strings_column_view const& input,
                                   std::vector<std::pair<uint32_t, uint32_t>> const& chars_table,
                                   cuda::stream_ref stream,
                                   rmm::device_async_resource_ref mr)
-{
-  return detail::translate(input, std::span{chars_table}, stream, mr);
-}
+{ return detail::translate(input, std::span{chars_table}, stream, mr); }
 
 }  // namespace strings
 }  // namespace cudf

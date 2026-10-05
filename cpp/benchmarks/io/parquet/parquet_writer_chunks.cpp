@@ -45,7 +45,7 @@ void PQ_write(nvbench::state& state)
   auto const rg_size_rows        = state.get_int64("row_group_size_rows");
 
   auto const tbl  = create_random_table(cycle_dtypes({cudf::type_id::INT32}, num_cols),
-                                       table_size_bytes{data_size});
+                                        table_size_bytes{data_size});
   auto const view = tbl->view();
 
   std::size_t encoded_file_size = 0;

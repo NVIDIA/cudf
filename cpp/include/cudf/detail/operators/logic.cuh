@@ -24,9 +24,7 @@ namespace ops {
 template <typename A, typename B>
 __device__ bool logical_and(A a, B b)
   requires(!nullable<A> && !nullable<B> && requires { a && b; })
-{
-  return a && b;
-}
+{ return a && b; }
 
 /**
  * @brief Computes logical OR.
@@ -39,9 +37,7 @@ __device__ bool logical_and(A a, B b)
 template <typename A, typename B>
 __device__ bool logical_or(A a, B b)
   requires(!nullable<A> && !nullable<B> && requires { a || b; })
-{
-  return a || b;
-}
+{ return a || b; }
 
 /**
  * @brief Computes logical NOT.
@@ -52,9 +48,7 @@ __device__ bool logical_or(A a, B b)
 template <typename T>
 __device__ bool logical_not(T a)
   requires(!nullable<T> && requires { !a; })
-{
-  return !a;
-}
+{ return !a; }
 
 /**
  * @brief Computes logical AND with null-aware semantics.
@@ -67,9 +61,7 @@ __device__ bool logical_not(T a)
 template <typename A, typename B>
 __device__ bool null_logical_and(A a, B b)
   requires(!nullable<A> && !nullable<B> && requires { logical_and(a, b); })
-{
-  return logical_and(a, b);
-}
+{ return logical_and(a, b); }
 
 template <typename A, typename B>
 __device__ cuda::std::optional<bool> null_logical_and(cuda::std::optional<A> a,
@@ -100,9 +92,7 @@ __device__ cuda::std::optional<bool> null_logical_and(cuda::std::optional<A> a,
 template <typename A, typename B>
 __device__ bool null_logical_or(A a, B b)
   requires(!nullable<A> && !nullable<B> && requires { logical_or(a, b); })
-{
-  return logical_or(a, b);
-}
+{ return logical_or(a, b); }
 
 template <typename A, typename B>
 __device__ cuda::std::optional<bool> null_logical_or(cuda::std::optional<A> a,
@@ -135,18 +125,14 @@ __device__ cuda::std::optional<bool> null_logical_or(cuda::std::optional<A> a,
 template <typename A, typename B, cuda::std::integral Predicate>
 __device__ A if_else(A true_value, B false_value, Predicate pred)
   requires(!nullable<A> && cuda::std::same_as<A, B>)
-{
-  return pred ? true_value : false_value;
-}
+{ return pred ? true_value : false_value; }
 
 template <typename A, typename B, cuda::std::integral Predicate>
 __device__ cuda::std::optional<A> if_else(cuda::std::optional<A> true_value,
                                           cuda::std::optional<B> false_value,
                                           cuda::std::optional<Predicate> pred)
   requires(!nullable<A> && cuda::std::same_as<A, B>)
-{
-  return pred.value_or(false) ? true_value : false_value;
-}
+{ return pred.value_or(false) ? true_value : false_value; }
 
 }  // namespace ops
 }  // namespace detail

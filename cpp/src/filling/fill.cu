@@ -57,9 +57,7 @@ struct in_place_fill_range_dispatch {
   template <typename T>
   std::enable_if_t<cudf::is_fixed_width<T>() && not cudf::is_fixed_point<T>(), void> operator()(
     cudf::size_type begin, cudf::size_type end, cuda::stream_ref stream)
-  {
-    in_place_fill<T>(destination, begin, end, value, stream);
-  }
+  { in_place_fill<T>(destination, begin, end, value, stream); }
 
   template <typename T>
   std::enable_if_t<cudf::is_fixed_point<T>(), void> operator()(cudf::size_type begin,
@@ -75,9 +73,7 @@ struct in_place_fill_range_dispatch {
 
   template <typename T, typename... Args>
   std::enable_if_t<not cudf::is_fixed_width<T>(), void> operator()(Args&&...)
-  {
-    CUDF_FAIL("in-place fill does not work for variable width types.");
-  }
+  { CUDF_FAIL("in-place fill does not work for variable width types."); }
 };
 
 struct out_of_place_fill_range_dispatch {
@@ -88,9 +84,7 @@ struct out_of_place_fill_range_dispatch {
   std::enable_if_t<not cudf::is_rep_layout_compatible<T>() and not cudf::is_fixed_point<T>(),
                    std::unique_ptr<cudf::column>>
   operator()(Args...)
-  {
-    CUDF_FAIL("Unsupported type in fill.");
-  }
+  { CUDF_FAIL("Unsupported type in fill."); }
 
   template <typename T,
             CUDF_ENABLE_IF(cudf::is_rep_layout_compatible<T>() or cudf::is_fixed_point<T>())>

@@ -67,9 +67,7 @@ class DFACountCallbackWrapper {
 
   template <typename OffsetT>
   __device__ __forceinline__ void Init(OffsetT const&)
-  {
-    out_count = 0;
-  }
+  { out_count = 0; }
 
   template <typename CharIndexT, typename StateIndexT, typename SymbolIndexT, typename SymbolT>
   __device__ __forceinline__ void ReadSymbol(CharIndexT const character_index,
@@ -123,9 +121,7 @@ class DFAWriteCallbackWrapper {
 
   template <typename OffsetT>
   __device__ __forceinline__ void Init(OffsetT const& in_offset)
-  {
-    this->in_offset = in_offset;
-  }
+  { this->in_offset = in_offset; }
 
   template <typename CharIndexT,
             typename StateIndexT,
@@ -272,9 +268,7 @@ class WriteCoalescingCallbackWrapper {
 
   template <typename OffsetT>
   __device__ __forceinline__ void Init(OffsetT const& offset)
-  {
-    this->in_offset = offset;
-  }
+  { this->in_offset = offset; }
 
   template <typename CharIndexT, typename StateIndexT, typename SymbolIndexT, typename SymbolT>
   __device__ __forceinline__ void ReadSymbol(CharIndexT const character_index,

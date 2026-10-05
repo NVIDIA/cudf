@@ -89,9 +89,7 @@ using char_utf8         = uint32_t;  ///< UTF-8 characters are 1-4 bytes
  */
 template <typename T>
 size_type distance(T f, T l)
-{
-  return static_cast<size_type>(cuda::std::distance(f, l));
-}
+{ return static_cast<size_type>(cuda::std::distance(f, l)); }
 
 /**
  * @brief Indicates the order in which elements should be sorted.
@@ -311,9 +309,7 @@ class data_type {
    * @param scale The `fixed_point`'s scale (see `fixed_point::_scale`)
    */
   explicit data_type(type_id id, int32_t scale) : _id{id}, _fixed_point_scale{scale}
-  {
-    assert(id == type_id::DECIMAL32 || id == type_id::DECIMAL64 || id == type_id::DECIMAL128);
-  }
+  { assert(id == type_id::DECIMAL32 || id == type_id::DECIMAL64 || id == type_id::DECIMAL128); }
 
   /**
    * @brief Returns the type identifier
@@ -328,9 +324,7 @@ class data_type {
    * @return The scale
    */
   [[nodiscard]] CUDF_HOST_DEVICE constexpr int32_t scale() const noexcept
-  {
-    return _fixed_point_scale;
-  }
+  { return _fixed_point_scale; }
 
  private:
   type_id _id{type_id::EMPTY};

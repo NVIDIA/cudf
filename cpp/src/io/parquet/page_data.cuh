@@ -48,9 +48,7 @@ inline __device__ void gpuOutputString(auto* s, state_buf* sb, int src_pos, void
  */
 template <typename state_buf>
 inline __device__ void read_boolean(state_buf* sb, int src_pos, uint8_t* dst)
-{
-  *dst = sb->dict_idx[rolling_index<state_buf::dict_buf_size>(src_pos)];
-}
+{ *dst = sb->dict_idx[rolling_index<state_buf::dict_buf_size>(src_pos)]; }
 
 /**
  * @brief Store a 32-bit data element

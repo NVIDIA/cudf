@@ -12,8 +12,6 @@ size_type compute_nested_group_offsets(table_view const& keys,
                                        size_type size,
                                        rmm::device_uvector<size_type>& group_offsets,
                                        cuda::stream_ref stream)
-{
-  return compute_group_offsets<true>(keys, sorted_order, size, group_offsets, stream);
-}
+{ return compute_group_offsets<true>(keys, sorted_order, size, group_offsets, stream); }
 
 }  // namespace cudf::groupby::detail::sort

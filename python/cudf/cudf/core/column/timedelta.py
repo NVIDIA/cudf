@@ -51,7 +51,7 @@ if TYPE_CHECKING:
 
 @functools.cache
 def get_np_td_unit_conversion(
-    reso: str, dtype: None | np.dtype
+    reso: str, dtype: np.dtype | None
 ) -> np.timedelta64:
     td = np.timedelta64(unit_to_nanoseconds_conversion[reso], "ns")
     if dtype is not None:

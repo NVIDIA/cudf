@@ -87,14 +87,10 @@ __device__ cuda::std::optional<size_type> narrow_cast(cuda::std::optional<uint64
 }
 
 __device__ basic_type decode_basic_type(uint8_t value_metadata)
-{
-  return static_cast<basic_type>(value_metadata & 0x03);
-}
+{ return static_cast<basic_type>(value_metadata & 0x03); }
 
 __device__ uint8_t variant_value_header(uint8_t value_metadata)
-{
-  return (value_metadata >> 2) & 0x3F;
-}
+{ return (value_metadata >> 2) & 0x3F; }
 
 struct object_array_header {
   int field_offset_size;  // bytes per field_offset entry
@@ -702,9 +698,7 @@ __device__ cuda::std::pair<device_span<uint8_t const>, device_span<uint8_t const
 metadata_and_value_at(cudf::lists_column_device_view const& metadata,
                       cudf::lists_column_device_view const& values,
                       size_type row)
-{
-  return {list_row_span(metadata, row), list_row_span(values, row)};
-}
+{ return {list_row_span(metadata, row), list_row_span(values, row)}; }
 
 constexpr int block_size = 256;
 
@@ -1251,9 +1245,7 @@ struct cast_variant_fn {
   template <typename T>
   std::unique_ptr<column> operator()()
     requires(not is_variant_castable<T>)
-  {
-    CUDF_FAIL("unsupported type for variant cast", std::invalid_argument);
-  }
+  { CUDF_FAIL("unsupported type for variant cast", std::invalid_argument); }
 };
 
 /**

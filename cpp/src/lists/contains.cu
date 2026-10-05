@@ -58,9 +58,7 @@ auto constexpr __device__ NULL_SENTINEL = cuda::std::numeric_limits<size_type>::
  */
 template <typename Element>
 static auto constexpr is_supported_non_nested_type()
-{
-  return cudf::is_fixed_width<Element>() || std::is_same_v<Element, cudf::string_view>;
-}
+{ return cudf::is_fixed_width<Element>() || std::is_same_v<Element, cudf::string_view>; }
 
 /**
  * @brief Check if the given type is supported in `cudf::lists::contains`.
@@ -68,9 +66,7 @@ static auto constexpr is_supported_non_nested_type()
 struct is_supported_type_fn {
   template <typename Element>
   auto constexpr operator()()
-  {
-    return is_supported_non_nested_type<Element>() || cudf::is_nested<Element>();
-  }
+  { return is_supported_non_nested_type<Element>() || cudf::is_nested<Element>(); }
 };
 
 /**
@@ -333,11 +329,11 @@ std::unique_ptr<column> contains_nulls(lists_column_view const& lists,
 {
   auto const lists_cv      = lists.parent();
   auto output              = make_numeric_column(data_type{type_to_id<bool>()},
-                                    lists.size(),
-                                    cudf::detail::copy_bitmask(lists_cv, stream, mr),
-                                    lists_cv.null_count(),
-                                    stream,
-                                    mr);
+                                                 lists.size(),
+                                                 cudf::detail::copy_bitmask(lists_cv, stream, mr),
+                                                 lists_cv.null_count(),
+                                                 stream,
+                                                 mr);
   auto const out_begin     = output->mutable_view().template begin<bool>();
   auto const lists_cdv_ptr = column_device_view::create(lists_cv, stream);
 

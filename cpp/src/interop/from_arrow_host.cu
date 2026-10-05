@@ -152,9 +152,7 @@ struct dispatch_copy_from_arrow_host {
 
   template <typename T, CUDF_ENABLE_IF(not is_rep_layout_compatible<T>() && !is_fixed_point<T>())>
   std::unique_ptr<column> operator()(ArrowSchemaView const*, ArrowArray const*, data_type, bool)
-  {
-    CUDF_FAIL("Unsupported type in copy_from_arrow_host.");
-  }
+  { CUDF_FAIL("Unsupported type in copy_from_arrow_host."); }
 
   template <typename T, CUDF_ENABLE_IF(is_rep_layout_compatible<T>() || is_fixed_point<T>())>
   std::unique_ptr<column> operator()(ArrowSchemaView const*,
@@ -479,12 +477,12 @@ std::tuple<std::unique_ptr<column>, int64_t, int64_t> get_offsets_column(
   void const* offsets_buffer     = input->buffers[fixed_width_data_buffer_idx];
   void const* offsets_buffers[2] = {nullptr, offsets_buffer};
   ArrowArray offsets_array       = {
-          .length     = input->length + 1,
-          .null_count = 0,
-          .offset     = input->offset,
-          .n_buffers  = 2,
-          .n_children = 0,
-          .buffers    = offsets_buffers,
+    .length     = input->length + 1,
+    .null_count = 0,
+    .offset     = input->offset,
+    .n_buffers  = 2,
+    .n_children = 0,
+    .buffers    = offsets_buffers,
   };
 
   if (schema->type == NANOARROW_TYPE_STRING || schema->type == NANOARROW_TYPE_LIST) {
@@ -593,9 +591,7 @@ std::unique_ptr<column> get_column_from_host_copy(ArrowSchemaView const* schema,
                                                   bool skip_mask,
                                                   cuda::stream_ref stream,
                                                   rmm::device_async_resource_ref mr)
-{
-  return get_column_copy(schema, input, type, skip_mask, stream, mr);
-}
+{ return get_column_copy(schema, input, type, skip_mask, stream, mr); }
 
 }  // namespace detail
 

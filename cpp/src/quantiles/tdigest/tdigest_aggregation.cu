@@ -67,9 +67,7 @@ namespace {
 // substantially.
 constexpr size_type max_cpu_groups = 32;
 bool use_cpu_for_cluster_computation(size_type num_groups)
-{
-  return (not is_cpu_cluster_computation_disabled) and (num_groups <= max_cpu_groups * 2);
-}
+{ return (not is_cpu_cluster_computation_disabled) and (num_groups <= max_cpu_groups * 2); }
 
 // maximum temporary memory we will allow for using a worst-case allocation strategy that allows us
 // to skip half of the cluster generation kernel calls
@@ -102,9 +100,7 @@ struct make_centroid_no_nulls {
   column_device_view const col;
 
   centroid operator() __device__(size_type index) const
-  {
-    return {convert_to_floating<double>(col.element<T>(index)), 1.0, true};
-  }
+  { return {convert_to_floating<double>(col.element<T>(index)), 1.0, true}; }
 };
 
 // make a centroid from an input stream of mean/weight values.
@@ -243,9 +239,7 @@ struct cumulative_scalar_weight_grouped {
 struct cumulative_scalar_weight {
   cuda::std::tuple<size_type, size_type, double> operator()
     CUDF_HOST_DEVICE(size_type value_index) const
-  {
-    return {0, value_index, value_index + 1};
-  }
+  { return {0, value_index, value_index + 1}; }
 };
 
 /**
@@ -305,9 +299,7 @@ struct scalar_group_info {
   size_type const size;
 
   CUDF_HOST_DEVICE cuda::std::tuple<double, size_type, size_type> operator()(size_type) const
-  {
-    return {total_weight, size, 0};
-  }
+  { return {total_weight, size, 0}; }
 };
 
 // retrieve group info of centroid inputs by group index
@@ -1208,9 +1200,7 @@ struct typed_group_tdigest {
   template <typename T, typename... Args>
   std::unique_ptr<column> operator()(Args&&...)
     requires(!cudf::is_numeric<T>() && !cudf::is_fixed_point<T>())
-  {
-    CUDF_FAIL("Non-numeric type in group_tdigest");
-  }
+  { CUDF_FAIL("Non-numeric type in group_tdigest"); }
 };
 
 struct typed_reduce_tdigest {
@@ -1288,9 +1278,7 @@ struct typed_reduce_tdigest {
   template <typename T, typename... Args>
   std::unique_ptr<scalar> operator()(Args&&...)
     requires(!cudf::is_numeric<T>() && !cudf::is_fixed_point<T>())
-  {
-    CUDF_FAIL("Non-numeric type in group_tdigest");
-  }
+  { CUDF_FAIL("Non-numeric type in group_tdigest"); }
 };
 
 /**

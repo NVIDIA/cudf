@@ -68,9 +68,7 @@ struct gather_mask {
   join_kind kind;
   device_span<bool const> flagged;
   __device__ bool operator()(size_type idx) const noexcept
-  {
-    return flagged[idx] == (kind == join_kind::LEFT_SEMI_JOIN);
-  }
+  { return flagged[idx] == (kind == join_kind::LEFT_SEMI_JOIN); }
 };
 
 }  // namespace
@@ -212,14 +210,10 @@ filtered_join::filtered_join(cudf::table_view const& build,
 
 std::unique_ptr<rmm::device_uvector<size_type>> filtered_join::semi_join(
   cudf::table_view const& probe, cuda::stream_ref stream, rmm::device_async_resource_ref mr) const
-{
-  return _impl->semi_join(probe, stream, mr);
-}
+{ return _impl->semi_join(probe, stream, mr); }
 
 std::unique_ptr<rmm::device_uvector<size_type>> filtered_join::anti_join(
   cudf::table_view const& probe, cuda::stream_ref stream, rmm::device_async_resource_ref mr) const
-{
-  return _impl->anti_join(probe, stream, mr);
-}
+{ return _impl->anti_join(probe, stream, mr); }
 
 }  // namespace cudf

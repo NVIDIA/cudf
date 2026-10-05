@@ -25,7 +25,7 @@ class SingleEnvironment : public Environment {
   {
     options_ = rapidsmpf::config::Options(rapidsmpf::config::get_environment_variables());
     comm_    = std::make_shared<rapidsmpf::Single>(std::make_shared<rapidsmpf::ProgressThread>(),
-                                                rapidsmpf::Logger::from_options(options_));
+                                                   rapidsmpf::Logger::from_options(options_));
   }
 
   void TearDown() override { comm_ = nullptr; }

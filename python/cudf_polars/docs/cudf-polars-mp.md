@@ -90,10 +90,12 @@ with SPMDEngine.from_options(opts) as engine:
 raise `TypeError`; `None` values are treated as `UNSPECIFIED`:
 
 ```python
-opts = StreamingOptions.from_dict({
-    "num_streaming_threads": 8,
-    "fallback_mode": "silent",
-})
+opts = StreamingOptions.from_dict(
+    {
+        "num_streaming_threads": 8,
+        "fallback_mode": "silent",
+    }
+)
 ```
 
 ### Memory resource configuration
@@ -675,7 +677,7 @@ with SPMDEngine() as engine:
 # The collective IDs go out of sync → deadlock.
 with SPMDEngine() as engine:
     df = pl.scan_parquet("/data/*.parquet")
-    if engine.rank == 0:        # DON'T DO THIS
+    if engine.rank == 0:  # DON'T DO THIS
         df = df.group_by("customer_id").agg(pl.col("amount").sum())
     result = df.collect(engine=engine)
 ```

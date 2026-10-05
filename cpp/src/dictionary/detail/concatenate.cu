@@ -56,9 +56,7 @@ struct insert_keys_fn {
   SetRef set_ref;
   column_device_view d_keys;
   __device__ size_type operator()(size_type idx)
-  {
-    return *cuda::std::get<0>(set_ref.insert_and_find(idx));
-  }
+  { return *cuda::std::get<0>(set_ref.insert_and_find(idx)); }
 };
 
 /**
@@ -151,9 +149,9 @@ struct map_indices_fn {
   {
     if (d_indices.is_null(idx)) { return 0; }
     auto cmp = [] __device__(auto const& lhs, auto const& rhs) { return lhs.second < rhs.second; };
-    auto col_iter = thrust::upper_bound(
-                      thrust::seq, d_offsets.begin(), d_offsets.end(), offsets_pair{0, idx}, cmp) -
-                    1;
+    auto col_iter   = thrust::upper_bound(
+                        thrust::seq, d_offsets.begin(), d_offsets.end(), offsets_pair{0, idx}, cmp) -
+                      1;
     auto col_idx    = cuda::std::distance(d_offsets.begin(), col_iter);
     auto key_offset = d_offsets[col_idx].first;
     return d_keys_remap[key_offset + d_input[idx]];

@@ -87,10 +87,10 @@ struct m2_functor {
   {
     using result_type = cudf::detail::target_type_t<T, aggregation::Kind::M2>;
     auto result       = make_numeric_column(data_type(type_to_id<result_type>()),
-                                      group_means.size(),
-                                      mask_state::UNALLOCATED,
-                                      stream,
-                                      mr);
+                                            group_means.size(),
+                                            mask_state::UNALLOCATED,
+                                            stream,
+                                            mr);
 
     auto const values_dv_ptr = column_device_view::create(values, stream);
     auto const d_values      = *values_dv_ptr;
@@ -112,9 +112,7 @@ struct m2_functor {
   template <typename T, typename... Args>
   std::unique_ptr<column> operator()(Args&&...)
     requires(!std::is_arithmetic_v<T>)
-  {
-    CUDF_FAIL("Only numeric types are supported in M2 groupby aggregation");
-  }
+  { CUDF_FAIL("Only numeric types are supported in M2 groupby aggregation"); }
 };
 
 }  // namespace

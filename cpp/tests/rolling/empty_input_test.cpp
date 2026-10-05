@@ -14,14 +14,10 @@
 namespace {
 // Helper functions to construct rolling window operators.
 auto count_valid()
-{
-  return cudf::make_count_aggregation<cudf::rolling_aggregation>(cudf::null_policy::EXCLUDE);
-}
+{ return cudf::make_count_aggregation<cudf::rolling_aggregation>(cudf::null_policy::EXCLUDE); }
 
 auto count_all()
-{
-  return cudf::make_count_aggregation<cudf::rolling_aggregation>(cudf::null_policy::INCLUDE);
-}
+{ return cudf::make_count_aggregation<cudf::rolling_aggregation>(cudf::null_policy::INCLUDE); }
 
 auto sum() { return cudf::make_sum_aggregation<cudf::rolling_aggregation>(); }
 
@@ -47,13 +43,9 @@ auto constexpr following   = 2;
 auto preceding_scalar() { return cudf::numeric_scalar<cudf::size_type>(preceding); }
 auto following_scalar() { return cudf::numeric_scalar<cudf::size_type>(following); }
 auto preceding_column()
-{
-  return cudf::test::fixed_width_column_wrapper<cudf::size_type>{}.release();
-}
+{ return cudf::test::fixed_width_column_wrapper<cudf::size_type>{}.release(); }
 auto following_column()
-{
-  return cudf::test::fixed_width_column_wrapper<cudf::size_type>{}.release();
-}
+{ return cudf::test::fixed_width_column_wrapper<cudf::size_type>{}.release(); }
 
 }  // namespace
 

@@ -2,7 +2,7 @@
  * SPDX-FileCopyrightText: Copyright 2018-2019 BlazingDB, Inc.
  * SPDX-FileCopyrightText: Copyright 2018 Christian Noboa Mardini <christian@blazingdb.com>
  * SPDX-FileCopyrightText: Copyright 2018 Rommel Quintanilla <rommel@blazingdb.com>
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 /*
@@ -82,6 +82,4 @@ extern "C" __global__ void cudf_kernel_entry(cudf::size_type size,
                                              void* out_data,
                                              void* lhs_data,
                                              void* rhs_data)
-{
-  CUDF_KERNEL_INSTANCE(size, out_data, lhs_data, rhs_data);
-}
+{ CUDF_KERNEL_INSTANCE(size, out_data, lhs_data, rhs_data); }

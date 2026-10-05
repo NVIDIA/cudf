@@ -773,7 +773,7 @@ TYPED_TEST(TypedNestedLeadLagWindowTest, Structs)
                                      {},
                                      {},
                                      {}},
-                                  cudf::test::iterators::nulls_at({3, 4, 5, 9, 10, 11})};
+                                    cudf::test::iterators::nulls_at({3, 4, 5, 9, 10, 11})};
     auto expected_strings_col = cudf::test::strings_column_wrapper{
       {"333", "4444", "55555", "", "", "", "", "40404040", "5050505050", "", "", ""},
       cudf::test::iterators::nulls_at({3, 4, 5, 6, 9, 10, 11})};

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -36,9 +36,7 @@ namespace detail {
 template <typename TYPES, std::size_t... Indices>
 constexpr std::array<cudf::type_id, sizeof...(Indices)> types_to_ids_impl(
   std::index_sequence<Indices...>)
-{
-  return {{cudf::type_to_id<GetType<TYPES, Indices>>()...}};
-}
+{ return {{cudf::type_to_id<GetType<TYPES, Indices>>()...}}; }
 
 /**
  * @brief Converts a `Types` list of types into a `std::array` of the
@@ -135,9 +133,7 @@ template <typename TypeParam, typename T>
 std::enable_if_t<cudf::is_fixed_width<TypeParam>() && !cudf::is_timestamp_t<TypeParam>::value,
                  TypeParam>
 make_type_param_scalar(T const init_value)
-{
-  return static_cast<TypeParam>(init_value);
-}
+{ return static_cast<TypeParam>(init_value); }
 
 /**
  * @brief Convert the timestamp value of type T to a fixed width type of type TypeParam.
@@ -153,9 +149,7 @@ make_type_param_scalar(T const init_value)
 template <typename TypeParam, typename T>
 std::enable_if_t<cudf::is_timestamp_t<TypeParam>::value, TypeParam> make_type_param_scalar(
   T const init_value)
-{
-  return TypeParam{typename TypeParam::duration(init_value)};
-}
+{ return TypeParam{typename TypeParam::duration(init_value)}; }
 
 /**
  * @brief Convert the numeric value of type T to a string type.
@@ -168,9 +162,7 @@ std::enable_if_t<cudf::is_timestamp_t<TypeParam>::value, TypeParam> make_type_pa
 template <typename TypeParam, typename T>
 std::enable_if_t<std::is_same_v<TypeParam, std::string>, TypeParam> make_type_param_scalar(
   T const init_value)
-{
-  return std::to_string(init_value);
-}
+{ return std::to_string(init_value); }
 
 /**
  * @brief Type list for all integral types except type bool.

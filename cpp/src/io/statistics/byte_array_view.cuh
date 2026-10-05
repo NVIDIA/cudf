@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -51,9 +51,7 @@ class byte_array_view {
    * @return A reference to the idx-th element of the byte_array_view, i.e., `_data.data()[idx]`.
    */
   [[nodiscard]] __device__ constexpr element_type& operator[](std::size_t idx) const
-  {
-    return _data[idx];
-  }
+  { return _data[idx]; }
 
   /**
    * @brief Returns a pointer to the beginning of the byte_array_view.
@@ -61,9 +59,7 @@ class byte_array_view {
    * @return A pointer to the first element of the byte_array_view.
    */
   [[nodiscard]] CUDF_HOST_DEVICE constexpr element_type* data() const noexcept
-  {
-    return _data.data();
-  }
+  { return _data.data(); }
 
   /**
    * @brief Returns the number of elements in the byte_array_view.
@@ -78,9 +74,7 @@ class byte_array_view {
    * @return The size of the byte_array_view in bytes
    */
   [[nodiscard]] CUDF_HOST_DEVICE constexpr std::size_t size_bytes() const noexcept
-  {
-    return _data.size_bytes();
-  }
+  { return _data.size_bytes(); }
 
   /**
    * @brief Comparing target byte_array_view with this byte_array_view. Each byte in the array is
@@ -125,9 +119,7 @@ class byte_array_view {
    * @return true if this byte_array_view is ordered before rhs
    */
   [[nodiscard]] __device__ inline bool operator<(byte_array_view const& rhs) const
-  {
-    return compare(rhs) < 0;
-  }
+  { return compare(rhs) < 0; }
   /**
    * @brief Returns true if rhs is ordered before this byte_array_view.
    *
@@ -135,9 +127,7 @@ class byte_array_view {
    * @return true if rhs is ordered before this byte_array_view
    */
   [[nodiscard]] __device__ inline bool operator>(byte_array_view const& rhs) const
-  {
-    return compare(rhs) > 0;
-  }
+  { return compare(rhs) > 0; }
 
   /**
    * @brief Returns true if this byte_array_view is ordered before rhs.
@@ -146,9 +136,7 @@ class byte_array_view {
    * @return true if this byte_array_view is ordered before rhs
    */
   [[nodiscard]] __device__ inline bool operator<=(byte_array_view const& rhs) const
-  {
-    return compare(rhs) <= 0;
-  }
+  { return compare(rhs) <= 0; }
   /**
    * @brief Returns true if rhs is ordered before this byte_array_view.
    *
@@ -156,9 +144,7 @@ class byte_array_view {
    * @return true if rhs is ordered before this byte_array_view
    */
   [[nodiscard]] __device__ inline bool operator>=(byte_array_view const& rhs) const
-  {
-    return compare(rhs) >= 0;
-  }
+  { return compare(rhs) >= 0; }
 
   /**
    * @brief Return minimum value associated with the byte_array_view type
@@ -173,9 +159,7 @@ class byte_array_view {
    * @return A byte_array_view value which represents the largest possible byte_array_view
    */
   [[nodiscard]] __device__ inline static byte_array_view max()
-  {
-    return {nullptr, cuda::std::numeric_limits<std::size_t>::max()};
-  }
+  { return {nullptr, cuda::std::numeric_limits<std::size_t>::max()}; }
 
  private:
   device_span<element_type> _data{};

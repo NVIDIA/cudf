@@ -110,33 +110,19 @@ struct sizes_to_offsets_iterator {
   }
 
   CUDF_HOST_DEVICE inline difference_type operator-(sizes_to_offsets_iterator const& rhs) const
-  {
-    return itr_ - rhs.itr_;
-  }
+  { return itr_ - rhs.itr_; }
   CUDF_HOST_DEVICE inline bool operator==(sizes_to_offsets_iterator const& rhs) const
-  {
-    return rhs.itr_ == itr_;
-  }
+  { return rhs.itr_ == itr_; }
   CUDF_HOST_DEVICE inline bool operator!=(sizes_to_offsets_iterator const& rhs) const
-  {
-    return rhs.itr_ != itr_;
-  }
+  { return rhs.itr_ != itr_; }
   CUDF_HOST_DEVICE inline bool operator<(sizes_to_offsets_iterator const& rhs) const
-  {
-    return itr_ < rhs.itr_;
-  }
+  { return itr_ < rhs.itr_; }
   CUDF_HOST_DEVICE inline bool operator>(sizes_to_offsets_iterator const& rhs) const
-  {
-    return itr_ > rhs.itr_;
-  }
+  { return itr_ > rhs.itr_; }
   CUDF_HOST_DEVICE inline bool operator<=(sizes_to_offsets_iterator const& rhs) const
-  {
-    return itr_ <= rhs.itr_;
-  }
+  { return itr_ <= rhs.itr_; }
   CUDF_HOST_DEVICE inline bool operator>=(sizes_to_offsets_iterator const& rhs) const
-  {
-    return itr_ >= rhs.itr_;
-  }
+  { return itr_ >= rhs.itr_; }
 
   CUDF_HOST_DEVICE inline sizes_to_offsets_iterator const& operator*() const { return *this; }
 
@@ -214,9 +200,7 @@ struct sizes_to_offsets_iterator {
 template <typename ScanIterator, typename LastType>
 static sizes_to_offsets_iterator<ScanIterator, LastType> make_sizes_to_offsets_iterator(
   ScanIterator begin, ScanIterator end, LastType* last)
-{
-  return sizes_to_offsets_iterator<ScanIterator, LastType>(begin, end, last);
-}
+{ return sizes_to_offsets_iterator<ScanIterator, LastType>(begin, end, last); }
 
 /**
  * @brief Perform an exclusive-scan and capture the final element value

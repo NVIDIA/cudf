@@ -38,9 +38,7 @@ template <typename TaggedTypeT>
 struct ToTaggedType {
   template <typename T>
   CUDF_HOST_DEVICE TaggedTypeT operator()(T const& v) const
-  {
-    return TaggedTypeT{v};
-  }
+  { return TaggedTypeT{v}; }
 };
 
 /**
@@ -60,30 +58,22 @@ auto hex(InItT it)
 
 template <typename T, CUDF_ENABLE_IF(std::is_integral_v<T>&& std::is_signed_v<T>)>
 CUDF_HOST_DEVICE void print_value(int32_t width, T arg)
-{
-  printf("%*d", width, arg);
-}
+{ printf("%*d", width, arg); }
 
 template <typename T, CUDF_ENABLE_IF(std::is_integral_v<T>&& std::is_unsigned_v<T>)>
 CUDF_HOST_DEVICE void print_value(int32_t width, T arg)
-{
-  printf("%*d", width, arg);
-}
+{ printf("%*d", width, arg); }
 
 CUDF_HOST_DEVICE void print_value(int32_t width, char arg) { printf("%*c", width, arg); }
 
 template <typename T>
 CUDF_HOST_DEVICE void print_value(int32_t width, hex_t<T> arg)
-{
-  printf("%*X", width, arg.v);
-}
+{ printf("%*X", width, arg.v); }
 
 namespace detail {
 template <typename T>
 CUDF_HOST_DEVICE void print_values(int32_t width, char delimiter, T arg)
-{
-  print_value(width, arg);
-}
+{ print_value(width, arg); }
 
 template <typename T, typename... Ts>
 CUDF_HOST_DEVICE void print_values(int32_t width, char delimiter, T arg, Ts... args)

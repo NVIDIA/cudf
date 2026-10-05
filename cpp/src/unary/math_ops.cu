@@ -31,97 +31,73 @@ namespace {
 struct DeviceSin {
   template <typename T>
   __device__ T operator()(T data)
-  {
-    return cuda::std::sin(data);
-  }
+  { return cuda::std::sin(data); }
 };
 
 struct DeviceCos {
   template <typename T>
   __device__ T operator()(T data)
-  {
-    return cuda::std::cos(data);
-  }
+  { return cuda::std::cos(data); }
 };
 
 struct DeviceTan {
   template <typename T>
   __device__ T operator()(T data)
-  {
-    return cuda::std::tan(data);
-  }
+  { return cuda::std::tan(data); }
 };
 
 struct DeviceArcSin {
   template <typename T>
   __device__ T operator()(T data)
-  {
-    return cuda::std::asin(data);
-  }
+  { return cuda::std::asin(data); }
 };
 
 struct DeviceArcCos {
   template <typename T>
   __device__ T operator()(T data)
-  {
-    return cuda::std::acos(data);
-  }
+  { return cuda::std::acos(data); }
 };
 
 struct DeviceArcTan {
   template <typename T>
   __device__ T operator()(T data)
-  {
-    return cuda::std::atan(data);
-  }
+  { return cuda::std::atan(data); }
 };
 
 struct DeviceSinH {
   template <typename T>
   __device__ T operator()(T data)
-  {
-    return cuda::std::sinh(data);
-  }
+  { return cuda::std::sinh(data); }
 };
 
 struct DeviceCosH {
   template <typename T>
   __device__ T operator()(T data)
-  {
-    return cuda::std::cosh(data);
-  }
+  { return cuda::std::cosh(data); }
 };
 
 struct DeviceTanH {
   template <typename T>
   __device__ T operator()(T data)
-  {
-    return cuda::std::tanh(data);
-  }
+  { return cuda::std::tanh(data); }
 };
 
 struct DeviceArcSinH {
   template <typename T>
   __device__ T operator()(T data)
-  {
-    return cuda::std::asinh(data);
-  }
+  { return cuda::std::asinh(data); }
 };
 
 struct DeviceArcCosH {
   template <typename T>
   __device__ T operator()(T data)
-  {
-    return cuda::std::acosh(data);
-  }
+  { return cuda::std::acosh(data); }
 };
 
 struct DeviceArcTanH {
   template <typename T>
   __device__ T operator()(T data)
-  {
-    return cuda::std::atanh(data);
-  }
+  { return cuda::std::atanh(data); }
 };
 
 // exponential functions
@@ -129,33 +105,25 @@ struct DeviceArcTanH {
 struct DeviceExp {
   template <typename T>
   __device__ T operator()(T data)
-  {
-    return cuda::std::exp(data);
-  }
+  { return cuda::std::exp(data); }
 };
 
 struct DeviceLog {
   template <typename T>
   __device__ T operator()(T data)
-  {
-    return cuda::std::log(data);
-  }
+  { return cuda::std::log(data); }
 };
 
 struct DeviceSqrt {
   template <typename T>
   __device__ T operator()(T data)
-  {
-    return cuda::std::sqrt(data);
-  }
+  { return cuda::std::sqrt(data); }
 };
 
 struct DeviceCbrt {
   template <typename T>
   __device__ T operator()(T data)
-  {
-    return cuda::std::cbrt(data);
-  }
+  { return cuda::std::cbrt(data); }
 };
 
 // rounding functions
@@ -163,32 +131,24 @@ struct DeviceCbrt {
 struct DeviceCeil {
   template <typename T>
   __device__ T operator()(T data)
-  {
-    return cuda::std::ceil(data);
-  }
+  { return cuda::std::ceil(data); }
 };
 
 struct DeviceFloor {
   template <typename T>
   __device__ T operator()(T data)
-  {
-    return cuda::std::floor(data);
-  }
+  { return cuda::std::floor(data); }
 };
 
 struct DeviceAbs {
   template <typename T>
   T __device__ operator()(T data)
     requires(cuda::std::is_signed_v<T>)
-  {
-    return cuda::std::abs(data);
-  }
+  { return cuda::std::abs(data); }
   template <typename T>
   T __device__ operator()(T data)
     requires(!cuda::std::is_signed_v<T>)
-  {
-    return data;
-  }
+  { return data; }
 };
 
 // round float to int
@@ -196,9 +156,7 @@ struct DeviceAbs {
 struct DeviceRInt {
   template <typename T>
   __device__ T operator()(T data)
-  {
-    return cuda::std::rint(data);
-  }
+  { return cuda::std::rint(data); }
 };
 
 struct DeviceBitCount {
@@ -217,9 +175,7 @@ struct DeviceBitCount {
 struct DeviceBitInvert {
   template <typename T>
   __device__ T operator()(T data)
-  {
-    return ~data;
-  }
+  { return ~data; }
 };
 
 // logical op
@@ -227,9 +183,7 @@ struct DeviceBitInvert {
 struct DeviceNot {
   template <typename T>
   __device__ bool operator()(T data)
-  {
-    return !data;
-  }
+  { return !data; }
 };
 
 // negation
@@ -237,9 +191,7 @@ struct DeviceNot {
 struct DeviceNegate {
   template <typename T>
   __device__ T operator()(T data)
-  {
-    return -data;
-  }
+  { return -data; }
 };
 
 // fixed_point ops
@@ -436,9 +388,7 @@ struct MathOpDispatcher {
   template <typename T, typename... Args>
   std::unique_ptr<cudf::column> operator()(Args&&...)
     requires(!Supported<T>::is_supported())
-  {
-    CUDF_FAIL("Unsupported data type for this operation");
-  }
+  { CUDF_FAIL("Unsupported data type for this operation"); }
 };
 
 template <typename UFN>
@@ -446,9 +396,7 @@ struct BitwiseCountDispatcher {
  private:
   template <typename T>
   static constexpr bool is_supported()
-  {
-    return std::is_integral_v<T>;
-  }
+  { return std::is_integral_v<T>; }
 
   // Always use int32_t as output type for bit count.
   using OutputType = int32_t;
@@ -481,9 +429,7 @@ struct BitwiseCountDispatcher {
   template <typename T, typename... Args>
   std::unique_ptr<cudf::column> operator()(Args&&...)
     requires(!is_supported<T>())
-  {
-    CUDF_FAIL("Unsupported datatype for operation");
-  }
+  { CUDF_FAIL("Unsupported datatype for operation"); }
 };
 
 template <typename UFN>
@@ -491,9 +437,7 @@ struct LogicalOpDispatcher {
  private:
   template <typename T>
   static constexpr bool is_supported()
-  {
-    return std::is_arithmetic_v<T> || std::is_same_v<T, bool>;
-  }
+  { return std::is_arithmetic_v<T> || std::is_same_v<T, bool>; }
 
  public:
   template <typename T>
@@ -523,18 +467,14 @@ struct LogicalOpDispatcher {
   template <typename T, typename... Args>
   std::unique_ptr<cudf::column> operator()(Args&&...)
     requires(!is_supported<T>())
-  {
-    CUDF_FAIL("Unsupported datatype for operation");
-  }
+  { CUDF_FAIL("Unsupported datatype for operation"); }
 };
 
 struct FixedPointOpDispatcher {
   template <typename T, typename... Args>
   std::unique_ptr<column> operator()(Args&&...)
     requires(not cudf::is_fixed_point<T>())
-  {
-    CUDF_FAIL("FixedPointOpDispatcher only for fixed_point");
-  }
+  { CUDF_FAIL("FixedPointOpDispatcher only for fixed_point"); }
 
   template <typename T>
   std::unique_ptr<column> operator()(column_view const& input,

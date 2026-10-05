@@ -20,9 +20,9 @@ std::unique_ptr<column> create_empty_column(size_type orc_col_id,
   schema_info.name = metadata.column_name(0, orc_col_id);
   auto const kind  = metadata.get_col_type(orc_col_id).kind;
   auto const type  = to_cudf_type(kind,
-                                 use_np_dtypes,
-                                 timestamp_type.id(),
-                                 to_cudf_decimal_type(decimal128_columns, metadata, orc_col_id));
+                                  use_np_dtypes,
+                                  timestamp_type.id(),
+                                  to_cudf_decimal_type(decimal128_columns, metadata, orc_col_id));
 
   switch (kind) {
     case LIST: {

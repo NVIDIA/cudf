@@ -35,9 +35,7 @@ template <typename T, typename Enable = void>
 struct copy_if_else_functor_impl {
   template <typename... Args>
   std::unique_ptr<column> operator()(Args&&...)
-  {
-    CUDF_FAIL("Unsupported type for copy_if_else.");
-  }
+  { CUDF_FAIL("Unsupported type for copy_if_else."); }
 };
 
 /**
@@ -47,16 +45,12 @@ struct get_iterable_device_view {
   template <typename T>
   auto operator()(T const& input, cuda::stream_ref stream)
     requires(std::is_same_v<T, cudf::column_view>)
-  {
-    return cudf::column_device_view::create(input, stream);
-  }
+  { return cudf::column_device_view::create(input, stream); }
 
   template <typename T>
   auto operator()(T const& input, cuda::stream_ref)
     requires(std::is_same_v<T, cudf::scalar>)
-  {
-    return &input;
-  }
+  { return &input; }
 };
 
 template <typename T>
@@ -218,9 +212,7 @@ std::unique_ptr<column> scatter_gather_based_if_else(cudf::column_view const& lh
                                                      Filter is_left,
                                                      cuda::stream_ref stream,
                                                      rmm::device_async_resource_ref mr)
-{
-  return scatter_gather_based_if_else(rhs, lhs, size, logical_not{is_left}, stream, mr);
-}
+{ return scatter_gather_based_if_else(rhs, lhs, size, logical_not{is_left}, stream, mr); }
 
 template <typename Filter>
 std::unique_ptr<column> scatter_gather_based_if_else(cudf::scalar const& lhs,
@@ -245,9 +237,7 @@ struct copy_if_else_functor_impl<struct_view> {
                                      Filter filter,
                                      cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr)
-  {
-    return scatter_gather_based_if_else(lhs, rhs, size, filter, stream, mr);
-  }
+  { return scatter_gather_based_if_else(lhs, rhs, size, filter, stream, mr); }
 };
 
 template <>
@@ -261,9 +251,7 @@ struct copy_if_else_functor_impl<list_view> {
                                      Filter filter,
                                      cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr)
-  {
-    return scatter_gather_based_if_else(lhs, rhs, size, filter, stream, mr);
-  }
+  { return scatter_gather_based_if_else(lhs, rhs, size, filter, stream, mr); }
 };
 
 template <>
@@ -277,9 +265,7 @@ struct copy_if_else_functor_impl<dictionary32> {
                                      Filter filter,
                                      cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr)
-  {
-    return scatter_gather_based_if_else(lhs, rhs, size, filter, stream, mr);
-  }
+  { return scatter_gather_based_if_else(lhs, rhs, size, filter, stream, mr); }
 };
 
 /**

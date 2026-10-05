@@ -49,9 +49,7 @@ CUDF_HOST_DEVICE constexpr duration_s year_start_since_epoch(int32_t year)
  * @return Length of the solar cycle, in seconds
  */
 CUDF_HOST_DEVICE constexpr duration_s solar_cycle_duration()
-{
-  return year_start_since_epoch(1970 + solar_cycle_years);
-}
+{ return year_start_since_epoch(1970 + solar_cycle_years); }
 
 /**
  * @brief Creates a transition table to convert ORC timestamps to UTC.

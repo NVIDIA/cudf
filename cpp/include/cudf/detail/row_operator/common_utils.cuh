@@ -82,17 +82,13 @@ struct strong_index_iterator : public thrust::iterator_facade<strong_index_itera
   __device__ constexpr void advance(Underlying n) { begin += n; }
 
   __device__ constexpr bool equal(strong_index_iterator<Index> const& other) const noexcept
-  {
-    return begin == other.begin;
-  }
+  { return begin == other.begin; }
 
   __device__ constexpr Index dereference() const noexcept { return static_cast<Index>(begin); }
 
   __device__ constexpr Underlying distance_to(
     strong_index_iterator<Index> const& other) const noexcept
-  {
-    return other.begin - begin;
-  }
+  { return other.begin - begin; }
 
   Underlying begin{};
 };
@@ -220,9 +216,7 @@ inline __device__ auto null_compare(bool lhs_is_null, bool rhs_is_null, null_ord
 template <typename Element>
 __device__ weak_ordering relational_compare(Element lhs, Element rhs)
   requires(not cuda::std::is_floating_point_v<Element>)
-{
-  return detail::compare_elements(lhs, rhs);
-}
+{ return detail::compare_elements(lhs, rhs); }
 
 /**
  * @brief A specialization for floating-point `Element` type to check if
@@ -251,8 +245,6 @@ __device__ bool equality_compare(Element lhs, Element rhs)
 template <typename Element>
 __device__ bool equality_compare(Element const lhs, Element const rhs)
   requires(not cuda::std::is_floating_point_v<Element>)
-{
-  return lhs == rhs;
-}
+{ return lhs == rhs; }
 
 }  // namespace cudf::detail

@@ -42,9 +42,7 @@ std::vector<T> split(T const& input,
 std::vector<cudf::column_view> split(cudf::column_view const& input,
                                      std::span<size_type const> splits,
                                      cuda::stream_ref stream)
-{
-  return split(input, input.size(), splits, stream);
-}
+{ return split(input, input.size(), splits, stream); }
 
 std::vector<cudf::table_view> split(cudf::table_view const& input,
                                     std::span<size_type const> splits,
@@ -58,16 +56,12 @@ std::vector<cudf::table_view> split(cudf::table_view const& input,
 std::vector<column_view> split(column_view const& input,
                                std::initializer_list<size_type> splits,
                                cuda::stream_ref stream)
-{
-  return detail::split(input, std::span<size_type const>(splits.begin(), splits.size()), stream);
-}
+{ return detail::split(input, std::span<size_type const>(splits.begin(), splits.size()), stream); }
 
 std::vector<table_view> split(table_view const& input,
                               std::initializer_list<size_type> splits,
                               cuda::stream_ref stream)
-{
-  return detail::split(input, std::span<size_type const>(splits.begin(), splits.size()), stream);
-}
+{ return detail::split(input, std::span<size_type const>(splits.begin(), splits.size()), stream); }
 
 }  // namespace detail
 

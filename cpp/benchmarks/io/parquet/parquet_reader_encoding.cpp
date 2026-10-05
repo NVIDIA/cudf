@@ -164,24 +164,16 @@ void bench_read_encoding(nvbench::state& state,
 }  // namespace
 
 void BM_parquet_read_delta_binary(nvbench::state& state)
-{
-  bench_read_encoding(state, {cudf::type_id::INT32, cudf::type_id::INT64});
-}
+{ bench_read_encoding(state, {cudf::type_id::INT32, cudf::type_id::INT64}); }
 
 void BM_parquet_read_delta_string(nvbench::state& state)
-{
-  bench_read_encoding(state, {cudf::type_id::STRING});
-}
+{ bench_read_encoding(state, {cudf::type_id::STRING}); }
 
 void BM_parquet_read_delta_binary_nullable_page_sizes(nvbench::state& state)
-{
-  bench_read_encoding(state, {cudf::type_id::INT32, cudf::type_id::INT64}, true);
-}
+{ bench_read_encoding(state, {cudf::type_id::INT32, cudf::type_id::INT64}, true); }
 
 void BM_parquet_read_delta_string_nullable_page_sizes(nvbench::state& state)
-{
-  bench_read_encoding(state, {cudf::type_id::STRING}, true);
-}
+{ bench_read_encoding(state, {cudf::type_id::STRING}, true); }
 
 NVBENCH_BENCH(BM_parquet_read_delta_binary)
   .set_name("parquet_read_delta_binary")

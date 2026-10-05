@@ -89,11 +89,8 @@ cuda_stream_pool& current_cuda_stream_pool();
  * @return Reference to the calling thread's stream pool for the current device.
  */
 [[deprecated("Use current_cuda_stream_pool instead.")]]  //
-inline cuda_stream_pool&
-global_cuda_stream_pool()
-{
-  return current_cuda_stream_pool();
-}
+inline cuda_stream_pool& global_cuda_stream_pool()
+{ return current_cuda_stream_pool(); }
 
 /**
  * @brief Acquire a vector of `cuda::stream_ref` objects and synchronize them to an event on

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -365,16 +365,12 @@ struct create_chrono_scalar {
   template <typename ChronoT = T, typename... Args>
   cudf::timestamp_scalar<ChronoT> operator()(Args&&... args) const
     requires(cudf::is_timestamp_t<ChronoT>::type::value)
-  {
-    return cudf::timestamp_scalar<T>(std::forward<Args>(args)...);
-  }
+  { return cudf::timestamp_scalar<T>(std::forward<Args>(args)...); }
 
   template <typename ChronoT = T, typename... Args>
   cudf::duration_scalar<ChronoT> operator()(Args&&... args) const
     requires(cudf::is_duration_t<ChronoT>::type::value)
-  {
-    return cudf::duration_scalar<T>(std::forward<Args>(args)...);
-  }
+  { return cudf::duration_scalar<T>(std::forward<Args>(args)...); }
 };
 
 template <typename T>

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -53,15 +53,11 @@ auto search_bounds(std::unique_ptr<cudf::column> const& t_col,
                    std::vector<cudf::order> const& column_orders        = {cudf::order::ASCENDING},
                    std::vector<cudf::null_order> const& null_precedence = {
                      cudf::null_order::BEFORE})
-{
-  return search_bounds(t_col->view(), values_col, column_orders, null_precedence);
-}
+{ return search_bounds(t_col->view(), values_col, column_orders, null_precedence); }
 
 template <typename... Args>
 auto make_struct_scalar(Args&&... args)
-{
-  return cudf::struct_scalar(std::vector<cudf::column_view>{std::forward<Args>(args)...});
-}
+{ return cudf::struct_scalar(std::vector<cudf::column_view>{std::forward<Args>(args)...}); }
 
 }  // namespace
 

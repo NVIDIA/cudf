@@ -25,9 +25,7 @@ std::unique_ptr<column> stable_sorted_order(table_view const& input,
                                             std::vector<null_order> const& null_precedence,
                                             cuda::stream_ref stream,
                                             rmm::device_async_resource_ref mr)
-{
-  return sorted_order_impl(input, column_order, null_precedence, sort_method::STABLE, stream, mr);
-}
+{ return sorted_order_impl(input, column_order, null_precedence, sort_method::STABLE, stream, mr); }
 
 std::unique_ptr<table> stable_sort(table_view const& input,
                                    std::vector<order> const& column_order,

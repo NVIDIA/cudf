@@ -54,9 +54,7 @@ struct nan_dispatcher {
                                      cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr)
     requires(!std::is_floating_point_v<T>)
-  {
-    CUDF_FAIL("NAN is not supported in a Non-floating point type column");
-  }
+  { CUDF_FAIL("NAN is not supported in a Non-floating point type column"); }
 };
 
 std::unique_ptr<column> is_nan(cudf::column_view const& input,

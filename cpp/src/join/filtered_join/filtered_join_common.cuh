@@ -28,9 +28,7 @@ struct precomputed_hash {
   CUDF_HOST_DEVICE constexpr precomputed_hash(hash_value_type const* hashes) : _hashes{hashes} {}
 
   __device__ __forceinline__ hash_value_type operator()(size_type i) const noexcept
-  {
-    return _hashes[i];
-  }
+  { return _hashes[i]; }
 
  private:
   hash_value_type const* _hashes;
@@ -44,9 +42,7 @@ class filtered_join_row_is_valid {
   filtered_join_row_is_valid(bitmask_type const* row_bitmask) : _row_bitmask{row_bitmask} {}
 
   __device__ bool operator()(size_type const& i) const noexcept
-  {
-    return cudf::bit_is_set(_row_bitmask, i);
-  }
+  { return cudf::bit_is_set(_row_bitmask, i); }
 
  private:
   bitmask_type const* _row_bitmask;

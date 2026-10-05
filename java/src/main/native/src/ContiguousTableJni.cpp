@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -39,9 +39,7 @@ bool cache_contiguous_table_jni(JNIEnv* env)
 }
 
 void release_contiguous_table_jni(JNIEnv* env)
-{
-  Contiguous_table_jclass = cudf::jni::del_global_ref(env, Contiguous_table_jclass);
-}
+{ Contiguous_table_jclass = cudf::jni::del_global_ref(env, Contiguous_table_jclass); }
 
 bool cache_contig_split_group_by_result_jni(JNIEnv* env)
 {
@@ -62,9 +60,7 @@ bool cache_contig_split_group_by_result_jni(JNIEnv* env)
 }
 
 void release_contig_split_group_by_result_jni(JNIEnv* env)
-{
-  Contig_split_group_by_result_jclass = del_global_ref(env, Contig_split_group_by_result_jclass);
-}
+{ Contig_split_group_by_result_jclass = del_global_ref(env, Contig_split_group_by_result_jclass); }
 
 jobject contig_split_group_by_result_from(JNIEnv* env, jobjectArray& groups)
 {

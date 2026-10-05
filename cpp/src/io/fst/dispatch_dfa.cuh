@@ -123,9 +123,7 @@ struct DeviceFSMPolicy {
  */
 template <typename TileState>
 CUDF_KERNEL void initialization_pass_kernel(TileState items_state, uint32_t num_tiles)
-{
-  items_state.InitializeStatus(num_tiles);
-}
+{ items_state.InitializeStatus(num_tiles); }
 
 template <typename DfaT,
           typename SymbolItT,

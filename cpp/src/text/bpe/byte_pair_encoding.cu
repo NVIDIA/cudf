@@ -45,9 +45,7 @@ namespace nvtext {
  * @return The impl object with detailed, internal member data
  */
 bpe_merge_pairs::bpe_merge_pairs_impl const* get_bpe_merge_pairs_impl(bpe_merge_pairs const& bpe)
-{
-  return bpe.impl;
-}
+{ return bpe.impl; }
 
 namespace detail {
 namespace {
@@ -347,11 +345,11 @@ std::unique_ptr<cudf::column> byte_pair_encoding(cudf::strings_column_view const
 
   auto const first_offset  = (input.offset() == 0) ? 0L
                                                    : cudf::strings::detail::get_offset_value(
-                                                      input.offsets(), input.offset(), stream);
+                                                       input.offsets(), input.offset(), stream);
   auto const last_offset   = (input.offset() == 0 && input.size() == input.offsets().size() - 1)
                                ? static_cast<int64_t>(input.chars_size(stream))
                                : cudf::strings::detail::get_offset_value(
-                                 input.offsets(), input.size() + input.offset(), stream);
+                                   input.offsets(), input.size() + input.offset(), stream);
   auto const chars_size    = last_offset - first_offset;
   auto const d_input_chars = input.chars_begin(stream) + first_offset;
 

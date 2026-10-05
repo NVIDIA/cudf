@@ -75,9 +75,7 @@ class alignas(16) reprog_device {
    * @brief Returns the number of regex groups found in the expression.
    */
   [[nodiscard]] CUDF_HOST_DEVICE inline int32_t group_counts() const
-  {
-    return _num_capturing_groups;
-  }
+  { return _num_capturing_groups; }
 
   /**
    * @brief Returns true if this is an empty program.
@@ -88,9 +86,7 @@ class alignas(16) reprog_device {
    * @brief Returns true if the instructions in this program can match an empty string
    */
   [[nodiscard]] CUDF_HOST_DEVICE bool is_empty_match_possible() const
-  {
-    return _empty_match_possible;
-  }
+  { return _empty_match_possible; }
 
   /**
    * @brief Return the size in bytes needed for working memory to

@@ -67,15 +67,11 @@ struct in_place_copy_range_dispatch {
                   cudf::size_type source_end,
                   cudf::size_type target_begin,
                   cuda::stream_ref stream)
-  {
-    in_place_copy_range<T>(source, target, source_begin, source_end, target_begin, stream);
-  }
+  { in_place_copy_range<T>(source, target, source_begin, source_end, target_begin, stream); }
 
   template <typename T, typename... Args>
   void operator()(Args&&...)
-  {
-    CUDF_FAIL("Unsupported type for in-place copy.");
-  }
+  { CUDF_FAIL("Unsupported type for in-place copy."); }
 };
 
 struct out_of_place_copy_range_dispatch {
@@ -108,9 +104,7 @@ struct out_of_place_copy_range_dispatch {
   template <typename T, typename... Args>
   std::enable_if_t<not cudf::is_rep_layout_compatible<T>(), std::unique_ptr<cudf::column>>
   operator()(Args...)
-  {
-    CUDF_FAIL("Unsupported type for out of place copy.", cudf::data_type_error);
-  }
+  { CUDF_FAIL("Unsupported type for out of place copy.", cudf::data_type_error); }
 };
 
 template <>

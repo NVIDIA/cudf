@@ -41,9 +41,7 @@ __device__ cuda::std::expected<A, errc> add_overflow(A a, B b)
 template <floating_point A, floating_point B>
 __device__ cuda::std::expected<A, errc> add_overflow(A a, B b)
   requires(cuda::std::same_as<A, B>)
-{
-  return a + b;
-}
+{ return a + b; }
 
 template <typename A, typename B>
 __device__ cuda::std::expected<numeric::decimal<A>, errc> add_overflow(numeric::decimal<A> a,
@@ -81,9 +79,7 @@ __device__ cuda::std::expected<A, errc> sub_overflow(A a, B b)
 template <floating_point A, floating_point B>
 __device__ cuda::std::expected<A, errc> sub_overflow(A a, B b)
   requires(cuda::std::same_as<A, B>)
-{
-  return a - b;
-}
+{ return a - b; }
 
 template <typename A, typename B>
 __device__ cuda::std::expected<numeric::decimal<A>, errc> sub_overflow(numeric::decimal<A> a,
@@ -121,9 +117,7 @@ __device__ cuda::std::expected<A, errc> mul_overflow(A a, B b)
 template <floating_point A, floating_point B>
 __device__ cuda::std::expected<A, errc> mul_overflow(A a, B b)
   requires(cuda::std::same_as<A, B>)
-{
-  return a * b;
-}
+{ return a * b; }
 
 template <typename A, typename B>
 __device__ cuda::std::expected<numeric::decimal<A>, errc> mul_overflow(numeric::decimal<A> a,
@@ -161,9 +155,7 @@ __device__ cuda::std::expected<A, errc> div_overflow(A a, B b)
 template <floating_point A, floating_point B>
 __device__ cuda::std::expected<A, errc> div_overflow(A a, B b)
   requires(cuda::std::same_as<A, B>)
-{
-  return a / b;
-}
+{ return a / b; }
 
 template <typename A, typename B>
 __device__ cuda::std::expected<numeric::decimal<A>, errc> div_overflow(numeric::decimal<A> a,
@@ -249,15 +241,11 @@ __device__ cuda::std::expected<T, errc> abs_overflow(T a)
 
 template <unsigned_integer T>
 __device__ cuda::std::expected<T, errc> abs_overflow(T a)
-{
-  return a;
-}
+{ return a; }
 
 template <floating_point T>
 __device__ cuda::std::expected<T, errc> abs_overflow(T a)
-{
-  return cuda::std::fabs(a);
-}
+{ return cuda::std::fabs(a); }
 
 template <typename R>
 __device__ cuda::std::expected<numeric::decimal<R>, errc> abs_overflow(numeric::decimal<R> a)
@@ -294,9 +282,7 @@ __device__ cuda::std::expected<T, errc> neg_overflow(T a)
 
 template <floating_point T>
 __device__ cuda::std::expected<T, errc> neg_overflow(T a)
-{
-  return -a;
-}
+{ return -a; }
 
 template <typename R>
 __device__ cuda::std::expected<numeric::decimal<R>, errc> neg_overflow(numeric::decimal<R> a)

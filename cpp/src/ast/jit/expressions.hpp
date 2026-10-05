@@ -59,9 +59,7 @@ struct operation : public ast::expression {
    * @return Span of operands
    */
   [[nodiscard]] std::span<std::reference_wrapper<expression const> const> get_arguments() const
-  {
-    return args_;
-  }
+  { return args_; }
 
   /**
    * @brief Get the target scale for rescale and precision check operations.

@@ -73,9 +73,7 @@ class parser {
   CUDF_HOST_DEVICE inline parser() {}
   CUDF_HOST_DEVICE inline parser(char const* _input, int64_t _input_len)
     : input(_input), input_len(_input_len), pos(_input)
-  {
-    parse_whitespace();
-  }
+  { parse_whitespace(); }
 
   CUDF_HOST_DEVICE inline parser(parser const& p)
     : input(p.input), input_len(p.input_len), pos(p.pos)
@@ -98,9 +96,7 @@ class parser {
   }
 
   CUDF_HOST_DEVICE inline bool is_hex_digit(char c)
-  {
-    return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
-  }
+  { return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F'); }
 
   CUDF_HOST_DEVICE inline int64_t chars_left() { return input_len - ((pos - input) + 1); }
 
@@ -476,9 +472,7 @@ class json_state : private parser {
   }
 
   CUDF_HOST_DEVICE inline bool is_quote(char c)
-  {
-    return (c == '\"') || (options.get_allow_single_quotes() && (c == '\''));
-  }
+  { return (c == '\"') || (options.get_allow_single_quotes() && (c == '\'')); }
 
   char const* cur_el_start{nullptr};  // pointer to the first character of the -value- of the
                                       // current element - not the name

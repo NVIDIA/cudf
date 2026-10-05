@@ -124,16 +124,12 @@ class pinned_pool_with_fallback_memory_resource {
   }
 
   void* allocate_sync(std::size_t bytes, std::size_t alignment = rmm::CUDA_ALLOCATION_ALIGNMENT)
-  {
-    return allocate(cuda::stream_ref{cudaStream_t{cudaStreamDefault}}, bytes, alignment);
-  }
+  { return allocate(cuda::stream_ref{cudaStream_t{cudaStreamDefault}}, bytes, alignment); }
 
   void deallocate_sync(void* ptr,
                        std::size_t bytes,
                        std::size_t alignment = rmm::CUDA_ALLOCATION_ALIGNMENT) noexcept
-  {
-    deallocate(cuda::stream_ref{cudaStream_t{cudaStreamDefault}}, ptr, bytes, alignment);
-  }
+  { deallocate(cuda::stream_ref{cudaStream_t{cudaStreamDefault}}, ptr, bytes, alignment); }
 
   void* allocate(cuda::stream_ref stream,
                  std::size_t bytes,
@@ -186,14 +182,10 @@ class pinned_pool_with_fallback_memory_resource {
   }
 
   bool operator==(pinned_pool_with_fallback_memory_resource const& other) const noexcept
-  {
-    return pool_ == other.pool_;
-  }
+  { return pool_ == other.pool_; }
 
   bool operator!=(pinned_pool_with_fallback_memory_resource const& other) const noexcept
-  {
-    return !(*this == other);
-  }
+  { return !(*this == other); }
 };
 
 static_assert(cuda::mr::resource_with<pinned_pool_with_fallback_memory_resource,
@@ -276,24 +268,18 @@ class new_delete_memory_resource {
   void* allocate([[maybe_unused]] cuda::stream_ref stream,
                  std::size_t bytes,
                  std::size_t alignment = rmm::CUDA_ALLOCATION_ALIGNMENT)
-  {
-    return allocate_sync(bytes, alignment);
-  }
+  { return allocate_sync(bytes, alignment); }
 
   void deallocate_sync(void* ptr,
                        std::size_t bytes,
                        std::size_t alignment = rmm::CUDA_ALLOCATION_ALIGNMENT) noexcept
-  {
-    aligned_host_deallocate(ptr, bytes, alignment);
-  }
+  { aligned_host_deallocate(ptr, bytes, alignment); }
 
   void deallocate([[maybe_unused]] cuda::stream_ref stream,
                   void* ptr,
                   std::size_t bytes,
                   std::size_t alignment = rmm::CUDA_ALLOCATION_ALIGNMENT) noexcept
-  {
-    deallocate_sync(ptr, bytes, alignment);
-  }
+  { deallocate_sync(ptr, bytes, alignment); }
 
   bool operator==(new_delete_memory_resource const& other) const { return true; }
 
@@ -341,9 +327,7 @@ CUDF_EXPORT auto& kernel_pinned_copy_threshold()
 }
 
 void set_kernel_pinned_copy_threshold(size_t threshold)
-{
-  kernel_pinned_copy_threshold() = threshold;
-}
+{ kernel_pinned_copy_threshold() = threshold; }
 
 size_t get_kernel_pinned_copy_threshold() { return kernel_pinned_copy_threshold(); }
 
@@ -356,9 +340,7 @@ CUDF_EXPORT auto& allocate_host_as_pinned_threshold()
 }
 
 void set_allocate_host_as_pinned_threshold(size_t threshold)
-{
-  allocate_host_as_pinned_threshold() = threshold;
-}
+{ allocate_host_as_pinned_threshold() = threshold; }
 
 size_t get_allocate_host_as_pinned_threshold() { return allocate_host_as_pinned_threshold(); }
 

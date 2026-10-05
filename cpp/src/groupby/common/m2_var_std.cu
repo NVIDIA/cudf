@@ -26,17 +26,13 @@ namespace {
 
 template <typename Source>
 constexpr bool is_m2_supported()
-{
-  return is_numeric<Source>() && !is_fixed_point<Source>();
-}
+{ return is_numeric<Source>() && !is_fixed_point<Source>(); }
 
 struct m2_functor {
   template <typename Source, typename... Args>
   void operator()(Args&&...)  //
     requires(!is_m2_supported<Source>())
-  {
-    CUDF_FAIL("Invalid source type for M2 aggregation.");
-  }
+  { CUDF_FAIL("Invalid source type for M2 aggregation."); }
 
   template <typename Target, typename SumSqrType, typename SumType, typename CountType>
   void evaluate(Target* target,

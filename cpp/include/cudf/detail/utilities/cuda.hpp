@@ -60,9 +60,7 @@ cudf::size_type elements_per_thread(Kernel kernel,
  * may be called from threads without a current CUDA context.
  */
 inline void sync_stream(cuda::stream_ref stream)
-{
-  CUDF_CUDA_TRY(cudaStreamSynchronize(stream.get()));
-}
+{ CUDF_CUDA_TRY(cudaStreamSynchronize(stream.get())); }
 
 }  // namespace detail
 }  // namespace CUDF_EXPORT cudf

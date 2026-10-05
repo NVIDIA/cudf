@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -82,9 +82,7 @@ __device__ constexpr uint8_t decode_digit(char c, bool* valid_flag)
 
 // Converts character to lowercase.
 CUDF_HOST_DEVICE constexpr char to_lower(char const c)
-{
-  return c >= 'A' && c <= 'Z' ? c + ('a' - 'A') : c;
-}
+{ return c >= 'A' && c <= 'Z' ? c + ('a' - 'A') : c; }
 
 /**
  * @brief Checks if string is infinity, case insensitive with/without sign
@@ -364,9 +362,7 @@ __inline__ __device__ bool is_whitespace(char ch) { return ch == '\t' || ch == '
  */
 template <typename It>
 __inline__ __device__ It skip_character(It const& it, char ch)
-{
-  return it + (*it == ch);
-}
+{ return it + (*it == ch); }
 
 /**
  * @brief Adjusts the range to ignore starting/trailing whitespace and quotation characters.
@@ -384,9 +380,9 @@ __inline__ __device__ cuda::std::pair<char const*, char const*> trim_whitespaces
 
   auto const trim_begin = thrust::find_if(thrust::seq, begin, end, not_whitespace);
   auto const trim_end   = thrust::find_if(thrust::seq,
-                                        cuda::std::make_reverse_iterator(end),
-                                        cuda::std::make_reverse_iterator(trim_begin),
-                                        not_whitespace);
+                                          cuda::std::make_reverse_iterator(end),
+                                          cuda::std::make_reverse_iterator(trim_begin),
+                                          not_whitespace);
 
   return {skip_character(trim_begin, quotechar), skip_character(trim_end, quotechar).base()};
 }
@@ -406,9 +402,9 @@ __inline__ __device__ cuda::std::pair<char const*, char const*> trim_whitespaces
 
   auto const trim_begin = thrust::find_if(thrust::seq, begin, end, not_whitespace);
   auto const trim_end   = thrust::find_if(thrust::seq,
-                                        cuda::std::make_reverse_iterator(end),
-                                        cuda::std::make_reverse_iterator(trim_begin),
-                                        not_whitespace);
+                                          cuda::std::make_reverse_iterator(end),
+                                          cuda::std::make_reverse_iterator(trim_begin),
+                                          not_whitespace);
 
   return {trim_begin, trim_end.base()};
 }

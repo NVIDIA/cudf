@@ -57,9 +57,7 @@ struct bpe_hasher {
   }
   // used by find
   __device__ hash_value_type operator()(merge_pair_type const& mp) const
-  {
-    return cudf::hashing::detail::hash_combine(hasher(mp.first), hasher(mp.second));
-  }
+  { return cudf::hashing::detail::hash_combine(hasher(mp.first), hasher(mp.second)); }
 };
 
 /**
@@ -118,9 +116,7 @@ struct mp_hasher {
   }
   // used by find
   __device__ hash_value_type operator()(cudf::string_view const& d_str) const
-  {
-    return hasher(d_str);
-  }
+  { return hasher(d_str); }
 };
 
 /**

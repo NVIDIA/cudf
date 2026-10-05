@@ -259,9 +259,9 @@ void reader_impl::allocate_nesting_info()
           nesting_info[cur_depth].max_def_level = actual_cur_schema.max_definition_level;
           pni[cur_depth].size                   = 0;
           pni[cur_depth].type                   = to_type_id(actual_cur_schema,
-                                           _strings_to_categorical,
-                                           _options.timestamp_type.id(),
-                                           _options.decimal_width);
+                                                             _strings_to_categorical,
+                                                             _options.timestamp_type.id(),
+                                                             _options.decimal_width);
           pni[cur_depth].nullable = cur_schema.repetition_type == FieldRepetitionType::OPTIONAL;
         }
 
@@ -902,8 +902,8 @@ void reader_impl::preprocess_subpass_pages(read_mode mode, size_t chunk_read_lim
     auto const& last_page  = subpass.pages[first_page_index + (subpass.column_page_count[idx] - 1)];
     auto const& last_chunk = pass.chunks[last_page.chunk_idx];
     auto max_col_row       = static_cast<size_t>(last_chunk.start_row) +
-                       static_cast<size_t>(last_page.chunk_row) +
-                       static_cast<size_t>(last_page.num_rows);
+                             static_cast<size_t>(last_page.chunk_row) +
+                             static_cast<size_t>(last_page.num_rows);
 
     // special case.  list rows can span page boundaries, but we can't tell if that is happening
     // here because we have not yet decoded the pages. the very last row starting in the page may

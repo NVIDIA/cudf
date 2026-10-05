@@ -169,11 +169,11 @@ streaming::Message semi_join_chunk(std::shared_ptr<streaming::Context> ctx,
 
   cudf::column_view indices = cudf::device_span<cudf::size_type const>(*match);
   auto result_columns       = cudf::gather(left_carrier,
-                                     indices,
-                                     cudf::out_of_bounds_policy::DONT_CHECK,
-                                     chunk_stream,
-                                     ctx->br()->device_mr())
-                          ->release();
+                                           indices,
+                                           cudf::out_of_bounds_policy::DONT_CHECK,
+                                           chunk_stream,
+                                           ctx->br()->device_mr())
+                                ->release();
 
   auto result_table = std::make_unique<cudf::table>(std::move(result_columns));
   // Deallocation of the join indices will happen on chunk_stream, so add stream dep

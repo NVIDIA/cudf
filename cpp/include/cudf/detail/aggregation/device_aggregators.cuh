@@ -27,9 +27,7 @@ struct update_target_element {
                              size_type,
                              column_device_view,
                              size_type) const noexcept
-  {
-    CUDF_UNREACHABLE("Invalid source type and aggregation combination.");
-  }
+  { CUDF_UNREACHABLE("Invalid source type and aggregation combination."); }
 };
 
 template <typename Source>
@@ -174,9 +172,7 @@ struct update_target_from_dictionary {
                              column_device_view source,
                              size_type source_index) const noexcept
     requires(!is_dictionary<Source>())
-  {
-    update_target_element<Source, k>{}(target, target_index, source, source_index);
-  }
+  { update_target_element<Source, k>{}(target, target_index, source, source_index); }
   template <typename Source, aggregation::Kind k>
   __device__ void operator()(mutable_column_device_view,
                              size_type,

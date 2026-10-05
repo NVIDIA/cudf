@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -84,19 +84,13 @@ TEST_F(DatetimeTest, ExtractNanosecondFraction)
 }
 
 TEST_F(DatetimeTest, LastDayOfMonth)
-{
-  cudf::datetime::last_day_of_month(timestamps, cudf::test::get_default_stream());
-}
+{ cudf::datetime::last_day_of_month(timestamps, cudf::test::get_default_stream()); }
 
 TEST_F(DatetimeTest, DayOfYear)
-{
-  cudf::datetime::day_of_year(timestamps, cudf::test::get_default_stream());
-}
+{ cudf::datetime::day_of_year(timestamps, cudf::test::get_default_stream()); }
 
 TEST_F(DatetimeTest, AddCalendricalMonths)
-{
-  cudf::datetime::add_calendrical_months(timestamps, months, cudf::test::get_default_stream());
-}
+{ cudf::datetime::add_calendrical_months(timestamps, months, cudf::test::get_default_stream()); }
 
 TEST_F(DatetimeTest, AddCalendricalMonthsScalar)
 {
@@ -106,19 +100,13 @@ TEST_F(DatetimeTest, AddCalendricalMonthsScalar)
 }
 
 TEST_F(DatetimeTest, IsLeapYear)
-{
-  cudf::datetime::is_leap_year(timestamps, cudf::test::get_default_stream());
-}
+{ cudf::datetime::is_leap_year(timestamps, cudf::test::get_default_stream()); }
 
 TEST_F(DatetimeTest, DaysInMonth)
-{
-  cudf::datetime::days_in_month(timestamps, cudf::test::get_default_stream());
-}
+{ cudf::datetime::days_in_month(timestamps, cudf::test::get_default_stream()); }
 
 TEST_F(DatetimeTest, ExtractQuarter)
-{
-  cudf::datetime::extract_quarter(timestamps, cudf::test::get_default_stream());
-}
+{ cudf::datetime::extract_quarter(timestamps, cudf::test::get_default_stream()); }
 
 TEST_F(DatetimeTest, CeilDatetimes)
 {

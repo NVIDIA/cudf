@@ -344,10 +344,10 @@ __device__ int transform(int32_t* output, cudf::string_view input) {
     cudf::strings_column_view{authority_path_columns[0]->view()}, at, stream, mr);
   auto userinfo_columns = userinfo_table->release();
   auto host_port        = cudf::copy_if_else(userinfo_columns[2]->view(),
-                                      authority_path_columns[0]->view(),
-                                      has_userinfo->view(),
-                                      stream,
-                                      mr);
+                                             authority_path_columns[0]->view(),
+                                             has_userinfo->view(),
+                                             stream,
+                                             mr);
 
   // Bracketed IP literals and regular hosts require different port splitting rules.
   auto is_ip_literal = cudf::strings::starts_with(
@@ -421,15 +421,15 @@ __device__ int transform(int32_t* output, cudf::string_view input) {
     auto range    = url_log_fragments::file_ranges[url_log_fragments::url_component_sizes];
     auto fragment = url_log_fragments::files.subspan(range[0], range[1]);
     sizes         = cudf::transform_lto(fragment,
-                                cudf::lto_binary_type::FATBIN,
-                                cudf::null_aware::NO,
-                                std::nullopt,
-                                inputs,
-                                size_outputs,
+                                        cudf::lto_binary_type::FATBIN,
+                                        cudf::null_aware::NO,
+                                        std::nullopt,
+                                        inputs,
+                                        size_outputs,
                                         {},
-                                std::nullopt,
-                                stream,
-                                mr);
+                                        std::nullopt,
+                                        stream,
+                                        mr);
   } else {
     sizes = cudf::transform(url_component_sizes_udf,
                             cudf::udf_source_type::CUDA,
@@ -538,7 +538,7 @@ try {
                         .header(0)
                         .use_cols_names({"LogLine"})
                         .build();
-  auto input = cudf::io::read_csv(read_options).tbl;
+  auto input        = cudf::io::read_csv(read_options).tbl;
   if (rows != input->num_rows()) {
     input =
       cudf::sample(input->view(), rows, cudf::sample_with_replacement::TRUE, 0, stream, whole_mr);

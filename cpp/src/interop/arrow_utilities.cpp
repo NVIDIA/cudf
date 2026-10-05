@@ -67,9 +67,7 @@ data_type arrow_to_cudf_type(ArrowSchemaView const* arrow_view)
 }
 
 bool is_fixed_size_list(ArrowSchemaView const* arrow_view)
-{
-  return arrow_view->type == NANOARROW_TYPE_FIXED_SIZE_LIST;
-}
+{ return arrow_view->type == NANOARROW_TYPE_FIXED_SIZE_LIST; }
 
 int32_t fixed_size_list_width(ArrowSchemaView const* arrow_view)
 {

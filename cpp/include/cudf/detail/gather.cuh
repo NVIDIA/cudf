@@ -140,9 +140,7 @@ template <typename Element, typename Enable = void>
 struct column_gatherer_impl {
   template <typename... Args>
   std::unique_ptr<column> operator()(Args&&...)
-  {
-    CUDF_FAIL("Unsupported type in gather.");
-  }
+  { CUDF_FAIL("Unsupported type in gather."); }
 };
 
 /**

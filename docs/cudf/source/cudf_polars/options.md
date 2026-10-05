@@ -20,10 +20,10 @@ opts = StreamingOptions(
 with RayEngine.from_options(opts) as engine:
     result = (
         pl.scan_parquet("/data/*.parquet")
-          .filter(pl.col("amount") > 100)
-          .group_by("customer_id")
-          .agg(pl.col("amount").sum())
-          .collect(engine=engine)
+        .filter(pl.col("amount") > 100)
+        .group_by("customer_id")
+        .agg(pl.col("amount").sum())
+        .collect(engine=engine)
     )
 ```
 
@@ -66,10 +66,12 @@ and `{"0", "false", "no", "n"}` as false.
 Unknown keys raise `TypeError` and `None` values leave the field unspecified:
 
 ```python
-opts = StreamingOptions.from_dict({
-    "num_streaming_threads": 8,
-    "fallback_mode": "silent",
-})
+opts = StreamingOptions.from_dict(
+    {
+        "num_streaming_threads": 8,
+        "fallback_mode": "silent",
+    }
+)
 ```
 
 This is convenient when options come from a config file or CLI.

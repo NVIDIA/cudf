@@ -66,7 +66,7 @@ TEST_F(StringsConvertTest, IsIntegerBoundCheckNoNull)
   strings = cudf::test::strings_column_wrapper(
     {"0", "+0", "-0", "1234567890", "-27341132", "+012", "023", "-045"});
   results  = cudf::strings::is_integer(cudf::strings_column_view(strings),
-                                      cudf::data_type{cudf::type_id::INT32});
+                                       cudf::data_type{cudf::type_id::INT32});
   expected = cudf::test::fixed_width_column_wrapper<bool>({1, 1, 1, 1, 1, 1, 1, 1});
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
 }
@@ -109,24 +109,24 @@ TEST_F(StringsConvertTest, IsIntegerBoundCheckSmallNumbers)
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
 
   results  = cudf::strings::is_integer(cudf::strings_column_view(strings),
-                                      cudf::data_type{cudf::type_id::UINT8});
+                                       cudf::data_type{cudf::type_id::UINT8});
   expected = cudf::test::fixed_width_column_wrapper<bool>({0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 0, 0});
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
 
   strings = cudf::test::strings_column_wrapper(
     {"-40000", "-32769", "-32768", "-32767", "-32766", "32765", "32766", "32767", "32768"});
   results  = cudf::strings::is_integer(cudf::strings_column_view(strings),
-                                      cudf::data_type{cudf::type_id::INT16});
+                                       cudf::data_type{cudf::type_id::INT16});
   expected = cudf::test::fixed_width_column_wrapper<bool>({0, 0, 1, 1, 1, 1, 1, 1, 0});
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
 
   results  = cudf::strings::is_integer(cudf::strings_column_view(strings),
-                                      cudf::data_type{cudf::type_id::UINT16});
+                                       cudf::data_type{cudf::type_id::UINT16});
   expected = cudf::test::fixed_width_column_wrapper<bool>({0, 0, 0, 0, 0, 1, 1, 1, 1});
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
 
   results  = cudf::strings::is_integer(cudf::strings_column_view(strings),
-                                      cudf::data_type{cudf::type_id::INT32});
+                                       cudf::data_type{cudf::type_id::INT32});
   expected = cudf::test::fixed_width_column_wrapper<bool>({1, 1, 1, 1, 1, 1, 1, 1, 1});
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
 }
@@ -144,12 +144,12 @@ TEST_F(StringsConvertTest, IsIntegerBoundCheckLargeNumbers)
                                         "4294967295",    // std::numeric_limits<uint32_t>::max()
                                         "4294967296"});  // std::numeric_limits<uint32_t>::max() + 1
   auto results  = cudf::strings::is_integer(cudf::strings_column_view(strings),
-                                           cudf::data_type{cudf::type_id::INT32});
+                                            cudf::data_type{cudf::type_id::INT32});
   auto expected = cudf::test::fixed_width_column_wrapper<bool>({0, 1, 1, 1, 1, 0, 0, 0, 0});
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
 
   results  = cudf::strings::is_integer(cudf::strings_column_view(strings),
-                                      cudf::data_type{cudf::type_id::UINT32});
+                                       cudf::data_type{cudf::type_id::UINT32});
   expected = cudf::test::fixed_width_column_wrapper<bool>({0, 0, 0, 1, 1, 1, 1, 1, 0});
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
 
@@ -164,12 +164,12 @@ TEST_F(StringsConvertTest, IsIntegerBoundCheckLargeNumbers)
      "18446744073709551615",    // std::numeric_limits<uint64_t>::max()
      "18446744073709551616"});  // std::numeric_limits<uint64_t>::max() + 1
   results  = cudf::strings::is_integer(cudf::strings_column_view(strings),
-                                      cudf::data_type{cudf::type_id::INT64});
+                                       cudf::data_type{cudf::type_id::INT64});
   expected = cudf::test::fixed_width_column_wrapper<bool>({0, 1, 1, 1, 1, 0, 0, 0, 0});
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
 
   results  = cudf::strings::is_integer(cudf::strings_column_view(strings),
-                                      cudf::data_type{cudf::type_id::UINT64});
+                                       cudf::data_type{cudf::type_id::UINT64});
   expected = cudf::test::fixed_width_column_wrapper<bool>({0, 0, 0, 1, 1, 1, 1, 1, 0});
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
 }
@@ -194,14 +194,14 @@ TEST_F(StringsConvertTest, ToInteger)
     }));
 
   auto results            = cudf::strings::to_integers(cudf::strings_column_view(strings),
-                                            cudf::data_type{cudf::type_id::INT16});
+                                                       cudf::data_type{cudf::type_id::INT16});
   auto const expected_i16 = cudf::test::fixed_width_column_wrapper<int16_t>(
     std::initializer_list<int16_t>{0, 1234, NULL_VAL, 0, -9832, 93, 765, NULL_VAL, -1, -1, 0, 0},
     cuda::transform_iterator(h_strings.begin(), [](auto str) { return str != nullptr; }));
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected_i16);
 
   results                 = cudf::strings::to_integers(cudf::strings_column_view(strings),
-                                       cudf::data_type{cudf::type_id::INT32});
+                                                       cudf::data_type{cudf::type_id::INT32});
   auto const expected_i32 = cudf::test::fixed_width_column_wrapper<int32_t>(
     std::initializer_list<int32_t>{
       0, 1234, NULL_VAL, 0, -9832, 93, 765, NULL_VAL, -1, 2147483647, -2147483648, -2147483648},
@@ -209,7 +209,7 @@ TEST_F(StringsConvertTest, ToInteger)
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected_i32);
 
   results                 = cudf::strings::to_integers(cudf::strings_column_view(strings),
-                                       cudf::data_type{cudf::type_id::UINT32});
+                                                       cudf::data_type{cudf::type_id::UINT32});
   auto const expected_u32 = cudf::test::fixed_width_column_wrapper<uint32_t>(
     std::initializer_list<uint32_t>{0,
                                     1234,

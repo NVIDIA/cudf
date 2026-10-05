@@ -38,15 +38,11 @@ struct dispatch_set_int_fn {
   __device__ void operator()(mutable_column_device_view& d_results,
                              size_type idx,
                              uint64_t value) const
-  {
-    d_results.element<T>(idx) = static_cast<T>(value);
-  }
+  { d_results.element<T>(idx) = static_cast<T>(value); }
   template <typename T>
     requires(not cudf::is_integral_not_bool<T>())
   __device__ void operator()(mutable_column_device_view&, size_type, uint64_t) const
-  {
-    CUDF_UNREACHABLE("invalid type");
-  }
+  { CUDF_UNREACHABLE("invalid type"); }
 };
 
 struct cast_to_integer_fn {
@@ -86,11 +82,11 @@ std::unique_ptr<column> cast_to_integer(strings_column_view const& input,
                cudf::data_type_error);
 
   auto results   = make_numeric_column(output_type,
-                                     input.size(),
-                                     cudf::detail::copy_bitmask(input.parent(), stream, mr),
-                                     input.null_count(),
-                                     stream,
-                                     mr);
+                                       input.size(),
+                                       cudf::detail::copy_bitmask(input.parent(), stream, mr),
+                                       input.null_count(),
+                                       stream,
+                                       mr);
   auto d_strings = column_device_view::create(input.parent(), stream);
   auto d_results = mutable_column_device_view::create(*results, stream);
 
@@ -122,15 +118,11 @@ struct dispatch_get_int_fn {
   template <typename T>
     requires(cudf::is_integral_not_bool<T>())
   __device__ uint64_t operator()(column_device_view const& d_results, size_type idx) const
-  {
-    return static_cast<uint64_t>(d_results.element<T>(idx));
-  }
+  { return static_cast<uint64_t>(d_results.element<T>(idx)); }
   template <typename T>
     requires(not cudf::is_integral_not_bool<T>())
   __device__ uint64_t operator()(column_device_view const&, size_type) const
-  {
-    CUDF_UNREACHABLE("invalid type");
-  }
+  { CUDF_UNREACHABLE("invalid type"); }
 };
 
 namespace {

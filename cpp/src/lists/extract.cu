@@ -176,17 +176,13 @@ std::unique_ptr<column> extract_list_element(lists_column_view lists_column,
                                              size_type const index,
                                              cuda::stream_ref stream,
                                              rmm::device_async_resource_ref mr)
-{
-  return detail::extract_list_element_impl(lists_column, index, stream, mr);
-}
+{ return detail::extract_list_element_impl(lists_column, index, stream, mr); }
 
 std::unique_ptr<column> extract_list_element(lists_column_view lists_column,
                                              column_view const& indices,
                                              cuda::stream_ref stream,
                                              rmm::device_async_resource_ref mr)
-{
-  return detail::extract_list_element_impl(lists_column, indices, stream, mr);
-}
+{ return detail::extract_list_element_impl(lists_column, indices, stream, mr); }
 
 }  // namespace detail
 

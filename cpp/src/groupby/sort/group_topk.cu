@@ -23,9 +23,7 @@ std::unique_ptr<column> group_top_k(size_type k,
                                     cudf::device_span<size_type const> group_offsets,
                                     cuda::stream_ref stream,
                                     rmm::device_async_resource_ref mr)
-{
-  return cudf::detail::segmented_top_k(values, group_offsets, k, topk_order, stream, mr);
-}
+{ return cudf::detail::segmented_top_k(values, group_offsets, k, topk_order, stream, mr); }
 }  // namespace detail
 }  // namespace groupby
 }  // namespace cudf

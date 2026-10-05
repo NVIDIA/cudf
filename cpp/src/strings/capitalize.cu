@@ -146,8 +146,8 @@ struct base_fn {
       // result is encoded with up to 3 Unicode (16-bit) characters
       auto const result = title_case_chars[cuda::std::distance(title_case_table.begin(), tc_itr)];
       auto const count  = ((result & 0x0FFFF00000000) > 0) + ((result & 0x0000FFFF0000) > 0) +
-                         ((result & 0x00000000FFFF) > 0);
-      size_type bytes = 0;
+                          ((result & 0x00000000FFFF) > 0);
+      size_type bytes   = 0;
       for (auto i = 0; i < count; ++i) {
         auto new_cp = result >> (32 - (i * 16)) & 0x0FFFF;
         bytes += d_buffer
@@ -239,9 +239,7 @@ struct capitalize_fn : base_fn<capitalize_fn> {
   }
 
   __device__ bool capitalize_next(char_utf8 const chr, character_flags_table_type const)
-  {
-    return !d_delimiters.empty() && (d_delimiters.find(chr) != string_view::npos);
-  }
+  { return !d_delimiters.empty() && (d_delimiters.find(chr) != string_view::npos); }
 };
 
 /**
@@ -263,9 +261,7 @@ struct title_fn : base_fn<title_fn> {
   }
 
   __device__ bool capitalize_next(char_utf8 const, character_flags_table_type const flag)
-  {
-    return (flag & sequence_type) == 0;
-  };
+  { return (flag & sequence_type) == 0; };
 };
 
 /**
@@ -352,11 +348,11 @@ std::unique_ptr<column> is_title(strings_column_view const& input,
 {
   if (input.is_empty()) return make_empty_column(type_id::BOOL8);
   auto results  = make_numeric_column(data_type{type_id::BOOL8},
-                                     input.size(),
-                                     cudf::detail::copy_bitmask(input.parent(), stream, mr),
-                                     input.null_count(),
-                                     stream,
-                                     mr);
+                                      input.size(),
+                                      cudf::detail::copy_bitmask(input.parent(), stream, mr),
+                                      input.null_count(),
+                                      stream,
+                                      mr);
   auto d_column = column_device_view::create(input.parent(), stream);
   thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                     cuda::counting_iterator<size_type>{0},

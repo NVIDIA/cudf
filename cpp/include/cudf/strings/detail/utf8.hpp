@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -33,9 +33,7 @@ CUDF_HOST_DEVICE constexpr bool is_utf8_continuation_char(unsigned char chr)
  * @return true if this the first byte of the character
  */
 CUDF_HOST_DEVICE constexpr bool is_begin_utf8_char(unsigned char chr)
-{
-  return not is_utf8_continuation_char(chr);
-}
+{ return not is_utf8_continuation_char(chr); }
 
 /**
  * @brief This will return true if the passed in byte could be the start of

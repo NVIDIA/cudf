@@ -211,9 +211,7 @@ struct partitioning_spec {
    * @return A partitioning_spec with type INHERIT.
    */
   static partitioning_spec inherit()
-  {
-    return {.type = type::INHERIT, .hash = std::nullopt, .order = std::nullopt};
-  }
+  { return {.type = type::INHERIT, .hash = std::nullopt, .order = std::nullopt}; }
 
   /**
    * @brief Create a spec for hash partitioning.
@@ -221,9 +219,7 @@ struct partitioning_spec {
    * @return A partitioning_spec with type HASH.
    */
   static partitioning_spec from_hash(hash_scheme h)
-  {
-    return {.type = type::HASH, .hash = std::move(h), .order = std::nullopt};
-  }
+  { return {.type = type::HASH, .hash = std::move(h), .order = std::nullopt}; }
 
   /**
    * @brief Create a spec for order/range partitioning.

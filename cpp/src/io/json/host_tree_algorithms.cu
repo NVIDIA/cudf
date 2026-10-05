@@ -109,14 +109,14 @@ std::vector<std::string> copy_strings_to_host_sync(
   options_view.keepquotes = true;
   auto d_offset_length_it = cuda::make_zip_iterator(string_offsets.begin(), string_lengths.begin());
   auto d_column_names     = parse_data(input.data(),
-                                   d_offset_length_it,
-                                   num_strings,
-                                   data_type{type_id::STRING},
-                                   cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
-                                   0,
-                                   options_view,
-                                   stream,
-                                   cudf::get_current_device_resource_ref());
+                                       d_offset_length_it,
+                                       num_strings,
+                                       data_type{type_id::STRING},
+                                       cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
+                                       0,
+                                       options_view,
+                                       stream,
+                                       cudf::get_current_device_resource_ref());
   auto to_host            = [stream](auto const& col) {
     if (col.is_empty()) return std::vector<std::string>{};
     auto const scv     = cudf::strings_column_view(col);
@@ -418,16 +418,16 @@ void make_device_json_column(device_span<SymbolT const> input,
     return std::vector<uint8_t>();
   }();
   auto build_result                = build_tree(root,
-                                 is_str_column_all_nulls,
-                                 d_column_tree,
-                                 d_unique_col_ids,
-                                 d_max_row_offsets,
-                                 column_names,
-                                 row_array_parent_col_id,
-                                 is_array_of_arrays,
-                                 options,
-                                 stream,
-                                 mr);
+                                                is_str_column_all_nulls,
+                                                d_column_tree,
+                                                d_unique_col_ids,
+                                                d_max_row_offsets,
+                                                column_names,
+                                                row_array_parent_col_id,
+                                                is_array_of_arrays,
+                                                options,
+                                                stream,
+                                                mr);
   auto const& ignore_vals          = build_result.ignore_vals;
   auto const& is_mixed_pruned      = build_result.is_mixed_pruned;
   auto const& is_schema_mismatched = build_result.is_schema_mismatched;
@@ -1074,7 +1074,7 @@ void scatter_offsets(tree_meta_t const& tree,
       [col_ids         = col_ids.begin(),
        parent_node_ids = tree.parent_node_ids.begin()] __device__(size_type node_id) {
         return parent_node_ids[node_id] == parent_node_sentinel ? parent_node_sentinel
-                                                                  : col_ids[parent_node_ids[node_id]];
+                                                                : col_ids[parent_node_ids[node_id]];
       }));
   auto const list_children_end = cudf::detail::copy_if(
     cuda::make_zip_iterator(cuda::counting_iterator<size_type>{0}, parent_col_id),

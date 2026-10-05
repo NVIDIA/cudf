@@ -18,9 +18,7 @@ namespace cudf {
 namespace detail {
 template <typename T>
 CUDF_HOST_DEVICE constexpr bool is_product_supported()
-{
-  return is_numeric<T>();
-}
+{ return is_numeric<T>(); }
 
 /**
  * @brief Maps an `aggregation::Kind` value to its corresponding binary operator
@@ -106,9 +104,7 @@ using corresponding_operator_t = typename corresponding_operator<k>::type;
 
 template <aggregation::Kind k>
 constexpr bool has_corresponding_operator()
-{
-  return !cuda::std::is_same_v<typename corresponding_operator<k>::type, void>;
-}
+{ return !cuda::std::is_same_v<typename corresponding_operator<k>::type, void>; }
 
 /**
  * @brief Checks if the given type and aggregation kind combination is supported

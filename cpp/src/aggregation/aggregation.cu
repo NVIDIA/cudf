@@ -78,9 +78,7 @@ struct identity_initializer {
   template <typename T, aggregation::Kind k>
   void operator()(mutable_column_view const& col, cuda::stream_ref stream)
     requires(not is_supported<T, k>())
-  {
-    CUDF_FAIL("Unsupported aggregation for initializing values");
-  }
+  { CUDF_FAIL("Unsupported aggregation for initializing values"); }
 };
 }  // namespace
 

@@ -50,9 +50,7 @@ class insert_order_event {
   /// Makes `stream` wait for the most recently recorded insertion.  No-op before the first
   /// `record()`, which is exactly the behavior the first call needs.
   void wait(cuda::stream_ref stream) const
-  {
-    CUDF_CUDA_TRY(cudaStreamWaitEvent(stream.get(), _event));
-  }
+  { CUDF_CUDA_TRY(cudaStreamWaitEvent(stream.get(), _event)); }
 
   /// Records completion of the insertion just enqueued on `stream`.
   void record(cuda::stream_ref stream) { CUDF_CUDA_TRY(cudaEventRecord(_event, stream.get())); }
@@ -91,9 +89,7 @@ struct first_batch_comparator {
   size_type max_distinct_keys;
 
   __device__ bool operator()(size_type lhs, size_type rhs) const noexcept
-  {
-    return batch_self_eq(lhs - max_distinct_keys, rhs - max_distinct_keys);
-  }
+  { return batch_self_eq(lhs - max_distinct_keys, rhs - max_distinct_keys); }
 };
 
 /*
@@ -178,9 +174,7 @@ struct is_new_key_fn {
   size_type max_distinct_keys;
 
   __device__ bool operator()(size_type row_idx) const noexcept
-  {
-    return target_indices[row_idx] == max_distinct_keys + row_idx;
-  }
+  { return target_indices[row_idx] == max_distinct_keys + row_idx; }
 };
 
 /*
@@ -210,9 +204,7 @@ struct offset_cache_hasher {
   hash_value_type const* cache;
   size_type offset;
   __device__ hash_value_type operator()(size_type idx) const noexcept
-  {
-    return cache[idx - offset];
-  }
+  { return cache[idx - offset]; }
 };
 
 /*

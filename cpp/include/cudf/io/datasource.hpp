@@ -73,9 +73,7 @@ class datasource {
      * @return A host_span view of the buffer's data
      */
     operator cudf::host_span<uint8_t const>() const
-    {
-      return cudf::host_span<uint8_t const>{data(), size()};
-    }
+    { return cudf::host_span<uint8_t const>{data(), size()}; }
 
     /**
      * @brief Factory to construct a datasource buffer object from a container.
@@ -86,9 +84,7 @@ class datasource {
      */
     template <typename Container>
     static std::unique_ptr<buffer> create(Container&& data_owner)
-    {
-      return std::make_unique<owning_buffer<Container>>(std::forward<Container>(data_owner));
-    }
+    { return std::make_unique<owning_buffer<Container>>(std::forward<Container>(data_owner)); }
   };
 
   /**
@@ -232,9 +228,7 @@ class datasource {
    * @return whether the device read is expected to be more performant for the given size
    */
   [[nodiscard]] virtual bool is_device_read_preferred(size_t size) const
-  {
-    return supports_device_read();
-  }
+  { return supports_device_read(); }
 
   /**
    * @brief Returns a device buffer with a subset of data from the source.
@@ -255,9 +249,7 @@ class datasource {
   virtual std::unique_ptr<datasource::buffer> device_read(size_t offset,
                                                           size_t size,
                                                           cuda::stream_ref stream)
-  {
-    CUDF_FAIL("datasource classes that support device_read must override it.");
-  }
+  { CUDF_FAIL("datasource classes that support device_read must override it."); }
 
   /**
    * @brief Reads a selected range into a preallocated device buffer
@@ -277,9 +269,7 @@ class datasource {
    * @return The number of bytes read (can be smaller than size)
    */
   virtual size_t device_read(size_t offset, size_t size, uint8_t* dst, cuda::stream_ref stream)
-  {
-    CUDF_FAIL("datasource classes that support device_read must override it.");
-  }
+  { CUDF_FAIL("datasource classes that support device_read must override it."); }
 
   /**
    * @brief Asynchronously reads a selected range into a preallocated device buffer
@@ -308,9 +298,7 @@ class datasource {
                                                 size_t size,
                                                 uint8_t* dst,
                                                 cuda::stream_ref stream)
-  {
-    CUDF_FAIL("datasource classes that support device_read_async must override it.");
-  }
+  { CUDF_FAIL("datasource classes that support device_read_async must override it."); }
 
   /**
    * @brief Returns the size of the data in the source.
@@ -413,9 +401,7 @@ class datasource {
      * @return Pointer to the data in the buffer
      */
     [[nodiscard]] uint8_t const* data() const override
-    {
-      return static_cast<uint8_t const*>(_data_ptr);
-    }
+    { return static_cast<uint8_t const*>(_data_ptr); }
 
    private:
     Container _data;

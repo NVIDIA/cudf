@@ -269,9 +269,7 @@ OutputType transform_reduce(InputIterator begin,
  */
 template <typename TransformOp, typename InputIterator>
 bool all_of(InputIterator begin, InputIterator end, TransformOp op, cuda::stream_ref stream)
-{
-  return transform_reduce(begin, end, op, true, cuda::std::logical_and<bool>{}, stream);
-}
+{ return transform_reduce(begin, end, op, true, cuda::std::logical_and<bool>{}, stream); }
 
 /**
  * @brief Check if a predicate is true for any element in a device-accessible range
@@ -290,9 +288,7 @@ bool all_of(InputIterator begin, InputIterator end, TransformOp op, cuda::stream
  */
 template <typename TransformOp, typename InputIterator>
 bool any_of(InputIterator begin, InputIterator end, TransformOp op, cuda::stream_ref stream)
-{
-  return transform_reduce(begin, end, op, false, cuda::std::logical_or<bool>{}, stream);
-}
+{ return transform_reduce(begin, end, op, false, cuda::std::logical_or<bool>{}, stream); }
 
 /**
  * @brief Check if a predicate is false for all elements in a device-accessible range
@@ -311,9 +307,7 @@ bool any_of(InputIterator begin, InputIterator end, TransformOp op, cuda::stream
  */
 template <typename TransformOp, typename InputIterator>
 bool none_of(InputIterator begin, InputIterator end, TransformOp op, cuda::stream_ref stream)
-{
-  return not any_of(begin, end, op, stream);
-}
+{ return not any_of(begin, end, op, stream); }
 
 /**
  * @brief Helper to count elements satisfying a predicate using CUB with pinned memory

@@ -39,9 +39,7 @@ inline mask_state should_allocate_mask(mask_allocation_policy mask_alloc, bool m
 template <typename T>
 struct scalar_empty_like_functor_impl {
   std::unique_ptr<column> operator()(scalar const& input)
-  {
-    return cudf::make_empty_column(input.type());
-  }
+  { return cudf::make_empty_column(input.type()); }
 };
 
 template <>
@@ -82,9 +80,7 @@ struct scalar_empty_like_functor_impl<cudf::struct_view> {
 template <>
 struct scalar_empty_like_functor_impl<cudf::dictionary32> {
   std::unique_ptr<column> operator()(scalar const& input)
-  {
-    CUDF_FAIL("Dictionary scalars not supported");
-  }
+  { CUDF_FAIL("Dictionary scalars not supported"); }
 };
 
 struct scalar_empty_like_functor {

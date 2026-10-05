@@ -66,9 +66,7 @@ struct replace_nans_functor {
   template <typename T, typename... Args>
   std::unique_ptr<column> operator()(Args&&...)
     requires(!std::is_floating_point_v<T>)
-  {
-    CUDF_FAIL("NAN is not supported in a Non-floating point type column");
-  }
+  { CUDF_FAIL("NAN is not supported in a Non-floating point type column"); }
 };
 
 }  // namespace
@@ -158,9 +156,7 @@ struct normalize_nans_and_zeros_kernel_forwarder {
   template <typename T, typename... Args>
   void operator()(Args&&...)
     requires(not std::is_floating_point_v<T>)
-  {
-    CUDF_FAIL("Unexpected non floating-point type.");
-  }
+  { CUDF_FAIL("Unexpected non floating-point type."); }
 };
 
 }  // end anonymous namespace

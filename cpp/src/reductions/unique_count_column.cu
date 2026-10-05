@@ -33,15 +33,11 @@ struct check_nan {
   template <typename T>
   __device__ inline bool operator()(column_device_view const& input, size_type index)
     requires(cuda::std::is_floating_point_v<T>)
-  {
-    return cuda::std::isnan(input.data<T>()[index]);
-  }
+  { return cuda::std::isnan(input.data<T>()[index]); }
   template <typename T>
   __device__ inline bool operator()(column_device_view const&, size_type)
     requires(not cuda::std::is_floating_point_v<T>)
-  {
-    return false;
-  }
+  { return false; }
 };
 }  // namespace
 
@@ -75,7 +71,7 @@ cudf::size_type unique_count(column_view const& input,
     [count_nulls, nan_is_null, should_check_nan, device_view, comp] __device__(cudf::size_type i) {
       auto const is_null = device_view.is_null(i);
       auto const is_nan  = nan_is_null and should_check_nan and
-                          cudf::type_dispatcher(device_view.type(), check_nan{}, device_view, i);
+                           cudf::type_dispatcher(device_view.type(), check_nan{}, device_view, i);
       if (not count_nulls and (is_null or (nan_is_null and is_nan))) { return false; }
       if (i == 0) { return true; }
       if (count_nulls and nan_is_null and (is_nan or is_null)) {

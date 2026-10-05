@@ -110,9 +110,7 @@ struct dispatch_to_arrow_host {
   template <typename T,
             CUDF_ENABLE_IF(!is_rep_layout_compatible<T>() && !cudf::is_fixed_point<T>())>
   int operator()(ArrowArray*) const
-  {
-    CUDF_FAIL("Unsupported type for to_arrow_host", cudf::data_type_error);
-  }
+  { CUDF_FAIL("Unsupported type for to_arrow_host", cudf::data_type_error); }
 
   template <typename T, CUDF_ENABLE_IF(is_rep_layout_compatible<T>() || is_fixed_point<T>())>
   int operator()(ArrowArray* out) const

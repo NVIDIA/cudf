@@ -202,9 +202,7 @@ struct character_normalizer::character_normalizer_impl {
   rmm::device_uvector<cudf::string_view> special_tokens_view;
 
   cudf::device_span<cudf::string_view const> get_special_tokens() const
-  {
-    return special_tokens_view;
-  }
+  { return special_tokens_view; }
 
   character_normalizer_impl(rmm::device_uvector<uint32_t>&& cp_metadata,
                             rmm::device_uvector<aux_codepoint_data_type>&& aux_table,

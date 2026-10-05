@@ -105,9 +105,7 @@ struct [[nodiscard]] expression {
    * @return `true` if the expression may evaluate to null, otherwise false
    */
   [[nodiscard]] bool may_evaluate_null(table_view const& left, cuda::stream_ref stream) const
-  {
-    return may_evaluate_null(left, left, stream);
-  }
+  { return may_evaluate_null(left, left, stream); }
 
   /**
    * @brief Returns true if the expression may evaluate to null.
@@ -335,9 +333,7 @@ class literal : public expression {
    * @return true if the literal is backed by a scalar column view
    */
   [[nodiscard]] bool is_scalar_column_view() const noexcept
-  {
-    return std::holds_alternative<scalar_column_view>(scalar);
-  }
+  { return std::holds_alternative<scalar_column_view>(scalar); }
 
   /**
    * @brief Get the value object.
@@ -345,9 +341,7 @@ class literal : public expression {
    * @return The device scalar object
    */
   [[nodiscard]] generic_scalar_device_view get_value() const
-  {
-    return std::get<ast_scalar>(scalar).value;
-  }
+  { return std::get<ast_scalar>(scalar).value; }
 
   /**
    * @brief Get the scalar.
@@ -355,9 +349,7 @@ class literal : public expression {
    * @return The scalar object
    */
   [[nodiscard]] cudf::scalar const& get_scalar() const
-  {
-    return std::get<ast_scalar>(scalar).scalar.get();
-  }
+  { return std::get<ast_scalar>(scalar).scalar.get(); }
 
   /**
    * @brief Get scalar column view.
@@ -365,9 +357,7 @@ class literal : public expression {
    * @return The scalar column view object
    */
   [[nodiscard]] scalar_column_view const& get_scalar_column_view() const
-  {
-    return std::get<scalar_column_view>(scalar);
-  }
+  { return std::get<scalar_column_view>(scalar); }
 
   /**
    * @copydoc expression::accept
@@ -389,9 +379,7 @@ class literal : public expression {
   [[nodiscard]] bool may_evaluate_null(table_view const& left,
                                        table_view const& right,
                                        cuda::stream_ref stream) const override
-  {
-    return !is_valid(stream);
-  }
+  { return !is_valid(stream); }
 
   /**
    * @brief Check if the underlying scalar is valid.
@@ -539,9 +527,7 @@ class operation : public expression {
    * @return Vector of operands
    */
   [[nodiscard]] std::vector<std::reference_wrapper<expression const>> const& get_operands() const
-  {
-    return operands;
-  }
+  { return operands; }
 
   /**
    * @copydoc expression::accept
@@ -650,9 +636,7 @@ class column_name_reference : public expression {
   [[nodiscard]] bool may_evaluate_null(table_view const& left,
                                        table_view const& right,
                                        cuda::stream_ref stream) const override
-  {
-    return true;
-  }
+  { return true; }
 
   /**
    * @copydoc expression::accept
@@ -713,9 +697,7 @@ class tree {
    */
   template <typename Expr>
   decltype(auto) push(Expr expr)
-  {
-    return emplace<Expr>(std::move(expr));
-  }
+  { return emplace<Expr>(std::move(expr)); }
 
   /**
    * @brief get the first expression in the tree

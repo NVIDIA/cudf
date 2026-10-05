@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -49,9 +49,7 @@ struct tdigest_gen_grouped {
   std::unique_ptr<cudf::column> operator()(cudf::column_view const& keys,
                                            cudf::column_view const& values,
                                            int delta)
-  {
-    CUDF_FAIL("Invalid tdigest test type");
-  }
+  { CUDF_FAIL("Invalid tdigest test type"); }
 };
 
 /**
@@ -419,19 +417,13 @@ void tdigest_simple_large_input_decimal_aggregation(Func op)
 }
 
 TEST_F(TDigestTest, LargeInputDouble)
-{
-  tdigest_simple_large_input_double_aggregation(tdigest_groupby_simple_op{});
-}
+{ tdigest_simple_large_input_double_aggregation(tdigest_groupby_simple_op{}); }
 
 TEST_F(TDigestTest, LargeInputInt)
-{
-  tdigest_simple_large_input_int_aggregation(tdigest_groupby_simple_op{});
-}
+{ tdigest_simple_large_input_int_aggregation(tdigest_groupby_simple_op{}); }
 
 TEST_F(TDigestTest, LargeInputDecimal)
-{
-  tdigest_simple_large_input_decimal_aggregation(tdigest_groupby_simple_op{});
-}
+{ tdigest_simple_large_input_decimal_aggregation(tdigest_groupby_simple_op{}); }
 
 struct TDigestMergeTest : public cudf::test::BaseFixture {};
 
@@ -631,9 +623,7 @@ TEST_F(TDigestMergeTest, Grouped)
 }
 
 TEST_F(TDigestMergeTest, Empty)
-{
-  cudf::test::tdigest_merge_empty(tdigest_groupby_simple_merge_op{});
-}
+{ cudf::test::tdigest_merge_empty(tdigest_groupby_simple_merge_op{}); }
 
 TEST_F(TDigestMergeTest, EmptyGroups)
 {

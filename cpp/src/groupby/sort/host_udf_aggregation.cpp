@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -12,9 +12,7 @@ namespace detail {
 
 host_udf_aggregation::host_udf_aggregation(std::unique_ptr<host_udf_base> udf_ptr_)
   : aggregation{HOST_UDF}, udf_ptr{std::move(udf_ptr_)}
-{
-  CUDF_EXPECTS(udf_ptr != nullptr, "Invalid host_udf_base instance.");
-}
+{ CUDF_EXPECTS(udf_ptr != nullptr, "Invalid host_udf_base instance."); }
 
 host_udf_aggregation::~host_udf_aggregation() = default;
 
@@ -26,22 +24,16 @@ bool host_udf_aggregation::is_equal(aggregation const& _other) const
 }
 
 size_t host_udf_aggregation::do_hash() const
-{
-  return this->aggregation::do_hash() ^ udf_ptr->do_hash();
-}
+{ return this->aggregation::do_hash() ^ udf_ptr->do_hash(); }
 
 std::unique_ptr<aggregation> host_udf_aggregation::clone() const
-{
-  return std::make_unique<host_udf_aggregation>(udf_ptr->clone());
-}
+{ return std::make_unique<host_udf_aggregation>(udf_ptr->clone()); }
 
 }  // namespace detail
 
 template <typename Base>
 std::unique_ptr<Base> make_host_udf_aggregation(std::unique_ptr<host_udf_base> udf_ptr_)
-{
-  return std::make_unique<detail::host_udf_aggregation>(std::move(udf_ptr_));
-}
+{ return std::make_unique<detail::host_udf_aggregation>(std::move(udf_ptr_)); }
 template CUDF_EXPORT std::unique_ptr<aggregation> make_host_udf_aggregation<aggregation>(
   std::unique_ptr<host_udf_base>);
 template CUDF_EXPORT std::unique_ptr<groupby_aggregation>

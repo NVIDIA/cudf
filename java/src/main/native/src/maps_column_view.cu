@@ -51,10 +51,10 @@ std::unique_ptr<column> get_values_for_impl(maps_column_view const& maps_view,
   CUDF_EXPECTS(lookup_keys.type().id() == keys_.child().type().id(),
                "Lookup keys must have the same type as the keys of the map column.");
   auto key_indices              = cudf::lists::index_of(keys_,
-                                           lookup_keys,
-                                           lists::duplicate_find_option::FIND_LAST,
-                                           stream,
-                                           cudf::get_current_device_resource_ref());
+                                                        lookup_keys,
+                                                        lists::duplicate_find_option::FIND_LAST,
+                                                        stream,
+                                                        cudf::get_current_device_resource_ref());
   auto constexpr absent_offset  = size_type{-1};
   auto constexpr nullity_offset = std::numeric_limits<size_type>::min();
   thrust::replace(rmm::exec_policy_nosync(stream),
@@ -78,9 +78,7 @@ std::unique_ptr<column> maps_column_view::get_values_for(column_view const& look
 std::unique_ptr<column> maps_column_view::get_values_for(cudf::scalar const& lookup_key,
                                                          cuda::stream_ref stream,
                                                          rmm::device_async_resource_ref mr) const
-{
-  return get_values_for_impl(*this, lookup_key, stream, mr);
-}
+{ return get_values_for_impl(*this, lookup_key, stream, mr); }
 
 template <typename KeyT>
 std::unique_ptr<column> contains_impl(maps_column_view const& maps_view,
@@ -111,8 +109,6 @@ std::unique_ptr<column> maps_column_view::contains(column_view const& lookup_key
 std::unique_ptr<column> maps_column_view::contains(cudf::scalar const& lookup_key,
                                                    cuda::stream_ref stream,
                                                    rmm::device_async_resource_ref mr) const
-{
-  return contains_impl(*this, lookup_key, stream, mr);
-}
+{ return contains_impl(*this, lookup_key, stream, mr); }
 
 }  // namespace cudf::jni

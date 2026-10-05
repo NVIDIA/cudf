@@ -80,9 +80,7 @@ std::unique_ptr<cudf::column> column_from_scalar_dispatch::operator()<cudf::stri
 template <>
 std::unique_ptr<cudf::column> column_from_scalar_dispatch::operator()<cudf::dictionary32>(
   scalar const&, size_type, cuda::stream_ref, rmm::device_async_resource_ref) const
-{
-  CUDF_FAIL("dictionary not supported when creating from scalar");
-}
+{ CUDF_FAIL("dictionary not supported when creating from scalar"); }
 
 template <>
 std::unique_ptr<cudf::column> column_from_scalar_dispatch::operator()<cudf::list_view>(
@@ -125,8 +123,6 @@ std::unique_ptr<column> make_column_from_scalar(scalar const& s,
                                                 size_type size,
                                                 cuda::stream_ref stream,
                                                 rmm::device_async_resource_ref mr)
-{
-  return type_dispatcher(s.type(), column_from_scalar_dispatch{}, s, size, stream, mr);
-}
+{ return type_dispatcher(s.type(), column_from_scalar_dispatch{}, s, size, stream, mr); }
 
 }  // namespace cudf

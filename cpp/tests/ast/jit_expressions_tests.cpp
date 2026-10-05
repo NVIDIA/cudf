@@ -630,9 +630,7 @@ struct cast_test<cudf::test::Types<To...>, cudf::test::Types<From...>> {
 
 template <typename ToTypes, typename FromTypes>
 void test_casts()
-{
-  cast_test<ToTypes, FromTypes>::run();
-}
+{ cast_test<ToTypes, FromTypes>::run(); }
 
 using standard_cast_sources = cudf::test::Types<uint8_t,
                                                 uint16_t,

@@ -171,10 +171,10 @@ __device__ void is_even(cuda::std::optional<bool>* out, cuda::std::optional<int3
   )***";
 
   auto null_result   = transform_and_apply_retention_mask(std::span{inputs},
-                                                        null_cuda,
-                                                        cudf::table_view{{a}},
-                                                        cudf::udf_source_type::CUDA,
-                                                        cudf::null_aware::YES);
+                                                          null_cuda,
+                                                          cudf::table_view{{a}},
+                                                          cudf::udf_source_type::CUDA,
+                                                          cudf::null_aware::YES);
   auto null_expected = cudf::test::fixed_width_column_wrapper<int32_t>{{2, 4, 6}, {1, 1, 1}};
 
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(null_expected, null_result[0]->view());

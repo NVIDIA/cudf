@@ -66,14 +66,10 @@ struct replace_multi_parallel_fn {
   __device__ char const* get_base_ptr() const { return d_strings.head<char>(); }
 
   __device__ string_view const get_string(size_type idx) const
-  {
-    return d_strings.element<string_view>(idx);
-  }
+  { return d_strings.element<string_view>(idx); }
 
   __device__ string_view const get_replacement_string(size_type idx) const
-  {
-    return d_replacements.size() == 1 ? d_replacements[0] : d_replacements[idx];
-  }
+  { return d_replacements.size() == 1 ? d_replacements[0] : d_replacements[idx]; }
 
   __device__ bool is_valid(size_type idx) const { return d_strings.is_valid(idx); }
 
@@ -291,9 +287,7 @@ CUDF_KERNEL void count_targets(replace_multi_parallel_fn fn, int64_t chars_bytes
  */
 struct pair_generator {
   __device__ target_pair operator()(int64_t idx) const
-  {
-    return cuda::std::make_tuple(idx, fn.target_index(idx, chars_bytes));
-  }
+  { return cuda::std::make_tuple(idx, fn.target_index(idx, chars_bytes)); }
   replace_multi_parallel_fn fn;
   int64_t chars_bytes;
 };

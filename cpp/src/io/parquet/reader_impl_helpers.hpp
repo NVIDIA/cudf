@@ -117,9 +117,7 @@ struct column_chunk_info {
    * @return `true` if this column chunk has a dictionary page.
    */
   [[nodiscard]] constexpr bool has_dictionary() const
-  {
-    return dictionary_offset.has_value() && dictionary_size.has_value();
-  }
+  { return dictionary_offset.has_value() && dictionary_size.has_value(); }
 };
 
 /**
@@ -548,9 +546,7 @@ class aggregate_reader_metadata {
    * @return Parquet file metadatas
    */
   [[nodiscard]] std::vector<FileMetaData> get_parquet_metadatas() const
-  {
-    return std::vector<FileMetaData>{per_file_metadata.begin(), per_file_metadata.end()};
-  }
+  { return std::vector<FileMetaData>{per_file_metadata.begin(), per_file_metadata.end()}; }
 
   /**
    * @brief Extracts the schema_idx'th column chunk metadata from row_group_index'th row group of
@@ -675,9 +671,7 @@ class aggregate_reader_metadata {
    * @return True if the field is nullable in a source other than the zeroth one
    */
   [[nodiscard]] bool is_nullable_across_sources(int schema_idx) const
-  {
-    return nullable_across_sources.contains(schema_idx);
-  }
+  { return nullable_across_sources.contains(schema_idx); }
 
   /**
    * @brief Extracts the schema_idx'th SchemaElement from the pfm_idx'th file

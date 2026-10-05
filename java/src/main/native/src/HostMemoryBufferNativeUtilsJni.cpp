@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -17,9 +17,7 @@ extern "C" {
 
 JNIEXPORT jobject JNICALL Java_ai_rapids_cudf_HostMemoryBufferNativeUtils_wrapRangeInBuffer(
   JNIEnv* env, jclass, jlong addr, jlong len)
-{
-  return env->NewDirectByteBuffer(reinterpret_cast<void*>(addr), len);
-}
+{ return env->NewDirectByteBuffer(reinterpret_cast<void*>(addr), len); }
 
 JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_HostMemoryBufferNativeUtils_mmap(
   JNIEnv* env, jclass, jstring jpath, jint mode, jlong offset, jlong length)

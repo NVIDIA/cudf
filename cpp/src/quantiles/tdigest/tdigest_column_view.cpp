@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -53,14 +53,10 @@ column_view tdigest_column_view::weights() const
 }
 
 double const* tdigest_column_view::min_begin() const
-{
-  return child(min_column_index).begin<double>();
-}
+{ return child(min_column_index).begin<double>(); }
 
 double const* tdigest_column_view::max_begin() const
-{
-  return child(max_column_index).begin<double>();
-}
+{ return child(max_column_index).begin<double>(); }
 
 }  // namespace tdigest
 }  // namespace cudf

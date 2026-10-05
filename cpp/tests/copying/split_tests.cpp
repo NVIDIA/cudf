@@ -2411,7 +2411,7 @@ TEST_F(ContiguousSplitTableCornerCases, NestedEmpty)
   {
     auto empty_string = cudf::make_empty_column(cudf::data_type{cudf::type_id::STRING});
     auto offsets      = cudf::test::fixed_width_column_wrapper<int>({0, 0});
-    auto list         = cudf::make_lists_column(1,
+    auto list = cudf::make_lists_column(1,
                                         offsets.release(),
                                         std::move(empty_string),
                                         0,
@@ -2434,7 +2434,7 @@ TEST_F(ContiguousSplitTableCornerCases, NestedEmpty)
     cudf::test::strings_column_wrapper str{"abc"};
     auto empty_string = cudf::empty_like(str);
     auto offsets      = cudf::test::fixed_width_column_wrapper<int>({0, 0});
-    auto list         = cudf::make_lists_column(1,
+    auto list = cudf::make_lists_column(1,
                                         offsets.release(),
                                         std::move(empty_string),
                                         0,
@@ -2457,7 +2457,7 @@ TEST_F(ContiguousSplitTableCornerCases, NestedEmpty)
     cudf::test::lists_column_wrapper<float> listw{{1.0f, 2.0f}, {3.0f, 4.0f}};
     auto empty_list = cudf::empty_like(listw);
     auto offsets    = cudf::test::fixed_width_column_wrapper<int>({0, 0});
-    auto list       = cudf::make_lists_column(1,
+    auto list = cudf::make_lists_column(1,
                                         offsets.release(),
                                         std::move(empty_list),
                                         0,
@@ -2480,7 +2480,7 @@ TEST_F(ContiguousSplitTableCornerCases, NestedEmpty)
     cudf::test::lists_column_wrapper<float> listw{{1.0f, 2.0f}, {3.0f, 4.0f}};
     auto empty_list = cudf::empty_like(listw);
     auto offsets    = cudf::test::fixed_width_column_wrapper<int>({0, 0});
-    auto list       = cudf::make_lists_column(1,
+    auto list = cudf::make_lists_column(1,
                                         offsets.release(),
                                         std::move(empty_list),
                                         0,
@@ -2505,7 +2505,7 @@ TEST_F(ContiguousSplitTableCornerCases, NestedEmpty)
     auto struct_column = cudf::test::structs_column_wrapper({ints, floats});
     auto empty_struct  = cudf::empty_like(struct_column);
     auto offsets       = cudf::test::fixed_width_column_wrapper<int>({0, 0});
-    auto list          = cudf::make_lists_column(1,
+    auto list = cudf::make_lists_column(1,
                                         offsets.release(),
                                         std::move(empty_struct),
                                         0,

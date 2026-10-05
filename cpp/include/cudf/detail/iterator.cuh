@@ -105,9 +105,7 @@ struct null_replaced_value_accessor {
   }
 
   __device__ inline Element const operator()(cudf::size_type i) const
-  {
-    return has_nulls && col.is_null_nocheck(i) ? null_replacement : col.element<Element>(i);
-  }
+  { return has_nulls && col.is_null_nocheck(i) ? null_replacement : col.element<Element>(i); }
 };
 
 /**
@@ -235,9 +233,7 @@ auto make_null_replacement_iterator(column_device_view const& column,
  */
 template <typename Element, typename Nullate>
 auto make_optional_iterator(column_device_view const& column, Nullate has_nulls)
-{
-  return column.optional_begin<Element, Nullate>(has_nulls);
-}
+{ return column.optional_begin<Element, Nullate>(has_nulls); }
 
 /**
  * @brief Constructs a pair iterator over a column's values and its validity.
@@ -262,9 +258,7 @@ auto make_optional_iterator(column_device_view const& column, Nullate has_nulls)
  */
 template <typename Element, bool has_nulls = false>
 auto make_pair_iterator(column_device_view const& column)
-{
-  return column.pair_begin<Element, has_nulls>();
-}
+{ return column.pair_begin<Element, has_nulls>(); }
 
 /**
  * @brief Constructs a pair rep iterator over a column's representative values and its validity.
@@ -291,9 +285,7 @@ auto make_pair_iterator(column_device_view const& column)
  */
 template <typename Element, bool has_nulls = false>
 auto make_pair_rep_iterator(column_device_view const& column)
-{
-  return column.pair_rep_begin<Element, has_nulls>();
-}
+{ return column.pair_rep_begin<Element, has_nulls>(); }
 
 /**
  * @brief Constructs an iterator over a column's validities.
@@ -312,9 +304,7 @@ auto make_pair_rep_iterator(column_device_view const& column)
  */
 template <bool safe = false>
 CUDF_HOST_DEVICE auto inline make_validity_iterator(column_device_view const& column)
-{
-  return make_counting_transform_iterator(cudf::size_type{0}, validity_accessor<safe>{column});
-}
+{ return make_counting_transform_iterator(cudf::size_type{0}, validity_accessor<safe>{column}); }
 
 /**
  * @brief Constructs a constant device iterator over a scalar's validity.
@@ -330,9 +320,7 @@ CUDF_HOST_DEVICE auto inline make_validity_iterator(column_device_view const& co
  */
 template <bool safe = false>
 auto inline make_validity_iterator(scalar const& scalar_value)
-{
-  return cuda::make_constant_iterator(scalar_value.is_valid());
-}
+{ return cuda::make_constant_iterator(scalar_value.is_valid()); }
 
 /**
  * @brief value accessor for scalar with valid data.
@@ -452,9 +440,7 @@ struct scalar_pair_accessor : public scalar_value_accessor<Element> {
   scalar_pair_accessor(scalar const& scalar_value) : scalar_value_accessor<Element>(scalar_value) {}
 
   __device__ inline value_type const operator()(size_type) const
-  {
-    return {Element(super_t::dscalar.value()), super_t::dscalar.is_valid()};
-  }
+  { return {Element(super_t::dscalar.value()), super_t::dscalar.is_valid()}; }
 };
 
 /**
@@ -490,24 +476,18 @@ struct scalar_representation_pair_accessor : public scalar_value_accessor<Elemen
   scalar_representation_pair_accessor(scalar const& scalar_value) : base(scalar_value) {}
 
   __device__ inline value_type const operator()(size_type) const
-  {
-    return {get_rep(base::dscalar), base::dscalar.is_valid()};
-  }
+  { return {get_rep(base::dscalar), base::dscalar.is_valid()}; }
 
  private:
   template <typename DeviceScalar>
   __device__ inline rep_type get_rep(DeviceScalar const& dscalar) const
     requires(!has_rep_member<DeviceScalar>::value)
-  {
-    return dscalar.value();
-  }
+  { return dscalar.value(); }
 
   template <typename DeviceScalar>
   __device__ inline rep_type get_rep(DeviceScalar const& dscalar) const
     requires(has_rep_member<DeviceScalar>::value)
-  {
-    return dscalar.rep();
-  }
+  { return dscalar.rep(); }
 };
 
 /**

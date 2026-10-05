@@ -91,14 +91,10 @@ struct GroupedRollingRangeOrderByNumericTest : public BaseGroupedRollingRangeOrd
   static auto constexpr nan = std::numeric_limits<T>::quiet_NaN();
 
   [[nodiscard]] auto make_range_bounds(T const& value) const
-  {
-    return cudf::range_window_bounds::get(*cudf::make_fixed_width_scalar(value));
-  }
+  { return cudf::range_window_bounds::get(*cudf::make_fixed_width_scalar(value)); }
 
   [[nodiscard]] auto make_unbounded_range_bounds() const
-  {
-    return cudf::range_window_bounds::unbounded(cudf::data_type{cudf::type_to_id<T>()});
-  }
+  { return cudf::range_window_bounds::unbounded(cudf::data_type{cudf::type_to_id<T>()}); }
 
   /// Generate order-by column with values: [0, 100,   200,   300,   ... 1100,   1200,   1300]
   [[nodiscard]] column_ptr generate_order_by_column() const
@@ -388,14 +384,10 @@ struct GroupedRollingRangeOrderByDecimalTypedTest
 
   [[nodiscard]] auto make_fixed_point_range_bounds(typename DecimalT::rep value,
                                                    numeric::scale_type scale) const
-  {
-    return cudf::range_window_bounds::get(*cudf::make_fixed_point_scalar<DecimalT>(value, scale));
-  }
+  { return cudf::range_window_bounds::get(*cudf::make_fixed_point_scalar<DecimalT>(value, scale)); }
 
   [[nodiscard]] auto make_unbounded_fixed_point_range_bounds() const
-  {
-    return cudf::range_window_bounds::unbounded(cudf::data_type{cudf::type_to_id<DecimalT>()});
-  }
+  { return cudf::range_window_bounds::unbounded(cudf::data_type{cudf::type_to_id<DecimalT>()}); }
 
   /// For different scales, generate order_by column with
   /// the same effective values:           [0, 100,   200,   300,   ... 1100,   1200,   1300]
@@ -620,9 +612,7 @@ struct GroupedRollingRangeOrderByStringTest : public cudf::test::BaseFixture {
   cudf::range_window_bounds const current_row = cudf::range_window_bounds::current_row(string_type);
 
   [[nodiscard]] static auto nullable_ints_column(std::initializer_list<int> const& ints)
-  {
-    return ints_column{ints, cudf::test::iterators::no_nulls()};
-  }
+  { return ints_column{ints, cudf::test::iterators::no_nulls()}; }
 
   [[nodiscard]] auto get_count_over_partitioned_window(
     cudf::column_view const& order_by,

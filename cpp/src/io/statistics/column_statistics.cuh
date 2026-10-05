@@ -70,9 +70,7 @@ struct calculate_group_statistics_functor {
 
   template <typename T>
   __device__ T get_element(stats_state_s const& s, uint32_t row)
-  {
-    return cudf::io::get_element<T>(*s.col.leaf_column, row);
-  }
+  { return cudf::io::get_element<T>(*s.col.leaf_column, row); }
 
   /**
    * @brief Iterates through the rows specified by statistics group and stores the combined
@@ -128,9 +126,7 @@ struct calculate_group_statistics_functor {
   __device__ void operator()(stats_state_s& s, uint32_t t)
     requires(detail::statistics_type_category<T, IO>::include_extrema and
              IO == detail::io_file_format::PARQUET and std::is_same_v<T, list_view>)
-  {
-    operator()<statistics::byte_array_view>(s, t);
-  }
+  { operator()<statistics::byte_array_view>(s, t); }
 
   template <typename T>
   __device__ void operator()(stats_state_s& s, uint32_t t)
@@ -218,9 +214,7 @@ struct merge_group_statistics_functor {
                              uint32_t t)
     requires(detail::statistics_type_category<T, IO>::include_extrema and
              IO == detail::io_file_format::PARQUET and std::is_same_v<T, list_view>)
-  {
-    operator()<statistics::byte_array_view>(s, chunks, num_chunks, t);
-  }
+  { operator()<statistics::byte_array_view>(s, chunks, num_chunks, t); }
 
   template <typename T>
   __device__ void operator()(merge_state_s& s,

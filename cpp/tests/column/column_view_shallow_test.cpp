@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -50,9 +50,7 @@ std::unique_ptr<cudf::column> example_column()
 template <typename T>
 std::unique_ptr<cudf::column> example_column()
   requires(std::is_same_v<T, cudf::list_view>)
-{
-  return cudf::test::lists_column_wrapper<int>({{1, 2, 3}, {4, 5}, {}, {6, 7, 8}}).release();
-}
+{ return cudf::test::lists_column_wrapper<int>({{1, 2, 3}, {4, 5}, {}, {6, 7, 8}}).release(); }
 
 template <typename T>
 std::unique_ptr<cudf::column> example_column()

@@ -360,11 +360,11 @@ std::unique_ptr<cudf::table> generate_lineitem_partial(cudf::table_view const& o
     auto const multiplier =
       generate_repeat_sequence_column<int8_t>(2, false, l_num_rows, stream, mr);
     auto const ternary_mask   = cudf::binary_operation(binary_mask->view(),
-                                                     multiplier->view(),
-                                                     cudf::binary_operator::MUL,
-                                                     cudf::data_type{cudf::type_id::INT8},
-                                                     stream,
-                                                     mr);
+                                                       multiplier->view(),
+                                                       cudf::binary_operator::MUL,
+                                                       cudf::data_type{cudf::type_id::INT8},
+                                                       stream,
+                                                       mr);
     auto const indices        = cudf::test::fixed_width_column_wrapper<int8_t>({0, 1, 2}).release();
     auto const keys           = cudf::test::strings_column_wrapper({"N", "A", "R"}).release();
     auto const gather_map     = cudf::table_view({indices->view(), keys->view()});

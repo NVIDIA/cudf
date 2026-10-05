@@ -52,9 +52,7 @@ class file_sink : public data_sink {
   [[nodiscard]] bool supports_device_write() const override { return true; }
 
   [[nodiscard]] bool is_device_write_preferred(size_t size) const override
-  {
-    return supports_device_write();
-  }
+  { return supports_device_write(); }
 
   std::future<void> device_write_async(void const* gpu_data,
                                        size_t size,
@@ -72,9 +70,7 @@ class file_sink : public data_sink {
   }
 
   void device_write(void const* gpu_data, size_t size, cuda::stream_ref stream) override
-  {
-    return device_write_async(gpu_data, size, stream).get();
-  }
+  { return device_write_async(gpu_data, size, stream).get(); }
 
  private:
   size_t _bytes_written = 0;
@@ -102,9 +98,7 @@ class host_buffer_sink : public data_sink {
   [[nodiscard]] bool is_device_write_preferred(size_t size) const override { return true; }
 
   void device_write(void const* gpu_data, size_t size, cuda::stream_ref stream) override
-  {
-    device_write_async(gpu_data, size, stream).get();
-  }
+  { device_write_async(gpu_data, size, stream).get(); }
 
   std::future<void> device_write_async(void const* gpu_data,
                                        size_t size,
@@ -147,9 +141,7 @@ class void_sink : public data_sink {
   [[nodiscard]] bool is_device_write_preferred(size_t size) const override { return true; }
 
   void device_write(void const* gpu_data, size_t size, cuda::stream_ref stream) override
-  {
-    _bytes_written += size;
-  }
+  { _bytes_written += size; }
 
   std::future<void> device_write_async(void const* gpu_data,
                                        size_t size,
@@ -176,9 +168,7 @@ class user_sink_wrapper : public data_sink {
   void host_write(void const* data, size_t size) override { user_sink->host_write(data, size); }
 
   [[nodiscard]] bool supports_device_write() const override
-  {
-    return user_sink->supports_device_write();
-  }
+  { return user_sink->supports_device_write(); }
 
   void device_write(void const* gpu_data, size_t size, cuda::stream_ref stream) override
   {
@@ -197,9 +187,7 @@ class user_sink_wrapper : public data_sink {
   }
 
   [[nodiscard]] bool is_device_write_preferred(size_t size) const override
-  {
-    return user_sink->is_device_write_preferred(size);
-  }
+  { return user_sink->is_device_write_preferred(size); }
 
   void flush() override { user_sink->flush(); }
 
@@ -210,21 +198,15 @@ class user_sink_wrapper : public data_sink {
 };
 
 std::unique_ptr<data_sink> data_sink::create(std::string const& filepath)
-{
-  return std::make_unique<file_sink>(filepath);
-}
+{ return std::make_unique<file_sink>(filepath); }
 
 std::unique_ptr<data_sink> data_sink::create(std::vector<char>* buffer)
-{
-  return std::make_unique<host_buffer_sink>(buffer);
-}
+{ return std::make_unique<host_buffer_sink>(buffer); }
 
 std::unique_ptr<data_sink> data_sink::create() { return std::make_unique<void_sink>(); }
 
 std::unique_ptr<data_sink> data_sink::create(cudf::io::data_sink* const user_sink)
-{
-  return std::make_unique<user_sink_wrapper>(user_sink);
-}
+{ return std::make_unique<user_sink_wrapper>(user_sink); }
 
 }  // namespace io
 }  // namespace cudf

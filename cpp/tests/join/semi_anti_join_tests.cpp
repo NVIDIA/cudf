@@ -44,9 +44,7 @@ struct SemiAntiJoinTest : public cudf::test::BaseFixture,
 
 namespace {
 [[nodiscard]] bool use_mark_join(join_implementation implementation)
-{
-  return implementation != join_implementation::FILTERED_JOIN;
-}
+{ return implementation != join_implementation::FILTERED_JOIN; }
 
 [[nodiscard]] cudf::join_prefilter prefilter_mode(join_implementation implementation)
 {
@@ -184,11 +182,11 @@ TEST_P(SemiAntiJoinTest, SemiJoinWithStructsAndNulls)
   auto tables = get_saj_tables({true, true, false, true, false}, {true, false, false, true, true});
 
   auto result            = left_semi_join(*tables.first,
-                               *tables.second,
+                                          *tables.second,
                                           {0, 1, 3},
                                           {0, 1, 3},
-                               cudf::null_equality::EQUAL,
-                               implementation);
+                                          cudf::null_equality::EQUAL,
+                                          implementation);
   auto result_sort_order = cudf::sorted_order(result->view());
   auto sorted_result     = cudf::gather(result->view(), *result_sort_order);
 
@@ -221,11 +219,11 @@ TEST_P(SemiAntiJoinTest, SemiJoinWithStructsAndNullsNotEqual)
   auto tables = get_saj_tables({true, true, false, true, true}, {true, true, false, true, true});
 
   auto result            = left_semi_join(*tables.first,
-                               *tables.second,
+                                          *tables.second,
                                           {0, 1, 3},
                                           {0, 1, 3},
-                               cudf::null_equality::UNEQUAL,
-                               implementation);
+                                          cudf::null_equality::UNEQUAL,
+                                          implementation);
   auto result_sort_order = cudf::sorted_order(result->view());
   auto sorted_result     = cudf::gather(result->view(), *result_sort_order);
 
@@ -259,11 +257,11 @@ TEST_P(SemiAntiJoinTest, AntiJoinWithStructsAndNulls)
   auto tables = get_saj_tables({true, true, false, true, false}, {true, false, false, true, true});
 
   auto result            = left_anti_join(*tables.first,
-                               *tables.second,
+                                          *tables.second,
                                           {0, 1, 3},
                                           {0, 1, 3},
-                               cudf::null_equality::EQUAL,
-                               implementation);
+                                          cudf::null_equality::EQUAL,
+                                          implementation);
   auto result_sort_order = cudf::sorted_order(result->view());
   auto sorted_result     = cudf::gather(result->view(), *result_sort_order);
 
@@ -297,11 +295,11 @@ TEST_P(SemiAntiJoinTest, AntiJoinWithStructsAndNullsNotEqual)
   auto tables = get_saj_tables({true, true, false, true, true}, {true, true, false, true, true});
 
   auto result            = left_anti_join(*tables.first,
-                               *tables.second,
+                                          *tables.second,
                                           {0, 1, 3},
                                           {0, 1, 3},
-                               cudf::null_equality::UNEQUAL,
-                               implementation);
+                                          cudf::null_equality::UNEQUAL,
+                                          implementation);
   auto result_sort_order = cudf::sorted_order(result->view());
   auto sorted_result     = cudf::gather(result->view(), *result_sort_order);
 

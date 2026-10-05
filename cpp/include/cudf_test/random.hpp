@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -140,9 +140,7 @@ class UniformRandomGenerator {
    */
   template <typename TL = T, std::enable_if_t<!cudf::is_timestamp<TL>()>* = nullptr>
   T generate()
-  {
-    return T{dist(rng)};
-  }
+  { return T{dist(rng)}; }
 
   /**
    * @brief Returns the next random number.
@@ -150,9 +148,7 @@ class UniformRandomGenerator {
    */
   template <typename TL = T, std::enable_if_t<cudf::is_timestamp<TL>()>* = nullptr>
   T generate()
-  {
-    return T{typename T::duration{dist(rng)}};
-  }
+  { return T{typename T::duration{dist(rng)}}; }
 
  private:
   uniform_distribution dist{};  ///< Distribution

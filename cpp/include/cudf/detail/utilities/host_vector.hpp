@@ -159,9 +159,7 @@ class rmm_host_allocator {
    *        the objects stored at \p p.
    */
   inline void deallocate(pointer p, size_type cnt) noexcept
-  {
-    mr.deallocate(stream, p, cnt * sizeof(value_type), alignof(value_type));
-  }
+  { mr.deallocate(stream, p, cnt * sizeof(value_type), alignof(value_type)); }
 
   /**
    * @brief This method returns the maximum size of the \c cnt parameter
@@ -171,9 +169,7 @@ class rmm_host_allocator {
    *          by a single call to \p allocate().
    */
   [[nodiscard]] constexpr inline size_type max_size() const
-  {
-    return (std::numeric_limits<size_type>::max)() / sizeof(T);
-  }
+  { return (std::numeric_limits<size_type>::max)() / sizeof(T); }
 
   /**
    * @brief This method tests this \p rmm_host_allocator for equality to
@@ -183,9 +179,7 @@ class rmm_host_allocator {
    *  @return This method always returns \c true.
    */
   inline bool operator==(rmm_host_allocator const& x) const
-  {
-    return x.mr == mr && x.stream == stream;
-  }
+  { return x.mr == mr && x.stream == stream; }
 
   /**
    * @brief This method tests this \p rmm_host_allocator for inequality
@@ -223,19 +217,13 @@ class host_vector : public thrust::host_vector<T, rmm_host_allocator<T>> {
   }
 
   [[nodiscard]] operator host_span<T>()
-  {
-    return host_span<T>{base::data(), base::size(), base::get_allocator().is_device_accessible()};
-  }
+  { return host_span<T>{base::data(), base::size(), base::get_allocator().is_device_accessible()}; }
 
   [[nodiscard]] operator std::span<T const>() const noexcept
-  {
-    return std::span<T const>(base::data(), base::size());
-  }
+  { return std::span<T const>(base::data(), base::size()); }
 
   [[nodiscard]] operator std::span<T>() noexcept
-  {
-    return std::span<T>(base::data(), base::size());
-  }
+  { return std::span<T>(base::data(), base::size()); }
 };
 
 }  // namespace detail

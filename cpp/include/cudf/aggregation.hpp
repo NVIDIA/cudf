@@ -128,9 +128,7 @@ class aggregation {
    * requirements.
    */
   aggregation() : kind{Kind::INVALID}
-  {
-    CUDF_FAIL("No-parameter aggregation constructor should never be called");
-  }
+  { CUDF_FAIL("No-parameter aggregation constructor should never be called"); }
 
   /**
    * @brief Construct a new aggregation object from a given aggregation kind.

@@ -181,9 +181,7 @@ class table {
    * specified by the elements of `column_indices`
    */
   [[nodiscard]] table_view select(std::vector<cudf::size_type> const& column_indices) const
-  {
-    return select(column_indices.begin(), column_indices.end());
-  };
+  { return select(column_indices.begin(), column_indices.end()); };
 
   /**
    * @brief Returns a reference to the specified column

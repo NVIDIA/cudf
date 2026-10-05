@@ -134,13 +134,9 @@ packed_table read_cudftable(datasource* source,
 
 cudftable_writer_options_builder cudftable_writer_options::builder(sink_info const& sink,
                                                                    table_view const& table)
-{
-  return cudftable_writer_options_builder(sink, table);
-}
+{ return cudftable_writer_options_builder(sink, table); }
 
 cudftable_reader_options_builder cudftable_reader_options::builder(source_info src)
-{
-  return cudftable_reader_options_builder(std::move(src));
-}
+{ return cudftable_reader_options_builder(std::move(src)); }
 
 }  // namespace cudf::io::experimental

@@ -266,9 +266,7 @@ struct build_comp_table_fn {
 
 struct is_zero_comp_key_fn {
   __device__ bool operator()(cuda::std::tuple<uint64_t, uint32_t> const& kv) const
-  {
-    return cuda::std::get<0>(kv) == uint64_t{0};
-  }
+  { return cuda::std::get<0>(kv) == uint64_t{0}; }
 };
 
 }  // namespace
@@ -461,18 +459,12 @@ constexpr uint32_t PACKED_CCC_SHIFT    = 21u;
 constexpr uint32_t PACKED_CONSUMED_BIT = 1u << 29;  // bit 29
 
 __device__ __forceinline__ uint32_t pack_cp_ccc(uint32_t cp, uint8_t ccc)
-{
-  return (static_cast<uint32_t>(ccc) << PACKED_CCC_SHIFT) | (cp & PACKED_CP_MASK);
-}
+{ return (static_cast<uint32_t>(ccc) << PACKED_CCC_SHIFT) | (cp & PACKED_CP_MASK); }
 __device__ __forceinline__ uint32_t cp_of(uint32_t packed) { return packed & PACKED_CP_MASK; }
 __device__ __forceinline__ uint8_t ccc_of(uint32_t packed)
-{
-  return static_cast<uint8_t>((packed >> PACKED_CCC_SHIFT) & 0xFFu);
-}
+{ return static_cast<uint8_t>((packed >> PACKED_CCC_SHIFT) & 0xFFu); }
 __device__ __forceinline__ bool is_consumed(uint32_t packed)
-{
-  return (packed & PACKED_CONSUMED_BIT) != 0u;
-}
+{ return (packed & PACKED_CONSUMED_BIT) != 0u; }
 
 /**
  * Transitively decompose a single Unicode codepoint and invoke `fn` with the result.

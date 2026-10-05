@@ -86,9 +86,7 @@ class murmur_device_row_hasher {
                                           size_type,
                                           Nullate const,
                                           hash_value_type const) const noexcept
-    {
-      CUDF_UNREACHABLE("Unsupported type for MurmurHash3_x64_128");
-    }
+    { CUDF_UNREACHABLE("Unsupported type for MurmurHash3_x64_128"); }
   };
 
   Nullate const _check_nulls;

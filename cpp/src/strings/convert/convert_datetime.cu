@@ -77,13 +77,9 @@ struct alignas(4) format_item {
   int8_t length;               // item length in bytes
 
   static format_item new_specifier(char format_char, int8_t length)
-  {
-    return format_item{format_char_type::specifier, format_char, length};
-  }
+  { return format_item{format_char_type::specifier, format_char, length}; }
   static format_item new_literal(char literal)
-  {
-    return format_item{format_char_type::literal, literal, 1};
-  }
+  { return format_item{format_char_type::literal, literal, 1}; }
 };
 
 /**
@@ -412,9 +408,7 @@ struct dispatch_to_timestamps_fn {
                   mutable_column_view&,
                   cuda::stream_ref) const
     requires(not cudf::is_timestamp<T>())
-  {
-    CUDF_FAIL("Only timestamps type are expected", std::invalid_argument);
-  }
+  { CUDF_FAIL("Only timestamps type are expected", std::invalid_argument); }
 };
 
 }  // namespace
@@ -672,11 +666,11 @@ std::unique_ptr<cudf::column> is_timestamp(strings_column_view const& input,
   auto d_strings = column_device_view::create(input.parent(), stream);
 
   auto results   = make_numeric_column(data_type{type_id::BOOL8},
-                                     strings_count,
-                                     cudf::detail::copy_bitmask(input.parent(), stream, mr),
-                                     input.null_count(),
-                                     stream,
-                                     mr);
+                                       strings_count,
+                                       cudf::detail::copy_bitmask(input.parent(), stream, mr),
+                                       input.null_count(),
+                                       stream,
+                                       mr);
   auto d_results = results->mutable_view().data<bool>();
 
   format_compiler compiler(format, stream);
@@ -756,9 +750,7 @@ struct datetime_formatter_fn {
    * @endcode
    */
   __device__ int32_t modulo_time(int64_t time, int64_t base) const
-  {
-    return static_cast<int32_t>(((time % base) + base) % base);
-  };
+  { return static_cast<int32_t>(((time % base) + base) % base); };
 
   /**
    * @brief This function handles converting units by dividing and adjusting for negative values.
@@ -774,9 +766,7 @@ struct datetime_formatter_fn {
    * @endcode
    */
   __device__ int64_t scale_time(int64_t time, int64_t base) const
-  {
-    return (time - ((time < 0) * (base - 1L))) / base;
-  };
+  { return (time - ((time < 0) * (base - 1L))) / base; };
 
   __device__ time_components get_time_components(int64_t tstamp) const
   {
@@ -1107,9 +1097,7 @@ struct dispatch_from_timestamps_fn {
   template <typename T, typename... Args>
   strings_children operator()(Args&&...) const
     requires(not cudf::is_timestamp<T>())
-  {
-    CUDF_FAIL("Only timestamps type are expected", std::invalid_argument);
-  }
+  { CUDF_FAIL("Only timestamps type are expected", std::invalid_argument); }
 };
 
 }  // namespace

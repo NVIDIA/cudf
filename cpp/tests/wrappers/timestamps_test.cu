@@ -202,9 +202,9 @@ TYPED_TEST(ChronoColumnTest, ChronoFactoryNullMaskAsParm)
 {
   auto null_mask = create_null_mask(this->size(), cudf::mask_state::ALL_NULL);
   auto column    = make_fixed_width_column(cudf::data_type{cudf::type_to_id<TypeParam>()},
-                                        this->size(),
-                                        std::move(null_mask),
-                                        this->size());
+                                           this->size(),
+                                           std::move(null_mask),
+                                           this->size());
   EXPECT_EQ(column->type(), cudf::data_type{cudf::type_to_id<TypeParam>()});
   EXPECT_EQ(column->size(), this->size());
   EXPECT_EQ(this->size(), column->null_count());

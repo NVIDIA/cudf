@@ -54,9 +54,7 @@ std::array<char const*, 6> const utf8_prefixes{
 // Map a dictionary value to a UTF-8 string. Distinct values map to distinct
 // strings via the numeric suffix.
 std::string make_value_string(int value)
-{
-  return std::string{utf8_prefixes[value % utf8_prefixes.size()]} + "_" + std::to_string(value);
-}
+{ return std::string{utf8_prefixes[value % utf8_prefixes.size()]} + "_" + std::to_string(value); }
 
 cudf::test::strings_column_wrapper make_low_cardinality_strings(unsigned int col_seed = seed)
 {
@@ -355,10 +353,10 @@ TEST_F(ParquetReaderDictTest, FilterWithOutputDictColumns)
   auto const expected  = cudf::apply_retention_mask(input_tbl, predicate->view());
   ASSERT_LT(expected->num_rows(), num_rows) << "filter must remove some rows to be meaningful";
 
-  auto const read_opts = cudf::io::parquet_reader_options::builder(cudf::io::source_info{filepath})
-                           .output_dict_columns(true)
-                           .filter(filter_expr)
-                           .build();
+  auto const read_opts  = cudf::io::parquet_reader_options::builder(cudf::io::source_info{filepath})
+                            .output_dict_columns(true)
+                            .filter(filter_expr)
+                            .build();
   auto const read_table = cudf::io::read_parquet(read_opts).tbl;
   ASSERT_EQ(read_table->num_columns(), 2);
   ASSERT_EQ(read_table->num_rows(), expected->num_rows());
@@ -411,11 +409,11 @@ TEST_F(ParquetReaderDictTest, SkipRowsNumRowsDictTranscode)
   cudf::size_type const skip = row_group_size + 25;
   cudf::size_type const rows = 2 * row_group_size + 40;
 
-  auto const read_opts = cudf::io::parquet_reader_options::builder(cudf::io::source_info{filepath})
-                           .output_dict_columns(true)
-                           .skip_rows(skip)
-                           .num_rows(rows)
-                           .build();
+  auto const read_opts  = cudf::io::parquet_reader_options::builder(cudf::io::source_info{filepath})
+                            .output_dict_columns(true)
+                            .skip_rows(skip)
+                            .num_rows(rows)
+                            .build();
   auto const read_table = cudf::io::read_parquet(read_opts).tbl;
   ASSERT_EQ(read_table->num_columns(), 1);
   ASSERT_EQ(read_table->num_rows(), rows);

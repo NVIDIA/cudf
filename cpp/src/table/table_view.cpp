@@ -76,15 +76,11 @@ template class table_view_base<mutable_column_view>;
 
 // Returns a table_view with set of specified columns
 table_view table_view::select(std::vector<size_type> const& column_indices) const
-{
-  return select(column_indices.begin(), column_indices.end());
-}
+{ return select(column_indices.begin(), column_indices.end()); }
 
 // Convert mutable view to immutable view
 mutable_table_view::operator table_view()
-{
-  return table_view{std::vector<column_view>{begin(), end()}, num_rows()};
-}
+{ return table_view{std::vector<column_view>{begin(), end()}, num_rows()}; }
 
 table_view::table_view(std::vector<table_view> const& views)
   : table_view{detail::concatenate_column_views(views), detail::concatenated_table_num_rows(views)}

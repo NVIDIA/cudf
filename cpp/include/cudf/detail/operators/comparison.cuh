@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -24,9 +24,7 @@ namespace ops {
 template <typename A, typename B>
 __device__ bool equal(A a, B b)
   requires(!nullable<A> && !nullable<B> && requires { a == b; })
-{
-  return a == b;
-}
+{ return a == b; }
 
 /**
  * @brief Tests `a != b`.
@@ -39,9 +37,7 @@ __device__ bool equal(A a, B b)
 template <typename A, typename B>
 __device__ bool not_equal(A a, B b)
   requires(!nullable<A> && !nullable<B> && requires { a != b; })
-{
-  return a != b;
-}
+{ return a != b; }
 
 /**
  * @brief Tests `a > b`.
@@ -54,9 +50,7 @@ __device__ bool not_equal(A a, B b)
 template <typename A, typename B>
 __device__ bool greater(A a, B b)
   requires(!nullable<A> && !nullable<B> && requires { a > b; })
-{
-  return a > b;
-}
+{ return a > b; }
 
 /**
  * @brief Tests `a >= b`.
@@ -69,9 +63,7 @@ __device__ bool greater(A a, B b)
 template <typename A, typename B>
 __device__ bool greater_equal(A a, B b)
   requires(!nullable<A> && !nullable<B> && requires { a >= b; })
-{
-  return a >= b;
-}
+{ return a >= b; }
 
 /**
  * @brief Tests `a < b`.
@@ -84,9 +76,7 @@ __device__ bool greater_equal(A a, B b)
 template <typename A, typename B>
 __device__ bool less(A a, B b)
   requires(!nullable<A> && !nullable<B> && requires { a < b; })
-{
-  return a < b;
-}
+{ return a < b; }
 
 /**
  * @brief Tests `a <= b`.
@@ -99,9 +89,7 @@ __device__ bool less(A a, B b)
 template <typename A, typename B>
 __device__ bool less_equal(A a, B b)
   requires(!nullable<A> && !nullable<B> && requires { a <= b; })
-{
-  return a <= b;
-}
+{ return a <= b; }
 
 /**
  * @brief Tests equality between two values for null-aware equality semantics.
@@ -114,16 +102,12 @@ __device__ bool less_equal(A a, B b)
 template <typename A, typename B>
 __device__ bool null_equal(A a, B b)
   requires(!nullable<A> && !nullable<B> && requires { a == b; })
-{
-  return a == b;
-}
+{ return a == b; }
 
 template <typename A, typename B>
 __device__ bool null_equal(cuda::std::optional<A> a, cuda::std::optional<B> b)
   requires(!nullable<A> && !nullable<B> && requires { a == b; })
-{
-  return a == b;
-}
+{ return a == b; }
 
 }  // namespace ops
 }  // namespace detail

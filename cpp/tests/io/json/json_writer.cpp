@@ -353,7 +353,7 @@ TEST_F(JsonWriterTest, WriteReadNested)
                    reinterpret_cast<std::byte const*>(out_buffer.data()), out_buffer.size()}})
                  .lines(true)
                  .build();
-  result = cudf::io::read_json(in_options);
+  result     = cudf::io::read_json(in_options);
 
   mt.schema_info[2].children = {{"0"}, {"1"}};
   EXPECT_EQ(mt.schema_info.size(), result.metadata.schema_info.size());
@@ -376,7 +376,7 @@ TEST_F(JsonWriterTest, WriteReadNested)
                    reinterpret_cast<std::byte const*>(out_buffer.data()), out_buffer.size()}})
                  .lines(true)
                  .build();
-  result = cudf::io::read_json(in_options);
+  result     = cudf::io::read_json(in_options);
 
   mt.schema_info             = {{"0"}, {"1"}, {"2"}, {"3"}, {"4"}};
   mt.schema_info[2].children = {{"0"}, {"1"}};

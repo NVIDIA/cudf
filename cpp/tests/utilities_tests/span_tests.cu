@@ -59,21 +59,15 @@ void expect_match(Iterator1 expected, size_t expected_size, host_span<T> input)
 
 template <typename T>
 void expect_match(std::string expected, host_span<T> input)
-{
-  return expect_match(expected.begin(), expected.size(), input);
-}
+{ return expect_match(expected.begin(), expected.size(), input); }
 
 template <typename T>
 void expect_match(std::string expected, cudf::detail::hostdevice_span<T> input)
-{
-  return expect_match(expected.begin(), expected.size(), host_span<T>(input));
-}
+{ return expect_match(expected.begin(), expected.size(), host_span<T>(input)); }
 
 std::string const hello_world_message = "hello world";
 std::vector<char> create_hello_world_message()
-{
-  return std::vector<char>(hello_world_message.begin(), hello_world_message.end());
-}
+{ return std::vector<char>(hello_world_message.begin(), hello_world_message.end()); }
 
 class SpanTest : public cudf::test::BaseFixture {};
 

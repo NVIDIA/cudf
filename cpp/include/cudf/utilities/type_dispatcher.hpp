@@ -42,9 +42,7 @@ namespace CUDF_EXPORT cudf {
  */
 template <typename T>
 CUDF_HOST_DEVICE inline constexpr type_id base_type_to_id()
-{
-  return type_id::EMPTY;
-};
+{ return type_id::EMPTY; };
 
 /**
  * @brief Maps a `cudf::type_id` types to its corresponding C++ type name string
@@ -58,9 +56,7 @@ struct type_to_name_impl {
    */
   template <typename T>
   inline std::string operator()()
-  {
-    return "void";
-  }
+  { return "void"; }
 };
 
 template <cudf::type_id t>
@@ -118,9 +114,7 @@ using device_storage_type_t =
  */
 template <typename T>
 constexpr inline type_id type_to_id()
-{
-  return base_type_to_id<std::remove_cv_t<T>>();
-}
+{ return base_type_to_id<std::remove_cv_t<T>>(); }
 
 /**
  * @brief Macro used to define a mapping between a concrete C++ type and a
@@ -133,14 +127,10 @@ constexpr inline type_id type_to_id()
 #define CUDF_TYPE_MAPPING(Type, Id)                        \
   template <>                                              \
   constexpr inline type_id base_type_to_id<Type>()         \
-  {                                                        \
-    return Id;                                             \
-  }                                                        \
+  { return Id; }                                           \
   template <>                                              \
   inline std::string type_to_name_impl::operator()<Type>() \
-  {                                                        \
-    return CUDF_STRINGIFY(Type);                           \
-  }                                                        \
+  { return CUDF_STRINGIFY(Type); }                         \
   template <>                                              \
   struct id_to_type_impl<Id> {                             \
     using type = Type;                                     \
@@ -187,9 +177,7 @@ CUDF_TYPE_MAPPING(cudf::struct_view, type_id::STRUCT)
  */
 template <>  // CUDF_TYPE_MAPPING(char,INT8) causes duplicate id_to_type_impl definition
 constexpr inline type_id base_type_to_id<char>()
-{
-  return type_id::INT8;
-}
+{ return type_id::INT8; }
 
 /**
  * @brief Checks if `fixed_point`-like types have template type `T` matching the column's
@@ -569,9 +557,7 @@ struct double_type_dispatcher_second_type {
 #endif
   template <typename T2, typename F, typename... Ts>
   CUDF_HOST_DEVICE __forceinline__ decltype(auto) operator()(F&& f, Ts&&... args) const
-  {
-    return f.template operator()<T1, T2>(std::forward<Ts>(args)...);
-  }
+  { return f.template operator()<T1, T2>(std::forward<Ts>(args)...); }
 };
 
 template <template <cudf::type_id> typename IdTypeMap>

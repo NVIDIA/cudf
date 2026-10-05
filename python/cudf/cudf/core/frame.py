@@ -1021,9 +1021,9 @@ class Frame(BinaryOperand, Scannable, Serializable):
     @_performance_tracking
     def _fillna(
         self,
-        value: None | ScalarLike | Series = None,
+        value: ScalarLike | Series | None = None,
         *,
-        method: None | plc.replace.ReplacePolicy = None,
+        method: plc.replace.ReplacePolicy | None = None,
         axis: Axis | None = None,
         inplace: bool = False,
         limit: int | None = None,

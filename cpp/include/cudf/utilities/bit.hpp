@@ -46,9 +46,7 @@ constexpr CUDF_HOST_DEVICE inline std::size_t size_in_bits()
  * @return The index of the word containing the specified bit
  */
 constexpr CUDF_HOST_DEVICE inline size_type word_index(size_type bit_index)
-{
-  return bit_index / detail::size_in_bits<bitmask_type>();
-}
+{ return bit_index / detail::size_in_bits<bitmask_type>(); }
 
 /**
  * @brief Returns the position within a word of the specified bit.
@@ -57,9 +55,7 @@ constexpr CUDF_HOST_DEVICE inline size_type word_index(size_type bit_index)
  * @return The position within a word of the specified bit
  */
 constexpr CUDF_HOST_DEVICE inline size_type intra_word_index(size_type bit_index)
-{
-  return bit_index % detail::size_in_bits<bitmask_type>();
-}
+{ return bit_index % detail::size_in_bits<bitmask_type>(); }
 
 /**
  * @brief Sets the specified bit to `1`
@@ -118,9 +114,7 @@ CUDF_HOST_DEVICE inline bool bit_is_set(bitmask_type const* bitmask, size_type b
 CUDF_HOST_DEVICE inline bool bit_value_or(bitmask_type const* bitmask,
                                           size_type bit_index,
                                           bool default_value)
-{
-  return bitmask != nullptr ? bit_is_set(bitmask, bit_index) : default_value;
-}
+{ return bitmask != nullptr ? bit_is_set(bitmask, bit_index) : default_value; }
 
 /**
  * @brief Returns a bitmask word with the `n` least significant bits set.

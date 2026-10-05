@@ -458,9 +458,9 @@ TYPED_TEST(FromArrowHostDeviceTestDecimalsTest, FixedPointTableLargeNulls)
     auto iota       = cudf::detail::make_counting_transform_iterator(1, [](int i) { return T{i}; });
     auto const data = std::vector<T>(iota, iota + NUM_ELEMENTS);
     auto const col  = fp_wrapper<T>(iota,
-                                   iota + NUM_ELEMENTS,
-                                   cudf::detail::make_counting_transform_iterator(0, every_other),
-                                   scale_type{scale});
+                                    iota + NUM_ELEMENTS,
+                                    cudf::detail::make_counting_transform_iterator(0, every_other),
+                                    scale_type{scale});
     auto const expected = cudf::table_view({col});
 
     nanoarrow::UniqueSchema input_schema;

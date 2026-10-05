@@ -66,9 +66,7 @@ struct hash_functor {
   column_device_view const& col;
   uint32_t const seed = 0;
   __device__ auto operator()(key_type idx) const
-  {
-    return cudf::hashing::detail::MurmurHash3_x86_32<T>{seed}(col.element<T>(idx));
-  }
+  { return cudf::hashing::detail::MurmurHash3_x86_32<T>{seed}(col.element<T>(idx)); }
 };
 
 /**

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -134,9 +134,7 @@ class TimezoneAliasResolutionTest : public cudf::test::BaseFixture {
   }
 
   void write_tzdata_zi(std::string_view contents) const
-  {
-    std::ofstream{tz_dir_ / "tzdata.zi"} << contents;
-  }
+  { std::ofstream{tz_dir_ / "tzdata.zi"} << contents; }
 
   [[nodiscard]] std::string dir() const { return tz_dir_.string(); }
 
@@ -206,9 +204,7 @@ TEST_F(TimezoneAliasResolutionTest, ThrowsWhenLinkTargetIsAlsoMissing)
 }
 
 TEST_F(TimezoneAliasResolutionTest, ThrowsWhenNoTzdataZiPresent)
-{
-  EXPECT_THROW(cudf::make_timezone_transition_table(dir(), "US/Pacific"), cudf::logic_error);
-}
+{ EXPECT_THROW(cudf::make_timezone_transition_table(dir(), "US/Pacific"), cudf::logic_error); }
 
 TEST_F(TimezoneAliasResolutionTest, IgnoresCommentsAndNonLinkDirectives)
 {

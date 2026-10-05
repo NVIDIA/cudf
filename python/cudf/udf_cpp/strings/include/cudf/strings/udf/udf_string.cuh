@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2023, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -123,9 +123,7 @@ __device__ inline udf_string::~udf_string() { deallocate(m_data); }
 __device__ inline udf_string& udf_string::operator=(udf_string const& str) { return assign(str); }
 
 __device__ inline udf_string& udf_string::operator=(udf_string&& str) noexcept
-{
-  return assign(std::move(str));
-}
+{ return assign(std::move(str)); }
 
 __device__ inline udf_string& udf_string::operator=(cudf::string_view str) { return assign(str); }
 
@@ -145,14 +143,10 @@ __device__ udf_string& udf_string::assign(udf_string&& str) noexcept
 }
 
 __device__ udf_string& udf_string::assign(cudf::string_view str)
-{
-  return assign(str.data(), str.size_bytes());
-}
+{ return assign(str.data(), str.size_bytes()); }
 
 __device__ udf_string& udf_string::assign(char const* str)
-{
-  return assign(str, detail::bytes_in_null_terminated_string(str));
-}
+{ return assign(str, detail::bytes_in_null_terminated_string(str)); }
 
 __device__ udf_string& udf_string::assign(char const* str, cudf::size_type bytes)
 {
@@ -170,14 +164,10 @@ __device__ udf_string& udf_string::assign(char const* str, cudf::size_type bytes
 __device__ inline cudf::size_type udf_string::size_bytes() const noexcept { return m_bytes; }
 
 __device__ inline cudf::size_type udf_string::length() const noexcept
-{
-  return cudf::strings::detail::characters_in_string(m_data, m_bytes);
-}
+{ return cudf::strings::detail::characters_in_string(m_data, m_bytes); }
 
 __device__ constexpr cudf::size_type udf_string::max_size() const noexcept
-{
-  return std::numeric_limits<cudf::size_type>::max() - 1;
-}
+{ return std::numeric_limits<cudf::size_type>::max() - 1; }
 
 __device__ inline char* udf_string::data() noexcept { return m_data; }
 
@@ -186,14 +176,10 @@ __device__ inline char const* udf_string::data() const noexcept { return m_data;
 __device__ inline bool udf_string::is_empty() const noexcept { return m_bytes == 0; }
 
 __device__ inline cudf::string_view::const_iterator udf_string::begin() const noexcept
-{
-  return cudf::string_view::const_iterator(cudf::string_view(m_data, m_bytes), 0);
-}
+{ return cudf::string_view::const_iterator(cudf::string_view(m_data, m_bytes), 0); }
 
 __device__ inline cudf::string_view::const_iterator udf_string::end() const noexcept
-{
-  return cudf::string_view::const_iterator(cudf::string_view(m_data, m_bytes), length());
-}
+{ return cudf::string_view::const_iterator(cudf::string_view(m_data, m_bytes), length()); }
 
 __device__ inline cudf::char_utf8 udf_string::at(cudf::size_type pos) const
 {
@@ -204,9 +190,7 @@ __device__ inline cudf::char_utf8 udf_string::at(cudf::size_type pos) const
 }
 
 __device__ inline cudf::char_utf8 udf_string::operator[](cudf::size_type pos) const
-{
-  return at(pos);
-}
+{ return at(pos); }
 
 __device__ inline cudf::size_type udf_string::byte_offset(cudf::size_type pos) const
 {
@@ -224,9 +208,7 @@ __device__ inline cudf::size_type udf_string::byte_offset(cudf::size_type pos) c
 }
 
 __device__ inline int udf_string::compare(cudf::string_view in) const noexcept
-{
-  return compare(in.data(), in.size_bytes());
-}
+{ return compare(in.data(), in.size_bytes()); }
 
 __device__ inline int udf_string::compare(char const* data, cudf::size_type bytes) const
 {
@@ -235,34 +217,22 @@ __device__ inline int udf_string::compare(char const* data, cudf::size_type byte
 }
 
 __device__ inline bool udf_string::operator==(cudf::string_view rhs) const noexcept
-{
-  return m_bytes == rhs.size_bytes() && compare(rhs) == 0;
-}
+{ return m_bytes == rhs.size_bytes() && compare(rhs) == 0; }
 
 __device__ inline bool udf_string::operator!=(cudf::string_view rhs) const noexcept
-{
-  return compare(rhs) != 0;
-}
+{ return compare(rhs) != 0; }
 
 __device__ inline bool udf_string::operator<(cudf::string_view rhs) const noexcept
-{
-  return compare(rhs) < 0;
-}
+{ return compare(rhs) < 0; }
 
 __device__ inline bool udf_string::operator>(cudf::string_view rhs) const noexcept
-{
-  return compare(rhs) > 0;
-}
+{ return compare(rhs) > 0; }
 
 __device__ inline bool udf_string::operator<=(cudf::string_view rhs) const noexcept
-{
-  return compare(rhs) <= 0;
-}
+{ return compare(rhs) <= 0; }
 
 __device__ inline bool udf_string::operator>=(cudf::string_view rhs) const noexcept
-{
-  return compare(rhs) >= 0;
-}
+{ return compare(rhs) >= 0; }
 
 __device__ inline void udf_string::clear() noexcept
 {
@@ -308,9 +278,7 @@ __device__ inline udf_string& udf_string::append(char const* str, cudf::size_typ
 }
 
 __device__ inline udf_string& udf_string::append(char const* str)
-{
-  return append(str, detail::bytes_in_null_terminated_string(str));
-}
+{ return append(str, detail::bytes_in_null_terminated_string(str)); }
 
 __device__ inline udf_string& udf_string::append(cudf::char_utf8 chr, cudf::size_type count)
 {
@@ -319,9 +287,7 @@ __device__ inline udf_string& udf_string::append(cudf::char_utf8 chr, cudf::size
 }
 
 __device__ inline udf_string& udf_string::append(cudf::string_view in)
-{
-  return append(in.data(), in.size_bytes());
-}
+{ return append(in.data(), in.size_bytes()); }
 
 __device__ inline udf_string& udf_string::operator+=(cudf::string_view in) { return append(in); }
 
@@ -332,26 +298,18 @@ __device__ inline udf_string& udf_string::operator+=(char const* str) { return a
 __device__ inline udf_string& udf_string::insert(cudf::size_type pos,
                                                  char const* str,
                                                  cudf::size_type in_bytes)
-{
-  return replace(pos, 0, str, in_bytes);
-}
+{ return replace(pos, 0, str, in_bytes); }
 
 __device__ inline udf_string& udf_string::insert(cudf::size_type pos, char const* str)
-{
-  return insert(pos, str, detail::bytes_in_null_terminated_string(str));
-}
+{ return insert(pos, str, detail::bytes_in_null_terminated_string(str)); }
 
 __device__ inline udf_string& udf_string::insert(cudf::size_type pos, cudf::string_view in)
-{
-  return insert(pos, in.data(), in.size_bytes());
-}
+{ return insert(pos, in.data(), in.size_bytes()); }
 
 __device__ inline udf_string& udf_string::insert(cudf::size_type pos,
                                                  cudf::size_type count,
                                                  cudf::char_utf8 chr)
-{
-  return replace(pos, 0, count, chr);
-}
+{ return replace(pos, 0, count, chr); }
 
 __device__ inline udf_string udf_string::substr(cudf::size_type pos, cudf::size_type count) const
 {
@@ -412,16 +370,12 @@ __device__ inline udf_string& udf_string::replace(cudf::size_type pos,
 __device__ inline udf_string& udf_string::replace(cudf::size_type pos,
                                                   cudf::size_type count,
                                                   char const* str)
-{
-  return replace(pos, count, str, detail::bytes_in_null_terminated_string(str));
-}
+{ return replace(pos, count, str, detail::bytes_in_null_terminated_string(str)); }
 
 __device__ inline udf_string& udf_string::replace(cudf::size_type pos,
                                                   cudf::size_type count,
                                                   cudf::string_view in)
-{
-  return replace(pos, count, in.data(), in.size_bytes());
-}
+{ return replace(pos, count, in.data(), in.size_bytes()); }
 
 __device__ inline udf_string& udf_string::replace(cudf::size_type pos,
                                                   cudf::size_type count,
@@ -433,14 +387,10 @@ __device__ inline udf_string& udf_string::replace(cudf::size_type pos,
 }
 
 __device__ udf_string& udf_string::erase(cudf::size_type pos, cudf::size_type count)
-{
-  return replace(pos, count, nullptr, 0);
-}
+{ return replace(pos, count, nullptr, 0); }
 
 __device__ inline cudf::size_type udf_string::char_offset(cudf::size_type byte_pos) const
-{
-  return cudf::strings::detail::characters_in_string(data(), byte_pos);
-}
+{ return cudf::strings::detail::characters_in_string(data(), byte_pos); }
 
 }  // namespace udf
 }  // namespace strings

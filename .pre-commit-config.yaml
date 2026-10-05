@@ -39,7 +39,7 @@ repos:
       - id: cython-lint
         additional_dependencies: ["cython>=3.2.2,<3.3.0a0"]
   - repo: https://github.com/pre-commit/mirrors-mypy
-    rev: 'v2.3.0'
+    rev: 'v2.4.0'
     hooks:
       - id: mypy
         additional_dependencies: [
@@ -62,7 +62,7 @@ repos:
                "python/dask_cudf/dask_cudf"]
         pass_filenames: false
   - repo: https://github.com/pre-commit/mirrors-clang-format
-    rev: v20.1.8
+    rev: v23.1.2
     hooks:
       - id: clang-format
         types_or: [c, c++, cuda]
@@ -230,7 +230,7 @@ repos:
             ^CHANGELOG.md$
           )
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.15.22
+    rev: v0.16.10
     hooks:
       - id: ruff
         args: ["--fix"]
@@ -238,7 +238,7 @@ repos:
       - id: ruff-format
         exclude: ^python/cudf_polars/quent/bridge/cudf_polars_quent[.]pyi$
   - repo: https://github.com/numpy/numpydoc
-    rev: v1.10.0
+    rev: v1.11.0
     hooks:
       - id: numpydoc-validation
         files: ^python/cudf/cudf/
@@ -348,7 +348,7 @@ repos:
       - id: rapids-dependency-file-generator
         args: ["--clean", "--warn-all", "--strict"]
   - repo: https://github.com/shellcheck-py/shellcheck-py
-    rev: v0.11.0.1
+    rev: v0.11.0.1-1
     hooks:
       - id: shellcheck
         args: ["--severity=warning"]
@@ -365,7 +365,7 @@ repos:
             cpp/[.]clang-tidy$
           )
   - repo: https://github.com/zizmorcore/zizmor-pre-commit
-    rev: v1.27.0
+    rev: v1.30.1
     hooks:
       - id: zizmor
   # lychee checks local/relative links only (--offline), so checking itself
@@ -375,7 +375,7 @@ repos:
   # RST files are not scanned as sources; --fallback-extensions only affects
   # resolution of extensionless link targets.
   - repo: https://github.com/lycheeverse/lychee
-    rev: lychee-v0.24.2
+    rev: nightly
     hooks:
       - id: lychee
         alias: lychee-md

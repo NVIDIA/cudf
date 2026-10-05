@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -22,9 +22,7 @@ namespace ops {
  */
 template <floating_point T>
 __device__ T arccos(T a)
-{
-  return cuda::std::acos(a);
-}
+{ return cuda::std::acos(a); }
 
 /**
  * @brief Computes inverse hyperbolic cosine.
@@ -34,9 +32,7 @@ __device__ T arccos(T a)
  */
 template <floating_point T>
 __device__ T arccosh(T a)
-{
-  return cuda::std::acosh(a);
-}
+{ return cuda::std::acosh(a); }
 
 /**
  * @brief Computes inverse sine.
@@ -46,9 +42,7 @@ __device__ T arccosh(T a)
  */
 template <floating_point T>
 __device__ T arcsin(T a)
-{
-  return cuda::std::asin(a);
-}
+{ return cuda::std::asin(a); }
 
 /**
  * @brief Computes inverse hyperbolic sine.
@@ -58,9 +52,7 @@ __device__ T arcsin(T a)
  */
 template <floating_point T>
 __device__ T arcsinh(T a)
-{
-  return cuda::std::asinh(a);
-}
+{ return cuda::std::asinh(a); }
 
 /**
  * @brief Computes inverse tangent.
@@ -70,9 +62,7 @@ __device__ T arcsinh(T a)
  */
 template <floating_point T>
 __device__ T arctan(T a)
-{
-  return cuda::std::atan(a);
-}
+{ return cuda::std::atan(a); }
 
 /**
  * @brief Computes inverse hyperbolic tangent.
@@ -82,9 +72,7 @@ __device__ T arctan(T a)
  */
 template <floating_point T>
 __device__ T arctanh(T a)
-{
-  return cuda::std::atanh(a);
-}
+{ return cuda::std::atanh(a); }
 
 /**
  * @brief Computes cosine.
@@ -94,9 +82,7 @@ __device__ T arctanh(T a)
  */
 template <floating_point T>
 __device__ T cos(T a)
-{
-  return cuda::std::cos(a);
-}
+{ return cuda::std::cos(a); }
 
 /**
  * @brief Computes hyperbolic cosine.
@@ -106,9 +92,7 @@ __device__ T cos(T a)
  */
 template <floating_point T>
 __device__ T cosh(T a)
-{
-  return cuda::std::cosh(a);
-}
+{ return cuda::std::cosh(a); }
 
 /**
  * @brief Computes sine.
@@ -118,9 +102,7 @@ __device__ T cosh(T a)
  */
 template <floating_point T>
 __device__ T sin(T a)
-{
-  return cuda::std::sin(a);
-}
+{ return cuda::std::sin(a); }
 
 /**
  * @brief Computes hyperbolic sine.
@@ -130,9 +112,7 @@ __device__ T sin(T a)
  */
 template <floating_point T>
 __device__ T sinh(T a)
-{
-  return cuda::std::sinh(a);
-}
+{ return cuda::std::sinh(a); }
 
 /**
  * @brief Computes tangent.
@@ -142,9 +122,7 @@ __device__ T sinh(T a)
  */
 template <floating_point T>
 __device__ T tan(T a)
-{
-  return cuda::std::tan(a);
-}
+{ return cuda::std::tan(a); }
 
 /**
  * @brief Computes hyperbolic tangent.
@@ -154,9 +132,7 @@ __device__ T tan(T a)
  */
 template <floating_point T>
 __device__ T tanh(T a)
-{
-  return cuda::std::tanh(a);
-}
+{ return cuda::std::tanh(a); }
 
 }  // namespace ops
 }  // namespace detail

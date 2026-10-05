@@ -432,16 +432,16 @@ class StreamingOptions:
     target_partition_size: int | Unspecified = _opt(
         "executor", "CUDF_POLARS__EXECUTOR__TARGET_PARTITION_SIZE", int
     )
-    dynamic_planning: dict[str, Any] | DynamicPlanningOptions | None | Unspecified = (
+    dynamic_planning: dict[str, Any] | DynamicPlanningOptions | Unspecified | None = (
         _opt("executor")
     )
     join_filter_pushdown: (
-        dict[str, Any] | JoinFilterPushdownOptions | None | Unspecified
+        dict[str, Any] | JoinFilterPushdownOptions | Unspecified | None
     ) = _opt("executor")
     sink_to_directory: bool | Unspecified = _opt(
         "executor", "CUDF_POLARS__EXECUTOR__SINK_TO_DIRECTORY", parse_boolean
     )
-    quent_context: QuentContext | None | Unspecified = _opt(
+    quent_context: QuentContext | Unspecified | None = _opt(
         "executor",
     )
 

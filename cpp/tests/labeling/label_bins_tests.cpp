@@ -141,21 +141,15 @@ TYPED_TEST_SUITE(ExceptionCasesBinTestFixture, NumericTypesNotBool);
 
 // Empty input must return an empty output.
 TYPED_TEST(ExceptionCasesBinTestFixture, TestEmptyInput)
-{
-  this->test({}, {}, {0, 2, 4, 6, 8}, {2, 4, 6, 8, 10});
-};
+{ this->test({}, {}, {0, 2, 4, 6, 8}, {2, 4, 6, 8, 10}); };
 
 // If no edges are provided, the bin for all inputs is null.
 TYPED_TEST(ExceptionCasesBinTestFixture, TestEmptyEdges)
-{
-  this->test({1, 1}, {{0, 0}, {0, 0}}, {}, {});
-};
+{ this->test({1, 1}, {{0, 0}, {0, 0}}, {}, {}); };
 
 // Values outside the bounds should be labeled NULL.
 TYPED_TEST(ExceptionCasesBinTestFixture, TestOutOfBoundsInput)
-{
-  this->test({7, 9, 11, 13}, {{3, 4, 0, 0}, {1, 1, 0, 0}}, {0, 2, 4, 6, 8}, {2, 4, 6, 8, 10});
-};
+{ this->test({7, 9, 11, 13}, {{3, 4, 0, 0}, {1, 1, 0, 0}}, {0, 2, 4, 6, 8}, {2, 4, 6, 8, 10}); };
 
 // Null inputs must map to nulls.
 TYPED_TEST(ExceptionCasesBinTestFixture, TestInputWithNulls)

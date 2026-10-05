@@ -311,27 +311,21 @@ struct column_to_strings_fn {
   template <typename column_type>
   std::unique_ptr<column> operator()(column_view const& column) const
     requires(std::is_integral_v<column_type> && !std::is_same_v<column_type, bool>)
-  {
-    return cudf::strings::detail::from_integers(column, stream_, mr_);
-  }
+  { return cudf::strings::detail::from_integers(column, stream_, mr_); }
 
   // floats:
   //
   template <typename column_type>
   std::unique_ptr<column> operator()(column_view const& column) const
     requires(std::is_floating_point_v<column_type>)
-  {
-    return cudf::strings::detail::from_floats(column, stream_, mr_);
-  }
+  { return cudf::strings::detail::from_floats(column, stream_, mr_); }
 
   // fixed point:
   //
   template <typename column_type>
   std::unique_ptr<column> operator()(column_view const& column) const
     requires(cudf::is_fixed_point<column_type>())
-  {
-    return cudf::strings::detail::from_fixed_point(column, stream_, mr_);
-  }
+  { return cudf::strings::detail::from_fixed_point(column, stream_, mr_); }
 
   // timestamps:
   //
@@ -376,18 +370,14 @@ struct column_to_strings_fn {
   template <typename column_type>
   std::unique_ptr<column> operator()(column_view const& column) const
     requires(cudf::is_duration<column_type>())
-  {
-    return cudf::io::detail::csv::pandas_format_durations(column, stream_, mr_);
-  }
+  { return cudf::io::detail::csv::pandas_format_durations(column, stream_, mr_); }
 
   // unsupported type of column:
   //
   template <typename column_type>
   std::unique_ptr<column> operator()(column_view const&) const
     requires(!cudf::io::detail::is_convertible_to_string_column<column_type>())
-  {
-    CUDF_FAIL("Unsupported column type.");
-  }
+  { CUDF_FAIL("Unsupported column type."); }
 
  private:
   csv_writer_options const& options_;

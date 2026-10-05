@@ -62,9 +62,7 @@ class column_view_base {
   template <typename T = void,
             CUDF_ENABLE_IF(std::is_same_v<T, void> or is_rep_layout_compatible<T>())>
   T const* head() const noexcept
-  {
-    return static_cast<T const*>(get_data());
-  }
+  { return static_cast<T const*>(get_data()); }
 
   /**
    * @brief Returns the underlying data casted to the specified type, plus the
@@ -80,9 +78,7 @@ class column_view_base {
    */
   template <typename T, CUDF_ENABLE_IF(is_rep_layout_compatible<T>())>
   T const* data() const noexcept
-  {
-    return head<T>() + _offset;
-  }
+  { return head<T>() + _offset; }
 
   /**
    * @brief Return first element (accounting for offset) after underlying data
@@ -96,9 +92,7 @@ class column_view_base {
    */
   template <typename T, CUDF_ENABLE_IF(is_rep_layout_compatible<T>())>
   T const* begin() const noexcept
-  {
-    return data<T>();
-  }
+  { return data<T>(); }
 
   /**
    * @brief Return one past the last element after underlying data is casted to
@@ -112,9 +106,7 @@ class column_view_base {
    */
   template <typename T, CUDF_ENABLE_IF(is_rep_layout_compatible<T>())>
   T const* end() const noexcept
-  {
-    return begin<T>() + size();
-  }
+  { return begin<T>() + size(); }
 
   /**
    * @brief Returns the number of elements in the column
@@ -199,9 +191,7 @@ class column_view_base {
   [[nodiscard]] bool has_nulls(size_type begin,
                                size_type end,
                                cuda::stream_ref stream = cudf::get_default_stream()) const
-  {
-    return null_count(begin, end, stream) > 0;
-  }
+  { return null_count(begin, end, stream) > 0; }
 
   /**
    * @brief Returns raw pointer to the underlying bitmask allocation.
@@ -387,9 +377,7 @@ class column_view : public detail::column_view_base {
    * @return The requested child `column_view`
    */
   [[nodiscard]] column_view child(size_type child_index) const noexcept
-  {
-    return _children[child_index];
-  }
+  { return _children[child_index]; }
 
   /**
    * @brief Returns the number of child columns.
@@ -566,9 +554,7 @@ class mutable_column_view : public detail::column_view_base {
   template <typename T = void,
             CUDF_ENABLE_IF(std::is_same_v<T, void> or is_rep_layout_compatible<T>())>
   T* head() const noexcept
-  {
-    return const_cast<T*>(detail::column_view_base::head<T>());
-  }
+  { return const_cast<T*>(detail::column_view_base::head<T>()); }
 
   /**
    * @brief Returns the underlying data casted to the specified type, plus the
@@ -584,9 +570,7 @@ class mutable_column_view : public detail::column_view_base {
    */
   template <typename T, CUDF_ENABLE_IF(is_rep_layout_compatible<T>())>
   T* data() const noexcept
-  {
-    return const_cast<T*>(detail::column_view_base::data<T>());
-  }
+  { return const_cast<T*>(detail::column_view_base::data<T>()); }
 
   /**
    * @brief Return first element (accounting for offset) after underlying data is
@@ -600,9 +584,7 @@ class mutable_column_view : public detail::column_view_base {
    */
   template <typename T, CUDF_ENABLE_IF(is_rep_layout_compatible<T>())>
   T* begin() const noexcept
-  {
-    return const_cast<T*>(detail::column_view_base::begin<T>());
-  }
+  { return const_cast<T*>(detail::column_view_base::begin<T>()); }
 
   /**
    * @brief Return one past the last element after underlying data is casted to
@@ -616,9 +598,7 @@ class mutable_column_view : public detail::column_view_base {
    */
   template <typename T, CUDF_ENABLE_IF(is_rep_layout_compatible<T>())>
   T* end() const noexcept
-  {
-    return const_cast<T*>(detail::column_view_base::end<T>());
-  }
+  { return const_cast<T*>(detail::column_view_base::end<T>()); }
 
   /**
    * @brief Returns raw pointer to the underlying bitmask allocation.
@@ -630,9 +610,7 @@ class mutable_column_view : public detail::column_view_base {
    * @return Raw pointer to the underlying bitmask allocation
    */
   [[nodiscard]] bitmask_type* null_mask() const noexcept
-  {
-    return const_cast<bitmask_type*>(detail::column_view_base::null_mask());
-  }
+  { return const_cast<bitmask_type*>(detail::column_view_base::null_mask()); }
 
   /**
    * @brief Set the null count
@@ -650,9 +628,7 @@ class mutable_column_view : public detail::column_view_base {
    * @return The requested child `mutable_column_view`
    */
   [[nodiscard]] mutable_column_view child(size_type child_index) const noexcept
-  {
-    return mutable_children[child_index];
-  }
+  { return mutable_children[child_index]; }
 
   /**
    * @brief Returns the number of child columns.

@@ -58,9 +58,7 @@ struct string_offsets_fn {
   }
 
   __device__ constexpr size_type operator()(size_type idx) const noexcept
-  {
-    return idx < _strings_count ? static_cast<size_type>(_begin[idx]) : size_type{0};
-  };
+  { return idx < _strings_count ? static_cast<size_type>(_begin[idx]) : size_type{0}; };
 };
 
 /**
@@ -323,9 +321,7 @@ auto make_strings_children(SizeAndExecuteFunction size_and_exec_fn,
                            size_type strings_count,
                            cuda::stream_ref stream,
                            rmm::device_async_resource_ref mr)
-{
-  return make_strings_children(size_and_exec_fn, strings_count, strings_count, stream, mr);
-}
+{ return make_strings_children(size_and_exec_fn, strings_count, strings_count, stream, mr); }
 
 }  // namespace detail
 }  // namespace strings

@@ -145,9 +145,7 @@ std::pair<std::vector<cudf::table_view>, std::unique_ptr<cudf::table>> partition
 std::size_t partition_and_pack_cost(cudf::table_view const& table,
                                     cuda::stream_ref stream,
                                     rmm::device_async_resource_ref temp_mr)
-{
-  return packed_and_total_size(table, stream, temp_mr).second;
-}
+{ return packed_and_total_size(table, stream, temp_mr).second; }
 
 std::unordered_map<rapidsmpf::shuffler::PartID, rapidsmpf::PackedData> partition_and_pack(
   cudf::table_view const& table,
@@ -211,9 +209,7 @@ std::unordered_map<rapidsmpf::shuffler::PartID, rapidsmpf::PackedData> partition
 std::size_t split_and_pack_cost(cudf::table_view const& table,
                                 cuda::stream_ref stream,
                                 rmm::device_async_resource_ref temp_mr)
-{
-  return packed_and_total_size(table, stream, temp_mr).first;
-}
+{ return packed_and_total_size(table, stream, temp_mr).first; }
 
 std::unordered_map<rapidsmpf::shuffler::PartID, rapidsmpf::PackedData> split_and_pack(
   cudf::table_view const& table,

@@ -82,9 +82,7 @@ struct dispatch_topk_fn {
   template <typename T>
     requires(cudf::is_fixed_width<T>() and !cudf::is_floating_point<T>() and !cudf::is_chrono<T>())
   std::unique_ptr<column> operator()()
-  {
-    return top_k<T>();
-  }
+  { return top_k<T>(); }
 
   template <typename T>
     requires(cudf::is_chrono<T>())
@@ -97,9 +95,7 @@ struct dispatch_topk_fn {
   template <typename T>
     requires(not cudf::is_fixed_width<T>() or cudf::is_floating_point<T>())
   std::unique_ptr<column> operator()()
-  {
-    CUDF_UNREACHABLE("unexpected type for top_k fast path");
-  }
+  { CUDF_UNREACHABLE("unexpected type for top_k fast path"); }
 };
 
 }  // namespace

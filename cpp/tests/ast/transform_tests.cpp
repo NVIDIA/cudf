@@ -51,9 +51,7 @@ struct executor_ast {
     cudf::ast::expression const& expr,
     cuda::stream_ref stream           = cudf::get_default_stream(),
     rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref())
-  {
-    return cudf::compute_column(table, expr, stream, mr);
-  }
+  { return cudf::compute_column(table, expr, stream, mr); }
 };
 
 struct executor_jit {
@@ -62,9 +60,7 @@ struct executor_jit {
     cudf::ast::expression const& expr,
     cuda::stream_ref stream           = cudf::get_default_stream(),
     rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref())
-  {
-    return cudf::compute_column_jit(table, expr, stream, mr);
-  }
+  { return cudf::compute_column_jit(table, expr, stream, mr); }
 };
 
 struct executor_transform_program {
@@ -166,7 +162,7 @@ TEST_F(TransformProgramTest, OwnsMixedLiteralRepresentationsInInputOrder)
       auto scalar_literal     = cudf::ast::literal{scalar_value};
       auto column_literal     = cudf::ast::literal{cudf::scalar_column_view{literal_column}};
       auto column_ref         = cudf::ast::column_reference{0};
-      auto difference         = cudf::ast::operation{cudf::ast::ast_operator::SUB,
+      auto difference = cudf::ast::operation{cudf::ast::ast_operator::SUB,
                                              scalar_first ? scalar_literal : column_literal,
                                              scalar_first ? column_literal : scalar_literal};
       auto expression = cudf::ast::operation{cudf::ast::ast_operator::ADD, column_ref, difference};
@@ -636,10 +632,10 @@ TYPED_TEST(TransformTest, DISABLED_DeeplyNestedArithmeticLogicalExpression)
   auto const& col_ref_1 = tree.push(cudf::ast::column_reference(1));
 
   auto const& left_expression  = generate_ast_expr(left_depth_level,
-                                                  col_ref_0,
-                                                  cudf::ast::ast_operator::LESS,
-                                                  cudf::ast::ast_operator::ADD,
-                                                  false);
+                                                   col_ref_0,
+                                                   cudf::ast::ast_operator::LESS,
+                                                   cudf::ast::ast_operator::ADD,
+                                                   false);
   auto const& right_expression = generate_ast_expr(right_depth_level,
                                                    col_ref_1,
                                                    cudf::ast::ast_operator::EQUAL,

@@ -261,7 +261,7 @@ process_string(in_iterator_t in_begin,
       // Compute UTF16-encoded code point
       uint32_t unicode_code_point = 0x10000 + ((hex_val - UTF16_HIGH_SURROGATE_BEGIN) << 10) +
                                     (hex_low_val - UTF16_LOW_SURROGATE_BEGIN);
-      auto utf8_chars = strings::detail::codepoint_to_utf8(unicode_code_point);
+      auto utf8_chars             = strings::detail::codepoint_to_utf8(unicode_code_point);
       bytes += write_utf8_char(utf8_chars, d_buffer);
     } else {
       // Just a single \uXXXX sequence
@@ -316,9 +316,7 @@ struct bitfield_warp {
 
   /// Each thread in a warp gets the requested bit.
   __device__ bool get_bit(unsigned warp_id, int bit_index)
-  {
-    return is_slash[warp_id][UNICODE_LOOK_BACK + bit_index];
-  }
+  { return is_slash[warp_id][UNICODE_LOOK_BACK + bit_index]; }
 };
 
 /**
@@ -358,9 +356,7 @@ struct bitfield_block {
 
   /// Each thread in a block gets the requested bit.
   __device__ bool get_bit(unsigned warp_id, int bit_index)
-  {
-    return is_slash[UNICODE_LOOK_BACK + bit_index];
-  }
+  { return is_slash[UNICODE_LOOK_BACK + bit_index]; }
 };
 
 // Algorithm: warp/block parallel version of string_parse and process_string()
@@ -674,8 +670,8 @@ CUDF_KERNEL void parse_fn_string_parallel(str_tuple_it str_tuples,
               uint32_t unicode_code_point = 0x10000 +
                                             ((hex_val - UTF16_HIGH_SURROGATE_BEGIN) << 10) +
                                             (hex_low_val - UTF16_LOW_SURROGATE_BEGIN);
-              write_char   = strings::detail::codepoint_to_utf8(unicode_code_point);
-              this_num_out = strings::detail::bytes_in_char_utf8(write_char);
+              write_char                  = strings::detail::codepoint_to_utf8(unicode_code_point);
+              this_num_out                = strings::detail::bytes_in_char_utf8(write_char);
             } else {
               // if hex_val is high surrogate, ideally it should be parsing failure.
               // but skipping it as other parsers do this too.

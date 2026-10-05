@@ -452,7 +452,7 @@ TYPED_TEST(ExplodeTypedTest, ListOfStructs)
   cudf::test::strings_column_wrapper string_col{
     "70", "75", "50", "55", "35", "45", "25", "30", "15", "20"};
   auto struct_col = cudf::test::structs_column_wrapper{{numeric_col, string_col}}.release();
-  auto a          = cudf::make_lists_column(5,
+  auto a = cudf::make_lists_column(5,
                                    FCW{0, 2, 4, 6, 8, 10}.release(),
                                    std::move(struct_col),
                                    0,
@@ -1101,7 +1101,7 @@ TYPED_TEST(ExplodeOuterTypedTest, ListOfStructs)
   cudf::test::strings_column_wrapper string_col{
     "70", "75", "50", "55", "35", "45", "25", "30", "15", "20"};
   auto struct_col = cudf::test::structs_column_wrapper{{numeric_col, string_col}}.release();
-  auto a          = cudf::make_lists_column(5,
+  auto a = cudf::make_lists_column(5,
                                    FCW{0, 2, 4, 6, 8, 10}.release(),
                                    std::move(struct_col),
                                    0,

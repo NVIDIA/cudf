@@ -144,8 +144,8 @@ TEST_F(PurgeNonEmptyNullsTest, SingleLevelList)
     auto const results            = gather(input->view(), {2});
     auto const results_lists_view = cudf::lists_column_view(*results);
     auto const expected           = LCW<T>{{
-                                   LCW<T>{}  // NULL.
-                                 },
+                                             LCW<T>{}  // NULL.
+                                           },
                                            null_at(0)};
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(results->view(), expected);
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(results_lists_view.offsets(), offsets_col_t{0, 0});
@@ -316,11 +316,11 @@ TEST_F(PurgeNonEmptyNullsTest, ListOfStrings)
     auto const results           = gather(sliced, {1, 2, 0, 3});
     auto const results_list_view = cudf::lists_column_view(*results);
     auto const expected          = LCW<T>{{
-                                   {},
-                                   {"88888888", "999999999", "1010101010"},
-                                   {"55555"},
-                                   {"11", "22", "33", "44"},
-                                 },
+                                            {},
+                                            {"88888888", "999999999", "1010101010"},
+                                            {"55555"},
+                                            {"11", "22", "33", "44"},
+                                          },
                                           null_at(0)};
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(results_list_view.offsets(), offsets_col_t{0, 0, 3, 4, 8});
@@ -361,10 +361,10 @@ TEST_F(PurgeNonEmptyNullsTest, UnsanitizedListOfUnsanitizedStrings)
   // Construct a list column from the strings column.
   auto [null_mask, null_count] = cudf::test::detail::make_null_mask(no_nulls(), no_nulls() + 4);
   auto const lists             = cudf::make_lists_column(4,
-                                             offsets_col_t{0, 4, 5, 7, 10}.release(),
-                                             std::move(strings),
-                                             null_count,
-                                             std::move(null_mask));
+                                                         offsets_col_t{0, 4, 5, 7, 10}.release(),
+                                                         std::move(strings),
+                                                         null_count,
+                                                         std::move(null_mask));
   EXPECT_TRUE(cudf::may_have_nonempty_nulls(*lists));
   EXPECT_TRUE(cudf::has_nonempty_nulls(*lists));
 

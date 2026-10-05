@@ -51,9 +51,7 @@ struct str_cudf_column_scalar_fn {
                          cuda::stream_ref /* stream */,
                          rmm::device_async_resource_ref /* mr */
   )
-  {
-    RAPIDSMPF_FAIL("not implemented");
-  }
+  { RAPIDSMPF_FAIL("not implemented"); }
 };
 
 struct cudf_column_data_size_fn {
@@ -87,14 +85,10 @@ struct cudf_column_data_size_fn {
 
   template <typename T>
   std::size_t operator()(cudf::column_view const& col, cuda::stream_ref)
-  {
-    RAPIDSMPF_FAIL("not implemented for type: " + cudf::type_to_name(col.type()));
-  }
+  { RAPIDSMPF_FAIL("not implemented for type: " + cudf::type_to_name(col.type())); }
 
   static std::size_t bitmask_size(cudf::column_view const& col)
-  {
-    return col.nullable() ? cudf::bitmask_allocation_size_bytes(col.size()) : 0;
-  }
+  { return col.nullable() ? cudf::bitmask_allocation_size_bytes(col.size()) : 0; }
 };
 
 }  // namespace
@@ -103,9 +97,7 @@ std::string str(cudf::column_view col,
                 cudf::size_type index,
                 cuda::stream_ref stream,
                 rmm::device_async_resource_ref mr)
-{
-  return cudf::type_dispatcher(col.type(), str_cudf_column_scalar_fn{}, col, index, stream, mr);
-}
+{ return cudf::type_dispatcher(col.type(), str_cudf_column_scalar_fn{}, col, index, stream, mr); }
 
 std::string str(cudf::column_view col, cuda::stream_ref stream, rmm::device_async_resource_ref mr)
 {

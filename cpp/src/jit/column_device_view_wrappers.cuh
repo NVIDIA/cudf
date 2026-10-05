@@ -36,9 +36,7 @@ struct mutable_vector_device_view : private mutable_column_device_view_core {
 
   template <typename T>
   CUDF_HOST_DEVICE T* __restrict__ data() const noexcept
-  {
-    return static_cast<T*>(const_cast<void*>(_data)) + _offset;
-  }
+  { return static_cast<T*>(const_cast<void*>(_data)) + _offset; }
 
   using base::is_null;
   using base::is_valid;
@@ -46,9 +44,7 @@ struct mutable_vector_device_view : private mutable_column_device_view_core {
 
   template <typename T>
   [[nodiscard]] __device__ decltype(auto) element(size_type element_index) const noexcept
-  {
-    return data<T>()[element_index];
-  }
+  { return data<T>()[element_index]; }
 
   template <typename T>
   [[nodiscard]] __device__ cuda::std::optional<T> nullable_element(
@@ -60,9 +56,7 @@ struct mutable_vector_device_view : private mutable_column_device_view_core {
 
   template <typename T>
   __device__ void assign(size_type row, T value) const noexcept
-  {
-    data<T>()[row] = value;
-  }
+  { data<T>()[row] = value; }
 };
 
 /**

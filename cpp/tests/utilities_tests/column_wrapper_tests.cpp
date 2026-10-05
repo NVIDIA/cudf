@@ -213,9 +213,7 @@ struct ColumnWrapperTestWithHarness : public cudf::test::BaseFixtureWithHarness 
    * confirm that the output bytes were released.
    */
   void validate_with_harness(std::unique_ptr<cudf::column> col)
-  {
-    _harness.expect_resource_usage(col->alloc_size(), {}, this->stream());
-  }
+  { _harness.expect_resource_usage(col->alloc_size(), {}, this->stream()); }
 };
 
 template <typename T>

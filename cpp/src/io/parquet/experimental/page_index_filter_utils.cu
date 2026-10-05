@@ -162,9 +162,7 @@ struct search_fenwick_tree_functor {
    * @return Boolean indicating if the value is a power of two
    */
   __device__ bool inline constexpr is_power_of_two(cudf::size_type value) const noexcept
-  {
-    return (value & (value - 1)) == 0;
-  }
+  { return (value & (value - 1)) == 0; }
 
   /**
    * @brief Finds the smallest power of two in the range [start, end). If no power of two is
@@ -753,11 +751,11 @@ std::unique_ptr<column> compute_row_mask_from_page_stats(
                     page_maps.data() + (input_idx * num_segments),
                     static_cast<std::size_t>(num_segments)};
                   auto gathered         = cudf::detail::gather(input.statistics.view(),
-                                                       page_map_slice,
-                                                       out_of_bounds_policy::DONT_CHECK,
-                                                       negative_index_policy::NOT_ALLOWED,
-                                                       stream,
-                                                       temp_mr);
+                                                               page_map_slice,
+                                                               out_of_bounds_policy::DONT_CHECK,
+                                                               negative_index_policy::NOT_ALLOWED,
+                                                               stream,
+                                                               temp_mr);
                   auto gathered_columns = gathered->release();
                   for (size_type stat_index = 0; stat_index < stats_cols_per_column; ++stat_index) {
                     segment_views[(stats_cols_per_column * input.column_index) + stat_index] =

@@ -695,7 +695,7 @@ def translate_filters_to_ast(
     )
 
 
-def _parse_metadata(meta) -> tuple[bool, Any, None | np.dtype]:
+def _parse_metadata(meta) -> tuple[bool, Any, np.dtype | None]:
     file_is_range_index = False
     file_index_cols = None
     file_column_dtype = None

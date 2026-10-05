@@ -75,9 +75,7 @@ __device__ T single_lane_block_sum_reduce(T lane_value)
 
 template <class F>
 CUDF_KERNEL void single_thread_kernel(F f)
-{
-  f();
-}
+{ f(); }
 
 /**
  * @brief single thread cuda kernel
@@ -88,9 +86,7 @@ CUDF_KERNEL void single_thread_kernel(F f)
  */
 template <class Functor>
 void device_single_thread(Functor functor, cuda::stream_ref stream)
-{
-  single_thread_kernel<<<1, 1, 0, stream.get()>>>(functor);
-}
+{ single_thread_kernel<<<1, 1, 0, stream.get()>>>(functor); }
 
 #endif
 

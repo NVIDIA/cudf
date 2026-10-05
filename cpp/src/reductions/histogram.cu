@@ -44,9 +44,7 @@ using histogram_count_type = int64_t;
 struct is_not_zero {
   template <typename Pair>
   __device__ bool operator()(Pair const input) const
-  {
-    return cuda::std::get<1>(input) != 0;
-  }
+  { return cuda::std::get<1>(input) != 0; }
 };
 
 /**

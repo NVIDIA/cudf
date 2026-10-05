@@ -54,9 +54,7 @@ struct host_udf_groupby_test : cudf::groupby_host_udf {
     return dynamic_cast<host_udf_groupby_test const*>(&other) != nullptr;
   }
   [[nodiscard]] std::unique_ptr<host_udf_base> clone() const override
-  {
-    return std::make_unique<host_udf_groupby_test>(test_location_line, test_run, test_other_agg);
-  }
+  { return std::make_unique<host_udf_groupby_test>(test_location_line, test_run, test_other_agg); }
 
   [[nodiscard]] std::unique_ptr<cudf::column> get_empty_output(
     [[maybe_unused]] cuda::stream_ref stream,

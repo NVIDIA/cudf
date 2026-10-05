@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -76,9 +76,7 @@ class fixed_width_scalar_device_view_base : public detail::scalar_device_view_ba
    */
   template <typename T>
   __device__ T& value() noexcept
-  {
-    return *data<T>();
-  }
+  { return *data<T>(); }
 
   /**
    * @brief Returns const reference to stored value.
@@ -88,9 +86,7 @@ class fixed_width_scalar_device_view_base : public detail::scalar_device_view_ba
    */
   template <typename T>
   __device__ T const& value() const noexcept
-  {
-    return *data<T>();
-  }
+  { return *data<T>(); }
 
   /**
    * @brief Stores the value in scalar
@@ -100,9 +96,7 @@ class fixed_width_scalar_device_view_base : public detail::scalar_device_view_ba
    */
   template <typename T>
   __device__ void set_value(T value)
-  {
-    *static_cast<T*>(_data) = value;
-  }
+  { *static_cast<T*>(_data) = value; }
 
   /**
    * @brief Returns a raw pointer to the value in device memory
@@ -112,9 +106,7 @@ class fixed_width_scalar_device_view_base : public detail::scalar_device_view_ba
    */
   template <typename T>
   __device__ T* data() noexcept
-  {
-    return static_cast<T*>(_data);
-  }
+  { return static_cast<T*>(_data); }
 
   /**
    * @brief Returns a const raw pointer to the value in device memory
@@ -124,9 +116,7 @@ class fixed_width_scalar_device_view_base : public detail::scalar_device_view_ba
    */
   template <typename T>
   __device__ T const* data() const noexcept
-  {
-    return static_cast<T const*>(_data);
-  }
+  { return static_cast<T const*>(_data); }
 
  protected:
   void* _data{};  ///< Pointer to device memory containing the value
@@ -169,9 +159,7 @@ class fixed_width_scalar_device_view : public detail::fixed_width_scalar_device_
    * @returns Const reference to stored value
    */
   __device__ T const& value() const noexcept
-  {
-    return fixed_width_scalar_device_view_base::value<T>();
-  }
+  { return fixed_width_scalar_device_view_base::value<T>(); }
 
   /**
    * @brief Stores the value in scalar
@@ -193,9 +181,7 @@ class fixed_width_scalar_device_view : public detail::fixed_width_scalar_device_
    * @returns Const raw pointer to the value in device memory
    */
   __device__ T const* data() const noexcept
-  {
-    return fixed_width_scalar_device_view_base::data<T>();
-  }
+  { return fixed_width_scalar_device_view_base::data<T>(); }
 
  protected:
   /**
@@ -304,9 +290,7 @@ class string_scalar_device_view : public detail::scalar_device_view_base {
    * @returns string_view of the value of this scalar
    */
   [[nodiscard]] __device__ ValueType value() const noexcept
-  {
-    return ValueType{this->data(), _size};
-  }
+  { return ValueType{this->data(), _size}; }
 
   /**
    * @brief Returns a raw pointer to the value in device memory
@@ -314,9 +298,7 @@ class string_scalar_device_view : public detail::scalar_device_view_base {
    * @returns Raw pointer to the value in device memory
    */
   [[nodiscard]] __device__ char const* data() const noexcept
-  {
-    return static_cast<char const*>(_data);
-  }
+  { return static_cast<char const*>(_data); }
 
   /**
    * @brief Returns the size of the string in bytes.
@@ -378,9 +360,7 @@ class duration_scalar_device_view : public detail::fixed_width_scalar_device_vie
  */
 template <typename T>
 auto get_scalar_device_view(numeric_scalar<T>& s)
-{
-  return numeric_scalar_device_view<T>(s.type(), s.data(), s.validity_data());
-}
+{ return numeric_scalar_device_view<T>(s.type(), s.data(), s.validity_data()); }
 
 /**
  * @brief Get the device view of a string_scalar
@@ -389,9 +369,7 @@ auto get_scalar_device_view(numeric_scalar<T>& s)
  * @return A device view of a string_scalar
  */
 inline auto get_scalar_device_view(string_scalar& s)
-{
-  return string_scalar_device_view(s.type(), s.data(), s.validity_data(), s.size());
-}
+{ return string_scalar_device_view(s.type(), s.data(), s.validity_data(), s.size()); }
 
 /**
  * @brief Get the device view of a timestamp_scalar
@@ -401,9 +379,7 @@ inline auto get_scalar_device_view(string_scalar& s)
  */
 template <typename T>
 auto get_scalar_device_view(timestamp_scalar<T>& s)
-{
-  return timestamp_scalar_device_view<T>(s.type(), s.data(), s.validity_data());
-}
+{ return timestamp_scalar_device_view<T>(s.type(), s.data(), s.validity_data()); }
 
 /**
  * @brief Get the device view of a duration_scalar
@@ -413,9 +389,7 @@ auto get_scalar_device_view(timestamp_scalar<T>& s)
  */
 template <typename T>
 auto get_scalar_device_view(duration_scalar<T>& s)
-{
-  return duration_scalar_device_view<T>(s.type(), s.data(), s.validity_data());
-}
+{ return duration_scalar_device_view<T>(s.type(), s.data(), s.validity_data()); }
 
 /**
  * @brief Get the device view of a fixed_point_scalar
@@ -425,8 +399,6 @@ auto get_scalar_device_view(duration_scalar<T>& s)
  */
 template <typename T>
 auto get_scalar_device_view(fixed_point_scalar<T>& s)
-{
-  return fixed_point_scalar_device_view<T>(s.type(), s.data(), s.validity_data());
-}
+{ return fixed_point_scalar_device_view<T>(s.type(), s.data(), s.validity_data()); }
 
 }  // namespace CUDF_EXPORT cudf

@@ -49,38 +49,38 @@ std::tuple<std::unique_ptr<cudf::column>, std::vector<int32_t>> transform(
   // create boolean mask for US numbers (country_code == "1")
   auto us_scalar = cudf::string_scalar("1", true, stream, mr);
   auto us_mask   = cudf::binary_operation(country_code,
-                                        us_scalar,
-                                        cudf::binary_operator::EQUAL,
-                                        cudf::data_type{cudf::type_id::BOOL8},
-                                        stream,
-                                        mr);
+                                          us_scalar,
+                                          cudf::binary_operator::EQUAL,
+                                          cudf::data_type{cudf::type_id::BOOL8},
+                                          stream,
+                                          mr);
 
   // create boolean mask for UK numbers (country_code == "44")
   auto uk_scalar = cudf::string_scalar("44", true, stream, mr);
   auto uk_mask   = cudf::binary_operation(country_code,
-                                        uk_scalar,
-                                        cudf::binary_operator::EQUAL,
-                                        cudf::data_type{cudf::type_id::BOOL8},
-                                        stream,
-                                        mr);
+                                          uk_scalar,
+                                          cudf::binary_operator::EQUAL,
+                                          cudf::data_type{cudf::type_id::BOOL8},
+                                          stream,
+                                          mr);
 
   // create boolean mask for Ireland numbers (country_code == "353")
   auto ie_scalar = cudf::string_scalar("353", true, stream, mr);
   auto ie_mask   = cudf::binary_operation(country_code,
-                                        ie_scalar,
-                                        cudf::binary_operator::EQUAL,
-                                        cudf::data_type{cudf::type_id::BOOL8},
-                                        stream,
-                                        mr);
+                                          ie_scalar,
+                                          cudf::binary_operator::EQUAL,
+                                          cudf::data_type{cudf::type_id::BOOL8},
+                                          stream,
+                                          mr);
 
   // create boolean mask for New-Zealand numbers (country_code == "64")
   auto nz_scalar = cudf::string_scalar("64", true, stream, mr);
   auto nz_mask   = cudf::binary_operation(country_code,
-                                        nz_scalar,
-                                        cudf::binary_operator::EQUAL,
-                                        cudf::data_type{cudf::type_id::BOOL8},
-                                        stream,
-                                        mr);
+                                          nz_scalar,
+                                          cudf::binary_operator::EQUAL,
+                                          cudf::data_type{cudf::type_id::BOOL8},
+                                          stream,
+                                          mr);
 
   // <------- create formatted US numbers: "(area_code) phone" ----------->
 

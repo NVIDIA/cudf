@@ -197,9 +197,7 @@ struct cast_numeric_scalar_fn {
  private:
   template <typename ResultType>
   static constexpr bool is_supported()
-  {
-    return cudf::is_convertible<InputType, ResultType>::value && cudf::is_numeric<ResultType>();
-  }
+  { return cudf::is_convertible<InputType, ResultType>::value && cudf::is_numeric<ResultType>(); }
 
  public:
   template <typename ResultType>
@@ -221,9 +219,7 @@ struct cast_numeric_scalar_fn {
                                      cuda::stream_ref,
                                      rmm::device_async_resource_ref)
     requires(not is_supported<ResultType>())
-  {
-    CUDF_FAIL("input data type is not convertible to output data type");
-  }
+  { CUDF_FAIL("input data type is not convertible to output data type"); }
 };
 
 /**
@@ -241,9 +237,7 @@ struct bool_result_element_dispatcher {
                                      cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr)
     requires(std::is_arithmetic_v<ElementType>)
-  {
-    return simple_reduction<ElementType, bool, Op>(col, init, stream, mr);
-  }
+  { return simple_reduction<ElementType, bool, Op>(col, init, stream, mr); }
 
   template <typename ElementType>
   std::unique_ptr<scalar> operator()(column_view const&,
@@ -251,9 +245,7 @@ struct bool_result_element_dispatcher {
                                      cuda::stream_ref,
                                      rmm::device_async_resource_ref)
     requires(not std::is_arithmetic_v<ElementType>)
-  {
-    CUDF_FAIL("Reduction operator not supported for this type");
-  }
+  { CUDF_FAIL("Reduction operator not supported for this type"); }
 };
 
 /**
@@ -268,9 +260,7 @@ struct same_element_type_dispatcher {
  private:
   template <typename ElementType>
   static constexpr bool is_supported()
-  {
-    return !cudf::is_dictionary<ElementType>() && !std::is_same_v<ElementType, void>;
-  }
+  { return !cudf::is_dictionary<ElementType>() && !std::is_same_v<ElementType, void>; }
 
   template <typename IndexType>
   std::unique_ptr<scalar> resolve_key(column_view const& keys,
@@ -289,9 +279,7 @@ struct same_element_type_dispatcher {
                                       cuda::stream_ref,
                                       rmm::device_async_resource_ref)
     requires(!cudf::is_index_type<IndexType>())
-  {
-    CUDF_FAIL("index type expected for dictionary column");
-  }
+  { CUDF_FAIL("index type expected for dictionary column"); }
 
  public:
   template <typename ElementType>
@@ -343,9 +331,7 @@ struct same_element_type_dispatcher {
                                      cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr)
     requires(cudf::is_fixed_point<ElementType>())
-  {
-    return fixed_point_reduction<ElementType, Op>(col, init, stream, mr);
-  }
+  { return fixed_point_reduction<ElementType, Op>(col, init, stream, mr); }
 
   template <typename ElementType>
   std::unique_ptr<scalar> operator()(column_view const&,
@@ -353,9 +339,7 @@ struct same_element_type_dispatcher {
                                      cuda::stream_ref,
                                      rmm::device_async_resource_ref)
     requires(not is_supported<ElementType>())
-  {
-    CUDF_FAIL("Reduction operator not supported for this type");
-  }
+  { CUDF_FAIL("Reduction operator not supported for this type"); }
 };
 
 /**
@@ -439,9 +423,7 @@ struct element_type_dispatcher {
                                      cuda::stream_ref,
                                      rmm::device_async_resource_ref)
     requires(not cudf::is_numeric<ElementType>() and not cudf::is_fixed_point<ElementType>())
-  {
-    CUDF_FAIL("Reduction operator not supported for this type");
-  }
+  { CUDF_FAIL("Reduction operator not supported for this type"); }
 };
 
 }  // namespace detail

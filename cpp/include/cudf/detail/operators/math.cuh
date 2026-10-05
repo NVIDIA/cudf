@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -24,9 +24,7 @@ namespace ops {
  */
 template <floating_point T>
 __device__ T cbrt(T a)
-{
-  return cuda::std::cbrt(a);
-}
+{ return cuda::std::cbrt(a); }
 
 /**
  * @brief Computes ceiling.
@@ -36,9 +34,7 @@ __device__ T cbrt(T a)
  */
 template <floating_point T>
 __device__ T ceil(T a)
-{
-  return cuda::std::ceil(a);
-}
+{ return cuda::std::ceil(a); }
 
 namespace detail {
 
@@ -71,9 +67,7 @@ __device__ numeric::decimal<R> decimal_round(numeric::decimal<R> a)
 
 template <typename R>
 __device__ numeric::decimal<R> ceil(numeric::decimal<R> a)
-{
-  return detail::decimal_round<R, true>(a);
-}
+{ return detail::decimal_round<R, true>(a); }
 
 /**
  * @brief Computes natural exponential.
@@ -83,9 +77,7 @@ __device__ numeric::decimal<R> ceil(numeric::decimal<R> a)
  */
 template <floating_point T>
 __device__ T exp(T a)
-{
-  return cuda::std::exp(a);
-}
+{ return cuda::std::exp(a); }
 
 /**
  * @brief Computes floor of a value.
@@ -95,15 +87,11 @@ __device__ T exp(T a)
  */
 template <floating_point T>
 __device__ T floor(T a)
-{
-  return cuda::std::floor(a);
-}
+{ return cuda::std::floor(a); }
 
 template <typename R>
 __device__ numeric::decimal<R> floor(numeric::decimal<R> a)
-{
-  return detail::decimal_round<R, false>(a);
-}
+{ return detail::decimal_round<R, false>(a); }
 
 /**
  * @brief Computes natural logarithm.
@@ -113,9 +101,7 @@ __device__ numeric::decimal<R> floor(numeric::decimal<R> a)
  */
 template <floating_point T>
 __device__ T log(T a)
-{
-  return cuda::std::log(a);
-}
+{ return cuda::std::log(a); }
 
 /**
  * @brief Computes exponentiation.
@@ -127,15 +113,11 @@ __device__ T log(T a)
  */
 template <floating_point A, floating_point B>
 __device__ auto pow(A a, B b) -> decltype(cuda::std::pow(a, b))
-{
-  return cuda::std::pow(a, b);
-}
+{ return cuda::std::pow(a, b); }
 
 template <integer A, integer B>
 __device__ auto pow(A a, B b) -> decltype(cudf::detail::integral_pow(a, b))
-{
-  return cudf::detail::integral_pow(a, b);
-}
+{ return cudf::detail::integral_pow(a, b); }
 
 /**
  * @brief Rounds to integral value.
@@ -145,9 +127,7 @@ __device__ auto pow(A a, B b) -> decltype(cudf::detail::integral_pow(a, b))
  */
 template <floating_point T>
 __device__ T rint(T a)
-{
-  return cuda::std::rint(a);
-}
+{ return cuda::std::rint(a); }
 
 /**
  * @brief Computes square root.
@@ -156,9 +136,7 @@ __device__ T rint(T a)
  */
 template <floating_point T>
 __device__ T sqrt(T a)
-{
-  return cuda::std::sqrt(a);
-}
+{ return cuda::std::sqrt(a); }
 
 }  // namespace ops
 }  // namespace detail

@@ -75,9 +75,7 @@ enum class normalize_flags : uint32_t {
  * @return Combined flags
  */
 inline normalize_flags operator|(normalize_flags a, normalize_flags b)
-{
-  return static_cast<normalize_flags>(static_cast<uint32_t>(a) | static_cast<uint32_t>(b));
-}
+{ return static_cast<normalize_flags>(static_cast<uint32_t>(a) | static_cast<uint32_t>(b)); }
 
 /**
  * @brief Used for checking if one or more flags are set
@@ -87,9 +85,7 @@ inline normalize_flags operator|(normalize_flags a, normalize_flags b)
  * @return Masked combination of flags
  */
 inline normalize_flags operator&(normalize_flags a, normalize_flags b)
-{
-  return static_cast<normalize_flags>(static_cast<uint32_t>(a) & static_cast<uint32_t>(b));
-}
+{ return static_cast<normalize_flags>(static_cast<uint32_t>(a) & static_cast<uint32_t>(b)); }
 
 /**
  * @brief Normalizer object to be used with nvtext::normalize_characters

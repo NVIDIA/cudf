@@ -313,9 +313,7 @@ struct window_bounds {
    * @return window_bounds
    */
   static window_bounds unbounded()
-  {
-    return window_bounds(true, std::numeric_limits<cudf::size_type>::max());
-  }
+  { return window_bounds(true, std::numeric_limits<cudf::size_type>::max()); }
 
   /**
    * Whether the window_bounds is unbounded.

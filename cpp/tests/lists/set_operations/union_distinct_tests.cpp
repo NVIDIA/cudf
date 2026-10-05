@@ -420,11 +420,11 @@ TYPED_TEST(SetUnionTypedTest, InputHaveNullsTests)
   // Nullable child and nulls are equal.
   {
     auto const lhs      = lists_col{lists_col{{null, 1, null, 3}, nulls_at({0, 2})},
-                               lists_col{{null, 5}, null_at(0)},
-                               lists_col{{null, 7, null, 9}, nulls_at({0, 2})}};
+                                    lists_col{{null, 5}, null_at(0)},
+                                    lists_col{{null, 7, null, 9}, nulls_at({0, 2})}};
     auto const rhs      = lists_col{lists_col{{null, null, 5}, nulls_at({0, 1})},
-                               lists_col{{5, null}, null_at(1)},
-                               lists_col{7, 8, 9}};
+                                    lists_col{{5, null}, null_at(1)},
+                                    lists_col{7, 8, 9}};
     auto const expected = lists_col{lists_col{{null, 1, 3, 5}, null_at(0)},
                                     lists_col{{null, 5}, null_at(0)},
                                     lists_col{{null, 7, 8, 9}, null_at(0)}};

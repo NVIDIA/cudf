@@ -105,16 +105,12 @@ simplified_expression_opt stats_columns_collector::simplify_negated_comparison(
 }
 
 thrust::host_vector<bool> stats_columns_collector::get_stats_columns_mask() &&
-{
-  return std::move(_columns_mask);
-}
+{ return std::move(_columns_mask); }
 
 stats_expression_converter::stats_expression_converter(
   ast::expression const& expr, std::span<cudf::data_type const> output_dtypes)
   : parquet_expression_simplifier{output_dtypes}
-{
-  _stats_expr = simplify_expr(expr);
-}
+{ _stats_expr = simplify_expr(expr); }
 
 ast::expression const& stats_expression_converter::push_non_null_guard(
   size_type col_index, ast::expression const& stats_expr)

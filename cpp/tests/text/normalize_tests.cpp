@@ -171,11 +171,11 @@ TEST_F(TextNormalizeTest, SpecialTokens)
   auto results    = nvtext::normalize_characters(sv, *normalizer);
   auto expected   = cudf::test::strings_column_wrapper(
     {" [BOS] some strings with  [PAD]  special [SEP] tokens [EOS] ",
-       " [BOS] these should [SEP] work for lowercase [EOS] ",
-       "some [ non ] tokens [ eol ] too",
-       long_row,
-       long_row,
-       long_row});
+     " [BOS] these should [SEP] work for lowercase [EOS] ",
+     "some [ non ] tokens [ eol ] too",
+     long_row,
+     long_row,
+     long_row});
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
   results = nvtext::normalize_characters(sv, *normalizer);  // and again
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
@@ -184,11 +184,11 @@ TEST_F(TextNormalizeTest, SpecialTokens)
   results    = nvtext::normalize_characters(sv, *normalizer);
   expected   = cudf::test::strings_column_wrapper(
     {" [BOS] Some strings with  [PAD]  special [SEP] tokens [EOS] ",
-       " [ bos ] these should [ sep ] work for lowercase [ eos ] ",
-       "some [ non ] tokens [ eol ] too",
-       long_row,
-       long_row,
-       long_row});
+     " [ bos ] these should [ sep ] work for lowercase [ eos ] ",
+     "some [ non ] tokens [ eol ] too",
+     long_row,
+     long_row,
+     long_row});
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
   results = nvtext::normalize_characters(sv, *normalizer);  // and again
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);

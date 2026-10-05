@@ -162,9 +162,7 @@ class parquet_reader_options {
    * @return `true` if strings should be converted to categories
    */
   [[nodiscard]] bool is_enabled_convert_strings_to_categories() const
-  {
-    return _convert_strings_to_categories;
-  }
+  { return _convert_strings_to_categories; }
 
   /**
    * @brief Returns boolean depending on whether to use pandas metadata while reading.
@@ -188,9 +186,7 @@ class parquet_reader_options {
    * sources.
    */
   [[nodiscard]] bool is_enabled_allow_mismatched_pq_schemas() const
-  {
-    return _allow_mismatched_pq_schemas;
-  }
+  { return _allow_mismatched_pq_schemas; }
 
   /**
    * @brief Returns boolean depending on whether to ignore non-existent projected columns while
@@ -207,9 +203,7 @@ class parquet_reader_options {
    * @return vector of reader_column_schema objects.
    */
   [[nodiscard]] std::optional<std::vector<reader_column_schema>> get_column_schema() const
-  {
-    return _reader_column_schema;
-  }
+  { return _reader_column_schema; }
 
   /**
    * @brief Returns number of rows to skip from the start.
@@ -248,9 +242,7 @@ class parquet_reader_options {
    * @return Names of column to be read; `nullopt` if the option is not set
    */
   [[nodiscard]] [[deprecated("Use `get_column_names` instead.")]] auto const& get_columns() const
-  {
-    return _column_names;
-  }
+  { return _column_names; }
 
   /**
    * @brief Returns names of column to be read, if set.
@@ -324,9 +316,7 @@ class parquet_reader_options {
    * @return `true` if a source file index column should be prepended
    */
   [[nodiscard]] bool is_enabled_prepend_source_index_column() const
-  {
-    return _prepend_source_index_column;
-  }
+  { return _prepend_source_index_column; }
 
   /**
    * @brief Returns whether to prepend a file-local row index column to the output.
@@ -338,9 +328,7 @@ class parquet_reader_options {
    * @return `true` if a row index column should be prepended
    */
   [[nodiscard]] bool is_enabled_prepend_row_index_column() const
-  {
-    return _prepend_row_index_column;
-  }
+  { return _prepend_row_index_column; }
 
   /**
    * @brief Returns whether the reader returns flat string columns as DICTIONARY32 encoded columns
@@ -387,9 +375,7 @@ class parquet_reader_options {
    */
   [[deprecated("Use `set_column_names` instead.")]] void set_columns(
     std::vector<std::string> column_names)
-  {
-    set_column_names(std::move(column_names));
-  }
+  { set_column_names(std::move(column_names)); }
 
   /**
    * @brief Sets the names of columns to be read from all input sources.
@@ -569,9 +555,7 @@ class parquet_reader_options {
    * Note default is to convert to string columns.
    */
   void set_column_schema(std::vector<reader_column_schema> val)
-  {
-    _reader_column_schema = std::move(val);
-  }
+  { _reader_column_schema = std::move(val); }
 
   /**
    * @brief Sets number of rows to skip.
@@ -690,9 +674,7 @@ class parquet_reader_options_builder {
    */
   [[deprecated("Use `column_names` instead.")]] parquet_reader_options_builder& columns(
     std::vector<std::string> column_names)
-  {
-    return this->column_names(std::move(column_names));
-  }
+  { return this->column_names(std::move(column_names)); }
 
   /**
    * @brief Sets names of the columns to be read.
@@ -1307,9 +1289,7 @@ class parquet_writer_options_base {
    */
   [[nodiscard]] std::vector<std::map<std::string, std::string>> const& get_key_value_metadata()
     const
-  {
-    return _user_data;
-  }
+  { return _user_data; }
 
   /**
    * @brief Returns `true` if timestamps will be written as INT96
@@ -1354,9 +1334,7 @@ class parquet_writer_options_base {
    * @return Maximum uncompressed page size, in bytes
    */
   [[nodiscard]] auto get_max_page_size_bytes() const
-  {
-    return std::min(_max_page_size_bytes, get_row_group_size_bytes());
-  }
+  { return std::min(_max_page_size_bytes, get_row_group_size_bytes()); }
 
   /**
    * @brief Returns maximum page size, in rows.
@@ -1366,9 +1344,7 @@ class parquet_writer_options_base {
    * @return Maximum page size, in rows
    */
   [[nodiscard]] auto get_max_page_size_rows() const
-  {
-    return std::min(_max_page_size_rows, get_row_group_size_rows());
-  }
+  { return std::min(_max_page_size_rows, get_row_group_size_rows()); }
 
   /**
    * @brief Returns maximum length of min or max values in column index, in bytes.
@@ -1376,9 +1352,7 @@ class parquet_writer_options_base {
    * @return length min/max will be truncated to
    */
   [[nodiscard]] auto get_column_index_truncate_length() const
-  {
-    return _column_index_truncate_length;
-  }
+  { return _column_index_truncate_length; }
 
   /**
    * @brief Returns policy for dictionary use.
@@ -1407,9 +1381,7 @@ class parquet_writer_options_base {
    * @return Compression statistics
    */
   [[nodiscard]] std::shared_ptr<writer_compression_statistics> get_compression_statistics() const
-  {
-    return _compression_stats;
-  }
+  { return _compression_stats; }
 
   /**
    * @brief Returns `true` if V2 page headers should be written.
@@ -1876,9 +1848,7 @@ class parquet_writer_options : public parquet_writer_options_base {
    * @return Column chunks file paths to be set in the raw output metadata
    */
   [[nodiscard]] std::vector<std::string> const& get_column_chunks_file_paths() const
-  {
-    return _column_chunks_file_paths;
-  }
+  { return _column_chunks_file_paths; }
 
   /**
    * @brief Sets partitions.

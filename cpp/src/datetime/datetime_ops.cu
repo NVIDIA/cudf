@@ -259,9 +259,7 @@ struct dispatch_round {
   template <typename Timestamp, typename... Args>
   std::unique_ptr<cudf::column> operator()(Args&&...)
     requires(!cudf::is_timestamp<Timestamp>())
-  {
-    CUDF_FAIL("Must be cudf::timestamp");
-  }
+  { CUDF_FAIL("Must be cudf::timestamp"); }
 };
 
 // Apply the functor for every element/row in the input column to create the output column
@@ -275,9 +273,7 @@ struct launch_functor {
   template <typename Element>
   void operator()(cuda::stream_ref stream) const
     requires(!cudf::is_timestamp_t<Element>::value)
-  {
-    CUDF_FAIL("Cannot extract datetime component from non-timestamp column.");
-  }
+  { CUDF_FAIL("Cannot extract datetime component from non-timestamp column."); }
 
   template <typename Timestamp>
   void operator()(cuda::stream_ref stream) const
@@ -322,9 +318,7 @@ struct add_calendrical_months_functor {
   template <typename Element, typename... Args>
   std::unique_ptr<column> operator()(Args&&...) const
     requires(!cudf::is_timestamp_t<Element>::value)
-  {
-    CUDF_FAIL("Cannot extract datetime component from non-timestamp column.");
-  }
+  { CUDF_FAIL("Cannot extract datetime component from non-timestamp column."); }
 
   template <typename Timestamp, typename MonthIterator>
   std::unique_ptr<column> operator()(column_view timestamp_column,
@@ -443,23 +437,17 @@ std::unique_ptr<column> day_of_year(column_view const& column,
 std::unique_ptr<column> is_leap_year(column_view const& column,
                                      cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr)
-{
-  return apply_datetime_op<is_leap_year_op, type_id::BOOL8>(column, stream, mr);
-}
+{ return apply_datetime_op<is_leap_year_op, type_id::BOOL8>(column, stream, mr); }
 
 std::unique_ptr<column> days_in_month(column_view const& column,
                                       cuda::stream_ref stream,
                                       rmm::device_async_resource_ref mr)
-{
-  return apply_datetime_op<days_in_month_op, type_id::INT16>(column, stream, mr);
-}
+{ return apply_datetime_op<days_in_month_op, type_id::INT16>(column, stream, mr); }
 
 std::unique_ptr<column> extract_quarter(column_view const& column,
                                         cuda::stream_ref stream,
                                         rmm::device_async_resource_ref mr)
-{
-  return apply_datetime_op<extract_quarter_op, type_id::INT16>(column, stream, mr);
-}
+{ return apply_datetime_op<extract_quarter_op, type_id::INT16>(column, stream, mr); }
 
 std::unique_ptr<cudf::column> extract_datetime_component(cudf::column_view const& column,
                                                          datetime_component component,

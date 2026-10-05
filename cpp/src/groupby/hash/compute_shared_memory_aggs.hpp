@@ -23,9 +23,7 @@ int32_t max_active_blocks_shmem_aggs_kernel();
 size_type get_available_shared_memory_size(size_type grid_size);
 
 size_type constexpr compute_shmem_offsets_size(size_type num_cols)
-{
-  return static_cast<size_type>(sizeof(size_type) * num_cols);
-}
+{ return static_cast<size_type>(sizeof(size_type) * num_cols); }
 
 void compute_shared_memory_aggs(size_type grid_size,
                                 size_type available_shmem_size,

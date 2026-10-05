@@ -65,9 +65,7 @@ scalar::scalar(scalar const& other, cuda::stream_ref stream, rmm::device_async_r
 data_type scalar::type() const noexcept { return _type; }
 
 void scalar::set_valid_async(bool is_valid, cuda::stream_ref stream)
-{
-  _is_valid.set_value_async(is_valid, stream);
-}
+{ _is_valid.set_value_async(is_valid, stream); }
 
 bool scalar::is_valid(cuda::stream_ref stream) const { return _is_valid.value(stream); }
 
@@ -128,9 +126,7 @@ string_scalar::string_scalar(rmm::device_buffer&& data,
 }
 
 string_scalar::value_type string_scalar::value(cuda::stream_ref stream) const
-{
-  return value_type{data(), size()};
-}
+{ return value_type{data(), size()}; }
 
 size_type string_scalar::size() const { return _data.size(); }
 
@@ -204,9 +200,7 @@ fixed_point_scalar<T>::fixed_point_scalar(fixed_point_scalar<T> const& other,
 
 template <typename T>
 typename fixed_point_scalar<T>::rep_type fixed_point_scalar<T>::value(cuda::stream_ref stream) const
-{
-  return _data.value(stream);
-}
+{ return _data.value(stream); }
 
 template <typename T>
 T fixed_point_scalar<T>::fixed_point_value(cuda::stream_ref stream) const
@@ -217,15 +211,11 @@ T fixed_point_scalar<T>::fixed_point_value(cuda::stream_ref stream) const
 
 template <typename T>
 typename fixed_point_scalar<T>::rep_type* fixed_point_scalar<T>::data()
-{
-  return _data.data();
-}
+{ return _data.data(); }
 
 template <typename T>
 typename fixed_point_scalar<T>::rep_type const* fixed_point_scalar<T>::data() const
-{
-  return _data.data();
-}
+{ return _data.data(); }
 
 /**
  * @brief These define the valid fixed-point scalar types.
@@ -276,21 +266,15 @@ void fixed_width_scalar<T>::set_value(T value, cuda::stream_ref stream)
 
 template <typename T>
 T fixed_width_scalar<T>::value(cuda::stream_ref stream) const
-{
-  return _data.value(stream);
-}
+{ return _data.value(stream); }
 
 template <typename T>
 T* fixed_width_scalar<T>::data()
-{
-  return _data.data();
-}
+{ return _data.data(); }
 
 template <typename T>
 T const* fixed_width_scalar<T>::data() const
-{
-  return _data.data();
-}
+{ return _data.data(); }
 
 /**
  * @brief These define the valid fixed-width scalar types.
@@ -454,9 +438,7 @@ duration_scalar<T>::duration_scalar(duration_scalar<T> const& other,
 
 template <typename T>
 typename duration_scalar<T>::rep_type duration_scalar<T>::count(cuda::stream_ref stream)
-{
-  return this->value(stream).count();
-}
+{ return this->value(stream).count(); }
 
 /**
  * @brief These define the valid duration scalar types.
@@ -475,9 +457,7 @@ template class duration_scalar<duration_ns>;
 template <typename T>
 typename timestamp_scalar<T>::rep_type timestamp_scalar<T>::ticks_since_epoch(
   cuda::stream_ref stream)
-{
-  return this->value(stream).time_since_epoch().count();
-}
+{ return this->value(stream).time_since_epoch().count(); }
 
 /**
  * @brief These define the valid timestamp scalar types.
@@ -577,9 +557,7 @@ struct_scalar::struct_scalar(table_view const& data,
                              rmm::device_async_resource_ref mr)
   : scalar(data_type(type_id::STRUCT), is_valid, stream, mr),
     _data{init_data(table{data, stream, mr}, is_valid, stream, mr)}
-{
-  assert_valid_size();
-}
+{ assert_valid_size(); }
 
 struct_scalar::struct_scalar(std::span<column_view const> data,
                              bool is_valid,
@@ -591,9 +569,7 @@ struct_scalar::struct_scalar(std::span<column_view const> data,
                 is_valid,
                 stream,
                 mr)}
-{
-  assert_valid_size();
-}
+{ assert_valid_size(); }
 
 struct_scalar::struct_scalar(table&& data,
                              bool is_valid,
@@ -601,9 +577,7 @@ struct_scalar::struct_scalar(table&& data,
                              rmm::device_async_resource_ref mr)
   : scalar(data_type(type_id::STRUCT), is_valid, stream, mr),
     _data{init_data(std::move(data), is_valid, stream, mr)}
-{
-  assert_valid_size();
-}
+{ assert_valid_size(); }
 
 table_view struct_scalar::view() const { return _data.view(); }
 

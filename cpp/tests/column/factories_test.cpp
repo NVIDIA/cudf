@@ -118,9 +118,9 @@ TYPED_TEST(NumericFactoryTest, NullMaskAsParm)
 {
   auto null_mask = create_null_mask(this->size(), cudf::mask_state::ALL_NULL);
   auto column    = cudf::make_numeric_column(cudf::data_type{cudf::type_to_id<TypeParam>()},
-                                          this->size(),
-                                          std::move(null_mask),
-                                          this->size());
+                                             this->size(),
+                                             std::move(null_mask),
+                                             this->size());
   EXPECT_EQ(column->type(), cudf::data_type{cudf::type_to_id<TypeParam>()});
   EXPECT_EQ(column->size(), this->size());
   EXPECT_EQ(this->size(), column->null_count());
@@ -263,9 +263,9 @@ TYPED_TEST(FixedWidthFactoryTest, NullMaskAsParm)
 {
   auto null_mask = create_null_mask(this->size(), cudf::mask_state::ALL_NULL);
   auto column    = cudf::make_fixed_width_column(cudf::data_type{cudf::type_to_id<TypeParam>()},
-                                              this->size(),
-                                              std::move(null_mask),
-                                              this->size());
+                                                 this->size(),
+                                                 std::move(null_mask),
+                                                 this->size());
   EXPECT_EQ(column->type(), cudf::data_type{cudf::type_to_id<TypeParam>()});
   EXPECT_EQ(column->size(), this->size());
   EXPECT_EQ(this->size(), column->null_count());
@@ -541,9 +541,7 @@ class ListsStructsLeafTest : public ColumnFactoryTest {
                                cudf::test::strings_column_wrapper field2,
                                cudf::test::lists_column_wrapper<T, int32_t> field3,
                                MaskIterator mask)
-  {
-    return SCW{{field1, field2, field3}, mask};
-  }
+  { return SCW{{field1, field2, field3}, mask}; }
 };
 
 TYPED_TEST_SUITE(ListsStructsLeafTest, cudf::test::FixedWidthTypes);
@@ -630,9 +628,7 @@ class ListsZeroLengthColumnTest : public ColumnFactoryTest {
   StructsCW make_test_structs_column(cudf::test::fixed_width_column_wrapper<int32_t> field1,
                                      cudf::test::strings_column_wrapper field2,
                                      cudf::test::lists_column_wrapper<int32_t> field3)
-  {
-    return StructsCW{field1, field2, field3};
-  }
+  { return StructsCW{field1, field2, field3}; }
 };
 
 TEST_F(ListsZeroLengthColumnTest, MixedTypes)

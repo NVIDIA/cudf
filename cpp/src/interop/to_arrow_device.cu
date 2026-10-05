@@ -98,9 +98,7 @@ struct dispatch_to_arrow_device {
   template <typename T,
             CUDF_ENABLE_IF(not is_rep_layout_compatible<T>() and not is_fixed_point<T>())>
   int operator()(cudf::column&&, cuda::stream_ref, rmm::device_async_resource_ref, ArrowArray*)
-  {
-    CUDF_FAIL("Unsupported type for to_arrow_device", cudf::data_type_error);
-  }
+  { CUDF_FAIL("Unsupported type for to_arrow_device", cudf::data_type_error); }
 
   // cover rep layout compatible and decimal types
   template <typename T, CUDF_ENABLE_IF(is_rep_layout_compatible<T>() or is_fixed_point<T>())>
@@ -308,9 +306,7 @@ struct dispatch_to_arrow_device_view {
   template <typename T,
             CUDF_ENABLE_IF(not is_rep_layout_compatible<T>() and not is_fixed_point<T>())>
   int operator()(ArrowArray*) const
-  {
-    CUDF_FAIL("Unsupported type for to_arrow_device", cudf::data_type_error);
-  }
+  { CUDF_FAIL("Unsupported type for to_arrow_device", cudf::data_type_error); }
 
   template <typename T, CUDF_ENABLE_IF(is_rep_layout_compatible<T>() or is_fixed_point<T>())>
   int operator()(ArrowArray* out) const

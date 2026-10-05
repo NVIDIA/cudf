@@ -21,9 +21,7 @@ namespace {
 
 /// Check if nonempty-null checks can be skipped for a given type.
 bool type_may_have_nonempty_nulls(cudf::type_id const& type)
-{
-  return type == type_id::STRING || type == type_id::LIST || type == type_id::STRUCT;
-}
+{ return type == type_id::STRING || type == type_id::LIST || type == type_id::STRUCT; }
 
 /// Check if the (STRING/LIST) column has any null rows with non-zero length.
 bool has_nonempty_null_rows(cudf::column_view const& input, cuda::stream_ref stream)
@@ -118,9 +116,7 @@ bool may_have_nonempty_nulls(column_view const& input)
  * @copydoc cudf::has_nonempty_nulls
  */
 bool has_nonempty_nulls(column_view const& input, cuda::stream_ref stream)
-{
-  return detail::has_nonempty_nulls(input, stream);
-}
+{ return detail::has_nonempty_nulls(input, stream); }
 
 /**
  * @copydoc cudf::purge_nonempty_nulls(column_view const&, rmm::device_async_resource_ref)
@@ -128,8 +124,6 @@ bool has_nonempty_nulls(column_view const& input, cuda::stream_ref stream)
 std::unique_ptr<cudf::column> purge_nonempty_nulls(column_view const& input,
                                                    cuda::stream_ref stream,
                                                    rmm::device_async_resource_ref mr)
-{
-  return detail::purge_nonempty_nulls(input, stream, mr);
-}
+{ return detail::purge_nonempty_nulls(input, stream, mr); }
 
 }  // namespace cudf

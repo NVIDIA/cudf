@@ -122,9 +122,7 @@ struct create_minmax {
 template <typename T>
 struct create_minmax_with_nulls {
   __device__ minmax_pair<T> operator()(cuda::std::pair<T, bool> i)
-  {
-    return i.second ? minmax_pair<T>{i.first} : minmax_pair<T>{};
-  }
+  { return i.second ? minmax_pair<T>{i.first} : minmax_pair<T>{}; }
 };
 
 /**
@@ -222,9 +220,7 @@ struct minmax_dictionary_functor {
   std::pair<std::unique_ptr<scalar>, std::unique_ptr<scalar>> operator()(
     column_view const&, cuda::stream_ref, rmm::device_async_resource_ref)
     requires(!is_supported<T>())
-  {
-    CUDF_FAIL("dictionary key type not supported for minmax() operation");
-  }
+  { CUDF_FAIL("dictionary key type not supported for minmax() operation"); }
 };
 
 /**
@@ -238,9 +234,7 @@ struct minmax_dictionary_functor {
 struct minmax_functor {
   template <typename T>
   static constexpr bool is_supported()
-  {
-    return !(std::is_same_v<T, cudf::list_view> || std::is_same_v<T, cudf::struct_view>);
-  }
+  { return !(std::is_same_v<T, cudf::list_view> || std::is_same_v<T, cudf::struct_view>); }
 
   template <typename T>
   auto reduce(column_view const& col, cuda::stream_ref stream)
@@ -309,9 +303,7 @@ struct minmax_functor {
   std::pair<std::unique_ptr<scalar>, std::unique_ptr<scalar>> operator()(
     cudf::column_view const&, cuda::stream_ref, rmm::device_async_resource_ref)
     requires(!is_supported<T>())
-  {
-    CUDF_FAIL("type not supported for minmax() operation");
-  }
+  { CUDF_FAIL("type not supported for minmax() operation"); }
 };
 
 }  // namespace

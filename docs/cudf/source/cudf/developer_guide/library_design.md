@@ -199,10 +199,13 @@ It is possible to access the statistics through the spill manager like:
 
 To have each worker in dask print spill statistics, do something like:
 ```python
-    def spill_info():
-        from cudf.core.buffer.spill_manager import get_global_manager
-        print(get_global_manager().statistics)
-    client.submit(spill_info)
+def spill_info():
+    from cudf.core.buffer.spill_manager import get_global_manager
+
+    print(get_global_manager().statistics)
+
+
+client.submit(spill_info)
 ```
 
 (copy-on-write-dev-doc)=

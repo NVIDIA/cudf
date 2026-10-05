@@ -25,9 +25,7 @@ struct indices_handler_fn {
   column_device_view const d_indices;
   size_type oob_index;  // out-of-bounds index identifies nulls
   __device__ size_type operator()(size_type idx) const
-  {
-    return d_indices.is_null(idx) ? oob_index : d_iterator[idx];
-  }
+  { return d_indices.is_null(idx) ? oob_index : d_iterator[idx]; }
 };
 }  // namespace
 
@@ -47,13 +45,13 @@ std::unique_ptr<column> decode(dictionary_column_view const& source,
   auto const indices_begin = cudf::detail::make_counting_transform_iterator(
     0, indices_handler_fn{d_iterator, *d_indices, source.keys().size()});
 
-  auto table_column = cudf::detail::gather(table_view{{source.keys()}},
-                                           indices_begin,
-                                           indices_begin + source.size(),
-                                           cudf::out_of_bounds_policy::NULLIFY,
-                                           stream,
-                                           mr)
-                        ->release();
+  auto table_column  = cudf::detail::gather(table_view{{source.keys()}},
+                                            indices_begin,
+                                            indices_begin + source.size(),
+                                            cudf::out_of_bounds_policy::NULLIFY,
+                                            stream,
+                                            mr)
+                         ->release();
   auto output_column = std::unique_ptr<column>(std::move(table_column.front()));
 
   // apply any nulls to the output column

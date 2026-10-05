@@ -56,14 +56,10 @@ void nvbench_set_op(nvbench::state& state, BenchFuncPtr bfunc)
 }  // namespace
 
 void nvbench_have_overlap(nvbench::state& state)
-{
-  nvbench_set_op(state, &cudf::lists::have_overlap);
-}
+{ nvbench_set_op(state, &cudf::lists::have_overlap); }
 
 void nvbench_intersect_distinct(nvbench::state& state)
-{
-  nvbench_set_op(state, &cudf::lists::intersect_distinct);
-}
+{ nvbench_set_op(state, &cudf::lists::intersect_distinct); }
 
 NVBENCH_BENCH(nvbench_have_overlap)
   .set_name("have_overlap")

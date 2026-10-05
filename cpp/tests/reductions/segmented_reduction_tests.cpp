@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -1050,7 +1050,7 @@ TEST_F(SegmentedReductionTestUntyped, ReduceEmptyColumn)
 
   // Test with initial value
   auto const init_scalar = cudf::make_fixed_width_scalar<int32_t>(3);
-  res                    = cudf::segmented_reduce(input,
+  res = cudf::segmented_reduce(input,
                                d_offsets,
                                *cudf::make_sum_aggregation<cudf::segmented_reduce_aggregation>(),
                                cudf::data_type{cudf::type_to_id<int32_t>()},

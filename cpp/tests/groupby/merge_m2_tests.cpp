@@ -259,54 +259,34 @@ TYPED_TEST(GroupbyMergeM2TypedTest, EmptyInput)
 }
 
 TEST_F(GroupbyMergeM2ExtremeTest, ExtremeFiniteFirstPartialInt64Count)
-{
-  test_extreme_finite_first_partial<int64_t>();
-}
+{ test_extreme_finite_first_partial<int64_t>(); }
 
 TEST_F(GroupbyMergeM2ExtremeTest, ExtremeFiniteFirstPartialDoubleCount)
-{
-  test_extreme_finite_first_partial<double>();
-}
+{ test_extreme_finite_first_partial<double>(); }
 
 TEST_F(GroupbyMergeM2ExtremeTest, ExtremeFiniteMergedPartialsInt64Count)
-{
-  test_extreme_finite_merged_partials<int64_t>();
-}
+{ test_extreme_finite_merged_partials<int64_t>(); }
 
 TEST_F(GroupbyMergeM2ExtremeTest, ExtremeFiniteMergedPartialsDoubleCount)
-{
-  test_extreme_finite_merged_partials<double>();
-}
+{ test_extreme_finite_merged_partials<double>(); }
 
 TEST_F(GroupbyMergeM2ExtremeTest, NanMeanFirstPartialInt64Count)
-{
-  test_nan_mean_first_partial<int64_t>();
-}
+{ test_nan_mean_first_partial<int64_t>(); }
 
 TEST_F(GroupbyMergeM2ExtremeTest, NanMeanFirstPartialDoubleCount)
-{
-  test_nan_mean_first_partial<double>();
-}
+{ test_nan_mean_first_partial<double>(); }
 
 TEST_F(GroupbyMergeM2ExtremeTest, InfMeanFirstPartialInt64Count)
-{
-  test_inf_mean_first_partial<int64_t>();
-}
+{ test_inf_mean_first_partial<int64_t>(); }
 
 TEST_F(GroupbyMergeM2ExtremeTest, InfMeanFirstPartialDoubleCount)
-{
-  test_inf_mean_first_partial<double>();
-}
+{ test_inf_mean_first_partial<double>(); }
 
 TEST_F(GroupbyMergeM2ExtremeTest, NanMeanMergedWithFiniteInt64Count)
-{
-  test_nan_mean_merged_with_finite<int64_t>();
-}
+{ test_nan_mean_merged_with_finite<int64_t>(); }
 
 TEST_F(GroupbyMergeM2ExtremeTest, NanMeanMergedWithFiniteDoubleCount)
-{
-  test_nan_mean_merged_with_finite<double>();
-}
+{ test_nan_mean_merged_with_finite<double>(); }
 
 TYPED_TEST(GroupbyMergeM2TypedTest, SimpleInput)
 {

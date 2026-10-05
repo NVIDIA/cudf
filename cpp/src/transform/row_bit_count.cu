@@ -268,9 +268,7 @@ struct flatten_functor {
   void operator()(Args&&...)
     requires(!cudf::is_fixed_width<T>() && !std::is_same_v<T, string_view> &&
              !std::is_same_v<T, list_view> && !std::is_same_v<T, struct_view>)
-  {
-    CUDF_FAIL("Unsupported column type in row_bit_count");
-  }
+  { CUDF_FAIL("Unsupported column type in row_bit_count"); }
 };
 
 template <typename ColIter>
@@ -559,9 +557,7 @@ std::unique_ptr<column> segmented_row_bit_count(table_view const& t,
 std::unique_ptr<column> row_bit_count(table_view const& t,
                                       cuda::stream_ref stream,
                                       rmm::device_async_resource_ref mr)
-{
-  return detail::segmented_row_bit_count(t, 1, stream, mr);
-}
+{ return detail::segmented_row_bit_count(t, 1, stream, mr); }
 
 }  // namespace detail
 

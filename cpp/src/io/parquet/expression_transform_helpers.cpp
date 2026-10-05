@@ -309,9 +309,7 @@ names_from_expression::names_from_expression(
 }
 
 std::reference_wrapper<ast::expression const> names_from_expression::visit(ast::literal const& expr)
-{
-  return expr;
-}
+{ return expr; }
 
 std::reference_wrapper<ast::expression const> names_from_expression::visit(
   ast::column_reference const& expr)
@@ -367,21 +365,15 @@ offset_column_references::offset_column_references(
 
 std::optional<std::reference_wrapper<ast::expression const>>
 parquet_filter_normalizer::get_converted_expr() const
-{
-  return _converted_expr;
-}
+{ return _converted_expr; }
 
 std::optional<std::reference_wrapper<ast::expression const>>
 offset_column_references::get_converted_expr() const
-{
-  return _converted_expr;
-}
+{ return _converted_expr; }
 
 std::reference_wrapper<ast::expression const> offset_column_references::visit(
   ast::literal const& expr)
-{
-  return expr;
-}
+{ return expr; }
 
 std::reference_wrapper<ast::expression const> offset_column_references::visit(
   ast::column_reference const& expr)
@@ -401,9 +393,7 @@ std::reference_wrapper<ast::expression const> offset_column_references::visit(
 
 std::reference_wrapper<ast::expression const> offset_column_references::visit(
   ast::column_name_reference const&)
-{
-  CUDF_FAIL("Column name references are not supported in column reference offsetter");
-}
+{ CUDF_FAIL("Column name references are not supported in column reference offsetter"); }
 
 [[nodiscard]] std::unordered_map<cudf::size_type, std::string> map_column_indices_to_names(
   cudf::io::parquet_reader_options const& options,
@@ -493,21 +483,15 @@ parquet_expression_simplifier::parquet_expression_simplifier(
 
 simplified_expression_opt parquet_expression_simplifier::simplify_unary_op(
   ast::ast_operator, ast::column_reference const&)
-{
-  return std::nullopt;
-}
+{ return std::nullopt; }
 
 simplified_expression_opt parquet_expression_simplifier::simplify_negated_unary_op(
   ast::ast_operator, ast::column_reference const&)
-{
-  return std::nullopt;
-}
+{ return std::nullopt; }
 
 simplified_expression_opt parquet_expression_simplifier::simplify_negated_comparison(
   ast::ast_operator, ast::column_reference const&, ast::literal const&)
-{
-  return std::nullopt;
-}
+{ return std::nullopt; }
 
 void parquet_expression_simplifier::validate_column_reference(
   ast::column_reference const& col_ref) const
@@ -524,9 +508,7 @@ void parquet_expression_simplifier::validate_column_reference(
 }
 
 ast::expression const& parquet_expression_simplifier::placeholder_expr()
-{
-  return _tree.push(ast::column_reference{0});
-}
+{ return _tree.push(ast::column_reference{0}); }
 
 void parquet_expression_simplifier::validate_operands(ast::expression const& expr) const
 {
@@ -657,9 +639,7 @@ simplified_expression_opt parquet_expression_simplifier::simplify_expr_impl(
   std::vector<std::string> const& skip_names,
   cudf::io::parquet_reader_options const& options,
   std::vector<SchemaElement> const& schema_tree)
-{
-  return names_from_expression(expr, skip_names, options, schema_tree).to_vector();
-}
+{ return names_from_expression(expr, skip_names, options, schema_tree).to_vector(); }
 
 std::optional<std::vector<std::vector<size_type>>> collect_filtered_row_group_indices(
   cudf::table_view table,

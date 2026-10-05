@@ -76,9 +76,7 @@ TYPED_TEST(ReductionTDigestAllTypes, AllNull)
 struct ReductionTDigestMerge : public cudf::test::BaseFixtureWithHarness {};
 
 TEST_F(ReductionTDigestMerge, Simple)
-{
-  cudf::test::tdigest_merge_simple(reduce_op{}, reduce_merge_op{});
-}
+{ cudf::test::tdigest_merge_simple(reduce_op{}, reduce_merge_op{}); }
 
 TEST_F(ReductionTDigestMerge, TestUtilityMemoryResourceControl)
 {

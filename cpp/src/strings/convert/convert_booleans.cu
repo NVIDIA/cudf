@@ -43,11 +43,11 @@ std::unique_ptr<column> to_booleans(strings_column_view const& input,
   auto d_strings      = *strings_column;
   // create output column copying the strings' null-mask
   auto results      = make_numeric_column(data_type{type_id::BOOL8},
-                                     strings_count,
-                                     cudf::detail::copy_bitmask(input.parent(), stream, mr),
-                                     input.null_count(),
-                                     stream,
-                                     mr);
+                                          strings_count,
+                                          cudf::detail::copy_bitmask(input.parent(), stream, mr),
+                                          input.null_count(),
+                                          stream,
+                                          mr);
   auto results_view = results->mutable_view();
   auto d_results    = results_view.data<bool>();
 

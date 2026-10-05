@@ -138,8 +138,8 @@ struct batch_hash_layout {
   static_assert(num_hash_bits == 32, "streaming_hash_join requires a 32-bit row hash");
 
   explicit batch_hash_layout(size_type max_num_batches)
-    : batch_bits{std::bit_width(
-        static_cast<hash_value_type>(checked_batch_count(max_num_batches) - 1))},
+    : batch_bits{
+        std::bit_width(static_cast<hash_value_type>(checked_batch_count(max_num_batches) - 1))},
       batch_shift{num_hash_bits - batch_bits},
       hash_mask{std::numeric_limits<hash_value_type>::max() >> batch_bits}
   {
@@ -147,9 +147,7 @@ struct batch_hash_layout {
 
   [[nodiscard]] CUDF_HOST_DEVICE constexpr hash_value_type masked_hash(
     hash_value_type hash) const noexcept
-  {
-    return hash & hash_mask;
-  }
+  { return hash & hash_mask; }
 
   [[nodiscard]] CUDF_HOST_DEVICE constexpr hash_value_type pack(hash_value_type hash,
                                                                 size_type batch_id) const noexcept
@@ -172,18 +170,14 @@ struct batch_hash_layout {
 
 struct always_not_equal {
   __device__ constexpr bool operator()(slot_type const&, slot_type const&) const noexcept
-  {
-    return false;
-  }
+  { return false; }
 };
 
 struct masked_hasher1 {
   hash_value_type hash_mask{std::numeric_limits<hash_value_type>::max()};
 
   __device__ constexpr hash_value_type operator()(slot_type const& key) const noexcept
-  {
-    return key.first & hash_mask;
-  }
+  { return key.first & hash_mask; }
 };
 
 struct masked_hasher2 {
@@ -194,9 +188,7 @@ struct masked_hasher2 {
   }
 
   __device__ constexpr hash_value_type operator()(slot_type const& key) const noexcept
-  {
-    return hash(key.first & hash_mask);
-  }
+  { return hash(key.first & hash_mask); }
 
   hash_value_type hash_mask;
   cuco::xxhash_32<hash_value_type> hash;
@@ -218,9 +210,7 @@ struct build_pair_fn {
   size_type batch_id;
 
   __device__ slot_type operator()(size_type row_index) const noexcept
-  {
-    return slot_type{layout.pack(hash(row_index), batch_id), row_index};
-  }
+  { return slot_type{layout.pack(hash(row_index), batch_id), row_index}; }
 };
 
 template <typename Hasher>
@@ -229,9 +219,7 @@ struct probe_pair_fn {
   batch_hash_layout layout;
 
   __device__ slot_type operator()(size_type row_index) const noexcept
-  {
-    return slot_type{layout.masked_hash(hash(row_index)), row_index};
-  }
+  { return slot_type{layout.masked_hash(hash(row_index)), row_index}; }
 };
 
 template <typename RowEqual>
@@ -249,18 +237,14 @@ struct n_table_pair_equal {
 
 struct extract_index_fn {
   __device__ constexpr size_type operator()(slot_type const& value) const noexcept
-  {
-    return value.second;
-  }
+  { return value.second; }
 };
 
 struct decode_slot_fn {
   batch_hash_layout layout;
 
   __device__ cuda::std::tuple<size_type, size_type> operator()(slot_type const& slot) const noexcept
-  {
-    return {layout.batch_id(slot.first), slot.second};
-  }
+  { return {layout.batch_id(slot.first), slot.second}; }
 };
 
 }  // namespace
@@ -557,9 +541,7 @@ void streaming_hash_join::insert(table_view const& right_partition, cuda::stream
 }
 
 table_view streaming_hash_join::get_partition(size_type batch_id) const
-{
-  return _impl->get_partition(batch_id);
-}
+{ return _impl->get_partition(batch_id); }
 
 std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
           std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,

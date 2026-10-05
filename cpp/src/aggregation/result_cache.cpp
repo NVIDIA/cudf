@@ -13,9 +13,7 @@ namespace cudf {
 namespace detail {
 
 bool result_cache::has_result(column_view const& input, aggregation const& agg) const
-{
-  return _cache.count({input, agg});
-}
+{ return _cache.count({input, agg}); }
 
 void result_cache::add_result(column_view const& input,
                               aggregation const& agg,

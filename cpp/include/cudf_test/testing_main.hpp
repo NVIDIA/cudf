@@ -54,28 +54,20 @@ struct pinned_pool {
   }
 
   void* allocate_sync(std::size_t bytes, std::size_t alignment = rmm::CUDA_ALLOCATION_ALIGNMENT)
-  {
-    return pool_mr.allocate(cuda::stream_ref{cudaStream_t{cudaStreamDefault}}, bytes, alignment);
-  }
+  { return pool_mr.allocate(cuda::stream_ref{cudaStream_t{cudaStreamDefault}}, bytes, alignment); }
   void deallocate_sync(void* p,
                        std::size_t bytes,
                        std::size_t alignment = rmm::CUDA_ALLOCATION_ALIGNMENT) noexcept
-  {
-    pool_mr.deallocate(cuda::stream_ref{cudaStream_t{cudaStreamDefault}}, p, bytes, alignment);
-  }
+  { pool_mr.deallocate(cuda::stream_ref{cudaStream_t{cudaStreamDefault}}, p, bytes, alignment); }
   void* allocate(cuda::stream_ref s,
                  std::size_t bytes,
                  std::size_t a = rmm::CUDA_ALLOCATION_ALIGNMENT)
-  {
-    return pool_mr.allocate(s, bytes, a);
-  }
+  { return pool_mr.allocate(s, bytes, a); }
   void deallocate(cuda::stream_ref s,
                   void* p,
                   std::size_t bytes,
                   std::size_t a = rmm::CUDA_ALLOCATION_ALIGNMENT) noexcept
-  {
-    pool_mr.deallocate(s, p, bytes, a);
-  }
+  { pool_mr.deallocate(s, p, bytes, a); }
   bool operator==(pinned_pool const& o) const noexcept { return &pool_mr == &o.pool_mr; }
   bool operator!=(pinned_pool const& o) const noexcept { return &pool_mr != &o.pool_mr; }
   friend void get_property(pinned_pool const&, cuda::mr::device_accessible) noexcept {}

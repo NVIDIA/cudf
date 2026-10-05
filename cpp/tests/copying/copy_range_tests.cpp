@@ -338,9 +338,9 @@ TEST_F(CopyRangeTestFixture, CopyDictionary)
   }
 
   auto source_validity   = cuda::transform_iterator(cuda::counting_iterator<cudf::size_type>{0},
-                                                  [](auto i) { return i != 3; });
+                                                    [](auto i) { return i != 3; });
   auto target_validity   = cuda::transform_iterator(cuda::counting_iterator<cudf::size_type>{0},
-                                                  [](auto i) { return i != 3 && i != 9; });
+                                                    [](auto i) { return i != 3 && i != 9; });
   auto expected_validity = cuda::transform_iterator(cuda::counting_iterator<cudf::size_type>{0},
                                                     [](auto i) { return i != 5 && i != 9; });
   {

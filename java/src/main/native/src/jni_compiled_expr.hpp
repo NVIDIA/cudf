@@ -53,27 +53,19 @@ class compiled_expr {
 
   cudf::ast::column_reference const& add_column_ref(cudf::size_type column_index,
                                                     cudf::ast::table_reference table_ref)
-  {
-    return expressions.emplace<cudf::ast::column_reference>(column_index, table_ref);
-  }
+  { return expressions.emplace<cudf::ast::column_reference>(column_index, table_ref); }
 
   cudf::ast::column_name_reference const& add_column_name_ref(std::string column_name)
-  {
-    return expressions.emplace<cudf::ast::column_name_reference>(std::move(column_name));
-  }
+  { return expressions.emplace<cudf::ast::column_name_reference>(std::move(column_name)); }
 
   cudf::ast::operation const& add_operation(cudf::ast::ast_operator op,
                                             cudf::ast::expression const& child)
-  {
-    return expressions.emplace<cudf::ast::operation>(op, child);
-  }
+  { return expressions.emplace<cudf::ast::operation>(op, child); }
 
   cudf::ast::operation const& add_operation(cudf::ast::ast_operator op,
                                             cudf::ast::expression const& left,
                                             cudf::ast::expression const& right)
-  {
-    return expressions.emplace<cudf::ast::operation>(op, left, right);
-  }
+  { return expressions.emplace<cudf::ast::operation>(op, left, right); }
 
   template <typename F>
   cudf::ast::expression const& add_jit_expression(F&& factory)

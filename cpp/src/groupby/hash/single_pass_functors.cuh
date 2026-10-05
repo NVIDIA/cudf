@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -17,9 +17,7 @@ namespace cudf::groupby::detail::hash {
 struct size_of_functor {
   template <typename T>
   CUDF_HOST_DEVICE constexpr cudf::size_type operator()()
-  {
-    return sizeof(T);
-  }
+  { return sizeof(T); }
 };
 
 template <typename Target, cudf::aggregation::Kind k>
@@ -28,9 +26,7 @@ struct initialize_target_element {
                              bool* target_mask,
                              cudf::size_type idx) const noexcept
     requires(not cudf::detail::is_identity_supported<Target, k>())
-  {
-    CUDF_UNREACHABLE("Invalid source type and aggregation combination.");
-  }
+  { CUDF_UNREACHABLE("Invalid source type and aggregation combination."); }
 
   __device__ void operator()(cuda::std::byte* target,
                              bool* target_mask,
@@ -51,9 +47,7 @@ struct initialize_shmem {
   __device__ void operator()(cuda::std::byte* target,
                              bool* target_mask,
                              cudf::size_type idx) const noexcept
-  {
-    initialize_target_element<Target, k>{}(target, target_mask, idx);
-  }
+  { initialize_target_element<Target, k>{}(target, target_mask, idx); }
 };
 
 /**

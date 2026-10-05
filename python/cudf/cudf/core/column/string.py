@@ -1629,8 +1629,8 @@ class StringColumn(ColumnBase, Scannable):
 
     def slice_strings(
         self,
-        start: int | None | NumericalColumn,
-        stop: int | None | NumericalColumn,
+        start: int | NumericalColumn | None,
+        stop: int | NumericalColumn | None,
         step: int | None = None,
     ) -> Self:
         with self.access(mode="read", scope="internal"):

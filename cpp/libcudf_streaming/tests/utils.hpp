@@ -148,9 +148,7 @@ template <std::integral T = std::int64_t>
 [[nodiscard]] inline cudf::table sort_table(std::unique_ptr<cudf::table> const& table,
                                             std::vector<cudf::size_type> const& column_indices = {
                                               0})
-{
-  return sort_table(table->view(), column_indices);
-}
+{ return sort_table(table->view(), column_indices); }
 
 /**
  * @brief Generate a packed data object with the given number of elements and offset.
@@ -228,14 +226,10 @@ class DelayedMemoryResource {
   }
 
   void* allocate_sync(std::size_t, std::size_t)
-  {
-    RAPIDSMPF_FAIL("synchronous allocation not supported", std::invalid_argument);
-  }
+  { RAPIDSMPF_FAIL("synchronous allocation not supported", std::invalid_argument); }
 
   void deallocate_sync(void*, std::size_t, std::size_t) noexcept
-  {
-    RAPIDSMPF_FATAL("synchronous deallocation not supported");
-  }
+  { RAPIDSMPF_FATAL("synchronous deallocation not supported"); }
 
   void* allocate(cuda::stream_ref stream,
                  std::size_t size,
@@ -253,9 +247,7 @@ class DelayedMemoryResource {
                   void* ptr,
                   std::size_t size,
                   std::size_t alignment = rmm::CUDA_ALLOCATION_ALIGNMENT) noexcept
-  {
-    upstream_.deallocate(stream, ptr, size, alignment);
-  }
+  { upstream_.deallocate(stream, ptr, size, alignment); }
 
   bool operator==(DelayedMemoryResource const& other) const noexcept { return this == &other; }
 

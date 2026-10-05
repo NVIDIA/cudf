@@ -59,9 +59,7 @@ struct percentile_approx_dispatch {
                                            std::vector<double> const& percentages,
                                            cudf::size_type ulps)
     requires(!cudf::is_numeric<T>() && !cudf::is_fixed_point<T>())
-  {
-    CUDF_FAIL("Invalid input type for percentile_approx test");
-  }
+  { CUDF_FAIL("Invalid input type for percentile_approx test"); }
 };
 
 void percentile_approx_test(cudf::column_view const& _keys,
@@ -324,9 +322,7 @@ void expect_approx_percentiles_near_exact(std::vector<double> const& values,
 struct scoped_cpu_clustering_setting {
   bool const previous = cudf::tdigest::detail::is_cpu_cluster_computation_disabled;
   ~scoped_cpu_clustering_setting()
-  {
-    cudf::tdigest::detail::is_cpu_cluster_computation_disabled = previous;
-  }
+  { cudf::tdigest::detail::is_cpu_cluster_computation_disabled = previous; }
 };
 
 void simple_with_nulls_test(cudf::data_type input_type, std::vector<std::pair<int, int>> params)

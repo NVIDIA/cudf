@@ -622,9 +622,7 @@ void host_decompress(compression_type compression,
 }  // namespace
 
 size_t get_uncompressed_size(compression_type compression, host_span<uint8_t const> src)
-{
-  return get_source_properties(compression, src).uncomp_len;
-}
+{ return get_source_properties(compression, src).uncomp_len; }
 
 [[nodiscard]] size_t get_decompression_scratch_size(decompression_info const& di,
                                                     cuda::stream_ref stream)

@@ -445,7 +445,7 @@ TEST_F(PackUnpackTest, NestedEmpty)
   {
     auto empty_string = cudf::make_empty_column(cudf::data_type{cudf::type_id::STRING});
     auto offsets      = cudf::test::fixed_width_column_wrapper<int>({0, 0});
-    auto list         = cudf::make_lists_column(1,
+    auto list = cudf::make_lists_column(1,
                                         offsets.release(),
                                         std::move(empty_string),
                                         0,
@@ -461,7 +461,7 @@ TEST_F(PackUnpackTest, NestedEmpty)
     cudf::test::strings_column_wrapper str{"abc"};
     auto empty_string = cudf::empty_like(str);
     auto offsets      = cudf::test::fixed_width_column_wrapper<int>({0, 0});
-    auto list         = cudf::make_lists_column(1,
+    auto list = cudf::make_lists_column(1,
                                         offsets.release(),
                                         std::move(empty_string),
                                         0,
@@ -477,7 +477,7 @@ TEST_F(PackUnpackTest, NestedEmpty)
     cudf::test::lists_column_wrapper<float> listw{{1.0f, 2.0f}, {3.0f, 4.0f}};
     auto empty_list = cudf::empty_like(listw);
     auto offsets    = cudf::test::fixed_width_column_wrapper<int>({0, 0});
-    auto list       = cudf::make_lists_column(1,
+    auto list = cudf::make_lists_column(1,
                                         offsets.release(),
                                         std::move(empty_list),
                                         0,
@@ -493,7 +493,7 @@ TEST_F(PackUnpackTest, NestedEmpty)
     cudf::test::lists_column_wrapper<float> listw{{1.0f, 2.0f}, {3.0f, 4.0f}};
     auto empty_list = cudf::empty_like(listw);
     auto offsets    = cudf::test::fixed_width_column_wrapper<int>({0, 0});
-    auto list       = cudf::make_lists_column(1,
+    auto list = cudf::make_lists_column(1,
                                         offsets.release(),
                                         std::move(empty_list),
                                         0,
@@ -511,7 +511,7 @@ TEST_F(PackUnpackTest, NestedEmpty)
     auto struct_column = cudf::test::structs_column_wrapper({ints, floats});
     auto empty_struct  = cudf::empty_like(struct_column);
     auto offsets       = cudf::test::fixed_width_column_wrapper<int>({0, 0});
-    auto list          = cudf::make_lists_column(1,
+    auto list = cudf::make_lists_column(1,
                                         offsets.release(),
                                         std::move(empty_struct),
                                         0,
@@ -757,7 +757,7 @@ TEST_F(PackUnpackTest, MetadataViewRejectsCorruptedChildCount)
   auto const entry_size = (corrupted.size() - metadata_header_size) / 3;  // 3 column entries
   auto const num_children_offset = metadata_header_size                   // skip table header
                                    + entry_size - 2 * sizeof(int32_t);    // num_children in struct
-  cudf::size_type bad_children = 10;
+  cudf::size_type bad_children   = 10;
   std::memcpy(corrupted.data() + num_children_offset, &bad_children, sizeof(bad_children));
 
   EXPECT_THROW(cudf::packed_metadata_view{corrupted}, cudf::logic_error);

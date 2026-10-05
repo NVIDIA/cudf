@@ -44,9 +44,7 @@ struct scan_result_functor final : store_result_functor {
   using store_result_functor::store_result_functor;
   template <aggregation::Kind k>
   void operator()(aggregation const& agg)
-  {
-    CUDF_FAIL("Unsupported groupby scan aggregation");
-  }
+  { CUDF_FAIL("Unsupported groupby scan aggregation"); }
 
  private:
   column_view get_grouped_values()
@@ -154,10 +152,10 @@ void scan_result_functor::operator()<aggregation::RANK>(aggregation const& agg)
         cudf::get_current_device_resource_ref());
     } else {
       auto sort_order = (rank_agg._method == rank_method::FIRST ? cudf::detail::stable_sorted_order
-                                                                       : cudf::detail::sorted_order);
+                                                                : cudf::detail::sorted_order);
       return sort_order(table_view({group_labels_view, get_grouped_values()}),
-                               {order::ASCENDING, rank_agg._column_order},
-                               {null_order::AFTER, rank_agg._null_precedence},
+                        {order::ASCENDING, rank_agg._column_order},
+                        {null_order::AFTER, rank_agg._null_precedence},
                         stream,
                         cudf::get_current_device_resource_ref());
     }
@@ -191,13 +189,13 @@ void scan_result_functor::operator()<aggregation::RANK>(aggregation const& agg)
                                              stream,
                                              cudf::get_current_device_resource_ref());
     result     = detail::group_rank_to_percentage(rank_agg._method,
-                                              rank_agg._percentage,
-                                              *result,
-                                              *count,
-                                              helper.group_labels(stream),
-                                              helper.group_offsets(stream),
-                                              stream,
-                                              mr);
+                                                  rank_agg._percentage,
+                                                  *result,
+                                                  *count,
+                                                  helper.group_labels(stream),
+                                                  helper.group_offsets(stream),
+                                                  stream,
+                                                  mr);
   }
   result = std::move(
     cudf::detail::scatter(table_view{{*result}}, *gather_map, table_view{{*result}}, stream, mr)

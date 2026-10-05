@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -20,17 +20,13 @@ namespace ops {
 struct Add {
   template <typename T1, typename T2>
   __device__ inline auto operator()(T1 const& lhs, T2 const& rhs) -> decltype(lhs + rhs)
-  {
-    return lhs + rhs;
-  }
+  { return lhs + rhs; }
 };
 
 struct Sub {
   template <typename T1, typename T2>
   __device__ inline auto operator()(T1 const& lhs, T2 const& rhs) -> decltype(lhs - rhs)
-  {
-    return lhs - rhs;
-  }
+  { return lhs - rhs; }
 };
 
 struct Mul {
@@ -50,9 +46,7 @@ struct Mul {
   template <typename T1, typename T2>
   __device__ inline auto operator()(T1 const& lhs, T2 const& rhs) -> decltype(lhs * rhs)
     requires(is_supported<T1, T2>())
-  {
-    return lhs * rhs;
-  }
+  { return lhs * rhs; }
 };
 
 struct Div {
@@ -68,41 +62,31 @@ struct Div {
   template <typename T1, typename T2>
   __device__ inline auto operator()(T1 const& lhs, T2 const& rhs) -> decltype(lhs / rhs)
     requires(is_supported<T1, T2>())
-  {
-    return lhs / rhs;
-  }
+  { return lhs / rhs; }
 };
 
 struct TrueDiv {
   template <typename T1, typename T2>
   __device__ inline auto operator()(T1 const& lhs, T2 const& rhs)
     -> decltype((static_cast<double>(lhs) / static_cast<double>(rhs)))
-  {
-    return (static_cast<double>(lhs) / static_cast<double>(rhs));
-  }
+  { return (static_cast<double>(lhs) / static_cast<double>(rhs)); }
 };
 
 struct FloorDiv {
   template <typename TypeLhs, typename TypeRhs>
   __device__ inline auto operator()(TypeLhs x, TypeRhs y) -> decltype(x / y)
     requires(cuda::std::is_integral_v<cuda::std::common_type_t<TypeLhs, TypeRhs>>)
-  {
-    return cudf::detail::integral_floor_div(x, y);
-  }
+  { return cudf::detail::integral_floor_div(x, y); }
 
   template <typename TypeLhs, typename TypeRhs>
   __device__ inline auto operator()(TypeLhs x, TypeRhs y) -> float
     requires(cuda::std::is_same_v<cuda::std::common_type_t<TypeLhs, TypeRhs>, float>)
-  {
-    return floorf(x / y);
-  }
+  { return floorf(x / y); }
 
   template <typename TypeLhs, typename TypeRhs>
   __device__ inline auto operator()(TypeLhs x, TypeRhs y) -> double
     requires(cuda::std::is_same_v<cuda::std::common_type_t<TypeLhs, TypeRhs>, double>)
-  {
-    return floor(x / y);
-  }
+  { return floor(x / y); }
 };
 
 struct Mod {
@@ -118,21 +102,15 @@ struct Mod {
   template <typename T1, typename T2>
   __device__ inline auto operator()(T1 const& lhs, T2 const& rhs) -> decltype(lhs % rhs)
     requires(is_supported<T1, T2>())
-  {
-    return lhs % rhs;
-  }
+  { return lhs % rhs; }
   template <typename T1, typename T2>
   __device__ inline auto operator()(T1 const& lhs, T2 const& rhs) -> float
     requires(std::is_same_v<float, std::common_type_t<T1, T2>>)
-  {
-    return fmodf(static_cast<float>(lhs), static_cast<float>(rhs));
-  }
+  { return fmodf(static_cast<float>(lhs), static_cast<float>(rhs)); }
   template <typename T1, typename T2>
   __device__ inline auto operator()(T1 const& lhs, T2 const& rhs) -> double
     requires(std::is_same_v<double, std::common_type_t<T1, T2>>)
-  {
-    return fmod(static_cast<double>(lhs), static_cast<double>(rhs));
-  }
+  { return fmod(static_cast<double>(lhs), static_cast<double>(rhs)); }
 };
 
 struct PMod {
@@ -179,9 +157,7 @@ struct PyMod {
   __device__ inline auto operator()(TypeLhs x, TypeRhs y) -> decltype(((x % y) + y) % y)
     requires(std::is_integral_v<std::common_type_t<TypeLhs, TypeRhs>> or
              (cudf::is_fixed_point<TypeLhs>() and std::is_same_v<TypeLhs, TypeRhs>))
-  {
-    return ((x % y) + y) % y;
-  }
+  { return ((x % y) + y) % y; }
 
   template <typename TypeLhs, typename TypeRhs>
   __device__ inline auto operator()(TypeLhs x, TypeRhs y) -> double
@@ -195,61 +171,47 @@ struct PyMod {
   template <typename TypeLhs, typename TypeRhs>
   __device__ inline auto operator()(TypeLhs x, TypeRhs y) -> decltype(((x % y) + y) % y)
     requires(is_duration<TypeLhs>())
-  {
-    return ((x % y) + y) % y;
-  }
+  { return ((x % y) + y) % y; }
 };
 
 struct Pow {
   template <typename TypeLhs, typename TypeRhs>
   __device__ inline auto operator()(TypeLhs x, TypeRhs y) -> double
     requires(std::is_convertible_v<TypeLhs, double> and std::is_convertible_v<TypeRhs, double>)
-  {
-    return pow(static_cast<double>(x), static_cast<double>(y));
-  }
+  { return pow(static_cast<double>(x), static_cast<double>(y)); }
 };
 
 struct IntPow {
   template <typename TypeLhs, typename TypeRhs>
   __device__ inline auto operator()(TypeLhs x, TypeRhs y) -> TypeLhs
     requires(std::is_integral_v<TypeLhs> and std::is_integral_v<TypeRhs>)
-  {
-    return cudf::detail::integral_pow(x, y);
-  }
+  { return cudf::detail::integral_pow(x, y); }
 };
 
 struct LogBase {
   template <typename TypeLhs, typename TypeRhs>
   __device__ inline auto operator()(TypeLhs x, TypeRhs y) -> double
     requires(std::is_convertible_v<TypeLhs, double> and std::is_convertible_v<TypeRhs, double>)
-  {
-    return (std::log(static_cast<double>(x)) / std::log(static_cast<double>(y)));
-  }
+  { return (std::log(static_cast<double>(x)) / std::log(static_cast<double>(y))); }
 };
 
 struct ATan2 {
   template <typename TypeLhs, typename TypeRhs>
   __device__ inline auto operator()(TypeLhs x, TypeRhs y) -> double
     requires(std::is_convertible_v<TypeLhs, double> and std::is_convertible_v<TypeRhs, double>)
-  {
-    return std::atan2(static_cast<double>(x), static_cast<double>(y));
-  }
+  { return std::atan2(static_cast<double>(x), static_cast<double>(y)); }
 };
 
 struct ShiftLeft {
   template <typename TypeLhs, typename TypeRhs>
   __device__ inline auto operator()(TypeLhs x, TypeRhs y) -> decltype(x << y)
-  {
-    return (x << y);
-  }
+  { return (x << y); }
 };
 
 struct ShiftRight {
   template <typename TypeLhs, typename TypeRhs>
   __device__ inline auto operator()(TypeLhs x, TypeRhs y) -> decltype(x >> y)
-  {
-    return (x >> y);
-  }
+  { return (x >> y); }
 };
 
 struct ShiftRightUnsigned {
@@ -257,97 +219,73 @@ struct ShiftRightUnsigned {
   __device__ inline auto operator()(TypeLhs x, TypeRhs y)
     -> decltype(static_cast<cuda::std::make_unsigned_t<TypeLhs>>(x) >> y)
     requires(cuda::std::is_integral_v<TypeLhs> and not is_boolean<TypeLhs>())
-  {
-    return (static_cast<cuda::std::make_unsigned_t<TypeLhs>>(x) >> y);
-  }
+  { return (static_cast<cuda::std::make_unsigned_t<TypeLhs>>(x) >> y); }
 };
 
 struct BitwiseAnd {
   template <typename TypeLhs, typename TypeRhs>
   __device__ inline auto operator()(TypeLhs x, TypeRhs y) -> decltype(x & y)
-  {
-    return (x & y);
-  }
+  { return (x & y); }
 };
 
 struct BitwiseOr {
   template <typename TypeLhs, typename TypeRhs>
   __device__ inline auto operator()(TypeLhs x, TypeRhs y) -> decltype(x | y)
-  {
-    return (x | y);
-  }
+  { return (x | y); }
 };
 
 struct BitwiseXor {
   template <typename TypeLhs, typename TypeRhs>
   __device__ inline auto operator()(TypeLhs x, TypeRhs y) -> decltype(x ^ y)
-  {
-    return (x ^ y);
-  }
+  { return (x ^ y); }
 };
 
 struct LogicalAnd {
   template <typename TypeLhs, typename TypeRhs>
   __device__ inline auto operator()(TypeLhs x, TypeRhs y) -> decltype(x && y)
-  {
-    return (x && y);
-  }
+  { return (x && y); }
 };
 
 struct LogicalOr {
   template <typename TypeLhs, typename TypeRhs>
   __device__ inline auto operator()(TypeLhs x, TypeRhs y) -> decltype(x || y)
-  {
-    return (x || y);
-  }
+  { return (x || y); }
 };
 
 struct Equal {
   template <typename TypeLhs, typename TypeRhs>
   __device__ inline auto operator()(TypeLhs x, TypeRhs y) -> decltype(x == y)
-  {
-    return (x == y);
-  }
+  { return (x == y); }
 };
 
 struct NotEqual {
   template <typename TypeLhs, typename TypeRhs>
   __device__ inline auto operator()(TypeLhs x, TypeRhs y) -> decltype(x != y)
-  {
-    return (x != y);
-  }
+  { return (x != y); }
 };
 
 struct Less {
   template <typename TypeLhs, typename TypeRhs>
   __device__ inline auto operator()(TypeLhs x, TypeRhs y) -> decltype(x < y)
-  {
-    return (x < y);
-  }
+  { return (x < y); }
 };
 
 struct Greater {
   template <typename TypeLhs, typename TypeRhs>
   __device__ inline auto operator()(TypeLhs x, TypeRhs y) -> decltype(x > y)
-  {
-    return (x > y);
-  }
+  { return (x > y); }
 };
 
 struct LessEqual {
   template <typename TypeLhs, typename TypeRhs>
   __device__ inline auto operator()(TypeLhs x, TypeRhs y) -> decltype(x <= y)
-  {
-    return (x <= y);
-  }
+  { return (x <= y); }
 };
 
 struct GreaterEqual {
   template <typename TypeLhs, typename TypeRhs>
   __device__ inline auto operator()(TypeLhs x, TypeRhs y) -> decltype(x >= y)
-  {
-    return (x >= y);
-  }
+  { return (x >= y); }
 };
 
 struct NullEquals {
@@ -368,9 +306,7 @@ struct NullNotEquals {
   template <typename TypeLhs, typename TypeRhs>
   __device__ inline auto operator()(
     TypeLhs x, TypeRhs y, bool lhs_valid, bool rhs_valid, bool& output_valid) -> decltype(x != y)
-  {
-    return !NullEquals{}(x, y, lhs_valid, rhs_valid, output_valid);
-  }
+  { return !NullEquals{}(x, y, lhs_valid, rhs_valid, output_valid); }
   // To allow std::is_invocable_v = true
   template <typename TypeLhs, typename TypeRhs>
   __device__ inline auto operator()(TypeLhs x, TypeRhs y) -> decltype(x != y);

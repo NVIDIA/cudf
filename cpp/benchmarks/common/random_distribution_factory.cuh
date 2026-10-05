@@ -58,15 +58,11 @@ auto make_normal_dist(T lower_bound, T upper_bound)
 
 template <typename T, std::enable_if_t<cuda::std::is_integral_v<T>, T>* = nullptr>
 auto make_uniform_dist(T range_start, T range_end)
-{
-  return cuda::std::uniform_int_distribution<T>(range_start, range_end);
-}
+{ return cuda::std::uniform_int_distribution<T>(range_start, range_end); }
 
 template <typename T, std::enable_if_t<cudf::is_floating_point<T>()>* = nullptr>
 auto make_uniform_dist(T range_start, T range_end)
-{
-  return cuda::std::uniform_real_distribution<T>(range_start, range_end);
-}
+{ return cuda::std::uniform_real_distribution<T>(range_start, range_end); }
 
 /**
  * @brief Generates a geometric distribution between lower_bound and upper_bound.

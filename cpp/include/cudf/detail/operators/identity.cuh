@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -18,9 +18,7 @@ namespace ops {
  */
 template <typename T>
 __device__ T identity(T a)
-{
-  return a;
-}
+{ return a; }
 
 }  // namespace ops
 }  // namespace detail

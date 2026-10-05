@@ -120,9 +120,7 @@ struct opcode_evaluator;
     template <typename... Args>                             \
     __device__ static inline constexpr auto eval(Args... a) \
       -> decltype(cudf::detail::ops::func_name(a...))       \
-    {                                                       \
-      return cudf::detail::ops::func_name(a...);            \
-    }                                                       \
+    { return cudf::detail::ops::func_name(a...); }          \
   };
 
 CUDF_OPCODE_EVALUATOR(IDENTITY, identity)

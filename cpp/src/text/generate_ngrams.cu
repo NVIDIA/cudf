@@ -117,8 +117,8 @@ std::unique_ptr<cudf::column> generate_ngrams(cudf::strings_column_view const& s
                            stream,
                            cudf::get_current_device_resource_ref())
                            ->release();
-    strings_count = table_offsets.front()->size() - 1;
-    auto result   = std::move(table_offsets.front());
+    strings_count      = table_offsets.front()->size() - 1;
+    auto result        = std::move(table_offsets.front());
     return result;
   }();  // this allows freeing the temporary table_offsets
 

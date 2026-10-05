@@ -102,9 +102,7 @@ struct result_type_dispatcher {
                                      cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr)
     requires(is_supported_v<ResultType>())
-  {
-    return compound_reduction<ElementType, ResultType, Op>(col, output_dtype, ddof, stream, mr);
-  }
+  { return compound_reduction<ElementType, ResultType, Op>(col, output_dtype, ddof, stream, mr); }
 
   template <typename ResultType>
   std::unique_ptr<scalar> operator()(column_view const& col,
@@ -113,9 +111,7 @@ struct result_type_dispatcher {
                                      cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr)
     requires(not is_supported_v<ResultType>())
-  {
-    CUDF_FAIL("Unsupported output data type");
-  }
+  { CUDF_FAIL("Unsupported output data type"); }
 };
 
 // @brief input column element dispatcher for compound reduction (a.k.a. mean, var, std)
@@ -125,9 +121,7 @@ struct element_type_dispatcher {
   // return true if ElementType is arithmetic type
   template <typename ElementType>
   static constexpr bool is_supported_v()
-  {
-    return std::is_arithmetic_v<ElementType>;
-  }
+  { return std::is_arithmetic_v<ElementType>; }
 
  public:
   template <typename ElementType>

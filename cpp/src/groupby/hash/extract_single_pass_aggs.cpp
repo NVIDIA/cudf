@@ -88,25 +88,19 @@ std::vector<std::unique_ptr<aggregation>> collect_m2_simple_aggs()
 template <>
 std::vector<std::unique_ptr<aggregation>> simple_aggregation_collector::operator()<aggregation::M2>(
   data_type, aggregation const&) const
-{
-  return collect_m2_simple_aggs();
-}
+{ return collect_m2_simple_aggs(); }
 
 // Specialization for VARIANCE aggregation
 template <>
 std::vector<std::unique_ptr<aggregation>>
 simple_aggregation_collector::operator()<aggregation::VARIANCE>(data_type, aggregation const&) const
-{
-  return collect_m2_simple_aggs();
-}
+{ return collect_m2_simple_aggs(); }
 
 // Specialization for STD aggregation
 template <>
 std::vector<std::unique_ptr<aggregation>>
 simple_aggregation_collector::operator()<aggregation::STD>(data_type, aggregation const&) const
-{
-  return collect_m2_simple_aggs();
-}
+{ return collect_m2_simple_aggs(); }
 
 std::tuple<table_view,
            cudf::detail::host_vector<aggregation::Kind>,

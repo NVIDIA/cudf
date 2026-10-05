@@ -90,9 +90,7 @@ struct ColumnHandle {
 
   template <typename ColumnType, CUDF_ENABLE_IF(not cudf::is_rep_layout_compatible<ColumnType>())>
   void operator()(cudf::mutable_column_device_view source_column, int work_per_thread)
-  {
-    CUDF_FAIL("Invalid type to benchmark.");
-  }
+  { CUDF_FAIL("Invalid type to benchmark."); }
 };
 
 // The following is for DEVICE_DISPATCHING:
@@ -111,9 +109,7 @@ struct RowHandle {
 
   template <typename T, CUDF_ENABLE_IF(not cudf::is_rep_layout_compatible<T>())>
   __device__ void operator()(cudf::mutable_column_device_view source, cudf::size_type index)
-  {
-    CUDF_UNREACHABLE("Unsupported type.");
-  }
+  { CUDF_UNREACHABLE("Unsupported type."); }
 };
 
 // This is for DEVICE_DISPATCHING
@@ -214,34 +210,22 @@ void type_dispatcher_benchmark(nvbench::state& state)
 }
 
 void bench_fp64_bandwidth_host(nvbench::state& state)
-{
-  type_dispatcher_benchmark<double, BANDWIDTH_BOUND, HOST_DISPATCHING>(state);
-}
+{ type_dispatcher_benchmark<double, BANDWIDTH_BOUND, HOST_DISPATCHING>(state); }
 
 void bench_fp64_bandwidth_device(nvbench::state& state)
-{
-  type_dispatcher_benchmark<double, BANDWIDTH_BOUND, DEVICE_DISPATCHING>(state);
-}
+{ type_dispatcher_benchmark<double, BANDWIDTH_BOUND, DEVICE_DISPATCHING>(state); }
 
 void bench_fp64_bandwidth_no(nvbench::state& state)
-{
-  type_dispatcher_benchmark<double, BANDWIDTH_BOUND, NO_DISPATCHING>(state);
-}
+{ type_dispatcher_benchmark<double, BANDWIDTH_BOUND, NO_DISPATCHING>(state); }
 
 void bench_fp64_compute_host(nvbench::state& state)
-{
-  type_dispatcher_benchmark<double, COMPUTE_BOUND, HOST_DISPATCHING>(state);
-}
+{ type_dispatcher_benchmark<double, COMPUTE_BOUND, HOST_DISPATCHING>(state); }
 
 void bench_fp64_compute_device(nvbench::state& state)
-{
-  type_dispatcher_benchmark<double, COMPUTE_BOUND, DEVICE_DISPATCHING>(state);
-}
+{ type_dispatcher_benchmark<double, COMPUTE_BOUND, DEVICE_DISPATCHING>(state); }
 
 void bench_fp64_compute_no(nvbench::state& state)
-{
-  type_dispatcher_benchmark<double, COMPUTE_BOUND, NO_DISPATCHING>(state);
-}
+{ type_dispatcher_benchmark<double, COMPUTE_BOUND, NO_DISPATCHING>(state); }
 
 NVBENCH_BENCH(bench_fp64_bandwidth_host)
   .set_name("type_dispatcher_fp64_bandwidth_host")

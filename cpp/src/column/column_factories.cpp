@@ -26,9 +26,7 @@ struct size_of_helper {
   template <typename T>
   constexpr int operator()() const noexcept
     requires(is_fixed_width<T>() && not is_fixed_point<T>())
-  {
-    return sizeof(T);
-  }
+  { return sizeof(T); }
 
   template <typename T>
   constexpr int operator()() const noexcept

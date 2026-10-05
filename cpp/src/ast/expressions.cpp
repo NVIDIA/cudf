@@ -53,9 +53,7 @@ detail::expression_transformer::visit_operands(
 }
 
 cudf::size_type literal::accept(detail::expression_parser& visitor) const
-{
-  return visitor.visit(*this);
-}
+{ return visitor.visit(*this); }
 
 cudf::data_type column_reference::get_data_type(table_view const& table) const
 {
@@ -84,37 +82,25 @@ cudf::data_type column_reference::get_data_type(table_view const& left_table,
 }
 
 cudf::size_type column_reference::accept(detail::expression_parser& visitor) const
-{
-  return visitor.visit(*this);
-}
+{ return visitor.visit(*this); }
 
 cudf::size_type operation::accept(detail::expression_parser& visitor) const
-{
-  return visitor.visit(*this);
-}
+{ return visitor.visit(*this); }
 
 cudf::size_type column_name_reference::accept(detail::expression_parser& visitor) const
-{
-  return visitor.visit(*this);
-}
+{ return visitor.visit(*this); }
 
 auto literal::accept(detail::expression_transformer& visitor) const
   -> decltype(visitor.visit(*this))
-{
-  return visitor.visit(*this);
-}
+{ return visitor.visit(*this); }
 
 auto column_reference::accept(detail::expression_transformer& visitor) const
   -> decltype(visitor.visit(*this))
-{
-  return visitor.visit(*this);
-}
+{ return visitor.visit(*this); }
 
 auto operation::accept(detail::expression_transformer& visitor) const
   -> decltype(visitor.visit(*this))
-{
-  return visitor.visit(*this);
-}
+{ return visitor.visit(*this); }
 
 bool operation::may_evaluate_null(table_view const& left,
                                   table_view const& right,
@@ -144,33 +130,23 @@ std::reference_wrapper<expression const> detail::predicate::accept(
 bool detail::predicate::may_evaluate_null(table_view const& left,
                                           table_view const& right,
                                           cuda::stream_ref stream) const
-{
-  return false;
-}
+{ return false; }
 
 auto column_name_reference::accept(detail::expression_transformer& visitor) const
   -> decltype(visitor.visit(*this))
-{
-  return visitor.visit(*this);
-}
+{ return visitor.visit(*this); }
 
 std::unique_ptr<cudf::detail::row_ir::node> literal::accept(
   cudf::detail::row_ir::ast_converter& converter) const
-{
-  return converter.add_ir_node(*this);
-}
+{ return converter.add_ir_node(*this); }
 
 std::unique_ptr<cudf::detail::row_ir::node> column_reference::accept(
   cudf::detail::row_ir::ast_converter& converter) const
-{
-  return converter.add_ir_node(*this);
-}
+{ return converter.add_ir_node(*this); }
 
 std::unique_ptr<cudf::detail::row_ir::node> operation::accept(
   cudf::detail::row_ir::ast_converter& converter) const
-{
-  return converter.add_ir_node(*this);
-}
+{ return converter.add_ir_node(*this); }
 
 std::unique_ptr<cudf::detail::row_ir::node> column_name_reference::accept(
   cudf::detail::row_ir::ast_converter&) const
@@ -182,9 +158,7 @@ std::unique_ptr<cudf::detail::row_ir::node> column_name_reference::accept(
 
 std::unique_ptr<cudf::detail::row_ir::node> detail::predicate::accept(
   cudf::detail::row_ir::ast_converter& converter) const
-{
-  return converter.add_ir_node(*this);
-}
+{ return converter.add_ir_node(*this); }
 
 }  // namespace ast
 }  // namespace cudf

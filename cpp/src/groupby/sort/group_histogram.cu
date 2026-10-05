@@ -37,10 +37,10 @@ std::unique_ptr<column> build_histogram(column_view const& values,
 
   // Attach group labels to the input values.
   auto const labels_cv      = column_view{data_type{type_to_id<size_type>()},
-                                     static_cast<size_type>(group_labels.size()),
-                                     group_labels.data(),
-                                     nullptr,
-                                     0};
+                                          static_cast<size_type>(group_labels.size()),
+                                          group_labels.data(),
+                                          nullptr,
+                                          0};
   auto const labeled_values = table_view{{labels_cv, values}};
 
   // Build histogram for the labeled values.

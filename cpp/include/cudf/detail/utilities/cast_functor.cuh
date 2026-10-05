@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -27,14 +27,10 @@ template <typename T>
 struct cast_fn {
   template <typename U>
   CUDF_HOST_DEVICE constexpr T operator()(U&& val) const
-  {
-    return static_cast<T>(cuda::std::forward<U>(val));
-  }
+  { return static_cast<T>(cuda::std::forward<U>(val)); }
 
   CUDF_HOST_DEVICE constexpr T&& operator()(T&& val) const noexcept
-  {
-    return cuda::std::forward<T>(val);
-  }
+  { return cuda::std::forward<T>(val); }
 };
 
 /**
@@ -50,9 +46,7 @@ struct cast_functor_fn {
 
   template <typename... Ts>
   CUDF_HOST_DEVICE inline ResultType operator()(Ts&&... args)
-  {
-    return static_cast<ResultType>(f(std::forward<Ts>(args)...));
-  }
+  { return static_cast<ResultType>(f(std::forward<Ts>(args)...)); }
 };
 
 /**
@@ -60,9 +54,7 @@ struct cast_functor_fn {
  */
 template <typename ResultType, typename F>
 inline cast_functor_fn<ResultType, std::decay_t<F>> cast_functor(F&& f)
-{
-  return cast_functor_fn<ResultType, std::decay_t<F>>{std::forward<F>(f)};
-}
+{ return cast_functor_fn<ResultType, std::decay_t<F>>{std::forward<F>(f)}; }
 
 }  // namespace detail
 

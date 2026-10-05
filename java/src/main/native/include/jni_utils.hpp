@@ -25,9 +25,7 @@ constexpr jint MINIMUM_JNI_VERSION = JNI_VERSION_1_6;
  */
 template <typename T>
 jlong ptr_as_jlong(T* ptr)
-{
-  return reinterpret_cast<jlong>(ptr);
-}
+{ return reinterpret_cast<jlong>(ptr); }
 
 /**
  * @brief Helper to release the data held by a unique_ptr, and return
@@ -35,9 +33,7 @@ jlong ptr_as_jlong(T* ptr)
  */
 template <typename T>
 jlong release_as_jlong(std::unique_ptr<T>&& ptr)
-{
-  return ptr_as_jlong(ptr.release());
-}
+{ return ptr_as_jlong(ptr.release()); }
 
 /**
  * @brief Helper to release the data held by a unique_ptr, and return
@@ -45,112 +41,80 @@ jlong release_as_jlong(std::unique_ptr<T>&& ptr)
  */
 template <typename T>
 jlong release_as_jlong(std::unique_ptr<T>& ptr)
-{
-  return release_as_jlong(std::move(ptr));
-}
+{ return release_as_jlong(std::move(ptr)); }
 
 class native_jdoubleArray_accessor {
  public:
   jdouble* getArrayElements(JNIEnv* const env, jdoubleArray arr) const
-  {
-    return env->GetDoubleArrayElements(arr, NULL);
-  }
+  { return env->GetDoubleArrayElements(arr, NULL); }
 
   jdoubleArray newArray(JNIEnv* const env, int len) const { return env->NewDoubleArray(len); }
 
   void setArrayRegion(
     JNIEnv* const env, jdoubleArray jarr, int start, int len, jdouble const* arr) const
-  {
-    env->SetDoubleArrayRegion(jarr, start, len, arr);
-  }
+  { env->SetDoubleArrayRegion(jarr, start, len, arr); }
 
   void releaseArrayElements(JNIEnv* const env, jdoubleArray jarr, jdouble* arr, jint mode) const
-  {
-    env->ReleaseDoubleArrayElements(jarr, arr, mode);
-  }
+  { env->ReleaseDoubleArrayElements(jarr, arr, mode); }
 };
 
 class native_jlongArray_accessor {
  public:
   jlong* getArrayElements(JNIEnv* const env, jlongArray arr) const
-  {
-    return env->GetLongArrayElements(arr, NULL);
-  }
+  { return env->GetLongArrayElements(arr, NULL); }
 
   jlongArray newArray(JNIEnv* const env, int len) const { return env->NewLongArray(len); }
 
   void setArrayRegion(
     JNIEnv* const env, jlongArray jarr, int start, int len, jlong const* arr) const
-  {
-    env->SetLongArrayRegion(jarr, start, len, arr);
-  }
+  { env->SetLongArrayRegion(jarr, start, len, arr); }
 
   void releaseArrayElements(JNIEnv* const env, jlongArray jarr, jlong* arr, jint mode) const
-  {
-    env->ReleaseLongArrayElements(jarr, arr, mode);
-  }
+  { env->ReleaseLongArrayElements(jarr, arr, mode); }
 };
 
 class native_jintArray_accessor {
  public:
   jint* getArrayElements(JNIEnv* const env, jintArray arr) const
-  {
-    return env->GetIntArrayElements(arr, NULL);
-  }
+  { return env->GetIntArrayElements(arr, NULL); }
 
   jintArray newArray(JNIEnv* const env, int len) const { return env->NewIntArray(len); }
 
   void setArrayRegion(JNIEnv* const env, jintArray jarr, int start, int len, jint const* arr) const
-  {
-    env->SetIntArrayRegion(jarr, start, len, arr);
-  }
+  { env->SetIntArrayRegion(jarr, start, len, arr); }
 
   void releaseArrayElements(JNIEnv* const env, jintArray jarr, jint* arr, jint mode) const
-  {
-    env->ReleaseIntArrayElements(jarr, arr, mode);
-  }
+  { env->ReleaseIntArrayElements(jarr, arr, mode); }
 };
 
 class native_jbyteArray_accessor {
  public:
   jbyte* getArrayElements(JNIEnv* const env, jbyteArray arr) const
-  {
-    return env->GetByteArrayElements(arr, NULL);
-  }
+  { return env->GetByteArrayElements(arr, NULL); }
 
   jbyteArray newArray(JNIEnv* const env, int len) const { return env->NewByteArray(len); }
 
   void setArrayRegion(
     JNIEnv* const env, jbyteArray jarr, int start, int len, jbyte const* arr) const
-  {
-    env->SetByteArrayRegion(jarr, start, len, arr);
-  }
+  { env->SetByteArrayRegion(jarr, start, len, arr); }
 
   void releaseArrayElements(JNIEnv* const env, jbyteArray jarr, jbyte* arr, jint mode) const
-  {
-    env->ReleaseByteArrayElements(jarr, arr, mode);
-  }
+  { env->ReleaseByteArrayElements(jarr, arr, mode); }
 };
 
 class native_jbooleanArray_accessor {
  public:
   jboolean* getArrayElements(JNIEnv* const env, jbooleanArray arr) const
-  {
-    return env->GetBooleanArrayElements(arr, NULL);
-  }
+  { return env->GetBooleanArrayElements(arr, NULL); }
 
   jbooleanArray newArray(JNIEnv* const env, int len) const { return env->NewBooleanArray(len); }
 
   void setArrayRegion(
     JNIEnv* const env, jbooleanArray jarr, int start, int len, jboolean const* arr) const
-  {
-    env->SetBooleanArrayRegion(jarr, start, len, arr);
-  }
+  { env->SetBooleanArrayRegion(jarr, start, len, arr); }
 
   void releaseArrayElements(JNIEnv* const env, jbooleanArray jarr, jboolean* arr, jint mode) const
-  {
-    env->ReleaseBooleanArrayElements(jarr, arr, mode);
-  }
+  { env->ReleaseBooleanArrayElements(jarr, arr, mode); }
 };
 
 /**
@@ -190,9 +154,7 @@ class native_jArray {
 
   native_jArray(JNIEnv* const env, int len)
     : env(env), orig(access.newArray(env, len)), len(len), data_ptr(NULL)
-  {
-    check_java_exception(env);
-  }
+  { check_java_exception(env); }
 
   native_jArray(JNIEnv* const env, N_TYPE const* arr, int len)
     : env(env), orig(access.newArray(env, len)), len(len), data_ptr(NULL)
@@ -579,9 +541,7 @@ class native_jstring {
       cstr(other.cstr),
       cstr_length(other.cstr_length),
       converted(other.converted)
-  {
-    other.cstr = nullptr;
-  }
+  { other.cstr = nullptr; }
 
   native_jstring(JNIEnv* const env, jstring orig)
     : env(env), orig(orig), cstr(nullptr), cstr_length(0), converted(false)

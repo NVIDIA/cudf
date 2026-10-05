@@ -46,9 +46,7 @@ bool cache_data_source_jni(JNIEnv* env)
 }
 
 void release_data_source_jni(JNIEnv* env)
-{
-  DataSource_jclass = cudf::jni::del_global_ref(env, DataSource_jclass);
-}
+{ DataSource_jclass = cudf::jni::del_global_ref(env, DataSource_jclass); }
 
 class host_buffer_done_callback {
  public:
@@ -147,9 +145,7 @@ class jni_datasource : public cudf::io::datasource {
   bool supports_device_read() const override { return device_read_supported; }
 
   bool is_device_read_preferred(size_t size) const override
-  {
-    return device_read_supported && size >= device_read_cutoff;
-  }
+  { return device_read_supported && size >= device_read_cutoff; }
 
   size_t device_read(size_t offset, size_t size, uint8_t* dst, cuda::stream_ref stream) override
   {

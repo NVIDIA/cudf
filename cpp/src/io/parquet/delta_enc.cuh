@@ -161,9 +161,7 @@ class delta_binary_packer {
 
   // Signed subtraction with defined wrapping behavior.
   inline __device__ T subtract(T a, T b)
-  {
-    return static_cast<T>(static_cast<U>(a) - static_cast<U>(b));
-  }
+  { return static_cast<T>(static_cast<U>(a) - static_cast<U>(b)); }
 
  public:
   inline __device__ auto num_values() const { return _num_values; }
@@ -231,7 +229,7 @@ class delta_binary_packer {
     // Calculate delta for this thread.
     size_type const idx = _current_idx + t;
     T const delta       = idx < _num_values ? subtract(_buffer[delta::rolling_idx(idx)],
-                                                 _buffer[delta::rolling_idx(idx - 1)])
+                                                       _buffer[delta::rolling_idx(idx - 1)])
                                             : cuda::std::numeric_limits<T>::max();
 
     // Find min delta for the block.

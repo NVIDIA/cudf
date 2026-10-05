@@ -70,11 +70,11 @@ std::unique_ptr<column> counts_fn(strings_column_view const& strings,
 {
   // create output column
   auto results   = make_numeric_column(data_type{type_to_id<size_type>()},
-                                     strings.size(),
-                                     cudf::detail::copy_bitmask(strings.parent(), stream, mr),
-                                     strings.null_count(),
-                                     stream,
-                                     mr);
+                                       strings.size(),
+                                       cudf::detail::copy_bitmask(strings.parent(), stream, mr),
+                                       strings.null_count(),
+                                       stream,
+                                       mr);
   auto d_lengths = results->mutable_view().data<int32_t>();
   // input column device view
   auto strings_column = cudf::column_device_view::create(strings.parent(), stream);

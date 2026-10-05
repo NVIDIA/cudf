@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -134,9 +134,7 @@ __device__ inline bool operator<(index_pair const& lhs, index_pair const& rhs)
 }
 
 __device__ inline bool operator==(index_pair const& lhs, index_pair const& rhs)
-{
-  return lhs.first == rhs.first && lhs.second == rhs.second;
-}
+{ return lhs.first == rhs.first && lhs.second == rhs.second; }
 
 }  // namespace
 
@@ -371,52 +369,36 @@ struct ConditionalInnerJoinTest : public ConditionalJoinPairReturnTest<T> {
   PairJoinReturn join(cudf::table_view left,
                       cudf::table_view right,
                       cudf::ast::operation predicate) override
-  {
-    return cudf::conditional_inner_join(left, right, predicate);
-  }
+  { return cudf::conditional_inner_join(left, right, predicate); }
 
   std::size_t join_size(cudf::table_view left,
                         cudf::table_view right,
                         cudf::ast::operation predicate) override
-  {
-    return cudf::conditional_inner_join_size(left, right, predicate);
-  }
+  { return cudf::conditional_inner_join_size(left, right, predicate); }
 
   PairJoinReturn reference_join(
     cudf::table_view left,
     cudf::table_view right,
     cudf::null_equality compare_nulls = cudf::null_equality::EQUAL) override
-  {
-    return cudf::inner_join(left, right, compare_nulls);
-  }
+  { return cudf::inner_join(left, right, compare_nulls); }
 };
 
 TYPED_TEST_SUITE(ConditionalInnerJoinTest, cudf::test::IntegralTypesNotBool);
 
 TYPED_TEST(ConditionalInnerJoinTest, TestOneColumnOneRowAllEqual)
-{
-  this->test({{0}}, {{0}}, left_zero_eq_right_zero, {{0, 0}});
-};
+{ this->test({{0}}, {{0}}, left_zero_eq_right_zero, {{0, 0}}); };
 
 TYPED_TEST(ConditionalInnerJoinTest, TestOneColumnLeftEmpty)
-{
-  this->test({{}}, {{3, 4, 5}}, left_zero_eq_right_zero, {});
-};
+{ this->test({{}}, {{3, 4, 5}}, left_zero_eq_right_zero, {}); };
 
 TYPED_TEST(ConditionalInnerJoinTest, TestOneColumnRightEmpty)
-{
-  this->test({{3, 4, 5}}, {{}}, left_zero_eq_right_zero, {});
-};
+{ this->test({{3, 4, 5}}, {{}}, left_zero_eq_right_zero, {}); };
 
 TYPED_TEST(ConditionalInnerJoinTest, TestOneColumnTwoRowAllEqual)
-{
-  this->test({{0, 1}}, {{0, 0}}, left_zero_eq_right_zero, {{0, 0}, {0, 1}});
-};
+{ this->test({{0, 1}}, {{0, 0}}, left_zero_eq_right_zero, {{0, 0}, {0, 1}}); };
 
 TYPED_TEST(ConditionalInnerJoinTest, TestTwoColumnOneRowAllEqual)
-{
-  this->test({{0}, {0}}, {{0}, {0}}, left_zero_eq_right_zero, {{0, 0}});
-};
+{ this->test({{0}, {0}}, {{0}, {0}}, left_zero_eq_right_zero, {{0, 0}}); };
 
 TYPED_TEST(ConditionalInnerJoinTest, TestTwoColumnThreeRowAllEqual)
 {
@@ -550,9 +532,7 @@ TYPED_TEST(ConditionalInnerJoinTest, TestOneColumnTwoNullsRowAllEqual)
 };
 
 TYPED_TEST(ConditionalInnerJoinTest, TestOneColumnTwoNullsNoOutputRowAllEqual)
-{
-  this->test_nulls({{{0, 1}, {0, 1}}}, {{{0, 0}, {1, 1}}}, left_zero_eq_right_zero, {});
-};
+{ this->test_nulls({{{0, 1}, {0, 1}}}, {{{0, 0}, {1, 1}}}, left_zero_eq_right_zero, {}); };
 
 /**
  * Tests of conditional left joins.
@@ -562,24 +542,18 @@ struct ConditionalLeftJoinTest : public ConditionalJoinPairReturnTest<T> {
   PairJoinReturn join(cudf::table_view left,
                       cudf::table_view right,
                       cudf::ast::operation predicate) override
-  {
-    return cudf::conditional_left_join(left, right, predicate);
-  }
+  { return cudf::conditional_left_join(left, right, predicate); }
 
   std::size_t join_size(cudf::table_view left,
                         cudf::table_view right,
                         cudf::ast::operation predicate) override
-  {
-    return cudf::conditional_left_join_size(left, right, predicate);
-  }
+  { return cudf::conditional_left_join_size(left, right, predicate); }
 
   PairJoinReturn reference_join(
     cudf::table_view left,
     cudf::table_view right,
     cudf::null_equality compare_nulls = cudf::null_equality::EQUAL) override
-  {
-    return cudf::left_join(left, right, compare_nulls);
-  }
+  { return cudf::left_join(left, right, compare_nulls); }
 };
 
 TYPED_TEST_SUITE(ConditionalLeftJoinTest, cudf::test::IntegralTypesNotBool);
@@ -593,9 +567,7 @@ TYPED_TEST(ConditionalLeftJoinTest, TestTwoColumnThreeRowSomeEqual)
 };
 
 TYPED_TEST(ConditionalLeftJoinTest, TestOneColumnLeftEmpty)
-{
-  this->test({{}}, {{3, 4, 5}}, left_zero_eq_right_zero, {});
-};
+{ this->test({{}}, {{3, 4, 5}}, left_zero_eq_right_zero, {}); };
 
 TYPED_TEST(ConditionalLeftJoinTest, TestOneColumnRightEmpty)
 {
@@ -625,9 +597,7 @@ struct ConditionalFullJoinTest : public ConditionalJoinPairReturnTest<T> {
   PairJoinReturn join(cudf::table_view left,
                       cudf::table_view right,
                       cudf::ast::operation predicate) override
-  {
-    return cudf::conditional_full_join(left, right, predicate);
-  }
+  { return cudf::conditional_full_join(left, right, predicate); }
 
   std::size_t join_size(cudf::table_view left,
                         cudf::table_view right,
@@ -643,9 +613,7 @@ struct ConditionalFullJoinTest : public ConditionalJoinPairReturnTest<T> {
     cudf::table_view left,
     cudf::table_view right,
     cudf::null_equality compare_nulls = cudf::null_equality::EQUAL) override
-  {
-    return cudf::full_join(left, right, compare_nulls);
-  }
+  { return cudf::full_join(left, right, compare_nulls); }
 };
 
 TYPED_TEST_SUITE(ConditionalFullJoinTest, cudf::test::IntegralTypesNotBool);
@@ -814,16 +782,12 @@ struct ConditionalLeftSemiJoinTest : public ConditionalJoinSingleReturnTest<T> {
   SingleJoinReturn join(cudf::table_view left,
                         cudf::table_view right,
                         cudf::ast::operation predicate) override
-  {
-    return cudf::conditional_left_semi_join(left, right, predicate);
-  }
+  { return cudf::conditional_left_semi_join(left, right, predicate); }
 
   std::size_t join_size(cudf::table_view left,
                         cudf::table_view right,
                         cudf::ast::operation predicate) override
-  {
-    return cudf::conditional_left_semi_join_size(left, right, predicate);
-  }
+  { return cudf::conditional_left_semi_join_size(left, right, predicate); }
 
   SingleJoinReturn reference_join(
     cudf::table_view left,
@@ -838,14 +802,10 @@ struct ConditionalLeftSemiJoinTest : public ConditionalJoinSingleReturnTest<T> {
 TYPED_TEST_SUITE(ConditionalLeftSemiJoinTest, cudf::test::IntegralTypesNotBool);
 
 TYPED_TEST(ConditionalLeftSemiJoinTest, TestOneColumnLeftEmpty)
-{
-  this->test({{}}, {{3, 4, 5}}, left_zero_eq_right_zero, {});
-};
+{ this->test({{}}, {{3, 4, 5}}, left_zero_eq_right_zero, {}); };
 
 TYPED_TEST(ConditionalLeftSemiJoinTest, TestOneColumnRightEmpty)
-{
-  this->test({{3, 4, 5}}, {{}}, left_zero_eq_right_zero, {});
-};
+{ this->test({{3, 4, 5}}, {{}}, left_zero_eq_right_zero, {}); };
 
 TYPED_TEST(ConditionalLeftSemiJoinTest, TestTwoColumnThreeRowSomeEqual)
 {
@@ -872,16 +832,12 @@ struct ConditionalLeftAntiJoinTest : public ConditionalJoinSingleReturnTest<T> {
   SingleJoinReturn join(cudf::table_view left,
                         cudf::table_view right,
                         cudf::ast::operation predicate) override
-  {
-    return cudf::conditional_left_anti_join(left, right, predicate);
-  }
+  { return cudf::conditional_left_anti_join(left, right, predicate); }
 
   std::size_t join_size(cudf::table_view left,
                         cudf::table_view right,
                         cudf::ast::operation predicate) override
-  {
-    return cudf::conditional_left_anti_join_size(left, right, predicate);
-  }
+  { return cudf::conditional_left_anti_join_size(left, right, predicate); }
 
   SingleJoinReturn reference_join(
     cudf::table_view left,
@@ -896,19 +852,13 @@ struct ConditionalLeftAntiJoinTest : public ConditionalJoinSingleReturnTest<T> {
 TYPED_TEST_SUITE(ConditionalLeftAntiJoinTest, cudf::test::IntegralTypesNotBool);
 
 TYPED_TEST(ConditionalLeftAntiJoinTest, TestOneColumnLeftEmpty)
-{
-  this->test({{}}, {{3, 4, 5}}, left_zero_eq_right_zero, {});
-};
+{ this->test({{}}, {{3, 4, 5}}, left_zero_eq_right_zero, {}); };
 
 TYPED_TEST(ConditionalLeftAntiJoinTest, TestOneColumnRightEmpty)
-{
-  this->test({{3, 4, 5}}, {{}}, left_zero_eq_right_zero, {0, 1, 2});
-};
+{ this->test({{3, 4, 5}}, {{}}, left_zero_eq_right_zero, {0, 1, 2}); };
 
 TYPED_TEST(ConditionalLeftAntiJoinTest, TestTwoColumnThreeRowSomeEqual)
-{
-  this->test({{0, 1, 2}, {10, 20, 30}}, {{0, 1, 3}, {30, 40, 50}}, left_zero_eq_right_zero, {2});
-};
+{ this->test({{0, 1, 2}, {10, 20, 30}}, {{0, 1, 3}, {30, 40, 50}}, left_zero_eq_right_zero, {2}); };
 
 TYPED_TEST(ConditionalLeftAntiJoinTest, TestCompareRandomToHash)
 {

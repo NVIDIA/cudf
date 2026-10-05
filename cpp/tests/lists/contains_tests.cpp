@@ -28,9 +28,7 @@ auto create_scalar_search_key(T const& value)
 template <typename T>
 auto create_scalar_search_key(std::string const& value)
   requires(std::is_same_v<T, std::string>)
-{
-  return cudf::make_string_scalar(value);
-}
+{ return cudf::make_string_scalar(value); }
 
 template <typename T>
 auto create_scalar_search_key(typename T::rep const& value)
@@ -54,9 +52,7 @@ auto create_scalar_search_key(typename T::rep const& value)
 
 template <typename... Args>
 auto make_struct_scalar(Args&&... args)
-{
-  return cudf::struct_scalar(std::vector<cudf::column_view>{std::forward<Args>(args)...});
-}
+{ return cudf::struct_scalar(std::vector<cudf::column_view>{std::forward<Args>(args)...}); }
 
 template <typename T>
 auto create_null_search_key()
@@ -457,19 +453,19 @@ TYPED_TEST(TypedContainsTest, ScalarNullSearchKey)
 {
   using T = TypeParam;
 
-  auto search_space = cudf::test::lists_column_wrapper<T, int32_t>{{{0, 1, 2},
-                                                                    {3, 4, 5},
-                                                                    {6, 7, 8},
-                                                                    {},
-                                                                    {9, 0, 1},
-                                                                    {2, 3, 4},
-                                                                    {5, 6, 7},
-                                                                    {8, 9, 0},
-                                                                    {},
-                                                                    {1, 2, 3},
-                                                                    {}},
-                                                                   nulls_at({3, 10})}
-                        .release();
+  auto search_space    = cudf::test::lists_column_wrapper<T, int32_t>{{{0, 1, 2},
+                                                                       {3, 4, 5},
+                                                                       {6, 7, 8},
+                                                                       {},
+                                                                       {9, 0, 1},
+                                                                       {2, 3, 4},
+                                                                       {5, 6, 7},
+                                                                       {8, 9, 0},
+                                                                       {},
+                                                                       {1, 2, 3},
+                                                                       {}},
+                                                                      nulls_at({3, 10})}
+                           .release();
   auto search_key_null = create_null_search_key<T>();
   {
     // CONTAINS
@@ -861,15 +857,11 @@ TYPED_TEST_SUITE(TypedContainsNaNsTest, cudf::test::FloatingPointTypes);
 namespace {
 template <typename T>
 T get_nan(char const* nan_contents)
-{
-  return std::nan(nan_contents);
-}
+{ return std::nan(nan_contents); }
 
 template <>
 float get_nan<float>(char const* nan_contents)
-{
-  return std::nanf(nan_contents);
-}
+{ return std::nanf(nan_contents); }
 }  // namespace
 
 TYPED_TEST(TypedContainsNaNsTest, ListWithNaNsScalar)
@@ -1838,7 +1830,7 @@ TYPED_TEST(TypedListContainsTest, ColumnKeyWithListsOfStructsNoNulls)
     };
     // clang-format on
     auto structs = cudf::test::structs_column_wrapper{{data1, data2}};
-    auto child   = cudf::make_lists_column(8,
+    auto child = cudf::make_lists_column(8,
                                          child_offsets.release(),
                                          structs.release(),
                                          0,

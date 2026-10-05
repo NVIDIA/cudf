@@ -156,9 +156,7 @@ struct convert_char_fn {
 
   // special function for converting ASCII-only characters
   __device__ char process_ascii(char chr) const
-  {
-    return (case_flag & d_flags[chr]) ? static_cast<char>(d_case_table[chr]) : chr;
-  }
+  { return (case_flag & d_flags[chr]) ? static_cast<char>(d_case_table[chr]) : chr; }
 };
 
 /**
@@ -260,7 +258,7 @@ struct upper_lower_ls_fn : public base_upper_lower_fn {
   {
     auto const offset = d_input_offsets[idx];
     auto const d_str  = string_view{d_input_chars + offset,
-                                   static_cast<size_type>(d_input_offsets[idx + 1] - offset)};
+                                    static_cast<size_type>(d_input_offsets[idx + 1] - offset)};
     process_string(d_str, idx);
   }
 };

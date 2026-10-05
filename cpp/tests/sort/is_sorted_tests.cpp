@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -65,87 +65,63 @@ cudf::test::fixed_width_column_wrapper<T> descending()
 
 template <typename T>
 auto empty()
-{
-  return cudf::test::fixed_width_column_wrapper<T>();
-}
+{ return cudf::test::fixed_width_column_wrapper<T>(); }
 
 template <typename T>
 auto nulls_after()
-{
-  return cudf::test::fixed_width_column_wrapper<T, int32_t>({0, 0}, {1, 0});
-}
+{ return cudf::test::fixed_width_column_wrapper<T, int32_t>({0, 0}, {1, 0}); }
 
 template <typename T>
 auto nulls_before()
-{
-  return cudf::test::fixed_width_column_wrapper<T, int32_t>({0, 0}, {0, 1});
-}
+{ return cudf::test::fixed_width_column_wrapper<T, int32_t>({0, 0}, {0, 1}); }
 
 // ----- bool
 
 template <typename T>
 cudf::test::fixed_width_column_wrapper<bool> ascending()
   requires(std::is_same_v<T, bool>)
-{
-  return cudf::test::fixed_width_column_wrapper<bool>({false, false, true, true});
-}
+{ return cudf::test::fixed_width_column_wrapper<bool>({false, false, true, true}); }
 
 template <typename T>
 cudf::test::fixed_width_column_wrapper<bool> descending()
   requires(std::is_same_v<T, bool>)
-{
-  return cudf::test::fixed_width_column_wrapper<bool>({true, true, false, false});
-}
+{ return cudf::test::fixed_width_column_wrapper<bool>({true, true, false, false}); }
 
 // ----- chrono types
 
 template <typename T>
 cudf::test::fixed_width_column_wrapper<T> ascending()
   requires(cudf::is_chrono<T>())
-{
-  return cudf::test::fixed_width_column_wrapper<T>({T::min(), T::max()});
-}
+{ return cudf::test::fixed_width_column_wrapper<T>({T::min(), T::max()}); }
 
 template <typename T>
 cudf::test::fixed_width_column_wrapper<T> descending()
   requires(cudf::is_chrono<T>())
-{
-  return cudf::test::fixed_width_column_wrapper<T>({T::max(), T::min()});
-}
+{ return cudf::test::fixed_width_column_wrapper<T>({T::max(), T::min()}); }
 
 // ----- string_view
 
 template <typename T>
 cudf::test::strings_column_wrapper ascending()
   requires(std::is_same_v<T, cudf::string_view>)
-{
-  return cudf::test::strings_column_wrapper({"A", "B"});
-}
+{ return cudf::test::strings_column_wrapper({"A", "B"}); }
 
 template <typename T>
 cudf::test::strings_column_wrapper descending()
   requires(std::is_same_v<T, cudf::string_view>)
-{
-  return cudf::test::strings_column_wrapper({"B", "A"});
-}
+{ return cudf::test::strings_column_wrapper({"B", "A"}); }
 
 template <>
 auto empty<cudf::string_view>()
-{
-  return cudf::test::strings_column_wrapper();
-}
+{ return cudf::test::strings_column_wrapper(); }
 
 template <>
 auto nulls_after<cudf::string_view>()
-{
-  return cudf::test::strings_column_wrapper({"identical", ""}, {true, false});
-}
+{ return cudf::test::strings_column_wrapper({"identical", ""}, {true, false}); }
 
 template <>
 auto nulls_before<cudf::string_view>()
-{
-  return cudf::test::strings_column_wrapper({"", "identical"}, {false, true});
-}
+{ return cudf::test::strings_column_wrapper({"", "identical"}, {false, true}); }
 
 // ----- struct_view {"nestedInt" : {"Int" : 0 }, "float" : 1}
 
@@ -253,21 +229,15 @@ lcw descending()
 
 template <>
 auto empty<cudf::list_view>()
-{
-  return lcw{};
-}
+{ return lcw{}; }
 
 template <>
 auto nulls_after<cudf::list_view>()
-{
-  return lcw{{{1}, {2, 2}, {0}}, null_at(2)};
-}
+{ return lcw{{{1}, {2, 2}, {0}}, null_at(2)}; }
 
 template <>
 auto nulls_before<cudf::list_view>()
-{
-  return lcw{{{0}, {1}, {2, 2}}, null_at(0)};
-}
+{ return lcw{{{0}, {1}, {2, 2}}, null_at(0)}; }
 
 }  // namespace testdata
 

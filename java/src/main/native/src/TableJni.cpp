@@ -265,9 +265,7 @@ class jni_arrow_output_stream final : public arrow::io::OutputStream {
   }
 
   arrow::Status Write(std::shared_ptr<arrow::Buffer> const& data) override
-  {
-    return Write(data->data(), data->size());
-  }
+  { return Write(data->data(), data->size()); }
 
   arrow::Status Write(void const* data, int64_t nbytes) override
   {
@@ -516,16 +514,12 @@ jlongArray convert_table_for_return(JNIEnv* env,
 jlongArray convert_table_for_return(JNIEnv* env,
                                     std::unique_ptr<cudf::table>& table_result,
                                     std::vector<std::unique_ptr<cudf::column>>&& extra_columns)
-{
-  return convert_table_for_return(env, std::move(table_result), std::move(extra_columns));
-}
+{ return convert_table_for_return(env, std::move(table_result), std::move(extra_columns)); }
 
 jlongArray convert_table_for_return(JNIEnv* env,
                                     std::unique_ptr<cudf::table>& first_table,
                                     std::unique_ptr<cudf::table>& second_table)
-{
-  return convert_table_for_return(env, first_table, second_table->release());
-}
+{ return convert_table_for_return(env, first_table, second_table->release()); }
 
 // Convert the JNI boolean array of key column sort order to a vector of cudf::order
 // for groupby.
@@ -2660,7 +2654,7 @@ Java_ai_rapids_cudf_Table_writeORCBufferBegin(JNIEnv* env,
                                         .stripe_size_rows(j_stripe_size_rows)
                                         .writer_timezone(writer_timezone.get())
                                         .build();
-    auto writer_ptr                          = std::make_unique<cudf::io::orc_chunked_writer>(opts);
+    auto writer_ptr                 = std::make_unique<cudf::io::orc_chunked_writer>(opts);
     cudf::jni::native_orc_writer_handle* ret = new cudf::jni::native_orc_writer_handle(
       std::move(writer_ptr), std::move(data_sink), std::move(stats));
     return ptr_as_jlong(ret);
@@ -2738,7 +2732,7 @@ JNIEXPORT long JNICALL Java_ai_rapids_cudf_Table_writeORCFileBegin(JNIEnv* env,
                                         .stripe_size_rows(j_stripe_size_rows)
                                         .writer_timezone(writer_timezone.get())
                                         .build();
-    auto writer_ptr = std::make_unique<cudf::io::orc_chunked_writer>(opts);
+    auto writer_ptr                 = std::make_unique<cudf::io::orc_chunked_writer>(opts);
     cudf::jni::native_orc_writer_handle* ret =
       new cudf::jni::native_orc_writer_handle(std::move(writer_ptr), nullptr, std::move(stats));
     return ptr_as_jlong(ret);

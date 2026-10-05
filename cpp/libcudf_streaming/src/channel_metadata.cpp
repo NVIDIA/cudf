@@ -48,19 +48,13 @@ ordering::ordering(std::vector<order_key> keys,
     boundaries{std::move(boundaries)},
     strict_boundaries{strict_boundaries},
     locally_ordered{locally_ordered}
-{
-  validate_ordering(*this);
-}
+{ validate_ordering(*this); }
 
 ordering ordering::with_keys(std::vector<order_key> new_keys) const
-{
-  return ordering{std::move(new_keys), boundaries, strict_boundaries, locally_ordered};
-}
+{ return ordering{std::move(new_keys), boundaries, strict_boundaries, locally_ordered}; }
 
 ordering ordering::with_locally_ordered(bool locally_ordered) const
-{
-  return ordering{keys, boundaries, strict_boundaries, locally_ordered};
-}
+{ return ordering{keys, boundaries, strict_boundaries, locally_ordered}; }
 
 bool ordering::boundaries_aligned_with(ordering const& other, rapidsmpf::BufferResource& br) const
 {
@@ -81,16 +75,16 @@ bool ordering::boundaries_aligned_with(ordering const& other, rapidsmpf::BufferR
   rapidsmpf::cuda_stream_join(stream, other.boundaries->stream());
   for (cudf::size_type i = 0; i < lhs.num_columns(); ++i) {
     auto eq      = cudf::binary_operation(lhs.column(i),
-                                     rhs.column(i),
-                                     cudf::binary_operator::NULL_EQUALS,
-                                     cudf::data_type{cudf::type_id::BOOL8},
-                                     stream,
-                                     br.device_mr());
+                                          rhs.column(i),
+                                          cudf::binary_operator::NULL_EQUALS,
+                                          cudf::data_type{cudf::type_id::BOOL8},
+                                          stream,
+                                          br.device_mr());
     auto result  = cudf::reduce(eq->view(),
-                               *cudf::make_all_aggregation<cudf::reduce_aggregation>(),
-                               cudf::data_type{cudf::type_id::BOOL8},
-                               stream,
-                               br.device_mr());
+                                *cudf::make_all_aggregation<cudf::reduce_aggregation>(),
+                                cudf::data_type{cudf::type_id::BOOL8},
+                                stream,
+                                br.device_mr());
     auto& scalar = static_cast<cudf::numeric_scalar<bool>&>(*result);
     if (!scalar.value(stream)) { return false; }
   }
@@ -118,9 +112,7 @@ order_scheme::order_scheme(std::vector<ordering> orderings) : orderings{std::mov
 }
 
 partitioning_spec partitioning_spec::from_order(order_scheme o)
-{
-  return {.type = type::ORDER, .hash = std::nullopt, .order = std::move(o)};
-}
+{ return {.type = type::ORDER, .hash = std::nullopt, .order = std::move(o)}; }
 
 rapidsmpf::streaming::Message to_message(std::uint64_t sequence_number,
                                          std::unique_ptr<channel_metadata> m)

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2023, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -42,9 +42,7 @@ __device__ inline char* copy_and_increment(char* buffer, char const* input, size
  * @return Pointer to the end of the output buffer after the copy.
  */
 __device__ inline char* copy_string(char* buffer, string_view const& d_string)
-{
-  return copy_and_increment(buffer, d_string.data(), d_string.size_bytes());
-}
+{ return copy_and_increment(buffer, d_string.data(), d_string.size_bytes()); }
 
 // This template is a thin wrapper around per-context singleton objects.
 // It maintains a single object for each CUDA context.

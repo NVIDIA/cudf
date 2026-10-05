@@ -136,9 +136,7 @@ struct list_child_constructor {
   template <typename T, typename... Args>
   std::unique_ptr<column> operator()(Args&&... args)
     requires(!is_supported_child_type<T>::value)
-  {
-    CUDF_FAIL("list_child_constructor unsupported!");
-  }
+  { CUDF_FAIL("list_child_constructor unsupported!"); }
 
   /**
    * @brief Implementation for fixed_width child column types.

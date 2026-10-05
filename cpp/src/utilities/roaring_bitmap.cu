@@ -72,21 +72,15 @@ class roaring_bitmap::impl {
 
   template <roaring_bitmap_type Type>
   [[nodiscard]] bool empty() const
-  {
-    return bitmap<Type>().empty();
-  }
+  { return bitmap<Type>().empty(); }
 
   template <roaring_bitmap_type Type>
   [[nodiscard]] cuda::std::size_t size() const
-  {
-    return bitmap<Type>().size();
-  }
+  { return bitmap<Type>().size(); }
 
   template <roaring_bitmap_type Type>
   [[nodiscard]] cuda::std::size_t size_bytes() const
-  {
-    return bitmap<Type>().size_bytes();
-  }
+  { return bitmap<Type>().size_bytes(); }
 
   template <roaring_bitmap_type Type, typename InputIt, typename OutputIt>
   void contains_async(InputIt first, InputIt last, OutputIt output, cuda::stream_ref stream)

@@ -36,30 +36,22 @@ struct tdigest_gen {
   template <typename T, typename Func>
   std::unique_ptr<column> operator()(Func op, column_view const& values, int delta)
     requires(cudf::is_numeric<T>() || cudf::is_fixed_point<T>())
-  {
-    return op(values, delta);
-  }
+  { return op(values, delta); }
 
   template <typename T, typename Func>
   std::unique_ptr<column> operator()(Func op, column_view const& values, int delta)
     requires(!cudf::is_numeric<T>() && !cudf::is_fixed_point<T>())
-  {
-    CUDF_FAIL("Invalid tdigest test type");
-  }
+  { CUDF_FAIL("Invalid tdigest test type"); }
   // @endcond
 };
 
 template <typename T>
 inline T frand()
-{
-  return static_cast<T>(rand()) / static_cast<T>(RAND_MAX);
-}
+{ return static_cast<T>(rand()) / static_cast<T>(RAND_MAX); }
 
 template <typename T>
 inline T rand_range(T min, T max)
-{
-  return min + static_cast<T>(frand<T>() * (max - min));
-}
+{ return min + static_cast<T>(frand<T>() * (max - min)); }
 
 /**
  * @brief Generate a typed column from a bucketed percentile distribution.
@@ -225,8 +217,8 @@ void tdigest_simple_aggregation(Func op,
                                                       weight,
                                                       static_cast<double>(static_cast<T>(min)),
                                                       static_cast<double>(static_cast<T>(max))}},
-                                                 stream,
-                                                 temporary_resources);
+                                                    stream,
+                                                    temporary_resources);
 
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(*result, *expected, debug_output_level::FIRST_ERROR, stream, mr);
   }
@@ -265,8 +257,8 @@ void tdigest_simple_with_nulls_aggregation(
                                                       weight,
                                                       static_cast<double>(static_cast<T>(min)),
                                                       static_cast<double>(static_cast<T>(max))}},
-                                                 stream,
-                                                 temporary_resources);
+                                                    stream,
+                                                    temporary_resources);
 
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(*result, *expected, debug_output_level::FIRST_ERROR, stream, mr);
   }

@@ -125,9 +125,7 @@ template <typename T, typename Enable = void>
 struct interleave_list_entries_impl {
   template <typename... Args>
   std::unique_ptr<column> operator()(Args&&...)
-  {
-    CUDF_FAIL("Called `interleave_list_entries_fn()` on non-supported types.");
-  }
+  { CUDF_FAIL("Called `interleave_list_entries_fn()` on non-supported types."); }
 };
 
 /**
@@ -222,10 +220,10 @@ struct interleave_list_entries_impl<T, std::enable_if_t<cudf::is_fixed_width<T>(
 
     // The output child column.
     auto output        = cudf::detail::allocate_like(lists_column_view(*input.begin()).child(),
-                                              num_output_entries,
-                                              mask_allocation_policy::NEVER,
-                                              stream,
-                                              mr);
+                                                     num_output_entries,
+                                                     mask_allocation_policy::NEVER,
+                                                     stream,
+                                                     mr);
     auto output_dv_ptr = mutable_column_device_view::create(*output, stream);
 
     // The array of int8_t to store entry validities.

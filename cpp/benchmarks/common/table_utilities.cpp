@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -11,9 +11,7 @@
 #include <cmath>
 
 int64_t estimate_size(cudf::column_view const& col)
-{
-  return estimate_size(cudf::table_view({col}));
-}
+{ return estimate_size(cudf::table_view({col})); }
 
 int64_t estimate_size(cudf::table_view const& view)
 {

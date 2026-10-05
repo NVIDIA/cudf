@@ -157,7 +157,7 @@ JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_ColumnVector_fromArrow(JNIEnv* env,
     auto data_buffer =
       arrow::Buffer::Wrap(static_cast<char const*>(data_address), static_cast<int>(data_length));
     auto null_buffer    = arrow::Buffer::Wrap(static_cast<char const*>(validity_address),
-                                           static_cast<int>(validity_length));
+                                              static_cast<int>(validity_length));
     auto offsets_buffer = arrow::Buffer::Wrap(static_cast<char const*>(offsets_address),
                                               static_cast<int>(offsets_length));
 

@@ -65,14 +65,10 @@ constexpr uint8_t bench_decimal_scale = 2;
 // Compose a value-metadata header byte from a basic type and its 6-bit value_header.
 // See cpp/tests/io/experimental/variant_extract_test.cpp for the header byte layout.
 constexpr uint8_t make_variant_header(variant_basic_type basic, uint8_t value_header)
-{
-  return static_cast<uint8_t>(static_cast<uint8_t>(basic) | (value_header << 2));
-}
+{ return static_cast<uint8_t>(static_cast<uint8_t>(basic) | (value_header << 2)); }
 
 constexpr uint8_t make_variant_primitive_header(variant_primitive_type type)
-{
-  return make_variant_header(variant_basic_type::PRIMITIVE, static_cast<uint8_t>(type));
-}
+{ return make_variant_header(variant_basic_type::PRIMITIVE, static_cast<uint8_t>(type)); }
 
 // Header byte for a short string of the given length (must fit in 6 bits: 0..63).
 uint8_t make_variant_short_string_header(std::size_t length)
@@ -83,15 +79,11 @@ uint8_t make_variant_short_string_header(std::size_t length)
 
 // Header byte for an object value with 1-byte field ids and 1-byte offsets (value_header == 0).
 constexpr uint8_t make_variant_object_header()
-{
-  return make_variant_header(variant_basic_type::OBJECT, 0);
-}
+{ return make_variant_header(variant_basic_type::OBJECT, 0); }
 
 // Header byte for an array value with 1-byte count and 1-byte offsets (value_header == 0).
 constexpr uint8_t make_variant_array_header()
-{
-  return make_variant_header(variant_basic_type::ARRAY, 0);
-}
+{ return make_variant_header(variant_basic_type::ARRAY, 0); }
 
 // Append the low `width` bytes of `bits` to `out` in little-endian order.
 void append_le(std::vector<uint8_t>& out, uint64_t bits, int width)

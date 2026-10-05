@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -230,39 +230,27 @@ __device__ inline string_view::const_iterator& string_view::const_iterator::move
 
 __device__ inline bool string_view::const_iterator::operator==(
   string_view::const_iterator const& rhs) const
-{
-  return (p == rhs.p) && (char_pos == rhs.char_pos);
-}
+{ return (p == rhs.p) && (char_pos == rhs.char_pos); }
 
 __device__ inline bool string_view::const_iterator::operator!=(
   string_view::const_iterator const& rhs) const
-{
-  return (p != rhs.p) || (char_pos != rhs.char_pos);
-}
+{ return (p != rhs.p) || (char_pos != rhs.char_pos); }
 
 __device__ inline bool string_view::const_iterator::operator<(
   string_view::const_iterator const& rhs) const
-{
-  return (p == rhs.p) && (char_pos < rhs.char_pos);
-}
+{ return (p == rhs.p) && (char_pos < rhs.char_pos); }
 
 __device__ inline bool string_view::const_iterator::operator<=(
   string_view::const_iterator const& rhs) const
-{
-  return (p == rhs.p) && (char_pos <= rhs.char_pos);
-}
+{ return (p == rhs.p) && (char_pos <= rhs.char_pos); }
 
 __device__ inline bool string_view::const_iterator::operator>(
   string_view::const_iterator const& rhs) const
-{
-  return (p == rhs.p) && (char_pos > rhs.char_pos);
-}
+{ return (p == rhs.p) && (char_pos > rhs.char_pos); }
 
 __device__ inline bool string_view::const_iterator::operator>=(
   string_view::const_iterator const& rhs) const
-{
-  return (p == rhs.p) && (char_pos >= rhs.char_pos);
-}
+{ return (p == rhs.p) && (char_pos >= rhs.char_pos); }
 
 __device__ inline char_utf8 string_view::const_iterator::operator*() const
 {
@@ -278,9 +266,7 @@ __device__ inline size_type string_view::const_iterator::byte_offset() const { r
 __device__ inline string_view::const_iterator string_view::begin() const { return {*this, 0, 0}; }
 
 __device__ inline string_view::const_iterator string_view::end() const
-{
-  return {*this, length(), size_bytes()};
-}
+{ return {*this, length(), size_bytes()}; }
 // @endcond
 
 __device__ inline char_utf8 string_view::operator[](size_type pos) const
@@ -299,9 +285,7 @@ __device__ inline size_type string_view::byte_offset(size_type pos) const
 }
 
 __device__ inline int string_view::compare(string_view const& in) const
-{
-  return compare(in.data(), in.size_bytes());
-}
+{ return compare(in.data(), in.size_bytes()); }
 
 __device__ inline int string_view::compare(char const* data, size_type bytes) const
 {
@@ -321,24 +305,16 @@ __device__ inline int string_view::compare(char const* data, size_type bytes) co
 }
 
 __device__ inline bool string_view::operator==(string_view const& rhs) const
-{
-  return (size_bytes() == rhs.size_bytes()) && (compare(rhs) == 0);
-}
+{ return (size_bytes() == rhs.size_bytes()) && (compare(rhs) == 0); }
 
 __device__ inline bool string_view::operator!=(string_view const& rhs) const
-{
-  return compare(rhs) != 0;
-}
+{ return compare(rhs) != 0; }
 
 __device__ inline bool string_view::operator<(string_view const& rhs) const
-{
-  return compare(rhs) < 0;
-}
+{ return compare(rhs) < 0; }
 
 __device__ inline bool string_view::operator>(string_view const& rhs) const
-{
-  return compare(rhs) > 0;
-}
+{ return compare(rhs) > 0; }
 
 __device__ inline bool string_view::operator<=(string_view const& rhs) const
 {
@@ -355,9 +331,7 @@ __device__ inline bool string_view::operator>=(string_view const& rhs) const
 __device__ inline size_type string_view::find(string_view const& str,
                                               size_type pos,
                                               size_type count) const
-{
-  return find(str.data(), str.size_bytes(), pos, count);
-}
+{ return find(str.data(), str.size_bytes(), pos, count); }
 
 template <bool forward>
 __device__ inline size_type string_view::find_impl(char const* str,
@@ -393,9 +367,7 @@ __device__ inline size_type string_view::find(char const* str,
                                               size_type bytes,
                                               size_type pos,
                                               size_type count) const
-{
-  return find_impl<true>(str, bytes, pos, count);
-}
+{ return find_impl<true>(str, bytes, pos, count); }
 
 __device__ inline size_type string_view::find(char_utf8 chr, size_type pos, size_type count) const
 {
@@ -407,17 +379,13 @@ __device__ inline size_type string_view::find(char_utf8 chr, size_type pos, size
 __device__ inline size_type string_view::rfind(string_view const& str,
                                                size_type pos,
                                                size_type count) const
-{
-  return rfind(str.data(), str.size_bytes(), pos, count);
-}
+{ return rfind(str.data(), str.size_bytes(), pos, count); }
 
 __device__ inline size_type string_view::rfind(char const* str,
                                                size_type bytes,
                                                size_type pos,
                                                size_type count) const
-{
-  return find_impl<false>(str, bytes, pos, count);
-}
+{ return find_impl<false>(str, bytes, pos, count); }
 
 __device__ inline size_type string_view::rfind(char_utf8 chr, size_type pos, size_type count) const
 {

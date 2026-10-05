@@ -250,7 +250,7 @@ void expect_selected_nested_empty_struct_round_trip(std::unique_ptr<cudf::column
   auto const read_opts = cudf::io::orc_reader_options::builder(cudf::io::source_info{filepath})
                            .columns({"name"})
                            .build();
-  auto result = cudf::io::read_orc(read_opts);
+  auto result          = cudf::io::read_orc(read_opts);
   expect_selected_nested_empty_struct_table(expected->view(), result.tbl->view());
 }
 
@@ -636,7 +636,7 @@ TEST_F(OrcWriterTest, negTimestampsNano)
       -131968727238000000,
       -1530705634500000000,
       -1674638741932929000,
-    };
+  };
   cudf::table_view expected({timestamps_ns});
 
   auto filepath = temp_env->get_temp_filepath("OrcNegTimestamp.orc");
@@ -1514,7 +1514,7 @@ TEST_F(OrcReaderTest, ZeroColumnsPreservesRowCount)
   auto in_opts = cudf::io::orc_reader_options::builder(cudf::io::source_info{filepath})
                    .columns(std::vector<std::string>{})
                    .build();
-  auto result = cudf::io::read_orc(in_opts);
+  auto result  = cudf::io::read_orc(in_opts);
 
   EXPECT_EQ(result.tbl->view().num_columns(), 0);
   EXPECT_EQ(result.tbl->view().num_rows(), num_rows);

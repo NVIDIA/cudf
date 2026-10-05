@@ -26,10 +26,10 @@ from cudf_polars.engine.spmd import SPMDEngine
 with SPMDEngine() as engine:
     result = (
         pl.scan_parquet("/data/dataset/*.parquet")
-          .filter(pl.col("amount") > 100)
-          .group_by("customer_id")
-          .agg(pl.col("amount").sum())
-          .collect(engine=engine)
+        .filter(pl.col("amount") > 100)
+        .group_by("customer_id")
+        .agg(pl.col("amount").sum())
+        .collect(engine=engine)
     )
 ```
 
@@ -58,10 +58,10 @@ from cudf_polars.engine.spmd import SPMDEngine
 with SPMDEngine() as engine:
     result = (
         pl.scan_parquet("/data/dataset/*.parquet")
-          .filter(pl.col("amount") > 100)
-          .group_by("customer_id")
-          .agg(pl.col("amount").sum())
-          .collect(engine=engine)
+        .filter(pl.col("amount") > 100)
+        .group_by("customer_id")
+        .agg(pl.col("amount").sum())
+        .collect(engine=engine)
     )
 ```
 
@@ -112,9 +112,9 @@ In practice:
 with SPMDEngine() as engine:
     result = (
         pl.scan_parquet("/data/*.parquet")
-          .group_by("customer_id")
-          .agg(pl.col("amount").sum())
-          .collect(engine=engine)
+        .group_by("customer_id")
+        .agg(pl.col("amount").sum())
+        .collect(engine=engine)
     )
 ```
 
@@ -122,7 +122,7 @@ with SPMDEngine() as engine:
 # DEADLOCKS: rank 0 issues a group_by collective the other ranks never see.
 with SPMDEngine() as engine:
     df = pl.scan_parquet("/data/*.parquet")
-    if engine.rank == 0:        # don't do this
+    if engine.rank == 0:  # don't do this
         df = df.group_by("customer_id").agg(pl.col("amount").sum())
     result = df.collect(engine=engine)
 ```

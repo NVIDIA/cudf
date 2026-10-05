@@ -181,7 +181,7 @@ std::unique_ptr<cudf::column> make_parquet_list_list_col(
                           child_values.begin(), child_values.begin() + child_value_count);
 
   int child_offsets_size = static_cast<cudf::column_view>(child_offsets).size() - 1;
-  auto child             = cudf::make_lists_column(child_offsets_size,
+  auto child = cudf::make_lists_column(child_offsets_size,
                                        child_offsets.release(),
                                        child_data.release(),
                                        0,
@@ -303,9 +303,7 @@ cudf::io::parquet::OffsetIndex read_offset_index(
 
 // Return as a Statistics from the column chunk
 cudf::io::parquet::Statistics const& get_statistics(cudf::io::parquet::ColumnChunk const& chunk)
-{
-  return chunk.meta_data.statistics;
-}
+{ return chunk.meta_data.statistics; }
 
 // read page header from datasource at location indicated by page_loc,
 // parse and return as a PageHeader struct.
@@ -790,9 +788,7 @@ std::unique_ptr<cudf::table> build_expected_ordered_table(
 // 0 if v1 == v2, and 1 if v1 > v2.
 template <typename T>
 int32_t compare(T& v1, T& v2)
-{
-  return (v1 > v2) - (v1 < v2);
-}
+{ return (v1 > v2) - (v1 < v2); }
 
 // compare two binary statistics blobs based on their physical
 // and converted types. returns -1 if v1 < v2, 0 if v1 == v2, and

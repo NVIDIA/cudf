@@ -117,9 +117,7 @@ bool context::use_jit() const { return _config.use_jit; }
 context_config const& context::config() const { return _config; }
 
 context::device_properties const& context::get_device_properties() const
-{
-  return _device_properties;
-}
+{ return _device_properties; }
 
 std::optional<int32_t> context::nvrtc_version() const { return _nvrtc_version; }
 

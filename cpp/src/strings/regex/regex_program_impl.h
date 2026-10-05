@@ -37,14 +37,10 @@ struct regex_program::regex_program_impl {
 
 struct regex_device_builder {
   static bool glushkov_fast_path_supported(regex_program const& p)
-  {
-    return p._impl->glushkov_prog.get() != nullptr;
-  }
+  { return p._impl->glushkov_prog.get() != nullptr; }
 
   static auto create_prog_device(regex_program const& p, cuda::stream_ref stream)
-  {
-    return detail::reprog_device::create(p._impl->prog, stream);
-  }
+  { return detail::reprog_device::create(p._impl->prog, stream); }
 
   static auto create_gkprog_device(regex_program const& p, cuda::stream_ref stream)
   {

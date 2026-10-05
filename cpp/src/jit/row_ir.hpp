@@ -159,19 +159,13 @@ struct [[nodiscard]] instance_context {
   [[nodiscard]] int32_t add_input(input in);
 
   [[nodiscard]] int32_t add_input(scalar const& scalar)
-  {
-    return add_input(scalar_input{make_column_from_scalar(scalar, 1, stream_, mr_)});
-  }
+  { return add_input(scalar_input{make_column_from_scalar(scalar, 1, stream_, mr_)}); }
 
   [[nodiscard]] int32_t add_input(scalar_column_view const& column)
-  {
-    return add_input(scalar_input{column});
-  }
+  { return add_input(scalar_input{column}); }
 
   [[nodiscard]] int32_t add_input(column_view const& column)
-  {
-    return add_input(column_input{.column = column});
-  }
+  { return add_input(column_input{.column = column}); }
 
   /**
    * @brief Finds a structurally equivalent node belonging to a previously completed output.

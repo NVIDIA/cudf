@@ -28,9 +28,7 @@ __device__ bool is_ascii_alpha(char c) { return (c >= 'A' && c <= 'Z') || (c >= 
 __device__ bool is_ascii_digit(char c) { return c >= '0' && c <= '9'; }
 
 __device__ bool is_hex_digit(char c)
-{
-  return is_ascii_digit(c) || (c >= 'A' && c <= 'F') || (c >= 'a' && c <= 'f');
-}
+{ return is_ascii_digit(c) || (c >= 'A' && c <= 'F') || (c >= 'a' && c <= 'f'); }
 
 // Parses the first valid URL candidate and records byte ranges for all six components.
 __device__ bool parse_url(cudf::string_view input, url_ranges* out)
@@ -223,9 +221,7 @@ extern "C" __device__ int transform(cuda::std::span<char>* protocol,
                                     cuda::std::span<char>* query,
                                     cuda::std::span<char>* fragment,
                                     cudf::string_view input)
-{
-  return write_url_components(protocol, host, port, path, query, fragment, input);
-}
+{ return write_url_components(protocol, host, port, path, query, fragment, input); }
 #else
 #error "Must define either UDF_COMPUTE_SIZES or UDF_WRITE_OUTPUT"
 #endif

@@ -108,7 +108,7 @@ struct dispatch_is_integer_fn {
     requires(cudf::is_integral_not_bool<T>())
   {
     auto const d_column = column_device_view::create(input.parent(), stream);
-    auto results        = make_numeric_column(data_type{type_id::BOOL8},
+    auto results = make_numeric_column(data_type{type_id::BOOL8},
                                        input.size(),
                                        cudf::detail::copy_bitmask(input.parent(), stream, mr),
                                        input.null_count(),
@@ -141,9 +141,7 @@ struct dispatch_is_integer_fn {
                                      cuda::stream_ref,
                                      rmm::device_async_resource_ref) const
     requires(not cudf::is_integral_not_bool<T>())
-  {
-    CUDF_FAIL("is_integer is expecting an integer type");
-  }
+  { CUDF_FAIL("is_integer is expecting an integer type"); }
 };
 
 }  // namespace
@@ -154,11 +152,11 @@ std::unique_ptr<column> is_integer(strings_column_view const& input,
 {
   auto const d_column = column_device_view::create(input.parent(), stream);
   auto results        = make_numeric_column(data_type{type_id::BOOL8},
-                                     input.size(),
-                                     cudf::detail::copy_bitmask(input.parent(), stream, mr),
-                                     input.null_count(),
-                                     stream,
-                                     mr);
+                                            input.size(),
+                                            cudf::detail::copy_bitmask(input.parent(), stream, mr),
+                                            input.null_count(),
+                                            stream,
+                                            mr);
 
   auto d_results = results->mutable_view().data<bool>();
   if (input.has_nulls()) {
@@ -253,9 +251,7 @@ struct dispatch_to_integers_fn {
   template <typename T>
   void operator()(column_device_view const&, mutable_column_view&, cuda::stream_ref) const
     requires(not cudf::is_integral_not_bool<T>())
-  {
-    CUDF_FAIL("Output for to_integers must be an integer type.");
-  }
+  { CUDF_FAIL("Output for to_integers must be an integer type."); }
 };
 
 }  // namespace
@@ -372,9 +368,7 @@ struct dispatch_from_integers_fn {
                                      cuda::stream_ref,
                                      rmm::device_async_resource_ref) const
     requires(not cudf::is_integral_not_bool<T>())
-  {
-    CUDF_FAIL("Values for from_integers function must be an integer type.");
-  }
+  { CUDF_FAIL("Values for from_integers function must be an integer type."); }
 };
 }  // namespace
 

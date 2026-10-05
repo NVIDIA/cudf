@@ -463,14 +463,10 @@ class reader_impl {
    * @return True if this is the first output chunk
    */
   [[nodiscard]] bool is_first_output_chunk() const
-  {
-    return _file_itm_data._output_chunk_count == 0;
-  }
+  { return _file_itm_data._output_chunk_count == 0; }
 
   [[nodiscard]] cudf::detail::hostdevice_span<bool> subpass_page_mask_span() const
-  {
-    return _subpass_page_mask ? *_subpass_page_mask : cudf::detail::hostdevice_span<bool>{};
-  }
+  { return _subpass_page_mask ? *_subpass_page_mask : cudf::detail::hostdevice_span<bool>{}; }
 
   /**
    * @brief Offset the column references in `_expr_conv` by the number of columns prepended to

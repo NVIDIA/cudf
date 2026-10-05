@@ -70,9 +70,7 @@ struct unsnap_state_s {
 };
 
 inline __device__ volatile uint8_t& byte_access(unsnap_state_s* s, uint32_t pos)
-{
-  return s->q.buf[pos & (prefetch_size - 1)];
-}
+{ return s->q.buf[pos & (prefetch_size - 1)]; }
 
 /**
  * @brief prefetches data for the symbol decoding stage
@@ -321,10 +319,10 @@ __device__ void snappy_decode_symbols(unsnap_state_s* s, uint32_t t)
           // Check for bad copy element (offset == 0).
           bool is_copy_offset_bad = false;
           if (t < batch_len) {
-            blen               = (b0 & 1) ? ((b0 >> 2) & 7) + 4 : ((b0 >> 2) + 1);
-            ofs                = (b0 & 1) ? ((b0 & 0xe0) << 3) | byte_access(s, cur_t + 1)
-                                 : (b0 & 2) ? byte_access(s, cur_t + 1) | (byte_access(s, cur_t + 2) << 8)
-                                            : -(int32_t)(cur_t + 1);
+            blen = (b0 & 1) ? ((b0 >> 2) & 7) + 4 : ((b0 >> 2) + 1);
+            ofs  = (b0 & 1)   ? ((b0 & 0xe0) << 3) | byte_access(s, cur_t + 1)
+                   : (b0 & 2) ? byte_access(s, cur_t + 1) | (byte_access(s, cur_t + 2) << 8)
+                              : -(int32_t)(cur_t + 1);
             is_copy_offset_bad = (b0 & 3) != 0 && ofs == 0;
             b[t].len           = blen;
             b[t].offset        = ofs;
@@ -355,28 +353,28 @@ __device__ void snappy_decode_symbols(unsnap_state_s* s, uint32_t t)
         uint32_t batch_add;
         do {
           uint32_t clen, mask_t;
-          cur_t     = cur + t;
-          b0        = byte_access(s, cur_t);
-          clen      = (b0 & 3) ? (b0 & 2) ? 1 : 0 : (b0 >> 2);  // symbol length minus 2
-          v0        = ballot(clen & 1);
-          v1        = ballot((clen >> 1) & 1);
-          len3_mask = shuffle((t == 0) ? get_len5_mask(v0, v1) : 0);
-          mask_t    = (1 << (2 * t)) - 1;
-          cur_t     = cur + 2 * t + 2 * __popc((len3_mask & 0xaaaa'aaaa) & mask_t) +
-                  __popc((len3_mask & 0x5555'5555) & mask_t);
+          cur_t       = cur + t;
+          b0          = byte_access(s, cur_t);
+          clen        = (b0 & 3) ? (b0 & 2) ? 1 : 0 : (b0 >> 2);  // symbol length minus 2
+          v0          = ballot(clen & 1);
+          v1          = ballot((clen >> 1) & 1);
+          len3_mask   = shuffle((t == 0) ? get_len5_mask(v0, v1) : 0);
+          mask_t      = (1 << (2 * t)) - 1;
+          cur_t       = cur + 2 * t + 2 * __popc((len3_mask & 0xaaaa'aaaa) & mask_t) +
+                        __popc((len3_mask & 0x5555'5555) & mask_t);
           b0          = byte_access(s, cur_t);
           is_long_sym = ((b0 & 3) ? ((b0 & 3) == 3) : (b0 > 3 * 4)) || (cur_t >= cur + 32) ||
                         (batch_len + t >= batch_size);
-          batch_add = __ffs(ballot(is_long_sym)) - 1;
+          batch_add   = __ffs(ballot(is_long_sym)) - 1;
           if (batch_add != 0) {
             uint32_t blen           = 0;
             int32_t ofs             = 0;
             bool is_copy_offset_bad = false;
             if (t < batch_add) {
-              blen                    = (b0 & 1) ? ((b0 >> 2) & 7) + 4 : ((b0 >> 2) + 1);
-              ofs                     = (b0 & 1) ? ((b0 & 0xe0) << 3) | byte_access(s, cur_t + 1)
-                                        : (b0 & 2) ? byte_access(s, cur_t + 1) | (byte_access(s, cur_t + 2) << 8)
-                                                   : -(int32_t)(cur_t + 1);
+              blen = (b0 & 1) ? ((b0 >> 2) & 7) + 4 : ((b0 >> 2) + 1);
+              ofs  = (b0 & 1)   ? ((b0 & 0xe0) << 3) | byte_access(s, cur_t + 1)
+                     : (b0 & 2) ? byte_access(s, cur_t + 1) | (byte_access(s, cur_t + 2) << 8)
+                                : -(int32_t)(cur_t + 1);
               is_copy_offset_bad      = (b0 & 3) != 0 && ofs == 0;
               b[batch_len + t].len    = blen;
               b[batch_len + t].offset = ofs;
@@ -537,7 +535,7 @@ __device__ void snappy_process_symbols(unsnap_state_s* s, int t, Storage& temp_s
           cub::WarpReduce<uint32_t>(temp_storage).Sum((bofs < 32 && t < batch_len) ? 1 << bofs : 0);
         start_mask = shuffle(start_mask);
         n          = min(min((uint32_t)__popc(start_mask), (uint32_t)(__ffs(stop_mask) - 1u)),
-                (uint32_t)batch_len);
+                         (uint32_t)batch_len);
         if (n != 0) {
           uint32_t it  = __popc(start_mask & ((2 << t) - 1));
           uint32_t tr  = t - shuffle(bofs - blen_t, it);

@@ -73,9 +73,7 @@ class test_cuda_stream_pool : public cuda_stream_pool {
   cuda::stream_ref get_stream() override { return cudf::test::get_default_stream(); }
 
   std::vector<cuda::stream_ref> get_streams(std::size_t count) override
-  {
-    return std::vector<cuda::stream_ref>(count, cudf::test::get_default_stream());
-  }
+  { return std::vector<cuda::stream_ref>(count, cudf::test::get_default_stream()); }
 };
 
 cuda_stream_pool* create_cuda_stream_pool() { return new test_cuda_stream_pool(); }
@@ -176,7 +174,7 @@ void sanitizer_subscriber::check_stream_arg(Sanitizer_CallbackData const* cbdata
 
 void sanitizer_subscriber::callback(Sanitizer_CallbackDomain domain,
                                     Sanitizer_CallbackId cbid,
-                                    const void* cbdata)
+                                    void const* cbdata)
 {
   switch (domain) {
     case SANITIZER_CB_DOMAIN_RUNTIME_API: {

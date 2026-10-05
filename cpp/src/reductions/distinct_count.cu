@@ -43,9 +43,7 @@ class row_validity {
   row_validity(bitmask_type const* row_bitmask) : _row_bitmask{row_bitmask} {}
 
   __device__ inline bool operator()(size_type const& i) const noexcept
-  {
-    return cudf::bit_is_set(_row_bitmask, i);
-  }
+  { return cudf::bit_is_set(_row_bitmask, i); }
 
  private:
   bitmask_type const* _row_bitmask;
@@ -73,9 +71,7 @@ struct check_for_nan {
    * @returns bool true if value at `index` is `NaN` and not null, else false
    */
   __device__ bool operator()(size_type index) const noexcept
-  {
-    return std::isnan(_input.data<T>()[index]) and _input.is_valid(index);
-  }
+  { return std::isnan(_input.data<T>()[index]) and _input.is_valid(index); }
 
   cudf::column_device_view _input;
 };
@@ -122,9 +118,7 @@ struct has_nans {
   template <typename T>
   bool operator()(column_view const&, cuda::stream_ref)
     requires(not std::is_floating_point_v<T>)
-  {
-    return false;
-  }
+  { return false; }
 };
 }  // namespace
 
@@ -146,14 +140,14 @@ cudf::size_type distinct_count(table_view const& keys,
   auto const comparator_helper = [&](auto const row_equal) {
     using hasher_type = decltype(hash_key);
     auto key_set      = cuco::static_set{cuco::extent{static_cast<std::size_t>(num_rows)},
-                                    cudf::detail::CUCO_DESIRED_LOAD_FACTOR,
-                                    cuco::empty_key<cudf::size_type>{-1},
-                                    row_equal,
-                                    cuco::linear_probing<1, hasher_type>{hash_key},
+                                         cudf::detail::CUCO_DESIRED_LOAD_FACTOR,
+                                         cuco::empty_key<cudf::size_type>{-1},
+                                         row_equal,
+                                         cuco::linear_probing<1, hasher_type>{hash_key},
                                          {},
                                          {},
-                                    rmm::mr::polymorphic_allocator<char>{temp_mr},
-                                    stream.get()};
+                                         rmm::mr::polymorphic_allocator<char>{temp_mr},
+                                         stream.get()};
 
     auto const iter = cuda::counting_iterator<cudf::size_type>{0};
     // when nulls are equal, we skip hashing any row that has a null

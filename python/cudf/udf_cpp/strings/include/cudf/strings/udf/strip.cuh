@@ -1,6 +1,6 @@
 
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -60,9 +60,7 @@ namespace udf {
 __device__ udf_string strip(cudf::string_view const d_str,
                             cudf::string_view const d_to_strip,
                             side_type stype = side_type::BOTH)
-{
-  return udf_string{cudf::strings::detail::strip(d_str, d_to_strip, stype)};
-}
+{ return udf_string{cudf::strings::detail::strip(d_str, d_to_strip, stype)}; }
 
 }  // namespace udf
 }  // namespace strings

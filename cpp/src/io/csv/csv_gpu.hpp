@@ -59,9 +59,7 @@ using packed_rowctx_t = uint64_t;
  * and a 30-bit row count in the upper 30 bits.
  */
 inline __host__ __device__ rowctx32_t make_row_context(uint32_t row_count, uint32_t out_ctx)
-{
-  return (row_count << 2) + out_ctx;
-}
+{ return (row_count << 2) + out_ctx; }
 
 /**
  * @brief pack multiple row contexts together
@@ -87,9 +85,7 @@ constexpr __host__ __device__ packed_rowctx_t pack_row_contexts(rowctx32_t ctx0,
  * @brief Unpack a row context  (select one of the 4 contexts in packed form)
  */
 inline __host__ __device__ rowctx32_t get_row_context(packed_rowctx_t packed_ctx, uint32_t ctxid)
-{
-  return static_cast<rowctx32_t>((packed_ctx >> (ctxid * 20)) & ((1 << 20) - 1));
-}
+{ return static_cast<rowctx32_t>((packed_ctx >> (ctxid * 20)) & ((1 << 20) - 1)); }
 
 /**
  * @brief Select the output row context from a given input context and a packed row

@@ -100,9 +100,7 @@ struct scan_functor<Op, cudf::string_view> {
                                         bitmask_type const* mask,
                                         cuda::stream_ref stream,
                                         rmm::device_async_resource_ref mr)
-  {
-    return cudf::strings::detail::scan_inclusive<Op>(input_view, mask, stream, mr);
-  }
+  { return cudf::strings::detail::scan_inclusive<Op>(input_view, mask, stream, mr); }
 };
 
 template <typename Op>
@@ -112,9 +110,7 @@ struct scan_functor<Op, cudf::struct_view> {
                                         bitmask_type const*,
                                         cuda::stream_ref stream,
                                         rmm::device_async_resource_ref mr)
-  {
-    return cudf::structs::detail::scan_inclusive<Op>(input, stream, mr);
-  }
+  { return cudf::structs::detail::scan_inclusive<Op>(input, stream, mr); }
 };
 
 template <typename Op, typename T>
@@ -184,16 +180,12 @@ struct scan_dispatcher {
                                      cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr)
     requires(is_supported<T>())
-  {
-    return scan_functor<Op, T>::invoke(input, output_mask, stream, mr);
-  }
+  { return scan_functor<Op, T>::invoke(input, output_mask, stream, mr); }
 
   template <typename T, typename... Args>
   std::unique_ptr<column> operator()(Args&&...)
     requires(!is_supported<T>())
-  {
-    CUDF_FAIL("Unsupported type for inclusive scan operation");
-  }
+  { CUDF_FAIL("Unsupported type for inclusive scan operation"); }
 };
 
 }  // namespace

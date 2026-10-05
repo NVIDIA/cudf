@@ -16,9 +16,7 @@ template <typename T>
 struct cast_fn {
   template <typename U>
   __device__ T operator()(U const& val) const
-  {
-    return static_cast<T>(val);
-  }
+  { return static_cast<T>(val); }
 };
 
 // Tests up cast reduction with null iterator.

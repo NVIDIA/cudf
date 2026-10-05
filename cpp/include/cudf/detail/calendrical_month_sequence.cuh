@@ -54,9 +54,7 @@ struct calendrical_month_sequence_functor {
   template <typename T, typename... Args>
   std::unique_ptr<cudf::column> operator()(Args&&...)
     requires(!cudf::is_timestamp_t<T>::value)
-  {
-    CUDF_FAIL("Cannot make a date_range of a non-datetime type");
-  }
+  { CUDF_FAIL("Cannot make a date_range of a non-datetime type"); }
 };
 
 }  // namespace detail

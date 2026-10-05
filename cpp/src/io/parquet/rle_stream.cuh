@@ -251,9 +251,7 @@ struct rle_stream {
   }
 
   __device__ inline bool is_last_decode_warp(int warp_id)
-  {
-    return warp_id == num_rle_stream_decode_warps;
-  }
+  { return warp_id == num_rle_stream_decode_warps; }
 
   template <typename Group>
   __device__ void init(Group const& group,

@@ -20,9 +20,7 @@
 using cudf::test::scoped_current_device_resource;
 
 static rmm::device_async_resource_ref get_output_mr(cudf::memory_resources resources)
-{
-  return resources.get_output_mr();
-}
+{ return resources.get_output_mr(); }
 
 static_assert(std::is_nothrow_copy_constructible_v<cudf::memory_resources>);
 static_assert(std::is_nothrow_move_constructible_v<cudf::memory_resources>);

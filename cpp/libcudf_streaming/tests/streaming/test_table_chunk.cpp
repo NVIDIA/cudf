@@ -252,7 +252,7 @@ TEST_F(StreamingTableChunk, DeviceToDeviceCopy)
   EXPECT_TRUE(chunk.is_available());
 
   auto res    = br->reserve_or_fail(chunk.data_alloc_size(rapidsmpf::MemoryType::DEVICE),
-                                 rapidsmpf::MemoryType::DEVICE);
+                                    rapidsmpf::MemoryType::DEVICE);
   auto chunk2 = chunk.copy(res);
 
   CUDF_TEST_EXPECT_TABLES_EQUIVALENT(chunk2.table_view(), expect);
@@ -272,8 +272,8 @@ TEST_F(StreamingTableChunk, ShapeOnAvailableAndSpilledChunk)
   EXPECT_EQ(device_chunk.shape(), expected_shape);
 
   auto [res, _]   = br->reserve(rapidsmpf::MemoryType::HOST,
-                              device_chunk.data_alloc_size(rapidsmpf::MemoryType::DEVICE),
-                              rapidsmpf::AllowOverbooking::YES);
+                                device_chunk.data_alloc_size(rapidsmpf::MemoryType::DEVICE),
+                                rapidsmpf::AllowOverbooking::YES);
   auto host_chunk = device_chunk.copy(res);
 
   EXPECT_FALSE(host_chunk.is_available());
@@ -361,7 +361,7 @@ TEST_P(StreamingTableChunk, DeviceToHostRoundTripCopy)
 
   // Sanity check: a second device copy should also remain equivalent.
   auto dev_res2  = br->reserve_or_fail(dev_back.data_alloc_size(rapidsmpf::MemoryType::DEVICE),
-                                      rapidsmpf::MemoryType::DEVICE);
+                                       rapidsmpf::MemoryType::DEVICE);
   auto dev_copy2 = dev_back.copy(dev_res2);
   EXPECT_TRUE(dev_copy2.is_available());
   EXPECT_EQ(dev_copy2.make_available_cost(), 0);
@@ -449,7 +449,7 @@ TEST_P(StreamingTableChunk, SpillTrackingOnHostMove)
                                                 spill_mem_type);
     auto host     = move ? dev.move(host_res) : dev.copy(host_res);
     auto dev_res  = tracked_br->reserve_or_fail(host.data_alloc_size(spill_mem_type),
-                                               rapidsmpf::MemoryType::DEVICE);
+                                                rapidsmpf::MemoryType::DEVICE);
     return host.make_available(dev_res);
   };
 

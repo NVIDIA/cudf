@@ -64,9 +64,7 @@ struct distinct_precomputed_hash {
   }
 
   __device__ __forceinline__ hash_value_type operator()(size_type i) const noexcept
-  {
-    return _hashes[i];
-  }
+  { return _hashes[i]; }
 
  private:
   hash_value_type const* _hashes;

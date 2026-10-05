@@ -29,9 +29,7 @@ struct float_pair {
 template <typename F>
 struct float_decomposer {
   __device__ cuda::std::tuple<size_type&, F&> operator()(float_pair<F>& key) const
-  {
-    return {key.s, key.f};
-  }
+  { return {key.s, key.f}; }
 };
 
 template <typename F>
@@ -134,24 +132,18 @@ struct sort_radix_fn {
   template <typename T>
   void operator()()
     requires(cudf::is_fixed_width<T>() and !cudf::is_chrono<T>() and !cudf::is_floating_point<T>())
-  {
-    sort_radix<T>();
-  }
+  { sort_radix<T>(); }
 
   template <typename T>
   void operator()()
     requires(not cudf::is_fixed_width<T>())
-  {
-    CUDF_UNREACHABLE("invalid type for faster sort");
-  }
+  { CUDF_UNREACHABLE("invalid type for faster sort"); }
 };
 
 }  // namespace
 
 bool is_radix_sortable(column_view const& column)
-{
-  return !column.has_nulls() && cudf::is_fixed_width(column.type());
-}
+{ return !column.has_nulls() && cudf::is_fixed_width(column.type()); }
 
 std::unique_ptr<column> sort_radix(column_view const& input,
                                    bool ascending,

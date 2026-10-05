@@ -34,9 +34,7 @@ struct scatter_right_index {
   std::uint32_t const* right_keys;
 
   __device__ void operator()(size_type right_idx) const
-  {
-    lookup[right_keys[right_idx]] = right_idx;
-  }
+  { lookup[right_keys[right_idx]] = right_idx; }
 };
 
 // Writes the (left, right) index pair of the `out_idx`-th match, given a matched left row index
@@ -59,9 +57,7 @@ struct is_match {
   std::uint32_t const* left_keys;
 
   __device__ bool operator()(size_type left_idx) const
-  {
-    return lookup[left_keys[left_idx]] != JoinNoMatch;
-  }
+  { return lookup[left_keys[left_idx]] != JoinNoMatch; }
 };
 
 }  // namespace

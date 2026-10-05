@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -67,17 +67,13 @@ struct multistate {
    * @brief get's the Nth (head, ____] value state this multistate represents
    */
   [[nodiscard]] CUDF_HOST_DEVICE constexpr uint8_t get_head(uint8_t idx) const
-  {
-    return (_heads >> (idx * 4)) & 0xFu;
-  }
+  { return (_heads >> (idx * 4)) & 0xFu; }
 
   /**
    * @brief get's the Nth (____, tail] value state this multistate represents
    */
   [[nodiscard]] CUDF_HOST_DEVICE constexpr uint8_t get_tail(uint8_t idx) const
-  {
-    return (_tails >> (idx * 4)) & 0xFu;
-  }
+  { return (_tails >> (idx * 4)) & 0xFu; }
 
  private:
   uint8_t _size = 0;

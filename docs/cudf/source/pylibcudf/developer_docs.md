@@ -128,6 +128,7 @@ import pytest
 from cudf._lib import pylibcudf as plc
 from utils import assert_column_eq
 
+
 # The pa_dtype fixture is defined in conftest.py.
 @pytest.fixture(scope="module")
 def pa_column(pa_dtype):
@@ -314,6 +315,7 @@ values must be integers:
 
 ```python
 ColumnOrTable = TypeVar("ColumnOrTable", Column, Table)
+
 
 def split(input: ColumnOrTable, splits: list[int]) -> list[ColumnOrTable]: ...
 ```

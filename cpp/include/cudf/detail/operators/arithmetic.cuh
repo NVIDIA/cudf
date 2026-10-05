@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -26,15 +26,11 @@ namespace ops {
 template <typename T>
 __device__ T abs(T a)
   requires(cuda::std::is_signed_v<T>)
-{
-  return cuda::std::abs(a);
-}
+{ return cuda::std::abs(a); }
 
 template <unsigned_integer T>
 __device__ T abs(T a)
-{
-  return a;
-}
+{ return a; }
 
 template <typename R>
 __device__ numeric::decimal<R> abs(numeric::decimal<R> a)
@@ -53,9 +49,7 @@ __device__ numeric::decimal<R> abs(numeric::decimal<R> a)
  */
 template <typename A, typename B>
 __device__ auto add(A a, B b) -> decltype(a + b)
-{
-  return a + b;
-}
+{ return a + b; }
 
 /**
  * @brief Computes quotient of two values.
@@ -67,9 +61,7 @@ __device__ auto add(A a, B b) -> decltype(a + b)
  */
 template <typename A, typename B>
 __device__ auto div(A a, B b) -> decltype(a / b)
-{
-  return a / b;
-}
+{ return a / b; }
 
 /**
  * @brief Computes floor division of two values.
@@ -81,15 +73,11 @@ __device__ auto div(A a, B b) -> decltype(a / b)
  */
 template <integer A, integer B>
 __device__ auto floor_div(A a, B b) -> decltype(cudf::detail::integral_floor_div(a, b))
-{
-  return cudf::detail::integral_floor_div(a, b);
-}
+{ return cudf::detail::integral_floor_div(a, b); }
 
 template <floating_point A, floating_point B>
 __device__ auto floor_div(A a, B b) -> decltype(cuda::std::floor(a / b))
-{
-  return cuda::std::floor(a / b);
-}
+{ return cuda::std::floor(a / b); }
 
 /**
  * @brief Computes remainder of two values.
@@ -101,15 +89,11 @@ __device__ auto floor_div(A a, B b) -> decltype(cuda::std::floor(a / b))
  */
 template <typename A, typename B>
 __device__ auto mod(A a, B b) -> decltype(a % b)
-{
-  return a % b;
-}
+{ return a % b; }
 
 template <floating_point A, floating_point B>
 __device__ auto mod(A a, B b) -> decltype(cuda::std::fmod(a, b))
-{
-  return cuda::std::fmod(a, b);
-}
+{ return cuda::std::fmod(a, b); }
 
 /**
  * @brief Computes Python-style modulus.
@@ -121,15 +105,11 @@ __device__ auto mod(A a, B b) -> decltype(cuda::std::fmod(a, b))
  */
 template <typename A, typename B>
 __device__ auto pymod(A a, B b) -> decltype((a % b + b) % b)
-{
-  return (a % b + b) % b;
-}
+{ return (a % b + b) % b; }
 
 template <floating_point A, floating_point B>
 __device__ auto pymod(A a, B b) -> decltype(cuda::std::fmod(cuda::std::fmod(a, b) + b, b))
-{
-  return cuda::std::fmod(cuda::std::fmod(a, b) + b, b);
-}
+{ return cuda::std::fmod(cuda::std::fmod(a, b) + b, b); }
 
 /**
  * @brief Computes product of two values.
@@ -141,9 +121,7 @@ __device__ auto pymod(A a, B b) -> decltype(cuda::std::fmod(cuda::std::fmod(a, b
  */
 template <typename A, typename B>
 __device__ auto mul(A a, B b) -> decltype(a * b)
-{
-  return a * b;
-}
+{ return a * b; }
 
 /**
  * @brief Computes unary negation.
@@ -153,9 +131,7 @@ __device__ auto mul(A a, B b) -> decltype(a * b)
  */
 template <typename T>
 __device__ auto neg(T a) -> decltype(-a)
-{
-  return -a;
-}
+{ return -a; }
 
 template <typename R>
 __device__ numeric::decimal<R> neg(numeric::decimal<R> a)
@@ -174,9 +150,7 @@ __device__ numeric::decimal<R> neg(numeric::decimal<R> a)
  */
 template <typename A, typename B>
 __device__ auto sub(A a, B b) -> decltype(a - b)
-{
-  return a - b;
-}
+{ return a - b; }
 
 /**
  * @brief Computes true division and returns a double.
@@ -188,9 +162,7 @@ __device__ auto sub(A a, B b) -> decltype(a - b)
  */
 template <typename A, typename B>
 __device__ auto true_div(A a, B b) -> decltype(static_cast<double>(a) / static_cast<double>(b))
-{
-  return static_cast<double>(a) / static_cast<double>(b);
-}
+{ return static_cast<double>(a) / static_cast<double>(b); }
 
 }  // namespace ops
 }  // namespace detail

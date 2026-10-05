@@ -55,12 +55,12 @@ void tdigest_sample_compare(cudf::tdigest::tdigest_column_view const& tdv,
 
   auto map                   = cudf::device_span<cudf::size_type const>(d_expected_src);
   auto sampled_result_mean   = std::move(cudf::gather(cudf::table_view({result_mean}),
-                                                    map,
-                                                    cudf::out_of_bounds_policy::DONT_CHECK,
-                                                    stream,
-                                                    temporary_mr)
-                                         ->release()
-                                         .front());
+                                                      map,
+                                                      cudf::out_of_bounds_policy::DONT_CHECK,
+                                                      stream,
+                                                      temporary_mr)
+                                           ->release()
+                                           .front());
   auto sampled_result_weight = std::move(cudf::gather(cudf::table_view({result_weight}),
                                                       map,
                                                       cudf::out_of_bounds_policy::DONT_CHECK,

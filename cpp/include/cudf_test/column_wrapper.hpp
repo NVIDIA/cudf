@@ -99,9 +99,7 @@ struct fixed_width_type_converter {
             typename ToT                                        = To,
             std::enable_if_t<std::is_same_v<FromT, ToT>, void>* = nullptr>
   constexpr ToT operator()(FromT element) const
-  {
-    return element;
-  }
+  { return element; }
 
   /**
    * @brief Convert types if possible, otherwise construct target from source.
@@ -118,9 +116,7 @@ struct fixed_width_type_converter {
                                                      std::is_constructible_v<ToT, FromT>),
                      void>* = nullptr>
   constexpr ToT operator()(FromT element) const
-  {
-    return static_cast<ToT>(element);
-  }
+  { return static_cast<ToT>(element); }
 
   /**
    * @brief Convert integral values to timestamps
@@ -135,9 +131,7 @@ struct fixed_width_type_converter {
     typename ToT                                                                    = To,
     std::enable_if_t<std::is_integral_v<FromT> && cudf::is_timestamp<ToT>(), void>* = nullptr>
   constexpr ToT operator()(FromT element) const
-  {
-    return ToT{typename ToT::duration{element}};
-  }
+  { return ToT{typename ToT::duration{element}}; }
 };
 
 /**
@@ -356,9 +350,7 @@ class fixed_width_column_wrapper : public detail::column_wrapper {
    * @brief Default constructor initializes an empty column with proper dtype
    */
   fixed_width_column_wrapper() : column_wrapper{}
-  {
-    wrapped = cudf::make_empty_column(cudf::type_to_id<ElementTo>());
-  }
+  { wrapped = cudf::make_empty_column(cudf::type_to_id<ElementTo>()); }
 
   /**
    * @brief Construct a non-nullable column of the fixed-width elements in the
@@ -811,9 +803,7 @@ class strings_column_wrapper : public detail::column_wrapper {
    * @brief Default constructor initializes an empty column of strings
    */
   strings_column_wrapper() : column_wrapper{}
-  {
-    wrapped = cudf::make_empty_column(cudf::type_id::STRING);
-  }
+  { wrapped = cudf::make_empty_column(cudf::type_id::STRING); }
 
   /**
    * @brief Construct a non-nullable column of strings from the range
@@ -1053,9 +1043,7 @@ class dictionary_column_wrapper : public detail::column_wrapper {
    * @brief Default constructor initializes an empty column with dictionary type.
    */
   dictionary_column_wrapper() : column_wrapper{}
-  {
-    wrapped = cudf::make_empty_column(cudf::type_id::DICTIONARY32);
-  }
+  { wrapped = cudf::make_empty_column(cudf::type_id::DICTIONARY32); }
 
   /**
    * @brief Construct a non-nullable dictionary column of the fixed-width elements in the
@@ -1269,9 +1257,7 @@ class dictionary_column_wrapper<std::string> : public detail::column_wrapper {
    * @return column_view to keys column
    */
   [[nodiscard]] column_view keys() const
-  {
-    return cudf::dictionary_column_view{wrapped->view()}.keys();
-  }
+  { return cudf::dictionary_column_view{wrapped->view()}.keys(); }
 
   /**
    * @brief Access indices column view
@@ -1279,9 +1265,7 @@ class dictionary_column_wrapper<std::string> : public detail::column_wrapper {
    * @return column_view to indices column
    */
   [[nodiscard]] column_view indices() const
-  {
-    return cudf::dictionary_column_view{wrapped->view()}.indices();
-  }
+  { return cudf::dictionary_column_view{wrapped->view()}.indices(); }
 
   /**
    * @brief Default constructor initializes an empty dictionary column of strings
@@ -1933,7 +1917,7 @@ class lists_column_wrapper : public detail::column_wrapper {
     depth = 0;
 
     size_type num_elements = offsets->size() == 0 ? 0 : offsets->size() - 1;
-    wrapped                = make_lists_column(num_elements,
+    wrapped = make_lists_column(num_elements,
                                 std::move(offsets),
                                 std::move(c),
                                 0,
@@ -2050,9 +2034,7 @@ class lists_column_wrapper : public detail::column_wrapper {
   }
 
   [[nodiscard]] column_view get_view() const
-  {
-    return root ? lists_column_view(*wrapped).child() : *wrapped;
-  }
+  { return root ? lists_column_view(*wrapped).child() : *wrapped; }
 
   int depth = 0;
   bool root = false;
@@ -2109,9 +2091,7 @@ class structs_column_wrapper : public detail::column_wrapper {
                          std::vector<bool> const& validity = {},
                          cuda::stream_ref stream           = cudf::test::get_default_stream(),
                          cudf::memory_resources mr = cudf::get_current_device_resource_ref())
-  {
-    init(std::move(child_columns), validity, stream, mr);
-  }
+  { init(std::move(child_columns), validity, stream, mr); }
 
   /**
    * @brief Constructs a struct column from the list of column wrappers for child columns.

@@ -29,9 +29,7 @@ template <typename Expected>
 struct type_tester {
   template <typename Dispatched>
   bool operator()()
-  {
-    return std::is_same_v<Expected, Dispatched>;
-  }
+  { return std::is_same_v<Expected, Dispatched>; }
 };
 }  // namespace
 
@@ -53,9 +51,7 @@ struct verify_dispatched_type {
 
   template <typename T>
   __host__ __device__ bool operator()(cudf::type_id id)
-  {
-    return id == expected_id;
-  }
+  { return id == expected_id; }
 };
 
 CUDF_KERNEL void dispatch_test_kernel(cudf::type_id id, bool* d_result)
@@ -96,9 +92,7 @@ template <typename Expected1, typename Expected2>
 struct two_type_tester {
   template <typename Dispatched1, typename Dispatched2>
   bool operator()()
-  {
-    return std::is_same_v<Expected1, Dispatched1> && std::is_same_v<Expected2, Dispatched2>;
-  }
+  { return std::is_same_v<Expected1, Dispatched1> && std::is_same_v<Expected2, Dispatched2>; }
 };
 }  // namespace
 
@@ -116,9 +110,7 @@ struct verify_double_dispatched_type {
 
   template <typename T1, typename T2>
   __host__ __device__ bool operator()(cudf::type_id id1, cudf::type_id id2)
-  {
-    return id1 == expected_id1 && id2 == expected_id2;
-  }
+  { return id1 == expected_id1 && id2 == expected_id2; }
 };
 
 CUDF_KERNEL void double_dispatch_test_kernel(cudf::type_id id1, cudf::type_id id2, bool* d_result)

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -30,9 +30,7 @@ namespace detail {
 template <typename LHS, typename RHS>
 CUDF_HOST_DEVICE inline auto min(LHS const& lhs, RHS const& rhs)
   requires(cudf::is_relationally_comparable<LHS, RHS>())
-{
-  return cuda::std::min(lhs, rhs);
-}
+{ return cuda::std::min(lhs, rhs); }
 
 /**
  * @brief SFINAE enabled max function suitable for std::is_invocable
@@ -40,9 +38,7 @@ CUDF_HOST_DEVICE inline auto min(LHS const& lhs, RHS const& rhs)
 template <typename LHS, typename RHS>
 CUDF_HOST_DEVICE inline auto max(LHS const& lhs, RHS const& rhs)
   requires(cudf::is_relationally_comparable<LHS, RHS>())
-{
-  return cuda::std::max(lhs, rhs);
-}
+{ return cuda::std::max(lhs, rhs); }
 }  // namespace detail
 
 /**
@@ -52,23 +48,17 @@ struct DeviceSum {
   template <typename T>
   CUDF_HOST_DEVICE inline auto operator()(T const& lhs, T const& rhs) -> decltype(lhs + rhs)
     requires(!cudf::is_timestamp<T>())
-  {
-    return lhs + rhs;
-  }
+  { return lhs + rhs; }
 
   template <typename T>
   CUDF_HOST_DEVICE static constexpr T identity()
     requires(cudf::is_timestamp<T>())
-  {
-    return T{typename T::duration{0}};
-  }
+  { return T{typename T::duration{0}}; }
 
   template <typename T>
   CUDF_HOST_DEVICE static constexpr T identity()
     requires(!cudf::is_timestamp<T>() && !cudf::is_fixed_point<T>())
-  {
-    return T{0};
-  }
+  { return T{0}; }
 
   template <typename T>
   CUDF_HOST_DEVICE static constexpr T identity()
@@ -90,22 +80,16 @@ struct DeviceCount {
   template <typename T>
   CUDF_HOST_DEVICE inline T operator()(T const& lhs, T const& rhs)
     requires(cudf::is_timestamp<T>())
-  {
-    return T{DeviceCount{}(lhs.time_since_epoch(), rhs.time_since_epoch())};
-  }
+  { return T{DeviceCount{}(lhs.time_since_epoch(), rhs.time_since_epoch())}; }
 
   template <typename T>
   CUDF_HOST_DEVICE inline T operator()(T const&, T const& rhs)
     requires(!cudf::is_timestamp<T>())
-  {
-    return rhs + T{1};
-  }
+  { return rhs + T{1}; }
 
   template <typename T>
   CUDF_HOST_DEVICE static constexpr T identity()
-  {
-    return T{};
-  }
+  { return T{}; }
 };
 
 /**
@@ -116,17 +100,13 @@ struct DeviceMin {
   CUDF_HOST_DEVICE inline auto operator()(T const& lhs, T const& rhs)
     -> decltype(numeric::detail::min(lhs, rhs))
     requires(cudf::is_fixed_width<T>())
-  {
-    return numeric::detail::min(lhs, rhs);
-  }
+  { return numeric::detail::min(lhs, rhs); }
 
   template <typename T>
   CUDF_HOST_DEVICE inline auto operator()(T const& lhs, T const& rhs)
     -> decltype(cudf::detail::min(lhs, rhs))
     requires(not cudf::is_fixed_width<T>())
-  {
-    return cudf::detail::min(lhs, rhs);
-  }
+  { return cudf::detail::min(lhs, rhs); }
 
   template <typename T, CUDF_ENABLE_IF(cudf::is_numeric<T>() && !cudf::is_fixed_point<T>())>
   CUDF_HOST_DEVICE static constexpr T identity()
@@ -155,15 +135,11 @@ struct DeviceMin {
   template <typename T,
             CUDF_ENABLE_IF(cuda::std::is_same_v<T, cudf::string_view> || cudf::is_chrono<T>())>
   CUDF_HOST_DEVICE inline static constexpr T identity()
-  {
-    return T::max();
-  }
+  { return T::max(); }
 
   template <typename T, CUDF_ENABLE_IF(cudf::is_dictionary<T>())>
   CUDF_HOST_DEVICE static constexpr T identity()
-  {
-    return static_cast<T>(T::max_value());
-  }
+  { return static_cast<T>(T::max_value()); }
 };
 
 /**
@@ -174,17 +150,13 @@ struct DeviceMax {
   CUDF_HOST_DEVICE inline auto operator()(T const& lhs, T const& rhs)
     -> decltype(numeric::detail::max(lhs, rhs))
     requires(cudf::is_fixed_width<T>())
-  {
-    return numeric::detail::max(lhs, rhs);
-  }
+  { return numeric::detail::max(lhs, rhs); }
 
   template <typename T>
   CUDF_HOST_DEVICE inline auto operator()(T const& lhs, T const& rhs)
     -> decltype(cudf::detail::max(lhs, rhs))
     requires(not cudf::is_fixed_width<T>())
-  {
-    return cudf::detail::max(lhs, rhs);
-  }
+  { return cudf::detail::max(lhs, rhs); }
 
   template <typename T, CUDF_ENABLE_IF(cudf::is_numeric<T>() && !cudf::is_fixed_point<T>())>
   CUDF_HOST_DEVICE static constexpr T identity()
@@ -213,15 +185,11 @@ struct DeviceMax {
   template <typename T,
             CUDF_ENABLE_IF(cuda::std::is_same_v<T, cudf::string_view> || cudf::is_chrono<T>())>
   CUDF_HOST_DEVICE inline static constexpr T identity()
-  {
-    return T::min();
-  }
+  { return T::min(); }
 
   template <typename T, CUDF_ENABLE_IF(cudf::is_dictionary<T>())>
   CUDF_HOST_DEVICE static constexpr T identity()
-  {
-    return static_cast<T>(T::lowest_value());
-  }
+  { return static_cast<T>(T::lowest_value()); }
 };
 
 /**
@@ -231,16 +199,12 @@ struct DeviceProduct {
   template <typename T>
   CUDF_HOST_DEVICE inline auto operator()(T const& lhs, T const& rhs) -> decltype(lhs * rhs)
     requires(!cudf::is_timestamp<T>())
-  {
-    return lhs * rhs;
-  }
+  { return lhs * rhs; }
 
   template <typename T>
   CUDF_HOST_DEVICE static constexpr T identity()
     requires(!cudf::is_fixed_point<T>())
-  {
-    return T{1};
-  }
+  { return T{1}; }
 
   template <typename T>
   CUDF_HOST_DEVICE static constexpr T identity()
@@ -271,9 +235,7 @@ struct DeviceBitAnd {
   template <typename T>
   CUDF_HOST_DEVICE inline T operator()(T const& lhs, T const& rhs) const
     requires(std::is_integral_v<T>)
-  {
-    return lhs & rhs;
-  }
+  { return lhs & rhs; }
 
   template <typename T>
   CUDF_HOST_DEVICE static constexpr T identity()
@@ -306,16 +268,12 @@ struct DeviceBitOr {
   template <typename T>
   CUDF_HOST_DEVICE inline T operator()(T const& lhs, T const& rhs) const
     requires(std::is_integral_v<T>)
-  {
-    return lhs | rhs;
-  }
+  { return lhs | rhs; }
 
   template <typename T>
   CUDF_HOST_DEVICE static constexpr T identity()
     requires(std::is_integral_v<T>)
-  {
-    return T{0};
-  }
+  { return T{0}; }
 
   template <typename T>
   CUDF_HOST_DEVICE static constexpr T identity()
@@ -337,16 +295,12 @@ struct DeviceBitXor {
   template <typename T>
   CUDF_HOST_DEVICE inline T operator()(T const& lhs, T const& rhs) const
     requires(std::is_integral_v<T>)
-  {
-    return lhs ^ rhs;
-  }
+  { return lhs ^ rhs; }
 
   template <typename T>
   CUDF_HOST_DEVICE static constexpr T identity()
     requires(std::is_integral_v<T>)
-  {
-    return T{0};
-  }
+  { return T{0}; }
 
   template <typename T>
   CUDF_HOST_DEVICE static constexpr T identity()

@@ -46,9 +46,7 @@ namespace {
  * @return True if the chunk is a plain (non-categorical, non-decimal) BYTE_ARRAY string chunk
  */
 [[nodiscard]] bool is_byte_array_string_chunk(ColumnChunkDesc const& chunk)
-{
-  return is_string_col(chunk) and chunk.physical_type == Type::BYTE_ARRAY;
-}
+{ return is_string_col(chunk) and chunk.physical_type == Type::BYTE_ARRAY; }
 
 /**
  * @brief Per-input-column eligibility flags for Parquet-dict → DICTIONARY32 transcode.
@@ -67,9 +65,7 @@ struct column_eligibility {
    * @return True if the column is eligible for direct DICTIONARY32 transcode
    */
   [[nodiscard]] bool is_eligible() const
-  {
-    return has_string_buffer and has_any_chunk and all_chunks_string and all_pages_dict;
-  }
+  { return has_string_buffer and has_any_chunk and all_chunks_string and all_pages_dict; }
 };
 
 /**

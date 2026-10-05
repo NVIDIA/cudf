@@ -61,9 +61,7 @@ struct SHA384Hash : HashBase<SHA384Hash> {
 std::unique_ptr<column> sha384(table_view const& input,
                                cuda::stream_ref stream,
                                rmm::device_async_resource_ref mr)
-{
-  return sha_hash<SHA384Hash>(input, stream, mr);
-}
+{ return sha_hash<SHA384Hash>(input, stream, mr); }
 
 }  // namespace detail
 

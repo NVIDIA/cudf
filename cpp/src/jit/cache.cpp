@@ -26,9 +26,7 @@ namespace CUDF_EXPORT cudf {
 namespace {
 
 void hash(XXH3_state_t* ctx, std::span<char const> input)
-{
-  XXH3_128bits_update(ctx, input.data(), input.size());
-}
+{ XXH3_128bits_update(ctx, input.data(), input.size()); }
 
 void hash(XXH3_state_t* ctx, std::span<char const* const> inputs)
 {
@@ -144,9 +142,7 @@ void install_cudf_jit_files(std::string const& target_dir, std::string const& tm
 
 jit_bundle_t::jit_bundle_t(std::string install_dir, rtcx::cache_t& cache)
   : install_dir_{std::move(install_dir)}, cache_{&cache}
-{
-  ensure_installed();
-}
+{ ensure_installed(); }
 
 void jit_bundle_t::ensure_installed() const
 {
@@ -174,9 +170,7 @@ std::string jit_bundle_t::get_hash() const
 }
 
 std::string jit_bundle_t::get_directory() const
-{
-  return std::format("{}/{}", install_dir_, get_hash());
-}
+{ return std::format("{}/{}", install_dir_, get_hash()); }
 
 std::vector<std::string> jit_bundle_t::get_include_directories() const
 {
@@ -193,9 +187,7 @@ std::vector<std::string> jit_bundle_t::get_include_directories() const
 namespace {
 
 constexpr int32_t make_cuda_version(int32_t major, int32_t minor, int32_t patch)
-{
-  return major * 1000 + minor * 10 + patch;
-}
+{ return major * 1000 + minor * 10 + patch; }
 
 constexpr int32_t MIN_NVRTC_VERSION_PCH =
   make_cuda_version(12, 8, 0);  // minimum CUDA version for the "--pch" NVRTC flag

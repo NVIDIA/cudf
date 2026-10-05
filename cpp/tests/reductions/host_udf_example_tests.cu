@@ -53,9 +53,7 @@ struct host_udf_reduction_example : cudf::reduce_host_udf {
   }
 
   [[nodiscard]] std::unique_ptr<host_udf_base> clone() const override
-  {
-    return std::make_unique<host_udf_reduction_example>();
-  }
+  { return std::make_unique<host_udf_reduction_example>(); }
 
   struct reduce_fn {
     // For simplicity, this example only accepts a single type input and output.
@@ -67,9 +65,7 @@ struct host_udf_reduction_example : cudf::reduce_host_udf {
               typename... Args,
               CUDF_ENABLE_IF(!std::is_same_v<InputType, T> || !std::is_same_v<OutputType, U>)>
     std::unique_ptr<cudf::scalar> operator()(Args...) const
-    {
-      CUDF_FAIL("Unsupported input/output type.");
-    }
+    { CUDF_FAIL("Unsupported input/output type."); }
 
     template <typename T,
               typename U,
@@ -98,7 +94,7 @@ struct host_udf_reduction_example : cudf::reduce_host_udf {
       }();
 
       auto const input_dv_ptr = cudf::column_device_view::create(input, stream);
-      auto const result       = thrust::transform_reduce(rmm::exec_policy_nosync(stream),
+      auto const result = thrust::transform_reduce(rmm::exec_policy_nosync(stream),
                                                    cuda::counting_iterator<cudf::size_type>{0},
                                                    cuda::counting_iterator{input.size()},
                                                    transform_fn{*input_dv_ptr},
@@ -196,9 +192,7 @@ struct host_udf_segmented_reduction_example : cudf::segmented_reduce_host_udf {
   }
 
   [[nodiscard]] std::unique_ptr<host_udf_base> clone() const override
-  {
-    return std::make_unique<host_udf_segmented_reduction_example>();
-  }
+  { return std::make_unique<host_udf_segmented_reduction_example>(); }
 
   struct segmented_reduce_fn {
     // For simplicity, this example only accepts a single type input and output.
@@ -210,9 +204,7 @@ struct host_udf_segmented_reduction_example : cudf::segmented_reduce_host_udf {
               typename... Args,
               CUDF_ENABLE_IF(!std::is_same_v<InputType, T> || !std::is_same_v<OutputType, U>)>
     std::unique_ptr<cudf::column> operator()(Args...) const
-    {
-      CUDF_FAIL("Unsupported input/output type.");
-    }
+    { CUDF_FAIL("Unsupported input/output type."); }
 
     template <typename T,
               typename U,
@@ -309,10 +301,10 @@ struct HostUDFSegmentedReductionExampleTest : cudf::test::BaseFixture {};
 TEST_F(HostUDFSegmentedReductionExampleTest, SimpleInput)
 {
   double constexpr null = 0.0;
-  auto const vals       = doubles_col{{0.0, null, 2.0, 3.0, null, 5.0, null, null, 8.0, 9.0},
-                                      {true, false, true, true, false, true, false, false, true, true}};
-  auto const offsets    = int32s_col{0, 3, 5, 10}.release();
-  auto const agg        = cudf::make_host_udf_aggregation<cudf::segmented_reduce_aggregation>(
+  auto const vals = doubles_col{{0.0, null, 2.0, 3.0, null, 5.0, null, null, 8.0, 9.0},
+                                {true, false, true, true, false, true, false, false, true, true}};
+  auto const offsets = int32s_col{0, 3, 5, 10}.release();
+  auto const agg     = cudf::make_host_udf_aggregation<cudf::segmented_reduce_aggregation>(
     std::make_unique<host_udf_segmented_reduction_example>());
 
   // Test without init value.

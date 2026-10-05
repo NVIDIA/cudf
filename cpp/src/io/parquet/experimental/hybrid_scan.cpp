@@ -55,14 +55,10 @@ hybrid_scan_reader::hybrid_scan_reader(hybrid_scan_metadata metadata)
 hybrid_scan_reader::~hybrid_scan_reader() = default;
 
 [[nodiscard]] text::byte_range_info hybrid_scan_reader::page_index_byte_range() const
-{
-  return _impl->page_index_byte_ranges().front();
-}
+{ return _impl->page_index_byte_ranges().front(); }
 
 [[nodiscard]] FileMetaData hybrid_scan_reader::parquet_metadata() const
-{
-  return _impl->parquet_metadatas().front();
-}
+{ return _impl->parquet_metadatas().front(); }
 
 void hybrid_scan_reader::setup_page_index(cudf::host_span<uint8_t const> page_index_bytes) const
 {

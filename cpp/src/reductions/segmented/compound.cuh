@@ -88,9 +88,7 @@ struct compound_float_output_dispatcher {
  private:
   template <typename ResultType>
   static constexpr bool is_supported_v()
-  {
-    return std::is_floating_point_v<ResultType>;
-  }
+  { return std::is_floating_point_v<ResultType>; }
 
  public:
   template <typename ResultType>
@@ -114,9 +112,7 @@ struct compound_float_output_dispatcher {
                                      cuda::stream_ref,
                                      rmm::device_async_resource_ref)
     requires(not is_supported_v<ResultType>())
-  {
-    CUDF_FAIL("Unsupported output data type");
-  }
+  { CUDF_FAIL("Unsupported output data type"); }
 };
 
 template <typename Op>
@@ -124,9 +120,7 @@ struct compound_segmented_dispatcher {
  private:
   template <typename ElementType>
   static constexpr bool is_supported_v()
-  {
-    return std::is_arithmetic_v<ElementType>;
-  }
+  { return std::is_arithmetic_v<ElementType>; }
 
  public:
   template <typename ElementType>
@@ -158,9 +152,7 @@ struct compound_segmented_dispatcher {
                                      cuda::stream_ref,
                                      rmm::device_async_resource_ref)
     requires(not is_supported_v<ElementType>())
-  {
-    CUDF_FAIL("Compound operators are not supported for non-arithmetic types");
-  }
+  { CUDF_FAIL("Compound operators are not supported for non-arithmetic types"); }
 };
 
 }  // namespace detail

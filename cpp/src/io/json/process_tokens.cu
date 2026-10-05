@@ -265,9 +265,9 @@ void validate_token_stream(device_span<char const> d_input,
   auto num_tokens = tokens.size();
   auto count_it   = cuda::counting_iterator<std::size_t>{0};
   auto predicate  = cuda::proclaim_return_type<bool>([tokens        = tokens.begin(),
-                                                     token_indices = token_indices.begin(),
-                                                     validate_values,
-                                                     validate_strings] __device__(auto i) -> bool {
+                                                      token_indices = token_indices.begin(),
+                                                      validate_values,
+                                                      validate_strings] __device__(auto i) -> bool {
     if (tokens[i] == token_t::ValueEnd) {
       return !validate_values(token_indices[i - 1], token_indices[i]);
     } else if (tokens[i] == token_t::FieldNameEnd || tokens[i] == token_t::StringEnd) {

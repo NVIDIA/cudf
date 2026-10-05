@@ -189,9 +189,7 @@ cudf::ast::expression const& push_combination(filter_expression& expression,
                                               cudf::size_type index,
                                               cudf::ast::expression const& lhs,
                                               cudf::ast::expression const& rhs)
-{
-  return expression.tree.push(cudf::ast::operation{logical_operator(index), lhs, rhs});
-}
+{ return expression.tree.push(cudf::ast::operation{logical_operator(index), lhs, rhs}); }
 
 /**
  * @brief Builds a filter expression where every selected column contributes a predicate

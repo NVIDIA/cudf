@@ -229,9 +229,7 @@ hash_join::inner_join(cudf::table_view const& left,
                       std::optional<std::size_t> output_size,
                       cuda::stream_ref stream,
                       rmm::device_async_resource_ref mr) const
-{
-  return _impl->inner_join(left, output_size, stream, mr);
-}
+{ return _impl->inner_join(left, output_size, stream, mr); }
 
 std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
           std::unique_ptr<rmm::device_uvector<size_type>>>
@@ -239,9 +237,7 @@ hash_join::left_join(cudf::table_view const& left,
                      std::optional<std::size_t> output_size,
                      cuda::stream_ref stream,
                      rmm::device_async_resource_ref mr) const
-{
-  return _impl->left_join(left, output_size, stream, mr);
-}
+{ return _impl->left_join(left, output_size, stream, mr); }
 
 std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
           std::unique_ptr<rmm::device_uvector<size_type>>>
@@ -249,46 +245,32 @@ hash_join::full_join(cudf::table_view const& left,
                      std::optional<std::size_t> output_size,
                      cuda::stream_ref stream,
                      rmm::device_async_resource_ref mr) const
-{
-  return _impl->full_join(left, output_size, stream, mr);
-}
+{ return _impl->full_join(left, output_size, stream, mr); }
 
 std::size_t hash_join::inner_join_size(cudf::table_view const& left, cuda::stream_ref stream) const
-{
-  return _impl->inner_join_size(left, stream);
-}
+{ return _impl->inner_join_size(left, stream); }
 
 std::size_t hash_join::left_join_size(cudf::table_view const& left, cuda::stream_ref stream) const
-{
-  return _impl->left_join_size(left, stream);
-}
+{ return _impl->left_join_size(left, stream); }
 
 std::size_t hash_join::full_join_size(cudf::table_view const& left,
                                       cuda::stream_ref stream,
                                       rmm::device_async_resource_ref mr) const
-{
-  return _impl->full_join_size(left, stream, mr);
-}
+{ return _impl->full_join_size(left, stream, mr); }
 
 cudf::join_match_context hash_join::inner_join_match_context(
   cudf::table_view const& left, cuda::stream_ref stream, rmm::device_async_resource_ref mr) const
-{
-  return _impl->inner_join_match_context(left, stream, mr);
-}
+{ return _impl->inner_join_match_context(left, stream, mr); }
 
 cudf::join_match_context hash_join::left_join_match_context(cudf::table_view const& left,
                                                             cuda::stream_ref stream,
                                                             rmm::device_async_resource_ref mr) const
-{
-  return _impl->left_join_match_context(left, stream, mr);
-}
+{ return _impl->left_join_match_context(left, stream, mr); }
 
 cudf::join_match_context hash_join::full_join_match_context(cudf::table_view const& left,
                                                             cuda::stream_ref stream,
                                                             rmm::device_async_resource_ref mr) const
-{
-  return _impl->full_join_match_context(left, stream, mr);
-}
+{ return _impl->full_join_match_context(left, stream, mr); }
 
 std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
           std::unique_ptr<rmm::device_uvector<size_type>>>

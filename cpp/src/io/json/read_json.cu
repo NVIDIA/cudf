@@ -239,7 +239,7 @@ std::size_t get_batch_size(std::size_t chunk_size)
 {
   auto const size_per_subchunk = estimate_size_per_subchunk(chunk_size);
   auto const batch_limit       = static_cast<std::size_t>(std::numeric_limits<int32_t>::max()) -
-                           (max_subchunks_prealloced * size_per_subchunk);
+                                 (max_subchunks_prealloced * size_per_subchunk);
   return std::min(batch_limit,
                   cudf::detail::getenv_or<std::size_t>("LIBCUDF_JSON_BATCH_SIZE", batch_limit));
 }
@@ -361,11 +361,11 @@ get_record_range_raw_input(host_span<std::unique_ptr<datasource>> sources,
            subchunk++) {
         buffer_offset += readbufspan.size();
         readbufspan    = ingest_raw_input(bufspan.last(buffer_size - buffer_offset),
-                                       sources,
-                                       next_subchunk_start,
-                                       size_per_subchunk,
-                                       delimiter,
-                                       stream);
+                                          sources,
+                                          next_subchunk_start,
+                                          size_per_subchunk,
+                                          delimiter,
+                                          stream);
         next_delim_pos = find_first_delimiter(readbufspan, delimiter, stream) + buffer_offset;
         next_subchunk_start += size_per_subchunk;
       }
@@ -556,9 +556,9 @@ table_with_metadata read_json_impl(host_span<std::unique_ptr<datasource>> source
   CUDF_EXPECTS(total_source_size ? chunk_offset < total_source_size : !chunk_offset,
                "Invalid byte range offset",
                std::invalid_argument);
-  std::size_t chunk_size       = reader_opts.get_byte_range_size();
-  chunk_size                   = !chunk_size ? total_source_size - chunk_offset
-                                             : std::min(chunk_size, total_source_size - chunk_offset);
+  std::size_t chunk_size = reader_opts.get_byte_range_size();
+  chunk_size             = !chunk_size ? total_source_size - chunk_offset
+                                       : std::min(chunk_size, total_source_size - chunk_offset);
   std::size_t const batch_size = get_batch_size(chunk_size);
 
   // Identify the position (zero-indexed) of starting source file from which to begin

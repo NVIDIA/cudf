@@ -222,9 +222,7 @@ struct bloom_filter_caster {
                                            ast::literal const* const,
                                            cuda::stream_ref,
                                            cudf::memory_resources) const
-  {
-    CUDF_UNREACHABLE("Bloom filters cannot be queried for boolean or compound types");
-  }
+  { CUDF_UNREACHABLE("Bloom filters cannot be queried for boolean or compound types"); }
 
   // BYTE_ARRAYS are probed as their bytes
   template <typename T>
@@ -361,9 +359,7 @@ class bloom_filter_expression_converter final : public parquet_expression_simpli
    * @return The membership expression, or std::nullopt if no row group can be pruned
    */
   [[nodiscard]] simplified_expression_opt get_bloom_filter_expr() const
-  {
-    return _bloom_filter_expr;
-  }
+  { return _bloom_filter_expr; }
 
  protected:
   /**
@@ -615,14 +611,10 @@ equality_literals_collector::equality_literals_collector(
   std::span<cudf::size_type const> output_column_schemas,
   std::span<SchemaElement const> schema_tree)
   : equality_literals_collector{output_dtypes, output_column_schemas, schema_tree}
-{
-  collect(expr);
-}
+{ collect(expr); }
 
 void equality_literals_collector::collect(ast::expression const& expr)
-{
-  _can_filter = simplify_expr(expr).has_value();
-}
+{ _can_filter = simplify_expr(expr).has_value(); }
 
 bool equality_literals_collector::can_filter() const { return _can_filter; }
 
@@ -653,8 +645,6 @@ simplified_expression_opt equality_literals_collector::simplify_comparison(
 }
 
 std::vector<std::vector<ast::literal*>> equality_literals_collector::get_literals() &&
-{
-  return std::move(_literals);
-}
+{ return std::move(_literals); }
 
 }  // namespace cudf::io::parquet::detail

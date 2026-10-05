@@ -744,10 +744,10 @@ table_with_metadata reader_impl::read_chunk_internal(read_mode mode)
 
   // Create the final output cudf columns.
   for (size_t i = 0; i < _output_buffers.size(); ++i) {
-    auto metadata           = _reader_column_schema.has_value()
-                                ? std::make_optional<reader_column_schema>((*_reader_column_schema)[i])
-                                : std::nullopt;
-    auto const& schema      = _metadata->get_schema(_output_column_schemas[i]);
+    auto metadata      = _reader_column_schema.has_value()
+                           ? std::make_optional<reader_column_schema>((*_reader_column_schema)[i])
+                           : std::nullopt;
+    auto const& schema = _metadata->get_schema(_output_column_schemas[i]);
     auto const logical_type = schema.logical_type.value_or(LogicalType{});
     // FIXED_LEN_BYTE_ARRAY never read as string.
     // TODO: if we ever decide that the default reader behavior is to treat unannotated BINARY as

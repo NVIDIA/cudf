@@ -142,22 +142,16 @@ rmm::device_uvector<bool> device_bloom_filter::contains(cudf::table_view const& 
 }
 
 std::size_t device_bloom_filter::aligned_size(std::size_t size) noexcept
-{
-  return rmm::align_down(size, std::alignment_of_v<storage_type>);
-}
+{ return rmm::align_down(size, std::alignment_of_v<storage_type>); }
 
 std::size_t device_bloom_filter::max_size() noexcept
-{
-  return bloom_filter_policy_type::max_filter_blocks * sizeof(storage_type);
-}
+{ return bloom_filter_policy_type::max_filter_blocks * sizeof(storage_type); }
 
 void* device_bloom_filter::data() noexcept { return storage_; }
 
 void const* device_bloom_filter::data() const noexcept { return storage_; }
 
 std::size_t device_bloom_filter::size() const noexcept
-{
-  return num_blocks_ * sizeof(storage_type);
-}
+{ return num_blocks_ * sizeof(storage_type); }
 
 }  // namespace cudf_streaming::detail

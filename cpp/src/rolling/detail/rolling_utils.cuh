@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -25,9 +25,7 @@ struct group_info {
   [[nodiscard]] __device__ constexpr inline size_type group_start() const noexcept { return start; }
   [[nodiscard]] __device__ constexpr inline size_type group_end() const noexcept { return end; }
   [[nodiscard]] __device__ constexpr inline size_type non_null_start() const noexcept
-  {
-    return start;
-  }
+  { return start; }
   [[nodiscard]] __device__ constexpr inline size_type non_null_end() const noexcept { return end; }
   [[nodiscard]] __device__ constexpr inline size_type null_start() const noexcept { return start; }
   [[nodiscard]] __device__ constexpr inline size_type null_end() const noexcept { return start; }
@@ -44,33 +42,19 @@ struct group_info_with_nulls {
   size_type const null_count_;   ///< The null count of the group
   bool const nulls_at_start_;    ///< Do nulls sort at the start or the end of the group?
   [[nodiscard]] __device__ constexpr inline bool is_null(size_type i) const noexcept
-  {
-    return i < non_null_start() || i >= non_null_end();
-  }
+  { return i < non_null_start() || i >= non_null_end(); }
   [[nodiscard]] __device__ constexpr inline size_type group_start() const noexcept
-  {
-    return group_start_;
-  }
+  { return group_start_; }
   [[nodiscard]] __device__ constexpr inline size_type group_end() const noexcept
-  {
-    return group_end_;
-  }
+  { return group_end_; }
   [[nodiscard]] __device__ constexpr inline size_type non_null_start() const noexcept
-  {
-    return nulls_at_start_ ? group_start_ + null_count_ : group_start_;
-  }
+  { return nulls_at_start_ ? group_start_ + null_count_ : group_start_; }
   [[nodiscard]] constexpr __device__ size_type inline non_null_end() const noexcept
-  {
-    return nulls_at_start_ ? group_end_ : group_end_ - null_count_;
-  }
+  { return nulls_at_start_ ? group_end_ : group_end_ - null_count_; }
   [[nodiscard]] constexpr __device__ size_type inline null_start() const noexcept
-  {
-    return nulls_at_start_ ? group_start_ : group_end_ - null_count_;
-  }
+  { return nulls_at_start_ ? group_start_ : group_end_ - null_count_; }
   [[nodiscard]] constexpr __device__ size_type inline null_end() const noexcept
-  {
-    return nulls_at_start_ ? group_start_ + null_count_ : group_end_;
-  }
+  { return nulls_at_start_ ? group_start_ + null_count_ : group_end_; }
 };
 
 /**
@@ -91,9 +75,7 @@ struct ungrouped {
    * @returns `range_group_info` with the information about the row.
    */
   [[nodiscard]] __device__ constexpr inline group_info row_info(size_type i) const noexcept
-  {
-    return {0, num_rows};
-  }
+  { return {0, num_rows}; }
 };
 
 /**
@@ -142,9 +124,7 @@ struct ungrouped_with_nulls {
    */
   [[nodiscard]] __device__ constexpr inline group_info_with_nulls row_info(
     size_type i) const noexcept
-  {
-    return {0, num_rows, null_count, nulls_at_start};
-  }
+  { return {0, num_rows, null_count, nulls_at_start}; }
 };
 
 /**

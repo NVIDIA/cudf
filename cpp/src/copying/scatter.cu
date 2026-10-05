@@ -382,10 +382,10 @@ std::unique_ptr<column> boolean_mask_scatter(column_view const& input,
                                              rmm::device_async_resource_ref mr)
 {
   auto indices         = cudf::make_numeric_column(data_type{type_id::INT32},
-                                           target.size(),
-                                           mask_state::UNALLOCATED,
-                                           stream,
-                                           cudf::get_current_device_resource_ref());
+                                                   target.size(),
+                                                   mask_state::UNALLOCATED,
+                                                   stream,
+                                                   cudf::get_current_device_resource_ref());
   auto mutable_indices = indices->mutable_view();
 
   thrust::sequence(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
@@ -395,10 +395,10 @@ std::unique_ptr<column> boolean_mask_scatter(column_view const& input,
 
   // The scatter map is actually a table with only one column, which is scatter map.
   auto scatter_map  = detail::apply_mask(table_view{{indices->view()}},
-                                        boolean_mask,
-                                        mask_type::RETENTION,
-                                        stream,
-                                        cudf::get_current_device_resource_ref());
+                                         boolean_mask,
+                                         mask_type::RETENTION,
+                                         stream,
+                                         cudf::get_current_device_resource_ref());
   auto output_table = detail::scatter(
     table_view{{input}}, scatter_map->get_column(0).view(), table_view{{target}}, stream, mr);
 
@@ -411,9 +411,7 @@ std::unique_ptr<column> boolean_mask_scatter(scalar const& input,
                                              column_view const& boolean_mask,
                                              cuda::stream_ref stream,
                                              rmm::device_async_resource_ref mr)
-{
-  return detail::copy_if_else(input, target, boolean_mask, stream, mr);
-}
+{ return detail::copy_if_else(input, target, boolean_mask, stream, mr); }
 
 std::unique_ptr<table> boolean_mask_scatter(table_view const& input,
                                             table_view const& target,
@@ -438,10 +436,10 @@ std::unique_ptr<table> boolean_mask_scatter(table_view const& input,
   // Build a scatter map of the target row indices selected by the boolean mask, then delegate to
   // detail::scatter.
   auto indices         = cudf::make_numeric_column(data_type{type_id::INT32},
-                                           target.num_rows(),
-                                           mask_state::UNALLOCATED,
-                                           stream,
-                                           cudf::get_current_device_resource_ref());
+                                                   target.num_rows(),
+                                                   mask_state::UNALLOCATED,
+                                                   stream,
+                                                   cudf::get_current_device_resource_ref());
   auto mutable_indices = indices->mutable_view();
   thrust::sequence(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                    mutable_indices.begin<size_type>(),

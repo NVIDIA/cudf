@@ -72,9 +72,7 @@ struct alignas(16) reclass_device {
  * '\n, \r, \u0085, \u2028, or \u2029'
  */
 CUDF_HOST_DEVICE __forceinline__ constexpr bool is_newline(char32_t const ch)
-{
-  return (ch == '\n' || ch == '\r' || ch == 0x00c285 || ch == 0x00e280a8 || ch == 0x00e280a9);
-}
+{ return (ch == '\n' || ch == '\r' || ch == 0x00c285 || ch == 0x00e280a8 || ch == 0x00e280a9); }
 
 /**
  * @brief Template type used on `find` to specify desired position values in returned match_result

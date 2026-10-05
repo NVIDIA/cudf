@@ -44,16 +44,12 @@ struct tabulator {
   template <typename U>
   static T __device__ multiply(U x, size_type times)
     requires(!cudf::is_duration<U>())
-  {
-    return x * static_cast<T>(times);
-  }
+  { return x * static_cast<T>(times); }
 
   template <typename U>
   static T __device__ multiply(U x, size_type times)
     requires(cudf::is_duration<U>())
-  {
-    return T{x.count() * times};
-  }
+  { return T{x.count() * times}; }
 
   auto __device__ operator()(size_type idx) const
   {
@@ -69,9 +65,7 @@ template <typename T, typename Enable = void>
 struct sequences_functor {
   template <typename... Args>
   static std::unique_ptr<column> invoke(Args&&...)
-  {
-    CUDF_FAIL("Unsupported per-list sequence type-agg combination.");
-  }
+  { CUDF_FAIL("Unsupported per-list sequence type-agg combination."); }
 };
 
 struct sequences_dispatcher {
@@ -83,16 +77,12 @@ struct sequences_dispatcher {
                                      int32_t const* offsets,
                                      cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr)
-  {
-    return sequences_functor<T>::invoke(n_lists, n_elements, starts, steps, offsets, stream, mr);
-  }
+  { return sequences_functor<T>::invoke(n_lists, n_elements, starts, steps, offsets, stream, mr); }
 };
 
 template <typename T>
 static constexpr bool is_supported()
-{
-  return (cudf::is_numeric<T>() && !cudf::is_boolean<T>()) || cudf::is_duration<T>();
-}
+{ return (cudf::is_numeric<T>() && !cudf::is_boolean<T>()) || cudf::is_duration<T>(); }
 
 template <typename T>
 struct sequences_functor<T, std::enable_if_t<is_supported<T>()>> {
@@ -181,18 +171,14 @@ std::unique_ptr<column> sequences(column_view const& starts,
                                   column_view const& sizes,
                                   cuda::stream_ref stream,
                                   rmm::device_async_resource_ref mr)
-{
-  return sequences(starts, std::nullopt, sizes, stream, mr);
-}
+{ return sequences(starts, std::nullopt, sizes, stream, mr); }
 
 std::unique_ptr<column> sequences(column_view const& starts,
                                   column_view const& steps,
                                   column_view const& sizes,
                                   cuda::stream_ref stream,
                                   rmm::device_async_resource_ref mr)
-{
-  return sequences(starts, std::optional<column_view>{steps}, sizes, stream, mr);
-}
+{ return sequences(starts, std::optional<column_view>{steps}, sizes, stream, mr); }
 
 }  // namespace detail
 

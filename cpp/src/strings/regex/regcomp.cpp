@@ -830,9 +830,7 @@ class regex_parser {
   }
 
   [[nodiscard]] std::vector<regex_parser::Item> get_items() const
-  {
-    return _has_counted ? expand_counted_items() : _items;
-  }
+  { return _has_counted ? expand_counted_items() : _items; }
 };
 
 /**
@@ -870,9 +868,7 @@ class regex_compiler {
   }
 
   inline void push_operator(int token, int subid = 0)
-  {
-    _operator_stack.push(re_operator{token, subid});
-  }
+  { _operator_stack.push(re_operator{token, subid}); }
 
   inline re_operator const pop_operator()
   {

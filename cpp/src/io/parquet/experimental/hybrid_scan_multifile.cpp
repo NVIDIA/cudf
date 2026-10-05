@@ -35,14 +35,10 @@ hybrid_scan_multifile::hybrid_scan_multifile(std::vector<FileMetaData>&& parquet
 hybrid_scan_multifile::~hybrid_scan_multifile() = default;
 
 std::vector<FileMetaData> hybrid_scan_multifile::parquet_metadatas() const
-{
-  return _impl->parquet_metadatas();
-}
+{ return _impl->parquet_metadatas(); }
 
 std::vector<text::byte_range_info> hybrid_scan_multifile::page_index_byte_ranges() const
-{
-  return _impl->page_index_byte_ranges();
-}
+{ return _impl->page_index_byte_ranges(); }
 
 void hybrid_scan_multifile::setup_page_indexes(
   cudf::host_span<cudf::host_span<uint8_t const> const> page_index_bytes) const
@@ -53,9 +49,7 @@ void hybrid_scan_multifile::setup_page_indexes(
 
 std::vector<std::vector<size_type>> hybrid_scan_multifile::all_row_groups(
   parquet_reader_options const& options) const
-{
-  return _impl->all_row_groups(options);
-}
+{ return _impl->all_row_groups(options); }
 
 size_type hybrid_scan_multifile::total_rows_in_row_groups(
   cudf::host_span<std::vector<size_type> const> row_group_indices) const

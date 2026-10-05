@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -38,9 +38,7 @@ __device__ inline bool starts_with(cudf::string_view const dstr,
  * @return true if `tgt` matches the beginning of `dstr`
  */
 __device__ inline bool starts_with(cudf::string_view const dstr, cudf::string_view const& tgt)
-{
-  return starts_with(dstr, tgt.data(), tgt.size_bytes());
-}
+{ return starts_with(dstr, tgt.data(), tgt.size_bytes()); }
 
 /**
  * @brief Returns true if the end of the specified string
@@ -69,9 +67,7 @@ __device__ inline bool ends_with(cudf::string_view const dstr,
  * @return true if `tgt` matches the end of `dstr`
  */
 __device__ inline bool ends_with(cudf::string_view const dstr, cudf::string_view const& tgt)
-{
-  return ends_with(dstr, tgt.data(), tgt.size_bytes());
-}
+{ return ends_with(dstr, tgt.data(), tgt.size_bytes()); }
 
 }  // namespace udf
 }  // namespace strings

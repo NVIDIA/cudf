@@ -103,9 +103,7 @@ CUDF_HOST_DEVICE constexpr bool is_supported_encoding(Encoding enc)
  * the column chunk's dictionary page.
  */
 CUDF_HOST_DEVICE constexpr bool is_dictionary_encoding(Encoding enc)
-{
-  return enc == Encoding::PLAIN_DICTIONARY or enc == Encoding::RLE_DICTIONARY;
-}
+{ return enc == Encoding::PLAIN_DICTIONARY or enc == Encoding::RLE_DICTIONARY; }
 
 /**
  * @brief Atomically OR `error` into `error_code`.
@@ -192,16 +190,12 @@ using std::is_scoped_enum;
 template <typename... Ts,
           CUDF_ENABLE_IF(... && (std::is_same_v<std::uint32_t, Ts> || is_scoped_enum<Ts>::value))>
 CUDF_HOST_DEVICE constexpr std::uint32_t BitAnd(Ts... bits)
-{
-  return (... & static_cast<std::uint32_t>(bits));
-}
+{ return (... & static_cast<std::uint32_t>(bits)); }
 
 template <typename... Ts,
           CUDF_ENABLE_IF(... && (std::is_same_v<std::uint32_t, Ts> || is_scoped_enum<Ts>::value))>
 CUDF_HOST_DEVICE constexpr std::uint32_t BitOr(Ts... bits)
-{
-  return (... | static_cast<std::uint32_t>(bits));
-}
+{ return (... | static_cast<std::uint32_t>(bits)); }
 
 /**
  * @brief Enums for the flags in the page header
@@ -425,9 +419,7 @@ struct get_page_key {
  * @brief Return an iterator that returns they keys for a vector of pages.
  */
 inline auto make_page_key_iterator(device_span<PageInfo const> pages)
-{
-  return cuda::transform_iterator(pages.begin(), get_page_key{});
-}
+{ return cuda::transform_iterator(pages.begin(), get_page_key{}); }
 
 /**
  * @brief Struct describing a particular chunk of column data
@@ -532,13 +524,9 @@ struct parquet_column_device_view : stats_column_desc {
   uint8_t level_bits;  //!< bits to encode max definition (lower nibble) & repetition (upper nibble)
                        //!< levels
   [[nodiscard]] CUDF_HOST_DEVICE constexpr uint8_t num_def_level_bits() const
-  {
-    return level_bits & 0xf;
-  }
+  { return level_bits & 0xf; }
   [[nodiscard]] CUDF_HOST_DEVICE constexpr uint8_t num_rep_level_bits() const
-  {
-    return level_bits >> 4;
-  }
+  { return level_bits >> 4; }
   uint8_t max_def_level;  //!< needed for SizeStatistics calculation
   uint8_t max_rep_level;
 
@@ -603,9 +591,7 @@ constexpr uint32_t RLE_LENGTH_FIELD_LEN = sizeof(uint32_t);
 // Maximum size of a thrift field holding a varint of `value_bits` bits. Each varint byte carries
 // seven payload bits. Equal to 1 (field header byte) + ceil(value_bits / 7).
 CUDF_HOST_DEVICE constexpr size_t max_thrift_field_size(size_t value_bits)
-{
-  return 1 + cudf::util::div_rounding_up_unsafe<size_t>(value_bits, 7);
-}
+{ return 1 + cudf::util::div_rounding_up_unsafe<size_t>(value_bits, 7); }
 
 // Max V2 page header size excluding statistics. Equal to size of 9 `i32` fields + 2 bool fields
 // (is_compressed and nested struct) + 2 stop bytes.
@@ -641,9 +627,7 @@ struct EncPage;
 
 // convert Encoding to a mask value
 CUDF_HOST_DEVICE constexpr uint32_t encoding_to_mask(Encoding encoding)
-{
-  return 1 << static_cast<uint32_t>(encoding);
-}
+{ return 1 << static_cast<uint32_t>(encoding); }
 
 /**
  * @brief Enum of mask bits for the EncPage kernel_mask
@@ -713,14 +697,10 @@ struct EncColumnChunk {
     cuda::std::numeric_limits<decltype(EncColumnChunk::bfr_size)>::max();
 
   [[nodiscard]] CUDF_HOST_DEVICE constexpr uint32_t num_dict_pages() const
-  {
-    return use_dictionary ? 1 : 0;
-  }
+  { return use_dictionary ? 1 : 0; }
 
   [[nodiscard]] CUDF_HOST_DEVICE constexpr uint32_t num_data_pages() const
-  {
-    return num_pages - num_dict_pages();
-  }
+  { return num_pages - num_dict_pages(); }
 };
 
 /**
@@ -762,14 +742,10 @@ struct EncPage {
   uint8_t dict_rle_bits;   //!< RLE bit width for this data page's dict indices
 
   [[nodiscard]] CUDF_HOST_DEVICE constexpr bool is_v2() const
-  {
-    return page_type == PageType::DATA_PAGE_V2;
-  }
+  { return page_type == PageType::DATA_PAGE_V2; }
 
   [[nodiscard]] CUDF_HOST_DEVICE constexpr auto level_bytes() const
-  {
-    return def_lvl_bytes + rep_lvl_bytes;
-  }
+  { return def_lvl_bytes + rep_lvl_bytes; }
 };
 
 /**

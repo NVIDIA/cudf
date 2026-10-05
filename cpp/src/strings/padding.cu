@@ -84,9 +84,7 @@ struct pad_fn : base_fn<pad_fn<side>> {
   }
 
   __device__ void pad(string_view d_str, char* output) const
-  {
-    pad_impl<side>(d_str, Base::width, d_fill_char, output);
-  }
+  { pad_impl<side>(d_str, Base::width, d_fill_char, output); }
 };
 
 }  // namespace

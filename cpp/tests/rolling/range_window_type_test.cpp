@@ -283,10 +283,9 @@ struct UngroupedBase : cudf::test::BaseFixture {
   cw_t descending_nulls_before{};
   cw_t descending_nulls_after{};
   UngroupedBase()
-    : ascending_no_nulls{
-        // clang-format off
+    : ascending_no_nulls{// clang-format off
         {min, T{5}, T{5}, T{6}, T{7}, T{9}, T{9}, T{12}, T{13}, T{17}, T{22}, T{22}, max}},
-        // clang-format on
+      // clang-format on
       ascending_nulls_before{
         {min, T{5}, T{5}, T{6}, T{7}, T{9}, T{9}, T{12}, T{13}, T{17}, T{22}, T{22}, max},
         {false, false, false, false, true, true, true, true, true, true, true, true, true}},
@@ -1958,11 +1957,11 @@ TEST(UngroupedColumnDeltaRangeWindows, VaryingDeltaMatchesPerRowScalar)
   cudf::column_view const dcv = delta_col;
 
   auto const result         = cudf::make_range_windows(cudf::table_view{},
-                                               orderby,
-                                               cudf::order::ASCENDING,
-                                               cudf::null_order::BEFORE,
-                                               cudf::bounded_closed_column{dcv},
-                                               cudf::bounded_closed_column{dcv});
+                                                       orderby,
+                                                       cudf::order::ASCENDING,
+                                                       cudf::null_order::BEFORE,
+                                                       cudf::bounded_closed_column{dcv},
+                                                       cudf::bounded_closed_column{dcv});
   auto const preceding_host = cudf::test::to_host<cudf::size_type>(result.first->view()).first;
   auto const following_host = cudf::test::to_host<cudf::size_type>(result.second->view()).first;
 
@@ -1972,11 +1971,11 @@ TEST(UngroupedColumnDeltaRangeWindows, VaryingDeltaMatchesPerRowScalar)
   for (int32_t const d : unique_deltas) {
     auto const scalar = cudf::make_fixed_width_scalar<int32_t>(d);
     auto const sc     = cudf::make_range_windows(cudf::table_view{},
-                                             orderby,
-                                             cudf::order::ASCENDING,
-                                             cudf::null_order::BEFORE,
-                                             cudf::bounded_closed{*scalar},
-                                             cudf::bounded_closed{*scalar});
+                                                 orderby,
+                                                 cudf::order::ASCENDING,
+                                                 cudf::null_order::BEFORE,
+                                                 cudf::bounded_closed{*scalar},
+                                                 cudf::bounded_closed{*scalar});
     auto const sp     = cudf::test::to_host<cudf::size_type>(sc.first->view()).first;
     auto const sf     = cudf::test::to_host<cudf::size_type>(sc.second->view()).first;
     for (cudf::size_type i = 0; i < n; ++i) {

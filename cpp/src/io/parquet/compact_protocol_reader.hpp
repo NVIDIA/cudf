@@ -45,9 +45,7 @@ class CompactProtocolReader {
     size_t len                                = 0,
     experimental::thrift_mismatch_policy mode = experimental::thrift_mismatch_policy::THROW)
     : m_mismatch_policy(mode)
-  {
-    init(base, len);
-  }
+  { init(base, len); }
   void init(uint8_t const* base, size_t len)
   {
     // A null base is valid only for an empty buffer; a positive length would then have no backing
@@ -71,9 +69,7 @@ class CompactProtocolReader {
   // True if a wire-type/schema-type mismatch must be rejected (default THROW); false means skip it
   // per Thrift forward-compat (COMPAT), which the spark-rapids footer facade uses.
   [[nodiscard]] bool should_throw_on_type_mismatch() const noexcept
-  {
-    return m_mismatch_policy == experimental::thrift_mismatch_policy::THROW;
-  }
+  { return m_mismatch_policy == experimental::thrift_mismatch_policy::THROW; }
   // A read at end-of-buffer sets the sticky overread flag (queried via overread()) and
   // yields 0, keeping the hot parse path noexcept.
   unsigned int getb() noexcept
@@ -180,9 +176,7 @@ class CompactProtocolReader {
 
  public:
   static inline constexpr int NumRequiredBits(uint32_t max_level) noexcept
-  {
-    return 32 - cuda::std::countl_zero(max_level);
-  }
+  { return 32 - cuda::std::countl_zero(max_level); }
   bool InitSchema(FileMetaData* md);
 
  protected:

@@ -13,8 +13,7 @@
 #include <cudf/utilities/traits.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
-#include <rmm/device_uvector.hpp>
-
+#include <cuda/buffer>
 #include <cuda/iterator>
 #include <cuda/std/functional>
 #include <cuda/std/tuple>
@@ -224,7 +223,8 @@ struct fused_minmax_sum_fn {
     auto minimum = make_output(aggregation::MIN);
     auto maximum = make_output(aggregation::MAX);
     auto sum     = make_output(aggregation::SUM);
-    rmm::device_uvector<bool> group_valid(ctx.num_groups, stream, mr.get_temporary_mr());
+    cuda::device_buffer<bool> group_valid(
+      stream, mr.get_temporary_mr(), ctx.num_groups, cuda::no_init);
     if (ctx.num_groups > 0) {
       auto const identity = fused_minmax_sum<Source, Result>{Min::template identity<Source>(),
                                                              Max::template identity<Source>(),
@@ -238,7 +238,7 @@ struct fused_minmax_sum_fn {
         cuda::make_zip_iterator(minimum->mutable_view().template begin<Source>(),
                                 maximum->mutable_view().template begin<Source>(),
                                 sum->mutable_view().template begin<Result>(),
-                                group_valid.begin()),
+                                group_valid.data()),
         split_fused_minmax_sum_fn<Source, Result>{}};
       reduce_groups(
         ctx.grouped, values, outputs, fused_minmax_sum_op<Source, Result>{}, identity, stream, mr);
@@ -249,8 +249,8 @@ struct fused_minmax_sum_fn {
                     : kinds[i] == aggregation::MAX ? std::move(maximum)
                                                    : std::move(sum);
       if (!is_intermediate[i] && ctx.values.has_nulls() && ctx.num_groups > 0) {
-        auto [null_mask, null_count] =
-          make_mask_from_validity(group_valid.begin(), group_valid.end(), stream, mr);
+        auto [null_mask, null_count] = make_mask_from_validity(
+          group_valid.data(), group_valid.data() + group_valid.size(), stream, mr);
         result->set_null_mask(std::move(null_mask), null_count);
       }
       results.push_back(std::move(result));

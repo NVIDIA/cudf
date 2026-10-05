@@ -13,8 +13,7 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 
-#include <rmm/device_buffer.hpp>
-
+#include <cuda/buffer>
 #include <cuda/stream>
 
 #include <memory>

@@ -13,6 +13,7 @@
 #include <cudf/column/column_view.hpp>
 #include <cudf/detail/iterator.cuh>
 #include <cudf/detail/utilities/cuda.cuh>
+#include <cudf/detail/utilities/cuda_memcpy.hpp>
 #include <cudf/detail/utilities/integer_utils.hpp>
 #include <cudf/null_mask.hpp>
 #include <cudf/types.hpp>
@@ -21,10 +22,9 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 
-#include <rmm/device_buffer.hpp>
-#include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/buffer>
 #include <cuda/iterator>
 #include <cuda/std/algorithm>
 #include <cuda/std/array>
@@ -110,10 +110,10 @@ grouped_rows make_grouped_rows(device_span<size_type const> rows,
   grouped_rows grouped{
     rows,
     offsets,
-    rmm::device_uvector<size_type>{0, stream, mr.get_output_mr()},
-    rmm::device_uvector<size_type>{0, stream, mr.get_output_mr()},
-    rmm::device_uvector<cuda::std::array<size_type, 2>>{0, stream, mr.get_output_mr()},
-    rmm::device_uvector<size_type>{0, stream, mr.get_output_mr()}};
+    cuda::device_buffer<size_type>{stream, mr.get_output_mr()},
+    cuda::device_buffer<size_type>{stream, mr.get_output_mr()},
+    cuda::device_buffer<cuda::std::array<size_type, 2>>{stream, mr.get_output_mr()},
+    cuda::device_buffer<size_type>{stream, mr.get_output_mr()}};
   // Included groups are nonempty, so equality proves every included group is a singleton.
   if (num_groups == 0 || num_groups == num_rows) { return grouped; }
 
@@ -126,17 +126,19 @@ grouped_rows make_grouped_rows(device_span<size_type const> rows,
   auto const num_warp_groups =
     static_cast<size_type>(thrust::count_if(policy, group_ids, group_ids + num_groups, needs_warp));
   if (num_warp_groups == 0) { return grouped; }
-  grouped.warp_groups.resize(num_warp_groups, stream);
+  grouped.warp_groups = cuda::device_buffer<size_type>{
+    stream, mr.get_output_mr(), static_cast<std::size_t>(num_warp_groups), cuda::no_init};
   thrust::copy_if(
-    policy, group_ids, group_ids + num_groups, grouped.warp_groups.begin(), needs_warp);
+    policy, group_ids, group_ids + num_groups, grouped.warp_groups.data(), needs_warp);
   auto const long_groups =
     thrust::partition(policy,
-                      grouped.warp_groups.begin(),
-                      grouped.warp_groups.end(),
+                      grouped.warp_groups.data(),
+                      grouped.warp_groups.data() + grouped.warp_groups.size(),
                       [offsets = offsets.begin()] __device__(size_type group) {
                         return offsets[group + 1] - offsets[group] <= rows_per_chunk;
                       });
-  auto const num_long_groups = static_cast<size_type>(grouped.warp_groups.end() - long_groups);
+  auto const num_long_groups =
+    static_cast<size_type>(grouped.warp_groups.data() + grouped.warp_groups.size() - long_groups);
   if (num_long_groups == 0) { return grouped; }
 
   auto const chunk_counts = cudf::detail::make_counting_transform_iterator(
@@ -144,23 +146,30 @@ grouped_rows make_grouped_rows(device_span<size_type const> rows,
       auto const group = long_groups[index];
       return cudf::util::div_rounding_up_safe(offsets[group + 1] - offsets[group], rows_per_chunk);
     });
-  grouped.group_chunks.resize(static_cast<std::size_t>(num_long_groups) + 1, stream);
-  grouped.group_chunks.set_element_to_zero_async(0, stream);
+  grouped.group_chunks = cuda::device_buffer<size_type>{
+    stream, mr.get_output_mr(), static_cast<std::size_t>(num_long_groups) + 1, cuda::no_init};
+  CUDF_CUDA_TRY(cudaMemsetAsync(grouped.group_chunks.data(), 0, sizeof(size_type), stream.get()));
   thrust::inclusive_scan(
-    policy, chunk_counts, chunk_counts + num_long_groups, grouped.group_chunks.begin() + 1);
-  auto const num_chunks = grouped.group_chunks.back_element(stream);
+    policy, chunk_counts, chunk_counts + num_long_groups, grouped.group_chunks.data() + 1);
+  size_type num_chunks;
+  cudf::detail::cuda_memcpy<size_type>(
+    host_span<size_type>{&num_chunks, 1},
+    device_span<size_type const>{grouped.group_chunks.data() + num_long_groups, 1},
+    stream);
 
   // Short groups leave gaps in CSR positions; store both endpoints of each long chunk.
-  grouped.chunk_ranges.resize(num_chunks, stream);
+  grouped.chunk_ranges = cuda::device_buffer<cuda::std::array<size_type, 2>>{
+    stream, mr.get_output_mr(), static_cast<std::size_t>(num_chunks), cuda::no_init};
   thrust::tabulate(
     policy,
-    grouped.chunk_ranges.begin(),
-    grouped.chunk_ranges.end(),
+    grouped.chunk_ranges.data(),
+    grouped.chunk_ranges.data() + grouped.chunk_ranges.size(),
     [offsets = offsets.begin(),
      long_groups,
-     group_chunks = grouped.group_chunks.begin(),
+     group_chunks = grouped.group_chunks.data(),
      group_chunks_end =
-       grouped.group_chunks.end()] __device__(size_type chunk) -> cuda::std::array<size_type, 2> {
+       grouped.group_chunks.data() +
+       grouped.group_chunks.size()] __device__(size_type chunk) -> cuda::std::array<size_type, 2> {
       auto const index = static_cast<size_type>(
         cuda::std::upper_bound(group_chunks, group_chunks_end, chunk) - group_chunks - 1);
       auto const group = long_groups[index];
@@ -173,14 +182,17 @@ grouped_rows make_grouped_rows(device_span<size_type const> rows,
     });
 
   // Reuse a first-stored-row scheduling hint for long chunks across all value columns.
-  rmm::device_uvector<size_type> first_rows(num_chunks, stream, temp_mr);
+  cuda::device_buffer<size_type> first_rows(stream, temp_mr, num_chunks, cuda::no_init);
   auto const chunk_begins = cuda::transform_iterator{
-    grouped.chunk_ranges.begin(),
+    grouped.chunk_ranges.data(),
     [] __device__(cuda::std::array<size_type, 2> const& range) -> size_type { return range[0]; }};
-  thrust::gather(policy, chunk_begins, chunk_begins + num_chunks, rows.begin(), first_rows.begin());
-  grouped.chunk_order.resize(num_chunks, stream);
-  thrust::sequence(policy, grouped.chunk_order.begin(), grouped.chunk_order.end());
-  thrust::sort_by_key(policy, first_rows.begin(), first_rows.end(), grouped.chunk_order.begin());
+  thrust::gather(policy, chunk_begins, chunk_begins + num_chunks, rows.begin(), first_rows.data());
+  grouped.chunk_order = cuda::device_buffer<size_type>{
+    stream, mr.get_output_mr(), static_cast<std::size_t>(num_chunks), cuda::no_init};
+  thrust::sequence(
+    policy, grouped.chunk_order.data(), grouped.chunk_order.data() + grouped.chunk_order.size());
+  thrust::sort_by_key(
+    policy, first_rows.data(), first_rows.data() + first_rows.size(), grouped.chunk_order.data());
   return grouped;
 }
 

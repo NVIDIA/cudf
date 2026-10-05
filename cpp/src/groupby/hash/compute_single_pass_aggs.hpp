@@ -13,8 +13,7 @@
 #include <cudf/utilities/span.hpp>
 #include <cudf/utilities/traits.hpp>
 
-#include <rmm/device_uvector.hpp>
-
+#include <cuda/buffer>
 #include <cuda/std/array>
 #include <cuda/stream>
 
@@ -61,13 +60,13 @@ bool is_single_pass_agg_supported(data_type values_type, aggregation::Kind kind)
 struct grouped_rows {
   device_span<size_type const> rows;     ///< Input row index at each grouped position
   device_span<size_type const> offsets;  ///< Group boundaries in rows
-  rmm::device_uvector<size_type>
+  cuda::device_buffer<size_type>
     warp_groups;  ///< Group IDs wider than a warp: direct groups, then long groups
-  rmm::device_uvector<size_type>
+  cuda::device_buffer<size_type>
     group_chunks;  ///< Offsets of long groups in chunk_ranges, including the final offset
-  rmm::device_uvector<cuda::std::array<size_type, 2>>
+  cuda::device_buffer<cuda::std::array<size_type, 2>>
     chunk_ranges;                              ///< CSR begin/end positions of each long-group chunk
-  rmm::device_uvector<size_type> chunk_order;  ///< Long chunk IDs ordered by first stored input row
+  cuda::device_buffer<size_type> chunk_order;  ///< Long chunk IDs ordered by first stored input row
 };
 
 /**

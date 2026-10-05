@@ -14,6 +14,7 @@
 #include <cudf/detail/aggregation/aggregation.cuh>
 #include <cudf/detail/aggregation/aggregation.hpp>
 #include <cudf/detail/iterator.cuh>
+#include <cudf/detail/utilities/cuda_memcpy.hpp>
 #include <cudf/detail/utilities/element_argminmax.cuh>
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/dictionary/dictionary_column_view.hpp>
@@ -25,9 +26,7 @@
 #include <cudf/utilities/traits.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
-#include <rmm/device_buffer.hpp>
-#include <rmm/device_uvector.hpp>
-
+#include <cuda/buffer>
 #include <cuda/iterator>
 #include <cuda/std/algorithm>
 #include <cuda/std/cstdint>
@@ -207,11 +206,12 @@ struct grouped_reduction_fn {
     }
 
     // The validity of a group (any valid row) rides along with its value in one pass.
-    rmm::device_uvector<bool> group_valid(ctx.num_groups, stream, mr.get_temporary_mr());
+    cuda::device_buffer<bool> group_valid(
+      stream, mr.get_temporary_mr(), ctx.num_groups, cuda::no_init);
     auto const values = cudf::detail::make_counting_transform_iterator(
       0, grouped_valid_value_fn < Source, Result, K == aggregation::SUM_OF_SQUARES > {value});
     auto const outputs = cuda::transform_output_iterator{
-      cuda::make_zip_iterator(output, group_valid.begin()), split_valid_value_fn<Result>{}};
+      cuda::make_zip_iterator(output, group_valid.data()), split_valid_value_fn<Result>{}};
     reduce_groups(ctx.grouped,
                   values,
                   outputs,
@@ -219,8 +219,8 @@ struct grouped_reduction_fn {
                   valid_value<Result>{identity, false},
                   stream,
                   mr);
-    auto [null_mask, null_count] =
-      make_mask_from_validity(group_valid.begin(), group_valid.end(), stream, mr);
+    auto [null_mask, null_count] = make_mask_from_validity(
+      group_valid.data(), group_valid.data() + group_valid.size(), stream, mr);
     result->set_null_mask(std::move(null_mask), null_count);
     return result;
   }
@@ -406,8 +406,11 @@ struct grouped_reductions_fn {
       using Descriptor     = column_reduction<ValueIterator, OutputIterator>;
       static_assert(cuda::std::is_trivially_copyable_v<Descriptor>);
       auto columns = cudf::detail::make_empty_host_vector<Descriptor>(num_columns, stream);
-      rmm::device_uvector<bool> group_valid(
-        Nullable ? static_cast<std::size_t>(num_columns) * first.num_groups : 0, stream, temp_mr);
+      cuda::device_buffer<bool> group_valid(
+        stream,
+        temp_mr,
+        Nullable ? static_cast<std::size_t>(num_columns) * first.num_groups : 0,
+        cuda::no_init);
       for (size_type i = 0; i < num_columns; ++i) {
         auto const& ctx  = contexts[i];
         auto const value = value_fn{
@@ -424,7 +427,12 @@ struct grouped_reductions_fn {
         columns.push_back(
           {values, make_output(results[i]->mutable_view().template begin<Result>(), validity)});
       }
-      auto device_columns  = cudf::detail::make_device_uvector(columns, stream, temp_mr);
+      cuda::device_buffer<Descriptor> device_columns(
+        stream, temp_mr, columns.size(), cuda::no_init);
+      cudf::detail::cuda_memcpy(
+        device_span<Descriptor>{device_columns.data(), device_columns.size()},
+        host_span<Descriptor const>{columns},
+        stream);
       auto const operation = [] {
         if constexpr (Nullable) {
           return valid_value_op<Op, Result>{};
@@ -440,14 +448,14 @@ struct grouped_reductions_fn {
         }
       }();
       reduce_group_columns(first.grouped,
-                           reduction_columns{device_columns.begin(), num_columns},
+                           reduction_columns{device_columns.data(), num_columns},
                            operation,
                            init,
                            stream,
                            mr);
       if constexpr (Nullable) {
         for (size_type i = 0; i < num_columns; ++i) {
-          auto const begin = group_valid.begin() + static_cast<std::size_t>(i) * first.num_groups;
+          auto const begin = group_valid.data() + static_cast<std::size_t>(i) * first.num_groups;
           auto const resources = is_intermediate[i] ? cudf::memory_resources{temp_mr, temp_mr} : mr;
           auto [mask, null_count] =
             make_mask_from_validity(begin, begin + first.num_groups, stream, resources);

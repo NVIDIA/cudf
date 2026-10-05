@@ -18,8 +18,7 @@
 #include <cudf/dictionary/dictionary_column_view.hpp>
 #include <cudf/types.hpp>
 
-#include <rmm/device_buffer.hpp>
-
+#include <cuda/buffer>
 #include <cuda/stream>
 
 namespace cudf::groupby::detail::hash {

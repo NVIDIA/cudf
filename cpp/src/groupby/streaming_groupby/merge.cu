@@ -87,7 +87,58 @@ struct merge_single_pass_aggs_fn {
   }
 };
 
+struct merge_agg_replicas_fn {
+  size_type const* target_indices;
+  size_type replica_rows;
+  size_type num_source_keys;
+  aggregation::Kind const* aggs;
+  table_device_view source_values;
+  mutable_table_device_view target_values;
+
+  __device__ void operator()(int64_t idx) const
+  {
+    auto const num_rows       = source_values.num_rows();
+    auto const source_row_idx = static_cast<size_type>(idx % num_rows);
+    auto const source_key     = source_row_idx % replica_rows;
+    if (source_key >= num_source_keys) { return; }
+    auto const target_row_idx = target_indices ? target_indices[source_key] : source_key;
+    if (target_row_idx == cudf::detail::CUDF_SIZE_TYPE_SENTINEL) { return; }
+
+    auto const col_idx     = static_cast<size_type>(idx / num_rows);
+    auto const& source_col = source_values.column(col_idx);
+    auto const& target_col = target_values.column(col_idx);
+    cudf::detail::dispatch_type_and_aggregation(source_col.type(),
+                                                aggs[col_idx],
+                                                merge_element_aggregator{},
+                                                target_col,
+                                                target_row_idx,
+                                                source_col,
+                                                source_row_idx);
+  }
+};
+
 }  // namespace
+
+void streaming_groupby::impl::merge_agg_replicas(impl const& source,
+                                                 size_type source_distinct_keys,
+                                                 size_type const* target_indices,
+                                                 mutable_table_device_view const& target,
+                                                 cuda::stream_ref stream) const
+{
+  if (!source._agg_replicas || source_distinct_keys == 0) { return; }
+  auto const d_source     = table_device_view::create(source._agg_replicas->view(), stream);
+  auto const num_rows     = static_cast<int64_t>(source._agg_replicas->num_rows());
+  auto const num_agg_cols = static_cast<int64_t>(_agg_kinds.size());
+  thrust::for_each_n(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+                     cuda::counting_iterator<int64_t>(0),
+                     num_rows * num_agg_cols,
+                     merge_agg_replicas_fn{target_indices,
+                                           source._replica_rows,
+                                           source_distinct_keys,
+                                           _d_agg_kinds->data(),
+                                           *d_source,
+                                           target});
+}
 
 void streaming_groupby::impl::do_merge(impl const& other, cuda::stream_ref stream)
 {
@@ -143,6 +194,9 @@ void streaming_groupby::impl::do_merge(impl const& other, cuda::stream_ref strea
     static_cast<int64_t>(other_distinct_keys) * num_agg_cols,
     merge_single_pass_aggs_fn{
       result.target_indices.begin(), _d_agg_kinds->data(), *d_source, *_d_agg_results});
+
+  merge_agg_replicas(
+    other, other_distinct_keys, result.target_indices.begin(), *_d_agg_results, stream);
 }
 
 }  // namespace cudf::groupby

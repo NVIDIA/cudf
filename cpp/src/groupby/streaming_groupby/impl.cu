@@ -90,7 +90,8 @@ streaming_groupby::impl::impl(host_span<size_type const> key_indices,
   : _max_distinct_keys{max_distinct_keys},
     _null_handling{null_handling},
     _mr{std::move(mr)},
-    _d_agg_results{nullptr, +[](mutable_table_device_view*) {}}
+    _d_agg_results{nullptr, +[](mutable_table_device_view*) {}},
+    _d_agg_replicas{nullptr, +[](mutable_table_device_view*) {}}
 {
   CUDF_EXPECTS(max_distinct_keys > 0, "max_distinct_keys must be positive.", std::invalid_argument);
   if (!key_indices.empty()) { _key_indices.assign(key_indices.begin(), key_indices.end()); }
@@ -154,21 +155,14 @@ void streaming_groupby::impl::initialize(table_view const& data, cuda::stream_re
                  std::invalid_argument);
   }
 
-  _agg_results = detail::hash::create_results_table(
-    _max_distinct_keys, values_view, _agg_kinds, _is_agg_intermediate, stream, mr);
-
-  // Later batches and merged states may introduce groups containing only null values,
-  // even when the first batch has no nulls. Keep direct results nullable so each group
-  // remains null until its first valid input. Counts and intermediates stay non-nullable.
-  for (size_type i = 0; i < _agg_results->num_columns(); ++i) {
-    auto& result = _agg_results->get_column(i);
-    if (!result.nullable() && !_is_agg_intermediate[i] &&
-        _agg_kinds[i] != aggregation::COUNT_VALID && _agg_kinds[i] != aggregation::COUNT_ALL) {
-      result.set_null_mask(
-        cudf::create_null_mask(_max_distinct_keys, mask_state::ALL_NULL, stream, mr),
-        _max_distinct_keys);
-    }
+  std::vector<std::unique_ptr<column>> schema_cols;
+  schema_cols.reserve(values_view.num_columns());
+  for (auto const& col : values_view) {
+    schema_cols.push_back(cudf::empty_like(col));
   }
+  _values_schema = std::make_unique<table>(std::move(schema_cols));
+
+  _agg_results = make_results_table(_max_distinct_keys, stream);
 
   // Cache the mutable_table_device_view once; the underlying table is fixed-size and
   // never reallocated, so the device-side descriptor stays valid for the whole
@@ -178,6 +172,8 @@ void streaming_groupby::impl::initialize(table_view const& data, cuda::stream_re
     _d_agg_results =
       decltype(_d_agg_results){raii.release(), +[](mutable_table_device_view* t) { t->destroy(); }};
   }
+
+  _replica_rows = std::min(_max_distinct_keys, max_agg_replica_rows);
 
   _d_agg_kinds = std::make_unique<rmm::device_uvector<aggregation::Kind>>(
     cudf::detail::make_device_uvector_async(_agg_kinds, stream, mr));
@@ -247,16 +243,45 @@ void streaming_groupby::impl::update_nullable_state(table_view const& batch_keys
   }
 }
 
+std::unique_ptr<table> streaming_groupby::impl::make_results_table(size_type num_rows,
+                                                                   cuda::stream_ref stream) const
+{
+  auto const mr = cudf::get_current_device_resource_ref();
+  auto results  = detail::hash::create_results_table(
+    num_rows, _values_schema->view(), _agg_kinds, _is_agg_intermediate, stream, mr);
+
+  for (size_type i = 0; i < results->num_columns(); ++i) {
+    auto& result = results->get_column(i);
+    if (!result.nullable() && !_is_agg_intermediate[i] &&
+        _agg_kinds[i] != aggregation::COUNT_VALID && _agg_kinds[i] != aggregation::COUNT_ALL) {
+      result.set_null_mask(cudf::create_null_mask(num_rows, mask_state::ALL_NULL, stream, mr),
+                           num_rows);
+    }
+  }
+  return results;
+}
+
+void streaming_groupby::impl::create_agg_replicas(cuda::stream_ref stream)
+{
+  _agg_replicas = make_results_table(agg_replica_count * _replica_rows, stream);
+  _d_agg_replicas =
+    decltype(_d_agg_replicas){mutable_table_device_view::create(*_agg_replicas, stream).release(),
+                              +[](mutable_table_device_view* t) { t->destroy(); }};
+}
+
 std::unique_ptr<table> streaming_groupby::impl::gather_agg_results(
   cuda::stream_ref stream, rmm::device_async_resource_ref mr) const
 {
   // The results we care about are dense in `[0, _distinct_keys)` and can be extracted by
   // slice+copy.
-  auto const sliced =
-    cudf::detail::slice(
-      _agg_results->view(), {0, _distinct_keys.load(std::memory_order_relaxed)}, stream)
-      .front();
-  return std::make_unique<table>(sliced, stream, mr);
+  auto const distinct_keys = _distinct_keys.load(std::memory_order_relaxed);
+  auto const sliced = cudf::detail::slice(_agg_results->view(), {0, distinct_keys}, stream).front();
+  auto gathered     = std::make_unique<table>(sliced, stream, mr);
+  if (_agg_replicas && distinct_keys > 0) {
+    auto const d_gathered = mutable_table_device_view::create(*gathered, stream);
+    merge_agg_replicas(*this, distinct_keys, nullptr, *d_gathered, stream);
+  }
+  return gathered;
 }
 
 std::unique_ptr<table> streaming_groupby::impl::gather_distinct_keys(

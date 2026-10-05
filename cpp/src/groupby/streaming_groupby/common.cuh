@@ -68,6 +68,9 @@ class insert_order_event {
  */
 using key_location_t = cuda::std::pair<size_type, size_type>;
 
+inline constexpr size_type agg_replica_count    = 32;
+inline constexpr size_type max_agg_replica_rows = 256;
+
 using streaming_probing_scheme_t =
   cuco::linear_probing<detail::hash::GROUPBY_CG_SIZE,
                        cudf::hashing::detail::default_hash<size_type>>;
@@ -344,6 +347,12 @@ struct streaming_groupby::impl {
    * (which requires a host-to-device copy of the column metadata).
    */
   std::unique_ptr<mutable_table_device_view, void (*)(mutable_table_device_view*)> _d_agg_results;
+
+  size_type _replica_rows{0};
+  std::unique_ptr<table> _agg_replicas;
+  std::unique_ptr<mutable_table_device_view, void (*)(mutable_table_device_view*)> _d_agg_replicas;
+  std::unique_ptr<table> _values_schema;
+
   std::vector<size_type> _value_col_indices;
   std::unique_ptr<rmm::device_uvector<aggregation::Kind>> _d_agg_kinds;
 
@@ -364,6 +373,9 @@ struct streaming_groupby::impl {
        cuda::mr::any_resource<cuda::mr::device_accessible> mr);
 
   void initialize(table_view const& data, cuda::stream_ref stream);
+
+  std::unique_ptr<table> make_results_table(size_type num_rows, cuda::stream_ref stream) const;
+  void create_agg_replicas(cuda::stream_ref stream);
   void create_key_set(cuda::stream_ref stream);
   void update_nullable_state(table_view const& batch_keys);
 
@@ -426,6 +438,12 @@ struct streaming_groupby::impl {
     cuda::stream_ref stream, rmm::device_async_resource_ref mr) const;
 
   void do_merge(impl const& other, cuda::stream_ref stream);
+
+  void merge_agg_replicas(impl const& source,
+                          size_type source_distinct_keys,
+                          size_type const* target_indices,
+                          mutable_table_device_view const& target,
+                          cuda::stream_ref stream) const;
 };
 
 }  // namespace cudf::groupby

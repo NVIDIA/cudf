@@ -118,10 +118,7 @@ impl CudfPolarsUiAnalyzer {
                 operator.extend_active_span(actor.span);
             }
         }
-        let actor_operator_ids = actors
-            .into_iter()
-            .map(|actor| (actor.id, actor.operator_id))
-            .collect();
+        let actors = actors.into_iter().map(|actor| (actor.id, actor)).collect();
         let evaluate_indices = evaluates
             .iter()
             .enumerate()
@@ -129,7 +126,7 @@ impl CudfPolarsUiAnalyzer {
             .collect();
         Ok(Self {
             model,
-            actor_operator_ids,
+            actors,
             evaluates,
             evaluate_indices,
             resources,

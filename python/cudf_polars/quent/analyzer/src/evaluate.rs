@@ -55,8 +55,7 @@ impl EvaluateBuilder {
             EvaluateEvent::Failed { error, .. } => {
                 self.finished_at = Some(timestamp);
                 self.finished_state = Some("failed");
-                self.finished_attributes =
-                    vec![DynamicAttribute::string("error", error.clone())];
+                self.finished_attributes = vec![DynamicAttribute::string("error", error.clone())];
             }
         }
     }
@@ -196,10 +195,7 @@ mod tests {
                 seq: 1,
                 io: false,
                 input_bytes: 10,
-                processor: EntityRef::new(
-                    Uuid::now_v7(),
-                    crate::generated::ProcessorUsage {},
-                ),
+                processor: EntityRef::new(Uuid::now_v7(), crate::generated::ProcessorUsage {}),
                 channel: None,
             },
         );

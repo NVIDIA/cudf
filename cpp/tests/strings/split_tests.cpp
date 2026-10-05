@@ -582,6 +582,47 @@ TEST_F(StringsSplitTest, SplitRecordRegex)
   }
 }
 
+TEST_F(StringsSplitTest, SplitRegexLiteralFastPath)
+{
+  auto input =
+    cudf::test::strings_column_wrapper({"a::b::c", "", "::d::", "e", ""}, {1, 0, 1, 1, 1});
+  auto const sv    = cudf::strings_column_view(input);
+  auto const prog  = cudf::strings::regex_program::create("::");
+  auto const delim = cudf::string_scalar("::");
+
+  // split_re with literal pattern == split
+  CUDF_TEST_EXPECT_TABLES_EQUAL(cudf::strings::split_re(sv, *prog)->view(),
+                                cudf::strings::split(sv, delim)->view());
+
+  // rsplit_re with literal pattern == rsplit
+  CUDF_TEST_EXPECT_TABLES_EQUAL(cudf::strings::rsplit_re(sv, *prog)->view(),
+                                cudf::strings::rsplit(sv, delim)->view());
+
+  // split_re with maxsplit
+  CUDF_TEST_EXPECT_TABLES_EQUAL(cudf::strings::split_re(sv, *prog, 1)->view(),
+                                cudf::strings::split(sv, delim, 1)->view());
+
+  // rsplit_re with maxsplit
+  CUDF_TEST_EXPECT_TABLES_EQUAL(cudf::strings::rsplit_re(sv, *prog, 1)->view(),
+                                cudf::strings::rsplit(sv, delim, 1)->view());
+
+  // split_record_re with literal pattern == split_record
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(cudf::strings::split_record_re(sv, *prog)->view(),
+                                 cudf::strings::split_record(sv, delim)->view());
+
+  // rsplit_record_re with literal pattern == rsplit_record
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(cudf::strings::rsplit_record_re(sv, *prog)->view(),
+                                 cudf::strings::rsplit_record(sv, delim)->view());
+
+  // split_record_re with maxsplit
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(cudf::strings::split_record_re(sv, *prog, 1)->view(),
+                                 cudf::strings::split_record(sv, delim, 1)->view());
+
+  // rsplit_record_re with maxsplit
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(cudf::strings::rsplit_record_re(sv, *prog, 1)->view(),
+                                 cudf::strings::rsplit_record(sv, delim, 1)->view());
+}
+
 TEST_F(StringsSplitTest, SplitRecordRegexLazyQuantifier)
 {
   auto const input = cudf::test::strings_column_wrapper({"\rbaab\r\ra"});

@@ -155,7 +155,7 @@ void write_compressed_to_sink(data_sink* out_sink,
                d_results.end(),
                io::detail::codec_exec_result{0, io::detail::codec_status::FAILURE});
 
-  io::detail::compress(compression, d_inputs, d_outputs, d_results, stream);
+  io::detail::compress(compression, d_inputs, d_outputs, d_results, stream, {temp_mr, temp_mr});
 
   auto const results = cudf::detail::make_host_vector(d_results, stream);
   CUDF_EXPECTS(std::all_of(results.begin(),

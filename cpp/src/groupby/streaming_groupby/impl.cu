@@ -244,7 +244,7 @@ void streaming_groupby::impl::update_nullable_state(table_view const& batch_keys
 }
 
 std::unique_ptr<table> streaming_groupby::impl::make_results_table(size_type num_rows,
-                                                                  cuda::stream_ref stream) const
+                                                                   cuda::stream_ref stream) const
 {
   auto const mr = cudf::get_current_device_resource_ref();
   auto results  = detail::hash::create_results_table(

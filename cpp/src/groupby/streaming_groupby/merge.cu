@@ -196,10 +196,7 @@ void streaming_groupby::impl::do_merge(impl const& other, cuda::stream_ref strea
       result.target_indices.begin(), _d_agg_kinds->data(), *d_source, *_d_agg_results});
 
   merge_agg_replicas(
-    other,
-    other_distinct_keys,
-    result.target_indices.begin(),
-    *_d_agg_results, stream);
+    other, other_distinct_keys, result.target_indices.begin(), *_d_agg_results, stream);
 }
 
 }  // namespace cudf::groupby

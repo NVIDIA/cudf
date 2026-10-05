@@ -36,15 +36,16 @@ struct replicated_aggs_fn {
     auto const num_rows       = input_values.num_rows();
     auto const source_row_idx = static_cast<size_type>(idx % num_rows);
     auto const target_row_idx = target_indices[source_row_idx];
-    if (target_row_idx == cudf::detail::CUDF_SIZE_TYPE_SENTINEL) {
-      return;
-    }
+    if (target_row_idx == cudf::detail::CUDF_SIZE_TYPE_SENTINEL) { return; }
 
     auto const col_idx     = static_cast<size_type>(idx / num_rows);
     auto const& source_col = input_values.column(col_idx);
     auto const replicated  = target_row_idx < replica_rows;
-    auto const& target_col = replicated ? replica_values.column(col_idx) : output_values.column(col_idx);
-    auto const row = replicated ? (source_row_idx % agg_replica_count) * replica_rows + target_row_idx : target_row_idx;
+    auto const& target_col =
+      replicated ? replica_values.column(col_idx) : output_values.column(col_idx);
+    auto const row = replicated
+                       ? (source_row_idx % agg_replica_count) * replica_rows + target_row_idx
+                       : target_row_idx;
     cudf::detail::dispatch_type_and_aggregation(source_col.type(),
                                                 aggs[col_idx],
                                                 cudf::detail::element_aggregator{},
@@ -95,9 +96,7 @@ void streaming_groupby::impl::do_aggregate(table_view const& data, cuda::stream_
 
     mutable_table_device_view const* replicas = nullptr;
     if (_distinct_keys.load() <= _replica_rows) {
-      if (!_agg_replicas) {
-        create_agg_replicas(stream);
-      }
+      if (!_agg_replicas) { create_agg_replicas(stream); }
       replicas = _d_agg_replicas.get();
     }
     _insert_done.record(stream);

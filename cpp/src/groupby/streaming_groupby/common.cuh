@@ -68,7 +68,7 @@ class insert_order_event {
  */
 using key_location_t = cuda::std::pair<size_type, size_type>;
 
-inline constexpr size_type agg_replica_count = 32;
+inline constexpr size_type agg_replica_count    = 32;
 inline constexpr size_type max_agg_replica_rows = 256;
 
 using streaming_probing_scheme_t =
@@ -374,8 +374,7 @@ struct streaming_groupby::impl {
 
   void initialize(table_view const& data, cuda::stream_ref stream);
 
-  std::unique_ptr<table> make_results_table(size_type num_rows,
-                                            cuda::stream_ref stream) const;
+  std::unique_ptr<table> make_results_table(size_type num_rows, cuda::stream_ref stream) const;
   void create_agg_replicas(cuda::stream_ref stream);
   void create_key_set(cuda::stream_ref stream);
   void update_nullable_state(table_view const& batch_keys);

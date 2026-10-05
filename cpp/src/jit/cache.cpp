@@ -20,6 +20,9 @@
 #include <format>
 #include <fstream>
 #include <future>
+#include <map>
+#include <mutex>
+#include <utility>
 
 namespace CUDF_EXPORT cudf {
 
@@ -145,26 +148,30 @@ void install_cudf_jit_files(std::string const& target_dir, std::string const& tm
 jit_bundle_t::jit_bundle_t(std::string install_dir, rtcx::cache_t& cache)
   : install_dir_{std::move(install_dir)}, cache_{&cache}
 {
-  ensure_installed();
 }
 
+// Installation is deferred until the bundle's files are needed: kernels that are not compiled from
+// source (e.g. LTO-linked) only use the bundle hash, and installing dominates their cold start.
 void jit_bundle_t::ensure_installed() const
 {
-  CUDF_FUNC_RANGE();
+  std::call_once(installed_, [&] {
+    CUDF_FUNC_RANGE();
 
-  auto expected_hash = get_hash();
-  auto expected_path = std::format("{}/{}", install_dir_, expected_hash);
+    auto expected_hash = get_hash();
+    auto expected_path = std::format("{}/{}", install_dir_, expected_hash);
 
-  if (!std::filesystem::exists(expected_path)) {
-    // ensure base install directory exists
-    std::filesystem::create_directories(install_dir_);
-    install_cudf_jit_files(expected_path.c_str(), cache_->get_tmp_dir());
-  } else {
-    // directory exists, perform minor sanity check
-    CUDF_EXPECTS(std::filesystem::is_directory(expected_path),  // throws if path does not exist
-                 std::format("JIT install path ({}) exists but is not a directory", expected_path),
-                 std::runtime_error);
-  }
+    if (!std::filesystem::exists(expected_path)) {
+      // ensure base install directory exists
+      std::filesystem::create_directories(install_dir_);
+      install_cudf_jit_files(expected_path.c_str(), cache_->get_tmp_dir());
+    } else {
+      // directory exists, perform minor sanity check
+      CUDF_EXPECTS(
+        std::filesystem::is_directory(expected_path),  // throws if path does not exist
+        std::format("JIT install path ({}) exists but is not a directory", expected_path),
+        std::runtime_error);
+    }
+  });
 }
 
 std::string jit_bundle_t::get_hash() const
@@ -175,6 +182,7 @@ std::string jit_bundle_t::get_hash() const
 
 std::string jit_bundle_t::get_directory() const
 {
+  ensure_installed();
   return std::format("{}/{}", install_dir_, get_hash());
 }
 
@@ -580,6 +588,26 @@ bundle={}
 
   auto lib = fut.get();
   return kernel{lib, lib->get_kernel("cudf_kernel_entry")};
+}
+
+kernel get_linked_kernel(std::span<uint8_t const> binary)
+{
+  CUDF_FUNC_RANGE();
+
+  // The context initializes rtcx's driver entry points used by rtcx::load_library.
+  [[maybe_unused]] auto& ctx = cudf::get_context();
+
+  auto digest = XXH3_128bits(binary.data(), binary.size());
+  auto key    = std::pair{digest.high64, digest.low64};
+
+  // Intentionally leaked: unloading libraries during static destruction can race driver shutdown.
+  static auto* libraries = new std::map<std::pair<uint64_t, uint64_t>, rtcx::library>{};
+  static std::mutex lock;
+
+  std::lock_guard guard{lock};
+  auto it = libraries->find(key);
+  if (it == libraries->end()) { it = libraries->emplace(key, rtcx::load_library(binary)).first; }
+  return kernel{it->second, it->second->get_kernel("cudf_kernel_entry")};
 }
 
 }  // namespace CUDF_EXPORT cudf

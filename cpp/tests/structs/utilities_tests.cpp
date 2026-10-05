@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -86,11 +86,11 @@ TYPED_TEST(TypedStructUtilitiesTest, SingleLevelStruct)
   auto expected_nums_col_1  = cudf::column(nums_col);
   auto expected_structs_col = cudf::test::fixed_width_column_wrapper<bool>{{1, 1, 1, 1, 1, 1, 1}};
   auto expected_nums_col_2  = cudf::column(static_cast<cudf::structs_column_view>(structs_col)
-                                            .get_sliced_child(0, cudf::get_default_stream()));
+                                             .get_sliced_child(0, cudf::get_default_stream()));
   auto expected_strings_col = cudf::column(static_cast<cudf::structs_column_view>(structs_col)
                                              .get_sliced_child(1, cudf::get_default_stream()));
   auto expected             = cudf::table_view{
-                {expected_nums_col_1, expected_structs_col, expected_nums_col_2, expected_strings_col}};
+    {expected_nums_col_1, expected_structs_col, expected_nums_col_2, expected_strings_col}};
 
   auto flattened_table =
     cudf::structs::detail::flatten_nested_columns(table,
@@ -119,11 +119,11 @@ TYPED_TEST(TypedStructUtilitiesTest, SingleLevelStructWithNulls)
   auto expected_structs_col = cudf::test::fixed_width_column_wrapper<bool>{
     {1, 1, 0, 1, 1, 1, 1}, cudf::test::iterators::null_at(2)};
   auto expected_nums_col_2  = cudf::column(static_cast<cudf::structs_column_view>(structs_col)
-                                            .get_sliced_child(0, cudf::get_default_stream()));
+                                             .get_sliced_child(0, cudf::get_default_stream()));
   auto expected_strings_col = cudf::column(static_cast<cudf::structs_column_view>(structs_col)
                                              .get_sliced_child(1, cudf::get_default_stream()));
   auto expected             = cudf::table_view{
-                {expected_nums_col_1, expected_structs_col, expected_nums_col_2, expected_strings_col}};
+    {expected_nums_col_1, expected_structs_col, expected_nums_col_2, expected_strings_col}};
 
   auto flattened_table =
     cudf::structs::detail::flatten_nested_columns(table,
@@ -375,9 +375,7 @@ TYPED_TEST(TypedSuperimposeTest, NoStructInput)
  */
 template <typename T, typename NullIter>
 nums<T> make_nums_member(NullIter null_iter = cudf::test::iterators::no_nulls())
-{
-  return nums<T>{{10, 11, 12, 13, 14, 15, 16}, null_iter};
-}
+{ return nums<T>{{10, 11, 12, 13, 14, 15, 16}, null_iter}; }
 
 /**
  * @brief Helper to construct a lists member of a struct column.
@@ -481,7 +479,7 @@ TYPED_TEST(TypedSuperimposeTest, NestedStruct_ChildNullable_ParentNonNullable)
   auto expected_nums_member  = make_nums_member<T>(cudf::test::iterators::nulls_at({0, 3, 6}));
   auto expected_lists_member = make_lists_member<T>(cudf::test::iterators::nulls_at({0, 4, 5}));
   auto expected_structs      = cudf::test::structs_column_wrapper{
-         {expected_nums_member, expected_lists_member}, cudf::test::iterators::null_at(0)};
+    {expected_nums_member, expected_lists_member}, cudf::test::iterators::null_at(0)};
   auto expected_structs_of_structs = cudf::test::structs_column_wrapper{{expected_structs}};
 
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(output, expected_structs_of_structs);
@@ -525,7 +523,7 @@ TYPED_TEST(TypedSuperimposeTest, NestedStruct_ChildNullable_ParentNullable)
   auto expected_nums_member  = make_nums_member<T>(cudf::test::iterators::nulls_at({0, 1, 3, 6}));
   auto expected_lists_member = make_lists_member<T>(cudf::test::iterators::nulls_at({0, 1, 4, 5}));
   auto expected_structs      = cudf::test::structs_column_wrapper{
-         {expected_nums_member, expected_lists_member}, cudf::test::iterators::nulls_at({0, 1})};
+    {expected_nums_member, expected_lists_member}, cudf::test::iterators::nulls_at({0, 1})};
   auto expected_structs_of_structs =
     cudf::test::structs_column_wrapper{{expected_structs}, cudf::test::iterators::null_at(1)};
 
@@ -533,14 +531,10 @@ TYPED_TEST(TypedSuperimposeTest, NestedStruct_ChildNullable_ParentNullable)
 }
 
 cudf::column_view slice_off_first_and_last_rows(cudf::column_view const& col)
-{
-  return cudf::slice(col, {1, col.size() - 1})[0];
-}
+{ return cudf::slice(col, {1, col.size() - 1})[0]; }
 
 void mark_row_as_null(cudf::mutable_column_view const& col, cudf::size_type row_index)
-{
-  cudf::set_null_mask(col.null_mask(), row_index, row_index + 1, false);
-}
+{ cudf::set_null_mask(col.null_mask(), row_index, row_index + 1, false); }
 
 TYPED_TEST(TypedSuperimposeTest, Struct_Sliced)
 {

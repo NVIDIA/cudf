@@ -117,9 +117,7 @@ class row_lexicographic_comparator {
                                         size_type,
                                         size_type) const noexcept
       requires(not cudf::is_numeric<Element>())
-    {
-      CUDF_UNREACHABLE("Primitive lexicographic comparison requires numeric columns.");
-    }
+    { CUDF_UNREACHABLE("Primitive lexicographic comparison requires numeric columns."); }
   };
 
   nullate::DYNAMIC _has_nulls;

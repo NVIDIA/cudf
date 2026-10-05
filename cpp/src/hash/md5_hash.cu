@@ -267,9 +267,7 @@ struct ListHasherDispatcher {
 
 // MD5 supported leaf data type check
 inline bool md5_leaf_type_check(data_type dt)
-{
-  return (is_fixed_width(dt) && !is_chrono(dt)) || (dt.id() == type_id::STRING);
-}
+{ return (is_fixed_width(dt) && !is_chrono(dt)) || (dt.id() == type_id::STRING); }
 
 }  // namespace
 

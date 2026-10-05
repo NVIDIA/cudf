@@ -211,18 +211,14 @@ struct chunk_read_data {
   std::vector<range> decode_stripe_ranges;
   std::size_t curr_decode_stripe_range{0};
   bool more_stripes_to_decode() const
-  {
-    return curr_decode_stripe_range < decode_stripe_ranges.size();
-  }
+  { return curr_decode_stripe_range < decode_stripe_ranges.size(); }
 
   // Chunk of rows in the internal decoded table to output for each `read_chunk()`.
   std::vector<range> output_table_ranges;
   std::size_t curr_output_table_range{0};
   std::unique_ptr<cudf::table> decoded_table;
   bool more_table_chunks_to_output() const
-  {
-    return curr_output_table_range < output_table_ranges.size();
-  }
+  { return curr_output_table_range < output_table_ranges.size(); }
 
   bool has_next() const
   {
@@ -252,9 +248,7 @@ struct cumulative_size_and_row : public cumulative_size {
  */
 struct cumulative_size_plus {
   __device__ cumulative_size operator()(cumulative_size const& a, cumulative_size const& b) const
-  {
-    return cumulative_size{a.count + b.count, a.size_bytes + b.size_bytes};
-  }
+  { return cumulative_size{a.count + b.count, a.size_bytes + b.size_bytes}; }
 
   __device__ cumulative_size_and_row operator()(cumulative_size_and_row const& a,
                                                 cumulative_size_and_row const& b) const

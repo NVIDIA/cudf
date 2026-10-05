@@ -63,9 +63,7 @@ struct replace_parallel_chars_fn {
   __device__ inline char const* get_base_ptr() const { return d_strings.head<char>(); }
 
   __device__ inline string_view const get_string(size_type idx) const
-  {
-    return d_strings.element<string_view>(idx);
-  }
+  { return d_strings.element<string_view>(idx); }
 
   __device__ inline bool is_valid(size_type idx) const { return d_strings.is_valid(idx); }
 

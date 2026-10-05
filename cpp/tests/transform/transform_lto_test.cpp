@@ -158,14 +158,14 @@ TEST_F(TransformLTOTest, FallibleIntegerLehmerMean)
   cudf::transform_input inputs[] = {a, b};
 
   auto result      = cudf::transform_lto(udf,
-                                    cudf::lto_binary_type::FATBIN,
-                                    cudf::null_aware::NO,
-                                    std::nullopt,
-                                    inputs,
-                                    outputs,
+                                         cudf::lto_binary_type::FATBIN,
+                                         cudf::null_aware::NO,
+                                         std::nullopt,
+                                         inputs,
+                                         outputs,
                                          {},
-                                    std::nullopt,
-                                    cudf::test::get_default_stream());
+                                         std::nullopt,
+                                         cudf::test::get_default_stream());
   auto lehmer_mean = [](int32_t a, int32_t b) { return (a * a + b * b) / (a + b); };
 
   column_wrapper<int32_t> expected{{lehmer_mean(2, 1),

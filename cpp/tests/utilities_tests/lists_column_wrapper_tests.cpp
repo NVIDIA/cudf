@@ -1344,7 +1344,7 @@ TYPED_TEST(ListColumnWrapperTestTyped, ListsOfStructs)
 
   auto lists_column_offsets = cudf::test::fixed_width_column_wrapper<int32_t>{0, 2, 4, 8}.release();
   auto num_lists            = lists_column_offsets->size() - 1;
-  auto lists_column         = make_lists_column(num_lists,
+  auto lists_column = make_lists_column(num_lists,
                                         std::move(lists_column_offsets),
                                         std::move(struct_column),
                                         0,
@@ -1413,7 +1413,7 @@ TYPED_TEST(ListColumnWrapperTestTyped, ListsOfListsOfStructs)
 
   auto lists_column_offsets = cudf::test::fixed_width_column_wrapper<int32_t>{0, 2, 4, 8}.release();
   auto num_lists            = lists_column_offsets->size() - 1;
-  auto lists_column         = make_lists_column(num_lists,
+  auto lists_column = make_lists_column(num_lists,
                                         std::move(lists_column_offsets),
                                         std::move(struct_column),
                                         0,

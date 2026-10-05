@@ -98,10 +98,10 @@ void print_cumulative_page_info(host_span<cumulative_page_info const> sizes,
 
     if (splits.has_value()) {
       // if we have a split at this row count and this is the last instance of this row count
-      auto start             = cuda::make_transform_iterator(splits->begin(),
+      auto start = cuda::make_transform_iterator(splits->begin(),
                                                  [](row_range const& i) { return i.skip_rows; });
-      auto end               = start + splits->size();
-      auto split             = std::find(start, end, sizes[idx].end_row_index);
+      auto end   = start + splits->size();
+      auto split = std::find(start, end, sizes[idx].end_row_index);
       auto const split_index = [&]() -> int {
         if (split != end && ((idx == sizes.size() - 1) ||
                              (sizes[idx + 1].end_row_index > sizes[idx].end_row_index))) {
@@ -671,13 +671,13 @@ void detect_malformed_pages(device_span<PageInfo const> pages,
   auto const row_counts_begin = row_counts.begin();
   auto page_keys              = make_page_key_iterator(pages);
   auto const row_counts_end   = cudf::detail::reduce_by_key(page_keys,
-                                                          page_keys + pages.size(),
-                                                          size_iter,
-                                                          cuda::make_discard_iterator(),
-                                                          row_counts_begin,
-                                                          cuda::std::plus<>{},
-                                                          stream)
-                                .second;
+                                                            page_keys + pages.size(),
+                                                            size_iter,
+                                                            cuda::make_discard_iterator(),
+                                                            row_counts_begin,
+                                                            cuda::std::plus<>{},
+                                                            stream)
+                                  .second;
 
   // make sure all non-zero row counts are the same
   rmm::device_uvector<size_type> compacted_row_counts(pages.size(), stream);

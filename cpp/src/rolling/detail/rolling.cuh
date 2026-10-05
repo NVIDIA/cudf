@@ -107,32 +107,24 @@ inline std::vector<std::unique_ptr<aggregation>> preprocess_minmax(data_type col
 template <>
 inline std::vector<std::unique_ptr<aggregation>> rolling_preprocessor::operator()<aggregation::MIN>(
   data_type col_type, aggregation const&) const
-{
-  return preprocess_minmax(col_type, make_argmin_aggregation<>, make_min_aggregation<>);
-}
+{ return preprocess_minmax(col_type, make_argmin_aggregation<>, make_min_aggregation<>); }
 
 template <>
 inline std::vector<std::unique_ptr<aggregation>> rolling_preprocessor::operator()<aggregation::MAX>(
   data_type col_type, aggregation const&) const
-{
-  return preprocess_minmax(col_type, make_argmax_aggregation<>, make_max_aggregation<>);
-}
+{ return preprocess_minmax(col_type, make_argmax_aggregation<>, make_max_aggregation<>); }
 
 // COLLECT_LIST, COLLECT_SET, and NTH_ELEMENT aggregations do not perform a rolling operation.
 // They get processed entirely in the postprocessing step.
 template <>
 inline std::vector<std::unique_ptr<aggregation>>
 rolling_preprocessor::operator()<aggregation::COLLECT_LIST>(data_type, aggregation const&) const
-{
-  return {};
-}
+{ return {}; }
 
 template <>
 inline std::vector<std::unique_ptr<aggregation>>
 rolling_preprocessor::operator()<aggregation::COLLECT_SET>(data_type, aggregation const&) const
-{
-  return {};
-}
+{ return {}; }
 
 // Specialization for STD aggregation
 // STD aggregations depend on VARIANCE aggregation. Each element is applied
@@ -173,9 +165,7 @@ inline std::vector<std::unique_ptr<aggregation>> rolling_preprocessor::operator(
 template <>
 inline std::vector<std::unique_ptr<aggregation>>
 rolling_preprocessor::operator()<aggregation::NTH_ELEMENT>(data_type, aggregation const&) const
-{
-  return {};
-}
+{ return {}; }
 
 /**
  * @brief Functor for rolling window postprocessing.
@@ -202,9 +192,7 @@ struct rolling_postprocessor {
   template <aggregation::Kind k>
   std::unique_ptr<column> operator()(aggregation const&,
                                      std::unique_ptr<column>& intermediate) const
-  {
-    return std::move(intermediate);
-  }
+  { return std::move(intermediate); }
 
   template <aggregation::Kind k>
     requires(k == aggregation::MIN || k == aggregation::MAX)
@@ -267,9 +255,7 @@ struct rolling_postprocessor {
     requires(k == aggregation::STD)
   std::unique_ptr<column> operator()(aggregation const&,
                                      std::unique_ptr<column>& intermediate) const
-  {
-    return detail::unary_operation(intermediate->view(), unary_operator::SQRT, stream, mr);
-  }
+  { return detail::unary_operation(intermediate->view(), unary_operator::SQRT, stream, mr); }
 
   template <aggregation::Kind k>
     requires(k == aggregation::LEAD || k == aggregation::LAG)
@@ -489,9 +475,7 @@ struct rolling_window_launcher {
                                      cuda::stream_ref,
                                      rmm::device_async_resource_ref)
     requires(!corresponding_rolling_operator<InputType, op>::type::is_supported())
-  {
-    CUDF_FAIL("Invalid aggregation type/pair");
-  }
+  { CUDF_FAIL("Invalid aggregation type/pair"); }
 };
 
 /**

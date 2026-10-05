@@ -86,10 +86,10 @@ std::unique_ptr<column> have_overlap(lists_column_view const& lhs,
   auto overlap_results = rmm::device_uvector<bool>(num_rows, stream);
 
   auto const labels_begin = rhs_labels->view().begin<size_type>();
-  auto const end          = cudf::detail::reduce_by_key(labels_begin,  // keys
+  auto const end = cudf::detail::reduce_by_key(labels_begin,  // keys
                                                labels_begin + rhs_labels->size(),
-                                               contained.begin(),     // values to reduce
-                                               list_indices.begin(),  // out keys
+                                               contained.begin(),        // values to reduce
+                                               list_indices.begin(),     // out keys
                                                overlap_results.begin(),  // out values
                                                cuda::std::logical_or{},  // reduction op for values
                                                stream);

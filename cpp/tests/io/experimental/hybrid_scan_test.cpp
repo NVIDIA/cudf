@@ -269,14 +269,14 @@ TEST_F(HybridScanTest, FilterRowGroupsOnlyAndScanSelectColumns)
   {
     auto const payload_column_indices = std::vector<cudf::size_type>{1, 2};
     std::ignore                       = test_hybrid_scan_column_selection(parquet_buffer,
-                                                    filter_expression,
-                                                    "col0",
-                                                    payload_column_indices,
+                                                                          filter_expression,
+                                                                          "col0",
+                                                                          payload_column_indices,
                                                                           {},
-                                                    case_sensitive_names,
-                                                    stream,
-                                                    mr,
-                                                    aligned_mr);
+                                                                          case_sensitive_names,
+                                                                          stream,
+                                                                          mr,
+                                                                          aligned_mr);
   }
 
   // Columns: col0, col2
@@ -284,14 +284,14 @@ TEST_F(HybridScanTest, FilterRowGroupsOnlyAndScanSelectColumns)
     auto const payload_column_names   = std::vector<std::string>{"Col0", "Col2"};
     auto const payload_column_indices = std::vector<cudf::size_type>{2};
     std::ignore                       = test_hybrid_scan_column_selection(parquet_buffer,
-                                                    filter_expression,
-                                                    "col0",
-                                                    payload_column_indices,
-                                                    payload_column_names,
-                                                    case_sensitive_names,
-                                                    stream,
-                                                    mr,
-                                                    aligned_mr);
+                                                                          filter_expression,
+                                                                          "col0",
+                                                                          payload_column_indices,
+                                                                          payload_column_names,
+                                                                          case_sensitive_names,
+                                                                          stream,
+                                                                          mr,
+                                                                          aligned_mr);
   }
 
   // Columns: col2, col1
@@ -299,14 +299,14 @@ TEST_F(HybridScanTest, FilterRowGroupsOnlyAndScanSelectColumns)
     auto const payload_column_names   = std::vector<std::string>{"cOl2", "coL1"};
     auto const payload_column_indices = std::vector<cudf::size_type>{2, 1};
     std::ignore                       = test_hybrid_scan_column_selection(parquet_buffer,
-                                                    filter_expression,
-                                                    "col0",
-                                                    payload_column_indices,
-                                                    payload_column_names,
-                                                    case_sensitive_names,
-                                                    stream,
-                                                    mr,
-                                                    aligned_mr);
+                                                                          filter_expression,
+                                                                          "col0",
+                                                                          payload_column_indices,
+                                                                          payload_column_names,
+                                                                          case_sensitive_names,
+                                                                          stream,
+                                                                          mr,
+                                                                          aligned_mr);
   }
 }
 
@@ -335,14 +335,14 @@ TEST_F(HybridScanTest, FilterDataPagesOnlyAndScanAllColumns)
 
   auto const payload_column_indices = std::vector<cudf::size_type>{1, 2};
   auto read_table                   = test_hybrid_scan_column_selection(parquet_buffer,
-                                                      filter_expression,
-                                                      "col0",
+                                                                        filter_expression,
+                                                                        "col0",
                                                                         {1, 2},
                                                                         {},
-                                                      case_sensitive_names,
-                                                      stream,
-                                                      mr,
-                                                      aligned_mr);
+                                                                        case_sensitive_names,
+                                                                        stream,
+                                                                        mr,
+                                                                        aligned_mr);
 
   // Check equivalence (equal without checking nullability) with the original table with the
   // applied boolean mask

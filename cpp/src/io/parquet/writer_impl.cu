@@ -178,9 +178,7 @@ struct aggregate_writer_metadata {
   }
 
   [[nodiscard]] bool schema_matches(std::vector<SchemaElement> const& schema) const
-  {
-    return this->schema == schema;
-  }
+  { return this->schema == schema; }
   auto& file(size_t p) { return files[p]; }
   [[nodiscard]] size_t num_files() const { return files.size(); }
 
@@ -624,16 +622,12 @@ struct leaf_schema_fn {
   template <typename T>
   void operator()()
     requires(cudf::is_nested<T>())
-  {
-    CUDF_FAIL("This functor is only meant for physical data types");
-  }
+  { CUDF_FAIL("This functor is only meant for physical data types"); }
 
   template <typename T>
   void operator()()
     requires(cudf::is_dictionary<T>())
-  {
-    CUDF_FAIL("Dictionary columns are not supported for writing");
-  }
+  { CUDF_FAIL("Dictionary columns are not supported for writing"); }
 };
 
 /**
@@ -965,9 +959,7 @@ struct parquet_column_view {
   [[nodiscard]] column_view cudf_column_view() const { return cudf_col; }
   [[nodiscard]] Type physical_type() const { return schema_node.type; }
   [[nodiscard]] ConvertedType converted_type() const
-  {
-    return schema_node.converted_type.value_or(ConvertedType::UNKNOWN);
-  }
+  { return schema_node.converted_type.value_or(ConvertedType::UNKNOWN); }
 
   // Checks to see if the given column has a fixed-width data type. This doesn't
   // check every value, so it assumes string and list columns are not fixed-width, even
@@ -1125,8 +1117,8 @@ parquet_column_device_view parquet_column_view::get_device_view(cuda::stream_ref
   desc.converted_type       = converted_type();
   desc.output_as_byte_array = schema_node.output_as_byte_array;
 
-  desc.level_bits = CompactProtocolReader::NumRequiredBits(max_rep_level()) << 4 |
-                    CompactProtocolReader::NumRequiredBits(max_def_level());
+  desc.level_bits         = CompactProtocolReader::NumRequiredBits(max_rep_level()) << 4 |
+                            CompactProtocolReader::NumRequiredBits(max_def_level());
   desc.nullability        = _d_nullability.data();
   desc.max_def_level      = _max_def_level;
   desc.max_rep_level      = _max_rep_level;
@@ -2849,9 +2841,7 @@ void writer::write(table_view const& table, std::vector<partition_info> const& p
 // Forward to implementation
 std::unique_ptr<std::vector<uint8_t>> writer::close(
   std::vector<std::string> const& column_chunks_file_path)
-{
-  return _impl->close(column_chunks_file_path);
-}
+{ return _impl->close(column_chunks_file_path); }
 
 std::unique_ptr<std::vector<uint8_t>> writer::merge_row_group_metadata(
   std::vector<std::unique_ptr<std::vector<uint8_t>>> const& metadata_list)

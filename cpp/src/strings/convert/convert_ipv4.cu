@@ -73,11 +73,11 @@ std::unique_ptr<column> ipv4_to_integers(strings_column_view const& input,
   auto strings_column = column_device_view::create(input.parent(), stream);
   // create output column copying the strings' null-mask
   auto results   = make_numeric_column(data_type{type_id::UINT32},
-                                     strings_count,
-                                     cudf::detail::copy_bitmask(input.parent(), stream, mr),
-                                     input.null_count(),
-                                     stream,
-                                     mr);
+                                       strings_count,
+                                       cudf::detail::copy_bitmask(input.parent(), stream, mr),
+                                       input.null_count(),
+                                       stream,
+                                       mr);
   auto d_results = results->mutable_view().data<uint32_t>();
   // fill output column with ipv4 integers
   thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
@@ -174,11 +174,11 @@ std::unique_ptr<column> is_ipv4(strings_column_view const& input,
   auto d_column       = *strings_column;
   // create output column
   auto results   = make_numeric_column(data_type{type_id::BOOL8},
-                                     input.size(),
-                                     cudf::detail::copy_bitmask(input.parent(), stream, mr),
-                                     input.null_count(),
-                                     stream,
-                                     mr);
+                                       input.size(),
+                                       cudf::detail::copy_bitmask(input.parent(), stream, mr),
+                                       input.null_count(),
+                                       stream,
+                                       mr);
   auto d_results = results->mutable_view().data<bool>();
   thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                     cuda::counting_iterator<size_type>{0},

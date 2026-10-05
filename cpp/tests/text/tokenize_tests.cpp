@@ -200,7 +200,7 @@ TEST_F(TextTokenizeTest, Vocabulary)
                                                       "the mousé  ate  cheese",
                                                       "",
                                                       "dog"},
-                                                  validity);
+                                                     validity);
 
   auto input_view = cudf::strings_column_view(input);
   auto delimiter  = cudf::string_scalar(" ");

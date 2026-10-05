@@ -30,9 +30,7 @@ using policy_type =
 __global__ void block_index_kernel(std::uint32_t upper_hash,
                                    std::size_t num_blocks,
                                    std::uint32_t* result)
-{
-  *result = policy_type{}.block_index(upper_hash, cuco::extent<std::size_t>{num_blocks});
-}
+{ *result = policy_type{}.block_index(upper_hash, cuco::extent<std::size_t>{num_blocks}); }
 
 TEST(BloomFilterPolicyTest, UsesBlocksBeyondFormerArrowLimit)
 {

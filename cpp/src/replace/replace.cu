@@ -220,9 +220,7 @@ struct replace_kernel_forwarder {
                                            cudf::column_view const&,
                                            cuda::stream_ref,
                                            rmm::device_async_resource_ref)
-  {
-    CUDF_FAIL("No specialization exists for this type");
-  }
+  { CUDF_FAIL("No specialization exists for this type"); }
 };
 
 template <>

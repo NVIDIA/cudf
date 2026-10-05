@@ -47,9 +47,7 @@ class get_json_object_options {
    * @return true if single-quotes are allowed, false otherwise.
    */
   [[nodiscard]] CUDF_HOST_DEVICE inline bool get_allow_single_quotes() const
-  {
-    return allow_single_quotes;
-  }
+  { return allow_single_quotes; }
 
   /**
    * @brief Returns true/false depending on whether individually returned string values have
@@ -76,9 +74,7 @@ class get_json_object_options {
    * @return true if individually returned string values have their quotes stripped.
    */
   [[nodiscard]] CUDF_HOST_DEVICE inline bool get_strip_quotes_from_single_strings() const
-  {
-    return strip_quotes_from_single_strings;
-  }
+  { return strip_quotes_from_single_strings; }
 
   /**
    * @brief Whether a field not contained by an object is to be interpreted as null.
@@ -102,9 +98,7 @@ class get_json_object_options {
    * @return true if missing fields are interpreted as null.
    */
   [[nodiscard]] CUDF_HOST_DEVICE inline bool get_missing_fields_as_nulls() const
-  {
-    return missing_fields_as_nulls;
-  }
+  { return missing_fields_as_nulls; }
 
   /**
    * @brief Set whether single-quotes for strings are allowed.
@@ -112,9 +106,7 @@ class get_json_object_options {
    * @param _allow_single_quotes bool indicating desired behavior.
    */
   void set_allow_single_quotes(bool _allow_single_quotes)
-  {
-    allow_single_quotes = _allow_single_quotes;
-  }
+  { allow_single_quotes = _allow_single_quotes; }
 
   /**
    * @brief Set whether individually returned string values have their quotes stripped.
@@ -122,9 +114,7 @@ class get_json_object_options {
    * @param _strip_quotes_from_single_strings bool indicating desired behavior.
    */
   void set_strip_quotes_from_single_strings(bool _strip_quotes_from_single_strings)
-  {
-    strip_quotes_from_single_strings = _strip_quotes_from_single_strings;
-  }
+  { strip_quotes_from_single_strings = _strip_quotes_from_single_strings; }
 
   /**
    * @brief Set whether missing fields are interpreted as null.
@@ -132,9 +122,7 @@ class get_json_object_options {
    * @param _missing_fields_as_nulls bool indicating desired behavior.
    */
   void set_missing_fields_as_nulls(bool _missing_fields_as_nulls)
-  {
-    missing_fields_as_nulls = _missing_fields_as_nulls;
-  }
+  { missing_fields_as_nulls = _missing_fields_as_nulls; }
 };
 
 /**

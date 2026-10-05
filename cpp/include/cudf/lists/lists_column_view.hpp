@@ -107,9 +107,7 @@ class lists_column_view : private column_view {
    * @return Pointer to the first offset
    */
   [[nodiscard]] offset_iterator offsets_begin() const noexcept
-  {
-    return offsets().begin<int32_t>() + offset();
-  }
+  { return offsets().begin<int32_t>() + offset(); }
 
   /**
    * @brief Return pointer to the position that is one past the last offset
@@ -122,9 +120,7 @@ class lists_column_view : private column_view {
    * @return Pointer to one past the last offset
    */
   [[nodiscard]] offset_iterator offsets_end() const noexcept
-  {
-    return offsets_begin() + size() + 1;
-  }
+  { return offsets_begin() + size() + 1; }
 };
 /** @} */  // end of group
 }  // namespace CUDF_EXPORT cudf

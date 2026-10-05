@@ -61,9 +61,7 @@ constexpr init_flags operator~(init_flags flags) noexcept
 /// @param flag The specific flag to check for
 /// @return true if all bits in `flag` are set in `flags`, false otherwise
 constexpr bool has_flag(init_flags flags, init_flags flag) noexcept
-{
-  return (flags | flag) == flags;
-}
+{ return (flags | flag) == flags; }
 
 /// @brief Ensure the cudf global context is initialized. Only the first call to this function will
 /// have an effect, subsequent calls are no-ops regardless of the initialization flags.

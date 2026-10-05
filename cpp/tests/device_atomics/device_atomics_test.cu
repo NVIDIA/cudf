@@ -41,17 +41,13 @@ CUDF_KERNEL void gpu_atomic_test(T* result, T* data, size_t size)
 
 template <typename T, typename BinaryOp>
 constexpr inline bool is_timestamp_sum()
-{
-  return cudf::is_timestamp<T>() && std::is_same_v<BinaryOp, cudf::DeviceSum>;
-}
+{ return cudf::is_timestamp<T>() && std::is_same_v<BinaryOp, cudf::DeviceSum>; }
 // Disable SUM of TIMESTAMP types
 template <typename T,
           typename BinaryOp,
           std::enable_if_t<is_timestamp_sum<T, BinaryOp>()>* = nullptr>
 __device__ T atomic_op(T* addr, T const& value, BinaryOp op)
-{
-  return {};
-}
+{ return {}; }
 
 template <typename T,
           typename BinaryOp,
@@ -89,9 +85,7 @@ CUDF_KERNEL void gpu_atomicCAS_test(T* result, T* data, size_t size)
 
 template <typename T>
 std::enable_if_t<!cudf::is_timestamp<T>(), T> accumulate(cudf::host_span<T const> xs)
-{
-  return std::accumulate(xs.begin(), xs.end(), T{0});
-}
+{ return std::accumulate(xs.begin(), xs.end(), T{0}); }
 
 template <typename T>
 std::enable_if_t<cudf::is_timestamp<T>(), T> accumulate(cudf::host_span<T const> xs)
@@ -253,9 +247,7 @@ TYPED_TEST(AtomicsTest, atomicCASRandom)
 }
 
 __global__ void test_single_atomic_add_kernel(__int128_t* target, __int128_t value)
-{
-  cudf::detail::atomic_add(target, value);
-}
+{ cudf::detail::atomic_add(target, value); }
 
 class Atomic128Test : public cudf::test::BaseFixture {
  public:

@@ -38,11 +38,11 @@ std::unique_ptr<column> contains_dictionary(column_view const& haystack_in,
   column_view const haystack_indices = haystack_view.get_indices_annotated();
   column_view const needles_indices  = needles_view.get_indices_annotated();
   auto result_v                      = detail::contains(table_view{{haystack_indices}},
-                                   table_view{{needles_indices}},
-                                   null_equality::EQUAL,
-                                   nan_equality::ALL_EQUAL,
-                                   stream,
-                                   mr);
+                                                        table_view{{needles_indices}},
+                                                        null_equality::EQUAL,
+                                                        nan_equality::ALL_EQUAL,
+                                                        stream,
+                                                        mr);
   return std::make_unique<column>(std::move(result_v),
                                   detail::copy_bitmask(needles_indices, stream, mr),
                                   needles_indices.null_count());

@@ -60,9 +60,7 @@ std::pair<cuda::device_buffer<std::byte>, bitmask_type const*> build_row_bitmask
 struct row_is_null {
   bitmask_type const* _row_bitmask;
   __device__ bool operator()(size_type i) const noexcept
-  {
-    return !cudf::bit_is_set(_row_bitmask, i);
-  }
+  { return !cudf::bit_is_set(_row_bitmask, i); }
 };
 
 static constexpr int32_t mark_block_size = 1024;
@@ -103,14 +101,10 @@ class mark_join_prefilter_operator {
   }
 
   __device__ constexpr __forceinline__ ElementType accept(ElementType const& slot) const
-  {
-    return slot;
-  }
+  { return slot; }
 
   __device__ __forceinline__ auto get_bucket(cudf::size_type index) const
-  {
-    return _iterator + index;
-  }
+  { return _iterator + index; }
 
   __device__ constexpr __forceinline__ cudf::size_type num_buckets() const { return _num_elements; }
 

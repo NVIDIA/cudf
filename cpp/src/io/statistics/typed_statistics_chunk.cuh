@@ -48,44 +48,32 @@ class union_member {
   template <typename T, typename U>
   __device__ static type<T, U> get(U& val)
     requires(std::is_integral_v<T> and std::is_unsigned_v<T>)
-  {
-    return val.u_val;
-  }
+  { return val.u_val; }
 
   template <typename T, typename U>
   __device__ static type<T, U> get(U& val)
     requires(std::is_integral_v<T> and std::is_signed_v<T>)
-  {
-    return val.i_val;
-  }
+  { return val.i_val; }
 
   template <typename T, typename U>
   __device__ static type<T, U> get(U& val)
     requires(std::is_same_v<T, __int128_t>)
-  {
-    return val.d128_val;
-  }
+  { return val.d128_val; }
 
   template <typename T, typename U>
   __device__ static type<T, U> get(U& val)
     requires(std::is_floating_point_v<T>)
-  {
-    return val.fp_val;
-  }
+  { return val.fp_val; }
 
   template <typename T, typename U>
   __device__ static type<T, U> get(U& val)
     requires(std::is_same_v<T, string_view>)
-  {
-    return val.str_val;
-  }
+  { return val.str_val; }
 
   template <typename T, typename U>
   __device__ static type<T, U> get(U& val)
     requires(std::is_same_v<T, statistics::byte_array_view>)
-  {
-    return val.byte_val;
-  }
+  { return val.byte_val; }
 };
 
 /**

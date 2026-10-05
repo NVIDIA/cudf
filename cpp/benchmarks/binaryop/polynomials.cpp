@@ -70,10 +70,10 @@ static void BM_binaryop_polynomials(nvbench::state& state)
                                             cudf::data_type{cudf::type_to_id<key_type>()},
                                             stream);
       auto sum     = cudf::binary_operation(product->view(),
-                                        constants[i + 1],
-                                        cudf::binary_operator::ADD,
-                                        cudf::data_type{cudf::type_to_id<key_type>()},
-                                        stream);
+                                            constants[i + 1],
+                                            cudf::binary_operator::ADD,
+                                            cudf::data_type{cudf::type_to_id<key_type>()},
+                                            stream);
       intermediates.push_back(std::move(product));
       intermediates.push_back(std::move(result));
       result = std::move(sum);

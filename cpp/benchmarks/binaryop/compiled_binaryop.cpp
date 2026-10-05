@@ -44,13 +44,11 @@ void BM_compiled_binaryop(nvbench::state& state, cudf::binary_operator binop)
 #define BM_STRINGIFY(a) #a
 
 // TODO tparam boolean for null.
-#define BM_BINARYOP_BENCHMARK_DEFINE(name, lhs, rhs, bop, tout)               \
-  static void name(::nvbench::state& st)                                      \
-  {                                                                           \
-    ::BM_compiled_binaryop<lhs, rhs, tout>(st, ::cudf::binary_operator::bop); \
-  }                                                                           \
-  NVBENCH_BENCH(name)                                                         \
-    .set_name("compiled_binary_op_" BM_STRINGIFY(name))                       \
+#define BM_BINARYOP_BENCHMARK_DEFINE(name, lhs, rhs, bop, tout)                 \
+  static void name(::nvbench::state& st)                                        \
+  { ::BM_compiled_binaryop<lhs, rhs, tout>(st, ::cudf::binary_operator::bop); } \
+  NVBENCH_BENCH(name)                                                           \
+    .set_name("compiled_binary_op_" BM_STRINGIFY(name))                         \
     .add_int64_axis("num_rows", {10'000, 100'000, 1'000'000, 10'000'000, 100'000'000})
 
 #define build_name(a, b, c, d) a##_##b##_##c##_##d
@@ -199,9 +197,7 @@ __device__ void transform(float* out, float a, float b) {
 
 #define BM_JIT_BINARYOP_BENCHMARK_DEFINE(name, lhs, rhs, bop, tout)                    \
   static void name(::nvbench::state& st)                                               \
-  {                                                                                    \
-    ::BM_jit_binaryop<lhs, rhs, tout>(st, ::cudf::binary_operator::bop);               \
-  }                                                                                    \
+  { ::BM_jit_binaryop<lhs, rhs, tout>(st, ::cudf::binary_operator::bop); }             \
   NVBENCH_BENCH(name)                                                                  \
     .set_name("jit_binary_op_" BM_STRINGIFY(name))                                     \
     .add_int64_axis("num_rows", {10'000, 100'000, 1'000'000, 10'000'000, 100'000'000}) \

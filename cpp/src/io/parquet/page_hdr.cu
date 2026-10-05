@@ -55,9 +55,7 @@ struct byte_stream_s {
  * @return Current byte pointed to by the byte stream
  */
 inline __device__ unsigned int getb(byte_stream_s* bs)
-{
-  return (bs->cur < bs->end) ? *bs->cur++ : 0;
-}
+{ return (bs->cur < bs->end) ? *bs->cur++ : 0; }
 
 inline __device__ void skip_bytes(byte_stream_s* bs, size_t bytecnt)
 {
@@ -162,9 +160,7 @@ __device__ void skip_struct_field(byte_stream_s* bs, int field_type)
  * @return True if the column chunk has nesting
  */
 __device__ inline bool is_nested(ColumnChunkDesc const& chunk)
-{
-  return chunk.max_nesting_depth > 1;
-}
+{ return chunk.max_nesting_depth > 1; }
 
 /**
  * @brief Check if the column chunk is a list type
@@ -174,9 +170,7 @@ __device__ inline bool is_nested(ColumnChunkDesc const& chunk)
  * @return True if the column chunk is a list type
  */
 __device__ inline bool is_list(ColumnChunkDesc const& chunk)
-{
-  return chunk.max_level[level_type::REPETITION] > 0;
-}
+{ return chunk.max_level[level_type::REPETITION] > 0; }
 
 /**
  * @brief Check if the column chunk is a byte array type
@@ -186,9 +180,7 @@ __device__ inline bool is_list(ColumnChunkDesc const& chunk)
  * @return True if the column chunk is a byte array type
  */
 __device__ inline bool is_byte_array(ColumnChunkDesc const& chunk)
-{
-  return chunk.physical_type == Type::BYTE_ARRAY;
-}
+{ return chunk.physical_type == Type::BYTE_ARRAY; }
 
 /**
  * @brief Check if the column chunk is a boolean type
@@ -198,9 +190,7 @@ __device__ inline bool is_byte_array(ColumnChunkDesc const& chunk)
  * @return True if the column chunk is a boolean type
  */
 __device__ inline bool is_boolean(ColumnChunkDesc const& chunk)
-{
-  return chunk.physical_type == Type::BOOLEAN;
-}
+{ return chunk.physical_type == Type::BOOLEAN; }
 
 /**
  * @brief Determine which decode kernel to run for the given page.
@@ -337,9 +327,7 @@ struct ParquetFieldStruct {
   __device__ ParquetFieldStruct(int f) : field(f) {}
 
   inline __device__ bool operator()(byte_stream_s* bs, int field_type)
-  {
-    return ((static_cast<FieldType>(field_type) != FieldType::STRUCT) || !op(bs));
-  }
+  { return ((static_cast<FieldType>(field_type) != FieldType::STRUCT) || !op(bs)); }
 };
 
 /**

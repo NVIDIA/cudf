@@ -54,9 +54,7 @@ struct SHA224Hash : HashBase<SHA224Hash> {
 std::unique_ptr<column> sha224(table_view const& input,
                                cuda::stream_ref stream,
                                rmm::device_async_resource_ref mr)
-{
-  return sha_hash<SHA224Hash>(input, stream, mr);
-}
+{ return sha_hash<SHA224Hash>(input, stream, mr); }
 
 }  // namespace detail
 

@@ -159,14 +159,10 @@ void orc_read_io_compression(nvbench::state& state)
 }
 
 void BM_orc_read_io_compression(nvbench::state& state)
-{
-  return orc_read_io_compression<false>(state);
-}
+{ return orc_read_io_compression<false>(state); }
 
 void BM_orc_chunked_read_io_compression(nvbench::state& state)
-{
-  return orc_read_io_compression<true>(state);
-}
+{ return orc_read_io_compression<true>(state); }
 
 using d_type_list = nvbench::enum_type_list<data_type::INTEGRAL_SIGNED,
                                             data_type::FLOAT,

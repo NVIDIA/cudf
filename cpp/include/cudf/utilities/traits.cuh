@@ -28,16 +28,12 @@ namespace CUDF_EXPORT cudf {
  */
 template <typename T>
 constexpr inline bool has_atomic_support()
-{
-  return cuda::std::atomic<T>::is_always_lock_free;
-}
+{ return cuda::std::atomic<T>::is_always_lock_free; }
 
 struct has_atomic_support_impl {
   template <typename T>
   constexpr bool operator()()
-  {
-    return has_atomic_support<T>();
-  }
+  { return has_atomic_support<T>(); }
 };
 
 /**
@@ -48,9 +44,7 @@ struct has_atomic_support_impl {
  * @return false `type` no support for atomics
  */
 constexpr inline bool has_atomic_support(data_type type)
-{
-  return cudf::type_dispatcher(type, has_atomic_support_impl{});
-}
+{ return cudf::type_dispatcher(type, has_atomic_support_impl{}); }
 
 /** @} */
 

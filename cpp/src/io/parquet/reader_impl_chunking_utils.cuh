@@ -44,9 +44,7 @@ void print_cumulative_page_info(device_span<PageInfo const> d_pages,
  */
 template <typename T = uint8_t>
 [[nodiscard]] constexpr inline T required_bits(uint32_t max_level)
-{
-  return static_cast<T>(CompactProtocolReader::NumRequiredBits(max_level));
-}
+{ return static_cast<T>(CompactProtocolReader::NumRequiredBits(max_level)); }
 
 /**
  * @brief Returns the cudf compression type and whether it is supported by the parquet writer
@@ -338,9 +336,7 @@ struct get_span_size {
 struct get_span_size_by_index {
   cudf::device_span<page_span const> page_indices;
   __device__ inline size_t operator()(size_t i) const
-  {
-    return i >= page_indices.size() ? 0 : page_indices[i].end - page_indices[i].start;
-  }
+  { return i >= page_indices.size() ? 0 : page_indices[i].end - page_indices[i].start; }
 };
 
 /**
@@ -349,9 +345,7 @@ struct get_span_size_by_index {
 struct get_page_span_by_column {
   cudf::device_span<size_type const> page_offsets;
   __device__ inline page_span operator()(size_t i) const
-  {
-    return {static_cast<size_t>(page_offsets[i]), static_cast<size_t>(page_offsets[i + 1])};
-  }
+  { return {static_cast<size_t>(page_offsets[i]), static_cast<size_t>(page_offsets[i + 1])}; }
 };
 
 /**
@@ -368,9 +362,7 @@ struct get_page_end_row_index {
 struct cumulative_page_sum {
   __device__ inline cumulative_page_info operator()(cumulative_page_info const& a,
                                                     cumulative_page_info const& b) const
-  {
-    return cumulative_page_info{0, a.size_bytes + b.size_bytes, a.key};
-  }
+  { return cumulative_page_info{0, a.size_bytes + b.size_bytes, a.key}; }
 };
 
 /**
@@ -378,9 +370,7 @@ struct cumulative_page_sum {
  */
 struct get_chunk_compressed_size {
   __device__ inline size_t operator()(ColumnChunkDesc const& chunk) const
-  {
-    return chunk.compressed_size;
-  }
+  { return chunk.compressed_size; }
 };
 
 /**
@@ -499,9 +489,7 @@ struct row_counts_nonzero {
 struct row_counts_different {
   size_type const expected;
   __device__ inline bool operator()(size_type count) const
-  {
-    return (count != 0) && (count != expected);
-  }
+  { return (count != 0) && (count != expected); }
 };
 
 /**
@@ -542,9 +530,7 @@ __device__ inline size_t row_size_functor::operator()<list_view>(size_t num_rows
 
 template <>
 __device__ inline size_t row_size_functor::operator()<struct_view>(size_t num_rows, bool nullable)
-{
-  return validity_size(num_rows, nullable);
-}
+{ return validity_size(num_rows, nullable); }
 
 template <>
 __device__ inline size_t row_size_functor::operator()<string_view>(size_t num_rows, bool nullable)

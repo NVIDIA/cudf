@@ -210,10 +210,10 @@ struct MixedJoinTest : public cudf::test::BaseFixture {
     auto device_results_to_host = [](PairJoinReturn const& result) {
       // Create column views from device_uvectors
       auto left_view  = cudf::column_view(cudf::data_type{cudf::type_to_id<cudf::size_type>()},
-                                         result.first->size(),
-                                         result.first->data(),
-                                         nullptr,
-                                         0);
+                                          result.first->size(),
+                                          result.first->data(),
+                                          nullptr,
+                                          0);
       auto right_view = cudf::column_view(cudf::data_type{cudf::type_to_id<cudf::size_type>()},
                                           result.second->size(),
                                           result.second->data(),
@@ -486,9 +486,7 @@ struct MixedInnerJoinTest : public MixedJoinPairReturnTest<T> {
 TYPED_TEST_SUITE(MixedInnerJoinTest, cudf::test::IntegralTypesNotBool);
 
 TYPED_TEST(MixedInnerJoinTest, Empty)
-{
-  this->test({}, {}, {}, {}, left_zero_eq_right_zero, {}, {});
-}
+{ this->test({}, {}, {}, {}, left_zero_eq_right_zero, {}, {}); }
 
 TYPED_TEST(MixedInnerJoinTest, BasicEquality)
 {
@@ -1014,10 +1012,10 @@ TEST_F(MixedInnerJoinTest2, JitOnlyPredicate)
   //   (2,2): 0b0111^0b0001 = popcount 2 → FAIL
   //   (3,3): 0b1111^0b0000 = popcount 4 → FAIL
   auto left_view  = cudf::column_view(cudf::data_type{cudf::type_to_id<cudf::size_type>()},
-                                     result.first->size(),
-                                     result.first->data(),
-                                     nullptr,
-                                     0);
+                                      result.first->size(),
+                                      result.first->data(),
+                                      nullptr,
+                                      0);
   auto right_view = cudf::column_view(cudf::data_type{cudf::type_to_id<cudf::size_type>()},
                                       result.second->size(),
                                       result.second->data(),
@@ -2183,18 +2181,12 @@ TEST_F(FilteredFullJoinTest, DuplicateRightMixedMatches) { test({1}, {10}, {1, 1
 TEST_F(FilteredFullJoinTest, DuplicateRightAllFail) { test({1}, {1}, {1, 1}, {5, 15}); }
 TEST_F(FilteredFullJoinTest, DuplicateLeftMixedMatches) { test({1, 1}, {5, 15}, {1}, {10}); }
 TEST_F(FilteredFullJoinTest, DuplicateRightNull)
-{
-  test({1}, {10}, {1, 1}, {5, 15}, {}, {true, false});
-}
+{ test({1}, {10}, {1, 1}, {5, 15}, {}, {true, false}); }
 TEST_F(FilteredFullJoinTest, DuplicateLeftNull)
-{
-  test({1, 1}, {15, 15}, {1}, {10}, {true, false});
-}
+{ test({1, 1}, {15, 15}, {1}, {10}, {true, false}); }
 TEST_F(FilteredFullJoinTest, ManyToManyAllPass) { test({1, 1}, {10, 10}, {1, 1}, {5, 5}); }
 TEST_F(FilteredFullJoinTest, UnmatchedBothSides)
-{
-  test({1, 1, 2}, {10, 20, 30}, {1, 1, 3}, {5, 15, 25});
-}
+{ test({1, 1, 2}, {10, 20, 30}, {1, 1, 3}, {5, 15, 25}); }
 TEST_F(FilteredFullJoinTest, EmptyLeft) { test({}, {}, {1, 1}, {5, 15}); }
 TEST_F(FilteredFullJoinTest, EmptyRight) { test({1, 1}, {5, 15}, {}, {}); }
 TEST_F(FilteredFullJoinTest, BothEmpty) { test({}, {}, {}, {}); }
@@ -2224,6 +2216,4 @@ TEST_F(FilteredFullJoinTest, EmptyMapsWithNonemptyTables)
 }
 
 TEST_F(FilteredFullJoinTest, ManyToManyMixedMatches)
-{
-  test({1, 1, 1, 2, 3}, {1, 10, 20, 30, 40}, {1, 1, 1, 2, 4}, {5, 15, 25, 35, 45});
-}
+{ test({1, 1, 1, 2, 3}, {1, 10, 20, 30, 40}, {1, 1, 1, 2, 4}, {5, 15, 25, 35, 45}); }

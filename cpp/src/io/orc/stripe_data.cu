@@ -361,9 +361,7 @@ static __device__ void bytestream_fill(orc_bytestream_s* bs, int t)
  * @return byte
  */
 inline __device__ uint8_t bytestream_readbyte(orc_bytestream_s* bs, int pos)
-{
-  return bs->buf.u8[pos & (bytestream_buffer_size - 1)];
-}
+{ return bs->buf.u8[pos & (bytestream_buffer_size - 1)]; }
 
 /**
  * @brief Read 32 bits from a byte stream (little endian, byte aligned)
@@ -450,9 +448,7 @@ inline __device__ void bytestream_readbe(orc_bytestream_s* bs,
                                          int bitpos,
                                          uint32_t numbits,
                                          uint32_t& result)
-{
-  result = bytestream_readbits(bs, bitpos, numbits);
-}
+{ result = bytestream_readbits(bs, bitpos, numbits); }
 
 /**
  * @brief Decode a big-endian signed 32-bit value
@@ -483,9 +479,7 @@ inline __device__ void bytestream_readbe(orc_bytestream_s* bs,
                                          int bitpos,
                                          uint32_t numbits,
                                          uint64_t& result)
-{
-  result = bytestream_readbits64(bs, bitpos, numbits);
-}
+{ result = bytestream_readbits64(bs, bitpos, numbits); }
 
 /**
  * @brief Decode a big-endian signed 64-bit value
@@ -1352,7 +1346,7 @@ CUDF_KERNEL void __launch_bounds__(block_size)
       s->top.nulls_desc_row = begin_row;
       auto const strm_ofs   = by_rowgroup
                                 ? min(row_groups[rowgroup_idx][column].strm_offset[CI_PRESENT],
-                                    s->chunk.strm_len[CI_PRESENT])
+                                      s->chunk.strm_len[CI_PRESENT])
                                 : 0;
       bytestream_init(&s->bs,
                       s->chunk.streams[CI_PRESENT] + strm_ofs,
@@ -1687,7 +1681,7 @@ CUDF_KERNEL void __launch_bounds__(block_size)
       s->chunk.num_rows -= rowgroup_rowofs;
     }
     s->is_string               = (s->chunk.type_kind == STRING || s->chunk.type_kind == BINARY ||
-                    s->chunk.type_kind == VARCHAR || s->chunk.type_kind == CHAR);
+                                  s->chunk.type_kind == VARCHAR || s->chunk.type_kind == CHAR);
     s->top.data.cur_row        = max(s->chunk.start_row, max(first_row - s->chunk.skip_count, 0ul));
     s->top.data.end_row        = s->chunk.start_row + s->chunk.num_rows;
     s->top.data.buffered_count = 0;

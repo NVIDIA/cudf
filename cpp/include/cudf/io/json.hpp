@@ -338,9 +338,7 @@ class json_reader_options {
    * @return true if leading zeros are allowed in numeric values
    */
   [[nodiscard]] bool is_allowed_numeric_leading_zeros() const
-  {
-    return _allow_numeric_leading_zeros;
-  }
+  { return _allow_numeric_leading_zeros; }
 
   /**
    * @brief Whether unquoted number values should be allowed NaN, +INF, -INF, +Infinity, Infinity,
@@ -361,9 +359,7 @@ class json_reader_options {
    * @return true if unquoted control chars are allowed.
    */
   [[nodiscard]] bool is_allowed_unquoted_control_chars() const
-  {
-    return _allow_unquoted_control_chars;
-  }
+  { return _allow_unquoted_control_chars; }
 
   /**
    * @brief Returns additional values to recognize as null values.
@@ -1455,9 +1451,7 @@ void write_json(json_writer_options const& options,
 struct is_supported_json_write_type_fn {
   template <typename T>
   constexpr bool operator()() const
-  {
-    return cudf::io::detail::is_convertible_to_string_column<T>();
-  }
+  { return cudf::io::detail::is_convertible_to_string_column<T>(); }
 };
 /// @endcond
 
@@ -1468,9 +1462,7 @@ struct is_supported_json_write_type_fn {
  * @return true if the type is supported for JSON writing, false otherwise.
  */
 constexpr bool is_supported_write_json(data_type type)
-{
-  return cudf::type_dispatcher(type, is_supported_json_write_type_fn{});
-}
+{ return cudf::type_dispatcher(type, is_supported_json_write_type_fn{}); }
 
 /** @} */  // end of group
 }  // namespace io

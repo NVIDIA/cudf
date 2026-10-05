@@ -39,27 +39,19 @@ static constexpr hash_value_type mark_bit_mask = hash_value_type{1}
                                                  << (sizeof(hash_value_type) * 8 - 1);
 
 CUDF_HOST_DEVICE constexpr hash_value_type set_mark(hash_value_type value) noexcept
-{
-  return value | mark_bit_mask;
-}
+{ return value | mark_bit_mask; }
 
 CUDF_HOST_DEVICE constexpr hash_value_type unset_mark(hash_value_type value) noexcept
-{
-  return value & ~mark_bit_mask;
-}
+{ return value & ~mark_bit_mask; }
 
 CUDF_HOST_DEVICE constexpr bool is_marked(hash_value_type value) noexcept
-{
-  return (value & mark_bit_mask) != 0;
-}
+{ return (value & mark_bit_mask) != 0; }
 
 struct masked_hash_fn {
   template <typename T>
   CUDF_HOST_DEVICE constexpr hash_value_type operator()(
     cuco::pair<hash_value_type, T> const& key) const noexcept
-  {
-    return unset_mark(key.first);
-  }
+  { return unset_mark(key.first); }
 };
 
 struct secondary_hash_fn {
@@ -70,9 +62,7 @@ struct secondary_hash_fn {
 
   template <typename T>
   CUDF_HOST_DEVICE auto operator()(cuco::pair<hash_value_type, T> const& key) const noexcept
-  {
-    return cuco::xxhash_32<hash_value_type>{_seed}(unset_mark(key.first));
-  }
+  { return cuco::xxhash_32<hash_value_type>{_seed}(unset_mark(key.first)); }
 };
 
 template <typename T, typename Hasher>
@@ -80,9 +70,7 @@ struct masked_key_fn {
   CUDF_HOST_DEVICE constexpr masked_key_fn(Hasher const& hasher) : _hasher{hasher} {}
 
   __device__ __forceinline__ cuco::pair<hash_value_type, T> operator()(size_type i) const noexcept
-  {
-    return cuco::pair{unset_mark(_hasher(i)), T{i}};
-  }
+  { return cuco::pair{unset_mark(_hasher(i)), T{i}}; }
 
  private:
   Hasher _hasher;
@@ -93,9 +81,7 @@ struct masked_hash_value_fn {
   CUDF_HOST_DEVICE constexpr masked_hash_value_fn(Hasher const& hasher) : _hasher{hasher} {}
 
   __device__ __forceinline__ hash_value_type operator()(size_type i) const noexcept
-  {
-    return unset_mark(_hasher(i));
-  }
+  { return unset_mark(_hasher(i)); }
 
  private:
   Hasher _hasher;
@@ -107,9 +93,7 @@ struct hash_pair_fn {
 
   __device__ __forceinline__ cuco::pair<hash_value_type, IndexType> operator()(
     size_type i) const noexcept
-  {
-    return cuco::pair{_hashes[i], IndexType{i}};
-  }
+  { return cuco::pair{_hashes[i], IndexType{i}}; }
 
  private:
   hash_value_type const* _hashes;
@@ -145,9 +129,7 @@ struct insertion_adapter {
   __device__ constexpr bool operator()(
     cuco::pair<hash_value_type, lhs_index_type> const&,
     cuco::pair<hash_value_type, lhs_index_type> const&) const noexcept
-  {
-    return false;
-  }
+  { return false; }
 };
 
 static constexpr uint32_t mark_join_cg_size{1};

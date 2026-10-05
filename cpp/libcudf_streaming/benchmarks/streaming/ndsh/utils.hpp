@@ -216,9 +216,7 @@ enum class CommType : std::uint8_t {
 
 [[nodiscard]] constexpr std::array<std::string_view, static_cast<std::size_t>(CommType::MAX)>
 comm_type_names()
-{
-  return {"single", "mpi", "ucxx"};
-}
+{ return {"single", "mpi", "ucxx"}; }
 
 [[nodiscard]] bool is_comm_type_available(CommType comm_type);
 

@@ -89,14 +89,10 @@ class stream_checking_resource_adaptor final {
   }
 
   bool operator==(stream_checking_resource_adaptor const& other) const noexcept
-  {
-    return get_upstream_resource() == other.get_upstream_resource();
-  }
+  { return get_upstream_resource() == other.get_upstream_resource(); }
 
   bool operator!=(stream_checking_resource_adaptor const& other) const noexcept
-  {
-    return !(*this == other);
-  }
+  { return !(*this == other); }
 
   friend void get_property(stream_checking_resource_adaptor const&,
                            cuda::mr::device_accessible) noexcept

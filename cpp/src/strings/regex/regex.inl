@@ -131,14 +131,10 @@ struct reljunk {
 __device__ __forceinline__ reinst reprog_device::get_inst(int32_t id) const { return _insts[id]; }
 
 __device__ __forceinline__ reclass_device reprog_device::get_class(int32_t id) const
-{
-  return _classes[id];
-}
+{ return _classes[id]; }
 
 __device__ __forceinline__ bool reprog_device::is_empty() const
-{
-  return insts_counts() == 0 || get_inst(0).type == END;
-}
+{ return insts_counts() == 0 || get_inst(0).type == END; }
 
 __device__ __forceinline__ void reprog_device::store(void* buffer) const
 {
@@ -413,9 +409,7 @@ __device__ __forceinline__ match_result reprog_device::find(int32_t const thread
                                                             string_view const dstr,
                                                             string_view::const_iterator begin,
                                                             cudf::size_type end) const
-{
-  return call_regexec<P>(thread_idx, dstr, begin, end);
-}
+{ return call_regexec<P>(thread_idx, dstr, begin, end); }
 
 __device__ __forceinline__ match_result reprog_device::extract(int32_t const thread_idx,
                                                                string_view const dstr,

@@ -34,9 +34,7 @@
 namespace cudf {
 namespace {
 inline bool __device__ out_of_bounds(size_type size, size_type idx)
-{
-  return idx < 0 || idx >= size;
-}
+{ return idx < 0 || idx >= size; }
 
 std::pair<cuda::device_buffer<std::byte>, size_type> create_null_mask(
   column_device_view const& input,
@@ -62,9 +60,7 @@ struct shift_functor {
   template <typename T, typename... Args>
   std::unique_ptr<column> operator()(Args&&...)
     requires(not cudf::is_fixed_width<T>() and not std::is_same_v<cudf::string_view, T>)
-  {
-    CUDF_FAIL("shift only supports fixed-width or string types.", cudf::data_type_error);
-  }
+  { CUDF_FAIL("shift only supports fixed-width or string types.", cudf::data_type_error); }
 
   template <typename T, typename... Args>
   std::unique_ptr<column> operator()(column_view const& input,

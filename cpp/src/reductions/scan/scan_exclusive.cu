@@ -74,9 +74,7 @@ struct scan_dispatcher {
   template <typename T, typename... Args>
   std::unique_ptr<column> operator()(Args&&...)
     requires(not cuda::std::is_arithmetic_v<T>)
-  {
-    CUDF_FAIL("Non-arithmetic types not supported for exclusive scan");
-  }
+  { CUDF_FAIL("Non-arithmetic types not supported for exclusive scan"); }
 };
 
 }  // namespace

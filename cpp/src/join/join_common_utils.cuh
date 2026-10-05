@@ -22,9 +22,7 @@ struct pair_fn {
   CUDF_HOST_DEVICE pair_fn(Hasher hash) : _hash{std::move(hash)} {}
 
   __device__ cuco::pair<hash_value_type, size_type> operator()(size_type i) const noexcept
-  {
-    return cuco::pair{_hash(i), i};
-  }
+  { return cuco::pair{_hash(i), i}; }
 
  private:
   Hasher _hash;
@@ -38,9 +36,7 @@ class row_is_valid {
   row_is_valid(bitmask_type const* row_bitmask) : _row_bitmask{row_bitmask} {}
 
   __device__ bool operator()(size_type const& i) const noexcept
-  {
-    return cudf::bit_is_set(_row_bitmask, i);
-  }
+  { return cudf::bit_is_set(_row_bitmask, i); }
 
  private:
   bitmask_type const* _row_bitmask;
@@ -55,9 +51,7 @@ struct valid_range {
   __host__ __device__ valid_range(T const begin, T const end) : start(begin), stop(end) {}
 
   __host__ __device__ __forceinline__ bool operator()(T const index)
-  {
-    return ((index >= start) && (index < stop));
-  }
+  { return ((index >= start) && (index < stop)); }
 };
 
 }  // namespace cudf::detail

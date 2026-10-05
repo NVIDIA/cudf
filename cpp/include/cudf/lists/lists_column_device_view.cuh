@@ -66,9 +66,7 @@ class lists_column_device_view : private column_device_view {
    * @return The offsets column of the underlying list column
    */
   [[nodiscard]] __device__ inline column_device_view offsets() const
-  {
-    return column_device_view::child(lists_column_view::offsets_column_index);
-  }
+  { return column_device_view::child(lists_column_view::offsets_column_index); }
 
   /**
    * @brief Fetches the list offset value at a given row index while taking column offset into
@@ -78,9 +76,7 @@ class lists_column_device_view : private column_device_view {
    * @return The list offset value at a given row index while taking column offset into account
    */
   [[nodiscard]] __device__ inline size_type offset_at(size_type idx) const
-  {
-    return offsets().size() > 0 ? offsets().element<int32_t>(offset() + idx) : 0;
-  }
+  { return offsets().size() > 0 ? offsets().element<int32_t>(offset() + idx) : 0; }
 
   /**
    * @brief Fetches the child column of the underlying list column.
@@ -88,9 +84,7 @@ class lists_column_device_view : private column_device_view {
    * @return The child column of the underlying list column
    */
   [[nodiscard]] __device__ inline column_device_view child() const
-  {
-    return column_device_view::child(lists_column_view::child_column_index);
-  }
+  { return column_device_view::child(lists_column_view::child_column_index); }
 
   /**
    * @brief Fetches the child column of the underlying list column with offset and size applied

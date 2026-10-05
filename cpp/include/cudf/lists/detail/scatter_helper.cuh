@@ -59,9 +59,7 @@ struct unbound_list_view {
                                       cudf::lists_column_device_view const& lists_column,
                                       size_type const& row_index)
     : _label{scatter_source_label}, _row_index{row_index}
-  {
-    _size = list_device_view{lists_column, row_index}.size();
-  }
+  { _size = list_device_view{lists_column, row_index}.size(); }
 
   /**
    * @brief __device__ Constructor, for use when constructing the child column

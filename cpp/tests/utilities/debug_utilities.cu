@@ -100,9 +100,7 @@ namespace {
 template <typename T>
 static auto numeric_to_string_precise(T value)
   requires(std::is_integral_v<T>)
-{
-  return std::to_string(value);
-}
+{ return std::to_string(value); }
 
 template <typename T>
 static auto numeric_to_string_precise(T value)
@@ -509,29 +507,21 @@ std::string to_string(std::vector<bitmask_type> const& null_mask,
 std::vector<std::string> to_strings(cudf::column_view const& col,
                                     cuda::stream_ref stream,
                                     cudf::memory_resources mr)
-{
-  return detail::to_strings(col, "", stream, mr);
-}
+{ return detail::to_strings(col, "", stream, mr); }
 
 std::string to_string(cudf::column_view const& col,
                       std::string const& delimiter,
                       cuda::stream_ref stream,
                       cudf::memory_resources mr)
-{
-  return detail::to_string(col, delimiter, "", stream, mr);
-}
+{ return detail::to_string(col, delimiter, "", stream, mr); }
 
 std::string to_string(std::vector<bitmask_type> const& null_mask, size_type null_mask_size)
-{
-  return detail::to_string(null_mask, null_mask_size);
-}
+{ return detail::to_string(null_mask, null_mask_size); }
 
 void print(cudf::column_view const& col,
            std::ostream& os,
            cuda::stream_ref stream,
            cudf::memory_resources mr)
-{
-  os << to_string(col, ",", stream, mr) << std::endl;
-}
+{ os << to_string(col, ",", stream, mr) << std::endl; }
 
 }  // namespace cudf::test

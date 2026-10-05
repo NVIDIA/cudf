@@ -65,7 +65,7 @@ rapidsmpf::streaming::Actor read_lineitem(std::shared_ptr<rapidsmpf::streaming::
                      "l_tax"             // 5
                    })
                    .build();
-  auto stream = ctx->br()->stream_pool()->get_stream();
+  auto stream  = ctx->br()->stream_pool()->get_stream();
   // l_shipdate <= DATE '1998-09-02'
   constexpr auto date = cuda::std::chrono::year_month_day(
     cuda::std::chrono::year(1998), cuda::std::chrono::month(9), cuda::std::chrono::day(2));

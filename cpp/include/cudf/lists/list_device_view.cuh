@@ -86,9 +86,7 @@ class list_device_view {
    */
   template <typename T>
   __device__ inline T element(size_type idx) const
-  {
-    return lists_column.child().element<T>(element_offset(idx));
-  }
+  { return lists_column.child().element<T>(element_offset(idx)); }
 
   /**
    * @brief Checks whether the element is null at the specified index in the list
@@ -130,9 +128,7 @@ class list_device_view {
    * @return The lists_column_device_view that contains this list
    */
   [[nodiscard]] __device__ inline lists_column_device_view const& get_column() const
-  {
-    return lists_column;
-  }
+  { return lists_column; }
 
   template <typename T>
   struct pair_accessor;
@@ -168,9 +164,7 @@ class list_device_view {
    */
   template <typename T>
   [[nodiscard]] __device__ inline const_pair_iterator<T> pair_begin() const
-  {
-    return const_pair_iterator<T>{cuda::counting_iterator<size_type>{0}, pair_accessor<T>{*this}};
-  }
+  { return const_pair_iterator<T>{cuda::counting_iterator<size_type>{0}, pair_accessor<T>{*this}}; }
 
   /**
    * @brief Fetcher for a pair iterator to one position past the last element in the
@@ -259,9 +253,7 @@ class list_device_view {
      * @return A pair of data element and its validity flag.
      */
     __device__ inline cuda::std::pair<T, bool> operator()(cudf::size_type i) const
-    {
-      return {list.element<T>(i), !list.is_null(i)};
-    }
+    { return {list.element<T>(i), !list.is_null(i)}; }
   };
 
   /**
@@ -298,24 +290,18 @@ class list_device_view {
      * @return A pair of data element and its validity flag.
      */
     __device__ inline cuda::std::pair<rep_type, bool> operator()(cudf::size_type i) const
-    {
-      return {get_rep<T>(i), !list.is_null(i)};
-    }
+    { return {get_rep<T>(i), !list.is_null(i)}; }
 
    private:
     template <typename R>
     __device__ inline rep_type get_rep(cudf::size_type i) const
       requires(std::is_same_v<R, rep_type>)
-    {
-      return list.element<R>(i);
-    }
+    { return list.element<R>(i); }
 
     template <typename R>
     __device__ inline rep_type get_rep(cudf::size_type i) const
       requires(not std::is_same_v<R, rep_type>)
-    {
-      return list.element<R>(i).value();
-    }
+    { return list.element<R>(i).value(); }
   };
 };
 
@@ -362,8 +348,6 @@ struct list_size_functor {
  * @return An iterator that returns the size of the list by row index
  */
 CUDF_HOST_DEVICE auto inline make_list_size_iterator(lists_column_device_view const& c)
-{
-  return detail::make_counting_transform_iterator(0, list_size_functor{c});
-}
+{ return detail::make_counting_transform_iterator(0, list_size_functor{c}); }
 
 }  // namespace CUDF_EXPORT cudf

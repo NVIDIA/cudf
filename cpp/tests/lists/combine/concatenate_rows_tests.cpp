@@ -78,12 +78,12 @@ TYPED_TEST(ListConcatenateRowsTypedTest, ConcatenateOneColumnWithNulls)
 {
   using ListsCol = cudf::test::lists_column_wrapper<TypeParam>;
 
-  auto const col = ListsCol{{ListsCol{{1, 2, null}, null_at(2)},
-                             ListsCol{} /*NULL*/,
-                             ListsCol{{null, 3, 4, 4, 4, 4}, null_at(0)},
-                             ListsCol{5, 6}},
-                            null_at(1)}
-                     .release();
+  auto const col     = ListsCol{{ListsCol{{1, 2, null}, null_at(2)},
+                                 ListsCol{} /*NULL*/,
+                                 ListsCol{{null, 3, 4, 4, 4, 4}, null_at(0)},
+                                 ListsCol{5, 6}},
+                                null_at(1)}
+                         .release();
   auto const results = cudf::lists::concatenate_rows(TView{{col->view()}});
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(*col, *results, verbosity);
 }
@@ -127,7 +127,7 @@ TEST_F(ListConcatenateRowsTest, SimpleInputStringsColumnsNoNull)
                                     StrListsCol{"Banana", "Kiwi", "Cherry", "Lemon", "Peach"},
                                     StrListsCol{"Coconut"}}
                           .release();
-  auto const results = cudf::lists::concatenate_rows(TView{{col1->view(), col2->view()}});
+  auto const results  = cudf::lists::concatenate_rows(TView{{col1->view(), col2->view()}});
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(*expected, *results, verbosity);
 }
 
@@ -338,12 +338,12 @@ TYPED_TEST(ListConcatenateRowsTypedTest, SlicedColumnsInputWithNulls)
                                       ListsCol{8, 9, 10}},
                                      nulls_at({1, 3, 4})}
                               .release();
-  auto const col1     = cudf::slice(col_original->view(), {0, 3})[0];
-  auto const col2     = cudf::slice(col_original->view(), {1, 4})[0];
-  auto const col3     = cudf::slice(col_original->view(), {2, 5})[0];
-  auto const col4     = cudf::slice(col_original->view(), {3, 6})[0];
-  auto const col5     = cudf::slice(col_original->view(), {4, 7})[0];
-  auto const expected = ListsCol{
+  auto const col1         = cudf::slice(col_original->view(), {0, 3})[0];
+  auto const col2         = cudf::slice(col_original->view(), {1, 4})[0];
+  auto const col3         = cudf::slice(col_original->view(), {2, 5})[0];
+  auto const col4         = cudf::slice(col_original->view(), {3, 6})[0];
+  auto const col5         = cudf::slice(col_original->view(), {4, 7})[0];
+  auto const expected     = ListsCol{
     ListsCol{{null, 2, 3, 3, null, 5, 6}, nulls_at({0, 4})},
     ListsCol{{3, null, 5, 6, 7}, null_at(1)},
     ListsCol{{3, null, 5, 6, 7, 8, 9, 10},
@@ -688,7 +688,7 @@ TEST_F(ListConcatenateRowsNestedTypesTest, Struct)
   cudf::test::structs_column_wrapper s0(std::move(s0_children));
   cudf::test::fixed_width_column_wrapper<int> l0_offsets{0, 2, 2, 5, 6, 8};
   auto const l0_size = static_cast<cudf::column_view>(l0_offsets).size() - 1;
-  auto l0            = cudf::make_lists_column(l0_size,
+  auto l0 = cudf::make_lists_column(l0_size,
                                     l0_offsets.release(),
                                     s0.release(),
                                     0,
@@ -718,7 +718,7 @@ TEST_F(ListConcatenateRowsNestedTypesTest, Struct)
   cudf::test::structs_column_wrapper s1(std::move(s1_children));
   cudf::test::fixed_width_column_wrapper<int> l1_offsets{0, 0, 4, 7, 15, 15};
   auto const l1_size = static_cast<cudf::column_view>(l1_offsets).size() - 1;
-  auto l1            = cudf::make_lists_column(l1_size,
+  auto l1 = cudf::make_lists_column(l1_size,
                                     l1_offsets.release(),
                                     s1.release(),
                                     0,
@@ -741,7 +741,7 @@ TEST_F(ListConcatenateRowsNestedTypesTest, Struct)
   cudf::test::structs_column_wrapper se(std::move(se_children));
   cudf::test::fixed_width_column_wrapper<int> le_offsets{0, 2, 6, 12, 21, 23};
   auto const le_size = static_cast<cudf::column_view>(le_offsets).size() - 1;
-  auto expected      = cudf::make_lists_column(le_size,
+  auto expected = cudf::make_lists_column(le_size,
                                           le_offsets.release(),
                                           se.release(),
                                           0,

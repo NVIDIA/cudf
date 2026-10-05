@@ -63,9 +63,7 @@ std::int32_t precision_from_standard_error(double standard_error)
  * @return The standard error for the given precision
  */
 constexpr double standard_error_from_precision(std::int32_t precision)
-{
-  return hll_constant / std::sqrt(static_cast<double>(1 << precision));
-}
+{ return hll_constant / std::sqrt(static_cast<double>(1 << precision)); }
 
 [[nodiscard]] std::int32_t check_precision(std::int32_t precision)
 {
@@ -98,9 +96,7 @@ struct row_is_valid {
   bitmask_type const* row_bitmask;
 
   __device__ bool operator()(cudf::size_type row_idx) const noexcept
-  {
-    return cudf::bit_is_set(row_bitmask, row_idx);
-  }
+  { return cudf::bit_is_set(row_bitmask, row_idx); }
 };
 
 /**
@@ -341,27 +337,19 @@ cuda::std::span<cuda::std::byte const> approx_distinct_count<Hasher>::sketch() c
 
 template <template <typename> class Hasher>
 null_policy approx_distinct_count<Hasher>::null_handling() const noexcept
-{
-  return _null_handling;
-}
+{ return _null_handling; }
 
 template <template <typename> class Hasher>
 nan_policy approx_distinct_count<Hasher>::nan_handling() const noexcept
-{
-  return _nan_handling;
-}
+{ return _nan_handling; }
 
 template <template <typename> class Hasher>
 std::int32_t approx_distinct_count<Hasher>::precision() const noexcept
-{
-  return _precision;
-}
+{ return _precision; }
 
 template <template <typename> class Hasher>
 double approx_distinct_count<Hasher>::standard_error() const noexcept
-{
-  return standard_error_from_precision(_precision);
-}
+{ return standard_error_from_precision(_precision); }
 
 // Explicit instantiation for the default hasher
 template class approx_distinct_count<cudf::hashing::detail::XXHash_64>;
@@ -402,35 +390,23 @@ approx_distinct_count::approx_distinct_count(cuda::std::span<cuda::std::byte> sk
 }
 
 void approx_distinct_count::add(table_view const& input, cuda::stream_ref stream)
-{
-  _impl->add(input, stream);
-}
+{ _impl->add(input, stream); }
 
 void approx_distinct_count::merge(approx_distinct_count const& other, cuda::stream_ref stream)
-{
-  _impl->merge(*other._impl, stream);
-}
+{ _impl->merge(*other._impl, stream); }
 
 void approx_distinct_count::merge(cuda::std::span<cuda::std::byte const> sketch_span,
                                   cuda::stream_ref stream)
-{
-  _impl->merge(sketch_span, stream);
-}
+{ _impl->merge(sketch_span, stream); }
 
 std::size_t approx_distinct_count::estimate(cuda::stream_ref stream) const
-{
-  return _impl->estimate(stream);
-}
+{ return _impl->estimate(stream); }
 
 cuda::std::span<cuda::std::byte> approx_distinct_count::sketch() noexcept
-{
-  return _impl->sketch();
-}
+{ return _impl->sketch(); }
 
 cuda::std::span<cuda::std::byte const> approx_distinct_count::sketch() const noexcept
-{
-  return _impl->sketch();
-}
+{ return _impl->sketch(); }
 
 null_policy approx_distinct_count::null_handling() const noexcept { return _impl->null_handling(); }
 
@@ -441,9 +417,7 @@ std::int32_t approx_distinct_count::precision() const noexcept { return _impl->p
 double approx_distinct_count::standard_error() const noexcept { return _impl->standard_error(); }
 
 std::size_t approx_distinct_count::sketch_bytes(std::int32_t precision)
-{
-  return impl_type::sketch_bytes(precision);
-}
+{ return impl_type::sketch_bytes(precision); }
 
 std::size_t approx_distinct_count::sketch_alignment() { return impl_type::sketch_alignment(); }
 

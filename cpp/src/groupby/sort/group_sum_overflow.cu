@@ -39,9 +39,7 @@ template <typename DeviceType>
 struct split_accumulator {
   __device__ cuda::std::tuple<DeviceType, bool> operator()(
     cudf::reduction::detail::sum_overflow_result<DeviceType> const& acc) const
-  {
-    return {acc.sum, acc.wraps != 0};
-  }
+  { return {acc.sum, acc.wraps != 0}; }
 };
 
 struct group_sum_overflow_fn {
@@ -109,9 +107,7 @@ struct group_sum_overflow_fn {
   template <typename Source, typename... Args>
     requires(!cudf::detail::sum_overflow_supported<Source>)
   std::unique_ptr<column> operator()(Args&&...) const
-  {
-    CUDF_FAIL("SUM_OVERFLOW is only supported for signed integral and fixed-point types");
-  }
+  { CUDF_FAIL("SUM_OVERFLOW is only supported for signed integral and fixed-point types"); }
 };
 
 }  // namespace

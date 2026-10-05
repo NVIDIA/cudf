@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -44,7 +44,7 @@ TEST_F(CSVTest, CSVWriter)
 
   auto const filepath = temp_env->get_temp_dir() + "multicolumn.csv";
   auto w_options      = cudf::io::csv_writer_options::builder(cudf::io::sink_info{filepath}, tab)
-                     .inter_column_delimiter(',');
+                          .inter_column_delimiter(',');
   cudf::io::write_csv(w_options.build(), cudf::test::get_default_stream());
 }
 
@@ -73,7 +73,7 @@ TEST_F(CSVTest, CSVReader)
 
   auto const filepath = temp_env->get_temp_dir() + "multicolumn.csv";
   auto w_options      = cudf::io::csv_writer_options::builder(cudf::io::sink_info{filepath}, tab)
-                     .inter_column_delimiter(',');
+                          .inter_column_delimiter(',');
   cudf::io::write_csv(w_options.build(), cudf::test::get_default_stream());
 
   auto const r_options =

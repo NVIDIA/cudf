@@ -24,9 +24,7 @@ constexpr int32_t null{0};
 
 template <class T, class... Ts>
 auto build_lists_col(T& list, Ts&... lists)
-{
-  return T(std::initializer_list<T>{std::move(list), std::move(lists)...});
-}
+{ return T(std::initializer_list<T>{std::move(list), std::move(lists)...}); }
 
 }  // namespace
 
@@ -114,21 +112,21 @@ TYPED_TEST(ConcatenateListElementsTypedTest, SimpleInputWithNulls)
   auto row0      = ListsCol{{ListsCol{{1, null, 3, 4}, null_at(1)},
                              ListsCol{{10, 11, 12, null}, null_at(3)},
                              ListsCol{} /*NULL*/},
-                       null_at(2)};
+                            null_at(2)};
   auto row1      = ListsCol{ListsCol{{null, 2, 3, 4}, null_at(0)},
-                       ListsCol{{13, 14, 15, 16, 17, null}, null_at(5)},
-                       ListsCol{{20, null}, null_at(1)}};
+                            ListsCol{{13, 14, 15, 16, 17, null}, null_at(5)},
+                            ListsCol{{20, null}, null_at(1)}};
   auto row2      = ListsCol{{ListsCol{{null, 2, 3, 4}, null_at(0)},
                              ListsCol{} /*NULL*/,
                              ListsCol{{null, 21, null, null}, nulls_at({0, 2, 3})}},
-                       null_at(1)};
+                            null_at(1)};
   auto row3      = ListsCol{{ListsCol{} /*NULL*/, ListsCol{{null, 18}, null_at(0)}}, null_at(0)};
   auto row4      = ListsCol{ListsCol{{1, 2, null, 4}, null_at(2)},
-                       ListsCol{{19, 20, null}, null_at(2)},
-                       ListsCol{22, 23, 24, 25}};
+                            ListsCol{{19, 20, null}, null_at(2)},
+                            ListsCol{22, 23, 24, 25}};
   auto row5      = ListsCol{ListsCol{{1, 2, 3, null}, null_at(3)},
-                       ListsCol{{null}, null_at(0)},
-                       ListsCol{{null, null, null, null, null}, all_nulls()}};
+                            ListsCol{{null}, null_at(0)},
+                            ListsCol{{null, null, null, null, null}, all_nulls()}};
   auto row6 =
     ListsCol{{ListsCol{} /*NULL*/, ListsCol{} /*NULL*/, ListsCol{} /*NULL*/}, all_nulls()};
   auto const col = build_lists_col(row0, row1, row2, row3, row4, row5, row6);

@@ -25,9 +25,7 @@ struct operator_invoker;
     static constexpr auto arity = num_args;                                                       \
     template <typename... Args>                                                                   \
     __device__ static inline auto eval(Args... a) -> decltype(cudf::detail::ops::func_name(a...)) \
-    {                                                                                             \
-      return cudf::detail::ops::func_name(a...);                                                  \
-    }                                                                                             \
+    { return cudf::detail::ops::func_name(a...); }                                                \
   };
 
 CUDF_AST_OPERATOR_MAP(ADD, add, 2)
@@ -104,9 +102,7 @@ struct operator_functor {
   template <typename T>
   __device__ inline auto operator()(T a)
     requires(!cudf::detail::ops::nullable<T> && requires { operator_invoker<op>::eval(a); })
-  {
-    return operator_invoker<op>::eval(a);
-  }
+  { return operator_invoker<op>::eval(a); }
 
   template <typename T>
   __device__ inline auto operator()(T a)
@@ -132,9 +128,7 @@ struct operator_functor {
   template <typename T>
   __device__ inline auto operator()(T a, T b)
     requires(!cudf::detail::ops::nullable<T> && requires { operator_invoker<op>::eval(a, b); })
-  {
-    return operator_invoker<op>::eval(a, b);
-  }
+  { return operator_invoker<op>::eval(a, b); }
 
   template <typename T>
   __device__ inline auto operator()(T a, T b)

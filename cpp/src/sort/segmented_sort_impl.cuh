@@ -49,9 +49,7 @@ struct column_fast_sort_fn {
    */
   template <typename T>
   static constexpr bool is_fast_sort_supported()
-  {
-    return cudf::is_integral<T>() and !std::is_same_v<__int128, T>;
-  }
+  { return cudf::is_integral<T>() and !std::is_same_v<__int128, T>; }
 
   template <typename T>
   void fast_sort(column_view const& input,
@@ -62,7 +60,7 @@ struct column_fast_sort_fn {
   {
     // CUB's segmented sort functions cannot accept iterators.
     // We create a temporary column here for it to use.
-    auto temp_col                   = cudf::detail::allocate_like(input,
+    auto temp_col = cudf::detail::allocate_like(input,
                                                 input.size(),
                                                 mask_allocation_policy::NEVER,
                                                 stream,
@@ -131,16 +129,12 @@ struct column_fast_sort_fn {
                   mutable_column_view& indices,
                   bool ascending,
                   cuda::stream_ref stream)
-  {
-    fast_sort<T>(input, segment_offsets, indices, ascending, stream);
-  }
+  { fast_sort<T>(input, segment_offsets, indices, ascending, stream); }
 
   template <typename T, CUDF_ENABLE_IF(!is_fast_sort_supported<T>())>
   void operator()(
     column_view const&, column_view const&, mutable_column_view&, bool, cuda::stream_ref)
-  {
-    CUDF_FAIL("Column type cannot be used with fast-sort function");
-  }
+  { CUDF_FAIL("Column type cannot be used with fast-sort function"); }
 };
 
 /**

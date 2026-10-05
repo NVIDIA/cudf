@@ -38,9 +38,7 @@ template <typename T>
 class recurrence_functor {
  public:
   __device__ pair_type<T> operator()(pair_type<T> ci, pair_type<T> cj)
-  {
-    return {ci.first * cj.first, ci.second * cj.first + cj.second};
-  }
+  { return {ci.first * cj.first, ci.second * cj.first + cj.second}; }
 };
 
 template <typename T>
@@ -282,9 +280,7 @@ struct ewma_functor {
                                      column_view const& input,
                                      cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr)
-  {
-    CUDF_FAIL("Unsupported type for EWMA.");
-  }
+  { CUDF_FAIL("Unsupported type for EWMA."); }
 
   template <typename T, CUDF_ENABLE_IF(std::is_floating_point<T>::value)>
   std::unique_ptr<column> operator()(scan_aggregation const& agg,
@@ -319,9 +315,7 @@ std::unique_ptr<column> exponentially_weighted_moving_average(column_view const&
                                                               scan_aggregation const& agg,
                                                               cuda::stream_ref stream,
                                                               rmm::device_async_resource_ref mr)
-{
-  return type_dispatcher(input.type(), ewma_functor{}, agg, input, stream, mr);
-}
+{ return type_dispatcher(input.type(), ewma_functor{}, agg, input, stream, mr); }
 
 }  // namespace detail
 }  // namespace cudf

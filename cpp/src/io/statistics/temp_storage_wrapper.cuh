@@ -59,9 +59,7 @@ union block_reduce_storage {
 #define STORAGE_WRAPPER_GET(TYPE)                                                                 \
   template <typename T>                                                                           \
   __device__ std::enable_if_t<std::is_same_v<T, TYPE>, cub_temp_storage<TYPE, block_size>&> get() \
-  {                                                                                               \
-    return storage.MEMBER_NAME(TYPE);                                                             \
-  }
+  { return storage.MEMBER_NAME(TYPE); }
 
 /**
  * @brief Templated wrapper for block_reduce_storage to return member reference based on requested

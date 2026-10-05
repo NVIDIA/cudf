@@ -117,11 +117,11 @@ struct q9_data {
     cudf::binary_operation(one, discount, cudf::binary_operator::SUB, discount.type(), stream, mr);
   auto const extendedprice_discounted_type = cudf::data_type{cudf::type_id::FLOAT64};
   auto const extendedprice_discounted      = cudf::binary_operation(extendedprice,
-                                                               one_minus_discount->view(),
-                                                               cudf::binary_operator::MUL,
-                                                               extendedprice_discounted_type,
-                                                               stream,
-                                                               mr);
+                                                                    one_minus_discount->view(),
+                                                                    cudf::binary_operator::MUL,
+                                                                    extendedprice_discounted_type,
+                                                                    stream,
+                                                                    mr);
   auto const supplycost_quantity_type      = cudf::data_type{cudf::type_id::FLOAT64};
   auto const supplycost_quantity           = cudf::binary_operation(
     supplycost, quantity, cudf::binary_operator::MUL, supplycost_quantity_type, stream, mr);
@@ -320,10 +320,10 @@ void ndsh_q9(nvbench::state& state)
   state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
     q9_data const data = load_data(sources);
     auto const result  = compute_profit(state,
-                                       engine,
-                                       data,
-                                       launch.get_stream().get_stream(),
-                                       cudf::get_current_device_resource_ref());
+                                        engine,
+                                        data,
+                                        launch.get_stream().get_stream(),
+                                        cudf::get_current_device_resource_ref());
     result->to_parquet("q9.parquet");
   });
   state.add_buffer_size(

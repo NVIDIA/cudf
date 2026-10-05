@@ -23,16 +23,12 @@ namespace ops {
 template <typename T>
 __device__ bool is_null(T a)
   requires(!nullable<T>)
-{
-  return false;
-}
+{ return false; }
 
 template <typename T>
 __device__ bool is_null(T a)
   requires(nullable<T>)
-{
-  return !a.has_value();
-}
+{ return !a.has_value(); }
 
 /**
  * @brief Returns the first non-null of two values.
@@ -45,9 +41,7 @@ __device__ bool is_null(T a)
 template <typename A, typename B>
 __device__ A coalesce(A a, B b)
   requires(!nullable<A> && cuda::std::same_as<A, B>)
-{
-  return a;
-}
+{ return a; }
 
 template <typename A, typename B>
 __device__ cuda::std::optional<A> coalesce(cuda::std::optional<A> a, cuda::std::optional<B> b)
@@ -69,15 +63,11 @@ __device__ cuda::std::optional<A> coalesce(cuda::std::optional<A> a, cuda::std::
  */
 template <cuda::std::same_as<bool> T>
 __device__ inline bool predicate(T a)
-{
-  return a;
-}
+{ return a; }
 
 template <cuda::std::same_as<bool> T>
 __device__ inline bool predicate(cuda::std::optional<T> a)
-{
-  return a.value_or(false);
-}
+{ return a.value_or(false); }
 
 }  // namespace ops
 }  // namespace detail

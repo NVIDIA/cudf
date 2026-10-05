@@ -148,15 +148,11 @@ using unbz_state_s = struct {
 
 // return next 32 bits
 static inline uint32_t next32bits(unbz_state_s const* s)
-{
-  return (uint32_t)((s->bitbuf << s->bitpos) >> 32);
-}
+{ return (uint32_t)((s->bitbuf << s->bitpos) >> 32); }
 
 // return next n bits
 static inline uint32_t showbits(unbz_state_s const* s, uint32_t n)
-{
-  return (uint32_t)((s->bitbuf << s->bitpos) >> (64 - n));
-}
+{ return (uint32_t)((s->bitbuf << s->bitpos) >> (64 - n)); }
 
 // update bit position, refill bit buffer if necessary
 static void skipbits(unbz_state_s* s, uint32_t n)

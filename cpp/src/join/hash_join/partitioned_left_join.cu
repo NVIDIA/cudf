@@ -13,9 +13,7 @@ std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
 hash_join<Hasher>::partitioned_left_join(cudf::join_partition_context const& context,
                                          cuda::stream_ref stream,
                                          rmm::device_async_resource_ref mr) const
-{
-  return this->partitioned_join_retrieve(join_kind::LEFT_JOIN, context, stream, mr);
-}
+{ return this->partitioned_join_retrieve(join_kind::LEFT_JOIN, context, stream, mr); }
 
 template std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
                    std::unique_ptr<rmm::device_uvector<size_type>>>

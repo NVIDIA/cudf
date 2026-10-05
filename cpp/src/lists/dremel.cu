@@ -478,16 +478,12 @@ dremel_data get_dremel_data(column_view h_col,
                             std::vector<uint8_t> nullability,
                             bool output_as_byte_array,
                             cuda::stream_ref stream)
-{
-  return get_encoding(h_col, nullability, output_as_byte_array, false, stream);
-}
+{ return get_encoding(h_col, nullability, output_as_byte_array, false, stream); }
 
 dremel_data get_comparator_data(column_view h_col,
                                 std::vector<uint8_t> nullability,
                                 bool output_as_byte_array,
                                 cuda::stream_ref stream)
-{
-  return get_encoding(h_col, nullability, output_as_byte_array, true, stream);
-}
+{ return get_encoding(h_col, nullability, output_as_byte_array, true, stream); }
 
 }  // namespace cudf::detail

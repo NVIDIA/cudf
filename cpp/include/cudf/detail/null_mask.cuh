@@ -536,17 +536,13 @@ CUDF_KERNEL void subtract_set_bits_range_boundaries_kernel(bitmask_type const* b
 struct bit_to_word_index {
   bit_to_word_index(bool inclusive) : inclusive(inclusive) {}
   __device__ inline size_type operator()(size_type const& bit_index) const
-  {
-    return word_index(bit_index) + ((inclusive || intra_word_index(bit_index) == 0) ? 0 : 1);
-  }
+  { return word_index(bit_index) + ((inclusive || intra_word_index(bit_index) == 0) ? 0 : 1); }
   bool const inclusive;
 };
 
 struct popcount {
   __device__ inline size_type operator()(bitmask_type word) const
-  {
-    return cuda::std::popcount(word);
-  }
+  { return cuda::std::popcount(word); }
 };
 
 // Count set/unset bits in a segmented null mask, using offset iterators accessible by the device.
@@ -658,9 +654,7 @@ size_type validate_segmented_indices(IndexIterator indices_begin, IndexIterator 
 
 struct index_alternator {
   __device__ inline size_type operator()(size_type const& i) const
-  {
-    return *(d_indices + 2 * i + (is_end ? 1 : 0));
-  }
+  { return *(d_indices + 2 * i + (is_end ? 1 : 0)); }
 
   bool const is_end = false;
   size_type const* d_indices;

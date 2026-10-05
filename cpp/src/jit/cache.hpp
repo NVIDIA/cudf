@@ -46,18 +46,14 @@ struct [[nodiscard]] kernel {
 
   rtcx::kernel_occupancy_config max_occupancy_config(size_t dynamic_shared_memory_bytes,
                                                      int32_t block_size_limit) const
-  {
-    return _kernel.max_occupancy_config(dynamic_shared_memory_bytes, block_size_limit);
-  }
+  { return _kernel.max_occupancy_config(dynamic_shared_memory_bytes, block_size_limit); }
 
   void launch(rtcx::cuda_dim3 grid_dim,
               rtcx::cuda_dim3 block_dim,
               uint32_t shared_mem_bytes,
               cuda::stream_ref stream,
               void** kernel_params) const
-  {
-    return _kernel.launch(grid_dim, block_dim, shared_mem_bytes, stream.get(), kernel_params);
-  }
+  { return _kernel.launch(grid_dim, block_dim, shared_mem_bytes, stream.get(), kernel_params); }
 
   template <typename... Args>
   void launch_with(rtcx::cuda_dim3 grid_dim,

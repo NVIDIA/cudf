@@ -31,9 +31,7 @@ struct rank_equality_functor {
   }
 
   auto __device__ operator()(size_type row_index) const noexcept
-  {
-    return _resolver(row_index == 0 || !_comparator(row_index, row_index - 1), row_index);
-  }
+  { return _resolver(row_index == 0 || !_comparator(row_index, row_index - 1), row_index); }
 
  private:
   device_comparator_type _comparator;

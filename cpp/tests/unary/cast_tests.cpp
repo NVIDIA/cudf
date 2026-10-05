@@ -59,15 +59,11 @@ static auto const test_durations_ns = test_timestamps_ns;
 
 template <typename T, typename R>
 inline auto make_column(std::vector<R> data)
-{
-  return cudf::test::fixed_width_column_wrapper<T, R>(data.begin(), data.end());
-}
+{ return cudf::test::fixed_width_column_wrapper<T, R>(data.begin(), data.end()); }
 
 template <typename T, typename R>
 inline auto make_column(std::vector<R> data, std::vector<bool> mask)
-{
-  return cudf::test::fixed_width_column_wrapper<T, R>(data.begin(), data.end(), mask.begin());
-}
+{ return cudf::test::fixed_width_column_wrapper<T, R>(data.begin(), data.end(), mask.begin()); }
 
 inline cudf::column make_exp_chrono_column(cudf::type_id type_id)
 {
@@ -169,15 +165,11 @@ inline cudf::column make_exp_chrono_column(cudf::type_id type_id)
 
 template <typename T, typename R>
 inline auto make_column(thrust::host_vector<R> data)
-{
-  return cudf::test::fixed_width_column_wrapper<T, R>(data.begin(), data.end());
-}
+{ return cudf::test::fixed_width_column_wrapper<T, R>(data.begin(), data.end()); }
 
 template <typename T, typename R>
 inline auto make_column(thrust::host_vector<R> data, thrust::host_vector<bool> mask)
-{
-  return cudf::test::fixed_width_column_wrapper<T, R>(data.begin(), data.end(), mask.begin());
-}
+{ return cudf::test::fixed_width_column_wrapper<T, R>(data.begin(), data.end(), mask.begin()); }
 
 template <typename T, typename R>
 void validate_cast_result(cudf::column_view expected, cudf::column_view actual)
@@ -198,9 +190,7 @@ void validate_cast_result(cudf::column_view expected, cudf::column_view actual)
 
 template <typename T>
 inline auto make_data_type()
-{
-  return cudf::data_type{cudf::type_to_id<T>()};
-}
+{ return cudf::data_type{cudf::type_to_id<T>()}; }
 
 TEST(IsSupportedCast, UnsupportedTypes)
 {
@@ -556,9 +546,7 @@ TYPED_TEST(CastFromDurations, WithNulls)
 
 template <typename T>
 inline auto make_fixed_point_data_type(int32_t scale)
-{
-  return cudf::data_type{cudf::type_to_id<T>(), scale};
-}
+{ return cudf::data_type{cudf::type_to_id<T>(), scale}; }
 
 struct FixedPointTestSingleType : public cudf::test::BaseFixture {};
 

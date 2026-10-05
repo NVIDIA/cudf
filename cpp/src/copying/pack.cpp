@@ -325,7 +325,7 @@ class metadata_builder_impl {
     auto const num_rows = _columns.empty() ? _num_rows.value_or(0) : _columns.front().size;
     auto const header   = serialized_table_header{_num_root_columns, num_rows};
     auto output         = std::vector<uint8_t>(sizeof(serialized_table_header) +
-                                       _columns.size() * sizeof(serialized_column));
+                                               _columns.size() * sizeof(serialized_column));
     std::memcpy(output.data(), &header, sizeof(serialized_table_header));
     if (!_columns.empty()) {
       std::memcpy(output.data() + sizeof(serialized_table_header),
@@ -470,9 +470,7 @@ std::vector<uint8_t> pack_metadata(table_view const& table,
 }
 
 table_view unpack(packed_columns const& input)
-{
-  return unpack(*input.metadata, reinterpret_cast<uint8_t const*>(input.gpu_data->data()));
-}
+{ return unpack(*input.metadata, reinterpret_cast<uint8_t const*>(input.gpu_data->data())); }
 
 table_view unpack(std::span<uint8_t const> const metadata, uint8_t const* gpu_data)
 {

@@ -56,9 +56,7 @@ struct vocab_hasher {
   cudf::column_device_view const d_strings;
   string_hasher_type hasher{};
   __device__ hash_value_type operator()(cudf::size_type index) const
-  {
-    return hasher(d_strings.element<cudf::string_view>(index));
-  }
+  { return hasher(d_strings.element<cudf::string_view>(index)); }
   __device__ hash_value_type operator()(cudf::string_view const& s) const { return hasher(s); }
 };
 /**
@@ -71,9 +69,7 @@ struct vocab_equal {
     return lhs == rhs;  // all rows are expected to be unique
   }
   __device__ bool operator()(cudf::string_view const& lhs, cudf::size_type rhs) const noexcept
-  {
-    return d_strings.element<cudf::string_view>(rhs) == lhs;
-  }
+  { return d_strings.element<cudf::string_view>(rhs) == lhs; }
 };
 
 using cuco_storage        = cuco::storage<1>;
@@ -174,9 +170,7 @@ namespace {
 struct key_pair {
   __device__ cuco::pair<cudf::size_type, cudf::size_type> operator()(
     cudf::size_type idx) const noexcept
-  {
-    return cuco::make_pair(idx, idx);
-  }
+  { return cuco::make_pair(idx, idx); }
 };
 
 /**

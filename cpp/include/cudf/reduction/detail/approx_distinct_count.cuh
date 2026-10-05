@@ -242,9 +242,7 @@ class approx_distinct_count {
    * @return Required sketch storage size in bytes
    */
   [[nodiscard]] static constexpr std::size_t sketch_bytes(std::int32_t precision)
-  {
-    return hll_ref_type::sketch_bytes(cuco::precision{precision});
-  }
+  { return hll_ref_type::sketch_bytes(cuco::precision{precision}); }
 
   /**
    * @brief Returns the required alignment for sketch storage
@@ -252,9 +250,7 @@ class approx_distinct_count {
    * @return Required sketch storage alignment in bytes
    */
   [[nodiscard]] static constexpr std::size_t sketch_alignment()
-  {
-    return hll_ref_type::sketch_alignment();
-  }
+  { return hll_ref_type::sketch_alignment(); }
 
  private:
   /**

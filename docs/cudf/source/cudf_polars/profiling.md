@@ -26,9 +26,9 @@ opts = StreamingOptions(statistics=True)
 with RayEngine.from_options(opts) as engine:
     result = (
         pl.scan_parquet("/data/*.parquet")
-          .group_by("customer_id")
-          .agg(pl.col("amount").sum())
-          .collect(engine=engine)
+        .group_by("customer_id")
+        .agg(pl.col("amount").sum())
+        .collect(engine=engine)
     )
 
     per_rank = engine.gather_statistics(clear=True)
@@ -135,7 +135,10 @@ the in-memory engine supports it. This is useful for small queries during develo
 
 ```python
 import polars as pl
-q = pl.scan_parquet("ny-taxi/2024/*.parquet").filter(pl.col("total_amount") > 15.0)
+
+q = pl.scan_parquet("ny-taxi/2024/*.parquet").filter(
+    pl.col("total_amount") > 15.0
+)
 profile = q.profile(engine=pl.GPUEngine(executor="in-memory"))
 ```
 

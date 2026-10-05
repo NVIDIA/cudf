@@ -123,9 +123,7 @@ CUDF_HOST_DEVICE constexpr S round_up_unsafe(S number_to_round, S modulus) noexc
  */
 template <typename S, typename T>
 CUDF_HOST_DEVICE constexpr S div_rounding_up_unsafe(S const& dividend, T const& divisor) noexcept
-{
-  return (dividend + divisor - 1) / divisor;
-}
+{ return (dividend + divisor - 1) / divisor; }
 
 namespace detail {
 template <typename I>

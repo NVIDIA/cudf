@@ -301,17 +301,13 @@ arrow_column::arrow_column(ArrowArrayStream&& input,
 void arrow_column::to_arrow_schema(ArrowSchema* output,
                                    cuda::stream_ref stream,
                                    rmm::device_async_resource_ref mr) const
-{
-  NANOARROW_THROW_NOT_OK(ArrowSchemaDeepCopy(&container->schema, output));
-}
+{ NANOARROW_THROW_NOT_OK(ArrowSchemaDeepCopy(&container->schema, output)); }
 
 void arrow_column::to_arrow(ArrowDeviceArray* output,
                             ArrowDeviceType device_type,
                             cuda::stream_ref stream,
                             rmm::device_async_resource_ref mr) const
-{
-  arrow_obj_to_arrow(*this, container, output, device_type, stream, mr);
-}
+{ arrow_obj_to_arrow(*this, container, output, device_type, stream, mr); }
 
 column_view arrow_column::view() const { return cached_view; }
 
@@ -383,17 +379,13 @@ arrow_table::arrow_table(ArrowArrayStream&& input,
 void arrow_table::to_arrow_schema(ArrowSchema* output,
                                   cuda::stream_ref stream,
                                   rmm::device_async_resource_ref mr) const
-{
-  NANOARROW_THROW_NOT_OK(ArrowSchemaDeepCopy(&container->schema, output));
-}
+{ NANOARROW_THROW_NOT_OK(ArrowSchemaDeepCopy(&container->schema, output)); }
 
 void arrow_table::to_arrow(ArrowDeviceArray* output,
                            ArrowDeviceType device_type,
                            cuda::stream_ref stream,
                            rmm::device_async_resource_ref mr) const
-{
-  arrow_obj_to_arrow(*this, container, output, device_type, stream, mr);
-}
+{ arrow_obj_to_arrow(*this, container, output, device_type, stream, mr); }
 
 table_view arrow_table::view() const { return cached_view; }
 

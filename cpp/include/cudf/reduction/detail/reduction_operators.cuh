@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -131,9 +131,7 @@ struct simple_op {
    */
   template <typename T>
   constexpr T get_identity()
-  {
-    return Derived::op::template identity<T>();
-  }
+  { return Derived::op::template identity<T>(); }
 };
 
 // `sum`, `product`, `sum_of_squares`, `min`, `max` are used at simple_reduction
@@ -268,9 +266,7 @@ struct mean : public compound_op<mean> {
     CUDF_HOST_DEVICE inline static ResultType compute_result(IntermediateType const& input,
                                                              cudf::size_type const& count,
                                                              cudf::size_type const& ddof)
-    {
-      return (input / count);
-    };
+    { return (input / count); };
   };
 };
 
@@ -289,9 +285,7 @@ struct variance : public compound_op<variance> {
     CUDF_HOST_DEVICE inline static ResultType compute_result(IntermediateType const& input,
                                                              cudf::size_type const& count,
                                                              cudf::size_type const& ddof)
-    {
-      return input.running_square_deviations / (count - ddof);
-    };
+    { return input.running_square_deviations / (count - ddof); };
   };
 };
 

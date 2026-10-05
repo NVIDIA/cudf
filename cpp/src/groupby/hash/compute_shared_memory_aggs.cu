@@ -83,9 +83,7 @@ template <typename Element>
 struct dispatch_shared_memory_aggregation_fn {
   template <cudf::aggregation::Kind kind, typename F, typename... Ts>
   __device__ auto operator()(F&& f, Ts&&... args) const
-  {
-    return f.template operator()<Element, kind>(cuda::std::forward<Ts>(args)...);
-  }
+  { return f.template operator()<Element, kind>(cuda::std::forward<Ts>(args)...); }
 };
 
 struct dispatch_shared_memory_source_fn {

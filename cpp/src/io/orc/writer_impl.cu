@@ -216,14 +216,10 @@ class orc_column_view {
   auto is_string() const noexcept { return cudf_column.type().id() == type_id::STRING; }
 
   void attach_rowgroup_char_counts(host_span<size_type const> counts)
-  {
-    rowgroup_char_counts = counts;
-  }
+  { rowgroup_char_counts = counts; }
 
   [[nodiscard]] auto rowgroup_char_count(size_type rg_idx) const
-  {
-    return rowgroup_char_counts[rg_idx];
-  }
+  { return rowgroup_char_counts[rg_idx]; }
 
   [[nodiscard]] auto char_count() const
   {
@@ -322,9 +318,7 @@ struct orc_table_view {
 
   [[nodiscard]] auto num_columns() const noexcept { return columns.size(); }
   [[nodiscard]] size_type num_rows() const noexcept
-  {
-    return columns.empty() ? 0 : columns.front().size();
-  }
+  { return columns.empty() ? 0 : columns.front().size(); }
   [[nodiscard]] auto num_string_columns() const noexcept { return string_column_indices.size(); }
 
   auto& column(uint32_t idx) { return columns.at(idx); }
@@ -332,9 +326,7 @@ struct orc_table_view {
 
   auto& string_column(uint32_t idx) { return columns.at(string_column_indices.at(idx)); }
   [[nodiscard]] auto const& string_column(uint32_t idx) const
-  {
-    return columns.at(string_column_indices.at(idx));
-  }
+  { return columns.at(string_column_indices.at(idx)); }
 };
 
 namespace {
@@ -1718,7 +1710,7 @@ void write_index_stream(int32_t stripe_id,
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wdangling-reference"
 #endif
-      const auto& strm = enc_streams[column_id][rowgroup];
+      auto const& strm = enc_streams[column_id][rowgroup];
 #if defined(__GNUC__) && (__GNUC__ >= 14)
 #pragma GCC diagnostic pop
 #endif
@@ -2442,9 +2434,7 @@ stripe_dictionaries build_dictionaries(orc_table_view& orc_table,
 
 struct stripe_stream_size_less {
   __device__ bool operator()(stripe_stream const& lhs, stripe_stream const& rhs) const
-  {
-    return lhs.stream_size < rhs.stream_size;
-  }
+  { return lhs.stream_size < rhs.stream_size; }
 };
 
 [[nodiscard]] uint32_t find_largest_stream_size(device_2dspan<stripe_stream const> ss,

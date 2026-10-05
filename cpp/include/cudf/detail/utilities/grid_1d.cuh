@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -49,9 +49,7 @@ class grid_1d {
     thread_index_type thread_id,
     thread_index_type block_id,
     thread_index_type num_threads_per_block)
-  {
-    return thread_id + block_id * num_threads_per_block;
-  }
+  { return thread_id + block_id * num_threads_per_block; }
 
   /**
    * @brief Returns the global thread index of the current thread in a 1D grid.
@@ -59,9 +57,7 @@ class grid_1d {
    * @return thread_index_type The global thread index
    */
   static __device__ thread_index_type global_thread_id()
-  {
-    return global_thread_id(threadIdx.x, blockIdx.x, blockDim.x);
-  }
+  { return global_thread_id(threadIdx.x, blockIdx.x, blockDim.x); }
 
   /**
    * @brief Returns the global thread index of the current thread in a 1D grid.
@@ -72,9 +68,7 @@ class grid_1d {
    */
   template <thread_index_type num_threads_per_block>
   static __device__ thread_index_type global_thread_id()
-  {
-    return global_thread_id(threadIdx.x, blockIdx.x, num_threads_per_block);
-  }
+  { return global_thread_id(threadIdx.x, blockIdx.x, num_threads_per_block); }
 
   /**
    * @brief Returns the stride of a 1D grid.
@@ -87,9 +81,7 @@ class grid_1d {
    */
   __device__ static constexpr thread_index_type grid_stride(thread_index_type num_threads_per_block,
                                                             thread_index_type num_blocks_per_grid)
-  {
-    return num_threads_per_block * num_blocks_per_grid;
-  }
+  { return num_threads_per_block * num_blocks_per_grid; }
 
   /**
    * @brief Returns the stride of the current 1D grid.
@@ -107,9 +99,7 @@ class grid_1d {
    */
   template <thread_index_type num_threads_per_block>
   static __device__ thread_index_type grid_stride()
-  {
-    return grid_stride(num_threads_per_block, gridDim.x);
-  }
+  { return grid_stride(num_threads_per_block, gridDim.x); }
 };
 
 }  // namespace detail

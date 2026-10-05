@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -145,57 +145,43 @@ struct alignas(16) base_normalator {
    * @brief Compute offset from iterator difference operator.
    */
   CUDF_HOST_DEVICE inline difference_type operator-(Derived const& rhs) const
-  {
-    return (static_cast<Derived const&>(*this).p_ - rhs.p_) / width_;
-  }
+  { return (static_cast<Derived const&>(*this).p_ - rhs.p_) / width_; }
 
   /**
    * @brief Equals to operator.
    */
   CUDF_HOST_DEVICE inline bool operator==(Derived const& rhs) const
-  {
-    return rhs.p_ == static_cast<Derived const&>(*this).p_;
-  }
+  { return rhs.p_ == static_cast<Derived const&>(*this).p_; }
 
   /**
    * @brief Not equals to operator.
    */
   CUDF_HOST_DEVICE inline bool operator!=(Derived const& rhs) const
-  {
-    return rhs.p_ != static_cast<Derived const&>(*this).p_;
-  }
+  { return rhs.p_ != static_cast<Derived const&>(*this).p_; }
 
   /**
    * @brief Less than operator.
    */
   CUDF_HOST_DEVICE inline bool operator<(Derived const& rhs) const
-  {
-    return static_cast<Derived const&>(*this).p_ < rhs.p_;
-  }
+  { return static_cast<Derived const&>(*this).p_ < rhs.p_; }
 
   /**
    * @brief Greater than operator.
    */
   CUDF_HOST_DEVICE inline bool operator>(Derived const& rhs) const
-  {
-    return static_cast<Derived const&>(*this).p_ > rhs.p_;
-  }
+  { return static_cast<Derived const&>(*this).p_ > rhs.p_; }
 
   /**
    * @brief Less than or equals to operator.
    */
   CUDF_HOST_DEVICE inline bool operator<=(Derived const& rhs) const
-  {
-    return static_cast<Derived const&>(*this).p_ <= rhs.p_;
-  }
+  { return static_cast<Derived const&>(*this).p_ <= rhs.p_; }
 
   /**
    * @brief Greater than or equals to operator.
    */
   CUDF_HOST_DEVICE inline bool operator>=(Derived const& rhs) const
-  {
-    return static_cast<Derived const&>(*this).p_ >= rhs.p_;
-  }
+  { return static_cast<Derived const&>(*this).p_ >= rhs.p_; }
 
  private:
   struct integer_sizeof_fn {
@@ -210,9 +196,7 @@ struct alignas(16) base_normalator {
     }
     template <typename T, CUDF_ENABLE_IF(cudf::is_integral_not_bool<T>())>
     CUDF_HOST_DEVICE std::size_t operator()() const noexcept
-    {
-      return sizeof(T);
-    }
+    { return sizeof(T); }
   };
 
  protected:
@@ -222,9 +206,7 @@ struct alignas(16) base_normalator {
    * @brief Constructor assigns width and type member variables for base class.
    */
   explicit CUDF_HOST_DEVICE base_normalator(data_type dtype) : dtype_(dtype)
-  {
-    width_ = static_cast<int32_t>(type_dispatcher(dtype, integer_sizeof_fn{}));
-  }
+  { width_ = static_cast<int32_t>(type_dispatcher(dtype, integer_sizeof_fn{})); }
 
 #endif
 

@@ -88,9 +88,7 @@ class hostdevice_vector {
 
   operator cudf::device_span<T>() { return cudf::device_span<T>(device_ptr(), size()); }
   operator cudf::device_span<T const>() const
-  {
-    return cudf::device_span<T const>(device_ptr(), size());
-  }
+  { return cudf::device_span<T const>(device_ptr(), size()); }
 
   void host_to_device_async(cuda::stream_ref stream)
   {
@@ -121,9 +119,7 @@ class hostdevice_vector {
   [[nodiscard]] operator hostdevice_span<T>() { return {host_span<T>{h_data}, device_ptr()}; }
 
   [[nodiscard]] operator hostdevice_span<T const>() const
-  {
-    return {host_span<T const>{h_data}, device_ptr()};
-  }
+  { return {host_span<T const>{h_data}, device_ptr()}; }
 
  private:
   bool keep_single_copy;
@@ -148,9 +144,7 @@ class hostdevice_2dvector {
   }
 
   operator device_2dspan<T>()
-  {
-    return device_2dspan<T>(device_span<T>(_data.device_ptr(), _data.size()), _size.second);
-  }
+  { return device_2dspan<T>(device_span<T>(_data.device_ptr(), _data.size()), _size.second); }
   operator device_2dspan<T const>() const
   {
     return device_2dspan<T const>(device_span<T const>(_data.device_ptr(), _data.size()),
@@ -159,14 +153,10 @@ class hostdevice_2dvector {
 
   device_2dspan<T> device_view() { return static_cast<device_2dspan<T>>(*this); }
   [[nodiscard]] device_2dspan<T const> device_view() const
-  {
-    return static_cast<device_2dspan<T const>>(*this);
-  }
+  { return static_cast<device_2dspan<T const>>(*this); }
 
   operator host_2dspan<T>()
-  {
-    return host_2dspan<T>(host_span<T>(_data.host_ptr(), _data.size(), true), _size.second);
-  }
+  { return host_2dspan<T>(host_span<T>(_data.host_ptr(), _data.size(), true), _size.second); }
   operator host_2dspan<T const>() const
   {
     return host_2dspan<T const>(host_span<T const>(_data.host_ptr(), _data.size(), true),
@@ -175,9 +165,7 @@ class hostdevice_2dvector {
 
   host_2dspan<T> host_view() { return static_cast<host_2dspan<T>>(*this); }
   [[nodiscard]] host_2dspan<T const> host_view() const
-  {
-    return static_cast<host_2dspan<T const>>(*this);
-  }
+  { return static_cast<host_2dspan<T const>>(*this); }
 
   host_span<T> operator[](size_t row)
   {
@@ -201,17 +189,13 @@ class hostdevice_2dvector {
   [[nodiscard]] T const* base_host_ptr(size_t offset = 0) const { return _data.host_ptr(offset); }
 
   [[nodiscard]] T const* base_device_ptr(size_t offset = 0) const
-  {
-    return _data.device_ptr(offset);
-  }
+  { return _data.device_ptr(offset); }
 
   [[nodiscard]] size_t size_bytes() const noexcept { return _data.size_bytes(); }
 
   void host_to_device_async(cuda::stream_ref stream) { _data.host_to_device_async(stream); }
   [[deprecated("Use host_to_device_async instead")]] void host_to_device(cuda::stream_ref stream)
-  {
-    _data.host_to_device(stream);
-  }
+  { _data.host_to_device(stream); }
 
   void device_to_host_async(cuda::stream_ref stream) { _data.device_to_host_async(stream); }
   void device_to_host(cuda::stream_ref stream) { _data.device_to_host(stream); }

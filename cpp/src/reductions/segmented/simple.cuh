@@ -189,9 +189,7 @@ std::unique_ptr<column> string_segmented_reduction(column_view const& col,
                                                    null_policy null_handling,
                                                    cuda::stream_ref stream,
                                                    rmm::device_async_resource_ref mr)
-{
-  CUDF_FAIL("Segmented reduction on string column only supports min and max reduction.");
-}
+{ CUDF_FAIL("Segmented reduction on string column only supports min and max reduction."); }
 
 /**
  * @brief Specialization for fixed-point segmented reduction
@@ -300,9 +298,7 @@ struct bool_result_column_dispatcher {
                                      cuda::stream_ref,
                                      rmm::device_async_resource_ref)
     requires(not cudf::is_numeric<ElementType>())
-  {
-    CUDF_FAIL("Reduction operator not supported for this type");
-  }
+  { CUDF_FAIL("Reduction operator not supported for this type"); }
 };
 
 /**
@@ -372,9 +368,7 @@ struct same_column_type_dispatcher {
                                      std::optional<std::reference_wrapper<scalar const>>,
                                      cuda::stream_ref,
                                      rmm::device_async_resource_ref)
-  {
-    CUDF_FAIL("Reduction operator not supported for this type");
-  }
+  { CUDF_FAIL("Reduction operator not supported for this type"); }
 };
 
 /**
@@ -494,9 +488,7 @@ struct column_type_dispatcher {
                                      cuda::stream_ref,
                                      rmm::device_async_resource_ref)
     requires(not cudf::is_numeric<ElementType>() and not cudf::is_fixed_point<ElementType>())
-  {
-    CUDF_FAIL("Reduction operator not supported for this type");
-  }
+  { CUDF_FAIL("Reduction operator not supported for this type"); }
 };
 
 }  // namespace detail

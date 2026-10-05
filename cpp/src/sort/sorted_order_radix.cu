@@ -34,9 +34,7 @@ struct float_pair {
 template <typename F>
 struct float_decomposer {
   __device__ cuda::std::tuple<size_type&, F&> operator()(float_pair<F>& key) const
-  {
-    return {key.s, key.f};
-  }
+  { return {key.s, key.f}; }
 };
 
 template <typename F>
@@ -152,16 +150,12 @@ struct sorted_order_radix_fn {
   template <typename T>
   void operator()()
     requires(cudf::is_fixed_width<T>() and !cudf::is_chrono<T>() and !cudf::is_floating_point<T>())
-  {
-    radix_sort<T>();
-  }
+  { radix_sort<T>(); }
 
   template <typename T>
   void operator()()
     requires(not cudf::is_fixed_width<T>())
-  {
-    CUDF_UNREACHABLE("invalid type for radix sort");
-  }
+  { CUDF_UNREACHABLE("invalid type for radix sort"); }
 };
 }  // namespace
 

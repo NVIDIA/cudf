@@ -54,9 +54,7 @@ struct SHA256Hash : HashBase<SHA256Hash> {
 std::unique_ptr<column> sha256(table_view const& input,
                                cuda::stream_ref stream,
                                rmm::device_async_resource_ref mr)
-{
-  return sha_hash<SHA256Hash>(input, stream, mr);
-}
+{ return sha_hash<SHA256Hash>(input, stream, mr); }
 
 }  // namespace detail
 

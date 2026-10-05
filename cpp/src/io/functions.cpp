@@ -78,80 +78,56 @@ compression_type infer_compression_type(compression_type compression, source_inf
 
 // Returns builder for csv_reader_options
 csv_reader_options_builder csv_reader_options::builder(source_info src)
-{
-  return csv_reader_options_builder{std::move(src)};
-}
+{ return csv_reader_options_builder{std::move(src)}; }
 
 // Returns builder for csv_writer_options
 csv_writer_options_builder csv_writer_options::builder(sink_info const& sink,
                                                        table_view const& table)
-{
-  return csv_writer_options_builder{sink, table};
-}
+{ return csv_writer_options_builder{sink, table}; }
 
 // Returns builder for orc_reader_options
 orc_reader_options_builder orc_reader_options::builder(source_info src)
-{
-  return orc_reader_options_builder{std::move(src)};
-}
+{ return orc_reader_options_builder{std::move(src)}; }
 
 // Returns builder for orc_writer_options
 orc_writer_options_builder orc_writer_options::builder(sink_info const& sink,
                                                        table_view const& table)
-{
-  return orc_writer_options_builder{sink, table};
-}
+{ return orc_writer_options_builder{sink, table}; }
 
 // Returns builder for chunked_orc_writer_options
 chunked_orc_writer_options_builder chunked_orc_writer_options::builder(sink_info const& sink)
-{
-  return chunked_orc_writer_options_builder{sink};
-}
+{ return chunked_orc_writer_options_builder{sink}; }
 
 // Returns builder for avro_reader_options
 avro_reader_options_builder avro_reader_options::builder(source_info src)
-{
-  return avro_reader_options_builder(std::move(src));
-}
+{ return avro_reader_options_builder(std::move(src)); }
 
 // Returns builder for json_reader_options
 json_reader_options_builder json_reader_options::builder(source_info src)
-{
-  return json_reader_options_builder(std::move(src));
-}
+{ return json_reader_options_builder(std::move(src)); }
 
 // Returns builder for orc_writer_options
 json_writer_options_builder json_writer_options::builder(sink_info const& sink,
                                                          table_view const& table)
-{
-  return json_writer_options_builder{sink, table};
-}
+{ return json_writer_options_builder{sink, table}; }
 
 // Returns builder for parquet_reader_options
 parquet_reader_options_builder parquet_reader_options::builder(source_info src)
-{
-  return parquet_reader_options_builder{std::move(src)};
-}
+{ return parquet_reader_options_builder{std::move(src)}; }
 
 // Returns builder for parquet_writer_options
 parquet_writer_options_builder parquet_writer_options::builder(sink_info const& sink,
                                                                table_view const& table)
-{
-  return parquet_writer_options_builder{sink, table};
-}
+{ return parquet_writer_options_builder{sink, table}; }
 
 // Returns builder for parquet_writer_options
 parquet_writer_options_builder parquet_writer_options::builder()
-{
-  return parquet_writer_options_builder();
-}
+{ return parquet_writer_options_builder(); }
 
 // Returns builder for chunked_parquet_writer_options
 chunked_parquet_writer_options_builder chunked_parquet_writer_options::builder(
   sink_info const& sink)
-{
-  return chunked_parquet_writer_options_builder{sink};
-}
+{ return chunked_parquet_writer_options_builder{sink}; }
 
 /**
  * @copydoc cudf::io::make_datasources
@@ -958,9 +934,7 @@ void parquet_reader_options::set_num_bytes(size_t val)
 }
 
 void parquet_writer_options_base::set_metadata(table_input_metadata metadata)
-{
-  _metadata = std::move(metadata);
-}
+{ _metadata = std::move(metadata); }
 
 void parquet_writer_options_base::set_key_value_metadata(
   std::vector<std::map<std::string, std::string>> metadata)
@@ -987,9 +961,7 @@ void parquet_writer_options_base::enable_int96_timestamps(bool req)
 }
 
 void parquet_writer_options_base::enable_utc_timestamps(bool val)
-{
-  _write_timestamps_as_UTC = val;
-}
+{ _write_timestamps_as_UTC = val; }
 
 void parquet_writer_options_base::enable_write_arrow_schema(bool val)
 {
@@ -1034,9 +1006,7 @@ void parquet_writer_options_base::set_column_index_truncate_length(int32_t size_
 }
 
 void parquet_writer_options_base::set_dictionary_policy(dictionary_policy policy)
-{
-  _dictionary_policy = policy;
-}
+{ _dictionary_policy = policy; }
 
 void parquet_writer_options_base::set_max_dictionary_size(size_t size_bytes)
 {
@@ -1053,21 +1023,15 @@ void parquet_writer_options_base::set_max_page_fragment_size(size_type size_rows
 
 void parquet_writer_options_base::set_compression_statistics(
   std::shared_ptr<writer_compression_statistics> comp_stats)
-{
-  _compression_stats = std::move(comp_stats);
-}
+{ _compression_stats = std::move(comp_stats); }
 
 void parquet_writer_options_base::enable_write_v2_headers(bool val) { _v2_page_headers = val; }
 
 void parquet_writer_options_base::enable_page_level_compression(bool val)
-{
-  _page_level_compression = val;
-}
+{ _page_level_compression = val; }
 
 void parquet_writer_options_base::set_sorting_columns(std::vector<sorting_column> sorting_columns)
-{
-  _sorting_columns = std::move(sorting_columns);
-}
+{ _sorting_columns = std::move(sorting_columns); }
 
 parquet_writer_options::parquet_writer_options(sink_info const& sink, table_view table)
   : parquet_writer_options_base(sink), _table(std::move(table))
@@ -1240,15 +1204,11 @@ BuilderT& parquet_writer_options_builder_base<BuilderT, OptionsT>::sorting_colum
 
 template <class BuilderT, class OptionsT>
 parquet_writer_options_builder_base<BuilderT, OptionsT>::operator OptionsT&&()
-{
-  return std::move(_options);
-}
+{ return std::move(_options); }
 
 template <class BuilderT, class OptionsT>
 OptionsT&& parquet_writer_options_builder_base<BuilderT, OptionsT>::build()
-{
-  return std::move(_options);
-}
+{ return std::move(_options); }
 
 template class parquet_writer_options_builder_base<parquet_writer_options_builder,
                                                    parquet_writer_options>;

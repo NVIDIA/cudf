@@ -109,9 +109,7 @@ static void BM_transform(nvbench::state& state)
 
 #define AST_TRANSFORM_BENCHMARK_DEFINE(name, key_type, tree_type, reuse_columns, nullable) \
   static void name(::nvbench::state& st)                                                   \
-  {                                                                                        \
-    ::BM_transform<key_type, tree_type, reuse_columns, nullable>(st);                      \
-  }                                                                                        \
+  { ::BM_transform<key_type, tree_type, reuse_columns, nullable>(st); }                    \
   NVBENCH_BENCH(name)                                                                      \
     .set_name(#name)                                                                       \
     .add_int64_axis("tree_levels", {1, 5, 10})                                             \

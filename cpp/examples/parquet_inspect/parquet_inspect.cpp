@@ -24,9 +24,7 @@ namespace {
  * @brief Function to print example usage and argument information.
  */
 void print_usage()
-{
-  std::cout << "\nUsage: parquet_inspect <input parquet file> <output path>\n\n";
-}
+{ std::cout << "\nUsage: parquet_inspect <input parquet file> <output path>\n\n"; }
 
 }  // namespace
 

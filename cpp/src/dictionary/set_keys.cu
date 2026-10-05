@@ -132,9 +132,7 @@ struct remap_indices_dispatch_fn {
                           cuda::stream_ref,
                           rmm::device_async_resource_ref)
     requires(not cudf::is_dictionary_key<T>())
-  {
-    CUDF_UNREACHABLE("not a valid dictionary key type");
-  }
+  { CUDF_UNREACHABLE("not a valid dictionary key type"); }
 };
 
 struct set_keys_dispatch_fn {
@@ -158,9 +156,7 @@ struct set_keys_dispatch_fn {
                                            cuda::stream_ref,
                                            rmm::device_async_resource_ref)
     requires(not cudf::is_dictionary_key<T>())
-  {
-    CUDF_UNREACHABLE("not a valid dictionary key type");
-  }
+  { CUDF_UNREACHABLE("not a valid dictionary key type"); }
 };
 }  // namespace
 

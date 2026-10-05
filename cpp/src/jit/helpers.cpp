@@ -22,9 +22,7 @@ namespace cudf {
 namespace jit {
 
 bool is_scalar(cudf::size_type base_column_size, cudf::size_type column_size)
-{
-  return column_size == 1 && column_size != base_column_size;
-}
+{ return column_size == 1 && column_size != base_column_size; }
 
 typename std::vector<column_view>::const_iterator get_transform_base_column(
   std::vector<column_view> const& inputs)

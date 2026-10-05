@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -26,8 +26,6 @@ struct is_supported_rolling_aggregation_impl {
 }  // namespace
 
 bool is_valid_rolling_aggregation(data_type source, aggregation::Kind kind)
-{
-  return dispatch_type_and_aggregation(source, kind, is_supported_rolling_aggregation_impl{});
-}
+{ return dispatch_type_and_aggregation(source, kind, is_supported_rolling_aggregation_impl{}); }
 }  // namespace detail
 }  // namespace cudf

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -109,13 +109,13 @@ TEST_F(MergeTest, KeysWithNulls)
                                 null_precedence,
                                 cudf::test::get_default_stream())
                        ->release();
-      auto col2 = sorted2.front()->view();
+      auto col2    = sorted2.front()->view();
 
       auto result     = cudf::merge({cudf::table_view({col1}), cudf::table_view({col2})},
                                     {0},
-                                column_order,
-                                null_precedence,
-                                cudf::test::get_default_stream());
+                                    column_order,
+                                    null_precedence,
+                                    cudf::test::get_default_stream());
       auto sorted_all = cudf::sort(cudf::table_view({all_data->view()}),
                                    column_order,
                                    null_precedence,

@@ -53,14 +53,10 @@ bool are_column_paths_equal(std::string_view lhs, std::string_view rhs, bool cas
 }
 
 std::size_t column_path_hash::operator()(std::string_view path) const
-{
-  return std::hash<std::string>{}(normalize_column_path(path, case_sensitive_names));
-}
+{ return std::hash<std::string>{}(normalize_column_path(path, case_sensitive_names)); }
 
 bool column_path_equal::operator()(std::string_view lhs, std::string_view rhs) const
-{
-  return are_column_paths_equal(lhs, rhs, case_sensitive_names);
-}
+{ return are_column_paths_equal(lhs, rhs, case_sensitive_names); }
 
 column_path_set make_column_path_set(bool case_sensitive_names, std::size_t bucket_hint)
 {

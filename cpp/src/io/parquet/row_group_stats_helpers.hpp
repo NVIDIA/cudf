@@ -107,10 +107,10 @@ struct row_group_stats_caster : public stats_caster_base {
             std::invalid_argument);
           auto const& row_group = source_metadata.row_groups[rg_idx];
           auto col              = std::find_if(row_group.columns.begin(),
-                                  row_group.columns.end(),
-                                  [mapped_schema_idx](ColumnChunk const& col) {
+                                               row_group.columns.end(),
+                                               [mapped_schema_idx](ColumnChunk const& col) {
                                     return col.schema_idx == mapped_schema_idx;
-                                  });
+                                               });
           if (col != std::end(row_group.columns)) {
             auto const& colchunk = *col;
             auto const& stats    = colchunk.meta_data.statistics;

@@ -41,9 +41,9 @@ class UCXXEnvironment : public Environment {
 
     options_ = rapidsmpf::config::Options(rapidsmpf::config::get_environment_variables());
     comm_    = rapidsmpf::ucxx::init_using_mpi(MPI_COMM_WORLD,
-                                            options_,
-                                            std::make_shared<rapidsmpf::ProgressThread>(),
-                                            rapidsmpf::Logger::from_options(options_));
+                                               options_,
+                                               std::make_shared<rapidsmpf::ProgressThread>(),
+                                               rapidsmpf::Logger::from_options(options_));
   }
 
   void TearDown() override

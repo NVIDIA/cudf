@@ -127,9 +127,7 @@ inline void append_uleb128(std::vector<uint8_t>& out, uint64_t v)
 
 // append `v` to `out` as a zigzag-encoded LEB128 varint
 inline void append_zigzag128(std::vector<uint8_t>& out, int64_t v)
-{
-  append_uleb128(out, (static_cast<uint64_t>(v) << 1) ^ static_cast<uint64_t>(v >> 63));
-}
+{ append_uleb128(out, (static_cast<uint64_t>(v) << 1) ^ static_cast<uint64_t>(v >> 63)); }
 
 // complete DELTA_BINARY_PACKED stream: header (block_size, mini_block_count, value count, first
 // value), then per block a zigzag min-delta, one bit-width byte per mini-block, and the

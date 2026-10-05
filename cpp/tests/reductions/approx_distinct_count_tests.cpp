@@ -875,11 +875,11 @@ TEST_F(ApproxDistinctCount, MemoryResource)
 
   constexpr std::int32_t precision = 12;
   auto adc                         = cudf::approx_distinct_count(input_table,
-                                         precision,
-                                         null_policy::EXCLUDE,
-                                         nan_policy::NAN_IS_NULL,
-                                         cudf::get_default_stream(),
-                                         mr);
+                                                                 precision,
+                                                                 null_policy::EXCLUDE,
+                                                                 nan_policy::NAN_IS_NULL,
+                                                                 cudf::get_default_stream(),
+                                                                 mr);
 
   EXPECT_GE(mr.get_bytes_counter().peak, cudf::approx_distinct_count::sketch_bytes(precision));
 

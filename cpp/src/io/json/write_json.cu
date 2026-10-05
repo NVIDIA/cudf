@@ -75,9 +75,7 @@ struct escape_strings_fn {
   }
 
   __device__ inline char nibble_to_hex(uint8_t nibble) const
-  {
-    return nibble < 10 ? '0' + nibble : 'a' + nibble - 10;
-  }
+  { return nibble < 10 ? '0' + nibble : 'a' + nibble - 10; }
 
   __device__ void write_utf8_codepoint(uint16_t codepoint, char*& d_buffer, size_type& bytes)
   {
@@ -285,9 +283,9 @@ std::unique_ptr<column> struct_to_strings(table_view const& strings_columns,
                            [](auto const& c) { return c.type().id() == type_id::STRING; }),
                "All columns must be of type string");
   auto constexpr strviews_per_column = 3;  // (for each "column_name:", "value",  "separator")
-  auto const num_strviews_per_row    = strings_columns.num_columns() == 0
-                                         ? 2
-                                         : (1 + strings_columns.num_columns() * strviews_per_column);
+  auto const num_strviews_per_row = strings_columns.num_columns() == 0
+                                      ? 2
+                                      : (1 + strings_columns.num_columns() * strviews_per_column);
   // e.g. {col1: value, col2: value, col3: value} = 1 + 3 + 3 + (3-1) + 1 = 10
 
   auto tbl_device_view = cudf::table_device_view::create(strings_columns, stream);

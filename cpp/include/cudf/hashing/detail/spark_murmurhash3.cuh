@@ -82,9 +82,7 @@ struct Spark_MurmurHash3_x86_32 {
   }
 
   [[nodiscard]] result_type __device__ inline operator()(Key const& key) const
-  {
-    return compute(key);
-  }
+  { return compute(key); }
 
   /**
    * @brief Hash `length` bytes using four-byte block and signed tail-byte generators
@@ -171,30 +169,22 @@ __device__ inline auto Spark_MurmurHash3_x86_32<bool>::operator()(bool const& ke
 template <>
 __device__ inline auto Spark_MurmurHash3_x86_32<int8_t>::operator()(int8_t const& key) const
   -> result_type
-{
-  return compute<uint32_t>(key);
-}
+{ return compute<uint32_t>(key); }
 
 template <>
 __device__ inline auto Spark_MurmurHash3_x86_32<uint8_t>::operator()(uint8_t const& key) const
   -> result_type
-{
-  return compute<uint32_t>(key);
-}
+{ return compute<uint32_t>(key); }
 
 template <>
 __device__ inline auto Spark_MurmurHash3_x86_32<int16_t>::operator()(int16_t const& key) const
   -> result_type
-{
-  return compute<uint32_t>(key);
-}
+{ return compute<uint32_t>(key); }
 
 template <>
 __device__ inline auto Spark_MurmurHash3_x86_32<uint16_t>::operator()(uint16_t const& key) const
   -> result_type
-{
-  return compute<uint32_t>(key);
-}
+{ return compute<uint32_t>(key); }
 
 template <>
 __device__ inline auto Spark_MurmurHash3_x86_32<float>::operator()(float const& key) const
@@ -224,16 +214,12 @@ __device__ inline auto Spark_MurmurHash3_x86_32<cudf::string_view>::operator()(
 template <>
 __device__ inline auto Spark_MurmurHash3_x86_32<numeric::decimal32>::operator()(
   numeric::decimal32 const& key) const -> result_type
-{
-  return compute<uint64_t>(key.value());
-}
+{ return compute<uint64_t>(key.value()); }
 
 template <>
 __device__ inline auto Spark_MurmurHash3_x86_32<numeric::decimal64>::operator()(
   numeric::decimal64 const& key) const -> result_type
-{
-  return compute<uint64_t>(key.value());
-}
+{ return compute<uint64_t>(key.value()); }
 
 template <>
 __device__ inline auto Spark_MurmurHash3_x86_32<numeric::decimal128>::operator()(

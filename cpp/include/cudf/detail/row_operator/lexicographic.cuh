@@ -213,9 +213,7 @@ class device_row_comparator {
     __device__ cuda::std::pair<cudf::detail::weak_ordering, int> operator()(
       size_type const, size_type const) const noexcept
       requires(not cudf::is_relationally_comparable<KeyType, KeyType>())
-    {
-      CUDF_UNREACHABLE("Key types are not comparable");
-    }
+    { CUDF_UNREACHABLE("Key types are not comparable"); }
 
    private:
     column_device_view _lhs;
@@ -296,8 +294,8 @@ class device_row_comparator {
 #ifndef NDEBUG
     __attribute__((noinline))
 #endif
-    __device__ cuda::std::pair<cudf::detail::weak_ordering, int>
-    operator()(size_type const lhs_element_index, size_type const rhs_element_index) const noexcept
+    __device__ cuda::std::pair<cudf::detail::weak_ordering, int> operator()(
+      size_type const lhs_element_index, size_type const rhs_element_index) const noexcept
       requires(cudf::is_dictionary<Element>())
     {
       if (_check_nulls) {
@@ -329,9 +327,7 @@ class device_row_comparator {
       size_type const, size_type const) const noexcept
       requires(not cudf::is_relationally_comparable<Element, Element>() and
                (not has_nested_columns or not cudf::is_nested<Element>()))
-    {
-      CUDF_UNREACHABLE("Attempted to compare elements of uncomparable types.");
-    }
+    { CUDF_UNREACHABLE("Attempted to compare elements of uncomparable types."); }
 
     /**
      * @brief Compares two struct-type columns
@@ -345,8 +341,8 @@ class device_row_comparator {
 #ifndef NDEBUG
     __attribute__((noinline))
 #endif
-    __device__ cuda::std::pair<cudf::detail::weak_ordering, int>
-    operator()(size_type const lhs_element_index, size_type const rhs_element_index) const noexcept
+    __device__ cuda::std::pair<cudf::detail::weak_ordering, int> operator()(
+      size_type const lhs_element_index, size_type const rhs_element_index) const noexcept
       requires(has_nested_columns and cuda::std::is_same_v<Element, cudf::struct_view>)
     {
       column_device_view lcol = _lhs;
@@ -391,8 +387,8 @@ class device_row_comparator {
 #ifndef NDEBUG
     __attribute__((noinline))
 #endif
-    __device__ cuda::std::pair<cudf::detail::weak_ordering, int>
-    operator()(size_type lhs_element_index, size_type rhs_element_index)
+    __device__ cuda::std::pair<cudf::detail::weak_ordering, int> operator()(
+      size_type lhs_element_index, size_type rhs_element_index)
       requires(has_nested_columns and cuda::std::is_same_v<Element, cudf::list_view>)
     {
       auto const is_l_row_null = _lhs.is_null(lhs_element_index);

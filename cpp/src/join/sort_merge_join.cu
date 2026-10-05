@@ -74,9 +74,7 @@ struct index_mapping {
   T mapping;  ///< Mapping container that translates indices
 
   __device__ size_type operator()(size_type idx) const noexcept
-  {
-    return idx >= 0 ? mapping[idx] : idx;
-  }
+  { return idx >= 0 ? mapping[idx] : idx; }
 };
 
 /**
@@ -108,9 +106,7 @@ struct is_row_valid {
   bitmask_type const* _validity_mask;  ///< Validity mask for the table
 
   __device__ auto operator()(size_type idx) const noexcept
-  {
-    return bit_is_set(_validity_mask, idx);
-  }
+  { return bit_is_set(_validity_mask, idx); }
 };
 
 /**
@@ -122,9 +118,7 @@ struct is_row_null {
   bitmask_type const* const _validity_mask;  ///< Validity mask for the table
 
   __device__ auto operator()(size_type idx) const noexcept
-  {
-    return !cudf::bit_is_set(_validity_mask, idx);
-  }
+  { return !cudf::bit_is_set(_validity_mask, idx); }
 };
 
 /**
@@ -248,7 +242,7 @@ struct match_range_output {
     auto const is_match = run_idx < num_smaller_runs &&
                           !comparator(detail::row::rhs_index_type{idx},
                                       detail::row::lhs_index_type{unique_smaller_rows[run_idx]});
-    auto const start = is_match ? smaller_run_offsets[run_idx] : 0;
+    auto const start    = is_match ? smaller_run_offsets[run_idx] : 0;
     if (match_starts != nullptr) { match_starts[idx] = start; }
     match_counts[idx] = is_match ? smaller_run_offsets[run_idx + 1] - start : 0;
   }
@@ -284,9 +278,7 @@ struct left_smaller_index {
   SmallerIterator smaller_order;  ///< Iterator over build rows in sorted order
 
   __device__ size_type operator()(size_type offset) const
-  {
-    return match_counts[idx] == 0 ? JoinNoMatch : smaller_order[match_starts[idx] + offset];
-  }
+  { return match_counts[idx] == 0 ? JoinNoMatch : smaller_order[match_starts[idx] + offset]; }
 };
 
 /**
@@ -301,7 +293,7 @@ struct left_input_range {
   using smaller_iterator = cuda::transform_iterator<left_smaller_index<SmallerIterator>,
                                                     cuda::counting_iterator<size_type>>;
   using iterator_type    = decltype(cuda::make_zip_iterator(cuda::constant_iterator<size_type>{},
-                                                         std::declval<smaller_iterator>()));
+                                                            std::declval<smaller_iterator>()));
 
   __device__ iterator_type operator()(size_type idx) const
   {
@@ -429,9 +421,7 @@ typename merge<SmallerIterator>::match_ranges merge<SmallerIterator>::find_match
 template <typename SmallerIterator>
 std::unique_ptr<rmm::device_uvector<size_type>> merge<SmallerIterator>::matches_per_row(
   cuda::stream_ref stream, rmm::device_async_resource_ref mr)
-{
-  return find_match_ranges(compute_match_starts::NO, stream, mr).counts;
-}
+{ return find_match_ranges(compute_match_starts::NO, stream, mr).counts; }
 
 template <typename SmallerIterator>
 std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
@@ -567,7 +557,7 @@ void sort_merge_join::preprocessed_table::populate_nonnull_filter(cuda::stream_r
         cuda::std::reverse_iterator(offsets_subset.end()),
         cuda::std::reverse_iterator(child_positions.end()));
       auto subset_size   = cuda::std::distance(cuda::std::reverse_iterator(offsets_subset.end()),
-                                             cuda::std::get<0>(unique_end));
+                                               cuda::std::get<0>(unique_end));
       auto subset_offset = offsets.size() - subset_size;
 
       auto [reduced_validity_mask, num_nulls] =
@@ -1023,32 +1013,24 @@ std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
 sort_merge_join::inner_join(table_view const& left,
                             cuda::stream_ref stream,
                             rmm::device_async_resource_ref mr) const
-{
-  return _impl->inner_join(left, stream, mr);
-}
+{ return _impl->inner_join(left, stream, mr); }
 
 std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
           std::unique_ptr<rmm::device_uvector<size_type>>>
 sort_merge_join::left_join(table_view const& left,
                            cuda::stream_ref stream,
                            rmm::device_async_resource_ref mr) const
-{
-  return _impl->left_join(left, stream, mr);
-}
+{ return _impl->left_join(left, stream, mr); }
 
 std::unique_ptr<join_match_context> sort_merge_join::inner_join_match_context(
   table_view const& left, cuda::stream_ref stream, rmm::device_async_resource_ref mr) const
-{
-  return _impl->inner_join_match_context(left, stream, mr);
-}
+{ return _impl->inner_join_match_context(left, stream, mr); }
 
 std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
           std::unique_ptr<rmm::device_uvector<size_type>>>
 sort_merge_join::partitioned_inner_join(cudf::join_partition_context const& context,
                                         cuda::stream_ref stream,
                                         rmm::device_async_resource_ref mr) const
-{
-  return _impl->partitioned_inner_join(context, stream, mr);
-}
+{ return _impl->partitioned_inner_join(context, stream, mr); }
 
 }  // namespace cudf

@@ -73,9 +73,7 @@ struct dispatch_to_floats_fn {
   template <typename T>
   void operator()(column_device_view const&, mutable_column_view&, cuda::stream_ref) const
     requires(not std::is_floating_point_v<T>)
-  {
-    CUDF_FAIL("Output for to_floats must be a float type.");
-  }
+  { CUDF_FAIL("Output for to_floats must be a float type."); }
 };
 
 }  // namespace
@@ -95,11 +93,11 @@ std::unique_ptr<column> to_floats(strings_column_view const& input,
   auto d_strings      = *strings_column;
   // create float output column copying the strings null-mask
   auto results      = make_numeric_column(output_type,
-                                     strings_count,
-                                     cudf::detail::copy_bitmask(input.parent(), stream, mr),
-                                     input.null_count(),
-                                     stream,
-                                     mr);
+                                          strings_count,
+                                          cudf::detail::copy_bitmask(input.parent(), stream, mr),
+                                          input.null_count(),
+                                          stream,
+                                          mr);
   auto results_view = results->mutable_view();
   // fill output column with floats
   type_dispatcher(output_type, dispatch_to_floats_fn{}, d_strings, results_view, stream);
@@ -412,9 +410,7 @@ struct dispatch_from_floats_fn {
                                      cuda::stream_ref,
                                      rmm::device_async_resource_ref) const
     requires(not std::is_floating_point_v<T>)
-  {
-    CUDF_FAIL("Values for from_floats function must be a float type.");
-  }
+  { CUDF_FAIL("Values for from_floats function must be a float type."); }
 };
 
 }  // namespace
@@ -450,11 +446,11 @@ std::unique_ptr<column> is_float(strings_column_view const& input,
   auto d_column       = *strings_column;
   // create output column
   auto results   = make_numeric_column(data_type{type_id::BOOL8},
-                                     input.size(),
-                                     cudf::detail::copy_bitmask(input.parent(), stream, mr),
-                                     input.null_count(),
-                                     stream,
-                                     mr);
+                                       input.size(),
+                                       cudf::detail::copy_bitmask(input.parent(), stream, mr),
+                                       input.null_count(),
+                                       stream,
+                                       mr);
   auto d_results = results->mutable_view().data<bool>();
   // check strings for valid float chars
   thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),

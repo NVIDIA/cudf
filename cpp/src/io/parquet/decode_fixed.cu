@@ -292,7 +292,7 @@ __device__ inline void decode_fixed_width_split_values(
     uint8_t const* const src = s->stream.data_start + src_pos;
     uint8_t* const dst       = data_out + static_cast<size_t>(dst_pos) * dtype_len;
     auto const is_decimal    = s->setup.col.logical_type.has_value() and
-                            s->setup.col.logical_type->type == LogicalType::DECIMAL;
+                               s->setup.col.logical_type->type == LogicalType::DECIMAL;
 
     // Note: non-decimal FIXED_LEN_BYTE_ARRAY will be handled in the string reader
     if (is_decimal) {
@@ -470,9 +470,9 @@ __device__ int update_validity_and_row_indices_nested(
           int const vindex     = value_count + thread_value_count;  // absolute input value index
           int const bit_offset = (valid_map_offset + vindex + write_start) -
                                  first_row;  // absolute bit offset into the output validity map
-          int const write_end = cudf::detail::warp_size -
-                                __clz(in_write_row_bounds_mask);  // last bit in the warp to store
-          int const bit_count = write_end - write_start;
+          int const write_end  = cudf::detail::warp_size -
+                                 __clz(in_write_row_bounds_mask);  // last bit in the warp to store
+          int const bit_count  = write_end - write_start;
 
           store_validity(bit_offset, ni.valid_map, warp_validity_mask >> write_start, bit_count);
         }
@@ -964,7 +964,7 @@ __device__ void skip_ahead_in_decoding(auto* s,
   valid_count     = !process_nulls
                       ? first_row
                       : skip_validity_and_row_indices_nonlist<decode_block_size_t, level_t>(
-                      first_row, s, def, has_nesting_t, t);
+                          first_row, s, def, has_nesting_t, t);
 
   if constexpr (has_dict_t) {
     skip_decode<rolling_buf_size>(dict_stream, valid_count, t);
@@ -1013,9 +1013,7 @@ CUDF_HOST_DEVICE constexpr bool has_dict()
  */
 template <decode_kernel_mask kernel_mask_t>
 CUDF_HOST_DEVICE constexpr bool is_dict_int32_output()
-{
-  return (kernel_mask_t == decode_kernel_mask::DICT_INT32);
-}
+{ return (kernel_mask_t == decode_kernel_mask::DICT_INT32); }
 
 template <decode_kernel_mask kernel_mask_t>
 CUDF_HOST_DEVICE constexpr bool has_bools()
@@ -1116,7 +1114,7 @@ CUDF_KERNEL void __launch_bounds__(decode_block_size_t, 8)
   __shared__ __align__(16) full_page_decode_state state_g;
   constexpr bool use_dict_buffers = has_dict_t || has_bools_t;
   using state_buf_t               = page_state_buffers_s<rolling_buf_size,  // size of nz_idx buffer
-                                           use_dict_buffers ? rolling_buf_size : 1,
+                                                         use_dict_buffers ? rolling_buf_size : 1,
                                                          1>;
   __shared__ __align__(16) state_buf_t state_buffers;
 

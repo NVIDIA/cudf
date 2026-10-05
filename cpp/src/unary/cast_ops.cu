@@ -35,9 +35,7 @@ struct unary_cast {
   template <typename SourceT, typename TargetT = _TargetT>
   __device__ inline TargetT operator()(SourceT const element)
     requires(cudf::is_numeric<SourceT>() && cudf::is_numeric<TargetT>())
-  {
-    return static_cast<TargetT>(element);
-  }
+  { return static_cast<TargetT>(element); }
 
   template <typename SourceT, typename TargetT = _TargetT>
   __device__ inline TargetT operator()(SourceT const element)
@@ -52,37 +50,27 @@ struct unary_cast {
   template <typename SourceT, typename TargetT = _TargetT>
   __device__ inline TargetT operator()(SourceT const element)
     requires(cudf::is_duration<SourceT>() && cudf::is_duration<TargetT>())
-  {
-    return TargetT{cuda::std::chrono::floor<TargetT>(element)};
-  }
+  { return TargetT{cuda::std::chrono::floor<TargetT>(element)}; }
 
   template <typename SourceT, typename TargetT = _TargetT>
   __device__ inline TargetT operator()(SourceT const element)
     requires(cudf::is_numeric<SourceT>() && cudf::is_duration<TargetT>())
-  {
-    return TargetT{static_cast<typename TargetT::rep>(element)};
-  }
+  { return TargetT{static_cast<typename TargetT::rep>(element)}; }
 
   template <typename SourceT, typename TargetT = _TargetT>
   __device__ inline TargetT operator()(SourceT const element)
     requires(cudf::is_timestamp<SourceT>() && cudf::is_duration<TargetT>())
-  {
-    return TargetT{cuda::std::chrono::floor<TargetT>(element.time_since_epoch())};
-  }
+  { return TargetT{cuda::std::chrono::floor<TargetT>(element.time_since_epoch())}; }
 
   template <typename SourceT, typename TargetT = _TargetT>
   __device__ inline TargetT operator()(SourceT const element)
     requires(cudf::is_duration<SourceT>() && cudf::is_numeric<TargetT>())
-  {
-    return static_cast<TargetT>(element.count());
-  }
+  { return static_cast<TargetT>(element.count()); }
 
   template <typename SourceT, typename TargetT = _TargetT>
   __device__ inline TargetT operator()(SourceT const element)
     requires(cudf::is_duration<SourceT>() && cudf::is_timestamp<TargetT>())
-  {
-    return TargetT{cuda::std::chrono::floor<TargetT::duration>(element)};
-  }
+  { return TargetT{cuda::std::chrono::floor<TargetT::duration>(element)}; }
 };
 
 template <typename _SourceT, typename _TargetT>
@@ -231,7 +219,7 @@ struct dispatch_unary_cast_to {
     requires(is_supported_non_fixed_point_cast<SourceT, TargetT>())
   {
     auto const size = input.size();
-    auto output     = std::make_unique<column>(type,
+    auto output = std::make_unique<column>(type,
                                            size,
                                            rmm::device_buffer{size * sizeof(TargetT), stream, mr},
                                            detail::copy_bitmask(input, stream, mr),
@@ -255,7 +243,7 @@ struct dispatch_unary_cast_to {
     requires(cudf::is_fixed_point<SourceT>() && cudf::is_numeric<TargetT>())
   {
     auto const size = input.size();
-    auto output     = std::make_unique<column>(type,
+    auto output = std::make_unique<column>(type,
                                            size,
                                            rmm::device_buffer{size * sizeof(TargetT), stream, mr},
                                            detail::copy_bitmask(input, stream, mr),
@@ -284,7 +272,7 @@ struct dispatch_unary_cast_to {
     using DeviceT = device_storage_type_t<TargetT>;
 
     auto const size = input.size();
-    auto output     = std::make_unique<column>(type,
+    auto output = std::make_unique<column>(type,
                                            size,
                                            rmm::device_buffer{size * sizeof(DeviceT), stream, mr},
                                            cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
@@ -402,16 +390,12 @@ struct dispatch_unary_cast_from {
                                      cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr)
     requires(cudf::is_fixed_width<T>())
-  {
-    return type_dispatcher(type, dispatch_unary_cast_to<T>{input}, type, stream, mr);
-  }
+  { return type_dispatcher(type, dispatch_unary_cast_to<T>{input}, type, stream, mr); }
 
   template <typename T, typename... Args>
   std::unique_ptr<column> operator()(Args&&...)
     requires(!cudf::is_fixed_width<T>())
-  {
-    CUDF_FAIL("Column type must be numeric or chrono or decimal32/64/128");
-  }
+  { CUDF_FAIL("Column type must be numeric or chrono or decimal32/64/128"); }
 };
 }  // anonymous namespace
 
@@ -428,9 +412,7 @@ std::unique_ptr<column> cast(column_view const& input,
 struct is_supported_cast_impl {
   template <typename From, typename To>
   bool operator()() const
-  {
-    return is_supported_cast<From, To>();
-  }
+  { return is_supported_cast<From, To>(); }
 };
 
 }  // namespace detail

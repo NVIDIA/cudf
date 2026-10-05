@@ -233,9 +233,9 @@ TEST_F(StringsReplaceTest, ReplaceEndOfString)
 
 TEST_F(StringsReplaceTest, ReplaceAdjacentMultiByteTarget)
 {
-  auto input        = cudf::test::strings_column_wrapper({"ééééééééééééééééééééé",
-                                                          "eéeéeéeeéeéeéeeéeéeée",
-                                                          "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"});
+  auto input = cudf::test::strings_column_wrapper({"ééééééééééééééééééééé",
+                                                   "eéeéeéeeéeéeéeeéeéeée",
+                                                   "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"});
   auto strings_view = cudf::strings_column_view(input);
   // replace all occurrences of 'é' with 'e'
   cudf::test::strings_column_wrapper expected({"eeeeeeeeeeeeeeeeeeeee",

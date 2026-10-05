@@ -79,9 +79,7 @@ std::unique_ptr<column> murmurhash3_x86_32(
   uint32_t seed,
   cuda::stream_ref stream,
   rmm::device_async_resource_ref mr)
-{
-  return murmurhash3_x86_32_impl(input, num_rows, seed, nullate::YES{}, stream, mr);
-}
+{ return murmurhash3_x86_32_impl(input, num_rows, seed, nullate::YES{}, stream, mr); }
 
 }  // namespace detail
 

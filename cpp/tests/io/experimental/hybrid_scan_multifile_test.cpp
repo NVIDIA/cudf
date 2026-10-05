@@ -83,7 +83,7 @@ void test_hybrid_scan_multifile(std::vector<cudf::column_view> const& columns,
                                   .filter(filter_expression)
                                   .case_sensitive_names(case_sensitive_names)
                                   .build();
-  auto const expected = cudf::io::read_parquet(expected_options, stream, mr);
+  auto const expected         = cudf::io::read_parquet(expected_options, stream, mr);
 
   auto const [filter_table, payload_table] =
     hybrid_scan_multifile(source_info, filter_expression, {}, case_sensitive_names, stream, mr);

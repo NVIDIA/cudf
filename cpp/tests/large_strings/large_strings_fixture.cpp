@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -26,9 +26,7 @@ class LargeStringsData {
   virtual ~LargeStringsData() {}
 
   void add_table(std::string_view name, std::unique_ptr<cudf::table>&& data)
-  {
-    _data[std::string(name)] = std::move(data);
-  }
+  { _data[std::string(name)] = std::move(data); }
 
   [[nodiscard]] cudf::table_view get_table(std::string_view name) const
   {
@@ -50,9 +48,7 @@ class LargeStringsData {
   }
 
   [[nodiscard]] bool has_key(std::string_view name) const
-  {
-    return _data.find(std::string(name)) != _data.end();
-  }
+  { return _data.find(std::string(name)) != _data.end(); }
 
  protected:
   std::map<std::string, DataPointer> _data;

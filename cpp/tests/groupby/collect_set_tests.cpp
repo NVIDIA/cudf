@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -57,9 +57,7 @@ auto groupby_collect_set(cudf::column_view const& keys,
 
 struct CollectSetTest : public cudf::test::BaseFixture {
   static auto collect_set()
-  {
-    return cudf::make_collect_set_aggregation<cudf::groupby_aggregation>();
-  }
+  { return cudf::make_collect_set_aggregation<cudf::groupby_aggregation>(); }
 
   static auto collect_set_null_unequal()
   {
@@ -230,8 +228,8 @@ TEST_F(CollectSetTest, FloatsWithNaN)
 
   // null equal with nan unequal
   {
-    vals_expected                    = {{{-2.3e-5f, 1.0f, 2.3e5f, -NAN, -NAN, NAN, NAN, 0.0f},
-                                         validity_col{true, true, true, true, true, true, true, false}}};
+    vals_expected = {{{-2.3e-5f, 1.0f, 2.3e5f, -NAN, -NAN, NAN, NAN, 0.0f},
+                      validity_col{true, true, true, true, true, true, true, false}}};
     auto const [out_keys, out_lists] = groupby_collect_set(
       keys,
       vals,
@@ -243,8 +241,8 @@ TEST_F(CollectSetTest, FloatsWithNaN)
 
   // null unequal with nan unequal
   {
-    vals_expected                    = {{{-2.3e-5f, 1.0f, 2.3e5f, -NAN, -NAN, NAN, NAN, 0.0f, 0.0f},
-                                         validity_col{true, true, true, true, true, true, true, false, false}}};
+    vals_expected = {{{-2.3e-5f, 1.0f, 2.3e5f, -NAN, -NAN, NAN, NAN, 0.0f, 0.0f},
+                      validity_col{true, true, true, true, true, true, true, false, false}}};
     auto const [out_keys, out_lists] = groupby_collect_set(
       keys,
       vals,

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2025, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -60,9 +60,7 @@ static bool cache_host_memory_buffer_jni(JNIEnv* env)
 }
 
 static void release_host_memory_buffer_jni(JNIEnv* env)
-{
-  Host_memory_buffer_jclass = del_global_ref(env, Host_memory_buffer_jclass);
-}
+{ Host_memory_buffer_jclass = del_global_ref(env, Host_memory_buffer_jclass); }
 
 jobject allocate_host_buffer(JNIEnv* env,
                              jlong amount,
@@ -80,14 +78,10 @@ jobject allocate_host_buffer(JNIEnv* env,
 }
 
 jlong get_host_buffer_address(JNIEnv* env, jobject buffer)
-{
-  return env->GetLongField(buffer, Host_buffer_address);
-}
+{ return env->GetLongField(buffer, Host_buffer_address); }
 
 jlong get_host_buffer_length(JNIEnv* env, jobject buffer)
-{
-  return env->GetLongField(buffer, Host_buffer_length);
-}
+{ return env->GetLongField(buffer, Host_buffer_length); }
 
 // Get the JNI environment, attaching the current thread to the JVM if necessary. If the thread
 // needs to be attached, the thread will automatically detach when the thread terminates.
@@ -187,9 +181,7 @@ JNIEXPORT void JNI_OnUnload(JavaVM* vm, void*)
 }
 
 JNIEXPORT jboolean JNICALL Java_ai_rapids_cudf_Cuda_isPtdsEnabled(JNIEnv* env, jclass)
-{
-  return cudf::jni::is_ptds_enabled;
-}
+{ return cudf::jni::is_ptds_enabled; }
 
 JNIEXPORT void JNICALL Java_ai_rapids_cudf_Cudf_setKernelPinnedCopyThreshold(JNIEnv* env,
                                                                              jclass clazz,

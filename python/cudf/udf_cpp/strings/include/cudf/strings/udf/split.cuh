@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -74,9 +74,7 @@ __device__ inline cudf::size_type split(cudf::string_view const d_str,
  */
 __device__ inline cudf::size_type count_tokens(cudf::string_view const d_str,
                                                cudf::string_view const tgt)
-{
-  return detail::split(d_str, tgt, nullptr);
-}
+{ return detail::split(d_str, tgt, nullptr); }
 
 /**
  * @brief Split string using given string
@@ -101,9 +99,7 @@ __device__ inline cudf::size_type count_tokens(cudf::string_view const d_str,
 __device__ inline cudf::size_type split(cudf::string_view const d_str,
                                         cudf::string_view const tgt,
                                         cudf::string_view* result)
-{
-  return detail::split(d_str, tgt, result);
-}
+{ return detail::split(d_str, tgt, result); }
 
 /**
  * @brief Split string using given target array
@@ -118,9 +114,7 @@ __device__ inline cudf::size_type split(cudf::string_view const d_str,
                                         char const* tgt,
                                         cudf::size_type bytes,
                                         cudf::string_view* result)
-{
-  return detail::split(d_str, cudf::string_view{tgt, bytes}, result);
-}
+{ return detail::split(d_str, cudf::string_view{tgt, bytes}, result); }
 
 /**
  * @brief Split string using given target array
@@ -133,9 +127,7 @@ __device__ inline cudf::size_type split(cudf::string_view const d_str,
 __device__ inline cudf::size_type split(cudf::string_view const d_str,
                                         char const* tgt,
                                         cudf::string_view* result)
-{
-  return split(d_str, tgt, detail::bytes_in_null_terminated_string(tgt), result);
-}
+{ return split(d_str, tgt, detail::bytes_in_null_terminated_string(tgt), result); }
 
 namespace detail {
 /**
@@ -184,9 +176,7 @@ __device__ inline cudf::size_type split(cudf::string_view const d_str, cudf::str
  * @return Number of tokens returned
  */
 __device__ inline cudf::size_type count_tokens(cudf::string_view const d_str)
-{
-  return detail::split(d_str, nullptr);
-}
+{ return detail::split(d_str, nullptr); }
 
 /**
  * @brief Split string on whitespace
@@ -199,9 +189,7 @@ __device__ inline cudf::size_type count_tokens(cudf::string_view const d_str)
  * @return Number of tokens returned
  */
 __device__ inline cudf::size_type split(cudf::string_view const d_str, cudf::string_view* result)
-{
-  return detail::split(d_str, result);
-}
+{ return detail::split(d_str, result); }
 
 /**
  * @brief Join an array of strings with a separator
@@ -247,9 +235,7 @@ __device__ inline udf_string join(char const* separator,
                                   cudf::size_type bytes,
                                   cudf::string_view* input,
                                   cudf::size_type count)
-{
-  return join(cudf::string_view{separator, bytes}, input, count);
-}
+{ return join(cudf::string_view{separator, bytes}, input, count); }
 
 /**
  * @brief Join an array of strings with a separator
@@ -262,9 +248,7 @@ __device__ inline udf_string join(char const* separator,
 __device__ inline udf_string join(char const* separator,
                                   cudf::string_view* input,
                                   cudf::size_type count)
-{
-  return join(separator, detail::bytes_in_null_terminated_string(separator), input, count);
-}
+{ return join(separator, detail::bytes_in_null_terminated_string(separator), input, count); }
 
 }  // namespace udf
 }  // namespace strings

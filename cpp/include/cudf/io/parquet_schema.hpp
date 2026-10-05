@@ -51,8 +51,8 @@ enum class ConvertedType : int8_t {
   MAP_KEY_VALUE = 2,  // a key/value pair is converted into a group of two fields
   LIST =
     3,  // a list is converted into an optional field containing a repeated field for its values
-  ENUM    = 4,      // an enum is converted into a binary field
-  DECIMAL = 5,      // A decimal value. 10^(-scale) encoded as 2's complement big endian
+  ENUM        = 4,  // an enum is converted into a binary field
+  DECIMAL     = 5,  // A decimal value. 10^(-scale) encoded as 2's complement big endian
                     // (precision=number of digits, scale=location of decimal point)
   DATE        = 6,  // A Date, stored as days since Unix epoch, encoded as the INT32 physical type.
   TIME_MILLIS = 7,  // A time. The total number of milliseconds since midnight.The value is stored
@@ -74,7 +74,7 @@ enum class ConvertedType : int8_t {
   BSON             = 20,  // A BSON document embedded within a single BINARY column.
   INTERVAL = 21,  // This type annotates a time interval stored as a FIXED_LEN_BYTE_ARRAY of length
                   // 12 for 3 integers {months,days,milliseconds}
-  NA = 25,        // No Type information, For eg, all-nulls.
+  NA       = 25,  // No Type information, For eg, all-nulls.
 };
 
 /**
@@ -310,9 +310,7 @@ struct LogicalType {
    * @return True if the time is in milliseconds, false otherwise
    */
   [[nodiscard]] CUDF_HOST_DEVICE constexpr bool is_time_millis() const
-  {
-    return type == TIME and time_type->unit.type == TimeUnit::MILLIS;
-  }
+  { return type == TIME and time_type->unit.type == TimeUnit::MILLIS; }
 
   /**
    * @brief Check if the time is in microseconds
@@ -320,9 +318,7 @@ struct LogicalType {
    * @return True if the time is in microseconds, false otherwise
    */
   [[nodiscard]] CUDF_HOST_DEVICE constexpr bool is_time_micros() const
-  {
-    return type == TIME and time_type->unit.type == TimeUnit::MICROS;
-  }
+  { return type == TIME and time_type->unit.type == TimeUnit::MICROS; }
 
   /**
    * @brief Check if the time is in nanoseconds
@@ -330,9 +326,7 @@ struct LogicalType {
    * @return True if the time is in nanoseconds, false otherwise
    */
   [[nodiscard]] CUDF_HOST_DEVICE constexpr bool is_time_nanos() const
-  {
-    return type == TIME and time_type->unit.type == TimeUnit::NANOS;
-  }
+  { return type == TIME and time_type->unit.type == TimeUnit::NANOS; }
 
   /**
    * @brief Check if the timestamp is in milliseconds
@@ -340,9 +334,7 @@ struct LogicalType {
    * @return True if the timestamp is in milliseconds, false otherwise
    */
   [[nodiscard]] CUDF_HOST_DEVICE constexpr bool is_timestamp_millis() const
-  {
-    return type == TIMESTAMP and timestamp_type->unit.type == TimeUnit::MILLIS;
-  }
+  { return type == TIMESTAMP and timestamp_type->unit.type == TimeUnit::MILLIS; }
 
   /**
    * @brief Check if the timestamp is in microseconds
@@ -350,9 +342,7 @@ struct LogicalType {
    * @return True if the timestamp is in microseconds, false otherwise
    */
   [[nodiscard]] CUDF_HOST_DEVICE constexpr bool is_timestamp_micros() const
-  {
-    return type == TIMESTAMP and timestamp_type->unit.type == TimeUnit::MICROS;
-  }
+  { return type == TIMESTAMP and timestamp_type->unit.type == TimeUnit::MICROS; }
 
   /**
    * @brief Check if the timestamp is in nanoseconds
@@ -360,9 +350,7 @@ struct LogicalType {
    * @return True if the timestamp is in nanoseconds, false otherwise
    */
   [[nodiscard]] CUDF_HOST_DEVICE constexpr bool is_timestamp_nanos() const
-  {
-    return type == TIMESTAMP and timestamp_type->unit.type == TimeUnit::NANOS;
-  }
+  { return type == TIMESTAMP and timestamp_type->unit.type == TimeUnit::NANOS; }
 
   /**
    * @brief Get the bit width of the integer type
@@ -370,9 +358,7 @@ struct LogicalType {
    * @return The bit width of the integer type, or -1 if the type is not an integer
    */
   [[nodiscard]] CUDF_HOST_DEVICE constexpr int8_t bit_width() const
-  {
-    return type == INTEGER ? int_type->bitWidth : -1;
-  }
+  { return type == INTEGER ? int_type->bitWidth : -1; }
 
   /**
    * @brief Check if the integer is signed
@@ -387,9 +373,7 @@ struct LogicalType {
    * @return The scale of the decimal type, or -1 if the type is not a decimal
    */
   [[nodiscard]] constexpr int32_t scale() const
-  {
-    return type == DECIMAL ? decimal_type->scale : -1;
-  }
+  { return type == DECIMAL ? decimal_type->scale : -1; }
 
   /**
    * @brief Get the precision of the decimal type
@@ -397,9 +381,7 @@ struct LogicalType {
    * @return The precision of the decimal type, or -1 if the type is not a decimal
    */
   [[nodiscard]] CUDF_HOST_DEVICE constexpr int32_t precision() const
-  {
-    return type == DECIMAL ? decimal_type->precision : -1;
-  }
+  { return type == DECIMAL ? decimal_type->precision : -1; }
 };
 
 /**

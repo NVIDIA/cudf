@@ -65,9 +65,9 @@ rapidsmpf::streaming::Actor read_customer(std::shared_ptr<rapidsmpf::streaming::
 {
   auto files = rapidsmpf::ndsh::detail::list_parquet_files(
     rapidsmpf::ndsh::detail::get_table_path(input_directory, "customer"));
-  auto options = cudf::io::parquet_reader_options::builder(cudf::io::source_info(files))
-                   .column_names({"c_custkey"})  // 0
-                   .build();
+  auto options     = cudf::io::parquet_reader_options::builder(cudf::io::source_info(files))
+                       .column_names({"c_custkey"})  // 0
+                       .build();
   auto filter_expr = [&]() -> std::unique_ptr<cudf_streaming::filter> {
     auto stream = ctx->br()->stream_pool()->get_stream();
     auto owner  = new std::vector<std::any>;
@@ -106,7 +106,7 @@ rapidsmpf::streaming::Actor read_lineitem(std::shared_ptr<rapidsmpf::streaming::
                      "l_discount",       // 2
                    })
                    .build();
-  auto stream = ctx->br()->stream_pool()->get_stream();
+  auto stream  = ctx->br()->stream_pool()->get_stream();
   // l_shipdate > DATE '1995-03-15'
   constexpr auto date = cuda::std::chrono::year_month_day(
     cuda::std::chrono::year(1995), cuda::std::chrono::month(3), cuda::std::chrono::day(15));
@@ -136,7 +136,7 @@ rapidsmpf::streaming::Actor read_orders(std::shared_ptr<rapidsmpf::streaming::Co
                      "o_custkey"        // 3
                    })
                    .build();
-  auto stream = ctx->br()->stream_pool()->get_stream();
+  auto stream  = ctx->br()->stream_pool()->get_stream();
   // o_orderdate < DATE '1995-03-15'
   constexpr auto date = cuda::std::chrono::year_month_day(
     cuda::std::chrono::year(1995), cuda::std::chrono::month(3), cuda::std::chrono::day(15));

@@ -43,9 +43,7 @@ namespace detail {
 // https://developer.nvidia.com/blog/lerp-faster-cuda/
 template <typename T>
 __device__ inline T lerp(T v0, T v1, T t)
-{
-  return fma(t, v1, fma(-t, v0, v0));
-}
+{ return fma(t, v1, fma(-t, v0, v0)); }
 
 struct centroid {
   double mean;

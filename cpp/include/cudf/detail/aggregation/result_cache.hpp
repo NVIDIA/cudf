@@ -22,16 +22,12 @@ namespace detail {
 struct pair_column_aggregation_equal_to {
   bool operator()(std::pair<column_view, aggregation const&> const& lhs,
                   std::pair<column_view, aggregation const&> const& rhs) const
-  {
-    return is_shallow_equivalent(lhs.first, rhs.first) and lhs.second.is_equal(rhs.second);
-  }
+  { return is_shallow_equivalent(lhs.first, rhs.first) and lhs.second.is_equal(rhs.second); }
 };
 
 struct pair_column_aggregation_hash {
   size_t operator()(std::pair<column_view, aggregation const&> const& key) const
-  {
-    return cudf::hashing::detail::hash_combine(shallow_hash(key.first), key.second.do_hash());
-  }
+  { return cudf::hashing::detail::hash_combine(shallow_hash(key.first), key.second.do_hash()); }
 };
 
 class result_cache {

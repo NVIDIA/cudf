@@ -197,7 +197,7 @@ std::pair<std::shared_ptr<streaming::Context>, std::shared_ptr<Communicator>> cr
 
   auto pinned_pool_properties =
     arguments.no_pinned_host_memory ? PinnedMemoryDisabled : PinnedPoolProperties{};
-  auto br                              = BufferResource::create(std::move(mr),
+  auto br = BufferResource::create(std::move(mr),
                                    std::move(pinned_pool_properties),
                                    std::move(memory_limits),
                                    arguments.periodic_spill,

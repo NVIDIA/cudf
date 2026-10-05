@@ -523,7 +523,7 @@ TEST_F(RowBitCount, NestedTypes)
     cudf::test::fixed_width_column_wrapper<int> l4_offsets_col(l4_offsets.begin(),
                                                                l4_offsets.end());
     auto const l4_size = l4_offsets.size() - 1;
-    auto l4            = cudf::make_lists_column(static_cast<cudf::size_type>(l4_size),
+    auto l4 = cudf::make_lists_column(static_cast<cudf::size_type>(l4_size),
                                       l4_offsets_col.release(),
                                       innermost_struct.release(),
                                       0,

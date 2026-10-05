@@ -55,9 +55,7 @@ std::size_t regex_program::compute_working_memory_size(int32_t num_strings) cons
 }
 
 std::pair<literal_fast_path, std::string> regex_program::get_literal_fast_path() const
-{
-  return _impl->prog.check_for_literal_fast_path();
-}
+{ return _impl->prog.check_for_literal_fast_path(); }
 
 }  // namespace strings
 }  // namespace cudf

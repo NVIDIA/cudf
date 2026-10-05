@@ -25,9 +25,7 @@ struct tdigest_size_fn {
    * @return Size of the tdigest
    */
   __device__ size_type operator()(size_type tdigest_index)
-  {
-    return offsets[tdigest_index + 1] - offsets[tdigest_index];
-  }
+  { return offsets[tdigest_index + 1] - offsets[tdigest_index]; }
 };
 
 /**

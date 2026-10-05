@@ -67,14 +67,10 @@ struct input_indexalator : base_normalator<input_indexalator, cudf::size_type> {
   struct normalize_type {
     template <typename T, CUDF_ENABLE_IF(cudf::is_index_type<T>())>
     __device__ cudf::size_type operator()(void const* tp)
-    {
-      return static_cast<cudf::size_type>(*static_cast<T const*>(tp));
-    }
+    { return static_cast<cudf::size_type>(*static_cast<T const*>(tp)); }
     template <typename T, CUDF_ENABLE_IF(not cudf::is_index_type<T>())>
     __device__ cudf::size_type operator()(void const*)
-    {
-      CUDF_UNREACHABLE("only integral types are supported");
-    }
+    { CUDF_UNREACHABLE("only integral types are supported"); }
   };
 
   /**
@@ -98,9 +94,7 @@ struct input_indexalator : base_normalator<input_indexalator, cudf::size_type> {
    */
   CUDF_HOST_DEVICE input_indexalator(void const* data, data_type dtype, cudf::size_type offset = 0)
     : base_normalator<input_indexalator, cudf::size_type>(dtype), p_{static_cast<char const*>(data)}
-  {
-    p_ += static_cast<std::ptrdiff_t>(offset) * this->width_;
-  }
+  { p_ += static_cast<std::ptrdiff_t>(offset) * this->width_; }
 
  protected:
   char const* p_;  /// pointer to the integer data in device memory
@@ -165,14 +159,10 @@ struct output_indexalator : base_normalator<output_indexalator, cudf::size_type>
   struct normalize_type {
     template <typename T, CUDF_ENABLE_IF(cudf::is_index_type<T>())>
     __device__ void operator()(void* tp, cudf::size_type const value)
-    {
-      (*static_cast<T*>(tp)) = static_cast<T>(value);
-    }
+    { (*static_cast<T*>(tp)) = static_cast<T>(value); }
     template <typename T, CUDF_ENABLE_IF(not cudf::is_index_type<T>())>
     __device__ void operator()(void*, cudf::size_type const)
-    {
-      CUDF_UNREACHABLE("only index types are supported");
-    }
+    { CUDF_UNREACHABLE("only index types are supported"); }
   };
 
   /**
@@ -210,14 +200,10 @@ struct indexalator_factory {
   struct input_indexalator_fn {
     template <typename IndexType, CUDF_ENABLE_IF(is_index_type<IndexType>())>
     input_indexalator operator()(column_view const& indices)
-    {
-      return input_indexalator(indices.data<IndexType>(), indices.type());
-    }
+    { return input_indexalator(indices.data<IndexType>(), indices.type()); }
     template <typename IndexType, typename... Args, CUDF_ENABLE_IF(not is_index_type<IndexType>())>
     input_indexalator operator()(Args&&... args)
-    {
-      CUDF_FAIL("indices must be an index type");
-    }
+    { CUDF_FAIL("indices must be an index type"); }
   };
 
   /**
@@ -233,9 +219,7 @@ struct indexalator_factory {
     }
     template <typename IndexType, typename... Args, CUDF_ENABLE_IF(not is_index_type<IndexType>())>
     input_indexalator operator()(Args&&... args)
-    {
-      CUDF_FAIL("scalar must be an index type");
-    }
+    { CUDF_FAIL("scalar must be an index type"); }
   };
 
   /**
@@ -244,39 +228,29 @@ struct indexalator_factory {
   struct output_indexalator_fn {
     template <typename IndexType, CUDF_ENABLE_IF(is_index_type<IndexType>())>
     output_indexalator operator()(mutable_column_view const& indices)
-    {
-      return output_indexalator(indices.data<IndexType>(), indices.type());
-    }
+    { return output_indexalator(indices.data<IndexType>(), indices.type()); }
     template <typename IndexType, typename... Args, CUDF_ENABLE_IF(not is_index_type<IndexType>())>
     output_indexalator operator()(Args&&... args)
-    {
-      CUDF_FAIL("indices must be an index type");
-    }
+    { CUDF_FAIL("indices must be an index type"); }
   };
 
   /**
    * @brief Create an input indexalator instance from an indices column.
    */
   static input_indexalator make_input_iterator(column_view const& indices)
-  {
-    return type_dispatcher(indices.type(), input_indexalator_fn{}, indices);
-  }
+  { return type_dispatcher(indices.type(), input_indexalator_fn{}, indices); }
 
   /**
    * @brief Create an input indexalator instance from an index scalar.
    */
   static input_indexalator make_input_iterator(cudf::scalar const& index)
-  {
-    return type_dispatcher(index.type(), input_indexalator_scalar_fn{}, index);
-  }
+  { return type_dispatcher(index.type(), input_indexalator_scalar_fn{}, index); }
 
   /**
    * @brief Create an output indexalator instance from an indices column.
    */
   static output_indexalator make_output_iterator(mutable_column_view const& indices)
-  {
-    return type_dispatcher(indices.type(), output_indexalator_fn{}, indices);
-  }
+  { return type_dispatcher(indices.type(), output_indexalator_fn{}, indices); }
 
   /**
    * @brief An index accessor that returns an index value if corresponding validity flag is true.
@@ -320,23 +294,17 @@ struct indexalator_factory {
      */
     scalar_optional_index_accessor(scalar const& input, cuda::stream_ref stream)
       : is_null{!input.is_valid(stream)}
-    {
-      iter = indexalator_factory::make_input_iterator(input);
-    }
+    { iter = indexalator_factory::make_input_iterator(input); }
 
     __device__ cuda::std::optional<size_type> operator()(size_type) const
-    {
-      return is_null ? cuda::std::nullopt : cuda::std::make_optional(*iter);
-    }
+    { return is_null ? cuda::std::nullopt : cuda::std::make_optional(*iter); }
   };
 
   /**
    * @brief Create an index iterator with an optional index accessor.
    */
   static auto make_input_optional_iterator(column_view const& col)
-  {
-    return make_counting_transform_iterator(0, optional_index_accessor{col, col.has_nulls()});
-  }
+  { return make_counting_transform_iterator(0, optional_index_accessor{col, col.has_nulls()}); }
 
   /**
    * @brief Create an index iterator with an optional index accessor for a scalar.

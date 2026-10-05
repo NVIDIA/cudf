@@ -23,9 +23,7 @@
 namespace cudf_streaming {
 
 std::size_t bloom_filter::aligned_size(std::size_t size) noexcept
-{
-  return detail::device_bloom_filter::aligned_size(size);
-}
+{ return detail::device_bloom_filter::aligned_size(size); }
 
 bloom_filter::bloom_filter(std::shared_ptr<rapidsmpf::streaming::Context> ctx,
                            std::shared_ptr<rapidsmpf::Communicator> comm,

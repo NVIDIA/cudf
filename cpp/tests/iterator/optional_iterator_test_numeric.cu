@@ -21,9 +21,7 @@ struct NumericOptionalIteratorTest : public IteratorTest<T> {};
 
 TYPED_TEST_SUITE(NumericOptionalIteratorTest, TestingTypes);
 TYPED_TEST(NumericOptionalIteratorTest, nonull_optional_iterator)
-{
-  nonull_optional_iterator(*this);
-}
+{ nonull_optional_iterator(*this); }
 TYPED_TEST(NumericOptionalIteratorTest, null_optional_iterator) { null_optional_iterator(*this); }
 
 namespace {

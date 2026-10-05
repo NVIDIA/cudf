@@ -162,20 +162,14 @@ __device__ constexpr uint8_t hex_char_to_byte(char ch)
 }
 
 __device__ constexpr bool is_hex_digit(char ch)
-{
-  return (ch >= '0' && ch <= '9') || (ch >= 'A' && ch <= 'F') || (ch >= 'a' && ch <= 'f');
-}
+{ return (ch >= '0' && ch <= '9') || (ch >= 'A' && ch <= 'F') || (ch >= 'a' && ch <= 'f'); }
 
 __forceinline__ __device__ bool is_escape_char(char const* const ptr)
-{
-  return (ptr[0] == '%' && is_hex_digit(ptr[1]) && is_hex_digit(ptr[2]));
-}
+{ return (ptr[0] == '%' && is_hex_digit(ptr[1]) && is_hex_digit(ptr[2])); }
 
 // helper function for converting an escaped sequence starting at `ptr` to a single byte
 __forceinline__ __device__ char escaped_sequence_to_byte(char const* const ptr)
-{
-  return (hex_char_to_byte(ptr[1]) << 4) | hex_char_to_byte(ptr[2]);
-}
+{ return (hex_char_to_byte(ptr[1]) << 4) | hex_char_to_byte(ptr[2]); }
 
 /**
  * @brief Count the number of characters of each string after URL decoding.

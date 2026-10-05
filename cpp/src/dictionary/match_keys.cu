@@ -85,9 +85,7 @@ struct unique_keys_dispatch_fn {
                                            cuda::stream_ref,
                                            rmm::device_async_resource_ref)
     requires(not cudf::is_dictionary_key<T>())
-  {
-    CUDF_UNREACHABLE("invalid dictionary key type");
-  }
+  { CUDF_UNREACHABLE("invalid dictionary key type"); }
 };
 }  // namespace
 

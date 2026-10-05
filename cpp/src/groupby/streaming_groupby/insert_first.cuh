@@ -36,9 +36,7 @@ struct indirect_row_equality {
   RowEquality const* row_equal;  ///< Non-owning device pointer to the row-equality comparator
 
   __attribute__((noinline)) __device__ bool operator()(size_type lhs, size_type rhs) const noexcept
-  {
-    return (*row_equal)(lhs, rhs);
-  }
+  { return (*row_equal)(lhs, rhs); }
 };
 
 template <bool has_nested>

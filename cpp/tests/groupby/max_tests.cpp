@@ -483,11 +483,11 @@ TEST_F(groupby_max_list_test, null_keys_and_values)
   // Null child element.
   {
     auto const vals        = lists{lists{{0, null}, null_at(1)},
-                            lists{1, 2},
-                            lists{3, 4},
-                            lists{5, 6, 7},
-                            lists{0, 8},
-                            lists{9, 10}};
+                                   lists{1, 2},
+                                   lists{3, 4},
+                                   lists{5, 6, 7},
+                                   lists{0, 8},
+                                   lists{9, 10}};
     auto const expect_vals = lists{{0, 8}, {9, 10}, {3, 4}};
     test_single_agg(keys,
                     vals,

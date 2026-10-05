@@ -53,9 +53,7 @@ class primitive_pair_equal {
   __device__ __forceinline__ bool operator()(
     cuda::std::pair<hash_value_type, size_type> const& lhs,
     cuda::std::pair<hash_value_type, size_type> const& rhs) const noexcept
-  {
-    return lhs.first == rhs.first and _check_row_equality(lhs.second, rhs.second);
-  }
+  { return lhs.first == rhs.first and _check_row_equality(lhs.second, rhs.second); }
 
  private:
   cudf::detail::row::primitive::row_equality_comparator _check_row_equality;

@@ -127,17 +127,13 @@ void column_buffer_base<string_policy>::create(size_type _size,
                                                bool memset_data,
                                                cuda::stream_ref stream,
                                                rmm::device_async_resource_ref mr)
-{
-  create_with_mask(_size, mask_state::ALL_NULL, memset_data, stream, mr);
-}
+{ create_with_mask(_size, mask_state::ALL_NULL, memset_data, stream, mr); }
 
 template <class string_policy>
 void column_buffer_base<string_policy>::create(size_type _size,
                                                cuda::stream_ref stream,
                                                rmm::device_async_resource_ref mr)
-{
-  create_with_mask(_size, mask_state::ALL_NULL, true, stream, mr);
-}
+{ create_with_mask(_size, mask_state::ALL_NULL, true, stream, mr); }
 
 template <class string_policy>
 string_policy column_buffer_base<string_policy>::empty_like(string_policy const& input)

@@ -120,9 +120,7 @@ struct sum_overflow_dispatcher {
                                            std::optional<std::reference_wrapper<scalar const>> init,
                                            cuda::stream_ref stream,
                                            rmm::device_async_resource_ref mr) const
-  {
-    return sum_overflow_impl<Source>(col, init, stream, mr);
-  }
+  { return sum_overflow_impl<Source>(col, init, stream, mr); }
 
   template <typename Source>
     requires(!cudf::detail::sum_overflow_supported<Source>)

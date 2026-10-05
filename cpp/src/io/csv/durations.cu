@@ -105,18 +105,12 @@ struct duration_to_string_fn : public duration_to_string_size_fn<T> {
   }
 
   inline __device__ char* hour_24(char* ptr, duration_component const* timeparts)
-  {
-    return int_to_2digitstr(timeparts->hour, ptr);
-  }
+  { return int_to_2digitstr(timeparts->hour, ptr); }
 
   inline __device__ char* minute(char* ptr, duration_component const* timeparts)
-  {
-    return int_to_2digitstr(timeparts->minute, ptr);
-  }
+  { return int_to_2digitstr(timeparts->minute, ptr); }
   inline __device__ char* second(char* ptr, duration_component const* timeparts)
-  {
-    return int_to_2digitstr(timeparts->second, ptr);
-  }
+  { return int_to_2digitstr(timeparts->second, ptr); }
 
   inline __device__ char* nanosecond(char* ptr, duration_component const* timeparts)
   {
@@ -203,9 +197,7 @@ struct dispatch_from_durations_fn {
                                      cuda::stream_ref,
                                      rmm::device_async_resource_ref) const
     requires(not cudf::is_duration<T>())
-  {
-    CUDF_FAIL("Values for from_durations function must be a duration type.");
-  }
+  { CUDF_FAIL("Values for from_durations function must be a duration type."); }
 };
 
 }  // namespace

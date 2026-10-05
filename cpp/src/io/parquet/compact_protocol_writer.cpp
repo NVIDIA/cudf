@@ -489,8 +489,6 @@ inline void CompactProtocolFieldWriter::field_string_list(int field,
 inline int CompactProtocolFieldWriter::current_field() { return current_field_value; }
 
 inline void CompactProtocolFieldWriter::set_current_field(int const& field)
-{
-  current_field_value = field;
-}
+{ current_field_value = field; }
 
 }  // namespace cudf::io::parquet::detail

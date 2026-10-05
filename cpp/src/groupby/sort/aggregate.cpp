@@ -85,9 +85,7 @@ struct aggregate_result_functor final : store_result_functor {
   using store_result_functor::store_result_functor;
   template <aggregation::Kind k>
   void operator()(aggregation const& agg)
-  {
-    CUDF_FAIL("Unsupported aggregation.");
-  }
+  { CUDF_FAIL("Unsupported aggregation."); }
 };
 
 template <>
@@ -539,10 +537,10 @@ void aggregate_result_functor::operator()<aggregation::MERGE_SETS>(aggregation c
   if (cache.has_result(values, agg)) { return; }
 
   auto const merged_result   = detail::group_merge_lists(get_grouped_values(),
-                                                       helper.group_offsets(stream),
-                                                       helper.num_groups(stream),
-                                                       stream,
-                                                       cudf::get_current_device_resource_ref());
+                                                         helper.group_offsets(stream),
+                                                         helper.num_groups(stream),
+                                                         stream,
+                                                         cudf::get_current_device_resource_ref());
   auto const& merge_sets_agg = dynamic_cast<cudf::detail::merge_sets_aggregation const&>(agg);
   cache.add_result(values,
                    agg,
@@ -807,11 +805,11 @@ void aggregate_result_functor::operator()<aggregation::BITWISE_AGG>(aggregation 
 
   auto const bit_op = dynamic_cast<cudf::detail::bitwise_aggregation const&>(agg).bit_op;
   auto result       = detail::group_bitwise(bit_op,
-                                      get_grouped_values(),
-                                      helper.group_labels(stream),
-                                      helper.num_groups(stream),
-                                      stream,
-                                      mr);
+                                            get_grouped_values(),
+                                            helper.group_labels(stream),
+                                            helper.num_groups(stream),
+                                            stream,
+                                            mr);
   cache.add_result(values, agg, std::move(result));
 }
 

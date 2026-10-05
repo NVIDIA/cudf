@@ -2407,10 +2407,10 @@ TEST_F(JoinTest, HashJoinWithNullsOneSide)
 
   auto const sort_result = [](auto const& result) {
     auto const left_cv  = cudf::column_view{cudf::data_type{cudf::type_id::INT32},
-                                           static_cast<cudf::size_type>(result.first->size()),
-                                           result.first->data(),
-                                           nullptr,
-                                           0};
+                                            static_cast<cudf::size_type>(result.first->size()),
+                                            result.first->data(),
+                                            nullptr,
+                                            0};
     auto const right_cv = cudf::column_view{cudf::data_type{cudf::type_id::INT32},
                                             static_cast<cudf::size_type>(result.second->size()),
                                             result.second->data(),

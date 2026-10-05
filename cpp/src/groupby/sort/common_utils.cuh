@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -40,9 +40,7 @@ struct permuted_row_equality_comparator {
    * @returns true if the two specified rows in the permuted order are equivalent
    */
   __device__ bool operator()(cudf::size_type lhs, cudf::size_type rhs) const
-  {
-    return _comparator(_permutation[lhs], _permutation[rhs]);
-  };
+  { return _comparator(_permutation[lhs], _permutation[rhs]); };
 
  private:
   ComparatorT const _comparator;

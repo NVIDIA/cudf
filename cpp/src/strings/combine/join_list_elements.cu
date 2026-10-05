@@ -124,14 +124,10 @@ struct scalar_separator_fn {
 
   [[nodiscard]] __device__ bool is_null_list(column_device_view const& lists_dv,
                                              size_type const idx) const noexcept
-  {
-    return lists_dv.is_null(idx);
-  }
+  { return lists_dv.is_null(idx); }
 
   [[nodiscard]] __device__ string_view separator(size_type const) const noexcept
-  {
-    return d_separator.value();
-  }
+  { return d_separator.value(); }
 };
 
 template <typename CompFn>
@@ -222,9 +218,7 @@ struct column_separators_fn {
 
   [[nodiscard]] __device__ bool is_null_list(column_device_view const& lists_dv,
                                              size_type const idx) const noexcept
-  {
-    return lists_dv.is_null(idx) || (separators_dv.is_null(idx) && !sep_narep_dv.is_valid());
-  }
+  { return lists_dv.is_null(idx) || (separators_dv.is_null(idx) && !sep_narep_dv.is_valid()); }
 
   [[nodiscard]] __device__ string_view separator(size_type const idx) const noexcept
   {

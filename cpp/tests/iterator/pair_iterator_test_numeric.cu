@@ -106,10 +106,10 @@ TYPED_TEST(NumericPairIteratorTest, mean_var_output)
   auto it_dev         = d_col->template pair_begin<T, true>();
   auto it_dev_squared = cuda::transform_iterator(it_dev, transformer);
   auto result         = thrust::reduce(rmm::exec_policy_nosync(cudf::get_default_stream()),
-                               it_dev_squared,
-                               it_dev_squared + d_col->size(),
-                               cuda::std::make_pair(T_output{}, true),
-                               sum_if_not_null{});
+                                       it_dev_squared,
+                                       it_dev_squared + d_col->size(),
+                                       cuda::std::make_pair(T_output{}, true),
+                                       sum_if_not_null{});
   if constexpr (not std::is_floating_point<T>()) {
     EXPECT_EQ(expected_value, result.first) << "pair iterator reduction sum";
   } else {

@@ -106,16 +106,12 @@ struct column_sorted_order_fn {
                   bool ascending,
                   null_order null_precedence,
                   cuda::stream_ref stream)
-  {
-    sorted_order<T>(input, indices, ascending, null_precedence, stream);
-  }
+  { sorted_order<T>(input, indices, ascending, null_precedence, stream); }
 
   template <typename T>
     requires(not cudf::is_relationally_comparable<T, T>())
   void operator()(column_view const&, mutable_column_view&, bool, null_order, cuda::stream_ref)
-  {
-    CUDF_FAIL("Column type must be relationally comparable");
-  }
+  { CUDF_FAIL("Column type must be relationally comparable"); }
 
   template <typename T>
     requires(is_dictionary<T>())

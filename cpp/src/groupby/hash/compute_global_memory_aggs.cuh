@@ -95,11 +95,11 @@ std::pair<std::unique_ptr<table>, rmm::device_uvector<size_type>> compute_aggs_d
 
   auto const d_values = table_device_view::create(values, stream);
   auto agg_results    = create_results_table(static_cast<size_type>(unique_keys.size()),
-                                          values,
-                                          h_agg_kinds,
-                                          is_agg_intermediate,
-                                          stream,
-                                          mr);
+                                             values,
+                                             h_agg_kinds,
+                                             is_agg_intermediate,
+                                             stream,
+                                             mr);
   auto d_results_ptr  = mutable_table_device_view::create(*agg_results, stream);
 
   thrust::for_each_n(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),

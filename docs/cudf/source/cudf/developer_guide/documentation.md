@@ -25,6 +25,7 @@ class A:
     x : int
         Description of x, the first constructor parameter.
     """
+
     def __init__(self, x: int):
         pass
 

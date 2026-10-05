@@ -862,14 +862,14 @@ void reader_impl::decompress_and_decode_stripes(read_mode mode)
         chunk.num_child_rows = (chunk.type_kind != STRUCT) ? 0 : chunk.num_rows;
         chunk.dtype_id       = column_types[col_idx].id();
         chunk.decimal_scale  = _metadata.per_file_metadata[stripe.source_idx]
-                                .ff.types[columns_level[col_idx].id]
-                                .scale.value_or(0);
+                                 .ff.types[columns_level[col_idx].id]
+                                 .scale.value_or(0);
 
         chunk.rowgroup_id   = rowgroup_id;
         chunk.dtype_len     = (column_types[col_idx].id() == type_id::STRING)
                                 ? sizeof(string_index_pair)
                               : ((column_types[col_idx].id() == type_id::LIST) or
-                             (column_types[col_idx].id() == type_id::STRUCT))
+                                 (column_types[col_idx].id() == type_id::STRUCT))
                                 ? sizeof(size_type)
                                 : cudf::size_of(column_types[col_idx]);
         chunk.num_rowgroups = stripe_num_rowgroups;

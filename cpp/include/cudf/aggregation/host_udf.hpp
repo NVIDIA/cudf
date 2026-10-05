@@ -59,9 +59,7 @@ class host_udf_base {
    * @return The hash value of the instance
    */
   [[nodiscard]] virtual std::size_t do_hash() const
-  {
-    return std::hash<int>{}(static_cast<int>(aggregation::Kind::HOST_UDF));
-  }
+  { return std::hash<int>{}(static_cast<int>(aggregation::Kind::HOST_UDF)); }
 
   /**
    * @brief Compares two instances of the derived class for equality.
@@ -202,7 +200,7 @@ struct segmented_reduce_host_udf : host_udf_base {
 };
 
 // Forward declaration.
-namespace groupby ::detail {
+namespace groupby::detail {
 struct aggregate_result_functor;
 }
 

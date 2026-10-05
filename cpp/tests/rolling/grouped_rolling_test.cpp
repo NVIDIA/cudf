@@ -264,9 +264,7 @@ class GroupedRollingTest : public cudf::test::BaseFixture {
     cudf::size_type const& following_window_col,
     cudf::size_type min_periods)
     requires(!is_rolling_supported<T, k>())
-  {
-    CUDF_FAIL("Unsupported combination of type and aggregation");
-  }
+  { CUDF_FAIL("Unsupported combination of type and aggregation"); }
 
   std::unique_ptr<cudf::column> create_reference_output(
     cudf::rolling_aggregation const& op,
@@ -961,9 +959,7 @@ class GroupedTimeRangeRollingTest : public cudf::test::BaseFixture {
     cudf::size_type const& following_window_col,
     cudf::size_type min_periods)
     requires(!is_rolling_supported<T, k>())
-  {
-    CUDF_FAIL("Unsupported combination of type and aggregation");
-  }
+  { CUDF_FAIL("Unsupported combination of type and aggregation"); }
 
   std::unique_ptr<cudf::column> create_reference_output(
     cudf::rolling_aggregation const& op,

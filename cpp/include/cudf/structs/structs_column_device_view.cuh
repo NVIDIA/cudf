@@ -66,9 +66,7 @@ class structs_column_device_view : private column_device_view {
    * @return The child column sliced relative to the parent's offset and size
    */
   [[nodiscard]] __device__ inline column_device_view get_sliced_child(size_type idx) const
-  {
-    return child(idx).slice(offset(), size());
-  }
+  { return child(idx).slice(offset(), size()); }
 };
 
 }  // namespace cudf

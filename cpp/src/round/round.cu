@@ -42,37 +42,27 @@ inline double __device__ generic_modf(double a, double* b) { return modf(a, b); 
 template <typename T>
 T __device__ generic_abs(T value)
   requires(cuda::std::is_signed_v<T>)
-{
-  return numeric::detail::abs(value);
-}
+{ return numeric::detail::abs(value); }
 
 template <typename T>
 T __device__ generic_abs(T value)
   requires(not cuda::std::is_signed_v<T>)
-{
-  return value;
-}
+{ return value; }
 
 template <typename T>
 int16_t __device__ generic_sign(T value)
   requires(cuda::std::is_signed_v<T>)
-{
-  return value < 0 ? -1 : 1;
-}
+{ return value < 0 ? -1 : 1; }
 
 // this is needed to suppress warning: pointless comparison of unsigned integer with zero
 template <typename T>
 int16_t __device__ generic_sign(T)
   requires(not cuda::std::is_signed_v<T>)
-{
-  return 1;
-}
+{ return 1; }
 
 template <typename T>
 constexpr inline auto is_supported_round_type()
-{
-  return (cudf::is_numeric<T>() && not std::is_same_v<T, bool>) || cudf::is_fixed_point<T>();
-}
+{ return (cudf::is_numeric<T>() && not std::is_same_v<T, bool>) || cudf::is_fixed_point<T>(); }
 
 template <typename T>
 struct half_up_zero {
@@ -80,9 +70,7 @@ struct half_up_zero {
   template <typename U = T>
   __device__ U operator()(U e)
     requires(cudf::is_floating_point<U>())
-  {
-    return generic_round(e);
-  }
+  { return generic_round(e); }
 
   template <typename U = T>
   __device__ U operator()(U)
@@ -120,9 +108,7 @@ struct half_up_negative {
   template <typename U = T>
   __device__ U operator()(U e)
     requires(cudf::is_floating_point<U>())
-  {
-    return generic_round(e / n) * n;
-  }
+  { return generic_round(e / n) * n; }
 
   template <typename U = T>
   __device__ U operator()(U e)
@@ -139,9 +125,7 @@ struct half_even_zero {
   template <typename U = T>
   __device__ U operator()(U e)
     requires(cudf::is_floating_point<U>())
-  {
-    return generic_round_half_even(e);
-  }
+  { return generic_round_half_even(e); }
 
   template <typename U = T>
   __device__ U operator()(U)
@@ -179,9 +163,7 @@ struct half_even_negative {
   template <typename U = T>
   __device__ U operator()(U e)
     requires(cudf::is_floating_point<U>())
-  {
-    return generic_round_half_even(e / n) * n;
-  }
+  { return generic_round_half_even(e / n) * n; }
 
   template <typename U = T>
   __device__ U operator()(U e)
@@ -302,9 +284,7 @@ struct round_type_dispatcher {
   template <typename T, typename... Args>
   std::unique_ptr<column> operator()(Args&&...)
     requires(not is_supported_round_type<T>())
-  {
-    CUDF_FAIL("Type not support for cudf::round");
-  }
+  { CUDF_FAIL("Type not support for cudf::round"); }
 
   template <typename T>
   std::unique_ptr<column> operator()(column_view const& input,
@@ -335,16 +315,12 @@ struct round_type_dispatcher {
 struct round_dispatch_fn {
   template <typename T>
   static constexpr bool is_supported()
-  {
-    return cudf::is_integral_not_bool<T>() || cudf::is_fixed_point<T>();
-  }
+  { return cudf::is_integral_not_bool<T>() || cudf::is_fixed_point<T>(); }
 
   template <typename T, typename... Args>
   std::unique_ptr<column> operator()(Args&&...)
     requires(not is_supported<T>())
-  {
-    CUDF_UNREACHABLE("type not support for cudf::round_decimal");
-  }
+  { CUDF_UNREACHABLE("type not support for cudf::round_decimal"); }
 
   template <typename T>
   std::unique_ptr<column> operator()(column_view const& input,

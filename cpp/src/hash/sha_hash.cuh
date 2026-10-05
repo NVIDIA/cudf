@@ -365,7 +365,7 @@ __device__ inline void sha256_hash_step(hash_state& state)
                         (words[i - 15] >> 3);
     uint32_t const s1 = rotate_bits_right(words[i - 2], 17) ^ rotate_bits_right(words[i - 2], 19) ^
                         (words[i - 2] >> 10);
-    words[i] = words[i - 16] + s0 + words[i - 7] + s1;
+    words[i]          = words[i - 16] + s0 + words[i - 7] + s1;
   }
 
   uint32_t A = state.hash_value[0];
@@ -433,7 +433,7 @@ __device__ inline void sha512_hash_step(hash_state& state)
                         (words[i - 15] >> 7);
     uint64_t const s1 = rotate_bits_right(words[i - 2], 19) ^ rotate_bits_right(words[i - 2], 61) ^
                         (words[i - 2] >> 6);
-    words[i] = words[i - 16] + s0 + words[i - 7] + s1;
+    words[i]          = words[i - 16] + s0 + words[i - 7] + s1;
   }
 
   uint64_t A = state.hash_value[0];
@@ -479,9 +479,7 @@ __device__ inline void sha512_hash_step(hash_state& state)
 
 // SHA supported leaf data type check
 bool inline sha_leaf_type_check(data_type dt)
-{
-  return (is_fixed_width(dt) && !is_chrono(dt)) || (dt.id() == type_id::STRING);
-}
+{ return (is_fixed_width(dt) && !is_chrono(dt)) || (dt.id() == type_id::STRING); }
 
 /**
  * @brief Call a SHA-1 or SHA-2 hash function on a table view.

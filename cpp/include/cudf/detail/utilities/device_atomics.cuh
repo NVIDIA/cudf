@@ -225,9 +225,7 @@ __forceinline__ __device__ bool genericAtomicOperation(bool* address,
  */
 template <typename T>
 __forceinline__ __device__ T atomic_add(T* address, T val)
-{
-  return cudf::detail::genericAtomicOperation(address, val, cudf::DeviceSum{});
-}
+{ return cudf::detail::genericAtomicOperation(address, val, cudf::DeviceSum{}); }
 
 /**
  * @brief Overloads for `atomic_mul`
@@ -248,9 +246,7 @@ __forceinline__ __device__ T atomic_add(T* address, T val)
  */
 template <typename T>
 __forceinline__ __device__ T atomic_mul(T* address, T val)
-{
-  return cudf::detail::genericAtomicOperation(address, val, cudf::DeviceProduct{});
-}
+{ return cudf::detail::genericAtomicOperation(address, val, cudf::DeviceProduct{}); }
 
 /**
  * @brief Overloads for `atomic_min`
@@ -276,9 +272,7 @@ __forceinline__ __device__ T atomic_mul(T* address, T val)
  */
 template <typename T>
 __forceinline__ __device__ T atomic_min(T* address, T val)
-{
-  return cudf::detail::genericAtomicOperation(address, val, cudf::DeviceMin{});
-}
+{ return cudf::detail::genericAtomicOperation(address, val, cudf::DeviceMin{}); }
 
 /**
  * @brief Overloads for `atomic_max`
@@ -304,9 +298,7 @@ __forceinline__ __device__ T atomic_min(T* address, T val)
  */
 template <typename T>
 __forceinline__ __device__ T atomic_max(T* address, T val)
-{
-  return cudf::detail::genericAtomicOperation(address, val, cudf::DeviceMax{});
-}
+{ return cudf::detail::genericAtomicOperation(address, val, cudf::DeviceMax{}); }
 
 /**
  * @brief Overloads for `atomic_cas`
@@ -332,9 +324,7 @@ __forceinline__ __device__ T atomic_max(T* address, T val)
  */
 template <typename T>
 __forceinline__ __device__ T atomic_cas(T* address, T compare, T val)
-{
-  return cudf::detail::typesAtomicCASImpl<T>()(address, compare, val);
-}
+{ return cudf::detail::typesAtomicCASImpl<T>()(address, compare, val); }
 
 /**
  * @brief Helper function to calculate carry for 64-bit addition

@@ -60,13 +60,9 @@ struct alignas(4) format_item {
   int8_t length;               // item length in bytes
 
   static format_item new_specifier(char format_char, int8_t length)
-  {
-    return format_item{format_char_type::specifier, format_char, length};
-  }
+  { return format_item{format_char_type::specifier, format_char, length}; }
   static format_item new_delimiter(char literal)
-  {
-    return format_item{format_char_type::literal, literal, 1};
-  }
+  { return format_item{format_char_type::literal, literal, 1}; }
 };
 
 /**
@@ -239,18 +235,12 @@ struct from_durations_fn {
   }
 
   inline __device__ char* day(char* ptr, duration_component const* timeparts)
-  {
-    return int2str(ptr, -1, timeparts->day);
-  }
+  { return int2str(ptr, -1, timeparts->day); }
 
   inline __device__ char* hour_12(char* ptr, duration_component const* timeparts)
-  {
-    return int_to_2digitstr(ptr, timeparts->hour % 12);
-  }
+  { return int_to_2digitstr(ptr, timeparts->hour % 12); }
   inline __device__ char* hour_24(char* ptr, duration_component const* timeparts)
-  {
-    return int_to_2digitstr(ptr, timeparts->hour);
-  }
+  { return int_to_2digitstr(ptr, timeparts->hour); }
   inline __device__ char* am_or_pm(char* ptr, duration_component const* timeparts)
   {
     *ptr++ = (timeparts->hour / 12 == 0 ? 'A' : 'P');
@@ -258,13 +248,9 @@ struct from_durations_fn {
     return ptr;
   }
   inline __device__ char* minute(char* ptr, duration_component const* timeparts)
-  {
-    return int_to_2digitstr(ptr, timeparts->minute);
-  }
+  { return int_to_2digitstr(ptr, timeparts->minute); }
   inline __device__ char* second(char* ptr, duration_component const* timeparts)
-  {
-    return int_to_2digitstr(ptr, timeparts->second);
-  }
+  { return int_to_2digitstr(ptr, timeparts->second); }
 
   inline __device__ char* subsecond(char* ptr, duration_component const* timeparts)
   {
@@ -422,9 +408,7 @@ struct dispatch_from_durations_fn {
   template <typename T, typename... Args>
   std::unique_ptr<column> operator()(Args&&...) const
     requires(not cudf::is_duration<T>())
-  {
-    CUDF_FAIL("Values for from_durations function must be a duration type.");
-  }
+  { CUDF_FAIL("Values for from_durations function must be a duration type."); }
 };
 
 // this parses duration string into a duration integer
@@ -487,17 +471,11 @@ struct parse_duration {
     return (*str == '-') ? -value : value;
   }
   inline __device__ int8_t parse_hour(char const* str, int8_t& actual_length)
-  {
-    return parse_2digit_int(str, actual_length);
-  }
+  { return parse_2digit_int(str, actual_length); }
   inline __device__ int8_t parse_minute(char const* str, int8_t& actual_length)
-  {
-    return parse_2digit_int(str, actual_length);
-  }
+  { return parse_2digit_int(str, actual_length); }
   inline __device__ int8_t parse_second(char const* str, int8_t& actual_length)
-  {
-    return parse_2digit_int(str, actual_length);
-  }
+  { return parse_2digit_int(str, actual_length); }
 
   // Walk the format_items to read the datetime string.
   // Returns 0 if all ok.
@@ -663,9 +641,7 @@ struct dispatch_to_durations_fn {
                   mutable_column_view&,
                   cuda::stream_ref) const
     requires(not cudf::is_duration<T>())
-  {
-    CUDF_FAIL("Only durations type are expected for to_durations function");
-  }
+  { CUDF_FAIL("Only durations type are expected for to_durations function"); }
 };
 
 }  // namespace
@@ -699,11 +675,11 @@ std::unique_ptr<column> to_durations(strings_column_view const& input,
   auto d_column       = *strings_column;
 
   auto results      = make_duration_column(duration_type,
-                                      strings_count,
-                                      cudf::detail::copy_bitmask(input.parent(), stream, mr),
-                                      input.null_count(),
-                                      stream,
-                                      mr);
+                                           strings_count,
+                                           cudf::detail::copy_bitmask(input.parent(), stream, mr),
+                                           input.null_count(),
+                                           stream,
+                                           mr);
   auto results_view = results->mutable_view();
   cudf::type_dispatcher(
     duration_type, dispatch_to_durations_fn(), d_column, format, results_view, stream);

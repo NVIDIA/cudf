@@ -39,14 +39,10 @@ struct hasher_adapter {
   }
 
   __device__ constexpr auto operator()(lhs_index_type idx) const noexcept
-  {
-    return _needle_hasher(static_cast<size_type>(idx));
-  }
+  { return _needle_hasher(static_cast<size_type>(idx)); }
 
   __device__ constexpr auto operator()(rhs_index_type idx) const noexcept
-  {
-    return _haystack_hasher(static_cast<size_type>(idx));
-  }
+  { return _haystack_hasher(static_cast<size_type>(idx)); }
 
  private:
   HaystackHasher const _haystack_hasher;
@@ -74,9 +70,7 @@ struct comparator_adapter {
 
   __device__ constexpr auto operator()(lhs_index_type lhs_index,
                                        rhs_index_type rhs_index) const noexcept
-  {
-    return _two_table_equal(lhs_index, rhs_index);
-  }
+  { return _two_table_equal(lhs_index, rhs_index); }
 
  private:
   SelfEqual const _self_equal;

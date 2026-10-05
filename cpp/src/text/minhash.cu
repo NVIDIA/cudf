@@ -303,8 +303,8 @@ CUDF_KERNEL void minhash_kernel(offsets_type offsets_itr,
   // example:
   //  each section_size for string with size 588090 and blocks_per_row=64 is 9188
   //  except the last section which is 9188 + (588090 % 64) = 9246
-  auto const section_size = (row_size / blocks_per_row) +
-                            (section_idx < (blocks_per_row - 1) ? 0 : row_size % blocks_per_row);
+  auto const section_size   = (row_size / blocks_per_row) +
+                              (section_idx < (blocks_per_row - 1) ? 0 : row_size % blocks_per_row);
   auto const section_offset = section_idx * (row_size / blocks_per_row);
 
   // hash values for this block/section

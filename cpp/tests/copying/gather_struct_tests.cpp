@@ -64,9 +64,7 @@ struct column_wrapper_constructor<std::string, std::string> {
   cudf::test::strings_column_wrapper operator()(ValueIter begin,
                                                 ValueIter end,
                                                 ValidityIter validity_begin) const
-  {
-    return cudf::test::strings_column_wrapper{begin, end, validity_begin};
-  }
+  { return cudf::test::strings_column_wrapper{begin, end, validity_begin}; }
 };
 
 template <typename ElementTo,

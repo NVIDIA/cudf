@@ -513,9 +513,7 @@ void slice_host_nanoarrow(ArrowArray* arr, int64_t start, int64_t end);
 template <typename T>
 std::size_t get_decimal_precision()
   requires(std::same_as<T, int32_t> || std::same_as<T, int64_t> || std::same_as<T, __int128_t>)
-{
-  return std::numeric_limits<T>::digits10;
-}
+{ return std::numeric_limits<T>::digits10; }
 
 struct VectorOfArrays {
   std::vector<nanoarrow::UniqueArray> arrays;
@@ -544,9 +542,7 @@ struct VectorOfArrays {
   static char const* get_last_error(ArrowArrayStream* stream) { return nullptr; }
 
   static void release(ArrowArrayStream* stream)
-  {
-    delete static_cast<VectorOfArrays*>(stream->private_data);
-  }
+  { delete static_cast<VectorOfArrays*>(stream->private_data); }
 };
 
 void makeStreamFromArrays(std::vector<nanoarrow::UniqueArray> arrays,

@@ -67,9 +67,7 @@ class cardinality_estimator {
    * @return Shared pointer to the communicator.
    */
   [[nodiscard]] std::shared_ptr<rapidsmpf::Communicator> const& comm() const noexcept
-  {
-    return comm_;
-  }
+  { return comm_; }
 
   /**
    * @brief Get the HyperLogLog precision.

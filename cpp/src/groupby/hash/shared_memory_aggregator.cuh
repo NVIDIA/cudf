@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -20,9 +20,7 @@ struct update_target_element_shmem {
                              cudf::size_type,
                              cudf::column_device_view,
                              cudf::size_type) const
-  {
-    CUDF_UNREACHABLE("Invalid source type and aggregation combination.");
-  }
+  { CUDF_UNREACHABLE("Invalid source type and aggregation combination."); }
 };
 
 template <typename Source>

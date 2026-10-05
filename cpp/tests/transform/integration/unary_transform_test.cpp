@@ -664,9 +664,9 @@ __device__ inline void decode(float * output, float input){
 
   // non-nullable
   {
-    auto a = cudf::test::fixed_width_column_wrapper<float>(
-               {1.0F, 2.0F, 3.0F, 4.0F, 5.0F, 5.0F, 5.0F, 1.0F, 2.0F})
-               .release();
+    auto a                         = cudf::test::fixed_width_column_wrapper<float>(
+                                       {1.0F, 2.0F, 3.0F, 4.0F, 5.0F, 5.0F, 5.0F, 1.0F, 2.0F})
+                                       .release();
     auto a_encoded                 = cudf::dictionary::encode(a->view());
     cudf::transform_input inputs[] = {*a_encoded};
 
@@ -1027,7 +1027,7 @@ TEST_F(StringOperationTest, StringComparison)
                     inputs,
                     std::array{cudf::transform_output{cudf::data_type(cudf::type_id::BOOL8),
                                                       cudf::output_nullability::PRESERVE}},
-                                       {},
+                    {},
                     std::nullopt)
       ->release()
       .front());
@@ -1057,7 +1057,7 @@ TEST_F(StringOperationTest, StringContains)
                     inputs,
                     std::array{cudf::transform_output{cudf::data_type(cudf::type_id::BOOL8),
                                                       cudf::output_nullability::PRESERVE}},
-                                       {},
+                    {},
                     std::nullopt)
       ->release()
       .front());
@@ -1086,7 +1086,7 @@ TEST_F(StringOperationTest, StringFind)
                     inputs,
                     std::array{cudf::transform_output{cudf::data_type(cudf::type_id::INT32),
                                                       cudf::output_nullability::PRESERVE}},
-                                       {},
+                    {},
                     std::nullopt)
       ->release()
       .front());
@@ -1118,7 +1118,7 @@ TEST_F(StringOperationTest, MixedTypes)
                     inputs,
                     std::array{cudf::transform_output{cudf::data_type(cudf::type_id::BOOL8),
                                                       cudf::output_nullability::PRESERVE}},
-                                       {},
+                    {},
                     std::nullopt)
       ->release()
       .front());
@@ -1151,7 +1151,7 @@ TEST_F(StringOperationTest, Output)
                     inputs,
                     std::array{cudf::transform_output{cudf::data_type(cudf::type_id::STRING),
                                                       cudf::output_nullability::PRESERVE}},
-                                       {},
+                    {},
                     std::nullopt)
       ->release()
       .front());
@@ -1168,7 +1168,7 @@ TEST_F(StringOperationTest, Output)
                     empty_inputs,
                     std::array{cudf::transform_output{cudf::data_type(cudf::type_id::STRING),
                                                       cudf::output_nullability::PRESERVE}},
-                                       {},
+                    {},
                     std::nullopt)
       ->release()
       .front());
@@ -1201,13 +1201,13 @@ TEST_F(StringOperationTest, OutputOffsetted)
   cudf::transform_input inputs[]   = {a, b, c};
   cudf::transform_output outputs[] = {cudf::data_type(cudf::type_id::STRING)};
   auto result                      = cudf::transform(cuda,
-                                cudf::udf_source_type::CUDA,
-                                cudf::null_aware::NO,
-                                std::nullopt,
-                                inputs,
-                                outputs,
-                                std::move(strings_offsets),
-                                std::nullopt);
+                                                     cudf::udf_source_type::CUDA,
+                                                     cudf::null_aware::NO,
+                                                     std::nullopt,
+                                                     inputs,
+                                                     outputs,
+                                                     std::move(strings_offsets),
+                                                     std::nullopt);
 
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, result->get_column(0));
 
@@ -1274,13 +1274,13 @@ TEST_F(StringOperationTest, OutputOffsettedMixed)
                                       {cudf::data_type(cudf::type_id::STRING)},
                                       {cudf::data_type(cudf::type_id::BOOL8)}};
   auto result                      = cudf::transform(cuda,
-                                cudf::udf_source_type::CUDA,
-                                cudf::null_aware::NO,
-                                std::nullopt,
-                                inputs,
-                                outputs,
-                                std::move(strings_offsets),
-                                std::nullopt);
+                                                     cudf::udf_source_type::CUDA,
+                                                     cudf::null_aware::NO,
+                                                     std::nullopt,
+                                                     inputs,
+                                                     outputs,
+                                                     std::move(strings_offsets),
+                                                     std::nullopt);
 
   CUDF_TEST_EXPECT_TABLES_EQUAL(expected, result->view());
 }
@@ -1321,15 +1321,15 @@ __device__ void transform(void* user_data, cudf::size_type row,
     )***";
 
   auto expected                  = cudf::test::strings_column_wrapper{"John Doe",
-                                                     "Mia Folk",
-                                                     "Abd Louis",
-                                                     "Mendes Xi",
-                                                     "Arya Serenity",
-                                                     "John Scott",
-                                                     "François Ольга",
-                                                     "José Łukasz",
-                                                     "Søren Zoë",
-                                                     "张 伟"};
+                                                                      "Mia Folk",
+                                                                      "Abd Louis",
+                                                                      "Mendes Xi",
+                                                                      "Arya Serenity",
+                                                                      "John Scott",
+                                                                      "François Ольга",
+                                                                      "José Łukasz",
+                                                                      "Søren Zoë",
+                                                                      "张 伟"};
   cudf::transform_input inputs[] = {first_name, last_name, cudf::scalar_column_view(scratch_sizes)};
   auto result                    = std::move(
     cudf::transform(cuda,
@@ -1339,7 +1339,7 @@ __device__ void transform(void* user_data, cudf::size_type row,
                     inputs,
                     std::array{cudf::transform_output{cudf::data_type(cudf::type_id::STRING),
                                                       cudf::output_nullability::PRESERVE}},
-                                       {},
+                    {},
                     std::nullopt)
       ->release()
       .front());
@@ -1365,7 +1365,7 @@ TEST_F(StringOperationTest, EmptyInput)
                     bool_inputs,
                     std::array{cudf::transform_output{cudf::data_type(cudf::type_id::BOOL8),
                                                       cudf::output_nullability::PRESERVE}},
-                                            {},
+                    {},
                     std::nullopt)
       ->release()
       .front());
@@ -1385,7 +1385,7 @@ TEST_F(StringOperationTest, EmptyInput)
                     str_inputs,
                     std::array{cudf::transform_output{cudf::data_type(cudf::type_id::STRING),
                                                       cudf::output_nullability::PRESERVE}},
-                                                {},
+                    {},
                     std::nullopt)
       ->release()
       .front());
@@ -1444,13 +1444,13 @@ __device__ void capture_group(cudf::string_view* area_code,
                                       {.type = cudf::data_type(cudf::type_id::STRING)},
                                       {.type = cudf::data_type(cudf::type_id::STRING)}};
   auto result                      = cudf::transform(cuda,
-                                cudf::udf_source_type::CUDA,
-                                cudf::null_aware::NO,
-                                std::nullopt,
-                                inputs,
-                                outputs,
+                                                     cudf::udf_source_type::CUDA,
+                                                     cudf::null_aware::NO,
+                                                     std::nullopt,
+                                                     inputs,
+                                                     outputs,
                                                      {},
-                                std::nullopt);
+                                                     std::nullopt);
 
   CUDF_TEST_EXPECT_TABLES_EQUAL(expected, result->view());
 }
@@ -1574,7 +1574,7 @@ TEST_F(NullTest, ColumnNulls)
                     cuda_inputs,
                     std::array{cudf::transform_output{cudf::data_type(cudf::type_id::FLOAT32),
                                                       cudf::output_nullability::PRESERVE}},
-                                       {},
+                    {},
                     std::nullopt)
       ->release()
       .front());
@@ -1590,7 +1590,7 @@ TEST_F(NullTest, ColumnNulls)
                     ptx_inputs,
                     std::array{cudf::transform_output{cudf::data_type(cudf::type_id::FLOAT32),
                                                       cudf::output_nullability::PRESERVE}},
-                                       {},
+                    {},
                     std::nullopt)
       ->release()
       .front());
@@ -1626,7 +1626,7 @@ TEST_F(NullTest, ColumnNulls_And_Scalar)
                     cuda_inputs,
                     std::array{cudf::transform_output{cudf::data_type(cudf::type_id::FLOAT32),
                                                       cudf::output_nullability::PRESERVE}},
-                                       {},
+                    {},
                     std::nullopt)
       ->release()
       .front());
@@ -1642,7 +1642,7 @@ TEST_F(NullTest, ColumnNulls_And_Scalar)
                     ptx_inputs,
                     std::array{cudf::transform_output{cudf::data_type(cudf::type_id::FLOAT32),
                                                       cudf::output_nullability::PRESERVE}},
-                                       {},
+                    {},
                     std::nullopt)
       ->release()
       .front());
@@ -1677,7 +1677,7 @@ TEST_F(NullTest, ColumnNulls_And_ScalarNull)
                     cuda_inputs,
                     std::array{cudf::transform_output{cudf::data_type(cudf::type_id::FLOAT32),
                                                       cudf::output_nullability::PRESERVE}},
-                                       {},
+                    {},
                     std::nullopt)
       ->release()
       .front());
@@ -1693,7 +1693,7 @@ TEST_F(NullTest, ColumnNulls_And_ScalarNull)
                     ptx_inputs,
                     std::array{cudf::transform_output{cudf::data_type(cudf::type_id::FLOAT32),
                                                       cudf::output_nullability::PRESERVE}},
-                                       {},
+                    {},
                     std::nullopt)
       ->release()
       .front());
@@ -1725,7 +1725,7 @@ TEST_F(NullTest, IsNull)
                     inputs,
                     std::array{cudf::transform_output{cudf::data_type(cudf::type_id::BOOL8),
                                                       cudf::output_nullability::ALL_VALID}},
-                                       {},
+                    {},
                     std::nullopt)
       ->release()
       .front());
@@ -1776,7 +1776,7 @@ return l - t * l + t * h;
                     inputs,
                     std::array{cudf::transform_output{cudf::data_type(cudf::type_id::FLOAT32),
                                                       cudf::output_nullability::ALL_VALID}},
-                                  {},
+                    {},
                     std::nullopt)
       ->release()
       .front());

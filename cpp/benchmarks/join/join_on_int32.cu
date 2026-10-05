@@ -114,9 +114,9 @@ std::unique_ptr<cudf::column> generate_int32_keys(cudf::size_type num_rows, cudf
     // Divide each element by divisor to create duplicates
     auto divisor_scalar = cudf::make_fixed_width_scalar<cudf::size_type>(divisor, stream);
     result              = cudf::binary_operation(seq->view(),
-                                    *divisor_scalar,
-                                    cudf::binary_operator::DIV,
-                                    cudf::data_type{cudf::type_id::INT32});
+                                                 *divisor_scalar,
+                                                 cudf::binary_operator::DIV,
+                                                 cudf::data_type{cudf::type_id::INT32});
   }
 
   // Shuffle the generated data to reduce bias from data locality.

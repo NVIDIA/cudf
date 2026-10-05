@@ -55,9 +55,7 @@ struct host_udf_groupby_example : cudf::groupby_host_udf {
   }
 
   [[nodiscard]] std::unique_ptr<host_udf_base> clone() const override
-  {
-    return std::make_unique<host_udf_groupby_example>();
-  }
+  { return std::make_unique<host_udf_groupby_example>(); }
 
   struct groupby_fn {
     // Store pointer to the parent class so we can call its functions.
@@ -69,9 +67,7 @@ struct host_udf_groupby_example : cudf::groupby_host_udf {
 
     template <typename T, typename... Args, CUDF_ENABLE_IF(!std::is_same_v<InputType, T>)>
     std::unique_ptr<cudf::column> operator()(Args...) const
-    {
-      CUDF_FAIL("Unsupported input type.");
-    }
+    { CUDF_FAIL("Unsupported input type."); }
 
     template <typename T, CUDF_ENABLE_IF(std::is_same_v<InputType, T>)>
     std::unique_ptr<cudf::column> operator()(cuda::stream_ref stream,
@@ -162,9 +158,9 @@ TEST_F(HostUDFGroupbyExampleTest, SimpleInput)
 {
   double constexpr null = 0.0;
   auto const keys       = int32s_col{0, 1, 2, 0, 1, 2, 0, 1, 2, 0};
-  auto const vals       = doubles_col{{0.0, null, 2.0, 3.0, null, 5.0, null, null, 8.0, 9.0},
-                                      {true, false, true, true, false, true, false, false, true, true}};
-  auto agg              = cudf::make_host_udf_aggregation<cudf::groupby_aggregation>(
+  auto const vals = doubles_col{{0.0, null, 2.0, 3.0, null, 5.0, null, null, 8.0, 9.0},
+                                {true, false, true, true, false, true, false, false, true, true}};
+  auto agg        = cudf::make_host_udf_aggregation<cudf::groupby_aggregation>(
     std::make_unique<host_udf_groupby_example>());
 
   std::vector<cudf::groupby::aggregation_request> requests;

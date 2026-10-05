@@ -47,9 +47,7 @@ __device__ constexpr uint32_t get_first_cp(uint32_t metadata) { return metadata 
  * @return Category value.
  */
 __device__ constexpr uint32_t extract_token_cat(uint32_t metadata)
-{
-  return (metadata >> TOKEN_CAT_SHIFT) & TOKEN_CAT_MASK;
-}
+{ return (metadata >> TOKEN_CAT_SHIFT) & TOKEN_CAT_MASK; }
 
 /**
  * @brief Return true if category of metadata value specifies the character should be replaced.
@@ -80,17 +78,13 @@ __device__ constexpr bool should_add_spaces(uint32_t metadata,
  * @brief Return true if category of metadata value specifies the character should be replaced.
  */
 __device__ constexpr bool always_replace(uint32_t metadata)
-{
-  return extract_token_cat(metadata) == TOKEN_CAT_ALWAYS_REPLACE;
-}
+{ return extract_token_cat(metadata) == TOKEN_CAT_ALWAYS_REPLACE; }
 
 /**
  * @brief Returns true if metadata value includes a multi-character transform bit equal to 1.
  */
 __device__ constexpr bool is_multi_char_transform(uint32_t metadata)
-{
-  return (metadata >> MULTICHAR_SHIFT) & MULTICHAR_MASK;
-}
+{ return (metadata >> MULTICHAR_SHIFT) & MULTICHAR_MASK; }
 
 /**
  * @brief Returns true if the byte passed in could be a valid head byte for

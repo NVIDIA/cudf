@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -75,9 +75,7 @@ __device__ inline bool all_characters_of_type(
  */
 __device__ inline bool is_alpha(cudf::strings::detail::character_flags_table_type* flags_table,
                                 string_view d_str)
-{
-  return all_characters_of_type(flags_table, d_str, string_character_types::ALPHA);
-}
+{ return all_characters_of_type(flags_table, d_str, string_character_types::ALPHA); }
 
 /**
  * @brief Returns true if all characters are alphanumeric only
@@ -88,9 +86,7 @@ __device__ inline bool is_alpha(cudf::strings::detail::character_flags_table_typ
  */
 __device__ inline bool is_alpha_numeric(
   cudf::strings::detail::character_flags_table_type* flags_table, string_view d_str)
-{
-  return all_characters_of_type(flags_table, d_str, string_character_types::ALPHANUM);
-}
+{ return all_characters_of_type(flags_table, d_str, string_character_types::ALPHANUM); }
 
 /**
  * @brief Returns true if all characters are numeric only
@@ -101,9 +97,7 @@ __device__ inline bool is_alpha_numeric(
  */
 __device__ inline bool is_numeric(cudf::strings::detail::character_flags_table_type* flags_table,
                                   string_view d_str)
-{
-  return all_characters_of_type(flags_table, d_str, string_character_types::NUMERIC);
-}
+{ return all_characters_of_type(flags_table, d_str, string_character_types::NUMERIC); }
 
 /**
  * @brief Returns true if all characters are digits only
@@ -114,9 +108,7 @@ __device__ inline bool is_numeric(cudf::strings::detail::character_flags_table_t
  */
 __device__ inline bool is_digit(cudf::strings::detail::character_flags_table_type* flags_table,
                                 string_view d_str)
-{
-  return all_characters_of_type(flags_table, d_str, string_character_types::DIGIT);
-}
+{ return all_characters_of_type(flags_table, d_str, string_character_types::DIGIT); }
 
 /**
  * @brief Returns true if all characters are decimal only
@@ -127,9 +119,7 @@ __device__ inline bool is_digit(cudf::strings::detail::character_flags_table_typ
  */
 __device__ inline bool is_decimal(cudf::strings::detail::character_flags_table_type* flags_table,
                                   string_view d_str)
-{
-  return all_characters_of_type(flags_table, d_str, string_character_types::DECIMAL);
-}
+{ return all_characters_of_type(flags_table, d_str, string_character_types::DECIMAL); }
 
 /**
  * @brief Returns true if all characters are spaces only
@@ -140,9 +130,7 @@ __device__ inline bool is_decimal(cudf::strings::detail::character_flags_table_t
  */
 __device__ inline bool is_space(cudf::strings::detail::character_flags_table_type* flags_table,
                                 string_view d_str)
-{
-  return all_characters_of_type(flags_table, d_str, string_character_types::SPACE);
-}
+{ return all_characters_of_type(flags_table, d_str, string_character_types::SPACE); }
 
 /**
  * @brief Returns true if all characters are upper case only

@@ -118,9 +118,7 @@ class column {
       _null_mask{std::forward<B2>(null_mask)},
       _null_count{null_count},
       _children{std::move(children)}
-  {
-    CUDF_EXPECTS(size >= 0, "Column size cannot be negative.");
-  }
+  { CUDF_EXPECTS(size >= 0, "Column size cannot be negative."); }
 
   /**
    * @brief Construct a new column by deep copying the contents of a
@@ -239,9 +237,7 @@ class column {
    * @return Const reference to the desired child
    */
   [[nodiscard]] column const& child(size_type child_index) const noexcept
-  {
-    return *_children[child_index];
-  };
+  { return *_children[child_index]; };
 
   /**
    * @brief Wrapper for the contents of a column.

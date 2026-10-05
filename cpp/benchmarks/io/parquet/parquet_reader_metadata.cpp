@@ -196,10 +196,10 @@ void BM_parquet_column_selection(nvbench::state& state)
 
   // Create a table with minimal rows (1 row is enough to create valid parquet)
   constexpr cudf::size_type num_rows = 1;
-  auto const tbl                     = create_random_table(cycle_dtypes(mixed_dtypes, num_cols),
-                                       row_count{num_rows},
-                                       data_profile_builder().cardinality(0).avg_run_length(1));
-  auto const view                    = tbl->view();
+  auto const tbl  = create_random_table(cycle_dtypes(mixed_dtypes, num_cols),
+                                        row_count{num_rows},
+                                        data_profile_builder().cardinality(0).avg_run_length(1));
+  auto const view = tbl->view();
 
   cudf::io::parquet_writer_options write_opts =
     cudf::io::parquet_writer_options::builder(source_sink.make_sink_info(), view)

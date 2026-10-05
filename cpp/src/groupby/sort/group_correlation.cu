@@ -32,16 +32,12 @@ namespace {
 
 template <typename T>
 constexpr bool is_double_convertible()
-{
-  return std::is_convertible_v<T, double> || std::is_constructible_v<double, T>;
-}
+{ return std::is_convertible_v<T, double> || std::is_constructible_v<double, T>; }
 
 struct is_double_convertible_impl {
   template <typename T>
   bool operator()()
-  {
-    return is_double_convertible<T>();
-  }
+  { return is_double_convertible<T>(); }
 };
 
 /**
@@ -178,11 +174,11 @@ std::unique_ptr<column> group_correlation(column_view const& covariance,
   auto stddev1_ptr = stddev_1.begin<result_type>();
   auto stddev_iter = cuda::make_zip_iterator(cuda::std::make_tuple(stddev0_ptr, stddev1_ptr));
   auto result      = make_numeric_column(covariance.type(),
-                                    covariance.size(),
-                                    cudf::detail::copy_bitmask(covariance, stream, mr),
-                                    covariance.null_count(),
-                                    stream,
-                                    mr);
+                                         covariance.size(),
+                                         cudf::detail::copy_bitmask(covariance, stream, mr),
+                                         covariance.null_count(),
+                                         stream,
+                                         mr);
   auto d_result    = result->mutable_view().begin<result_type>();
   thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                     covariance.begin<result_type>(),

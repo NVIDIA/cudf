@@ -64,9 +64,7 @@ struct empty_column_functor {
 
   template <typename T, CUDF_ENABLE_IF(!cudf::is_nested<T>())>
   std::unique_ptr<column> operator()(schema_element const& schema) const
-  {
-    return make_empty_column(schema.type);
-  }
+  { return make_empty_column(schema.type); }
 
   template <typename T, CUDF_ENABLE_IF(std::is_same_v<T, cudf::list_view>)>
   std::unique_ptr<column> operator()(schema_element const& schema) const
@@ -109,9 +107,7 @@ struct empty_column_functor {
 std::unique_ptr<column> make_empty_column(schema_element const& schema,
                                           cuda::stream_ref stream,
                                           rmm::device_async_resource_ref mr)
-{
-  return cudf::type_dispatcher(schema.type, empty_column_functor{stream, mr}, schema);
-}
+{ return cudf::type_dispatcher(schema.type, empty_column_functor{stream, mr}, schema); }
 
 /// Created all null column of the specified schema
 struct allnull_column_functor {
@@ -137,9 +133,7 @@ struct allnull_column_functor {
  public:
   template <typename T, CUDF_ENABLE_IF(cudf::is_fixed_width<T>())>
   std::unique_ptr<column> operator()(schema_element const& schema, size_type size) const
-  {
-    return make_fixed_width_column(schema.type, size, mask_state::ALL_NULL, stream, mr);
-  }
+  { return make_fixed_width_column(schema.type, size, mask_state::ALL_NULL, stream, mr); }
 
   template <typename T, CUDF_ENABLE_IF(cudf::is_dictionary<T>())>
   std::unique_ptr<column> operator()(schema_element const& schema, size_type size) const
@@ -209,9 +203,7 @@ std::unique_ptr<column> make_all_nulls_column(schema_element const& schema,
                                               size_type num_rows,
                                               cuda::stream_ref stream,
                                               rmm::device_async_resource_ref mr)
-{
-  return cudf::type_dispatcher(schema.type, allnull_column_functor{stream, mr}, schema, num_rows);
-}
+{ return cudf::type_dispatcher(schema.type, allnull_column_functor{stream, mr}, schema, num_rows); }
 
 column_name_info make_column_name_info(schema_element const& schema, std::string const& col_name)
 {

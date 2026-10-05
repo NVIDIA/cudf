@@ -285,9 +285,7 @@ class ScatterListOfStructScalarTest : public ScatterListScalarTests {
     cudf::test::strings_column_wrapper field1,
     cudf::test::lists_column_wrapper<T, int32_t> field2,
     std::vector<cudf::valid_type> mask)
-  {
-    return cudf::test::structs_column_wrapper({field0, field1, field2}, mask.begin());
-  }
+  { return cudf::test::structs_column_wrapper({field0, field1, field2}, mask.begin()); }
 };
 
 TYPED_TEST_SUITE(ScatterListOfStructScalarTest, cudf::test::FixedWidthTypesWithoutFixedPoint);

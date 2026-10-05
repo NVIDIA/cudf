@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #include <cudf_test/base_fixture.hpp>
@@ -81,9 +81,7 @@ TEST_F(DLPackUntypedTests, EmptyColsToDlpack)
 }
 
 TEST_F(DLPackUntypedTests, NullTensorFromDlpack)
-{
-  EXPECT_THROW(cudf::from_dlpack(nullptr), cudf::logic_error);
-}
+{ EXPECT_THROW(cudf::from_dlpack(nullptr), cudf::logic_error); }
 
 TEST_F(DLPackUntypedTests, MultipleTypesToDlpack)
 {

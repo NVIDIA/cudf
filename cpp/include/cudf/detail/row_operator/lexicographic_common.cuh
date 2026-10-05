@@ -33,9 +33,7 @@ struct physical_element_comparator {
   template <typename Element>
   __device__ constexpr cudf::detail::weak_ordering operator()(Element const lhs,
                                                               Element const rhs) const noexcept
-  {
-    return cudf::detail::compare_elements(lhs, rhs);
-  }
+  { return cudf::detail::compare_elements(lhs, rhs); }
 };
 
 /**
@@ -55,9 +53,7 @@ struct sorting_physical_element_comparator {
   __device__ constexpr cudf::detail::weak_ordering operator()(Element const lhs,
                                                               Element const rhs) const noexcept
     requires(not cuda::std::is_floating_point_v<Element>)
-  {
-    return cudf::detail::compare_elements(lhs, rhs);
-  }
+  { return cudf::detail::compare_elements(lhs, rhs); }
 
   /**
    * @brief Operator for relational comparison of floating point values.

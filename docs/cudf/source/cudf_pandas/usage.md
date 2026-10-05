@@ -52,6 +52,7 @@ in Jupyter notebook or IPython environments.
 
 ```python
 import cudf.pandas
+
 cudf.pandas.install()
 
 import pandas as pd
@@ -73,6 +74,7 @@ For example
 # workers too. These two lines must run before pandas is imported,
 # either directly or transitively.
 import cudf.pandas
+
 cudf.pandas.install()
 
 from multiprocessing import Pool
@@ -163,6 +165,7 @@ when more control over profiling is needed.
 
 ```python
 import cudf.pandas
+
 cudf.pandas.install()
 
 from cudf.pandas.profiler import Profiler

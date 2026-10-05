@@ -155,9 +155,7 @@ __device__ inline bool maybe_has_nulls(auto* s)
  * @return True if the page should process nulls
  */
 __device__ inline bool should_process_nulls(auto* s)
-{
-  return is_nullable(s) && maybe_has_nulls(s);
-}
+{ return is_nullable(s) && maybe_has_nulls(s); }
 
 /**
  * @brief Test if the given page is in a string column
@@ -1040,9 +1038,7 @@ struct mask_filter {
   __device__ mask_filter(decode_kernel_mask m) : mask(static_cast<uint32_t>(m)) {}
 
   __device__ inline bool operator()(PageInfo const& page)
-  {
-    return BitAnd(mask, page.kernel_mask) != 0;
-  }
+  { return BitAnd(mask, page.kernel_mask) != 0; }
 };
 
 enum class page_processing_stage {

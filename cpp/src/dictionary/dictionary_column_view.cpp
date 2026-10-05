@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -17,27 +17,19 @@ dictionary_column_view::dictionary_column_view(column_view const& dictionary_col
 }
 
 column_view dictionary_column_view::parent() const noexcept
-{
-  return static_cast<column_view>(*this);
-}
+{ return static_cast<column_view>(*this); }
 
 column_view dictionary_column_view::indices() const noexcept { return child(0); }
 
 column_view dictionary_column_view::get_indices_annotated() const noexcept
-{
-  return {indices().type(), size(), indices().head(), null_mask(), null_count(), offset()};
-}
+{ return {indices().type(), size(), indices().head(), null_mask(), null_count(), offset()}; }
 
 column_view dictionary_column_view::keys() const noexcept { return child(1); }
 
 size_type dictionary_column_view::keys_size() const noexcept
-{
-  return (size() == 0) ? 0 : keys().size();
-}
+{ return (size() == 0) ? 0 : keys().size(); }
 
 data_type dictionary_column_view::keys_type() const noexcept
-{
-  return (size() == 0) ? data_type{type_id::EMPTY} : keys().type();
-}
+{ return (size() == 0) ? data_type{type_id::EMPTY} : keys().type(); }
 
 }  // namespace cudf

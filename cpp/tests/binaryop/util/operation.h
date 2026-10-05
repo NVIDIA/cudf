@@ -1,7 +1,7 @@
 /*
  * SPDX-FileCopyrightText: Copyright 2018-2019 BlazingDB, Inc.
  * SPDX-FileCopyrightText: Copyright 2018 Christian Noboa Mardini <christian@blazingdb.com>
- * SPDX-FileCopyrightText: Copyright (c) 2019-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 /*
@@ -40,9 +40,7 @@ struct Add {
   template <typename OutT = TypeOut>
   OutT operator()(TypeLhs lhs, TypeRhs rhs) const
     requires(cudf::is_chrono<OutT>() && cudf::is_chrono<TypeLhs>() && cudf::is_chrono<TypeRhs>())
-  {
-    return lhs + rhs;
-  }
+  { return lhs + rhs; }
 
   template <typename OutT = TypeOut>
   OutT operator()(TypeLhs lhs, TypeRhs rhs) const
@@ -60,9 +58,7 @@ struct Sub {
   template <typename OutT = TypeOut>
   OutT operator()(TypeLhs lhs, TypeRhs rhs) const
     requires(cudf::is_chrono<OutT>() && cudf::is_chrono<TypeLhs>() && cudf::is_chrono<TypeRhs>())
-  {
-    return lhs - rhs;
-  }
+  { return lhs - rhs; }
 
   template <typename OutT = TypeOut>
   OutT operator()(TypeLhs lhs, TypeRhs rhs) const
@@ -86,17 +82,13 @@ struct Mul {
   template <typename OutT = TypeOut>
   TypeOut operator()(TypeLhs x, TypeRhs y) const
     requires(cudf::is_duration_t<OutT>::value)
-  {
-    return DurationProduct<TypeOut>(x, y);
-  }
+  { return DurationProduct<TypeOut>(x, y); }
 
   template <typename OutT, typename LhsT, typename RhsT>
   [[nodiscard]] OutT DurationProduct(LhsT x, RhsT y) const
     requires((cudf::is_duration_t<LhsT>::value && std::is_integral_v<RhsT>) ||
              (cudf::is_duration_t<RhsT>::value && std::is_integral_v<LhsT>))
-  {
-    return x * y;
-  }
+  { return x * y; }
 };
 
 template <typename TypeOut, typename TypeLhs, typename TypeRhs>
@@ -112,24 +104,18 @@ struct Div {
   template <typename LhsT = TypeLhs>
   TypeOut operator()(TypeLhs x, TypeRhs y) const
     requires(cudf::is_duration_t<LhsT>::value)
-  {
-    return DurationDivide<TypeOut>(x, y);
-  }
+  { return DurationDivide<TypeOut>(x, y); }
 
   template <typename OutT, typename LhsT, typename RhsT>
   [[nodiscard]] OutT DurationDivide(LhsT x, RhsT y) const
     requires(std::is_integral_v<RhsT> || cudf::is_duration<RhsT>())
-  {
-    return x / y;
-  }
+  { return x / y; }
 };
 
 template <typename TypeOut, typename TypeLhs, typename TypeRhs>
 struct TrueDiv {
   TypeOut operator()(TypeLhs lhs, TypeRhs rhs)
-  {
-    return static_cast<TypeOut>(static_cast<double>(lhs) / static_cast<double>(rhs));
-  }
+  { return static_cast<TypeOut>(static_cast<double>(lhs) / static_cast<double>(rhs)); }
 };
 
 template <typename TypeOut, typename TypeLhs, typename TypeRhs>
@@ -152,23 +138,17 @@ struct FloorDiv {
   TypeOut operator()(TypeLhs lhs, TypeRhs rhs)
     requires(std::is_integral_v<std::common_type_t<LhsT, RhsT>> and
              !std::is_signed_v<std::common_type_t<LhsT, RhsT>>)
-  {
-    return lhs / rhs;
-  }
+  { return lhs / rhs; }
 
   template <typename OutT = TypeOut, typename LhsT = TypeLhs, typename RhsT = TypeRhs>
   TypeOut operator()(TypeLhs lhs, TypeRhs rhs)
     requires(std::is_same_v<std::common_type_t<LhsT, RhsT>, float>)
-  {
-    return static_cast<TypeOut>(std::floor(lhs / rhs));
-  }
+  { return static_cast<TypeOut>(std::floor(lhs / rhs)); }
 
   template <typename OutT = TypeOut, typename LhsT = TypeLhs, typename RhsT = TypeRhs>
   TypeOut operator()(TypeLhs lhs, TypeRhs rhs)
     requires(std::is_same_v<std::common_type_t<LhsT, RhsT>, double>)
-  {
-    return static_cast<TypeOut>(std::floor(lhs / rhs));
-  }
+  { return static_cast<TypeOut>(std::floor(lhs / rhs)); }
 };
 
 template <typename TypeOut, typename TypeLhs, typename TypeRhs>
@@ -184,32 +164,24 @@ struct Mod {
   template <typename OutT = TypeOut, typename LhsT = TypeLhs, typename RhsT = TypeRhs>
   TypeOut operator()(TypeLhs lhs, TypeRhs rhs)
     requires(std::is_same_v<std::common_type_t<OutT, LhsT, RhsT>, float>)
-  {
-    return static_cast<TypeOut>(fmod(static_cast<float>(lhs), static_cast<float>(rhs)));
-  }
+  { return static_cast<TypeOut>(fmod(static_cast<float>(lhs), static_cast<float>(rhs))); }
 
   template <typename OutT = TypeOut, typename LhsT = TypeLhs, typename RhsT = TypeRhs>
   TypeOut operator()(TypeLhs lhs, TypeRhs rhs)
     requires(std::is_same_v<std::common_type_t<OutT, LhsT, RhsT>, double>)
-  {
-    return static_cast<TypeOut>(fmod(static_cast<double>(lhs), static_cast<double>(rhs)));
-  }
+  { return static_cast<TypeOut>(fmod(static_cast<double>(lhs), static_cast<double>(rhs))); }
 
   // Mod with duration types - duration % (integral or a duration) = duration
   template <typename LhsT = TypeLhs, typename OutT = TypeOut>
   TypeOut operator()(TypeLhs lhs, TypeRhs rhs)
     requires(cudf::is_duration_t<LhsT>::value && cudf::is_duration_t<OutT>::value)
-  {
-    return lhs % rhs;
-  }
+  { return lhs % rhs; }
 };
 
 template <typename TypeOut, typename TypeLhs, typename TypeRhs>
 struct Pow {
   TypeOut operator()(TypeLhs lhs, TypeRhs rhs)
-  {
-    return static_cast<TypeOut>(pow(static_cast<double>(lhs), static_cast<double>(rhs)));
-  }
+  { return static_cast<TypeOut>(pow(static_cast<double>(lhs), static_cast<double>(rhs))); }
 };
 
 template <typename TypeOut, typename TypeLhs, typename TypeRhs>
@@ -280,9 +252,7 @@ struct ShiftRight {
 template <typename TypeOut, typename TypeLhs, typename TypeRhs>
 struct ShiftRightUnsigned {
   TypeOut operator()(TypeLhs lhs, TypeRhs rhs)
-  {
-    return static_cast<TypeOut>(static_cast<std::make_unsigned_t<TypeLhs>>(lhs) >> rhs);
-  }
+  { return static_cast<TypeOut>(static_cast<std::make_unsigned_t<TypeLhs>>(lhs) >> rhs); }
 };
 
 template <typename TypeOut, typename TypeLhs, typename TypeRhs>
@@ -311,9 +281,7 @@ struct PMod {
 template <typename TypeOut, typename TypeLhs, typename TypeRhs>
 struct ATan2 {
   TypeOut operator()(TypeLhs x, TypeRhs y) const
-  {
-    return static_cast<TypeOut>(std::atan2(static_cast<double>(x), static_cast<double>(y)));
-  }
+  { return static_cast<TypeOut>(std::atan2(static_cast<double>(x), static_cast<double>(y))); }
 };
 
 template <typename TypeOut, typename TypeLhs, typename TypeRhs>
@@ -388,9 +356,7 @@ struct NullEquals {
 template <typename TypeOut, typename TypeLhs, typename TypeRhs>
 struct NullNotEquals {
   TypeOut operator()(TypeLhs x, TypeRhs y, bool lhs_valid, bool rhs_valid, bool& output_valid) const
-  {
-    return !NullEquals<TypeOut, TypeLhs, TypeRhs>()(x, y, lhs_valid, rhs_valid, output_valid);
-  }
+  { return !NullEquals<TypeOut, TypeLhs, TypeRhs>()(x, y, lhs_valid, rhs_valid, output_valid); }
 };
 
 template <typename TypeOut, typename TypeLhs, typename TypeRhs>

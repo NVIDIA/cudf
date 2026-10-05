@@ -36,9 +36,7 @@ template <typename T, typename Enable = void>
 struct byte_list_conversion_fn {
   template <typename... Args>
   static std::unique_ptr<column> invoke(Args&&...)
-  {
-    CUDF_FAIL("Unsupported non-numeric and non-string column");
-  }
+  { CUDF_FAIL("Unsupported non-numeric and non-string column"); }
 };
 
 struct byte_list_conversion_dispatcher {
@@ -47,9 +45,7 @@ struct byte_list_conversion_dispatcher {
                                      flip_endianness configuration,
                                      cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr) const
-  {
-    return byte_list_conversion_fn<T>::invoke(input, configuration, stream, mr);
-  }
+  { return byte_list_conversion_fn<T>::invoke(input, configuration, stream, mr); }
 };
 
 template <typename T>

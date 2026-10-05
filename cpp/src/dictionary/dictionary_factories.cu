@@ -34,9 +34,7 @@ struct dispatch_create_indices {
                                      cuda::stream_ref,
                                      rmm::device_async_resource_ref)
     requires(!is_index_type<IndexType>())
-  {
-    CUDF_FAIL("indices must be an integer type.");
-  }
+  { CUDF_FAIL("indices must be an integer type."); }
 };
 }  // namespace
 
@@ -99,15 +97,11 @@ struct make_signed_fn {
   template <typename T>
   constexpr cudf::type_id operator()()
     requires(is_index_type<T>())
-  {
-    return cudf::type_to_id<std::make_signed_t<T>>();
-  }
+  { return cudf::type_to_id<std::make_signed_t<T>>(); }
   template <typename T>
   constexpr cudf::type_id operator()()
     requires(not is_index_type<T>())
-  {
-    return cudf::type_to_id<T>();
-  }
+  { return cudf::type_to_id<T>(); }
 };
 
 }  // namespace

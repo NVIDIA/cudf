@@ -124,9 +124,7 @@ std::unique_ptr<reprog_device, std::function<void(reprog_device*)>> reprog_devic
 void reprog_device::destroy() { delete this; }
 
 std::size_t reprog_device::working_memory_size(int32_t num_threads) const
-{
-  return compute_working_memory_size(num_threads, insts_counts());
-}
+{ return compute_working_memory_size(num_threads, insts_counts()); }
 
 std::pair<std::size_t, int32_t> reprog_device::compute_strided_working_memory(
   int32_t rows, int32_t min_rows, std::size_t requested_max_size) const
@@ -153,14 +151,10 @@ void reprog_device::set_working_memory(void* buffer, int32_t thread_count, int32
 }
 
 int32_t reprog_device::compute_shared_memory_size() const
-{
-  return _prog_size < MAX_SHARED_MEM ? static_cast<int32_t>(_prog_size) : 0;
-}
+{ return _prog_size < MAX_SHARED_MEM ? static_cast<int32_t>(_prog_size) : 0; }
 
 std::size_t reprog_device::compute_working_memory_size(int32_t num_threads, int32_t insts_count)
-{
-  return relist::alloc_size(insts_count, num_threads) * 2;
-}
+{ return relist::alloc_size(insts_count, num_threads) * 2; }
 
 }  // namespace detail
 }  // namespace strings

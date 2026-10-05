@@ -119,21 +119,15 @@ class tracking_resource_adaptor_impl {
   }
 
   void* allocate_sync(std::size_t bytes, std::size_t alignment = rmm::CUDA_ALLOCATION_ALIGNMENT)
-  {
-    return allocate(cuda::stream_ref{cudaStream_t{cudaStreamDefault}}, bytes, alignment);
-  }
+  { return allocate(cuda::stream_ref{cudaStream_t{cudaStreamDefault}}, bytes, alignment); }
 
   void deallocate_sync(void* ptr,
                        std::size_t bytes,
                        std::size_t alignment = rmm::CUDA_ALLOCATION_ALIGNMENT) noexcept
-  {
-    deallocate(cuda::stream_ref{cudaStream_t{cudaStreamDefault}}, ptr, bytes, alignment);
-  }
+  { deallocate(cuda::stream_ref{cudaStream_t{cudaStreamDefault}}, ptr, bytes, alignment); }
 
   bool operator==(tracking_resource_adaptor_impl const& other) const noexcept
-  {
-    return this == &other;
-  }
+  { return this == &other; }
 
   friend void get_property(tracking_resource_adaptor_impl const&,
                            cuda::mr::device_accessible) noexcept
@@ -173,34 +167,24 @@ class tracking_resource_adaptor {
   void* allocate(cuda::stream_ref stream,
                  std::size_t bytes,
                  std::size_t alignment = rmm::CUDA_ALLOCATION_ALIGNMENT)
-  {
-    return impl_->allocate(stream, bytes, alignment);
-  }
+  { return impl_->allocate(stream, bytes, alignment); }
 
   void deallocate(cuda::stream_ref stream,
                   void* ptr,
                   std::size_t bytes,
                   std::size_t alignment = rmm::CUDA_ALLOCATION_ALIGNMENT) noexcept
-  {
-    impl_->deallocate(stream, ptr, bytes, alignment);
-  }
+  { impl_->deallocate(stream, ptr, bytes, alignment); }
 
   void* allocate_sync(std::size_t bytes, std::size_t alignment = rmm::CUDA_ALLOCATION_ALIGNMENT)
-  {
-    return impl_->allocate_sync(bytes, alignment);
-  }
+  { return impl_->allocate_sync(bytes, alignment); }
 
   void deallocate_sync(void* ptr,
                        std::size_t bytes,
                        std::size_t alignment = rmm::CUDA_ALLOCATION_ALIGNMENT) noexcept
-  {
-    impl_->deallocate_sync(ptr, bytes, alignment);
-  }
+  { impl_->deallocate_sync(ptr, bytes, alignment); }
 
   bool operator==(tracking_resource_adaptor const& other) const noexcept
-  {
-    return impl_ == other.impl_;
-  }
+  { return impl_ == other.impl_; }
 
   friend void get_property(tracking_resource_adaptor const&, cuda::mr::device_accessible) noexcept
   {
@@ -209,9 +193,7 @@ class tracking_resource_adaptor {
   std::size_t get_total_allocated() { return impl_->get_total_allocated(); }
   std::size_t get_max_total_allocated() { return impl_->get_max_total_allocated(); }
   void reset_scoped_max_total_allocated(std::size_t initial_value)
-  {
-    impl_->reset_scoped_max_total_allocated(initial_value);
-  }
+  { impl_->reset_scoped_max_total_allocated(initial_value); }
   std::size_t get_scoped_max_total_allocated() { return impl_->get_scoped_max_total_allocated(); }
 
  private:
@@ -492,34 +474,24 @@ class java_event_handler_memory_resource {
   void* allocate(cuda::stream_ref stream,
                  std::size_t bytes,
                  std::size_t alignment = rmm::CUDA_ALLOCATION_ALIGNMENT)
-  {
-    return impl_->allocate(stream, bytes, alignment);
-  }
+  { return impl_->allocate(stream, bytes, alignment); }
 
   void deallocate(cuda::stream_ref stream,
                   void* ptr,
                   std::size_t bytes,
                   std::size_t alignment = rmm::CUDA_ALLOCATION_ALIGNMENT) noexcept
-  {
-    impl_->deallocate(stream, ptr, bytes, alignment);
-  }
+  { impl_->deallocate(stream, ptr, bytes, alignment); }
 
   void* allocate_sync(std::size_t bytes, std::size_t alignment = rmm::CUDA_ALLOCATION_ALIGNMENT)
-  {
-    return allocate(cuda::stream_ref{cudaStream_t{cudaStreamDefault}}, bytes, alignment);
-  }
+  { return allocate(cuda::stream_ref{cudaStream_t{cudaStreamDefault}}, bytes, alignment); }
 
   void deallocate_sync(void* ptr,
                        std::size_t bytes,
                        std::size_t alignment = rmm::CUDA_ALLOCATION_ALIGNMENT) noexcept
-  {
-    deallocate(cuda::stream_ref{cudaStream_t{cudaStreamDefault}}, ptr, bytes, alignment);
-  }
+  { deallocate(cuda::stream_ref{cudaStream_t{cudaStreamDefault}}, ptr, bytes, alignment); }
 
   bool operator==(java_event_handler_memory_resource const& other) const noexcept
-  {
-    return impl_ == other.impl_;
-  }
+  { return impl_ == other.impl_; }
 
   friend void get_property(java_event_handler_memory_resource const&,
                            cuda::mr::device_accessible) noexcept
@@ -584,17 +556,13 @@ class parallel_init_pinned_host_memory_resource final {
   void* allocate([[maybe_unused]] cuda::stream_ref stream,
                  std::size_t bytes,
                  std::size_t alignment = rmm::CUDA_ALLOCATION_ALIGNMENT)
-  {
-    return allocate_sync(bytes, alignment);
-  }
+  { return allocate_sync(bytes, alignment); }
 
   void deallocate([[maybe_unused]] cuda::stream_ref stream,
                   void* ptr,
                   std::size_t bytes,
                   std::size_t alignment = rmm::CUDA_ALLOCATION_ALIGNMENT) noexcept
-  {
-    deallocate_sync(ptr, bytes, alignment);
-  }
+  { deallocate_sync(ptr, bytes, alignment); }
 
   [[nodiscard]] void* allocate_sync(std::size_t bytes,
                                     std::size_t alignment = rmm::CUDA_ALLOCATION_ALIGNMENT)
@@ -671,9 +639,7 @@ class parallel_init_pinned_host_memory_resource final {
 
   [[nodiscard]] bool operator==(
     parallel_init_pinned_host_memory_resource const& other) const noexcept
-  {
-    return this == std::addressof(other);
-  }
+  { return this == std::addressof(other); }
 
   /**
    * @brief Enables CCCL's `cuda::mr::device_accessible` property
@@ -856,21 +822,15 @@ class pinned_fallback_host_memory_resource {
   }
 
   void* allocate_sync(std::size_t bytes, std::size_t alignment = rmm::CUDA_ALLOCATION_ALIGNMENT)
-  {
-    return allocate(cuda::stream_ref{cudaStream_t{cudaStreamDefault}}, bytes, alignment);
-  }
+  { return allocate(cuda::stream_ref{cudaStream_t{cudaStreamDefault}}, bytes, alignment); }
 
   void deallocate_sync(void* ptr,
                        std::size_t bytes,
                        std::size_t alignment = rmm::CUDA_ALLOCATION_ALIGNMENT) noexcept
-  {
-    deallocate(cuda::stream_ref{cudaStream_t{cudaStreamDefault}}, ptr, bytes, alignment);
-  }
+  { deallocate(cuda::stream_ref{cudaStream_t{cudaStreamDefault}}, ptr, bytes, alignment); }
 
   bool operator==(pinned_fallback_host_memory_resource const& other) const noexcept
-  {
-    return pool == other.pool;
-  }
+  { return pool == other.pool; }
 
   /**
    * @brief Enables the `cuda::mr::device_accessible` property
@@ -924,9 +884,7 @@ JNIEXPORT void JNICALL Java_ai_rapids_cudf_Rmm_initDefaultCudaDevice(JNIEnv* env
 }
 
 JNIEXPORT void JNICALL Java_ai_rapids_cudf_Rmm_cleanupDefaultCudaDevice(JNIEnv* env, jclass clazz)
-{
-  cudf::jni::set_cudf_device(cudaInvalidDeviceId);
-}
+{ cudf::jni::set_cudf_device(cudaInvalidDeviceId); }
 
 JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_Rmm_allocInternal(JNIEnv* env,
                                                               jclass clazz,

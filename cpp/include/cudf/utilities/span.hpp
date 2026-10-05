@@ -198,9 +198,7 @@ struct host_span {
    * @return An iterator to the element following the last element of the span
    */
   [[nodiscard]] CUDF_HOST_DEVICE constexpr iterator end() const noexcept
-  {
-    return _span.data() + _span.size();
-  }
+  { return _span.data() + _span.size(); }
   /**
    * @brief Returns a pointer to the beginning of the sequence.
    *
@@ -220,9 +218,7 @@ struct host_span {
    * @return The size of the sequence in bytes
    */
   [[nodiscard]] CUDF_HOST_DEVICE constexpr size_type size_bytes() const noexcept
-  {
-    return _span.size_bytes();
-  }
+  { return _span.size_bytes(); }
 
   /**
    * @brief Checks if the span is empty.
@@ -282,9 +278,7 @@ struct host_span {
    * @return Standard span instance
    */
   [[nodiscard]] constexpr operator std::span<T>() const noexcept
-  {
-    return std::span<T>(_span.data(), _span.size());
-  }
+  { return std::span<T>(_span.data(), _span.size()); }
 
  private:
   // TODO: could be std::span once base_2dspan moves to cuda::std::mdspan and host_span no longer
@@ -369,9 +363,7 @@ class base_2dspan {
    * @return A reference to the row-th element of the sequence, i.e., `data()[row]`
    */
   CUDF_HOST_DEVICE constexpr RowType<T, dynamic_extent> operator[](std::size_t row) const
-  {
-    return _flat.subspan(row * _size.second, _size.second);
-  }
+  { return _flat.subspan(row * _size.second, _size.second); }
 
   /**
    * @brief Returns a flattened span of the 2D span.
@@ -379,9 +371,7 @@ class base_2dspan {
    * @return A flattened span of the 2D span
    */
   [[nodiscard]] CUDF_HOST_DEVICE constexpr RowType<T, dynamic_extent> flat_view() const
-  {
-    return _flat;
-  }
+  { return _flat; }
 
   /**
    * @brief Construct a 2D span from another 2D span of convertible type

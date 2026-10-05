@@ -418,9 +418,7 @@ JNIEXPORT void JNICALL Java_ai_rapids_cudf_DeletionVector_destroyDeletionVectorP
   JNI_NULL_CHECK(env, handle, "handle is null", );
 
   JNI_TRY
-  {
-    delete reinterpret_cast<cudf::io::parquet::experimental::deletion_vector_info*>(handle);
-  }
+  { delete reinterpret_cast<cudf::io::parquet::experimental::deletion_vector_info*>(handle); }
   JNI_CATCH(env, );
 }
 

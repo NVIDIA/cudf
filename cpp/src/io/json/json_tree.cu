@@ -123,9 +123,7 @@ struct node_ranges {
 struct is_nested_end {
   PdaTokenT const* tokens;
   __device__ auto operator()(NodeIndexT i) -> bool
-  {
-    return tokens[i] == token_t::StructEnd or tokens[i] == token_t::ListEnd;
-  }
+  { return tokens[i] == token_t::StructEnd or tokens[i] == token_t::ListEnd; }
 };
 
 struct checked_token_level_output {
@@ -583,16 +581,16 @@ std::pair<size_t, rmm::device_uvector<size_type>> remapped_field_nodes_after_uni
 
   using hasher_type                             = decltype(d_hasher);
   constexpr size_type empty_node_index_sentinel = -1;
-  auto key_set                                  = cuco::static_set{cuco::extent{num_keys},
-                                  cudf::detail::CUCO_DESIRED_LOAD_FACTOR,
-                                  cuco::empty_key{empty_node_index_sentinel},
-                                  d_equal,
-                                  cuco::linear_probing<1, hasher_type>{d_hasher},
-                                                                   {},
-                                                                   {},
-                                  rmm::mr::polymorphic_allocator<char>{},
-                                  stream.get()};
-  auto const counting_iter                      = cuda::counting_iterator<size_type>{0};
+  auto key_set             = cuco::static_set{cuco::extent{num_keys},
+                                              cudf::detail::CUCO_DESIRED_LOAD_FACTOR,
+                                              cuco::empty_key{empty_node_index_sentinel},
+                                              d_equal,
+                                              cuco::linear_probing<1, hasher_type>{d_hasher},
+                                              {},
+                                              {},
+                                              rmm::mr::polymorphic_allocator<char>{},
+                                              stream.get()};
+  auto const counting_iter = cuda::counting_iterator<size_type>{0};
   rmm::device_uvector<size_type> found_keys(num_keys, stream);
   key_set.insert_and_find_async(counting_iter,
                                 counting_iter + num_keys,
@@ -660,13 +658,13 @@ rmm::device_uvector<size_type> hash_node_type_with_field_name(device_span<Symbol
 
   using hasher_type                             = decltype(d_hasher);
   constexpr size_type empty_node_index_sentinel = -1;
-  auto key_set                                  = cuco::static_set{cuco::extent{num_fields},
+  auto key_set = cuco::static_set{cuco::extent{num_fields},
                                   0.4,  // 40% load factor
                                   cuco::empty_key{empty_node_index_sentinel},
                                   d_equal,
                                   cuco::linear_probing<1, hasher_type>{d_hasher},
-                                                                   {},
-                                                                   {},
+                                  {},
+                                  {},
                                   rmm::mr::polymorphic_allocator<char>{},
                                   stream.get()};
   key_set.insert_if_async(counting_iter,

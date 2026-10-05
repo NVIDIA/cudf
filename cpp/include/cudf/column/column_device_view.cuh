@@ -116,9 +116,7 @@ class alignas(16) column_device_view : public column_device_view_core {
    */
   template <typename T, CUDF_ENABLE_IF(is_rep_layout_compatible<T>())>
   [[nodiscard]] __device__ T element(size_type element_index) const noexcept
-  {
-    return base::element<T>(element_index);
-  }
+  { return base::element<T>(element_index); }
 
   /**
    * @brief Returns `string_view` to the string element at the specified index.
@@ -133,9 +131,7 @@ class alignas(16) column_device_view : public column_device_view_core {
    */
   template <typename T, CUDF_ENABLE_IF(cuda::std::is_same_v<T, string_view>)>
   [[nodiscard]] __device__ T element(size_type element_index) const noexcept
-  {
-    return base::element<T>(element_index);
-  }
+  { return base::element<T>(element_index); }
 
   /**
    * @brief Returns a `numeric::fixed_point` element at the specified index for a `fixed_point`
@@ -149,9 +145,7 @@ class alignas(16) column_device_view : public column_device_view_core {
    */
   template <typename T, CUDF_ENABLE_IF(cudf::is_fixed_point<T>())>
   [[nodiscard]] __device__ T element(size_type element_index) const noexcept
-  {
-    return base::element<T>(element_index);
-  }
+  { return base::element<T>(element_index); }
 
  private:
   /**
@@ -163,17 +157,13 @@ class alignas(16) column_device_view : public column_device_view_core {
     template <typename IndexType,
               CUDF_ENABLE_IF(is_index_type<IndexType>() and cuda::std::is_signed_v<IndexType>)>
     __device__ size_type operator()(column_device_view const& indices, size_type index)
-    {
-      return static_cast<size_type>(indices.element<IndexType>(index));
-    }
+    { return static_cast<size_type>(indices.element<IndexType>(index)); }
 
     template <typename IndexType,
               typename... Args,
               CUDF_ENABLE_IF(not(is_index_type<IndexType>() and cuda::std::is_signed_v<IndexType>))>
     __device__ size_type operator()(Args&&... args)
-    {
-      CUDF_UNREACHABLE("dictionary indices must be a signed integral type");
-    }
+    { CUDF_UNREACHABLE("dictionary indices must be a signed integral type"); }
   };
 
  public:
@@ -217,9 +207,7 @@ class alignas(16) column_device_view : public column_device_view_core {
    */
   template <typename T>
   CUDF_HOST_DEVICE static constexpr bool has_element_accessor()
-  {
-    return has_element_accessor_impl<column_device_view, T>::value;
-  }
+  { return has_element_accessor_impl<column_device_view, T>::value; }
 
   /// Counting iterator
   using count_it = cuda::counting_iterator<size_type>;
@@ -246,9 +234,7 @@ class alignas(16) column_device_view : public column_device_view_core {
    */
   template <typename T, CUDF_ENABLE_IF(column_device_view::has_element_accessor<T>())>
   [[nodiscard]] const_iterator<T> begin() const
-  {
-    return const_iterator<T>{count_it{0}, detail::value_accessor<T>{*this}};
-  }
+  { return const_iterator<T>{count_it{0}, detail::value_accessor<T>{*this}}; }
 
   /**
    * @brief Returns an iterator to the element following the last element of the column.
@@ -266,9 +252,7 @@ class alignas(16) column_device_view : public column_device_view_core {
    */
   template <typename T, CUDF_ENABLE_IF(column_device_view::has_element_accessor<T>())>
   [[nodiscard]] const_iterator<T> end() const
-  {
-    return const_iterator<T>{count_it{size()}, detail::value_accessor<T>{*this}};
-  }
+  { return const_iterator<T>{count_it{size()}, detail::value_accessor<T>{*this}}; }
 
   /**
    * @brief Optional iterator for navigating this column
@@ -532,9 +516,7 @@ class alignas(16) column_device_view : public column_device_view_core {
    * @return column_view The requested child `column_view`
    */
   [[nodiscard]] __device__ column_device_view child(size_type child_index) const noexcept
-  {
-    return static_cast<column_device_view*>(_children)[child_index];
-  }
+  { return static_cast<column_device_view*>(_children)[child_index]; }
 
   /**
    * @brief Returns a span containing the children of this column
@@ -542,9 +524,7 @@ class alignas(16) column_device_view : public column_device_view_core {
    * @return A span containing the children of this column
    */
   [[nodiscard]] __device__ device_span<column_device_view const> children() const noexcept
-  {
-    return {static_cast<column_device_view*>(_children), static_cast<std::size_t>(_num_children)};
-  }
+  { return {static_cast<column_device_view*>(_children), static_cast<std::size_t>(_num_children)}; }
 
   /**
    * @brief Returns the number of child columns
@@ -552,9 +532,7 @@ class alignas(16) column_device_view : public column_device_view_core {
    * @return The number of child columns
    */
   [[nodiscard]] CUDF_HOST_DEVICE size_type num_child_columns() const noexcept
-  {
-    return _num_children;
-  }
+  { return _num_children; }
 
  private:
   /**
@@ -678,9 +656,7 @@ class alignas(16) mutable_column_device_view : public mutable_column_device_view
    */
   template <typename T, CUDF_ENABLE_IF(is_rep_layout_compatible<T>())>
   [[nodiscard]] __device__ T& element(size_type element_index) const noexcept
-  {
-    return base::element<T>(element_index);
-  }
+  { return base::element<T>(element_index); }
 
   /**
    * @brief For a given `T`, indicates if `mutable_column_device_view::element<T>()` has a valid
@@ -690,9 +666,7 @@ class alignas(16) mutable_column_device_view : public mutable_column_device_view
    */
   template <typename T>
   CUDF_HOST_DEVICE static constexpr bool has_element_accessor()
-  {
-    return has_element_accessor_impl<mutable_column_device_view, T>::value;
-  }
+  { return has_element_accessor_impl<mutable_column_device_view, T>::value; }
 
   /// Counting iterator
   using count_it = cuda::counting_iterator<size_type>;
@@ -714,9 +688,7 @@ class alignas(16) mutable_column_device_view : public mutable_column_device_view
    */
   template <typename T, CUDF_ENABLE_IF(mutable_column_device_view::has_element_accessor<T>())>
   iterator<T> begin()
-  {
-    return iterator<T>{count_it{0}, detail::mutable_value_accessor<T>{*this}};
-  }
+  { return iterator<T>{count_it{0}, detail::mutable_value_accessor<T>{*this}}; }
 
   /**
    * @brief Return one past the last element after underlying data is casted to
@@ -730,9 +702,7 @@ class alignas(16) mutable_column_device_view : public mutable_column_device_view
    */
   template <typename T, CUDF_ENABLE_IF(mutable_column_device_view::has_element_accessor<T>())>
   iterator<T> end()
-  {
-    return iterator<T>{count_it{size()}, detail::mutable_value_accessor<T>{*this}};
-  }
+  { return iterator<T>{count_it{size()}, detail::mutable_value_accessor<T>{*this}}; }
 
   /**
    * @brief Returns the specified child
@@ -741,9 +711,7 @@ class alignas(16) mutable_column_device_view : public mutable_column_device_view
    * @return The requested child `column_view`
    */
   [[nodiscard]] __device__ mutable_column_device_view child(size_type child_index) const noexcept
-  {
-    return static_cast<mutable_column_device_view*>(_children)[child_index];
-  }
+  { return static_cast<mutable_column_device_view*>(_children)[child_index]; }
 
   /**
    * @brief Return the size in bytes of the amount of memory needed to hold a
@@ -964,9 +932,7 @@ struct pair_accessor {
    * @return pair(element, validity)
    */
   __device__ inline cuda::std::pair<T, bool> operator()(cudf::size_type i) const
-  {
-    return {col.element<T>(i), (has_nulls ? col.is_valid_nocheck(i) : true)};
-  }
+  { return {col.element<T>(i), (has_nulls ? col.is_valid_nocheck(i) : true)}; }
 };
 
 /**
@@ -1012,24 +978,18 @@ struct pair_rep_accessor {
    * @return pair of element and validity
    */
   __device__ inline cuda::std::pair<rep_type, bool> operator()(cudf::size_type i) const
-  {
-    return {get_rep<T>(i), (has_nulls ? col.is_valid_nocheck(i) : true)};
-  }
+  { return {get_rep<T>(i), (has_nulls ? col.is_valid_nocheck(i) : true)}; }
 
  private:
   template <typename R>
   [[nodiscard]] __device__ inline auto get_rep(cudf::size_type i) const
     requires(std::is_same_v<R, rep_type>)
-  {
-    return col.element<R>(i);
-  }
+  { return col.element<R>(i); }
 
   template <typename R>
   [[nodiscard]] __device__ inline auto get_rep(cudf::size_type i) const
     requires(not std::is_same_v<R, rep_type>)
-  {
-    return col.element<R>(i).value();
-  }
+  { return col.element<R>(i).value(); }
 };
 
 /**

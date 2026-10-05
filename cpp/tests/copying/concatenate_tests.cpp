@@ -387,7 +387,7 @@ TEST_F(OverflowTest, OverflowTest)
     // try and concatenate 6 string columns of with 1 billion chars in each
     auto offsets    = cudf::test::fixed_width_column_wrapper<int32_t>{0, size};
     auto many_chars = rmm::device_uvector<char>(size, cudf::get_default_stream());
-    auto col        = cudf::make_strings_column(1,
+    auto col = cudf::make_strings_column(1,
                                          offsets.release(),
                                          many_chars.release(),
                                          0,
@@ -406,7 +406,7 @@ TEST_F(OverflowTest, OverflowTest)
     auto many_offsets =
       cudf::make_fixed_width_column(cudf::data_type{cudf::type_id::INT32}, size + 1);
     auto chars = rmm::device_uvector<char>(3, cudf::get_default_stream());
-    auto col   = cudf::make_strings_column(size,
+    auto col = cudf::make_strings_column(size,
                                          std::move(many_offsets),
                                          chars.release(),
                                          0,
@@ -433,7 +433,7 @@ TEST_F(OverflowTest, OverflowTest)
 
     // list
     auto offsets = cudf::test::fixed_width_column_wrapper<int32_t>{0, inner_size};
-    auto col     = cudf::make_lists_column(1,
+    auto col = cudf::make_lists_column(1,
                                        offsets.release(),
                                        std::move(struct_col),
                                        0,
@@ -529,7 +529,7 @@ TEST_F(OverflowTest, Presliced)
       0, [](cudf::size_type index) { return index * string_size; });
     cudf::test::fixed_width_column_wrapper<int> offsets(offset_gen, offset_gen + num_rows + 1);
     auto many_chars = rmm::device_uvector<char>(total_chars_size, cudf::get_default_stream());
-    auto col        = cudf::make_strings_column(num_rows,
+    auto col = cudf::make_strings_column(num_rows,
                                          offsets.release(),
                                          many_chars.release(),
                                          0,
@@ -555,10 +555,10 @@ TEST_F(OverflowTest, Presliced)
 
     // try and concatenate 4 string columns of with ~1/2 billion chars in each
     auto offsets    = cudf::sequence(num_rows + 1,
-                                  cudf::numeric_scalar<cudf::size_type>(0),
-                                  cudf::numeric_scalar<cudf::size_type>(string_size));
+                                     cudf::numeric_scalar<cudf::size_type>(0),
+                                     cudf::numeric_scalar<cudf::size_type>(string_size));
     auto many_chars = rmm::device_uvector<char>(total_chars_size, cudf::get_default_stream());
-    auto col        = cudf::make_strings_column(num_rows,
+    auto col = cudf::make_strings_column(num_rows,
                                          std::move(offsets),
                                          many_chars.release(),
                                          0,
@@ -732,10 +732,10 @@ TEST_F(OverflowTest, BigColumnsSmallSlices)
     constexpr cudf::size_type string_size = inner_size / num_rows;
 
     auto offsets    = cudf::sequence(num_rows + 1,
-                                  cudf::numeric_scalar<cudf::size_type>(0),
-                                  cudf::numeric_scalar<cudf::size_type>(string_size));
+                                     cudf::numeric_scalar<cudf::size_type>(0),
+                                     cudf::numeric_scalar<cudf::size_type>(string_size));
     auto many_chars = rmm::device_uvector<char>(inner_size, cudf::get_default_stream());
-    auto col        = cudf::make_strings_column(num_rows,
+    auto col = cudf::make_strings_column(num_rows,
                                          std::move(offsets),
                                          many_chars.release(),
                                          0,

@@ -52,14 +52,10 @@ class split_device_span {
   }
 
   [[nodiscard]] CUDF_HOST_DEVICE constexpr reference operator[](size_type i) const
-  {
-    return i < _head.size() ? _head[i] : _tail[i - _head.size()];
-  }
+  { return i < _head.size() ? _head[i] : _tail[i - _head.size()]; }
 
   [[nodiscard]] CUDF_HOST_DEVICE constexpr size_type size() const
-  {
-    return _head.size() + _tail.size();
-  }
+  { return _head.size() + _tail.size(); }
 
   [[nodiscard]] CUDF_HOST_DEVICE constexpr device_span<T> head() const { return _head; }
 
@@ -101,49 +97,31 @@ class split_device_span_iterator {
   [[nodiscard]] CUDF_HOST_DEVICE constexpr reference operator*() const { return _span[_offset]; }
 
   [[nodiscard]] CUDF_HOST_DEVICE constexpr reference operator[](size_type i) const
-  {
-    return _span[_offset + i];
-  }
+  { return _span[_offset + i]; }
 
   [[nodiscard]] CUDF_HOST_DEVICE constexpr friend bool operator==(it const& lhs, it const& rhs)
-  {
-    return lhs._offset == rhs._offset;
-  }
+  { return lhs._offset == rhs._offset; }
 
   [[nodiscard]] CUDF_HOST_DEVICE constexpr friend bool operator!=(it const& lhs, it const& rhs)
-  {
-    return !(lhs == rhs);
-  }
+  { return !(lhs == rhs); }
   [[nodiscard]] CUDF_HOST_DEVICE constexpr friend bool operator<(it const& lhs, it const& rhs)
-  {
-    return lhs._offset < rhs._offset;
-  }
+  { return lhs._offset < rhs._offset; }
 
   [[nodiscard]] CUDF_HOST_DEVICE constexpr friend bool operator>=(it const& lhs, it const& rhs)
-  {
-    return !(lhs < rhs);
-  }
+  { return !(lhs < rhs); }
 
   [[nodiscard]] CUDF_HOST_DEVICE constexpr friend bool operator>(it const& lhs, it const& rhs)
-  {
-    return rhs < lhs;
-  }
+  { return rhs < lhs; }
 
   [[nodiscard]] CUDF_HOST_DEVICE constexpr friend bool operator<=(it const& lhs, it const& rhs)
-  {
-    return !(lhs > rhs);
-  }
+  { return !(lhs > rhs); }
 
   [[nodiscard]] CUDF_HOST_DEVICE constexpr friend difference_type operator-(it const& lhs,
                                                                             it const& rhs)
-  {
-    return lhs._offset - rhs._offset;
-  }
+  { return lhs._offset - rhs._offset; }
 
   [[nodiscard]] CUDF_HOST_DEVICE constexpr friend it operator+(it lhs, difference_type i)
-  {
-    return lhs += i;
-  }
+  { return lhs += i; }
 
   CUDF_HOST_DEVICE constexpr it& operator+=(difference_type i)
   {
@@ -179,16 +157,12 @@ class split_device_span_iterator {
 template <typename T>
 [[nodiscard]] CUDF_HOST_DEVICE constexpr split_device_span_iterator<T> split_device_span<T>::begin()
   const
-{
-  return {*this, 0};
-}
+{ return {*this, 0}; }
 
 template <typename T>
 [[nodiscard]] CUDF_HOST_DEVICE constexpr split_device_span_iterator<T> split_device_span<T>::end()
   const
-{
-  return {*this, size()};
-}
+{ return {*this, size()}; }
 
 /**
  * @brief A chunked storage class that provides preallocated memory for algorithms with known
@@ -288,9 +262,7 @@ class output_builder {
    * @return The first element that was written to the output.
    */
   [[nodiscard]] T front_element(cuda::stream_ref stream) const
-  {
-    return _chunks.front().front_element(stream);
-  }
+  { return _chunks.front().front_element(stream); }
 
   /**
    * @brief Returns the last element that was written to the output.
@@ -363,9 +335,7 @@ class output_builder {
    * @return The span of unused elements.
    */
   static device_span<T> get_free_span(rmm::device_uvector<T>& vector)
-  {
-    return device_span<T>{vector.data() + vector.size(), vector.capacity() - vector.size()};
-  }
+  { return device_span<T>{vector.data() + vector.size(), vector.capacity() - vector.size()}; }
 
   size_type _size{0};
   size_type _max_write_size;

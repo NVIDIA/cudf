@@ -322,7 +322,7 @@ CUDF_KERNEL void __launch_bounds__(decode_block_size)
 
   auto const is_decimal = s->setup.col.logical_type.has_value() and
                           s->setup.col.logical_type->type == LogicalType::DECIMAL;
-  Type const dtype = s->setup.col.physical_type;
+  Type const dtype      = s->setup.col.physical_type;
 
   auto const first_out_thread_id = out_warp_id * warp.size();
   // skipped_leaf_values will always be 0 for flat hierarchies.

@@ -61,9 +61,7 @@ struct SHA512Hash : HashBase<SHA512Hash> {
 std::unique_ptr<column> sha512(table_view const& input,
                                cuda::stream_ref stream,
                                rmm::device_async_resource_ref mr)
-{
-  return sha_hash<SHA512Hash>(input, stream, mr);
-}
+{ return sha_hash<SHA512Hash>(input, stream, mr); }
 
 }  // namespace detail
 

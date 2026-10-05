@@ -80,9 +80,7 @@ struct mixed_unbounded_distance_fn {
 
   [[nodiscard]] __device__ cuda::std::tuple<size_type, size_type> operator()(
     size_type i) const noexcept
-  {
-    return cuda::std::tuple<size_type, size_type>{preceding_fn(i), following_fn(i)};
-  }
+  { return cuda::std::tuple<size_type, size_type>{preceding_fn(i), following_fn(i)}; }
 };
 
 /**

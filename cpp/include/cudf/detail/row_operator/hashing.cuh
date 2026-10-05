@@ -86,9 +86,7 @@ class element_hasher {
   __device__ result_type operator()(column_device_view const& col,
                                     size_type row_index) const noexcept
     requires(not column_device_view::has_element_accessor<T>())
-  {
-    CUDF_UNREACHABLE("Unsupported type in hash.");
-  }
+  { CUDF_UNREACHABLE("Unsupported type in hash."); }
 
   Nullate _check_nulls;
   // Assumes seeds are the same as the result type of the hash function
@@ -155,9 +153,7 @@ class device_row_hasher {
     __device__ result_type operator()(column_device_view const& col,
                                       size_type row_index) const noexcept
       requires(not cudf::is_nested<T>() and not cudf::is_dictionary<T>())
-    {
-      return _element_hasher.template operator()<T>(col, row_index);
-    }
+    { return _element_hasher.template operator()<T>(col, row_index); }
 
     template <typename T>
     __device__ result_type operator()(column_device_view const& col,
@@ -280,9 +276,7 @@ class row_hasher {
     Nullate nullate = {},
     cuda::std::invoke_result_t<hash_function<int32_t>, int32_t> seed =
       hashing::detail::DEFAULT_ALGORITHM_HASH_SEED) const
-  {
-    return DeviceRowHasher<hash_function, Nullate>(nullate, *d_t, seed);
-  }
+  { return DeviceRowHasher<hash_function, Nullate>(nullate, *d_t, seed); }
 
  private:
   std::shared_ptr<preprocessed_table> d_t;

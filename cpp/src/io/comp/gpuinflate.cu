@@ -112,9 +112,7 @@ struct prefetch_queue_s {
 
 template <typename T>
 inline __device__ volatile uint32_t* prefetch_addr32(prefetch_queue_s volatile& q, T* ptr)
-{
-  return reinterpret_cast<uint32_t volatile*>(&q.pref_data[(prefetch_size - 4) & (size_t)(ptr)]);
-}
+{ return reinterpret_cast<uint32_t volatile*>(&q.pref_data[(prefetch_size - 4) & (size_t)(ptr)]); }
 
 #endif  // ENABLE_PREFETCH
 
@@ -145,7 +143,7 @@ struct inflate_state_s {
 
   xwarp_s volatile x;
 #if ENABLE_PREFETCH
-  volatile prefetch_queue_s pref;
+  prefetch_queue_s volatile pref;
 #endif
 
   int16_t lencnt[max_bits + 1];
@@ -175,9 +173,7 @@ inline __device__ uint32_t showbits(inflate_state_s* s, uint32_t n)
 }
 
 inline __device__ uint32_t nextbits32(inflate_state_s* s)
-{
-  return __funnelshift_rc(s->bitbuf.x, s->bitbuf.y, s->bitpos);
-}
+{ return __funnelshift_rc(s->bitbuf.x, s->bitbuf.y, s->bitpos); }
 
 inline __device__ void skipbits(inflate_state_s* s, uint32_t n)
 {
@@ -494,18 +490,20 @@ __device__ int init_fixed(inflate_state_s* s)
  */
 
 /// permutation of code length codes
-static __device__ const __constant__ uint16_t g_lens[29] = {  // Size base for length codes 257..285
+static __device__ const __constant__ uint16_t g_lens[29] = {
+  // Size base for length codes 257..285
   3,  4,  5,  6,  7,  8,  9,  10, 11,  13,  15,  17,  19,  23, 27,
   31, 35, 43, 51, 59, 67, 83, 99, 115, 131, 163, 195, 227, 258};
-static __device__ const __constant__ uint16_t
-  g_lext[29] = {  // Extra bits for length codes 257..285
-    0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 0};
+static __device__ const __constant__ uint16_t g_lext[29] = {
+  // Extra bits for length codes 257..285
+  0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 0};
 
-static __device__ const __constant__ uint16_t
-  g_dists[30] = {  // Offset base for distance codes 0..29
-    1,   2,   3,   4,   5,   7,    9,    13,   17,   25,   33,   49,   65,    97,    129,
-    193, 257, 385, 513, 769, 1025, 1537, 2049, 3073, 4097, 6145, 8193, 12289, 16385, 24577};
-static __device__ const __constant__ uint16_t g_dext[30] = {  // Extra bits for distance codes 0..29
+static __device__ const __constant__ uint16_t g_dists[30] = {
+  // Offset base for distance codes 0..29
+  1,   2,   3,   4,   5,   7,    9,    13,   17,   25,   33,   49,   65,    97,    129,
+  193, 257, 385, 513, 769, 1025, 1537, 2049, 3073, 4097, 6145, 8193, 12289, 16385, 24577};
+static __device__ const __constant__ uint16_t g_dext[30] = {
+  // Extra bits for distance codes 0..29
   0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12, 12, 13, 13};
 
 /// @brief Thread 0 only: decode bitstreams and output symbols into the symbol queue
@@ -666,7 +664,7 @@ __device__ void decode_symbols(inflate_state_s* s)
     } while (batch_len < batch_size - 1);
     s->x.batch_len[batch] = batch_len;
 #if ENABLE_PREFETCH
-    ((volatile inflate_state_s*)s)->cur = cur;
+    ((inflate_state_s volatile*)s)->cur = cur;
 #endif
     if (batch_len != 0) batch = (batch + 1) & (batch_count - 1);
   } while (sym != 256);
@@ -1178,9 +1176,7 @@ class cost_model {
   static CUDF_HOST_DEVICE double task_device_cost(size_t input_size,
                                                   size_t output_size,
                                                   task_type task_type)
-  {
-    return cost_factor(input_size, output_size, task_type) * input_size;
-  }
+  { return cost_factor(input_size, output_size, task_type) * input_size; }
 
   static double task_host_cost(size_t input_size,
                                size_t output_size,
@@ -1323,17 +1319,13 @@ sorted_codec_parameters sort_decompression_tasks(
   device_span<device_span<uint8_t> const> outputs,
   cuda::stream_ref stream,
   cudf::memory_resources mr)
-{
-  return sort_tasks(inputs, outputs, task_type::DECOMPRESSION, stream, mr);
-}
+{ return sort_tasks(inputs, outputs, task_type::DECOMPRESSION, stream, mr); }
 
 sorted_codec_parameters sort_compression_tasks(device_span<device_span<uint8_t const> const> inputs,
                                                device_span<device_span<uint8_t> const> outputs,
                                                cuda::stream_ref stream,
                                                cudf::memory_resources mr)
-{
-  return sort_tasks(inputs, outputs, task_type::COMPRESSION, stream, mr);
-}
+{ return sort_tasks(inputs, outputs, task_type::COMPRESSION, stream, mr); }
 
 void copy_results_to_original_order(device_span<codec_exec_result const> sorted_results,
                                     device_span<codec_exec_result> original_results,

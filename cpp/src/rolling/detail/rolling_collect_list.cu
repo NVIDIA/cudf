@@ -44,10 +44,10 @@ std::unique_ptr<column> get_list_child_to_list_row_mapping(cudf::column_view con
 
   auto const num_child_rows{cudf::detail::get_value<int32_t>(offsets, offsets.size() - 1, stream)};
   auto per_row_mapping       = make_fixed_width_column(data_type{type_to_id<size_type>()},
-                                                 num_child_rows,
-                                                 mask_state::UNALLOCATED,
-                                                 stream,
-                                                 cudf::get_current_device_resource_ref());
+                                                       num_child_rows,
+                                                       mask_state::UNALLOCATED,
+                                                       stream,
+                                                       cudf::get_current_device_resource_ref());
   auto per_row_mapping_begin = per_row_mapping->mutable_view().template begin<size_type>();
   thrust::fill_n(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                  per_row_mapping_begin,

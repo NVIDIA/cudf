@@ -239,9 +239,9 @@ TEST_F(StringsCharsTest, Numerics)
     }));
   auto strings_view = cudf::strings_column_view(strings);
 
-  auto types = cudf::strings::string_character_types::DIGIT |
-               cudf::strings::string_character_types::DECIMAL |
-               cudf::strings::string_character_types::NUMERIC;
+  auto types   = cudf::strings::string_character_types::DIGIT |
+                 cudf::strings::string_character_types::DECIMAL |
+                 cudf::strings::string_character_types::NUMERIC;
   auto results = cudf::strings::all_characters_of_type(
     strings_view, (cudf::strings::string_character_types)types);
 

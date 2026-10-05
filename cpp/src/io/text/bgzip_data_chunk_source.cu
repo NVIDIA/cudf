@@ -186,9 +186,7 @@ class bgzip_data_chunk_reader : public data_chunk_reader {
     [[nodiscard]] std::size_t decompressed_size() const { return h_decompressed_offsets.back(); }
 
     [[nodiscard]] std::size_t remaining_size() const
-    {
-      return available_decompressed_size - read_pos;
-    }
+    { return available_decompressed_size - read_pos; }
 
     void read_block(detail::bgzip::header header, std::istream& stream)
     {
@@ -362,9 +360,7 @@ class bgzip_data_chunk_source : public data_chunk_source {
 std::unique_ptr<data_chunk_source> make_source_from_bgzip_file(std::string_view filename,
                                                                uint64_t virtual_begin,
                                                                uint64_t virtual_end)
-{
-  return std::make_unique<bgzip_data_chunk_source>(filename, virtual_begin, virtual_end);
-}
+{ return std::make_unique<bgzip_data_chunk_source>(filename, virtual_begin, virtual_end); }
 
 std::unique_ptr<data_chunk_source> make_source_from_bgzip_file(std::string_view filename)
 {

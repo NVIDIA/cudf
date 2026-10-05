@@ -29,9 +29,7 @@ struct output_sizes_fn {
   size_type const offset;
 
   __device__ size_type get_string_size_at(size_type idx)
-  {
-    return d_column.is_null(idx) ? 0 : d_column.element<string_view>(idx).size_bytes();
-  }
+  { return d_column.is_null(idx) ? 0 : d_column.element<string_view>(idx).size_bytes(); }
 
   __device__ size_type operator()(size_type idx)
   {

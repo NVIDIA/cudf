@@ -537,7 +537,7 @@ TYPED_TEST(ReductionHistogramTest, Histogram)
   auto constexpr null{0};
   {
     auto const input    = data_col{{null, -3, 2, 1, 2, 0, null, 5, 2, null, -3, -2, null, 2, 1},
-                                nulls_at({0, 6, 9, 12})};
+                                   nulls_at({0, 6, 9, 12})};
     auto const expected = [] {
       auto child1 = data_col{{null, -3, -2, 0, 1, 2, 5}, null_at(0)};
       auto child2 = int64_col{4, 2, 1, 1, 2, 4, 1};
@@ -2333,9 +2333,9 @@ TYPED_TEST(FixedPointTestAllReps, FixedPointReductionQuantile)
     for (auto const i : {0, 1, 2, 3, 4}) {
       auto const expected      = decimalXX{scaled_integer<RepType>{i + 1, scale}};
       auto const result        = cudf::reduce(column,
-                                       *cudf::make_quantile_aggregation<reduce_aggregation>(
-                                         {i / 4.0}, cudf::interpolation::LINEAR),
-                                       out_type);
+                                              *cudf::make_quantile_aggregation<reduce_aggregation>(
+                                                {i / 4.0}, cudf::interpolation::LINEAR),
+                                              out_type);
       auto const result_scalar = static_cast<cudf::scalar_type_t<decimalXX>*>(result.get());
       EXPECT_EQ(result_scalar->fixed_point_value(), expected);
     }
@@ -3815,38 +3815,26 @@ struct ReduceOverflowTest : public cudf::test::BaseFixture {
 
   cudf::test::fixed_width_column_wrapper<T> make_col(std::initializer_list<Rep> values)
     requires(!cudf::is_fixed_point<T>())
-  {
-    return cudf::test::fixed_width_column_wrapper<T>(values);
-  }
+  { return cudf::test::fixed_width_column_wrapper<T>(values); }
   cudf::test::fixed_point_column_wrapper<Rep> make_col(std::initializer_list<Rep> values)
     requires(cudf::is_fixed_point<T>())
-  {
-    return cudf::test::fixed_point_column_wrapper<Rep>(values, scale);
-  }
+  { return cudf::test::fixed_point_column_wrapper<Rep>(values, scale); }
 
   cudf::test::fixed_width_column_wrapper<T> make_null_col(std::initializer_list<Rep> values,
                                                           std::initializer_list<bool> validity)
     requires(!cudf::is_fixed_point<T>())
-  {
-    return cudf::test::fixed_width_column_wrapper<T>(values, std::cbegin(validity));
-  }
+  { return cudf::test::fixed_width_column_wrapper<T>(values, std::cbegin(validity)); }
   cudf::test::fixed_point_column_wrapper<Rep> make_null_col(std::initializer_list<Rep> values,
                                                             std::initializer_list<bool> validity)
     requires(cudf::is_fixed_point<T>())
-  {
-    return cudf::test::fixed_point_column_wrapper<Rep>(values, std::cbegin(validity), scale);
-  }
+  { return cudf::test::fixed_point_column_wrapper<Rep>(values, std::cbegin(validity), scale); }
 
   cudf::test::fixed_width_column_wrapper<T> make_col_from_vec(std::vector<Rep> const& values)
     requires(!cudf::is_fixed_point<T>())
-  {
-    return cudf::test::fixed_width_column_wrapper<T>(values.begin(), values.end());
-  }
+  { return cudf::test::fixed_width_column_wrapper<T>(values.begin(), values.end()); }
   cudf::test::fixed_point_column_wrapper<Rep> make_col_from_vec(std::vector<Rep> const& values)
     requires(cudf::is_fixed_point<T>())
-  {
-    return cudf::test::fixed_point_column_wrapper<Rep>(values.begin(), values.end(), scale);
-  }
+  { return cudf::test::fixed_point_column_wrapper<Rep>(values.begin(), values.end(), scale); }
 
   std::unique_ptr<cudf::scalar> make_init_scalar(Rep value)
   {

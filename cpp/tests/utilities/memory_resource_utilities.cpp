@@ -23,9 +23,7 @@ scoped_current_device_resource::scoped_current_device_resource(
 }
 
 scoped_current_device_resource::~scoped_current_device_resource()
-{
-  std::ignore = cudf::set_current_device_resource(std::move(_previous));
-}
+{ std::ignore = cudf::set_current_device_resource(std::move(_previous)); }
 
 memory_resource_test_harness::memory_resource_test_harness(rmm::device_async_resource_ref upstream)
   : _setup_mr{upstream},
@@ -39,29 +37,19 @@ memory_resource_test_harness::memory_resource_test_harness(rmm::device_async_res
 }
 
 rmm::mr::statistics_resource_adaptor& memory_resource_test_harness::setup_mr() noexcept
-{
-  return _setup_mr;
-}
+{ return _setup_mr; }
 
 rmm::mr::statistics_resource_adaptor& memory_resource_test_harness::output_mr() noexcept
-{
-  return _output_mr;
-}
+{ return _output_mr; }
 
 rmm::mr::statistics_resource_adaptor& memory_resource_test_harness::temporary_mr() noexcept
-{
-  return _temporary_mr;
-}
+{ return _temporary_mr; }
 
 cudf::memory_resources memory_resource_test_harness::resources() noexcept
-{
-  return cudf::memory_resources{_output_mr, _temporary_mr};
-}
+{ return cudf::memory_resources{_output_mr, _temporary_mr}; }
 
 scoped_current_device_resource memory_resource_test_harness::fail_on_current_device_resource_use()
-{
-  return scoped_current_device_resource{_failing_mr};
-}
+{ return scoped_current_device_resource{_failing_mr}; }
 
 void memory_resource_test_harness::synchronize(cuda::stream_ref stream) const { stream.sync(); }
 

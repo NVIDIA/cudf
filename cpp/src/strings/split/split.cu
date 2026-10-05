@@ -291,18 +291,14 @@ std::unique_ptr<table> split(strings_column_view const& input,
                              size_type maxsplit,
                              cuda::stream_ref stream,
                              rmm::device_async_resource_ref mr)
-{
-  return split_impl<true>(input, delimiter, maxsplit, stream, mr);
-}
+{ return split_impl<true>(input, delimiter, maxsplit, stream, mr); }
 
 std::unique_ptr<table> rsplit(strings_column_view const& input,
                               string_scalar const& delimiter,
                               size_type maxsplit,
                               cuda::stream_ref stream,
                               rmm::device_async_resource_ref mr)
-{
-  return split_impl<false>(input, delimiter, maxsplit, stream, mr);
-}
+{ return split_impl<false>(input, delimiter, maxsplit, stream, mr); }
 
 }  // namespace detail
 

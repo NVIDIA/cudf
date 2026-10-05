@@ -54,9 +54,7 @@ inline rmm::device_buffer create_data(data_type type,
                                       size_type size,
                                       cuda::stream_ref stream,
                                       rmm::device_async_resource_ref mr)
-{
-  return create_data(type, size, true, stream, mr);
-}
+{ return create_data(type, size, true, stream, mr); }
 
 using string_index_pair = cuda::std::pair<char const*, size_type>;
 
@@ -132,23 +130,17 @@ class column_buffer_base {
 
   template <typename T = uint32_t>
   auto null_mask()
-  {
-    return reinterpret_cast<T*>(_null_mask.data());
-  }
+  { return reinterpret_cast<T*>(_null_mask.data()); }
   auto null_mask_size() { return _null_mask.size(); }
   auto& null_count() { return _null_count; }
 
   auto data() { return static_cast<string_policy*>(this)->data_impl(); }
   [[nodiscard]] auto data() const { return static_cast<string_policy const*>(this)->data_impl(); }
   [[nodiscard]] auto data_size() const
-  {
-    return static_cast<string_policy const*>(this)->data_size_impl();
-  }
+  { return static_cast<string_policy const*>(this)->data_size_impl(); }
 
   std::unique_ptr<column> make_string_column(cuda::stream_ref stream)
-  {
-    return static_cast<string_policy*>(this)->make_string_column_impl(stream);
-  }
+  { return static_cast<string_policy*>(this)->make_string_column_impl(stream); }
 
  protected:
   rmm::device_buffer _data{};
@@ -193,9 +185,7 @@ class gather_column_buffer : public column_buffer_base<gather_column_buffer> {
                        cuda::stream_ref stream,
                        rmm::device_async_resource_ref mr)
     : column_buffer_base<gather_column_buffer>(_type, _size, _is_nullable, stream, mr)
-  {
-    create(_size, stream, mr);
-  }
+  { create(_size, stream, mr); }
 
   void allocate_strings_data(bool memset_data, cuda::stream_ref stream);
 
@@ -227,9 +217,7 @@ class inline_column_buffer : public column_buffer_base<inline_column_buffer> {
                        cuda::stream_ref stream,
                        rmm::device_async_resource_ref mr)
     : column_buffer_base<inline_column_buffer>(_type, _size, _is_nullable, stream, mr)
-  {
-    create(_size, stream, mr);
-  }
+  { create(_size, stream, mr); }
 
   void allocate_strings_data(bool memset_data, cuda::stream_ref stream);
 

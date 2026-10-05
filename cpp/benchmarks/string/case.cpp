@@ -21,10 +21,10 @@ void bench_case(nvbench::state& state)
 
   data_profile const profile = data_profile_builder().distribution(
     cudf::type_id::STRING, distribution_id::NORMAL, min_width, max_width);
-  auto const column   = encoding == "ascii"
-                          ? create_ascii_string_column(profile, num_rows)
-                          : create_random_column(cudf::type_id::STRING, row_count{num_rows}, profile);
-  auto const input    = cudf::strings_column_view(column->view());
+  auto const column = encoding == "ascii"
+                        ? create_ascii_string_column(profile, num_rows)
+                        : create_random_column(cudf::type_id::STRING, row_count{num_rows}, profile);
+  auto const input  = cudf::strings_column_view(column->view());
   auto const col_size = column->alloc_size();
 
   state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().get()));

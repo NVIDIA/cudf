@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -26,9 +26,7 @@
 
 template <typename T>
 auto lhs_random_column(cudf::size_type size)
-{
-  return BinaryOperationTest::make_random_wrapped_column<T>(size);
-}
+{ return BinaryOperationTest::make_random_wrapped_column<T>(size); }
 
 template <>
 auto lhs_random_column<std::string>(cudf::size_type size)
@@ -38,9 +36,7 @@ auto lhs_random_column<std::string>(cudf::size_type size)
 }
 template <typename T>
 auto rhs_random_column(cudf::size_type size)
-{
-  return BinaryOperationTest::make_random_wrapped_column<T>(size);
-}
+{ return BinaryOperationTest::make_random_wrapped_column<T>(size); }
 template <>
 auto rhs_random_column<std::string>(cudf::size_type size)
 {
@@ -124,9 +120,7 @@ struct BinaryOperationCompiledTest_Add : public BinaryOperationCompiledTest<T> {
 TYPED_TEST_SUITE(BinaryOperationCompiledTest_Add, Add_types);
 
 TYPED_TEST(BinaryOperationCompiledTest_Add, Vector_Vector)
-{
-  this->template test<cudf::library::operation::Add>(cudf::binary_operator::ADD);
-}
+{ this->template test<cudf::library::operation::Add>(cudf::binary_operator::ADD); }
 
 // SUB
 //     n      t     d
@@ -152,9 +146,7 @@ struct BinaryOperationCompiledTest_Sub : public BinaryOperationCompiledTest<T> {
 TYPED_TEST_SUITE(BinaryOperationCompiledTest_Sub, Sub_types);
 
 TYPED_TEST(BinaryOperationCompiledTest_Sub, Vector_Vector)
-{
-  this->template test<cudf::library::operation::Sub>(cudf::binary_operator::SUB);
-}
+{ this->template test<cudf::library::operation::Sub>(cudf::binary_operator::SUB); }
 
 // MUL
 //     n      t     d
@@ -181,9 +173,7 @@ struct BinaryOperationCompiledTest_Mul : public BinaryOperationCompiledTest<T> {
 TYPED_TEST_SUITE(BinaryOperationCompiledTest_Mul, Mul_types);
 
 TYPED_TEST(BinaryOperationCompiledTest_Mul, Vector_Vector)
-{
-  this->template test<cudf::library::operation::Mul>(cudf::binary_operator::MUL);
-}
+{ this->template test<cudf::library::operation::Mul>(cudf::binary_operator::MUL); }
 
 // DIV
 //     n      t     d
@@ -210,9 +200,7 @@ struct BinaryOperationCompiledTest_Div : public BinaryOperationCompiledTest<T> {
 TYPED_TEST_SUITE(BinaryOperationCompiledTest_Div, Div_types);
 
 TYPED_TEST(BinaryOperationCompiledTest_Div, Vector_Vector)
-{
-  this->template test<cudf::library::operation::Div>(cudf::binary_operator::DIV);
-}
+{ this->template test<cudf::library::operation::Div>(cudf::binary_operator::DIV); }
 
 // TRUE-DIV
 //     n      t     d
@@ -229,18 +217,14 @@ struct BinaryOperationCompiledTest_TrueDiv : public BinaryOperationCompiledTest<
 TYPED_TEST_SUITE(BinaryOperationCompiledTest_TrueDiv, TrueDiv_types);
 
 TYPED_TEST(BinaryOperationCompiledTest_TrueDiv, Vector_Vector)
-{
-  this->template test<cudf::library::operation::TrueDiv>(cudf::binary_operator::TRUE_DIV);
-}
+{ this->template test<cudf::library::operation::TrueDiv>(cudf::binary_operator::TRUE_DIV); }
 // FLOOR_DIV
 //     n      t     d
 // n n / n
 // t
 // d
 TYPED_TEST(BinaryOperationCompiledTest_TrueDiv, FloorDiv_Vector_Vector)
-{
-  this->template test<cudf::library::operation::FloorDiv>(cudf::binary_operator::FLOOR_DIV);
-}
+{ this->template test<cudf::library::operation::FloorDiv>(cudf::binary_operator::FLOOR_DIV); }
 
 // MOD
 //     n      t     d
@@ -259,9 +243,7 @@ struct BinaryOperationCompiledTest_Mod : public BinaryOperationCompiledTest<T> {
 TYPED_TEST_SUITE(BinaryOperationCompiledTest_Mod, Mod_types);
 
 TYPED_TEST(BinaryOperationCompiledTest_Mod, Vector_Vector)
-{
-  this->template test<cudf::library::operation::Mod>(cudf::binary_operator::MOD);
-}
+{ this->template test<cudf::library::operation::Mod>(cudf::binary_operator::MOD); }
 
 // PYMOD
 //     n      t     d
@@ -277,9 +259,7 @@ template <typename T>
 struct BinaryOperationCompiledTest_PyMod : public BinaryOperationCompiledTest<T> {};
 TYPED_TEST_SUITE(BinaryOperationCompiledTest_PyMod, PyMod_types);
 TYPED_TEST(BinaryOperationCompiledTest_PyMod, Vector_Vector)
-{
-  this->template test<cudf::library::operation::PyMod>(cudf::binary_operator::PYMOD);
-}
+{ this->template test<cudf::library::operation::PyMod>(cudf::binary_operator::PYMOD); }
 
 // POW
 //     n      t     d
@@ -377,9 +357,7 @@ TYPED_TEST(BinaryOperationCompiledTest_FloatOps, ATan2_Vector_Vector)
 }
 
 TYPED_TEST(BinaryOperationCompiledTest_FloatOps, PMod_Vector_Vector)
-{
-  this->template test<cudf::library::operation::PMod>(cudf::binary_operator::PMOD);
-}
+{ this->template test<cudf::library::operation::PMod>(cudf::binary_operator::PMOD); }
 
 using IntPow_types = cudf::test::Types<cudf::test::Types<int32_t, int32_t, int32_t>,
                                        cudf::test::Types<int64_t, int64_t, int64_t>>;
@@ -474,29 +452,19 @@ struct BinaryOperationCompiledTest_Bit : public BinaryOperationCompiledTest<T> {
 TYPED_TEST_SUITE(BinaryOperationCompiledTest_Bit, Bit_types);
 
 TYPED_TEST(BinaryOperationCompiledTest_Bit, BitwiseAnd_Vector_Vector)
-{
-  this->template test<cudf::library::operation::BitwiseAnd>(cudf::binary_operator::BITWISE_AND);
-}
+{ this->template test<cudf::library::operation::BitwiseAnd>(cudf::binary_operator::BITWISE_AND); }
 
 TYPED_TEST(BinaryOperationCompiledTest_Bit, BitwiseOr_Vector_Vector)
-{
-  this->template test<cudf::library::operation::BitwiseOr>(cudf::binary_operator::BITWISE_OR);
-}
+{ this->template test<cudf::library::operation::BitwiseOr>(cudf::binary_operator::BITWISE_OR); }
 
 TYPED_TEST(BinaryOperationCompiledTest_Bit, BitwiseXor_Vector_Vector)
-{
-  this->template test<cudf::library::operation::BitwiseXor>(cudf::binary_operator::BITWISE_XOR);
-}
+{ this->template test<cudf::library::operation::BitwiseXor>(cudf::binary_operator::BITWISE_XOR); }
 
 TYPED_TEST(BinaryOperationCompiledTest_Bit, ShiftLeft_Vector_Vector)
-{
-  this->template test<cudf::library::operation::ShiftLeft>(cudf::binary_operator::SHIFT_LEFT);
-}
+{ this->template test<cudf::library::operation::ShiftLeft>(cudf::binary_operator::SHIFT_LEFT); }
 
 TYPED_TEST(BinaryOperationCompiledTest_Bit, ShiftRight_Vector_Vector)
-{
-  this->template test<cudf::library::operation::ShiftRight>(cudf::binary_operator::SHIFT_RIGHT);
-}
+{ this->template test<cudf::library::operation::ShiftRight>(cudf::binary_operator::SHIFT_RIGHT); }
 
 TYPED_TEST(BinaryOperationCompiledTest_Bit, ShiftRightUnsigned_Vector_Vector)
 {
@@ -522,14 +490,10 @@ struct BinaryOperationCompiledTest_Logical : public BinaryOperationCompiledTest<
 TYPED_TEST_SUITE(BinaryOperationCompiledTest_Logical, Logical_types);
 
 TYPED_TEST(BinaryOperationCompiledTest_Logical, LogicalAnd_Vector_Vector)
-{
-  this->template test<cudf::library::operation::LogicalAnd>(cudf::binary_operator::LOGICAL_AND);
-}
+{ this->template test<cudf::library::operation::LogicalAnd>(cudf::binary_operator::LOGICAL_AND); }
 
 TYPED_TEST(BinaryOperationCompiledTest_Logical, LogicalOr_Vector_Vector)
-{
-  this->template test<cudf::library::operation::LogicalOr>(cudf::binary_operator::LOGICAL_OR);
-}
+{ this->template test<cudf::library::operation::LogicalOr>(cudf::binary_operator::LOGICAL_OR); }
 
 template <typename T>
 using column_wrapper = std::conditional_t<std::is_same_v<T, std::string>,
@@ -615,29 +579,19 @@ struct BinaryOperationCompiledTest_Comparison : public BinaryOperationCompiledTe
 TYPED_TEST_SUITE(BinaryOperationCompiledTest_Comparison, Comparison_types);
 
 TYPED_TEST(BinaryOperationCompiledTest_Comparison, Equal_Vector_Vector)
-{
-  this->template test<cudf::library::operation::Equal>(cudf::binary_operator::EQUAL);
-}
+{ this->template test<cudf::library::operation::Equal>(cudf::binary_operator::EQUAL); }
 
 TYPED_TEST(BinaryOperationCompiledTest_Comparison, NotEqual_Vector_Vector)
-{
-  this->template test<cudf::library::operation::NotEqual>(cudf::binary_operator::NOT_EQUAL);
-}
+{ this->template test<cudf::library::operation::NotEqual>(cudf::binary_operator::NOT_EQUAL); }
 
 TYPED_TEST(BinaryOperationCompiledTest_Comparison, Less_Vector_Vector)
-{
-  this->template test<cudf::library::operation::Less>(cudf::binary_operator::LESS);
-}
+{ this->template test<cudf::library::operation::Less>(cudf::binary_operator::LESS); }
 
 TYPED_TEST(BinaryOperationCompiledTest_Comparison, Greater_Vector_Vector)
-{
-  this->template test<cudf::library::operation::Greater>(cudf::binary_operator::GREATER);
-}
+{ this->template test<cudf::library::operation::Greater>(cudf::binary_operator::GREATER); }
 
 TYPED_TEST(BinaryOperationCompiledTest_Comparison, LessEqual_Vector_Vector)
-{
-  this->template test<cudf::library::operation::LessEqual>(cudf::binary_operator::LESS_EQUAL);
-}
+{ this->template test<cudf::library::operation::LessEqual>(cudf::binary_operator::LESS_EQUAL); }
 
 TYPED_TEST(BinaryOperationCompiledTest_Comparison, GreaterEqual_Vector_Vector)
 {

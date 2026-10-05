@@ -47,9 +47,7 @@ struct physical_equality_comparator {
    */
   template <typename Element>
   __device__ constexpr bool operator()(Element const lhs, Element const rhs) const noexcept
-  {
-    return lhs == rhs;
-  }
+  { return lhs == rhs; }
 };
 
 /**
@@ -67,9 +65,7 @@ struct nan_equal_physical_equality_comparator {
   template <typename Element>
   __device__ constexpr bool operator()(Element const lhs, Element const rhs) const noexcept
     requires(not cuda::std::is_floating_point_v<Element>)
-  {
-    return lhs == rhs;
-  }
+  { return lhs == rhs; }
 
   /**
    * @brief Operator for equality comparison of floating point values.
@@ -83,9 +79,7 @@ struct nan_equal_physical_equality_comparator {
   template <typename Element>
   __device__ constexpr bool operator()(Element const lhs, Element const rhs) const noexcept
     requires(cuda::std::is_floating_point_v<Element>)
-  {
-    return isnan(lhs) and isnan(rhs) ? true : lhs == rhs;
-  }
+  { return isnan(lhs) and isnan(rhs) ? true : lhs == rhs; }
 };
 
 /**
@@ -192,9 +186,7 @@ class device_row_comparator {
     template <typename KeyType, typename... Args>
     __device__ bool operator()(Args...) const noexcept
       requires(not cudf::is_equality_comparable<KeyType, KeyType>())
-    {
-      CUDF_UNREACHABLE("Key types are not comparable");
-    }
+    { CUDF_UNREACHABLE("Key types are not comparable"); }
 
    private:
     column_device_view lhs;
@@ -264,8 +256,8 @@ class device_row_comparator {
 #ifndef NDEBUG
     __attribute__((noinline))
 #endif
-    __device__ bool
-    operator()(size_type const lhs_element_index, size_type const rhs_element_index) const noexcept
+    __device__ bool operator()(size_type const lhs_element_index,
+                               size_type const rhs_element_index) const noexcept
       requires(cudf::is_dictionary<Element>())
     {
       if (check_nulls) {
@@ -289,16 +281,14 @@ class device_row_comparator {
     __device__ bool operator()(Args...) const noexcept
       requires(not cudf::is_equality_comparable<Element, Element>() and
                (not has_nested_columns or not cudf::is_nested<Element>()))
-    {
-      CUDF_UNREACHABLE("Attempted to compare elements of uncomparable types.");
-    }
+    { CUDF_UNREACHABLE("Attempted to compare elements of uncomparable types."); }
 
     template <typename Element>
 #ifndef NDEBUG
     __attribute__((noinline))
 #endif
-    __device__ bool
-    operator()(size_type const lhs_element_index, size_type const rhs_element_index) const noexcept
+    __device__ bool operator()(size_type const lhs_element_index,
+                               size_type const rhs_element_index) const noexcept
       requires(has_nested_columns and cudf::is_nested<Element>())
     {
       column_device_view lcol = lhs.slice(lhs_element_index, 1);
@@ -375,9 +365,7 @@ class device_row_comparator {
       template <typename Element, typename... Args>
       __device__ bool operator()(Args...) const noexcept
         requires(not cudf::is_equality_comparable<Element, Element>())
-      {
-        CUDF_UNREACHABLE("Attempted to compare elements of uncomparable types.");
-      }
+      { CUDF_UNREACHABLE("Attempted to compare elements of uncomparable types."); }
     };
 
     column_device_view const lhs;
@@ -481,9 +469,7 @@ struct strong_index_comparator_adapter {
 
   __device__ constexpr bool operator()(rhs_index_type const rhs_index,
                                        lhs_index_type const lhs_index) const noexcept
-  {
-    return this->operator()(lhs_index, rhs_index);
-  }
+  { return this->operator()(lhs_index, rhs_index); }
 
   Comparator const comparator;
 };

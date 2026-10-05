@@ -48,9 +48,7 @@ bool operation::may_evaluate_null(table_view const& left,
 
 std::unique_ptr<cudf::detail::row_ir::node> operation::accept(
   cudf::detail::row_ir::ast_converter& converter) const
-{
-  return converter.add_ir_node(*this);
-}
+{ return converter.add_ir_node(*this); }
 
 }  // namespace detail
 }  // namespace jit

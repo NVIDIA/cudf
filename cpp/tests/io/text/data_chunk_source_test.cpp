@@ -171,9 +171,7 @@ std::string make_bgzip_test_input()
 }
 
 uint64_t virtual_offset(std::size_t block_offset, std::size_t local_offset)
-{
-  return (block_offset << 16) | local_offset;
-}
+{ return (block_offset << 16) | local_offset; }
 
 void write_bgzip(std::ostream& output_stream,
                  cudf::host_span<char const> data,

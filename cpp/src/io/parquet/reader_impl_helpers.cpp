@@ -454,7 +454,7 @@ void metadata::sanitize_schema()
       auto const& parent_schema    = schema[schema_elem.parent_idx];
       auto const is_parent_variant = parent_schema.logical_type.has_value() &&
                                      parent_schema.logical_type->type == LogicalType::VARIANT;
-      auto const parent_type = parent_schema.converted_type;
+      auto const parent_type       = parent_schema.converted_type;
       if (not is_parent_variant && schema_elem.repetition_type == FieldRepetitionType::REPEATED &&
           schema_elem.num_children >= 1 && parent_type != ConvertedType::LIST &&
           parent_type != ConvertedType::MAP) {

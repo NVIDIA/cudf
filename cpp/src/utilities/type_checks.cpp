@@ -18,9 +18,7 @@ namespace {
 struct columns_equal_fn {
   template <typename T>
   bool operator()(column_view const& lhs, column_view const& rhs)
-  {
-    return lhs.type() == rhs.type();
-  }
+  { return lhs.type() == rhs.type(); }
 };
 
 template <>
@@ -55,9 +53,7 @@ bool columns_equal_fn::operator()<struct_view>(column_view const& lhs, column_vi
 struct column_scalar_equal_fn {
   template <typename T>
   bool operator()(column_view const& col, scalar const& slr)
-  {
-    return col.type() == slr.type();
-  }
+  { return col.type() == slr.type(); }
 };
 
 template <>
@@ -94,9 +90,7 @@ bool column_scalar_equal_fn::operator()<struct_view>(column_view const& col, sca
 struct scalars_equal_fn {
   template <typename T>
   bool operator()(scalar const& lhs, scalar const& rhs)
-  {
-    return lhs.type() == rhs.type();
-  }
+  { return lhs.type() == rhs.type(); }
 };
 
 template <>
@@ -122,24 +116,16 @@ bool scalars_equal_fn::operator()<struct_view>(scalar const& lhs, scalar const& 
 // Implementation note: avoid using double dispatch for this function
 // as it increases code paths to NxN for N types.
 bool have_same_types(column_view const& lhs, column_view const& rhs)
-{
-  return type_dispatcher(lhs.type(), columns_equal_fn{}, lhs, rhs);
-}
+{ return type_dispatcher(lhs.type(), columns_equal_fn{}, lhs, rhs); }
 
 bool have_same_types(column_view const& lhs, scalar const& rhs)
-{
-  return type_dispatcher(lhs.type(), column_scalar_equal_fn{}, lhs, rhs);
-}
+{ return type_dispatcher(lhs.type(), column_scalar_equal_fn{}, lhs, rhs); }
 
 bool have_same_types(scalar const& lhs, column_view const& rhs)
-{
-  return have_same_types(rhs, lhs);
-}
+{ return have_same_types(rhs, lhs); }
 
 bool have_same_types(scalar const& lhs, scalar const& rhs)
-{
-  return type_dispatcher(lhs.type(), scalars_equal_fn{}, lhs, rhs);
-}
+{ return type_dispatcher(lhs.type(), scalars_equal_fn{}, lhs, rhs); }
 
 bool have_same_types(table_view const& lhs, table_view const& rhs)
 {

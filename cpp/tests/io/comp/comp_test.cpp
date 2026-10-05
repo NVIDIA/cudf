@@ -211,9 +211,7 @@ struct SnappyDecompressTest : public DecompressTest<SnappyDecompressTest> {
   void device_dispatch(device_span<device_span<uint8_t const>> d_inf_in,
                        device_span<device_span<uint8_t>> d_inf_out,
                        device_span<codec_exec_result> d_inf_stat)
-  {
-    cudf::io::detail::gpu_unsnap(d_inf_in, d_inf_out, d_inf_stat, cudf::get_default_stream());
-  }
+  { cudf::io::detail::gpu_unsnap(d_inf_in, d_inf_out, d_inf_stat, cudf::get_default_stream()); }
 
   std::vector<uint8_t> host_dispatch(cudf::io::compression_type comp_type,
                                      cudf::host_span<uint8_t const> compressed,

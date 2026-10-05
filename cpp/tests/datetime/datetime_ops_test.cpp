@@ -81,28 +81,28 @@ TEST_F(BasicDatetimeOpsTest, TestExtractingDatetimeComponents)
       -1528,  // 1965-10-26 GMT
       17716,  // 2018-07-04 GMT
       19382   // 2023-01-25 GMT
-    };
+  };
 
   auto timestamps_s =
     cudf::test::fixed_width_column_wrapper<cudf::timestamp_s, cudf::timestamp_s::rep>{
       -131968728,  // 1965-10-26 14:01:12 GMT
       1530705600,  // 2018-07-04 12:00:00 GMT
       1674631932   // 2023-01-25 07:32:12 GMT
-    };
+  };
 
   auto timestamps_ms =
     cudf::test::fixed_width_column_wrapper<cudf::timestamp_ms, cudf::timestamp_ms::rep>{
       -131968727238,  // 1965-10-26 14:01:12.762 GMT
       1530705600000,  // 2018-07-04 12:00:00.000 GMT
       1674631932929   // 2023-01-25 07:32:12.929 GMT
-    };
+  };
 
   auto timestamps_ns =
     cudf::test::fixed_width_column_wrapper<cudf::timestamp_ns, cudf::timestamp_ns::rep>{
       -23324234,  // 1969-12-31 23:59:59.976675766 GMT
       23432424,   // 1970-01-01 00:00:00.023432424 GMT
       987234623   // 1970-01-01 00:00:00.987234623 GMT
-    };
+  };
 
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(
     *extract_datetime_component(timestamps_D, cudf::datetime::datetime_component::YEAR),
@@ -554,7 +554,7 @@ TEST_F(BasicDatetimeOpsTest, TestAddMonthsWithInvalidColType)
   auto timestamps_s =
     cudf::test::fixed_width_column_wrapper<cudf::timestamp_s, cudf::timestamp_s::rep>{
       662688000L  // 1991-01-01 00:00:00 GMT
-    };
+  };
 
   // Months has to be an INT16 or INT32 type
   EXPECT_NO_THROW(
@@ -604,7 +604,7 @@ TEST_F(BasicDatetimeOpsTest, TestAddMonthsWithIncorrectColSizes)
   auto timestamps_s =
     cudf::test::fixed_width_column_wrapper<cudf::timestamp_s, cudf::timestamp_s::rep>{
       662688000L  // 1991-01-01 00:00:00 GMT
-    };
+  };
 
   // Provide more number of months rows than timestamp rows
   auto months = cudf::test::fixed_width_column_wrapper<int16_t>{-2, 3};
@@ -641,7 +641,7 @@ TYPED_TEST(TypedAddMonthsTest, TestAddMonthsWithSeconds)
       -131550590L,  // 1965-10-31 10:10:10 GMT
       -131544000L,  // 1965-10-31 12:00:00 GMT
       -131536728L   // 1965-10-31 14:01:12 GMT
-    };
+  };
 
   auto const months =
     cudf::test::fixed_width_column_wrapper<TypeParam>{-2, 6, -1, 1, -4, 8, -2, 10, 4, -20, 1, 3};
@@ -660,7 +660,7 @@ TYPED_TEST(TypedAddMonthsTest, TestAddMonthsWithSeconds)
       -184254590L,  // 1964-02-29 10:10:10 GMT
       -128952000L,  // 1965-11-30 12:00:00 GMT
       -123587928L   // 1966-01-31 14:01:12 GMT
-    };
+  };
 
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(
     *add_calendrical_months(timestamps_s, months), expected, verbosity);

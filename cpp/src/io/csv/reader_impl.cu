@@ -516,17 +516,17 @@ std::pair<rmm::device_uvector<char>, selected_rows_offsets> select_data_and_row_
   // Transfer source data to GPU and gather row offsets
   auto const uncomp_size = h_data.has_value() ? h_data->size() : source->size();
   auto data_row_offsets  = load_data_and_gather_row_offsets(source,
-                                                           reader_opts,
-                                                           parse_opts,
-                                                           header,
-                                                           h_data,
-                                                           range_offset,
-                                                           data_start_offset - range_offset,
-                                                           (range_size) ? range_size : uncomp_size,
-                                                           (skip_rows > 0) ? skip_rows : 0,
-                                                           num_rows,
-                                                           load_whole_file,
-                                                           stream);
+                                                            reader_opts,
+                                                            parse_opts,
+                                                            header,
+                                                            h_data,
+                                                            range_offset,
+                                                            data_start_offset - range_offset,
+                                                            (range_size) ? range_size : uncomp_size,
+                                                            (skip_rows > 0) ? skip_rows : 0,
+                                                            num_rows,
+                                                            load_whole_file,
+                                                            stream);
   auto& row_offsets      = data_row_offsets.second;
   // Exclude the rows that are to be skipped from the end
   if (skip_end_rows > 0 && static_cast<size_t>(skip_end_rows) < row_offsets.size()) {

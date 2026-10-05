@@ -52,9 +52,7 @@ class device_scalar {
     cuda::stream_ref stream,
     rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref())
     : _storage{1, stream, std::move(mr)}, bounce_buffer{make_pinned_vector<T>(1, stream)}
-  {
-    set_value_async(initial_value, stream);
-  }
+  { set_value_async(initial_value, stream); }
 
   device_scalar(device_scalar const& other,
                 cuda::stream_ref stream,

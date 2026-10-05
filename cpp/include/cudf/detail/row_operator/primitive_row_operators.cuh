@@ -82,9 +82,7 @@ class element_equality_comparator {
                              column_device_view const&,
                              size_type,
                              size_type) const
-  {
-    CUDF_UNREACHABLE("Attempted to compare elements of uncomparable types.");
-  }
+  { CUDF_UNREACHABLE("Attempted to compare elements of uncomparable types."); }
   // @endcond
 };
 
@@ -106,9 +104,7 @@ class row_equality_comparator {
                           std::shared_ptr<cudf::detail::row::equality::preprocessed_table> rhs,
                           null_equality nulls_are_equal)
     : _has_nulls{has_nulls}, _lhs{*lhs}, _rhs{*rhs}, _nulls_are_equal{nulls_are_equal}
-  {
-    CUDF_EXPECTS(_lhs.num_columns() == _rhs.num_columns(), "Mismatched number of columns.");
-  }
+  { CUDF_EXPECTS(_lhs.num_columns() == _rhs.num_columns(), "Mismatched number of columns."); }
 
   /**
    * @brief Compares the specified rows for equality.
@@ -150,9 +146,7 @@ class row_equality_comparator {
    */
   __device__ bool operator()(cudf::detail::row::lhs_index_type lhs_index,
                              cudf::detail::row::rhs_index_type rhs_index) const
-  {
-    return (*this)(static_cast<size_type>(lhs_index), static_cast<size_type>(rhs_index));
-  }
+  { return (*this)(static_cast<size_type>(lhs_index), static_cast<size_type>(rhs_index)); }
 
  private:
   cudf::nullate::DYNAMIC _has_nulls;
@@ -184,16 +178,12 @@ class element_hasher {
   __device__ result_type operator()(result_type seed,
                                     column_device_view const& col,
                                     size_type row_index) const
-  {
-    return Hash<T>{seed}(col.element<T>(row_index));
-  }
+  { return Hash<T>{seed}(col.element<T>(row_index)); }
 
   // @cond
   template <typename T, CUDF_ENABLE_IF(not column_device_view::has_element_accessor<T>())>
   __device__ result_type operator()(result_type, column_device_view const&, size_type) const
-  {
-    CUDF_UNREACHABLE("Unsupported type in hash.");
-  }
+  { CUDF_UNREACHABLE("Unsupported type in hash."); }
   // @endcond
 };
 

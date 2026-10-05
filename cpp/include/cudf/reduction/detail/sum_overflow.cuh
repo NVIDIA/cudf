@@ -43,9 +43,7 @@ struct overflow_sum_op {
 template <typename DeviceType>
 struct to_sum_overflow {
   __device__ sum_overflow_result<DeviceType> operator()(DeviceType value) const
-  {
-    return sum_overflow_result<DeviceType>{value, 0};
-  }
+  { return sum_overflow_result<DeviceType>{value, 0}; }
 };
 
 /// @brief Maps a row index to an accumulator, treating nulls as a zero contribution.

@@ -35,9 +35,7 @@ struct tabulator {
   cudf::numeric_scalar_device_view<T> const n_step;
 
   T __device__ operator()(cudf::size_type i)
-  {
-    return n_init.value() + (static_cast<T>(i) * n_step.value());
-  }
+  { return n_init.value() + (static_cast<T>(i) * n_step.value()); }
 };
 
 template <typename T>
@@ -106,9 +104,7 @@ struct sequence_functor {
   template <typename T, typename... Args>
   std::unique_ptr<column> operator()(Args&&...)
     requires(not cudf::is_numeric<T>() or cudf::is_boolean<T>())
-  {
-    CUDF_FAIL("Unsupported sequence scalar type", cudf::data_type_error);
-  }
+  { CUDF_FAIL("Unsupported sequence scalar type", cudf::data_type_error); }
 };
 
 }  // anonymous namespace

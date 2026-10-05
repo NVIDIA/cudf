@@ -216,20 +216,14 @@ hybrid_scan_reader_impl::hybrid_scan_reader_impl(
 }
 
 std::vector<FileMetaData> hybrid_scan_reader_impl::parquet_metadatas() const
-{
-  return _extended_metadata->parquet_metadatas();
-}
+{ return _extended_metadata->parquet_metadatas(); }
 
 std::vector<byte_range_info> hybrid_scan_reader_impl::page_index_byte_ranges() const
-{
-  return _extended_metadata->page_index_byte_ranges();
-}
+{ return _extended_metadata->page_index_byte_ranges(); }
 
 void hybrid_scan_reader_impl::setup_page_indexes(
   cudf::host_span<cudf::host_span<uint8_t const> const> page_index_bytes) const
-{
-  _extended_metadata->setup_page_indexes(page_index_bytes);
-}
+{ _extended_metadata->setup_page_indexes(page_index_bytes); }
 
 void hybrid_scan_reader_impl::select_columns(read_columns_mode columns_mode,
                                              parquet_reader_options const& options)
@@ -322,15 +316,11 @@ void hybrid_scan_reader_impl::reset_output_buffers()
 
 std::vector<std::vector<size_type>> hybrid_scan_reader_impl::all_row_groups(
   parquet_reader_options const& options) const
-{
-  return _extended_metadata->all_row_groups(options);
-}
+{ return _extended_metadata->all_row_groups(options); }
 
 std::size_t hybrid_scan_reader_impl::total_rows_in_row_groups(
   std::span<std::vector<size_type> const> row_group_indices) const
-{
-  return _extended_metadata->total_rows_in_row_groups(row_group_indices);
-}
+{ return _extended_metadata->total_rows_in_row_groups(row_group_indices); }
 
 void hybrid_scan_reader_impl::reset_column_selection()
 {
@@ -1292,10 +1282,10 @@ table_with_metadata hybrid_scan_reader_impl::read_chunk_internal(read_mode mode,
 
   // Create the final output cudf columns.
   for (std::size_t i = 0; i < _output_buffers.size(); ++i) {
-    auto metadata           = _reader_column_schema.has_value()
-                                ? std::make_optional<reader_column_schema>((*_reader_column_schema)[i])
-                                : std::nullopt;
-    auto const& schema      = _extended_metadata->get_schema(_output_column_schemas[i]);
+    auto metadata      = _reader_column_schema.has_value()
+                           ? std::make_optional<reader_column_schema>((*_reader_column_schema)[i])
+                           : std::nullopt;
+    auto const& schema = _extended_metadata->get_schema(_output_column_schemas[i]);
     auto const logical_type = schema.logical_type.value_or(LogicalType{});
     // FIXED_LEN_BYTE_ARRAY never read as string.
     // TODO: if we ever decide that the default reader behavior is to treat unannotated BINARY

@@ -32,9 +32,7 @@ struct count_scalar_fn {
   std::unique_ptr<cudf::scalar> operator()(size_type,
                                            cuda::stream_ref,
                                            rmm::device_async_resource_ref) const
-  {
-    CUDF_FAIL("COUNT is not supported for boolean or non-numeric types", std::invalid_argument);
-  }
+  { CUDF_FAIL("COUNT is not supported for boolean or non-numeric types", std::invalid_argument); }
 };
 }  // namespace
 

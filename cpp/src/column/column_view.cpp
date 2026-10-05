@@ -55,16 +55,12 @@ struct HashValue {
   std::size_t hash;
   explicit HashValue(std::size_t h) : hash{h} {}
   HashValue operator^(HashValue const& other) const
-  {
-    return HashValue{cudf::hashing::detail::hash_combine(hash, other.hash)};
-  }
+  { return HashValue{cudf::hashing::detail::hash_combine(hash, other.hash)}; }
 };
 
 template <typename... Ts>
 constexpr auto hash(Ts&&... ts)
-{
-  return (... ^ HashValue(std::hash<Ts>{}(ts))).hash;
-}
+{ return (... ^ HashValue(std::hash<Ts>{}(ts))).hash; }
 
 std::size_t shallow_hash_impl(column_view const& c, bool is_parent_empty = false)
 {
@@ -144,9 +140,7 @@ size_type column_view_base::null_count(size_type begin,
 }
 
 bool is_shallow_equivalent(column_view const& lhs, column_view const& rhs)
-{
-  return shallow_equivalent_impl(lhs, rhs);
-}
+{ return shallow_equivalent_impl(lhs, rhs); }
 
 std::size_t shallow_hash(column_view const& input) { return shallow_hash_impl(input); }
 

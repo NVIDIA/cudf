@@ -69,9 +69,7 @@ struct bloom_filter {
    * @return Shared pointer to communicator.
    */
   [[nodiscard]] std::shared_ptr<rapidsmpf::Communicator> const& comm() const noexcept
-  {
-    return comm_;
-  }
+  { return comm_; }
 
   /**
    * @brief Build a bloom filter from the input channel.

@@ -48,9 +48,7 @@ namespace cudf {
 namespace binops {
 
 bool is_supported_operation(data_type out, data_type lhs, data_type rhs, binary_operator op)
-{
-  return cudf::binops::compiled::is_supported_operation(out, lhs, rhs, op);
-}
+{ return cudf::binops::compiled::is_supported_operation(out, lhs, rhs, op); }
 
 /**
  * @brief Computes output valid mask for op between a column and a scalar
@@ -120,9 +118,7 @@ bool is_comparison_binop(binary_operator op)
  * @brief Returns `true` if `binary_operator` `op` is supported by `fixed_point`
  */
 bool is_supported_fixed_point_binop(binary_operator op)
-{
-  return is_basic_arithmetic_binop(op) or is_comparison_binop(op);
-}
+{ return is_basic_arithmetic_binop(op) or is_comparison_binop(op); }
 
 /**
  * @brief Helper predicate function that identifies if `op` requires scales to be the same
@@ -132,9 +128,7 @@ bool is_supported_fixed_point_binop(binary_operator op)
  * @return false `op` does not require scales of lhs and rhs to be the same
  */
 bool is_same_scale_necessary(binary_operator op)
-{
-  return op != binary_operator::MUL && op != binary_operator::DIV;
-}
+{ return op != binary_operator::MUL && op != binary_operator::DIV; }
 
 namespace jit {
 void binary_operation(mutable_column_view& out,

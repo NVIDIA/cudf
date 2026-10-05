@@ -76,9 +76,7 @@ class kvikio_source : public datasource {
   }
 
   size_t host_read(size_t offset, size_t size, uint8_t* dst) override
-  {
-    return host_read_async(offset, size, dst).get();
-  }
+  { return host_read_async(offset, size, dst).get(); }
 
   std::future<size_t> host_read_async(size_t offset, size_t size, uint8_t* dst) override
   {
@@ -92,9 +90,7 @@ class kvikio_source : public datasource {
   [[nodiscard]] bool supports_device_read() const override { return true; }
 
   [[nodiscard]] bool is_device_read_preferred(size_t size) const override
-  {
-    return supports_device_read();
-  }
+  { return supports_device_read(); }
 
   std::future<size_t> device_read_async(size_t offset,
                                         size_t size,
@@ -108,9 +104,7 @@ class kvikio_source : public datasource {
   }
 
   size_t device_read(size_t offset, size_t size, uint8_t* dst, cuda::stream_ref stream) override
-  {
-    return device_read_async(offset, size, dst, stream).get();
-  }
+  { return device_read_async(offset, size, dst, stream).get(); }
 
   std::unique_ptr<datasource::buffer> device_read(size_t offset,
                                                   size_t size,
@@ -234,9 +228,7 @@ class device_buffer_source final : public datasource {
   }
 
   size_t device_read(size_t offset, size_t size, uint8_t* dst, cuda::stream_ref stream) override
-  {
-    return device_read_async(offset, size, dst, stream).get();
-  }
+  { return device_read_async(offset, size, dst, stream).get(); }
 
   std::unique_ptr<buffer> device_read(size_t offset, size_t size, cuda::stream_ref stream) override
   {
@@ -289,53 +281,35 @@ class user_datasource_wrapper : public datasource {
   explicit user_datasource_wrapper(datasource* const source) : source(source) {}
 
   size_t host_read(size_t offset, size_t size, uint8_t* dst) override
-  {
-    return source->host_read(offset, size, dst);
-  }
+  { return source->host_read(offset, size, dst); }
 
   std::unique_ptr<buffer> host_read(size_t offset, size_t size) override
-  {
-    return source->host_read(offset, size);
-  }
+  { return source->host_read(offset, size); }
 
   std::future<size_t> host_read_async(size_t offset, size_t size, uint8_t* dst) override
-  {
-    return source->host_read_async(offset, size, dst);
-  }
+  { return source->host_read_async(offset, size, dst); }
 
   std::future<std::unique_ptr<datasource::buffer>> host_read_async(size_t offset,
                                                                    size_t size) override
-  {
-    return source->host_read_async(offset, size);
-  }
+  { return source->host_read_async(offset, size); }
 
   [[nodiscard]] bool supports_device_read() const override
-  {
-    return source->supports_device_read();
-  }
+  { return source->supports_device_read(); }
 
   [[nodiscard]] bool is_device_read_preferred(size_t size) const override
-  {
-    return source->is_device_read_preferred(size);
-  }
+  { return source->is_device_read_preferred(size); }
 
   size_t device_read(size_t offset, size_t size, uint8_t* dst, cuda::stream_ref stream) override
-  {
-    return source->device_read(offset, size, dst, stream);
-  }
+  { return source->device_read(offset, size, dst, stream); }
 
   std::unique_ptr<buffer> device_read(size_t offset, size_t size, cuda::stream_ref stream) override
-  {
-    return source->device_read(offset, size, stream);
-  }
+  { return source->device_read(offset, size, stream); }
 
   std::future<size_t> device_read_async(size_t offset,
                                         size_t size,
                                         uint8_t* dst,
                                         cuda::stream_ref stream) override
-  {
-    return source->device_read_async(offset, size, dst, stream);
-  }
+  { return source->device_read_async(offset, size, dst, stream); }
 
   [[nodiscard]] size_t size() const override { return source->size(); }
 
@@ -470,14 +444,10 @@ std::unique_ptr<datasource> datasource::create(std::string const& filepath,
 }
 
 std::unique_ptr<datasource> datasource::create(cudf::host_span<std::byte const> buffer)
-{
-  return std::make_unique<host_buffer_source>(buffer);
-}
+{ return std::make_unique<host_buffer_source>(buffer); }
 
 std::unique_ptr<datasource> datasource::create(cudf::device_span<std::byte const> buffer)
-{
-  return std::make_unique<device_buffer_source>(buffer);
-}
+{ return std::make_unique<device_buffer_source>(buffer); }
 
 std::unique_ptr<datasource> datasource::create(datasource* source)
 {

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -368,7 +368,7 @@ TYPED_TEST(RepeatStringsTypedTest, StringsColumnWithNullsWithScalarRepeatTimes)
                                  "íí",
                                  "",
                                  "Hello World"},
-                             nulls_at({1, 3, 5})};
+                                nulls_at({1, 3, 5})};
   auto const strs_cv = cudf::strings_column_view(strs);
 
   {
@@ -420,7 +420,7 @@ TYPED_TEST(RepeatStringsTypedTest, StringsColumnWithNullsWithColumnRepeatTimes)
                                  "íí",
                                  "",
                                  "Hello World"},
-                             nulls_at({1, 3, 5})};
+                                nulls_at({1, 3, 5})};
   auto const strs_cv = cudf::strings_column_view(strs);
 
   // Repeat once.
@@ -548,7 +548,7 @@ TYPED_TEST(RepeatStringsTypedTest, SlicedStringsColumnWithNullsWithColumnRepeatT
     auto const sliced_rtimes  = cudf::slice(repeat_times, {2, 7})[0];
     auto const sliced_strs_cv = cudf::strings_column_view(sliced_strs);
     auto const expected_strs  = strs_col{
-       {"" /*NULL*/, "" /*NULL*/, "" /*NULL*/, "" /*NULL*/, "áááááá"}, nulls_at({0, 1, 2, 3})};
+      {"" /*NULL*/, "" /*NULL*/, "" /*NULL*/, "" /*NULL*/, "áááááá"}, nulls_at({0, 1, 2, 3})};
 
     auto results = cudf::strings::repeat_strings(sliced_strs_cv, sliced_rtimes);
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_strs, *results, verbosity);

@@ -218,18 +218,18 @@ TYPED_TEST(ListsReverseTypedTest, InputListsOfListsWithNulls)
 {
   using lists_col           = cudf::test::lists_column_wrapper<TypeParam>;
   auto const input_original = [] {
-    auto child = lists_col{{{1, 2, 3},
-                            {4, 5, 6},
-                            {7},
-                            {4, 5},
-                            {} /*null*/,
-                            {4, 5, 6},
-                            {},
-                            {6, 7, 8},
-                            {} /*null*/,
-                            {9}},
-                           nulls_at({4, 8})}
-                   .release();
+    auto child     = lists_col{{{1, 2, 3},
+                                {4, 5, 6},
+                                {7},
+                                {4, 5},
+                                {} /*null*/,
+                                {4, 5, 6},
+                                {},
+                                {6, 7, 8},
+                                {} /*null*/,
+                                {9}},
+                               nulls_at({4, 8})}
+                       .release();
     auto offsets   = ints_col{0, 0, 3, 3, 6, 9, 10, 10, 10}.release();
     auto null_mask = cudf::create_null_mask(8, cudf::mask_state::ALL_VALID);
     cudf::set_null_mask(reinterpret_cast<cudf::bitmask_type*>(null_mask.data()), 2, 3, false);
@@ -240,18 +240,18 @@ TYPED_TEST(ListsReverseTypedTest, InputListsOfListsWithNulls)
 
   {
     auto const expected = [] {
-      auto child = lists_col{{{7},
-                              {4, 5, 6},
-                              {1, 2, 3},
-                              {4, 5, 6},
-                              {} /*null*/,
-                              {4, 5},
-                              {} /*null*/,
-                              {6, 7, 8},
-                              {},
-                              {9}},
-                             nulls_at({4, 6})}
-                     .release();
+      auto child     = lists_col{{{7},
+                                  {4, 5, 6},
+                                  {1, 2, 3},
+                                  {4, 5, 6},
+                                  {} /*null*/,
+                                  {4, 5},
+                                  {} /*null*/,
+                                  {6, 7, 8},
+                                  {},
+                                  {9}},
+                                 nulls_at({4, 6})}
+                         .release();
       auto offsets   = ints_col{0, 0, 3, 3, 6, 9, 10, 10, 10}.release();
       auto null_mask = cudf::create_null_mask(8, cudf::mask_state::ALL_VALID);
       cudf::set_null_mask(reinterpret_cast<cudf::bitmask_type*>(null_mask.data()), 2, 3, false);

@@ -26,12 +26,12 @@ std::unique_ptr<column> group_argmax(column_view const& values,
                          ? dictionary_column_view(values).keys().type()
                          : values.type();
   auto indices       = type_dispatcher(dispatch_type,
-                                 group_reduction_dispatcher<aggregation::ARGMAX>{},
-                                 values,
-                                 num_groups,
-                                 group_labels,
-                                 stream,
-                                 mr);
+                                       group_reduction_dispatcher<aggregation::ARGMAX>{},
+                                       values,
+                                       num_groups,
+                                       group_labels,
+                                       stream,
+                                       mr);
 
   // The functor returns the indices of maximums based on the sorted keys.
   // We need the indices of maximums from the original unsorted keys

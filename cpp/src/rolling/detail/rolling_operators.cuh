@@ -65,9 +65,7 @@ struct DeviceRolling {
   template <typename T = InputType, aggregation::Kind O = op>
     requires(not is_supported<T, O>())
   explicit DeviceRolling(size_type min_periods) : min_periods(min_periods)
-  {
-    CUDF_FAIL("Invalid aggregation/type pair");
-  }
+  { CUDF_FAIL("Invalid aggregation/type pair"); }
 
   // perform the windowing operation
   template <typename OutputType>
@@ -266,9 +264,7 @@ struct DeviceRollingArgMinMaxDictionary : DeviceRollingArgMinMaxBase<cudf::dicti
       requires(not cudf::is_dictionary_key<T>())
     size_type __device__
     operator()(column_device_view const&, bool, size_type, size_type, size_type)
-    {
-      CUDF_UNREACHABLE("invalid dictionary key");
-    }
+    { CUDF_UNREACHABLE("invalid dictionary key"); }
 
     size_type min_periods;
   };
@@ -284,12 +280,12 @@ struct DeviceRollingArgMinMaxDictionary : DeviceRollingArgMinMaxBase<cudf::dicti
   {
     auto keys_type = input.child(cudf::dictionary_column_view::keys_column_index).type();
     auto index     = type_dispatcher<dispatch_storage_type>(keys_type,
-                                                        keys_dispatch_fn{min_periods},
-                                                        input,
-                                                        has_nulls,
-                                                        start_index,
-                                                        end_index,
-                                                        current_index);
+                                                            keys_dispatch_fn{min_periods},
+                                                            input,
+                                                            has_nulls,
+                                                            start_index,
+                                                            end_index,
+                                                            current_index);
 
     output.element<OutputType>(current_index) = index;
     // The gather mask shouldn't contain null values, so always return true.
@@ -307,9 +303,7 @@ struct DeviceRollingCountValid {
   // what operations do we support
   template <typename T = InputType, aggregation::Kind O = aggregation::COUNT_VALID>
   static constexpr bool is_supported()
-  {
-    return true;
-  }
+  { return true; }
 
   DeviceRollingCountValid(size_type _min_periods) : min_periods(_min_periods) {}
 
@@ -352,9 +346,7 @@ struct DeviceRollingCountAll {
   // what operations do we support
   template <typename T = InputType, aggregation::Kind O = aggregation::COUNT_ALL>
   static constexpr bool is_supported()
-  {
-    return true;
-  }
+  { return true; }
 
   DeviceRollingCountAll(size_type _min_periods) : min_periods(_min_periods) {}
 
@@ -387,9 +379,7 @@ struct DeviceRollingVariance {
   // what operations do we support
   template <typename T = InputType, aggregation::Kind O = aggregation::VARIANCE>
   static constexpr bool is_supported()
-  {
-    return is_fixed_width<InputType>() and not is_chrono<InputType>();
-  }
+  { return is_fixed_width<InputType>() and not is_chrono<InputType>(); }
 
   DeviceRollingVariance(size_type _min_periods, size_type _ddof)
     : min_periods(_min_periods), ddof{_ddof}
@@ -467,9 +457,7 @@ struct DeviceRollingRowNumber {
   // what operations do we support
   template <typename T = InputType, aggregation::Kind O = aggregation::ROW_NUMBER>
   static constexpr bool is_supported()
-  {
-    return true;
-  }
+  { return true; }
 
   DeviceRollingRowNumber(size_type _min_periods) : min_periods(_min_periods) {}
 
@@ -525,9 +513,7 @@ struct DeviceRollingLead {
   // what operations do we support
   template <typename T = InputType, aggregation::Kind O = aggregation::LEAD>
   static constexpr bool is_supported()
-  {
-    return cudf::is_fixed_width<T>() || cudf::is_dictionary<T>();
-  }
+  { return cudf::is_fixed_width<T>() || cudf::is_dictionary<T>(); }
 
   template <typename T = InputType>
   DeviceRollingLead(size_type _row_offset)
@@ -540,9 +526,7 @@ struct DeviceRollingLead {
   DeviceRollingLead(size_type _row_offset)
     requires(!is_supported<T>())
     : row_offset(_row_offset)
-  {
-    CUDF_FAIL("Invalid aggregation/type pair");
-  }
+  { CUDF_FAIL("Invalid aggregation/type pair"); }
 
   template <typename OutputType>
   bool __device__ operator()(column_device_view const& input,
@@ -590,9 +574,7 @@ struct DeviceRollingLag {
   // what operations do we support
   template <typename T = InputType, aggregation::Kind O = aggregation::LAG>
   static constexpr bool is_supported()
-  {
-    return cudf::is_fixed_width<T>() || cudf::is_dictionary<T>();
-  }
+  { return cudf::is_fixed_width<T>() || cudf::is_dictionary<T>(); }
 
   template <typename T = InputType>
   DeviceRollingLag(size_type _row_offset)
@@ -605,9 +587,7 @@ struct DeviceRollingLag {
   DeviceRollingLag(size_type _row_offset)
     requires(!is_supported<T>())
     : row_offset(_row_offset)
-  {
-    CUDF_FAIL("Invalid aggregation/type pair");
-  }
+  { CUDF_FAIL("Invalid aggregation/type pair"); }
 
   template <typename OutputType>
   bool __device__ operator()(column_device_view const& input,
@@ -708,9 +688,7 @@ struct corresponding_rolling_operator<InputType, aggregation::Kind::LAG> {
 template <typename InputType, aggregation::Kind k, typename = void>
 struct create_rolling_operator {
   auto operator()(size_type min_periods, rolling_aggregation const&)
-  {
-    return typename corresponding_rolling_operator<InputType, k>::type(min_periods);
-  }
+  { return typename corresponding_rolling_operator<InputType, k>::type(min_periods); }
 };
 
 template <typename InputType>
@@ -755,9 +733,7 @@ template <typename InputType, aggregation::Kind k>
            (k == aggregation::Kind::ARGMIN || k == aggregation::Kind::ARGMAX))
 struct create_rolling_operator<InputType, k> {
   auto operator()(size_type min_periods, rolling_aggregation const&)
-  {
-    return DeviceRollingArgMinMaxString<k>{min_periods};
-  }
+  { return DeviceRollingArgMinMaxString<k>{min_periods}; }
 };
 
 template <typename InputType, aggregation::Kind k>
@@ -765,9 +741,7 @@ template <typename InputType, aggregation::Kind k>
            (k == aggregation::Kind::ARGMIN || k == aggregation::Kind::ARGMAX))
 struct create_rolling_operator<InputType, k> {
   auto operator()(size_type min_periods, rolling_aggregation const&)
-  {
-    return DeviceRollingArgMinMaxDictionary<k>{min_periods};
-  }
+  { return DeviceRollingArgMinMaxDictionary<k>{min_periods}; }
 };
 
 template <typename InputType, aggregation::Kind k>
@@ -776,9 +750,7 @@ template <typename InputType, aggregation::Kind k>
 struct create_rolling_operator<InputType, k> {
   template <typename Comparator>
   auto operator()(size_type min_periods, Comparator const& comp)
-  {
-    return DeviceRollingArgMinMaxStruct<k, Comparator>{min_periods, comp};
-  }
+  { return DeviceRollingArgMinMaxStruct<k, Comparator>{min_periods, comp}; }
 };
 
 }  // namespace detail

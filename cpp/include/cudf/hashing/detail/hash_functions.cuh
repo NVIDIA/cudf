@@ -43,9 +43,7 @@ __device__ inline uint32_t rotate_bits_left(uint32_t x, uint32_t r)
 }
 
 __device__ inline uint64_t rotate_bits_left(uint64_t x, uint32_t r)
-{
-  return (x << r) | (x >> (64 - r));
-}
+{ return (x << r) | (x >> (64 - r)); }
 
 __device__ inline uint32_t rotate_bits_right(uint32_t x, uint32_t r)
 {
@@ -54,9 +52,7 @@ __device__ inline uint32_t rotate_bits_right(uint32_t x, uint32_t r)
 }
 
 __device__ inline uint64_t rotate_bits_right(uint64_t x, uint32_t r)
-{
-  return (x >> r) | (x << (64 - r));
-}
+{ return (x >> r) | (x << (64 - r)); }
 
 // Swap the endianness of a 32 bit value
 __device__ inline uint32_t swap_endian(uint32_t x)
@@ -93,7 +89,7 @@ __device__ inline void uint32ToLowercaseHexString(uint32_t num, char* destinatio
   uint64_t x = num;
   x          = ((x & 0xFFFF'0000u) << 16) | ((x & 0xFFFF));
   x          = ((x & 0x000F'0000'000Fu) << 8) | ((x & 0x00F0'0000'00F0u) >> 4) |
-      ((x & 0x0F00'0000'0F00u) << 16) | ((x & 0xF000'0000'F000) << 4);
+               ((x & 0x0F00'0000'0F00u) << 16) | ((x & 0xF000'0000'F000) << 4);
 
   // Calculate a mask of ascii value offsets for bytes that contain alphabetical hex digits
   uint64_t offsets = (((x + 0x0606'0606'0606'0606) >> 4) & 0x0101'0101'0101'0101) * 0x27;

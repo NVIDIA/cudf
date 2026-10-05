@@ -137,10 +137,10 @@ std::pair<size_t, size_t> max_chunk_and_total_input_size(device_span<size_t cons
 {
   auto const temp_mr = mr.get_temporary_mr();
   auto const max     = thrust::reduce(rmm::exec_policy_nosync(stream, temp_mr),
-                                  input_sizes.begin(),
-                                  input_sizes.end(),
-                                  0ul,
-                                  cuda::maximum<size_t>());
+                                      input_sizes.begin(),
+                                      input_sizes.end(),
+                                      0ul,
+                                      cuda::maximum<size_t>());
   auto const sum     = thrust::reduce(
     rmm::exec_policy_nosync(stream, temp_mr), input_sizes.begin(), input_sizes.end());
   return {max, sum};

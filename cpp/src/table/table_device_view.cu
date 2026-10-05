@@ -22,9 +22,7 @@ namespace cudf {
 namespace detail {
 template <typename ColumnDeviceView, typename HostTableView>
 void table_device_view_base<ColumnDeviceView, HostTableView>::destroy()
-{
-  delete this;
-}
+{ delete this; }
 
 template <typename ColumnDeviceView, typename HostTableView>
 table_device_view_base<ColumnDeviceView, HostTableView>::table_device_view_base(

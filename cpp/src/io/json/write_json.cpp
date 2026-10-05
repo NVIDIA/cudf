@@ -213,9 +213,7 @@ struct column_to_strings_fn {
   std::unique_ptr<column> operator()(column_view const&, host_span<column_name_info const>) const
     requires(!std::is_same_v<column_type, cudf::list_view> &&
              !std::is_same_v<column_type, cudf::struct_view>)
-  {
-    CUDF_FAIL("Only nested columns should use this overload.");
-  }
+  { CUDF_FAIL("Only nested columns should use this overload."); }
 
   template <typename column_type>
   std::unique_ptr<column> operator()(column_view const& column,

@@ -144,11 +144,11 @@ std::unique_ptr<column> segmented_top_k(column_view const& col,
   if (lv.is_empty()) { return cudf::make_empty_lists_column(col.type()); }
 
   auto result         = cudf::detail::gather(cudf::table_view({col}),
-                                     lv.child(),
-                                     out_of_bounds_policy::DONT_CHECK,
-                                     negative_index_policy::NOT_ALLOWED,
-                                     stream,
-                                     mr);
+                                             lv.child(),
+                                             out_of_bounds_policy::DONT_CHECK,
+                                             negative_index_policy::NOT_ALLOWED,
+                                             stream,
+                                             mr);
   auto offsets        = std::move(ordered->release().children.front());
   auto const num_rows = static_cast<size_type>(offsets->size() - 1);
   return make_lists_column(num_rows,

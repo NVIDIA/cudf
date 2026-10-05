@@ -131,7 +131,7 @@ TYPED_TEST(TypedTableViewTest, TestLexicographicalComparatorSameTable)
   auto const input_table  = cudf::table_view{{col1}};
 
   auto const expected = cudf::test::fixed_width_column_wrapper<bool>{{0, 0, 0, 0}, stream, mr};
-  auto const got      = self_comparison(input_table,
+  auto const got = self_comparison(input_table,
                                    column_order,
                                    cudf::detail::row::lexicographic::physical_element_comparator{},
                                    stream,
@@ -370,7 +370,7 @@ TYPED_TEST(NaNTableViewTest, TestEqualityComparatorTwoTableNaNCase)
   auto const rhs = cudf::table_view{{col2}};
 
   auto const expected = cudf::test::fixed_width_column_wrapper<bool>{{0, 0, 0, 1}, stream, mr};
-  auto const got      = two_table_equality(lhs,
+  auto const got = two_table_equality(lhs,
                                       rhs,
                                       column_order,
                                       cudf::detail::row::equality::physical_equality_comparator{},
@@ -509,8 +509,8 @@ TEST_F(RowOperatorTest, TestSparkMurmurRowHasher)
   auto const input  = cudf::table_view{{first, second}};
 
   auto const row_hasher = cudf::detail::row::hash::row_hasher{input, stream, mr.get_temporary_mr()};
-  auto const hasher     = row_hasher.device_hasher<cudf::hashing::detail::Spark_MurmurHash3_x86_32,
-                                                   cudf::detail::row::hash::spark_device_row_hasher>(
+  auto const hasher = row_hasher.device_hasher<cudf::hashing::detail::Spark_MurmurHash3_x86_32,
+                                               cudf::detail::row::hash::spark_device_row_hasher>(
     cudf::nullate::DYNAMIC{false}, 42);
 
   auto results =

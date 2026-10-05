@@ -49,12 +49,7 @@ with RayEngine() as engine:
     )
 
     # Run more work on the GPU using the persisted result as input.
-    df = (
-        result.lazy()
-        .sort("amount")
-        .head(10)
-        .collect(engine=engine)
-    )
+    df = result.lazy().sort("amount").head(10).collect(engine=engine)
 ```
 
 The `LazyFrame` returned by `result.lazy()` can be collected **only** with the
@@ -100,11 +95,15 @@ with RayEngine() as engine:
     result = engine.execute(pl.scan_parquet("/data/*.parquet"))
     lazy = result.lazy()
 
-    df = lazy.collect(engine=engine)        # OK: consumes the partitions.
-    df = lazy.collect(engine=engine)        # RuntimeError: already consumed.
+    df = lazy.collect(engine=engine)  # OK: consumes the partitions.
+    df = lazy.collect(engine=engine)  # RuntimeError: already consumed.
 
     # Need it again? Re-run the query for a fresh result.
-    df = engine.execute(pl.scan_parquet("/data/*.parquet")).lazy().collect(engine=engine)
+    df = (
+        engine.execute(pl.scan_parquet("/data/*.parquet"))
+        .lazy()
+        .collect(engine=engine)
+    )
 ```
 
 ## Releasing partitions

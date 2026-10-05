@@ -74,9 +74,7 @@ class filtered_join {
     template <typename T>
     __device__ constexpr hash_value_type operator()(
       cuco::pair<hash_value_type, T> const& key) const noexcept
-    {
-      return key.first;
-    }
+    { return key.first; }
   };
 
   /**
@@ -90,9 +88,7 @@ class filtered_join {
     CUDF_HOST_DEVICE constexpr key_pair_fn(Hasher const& hasher) : _hasher{hasher} {}
 
     __device__ __forceinline__ cuco::pair<hash_value_type, T> operator()(size_type i) const noexcept
-    {
-      return cuco::pair{_hasher(i), T{i}};
-    }
+    { return cuco::pair{_hasher(i), T{i}}; }
 
    private:
     Hasher _hasher;

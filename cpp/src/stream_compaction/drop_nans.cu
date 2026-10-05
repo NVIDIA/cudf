@@ -24,16 +24,12 @@ struct dispatch_is_not_nan {
   template <typename T>
   bool __device__ operator()(cudf::column_device_view col_device_view, cudf::size_type i)
     requires(std::is_floating_point_v<T>)
-  {
-    return col_device_view.is_valid(i) ? not std::isnan(col_device_view.element<T>(i)) : true;
-  }
+  { return col_device_view.is_valid(i) ? not std::isnan(col_device_view.element<T>(i)) : true; }
 
   template <typename T>
   bool __device__ operator()(cudf::column_device_view, cudf::size_type)
     requires(not std::is_floating_point_v<T>)
-  {
-    return true;
-  }
+  { return true; }
 };
 
 // Returns true if the mask is true and it is not NaN for index i in at least keep_threshold

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -46,23 +46,17 @@ struct TypeParam_to_host_type<numeric::decimal128> {
 template <typename TypeParam, typename T>
 thrust::host_vector<std::string> make_vector(std::initializer_list<T> const& init)
   requires(std::is_same_v<TypeParam, cudf::string_view>)
-{
-  return cudf::test::make_type_param_vector<std::string, T>(init);
-}
+{ return cudf::test::make_type_param_vector<std::string, T>(init); }
 
 template <typename TypeParam, typename T>
 thrust::host_vector<typename TypeParam::rep> make_vector(std::initializer_list<T> const& init)
   requires(cudf::is_fixed_point<TypeParam>())
-{
-  return cudf::test::make_type_param_vector<typename TypeParam::rep, T>(init);
-}
+{ return cudf::test::make_type_param_vector<typename TypeParam::rep, T>(init); }
 
 template <typename TypeParam, typename T>
 thrust::host_vector<TypeParam> make_vector(std::initializer_list<T> const& init)
   requires(not(std::is_same_v<TypeParam, cudf::string_view> || cudf::is_fixed_point<TypeParam>()))
-{
-  return cudf::test::make_type_param_vector<TypeParam, T>(init);
-}
+{ return cudf::test::make_type_param_vector<TypeParam, T>(init); }
 
 // This is the base test feature
 template <typename T>

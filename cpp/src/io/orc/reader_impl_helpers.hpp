@@ -109,9 +109,7 @@ inline type_id to_cudf_decimal_type(host_span<std::string const> decimal128_colu
 }
 
 inline std::string get_map_child_col_name(std::size_t const idx)
-{
-  return (idx == 0) ? "key" : "value";
-}
+{ return (idx == 0) ? "key" : "value"; }
 
 /**
  * @brief Create empty columns and respective schema information from the buffer.

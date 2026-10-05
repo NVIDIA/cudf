@@ -247,8 +247,8 @@ inline void throw_cuda_error(cudaError_t error, char const* file, unsigned int l
   cudaGetLastError();
   auto const last = cudaFree(nullptr);
   auto const msg  = std::string{"CUDA error encountered at: " + std::string{file} + ":" +
-                               std::to_string(line) + ": " + std::to_string(error) + " " +
-                               cudaGetErrorName(error) + " " + cudaGetErrorString(error)};
+                                std::to_string(line) + ": " + std::to_string(error) + " " +
+                                cudaGetErrorName(error) + " " + cudaGetErrorString(error)};
   // Call cudaDeviceSynchronize to ensure `last` did not result from an asynchronous error.
   // between two calls.
   if (error == last && last == cudaDeviceSynchronize()) {

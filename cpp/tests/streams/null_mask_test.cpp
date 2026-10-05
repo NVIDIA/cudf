@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -14,9 +14,7 @@
 class NullMaskTest : public cudf::test::BaseFixture {};
 
 TEST_F(NullMaskTest, CreateNullMask)
-{
-  cudf::create_null_mask(10, cudf::mask_state::ALL_VALID, cudf::test::get_default_stream());
-}
+{ cudf::create_null_mask(10, cudf::mask_state::ALL_VALID, cudf::test::get_default_stream()); }
 
 TEST_F(NullMaskTest, SetNullMask)
 {

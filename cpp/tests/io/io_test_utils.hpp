@@ -95,9 +95,7 @@ class ThrowingDeviceWriteDataSink : public cudf::io::data_sink {
   [[nodiscard]] bool supports_device_write() const override { return true; }
 
   void device_write(void const* gpu_data, size_t size, cuda::stream_ref stream) override
-  {
-    buffer_size_ += size;
-  }
+  { buffer_size_ += size; }
 
   std::future<void> device_write_async(void const* gpu_data,
                                        size_t size,

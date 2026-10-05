@@ -192,18 +192,14 @@ std::unique_ptr<column> split_record(strings_column_view const& input,
                                      size_type maxsplit,
                                      cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr)
-{
-  return split_record_impl<true>(input, delimiter, maxsplit, stream, mr);
-}
+{ return split_record_impl<true>(input, delimiter, maxsplit, stream, mr); }
 
 std::unique_ptr<column> rsplit_record(strings_column_view const& input,
                                       string_scalar const& delimiter,
                                       size_type maxsplit,
                                       cuda::stream_ref stream,
                                       rmm::device_async_resource_ref mr)
-{
-  return split_record_impl<false>(input, delimiter, maxsplit, stream, mr);
-}
+{ return split_record_impl<false>(input, delimiter, maxsplit, stream, mr); }
 
 }  // namespace detail
 

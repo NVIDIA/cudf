@@ -20,9 +20,7 @@ using namespace cudf::jni::hybrid_scan;
 namespace {
 
 inline exp_pq::use_data_page_mask to_data_page_mask(bool use_data_page_mask)
-{
-  return use_data_page_mask ? exp_pq::use_data_page_mask::YES : exp_pq::use_data_page_mask::NO;
-}
+{ return use_data_page_mask ? exp_pq::use_data_page_mask::YES : exp_pq::use_data_page_mask::NO; }
 
 }  // namespace
 
@@ -129,7 +127,7 @@ JNIEXPORT jlongArray JNICALL Java_ai_rapids_cudf_HybridScanReader_materializeAll
     auto* wrapper = reinterpret_cast<hybrid_scan_reader_wrapper*>(handle);
     auto holder   = make_row_group_span(env, j_row_groups);
     auto spans    = make_device_spans(env, j_addrs, j_lens);
-    auto result   = wrapper->reader->materialize_all_columns(holder.span(),
+    auto result = wrapper->reader->materialize_all_columns(holder.span(),
                                                            spans,
                                                            wrapper->options,
                                                            cudf::get_default_stream(),
@@ -402,8 +400,6 @@ Java_ai_rapids_cudf_HybridScanReader_constructRowGroupPasses(JNIEnv* env,
                                                              jint columns_mode,
                                                              jintArray j_row_groups,
                                                              jlong pass_read_limit)
-{
-  return construct_row_group_passes(env, handle, columns_mode, j_row_groups, pass_read_limit);
-}
+{ return construct_row_group_passes(env, handle, columns_mode, j_row_groups, pass_read_limit); }
 
 }  // extern "C"

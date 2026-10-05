@@ -61,9 +61,7 @@ class lifetime_test_scalar : public cudf::numeric_scalar<int32_t> {
   using numeric_scalar::numeric_scalar;
 
   void set_data_async(int32_t const& value, cuda::stream_ref stream)
-  {
-    this->_data.set_value_async(value, stream);
-  }
+  { this->_data.set_value_async(value, stream); }
 };
 
 cuda::stream make_stream()

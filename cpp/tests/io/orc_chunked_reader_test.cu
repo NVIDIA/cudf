@@ -148,9 +148,7 @@ auto chunked_read(std::string const& filepath,
 auto chunked_read(std::string const& filepath,
                   output_limit output_limit_bytes,
                   output_row_granularity output_granularity)
-{
-  return chunked_read(filepath, output_limit_bytes, input_limit{0UL}, output_granularity);
-}
+{ return chunked_read(filepath, output_limit_bytes, input_limit{0UL}, output_granularity); }
 
 void expect_selected_nested_empty_struct_table(cudf::table_view expected, cudf::table_view actual)
 {
@@ -640,8 +638,8 @@ TEST_F(OrcChunkedReaderTest, TestChunkedReadWithListsNoNulls)
 
     auto const gather_values = std::views::iota(int32_t{0}) |
                                std::views::transform([&](int32_t i) -> int32_t { return i % 4; });
-    auto const gather_iter = gather_values.begin();
-    auto const gather_map  = int32s_col(gather_iter, gather_iter + num_rows);
+    auto const gather_iter   = gather_values.begin();
+    auto const gather_map    = int32s_col(gather_iter, gather_iter + num_rows);
     input_columns.emplace_back(
       std::move(cudf::gather(cudf::table_view{{template_lists}}, gather_map)->release().front()));
 
@@ -727,8 +725,8 @@ TEST_F(OrcChunkedReaderTest, TestChunkedReadWithListsHavingNulls)
                        int32s_lists_col{3, 4, 5, 6, 7, 8, 9} /* this list will be nullified out */};
     auto const gather_values = std::views::iota(int32_t{0}) |
                                std::views::transform([&](int32_t i) -> int32_t { return i % 4; });
-    auto const gather_iter = gather_values.begin();
-    auto const gather_map  = int32s_col(gather_iter, gather_iter + num_rows);
+    auto const gather_iter   = gather_values.begin();
+    auto const gather_map    = int32s_col(gather_iter, gather_iter + num_rows);
     input_columns.emplace_back(
       std::move(cudf::gather(cudf::table_view{{template_lists}}, gather_map)->release().front()));
 
@@ -817,8 +815,8 @@ TEST_F(OrcChunkedReaderTest, TestChunkedReadWithStructsOfLists)
         int32s_lists_col{}, int32s_lists_col{0}, int32s_lists_col{0, 1}, int32s_lists_col{0, 1, 2}};
       auto const gather_values = std::views::iota(int32_t{0}) |
                                  std::views::transform([&](int32_t i) -> int32_t { return i % 4; });
-      auto const gather_iter = gather_values.begin();
-      auto const gather_map  = int32s_col(gather_iter, gather_iter + num_rows);
+      auto const gather_iter   = gather_values.begin();
+      auto const gather_map    = int32s_col(gather_iter, gather_iter + num_rows);
       child_columns.emplace_back(
         std::move(cudf::gather(cudf::table_view{{template_lists}}, gather_map)->release().front()));
 
@@ -1060,7 +1058,7 @@ TEST_F(OrcChunkedReaderTest, TestChunkedReadNullCount)
   auto const sequence        = cuda::constant_iterator(1);
   auto const validity_values = std::views::iota(cudf::size_type{0}) |
                                std::views::transform([](auto i) -> bool { return i % 4 != 3; });
-  auto const validity = validity_values.begin();
+  auto const validity        = validity_values.begin();
   std::vector<std::unique_ptr<cudf::column>> cols;
   cols.push_back(int32s_col{sequence, sequence + num_rows, validity}.release());
   auto const expected = std::make_unique<cudf::table>(std::move(cols));
@@ -1090,9 +1088,7 @@ namespace {
 std::size_t constexpr input_limit_expected_file_count = 3;
 
 std::vector<std::string> input_limit_get_test_names(std::string const& base_filename)
-{
-  return {base_filename + "_a.orc", base_filename + "_b.orc", base_filename + "_c.orc"};
-}
+{ return {base_filename + "_a.orc", base_filename + "_b.orc", base_filename + "_c.orc"}; }
 
 void input_limit_test_write_one(std::string const& filepath,
                                 cudf::table_view const& input,

@@ -311,9 +311,7 @@ struct BitwiseOr {
   /// Binary OR operator, returns <tt>a | b</tt>
   template <typename T>
   __host__ __device__ __forceinline__ T operator()(T const& a, T const& b) const
-  {
-    return a | b;
-  }
+  { return a | b; }
 };
 
 // PT is the parquet physical type (INT32 or INT64).
@@ -598,8 +596,8 @@ CUDF_KERNEL void __launch_bounds__(128)
   // figure out kernel encoding to use for data pages
   auto const column_data_encoding = data_encoding_for_col(&ck_g, &col_g, write_v2_headers);
   auto const is_use_delta         = column_data_encoding == encode_kernel_mask::DELTA_BINARY or
-                            column_data_encoding == encode_kernel_mask::DELTA_LENGTH_BA or
-                            column_data_encoding == encode_kernel_mask::DELTA_BYTE_ARRAY;
+                                    column_data_encoding == encode_kernel_mask::DELTA_LENGTH_BA or
+                                    column_data_encoding == encode_kernel_mask::DELTA_BYTE_ARRAY;
 
   if (t < 32) {
     uint32_t fragments_in_chunk  = 0;
@@ -1549,7 +1547,7 @@ __device__ void finish_page_encode(state_buf* s,
     if (t == 0) {
       // `hist[max_def_level] = num_valid`, and the values for hist[1..max_def_level) are known
       s->page.def_histogram[s->col.max_def_level] = s->page.num_valid;
-      s->page.def_histogram[0]                    = s->page.num_values - s->page.num_valid -
+      s->page.def_histogram[0] = s->page.num_values - s->page.num_valid -
                                  histogram_sum(s->page.def_histogram, s->col.max_def_level);
     }
   }
@@ -2701,16 +2699,14 @@ class header_encoder {
 
   template <typename T>
   inline __device__ void put_int64(T value)
-  {
-    current_header_ptr = cpw_put_int64(current_header_ptr, static_cast<int64_t>(value));
-  }
+  { current_header_ptr = cpw_put_int64(current_header_ptr, static_cast<int64_t>(value)); }
 
   inline __device__ void field_bool(int field, bool value)
   {
     current_header_ptr  = cpw_put_fldh(current_header_ptr,
-                                      field,
-                                      current_field_index,
-                                      value ? FieldType::BOOLEAN_TRUE : FieldType::BOOLEAN_FALSE);
+                                       field,
+                                       current_field_index,
+                                       value ? FieldType::BOOLEAN_TRUE : FieldType::BOOLEAN_FALSE);
     current_field_index = field;
   }
 
@@ -3184,9 +3180,7 @@ __device__ bool is_comparable(Type ptype, ConvertedType ctype)
  */
 template <typename T>
 constexpr __device__ int32_t compare(T& v1, T& v2)
-{
-  return (v1 > v2) - (v1 < v2);
-}
+{ return (v1 > v2) - (v1 < v2); }
 
 /**
  * @brief Compares two statistics_val structs.

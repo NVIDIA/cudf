@@ -2153,7 +2153,7 @@ JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_ColumnView_extractAllRecord(JNIEnv* 
       pattern,
       flags,
       idx == 0 ? cudf::strings::capture_groups::NON_CAPTURE
-                   : static_cast<cudf::strings::capture_groups>(capture_groups));
+               : static_cast<cudf::strings::capture_groups>(capture_groups));
     auto result = (idx == 0) ? cudf::strings::findall(strings_column, *regex_prog)
                              : cudf::strings::extract_all_record(strings_column, *regex_prog);
     return release_as_jlong(result);
@@ -2625,9 +2625,7 @@ JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_ColumnView_getDeviceMemorySize(JNIEn
 }
 
 JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_ColumnView_hostPaddingSizeInBytes(JNIEnv* env, jclass)
-{
-  return sizeof(std::max_align_t);
-}
+{ return sizeof(std::max_align_t); }
 
 JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_ColumnView_clamper(JNIEnv* env,
                                                                jobject j_object,

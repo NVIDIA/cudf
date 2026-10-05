@@ -235,7 +235,7 @@ struct saturating {
     U uy     = static_cast<U>(y);
     U result = Op{}(ux, uy);
     ux       = (ux >> cuda::std::numeric_limits<T>::digits) +
-         static_cast<U>(cuda::std::numeric_limits<T>::max());
+               static_cast<U>(cuda::std::numeric_limits<T>::max());
     // Note: the casts here are implementation defined (until C++20) but all
     // the platforms we care about do the twos-complement thing.
     if constexpr (cuda::std::is_same_v<Op, cuda::std::plus<>>) {
@@ -473,10 +473,10 @@ struct bounded_distance_functor {
     OrderbyT const offset_value = cuda::std::get<0>(offset_value_did_overflow);
     bool const did_overflow     = cuda::std::get<1>(offset_value_did_overflow);
     auto const distance         = [preceding    = direction == direction::PRECEDING,
-                           current      = begin + i,
-                           start        = begin + row_info.non_null_start(),
-                           end          = begin + row_info.non_null_end(),
-                           offset_value = offset_value](auto&& cmp) {
+                                   current      = begin + i,
+                                   start        = begin + row_info.non_null_start(),
+                                   end          = begin + row_info.non_null_end(),
+                                   offset_value = offset_value](auto&& cmp) {
       if (preceding) {
         // Search for first slot we can place the offset value
         return 1 + cuda::std::distance(
@@ -575,9 +575,7 @@ void materialize_range_window_bounds(size_type size,
  * @return Pointer to the delta column, or `nullptr` if `delta` does not hold a column.
  */
 [[nodiscard]] inline column_view const* as_column_delta(range_window_delta const& delta)
-{
-  return std::get_if<column_view>(&delta);
-}
+{ return std::get_if<column_view>(&delta); }
 
 /**
  * @brief Functor to dispatch computation of clamped range-based rolling window bounds.
@@ -685,7 +683,7 @@ struct range_window_clamper {
         // bounds for every other orderby type before dispatching, so no runtime guard is needed.
         static_assert(cudf::is_numeric_not_bool<OrderbyT>() || cudf::is_timestamp<OrderbyT>(),
                       "Column-valued RANGE bounds support only numeric and timestamp orderby "
-                         "columns.");
+                      "columns.");
         // A column-valued window normalizes to a `column_view` delta, so extract it directly:
         // `std::get` makes that invariant explicit and throws if normalization and dispatch ever
         // disagree, rather than silently dereferencing a null accessor result.
@@ -902,9 +900,7 @@ struct range_window_clamper {
                                      range_window_delta const&,
                                      cuda::stream_ref,
                                      rmm::device_async_resource_ref) const
-  {
-    CUDF_FAIL("Unsupported rolling window type.", cudf::data_type_error);
-  }
+  { CUDF_FAIL("Unsupported rolling window type.", cudf::data_type_error); }
 };
 }  // namespace rolling
 }  // namespace detail

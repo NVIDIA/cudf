@@ -33,9 +33,7 @@ struct snap_state_s {
  * @brief 12-bit hash from four consecutive bytes
  */
 static inline __device__ uint32_t snap_hash(uint32_t v)
-{
-  return (v * ((1 << 20) + (0x2a00) + (0x6a) + 1)) >> (32 - hash_bits);
-}
+{ return (v * ((1 << 20) + (0x2a00) + (0x6a) + 1)) >> (32 - hash_bits); }
 
 /**
  * @brief Outputs a snappy literal symbol
@@ -129,9 +127,7 @@ static __device__ uint8_t* StoreCopy(uint8_t* dst,
  * equal to that of the calling thread
  */
 static inline __device__ uint32_t HashMatchAny(uint32_t v, uint32_t t)
-{
-  return __match_any_sync(~0, v);
-}
+{ return __match_any_sync(~0, v); }
 
 /**
  * @brief Finds the first occurrence of a consecutive 4-byte match in the input sequence,

@@ -359,10 +359,10 @@ TEST_F(TableTest, TablesEqualStructColumnsDeepLeafMismatch)
 TEST_F(TableTest, TablesEqualThrowsForNonEqualityComparableTypes)
 {
   auto left  = column{cudf::data_type{cudf::type_id::EMPTY},
-                     3,
-                     rmm::device_buffer{},
-                     cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
-                     0};
+                      3,
+                      rmm::device_buffer{},
+                      cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
+                      0};
   auto right = column{cudf::data_type{cudf::type_id::EMPTY},
                       3,
                       rmm::device_buffer{},

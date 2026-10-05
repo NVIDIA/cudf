@@ -65,16 +65,12 @@ constexpr int block_size                           = 256;
 
 template <typename T0, typename T1>
 inline __device__ uint16_t huffcode(T0 len, T1 sym)
-{
-  return (uint16_t)(((sym) << 4) + (len));
-}
+{ return (uint16_t)(((sym) << 4) + (len)); }
 
 inline __device__ uint32_t brotli_distance_alphabet_size(uint8_t npostfix,
                                                          uint32_t ndirect,
                                                          uint32_t maxnbits)
-{
-  return brotli_num_distance_short_codes + ndirect + (maxnbits << (npostfix + 1));
-}
+{ return brotli_num_distance_short_codes + ndirect + (maxnbits << (npostfix + 1)); }
 
 inline __device__ uint32_t brev8(uint32_t x)
 {
@@ -90,22 +86,16 @@ __inline__ __device__ int brotli_context_lut(int mode) { return (mode << 9); }
 inline __device__ uint8_t brotli_transform_type(int idx) { return kTransformsData[(idx * 3) + 1]; }
 
 inline __device__ uint8_t const* brotli_transform_prefix(int idx)
-{
-  return &kPrefixSuffix[kPrefixSuffixMap[kTransformsData[(idx * 3)]]];
-}
+{ return &kPrefixSuffix[kPrefixSuffixMap[kTransformsData[(idx * 3)]]]; }
 
 inline __device__ uint8_t const* brotli_transform_suffix(int idx)
-{
-  return &kPrefixSuffix[kPrefixSuffixMap[kTransformsData[(idx * 3) + 2]]];
-}
+{ return &kPrefixSuffix[kPrefixSuffixMap[kTransformsData[(idx * 3) + 2]]]; }
 
 /* typeof(LUT) == const uint8_t* */
 __inline__ __device__ int brotli_need_context_lut(int mode) { return (mode < (4 << 9)); }
 
 __inline__ __device__ int brotli_context(int p1, int p2, int lut)
-{
-  return kContextLookup[lut + p1] | kContextLookup[lut + p2 + 256];
-}
+{ return kContextLookup[lut + p1] | kContextLookup[lut + p2 + 256]; }
 
 /**
  * @brief Various local scratch arrays
@@ -218,9 +208,7 @@ __device__ void initbits(debrotli_state_s* s, uint8_t const* base, size_t len, s
 
 // return next 32 bits
 inline __device__ uint32_t next32bits(debrotli_state_s const* s)
-{
-  return __funnelshift_rc(s->bitbuf.x, s->bitbuf.y, s->bitpos);
-}
+{ return __funnelshift_rc(s->bitbuf.x, s->bitbuf.y, s->bitpos); }
 
 /// return next n bits
 inline __device__ uint32_t showbits(debrotli_state_s const* s, uint32_t n)

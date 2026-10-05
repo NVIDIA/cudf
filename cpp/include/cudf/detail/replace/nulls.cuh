@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -23,9 +23,7 @@ using idx_valid_pair_t = cuda::std::tuple<cudf::size_type, bool>;
  */
 struct replace_policy_functor {
   __device__ idx_valid_pair_t operator()(idx_valid_pair_t const& lhs, idx_valid_pair_t const& rhs)
-  {
-    return cuda::std::get<1>(rhs) ? rhs : lhs;
-  }
+  { return cuda::std::get<1>(rhs) ? rhs : lhs; }
 };
 
 }  // namespace detail

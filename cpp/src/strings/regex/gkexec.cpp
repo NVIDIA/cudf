@@ -130,8 +130,8 @@ std::unique_ptr<gkprog_device, std::function<void(gkprog_device*)>> gkprog_devic
   for (int32_t ci = 0; ci < classes_cnt; ++ci) {
     auto const& src      = h_gp.classes[ci];
     *classes++           = reclass_device{src.builtins,
-                                static_cast<int32_t>(src.literals.size()),
-                                reinterpret_cast<reclass_range const*>(d_end)};
+                                          static_cast<int32_t>(src.literals.size()),
+                                          reinterpret_cast<reclass_range const*>(d_end)};
     auto const lit_bytes = src.literals.size() * sizeof(reclass_range);
     std::memcpy(h_end, src.literals.data(), lit_bytes);
     h_end += lit_bytes;
@@ -160,21 +160,15 @@ std::unique_ptr<gkprog_device, std::function<void(gkprog_device*)>> gkprog_devic
 void gkprog_device::destroy() { delete this; }
 
 int32_t gkprog_device::compute_shared_memory_size() const
-{
-  return static_cast<int32_t>(sizeof(glushkov_shmem_cache));
-}
+{ return static_cast<int32_t>(sizeof(glushkov_shmem_cache)); }
 
 std::pair<std::size_t, int32_t> gkprog_device::compute_strided_working_memory(int32_t rows,
                                                                               int32_t,
                                                                               std::size_t) const
-{
-  return std::make_pair(0, rows);
-}
+{ return std::make_pair(0, rows); }
 
 void gkprog_device::set_working_memory(void*, int32_t thread_count, int32_t)
-{
-  _thread_count = thread_count;
-}
+{ _thread_count = thread_count; }
 
 }  // namespace detail
 }  // namespace strings

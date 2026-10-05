@@ -394,9 +394,7 @@ struct make_literal {
                                        bool is_valid,
                                        cudf::jni::ast::compiled_expr& compiled_expr,
                                        jni_serialized_ast& jni_ast) const
-  {
-    throw std::logic_error("Unsupported AST literal type");
-  }
+  { throw std::logic_error("Unsupported AST literal type"); }
 };
 
 /** Decode a serialized AST literal */
@@ -587,16 +585,12 @@ extern "C" {
 JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_ast_CompiledExpression_compile(JNIEnv* env,
                                                                            jclass,
                                                                            jbyteArray jni_data)
-{
-  return compile_serialized_expression(env, jni_data, cudf::jni::ast::compilation_mode::DEFAULT);
-}
+{ return compile_serialized_expression(env, jni_data, cudf::jni::ast::compilation_mode::DEFAULT); }
 
 JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_ast_CompiledExpression_compileJit(JNIEnv* env,
                                                                               jclass,
                                                                               jbyteArray jni_data)
-{
-  return compile_serialized_expression(env, jni_data, cudf::jni::ast::compilation_mode::JIT);
-}
+{ return compile_serialized_expression(env, jni_data, cudf::jni::ast::compilation_mode::JIT); }
 
 JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_ast_CompiledExpression_computeColumn(JNIEnv* env,
                                                                                  jclass,

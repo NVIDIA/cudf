@@ -31,9 +31,7 @@ struct IdentityOp {
   template <typename LookUpTableT, typename... Args>
   __host__ __device__ __forceinline__ auto operator()(LookUpTableT const& lookup_table,
                                                       Args&&... args) const
-  {
-    return lookup_table.lookup(std::forward<Args>(args)...);
-  }
+  { return lookup_table.lookup(std::forward<Args>(args)...); }
 };
 
 /**
@@ -195,9 +193,7 @@ class SymbolGroupLookupOp {
   };
 
   static KernelParameter InitDeviceSymbolGroupIdLut(SymbolGroupLookupOpT sgid_lookup_op)
-  {
-    return KernelParameter{sgid_lookup_op};
-  }
+  { return KernelParameter{sgid_lookup_op}; }
 
  private:
   _TempStorage& temp_storage;
@@ -237,9 +233,7 @@ class SymbolGroupLookupOp {
  */
 template <typename FunctorT>
 auto make_symbol_group_lookup_op(FunctorT sgid_lookup_op)
-{
-  return SymbolGroupLookupOp<FunctorT>::InitDeviceSymbolGroupIdLut(sgid_lookup_op);
-}
+{ return SymbolGroupLookupOp<FunctorT>::InitDeviceSymbolGroupIdLut(sgid_lookup_op); }
 
 /**
  * @brief Creates a symbol group lookup table of type `SingleSymbolSmemLUT` that uses a two-staged
@@ -308,9 +302,7 @@ auto make_symbol_group_lut(std::array<std::string, NUM_SYMBOL_GROUPS> const& sym
 template <typename symbol_t, std::size_t NUM_SYMBOL_GROUPS>
 auto make_symbol_group_lut(
   std::array<std::vector<symbol_t>, NUM_SYMBOL_GROUPS> const& symbol_strings)
-{
-  return make_symbol_group_lut(symbol_strings, IdentityOp{});
-}
+{ return make_symbol_group_lut(symbol_strings, IdentityOp{}); }
 
 /**
  * @brief Creates a symbol group lookup table that maps a symbol to a symbol group id, requiring the
@@ -326,9 +318,7 @@ auto make_symbol_group_lut(
  */
 template <std::size_t NUM_SYMBOL_GROUPS>
 auto make_symbol_group_lut(std::array<std::string, NUM_SYMBOL_GROUPS> const& symbol_strings)
-{
-  return make_symbol_group_lut(symbol_strings, IdentityOp{});
-}
+{ return make_symbol_group_lut(symbol_strings, IdentityOp{}); }
 
 /**
  * @brief Lookup table mapping (old_state, symbol_group_id) transitions to a new target state. The
@@ -403,9 +393,7 @@ class TransitionTable {
   template <typename StateIndexT, typename SymbolIndexT>
   constexpr CUDF_HOST_DEVICE int32_t operator()(StateIndexT const state_id,
                                                 SymbolIndexT const match_id) const
-  {
-    return temp_storage.transitions[match_id * MAX_NUM_STATES + state_id];
-  }
+  { return temp_storage.transitions[match_id * MAX_NUM_STATES + state_id]; }
 
  private:
   _TempStorage& temp_storage;
@@ -501,19 +489,13 @@ class dfa_device_view {
                                                       typename cub::NullType>;
 
   __device__ auto InitSymbolGroupLUT(SymbolGroupStorageT& temp_storage)
-  {
-    return SymbolGroupIdLookupT(*d_sgid_lut_init, temp_storage);
-  }
+  { return SymbolGroupIdLookupT(*d_sgid_lut_init, temp_storage); }
 
   __device__ auto InitTransitionTable(TransitionTableStorageT& temp_storage)
-  {
-    return TransitionTableT(*d_transition_table_init, temp_storage);
-  }
+  { return TransitionTableT(*d_transition_table_init, temp_storage); }
 
   __device__ auto InitTranslationTable(TranslationTableStorageT& temp_storage)
-  {
-    return TranslationTableT(*d_translation_table_init, temp_storage);
-  }
+  { return TranslationTableT(*d_translation_table_init, temp_storage); }
 
   dfa_device_view(sgid_lut_init_t const* d_sgid_lut_init,
                   transition_table_init_t const* d_transition_table_init,
@@ -751,9 +733,7 @@ class TranslationOp {
    * of the thread block to call the constructor
    */
   static KernelParameter InitDeviceTranslationTable(TranslationOpT translation_op)
-  {
-    return KernelParameter{translation_op};
-  }
+  { return KernelParameter{translation_op}; }
 
  private:
   _TempStorage& temp_storage;
@@ -776,17 +756,13 @@ class TranslationOp {
                                              SymbolIndexT const match_id,
                                              RelativeOffsetT const relative_offset,
                                              SymbolT const read_symbol) const
-  {
-    return translation_op(state_id, match_id, relative_offset, read_symbol);
-  }
+  { return translation_op(state_id, match_id, relative_offset, read_symbol); }
 
   template <typename StateIndexT, typename SymbolIndexT, typename SymbolT>
   constexpr CUDF_HOST_DEVICE auto operator()(StateIndexT const state_id,
                                              SymbolIndexT const match_id,
                                              SymbolT const read_symbol) const
-  {
-    return translation_op(state_id, match_id, read_symbol);
-  }
+  { return translation_op(state_id, match_id, read_symbol); }
 };
 
 /**

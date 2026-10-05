@@ -131,7 +131,7 @@ table_chunk::table_chunk(std::unique_ptr<rapidsmpf::PackedData> packed_data)
   } else {
     // table data is in device memory. We can trivially unpack it and make it
     // available.
-    table_view_          = cudf::unpack(packed_data_->metadata->data(),
+    table_view_ = cudf::unpack(packed_data_->metadata->data(),
                                reinterpret_cast<std::uint8_t const*>(packed_data_->data->data()));
     make_available_cost_ = 0;
   }
@@ -167,9 +167,7 @@ table_chunk& table_chunk::operator=(table_chunk&& other) noexcept
 cuda::stream_ref table_chunk::stream() const noexcept { return stream_; }
 
 std::size_t table_chunk::data_alloc_size(rapidsmpf::MemoryType mem_type) const
-{
-  return data_alloc_size_.at(static_cast<std::size_t>(mem_type));
-}
+{ return data_alloc_size_.at(static_cast<std::size_t>(mem_type)); }
 
 bool table_chunk::is_available() const noexcept { return table_view_.has_value(); }
 
@@ -196,9 +194,7 @@ table_chunk table_chunk::make_available(rapidsmpf::MemoryReservation&& reservati
 
 coro::task<table_chunk> table_chunk::make_available(
   std::shared_ptr<rapidsmpf::streaming::Context> ctx, std::int64_t net_memory_delta)
-{
-  co_return make_available(co_await reserve_memory(ctx, make_available_cost(), net_memory_delta));
-}
+{ co_return make_available(co_await reserve_memory(ctx, make_available_cost(), net_memory_delta)); }
 
 cudf::table_view table_chunk::table_view() const
 {

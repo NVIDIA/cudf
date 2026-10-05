@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -302,9 +302,7 @@ struct GroupbyReplaceNullsStructsTest : public cudf::test::BaseFixture {
            cudf::test::strings_column_wrapper field1,
            cudf::test::lists_column_wrapper<int32_t> field2,
            std::initializer_list<cudf::valid_type> mask)
-  {
-    return SCW({field0, field1, field2}, mask.begin());
-  }
+  { return SCW({field0, field1, field2}, mask.begin()); }
 };
 
 TEST_F(GroupbyReplaceNullsStructsTest, PrecedingFill)

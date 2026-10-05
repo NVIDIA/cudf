@@ -48,9 +48,7 @@ struct quantile_functor {
   template <typename T>
   std::unique_ptr<column> operator()(column_view const& input)
     requires(not std::is_arithmetic_v<T> and not cudf::is_fixed_point<T>())
-  {
-    CUDF_FAIL("quantile does not support non-numeric types");
-  }
+  { CUDF_FAIL("quantile does not support non-numeric types"); }
 
   template <typename T>
   std::unique_ptr<column> operator()(column_view const& input)

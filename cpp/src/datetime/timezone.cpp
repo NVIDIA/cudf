@@ -136,9 +136,7 @@ struct timezone_file {
 
   // Based on https://datatracker.ietf.org/doc/html/draft-murchison-tzdist-tzif-16
   static constexpr auto leap_second_rec_size(bool is_64bit) noexcept
-  {
-    return (is_64bit ? sizeof(uint64_t) : sizeof(uint32_t)) + sizeof(uint32_t);
-  }
+  { return (is_64bit ? sizeof(uint64_t) : sizeof(uint32_t)) + sizeof(uint32_t); }
   static constexpr auto file_content_size_32(timezone_file_header const& header) noexcept
   {
     return header.timecnt * sizeof(uint32_t) +                 // transition times
@@ -606,9 +604,7 @@ std::unique_ptr<table> make_timezone_transition_table(std::optional<std::string_
 duration_s get_ut_offset(std::optional<std::string_view> tzif_dir,
                          std::string_view timezone_name,
                          timestamp_s ts)
-{
-  return build_transition_table(tzif_dir, timezone_name).ut_offset(ts);
-}
+{ return build_transition_table(tzif_dir, timezone_name).ut_offset(ts); }
 
 }  // namespace detail
 }  // namespace cudf

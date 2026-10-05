@@ -55,9 +55,7 @@ class hostdevice_span {
             std::enable_if_t<std::is_convertible_v<T (*)[], U (*)[]>,  // NOLINT
                              void>* = nullptr>
   [[nodiscard]] operator cudf::device_span<U>() const noexcept
-  {
-    return cudf::device_span<U>(_device_data, size());
-  }
+  { return cudf::device_span<U>(_device_data, size()); }
 
   /**
    * @brief Returns the underlying device data.
@@ -93,9 +91,7 @@ class hostdevice_span {
             std::enable_if_t<std::is_convertible_v<T (*)[], U (*)[]>,  // NOLINT
                              void>* = nullptr>
   [[nodiscard]] operator host_span<U>() const noexcept
-  {
-    return {_host_data};
-  }
+  { return {_host_data}; }
 
   /**
    * @brief Returns the underlying host data.
@@ -148,9 +144,7 @@ class hostdevice_span {
    * @return A subspan of the sequence, of requested count and offset
    */
   [[nodiscard]] constexpr hostdevice_span<T> subspan(size_t offset, size_t count) const noexcept
-  {
-    return hostdevice_span<T>(_host_data.subspan(offset, count), device_ptr(offset));
-  }
+  { return hostdevice_span<T>(_host_data.subspan(offset, count), device_ptr(offset)); }
 
   void host_to_device_async(cuda::stream_ref stream) const
   {

@@ -124,9 +124,7 @@ template <typename Element, typename Enable = void>
 struct column_scatterer_impl {
   template <typename... Args>
   std::unique_ptr<column> operator()(Args&&...) const
-  {
-    CUDF_FAIL("Unsupported type for scatter.");
-  }
+  { CUDF_FAIL("Unsupported type for scatter."); }
 };
 
 template <typename Element>

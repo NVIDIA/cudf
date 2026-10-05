@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -55,11 +55,11 @@ TEST_F(PartitionTest, ZeroPartitions)
 
   cudf::size_type const num_partitions = 0;
   auto [output, offsets]               = cudf::hash_partition(input,
-                                                columns_to_hash,
-                                                num_partitions,
-                                                cudf::hash_id::HASH_MURMUR3,
-                                                cudf::DEFAULT_HASH_SEED,
-                                                cudf::test::get_default_stream());
+                                                              columns_to_hash,
+                                                              num_partitions,
+                                                              cudf::hash_id::HASH_MURMUR3,
+                                                              cudf::DEFAULT_HASH_SEED,
+                                                              cudf::test::get_default_stream());
 }
 
 CUDF_TEST_PROGRAM_MAIN()

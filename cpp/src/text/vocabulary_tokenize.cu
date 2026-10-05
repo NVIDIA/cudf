@@ -57,9 +57,7 @@ struct vocab_hasher {
   string_hasher_type hasher{};
   // used by insert
   __device__ hash_value_type operator()(cudf::size_type index) const
-  {
-    return hasher(d_strings.element<cudf::string_view>(index));
-  }
+  { return hasher(d_strings.element<cudf::string_view>(index)); }
   // used by find
   __device__ hash_value_type operator()(cudf::string_view const& s) const { return hasher(s); }
 };
@@ -79,9 +77,7 @@ struct vocab_equal {
   }
   // used by find
   __device__ bool operator()(cudf::string_view const& lhs, cudf::size_type rhs) const noexcept
-  {
-    return d_strings.element<cudf::string_view>(rhs) == lhs;
-  }
+  { return d_strings.element<cudf::string_view>(rhs) == lhs; }
 };
 
 using probe_scheme        = cuco::linear_probing<1, vocab_hasher>;
@@ -122,9 +118,7 @@ struct tokenize_vocabulary::tokenize_vocabulary_impl {
 struct key_pair {
   __device__ cuco::pair<cudf::size_type, cudf::size_type> operator()(
     cudf::size_type idx) const noexcept
-  {
-    return cuco::make_pair(idx, idx);
-  }
+  { return cuco::make_pair(idx, idx); }
 };
 
 tokenize_vocabulary::tokenize_vocabulary(cudf::strings_column_view const& input,
@@ -394,11 +388,11 @@ std::unique_ptr<cudf::column> tokenize_with_vocabulary(cudf::strings_column_view
 
   auto const first_offset  = (input.offset() == 0) ? 0
                                                    : cudf::strings::detail::get_offset_value(
-                                                      input.offsets(), input.offset(), stream);
+                                                       input.offsets(), input.offset(), stream);
   auto const last_offset   = (input.offset() == 0 && input.size() == input.offsets().size() - 1)
                                ? input.chars_size(stream)
                                : cudf::strings::detail::get_offset_value(
-                                 input.offsets(), input.size() + input.offset(), stream);
+                                   input.offsets(), input.size() + input.offset(), stream);
   auto const chars_size    = last_offset - first_offset;
   auto const d_input_chars = input.chars_begin(stream) + first_offset;
 

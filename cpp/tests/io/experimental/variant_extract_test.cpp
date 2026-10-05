@@ -63,9 +63,7 @@ constexpr uint8_t make_variant_header(variant_basic_type basic, uint8_t value_he
 
 // Header byte for a primitive value of the given physical type.
 constexpr uint8_t make_variant_primitive(variant_primitive_type type)
-{
-  return make_variant_header(variant_basic_type::PRIMITIVE, static_cast<uint8_t>(type));
-}
+{ return make_variant_header(variant_basic_type::PRIMITIVE, static_cast<uint8_t>(type)); }
 
 // Header byte for a short string of the given length (must fit in 6 bits: 0..63).
 constexpr uint8_t make_variant_short_string_header(std::size_t length)
@@ -77,9 +75,7 @@ constexpr uint8_t make_variant_short_string_header(std::size_t length)
 // Header byte for an object value with 1-byte field ids and 1-byte offsets
 // (is_large=false), i.e. value_header == 0.
 constexpr uint8_t make_variant_object_header()
-{
-  return make_variant_header(variant_basic_type::OBJECT, 0);
-}
+{ return make_variant_header(variant_basic_type::OBJECT, 0); }
 
 // Build a struct `column_view` over (metadata, value) without copying.
 inline cudf::column_view wrap_variant_view(cudf::column_view const& metadata,
@@ -498,9 +494,7 @@ inline void append_le(std::vector<uint8_t>& out, uint64_t bits, int width)
 
 // Primitive value blobs (header + fixed payload) for every physical type the cast matrix exercises.
 inline std::vector<uint8_t> enc_null()
-{
-  return {make_variant_primitive(variant_primitive_type::NULLVAL)};
-}
+{ return {make_variant_primitive(variant_primitive_type::NULLVAL)}; }
 
 inline std::vector<uint8_t> enc_bool(bool b)
 {
@@ -509,9 +503,7 @@ inline std::vector<uint8_t> enc_bool(bool b)
 }
 
 inline std::vector<uint8_t> enc_int8(int8_t v)
-{
-  return {make_variant_primitive(variant_primitive_type::INT8), static_cast<uint8_t>(v)};
-}
+{ return {make_variant_primitive(variant_primitive_type::INT8), static_cast<uint8_t>(v)}; }
 
 inline std::vector<uint8_t> enc_int16(int16_t v)
 {
@@ -1604,9 +1596,9 @@ TEST_F(CastVariantTest, DecimalOverflowYieldsNull)
     constexpr auto expected_scale = numeric::scale_type{0};
     // 2^64 rather than 2^63, so that the negated row is out of range too: -2^63 is int64_min.
     constexpr auto out_of_int64_range = static_cast<__int128_t>(1) << 64;
-    auto got                          = cast({enc_decimal16(out_of_int64_range, 0),
-                                              enc_decimal16(-out_of_int64_range, 0),
-                                              enc_decimal8(1234, 2)},
+    auto got = cast({enc_decimal16(out_of_int64_range, 0),
+                     enc_decimal16(-out_of_int64_range, 0),
+                     enc_decimal8(1234, 2)},
                     cudf::data_type{cudf::type_id::DECIMAL64, expected_scale});
     cudf::test::fixed_point_column_wrapper<int64_t> expected{
       {0, 0, 12}, {false, false, true}, expected_scale};
@@ -1941,21 +1933,15 @@ namespace {
 
 // A well-formed VARIANT child: a single-row list<uint8> holding `bytes`.
 inline std::unique_ptr<cudf::column> list_u8(std::vector<uint8_t> const& bytes)
-{
-  return cudf::test::lists_column_wrapper<uint8_t>(bytes.begin(), bytes.end()).release();
-}
+{ return cudf::test::lists_column_wrapper<uint8_t>(bytes.begin(), bytes.end()).release(); }
 
 // A single-row list<int32> (wrong element type for a VARIANT child).
 inline std::unique_ptr<cudf::column> list_i32(std::vector<int32_t> const& values)
-{
-  return cudf::test::lists_column_wrapper<int32_t>(values.begin(), values.end()).release();
-}
+{ return cudf::test::lists_column_wrapper<int32_t>(values.begin(), values.end()).release(); }
 
 // A single-row fixed-width int32 column (a non-list child).
 inline std::unique_ptr<cudf::column> scalar_i32()
-{
-  return cudf::test::fixed_width_column_wrapper<int32_t>{42}.release();
-}
+{ return cudf::test::fixed_width_column_wrapper<int32_t>{42}.release(); }
 
 // A single-row STRUCT column adopting `children`.
 inline std::unique_ptr<cudf::column> struct_of(std::vector<std::unique_ptr<cudf::column>> children)
@@ -2669,9 +2655,7 @@ struct CastVariantStatusTest : public cudf::test::BaseFixture {};
 namespace {
 
 inline cudf::test::lists_column_wrapper<uint8_t> make_value_col(std::vector<uint8_t> const& bytes)
-{
-  return cudf::test::lists_column_wrapper<uint8_t>(bytes.begin(), bytes.end());
-}
+{ return cudf::test::lists_column_wrapper<uint8_t>(bytes.begin(), bytes.end()); }
 
 }  // namespace
 
@@ -2747,10 +2731,10 @@ TEST_F(CastVariantStatusTest, SqlNullInputProducesRowNullStatus)
 
   auto status = make_status_buffer(values_col->size());
   auto got    = cudf::io::parquet::experimental::cast_variant(values_col->view(),
-                                                           cudf::data_type{cudf::type_id::INT32},
-                                                           status->mutable_view(),
-                                                           stream,
-                                                           cmr());
+                                                              cudf::data_type{cudf::type_id::INT32},
+                                                              status->mutable_view(),
+                                                              stream,
+                                                              cmr());
 
   // Row 0: success; row 1: row_null (status column is always non-nullable)
   ASSERT_EQ(status->null_count(), 0);

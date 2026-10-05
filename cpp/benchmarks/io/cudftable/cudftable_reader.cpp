@@ -94,9 +94,7 @@ void BM_cudftable_read_data_common(nvbench::state& state,
 template <data_type DataType>
 void BM_cudftable_read_data_types(nvbench::state& state,
                                   nvbench::type_list<nvbench::enum_type<DataType>> type_list)
-{
-  BM_cudftable_read_data_common<DataType>(state, data_profile{}, type_list);
-}
+{ BM_cudftable_read_data_common<DataType>(state, data_profile{}, type_list); }
 
 template <data_type DataType>
 void BM_cudftable_read_num_columns(nvbench::state& state,

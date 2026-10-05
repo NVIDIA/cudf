@@ -197,9 +197,7 @@ static void BM_string_compare_ast_transform(nvbench::state& state)
 
 #define AST_TRANSFORM_BENCHMARK_DEFINE(name, key_type, tree_type, reuse_columns, nullable) \
   static void name(::nvbench::state& st)                                                   \
-  {                                                                                        \
-    ::BM_ast_transform<key_type, tree_type, reuse_columns, nullable>(st);                  \
-  }                                                                                        \
+  { ::BM_ast_transform<key_type, tree_type, reuse_columns, nullable>(st); }                \
   NVBENCH_BENCH(name)                                                                      \
     .set_name(#name)                                                                       \
     .add_int64_axis("tree_levels", {1, 5, 10})                                             \
@@ -222,9 +220,7 @@ AST_TRANSFORM_BENCHMARK_DEFINE(
 
 #define AST_STRING_COMPARE_TRANSFORM_BENCHMARK_DEFINE(name, cmp_op, reduce_op) \
   static void name(::nvbench::state& st)                                       \
-  {                                                                            \
-    ::BM_string_compare_ast_transform<cmp_op, reduce_op>(st);                  \
-  }                                                                            \
+  { ::BM_string_compare_ast_transform<cmp_op, reduce_op>(st); }                \
   NVBENCH_BENCH(name)                                                          \
     .set_name(#name)                                                           \
     .add_int64_axis("string_width", {32, 64, 128, 256})                        \

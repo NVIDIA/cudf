@@ -102,9 +102,7 @@ struct insert_hash_functor {
   uint32_t const seed{DEFAULT_HASH_SEED};
   constexpr __device__ __forceinline__ typename hasher_type<T>::result_type operator()(
     key_type key) const noexcept
-  {
-    return hasher_type<T>{seed}(decoded_data[key]);
-  }
+  { return hasher_type<T>{seed}(decoded_data[key]); }
 };
 
 /**
@@ -117,9 +115,7 @@ struct query_hash_functor {
   uint32_t const seed{DEFAULT_HASH_SEED};
   constexpr __device__ __forceinline__ typename hasher_type<T>::result_type operator()(
     T const& value) const noexcept
-  {
-    return hasher_type<T>{seed}(value);
-  }
+  { return hasher_type<T>{seed}(value); }
 };
 
 /**
@@ -132,9 +128,7 @@ struct insert_equality_functor {
   cudf::device_span<T const> const decoded_data;
   constexpr __device__ __forceinline__ bool operator()(key_type lhs_key,
                                                        key_type rhs_key) const noexcept
-  {
-    return decoded_data[lhs_key] == decoded_data[rhs_key];
-  }
+  { return decoded_data[lhs_key] == decoded_data[rhs_key]; }
 };
 
 /**
@@ -146,9 +140,7 @@ template <SupportedDictionaryType T>
 struct query_equality_functor {
   cudf::device_span<T const> const decoded_data;
   constexpr __device__ __forceinline__ bool operator()(T const& value, key_type key) const noexcept
-  {
-    return value == decoded_data[key];
-  }
+  { return value == decoded_data[key]; }
 };
 
 /**
@@ -163,9 +155,7 @@ struct query_equality_functor {
 __device__ __forceinline__ bool is_stream_overrun(size_type offset,
                                                   size_type length,
                                                   size_type page_data_size)
-{
-  return offset + length > page_data_size;
-}
+{ return offset + length > page_data_size; }
 
 /**
  * @brief Helper function to set error
@@ -620,10 +610,10 @@ CUDF_KERNEL void __launch_bounds__(DECODE_BLOCK_SIZE)
 
   // Create a view of the hash set
   auto hash_set_ref   = cuco::static_set_ref{cuco::empty_key<key_type>{EMPTY_KEY_SENTINEL},
-                                           equality_fn_type{decoded_data},
-                                           probing_scheme_type{hash_fn_type{decoded_data}},
-                                           cuco::thread_scope_thread,
-                                           storage_ref};
+                                             equality_fn_type{decoded_data},
+                                             probing_scheme_type{hash_fn_type{decoded_data}},
+                                             cuco::thread_scope_thread,
+                                             storage_ref};
   auto set_insert_ref = hash_set_ref.rebind_operators(cuco::insert);
 
   // Offset into the running sum of values to be decoded from all column chunks of this column
@@ -715,10 +705,10 @@ CUDF_KERNEL void __launch_bounds__(DECODE_BLOCK_SIZE)
 
   // Create a view of the hash set
   auto hash_set_ref   = cuco::static_set_ref{cuco::empty_key{EMPTY_KEY_SENTINEL},
-                                           equality_fn_type{decoded_data},
-                                           probing_scheme_type{hash_fn_type{decoded_data}},
-                                           cuco::thread_scope_block,
-                                           storage_ref};
+                                             equality_fn_type{decoded_data},
+                                             probing_scheme_type{hash_fn_type{decoded_data}},
+                                             cuco::thread_scope_block,
+                                             storage_ref};
   auto set_insert_ref = hash_set_ref.rebind_operators(cuco::insert);
 
   // Decode values from the current dictionary page
@@ -1525,8 +1515,6 @@ simplified_expression_opt dictionary_literals_collector::simplify_comparison(
 
 std::pair<std::vector<std::vector<ast::literal*>>, std::vector<std::vector<ast::ast_operator>>>
 dictionary_literals_collector::get_literals_and_operators() &&
-{
-  return {std::move(_literals), std::move(_operators)};
-}
+{ return {std::move(_literals), std::move(_operators)}; }
 
 }  // namespace cudf::io::parquet::experimental::detail

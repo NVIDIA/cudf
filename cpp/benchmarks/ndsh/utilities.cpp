@@ -96,9 +96,7 @@ std::unordered_map<std::string, std::vector<std::string> const> const SCHEMAS = 
 cudf::table_view table_with_names::table() const { return tbl->view(); }
 
 cudf::column_view table_with_names::column(std::string const& col_name) const
-{
-  return tbl->view().column(column_id(col_name));
-}
+{ return tbl->view().column(column_id(col_name)); }
 
 std::vector<std::string> const& table_with_names::column_names() const { return col_names; }
 

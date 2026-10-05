@@ -38,9 +38,7 @@ struct hash_join<Hasher>::impl {
   }
 
   hash_table_ref hash_table() const
-  {
-    return {const_cast<hash_table_slot_type*>(_slots.data()), _capacity, _row_mask};
-  }
+  { return {const_cast<hash_table_slot_type*>(_slots.data()), _capacity, _row_mask}; }
 
   csr_ref csr() const { return {_offsets.data(), _values.data()}; }
 

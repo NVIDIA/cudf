@@ -62,11 +62,11 @@ std::unique_ptr<cudf::column> make_lists_column_from_scalar(list_scalar const& v
 
   auto begin = cuda::make_constant_iterator(0);
   auto res   = cudf::detail::gather(table_view({one_row_col_view}),
-                                  begin,
-                                  begin + size,
-                                  out_of_bounds_policy::DONT_CHECK,
-                                  stream,
-                                  mr_final);
+                                    begin,
+                                    begin + size,
+                                    out_of_bounds_policy::DONT_CHECK,
+                                    stream,
+                                    mr_final);
   return std::move(res->release()[0]);
 }
 
@@ -101,9 +101,7 @@ std::unique_ptr<column> make_all_nulls_lists_column(size_type size,
 }  // namespace lists
 
 std::unique_ptr<column> make_empty_lists_column(data_type child_type)
-{
-  return lists::detail::make_empty_lists_column(child_type);
-}
+{ return lists::detail::make_empty_lists_column(child_type); }
 
 /**
  * @copydoc cudf::make_lists_column

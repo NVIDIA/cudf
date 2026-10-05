@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -116,16 +116,16 @@ Java_ai_rapids_cudf_nvcomp_NvcompJni_batchedLZ4CompressAsync(JNIEnv* env,
     // decompressor.
     auto comp_statuses = rmm::device_uvector<nvcompStatus_t>(batch_size, stream);
     auto status        = nvcompBatchedLZ4CompressAsync(in_ptrs,
-                                                in_sizes,
-                                                chunk_size,
-                                                batch_size,
-                                                temp_ptr,
-                                                temp_size,
-                                                out_ptrs,
-                                                compressed_out_sizes,
-                                                nvcompBatchedLZ4CompressDefaultOpts,
-                                                comp_statuses.data(),
-                                                stream);
+                                                       in_sizes,
+                                                       chunk_size,
+                                                       batch_size,
+                                                       temp_ptr,
+                                                       temp_size,
+                                                       out_ptrs,
+                                                       compressed_out_sizes,
+                                                       nvcompBatchedLZ4CompressDefaultOpts,
+                                                       comp_statuses.data(),
+                                                       stream);
     check_nvcomp_status(env, status);
   }
   JNI_CATCH(env, );
@@ -174,7 +174,7 @@ Java_ai_rapids_cudf_nvcomp_NvcompJni_batchedLZ4DecompressAsync(JNIEnv* env,
     auto stream                    = reinterpret_cast<cudaStream_t>(j_stream);
     auto uncompressed_statuses     = rmm::device_uvector<nvcompStatus_t>(batch_size, stream);
     auto actual_uncompressed_sizes = rmm::device_uvector<std::size_t>(batch_size, stream);
-    auto status                    = nvcompBatchedLZ4DecompressAsync(compressed_ptrs,
+    auto status = nvcompBatchedLZ4DecompressAsync(compressed_ptrs,
                                                   compressed_sizes,
                                                   uncompressed_sizes,
                                                   actual_uncompressed_sizes.data(),
@@ -284,16 +284,16 @@ Java_ai_rapids_cudf_nvcomp_NvcompJni_batchedZstdCompressAsync(JNIEnv* env,
     // decompressor.
     auto comp_statuses = rmm::device_uvector<nvcompStatus_t>(batch_size, stream);
     auto status        = nvcompBatchedZstdCompressAsync(in_ptrs,
-                                                 in_sizes,
-                                                 chunk_size,
-                                                 batch_size,
-                                                 temp_ptr,
-                                                 temp_size,
-                                                 out_ptrs,
-                                                 compressed_out_sizes,
-                                                 nvcompBatchedZstdCompressDefaultOpts,
-                                                 comp_statuses.data(),
-                                                 stream);
+                                                        in_sizes,
+                                                        chunk_size,
+                                                        batch_size,
+                                                        temp_ptr,
+                                                        temp_size,
+                                                        out_ptrs,
+                                                        compressed_out_sizes,
+                                                        nvcompBatchedZstdCompressDefaultOpts,
+                                                        comp_statuses.data(),
+                                                        stream);
     check_nvcomp_status(env, status);
   }
   JNI_CATCH(env, );
@@ -342,7 +342,7 @@ Java_ai_rapids_cudf_nvcomp_NvcompJni_batchedZstdDecompressAsync(JNIEnv* env,
     auto stream                    = reinterpret_cast<cudaStream_t>(j_stream);
     auto uncompressed_statuses     = rmm::device_uvector<nvcompStatus_t>(batch_size, stream);
     auto actual_uncompressed_sizes = rmm::device_uvector<std::size_t>(batch_size, stream);
-    auto status                    = nvcompBatchedZstdDecompressAsync(compressed_ptrs,
+    auto status = nvcompBatchedZstdDecompressAsync(compressed_ptrs,
                                                    compressed_sizes,
                                                    uncompressed_sizes,
                                                    actual_uncompressed_sizes.data(),

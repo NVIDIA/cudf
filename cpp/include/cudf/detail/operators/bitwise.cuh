@@ -21,9 +21,7 @@ namespace ops {
  */
 template <integer A, integer B>
 __device__ auto bitwise_and(A a, B b) -> decltype(a & b)
-{
-  return a & b;
-}
+{ return a & b; }
 
 /**
  * @brief Computes bitwise NOT of one value.
@@ -33,9 +31,7 @@ __device__ auto bitwise_and(A a, B b) -> decltype(a & b)
  */
 template <integer T>
 __device__ auto bitwise_invert(T a) -> decltype(~a)
-{
-  return ~a;
-}
+{ return ~a; }
 
 /**
  * @brief Computes bitwise OR of two values.
@@ -47,9 +43,7 @@ __device__ auto bitwise_invert(T a) -> decltype(~a)
  */
 template <integer A, integer B>
 __device__ auto bitwise_or(A a, B b) -> decltype(a | b)
-{
-  return a | b;
-}
+{ return a | b; }
 
 /**
  * @brief Computes bitwise XOR of two values.
@@ -61,9 +55,7 @@ __device__ auto bitwise_or(A a, B b) -> decltype(a | b)
  */
 template <integer A, integer B>
 __device__ auto bitwise_xor(A a, B b) -> decltype(a ^ b)
-{
-  return a ^ b;
-}
+{ return a ^ b; }
 
 /**
  * @brief Shifts a value left by a bit count.
@@ -75,9 +67,7 @@ __device__ auto bitwise_xor(A a, B b) -> decltype(a ^ b)
  */
 template <integer A, integer B>
 __device__ auto bitwise_shift_left(A a, B b) -> decltype(a << b)
-{
-  return a << b;
-}
+{ return a << b; }
 
 /**
  * @brief Shifts a value right by a bit count.
@@ -89,9 +79,7 @@ __device__ auto bitwise_shift_left(A a, B b) -> decltype(a << b)
  */
 template <integer A, integer B>
 __device__ auto bitwise_shift_right(A a, B b) -> decltype(a >> b)
-{
-  return a >> b;
-}
+{ return a >> b; }
 
 }  // namespace ops
 }  // namespace detail

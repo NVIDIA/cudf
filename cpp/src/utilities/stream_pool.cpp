@@ -157,9 +157,7 @@ class debug_cuda_stream_pool : public cuda_stream_pool {
   cuda::stream_ref get_stream() override { return cudf::get_default_stream(); }
 
   std::vector<cuda::stream_ref> get_streams(std::size_t count) override
-  {
-    return std::vector<cuda::stream_ref>(count, cudf::get_default_stream());
-  }
+  { return std::vector<cuda::stream_ref>(count, cudf::get_default_stream()); }
 };
 
 cuda_stream_pool* create_cuda_stream_pool()
@@ -316,9 +314,7 @@ thread_stream_resources& current_thread_resources()
  * for another thread when this one exits.
  */
 cudaEvent_t event_for_thread()
-{
-  return current_thread_resources().event_for(get_current_cuda_device());
-}
+{ return current_thread_resources().event_for(get_current_cuda_device()); }
 
 }  // namespace
 
@@ -327,9 +323,7 @@ cudaEvent_t event_for_thread()
  * @return `cuda_stream_pool` owned by the current thread and valid on the current device.
  */
 cuda_stream_pool& current_cuda_stream_pool()
-{
-  return current_thread_resources().pool_for(get_current_cuda_device());
-}
+{ return current_thread_resources().pool_for(get_current_cuda_device()); }
 
 std::vector<cuda::stream_ref> fork_streams(cuda::stream_ref stream, std::size_t count)
 {

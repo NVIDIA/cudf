@@ -55,9 +55,7 @@ namespace {
 
 /// True for instructions that consume a character (Glushkov positions).
 bool is_char_consuming(int32_t const type)
-{
-  return type == CHAR || type == ANY || type == ANYNL || type == CCLASS || type == NCCLASS;
-}
+{ return type == CHAR || type == ANY || type == ANYNL || type == CCLASS || type == NCCLASS; }
 
 /**
  * @brief Returns true if ASCII character @p c matches the host-side character class @p cls.
@@ -92,9 +90,7 @@ bool host_reclass_match_ascii(reclass const& cls, uint8_t const c)
 
 /// True for zero-width assertion instructions (not handled by Glushkov path).
 bool is_assertion(int32_t const type)
-{
-  return type == BOL || type == EOL || type == BOW || type == NBOW;
-}
+{ return type == BOL || type == EOL || type == BOW || type == NBOW; }
 
 // ---------------------------------------------------------------------------
 // ε-closure traversal

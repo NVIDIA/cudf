@@ -37,11 +37,11 @@ auto constexpr bucket_size =
   1;  ///< Number of concurrent slots (set for best performance) handled by each thread.
 auto constexpr occupancy_factor = 1.43f;  ///< cuCollections suggests using a hash map of size
                                           ///< N * (1/0.7) = 1.43 to target a 70% occupancy factor.
-using storage_type     = cuco::bucket_storage<slot_type,
-                                              bucket_size,
-                                              cuco::extent<std::size_t>,
-                                              rmm::mr::polymorphic_allocator<char>>;
-using storage_ref_type = typename storage_type::ref_type;
+using storage_type              = cuco::bucket_storage<slot_type,
+                                                       bucket_size,
+                                                       cuco::extent<std::size_t>,
+                                                       rmm::mr::polymorphic_allocator<char>>;
+using storage_ref_type          = typename storage_type::ref_type;
 
 auto constexpr KEY_SENTINEL   = size_type{-1};
 auto constexpr VALUE_SENTINEL = size_type{-1};

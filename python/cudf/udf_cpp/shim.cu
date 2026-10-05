@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -512,9 +512,7 @@ __device__ double BlockCoVar(T const* lhs, T const* rhs, int64_t size)
 
 template <typename T>
 __device__ double BlockVar(T const* data, int64_t size)
-{
-  return BlockCoVar<T>(data, data, size);
-}
+{ return BlockCoVar<T>(data, data, size); }
 
 template <typename T>
 __device__ double BlockStd(T const* data, int64_t size)

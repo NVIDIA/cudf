@@ -1,6 +1,6 @@
 
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -24,9 +24,7 @@ namespace udf {
  * Overflow of the int64 type is not detected.
  */
 __device__ inline int64_t stoi(string_view const& d_str)
-{
-  return cudf::strings::detail::string_to_integer(d_str);
-}
+{ return cudf::strings::detail::string_to_integer(d_str); }
 
 /**
  * @brief Converts an integer into string
@@ -52,9 +50,7 @@ __device__ inline udf_string to_string(int64_t value)
  * Overflow goes to inf or -inf and underflow may go to 0.
  */
 __device__ inline double stod(string_view const& d_str)
-{
-  return cudf::strings::detail::stod(d_str);
-}
+{ return cudf::strings::detail::stod(d_str); }
 
 }  // namespace udf
 }  // namespace strings

@@ -129,11 +129,11 @@ struct dispatch_to_fixed_point_fn {
 
     // create output column
     auto results   = make_fixed_point_column(output_type,
-                                           input.size(),
-                                           cudf::detail::copy_bitmask(input.parent(), stream, mr),
-                                           input.null_count(),
-                                           stream,
-                                           mr);
+                                             input.size(),
+                                             cudf::detail::copy_bitmask(input.parent(), stream, mr),
+                                             input.null_count(),
+                                             stream,
+                                             mr);
     auto d_results = results->mutable_view().data<DecimalType>();
 
     // convert strings into decimal values
@@ -152,9 +152,7 @@ struct dispatch_to_fixed_point_fn {
                                      cuda::stream_ref,
                                      rmm::device_async_resource_ref) const
     requires(not cudf::is_fixed_point<T>())
-  {
-    CUDF_FAIL("Output for to_fixed_point must be a decimal type.");
-  }
+  { CUDF_FAIL("Output for to_fixed_point must be a decimal type."); }
 };
 
 }  // namespace
@@ -249,9 +247,7 @@ struct dispatch_from_fixed_point_fn {
                                      cuda::stream_ref,
                                      rmm::device_async_resource_ref) const
     requires(not cudf::is_fixed_point<T>())
-  {
-    CUDF_FAIL("Values for from_fixed_point function must be a decimal type.");
-  }
+  { CUDF_FAIL("Values for from_fixed_point function must be a decimal type."); }
 };
 
 }  // namespace
@@ -293,11 +289,11 @@ struct dispatch_is_fixed_point_fn {
 
     // create output column
     auto results   = make_numeric_column(data_type{type_id::BOOL8},
-                                       input.size(),
-                                       cudf::detail::copy_bitmask(input.parent(), stream, mr),
-                                       input.null_count(),
-                                       stream,
-                                       mr);
+                                         input.size(),
+                                         cudf::detail::copy_bitmask(input.parent(), stream, mr),
+                                         input.null_count(),
+                                         stream,
+                                         mr);
     auto d_results = results->mutable_view().data<bool>();
 
     // check strings for valid fixed-point chars
@@ -316,9 +312,7 @@ struct dispatch_is_fixed_point_fn {
                                      cuda::stream_ref,
                                      rmm::device_async_resource_ref) const
     requires(not cudf::is_fixed_point<T>())
-  {
-    CUDF_FAIL("is_fixed_point is expecting a decimal type");
-  }
+  { CUDF_FAIL("is_fixed_point is expecting a decimal type"); }
 };
 
 }  // namespace

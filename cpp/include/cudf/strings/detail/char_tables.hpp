@@ -42,9 +42,7 @@ CUDF_HOST_DEVICE constexpr uint8_t IS_LOWER(uint8_t x) { return ((x) & (1 << 6))
 CUDF_HOST_DEVICE constexpr uint8_t IS_SPECIAL(uint8_t x) { return ((x) & (1 << 7)); }
 CUDF_HOST_DEVICE constexpr uint8_t IS_ALPHANUM(uint8_t x) { return ((x) & (0x0F)); }
 CUDF_HOST_DEVICE constexpr uint8_t IS_UPPER_OR_LOWER(uint8_t x)
-{
-  return ((x) & ((1 << 5) | (1 << 6)));
-}
+{ return ((x) & ((1 << 5) | (1 << 6))); }
 __device__ constexpr uint8_t ALL_FLAGS = 0xFF;
 
 // Type for the character cases table.

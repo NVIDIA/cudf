@@ -304,9 +304,7 @@ std::vector<cudf::size_type> filter_row_groups_with_dictionaries(
   cudf::io::parquet_reader_options const& options,
   cuda::stream_ref stream,
   rmm::device_async_resource_ref mr)
-{
-  return filter_row_groups_with_dictionaries_impl(datasource, reader, options, stream, mr);
-}
+{ return filter_row_groups_with_dictionaries_impl(datasource, reader, options, stream, mr); }
 
 std::vector<std::vector<cudf::size_type>> filter_row_groups_with_dictionaries(
   multifile_inputs const& inputs,
@@ -314,9 +312,7 @@ std::vector<std::vector<cudf::size_type>> filter_row_groups_with_dictionaries(
   cudf::io::parquet_reader_options const& options,
   cuda::stream_ref stream,
   rmm::device_async_resource_ref mr)
-{
-  return filter_row_groups_with_dictionaries_impl(inputs, reader, options, stream, mr);
-}
+{ return filter_row_groups_with_dictionaries_impl(inputs, reader, options, stream, mr); }
 
 template <typename T, size_t NumTableConcats, bool IsConstantStrings, bool IsNullable>
 std::pair<std::unique_ptr<cudf::table>, std::vector<char>> create_parquet_with_stats(

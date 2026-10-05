@@ -238,9 +238,7 @@ std::unique_ptr<column> find(strings_column_view const& input,
                              size_type stop,
                              cuda::stream_ref stream,
                              rmm::device_async_resource_ref mr)
-{
-  return find_fn<true>(input, target, start, stop, stream, mr);
-}
+{ return find_fn<true>(input, target, start, stop, stream, mr); }
 
 std::unique_ptr<column> rfind(strings_column_view const& input,
                               string_scalar const& target,
@@ -248,9 +246,7 @@ std::unique_ptr<column> rfind(strings_column_view const& input,
                               size_type stop,
                               cuda::stream_ref stream,
                               rmm::device_async_resource_ref mr)
-{
-  return find_fn<false>(input, target, start, stop, stream, mr);
-}
+{ return find_fn<false>(input, target, start, stop, stream, mr); }
 
 template <bool forward = true>
 std::unique_ptr<column> find(strings_column_view const& input,
@@ -448,11 +444,11 @@ std::unique_ptr<column> contains_fn(strings_column_view const& strings,
   auto d_strings      = *strings_column;
   // create output column
   auto results      = make_numeric_column(data_type{type_id::BOOL8},
-                                     strings_count,
-                                     cudf::detail::copy_bitmask(strings.parent(), stream, mr),
-                                     strings.null_count(),
-                                     stream,
-                                     mr);
+                                          strings_count,
+                                          cudf::detail::copy_bitmask(strings.parent(), stream, mr),
+                                          strings.null_count(),
+                                          stream,
+                                          mr);
   auto results_view = results->mutable_view();
   auto d_results    = results_view.data<bool>();
   // set the bool values by evaluating the passed function
@@ -501,11 +497,11 @@ std::unique_ptr<column> contains_fn(strings_column_view const& strings,
   auto d_strings      = *strings_column;
   // create output column
   auto results      = make_numeric_column(data_type{type_id::BOOL8},
-                                     strings.size(),
-                                     cudf::detail::copy_bitmask(strings.parent(), stream, mr),
-                                     strings.null_count(),
-                                     stream,
-                                     mr);
+                                          strings.size(),
+                                          cudf::detail::copy_bitmask(strings.parent(), stream, mr),
+                                          strings.null_count(),
+                                          stream,
+                                          mr);
   auto results_view = results->mutable_view();
   auto d_results    = results_view.data<bool>();
   // set the bool values by evaluating the passed function

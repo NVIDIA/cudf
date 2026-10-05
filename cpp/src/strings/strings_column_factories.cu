@@ -70,9 +70,7 @@ make_offsets_child_column_batch_async(std::vector<column_string_pairs> const& in
 
 CUDF_EXPORT std::pair<std::unique_ptr<column>, int64_t> make_offsets_child_column(
   device_span<size_type const> sizes, cuda::stream_ref stream, rmm::device_async_resource_ref mr)
-{
-  return make_offsets_child_column(sizes.begin(), sizes.end(), stream, mr);
-}
+{ return make_offsets_child_column(sizes.begin(), sizes.end(), stream, mr); }
 
 std::vector<std::unique_ptr<column>> make_strings_column_batch(
   std::vector<column_string_pairs> const& input,
@@ -174,7 +172,7 @@ std::vector<std::unique_ptr<column>> make_strings_column_batch(
       chars_data.release(),
       null_count,
       null_count ? std::move(null_masks[idx])
-                           : cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED, stream, mr));
+                 : cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED, stream, mr));
   }
 
   return output;

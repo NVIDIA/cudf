@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -24,9 +24,7 @@ struct unary_relationally_comparable_functor {
    */
   template <typename T>
   inline bool operator()() const
-  {
-    return cudf::is_relationally_comparable<T, T>();
-  }
+  { return cudf::is_relationally_comparable<T, T>(); }
 };
 }  // namespace
 
@@ -38,9 +36,7 @@ struct unary_relationally_comparable_functor {
  * @return false If `type` does not support relational comparisons.
  */
 bool is_relationally_comparable(data_type type)
-{
-  return type_dispatcher(type, unary_relationally_comparable_functor{});
-}
+{ return type_dispatcher(type, unary_relationally_comparable_functor{}); }
 
 namespace {
 /**
@@ -56,9 +52,7 @@ struct unary_equality_comparable_functor {
    */
   template <typename T>
   bool operator()() const
-  {
-    return cudf::is_equality_comparable<T, T>();
-  }
+  { return cudf::is_equality_comparable<T, T>(); }
 };
 }  // namespace
 
@@ -70,16 +64,12 @@ struct unary_equality_comparable_functor {
  * @return false If `type` does not support equality comparisons.
  */
 bool is_equality_comparable(data_type type)
-{
-  return cudf::type_dispatcher(type, unary_equality_comparable_functor{});
-}
+{ return cudf::type_dispatcher(type, unary_equality_comparable_functor{}); }
 
 struct is_numeric_impl {
   template <typename T>
   constexpr bool operator()()
-  {
-    return is_numeric<T>();
-  }
+  { return is_numeric<T>(); }
 };
 
 /**
@@ -98,9 +88,7 @@ bool is_numeric(data_type type) { return cudf::type_dispatcher(type, is_numeric_
 struct is_index_type_impl {
   template <typename T>
   constexpr bool operator()()
-  {
-    return is_index_type<T>();
-  }
+  { return is_index_type<T>(); }
 };
 
 /**
@@ -119,9 +107,7 @@ bool is_index_type(data_type type) { return cudf::type_dispatcher(type, is_index
 struct is_signed_impl {
   template <typename T>
   constexpr bool operator()()
-  {
-    return is_signed<T>();
-  }
+  { return is_signed<T>(); }
 };
 
 /**
@@ -135,9 +121,7 @@ bool is_signed(data_type type) { return cudf::type_dispatcher(type, is_signed_im
 struct is_unsigned_impl {
   template <typename T>
   constexpr bool operator()()
-  {
-    return is_unsigned<T>();
-  }
+  { return is_unsigned<T>(); }
 };
 
 /**
@@ -154,9 +138,7 @@ bool is_unsigned(data_type type) { return cudf::type_dispatcher(type, is_unsigne
 struct is_integral_impl {
   template <typename T>
   constexpr bool operator()()
-  {
-    return is_integral<T>();
-  }
+  { return is_integral<T>(); }
 };
 
 bool is_integral(data_type type) { return cudf::type_dispatcher(type, is_integral_impl{}); }
@@ -164,35 +146,25 @@ bool is_integral(data_type type) { return cudf::type_dispatcher(type, is_integra
 struct is_integral_not_bool_impl {
   template <typename T>
   constexpr bool operator()()
-  {
-    return is_integral_not_bool<T>();
-  }
+  { return is_integral_not_bool<T>(); }
 };
 
 bool is_integral_not_bool(data_type type)
-{
-  return cudf::type_dispatcher(type, is_integral_not_bool_impl{});
-}
+{ return cudf::type_dispatcher(type, is_integral_not_bool_impl{}); }
 
 struct is_numeric_not_bool_impl {
   template <typename T>
   constexpr bool operator()()
-  {
-    return is_numeric_not_bool<T>();
-  }
+  { return is_numeric_not_bool<T>(); }
 };
 
 bool is_numeric_not_bool(data_type type)
-{
-  return cudf::type_dispatcher(type, is_numeric_not_bool_impl{});
-}
+{ return cudf::type_dispatcher(type, is_numeric_not_bool_impl{}); }
 
 struct is_floating_point_impl {
   template <typename T>
   constexpr bool operator()()
-  {
-    return is_floating_point<T>();
-  }
+  { return is_floating_point<T>(); }
 };
 
 /**
@@ -205,16 +177,12 @@ struct is_floating_point_impl {
  * @return false `type` is not floating point
  */
 bool is_floating_point(data_type type)
-{
-  return cudf::type_dispatcher(type, is_floating_point_impl{});
-}
+{ return cudf::type_dispatcher(type, is_floating_point_impl{}); }
 
 struct is_boolean_impl {
   template <typename T>
   constexpr bool operator()()
-  {
-    return is_boolean<T>();
-  }
+  { return is_boolean<T>(); }
 };
 
 /**
@@ -229,9 +197,7 @@ bool is_boolean(data_type type) { return cudf::type_dispatcher(type, is_boolean_
 struct is_fixed_point_impl {
   template <typename T>
   constexpr bool operator()()
-  {
-    return is_fixed_point<T>();
-  }
+  { return is_fixed_point<T>(); }
 };
 
 /**
@@ -246,9 +212,7 @@ bool is_fixed_point(data_type type) { return cudf::type_dispatcher(type, is_fixe
 struct is_timestamp_impl {
   template <typename T>
   constexpr bool operator()()
-  {
-    return is_timestamp<T>();
-  }
+  { return is_timestamp<T>(); }
 };
 
 /**
@@ -265,9 +229,7 @@ bool is_timestamp(data_type type) { return cudf::type_dispatcher(type, is_timest
 struct is_duration_impl {
   template <typename T>
   constexpr bool operator()()
-  {
-    return is_duration<T>();
-  }
+  { return is_duration<T>(); }
 };
 
 /**
@@ -284,9 +246,7 @@ bool is_duration(data_type type) { return cudf::type_dispatcher(type, is_duratio
 struct is_chrono_impl {
   template <typename T>
   constexpr bool operator()()
-  {
-    return is_chrono<T>();
-  }
+  { return is_chrono<T>(); }
 };
 
 /**
@@ -304,9 +264,7 @@ bool is_chrono(data_type type) { return cudf::type_dispatcher(type, is_chrono_im
 struct is_dictionary_impl {
   template <typename T>
   constexpr bool operator()()
-  {
-    return is_dictionary<T>();
-  }
+  { return is_dictionary<T>(); }
 };
 
 /**
@@ -326,16 +284,12 @@ bool is_dictionary(data_type type) { return cudf::type_dispatcher(type, is_dicti
  * @return false `type` cannot be a dictionary type
  */
 bool is_dictionary_key(data_type type)
-{
-  return not is_dictionary(type) && is_relationally_comparable(type);
-}
+{ return not is_dictionary(type) && is_relationally_comparable(type); }
 
 struct is_fixed_width_impl {
   template <typename T>
   constexpr bool operator()()
-  {
-    return is_fixed_width<T>();
-  }
+  { return is_fixed_width<T>(); }
 };
 
 /**
@@ -352,9 +306,7 @@ bool is_fixed_width(data_type type) { return cudf::type_dispatcher(type, is_fixe
 struct is_compound_impl {
   template <typename T>
   constexpr bool operator()()
-  {
-    return is_compound<T>();
-  }
+  { return is_compound<T>(); }
 };
 
 /**
@@ -374,9 +326,7 @@ bool is_compound(data_type type) { return cudf::type_dispatcher(type, is_compoun
 struct is_nested_impl {
   template <typename T>
   constexpr bool operator()()
-  {
-    return is_nested<T>();
-  }
+  { return is_nested<T>(); }
 };
 
 /**
@@ -398,9 +348,7 @@ struct is_bit_castable_to_impl {
   template <typename ToType>
   constexpr bool operator()()
     requires(is_compound<ToType>())
-  {
-    return false;
-  }
+  { return false; }
 
   template <typename ToType>
   constexpr bool operator()()
@@ -420,16 +368,12 @@ struct is_bit_castable_from_impl {
   template <typename FromType>
   constexpr bool operator()(data_type)
     requires(is_compound<FromType>())
-  {
-    return false;
-  }
+  { return false; }
 
   template <typename FromType>
   constexpr bool operator()(data_type to)
     requires(not is_compound<FromType>())
-  {
-    return cudf::type_dispatcher(to, is_bit_castable_to_impl<FromType>{});
-  }
+  { return cudf::type_dispatcher(to, is_bit_castable_to_impl<FromType>{}); }
 };
 }  // namespace
 
@@ -447,8 +391,6 @@ struct is_bit_castable_from_impl {
  * @return `true` if the types are castable
  */
 bool is_bit_castable(data_type from, data_type to)
-{
-  return type_dispatcher(from, is_bit_castable_from_impl{}, to);
-}
+{ return type_dispatcher(from, is_bit_castable_from_impl{}, to); }
 
 }  // namespace cudf

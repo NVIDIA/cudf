@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -96,7 +96,7 @@ TEST_F(StringsListsConcatenateTest, ZeroSizeStringsInput)
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected, verbosity);
 
     auto const separators = STR_COL{"", "", "", ""}.release();
-    results               = cudf::strings::join_list_elements(string_lv,
+    results = cudf::strings::join_list_elements(string_lv,
                                                 separators->view(),
                                                 cudf::string_scalar(""),
                                                 cudf::string_scalar(""),
@@ -138,7 +138,7 @@ TEST_F(StringsListsConcatenateTest, ColumnHasEmptyListAndNullListInput)
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected, verbosity);
 
     auto const separators = STR_COL{"-", "", "", ""}.release();
-    results               = cudf::strings::join_list_elements(string_lv,
+    results = cudf::strings::join_list_elements(string_lv,
                                                 separators->view(),
                                                 cudf::string_scalar(""),
                                                 cudf::string_scalar(""),
@@ -175,7 +175,7 @@ TEST_F(StringsListsConcatenateTest, ScalarSeparator)
                                        STR_LISTS{{"v", "", "", "w"}, nulls_at({1, 2})}},
                                       null_at(1)}
                               .release();
-  auto const string_lv = cudf::lists_column_view(string_lists->view());
+  auto const string_lv    = cudf::lists_column_view(string_lists->view());
 
   // No null replacement
   {
@@ -355,8 +355,8 @@ TEST_F(StringsListsConcatenateTest, ColumnSeparators)
                                        STR_LISTS{"zzz", "xxxxx"}},
                                       null_at(1)}
                               .release();
-  auto const string_lv  = cudf::lists_column_view(string_lists->view());
-  auto const separators = STR_COL{
+  auto const string_lv    = cudf::lists_column_view(string_lists->view());
+  auto const separators   = STR_COL{
     {"+++", "***", "!!!" /*NULL*/, "$$$" /*NULL*/, "%%%", "^^^"},
     cudf::detail::make_counting_transform_iterator(0, [](auto i) {
       return i != 2 && i != 3;

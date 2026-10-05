@@ -18,15 +18,11 @@ struct get_data_ptr_functor {
    */
   template <typename T, CUDF_ENABLE_IF(is_rep_layout_compatible<T>())>
   void const* operator()(column_view const& view)
-  {
-    return static_cast<void const*>(view.template data<T>());
-  }
+  { return static_cast<void const*>(view.template data<T>()); }
 
   template <typename T, CUDF_ENABLE_IF(not is_rep_layout_compatible<T>())>
   void const* operator()(column_view const& view)
-  {
-    CUDF_FAIL("Invalid data type for JIT operation");
-  }
+  { CUDF_FAIL("Invalid data type for JIT operation"); }
 
   /**
    * @brief Gets the data pointer from a scalar
@@ -41,20 +37,14 @@ struct get_data_ptr_functor {
 
   template <typename T, CUDF_ENABLE_IF(not is_rep_layout_compatible<T>())>
   void const* operator()(scalar const& s)
-  {
-    CUDF_FAIL("Invalid data type for JIT operation");
-  }
+  { CUDF_FAIL("Invalid data type for JIT operation"); }
 };
 
 void const* get_data_ptr(column_view const& view)
-{
-  return type_dispatcher<dispatch_storage_type>(view.type(), get_data_ptr_functor{}, view);
-}
+{ return type_dispatcher<dispatch_storage_type>(view.type(), get_data_ptr_functor{}, view); }
 
 void const* get_data_ptr(scalar const& s)
-{
-  return type_dispatcher<dispatch_storage_type>(s.type(), get_data_ptr_functor{}, s);
-}
+{ return type_dispatcher<dispatch_storage_type>(s.type(), get_data_ptr_functor{}, s); }
 
 data_type physical_type_of(data_type type)
 {

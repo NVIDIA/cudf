@@ -127,9 +127,7 @@ static void BM_string_compare_binaryop_transform(nvbench::state& state)
 #define BINARYOP_TRANSFORM_BENCHMARK_DEFINE(name, key_type, tree_type, reuse_columns) \
                                                                                       \
   static void name(::nvbench::state& st)                                              \
-  {                                                                                   \
-    ::BM_binaryop_transform<key_type, tree_type, reuse_columns>(st);                  \
-  }                                                                                   \
+  { ::BM_binaryop_transform<key_type, tree_type, reuse_columns>(st); }                \
   NVBENCH_BENCH(name)                                                                 \
     .add_int64_axis("tree_levels", {1, 2, 5, 10})                                     \
     .add_int64_axis("num_rows", {100'000, 1'000'000, 10'000'000, 100'000'000})
@@ -150,9 +148,7 @@ BINARYOP_TRANSFORM_BENCHMARK_DEFINE(binaryop_double_imbalanced_unique,
 #define STRING_COMPARE_BINARYOP_TRANSFORM_BENCHMARK_DEFINE(name, cmp_op, reduce_op) \
                                                                                     \
   static void name(::nvbench::state& st)                                            \
-  {                                                                                 \
-    ::BM_string_compare_binaryop_transform<cmp_op, reduce_op>(st);                  \
-  }                                                                                 \
+  { ::BM_string_compare_binaryop_transform<cmp_op, reduce_op>(st); }                \
   NVBENCH_BENCH(name)                                                               \
     .set_name(#name)                                                                \
     .add_int64_axis("string_width", {32, 64, 128, 256})                             \

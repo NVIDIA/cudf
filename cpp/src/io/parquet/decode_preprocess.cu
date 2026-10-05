@@ -109,7 +109,7 @@ __device__ void update_page_sizes(auto* s,
       // if this thread is in row bounds
       int const row_index = (thread_row_count + row_count) - 1;
       in_row_bounds       = (row_index >= s->progress.row_index_lower_bound) &&
-                      (row_index < (s->setup.first_row + s->setup.num_rows));
+                            (row_index < (s->setup.first_row + s->setup.num_rows));
 
       // if we have not set skipped values yet, see if we found the first in-bounds row
       if (!skipped_values_set) {
@@ -319,9 +319,9 @@ CUDF_KERNEL void __launch_bounds__(preprocess_block_size)
 
   auto* const rep          = reinterpret_cast<level_t*>(pp->lvl_decode_buf[level_type::REPETITION]);
   bool const process_nulls = should_process_nulls(s);
-  level_t* const def       = !process_nulls
-                               ? nullptr
-                               : reinterpret_cast<level_t*>(pp->lvl_decode_buf[level_type::DEFINITION]);
+  level_t* const def = !process_nulls
+                         ? nullptr
+                         : reinterpret_cast<level_t*>(pp->lvl_decode_buf[level_type::DEFINITION]);
 
   if (!t) {
     s->setup.page.skipped_values      = -1;

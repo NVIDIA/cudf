@@ -101,9 +101,7 @@ struct table_flattener {
       nullability{nullability},
       stream{stream},
       mr{mr}
-  {
-    superimpose_nulls(input);
-  }
+  { superimpose_nulls(input); }
 
   /**
    * @brief Pushes down nulls from struct columns to children, saves the resulting

@@ -59,9 +59,7 @@ class aggregate_orc_metadata {
   aggregate_orc_metadata& operator=(aggregate_orc_metadata&&)      = delete;
 
   [[nodiscard]] auto get_col_type(int col_idx) const
-  {
-    return per_file_metadata[0].ff.types[col_idx];
-  }
+  { return per_file_metadata[0].ff.types[col_idx]; }
 
   [[nodiscard]] auto get_num_rows() const { return num_rows; }
 

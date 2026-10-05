@@ -38,9 +38,7 @@ struct nvbench_base_fixture {
   inline auto make_cuda() { return rmm::mr::cuda_memory_resource{}; }
 
   inline auto make_pool()
-  {
-    return rmm::mr::pool_memory_resource{make_cuda(), rmm::percent_of_free_device_memory(50)};
-  }
+  { return rmm::mr::pool_memory_resource{make_cuda(), rmm::percent_of_free_device_memory(50)}; }
 
   inline auto make_async() { return rmm::mr::cuda_async_memory_resource{}; }
 
@@ -49,9 +47,7 @@ struct nvbench_base_fixture {
   inline auto make_arena() { return rmm::mr::arena_memory_resource{make_cuda()}; }
 
   inline auto make_managed_pool()
-  {
-    return rmm::mr::pool_memory_resource{make_managed(), rmm::percent_of_free_device_memory(50)};
-  }
+  { return rmm::mr::pool_memory_resource{make_managed(), rmm::percent_of_free_device_memory(50)}; }
 
   inline cuda::mr::any_resource<cuda::mr::device_accessible> create_memory_resource(
     std::string const& mode)

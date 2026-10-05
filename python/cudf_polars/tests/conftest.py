@@ -383,19 +383,7 @@ def pytest_generate_tests(metafunc: pytest.Metafunc):
 
     marker = metafunc.definition.get_closest_marker("engine_params")
     if marker is not None:
-        # Selectors must not opt unavailable backends back into the fixture.
-        engines = [engine for engine in engines if engine in marker.args[0]]
-
-    if not engines:
-        # Empty parameter sets are collection errors in this suite.
-        metafunc.parametrize(
-            "_engine_param",
-            [pytest.param(None, marks=pytest.mark.skip(reason="No available engines"))],
-            indirect=True,
-            ids=["unavailable"],
-            scope="session",
-        )
-        return
+        engines = list(marker.args[0])
 
     metafunc.parametrize(
         "_engine_param",

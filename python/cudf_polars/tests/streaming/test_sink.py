@@ -109,17 +109,15 @@ def test_sink_parquet_raises(df: pl.LazyFrame, tmp_path, streaming_engine_factor
         df.sink_parquet(tmp_path / "test_sink_gpu.parquet", engine=engine)
 
 
-CSV_SINK_CASES = [
-    pytest.param(10, ",", None, True, id="multipart-default"),
-    pytest.param(1_000_000, ",", None, True, id="single-partition"),
-    pytest.param(10, ",", None, False, id="without-header"),
-    pytest.param(10, ",", "NA", True, id="null-value"),
-    pytest.param(10, "|", None, True, id="separator"),
-]
-
-
 @pytest.mark.parametrize(
-    "max_rows_per_partition,separator,null_value,include_header", CSV_SINK_CASES
+    "max_rows_per_partition,separator,null_value,include_header",
+    [
+        pytest.param(10, ",", None, True, id="multipart-default"),
+        pytest.param(1_000_000, ",", None, True, id="single-partition"),
+        pytest.param(10, ",", None, False, id="without-header"),
+        pytest.param(10, ",", "NA", True, id="null-value"),
+        pytest.param(10, "|", None, True, id="separator"),
+    ],
 )
 def test_sink_csv(
     df,

@@ -24,18 +24,16 @@ def df():
     )
 
 
-CSV_SINK_CASES = [
-    pytest.param(True, None, "\n", ",", id="default"),
-    pytest.param(False, None, "\n", ",", id="without-header"),
-    pytest.param(True, "NA", "\n", ",", id="null-value"),
-    pytest.param(True, None, "\n\n", ",", id="line-terminator"),
-    pytest.param(True, None, "\n", "|", id="separator"),
-    pytest.param(False, "NA", "\n\n", "|", id="writer-option-interaction"),
-]
-
-
 @pytest.mark.parametrize(
-    "include_header,null_value,line_terminator,separator", CSV_SINK_CASES
+    "include_header,null_value,line_terminator,separator",
+    [
+        pytest.param(True, None, "\n", ",", id="default"),
+        pytest.param(False, None, "\n", ",", id="without-header"),
+        pytest.param(True, "NA", "\n", ",", id="null-value"),
+        pytest.param(True, None, "\n\n", ",", id="line-terminator"),
+        pytest.param(True, None, "\n", "|", id="separator"),
+        pytest.param(False, "NA", "\n\n", "|", id="writer-option-interaction"),
+    ],
 )
 def test_sink_csv(
     engine: pl.GPUEngine,
@@ -96,27 +94,25 @@ def test_sink_ndjson(engine: pl.GPUEngine, df, tmp_path):
     )
 
 
-PARQUET_SINK_CASES = [
-    pytest.param(True, None, None, False, 1, id="default"),
-    pytest.param(False, None, None, False, 1, id="mkdir-disabled"),
-    pytest.param(True, 256_000, None, False, 1, id="data-page-size"),
-    pytest.param(True, None, 1_000, False, 1, id="row-group-size"),
-    pytest.param(True, None, None, True, 1, id="chunked-single-output"),
-    pytest.param(True, None, None, True, 4, id="chunked-four-outputs"),
-    pytest.param(True, None, None, True, 8, id="chunked-eight-outputs"),
-    pytest.param(
-        True,
-        256_000,
-        1_000,
-        True,
-        4,
-        id="writer-option-interaction",
-    ),
-]
-
-
 @pytest.mark.parametrize(
-    "mkdir,data_page_size,row_group_size,is_chunked,n_output_chunks", PARQUET_SINK_CASES
+    "mkdir,data_page_size,row_group_size,is_chunked,n_output_chunks",
+    [
+        pytest.param(True, None, None, False, 1, id="default"),
+        pytest.param(False, None, None, False, 1, id="mkdir-disabled"),
+        pytest.param(True, 256_000, None, False, 1, id="data-page-size"),
+        pytest.param(True, None, 1_000, False, 1, id="row-group-size"),
+        pytest.param(True, None, None, True, 1, id="chunked-single-output"),
+        pytest.param(True, None, None, True, 4, id="chunked-four-outputs"),
+        pytest.param(True, None, None, True, 8, id="chunked-eight-outputs"),
+        pytest.param(
+            True,
+            256_000,
+            1_000,
+            True,
+            4,
+            id="writer-option-interaction",
+        ),
+    ],
 )
 def test_sink_parquet(
     df, tmp_path, mkdir, data_page_size, row_group_size, is_chunked, n_output_chunks

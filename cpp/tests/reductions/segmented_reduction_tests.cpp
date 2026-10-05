@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -8,6 +8,7 @@
 #include <cudf_test/type_lists.hpp>
 
 #include <cudf/aggregation.hpp>
+#include <cudf/copying.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/reduction.hpp>
 #include <cudf/scalar/scalar_factories.hpp>
@@ -1361,6 +1362,67 @@ TYPED_TEST(SegmentedReductionFixedPointTest, SumOfSquares)
 // String: Empty string,
 // Position of the min/max: start of segment, end of segment
 // Include null, exclude null
+
+TEST_F(SegmentedReductionTestUntyped, StringMinMaxWithEmptyAndNullSegments)
+{
+  // Repeated extrema and null segments guard against changing the shared index reducer.
+  cudf::test::strings_column_wrapper input{{"é", "apple", "é", "", "", "z", "z", ""},
+                                           {true, true, true, false, true, true, true, false}};
+  auto const offsets   = std::vector<cudf::size_type>{0, 3, 3, 4, 6, 8, 8};
+  auto const d_offsets = cudf::detail::make_device_uvector_async(
+    offsets, cudf::get_default_stream(), cudf::get_current_device_resource_ref());
+
+  for (auto const policy : {cudf::null_policy::INCLUDE, cudf::null_policy::EXCLUDE}) {
+    auto const valid =
+      std::vector<bool>{true, false, false, true, policy == cudf::null_policy::EXCLUDE, false};
+    cudf::test::strings_column_wrapper expected_min{{"apple", "", "", "", "z", ""}, valid.begin()};
+    cudf::test::strings_column_wrapper expected_max{{"é", "", "", "z", "z", ""}, valid.begin()};
+    auto const minimum =
+      cudf::segmented_reduce(input,
+                             d_offsets,
+                             *cudf::make_min_aggregation<cudf::segmented_reduce_aggregation>(),
+                             cudf::data_type{cudf::type_id::STRING},
+                             policy);
+    auto const maximum =
+      cudf::segmented_reduce(input,
+                             d_offsets,
+                             *cudf::make_max_aggregation<cudf::segmented_reduce_aggregation>(),
+                             cudf::data_type{cudf::type_id::STRING},
+                             policy);
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(*minimum, expected_min);
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(*maximum, expected_max);
+  }
+}
+
+TEST_F(SegmentedReductionTestUntyped, StringMinMaxSlicedInput)
+{
+  // Slice-relative gather indices must not select the prefix or suffix outside the view.
+  cudf::test::strings_column_wrapper input{"prefix", "é", "apple", "é", "", "z", "z", "suffix"};
+  auto const sliced_input = cudf::slice(input, {1, 7}).front();
+  auto const offsets      = std::vector<cudf::size_type>{0, 3, 3, 4, 6, 6};
+  auto const d_offsets    = cudf::detail::make_device_uvector_async(
+    offsets, cudf::get_default_stream(), cudf::get_current_device_resource_ref());
+  cudf::test::strings_column_wrapper expected_min{{"apple", "", "", "z", ""},
+                                                  {true, false, true, true, false}};
+  cudf::test::strings_column_wrapper expected_max{{"é", "", "", "z", ""},
+                                                  {true, false, true, true, false}};
+  for (auto const policy : {cudf::null_policy::INCLUDE, cudf::null_policy::EXCLUDE}) {
+    auto const minimum =
+      cudf::segmented_reduce(sliced_input,
+                             d_offsets,
+                             *cudf::make_min_aggregation<cudf::segmented_reduce_aggregation>(),
+                             cudf::data_type{cudf::type_id::STRING},
+                             policy);
+    auto const maximum =
+      cudf::segmented_reduce(sliced_input,
+                             d_offsets,
+                             *cudf::make_max_aggregation<cudf::segmented_reduce_aggregation>(),
+                             cudf::data_type{cudf::type_id::STRING},
+                             policy);
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(*minimum, expected_min);
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(*maximum, expected_max);
+  }
+}
 
 #undef XXX
 #define XXX ""  // null placeholder

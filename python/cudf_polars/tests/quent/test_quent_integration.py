@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import json
+import uuid
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -14,7 +15,9 @@ import polars as pl
 
 pytest.importorskip("cudf_polars_quent")
 
+import cudf_polars.quent
 from cudf_polars.dsl.tracing import LOG_TRACES
+from cudf_polars.engine.spmd import SPMDEngine
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -53,8 +56,6 @@ def engine_with_quent_context(
         from rapidsmpf.communicator.single import new_communicator
         from rapidsmpf.config import Options, get_environment_variables
         from rapidsmpf.progress_thread import ProgressThread
-
-        from cudf_polars.engine.spmd import SPMDEngine
 
         comm = (
             bootstrap.create_ucxx_comm(
@@ -155,3 +156,30 @@ def test_multiple_collects_get_distinct_queries_and_plans(
         for event in _of_type(events, entity)
     ]
     assert len(memory_ids) == len(set(memory_ids))
+
+
+@pytest.mark.spmd
+def test_quent_context_user_provided(spmd_engine: SPMDEngine, tmp_path: Path) -> None:
+    quent_context = cudf_polars.quent.QuentContext(
+        engine_id=uuid.uuid4(),
+        implementation_name="test_implementation",
+        implementation_version="0.0.0",
+        query_group_name="test_query_group",
+        query_name="test_query",
+        output_root=str(tmp_path / "quent"),
+    )
+
+    with SPMDEngine(
+        comm=spmd_engine.comm, executor_options={"quent_context": quent_context}
+    ) as engine:
+        assert engine.config["executor_options"]["quent_context"] == quent_context
+        with pytest.raises(ValueError, match="quent_context cannot be changed"):
+            engine._reset(
+                executor_options={"quent_context": cudf_polars.quent.QuentContext()}
+            )
+
+
+@pytest.mark.spmd
+def test_quent_context_default(spmd_engine: SPMDEngine) -> None:
+    with SPMDEngine(comm=spmd_engine.comm) as engine:
+        assert engine.config["executor_options"].get("quent_context") is None

@@ -5,7 +5,6 @@
 from __future__ import annotations
 
 import os
-import uuid
 from itertools import pairwise
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -21,7 +20,6 @@ import rmm.mr
 from rapidsmpf.bootstrap import is_running_with_rrun
 from rapidsmpf.rmm_resource_adaptor import RmmResourceAdaptor
 
-import cudf_polars.quent
 from cudf_polars.engine.core import _find_memory_error, all_gather_host_data
 from cudf_polars.engine.hardware_binding import HardwareBindingPolicy
 from cudf_polars.engine.options import StreamingOptions
@@ -457,33 +455,6 @@ def test_reset_rejects_construction_time_engine_options(
             )
         with pytest.raises(ValueError, match="memory_resource_config"):
             engine._reset(engine_options={"memory_resource_config": None})
-
-
-def test_quent_context_user_provided(spmd_engine: SPMDEngine, tmp_path: Path) -> None:
-    # Ensure that the user-provided quent context is used if provided
-    pytest.importorskip("cudf_polars_quent")
-    quent_context = cudf_polars.quent.QuentContext(
-        engine_id=uuid.uuid4(),
-        implementation_name="test_implementation",
-        implementation_version="0.0.0",
-        query_group_name="test_query_group",
-        query_name="test_query",
-        output_root=str(tmp_path / "quent"),
-    )
-
-    with SPMDEngine(
-        comm=spmd_engine.comm, executor_options={"quent_context": quent_context}
-    ) as engine:
-        assert engine.config["executor_options"]["quent_context"] == quent_context
-        with pytest.raises(ValueError, match="quent_context cannot be changed"):
-            engine._reset(
-                executor_options={"quent_context": cudf_polars.quent.QuentContext()}
-            )
-
-
-def test_quent_context_default(spmd_engine: SPMDEngine) -> None:
-    with SPMDEngine(comm=spmd_engine.comm) as engine:
-        assert engine.config["executor_options"].get("quent_context") is None
 
 
 # Group keys probed with num_partitions=2, nranks=2, ROUND_ROBIN:

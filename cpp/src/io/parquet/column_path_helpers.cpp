@@ -66,8 +66,8 @@ std::string to_lower_ascii(std::string_view input)
 /**
  * @brief Lowercases a UTF-8 string using the `C.UTF-8` locale (simple per-codepoint mapping)
  *
- * Only ASCII characters are lowercased if the locale is unavailable or if the input is not valid
- * UTF-8. Output byte length may differ from input.
+ * Falls back to the classic locale if `C.UTF-8` is unavailable. Returns the input unchanged if it
+ * is not valid UTF-8. Output byte length may differ from input.
  *
  * @param input The string to lowercase
  * @return The lowercase string
@@ -97,7 +97,8 @@ std::string to_lower_utf8(std::string_view input)
   if (utf8.in(
         state, in_begin, in_end, in_next, wide.data(), wide.data() + wide.size(), wide_next) !=
       std::codecvt_base::ok) {
-    return to_lower_ascii(input);
+    CUDF_LOG_WARN("Encountered invalid UTF-8 in column name or path, returning input unchanged");
+    return std::string{input};
   }
   wide.resize(wide_next - wide.data());
 
@@ -118,8 +119,8 @@ std::string to_lower_utf8(std::string_view input)
                                out_begin + result.size(),
                                out_next);
   if (status != std::codecvt_base::ok) {
-    CUDF_LOG_WARN("Failed to convert UTF-8 string to lowercase, falling back to ASCII");
-    return to_lower_ascii(input);
+    CUDF_LOG_WARN("Failed to convert UTF-8 string to lowercase, returning input unchanged");
+    return std::string{input};
   }
   result.resize(out_next - out_begin);
   return result;
@@ -143,8 +144,7 @@ std::string column_path_from_index(std::span<SchemaElement const> schema_tree, i
 std::string normalize_column_path(std::string_view col_path, bool case_sensitive_names)
 {
   if (case_sensitive_names) { return std::string{col_path}; }
-  if (is_ascii(col_path)) { return to_lower_ascii(col_path); }
-  return to_lower_utf8(col_path);
+  return is_ascii(col_path) ? to_lower_ascii(col_path) : to_lower_utf8(col_path);
 }
 
 bool are_column_paths_equal(std::string_view lhs, std::string_view rhs, bool case_sensitive_names)

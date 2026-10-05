@@ -66,17 +66,16 @@ def _contains_categorical(dtype: PolarsDataType) -> bool:
     return False
 
 
-_CATEGORICAL_PHYSICAL_TO_TYPE_ID: dict[str, plc.TypeId] = {
-    "UInt8": plc.TypeId.UINT8,
-    "UInt16": plc.TypeId.UINT16,
-    "UInt32": plc.TypeId.UINT32,
+_CATEGORICAL_PHYSICAL_TO_TYPE_ID: dict[PolarsDataType, plc.TypeId] = {
+    pl.UInt8: plc.TypeId.UINT8,
+    pl.UInt16: plc.TypeId.UINT16,
+    pl.UInt32: plc.TypeId.UINT32,
 }
 
 
 def _categorical_physical_type_id(physical: PolarsDataType) -> plc.TypeId:
-    name = physical.__name__ if isinstance(physical, type) else type(physical).__name__
     try:
-        return _CATEGORICAL_PHYSICAL_TO_TYPE_ID[name]
+        return _CATEGORICAL_PHYSICAL_TO_TYPE_ID[physical]
     except KeyError as err:  # pragma: no cover
         raise NotImplementedError(
             f"Unsupported categorical physical type {physical!r}"
@@ -90,14 +89,11 @@ def _dtype_to_header(dtype: PolarsDataType) -> DataTypeHeader:
         return {"kind": "enum", "categories": dtype.categories.to_list()}
     if isinstance(dtype, pl.Categorical):
         cats = dtype.categories
-        physical = cats.physical()
         return {
             "kind": "categorical",
             "name": cats.name(),
             "namespace": cats.namespace(),
-            "physical": physical.__name__
-            if isinstance(physical, type)
-            else type(physical).__name__,
+            "physical": str(cats.physical()),
         }
     name = type(dtype).__name__
     if name in SCALAR_NAME_TO_POLARS_TYPE_MAP:
@@ -174,11 +170,11 @@ def _dtype_from_header(header: DataTypeHeader) -> pl.DataType:
             ]
         )
     if header["kind"] == "categorical":
-        if header["name"] == "":
-            return pl.Categorical()
         return pl.Categorical(
             pl.Categories(
-                header["name"], header["namespace"], getattr(pl, header["physical"])
+                header["name"],
+                header["namespace"],
+                SCALAR_NAME_TO_POLARS_TYPE_MAP[header["physical"]],
             )
         )
     if header["kind"] == "enum":

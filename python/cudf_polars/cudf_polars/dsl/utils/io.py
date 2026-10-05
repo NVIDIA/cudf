@@ -195,7 +195,7 @@ def prefetch_parquet_file_metadata_for_ir(
         elif isinstance(node, Scan) and node.typ == "parquet":  # pragma: no cover
             raise RuntimeError("Unexpected parquet 'Scan' node in lowered IR graph.")
 
-    cached_parquet_info: dict[str, CachedParquetInfo] = {}
+    cached_parquet_info_map: dict[str, CachedParquetInfo] = {}
     if stats is not None:
         for node, datasource_info in stats.scan_stats.items():
             if (
@@ -205,9 +205,9 @@ def prefetch_parquet_file_metadata_for_ir(
                 and datasource_info.cached_parquet_info is not None
             ):
                 for info in datasource_info.cached_parquet_info:
-                    cached_parquet_info[info.path] = info
+                    cached_parquet_info_map[info.path] = info
 
-    missing_paths = all_paths - set(cached_parquet_info.keys())
+    missing_paths = all_paths - set(cached_parquet_info_map.keys())
     if remote_only:
         missing_paths = {
             p for p in missing_paths if plc.io.SourceInfo._is_remote_uri(p)
@@ -234,8 +234,8 @@ def prefetch_parquet_file_metadata_for_ir(
 
         for future in concurrent.futures.as_completed(futures):
             for info in future.result():
-                cached_parquet_info[info.path] = info
-    return cached_parquet_info
+                cached_parquet_info_map[info.path] = info
+    return cached_parquet_info_map
 
 
 def attach_cached_parquet_metadata(

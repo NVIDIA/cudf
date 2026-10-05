@@ -116,6 +116,7 @@ _DECIMAL_AGGS = {
     "MIN",
     "NTH",
     "NUNIQUE",
+    "SIZE",
     "SUM",
 }
 

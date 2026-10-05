@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -450,10 +450,18 @@ TEST_F(ListOverlapTest, InputListsOfNestedStructsHaveNull)
 
   // Nulls are equal.
   {
-    auto const lhs = cudf::make_lists_column(
-      3, int32s_col{0, 8, 16, 24}.release(), get_structs_lhs().release(), 0, {});
-    auto const rhs = cudf::make_lists_column(
-      3, int32s_col{0, 8, 16, 24}.release(), get_structs_rhs().release(), 0, {});
+    auto const lhs =
+      cudf::make_lists_column(3,
+                              int32s_col{0, 8, 16, 24}.release(),
+                              get_structs_lhs().release(),
+                              0,
+                              cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
+    auto const rhs =
+      cudf::make_lists_column(3,
+                              int32s_col{0, 8, 16, 24}.release(),
+                              get_structs_rhs().release(),
+                              0,
+                              cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
     auto const expected = bools_col{1, 1, 1};
 
     auto const results = cudf::lists::have_overlap(lists_cv{*lhs}, lists_cv{*rhs}, NULL_EQUAL);
@@ -462,10 +470,18 @@ TEST_F(ListOverlapTest, InputListsOfNestedStructsHaveNull)
 
   // Nulls are unequal.
   {
-    auto const lhs = cudf::make_lists_column(
-      3, int32s_col{0, 8, 16, 24}.release(), get_structs_lhs().release(), 0, {});
-    auto const rhs = cudf::make_lists_column(
-      3, int32s_col{0, 8, 16, 24}.release(), get_structs_rhs().release(), 0, {});
+    auto const lhs =
+      cudf::make_lists_column(3,
+                              int32s_col{0, 8, 16, 24}.release(),
+                              get_structs_lhs().release(),
+                              0,
+                              cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
+    auto const rhs =
+      cudf::make_lists_column(3,
+                              int32s_col{0, 8, 16, 24}.release(),
+                              get_structs_rhs().release(),
+                              0,
+                              cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
     auto const expected = bools_col{0, 0, 0};
 
     auto const results = cudf::lists::have_overlap(lists_cv{*lhs}, lists_cv{*rhs}, NULL_UNEQUAL);
@@ -500,8 +516,11 @@ TEST_F(ListOverlapTest, InputListsOfStructsOfLists)
       return structs_col{{child1, child2}};
     };
 
-    return cudf::make_lists_column(
-      3, int32s_col{0, 3, 4, 7}.release(), get_structs().release(), 0, {});
+    return cudf::make_lists_column(3,
+                                   int32s_col{0, 3, 4, 7}.release(),
+                                   get_structs().release(),
+                                   0,
+                                   cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
   }();
 
   auto const rhs = [] {
@@ -529,8 +548,11 @@ TEST_F(ListOverlapTest, InputListsOfStructsOfLists)
       return structs_col{{child1, child2}};
     };
 
-    return cudf::make_lists_column(
-      3, int32s_col{0, 3, 4, 7}.release(), get_structs().release(), 0, {});
+    return cudf::make_lists_column(3,
+                                   int32s_col{0, 3, 4, 7}.release(),
+                                   get_structs().release(),
+                                   0,
+                                   cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
   }();
 
   auto const expected = bools_col{0, 1, 1};

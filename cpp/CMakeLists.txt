@@ -945,6 +945,9 @@ add_library(
   src/join/hash_join/full_join_retrieve.cu
   src/join/hash_join/full_join_size.cu
   src/join/hash_join/hash_join.cu
+  src/join/hash_join/hash_join_size.cu
+  src/join/hash_join/hash_join_retrieve.cu
+  src/join/hash_join/hash_csr_kernels.cu
   src/join/hash_join/inner_join_match_context.cpp
   src/join/hash_join/inner_join_retrieve.cu
   src/join/hash_join/inner_join_size.cu
@@ -1082,7 +1085,6 @@ add_library(
   src/sort/sort_column.cu
   src/sort/sort_radix.cu
   src/sort/sorted_order_radix.cu
-  src/sort/stable_sort_column.cu
   src/sort/stable_sort.cu
   src/sort/top_k.cu
   src/stream_compaction/apply_mask.cu

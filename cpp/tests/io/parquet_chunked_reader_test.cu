@@ -26,6 +26,7 @@
 #include <cudf/io/data_sink.hpp>
 #include <cudf/io/datasource.hpp>
 #include <cudf/io/parquet.hpp>
+#include <cudf/io/parquet_metadata.hpp>
 #include <cudf/io/parquet_schema.hpp>
 #include <cudf/strings/strings_column_view.hpp>
 #include <cudf/table/table.hpp>
@@ -42,6 +43,7 @@
 #include <fstream>
 #include <numeric>
 #include <optional>
+#include <random>
 #include <ranges>
 #include <type_traits>
 
@@ -72,7 +74,7 @@ auto write_file(std::vector<std::unique_ptr<cudf::column>>& input_columns,
       auto const [null_mask, null_count] =
         cudf::test::detail::make_null_mask(valid_iter + offset, valid_iter + col->size() + offset);
       col = cudf::structs::detail::superimpose_and_sanitize_nulls(
-        static_cast<cudf::bitmask_type const*>(null_mask.data()),
+        reinterpret_cast<cudf::bitmask_type const*>(null_mask.data()),
         null_count,
         std::move(col),
         cudf::get_default_stream(),
@@ -549,8 +551,11 @@ TEST_F(ParquetChunkedReaderTest, TestChunkedReadWithPlainListOfStringSpanningPag
 
   auto child_col   = strings_col(child_strings.begin(), child_strings.end()).release();
   auto offsets_col = int32s_col(offsets.begin(), offsets.end()).release();
-  auto list_col    = cudf::make_lists_column(
-    num_rows, std::move(offsets_col), std::move(child_col), 0, rmm::device_buffer{});
+  auto list_col    = cudf::make_lists_column(num_rows,
+                                          std::move(offsets_col),
+                                          std::move(child_col),
+                                          0,
+                                          cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
   std::vector<std::unique_ptr<cudf::column>> cols;
   cols.push_back(std::move(list_col));
@@ -1090,7 +1095,7 @@ TEST_F(ParquetChunkedReaderTest, TestChunkedReadWithListsOfStructs)
                               int32s_col(offsets.begin(), offsets.end()).release(),
                               make_structs_col(),
                               0,
-                              rmm::device_buffer{}));
+                              cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED)));
 
     return write_file(input_columns,
                       "chunked_read_with_lists_of_structs",
@@ -1347,6 +1352,55 @@ TEST_F(ParquetChunkedReaderInputLimitConstrainedTest, MixedColumns)
 
 struct ParquetChunkedReaderInputLimitTest : public cudf::test::BaseFixture {};
 
+TEST_F(ParquetChunkedReaderInputLimitTest, V2PagesWithLevels)
+{
+  tmp_env_var const nvcomp{nvcomp_policy_env_var, "ALWAYS"};
+  tmp_env_var const host_decomp{host_decomp_env_var, "OFF"};
+  constexpr cudf::size_type num_rows    = 20'000;
+  constexpr cudf::size_type page_rows   = 5'000;
+  constexpr cudf::size_type rows_per_rg = 10'000;
+  auto values = cudf::detail::make_counting_transform_iterator(0, [](auto i) { return i % 25; });
+  auto valid =
+    cudf::detail::make_counting_transform_iterator(0, [](auto i) { return i % 10 != 0; });
+  auto const mixed_valid = cudf::detail::make_counting_transform_iterator(0, [](auto i) {
+    auto const page = i / page_rows;
+    return (page % 2 == 1) && (i % 10 != 0);
+  });
+  int64s_col mixed(values, values + num_rows, mixed_valid);
+  int64s_col flat(values, values + num_rows, valid);
+  int64s_col all_null(values, values + num_rows, cuda::make_constant_iterator(false));
+  int32s_col child(values, values + 2 * num_rows, valid);
+  auto offsets = cudf::detail::make_counting_transform_iterator(0, [](auto i) { return 2 * i; });
+  int32s_col list_offsets(offsets, offsets + num_rows + 1);
+  auto const lists =
+    cudf::make_lists_column(num_rows,
+                            list_offsets.release(),
+                            child.release(),
+                            0,
+                            cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
+  auto const expected = cudf::table_view{{flat, all_null, mixed, lists->view()}};
+  auto const filepath = temp_env->get_temp_filepath("ScratchLevels.parquet");
+  auto const options =
+    cudf::io::parquet_writer_options::builder(cudf::io::sink_info{filepath}, expected)
+      .compression(cudf::io::compression_type::ZSTD)
+      .write_v2_headers(true)
+      // Per-page compression decisions: lets an all-null page in a ZSTD chunk stay uncompressed.
+      .page_level_compression(true)
+      .dictionary_policy(cudf::io::dictionary_policy::NEVER)
+      .max_page_size_rows(page_rows)
+      .max_page_fragment_size(page_rows)
+      .row_group_size_rows(rows_per_rg)
+      .build();
+  cudf::io::write_parquet(options);
+
+  auto const [result, num_chunks] = chunked_read(filepath, 0, 32'768);
+  CUDF_TEST_EXPECT_TABLES_EQUIVALENT(expected, result->view());
+  // With a 32 KiB input pass limit and two row groups of mixed-compression V2 pages, the reader
+  // must break the file into more than one limited pass; a single chunk would mean the pass
+  // limit was ignored (previously masked by the scratch-cost bug).
+  EXPECT_GT(num_chunks, 1);
+}
+
 TEST_F(ParquetChunkedReaderInputLimitTest, ProjectedColumnsReducePasses)
 {
   constexpr int num_columns        = 16;
@@ -1439,18 +1493,23 @@ TEST_F(ParquetChunkedReaderInputLimitTest, ListSpanningPagesAtPassEnd)
   auto const make_offsets = [&] { return int32s_col(offsets.begin(), offsets.end()).release(); };
 
   // array<string>
-  auto list_of_string = cudf::make_lists_column(num_rows,
-                                                make_offsets(),
-                                                strings_col(keys.begin(), keys.end()).release(),
-                                                0,
-                                                rmm::device_buffer{});
+  auto list_of_string =
+    cudf::make_lists_column(num_rows,
+                            make_offsets(),
+                            strings_col(keys.begin(), keys.end()).release(),
+                            0,
+                            cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
   // map<string, string>, modeled as list<struct<string, string>>
   std::vector<std::unique_ptr<cudf::column>> key_value;
   key_value.emplace_back(strings_col(keys.begin(), keys.end()).release());
   key_value.emplace_back(strings_col(values.begin(), values.end(), value_valid.begin()).release());
-  auto list_of_struct = cudf::make_lists_column(
-    num_rows, make_offsets(), structs_col{std::move(key_value)}.release(), 0, rmm::device_buffer{});
+  auto list_of_struct =
+    cudf::make_lists_column(num_rows,
+                            make_offsets(),
+                            structs_col{std::move(key_value)}.release(),
+                            0,
+                            cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
   std::vector<std::unique_ptr<cudf::column>> cols;
   cols.emplace_back(std::move(list_of_string));
@@ -1606,7 +1665,12 @@ void tiny_list_rowgroup_test(bool just_list_col)
     // write out the single-row list column as it's own file
     cudf::test::fixed_width_column_wrapper<int> values(iter, iter + row_sizes[idx]);
     cudf::test::fixed_width_column_wrapper<int> offsets({0, row_sizes[idx]});
-    cols.push_back(cudf::make_lists_column(1, offsets.release(), values.release(), 0, {}));
+    cols.push_back(
+      cudf::make_lists_column(1,
+                              offsets.release(),
+                              values.release(),
+                              0,
+                              cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED)));
 
     // add a column after the list
     if (!just_list_col) {
@@ -2549,8 +2613,12 @@ TEST_F(ParquetReaderTest, ManyLargeLists)
     stream.sync();
 
     // list<bool> column
-    auto list_col = cudf::make_lists_column(
-      num_rows, std::move(offsets_col), std::move(bools_col), 0, rmm::device_buffer{});
+    auto list_col =
+      cudf::make_lists_column(num_rows,
+                              std::move(offsets_col),
+                              std::move(bools_col),
+                              0,
+                              cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
     auto const table    = cudf::table_view({*list_col});
     auto const filepath = temp_env->get_temp_filepath("ManyLargeLists.parquet");

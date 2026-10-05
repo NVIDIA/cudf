@@ -11,6 +11,7 @@
 #include <cudf_test/iterator_utilities.hpp>
 
 #include <cudf/detail/utilities/vector_factories.hpp>
+#include <cudf/null_mask.hpp>
 #include <cudf/strings/contains.hpp>
 #include <cudf/strings/regex/regex_program.hpp>
 #include <cudf/strings/strings_column_view.hpp>
@@ -288,9 +289,13 @@ TEST_F(StringsContainsTests, HexTest)
   auto d_offsets = std::make_unique<cudf::column>(
     cudf::detail::make_device_uvector(
       offsets, cudf::get_default_stream(), cudf::get_current_device_resource_ref()),
-    rmm::device_buffer{},
+    cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
     0);
-  auto input = cudf::make_strings_column(count, std::move(d_offsets), d_chars.release(), 0, {});
+  auto input = cudf::make_strings_column(count,
+                                         std::move(d_offsets),
+                                         d_chars.release(),
+                                         0,
+                                         cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
   auto strings_view = cudf::strings_column_view(input->view());
   for (auto ch : ascii_chars) {
@@ -885,7 +890,7 @@ TEST_F(StringsContainsTests, DotAll)
 
 TEST_F(StringsContainsTests, ASCII)
 {
-  auto input = cudf::test::strings_column_wrapper({"abc \t\f\r 12", "áé 　❽❽", "aZ ❽4", "XYZ　8"});
+  auto input = cudf::test::strings_column_wrapper({"ab_c \t\f\r 12", "áé 　❽❽", "aZ ❽4", "XYZ　8"});
   auto view  = cudf::strings_column_view(input);
 
   std::array patterns = {R"(\w+[\s]+\d+)",
@@ -905,6 +910,38 @@ TEST_F(StringsContainsTests, ASCII)
     results           = cudf::strings::contains_re(view, *prog);
     CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(*results, expected_contains);
   }
+}
+
+TEST_F(StringsContainsTests, CountASCII)
+{
+  auto input =
+    cudf::test::strings_column_wrapper({"ab_c \t\f\r 12", "á_é 　❽❽", "aZ ❽4", "XYZ　8"});
+  auto view = cudf::strings_column_view(input);
+
+  auto prog     = cudf::strings::regex_program::create(R"(\w)", cudf::strings::regex_flags::ASCII);
+  auto results  = cudf::strings::count_re(view, *prog);
+  auto expected = cudf::test::fixed_width_column_wrapper<cudf::size_type>({6, 1, 3, 4});
+  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(*results, expected);
+  prog     = cudf::strings::regex_program::create(R"(\W)", cudf::strings::regex_flags::ASCII);
+  results  = cudf::strings::count_re(view, *prog);
+  expected = cudf::test::fixed_width_column_wrapper<cudf::size_type>({5, 6, 2, 1});
+  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(*results, expected);
+  prog     = cudf::strings::regex_program::create(R"(\d)", cudf::strings::regex_flags::ASCII);
+  results  = cudf::strings::count_re(view, *prog);
+  expected = cudf::test::fixed_width_column_wrapper<cudf::size_type>({2, 0, 1, 1});
+  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(*results, expected);
+  prog     = cudf::strings::regex_program::create(R"(\D)", cudf::strings::regex_flags::ASCII);
+  results  = cudf::strings::count_re(view, *prog);
+  expected = cudf::test::fixed_width_column_wrapper<cudf::size_type>({9, 7, 4, 4});
+  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(*results, expected);
+  prog     = cudf::strings::regex_program::create(R"(\s)", cudf::strings::regex_flags::ASCII);
+  results  = cudf::strings::count_re(view, *prog);
+  expected = cudf::test::fixed_width_column_wrapper<cudf::size_type>({5, 1, 1, 0});
+  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(*results, expected);
+  prog     = cudf::strings::regex_program::create(R"(\S)", cudf::strings::regex_flags::ASCII);
+  results  = cudf::strings::count_re(view, *prog);
+  expected = cudf::test::fixed_width_column_wrapper<cudf::size_type>({6, 6, 4, 5});
+  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(*results, expected);
 }
 
 TEST_F(StringsContainsTests, IgnoreCase)

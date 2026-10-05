@@ -461,6 +461,7 @@ def test_reset_rejects_construction_time_engine_options(
 
 def test_quent_context_user_provided(spmd_engine: SPMDEngine, tmp_path: Path) -> None:
     # Ensure that the user-provided quent context is used if provided
+    pytest.importorskip("cudf_polars_quent")
     quent_context = cudf_polars.quent.QuentContext(
         engine_id=uuid.uuid4(),
         implementation_name="test_implementation",

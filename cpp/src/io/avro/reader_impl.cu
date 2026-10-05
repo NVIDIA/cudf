@@ -317,7 +317,8 @@ cuda::device_buffer<std::uint8_t> decompress_data(
                decomp_results,
                max_decomp_block_size,
                uncompressed_data_size,
-               stream);
+               stream,
+               cudf::get_current_device_resource_ref());
     CUDF_EXPECTS(thrust::equal(
                    rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                    uncompressed_sizes.d_begin(),

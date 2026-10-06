@@ -1,7 +1,13 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Unit tests for Quent context state."""
+"""
+Unit tests for Quent context state.
+
+In general, integration tests are preferred for Quent testing. But these unit
+test cover areas that are relatively difficult to trigger through normal
+execution.
+"""
 
 from __future__ import annotations
 

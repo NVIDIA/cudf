@@ -48,6 +48,7 @@ from cudf_polars.utils.config import (
     resolve_kvikio_reactor_dispatch,
     resolve_kvikio_remote_io_backend,
     resolve_kvikio_task_size,
+    resolve_quent_context,
 )
 from cudf_polars.utils.cuda_stream import get_cuda_stream
 
@@ -623,6 +624,14 @@ def test_quent_context_from_env_disabled(monkeypatch: pytest.MonkeyPatch) -> Non
         engine = pl.GPUEngine()
         config = ConfigOptions.from_polars_engine(engine)
         assert config.executor.quent_context is None
+
+
+def test_resolve_quent_context_preserves_explicit_none(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("CUDF_POLARS__EXECUTOR__QUENT_CONTEXT", "1")
+    assert resolve_quent_context({}) is not None
+    assert resolve_quent_context({"quent_context": None}) is None
 
 
 def test_quent_output_root_from_env(

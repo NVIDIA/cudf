@@ -36,10 +36,6 @@
 #include <cuda/std/type_traits>
 #include <cuda/std/utility>
 #include <cuda/stream>
-#include <thrust/detail/use_default.h>
-#include <thrust/iterator/iterator_adaptor.h>
-#include <thrust/iterator/iterator_categories.h>
-#include <thrust/iterator/iterator_facade.h>
 
 #include <memory>
 #include <type_traits>

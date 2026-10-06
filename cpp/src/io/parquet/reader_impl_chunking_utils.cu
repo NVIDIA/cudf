@@ -30,7 +30,6 @@
 #include <cuda/std/utility>
 #include <thrust/binary_search.h>
 #include <thrust/sequence.h>
-#include <thrust/transform_scan.h>
 #include <thrust/unique.h>
 
 #include <algorithm>

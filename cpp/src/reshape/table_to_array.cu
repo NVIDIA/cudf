@@ -22,7 +22,6 @@
 #include <cuda/iterator>
 #include <cuda/stream>
 #include <cuda_runtime.h>
-#include <thrust/device_vector.h>
 
 namespace cudf {
 namespace detail {

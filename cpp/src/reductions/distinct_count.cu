@@ -24,8 +24,6 @@
 #include <cuco/static_set.cuh>
 #include <cuda/iterator>
 #include <cuda/stream>
-#include <thrust/count.h>
-#include <thrust/execution_policy.h>
 #include <thrust/logical.h>
 
 #include <cmath>

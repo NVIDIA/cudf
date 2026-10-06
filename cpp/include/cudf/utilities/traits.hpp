@@ -25,10 +25,6 @@ namespace CUDF_EXPORT cudf {
  * @{
  */
 
-/// Utility metafunction that maps a sequence of any types to the type void.
-template <typename...>
-using void_t = void;
-
 /**
  * @brief Convenience macro for SFINAE as an unnamed template parameter.
  *
@@ -55,38 +51,27 @@ template <typename L, typename R>
 using equality_comparable = decltype(cuda::std::declval<L>() == cuda::std::declval<R>());
 
 namespace detail {
-template <typename L, typename R, typename = void>
-struct is_relationally_comparable_impl : cuda::std::false_type {};
-
 template <typename L, typename R>
-struct is_relationally_comparable_impl<L,
-                                       R,
-                                       void_t<less_comparable<L, R>, greater_comparable<L, R>>>
-  : cuda::std::true_type {};
-
-template <typename L, typename R, typename = void>
-struct is_equality_comparable_impl : cuda::std::false_type {};
-
-template <typename L, typename R>
-struct is_equality_comparable_impl<L, R, void_t<equality_comparable<L, R>>> : cuda::std::true_type {
+constexpr inline bool is_relationally_comparable_impl = requires {
+  typename less_comparable<L, R>;
+  typename greater_comparable<L, R>;
 };
 
-// has common type
-template <typename AlwaysVoid, typename... Ts>
-struct has_common_type_impl : cuda::std::false_type {};
+template <typename L, typename R>
+constexpr inline bool is_equality_comparable_impl =
+  requires { typename equality_comparable<L, R>; };
 
 template <typename... Ts>
-struct has_common_type_impl<void_t<cuda::std::common_type_t<Ts...>>, Ts...> : cuda::std::true_type {
-};
+constexpr inline bool has_common_type_impl = requires { typename cuda::std::common_type_t<Ts...>; };
 }  // namespace detail
 
 /// Checks if types have a common type
 template <typename... Ts>
-using has_common_type = typename detail::has_common_type_impl<void, Ts...>::type;
+using has_common_type = cuda::std::bool_constant<detail::has_common_type_impl<Ts...>>;
 
 /// Helper variable template for has_common_type<>::value
 template <typename... Ts>
-constexpr inline bool has_common_type_v = detail::has_common_type_impl<void, Ts...>::value;
+constexpr inline bool has_common_type_v = detail::has_common_type_impl<Ts...>;
 
 /// Checks if a type is a timestamp type.
 template <typename T>
@@ -125,7 +110,7 @@ using is_duration_t =
 template <typename L, typename R>
 constexpr inline bool is_relationally_comparable()
 {
-  return detail::is_relationally_comparable_impl<L, R>::value;
+  return detail::is_relationally_comparable_impl<L, R>;
 }
 
 /**
@@ -152,7 +137,7 @@ bool is_relationally_comparable(data_type type);
 template <typename L, typename R>
 constexpr inline bool is_equality_comparable()
 {
-  return detail::is_equality_comparable_impl<L, R>::value;
+  return detail::is_equality_comparable_impl<L, R>;
 }
 
 /**

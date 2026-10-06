@@ -25,10 +25,7 @@ from cudf_polars.containers import DataType
 from cudf_polars.dsl.expr import Col, NamedExpr
 from cudf_polars.dsl.ir import IR, Distinct, GroupBy, Select
 from cudf_polars.dsl.utils.naming import names_to_indices, unique_names
-from cudf_polars.streaming.actor_graph.collectives.ordering import (
-    _partition_range,
-    adjust_ordering,
-)
+from cudf_polars.streaming.actor_graph.collectives.ordering import adjust_ordering
 from cudf_polars.streaming.actor_graph.collectives.shuffle import ShuffleManager
 from cudf_polars.streaming.actor_graph.dispatch import (
     generate_ir_sub_network,
@@ -57,6 +54,7 @@ from cudf_polars.streaming.actor_graph.utils import (
 )
 from cudf_polars.streaming.groupby import _has_stable_sorted_agg, combine, decompose
 from cudf_polars.streaming.repartition import Repartition
+from cudf_polars.streaming.utils import partition_range
 
 if TYPE_CHECKING:
     from cudf_streaming.channel_metadata import Ordering
@@ -705,7 +703,7 @@ def _maintain_order(ir: GroupBy | Distinct) -> bool:
 
 def _partition_count_for_rank(rank: int, nranks: int, npartitions: int) -> int:
     """Return the contiguous output-partition count owned by one rank."""
-    start, stop = _partition_range(rank, nranks, npartitions)
+    start, stop = partition_range(rank, nranks, npartitions)
     return stop - start
 
 

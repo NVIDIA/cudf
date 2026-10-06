@@ -5,6 +5,7 @@
 
 #pragma once
 
+#include <cudf/column/column.hpp>
 #include <cudf/table/table_device_view.cuh>
 
 #include <rmm/device_uvector.hpp>

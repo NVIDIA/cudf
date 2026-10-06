@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from __future__ import annotations
@@ -34,18 +34,24 @@ class CharacterNormalizer:
             do_lower, special_tokens._column.plc_column
         )
 
-    def normalize(self, text: Series) -> Series:
+    def normalize(self, text: Series, flags: int | None = None) -> Series:
         """
         Parameters
         ----------
         text : cudf.Series
             The strings to be normalized.
+        flags : int, optional
+            Bitmask of ``pylibcudf.nvtext.normalize.NormalizeFlags`` values.
+            Default is ``NormalizeFlags.PAD_PUNCTUATION``.
 
         Returns
         -------
         cudf.Series
             Normalized strings
         """
-        result = text._column.normalize_characters(self.normalizer)
+        NormalizeFlags = plc.nvtext.normalize.NormalizeFlags
+        if flags is None:
+            flags = int(NormalizeFlags.PAD_PUNCTUATION)
+        result = text._column.normalize_characters(self.normalizer, flags)
 
         return Series._from_column(result)

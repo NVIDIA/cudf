@@ -1709,6 +1709,56 @@ TEST_F(ParquetReaderTest, DeltaLengthByteArrayLargeMiniBlockSkipRows)
     build_delta_length_byte_array_parquet(s96, 384, 4), s96, 40, 60);
 }
 
+TEST_F(ParquetReaderTest, DeltaLengthByteArrayBlockBoundary)
+{
+  // This test validates that delta binary decoding properly finds the end of the block in the edge
+  // cases where the end is located from either 1) a full block or 2) a block holding exactly one
+  // delta. The stream holds n-1 deltas, so with a block size of 128 a stream of size 129 has
+  // exactly one full block, a stream of size 130 has the one final delta with empty trailing mini
+  // blocks, and a stream of size 257 has two full blocks.
+  for (auto const n : {129, 130, 257}) {
+    SCOPED_TRACE("n = " + std::to_string(n));
+    auto const strings = delta_test_strings(n, false);
+    auto const file    = build_delta_length_byte_array_parquet(strings, 128, 4);
+    delta_large_mini_block_string_read_test(file, strings);
+    // A trimmed read makes this a bounds page, where the string output is sized from the
+    // delta-decoded lengths rather than read straight through.
+    delta_large_mini_block_string_read_test(file, strings, 40, 50);
+  }
+}
+
+TEST_F(ParquetReaderTest, DeltaLengthByteArrayTwoMiniBlocks)
+{
+  // Validates a mini_block_count of 2, which libcudf itself never produces and therefore goes
+  // largely untested without this explicit construction in the test.
+  auto const strings = delta_test_strings(333, false);
+  auto const file    = build_delta_length_byte_array_parquet(strings, 256, 2);
+  delta_large_mini_block_string_read_test(file, strings);
+  delta_large_mini_block_string_read_test(file, strings, 100, 150);
+}
+
+TEST_F(ParquetReaderTest, DeltaLengthByteArrayLargeBlockSize)
+{
+  // Validate the behavior for a combination of large mini block sizes _and_ a filled block followed
+  // by a subsequent partial subblock. This test should suss out if our miniblock to miniblock
+  // transition handling is correct and plays nicely with our block to block transition handling.
+  auto const strings = delta_test_strings(600, false);
+  auto const file    = build_delta_length_byte_array_parquet(strings, 512, 4);
+  delta_large_mini_block_string_read_test(file, strings);
+  delta_large_mini_block_string_read_test(file, strings, 200, 300);
+}
+
+TEST_F(ParquetReaderTest, DeltaLengthByteArrayOddPassCountFullBlock)
+{
+  // A block whose mini-blocks each take an odd number of warp-size passes (96 values -> 3 passes),
+  // filled exactly to capacity to test the sequence running to the end of the block, where the last
+  // mini-block's final pass coincides with the end of the delta stream.
+  auto const strings = delta_test_strings(385, false);
+  auto const file    = build_delta_length_byte_array_parquet(strings, 384, 4);
+  delta_large_mini_block_string_read_test(file, strings);
+  delta_large_mini_block_string_read_test(file, strings, 130, 200);
+}
+
 TEST_F(ParquetReaderTest, DeltaBinaryListMiniBlock64)
 {
   // LIST<INT64> with 64 values/mini-block. The leading-skip read resumes the delta decoder
@@ -3207,7 +3257,7 @@ TEST_F(ParquetReaderTest, FilterErrors)
     auto expr        = cudf::ast::operation(cudf::ast::ast_operator::LESS, filter_col1, low_lot);
 
     auto builder = cudf::io::parquet_reader_options::builder(si).filter(expr);
-    EXPECT_THROW(cudf::io::read_parquet(builder), cudf::logic_error);
+    EXPECT_THROW(cudf::io::read_parquet(builder), std::out_of_range);
   }
 
   // Filtering AST - invalid column name
@@ -3878,6 +3928,60 @@ TEST_F(ParquetReaderTest, DeltaByteArraySkipAllValid)
   auto result = cudf::io::read_parquet(in_opts);
   CUDF_TEST_EXPECT_TABLES_EQUAL(cudf::slice(expected, {num_valid + 1, num_rows}),
                                 result.tbl->view());
+}
+
+TEST_F(ParquetReaderTest, DeltaByteArrayAllNull)
+{
+  // An all-null DELTA_BYTE_ARRAY column: the delta stream is empty while the page still carries a
+  // full run of definition levels, so every output position is a null the decoder has to fill
+  // without consuming a value. Nothing else covers this -- DeltaSkipRowsWithNulls and
+  // DeltaByteArraySkipAllValid both keep some values valid. 50% is included as an ordinary case to
+  // check the all-null result is not an artefact of the fixture.
+  //
+  // Each is read twice: in full, and as a row range, the latter putting the pages on the
+  // bounds-page path where skip_rows interacts with delta's prefix/suffix reconstruction (skipped
+  // values still have to be decoded to carry the prefix seed forward).
+  constexpr int num_rows = 40000;
+
+  for (int null_percent : {50, 100}) {
+    SCOPED_TRACE("null_percent = " + std::to_string(null_percent));
+    auto const strings = cudf::detail::make_counting_transform_iterator(
+      0, [](auto i) { return "string_value_" + std::to_string(i); });
+    // Deterministic, and spread evenly so every page sees the same null density.
+    auto const valids = cudf::detail::make_counting_transform_iterator(
+      0, [null_percent](auto i) { return (i % 100) >= null_percent; });
+
+    auto const col      = cudf::test::strings_column_wrapper{strings, strings + num_rows, valids};
+    auto const expected = table_view({col});
+
+    auto input_metadata = cudf::io::table_input_metadata{expected};
+    input_metadata.column_metadata[0].set_encoding(cudf::io::column_encoding::DELTA_BYTE_ARRAY);
+
+    std::vector<char> buffer;
+    cudf::io::write_parquet(
+      cudf::io::parquet_writer_options::builder(cudf::io::sink_info{&buffer}, expected)
+        .write_v2_headers(true)
+        .metadata(input_metadata)
+        .dictionary_policy(cudf::io::dictionary_policy::NEVER)
+        .build());
+
+    auto const result =
+      cudf::io::read_parquet(cudf::io::parquet_reader_options::builder(
+                               cudf::io::source_info{cudf::host_span<std::byte const>{
+                                 reinterpret_cast<std::byte const*>(buffer.data()), buffer.size()}})
+                               .build());
+    CUDF_TEST_EXPECT_TABLES_EQUAL(expected, result.tbl->view());
+
+    auto const trimmed =
+      cudf::io::read_parquet(cudf::io::parquet_reader_options::builder(
+                               cudf::io::source_info{cudf::host_span<std::byte const>{
+                                 reinterpret_cast<std::byte const*>(buffer.data()), buffer.size()}})
+                               .skip_rows(1234)
+                               .num_rows(5678)
+                               .build());
+    SCOPED_TRACE("row-range read");
+    CUDF_TEST_EXPECT_TABLES_EQUAL(cudf::slice(expected, {1234, 1234 + 5678}), trimmed.tbl->view());
+  }
 }
 
 namespace {

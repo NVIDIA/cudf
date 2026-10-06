@@ -12,8 +12,8 @@
 #include <cudf/column/column_factories.hpp>
 #include <cudf/column/column_view.hpp>
 #include <cudf/detail/row_operator/lexicographic.cuh>
+#include <cudf/detail/row_operator/primitive_common.cuh>
 #include <cudf/detail/row_operator/primitive_lexicographic.cuh>
-#include <cudf/detail/row_operator/primitive_row_operators.cuh>
 #include <cudf/table/table_view.hpp>
 #include <cudf/types.hpp>
 #include <cudf/utilities/error.hpp>

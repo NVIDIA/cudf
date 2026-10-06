@@ -1463,9 +1463,9 @@ endif()
 # against any of these libraries ever adding a rapids_logger / rmm hidden dependency
 target_link_libraries(
   cudf
-  PUBLIC CCCL::CCCL $<BUILD_LOCAL_INTERFACE:BS::thread_pool>
+  PUBLIC CCCL::CCCL rtcx::rtcx $<BUILD_LOCAL_INTERFACE:BS::thread_pool>
   PRIVATE $<BUILD_LOCAL_INTERFACE:nvtx3::nvtx3-cpp> $<BUILD_LOCAL_INTERFACE:cuco::cuco> ZLIB::ZLIB
-          kvikio::kvikio ${CUDF_nanoarrow_TARGET} zstd $<BUILD_LOCAL_INTERFACE:xxhash> rtcx::rtcx
+          kvikio::kvikio ${CUDF_nanoarrow_TARGET} zstd $<BUILD_LOCAL_INTERFACE:xxhash>
 )
 
 if(NOT _absorbed_nvcomp)

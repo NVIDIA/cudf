@@ -14,6 +14,8 @@ function(find_and_configure_rtcx VERSION)
   rapids_cpm_find(
     rtcx ${VERSION}
     GLOBAL_TARGETS rtcx::rtcx
+    BUILD_EXPORT_SET cudf-exports
+    INSTALL_EXPORT_SET cudf-exports
     CPM_ARGS
     GIT_REPOSITORY https://github.com/rapidsai/librtcx.git
     GIT_TAG da8150f0a83e22953e598844dbebff6791681de7

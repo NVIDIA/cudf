@@ -11,6 +11,7 @@
 #include <cudf/detail/null_mask.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/transform.hpp>
+#include <cudf/detail/transform/program_info.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/detail/valid_if.cuh>
 #include <cudf/errc.hpp>
@@ -39,7 +40,30 @@
 #include <variant>
 
 namespace cudf {
+
+struct transform_program_info::impl : detail::transform_program_metadata {};
+
+transform_program_info::transform_program_info() noexcept                         = default;
+transform_program_info::~transform_program_info()                                 = default;
+transform_program_info::transform_program_info(transform_program_info&&) noexcept = default;
+transform_program_info& transform_program_info::operator=(transform_program_info&&) noexcept =
+  default;
+
+transform_program_info::view_type transform_program_info::view() const noexcept
+{
+  return impl_.get();
+}
+
+transform_program_info transform_program_info::from_metadata(
+  detail::transform_program_metadata metadata)
+{
+  transform_program_info result;
+  result.impl_ = std::make_unique<impl>(impl{std::move(metadata)});
+  return result;
+}
+
 namespace {
+using transform_executable = std::variant<kernel, rtcx::kernel_ref>;
 
 column_view as_column_view(scalar_column_view const& scalar) { return scalar.as_column_view(); }
 
@@ -193,7 +217,7 @@ kernel instantiate(bool is_null_aware,
   return jit::get_udf_kernel("cudf/cpp/src/transform/jit/kernel.cu", kernel, cuda_source);
 }
 
-void launch(cudf::kernel const& kernel,
+void launch(rtcx::kernel_ref const& kernel,
             size_type row_size,
             bitmask_type const* stencil,
             void* user_data,
@@ -208,7 +232,29 @@ void launch(cudf::kernel const& kernel,
   CUDF_EXPECTS(cfg.block_size % cudf::detail::warp_size == 0,
                "Expected block size to be a multiple of warp size",
                std::runtime_error);
-  kernel.launch({cfg.min_grid_size}, {cfg.block_size}, 0, stream, args);
+  kernel.launch({cfg.min_grid_size}, {cfg.block_size}, 0, stream.get(), args);
+}
+
+void launch(transform_executable const& executable,
+            size_type row_size,
+            bitmask_type const* stencil,
+            void* user_data,
+            column_device_view_core const* input_cols,
+            mutable_column_device_view_core const* output_cols,
+            int32_t* max_error,
+            cuda::stream_ref stream)
+{
+  auto kernel = std::visit(
+    [](auto const& value) {
+      if constexpr (std::is_same_v<std::decay_t<decltype(value)>, rtcx::kernel_ref>) {
+        rtcx::initialize();
+        return value;
+      } else {
+        return value.get();
+      }
+    },
+    executable);
+  launch(kernel, row_size, stencil, user_data, input_cols, output_cols, max_error, stream);
 }
 
 std::string get_element_type_name(transform_input_spec const& spec, bool use_physical_type);
@@ -548,24 +594,6 @@ auto to_args(std::span<input_column_view const> inputs,
 
 kernel get_kernel(bool is_null_aware,
                   bool has_user_data,
-                  std::span<input_column_view const> inputs,
-                  std::span<output_column const> outputs,
-                  std::string const& udf,
-                  udf_source_type source_type)
-{
-  auto [in_types, out_types, ptx_in_types, ptx_out_types] = reflect(source_type, inputs, outputs);
-  return instantiate(is_null_aware,
-                     has_user_data,
-                     in_types,
-                     out_types,
-                     ptx_in_types,
-                     ptx_out_types,
-                     udf,
-                     source_type);
-}
-
-kernel get_kernel(bool is_null_aware,
-                  bool has_user_data,
                   std::span<transform_input_spec const> inputs,
                   std::span<transform_output_spec const> outputs,
                   std::string const& udf,
@@ -582,29 +610,24 @@ kernel get_kernel(bool is_null_aware,
                      source_type);
 }
 
-void run(bool is_null_aware,
-         bool has_user_data,
-         size_type row_size,
-         bitmask_type const* d_stencil,
-         void* user_data,
-         std::span<input_column_view const> inputs,
-         std::span<output_column> outputs,
-         int32_t* d_max_error,
-         std::string const& udf,
-         udf_source_type source_type,
-         cuda::stream_ref stream,
-         rmm::device_async_resource_ref mr)
+rtcx::kernel_ref select_kernel(bool is_null_aware,
+                               bool has_user_data,
+                               std::span<transform_input_spec const> inputs,
+                               std::span<transform_output_spec const> outputs,
+                               std::span<transform_program_info::view_type const> kernels,
+                               std::string_view tag)
 {
-  auto kernel = get_kernel(is_null_aware, has_user_data, inputs, outputs, udf, source_type);
-  auto [cols, handles] = to_args(inputs, outputs, stream, mr);
-  auto* input_cols     = reinterpret_cast<column_device_view_core const*>(cols.data());
-  auto* output_cols =
-    reinterpret_cast<mutable_column_device_view_core const*>(input_cols + inputs.size());
-  return launch(
-    kernel, row_size, d_stencil, user_data, input_cols, output_cols, d_max_error, stream);
+  for (auto const& candidate : kernels) {
+    if (candidate != nullptr && candidate->tag == tag &&
+        detail::matches_transform_program(
+          *candidate, is_null_aware, has_user_data, inputs, outputs)) {
+      return candidate->kernel;
+    }
+  }
+  CUDF_FAIL("No matching precompiled transform kernel found", std::invalid_argument);
 }
 
-void run(kernel const& kernel,
+void run(transform_executable const& kernel,
          size_type row_size,
          bitmask_type const* d_stencil,
          void* user_data,
@@ -684,7 +707,7 @@ void run_lto(std::optional<std::tuple<std::span<uint8_t const>, lto_binary_type,
   auto* output_cols =
     reinterpret_cast<mutable_column_device_view_core const*>(input_cols + inputs.size());
   return launch(
-    kernel, row_size, d_stencil, user_data, input_cols, output_cols, d_max_error, stream);
+    kernel.get(), row_size, d_stencil, user_data, input_cols, output_cols, d_max_error, stream);
 }
 
 }  // namespace jit_transform
@@ -1151,7 +1174,7 @@ std::unique_ptr<table> execute_transform(std::string const& udf,
                                          std::span<transform_input const> inputs,
                                          std::span<transform_output const> outputs,
                                          std::vector<std::unique_ptr<column>> string_offsets,
-                                         kernel const* compiled_kernel,
+                                         transform_executable const* compiled_kernel,
                                          cuda::stream_ref stream,
                                          rmm::device_async_resource_ref mr)
 {
@@ -1172,30 +1195,25 @@ std::unique_ptr<table> execute_transform(std::string const& udf,
   cudf::detail::device_scalar<int32_t> d_max_error(
     static_cast<int32_t>(errc::SUCCESS), stream, cudf::get_current_device_resource_ref());
 
+  std::optional<transform_executable> resolved_kernel;
   if (compiled_kernel == nullptr) {
-    jit_transform::run(is_null_aware == null_aware::YES,
-                       user_data.has_value(),
-                       row_size,
-                       stencil_has_nulls ? stencil_arg : nullptr,
-                       user_data.value_or(nullptr),
-                       inputs,
-                       output_columns,
-                       d_max_error.data(),
-                       udf,
-                       source_type,
-                       stream,
-                       mr);
-  } else {
-    jit_transform::run(*compiled_kernel,
-                       row_size,
-                       stencil_has_nulls ? stencil_arg : nullptr,
-                       user_data.value_or(nullptr),
-                       inputs,
-                       output_columns,
-                       d_max_error.data(),
-                       stream,
-                       mr);
+    resolved_kernel = jit_transform::get_kernel(is_null_aware == null_aware::YES,
+                                                user_data.has_value(),
+                                                jit_transform::make_input_specs(inputs),
+                                                jit_transform::make_output_specs(output_columns),
+                                                udf,
+                                                source_type);
+    compiled_kernel = &*resolved_kernel;
   }
+  jit_transform::run(*compiled_kernel,
+                     row_size,
+                     stencil_has_nulls ? stencil_arg : nullptr,
+                     user_data.value_or(nullptr),
+                     inputs,
+                     output_columns,
+                     d_max_error.data(),
+                     stream,
+                     mr);
 
   auto error = static_cast<errc>(d_max_error.value(stream));
 
@@ -1234,6 +1252,40 @@ std::unique_ptr<table> transform(std::string const& udf,
                            outputs,
                            std::move(string_offsets),
                            nullptr,
+                           stream,
+                           mr);
+}
+
+std::unique_ptr<table> transform_precompiled(
+  std::span<transform_program_info::view_type const> kernels,
+  null_aware is_null_aware,
+  std::optional<void*> user_data,
+  std::span<transform_input const> inputs,
+  std::span<transform_output const> outputs,
+  std::vector<std::unique_ptr<column>>&& string_offsets,
+  std::optional<size_type> row_size,
+  std::string_view tag,
+  cuda::stream_ref stream,
+  rmm::device_async_resource_ref mr)
+{
+  CUDF_FUNC_RANGE();
+  perform_checks(udf_source_type::CUDA, is_null_aware, row_size, inputs, outputs, string_offsets);
+  transform_executable executable =
+    jit_transform::select_kernel(is_null_aware == null_aware::YES,
+                                 user_data.has_value(),
+                                 jit_transform::make_input_specs(inputs),
+                                 jit_transform::make_output_specs(outputs, string_offsets),
+                                 kernels,
+                                 tag);
+  return execute_transform({},
+                           udf_source_type::CUDA,
+                           is_null_aware,
+                           row_size,
+                           user_data,
+                           inputs,
+                           outputs,
+                           std::move(string_offsets),
+                           &executable,
                            stream,
                            mr);
 }
@@ -1460,12 +1512,27 @@ struct transform_program::impl {
   {
   }
 
+  impl(std::span<transform_program_info::view_type const> kernels,
+       null_aware is_null_aware,
+       std::optional<void*> user_data,
+       std::vector<transform_input_spec> inputs,
+       std::vector<transform_output_spec> outputs,
+       std::string_view tag)
+    : reflection_{jit_transform::reflect(udf_source_type::CUDA, inputs, outputs)},
+      source_type_{udf_source_type::CUDA},
+      is_null_aware_{is_null_aware},
+      user_data_{user_data},
+      kernel_{jit_transform::select_kernel(
+        is_null_aware == null_aware::YES, user_data.has_value(), inputs, outputs, kernels, tag)}
+  {
+  }
+
   std::tuple<std::string, std::string, std::vector<std::string>, std::vector<std::string>>
     reflection_;
   udf_source_type source_type_;
   null_aware is_null_aware_;
   std::optional<void*> user_data_;
-  kernel kernel_;
+  transform_executable kernel_;
   std::vector<std::unique_ptr<column>> ast_scalar_columns_;
   std::optional<std::vector<std::optional<int32_t>>> ast_input_column_indices_;
   std::vector<data_type> ast_input_types_;
@@ -1504,6 +1571,38 @@ transform_program::transform_program(std::string const& udf,
                            user_data,
                            std::vector<transform_input_spec>{inputs.begin(), inputs.end()},
                            std::vector<transform_output_spec>{outputs.begin(), outputs.end()});
+}
+
+transform_program::transform_program(std::span<transform_program_info::view_type const> kernels,
+                                     null_aware is_null_aware,
+                                     std::optional<void*> user_data,
+                                     std::span<transform_input const> inputs,
+                                     std::span<transform_output const> outputs,
+                                     std::span<std::unique_ptr<column> const> string_offsets,
+                                     std::string_view tag)
+  : transform_program(kernels,
+                      is_null_aware,
+                      user_data,
+                      jit_transform::make_input_specs(inputs),
+                      jit_transform::make_output_specs(outputs, string_offsets),
+                      tag)
+{
+}
+
+transform_program::transform_program(std::span<transform_program_info::view_type const> kernels,
+                                     null_aware is_null_aware,
+                                     std::optional<void*> user_data,
+                                     std::span<transform_input_spec const> inputs,
+                                     std::span<transform_output_spec const> outputs,
+                                     std::string_view tag)
+{
+  CUDF_FUNC_RANGE();
+  impl_ = std::make_unique<impl>(kernels,
+                                 is_null_aware,
+                                 user_data,
+                                 std::vector<transform_input_spec>{inputs.begin(), inputs.end()},
+                                 std::vector<transform_output_spec>{outputs.begin(), outputs.end()},
+                                 tag);
 }
 
 transform_program::transform_program(

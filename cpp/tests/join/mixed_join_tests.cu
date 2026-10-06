@@ -15,9 +15,11 @@
 #include <cudf/join/join.hpp>
 #include <cudf/join/mixed_join.hpp>
 #include <cudf/table/table_view.hpp>
+#include <cudf/transform.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
+#include <rmm/cuda_stream.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <thrust/device_vector.h>
@@ -26,15 +28,30 @@
 #include <thrust/sort.h>
 
 #include <algorithm>
+#include <array>
 #include <numeric>
 #include <random>
 #include <sstream>
 #include <stdexcept>
+#include <string>
+#include <string_view>
 #include <tuple>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
 namespace {
+
+template <typename Info, std::size_t N>
+auto program_views(std::array<Info, N> const& owners)
+{
+  std::array<typename Info::view_type, N> views{};
+  for (std::size_t i = 0; i < N; ++i) {
+    views[i] = owners[i].view();
+  }
+  return views;
+}
+
 using PairJoinReturn   = std::pair<std::unique_ptr<rmm::device_uvector<cudf::size_type>>,
                                    std::unique_ptr<rmm::device_uvector<cudf::size_type>>>;
 using SingleJoinReturn = std::unique_ptr<rmm::device_uvector<cudf::size_type>>;
@@ -2050,6 +2067,37 @@ TYPED_TEST(MixedLeftAntiJoinTest, MixedLeftAntiJoinGatherMap)
              {0, 1, 3, 4, 5, 6, 9});
 }
 
+template <typename T = int32_t, bool Nullable = false, typename Output = bool>
+struct precompiled_greater {
+  using Inputs                    = cudf::type_list<T, T>;
+  using Outputs                   = cudf::type_list<Output>;
+  static constexpr bool NullAware = Nullable;
+  static constexpr bool UserData  = false;
+  struct Function {
+    __device__ void operator()(auto* out, auto left, auto right) const
+    {
+      if constexpr (Nullable) {
+        *out = left.has_value() && right.has_value() ? cuda::std::optional<Output>{*left > *right}
+                                                     : cuda::std::nullopt;
+      } else {
+        *out = left > right;
+      }
+    }
+  };
+};
+
+struct precompiled_filter_return_value : precompiled_greater<int32_t, true> {
+  struct Function {
+    __device__ cudf::errc operator()(cuda::std::optional<bool>* out,
+                                     cuda::std::optional<int32_t>,
+                                     cuda::std::optional<int32_t>) const
+    {
+      *out = true;
+      return cudf::errc::DIVISION_BY_ZERO;
+    }
+  };
+};
+
 struct FilteredFullJoinTest : public cudf::test::BaseFixture {
   using index_pair = std::pair<cudf::size_type, cudf::size_type>;
 
@@ -2141,6 +2189,16 @@ struct FilteredFullJoinTest : public cudf::test::BaseFixture {
 
     auto ast_result = cudf::filter_join_indices(left, right, li, ri, predicate, kind);
     EXPECT_EQ(to_pairs(ast_result), expected);
+    std::array kernels_owners{cudf::filter_join_program_info::make<precompiled_greater<>, 1>()};
+    auto kernels = program_views(kernels_owners);
+    EXPECT_EQ(to_pairs(cudf::filter_join_indices_precompiled(left, right, li, ri, kernels, kind)),
+              expected);
+    std::array nullable_kernels_owners{
+      cudf::filter_join_program_info::make<precompiled_greater<int32_t, true>, 1>()};
+    auto nullable_kernels = program_views(nullable_kernels_owners);
+    EXPECT_EQ(to_pairs(cudf::filter_join_indices_precompiled(
+                left, right, li, ri, nullable_kernels, kind, cudf::null_aware::YES)),
+              expected);
 
     auto left_maps     = cudf::left_join(cudf::table_view{{lk}}, cudf::table_view{{rk}});
     auto filtered_left = cudf::filter_join_indices(
@@ -2226,4 +2284,257 @@ TEST_F(FilteredFullJoinTest, EmptyMapsWithNonemptyTables)
 TEST_F(FilteredFullJoinTest, ManyToManyMixedMatches)
 {
   test({1, 1, 1, 2, 3}, {1, 10, 20, 30, 40}, {1, 1, 1, 2, 4}, {5, 15, 25, 35, 45});
+}
+
+static_assert(!std::is_copy_constructible_v<cudf::filter_join_program_info>);
+static_assert(!std::is_copy_assignable_v<cudf::filter_join_program_info>);
+static_assert(std::is_nothrow_move_constructible_v<cudf::filter_join_program_info>);
+static_assert(std::is_nothrow_move_assignable_v<cudf::filter_join_program_info>);
+
+template <typename T>
+constexpr bool has_definition = requires { sizeof(T); };
+static_assert(!has_definition<cudf::filter_join_program_info::impl>);
+
+TEST_F(FilteredFullJoinTest, PrecompiledMoveOnlyOwnerAndBorrowedViews)
+{
+  cudf::test::fixed_width_column_wrapper<int32_t> lv{5}, rv{3};
+  cudf::table_view left{{lv}}, right{{rv}};
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> index{0};
+  cudf::column_view map{index};
+  cudf::device_span<cudf::size_type const> rows{map.data<cudf::size_type>(), 1};
+  cudf::filter_join_program_info empty;
+  EXPECT_EQ(empty.view(), nullptr);
+  auto owner    = cudf::filter_join_program_info::make<precompiled_greater<>, 1>();
+  auto borrowed = owner.view();
+  ASSERT_NE(borrowed, nullptr);
+  auto moved = std::move(owner);
+  EXPECT_EQ(owner.view(), nullptr);
+  EXPECT_EQ(moved.view(), borrowed);
+  empty = std::move(moved);
+  EXPECT_EQ(moved.view(), nullptr);
+  EXPECT_EQ(empty.view(), borrowed);
+  std::array<cudf::filter_join_program_info::view_type, 3> views{nullptr, borrowed, nullptr};
+  std::vector<index_pair> expected{{0, 0}};
+  EXPECT_EQ(to_pairs(cudf::filter_join_indices_precompiled(
+              left, right, rows, rows, views, cudf::join_kind::INNER_JOIN)),
+            expected);
+  std::array null_views{owner.view(), moved.view()};
+  EXPECT_THROW(cudf::filter_join_indices_precompiled(
+                 left, right, rows, rows, null_views, cudf::join_kind::INNER_JOIN),
+               std::invalid_argument);
+}
+
+TEST_F(FilteredFullJoinTest, PrecompiledInnerLeftFullAndNulls)
+{
+  cudf::test::fixed_width_column_wrapper<int32_t> lv{{5, 10, 15}, {true, false, true}};
+  cudf::test::fixed_width_column_wrapper<int32_t> rv{{3, 9, 20}, {true, true, true}};
+  cudf::table_view left{{lv}}, right{{rv}};
+  auto predicate =
+    cudf::ast::operation{cudf::ast::ast_operator::GREATER, col_ref_left_0, col_ref_right_0};
+  std::array kernels_owners{cudf::filter_join_program_info::make<precompiled_greater<>, 1>()};
+  auto kernels = program_views(kernels_owners);
+  std::array nullable_kernels_owners{
+    cudf::filter_join_program_info::make<precompiled_greater<int32_t, true>, 1>()};
+  auto nullable_kernels = program_views(nullable_kernels_owners);
+  for (auto kind :
+       {cudf::join_kind::INNER_JOIN, cudf::join_kind::LEFT_JOIN, cudf::join_kind::FULL_JOIN}) {
+    std::vector<cudf::size_type> lm{0, 1, 1}, rm{0, 0, 1};
+    std::vector<index_pair> expected{{0, 0}};
+    if (kind != cudf::join_kind::INNER_JOIN) {
+      lm.push_back(2);
+      rm.push_back(cudf::JoinNoMatch);
+      expected.emplace_back(1, cudf::JoinNoMatch);
+      expected.emplace_back(2, cudf::JoinNoMatch);
+    }
+    if (kind == cudf::join_kind::FULL_JOIN) {
+      lm.push_back(cudf::JoinNoMatch);
+      rm.push_back(2);
+      expected.emplace_back(cudf::JoinNoMatch, 1);
+      expected.emplace_back(cudf::JoinNoMatch, 2);
+    }
+    std::sort(expected.begin(), expected.end());
+    cudf::test::fixed_width_column_wrapper<cudf::size_type> lmap(lm.begin(), lm.end());
+    cudf::test::fixed_width_column_wrapper<cudf::size_type> rmap(rm.begin(), rm.end());
+    cudf::column_view left_map{lmap}, right_map{rmap};
+    cudf::device_span<cudf::size_type const> li{left_map.data<cudf::size_type>(),
+                                                static_cast<std::size_t>(left_map.size())};
+    cudf::device_span<cudf::size_type const> ri{right_map.data<cudf::size_type>(),
+                                                static_cast<std::size_t>(right_map.size())};
+    EXPECT_EQ(to_pairs(cudf::filter_join_indices_jit(left, right, li, ri, predicate, kind)),
+              expected);
+    EXPECT_EQ(to_pairs(cudf::filter_join_indices_precompiled(left, right, li, ri, kernels, kind)),
+              expected);
+    EXPECT_EQ(to_pairs(cudf::filter_join_indices_precompiled(
+                left, right, li, ri, nullable_kernels, kind, cudf::null_aware::YES)),
+              expected);
+  }
+}
+
+TEST_F(FilteredFullJoinTest, PrecompiledConstraintsAndEmptyMaps)
+{
+  cudf::test::fixed_width_column_wrapper<int32_t> values{1, 2};
+  cudf::table_view table{{values}};
+  cudf::device_span<cudf::size_type const> empty;
+  std::array kernels_owners{cudf::filter_join_program_info::make<precompiled_greater<>, 1>()};
+  auto kernels = program_views(kernels_owners);
+  std::array wrong_type_owners{
+    cudf::filter_join_program_info::make<precompiled_greater<float>, 1>()};
+  auto wrong_type = program_views(wrong_type_owners);
+  std::array wrong_split_owners{cudf::filter_join_program_info::make<precompiled_greater<>, 0>()};
+  auto wrong_split = program_views(wrong_split_owners);
+  for (auto kind :
+       {cudf::join_kind::INNER_JOIN, cudf::join_kind::LEFT_JOIN, cudf::join_kind::FULL_JOIN}) {
+    EXPECT_TRUE(
+      to_pairs(cudf::filter_join_indices_precompiled(table, table, empty, empty, kernels, kind))
+        .empty());
+    EXPECT_THROW(cudf::filter_join_indices_precompiled(
+                   table,
+                   table,
+                   empty,
+                   empty,
+                   std::span<cudf::filter_join_program_info::view_type const>{},
+                   kind),
+                 std::invalid_argument);
+    EXPECT_THROW(
+      cudf::filter_join_indices_precompiled(table, table, empty, empty, wrong_type, kind),
+      std::invalid_argument);
+    EXPECT_THROW(
+      cudf::filter_join_indices_precompiled(table, table, empty, empty, wrong_split, kind),
+      std::invalid_argument);
+    EXPECT_THROW(cudf::filter_join_indices_precompiled(
+                   table, table, empty, empty, kernels, kind, cudf::null_aware::YES),
+                 std::invalid_argument);
+  }
+  EXPECT_THROW(cudf::filter_join_indices_precompiled(
+                 table, table, empty, empty, kernels, cudf::join_kind::LEFT_SEMI_JOIN),
+               std::invalid_argument);
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> indices{0};
+  cudf::column_view index_view{indices};
+  cudf::device_span<cudf::size_type const> nonempty{index_view.data<cudf::size_type>(), 1};
+  EXPECT_THROW(cudf::filter_join_indices_precompiled(
+                 table, table, nonempty, empty, kernels, cudf::join_kind::INNER_JOIN),
+               std::invalid_argument);
+}
+
+TEST_F(FilteredFullJoinTest, PrecompiledSkipsUnmatchedAndIgnoresReturnValues)
+{
+  cudf::test::fixed_width_column_wrapper<int32_t> values{1};
+  cudf::table_view table{{values}};
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> matched{0};
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> unmatched{cudf::JoinNoMatch};
+  cudf::column_view matched_view{matched}, unmatched_view{unmatched};
+  cudf::device_span<cudf::size_type const> mi{matched_view.data<cudf::size_type>(), 1};
+  cudf::device_span<cudf::size_type const> ui{unmatched_view.data<cudf::size_type>(), 1};
+  std::array kernels_owners{
+    cudf::filter_join_program_info::make<precompiled_filter_return_value, 1>()};
+  auto kernels = program_views(kernels_owners);
+  EXPECT_TRUE(
+    to_pairs(cudf::filter_join_indices_precompiled(
+               table, table, mi, ui, kernels, cudf::join_kind::INNER_JOIN, cudf::null_aware::YES))
+      .empty());
+  std::vector<index_pair> expected{{0, 0}};
+  EXPECT_EQ(to_pairs(cudf::filter_join_indices_precompiled(
+              table, table, mi, mi, kernels, cudf::join_kind::INNER_JOIN, cudf::null_aware::YES)),
+            expected);
+}
+
+struct precompiled_less : precompiled_greater<> {
+  struct Function {
+    __device__ void operator()(bool* out, int32_t left, int32_t right) const
+    {
+      *out = left < right;
+    }
+  };
+};
+
+TEST_F(FilteredFullJoinTest, PrecompiledTagDispatch)
+{
+  cudf::test::fixed_width_column_wrapper<int32_t> lv{1, 3}, rv{2, 2};
+  cudf::table_view left{{lv}}, right{{rv}};
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> indices{0, 1};
+  cudf::column_view map{indices};
+  cudf::device_span<cudf::size_type const> rows{map.data<cudf::size_type>(),
+                                                static_cast<std::size_t>(map.size())};
+  std::string tag = "greater";
+  auto greater    = cudf::filter_join_program_info::make<precompiled_greater<>, 1>(tag);
+  tag             = "changed";
+  std::array kernels_owners{
+    cudf::filter_join_program_info::make<precompiled_less, 1>(),
+    cudf::filter_join_program_info::make<precompiled_less, 1>("less"),
+    cudf::filter_join_program_info::make<precompiled_greater<float>, 1>("greater"),
+    std::move(greater)};
+  auto kernels = program_views(kernels_owners);
+  auto invoke  = [&](std::string_view name) {
+    return cudf::filter_join_indices_precompiled(
+      left, right, rows, rows, kernels, cudf::join_kind::INNER_JOIN, cudf::null_aware::NO, name);
+  };
+  std::vector<index_pair> less{{0, 0}}, greater_pairs{{1, 1}};
+  EXPECT_EQ(to_pairs(invoke("greater")), greater_pairs);
+  EXPECT_EQ(to_pairs(invoke("less")), less);
+  EXPECT_EQ(to_pairs(cudf::filter_join_indices_precompiled(
+              left, right, rows, rows, kernels, cudf::join_kind::INNER_JOIN)),
+            less);
+  EXPECT_THROW(invoke("missing"), std::invalid_argument);
+  EXPECT_THROW(invoke("Greater"), std::invalid_argument);
+  std::array named_only{kernels.back()};
+  EXPECT_THROW(cudf::filter_join_indices_precompiled(
+                 left, right, rows, rows, named_only, cudf::join_kind::INNER_JOIN),
+               std::invalid_argument);
+  cudf::device_span<cudf::size_type const> empty;
+  EXPECT_THROW(cudf::filter_join_indices_precompiled(left,
+                                                     right,
+                                                     empty,
+                                                     empty,
+                                                     kernels,
+                                                     cudf::join_kind::INNER_JOIN,
+                                                     cudf::null_aware::NO,
+                                                     "missing"),
+               std::invalid_argument);
+}
+
+struct precompiled_string_filter {
+  using Inputs  = cudf::type_list<int32_t, cudf::string_view, int32_t, cudf::string_view>;
+  using Outputs = cudf::type_list<bool>;
+  static constexpr bool NullAware = false;
+  static constexpr bool UserData  = false;
+  struct Function {
+    __device__ void operator()(bool* out,
+                               int32_t left,
+                               cudf::string_view left_text,
+                               int32_t right,
+                               cudf::string_view right_text) const
+    {
+      *out = left > right && left_text == right_text;
+    }
+  };
+};
+
+TEST_F(FilteredFullJoinTest, PrecompiledStringsColumnOrderAndStream)
+{
+  cudf::test::fixed_width_column_wrapper<int32_t> lv{3, 8}, rv{1, 4};
+  cudf::test::strings_column_wrapper ls{"a", "b"}, rs{"a", "c"};
+  cudf::table_view left{{lv, ls}}, right{{rv, rs}};
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> lm{0, 1, 1}, rm{0, 1, 0};
+  cudf::column_view lmap{lm}, rmap{rm};
+  cudf::device_span<cudf::size_type const> li{lmap.data<cudf::size_type>(),
+                                              static_cast<std::size_t>(lmap.size())};
+  cudf::device_span<cudf::size_type const> ri{rmap.data<cudf::size_type>(),
+                                              static_cast<std::size_t>(rmap.size())};
+  std::array kernels_owners{cudf::filter_join_program_info::make<precompiled_greater<>, 1>(),
+                            cudf::filter_join_program_info::make<precompiled_string_filter, 2>()};
+  auto kernels = program_views(kernels_owners);
+  rmm::cuda_stream stream;
+  CUDF_CUDA_TRY(cudaStreamSynchronize(cudf::get_default_stream().get()));
+  auto result = cudf::filter_join_indices_precompiled(left,
+                                                      right,
+                                                      li,
+                                                      ri,
+                                                      kernels,
+                                                      cudf::join_kind::INNER_JOIN,
+                                                      cudf::null_aware::NO,
+                                                      {},
+                                                      cuda::stream_ref{stream});
+  stream.synchronize();
+  std::vector<index_pair> expected{{0, 0}};
+  EXPECT_EQ(to_pairs(result), expected);
 }

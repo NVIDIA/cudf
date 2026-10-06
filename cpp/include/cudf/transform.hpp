@@ -17,6 +17,9 @@
 #include <memory>
 #include <optional>
 #include <span>
+#include <string>
+#include <string_view>
+#include <utility>
 #include <variant>
 #include <vector>
 
@@ -26,6 +29,10 @@
  */
 
 namespace CUDF_EXPORT cudf {
+
+namespace detail {
+struct transform_program_metadata;
+}  // namespace detail
 
 /**
  * @addtogroup transformation_transform
@@ -117,7 +124,52 @@ struct transform_output_spec {
 };
 
 /**
- * @brief A reusable transform program that retains a JIT-compiled kernel.
+ * @brief A user-instantiated transform program and its generated dispatch metadata.
+ *
+ * Create entries with `transform_program_info::make` using a CUDA compiler and pass a list of their
+ * `view()` handles to `transform_precompiled` or `transform_program`. Entries are move-only owners
+ * of erased metadata and do not own user data. The CUDA module containing their implementation must
+ * remain loaded while they are used.
+ */
+struct transform_program_info {
+  struct impl;                    ///< Opaque implementation; defined inside libcudf
+  using view_type = impl const*;  ///< Non-owning opaque program handle
+
+  transform_program_info() noexcept;
+  ~transform_program_info();
+  transform_program_info(transform_program_info&&) noexcept;
+  transform_program_info& operator=(transform_program_info&&) noexcept;
+  transform_program_info(transform_program_info const&)            = delete;
+  transform_program_info& operator=(transform_program_info const&) = delete;
+
+  /**
+   * @brief Gets a non-owning view. The owner must outlive uses of this view.
+   *
+   * Moving the owner preserves existing views. Empty and moved-from owners return nullptr.
+   * @return Opaque implementation pointer
+   */
+  [[nodiscard]] view_type view() const noexcept;
+
+  /**
+   * @brief Instantiates a UDF implementation and generates its dispatch metadata.
+   *
+   * Compile with a CUDA compiler to use this factory. Its definition is included automatically
+   * when `__CUDACC__` is defined.
+   * @tparam UserOperator Compile-time UDF descriptor
+   * @param tag Function name used for precompiled dispatch; empty by default
+   * @return Move-only owner of the instantiated implementation metadata
+   */
+  template <typename UserOperator>
+  [[nodiscard]] static transform_program_info make(std::string tag = {});
+
+ private:
+  std::unique_ptr<impl> impl_;
+
+  static transform_program_info from_metadata(detail::transform_program_metadata metadata);
+};
+
+/**
+ * @brief A reusable transform program that retains a compiled kernel.
  *
  * Construction retrieves the kernel for the UDF and the supplied input and output specifications.
  * Subsequent calls to `run` reuse that kernel.
@@ -177,6 +229,49 @@ struct transform_program {
                     std::optional<void*> user_data,
                     std::span<transform_input_spec const> inputs,
                     std::span<transform_output_spec const> outputs);
+
+  /**
+   * @brief Constructs a reusable program from user-instantiated kernels and transform arguments.
+   *
+   * Selects and retains the first compatible kernel. No source or LTO binary is required.
+   * Input and output objects are inspected only to derive their specifications.
+   * @throws std::invalid_argument if no compatible kernel is found, including an empty list
+   * @param kernels Non-owning views of precompiled implementations, considered in list order
+   * @param is_null_aware Whether the UDF receives optional values
+   * @param user_data Non-owning user-defined device data passed to the UDF by `run`
+   * @param inputs Inputs from which to derive input specifications
+   * @param outputs Outputs from which to derive output specifications
+   * @param string_offsets Optional offsets used to determine string output representations
+   * @param tag Function name to match exactly; empty selects untagged entries
+   */
+  transform_program(std::span<transform_program_info::view_type const> kernels,
+                    null_aware is_null_aware,
+                    std::optional<void*> user_data,
+                    std::span<transform_input const> inputs,
+                    std::span<transform_output const> outputs,
+                    std::span<std::unique_ptr<column> const> string_offsets,
+                    std::string_view tag = {});
+
+  /**
+   * @brief Constructs a reusable program from user-instantiated kernels and explicit
+   * specifications.
+   *
+   * Selects and retains the first compatible kernel. The original owners and view list may then be
+   * destroyed.
+   * @throws std::invalid_argument if no compatible kernel is found, including an empty list
+   * @param kernels Non-owning views of precompiled implementations, considered in list order
+   * @param is_null_aware Whether the UDF receives optional values
+   * @param user_data Non-owning user-defined device data passed to the UDF by `run`
+   * @param inputs Input specifications
+   * @param outputs Output specifications
+   * @param tag Function name to match exactly; empty selects untagged entries
+   */
+  transform_program(std::span<transform_program_info::view_type const> kernels,
+                    null_aware is_null_aware,
+                    std::optional<void*> user_data,
+                    std::span<transform_input_spec const> inputs,
+                    std::span<transform_output_spec const> outputs,
+                    std::string_view tag = {});
 
   /**
    * @brief Constructs a reusable program for an AST expression.
@@ -303,6 +398,40 @@ std::unique_ptr<table> transform(
   std::span<transform_output const> outputs,
   std::vector<std::unique_ptr<column>>&& string_offsets,
   std::optional<size_type> row_size,
+  cuda::stream_ref stream           = cudf::get_default_stream(),
+  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+
+/**
+ * @brief Applies a user-instantiated transform kernel to the input columns.
+ *
+ * Selects the first entry whose tag and metadata match the runtime arguments. Launch policy
+ * is determined by cuDF. No source or LTO
+ * binary is required and no runtime compilation is performed.
+ *
+ * @throws std::invalid_argument if no compatible kernel is found, including an empty list
+ * @throws std::invalid_argument if the runtime arguments violate `transform` requirements
+ * @throws cudf::evaluation_error if the UDF produces an error during execution
+ * @param kernels Non-owning views of precompiled implementations, considered in list order
+ * @param is_null_aware Whether the UDF receives optional values
+ * @param user_data Non-owning user-defined device data passed to the UDF
+ * @param inputs Immutable views of columns and scalar columns
+ * @param outputs Output column specifications
+ * @param string_offsets Optional preallocated offsets for string output columns
+ * @param row_size Row count; inferred from inputs when omitted
+ * @param stream CUDA stream used for device memory operations and kernel launches
+ * @param mr Device memory resource used to allocate the returned columns
+ * @return A table containing the transform results
+ * @param tag Function name to match exactly; empty selects untagged entries
+ */
+std::unique_ptr<table> transform_precompiled(
+  std::span<transform_program_info::view_type const> kernels,
+  null_aware is_null_aware,
+  std::optional<void*> user_data,
+  std::span<transform_input const> inputs,
+  std::span<transform_output const> outputs,
+  std::vector<std::unique_ptr<column>>&& string_offsets,
+  std::optional<size_type> row_size,
+  std::string_view tag              = {},
   cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
@@ -657,3 +786,7 @@ std::unique_ptr<column> segmented_row_bit_count(
 
 /** @} */  // end of group
 }  // namespace CUDF_EXPORT cudf
+
+#ifdef __CUDACC__
+#include <cudf/detail/transform/instantiate_program.cuh>
+#endif

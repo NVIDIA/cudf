@@ -21,6 +21,9 @@
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <span>
+#include <string>
+#include <string_view>
 #include <utility>
 
 /**
@@ -29,6 +32,10 @@
  */
 
 namespace CUDF_EXPORT cudf {
+
+namespace detail {
+struct filter_join_program_metadata;
+}  // namespace detail
 
 /**
  * @addtogroup column_join
@@ -532,6 +539,101 @@ filter_join_indices_jit(
   cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
+/**
+ * @brief A user-instantiated join-filter program and its dispatch metadata.
+ *
+ * Create owners with `make` using a CUDA compiler and pass their `view()` handles to the API.
+ * The owners must outlive uses of their views. The CUDA module containing their
+ * implementation must remain loaded while they are used.
+ */
+struct filter_join_program_info {
+  struct impl;                    ///< Opaque implementation; defined inside libcudf
+  using view_type = impl const*;  ///< Non-owning opaque program handle
+
+  filter_join_program_info() noexcept;
+  ~filter_join_program_info();
+  filter_join_program_info(filter_join_program_info&&) noexcept;
+  filter_join_program_info& operator=(filter_join_program_info&&) noexcept;
+  filter_join_program_info(filter_join_program_info const&)            = delete;
+  filter_join_program_info& operator=(filter_join_program_info const&) = delete;
+
+  /**
+   * @brief Gets a non-owning view. The owner must outlive uses of this view.
+   *
+   * Moving the owner preserves existing views. Empty and moved-from owners return nullptr.
+   * @return Opaque implementation pointer
+   */
+  [[nodiscard]] view_type view() const noexcept;
+
+  /**
+   * @brief Instantiates a kernel with the join-filter launch signature.
+   *
+   * The descriptor uses the same Inputs, Outputs, Function, NullAware, and UserData members as
+   * `transform_program_info::make`. Inputs must be non-scalar fixed-width or string columns,
+   * ordered left then right; Outputs must be `type_list<bool>` and UserData must be false.
+   * Predicate return values are ignored, as with JIT join filters. This factory is included
+   * automatically when `__CUDACC__` is defined.
+   * @tparam UserOperator Compile-time predicate descriptor
+   * @tparam LeftInputCount Number of leading inputs belonging to the left table
+   * @param tag Function name used for precompiled dispatch; empty by default
+   * @return Entry for `filter_join_indices_precompiled`
+   */
+  template <typename UserOperator, std::size_t LeftInputCount>
+  [[nodiscard]] static filter_join_program_info make(std::string tag = {});
+
+ private:
+  std::unique_ptr<impl> impl_;
+
+  static filter_join_program_info from_metadata(detail::filter_join_program_metadata metadata);
+};
+
+/**
+ * @brief Filters join index pairs with a precompiled predicate using the JIT filter machinery.
+ *
+ * Kernels are created with `filter_join_program_info::make`, specifying the left column count.
+ * Descriptor inputs must be all left columns followed by all right columns, with no scalar inputs,
+ * and exactly one BOOL8 output. User-data predicates are not supported. The first compatible entry
+ * with the requested tag is selected; no CUDA/PTX source or LTO binary is required. The input-map
+ * contract and INNER, LEFT, and FULL join semantics match `filter_join_indices`. Null predicate
+ * results and pairs containing `JoinNoMatch` do not pass the filter. Null-aware predicates receive
+ * optional inputs; other predicates skip rows with null inputs. Pairs containing `JoinNoMatch` are
+ * skipped before invoking the predicate.
+ *
+ * Precompiled and JIT kernels use the same join-filter launch signature and device loop.
+ * @throws std::invalid_argument if no kernel matches, including an empty list or empty maps
+ * @throws std::invalid_argument if the map sizes differ, exceed the maximum `size_type`, the
+ * join kind is unsupported, or a table contains nested or dictionary columns
+ * Predicate return values are ignored, as with the JIT predicate API.
+ * @param left Left table for predicate evaluation
+ * @param right Right table for predicate evaluation
+ * @param left_indices Candidate left row indices
+ * @param right_indices Candidate right row indices
+ * @param kernels Non-owning views of precompiled predicates, considered in list order
+ * @param tag Function name to match exactly; empty selects untagged entries
+ * @param join_kind INNER_JOIN, LEFT_JOIN, or FULL_JOIN
+ * @param is_null_aware Whether the predicate receives optional values
+ * @param stream CUDA stream for allocations and kernel launches
+ * @param mr Device memory resource used to allocate returned indices
+ * @return Filtered left and right index vectors
+ */
+std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
+          std::unique_ptr<rmm::device_uvector<size_type>>>
+filter_join_indices_precompiled(
+  table_view const& left,
+  table_view const& right,
+  device_span<size_type const> left_indices,
+  device_span<size_type const> right_indices,
+  std::span<filter_join_program_info::view_type const> kernels,
+  cudf::join_kind join_kind,
+  null_aware is_null_aware          = null_aware::NO,
+  std::string_view tag              = {},
+  cuda::stream_ref stream           = cudf::get_default_stream(),
+  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+
 /** @} */  // end of group
 
 }  // namespace CUDF_EXPORT cudf
+
+#ifdef __CUDACC__
+#include <cudf/detail/join/instantiate_program.cuh>
+#endif

@@ -5,6 +5,7 @@
 
 #include <cudf/column/column_device_view_base.cuh>
 #include <cudf/detail/row_ir/opcode.hpp>
+#include <cudf/detail/transform/kernel.cuh>
 #include <cudf/detail/utilities/cuda.cuh>
 #include <cudf/detail/utilities/grid_1d.cuh>
 #include <cudf/detail/utilities/integer_utils.hpp>
@@ -57,7 +58,7 @@ extern "C" __device__ transform_type transform;
 
 }  // namespace lto
 
-/// @brief The generic transform kernel. Supports all types and nullability combinations.
+/// @brief JIT adapter to the shared transform implementation.
 template <bool is_null_aware, bool has_user_data, typename InputAccessors, typename OutputAccessors>
 __device__ void transform_kernel(size_type row_size,
                                  bitmask_type const* __restrict__ stencil,
@@ -66,84 +67,9 @@ __device__ void transform_kernel(size_type row_size,
                                  mutable_column_device_view_core const* __restrict__ output_cols,
                                  int32_t* __restrict__ max_error)
 {
-  auto start        = detail::grid_1d::global_thread_id();
-  auto stride       = detail::grid_1d::grid_stride();
-  auto thread_error = errc::SUCCESS;
-
-  auto operation = [&]<typename Args>(thread_index_type row, Args args) {
-    // TODO: static assert invocable
-    auto func = [&](auto... a) {
-      if constexpr (!cuda::std::is_void_v<decltype(GENERIC_TRANSFORM_OP(a...))>) {
-        return static_cast<cudf::errc>(GENERIC_TRANSFORM_OP(a...));
-      } else {
-        (void)GENERIC_TRANSFORM_OP(a...);
-        return errc::SUCCESS;
-      }
-    };
-
-    if constexpr (has_user_data) {
-      return cuda::std::apply(func, cuda::std::tuple_cat(cuda::std::tuple{user_data, row}, args));
-    } else {
-      return cuda::std::apply(func, args);
-    }
-  };
-
-  if constexpr (!is_null_aware) {
-    for (auto row = start; row < row_size; row += stride) {
-      if (stencil != nullptr && !bit_is_set(stencil, row)) { continue; }
-
-      auto ins = InputAccessors::map(
-        [&]<typename... A>() { return cuda::std::tuple{A::element(input_cols, row)...}; });
-
-      auto outs = OutputAccessors::map(
-        [&]<typename... A>() { return cuda::std::tuple{A::output_arg(output_cols, row)...}; });
-
-      auto out_ptrs =
-        cuda::std::apply([&](auto&... args) { return cuda::std::tuple{&args...}; }, outs);
-
-      auto row_error = operation(row, cuda::std::tuple_cat(out_ptrs, ins));
-
-      OutputAccessors::map([&]<typename... A>() {
-        (A::assign(output_cols, row, cuda::std::get<A::index>(outs)), ...);
-      });
-
-      thread_error = cuda::std::max(thread_error, row_error);
-    }
-  } else {
-    // Keep every lane in a warp on the same loop iteration when writing validity.
-    auto warp_padded_size = util::round_up_safe<thread_index_type>(row_size, detail::warp_size);
-
-    for (auto row = start; row < warp_padded_size; row += stride) {
-      auto active_mask = __ballot_sync(0xffff'ffffu, row < row_size);
-      if (row >= row_size) { continue; }
-
-      auto ins = InputAccessors::map(
-        [&]<typename... A>() { return cuda::std::tuple{A::nullable_element(input_cols, row)...}; });
-
-      auto outs = OutputAccessors::map(
-        [&]<typename... A>() { return cuda::std::tuple{A::null_output_arg(output_cols, row)...}; });
-
-      auto out_ptrs =
-        cuda::std::apply([&](auto&... args) { return cuda::std::tuple{&args...}; }, outs);
-
-      auto row_error = operation(row, cuda::std::tuple_cat(out_ptrs, ins));
-
-      OutputAccessors::map([&]<typename... A>() {
-        (A::assign(output_cols, row, *cuda::std::get<A::index>(outs)), ...);
-        (warp_compact_validity<A>(
-           active_mask, output_cols, row, cuda::std::get<A::index>(outs).has_value()),
-         ...);
-      });
-
-      thread_error = cuda::std::max(thread_error, row_error);
-    }
-  }
-
-  // early exit if no error occurred
-  if (thread_error == errc::SUCCESS) { return; }
-
-  cuda::atomic_ref ref(*max_error);
-  ref.fetch_max(static_cast<int32_t>(thread_error), cuda::std::memory_order_relaxed);
+  auto function = [](auto... args) { return GENERIC_TRANSFORM_OP(args...); };
+  detail::transform_kernel<is_null_aware, has_user_data, InputAccessors, OutputAccessors>(
+    row_size, stencil, user_data, input_cols, output_cols, max_error, function);
 }
 
 }  // namespace jit

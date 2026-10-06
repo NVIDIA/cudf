@@ -12,12 +12,14 @@
 #include <cudf/detail/algorithms/reduce.cuh>
 #include <cudf/detail/cuco_helpers.hpp>
 #include <cudf/detail/iterator.cuh>
+#include <cudf/detail/join/program_info.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/utilities/cuda.cuh>
 #include <cudf/detail/utilities/grid_1d.cuh>
 #include <cudf/join/join.hpp>
 #include <cudf/table/table_device_view.cuh>
 #include <cudf/table/table_view.hpp>
+#include <cudf/transform.hpp>
 #include <cudf/types.hpp>
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/span.hpp>
@@ -38,10 +40,36 @@
 #include <jit/parser.hpp>
 #include <jit/row_ir.hpp>
 
+#include <array>
+#include <limits>
 #include <memory>
+#include <type_traits>
 #include <utility>
+#include <variant>
 
 namespace cudf {
+
+struct filter_join_program_info::impl : detail::filter_join_program_metadata {};
+
+filter_join_program_info::filter_join_program_info() noexcept                           = default;
+filter_join_program_info::~filter_join_program_info()                                   = default;
+filter_join_program_info::filter_join_program_info(filter_join_program_info&&) noexcept = default;
+filter_join_program_info& filter_join_program_info::operator=(filter_join_program_info&&) noexcept =
+  default;
+
+filter_join_program_info::view_type filter_join_program_info::view() const noexcept
+{
+  return impl_.get();
+}
+
+filter_join_program_info filter_join_program_info::from_metadata(
+  detail::filter_join_program_metadata metadata)
+{
+  filter_join_program_info result;
+  result.impl_ = std::make_unique<impl>(impl{std::move(metadata)});
+  return result;
+}
+
 namespace detail {
 
 namespace {
@@ -128,7 +156,7 @@ kernel build_join_filter_kernel(std::string const& predicate_code,
 }
 
 // Launch the JIT kernel for join filtering
-void launch_join_filter_kernel(kernel const& kernel,
+void launch_join_filter_kernel(rtcx::kernel_ref const& kernel,
                                cudf::device_span<size_type const> left_indices,
                                cudf::device_span<size_type const> right_indices,
                                std::span<transform_input const> inputs,
@@ -169,7 +197,7 @@ void launch_join_filter_kernel(kernel const& kernel,
 
   auto cfg = kernel.max_occupancy_config(0, 0);
 
-  kernel.launch({cfg.min_grid_size}, {cfg.block_size}, 0, stream, args);
+  kernel.launch({cfg.min_grid_size}, {cfg.block_size}, 0, stream.get(), args);
 }
 
 // Same join semantics handling as the AST version
@@ -317,179 +345,220 @@ void validate_column_types(cudf::table_view const& table, char const* side)
   }
 }
 
+// Retain JIT ownership when needed; both alternatives have the same join-filter launch ABI.
+struct join_filter_executable {
+  std::variant<kernel, rtcx::kernel_ref> implementation;
+  std::vector<transform_input> inputs;
+  std::optional<void*> user_data;
+};
+
+template <bool resolve_empty, typename Builder>
+std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
+          std::unique_ptr<rmm::device_uvector<size_type>>>
+filter_join_indices_impl(table_view const& left,
+                         table_view const& right,
+                         device_span<size_type const> left_indices,
+                         device_span<size_type const> right_indices,
+                         cudf::join_kind kind,
+                         Builder&& build_kernel,
+                         cuda::stream_ref stream,
+                         rmm::device_async_resource_ref mr)
+{
+  CUDF_EXPECTS(left_indices.size() == right_indices.size(),
+               "Left and right index arrays must have the same size",
+               std::invalid_argument);
+  CUDF_EXPECTS(
+    kind == join_kind::INNER_JOIN || kind == join_kind::LEFT_JOIN || kind == join_kind::FULL_JOIN,
+    "filter_join_indices_jit only supports INNER_JOIN, LEFT_JOIN, and FULL_JOIN.",
+    std::invalid_argument);
+  validate_column_types(left, "left");
+  validate_column_types(right, "right");
+  std::optional<join_filter_executable> executable;
+  if constexpr (resolve_empty) {
+    CUDF_EXPECTS(
+      left_indices.size() <= static_cast<std::size_t>(std::numeric_limits<size_type>::max()),
+      "Precompiled join filtering supports at most size_type candidate pairs",
+      std::invalid_argument);
+    // A supplied list must match even when the maps are empty.
+    executable.emplace(build_kernel());
+  }
+  auto make_empty_result = [&] {
+    return std::pair{std::make_unique<rmm::device_uvector<size_type>>(0, stream, mr),
+                     std::make_unique<rmm::device_uvector<size_type>>(0, stream, mr)};
+  };
+  if (left_indices.empty()) { return make_empty_result(); }
+
+  // FULL maps contain unmatched-right rows. Filter their LEFT component, then reconstruct
+  // the unmatched-right complement after evaluating the predicate.
+  std::optional<VectorPair> left_maps;
+  if (kind == join_kind::FULL_JOIN) {
+    left_maps.emplace(full_to_left_join_indices(
+      left_indices, right_indices, stream, cudf::get_current_device_resource_ref()));
+    left_indices  = device_span<size_type const>{*left_maps->first};
+    right_indices = device_span<size_type const>{*left_maps->second};
+    if (left_indices.empty()) {
+      return finalize_full_join(
+        make_empty_result(), left.num_rows(), right.num_rows(), std::nullopt, stream, mr);
+    }
+  }
+  if (!executable.has_value()) { executable.emplace(build_kernel()); }
+  rmm::device_uvector<bool> predicate_results(left_indices.size(), stream);
+  auto kernel_ref = std::visit(
+    [](auto const& implementation) {
+      if constexpr (std::is_same_v<std::decay_t<decltype(implementation)>, kernel>) {
+        return implementation.get();
+      } else {
+        return implementation;
+      }
+    },
+    executable->implementation);
+  launch_join_filter_kernel(kernel_ref,
+                            left_indices,
+                            right_indices,
+                            executable->inputs,
+                            predicate_results.data(),
+                            executable->user_data,
+                            stream,
+                            cudf::get_current_device_resource_ref());
+  auto filtered = apply_join_semantics(left,
+                                       left_indices,
+                                       right_indices,
+                                       predicate_results,
+                                       kind == join_kind::FULL_JOIN ? join_kind::LEFT_JOIN : kind,
+                                       stream,
+                                       mr);
+  if (kind == join_kind::FULL_JOIN) {
+    return finalize_full_join(
+      std::move(filtered), left.num_rows(), right.num_rows(), std::nullopt, stream, mr);
+  }
+  return filtered;
+}
+
 }  // anonymous namespace
 
 std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
           std::unique_ptr<rmm::device_uvector<size_type>>>
-filter_join_indices_jit(cudf::table_view const& left,
-                        cudf::table_view const& right,
-                        cudf::device_span<size_type const> left_indices,
-                        cudf::device_span<size_type const> right_indices,
+filter_join_indices_jit(table_view const& left,
+                        table_view const& right,
+                        device_span<size_type const> left_indices,
+                        device_span<size_type const> right_indices,
                         std::string const& predicate_code,
-                        join_kind join_kind,
+                        cudf::join_kind kind,
                         bool is_ptx,
                         cuda::stream_ref stream,
                         rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
+  auto build_kernel = [&]() {
+    std::vector<transform_input> inputs;
+    std::vector<std::optional<int32_t>> table_sources;
+    for (auto const& col : left) {
+      inputs.emplace_back(col);
+      table_sources.emplace_back(0);
+    }
+    for (auto const& col : right) {
+      inputs.emplace_back(col);
+      table_sources.emplace_back(1);
+    }
 
-  // Validate inputs - same as AST version
-  CUDF_EXPECTS(left_indices.size() == right_indices.size(),
-               "Left and right index arrays must have the same size",
-               std::invalid_argument);
+    auto kernel = build_join_filter_kernel(predicate_code,
+                                           inputs,
+                                           table_sources,
+                                           is_ptx,
+                                           false,  // has_user_data = false for now
+                                           false,
+                                           stream,
+                                           mr);
 
-  CUDF_EXPECTS(join_kind == join_kind::INNER_JOIN || join_kind == join_kind::LEFT_JOIN ||
-                 join_kind == join_kind::FULL_JOIN,
-               "filter_join_indices_jit only supports INNER_JOIN, LEFT_JOIN, and FULL_JOIN.",
-               std::invalid_argument);
-
-  validate_column_types(left, "left");
-  validate_column_types(right, "right");
-
-  auto make_empty_result = [&]() {
-    return std::pair{std::make_unique<rmm::device_uvector<size_type>>(0, stream, mr),
-                     std::make_unique<rmm::device_uvector<size_type>>(0, stream, mr)};
+    return join_filter_executable{std::move(kernel), std::move(inputs), std::nullopt};
   };
-
-  if (left_indices.empty()) { return make_empty_result(); }
-
-  if (join_kind == join_kind::FULL_JOIN) {
-    auto left_maps = full_to_left_join_indices(
-      left_indices, right_indices, stream, cudf::get_current_device_resource_ref());
-    auto filtered_left =
-      cudf::detail::filter_join_indices_jit(left,
-                                            right,
-                                            device_span<size_type const>{*left_maps.first},
-                                            device_span<size_type const>{*left_maps.second},
-                                            predicate_code,
-                                            join_kind::LEFT_JOIN,
-                                            is_ptx,
-                                            stream,
-                                            mr);
-    return finalize_full_join(
-      std::move(filtered_left), left.num_rows(), right.num_rows(), std::nullopt, stream, mr);
-  }
-
-  // Compile JIT kernel
-  std::vector<transform_input> inputs;
-  std::vector<std::optional<int32_t>> table_sources;
-  for (auto const& col : left) {
-    inputs.emplace_back(col);
-    table_sources.emplace_back(0);
-  }
-  for (auto const& col : right) {
-    inputs.emplace_back(col);
-    table_sources.emplace_back(1);
-  }
-
-  auto kernel = build_join_filter_kernel(predicate_code,
-                                         inputs,
-                                         table_sources,
-                                         is_ptx,
-                                         false,  // has_user_data = false for now
-                                         false,
-                                         stream,
-                                         mr);
-
-  // Allocate predicate results
-  auto predicate_results = rmm::device_uvector<bool>(left_indices.size(), stream);
-
-  // Launch kernel
-  launch_join_filter_kernel(kernel,
-                            left_indices,
-                            right_indices,
-                            inputs,
-                            predicate_results.data(),
-                            std::nullopt,  // no user data for now
-                            stream,
-                            cudf::get_current_device_resource_ref());
-
-  // Apply same join semantics as AST version
-  return apply_join_semantics(
-    left, left_indices, right_indices, predicate_results, join_kind, stream, mr);
+  return filter_join_indices_impl<false>(
+    left, right, left_indices, right_indices, kind, build_kernel, stream, mr);
 }
 
 std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
           std::unique_ptr<rmm::device_uvector<size_type>>>
-filter_join_indices_jit(cudf::table_view const& left,
-                        cudf::table_view const& right,
-                        cudf::device_span<size_type const> left_indices,
-                        cudf::device_span<size_type const> right_indices,
+filter_join_indices_jit(table_view const& left,
+                        table_view const& right,
+                        device_span<size_type const> left_indices,
+                        device_span<size_type const> right_indices,
                         ast::expression const& predicate,
-                        join_kind join_kind,
+                        cudf::join_kind kind,
                         cuda::stream_ref stream,
                         rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
+  // Retain converted AST inputs and literals until predicate evaluation completes.
+  std::optional<row_ir::transform_args> filter_result;
+  auto build_kernel = [&]() {
+    // Convert AST predicate to JIT code
+    auto& args =
+      filter_result.emplace(row_ir::ast_converter::filter(row_ir::target::CUDA,
+                                                          predicate,
+                                                          left,
+                                                          right,
+                                                          "filter_operation",
+                                                          stream,
+                                                          cudf::get_current_device_resource_ref()));
 
-  CUDF_EXPECTS(left_indices.size() == right_indices.size(),
-               "Left and right index arrays must have the same size",
-               std::invalid_argument);
+    auto template_args = build_join_filter_template_params(args.inputs,
+                                                           args.input_table_sources,
+                                                           args.user_data.has_value(),
+                                                           args.is_null_aware == null_aware::YES);
 
-  CUDF_EXPECTS(join_kind == join_kind::INNER_JOIN || join_kind == join_kind::LEFT_JOIN ||
-                 join_kind == join_kind::FULL_JOIN,
-               "filter_join_indices_jit only supports INNER_JOIN, LEFT_JOIN, and FULL_JOIN.",
-               std::invalid_argument);
+    auto const cuda_source =
+      cudf::jit::parse_single_function_cuda(args.udf, "GENERIC_JOIN_FILTER_OP");
 
-  validate_column_types(left, "left");
-  validate_column_types(right, "right");
+    auto kernel_name = rtcx::reflect_template("cudf::join::jit::filter_join_kernel", template_args);
+    auto kernel      = cudf::jit::get_udf_kernel(
+      "cudf/cpp/src/join/jit/filter_join_kernel.cu", kernel_name, cuda_source);
 
-  if (left_indices.empty()) {
-    return std::pair{std::make_unique<rmm::device_uvector<size_type>>(0, stream, mr),
-                     std::make_unique<rmm::device_uvector<size_type>>(0, stream, mr)};
-  }
+    return join_filter_executable{std::move(kernel), args.inputs, args.user_data};
+  };
+  return filter_join_indices_impl<false>(
+    left, right, left_indices, right_indices, kind, build_kernel, stream, mr);
+}
 
-  if (join_kind == join_kind::FULL_JOIN) {
-    auto left_maps = full_to_left_join_indices(
-      left_indices, right_indices, stream, cudf::get_current_device_resource_ref());
-    auto filtered_left =
-      cudf::detail::filter_join_indices_jit(left,
-                                            right,
-                                            device_span<size_type const>{*left_maps.first},
-                                            device_span<size_type const>{*left_maps.second},
-                                            predicate,
-                                            join_kind::LEFT_JOIN,
-                                            stream,
-                                            mr);
-    return finalize_full_join(
-      std::move(filtered_left), left.num_rows(), right.num_rows(), std::nullopt, stream, mr);
-  }
-
-  // Convert AST predicate to JIT code
-  auto filter_result = row_ir::ast_converter::filter(row_ir::target::CUDA,
-                                                     predicate,
-                                                     left,
-                                                     right,
-                                                     "filter_operation",
-                                                     stream,
-                                                     cudf::get_current_device_resource_ref());
-
-  auto template_args =
-    build_join_filter_template_params(filter_result.inputs,
-                                      filter_result.input_table_sources,
-                                      filter_result.user_data.has_value(),
-                                      filter_result.is_null_aware == null_aware::YES);
-
-  auto const cuda_source =
-    cudf::jit::parse_single_function_cuda(filter_result.udf, "GENERIC_JOIN_FILTER_OP");
-
-  auto kernel_name = rtcx::reflect_template("cudf::join::jit::filter_join_kernel", template_args);
-  auto kernel      = cudf::jit::get_udf_kernel(
-    "cudf/cpp/src/join/jit/filter_join_kernel.cu", kernel_name, cuda_source);
-
-  // Allocate and compute predicate results
-  auto predicate_results = rmm::device_uvector<bool>(left_indices.size(), stream);
-  launch_join_filter_kernel(kernel,
-                            left_indices,
-                            right_indices,
-                            filter_result.inputs,
-                            predicate_results.data(),
-                            filter_result.user_data,
-                            stream,
-                            cudf::get_current_device_resource_ref());
-
-  return apply_join_semantics(
-    left, left_indices, right_indices, predicate_results, join_kind, stream, mr);
+std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
+          std::unique_ptr<rmm::device_uvector<size_type>>>
+filter_join_indices_precompiled(table_view const& left,
+                                table_view const& right,
+                                device_span<size_type const> left_indices,
+                                device_span<size_type const> right_indices,
+                                std::span<filter_join_program_info::view_type const> kernels,
+                                cudf::join_kind kind,
+                                null_aware is_null_aware,
+                                std::string_view tag,
+                                cuda::stream_ref stream,
+                                rmm::device_async_resource_ref mr)
+{
+  CUDF_FUNC_RANGE();
+  auto build_kernel = [&]() {
+    std::vector<transform_input> inputs;
+    for (auto const& col : left) {
+      inputs.emplace_back(col);
+    }
+    for (auto const& col : right) {
+      inputs.emplace_back(col);
+    }
+    std::vector<transform_input_spec> input_specs;
+    for (auto const& input : inputs) {
+      input_specs.push_back({.type = std::get<column_view>(input).type().id()});
+    }
+    std::array output_specs{transform_output_spec{.type = type_id::BOOL8}};
+    for (auto const& candidate : kernels) {
+      if (candidate != nullptr && candidate->tag == tag &&
+          candidate->left_input_count == static_cast<std::size_t>(left.num_columns()) &&
+          matches_transform_program(
+            *candidate, is_null_aware == null_aware::YES, false, input_specs, output_specs)) {
+        rtcx::initialize();
+        return join_filter_executable{candidate->kernel, std::move(inputs), std::nullopt};
+      }
+    }
+    CUDF_FAIL("No matching precompiled join filter kernel found", std::invalid_argument);
+  };
+  return filter_join_indices_impl<true>(
+    left, right, left_indices, right_indices, kind, build_kernel, stream, mr);
 }
 
 }  // namespace detail
@@ -526,6 +595,24 @@ filter_join_indices_jit(cudf::table_view const& left,
   CUDF_FUNC_RANGE();
   return detail::filter_join_indices_jit(
     left, right, left_indices, right_indices, predicate, join_kind, stream, mr);
+}
+
+std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
+          std::unique_ptr<rmm::device_uvector<size_type>>>
+filter_join_indices_precompiled(table_view const& left,
+                                table_view const& right,
+                                device_span<size_type const> left_indices,
+                                device_span<size_type const> right_indices,
+                                std::span<filter_join_program_info::view_type const> kernels,
+                                cudf::join_kind join_kind,
+                                null_aware is_null_aware,
+                                std::string_view tag,
+                                cuda::stream_ref stream,
+                                rmm::device_async_resource_ref mr)
+{
+  CUDF_FUNC_RANGE();
+  return detail::filter_join_indices_precompiled(
+    left, right, left_indices, right_indices, kernels, join_kind, is_null_aware, tag, stream, mr);
 }
 
 }  // namespace cudf

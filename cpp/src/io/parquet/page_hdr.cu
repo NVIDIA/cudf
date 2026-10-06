@@ -855,7 +855,7 @@ CUDF_KERNEL void __launch_bounds__(build_string_dict_index_block_size)
   constexpr int warp_size   = cudf::detail::warp_size;
   constexpr int window_size = 4096;
   constexpr int load_size   = sizeof(int4);
-  static_assert(build_string_dict_index_block_size == warp_size);
+
   static_assert(window_size % load_size == 0);
 
   struct parser_state {
@@ -878,45 +878,47 @@ CUDF_KERNEL void __launch_bounds__(build_string_dict_index_block_size)
   int const chunk = blockIdx.x;
   if (chunk >= num_chunks) { return; }
 
-  // Lane 0 initializes the shared state for the warp
-  if (lane == 0) {
+  if (chunks[chunk].num_dict_pages <= 0 or chunks[chunk].str_dict_index == nullptr) { return; }
+
+  // One lane initializes the shared state for the warp
+  cg::invoke_one(warp, [&] {
     ck                 = chunks[chunk];
     state.cursor       = 0;
     state.parsed       = 0;
     state.window_start = 0;
     state.window_bytes = 0;
     state.invalid      = false;
-  }
+  });
   warp.sync();
 
-  if (ck.num_dict_pages <= 0 or ck.str_dict_index == nullptr) { return; }
+
 
   auto const* dict      = ck.dict_page->page_data;
   int const dict_size   = ck.dict_page->uncompressed_page_size;
   int const num_entries = ck.dict_page->num_input_values;
   if (num_entries < 0 or dict_size < 0) {
-    if (lane == 0) {
+    cg::invoke_one(warp, [&] {
       set_error(static_cast<kernel_error::value_type>(decode_error::INVALID_DICT_WIDTH),
                 error_code);
-    }
+    });
     return;
   }
 
   if (ck.physical_type == Type::FIXED_LEN_BYTE_ARRAY) {
     int const width = ck.type_length;
     if (width < 0) {
-      if (lane == 0) {
+      cg::invoke_one(warp, [&] {
         set_error(static_cast<kernel_error::value_type>(decode_error::INVALID_DICT_WIDTH),
                   error_code);
-      }
+      });
       return;
     }
     // Validate the whole dictionary before forming pointers
     if (static_cast<int64_t>(num_entries) * width > dict_size) {
-      if (lane == 0) {
+      cg::invoke_one(warp, [&] {
         set_error(static_cast<kernel_error::value_type>(decode_error::DATA_STREAM_OVERRUN),
                   error_code);
-      }
+      });
       return;
     }
     // Each warp iteration writes consecutive entries.
@@ -927,8 +929,11 @@ CUDF_KERNEL void __launch_bounds__(build_string_dict_index_block_size)
   }
 
   while (state.parsed < num_entries) {
-    int const cursor = state.cursor;
-    if (cursor > state.window_start + state.window_bytes - 4) {
+    int const cursor         = state.cursor;
+    bool const refill_window = cursor > state.window_start + state.window_bytes - 4;
+    warp.sync();
+
+    if (refill_window) {
       // Align both the page address and the shared destination for int4 copies. The first
       // virtual window can start before the page; pad those bytes instead of reading them.
       int const start =
@@ -949,17 +954,19 @@ CUDF_KERNEL void __launch_bounds__(build_string_dict_index_block_size)
           }
         }
       }
-      if (lane == 0) {
+      // Finish all window copies before publishing its new bounds.
+      warp.sync();
+      cg::invoke_one(warp, [&] {
         state.window_start = start;
         state.window_bytes = this_iteration_bytes;
-      }
+      });
       warp.sync();
     }
 
     int const first = state.parsed;
 
-    // Lane 0 computes the offsets and lengths for the batch
-    if (lane == 0) {
+    // One lane computes the offsets and lengths for the batch
+    cg::invoke_one(warp, [&] {
       int cur             = state.cursor;
       int count           = 0;
       int const max_count = min(warp_size, num_entries - first);
@@ -993,7 +1000,7 @@ CUDF_KERNEL void __launch_bounds__(build_string_dict_index_block_size)
         set_error(static_cast<kernel_error::value_type>(decode_error::DATA_STREAM_OVERRUN),
                   error_code);
       }
-    }
+    });
     warp.sync();
     if (state.invalid) { return; }
     int const count = state.batch;
@@ -1003,7 +1010,7 @@ CUDF_KERNEL void __launch_bounds__(build_string_dict_index_block_size)
     }
     // Finish consuming the batch before the parser can overwrite it or refill the window.
     warp.sync();
-    if (lane == 0) { state.parsed = first + count; }
+    cg::invoke_one(warp, [&] { state.parsed = first + count; });
     warp.sync();
   }
 }
@@ -1076,6 +1083,7 @@ void build_string_dictionary_index(ColumnChunkDesc* chunks,
                                    kernel_error::pointer error_code,
                                    cuda::stream_ref stream)
 {
+  static_assert(build_string_dict_index_block_size == cudf::detail::warp_size);
   // One warp/block per row-group column chunk.
   build_string_dictionary_index_kernel<<<num_chunks,
                                          build_string_dict_index_block_size,

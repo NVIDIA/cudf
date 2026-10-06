@@ -119,6 +119,20 @@ def test_quent_lifecycle(
             current_context
         )
         query.collect(engine=engine_with_quent_context)
+        current_context = dataclasses.replace(
+            current_context,
+            query_name="Failed iteration",
+        )
+        engine_with_quent_context.config["executor_options"]["quent_context"] = (
+            current_context
+        )
+        failed_query = (
+            pl.LazyFrame({"orderby": [1, 2, 4, 2], "value": [1, 2, 3, 4]})
+            .rolling("orderby", period="2i")
+            .agg(pl.sum("value"))
+        )
+        with pytest.raises(Exception):  # noqa: B017 - backend-specific wrapper
+            failed_query.collect(engine=engine_with_quent_context)
         with pytest.raises(ValueError, match="quent_context cannot be changed"):
             engine_with_quent_context._reset(
                 executor_options={"quent_context": cudf_polars.quent.QuentContext()}
@@ -147,7 +161,7 @@ def test_quent_lifecycle(
         == "Updated Query Group"
     )
     query_events = _of_type(events, "Query")
-    assert len(query_events) == 8
+    assert len(query_events) == 12
     assert _of_type(events, "Plan")
     assert _of_type(events, "Operator")
     assert _of_type(events, "Actor")
@@ -162,18 +176,31 @@ def test_quent_lifecycle(
         if isinstance(event["data"]["Query"], dict)
         and "Initialized" in event["data"]["Query"]
     ]
-    assert len({event["id"] for event in initialized_queries}) == 2
+    assert len({event["id"] for event in initialized_queries}) == 3
     assert [
         event["data"]["Query"]["Initialized"]["instance_name"]
         for event in initialized_queries
-    ] == ["Iteration 1", "Iteration 2"]
+    ] == ["Iteration 1", "Iteration 2", "Failed iteration"]
+    events_by_query = {
+        initialized["id"]: [
+            next(iter(event["data"]["Query"]))
+            for event in query_events
+            if event["id"] == initialized["id"]
+        ]
+        for initialized in initialized_queries
+    }
+    assert list(events_by_query.values()) == [
+        ["Initialized", "Planning", "Executing", "Completed"],
+        ["Initialized", "Planning", "Executing", "Completed"],
+        ["Initialized", "Planning", "Executing", "Failed"],
+    ]
 
     logical_plans = [
         event
         for event in _of_type(events, "Plan")
         if event["data"]["Plan"]["Declared"]["instance_name"] == "logical"
     ]
-    assert len({event["id"] for event in logical_plans}) == 2
+    assert len({event["id"] for event in logical_plans}) == 3
 
     memory_ids = [
         event["id"]

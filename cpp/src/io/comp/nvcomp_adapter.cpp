@@ -526,11 +526,13 @@ size_t batched_decompress_temp_size_ex(compression_type compression,
                                        device_span<size_t const> input_data_sizes,
                                        size_t max_uncomp_chunk_size,
                                        size_t max_total_uncomp_size,
-                                       cuda::stream_ref stream)
+                                       cuda::stream_ref stream,
+                                       cudf::memory_resources mr)
 {
   if (is_batched_decompress_temp_size_ex_supported(compression)) {
     size_t temp_size = 0;
-    auto d_statuses  = rmm::device_uvector<nvcompStatus_t>(input_data_ptrs.size(), stream);
+    auto d_statuses =
+      rmm::device_uvector<nvcompStatus_t>(input_data_ptrs.size(), stream, mr.get_temporary_mr());
     nvcompStatus_t const nvcomp_status =
       batched_decompress_get_temp_size_sync(compression,
                                             input_data_ptrs.data(),
@@ -579,12 +581,20 @@ size_t batched_decompress_temp_size_ex(compression_type compression,
                                        device_span<device_span<uint8_t const> const> inputs,
                                        size_t max_uncomp_chunk_size,
                                        size_t max_total_uncomp_size,
-                                       cuda::stream_ref stream)
+                                       cuda::stream_ref stream,
+                                       cudf::memory_resources mr)
 {
-  auto const [d_input_ptrs, d_input_sizes] = create_get_temp_size_args(inputs, stream);
+  auto const temp_mr = mr.get_temporary_mr();
+  auto const [d_input_ptrs, d_input_sizes] =
+    create_get_temp_size_args(inputs, stream, {temp_mr, temp_mr});
 
-  return batched_decompress_temp_size_ex(
-    compression, d_input_ptrs, d_input_sizes, max_uncomp_chunk_size, max_total_uncomp_size, stream);
+  return batched_decompress_temp_size_ex(compression,
+                                         d_input_ptrs,
+                                         d_input_sizes,
+                                         max_uncomp_chunk_size,
+                                         max_total_uncomp_size,
+                                         stream,
+                                         mr);
 }
 
 void batched_decompress(compression_type compression,
@@ -593,8 +603,10 @@ void batched_decompress(compression_type compression,
                         device_span<codec_exec_result> results,
                         size_t max_uncomp_chunk_size,
                         size_t max_total_uncomp_size,
-                        cuda::stream_ref stream)
+                        cuda::stream_ref stream,
+                        cudf::memory_resources mr)
 {
+  auto const temp_mr = mr.get_temporary_mr();
   CUDF_EXPECTS(inputs.size() > 0, "inputs must be non-empty");
   CUDF_EXPECTS(inputs.size() == outputs.size(), "inputs and outputs must have the same size");
   CUDF_EXPECTS(inputs.size() == results.size(), "inputs and results must have the same size");
@@ -604,9 +616,9 @@ void batched_decompress(compression_type compression,
   auto const num_chunks = inputs.size();
 
   // cuDF inflate inputs converted to nvcomp inputs
-  auto const nvcomp_args = create_batched_nvcomp_args(inputs, outputs, stream);
-  rmm::device_uvector<size_t> actual_uncompressed_data_sizes(num_chunks, stream);
-  rmm::device_uvector<nvcompStatus_t> nvcomp_statuses(num_chunks, stream);
+  auto const nvcomp_args = create_batched_nvcomp_args(inputs, outputs, stream, {temp_mr, temp_mr});
+  rmm::device_uvector<size_t> actual_uncompressed_data_sizes(num_chunks, stream, temp_mr);
+  rmm::device_uvector<nvcompStatus_t> nvcomp_statuses(num_chunks, stream, temp_mr);
 
   // Temporary space required for decompression
   auto const temp_size = batched_decompress_temp_size_ex(compression,
@@ -614,9 +626,9 @@ void batched_decompress(compression_type compression,
                                                          nvcomp_args.input_data_sizes,
                                                          max_uncomp_chunk_size,
                                                          max_total_uncomp_size,
-                                                         stream);
-  cuda::device_buffer<std::byte> scratch(
-    stream, cudf::get_current_device_resource_ref(), temp_size, cuda::no_init);
+                                                         stream,
+                                                         mr);
+  cuda::device_buffer<std::byte> scratch(stream, temp_mr, temp_size, cuda::no_init);
 
   auto const nvcomp_status = batched_decompress_async(compression,
                                                       use_hw_decompression(),
@@ -632,7 +644,7 @@ void batched_decompress(compression_type compression,
                                                       stream.get());
   CHECK_NVCOMP_STATUS(nvcomp_status);
 
-  update_compression_results(nvcomp_statuses, actual_uncompressed_data_sizes, results, stream);
+  update_compression_results(nvcomp_statuses, actual_uncompressed_data_sizes, results, stream, mr);
 }
 
 // Wrapper for nvcompBatched<format>CompressGetMaxOutputChunkSize
@@ -685,31 +697,35 @@ void batched_compress(compression_type compression,
                       device_span<device_span<uint8_t const> const> inputs,
                       device_span<device_span<uint8_t> const> outputs,
                       device_span<codec_exec_result> results,
-                      cuda::stream_ref stream)
+                      cuda::stream_ref stream,
+                      cudf::memory_resources mr)
 {
+  auto const temp_mr = mr.get_temporary_mr();
   CUDF_EXPECTS(inputs.size() > 0, "inputs must be non-empty");
   CUDF_EXPECTS(inputs.size() == outputs.size(), "inputs and outputs must have the same size");
   CUDF_EXPECTS(inputs.size() == results.size(), "inputs and results must have the same size");
 
   auto const num_chunks = inputs.size();
 
-  auto nvcomp_args = create_batched_nvcomp_args(inputs, outputs, stream);
+  auto nvcomp_args = create_batched_nvcomp_args(inputs, outputs, stream, {temp_mr, temp_mr});
 
-  skip_unsupported_inputs(
-    nvcomp_args.input_data_sizes, results, compress_max_allowed_chunk_size(compression), stream);
+  skip_unsupported_inputs(nvcomp_args.input_data_sizes,
+                          results,
+                          compress_max_allowed_chunk_size(compression),
+                          stream,
+                          mr);
 
   auto const [max_uncomp_chunk_size, total_uncomp_size] =
-    max_chunk_and_total_input_size(nvcomp_args.input_data_sizes, stream);
+    max_chunk_and_total_input_size(nvcomp_args.input_data_sizes, stream, mr);
 
   auto const temp_size = batched_compress_temp_size(
     compression, num_chunks, max_uncomp_chunk_size, total_uncomp_size, stream);
 
-  cuda::device_buffer<std::byte> scratch(
-    stream, cudf::get_current_device_resource_ref(), temp_size, cuda::no_init);
+  cuda::device_buffer<std::byte> scratch(stream, temp_mr, temp_size, cuda::no_init);
   CUDF_EXPECTS(is_aligned(scratch.data(), 8), "Compression failed, misaligned scratch buffer");
 
-  rmm::device_uvector<size_t> actual_compressed_data_sizes(num_chunks, stream);
-  rmm::device_uvector<nvcompStatus_t> nvcomp_statuses(num_chunks, stream);
+  rmm::device_uvector<size_t> actual_compressed_data_sizes(num_chunks, stream, temp_mr);
+  rmm::device_uvector<nvcompStatus_t> nvcomp_statuses(num_chunks, stream, temp_mr);
 
   batched_compress_async(compression,
                          nvcomp_args.input_data_ptrs.data(),
@@ -723,7 +739,7 @@ void batched_compress(compression_type compression,
                          nvcomp_statuses.data(),
                          stream.get());
 
-  update_compression_results(nvcomp_statuses, actual_compressed_data_sizes, results, stream);
+  update_compression_results(nvcomp_statuses, actual_compressed_data_sizes, results, stream, mr);
 }
 
 feature_status_parameters::feature_status_parameters()
@@ -917,7 +933,7 @@ void load_nvcomp_library()
     hd_results.host_to_device_async(stream);
 
     // Perform compression - this will execute an nvCOMP kernel
-    batched_compress(compression_type::SNAPPY, hd_inputs, hd_outputs, hd_results, stream);
+    batched_compress(compression_type::SNAPPY, hd_inputs, hd_outputs, hd_results, stream, mr);
   });
 }
 

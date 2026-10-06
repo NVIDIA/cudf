@@ -90,23 +90,25 @@ constexpr inline bool has_common_type_v = detail::has_common_type_impl<void, Ts.
 
 /// Checks if a type is a timestamp type.
 template <typename T>
-using is_timestamp_t = cuda::std::disjunction<cuda::std::is_same<cudf::timestamp_D, T>,
-                                              cuda::std::is_same<cudf::timestamp_h, T>,
-                                              cuda::std::is_same<cudf::timestamp_m, T>,
-                                              cuda::std::is_same<cudf::timestamp_s, T>,
-                                              cuda::std::is_same<cudf::timestamp_ms, T>,
-                                              cuda::std::is_same<cudf::timestamp_us, T>,
-                                              cuda::std::is_same<cudf::timestamp_ns, T>>;
+using is_timestamp_t =
+  cuda::std::disjunction<cuda::std::is_same<cudf::timestamp_D, cuda::std::remove_cv_t<T>>,
+                         cuda::std::is_same<cudf::timestamp_h, cuda::std::remove_cv_t<T>>,
+                         cuda::std::is_same<cudf::timestamp_m, cuda::std::remove_cv_t<T>>,
+                         cuda::std::is_same<cudf::timestamp_s, cuda::std::remove_cv_t<T>>,
+                         cuda::std::is_same<cudf::timestamp_ms, cuda::std::remove_cv_t<T>>,
+                         cuda::std::is_same<cudf::timestamp_us, cuda::std::remove_cv_t<T>>,
+                         cuda::std::is_same<cudf::timestamp_ns, cuda::std::remove_cv_t<T>>>;
 
 /// Checks if a type is a duration type.
 template <typename T>
-using is_duration_t = cuda::std::disjunction<cuda::std::is_same<cudf::duration_D, T>,
-                                             cuda::std::is_same<cudf::duration_h, T>,
-                                             cuda::std::is_same<cudf::duration_m, T>,
-                                             cuda::std::is_same<cudf::duration_s, T>,
-                                             cuda::std::is_same<cudf::duration_ms, T>,
-                                             cuda::std::is_same<cudf::duration_us, T>,
-                                             cuda::std::is_same<cudf::duration_ns, T>>;
+using is_duration_t =
+  cuda::std::disjunction<cuda::std::is_same<cudf::duration_D, cuda::std::remove_cv_t<T>>,
+                         cuda::std::is_same<cudf::duration_h, cuda::std::remove_cv_t<T>>,
+                         cuda::std::is_same<cudf::duration_m, cuda::std::remove_cv_t<T>>,
+                         cuda::std::is_same<cudf::duration_s, cuda::std::remove_cv_t<T>>,
+                         cuda::std::is_same<cudf::duration_ms, cuda::std::remove_cv_t<T>>,
+                         cuda::std::is_same<cudf::duration_us, cuda::std::remove_cv_t<T>>,
+                         cuda::std::is_same<cudf::duration_ns, cuda::std::remove_cv_t<T>>>;
 
 /**
  * @brief Indicates whether objects of types `L` and `R` can be relationally
@@ -202,7 +204,7 @@ bool is_numeric(data_type type);
 template <typename T>
 constexpr inline bool is_index_type()
 {
-  return cuda::std::is_integral_v<T> and not cuda::std::is_same_v<T, bool>;
+  return cuda::std::is_integral_v<T> and not cuda::std::is_same_v<cuda::std::remove_cv_t<T>, bool>;
 }
 
 /**
@@ -311,7 +313,7 @@ bool is_integral(data_type type);
 template <typename T>
 constexpr inline bool is_integral_not_bool()
 {
-  return cuda::std::is_integral_v<T> and not cuda::std::is_same_v<T, bool>;
+  return cuda::std::is_integral_v<T> and not cuda::std::is_same_v<cuda::std::remove_cv_t<T>, bool>;
 }
 
 /**
@@ -335,7 +337,7 @@ bool is_integral_not_bool(data_type type);
 template <typename T>
 constexpr inline bool is_numeric_not_bool()
 {
-  return cudf::is_numeric<T>() and not cuda::std::is_same_v<T, bool>;
+  return cudf::is_numeric<T>() and not cuda::std::is_same_v<cuda::std::remove_cv_t<T>, bool>;
 }
 
 /**
@@ -396,7 +398,7 @@ constexpr inline bool is_byte()
 template <typename T>
 constexpr inline bool is_boolean()
 {
-  return cuda::std::is_same_v<T, bool>;
+  return cuda::std::is_same_v<cuda::std::remove_cv_t<T>, bool>;
 }
 
 /**
@@ -442,12 +444,13 @@ bool is_timestamp(data_type type);
 template <typename T>
 CUDF_HOST_DEVICE constexpr inline bool is_fixed_point()
 {
-  return cuda::std::is_same_v<numeric::decimal32, T> ||
-         cuda::std::is_same_v<numeric::decimal64, T> ||
-         cuda::std::is_same_v<numeric::decimal128, T> ||
-         cuda::std::is_same_v<numeric::fixed_point<int32_t, numeric::Radix::BASE_2>, T> ||
-         cuda::std::is_same_v<numeric::fixed_point<int64_t, numeric::Radix::BASE_2>, T> ||
-         cuda::std::is_same_v<numeric::fixed_point<__int128_t, numeric::Radix::BASE_2>, T>;
+  using U = cuda::std::remove_cv_t<T>;
+  return cuda::std::is_same_v<numeric::decimal32, U> ||
+         cuda::std::is_same_v<numeric::decimal64, U> ||
+         cuda::std::is_same_v<numeric::decimal128, U> ||
+         cuda::std::is_same_v<numeric::fixed_point<int32_t, numeric::Radix::BASE_2>, U> ||
+         cuda::std::is_same_v<numeric::fixed_point<int64_t, numeric::Radix::BASE_2>, U> ||
+         cuda::std::is_same_v<numeric::fixed_point<__int128_t, numeric::Radix::BASE_2>, U>;
 }
 
 /**
@@ -537,7 +540,7 @@ constexpr bool is_rep_layout_compatible()
 template <typename T>
 CUDF_HOST_DEVICE constexpr inline bool is_dictionary()
 {
-  return cuda::std::is_same_v<dictionary32, T>;
+  return cuda::std::is_same_v<dictionary32, cuda::std::remove_cv_t<T>>;
 }
 
 /**
@@ -616,9 +619,10 @@ class string_view;
 template <typename T>
 CUDF_HOST_DEVICE constexpr inline bool is_compound()
 {
-  return cuda::std::is_same_v<T, cudf::string_view> or
-         cuda::std::is_same_v<T, cudf::dictionary32> or cuda::std::is_same_v<T, cudf::list_view> or
-         cuda::std::is_same_v<T, cudf::struct_view>;
+  using U = cuda::std::remove_cv_t<T>;
+  return cuda::std::is_same_v<U, cudf::string_view> or
+         cuda::std::is_same_v<U, cudf::dictionary32> or cuda::std::is_same_v<U, cudf::list_view> or
+         cuda::std::is_same_v<U, cudf::struct_view>;
 }
 
 /**
@@ -649,7 +653,8 @@ bool is_compound(data_type type);
 template <typename T>
 CUDF_HOST_DEVICE constexpr inline bool is_nested()
 {
-  return cuda::std::is_same_v<T, cudf::list_view> || cuda::std::is_same_v<T, cudf::struct_view>;
+  using U = cuda::std::remove_cv_t<T>;
+  return cuda::std::is_same_v<U, cudf::list_view> || cuda::std::is_same_v<U, cudf::struct_view>;
 }
 
 /**

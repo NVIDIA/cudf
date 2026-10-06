@@ -7,6 +7,7 @@
 
 #include <benchmarks/io/cuio_common.hpp>
 
+#include <cudf/table/table_view.hpp>
 #include <cudf/types.hpp>
 
 #include <nvbench/nvbench.cuh>
@@ -30,10 +31,10 @@ void parquet_read_common(cudf::size_type num_rows_to_read,
                          cuio_source_sink_pair& source_sink,
                          nvbench::state& state);
 
-// Writes a single-column file with an explicitly controlled row group and page layout
+// Writes `table` as `num_row_groups` row groups of `pages_per_row_group` pages each. The layout
+// is exact only if the number of rows is a multiple of `num_row_groups * pages_per_row_group`
 [[nodiscard]] cuio_source_sink_pair write_file_shape_parquet_file(
-  cudf::type_id dtype,
-  cudf::size_type num_rows,
+  cudf::table_view const& table,
   cudf::size_type num_row_groups,
   cudf::size_type pages_per_row_group,
   io_type source_type,

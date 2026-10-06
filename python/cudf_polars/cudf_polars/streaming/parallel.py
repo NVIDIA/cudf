@@ -358,7 +358,7 @@ def _(
     if partition_info[child].count > 1 and _contains_over([ir.mask.value]):
         # mask contains .over(...), collapse to single partition
         return _lower_ir_fallback(
-            ir.reconstruct([child]),
+            ir,
             rec,
             msg=(
                 "over(...) inside filter is not supported for multiple partitions; "

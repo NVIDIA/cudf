@@ -17,9 +17,11 @@
 #include <format>
 #include <iostream>
 #include <iterator>
+#include <map>
 #include <numeric>
 #include <span>
 #include <stdexcept>
+#include <type_traits>
 #include <utility>
 
 namespace cudf::detail::row_ir {
@@ -225,6 +227,9 @@ struct [[nodiscard]] opcode_info {
       {"SINH", PROPAGATE, false, false, {FLOATS}, ARG0},
       {"TAN", PROPAGATE, false, false, {FLOATS}, ARG0},
       {"TANH", PROPAGATE, false, false, {FLOATS}, ARG0},
+      // Placeholder that keeps the table aligned with the opcodes: a UDF_CALL node takes its
+      // arity, null behaviour and types from its udf_info, never from this row.
+      {"UDF_CALL", PROPAGATE, false, false, {}, NONE},
     };
 
   auto index = static_cast<size_t>(op);
@@ -522,6 +527,14 @@ size_t node::compute_hash() const
     reference_);
   h = cudf::hashing::detail::hash_combine(
     h, target_scale_.has_value() ? std::hash<int32_t>{}(*target_scale_) : 0);
+  if (udf_ != nullptr) {
+    // The symbol and output type tell most callees apart; is_equivalent compares the full callee.
+    h = cudf::hashing::detail::hash_combine(h, std::hash<std::string>{}(udf_->symbol));
+    h = cudf::hashing::detail::hash_combine(
+      h,
+      std::hash<std::underlying_type_t<type_id>>{}(
+        static_cast<std::underlying_type_t<type_id>>(udf_->output_type.id())));
+  }
   for (auto& arg : args_) {
     h = cudf::hashing::detail::hash_combine(h, arg->hash());
   }
@@ -575,6 +588,18 @@ node::node(input_reference input)
   hash_ = compute_hash();
 }
 
+node::node(udf_info udf, error_policy error_policy, std::vector<std::unique_ptr<node>> args)
+  : op_{opcode::UDF_CALL},
+    error_policy_{error_policy},
+    args_{std::move(args)},
+    udf_{std::make_shared<udf_info const>(std::move(udf))}
+{
+  CUDF_EXPECTS(!args_.empty(),
+               std::format("UDF call `{}` needs at least one argument.", udf_->symbol),
+               std::runtime_error);
+  hash_ = compute_hash();
+}
+
 node::node(output_reference reference, std::unique_ptr<node> arg)
   : reference_{reference}, op_{opcode::SET_OUTPUT}
 {
@@ -592,8 +617,12 @@ size_t node::hash() const { return hash_; }
 
 bool node::is_equivalent(node const& other) const
 {
+  // Calls of a function that isn't declared pure are evaluated as written, so they never merge.
+  auto const same_udf =
+    (udf_ == nullptr && other.udf_ == nullptr) ||
+    (udf_ != nullptr && other.udf_ != nullptr && udf_->is_pure && *udf_ == *other.udf_);
   return hash_ == other.hash_ && op_ == other.op_ && target_scale_ == other.target_scale_ &&
-         error_policy_ == other.error_policy_ && reference_ == other.reference_ &&
+         error_policy_ == other.error_policy_ && reference_ == other.reference_ && same_udf &&
          args_.size() == other.args_.size() &&
          std::equal(
            args_.begin(), args_.end(), other.args_.begin(), [](auto const& lhs, auto const& rhs) {
@@ -611,9 +640,18 @@ opcode node::get_opcode() const { return op_; }
 
 std::span<std::unique_ptr<node> const> node::get_args() const { return args_; }
 
+udf_info const* node::get_udf() const { return udf_.get(); }
+
 bool node::is_null_aware() const
 {
   if (op_ == opcode::GET_INPUT) { return false; }
+
+  // A NULLIFY call emits nulls for failing rows, so like an always-nullable operator it needs the
+  // nullable form of the generated code.
+  if (op_ == opcode::UDF_CALL) {
+    return error_policy_ == cudf::error_policy::NULLIFY ||
+           std::ranges::any_of(args_, [](auto& a) { return a->is_null_aware(); });
+  }
 
   // to emit nulls for always-nullable operators, we  need to mark them as null-aware
   auto op_info = get_op_info(op_, error_policy_);
@@ -633,6 +671,11 @@ bool node::is_null_aware() const
 bool node::is_always_valid() const
 {
   if (op_ == opcode::GET_INPUT) { return false; }
+
+  if (op_ == opcode::UDF_CALL) {
+    if (error_policy_ == cudf::error_policy::NULLIFY) { return false; }
+    return std::ranges::all_of(args_, [](auto& a) { return a->is_always_valid(); });
+  }
 
   auto null_policy = get_op_info(op_, error_policy_).null_policy;
 
@@ -685,6 +728,9 @@ void node::instantiate(instance_context& ctx)
     } break;
     case opcode::SET_OUTPUT: {
       type_ = args_[0]->get_type();
+    } break;
+    case opcode::UDF_CALL: {
+      type_ = udf_->output_type;
     } break;
     default: {
       std::vector<data_type> arg_types;
@@ -743,6 +789,46 @@ void node::emit_code(instance_context& instance, target_info const& info, code_s
             args_[0]->get_id(),
             instance.get_output_vars()[std::get<output_reference>(reference_).index].id,
             id_));
+        } break;
+
+        case opcode::UDF_CALL: {
+          auto args_str = std::accumulate(
+            args_.begin() + 1,
+            args_.end(),
+            std::string{args_[0]->get_id()},
+            [](auto const& a, auto& node) { return std::format("{}, {}", a, node->get_id()); });
+          auto call = std::format("cudf::detail::row_ir::evaluate_udf<&{}, {}>({})",
+                                  udf_->symbol,
+                                  type_to_name(udf_->output_type),
+                                  args_str);
+
+          // evaluate_udf always returns a cuda::std::expected, so both policies reuse the
+          // handling of fallible operators.
+          if (error_policy_ != cudf::error_policy::NULLIFY) {
+            sink.emit(std::format(
+              R"***(auto expected__{1} = {2};
+if(!expected__{1}.has_value()) {{
+ return expected__{1}.error();
+}}
+{0} {1} = expected__{1}.value();
+)***",
+              type,
+              id_,
+              call));
+          } else {
+            sink.emit(std::format(
+              R"***({0} {1}{{}};
+auto expected__{1} = {2};
+if(expected__{1}.has_value()) {{
+  {1} = expected__{1}.value();
+}} else {{
+  {1} = {{}};
+}}
+)***",
+              type,
+              id_,
+              call));
+          }
         } break;
 
         default: {
@@ -873,6 +959,86 @@ std::unique_ptr<row_ir::node> ast_converter::add_ir_node(ast::jit::detail::opera
     expr.get_opcode(), expr.get_target_scale(), expr.get_error_policy(), std::move(args));
 }
 
+std::unique_ptr<row_ir::node> ast_converter::add_ir_node(ast::jit::detail::udf_call const& expr)
+{
+  std::vector<std::unique_ptr<row_ir::node>> args;
+  for (auto& arg : expr.get_arguments()) {
+    args.emplace_back(arg.get().accept(*this));
+  }
+  auto const& function = expr.get_function();
+  auto info            = udf_info{.symbol        = function.symbol,
+                                  .fragment      = function.fragment,
+                                  .fragment_type = function.binary_type,
+                                  .output_type   = expr.get_output_type(),
+                                  .is_pure       = function.is_pure};
+  return std::make_unique<row_ir::node>(std::move(info), expr.get_error_policy(), std::move(args));
+}
+
+namespace {
+
+/**
+ * @brief The LTO callees a tree calls, in first-call order, one call per symbol.
+ *
+ * Every call of a symbol must carry the same definition (fragment and purity) and the same
+ * signature, because the symbol is declared once.
+ */
+struct udf_calls {
+  std::map<std::string, node const*> by_symbol;
+  std::vector<node const*> first_calls;
+};
+
+bool same_signature(node const& lhs, node const& rhs)
+{
+  auto const lhs_args = lhs.get_args();
+  auto const rhs_args = rhs.get_args();
+  return lhs.get_udf()->output_type == rhs.get_udf()->output_type &&
+         std::ranges::equal(lhs_args, rhs_args, [](auto const& l, auto const& r) {
+           return l->get_type() == r->get_type();
+         });
+}
+
+void collect_udfs(node const& ir, udf_calls& calls)
+{
+  for (auto& arg : ir.get_args()) {
+    collect_udfs(*arg, calls);
+  }
+  auto const* udf = ir.get_udf();
+  if (udf == nullptr) { return; }
+
+  auto [it, inserted] = calls.by_symbol.try_emplace(udf->symbol, &ir);
+  if (inserted) {
+    calls.first_calls.emplace_back(&ir);
+    return;
+  }
+  auto const& first          = *it->second->get_udf();
+  auto const same_definition = first.fragment.data() == udf->fragment.data() &&
+                               first.fragment.size() == udf->fragment.size() &&
+                               first.fragment_type == udf->fragment_type &&
+                               first.is_pure == udf->is_pure;
+  CUDF_EXPECTS(same_definition,
+               std::format("UDF `{}` is called with two different definitions.", udf->symbol),
+               std::invalid_argument);
+  CUDF_EXPECTS(same_signature(*it->second, ir),
+               std::format("UDF `{}` is called with two different signatures.", udf->symbol),
+               std::invalid_argument);
+}
+
+/**
+ * @brief Declare an LTO callee the way it is defined: `extern "C"`, returning an error code.
+ */
+std::string lto_declaration(node const& call)
+{
+  auto const& udf = *call.get_udf();
+  auto params     = std::format("{}* out", to_cuda_type(udf.output_type, false));
+  auto index      = 0;
+  for (auto& arg : call.get_args()) {
+    params += std::format(", {} in_{}", to_cuda_type(arg->get_type(), false), index++);
+  }
+  return std::format("extern \"C\" __device__ cudf::errc {}({});\n", udf.symbol, params);
+}
+
+}  // namespace
+
 bool is_nullable(scalar_input const& in)
 {
   if (auto* s = std::get_if<std::unique_ptr<column>>(&in)) {
@@ -963,7 +1129,23 @@ std::tuple<std::string, null_aware, std::vector<output_nullability>> ast_convert
     }
   }();
 
+  udf_calls calls;
+  for (auto& ir : output_irs_) {
+    collect_udfs(*ir, calls);
+  }
+
   code_sink sink;
+  // Each LTO callee is declared before the generated function. Without calls the code is unchanged.
+  for (auto const* call : calls.first_calls) {
+    sink.emit(lto_declaration(*call));
+    auto const& udf = *call->get_udf();
+    if (std::ranges::none_of(udf_fragments_, [&](auto const& fragment) {
+          return fragment.data.data() == udf.fragment.data() &&
+                 fragment.data.size() == udf.fragment.size();
+        })) {
+      udf_fragments_.push_back(udf_fragment{.data = udf.fragment, .type = udf.fragment_type});
+    }
+  }
   sink.emit(std::format("__device__ cudf::errc {}(", function_name));
   sink.emit(args_decl);
   sink.emit(")\n{\n");
@@ -1047,7 +1229,9 @@ transform_args ast_converter::compute_table(
                                  .inputs               = inputs,
                                  .outputs              = std::move(outputs),
                                  .string_offsets{},
-                                 .row_size = row_size};
+                                 .row_size       = row_size,
+                                 .udf_expression = std::string{function_name},
+                                 .udf_fragments  = std::move(converter.udf_fragments_)};
   if (get_context().dump_codegen()) {
     std::cout << "Generated code for transform: \n" << result.udf << std::endl;
   }

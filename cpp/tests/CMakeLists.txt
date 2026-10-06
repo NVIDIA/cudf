@@ -726,6 +726,10 @@ add_fragment(
 
 add_fragment(cudf_test_fragments FRAGMENT to_upper SOURCE transform/fragments/to_upper.cu)
 
+add_fragment(
+  cudf_test_fragments FRAGMENT ast_udf_callees SOURCE transform/fragments/ast_udf_callees.cu
+)
+
 rtcx_embed(
   cudf_test_fragments COMPRESSION none OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/rtcx_embed"
 )
@@ -736,6 +740,13 @@ ConfigureTest(
 )
 add_dependencies(TRANSFORM_LTO_TEST cudf_test_fragments)
 target_include_directories(TRANSFORM_LTO_TEST PRIVATE ${cudf_test_fragments_SOURCE_DIR})
+
+# AST JIT expressions in these tests call LTO callees from the same fragments.
+foreach(test AST_TEST JOIN_TEST)
+  target_sources(${test} PRIVATE ${cudf_test_fragments_SOURCE_DIR}/cudf_test_fragments.s)
+  add_dependencies(${test} cudf_test_fragments)
+  target_include_directories(${test} PRIVATE ${cudf_test_fragments_SOURCE_DIR})
+endforeach()
 
 # ##################################################################################################
 # * lists tests ----------------------------------------------------------------------------------

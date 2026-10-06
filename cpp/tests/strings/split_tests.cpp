@@ -24,6 +24,48 @@
 
 struct StringsSplitTest : public cudf::test::BaseFixture {};
 
+TEST_F(StringsSplitTest, WideExplicitDelimiter)
+{
+  // Wide rows exercise global position selection rather than the per-row fast path.
+  auto const left  = std::string(300, 'a');
+  auto const right = std::string(300, 'b');
+  std::vector<std::string> const rows{left + "é" + right, "", "", left + "éé" + right};
+  auto const input =
+    cudf::test::strings_column_wrapper(rows.begin(), rows.end(), cudf::test::iterators::null_at(1));
+  auto const view      = cudf::strings_column_view{input};
+  auto const delimiter = cudf::string_scalar{"é"};
+
+  auto const first =
+    cudf::test::strings_column_wrapper({left, "", "", left}, {true, false, true, true});
+  auto const last =
+    cudf::test::strings_column_wrapper({right, "", "", "é" + right}, {true, false, false, true});
+  auto const split = cudf::strings::split(view, delimiter, 1);
+  CUDF_TEST_EXPECT_TABLES_EQUAL(split->view(), cudf::table_view({first, last}));
+
+  auto const reverse_first =
+    cudf::test::strings_column_wrapper({left, "", "", left + "é"}, {true, false, true, true});
+  auto const reverse_last =
+    cudf::test::strings_column_wrapper({right, "", "", right}, {true, false, false, true});
+  auto const reverse = cudf::strings::rsplit(view, delimiter, 1);
+  CUDF_TEST_EXPECT_TABLES_EQUAL(reverse->view(), cudf::table_view({reverse_first, reverse_last}));
+
+  using LCW = cudf::test::lists_column_wrapper<cudf::string_view>;
+  LCW const expected_record({LCW{left, right}, LCW{}, LCW{""}, LCW{left, "é" + right}},
+                            cudf::test::iterators::null_at(1));
+  auto const record = cudf::strings::split_record(view, delimiter, 1);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(record->view(), expected_record);
+
+  LCW const expected_reverse({LCW{left, right}, LCW{}, LCW{""}, LCW{left + "é", right}},
+                             cudf::test::iterators::null_at(1));
+  auto const reverse_record = cudf::strings::rsplit_record(view, delimiter, 1);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(reverse_record->view(), expected_reverse);
+
+  auto const expected_part =
+    cudf::test::strings_column_wrapper({right, "", "", ""}, {true, false, false, true});
+  auto const part = cudf::strings::split_part(view, delimiter, 1);
+  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(part->view(), expected_part);
+}
+
 TEST_F(StringsSplitTest, Split)
 {
   std::vector<char const*> h_strings{

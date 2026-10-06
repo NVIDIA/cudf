@@ -41,6 +41,7 @@
 #include <limits>
 #include <numeric>
 #include <optional>
+#include <ranges>
 #include <regex>
 #include <span>
 #include <string_view>

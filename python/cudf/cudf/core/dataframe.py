@@ -4434,18 +4434,22 @@ class DataFrame(IndexedFrame, GetAttrGetItemMixin):
 
     @_performance_tracking
     def add_prefix(self, prefix, axis=None):
-        if axis is not None:
-            raise NotImplementedError("axis is currently not implemented.")
+        axis = 1 if axis is None else self._get_axis_from_axis_arg(axis)
         out = self.copy(deep=False)
-        out.columns = [prefix + col_name for col_name in self._column_names]
+        if axis == 0:
+            out.index = prefix + self.index.astype(str)
+        else:
+            out.columns = [prefix + col_name for col_name in self._column_names]
         return out
 
     @_performance_tracking
     def add_suffix(self, suffix, axis=None):
-        if axis is not None:
-            raise NotImplementedError("axis is currently not implemented.")
+        axis = 1 if axis is None else self._get_axis_from_axis_arg(axis)
         out = self.copy(deep=False)
-        out.columns = [col_name + suffix for col_name in self._column_names]
+        if axis == 0:
+            out.index = self.index.astype(str) + suffix
+        else:
+            out.columns = [col_name + suffix for col_name in self._column_names]
         return out
 
     @_performance_tracking

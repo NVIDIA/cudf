@@ -28,6 +28,7 @@ def test_dataframe_add_suffix(axis):
 
     assert_eq(got, expected, check_index_type=axis not in (0, "index"))
 
+
 @pytest.mark.parametrize(
     ("method", "affix"),
     [("add_prefix", "item_"), ("add_suffix", "_item")],

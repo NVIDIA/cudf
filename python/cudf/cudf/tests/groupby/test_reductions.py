@@ -151,6 +151,16 @@ def test_groupby_column_name():
     assert_groupby_results_equal(pxx, gxx)
 
 
+def test_groupby_grouper_with_empty_key():
+    pdf = pd.DataFrame({"": [1, 1, 2], "value": [10, 20, 30]})
+    gdf = cudf.from_pandas(pdf)
+
+    expect = pdf.groupby(pd.Grouper(key="")).sum()
+    got = gdf.groupby(cudf.Grouper(key="")).sum()
+
+    assert_eq(expect, got, check_dtype=False, check_index_type=False)
+
+
 def test_groupby_column_numeral():
     pdf = pd.DataFrame({0: [1.0, 2.0, 3.0], 1: [1, 2, 3]})
     gdf = cudf.DataFrame(pdf)

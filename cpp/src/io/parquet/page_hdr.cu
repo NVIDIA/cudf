@@ -835,9 +835,10 @@ struct decode_from_page_data_fn {
 /**
  * @brief Build string pointer/length descriptors for each chunk's dictionary entries.
  *
- * One warp handles each chunk. For BYTE_ARRAY dictionaries, the warp loads a shared-memory
+ * For BYTE_ARRAY dictionaries, the warp loads a shared-memory
  * window with aligned vector loads, one lane follows the variable-length prefixes, and the
- * warp writes a batch of descriptors. Descriptor pointers refer to the original page data.
+ * warp writes a batch of string pointer/length descriptors. Descriptor pointers refer to the
+ * original page data.
  *
  * For FIXED_LEN_BYTE_ARRAY dictionaries, lanes compute entry offsets independently and write
  * descriptors directly to the chunk's str_dict_index array.
@@ -867,6 +868,7 @@ CUDF_KERNEL void __launch_bounds__(build_string_dict_index_block_size)
     cuda::std::array<int, warp_size> offsets;
     cuda::std::array<int, warp_size> lengths;
   };
+
   __shared__ ColumnChunkDesc ck;
   __shared__ parser_state state;
   __shared__ __align__(16) cuda::std::array<uint8_t, window_size> window;
@@ -876,6 +878,7 @@ CUDF_KERNEL void __launch_bounds__(build_string_dict_index_block_size)
   int const chunk = blockIdx.x;
   if (chunk >= num_chunks) { return; }
 
+  // Lane 0 initializes the shared state for the warp
   if (lane == 0) {
     ck                 = chunks[chunk];
     state.cursor       = 0;
@@ -885,6 +888,7 @@ CUDF_KERNEL void __launch_bounds__(build_string_dict_index_block_size)
     state.invalid      = false;
   }
   warp.sync();
+
   if (ck.num_dict_pages <= 0 or ck.str_dict_index == nullptr) { return; }
 
   auto const* dict      = ck.dict_page->page_data;
@@ -907,7 +911,7 @@ CUDF_KERNEL void __launch_bounds__(build_string_dict_index_block_size)
       }
       return;
     }
-    // Validate the whole dictionary before forming pointers; widen the product to avoid overflow.
+    // Validate the whole dictionary before forming pointers
     if (static_cast<int64_t>(num_entries) * width > dict_size) {
       if (lane == 0) {
         set_error(static_cast<kernel_error::value_type>(decode_error::DATA_STREAM_OVERRUN),
@@ -915,8 +919,7 @@ CUDF_KERNEL void __launch_bounds__(build_string_dict_index_block_size)
       }
       return;
     }
-    // Each warp iteration writes consecutive entries. A wide counter also keeps the last
-    // warp-sized increment safe when num_entries is close to the size_type limit.
+    // Each warp iteration writes consecutive entries.
     for (int64_t i = lane; i < num_entries; i += warp_size) {
       ck.str_dict_index[i] = {reinterpret_cast<char const*>(dict + i * width), width};
     }
@@ -930,36 +933,44 @@ CUDF_KERNEL void __launch_bounds__(build_string_dict_index_block_size)
       // virtual window can start before the page; pad those bytes instead of reading them.
       int const start =
         cursor - static_cast<int>(reinterpret_cast<uintptr_t>(dict + cursor) % load_size);
-      int const bytes = static_cast<int>(
+      int const this_iteration_bytes = static_cast<int>(
         min(static_cast<int64_t>(window_size), static_cast<int64_t>(dict_size) - start));
-      for (int i = lane * load_size; i < bytes; i += warp_size * load_size) {
-        int64_t const source = static_cast<int64_t>(start) + i;
-        if (source >= 0 and source + load_size <= dict_size and i + load_size <= bytes) {
+      for (int i = lane * load_size; i < this_iteration_bytes; i += warp_size * load_size) {
+        int64_t const source =
+          static_cast<int64_t>(start) +
+          i;  // Source is the offset of the current iteration from the start of the dictionary
+        if (source >= 0 and source + load_size <= dict_size and
+            i + load_size <= this_iteration_bytes) {
           reinterpret_cast<int4*>(window.data())[i / load_size] =
             *reinterpret_cast<int4 const*>(dict + source);
-        } else {
-          for (int j = 0; j < load_size and i + j < bytes; ++j) {
+        } else {  // Apply padding to the window if source is negative
+          for (int j = 0; j < load_size and i + j < this_iteration_bytes; ++j) {
             window[i + j] = source + j >= 0 ? dict[source + j] : 0;
           }
         }
       }
       if (lane == 0) {
         state.window_start = start;
-        state.window_bytes = bytes;
+        state.window_bytes = this_iteration_bytes;
       }
       warp.sync();
     }
 
     int const first = state.parsed;
+
+    // Lane 0 computes the offsets and lengths for the batch
     if (lane == 0) {
       int cur             = state.cursor;
       int count           = 0;
       int const max_count = min(warp_size, num_entries - first);
       while (count < max_count) {
+        // Check if the dictionary is too small to fit the next 4 bytes
         if (dict_size - cur < 4) {
           state.invalid = true;
           break;
         }
+
+        // Check if the cursor is past the end of the window
         if (cur > state.window_start + state.window_bytes - 4) { break; }
         int const offset  = cur - state.window_start;
         auto const length = static_cast<uint32_t>(window[offset]) |

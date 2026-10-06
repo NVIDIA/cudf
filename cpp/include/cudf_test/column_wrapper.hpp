@@ -111,12 +111,11 @@ struct fixed_width_type_converter {
    * @param element Source value
    * @return The converted target value
    */
-  template <
-    typename FromT          = From,
-    typename ToT            = To,
-    std::enable_if_t<!std::is_same_v<FromT, ToT> && (cudf::is_convertible<FromT, ToT>::value ||
-                                                     std::is_constructible_v<ToT, FromT>),
-                     void>* = nullptr>
+  template <typename FromT          = From,
+            typename ToT            = To,
+            std::enable_if_t<!std::is_same_v<FromT, ToT> && (std::is_convertible_v<FromT, ToT> ||
+                                                             std::is_constructible_v<ToT, FromT>),
+                             void>* = nullptr>
   constexpr ToT operator()(FromT element) const
   {
     return static_cast<ToT>(element);

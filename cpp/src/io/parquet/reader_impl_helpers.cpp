@@ -549,7 +549,7 @@ metadata::metadata(datasource* source, bool read_page_indexes)
     try {
       auto const range = page_index_byte_range();
       if (std::cmp_less_equal(range.offset() + range.size(), source->size())) { return range; }
-    } catch (std::invalid_argument const&) {
+    } catch (std::overflow_error const&) {
       // Page indexes are optional so skip them if their byte range is invalid
     }
     return {};

@@ -535,7 +535,7 @@ metadata::metadata(datasource* source, bool read_page_indexes)
   auto const has_strings =
     std::ranges::any_of(schema, [](auto const& elem) { return elem.type == Type::BYTE_ARRAY; });
 
-  // Column indexes are only used along side offset indexes, skip if there are no offset indexes
+  // Column indexes are only used alongside offset indexes, skip if there are no offset indexes
   auto const has_offset_index = [this] {
     return std::ranges::any_of(row_groups, [](auto const& rg) {
       return std::ranges::any_of(rg.columns, [](auto const& col) {

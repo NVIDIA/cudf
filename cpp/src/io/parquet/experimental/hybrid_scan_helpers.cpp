@@ -31,7 +31,6 @@ using metadata_base                  = parquet::detail::metadata;
 using io::detail::inline_column_buffer;
 using parquet::detail::equality_literals_collector;
 using parquet::detail::input_column_info;
-using parquet::detail::page_index_byte_range;
 using parquet::detail::row_group_info;
 using text::byte_range_info;
 
@@ -108,7 +107,7 @@ std::vector<text::byte_range_info> aggregate_reader_metadata::page_index_byte_ra
   std::ranges::transform(per_file_metadata,
                          std::back_inserter(page_index_byte_ranges),
                          [](auto const& file_metadata) -> text::byte_range_info {
-                           return page_index_byte_range(file_metadata);
+                           return file_metadata.page_index_byte_range();
                          });
 
   return page_index_byte_ranges;
@@ -176,7 +175,7 @@ void aggregate_reader_metadata::setup_page_indexes(
     CUDF_EXPECTS(not row_groups.empty() and not row_groups.front().columns.empty(),
                  "No column chunks in Parquet schema to read page index for");
 
-    auto const expected_byte_range = page_index_byte_range(file_metadata);
+    auto const expected_byte_range = file_metadata.page_index_byte_range();
 
     CUDF_EXPECTS(not expected_byte_range.is_empty() and
                    std::cmp_equal(pgidx_bytes.size(), expected_byte_range.size()),

@@ -86,15 +86,6 @@ template <typename T, typename UnaryOp>
   return results;
 }
 
- * @brief Computes the byte range containing the column and/or offset indexes.
- *
- * @throws std::invalid_argument if an index end exceeds the supported offset range
- *
- * @param file_metadata Parquet file metadata
- * @return Page-index byte range, or an empty range when no indexes are available
- */
-[[nodiscard]] text::byte_range_info page_index_byte_range(FileMetaData const& file_metadata);
-
 /**
  * @brief page location and size info
  */
@@ -211,8 +202,20 @@ struct metadata : public FileMetaData {
   metadata& operator=(metadata&& other)      = default;
   ~metadata();
 
+  /**
+   * @brief Computes the byte range of the page index, or an empty range if
+   *  it is not available or already set up
+   */
+  [[nodiscard]] text::byte_range_info page_index_byte_range() const;
+
+  /**
+   * @brief Parses column and offset indexes from the page index bytes starting at `min_offset`
+   */
   void setup_page_index(cudf::host_span<uint8_t const> page_index_bytes, int64_t min_offset);
 
+  /**
+   * @brief Returns whether the page index has been set up
+   */
   [[nodiscard]] bool is_page_index_setup() const { return is_page_index_setup_; }
 
  protected:

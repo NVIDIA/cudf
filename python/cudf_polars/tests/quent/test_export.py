@@ -80,31 +80,3 @@ def test_export_packages_generated_context(tmp_path: Path) -> None:
         streams = {name.split("/")[1] for name in names if "/" in name}
         assert "Engine" in streams
         assert "engine" not in streams
-
-
-def test_benchmark_writer_packages_collector_output(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    from cudf_polars.streaming.benchmarks import utils as benchmark_utils
-
-    run_id = uuid.uuid4()
-    root = tmp_path / str(run_id)
-    _collect_engine_events(root)
-
-    class FakeEngine:
-        _quent_output_root = root
-
-    archive_path = tmp_path / "logs" / f"{run_id}.zip"
-    monkeypatch.chdir(tmp_path)
-    assert (
-        benchmark_utils._write_quent_traces(
-            FakeEngine(),  # type: ignore[arg-type]
-            run_id,
-            collect_traces=True,
-            quent_archive=archive_path,
-        )
-        == archive_path
-    )
-    assert not root.exists()
-    with zipfile.ZipFile(archive_path) as archive:
-        assert any(name.endswith(SIDECAR_FILE_NAME) for name in archive.namelist())

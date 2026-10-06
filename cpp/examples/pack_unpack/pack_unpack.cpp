@@ -91,7 +91,7 @@ void print_table(std::string const& header, cudf::table_view const& tbl_view)
 }
 
 /**
- * @brief Asserts that `actual` equals `expected` and prints the outcome; throws on mismatch.
+ * @brief Asserts that `actual` equals `expected` and prints the outcome. Throws on mismatch.
  */
 void check_tables_equal(cudf::table_view const& expected,
                         cudf::table_view const& actual,

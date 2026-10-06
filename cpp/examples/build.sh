@@ -72,11 +72,11 @@ for example_name in \
   billion_rows \
   hybrid_scan_io \
   nested_types \
-  strings \
-  string_transforms \
   pack_unpack \
   parquet_inspect \
-  parquet_io; do
+  parquet_io \
+  strings \
+  string_transforms; do
   build_example "${example_name}" &
   example_build_pids+=("$!")
 done

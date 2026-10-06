@@ -12,7 +12,7 @@ execution.
 from __future__ import annotations
 
 import uuid
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, call
 
 from cudf_polars.quent._context import QuentContext, WorkerResources
 
@@ -32,14 +32,13 @@ def test_context_serialization_roundtrip(tmp_path) -> None:
 def test_worker_resources_declares_inter_rank_channel() -> None:
     engine_id = uuid.uuid4()
     worker_id = uuid.uuid4()
-    with patch("cudf_polars.quent._context.get_total_device_memory", return_value=1024):
-        resources = WorkerResources.build(
-            instance_suffix="rank-0",
-            engine_id=engine_id,
-            worker_id=worker_id,
-            rank=0,
-            nranks=2,
-        )
+    resources = WorkerResources.build(
+        instance_suffix="rank-0",
+        engine_id=engine_id,
+        worker_id=worker_id,
+        rank=0,
+        nranks=2,
+    )
 
     session = MagicMock()
     resources.declare(session)

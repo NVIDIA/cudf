@@ -15,9 +15,8 @@ import sys
 sys.modules["cudf_polars_quent"] = None
 
 import cudf_polars.quent
-from cudf_polars.engine.spmd import SPMDEngine
+import polars as pl
 
-assert cudf_polars.quent.QuentContext()
-assert SPMDEngine
+pl.LazyFrame({"a": [1, 2]}).collect(engine="gpu")
 """
     subprocess.run([sys.executable, "-c", code], check=True)

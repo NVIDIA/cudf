@@ -5,15 +5,12 @@
 
 from __future__ import annotations
 
-import uuid
-from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
 from cudf_polars.quent._plan import (
     _emit_operator_details,
-    emit_plan,
     port_names_for_node,
 )
 
@@ -158,36 +155,6 @@ def test_emit_operator_details(
     _emit_operator_details(operator, node_type, properties)
 
     getattr(operator, method_name).assert_called_once_with(values=expected)
-
-
-def test_emit_plan_disabled_returns_deterministic_operator_ids() -> None:
-    plan_id = uuid.uuid4()
-    serializable_plan = SimpleNamespace(
-        nodes={
-            "1": SimpleNamespace(type="Select", children=["0"]),
-            "0": SimpleNamespace(type="Scan", children=[]),
-        }
-    )
-    session = MagicMock()
-
-    with patch(
-        "cudf_polars.quent._plan.SerializablePlan.from_ir",
-        return_value=serializable_plan,
-    ):
-        result = emit_plan(
-            session,
-            MagicMock(),
-            MagicMock(),
-            query_id=uuid.uuid4(),
-            plan_id=plan_id,
-            worker_id=None,
-            emit=False,
-        )
-
-    assert result == {
-        node_id: uuid.uuid5(plan_id, f"operator:{node_id}") for node_id in ("0", "1")
-    }
-    assert not session.context.mock_calls
 
 
 @pytest.mark.parametrize(

@@ -1072,37 +1072,45 @@ class DaskEngine(StreamingEngine):
         # Phase 2: complete bootstrap on all workers concurrently.
         # All workers call barrier() so they must all run simultaneously.
         # Each worker picks its own worker_id from the list using comm.rank.
-        dask_client.run(
-            functools.partial(
-                _setup_worker,
-                uid=rapidsmpf_id,
-                hardware_binding=hw_binding,
-                memory_resource_config=mr_config,
-                worker_ids=worker_ids,
-                quent_context=quent_context,
-            ),
-            root_ucxx_address_as_bytes,
-            nranks,
-            rapidsmpf_options_as_bytes,
-            quent_collector_address=quent_collector_address,
-            num_py_executors=executor_options.get("num_py_executors", 8),
-            kvikio_nthreads=executor_options["kvikio_nthreads"],
-            kvikio_statistics=executor_options["kvikio_statistics"],
-            kvikio_remote_io_backend=executor_options["kvikio_remote_io_backend"],
-            kvikio_task_size=executor_options["kvikio_task_size"],
-            kvikio_bounce_buffer_bytes=executor_options["kvikio_bounce_buffer_bytes"],
-            kvikio_reactor_count=executor_options["kvikio_reactor_count"],
-            kvikio_reactor_dispatch=executor_options["kvikio_reactor_dispatch"],
-            kvikio_request_ceiling=executor_options["kvikio_request_ceiling"],
-        )
-        if quent_context is not None:
-            assert quent_collector_address is not None
-            self._quent_runtime = QuentRuntime.create(
-                quent_context,
-                quent_collector_address,
-                backend="dask",
-                collector=quent_collector,
+        try:
+            dask_client.run(
+                functools.partial(
+                    _setup_worker,
+                    uid=rapidsmpf_id,
+                    hardware_binding=hw_binding,
+                    memory_resource_config=mr_config,
+                    worker_ids=worker_ids,
+                    quent_context=quent_context,
+                ),
+                root_ucxx_address_as_bytes,
+                nranks,
+                rapidsmpf_options_as_bytes,
+                quent_collector_address=quent_collector_address,
+                num_py_executors=executor_options.get("num_py_executors", 8),
+                kvikio_nthreads=executor_options["kvikio_nthreads"],
+                kvikio_statistics=executor_options["kvikio_statistics"],
+                kvikio_remote_io_backend=executor_options["kvikio_remote_io_backend"],
+                kvikio_task_size=executor_options["kvikio_task_size"],
+                kvikio_bounce_buffer_bytes=executor_options[
+                    "kvikio_bounce_buffer_bytes"
+                ],
+                kvikio_reactor_count=executor_options["kvikio_reactor_count"],
+                kvikio_reactor_dispatch=executor_options["kvikio_reactor_dispatch"],
+                kvikio_request_ceiling=executor_options["kvikio_request_ceiling"],
             )
+            if quent_context is not None:
+                assert quent_collector_address is not None
+                self._quent_runtime = QuentRuntime.create(
+                    quent_context,
+                    quent_collector_address,
+                    backend="dask",
+                    collector=quent_collector,
+                )
+        except Exception:
+            if quent_collector is not None:
+                with contextlib.suppress(Exception):
+                    quent_collector.close()
+            raise
 
         dask_ctx = DaskContext(
             client=dask_client,

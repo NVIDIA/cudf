@@ -10,6 +10,7 @@
 #include <cudf/io/detail/codec.hpp>
 #include <cudf/io/types.hpp>
 #include <cudf/utilities/export.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 
 #include <cuda/stream>
@@ -76,12 +77,14 @@ size_t get_gpu_debrotli_scratch_size(int max_num_inputs = 0);
  * @param[out] outputs List of output buffers
  * @param[out] results List of output status structures
  * @param[in] stream CUDA stream to use
+ * @param[in] mr Memory resources; only the temporary resource is used
  */
 CUDF_EXPORT
 void gpu_debrotli(device_span<device_span<uint8_t const> const> inputs,
                   device_span<device_span<uint8_t> const> outputs,
                   device_span<codec_exec_result> results,
-                  cuda::stream_ref stream);
+                  cuda::stream_ref stream,
+                  cudf::memory_resources mr);
 
 /**
  * @brief Interface for compressing data with Snappy

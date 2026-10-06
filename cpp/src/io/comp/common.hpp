@@ -25,6 +25,11 @@ namespace cudf::io::detail {
  * See https://github.com/NVIDIA/cudf/issues/13605.
  */
 constexpr std::size_t BUFFER_PADDING_MULTIPLE{8};
+
+/**
+ * This pads allocated buffers with an additional 16B, allowing small OOB reads to not raise exceptions.
+ * This can avoid extra range checks in kernels that are already instruction bound.
+ */
 constexpr std::size_t BUFFER_EXTRA_PADDING{16};
 
 [[nodiscard]] std::string compression_type_name(compression_type compression);

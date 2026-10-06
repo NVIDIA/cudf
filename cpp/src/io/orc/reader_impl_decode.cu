@@ -190,7 +190,8 @@ cuda::device_buffer<std::uint8_t> decompress_stripe_data(
     inflate_res,
     max_uncomp_block_size,
     total_decomp_size,
-    stream);
+    stream,
+    cudf::get_current_device_resource_ref());
 
   // Check if any block has been failed to decompress.
   // Not using `thrust::any` or `thrust::count_if` to defer stream sync.

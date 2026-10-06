@@ -171,17 +171,17 @@ def evaluate_pipeline_ray_mode(
     quent_runtime = config_options.executor.ray_context.quent_runtime
     if quent_context is not None:
         assert quent_runtime is not None
+        query_scope: contextlib.AbstractContextManager = quent_runtime.query(
+            query_id, context=quent_context
+        )
+    else:
+        query_scope = contextlib.nullcontext()
 
     # Serialize the IR into the Ray object store so actors fetch by reference
     # instead of receiving N copies.
     ir_ref = ray.put(ir)
     # `result` is in actor order, which is NOT rank order, so each actor
     # reports its rank and the partitions are sorted before concatenation.
-    query_scope = (
-        quent_runtime.query(query_id)
-        if quent_runtime is not None
-        else contextlib.nullcontext()
-    )
     with query_scope:
         result: list[tuple[int, pl.DataFrame, list[ChannelMetadata] | None]] = ray.get(
             [
@@ -609,7 +609,9 @@ class RankActor:
         local_quent_context: LocalQuentContext | None = None
         if quent_context is not None:
             assert self._quent_runtime is not None
-            local_quent_context = self._quent_runtime.local_context(query_id)
+            local_quent_context = self._quent_runtime.local_context(
+                query_id, context=quent_context
+            )
         # evaluate_on_rank always collects metadata internally so we can read
         # metadata[-1].duplicated to decide whether to suppress this rank's
         # output. The client concatenates each rank's result, so without this

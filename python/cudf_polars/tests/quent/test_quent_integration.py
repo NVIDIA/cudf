@@ -5,7 +5,9 @@
 
 from __future__ import annotations
 
+import dataclasses
 import json
+import uuid
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -99,7 +101,23 @@ def test_quent_lifecycle(
             engine_with_quent_context.config["executor_options"]["quent_context"]
             == quent_context
         )
+        current_context = dataclasses.replace(
+            quent_context,
+            query_group_id=uuid.uuid4(),
+            query_group_name="Updated Query Group",
+            query_name="Iteration 1",
+        )
+        engine_with_quent_context.config["executor_options"]["quent_context"] = (
+            current_context
+        )
         query.collect(engine=engine_with_quent_context)
+        current_context = dataclasses.replace(
+            current_context,
+            query_name="Iteration 2",
+        )
+        engine_with_quent_context.config["executor_options"]["quent_context"] = (
+            current_context
+        )
         query.collect(engine=engine_with_quent_context)
         with pytest.raises(ValueError, match="quent_context cannot be changed"):
             engine_with_quent_context._reset(
@@ -121,10 +139,15 @@ def test_quent_lifecycle(
     exited = [event for event in worker_events if "Exit" in event["data"]["Worker"]]
     assert {event["id"] for event in initialized} == {event["id"] for event in exited}
 
-    assert len(_of_type(events, "QueryGroup")) == 1
+    query_group_events = _of_type(events, "QueryGroup")
+    assert len(query_group_events) == 1
+    assert query_group_events[0]["id"] == str(current_context.query_group_id)
+    assert (
+        query_group_events[0]["data"]["QueryGroup"]["Declared"]["instance_name"]
+        == "Updated Query Group"
+    )
     query_events = _of_type(events, "Query")
     assert len(query_events) == 8
-    assert query_events[0]["id"] != str(quent_context.query_group_id)
     assert _of_type(events, "Plan")
     assert _of_type(events, "Operator")
     assert _of_type(events, "Actor")
@@ -140,6 +163,10 @@ def test_quent_lifecycle(
         and "Initialized" in event["data"]["Query"]
     ]
     assert len({event["id"] for event in initialized_queries}) == 2
+    assert [
+        event["data"]["Query"]["Initialized"]["instance_name"]
+        for event in initialized_queries
+    ] == ["Iteration 1", "Iteration 2"]
 
     logical_plans = [
         event

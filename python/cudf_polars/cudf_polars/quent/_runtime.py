@@ -187,7 +187,9 @@ class QuentRuntime:
         self.worker_resources = resources
         self._worker_active = True
 
-    def local_context(self, query_id: uuid.UUID) -> LocalQuentContext:
+    def local_context(
+        self, query_id: uuid.UUID, *, context: QuentContext | None = None
+    ) -> LocalQuentContext:
         """Build the per-query context for rank-local execution."""
         from cudf_polars.quent._context import LocalQuentContext
 
@@ -197,8 +199,9 @@ class QuentRuntime:
             or self.worker_resources is None
         ):
             raise RuntimeError("Quent worker runtime is not initialized")
+        context = context or self.context
         return LocalQuentContext(
-            context=self.context,
+            context=context,
             query_id=query_id,
             worker_id=self.worker_id,
             session=self.session,
@@ -206,22 +209,28 @@ class QuentRuntime:
         )
 
     @contextlib.contextmanager
-    def query(self, query_id: uuid.UUID, *, emit: bool = True) -> Iterator[None]:
-        """Emit one controller-side Query lifecycle around an operation."""
+    def query(
+        self,
+        query_id: uuid.UUID,
+        *,
+        context: QuentContext,
+        emit: bool = True,
+    ) -> Iterator[None]:
+        """Emit one controller-side Query lifecycle using the current context."""
         if not emit:
             yield
             return
         if not self._engine_active:
             raise RuntimeError("Quent controller runtime is not initialized")
-        self.context._emit_query_group_events(self.session)
-        self.context._emit_query_events(self.session, query_id)
+        context._emit_query_group_events(self.session)
+        context._emit_query_events(self.session, query_id)
         try:
             yield
         except BaseException as error:
-            self.context._emit_query_failed_event(self.session, query_id, error)
+            context._emit_query_failed_event(self.session, query_id, error)
             raise
         else:
-            self.context._emit_query_completed_event(self.session, query_id)
+            context._emit_query_completed_event(self.session, query_id)
 
     def close_worker(self) -> None:
         """Emit Worker exit, if this runtime owns an active worker."""

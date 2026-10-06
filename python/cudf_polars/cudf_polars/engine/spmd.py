@@ -136,19 +136,23 @@ def evaluate_pipeline_spmd_mode(
     local_quent_context: LocalQuentContext | None = None
     quent_runtime = spmd_context.quent_runtime
     if quent_context is not None:
+        assert quent_runtime is not None
         query_id = synchronize_quent_query_id(
             comm=comm,
             context=context,
             query_id=query_id,
         )
-        assert quent_runtime is not None
-        local_quent_context = quent_runtime.local_context(query_id)
+        local_quent_context = quent_runtime.local_context(
+            query_id, context=quent_context
+        )
 
-    query_scope = (
-        quent_runtime.query(query_id, emit=comm.rank == 0)
-        if quent_runtime is not None
-        else contextlib.nullcontext()
-    )
+        query_scope: contextlib.AbstractContextManager = quent_runtime.query(
+            query_id,
+            context=quent_context,
+            emit=comm.rank == 0,
+        )
+    else:
+        query_scope = contextlib.nullcontext()
     with query_scope:
         df, metadata = evaluate_on_rank(
             context,

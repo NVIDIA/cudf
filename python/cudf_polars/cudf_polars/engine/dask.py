@@ -774,7 +774,9 @@ def _worker_evaluate(
     local_quent_context: LocalQuentContext | None = None
     if quent_context is not None:
         assert mp_ctx.quent_runtime is not None
-        local_quent_context = mp_ctx.quent_runtime.local_context(query_id)
+        local_quent_context = mp_ctx.quent_runtime.local_context(
+            query_id, context=quent_context
+        )
     # evaluate_on_rank always collects metadata internally so we can read
     # metadata[-1].duplicated to decide whether to suppress this rank's output.
     # The client concatenates each rank's result, so without this dedup an
@@ -842,15 +844,15 @@ def evaluate_pipeline_dask_mode(
 
     quent_context = config_options.executor.quent_context
     quent_runtime = dask_context.quent_runtime
+    worker_config = config_options.drop_unserializable()
+
     if quent_context is not None:
         assert quent_runtime is not None
-
-    worker_config = config_options.drop_unserializable()
-    query_scope = (
-        quent_runtime.query(query_id)
-        if quent_runtime is not None
-        else contextlib.nullcontext()
-    )
+        query_scope: contextlib.AbstractContextManager = quent_runtime.query(
+            query_id, context=quent_context
+        )
+    else:
+        query_scope = contextlib.nullcontext()
     with query_scope:
         result_map = dask_context.client.run(
             functools.partial(_worker_evaluate, uid=dask_context.rapidsmpf_id),

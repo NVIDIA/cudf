@@ -50,7 +50,7 @@ def test_runtime_combines_controller_and_worker_lifecycles(tmp_path: Path) -> No
     local_context = runtime.local_context(query_id)
     assert local_context.worker_id == worker_id
     assert local_context.session is runtime.session
-    with runtime.query(query_id):
+    with runtime.query(query_id, context=context):
         pass
     runtime.close()
 
@@ -82,7 +82,10 @@ def test_runtime_query_failure_and_idempotent_close(tmp_path: Path) -> None:
         collector=collector,
     )
 
-    with pytest.raises(RuntimeError, match="failed"), runtime.query(query_id):
+    with (
+        pytest.raises(RuntimeError, match="failed"),
+        runtime.query(query_id, context=context),
+    ):
         raise RuntimeError("failed")
     runtime.close()
     runtime.close()

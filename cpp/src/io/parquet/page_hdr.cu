@@ -838,9 +838,9 @@ struct decode_from_page_data_fn {
  * One warp handles each chunk. For BYTE_ARRAY dictionaries, the warp loads a shared-memory
  * window with aligned vector loads, one lane follows the variable-length prefixes, and the
  * warp writes a batch of descriptors. Descriptor pointers refer to the original page data.
- * 
- * For FIXED_LEN_BYTE_ARRAY dictionaries, multiple lanes in the warp compute entry offsets independently and
- * write descriptors directly to the chunk's str_dict_index array.
+ *
+ * For FIXED_LEN_BYTE_ARRAY dictionaries, multiple lanes in the warp compute entry offsets
+ * independently and write descriptors directly to the chunk's str_dict_index array.
  *
  * @param[in] chunks List of column chunks
  * @param[in] num_chunks Number of column chunks

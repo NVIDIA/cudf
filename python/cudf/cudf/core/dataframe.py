@@ -4437,7 +4437,17 @@ class DataFrame(IndexedFrame, GetAttrGetItemMixin):
         axis = 1 if axis is None else self._get_axis_from_axis_arg(axis)
         out = self.copy(deep=False)
         if axis == 0:
-            out.index = prefix + self.index.astype(str)
+            index = self.index
+            if isinstance(index, MultiIndex):
+                out.index = MultiIndex.from_arrays(
+                    [
+                        prefix + index.get_level_values(i).astype(str)
+                        for i in range(index.nlevels)
+                    ],
+                    names=index.names,
+                )
+            else:
+                out.index = prefix + index.astype(str)
         else:
             out.columns = [prefix + col_name for col_name in self._column_names]
         return out
@@ -4447,7 +4457,17 @@ class DataFrame(IndexedFrame, GetAttrGetItemMixin):
         axis = 1 if axis is None else self._get_axis_from_axis_arg(axis)
         out = self.copy(deep=False)
         if axis == 0:
-            out.index = self.index.astype(str) + suffix
+            index = self.index
+            if isinstance(index, MultiIndex):
+                out.index = MultiIndex.from_arrays(
+                    [
+                        index.get_level_values(i).astype(str) + suffix
+                        for i in range(index.nlevels)
+                    ],
+                    names=index.names,
+                )
+            else:
+                out.index = index.astype(str) + suffix
         else:
             out.columns = [col_name + suffix for col_name in self._column_names]
         return out

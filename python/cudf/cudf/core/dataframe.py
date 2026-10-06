@@ -4441,7 +4441,10 @@ class DataFrame(IndexedFrame, GetAttrGetItemMixin):
             if isinstance(index, MultiIndex):
                 out.index = MultiIndex.from_arrays(
                     [
-                        prefix + index.get_level_values(i).astype(str)
+                        prefix
+                        + index.get_level_values(
+                            index._column_names[i]
+                        ).astype(str)
                         for i in range(index.nlevels)
                     ],
                     names=index.names,
@@ -4461,7 +4464,10 @@ class DataFrame(IndexedFrame, GetAttrGetItemMixin):
             if isinstance(index, MultiIndex):
                 out.index = MultiIndex.from_arrays(
                     [
-                        index.get_level_values(i).astype(str) + suffix
+                        index.get_level_values(
+                            index._column_names[i]
+                        ).astype(str)
+                        + suffix
                         for i in range(index.nlevels)
                     ],
                     names=index.names,

@@ -38,7 +38,7 @@ def test_dataframe_add_prefix_suffix_multiindex(method, affix):
         {"A": [1, 2, 3]},
         index=cudf.MultiIndex.from_arrays(
             [[1, 1, 2], ["a", "b", "c"]],
-            names=["number", "letter"],
+            names=[1, "letter"],
         ),
     )
     pdf = cdf.to_pandas()

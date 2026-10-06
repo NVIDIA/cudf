@@ -59,6 +59,7 @@ from cudf_polars.utils.config import (
     MemoryResourceConfig,
     configure_kvikio,
     resolve_kvikio_executor_options,
+    resolve_quent_context,
 )
 
 if TYPE_CHECKING:
@@ -975,9 +976,8 @@ class DaskEngine(StreamingEngine):
         executor_options = resolve_kvikio_executor_options(executor_options or {})
         engine_options = engine_options or {}
 
-        quent_context: cudf_polars.quent.QuentContext | None = executor_options.get(
-            "quent_context"
-        )
+        quent_context = resolve_quent_context(executor_options)
+        executor_options["quent_context"] = quent_context
         self._quent_runtime = None
 
         if bootstrap.is_running_with_rrun():
@@ -1000,7 +1000,6 @@ class DaskEngine(StreamingEngine):
         # TODO: there's no reason our API needs a plain dict[str, Any] rather than
         # a typed config object here.
         if quent_context is not None:
-            executor_options.setdefault("quent_context", quent_context)
             rapidsmpf_id = str(quent_context.engine_id)
         else:
             rapidsmpf_id = str(uuid.uuid4())
@@ -1143,7 +1142,7 @@ class DaskEngine(StreamingEngine):
             engine_options=engine_options,
         )
         executor_options = executor_options or {}
-        if existing_quent_context is not None:
+        if "quent_context" in existing_executor_options:
             executor_options.setdefault("quent_context", existing_quent_context)
         if "kvikio_nthreads" in existing_executor_options:
             executor_options.setdefault(
@@ -1309,14 +1308,24 @@ class DaskEngine(StreamingEngine):
         exceptions: list[Exception] = []
         try:
             if self._quent_runtime is not None:
-                ctx.client.run(
-                    functools.partial(_close_quent_worker, uid=ctx.rapidsmpf_id)
-                )
-                self._quent_runtime.close()
-            ctx.client.run(functools.partial(_teardown_worker, uid=ctx.rapidsmpf_id))
+                try:
+                    ctx.client.run(
+                        functools.partial(_close_quent_worker, uid=ctx.rapidsmpf_id)
+                    )
+                except Exception as e:
+                    exceptions.append(e)
+                finally:
+                    try:
+                        self._quent_runtime.close()
+                    except Exception as e:
+                        exceptions.append(e)
 
-        except Exception as e:
-            exceptions.append(e)
+            try:
+                ctx.client.run(
+                    functools.partial(_teardown_worker, uid=ctx.rapidsmpf_id)
+                )
+            except Exception as e:
+                exceptions.append(e)
         finally:
             if ctx.owned_client is not None:
                 ctx.owned_client.close()

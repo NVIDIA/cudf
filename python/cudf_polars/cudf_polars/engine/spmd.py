@@ -65,6 +65,7 @@ from cudf_polars.utils.config import (
     StreamingExecutor,
     configure_kvikio,
     resolve_kvikio_executor_options,
+    resolve_quent_context,
 )
 
 if TYPE_CHECKING:
@@ -439,9 +440,8 @@ class SPMDEngine(StreamingEngine):
         executor_options = resolve_kvikio_executor_options(executor_options or {})
         engine_options = engine_options or {}
 
-        quent_context: cudf_polars.quent.QuentContext | None = executor_options.get(
-            "quent_context"
-        )
+        quent_context = resolve_quent_context(executor_options)
+        executor_options["quent_context"] = quent_context
         self._quent_runtime = None
 
         check_reserved_keys(executor_options, engine_options)
@@ -661,7 +661,7 @@ class SPMDEngine(StreamingEngine):
             engine_options=engine_options,
         )
         executor_options = executor_options or {}
-        if existing_quent_context is not None:
+        if "quent_context" in existing_executor_options:
             executor_options.setdefault("quent_context", existing_quent_context)
         if "kvikio_nthreads" in existing_executor_options:
             executor_options.setdefault(

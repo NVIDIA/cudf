@@ -69,6 +69,7 @@ __all__ = [
     "StreamingExecutor",
     "StreamingFallbackMode",
     "Unspecified",
+    "resolve_quent_context",
     "resolve_quent_output_root",
 ]
 
@@ -557,6 +558,16 @@ def _quent_context_converter(v: str) -> QuentContext | None:
             return QuentContext()
         else:
             return None
+
+
+def resolve_quent_context(
+    executor_options: dict[str, Any],
+) -> QuentContext | None:
+    """Resolve the Quent context, preserving an explicitly supplied value."""
+    if "quent_context" in executor_options:
+        return executor_options["quent_context"]
+    value = os.environ.get("CUDF_POLARS__EXECUTOR__QUENT_CONTEXT")
+    return None if value is None else _quent_context_converter(value)
 
 
 def resolve_quent_output_root(output_root: str | os.PathLike[str] | None = None) -> str:

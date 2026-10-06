@@ -54,6 +54,7 @@ from cudf_polars.utils.config import (
     RayContext,
     configure_kvikio,
     resolve_kvikio_executor_options,
+    resolve_quent_context,
 )
 
 if TYPE_CHECKING:
@@ -831,11 +832,9 @@ class RayEngine(StreamingEngine):
 
         check_reserved_keys(executor_options, engine_options)
 
-        quent_context: cudf_polars.quent.QuentContext | None = executor_options.get(
-            "quent_context"
-        )
+        quent_context = resolve_quent_context(executor_options)
+        executor_options["quent_context"] = quent_context
         if quent_context is not None:
-            executor_options.setdefault("quent_context", quent_context)
             engine_id = quent_context.engine_id
         else:
             engine_id = uuid.uuid4()
@@ -981,7 +980,7 @@ class RayEngine(StreamingEngine):
             engine_options=engine_options,
         )
         executor_options = executor_options or {}
-        if existing_quent_context is not None:
+        if "quent_context" in existing_executor_options:
             executor_options.setdefault("quent_context", existing_quent_context)
         if "kvikio_nthreads" in existing_executor_options:
             executor_options.setdefault(
@@ -1185,8 +1184,15 @@ class RayEngine(StreamingEngine):
                 return
 
             if self._quent_runtime is not None:
-                ray.get([a.close_quent.remote() for a in self._rank_actors])
-                self._quent_runtime.close()
+                try:
+                    ray.get([a.close_quent.remote() for a in self._rank_actors])
+                except Exception as e:
+                    exceptions.append(e)
+                finally:
+                    try:
+                        self._quent_runtime.close()
+                    except Exception as e:
+                        exceptions.append(e)
 
             refs: list[ObjectRef[Any]] = [
                 a.shutdown.remote() for a in self._rank_actors

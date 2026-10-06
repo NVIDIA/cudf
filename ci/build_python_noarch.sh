@@ -30,6 +30,8 @@ for package in dask-cudf cudf-polars custreamz; do
   run_logged_build "${package}-parallel-build.log" \
     build_conda_package "${package}" "${PARALLEL_OUTPUT_DIR}/${package}" &
   builds+=("$!" "${package}-parallel-build.log")
+  # Keep build paths and cache settings identical for the serial CI control.
+  wait "$!"
 done
 wait_for_builds "${builds[@]}"
 collect_conda_packages "${PARALLEL_OUTPUT_DIR}"/*

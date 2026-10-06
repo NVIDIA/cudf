@@ -201,8 +201,8 @@ jobs:
           - '!python/cudf_polars/quent/**'
           - 'ci/test_python_cudf_polars.sh'
         test_cudf_polars_quent:
-          - 'python/cudf_polars/quent/bridge/**'
           - 'python/cudf_polars/quent/analyzer/**'
+          - 'python/cudf_polars/quent/bridge/**'
           - 'python/cudf_polars/quent/model.yaml'
           - 'ci/test_cudf_polars_quent.sh'
           - 'ci/run_cudf_polars_quent_tests.sh'

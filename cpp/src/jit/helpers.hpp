@@ -79,5 +79,13 @@ rtcx::blob get_udf_kernel_fragment(std::string const& source_file,
                                    std::string const& kernel_name,
                                    std::string const& udf_type);
 
+/**
+ * @brief Compiles a generated AST operation into an LTO fragment.
+ *
+ * Keeping typed column access in the operation lets all eligible column schemas reuse the
+ * same runtime-descriptor transform driver fragment.
+ */
+rtcx::blob get_ast_udf_lto_fragment(std::string const& cuda_source);
+
 }  // namespace jit
 }  // namespace cudf

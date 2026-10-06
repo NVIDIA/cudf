@@ -118,5 +118,21 @@ rtcx::blob get_udf_kernel_fragment(std::string const& source_file,
   return get_kernel_fragment(source_file, source_file, include_names, include_headers, kernel_name);
 }
 
+rtcx::blob get_ast_udf_lto_fragment(std::string const& cuda_source)
+{
+  char const* include_names[] =  // NOLINT(modernize-avoid-c-arrays)
+    {"cudf/detail/operation_udf.cuh"};
+  char const* include_headers[] =  // NOLINT(modernize-avoid-c-arrays)
+    {cuda_source.c_str()};
+  char const* name_expressions[] =  // NOLINT(modernize-avoid-c-arrays)
+    {"cudf_ast_runtime_entry"};
+  return get_kernel_fragment("cudf/cpp/src/transform/jit/ast_runtime_udf.cuh",
+                             "cudf/cpp/src/transform/jit/ast_runtime_udf.cuh",
+                             include_names,
+                             include_headers,
+                             "cudf_ast_runtime_entry",
+                             name_expressions);
+}
+
 }  // namespace jit
 }  // namespace cudf

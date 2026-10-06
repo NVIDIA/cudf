@@ -10,12 +10,14 @@
 
 #include <cudf_cuda_embed.hpp>
 #include <jit/cache.hpp>
+#include <jit/helpers.hpp>
 #include <rtcx/rtcx.hpp>
 #include <runtime/context.hpp>
 
 #define XXH_INLINE_ALL
 #include <xxhash.h>
 
+#include <array>
 #include <filesystem>
 #include <format>
 #include <fstream>
@@ -434,7 +436,8 @@ rtcx::blob get_kernel_fragment(std::string const& name,
                                std::string const& source_file_id,
                                std::span<char const* const> header_include_names,
                                std::span<char const* const> headers,
-                               std::string const& kernel_instance)
+                               std::string const& kernel_instance,
+                               std::span<char const* const> name_expressions)
 {
   CUDF_FUNC_RANGE();
 
@@ -474,6 +477,8 @@ kernel_instance={}
   hash(&state, header_include_names);
   hash(&state, "headers: ");
   hash(&state, headers);
+  hash(&state, "name_expressions: ");
+  hash(&state, name_expressions);
 
   auto digest = XXH3_128bits_digest(&state);
   auto key    = rtcx::hash128{digest.high64, digest.low64};
@@ -481,7 +486,8 @@ kernel_instance={}
   auto compile = [&] {
     auto bundle_dir = cudf::get_context().jit_bundle().get_directory();
     auto source     = read_file_string(source_file.c_str());
-    return compile_fragment(name.c_str(), source.c_str(), header_include_names, headers, {});
+    return compile_fragment(
+      name.c_str(), source.c_str(), header_include_names, headers, name_expressions);
   };
 
   auto fut = cache.get_or_add_blob(key, rtcx::blob_compile_func::from_functor(compile));
@@ -529,6 +535,55 @@ std::tuple<rtcx::library, rtcx::blob> link_library_uncached(
   auto blob    = rtcx::blob_t::from_buffer(std::move(cubin));
 
   return std::make_tuple(library, std::make_shared<rtcx::blob_t>(std::move(blob)));
+}
+
+kernel get_ast_runtime_kernel(std::string const& cuda_source)
+{
+  CUDF_FUNC_RANGE();
+
+  auto& ctx               = cudf::get_context();
+  auto& cache             = ctx.rtcx_cache();
+  auto& device_properties = ctx.get_device_properties();
+  std::string const name  = "cudf/cpp/src/transform/jit/ast_runtime_driver.cuh";
+  auto spec               = std::format(R"***(cuLibraryASTRuntimeLTOv1
+name={}
+binary_type=CUBIN
+cuda_runtime={}
+cuda_driver={}
+arch={}
+lto_arch={}
+bundle={}
+)***",
+                          name,
+                          device_properties.runtime_version,
+                          device_properties.driver_version,
+                          device_properties.compute_capability,
+                          LTO_ARCHITECTURE,
+                          ctx.jit_bundle().get_hash());
+
+  XXH3_state_t state;
+  XXH3_INITSTATE(&state);
+  XXH3_128bits_reset(&state);
+  hash(&state, spec);
+  hash(&state, cuda_source);
+  auto digest = XXH3_128bits_digest(&state);
+  auto key    = rtcx::hash128{digest.high64, digest.low64};
+
+  // The source encodes types, nullability, operations, and error policies; the bundle covers
+  // both embedded fragments. Defer resolving their IR until the linked library actually misses.
+  auto compile = [&] {
+    auto udf = jit::get_ast_udf_lto_fragment(cuda_source);
+    std::array<char const*, 1> const expressions{"cudf_kernel_entry"};
+    auto driver = get_kernel_fragment(name, name, {}, {}, "cudf_kernel_entry", expressions);
+    std::array<rtcx::memory_fragment, 2> const fragments{
+      {{.data = driver->view(), .type = rtcx::binary_type::LTO_IR, .name = nullptr},
+       {.data = udf->view(), .type = rtcx::binary_type::LTO_IR, .name = nullptr}}};
+    return link_library_uncached(name.c_str(), {}, fragments);
+  };
+
+  auto fut = cache.get_or_add_library(key, rtcx::library_compile_func::from_functor(compile));
+  auto lib = fut.get();
+  return kernel{lib, lib->get_kernel("cudf_kernel_entry")};
 }
 
 kernel get_lto_linked_kernel(std::string const& name,

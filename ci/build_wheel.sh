@@ -7,7 +7,7 @@ set -euo pipefail
 # shellcheck source=ci/build_wheel_common.sh
 source ./ci/build_wheel_common.sh
 
-# Build all non-noarch wheels in one local dependency chain.
+# Complete the shared prerequisites before building independent Python wheels.
 
 RAPIDS_CUDA_MAJOR="${RAPIDS_CUDA_VERSION%%.*}"
 RAPIDS_PY_CUDA_SUFFIX="$(rapids-wheel-ctk-name-gen "${RAPIDS_CUDA_VERSION}")"
@@ -105,31 +105,38 @@ finalize_package_wheel \
   20M \
   "$(rapids-artifact-name wheel_python pylibcudf cudf --stable --cuda "${RAPIDS_CUDA_VERSION}")"
 
-# cudf
 add_wheel_constraint pylibcudf "${RAPIDS_WHEEL_BLD_OUTPUT_DIR}/pylibcudf_*.whl"
-build_package_wheel cudf cudf python/cudf --stable
+(
+  export SCCACHE_SERVER_PORT=4227
+  build_package_wheel cudf cudf python/cudf --stable
 
-repair_wheel python/cudf/dist/*
+  repair_wheel python/cudf/dist/*
 
-finalize_package_wheel \
-  cudf \
-  python/cudf \
-  15M \
-  "$(rapids-artifact-name wheel_python cudf cudf --stable --cuda "${RAPIDS_CUDA_VERSION}")"
+  finalize_package_wheel \
+    cudf \
+    python/cudf \
+    15M \
+    "$(rapids-artifact-name wheel_python cudf cudf --stable --cuda "${RAPIDS_CUDA_VERSION}")"
+) &
+cudf_pid=$!
 
-# cudf-streaming
-build_package_wheel \
-  cudf_streaming \
-  cudf-streaming \
-  python/cudf_streaming \
-  --log cudf-streaming-wheel-build-output.log \
-  --stable
-check_cython_performance_hints cudf-streaming cudf-streaming-wheel-build-output.log
+(
+  export SCCACHE_SERVER_PORT=4228
+  build_package_wheel \
+    cudf_streaming \
+    cudf-streaming \
+    python/cudf_streaming \
+    --log cudf-streaming-wheel-build-output.log \
+    --stable
+  check_cython_performance_hints cudf-streaming cudf-streaming-wheel-build-output.log
 
-repair_wheel python/cudf_streaming/dist/*
+  repair_wheel python/cudf_streaming/dist/*
 
-finalize_package_wheel \
-  cudf_streaming \
-  python/cudf_streaming \
-  75M \
-  "$(rapids-artifact-name wheel_python cudf-streaming cudf --stable --cuda "${RAPIDS_CUDA_VERSION}")"
+  finalize_package_wheel \
+    cudf_streaming \
+    python/cudf_streaming \
+    75M \
+    "$(rapids-artifact-name wheel_python cudf-streaming cudf --stable --cuda "${RAPIDS_CUDA_VERSION}")"
+) &
+streaming_pid=$!
+wait_for_builds "${cudf_pid}" "${streaming_pid}"

@@ -58,6 +58,7 @@ build:
       SCCACHE_S3_USE_PREPROCESSOR_CACHE_MODE: ${{ env.get("SCCACHE_S3_USE_PREPROCESSOR_CACHE_MODE", default="true") }}
       SCCACHE_S3_USE_SSL: ${{ env.get("SCCACHE_S3_USE_SSL", default="true") }}
       SCCACHE_SERVER_LOG: ${{ env.get("SCCACHE_SERVER_LOG", default="sccache=debug") }}
+      SCCACHE_SERVER_PORT: ${{ env.get("SCCACHE_SERVER_PORT", default="4226") }}
 
 requirements:
   build:

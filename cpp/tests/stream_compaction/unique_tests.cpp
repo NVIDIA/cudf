@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2025, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -467,7 +467,7 @@ TEST_F(Unique, ListsOfStructsKeepAny)
   auto const keys = cudf::column_view(cudf::data_type(cudf::type_id::LIST),
                                       17,
                                       nullptr,
-                                      static_cast<cudf::bitmask_type const*>(null_mask.data()),
+                                      reinterpret_cast<cudf::bitmask_type const*>(null_mask.data()),
                                       null_count,
                                       0,
                                       {offsets, structs});
@@ -550,7 +550,7 @@ TEST_F(Unique, ListsOfStructsKeepFirstLastNone)
   auto const keys = cudf::column_view(cudf::data_type(cudf::type_id::LIST),
                                       17,
                                       nullptr,
-                                      static_cast<cudf::bitmask_type const*>(null_mask.data()),
+                                      reinterpret_cast<cudf::bitmask_type const*>(null_mask.data()),
                                       null_count,
                                       0,
                                       {offsets, structs});
@@ -610,7 +610,7 @@ TEST_F(Unique, ListsOfEmptyStructsKeepAny)
     cudf::column_view(cudf::data_type(cudf::type_id::STRUCT),
                       14,
                       nullptr,
-                      static_cast<cudf::bitmask_type const*>(structs_null_mask.data()),
+                      reinterpret_cast<cudf::bitmask_type const*>(structs_null_mask.data()),
                       structs_null_count);
 
   auto const offsets       = int32s_col{0, 0, 0, 0, 0, 2, 4, 6, 7, 8, 9, 10, 12, 14};
@@ -621,7 +621,7 @@ TEST_F(Unique, ListsOfEmptyStructsKeepAny)
     cudf::column_view(cudf::data_type(cudf::type_id::LIST),
                       13,
                       nullptr,
-                      static_cast<cudf::bitmask_type const*>(lists_null_mask.data()),
+                      reinterpret_cast<cudf::bitmask_type const*>(lists_null_mask.data()),
                       lists_null_count,
                       0,
                       {offsets, structs});

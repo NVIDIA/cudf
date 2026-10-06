@@ -106,24 +106,27 @@ std::optional<std::vector<std::vector<size_type>>> aggregate_reader_metadata::ap
     if (not stats_columns_mask[col_idx] or
         (cudf::is_compound(dtype) && dtype.id() != cudf::type_id::STRING)) {
       // Placeholder for unsupported types and non-participating columns
-      columns.push_back(cudf::make_numeric_column(data_type{cudf::type_id::BOOL8},
-                                                  total_row_groups,
-                                                  rmm::device_buffer{0, stream, mr},
-                                                  0,
-                                                  stream,
-                                                  mr));
-      columns.push_back(cudf::make_numeric_column(data_type{cudf::type_id::BOOL8},
-                                                  total_row_groups,
-                                                  rmm::device_buffer{0, stream, mr},
-                                                  0,
-                                                  stream,
-                                                  mr));
-      columns.push_back(cudf::make_numeric_column(data_type{cudf::type_id::BOOL8},
-                                                  total_row_groups,
-                                                  rmm::device_buffer{0, stream, mr},
-                                                  0,
-                                                  stream,
-                                                  mr));
+      columns.push_back(cudf::make_numeric_column(
+        data_type{cudf::type_id::BOOL8},
+        total_row_groups,
+        cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED, stream, mr),
+        0,
+        stream,
+        mr));
+      columns.push_back(cudf::make_numeric_column(
+        data_type{cudf::type_id::BOOL8},
+        total_row_groups,
+        cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED, stream, mr),
+        0,
+        stream,
+        mr));
+      columns.push_back(cudf::make_numeric_column(
+        data_type{cudf::type_id::BOOL8},
+        total_row_groups,
+        cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED, stream, mr),
+        0,
+        stream,
+        mr));
       continue;
     }
     // Map each filter column's zeroth-source schema index into every source's schema tree.
@@ -190,10 +193,16 @@ aggregate_reader_metadata::filter_row_groups(
                                                : input_row_group_indices;
 
   // Collect equality literals for each input table column for bloom filtering
-  auto const equality_literals =
-    equality_literals_collector{
-      filter.get(), output_dtypes, output_column_schemas, per_file_metadata[0].schema}
-      .get_literals();
+  auto literals_collector = equality_literals_collector{
+    filter.get(), output_dtypes, output_column_schemas, per_file_metadata[0].schema};
+
+  // Return early if bloom filters cannot prune any row groups with this filter.
+  if (not literals_collector.can_filter()) {
+    return {stats_filtered_row_groups,
+            {std::make_optional(num_stats_filtered_row_groups), std::nullopt}};
+  }
+
+  auto const equality_literals = std::move(literals_collector).get_literals();
 
   // Collect schema indices of columns with equality predicate(s)
   std::vector<cudf::size_type> equality_col_schemas;
@@ -203,12 +212,6 @@ aggregate_reader_metadata::filter_row_groups(
                   equality_literals.begin(),
                   std::back_inserter(equality_col_schemas),
                   [](auto& eq_literals) { return not eq_literals.empty(); });
-
-  // Return early if no column with equality predicate(s)
-  if (equality_col_schemas.empty()) {
-    return {stats_filtered_row_groups,
-            {std::make_optional(num_stats_filtered_row_groups), std::nullopt}};
-  }
 
   // Read a vector of bloom filter bitset device buffers for all columns with equality
   // predicate(s) across all row groups

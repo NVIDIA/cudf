@@ -333,6 +333,43 @@ struct PageNestingInfo {
 };
 
 /**
+ * @brief Which level-prepass consumer a page uses, or NONE for the legacy decoders.
+ *
+ * The level prepass walks a page's definition levels once up front and publishes a valid-rank
+ * map, so that the decode kernel can place values without decoding levels
+ * itself. For now, only the DELTA encodings have a consumer for the map. See
+ * `classify_prepass_family` in reader_impl_preprocess.cu.
+ *
+ * uint8_t to minimize the overhead in PageInfo
+ */
+enum class level_prepass_family : uint8_t {
+  NONE       = 0,
+  DELTA_FLAT = 1,
+};
+
+/**
+ * @brief Level prepass scratch information
+ *
+ * Contains a valid-rank map computed from the rep and def levels for later decode kernels to use
+ *
+ * Reached through a pointer on `PageInfo`, like `PageNestingInfo`, rather than copied into a
+ * per-kernel shared-memory struct: the map is indexed by rank straight out of global memory.
+ */
+struct page_prepass_state {
+  // `nz_count` value meaning "claimed, but the producer has not run yet".
+  static constexpr int32_t not_yet_produced = -1;
+
+  // Valid-rank map: `nz_idx[rank]` is the input position of the rank-th valid value. Null for a
+  // required page, whose map is the identity and is synthesized by the consumer.
+  uint32_t* nz_idx{};
+  // Negative until the producer runs; the page's valid count afterwards.
+  int32_t nz_count{not_yet_produced};
+  // Producer-written count whose meaning depends on the page's family, which is why it is not
+  // named for one of them. `DELTA_FLAT`, the only family here, uses it for the page's null count.
+  int32_t aux_count{};
+};
+
+/**
  * @brief Struct describing a particular page of column chunk data
  */
 struct PageInfo {
@@ -409,6 +446,23 @@ struct PageInfo {
   Encoding repetition_level_encoding;  // Encoding used for repetition levels (data page)
   bool is_compressed;                  // Whether the page is compressed (V2 header)
   bool has_value_info;  // true if str_bytes, num_valids, etc are derivable from page indexes
+
+  // prepass_family indicates which prepass consumer a page uses.
+  // `prepass_state` is null when the selector did not claim this page -- non-null *is* the
+  // selection flag.
+  level_prepass_family prepass_family{level_prepass_family::NONE};
+  page_prepass_state* prepass_state{};
+
+  /**
+   * @brief True when this page was selected for @p family's prepass.
+   *
+   * @param family Prepass family to test against
+   * @return True if the page carries prepass scratch for @p family
+   */
+  [[nodiscard]] CUDF_HOST_DEVICE constexpr bool is_prepass_family(level_prepass_family family) const
+  {
+    return prepass_state != nullptr && prepass_family == family;
+  }
 };
 
 // forward declaration

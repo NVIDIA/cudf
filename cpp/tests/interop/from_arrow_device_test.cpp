@@ -453,8 +453,11 @@ TEST_F(FromArrowDeviceTest, FixedSizeListColumnLarge)
     cudf::test::fixed_width_column_wrapper<int64_t>(values.begin(), values.end()).release();
   auto offsets_col =
     cudf::test::fixed_width_column_wrapper<int32_t>(offsets.begin(), offsets.end()).release();
-  auto expected = cudf::make_lists_column(
-    num_rows, std::move(offsets_col), std::move(child), 0, rmm::device_buffer{});
+  auto expected = cudf::make_lists_column(num_rows,
+                                          std::move(offsets_col),
+                                          std::move(child),
+                                          0,
+                                          cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
   auto input_schema = make_struct_fixed_size_list_int64_schema(width);
   nanoarrow::UniqueArray input_array;
@@ -553,7 +556,8 @@ TEST_F(FromArrowDeviceTest, StructColumn)
   cols.push_back(std::move(list_col));
   cols.push_back(std::move(sub_struct_col));
 
-  auto struct_col = cudf::make_structs_column(num_rows, std::move(cols), 0, {});
+  auto struct_col = cudf::make_structs_column(
+    num_rows, std::move(cols), 0, cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
   cudf::table_view expected_table_view({struct_col->view()});
 
   // Create name metadata
@@ -800,11 +804,19 @@ TEST_F(FromArrowDeviceTest, StringViewType)
                                 input.length * sizeof(ArrowBinaryView),
                                 cudaMemcpyDefault,
                                 stream.get()));
-  auto variadics     = std::vector<rmm::device_buffer>();
+  auto variadics     = std::vector<cuda::device_buffer<char>>();
   auto variadic_ptrs = std::vector<char*>();
   for (auto i = 0L; i < view.n_variadic_buffers; ++i) {
-    variadics.emplace_back(view.variadic_buffers[i], view.variadic_buffer_sizes[i], stream);
-    variadic_ptrs.push_back(static_cast<char*>(variadics.back().data()));
+    auto const* const data = static_cast<char const*>(view.variadic_buffers[i]);
+    if (view.variadic_buffer_sizes[i] == 0) {
+      variadics.emplace_back(stream, cudf::get_current_device_resource_ref());
+    } else {
+      variadics.emplace_back(stream,
+                             cudf::get_current_device_resource_ref(),
+                             data,
+                             data + view.variadic_buffer_sizes[i]);
+    }
+    variadic_ptrs.push_back(variadics.back().data());
   }
 
   stream.sync();
@@ -902,11 +914,19 @@ TEST_F(FromArrowDeviceTest, StringViewTypeWithProducerOwnedPrivateData)
                                 input->length * sizeof(ArrowBinaryView),
                                 cudaMemcpyDefault,
                                 stream.get()));
-  auto variadics     = std::vector<rmm::device_buffer>();
+  auto variadics     = std::vector<cuda::device_buffer<char>>();
   auto variadic_ptrs = std::vector<char*>();
   for (auto i = 0L; i < view.n_variadic_buffers; ++i) {
-    variadics.emplace_back(view.variadic_buffers[i], view.variadic_buffer_sizes[i], stream);
-    variadic_ptrs.push_back(static_cast<char*>(variadics.back().data()));
+    auto const* const data = static_cast<char const*>(view.variadic_buffers[i]);
+    if (view.variadic_buffer_sizes[i] == 0) {
+      variadics.emplace_back(stream, cudf::get_current_device_resource_ref());
+    } else {
+      variadics.emplace_back(stream,
+                             cudf::get_current_device_resource_ref(),
+                             data,
+                             data + view.variadic_buffer_sizes[i]);
+    }
+    variadic_ptrs.push_back(variadics.back().data());
   }
   stream.sync();
 

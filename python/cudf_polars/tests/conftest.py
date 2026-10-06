@@ -343,6 +343,11 @@ def pytest_configure(config: pytest.Config):
         'streaming ``engine`` variants (e.g. ``"spmd"``, ``"spmd-small"``, '
         '``"dask"``, ``"ray"``) while still allowing the in-memory variant to run.',
     )
+    config.addinivalue_line(
+        "markers",
+        "engine_params(params): run an engine-fixture test only for the "
+        "listed engine parameter ids.",
+    )
 
     # Ray's internal subprocess management leaks `/dev/null` file handles, and
     # distributed's shutdown leaves unclosed sockets. Under Python 3.14 +
@@ -375,6 +380,22 @@ def pytest_generate_tests(metafunc: pytest.Metafunc):
         engines = ALL_ENGINE_FIXTURE_PARAMS
     else:
         raise AssertionError("Unknown engine fixture")
+
+    marker = metafunc.definition.get_closest_marker("engine_params")
+    if marker is not None:
+        # Selectors must not opt unavailable backends back into the fixture.
+        engines = [engine for engine in engines if engine in marker.args[0]]
+
+    if not engines:
+        # Empty parameter sets are collection errors in this suite.
+        metafunc.parametrize(
+            "_engine_param",
+            [pytest.param(None, marks=pytest.mark.skip(reason="No available engines"))],
+            indirect=True,
+            ids=["unavailable"],
+            scope="session",
+        )
+        return
 
     metafunc.parametrize(
         "_engine_param",

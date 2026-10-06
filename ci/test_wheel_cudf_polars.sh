@@ -21,26 +21,18 @@ CUDF_STREAMING_WHEELHOUSE=$(rapids-download-from-github "$(rapids-artifact-name 
 rapids-generate-pip-constraints py_test_cudf_polars "${PIP_CONSTRAINT}" constraints
 
 read -r -a VERSIONS <<< "$(python ci/utils/get_matrix_values.py dependencies.yaml test_cudf_polars_compat polars_compat_version)"
-
-if [[ "${POLARS_VERSIONS:-all}" == "endpoints" ]] && [[ ${#VERSIONS[@]} -ge 2 ]]; then
-    VERSIONS=("${VERSIONS[0]}" "${VERSIONS[-1]}")
-fi
-
 LATEST_VERSION="${VERSIONS[-1]}"
 
-if [[ "${POLARS_VERSIONS:-all}" == "endpoints" ]] && [[ ${#VERSIONS[@]} -eq 2 ]]; then
-    # Split the two endpoint versions across the two CUDA-major matrix entries so each
-    # entry tests one version in parallel, instead of both serially in a single job.
-    # LATEST_VERSION (set above) is left untouched, so coverage is still only enforced
-    # on whichever entry ends up testing it.
-    read -r -a CUDA_MAJORS <<< "$(python ci/utils/get_matrix_values.py dependencies.yaml all cuda | tr ' ' '\n' | cut -d. -f1 | sort -nu | tr '\n' ' ')"
-    THIS_CUDA_MAJOR="${RAPIDS_CUDA_VERSION%%.*}"
-    if [[ "${THIS_CUDA_MAJOR}" == "${CUDA_MAJORS[0]}" ]]; then
-        VERSIONS=("${VERSIONS[0]}")
-    else
-        VERSIONS=("${VERSIONS[-1]}")
-    fi
-fi
+case "${POLARS_VERSIONS:-all}" in
+    all) ;;
+    earliest) VERSIONS=("${VERSIONS[0]}") ;;
+    latest) VERSIONS=("${VERSIONS[-1]}") ;;
+    endpoints) VERSIONS=("${VERSIONS[0]}" "${VERSIONS[-1]}") ;;
+    *)
+        echo "Unsupported POLARS_VERSIONS=${POLARS_VERSIONS}" >&2
+        exit 1
+        ;;
+esac
 
 # shellcheck disable=SC2317
 function set_exitcode()

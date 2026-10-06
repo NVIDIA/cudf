@@ -8,7 +8,6 @@
  * @brief cuDF-IO ORC writer class implementation
  */
 
-#include "datetime/timezone_utils.hpp"
 #include "io/comp/compression.hpp"
 #include "io/orc/orc_gpu.hpp"
 #include "io/statistics/column_statistics.cuh"
@@ -2298,6 +2297,8 @@ stripe_dictionaries build_dictionaries(orc_table_view& orc_table,
   auto map_storage = std::make_unique<storage_type>(
     total_map_storage_size, rmm::mr::polymorphic_allocator<char>{}, stream.get());
 
+  // Largest stripe row count, used to size the grids of the dictionary kernels
+  size_type max_dict_rows = 0;
   // Initialize stripe dictionaries
   for (auto col_idx : orc_table.string_column_indices) {
     auto& str_column       = orc_table.column(col_idx);
@@ -2319,12 +2320,14 @@ stripe_dictionaries build_dictionaries(orc_table_view& orc_table,
 
       sd.entry_count = 0;
       sd.char_count  = 0;
+
+      max_dict_rows = std::max(max_dict_rows, sd.num_rows);
     }
   }
   stripe_dicts.host_to_device_async(stream);
 
   map_storage->initialize_async({KEY_SENTINEL, VALUE_SENTINEL}, {stream.get()});
-  populate_dictionary_hash_maps(stripe_dicts, orc_table.d_columns, stream);
+  populate_dictionary_hash_maps(stripe_dicts, orc_table.d_columns, max_dict_rows, stream);
   // Copy the entry counts and char counts from the device to the host
   stripe_dicts.device_to_host(stream);
 
@@ -2371,7 +2374,7 @@ stripe_dictionaries build_dictionaries(orc_table_view& orc_table,
   stripe_dicts.host_to_device_async(stream);
 
   collect_map_entries(stripe_dicts, stream);
-  get_dictionary_indices(stripe_dicts, orc_table.d_columns, stream);
+  get_dictionary_indices(stripe_dicts, orc_table.d_columns, max_dict_rows, stream);
 
   // synchronize to ensure the copy is complete before we clear `map_slots`
   stream.sync();
@@ -2649,17 +2652,13 @@ auto convert_table_to_orc_data(table_view const& input,
 
 }  // namespace
 
-// ORC timestamps are wall-clock values, stored relative to the ORC epoch as it occurs in the
-// writer's timezone.
-// "UTC" has no transitions, so the offset is zero and the epoch is unshifted.
 duration_s writer_timezone::compute_base_epoch(std::string_view timezone)
 {
   // An empty name would omit `writerTimezone` from the stripe footers, which Apache readers
   // resolve as their own local timezone rather than UTC
   CUDF_EXPECTS(not timezone.empty(), "Writer timezone cannot be empty");
 
-  static constexpr duration_s utc_epoch{orc_utc_epoch};
-  return utc_epoch - cudf::detail::get_ut_offset(std::nullopt, timezone, timestamp_s{utc_epoch});
+  return base_epoch_in_timezone(timezone);
 }
 
 writer_timezone::writer_timezone(std::string timezone)

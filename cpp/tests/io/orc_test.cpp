@@ -30,6 +30,7 @@
 
 #include <cuda/iterator>
 
+#include <algorithm>
 #include <array>
 #include <numeric>
 #include <type_traits>
@@ -663,6 +664,7 @@ namespace {
 constexpr int64_t shanghai_offset     = cudf::duration_s{cudf::duration_h{8}}.count();
 constexpr int64_t new_york_offset     = cudf::duration_s{cudf::duration_h{-5}}.count();
 constexpr int64_t new_york_dst_offset = cudf::duration_s{cudf::duration_h{-4}}.count();
+constexpr int64_t phoenix_offset      = cudf::duration_s{cudf::duration_h{-7}}.count();
 constexpr int64_t kolkata_offset      = cudf::duration_s{cudf::duration_m{5 * 60 + 30}}.count();
 constexpr int64_t kathmandu_offset    = cudf::duration_s{cudf::duration_m{5 * 60 + 45}}.count();
 
@@ -726,6 +728,43 @@ TEST_F(OrcWriterTest, WriterTimezoneNonUtc)
   CUDF_TEST_EXPECT_TABLES_EQUAL(table_view({expected}), read_orc_buffer(buffer).tbl->view());
   CUDF_TEST_EXPECT_TABLES_EQUAL(table_view({expected}),
                                 read_orc_buffer(buffer, /*ignore_timezone=*/true).tbl->view());
+}
+
+TEST_F(OrcWriterTest, WriterTimezoneNearEpochBorrow)
+{
+  // Values straddling the window where UTC and the writer's local time disagree on the sign, and
+  // so on the borrow: `[-offset, 0)` for a positive offset, `[0, -offset)` for a negative one. All
+  // have a fractional part, since a whole second never borrows.
+  auto const near_epoch_ms = [](int64_t offset_s) {
+    auto const lo = std::min<cudf::timestamp_ms::rep>(-offset_s * 1000, 0);
+    auto const hi = std::max<cudf::timestamp_ms::rep>(-offset_s * 1000, 0);
+    return std::vector<cudf::timestamp_ms::rep>{
+      lo - 1'117, lo + 1, (lo + hi) / 2 + 117, hi - 1'117, hi + 1'117};
+  };
+
+  auto const agrees_whether_timezone_ignored = [&](std::string const& timezone, int64_t offset_s) {
+    auto const inputs = near_epoch_ms(offset_s);
+    auto const timestamps =
+      column_wrapper<cudf::timestamp_ms, cudf::timestamp_ms::rep>(inputs.begin(), inputs.end());
+    auto const buffer = write_orc_with_timezone(table_view({timestamps}), timezone);
+
+    auto shifted = inputs;
+    std::transform(shifted.begin(), shifted.end(), shifted.begin(), [offset_s](auto v) {
+      return v + offset_s * 1000;
+    });
+    auto const expected =
+      column_wrapper<cudf::timestamp_ms, cudf::timestamp_ms::rep>(shifted.begin(), shifted.end());
+
+    auto const ms = cudf::data_type{cudf::type_id::TIMESTAMP_MILLISECONDS};
+    CUDF_TEST_EXPECT_TABLES_EQUAL(
+      table_view({expected}), read_orc_buffer(buffer, /*ignore_timezone=*/false, ms).tbl->view());
+    CUDF_TEST_EXPECT_TABLES_EQUAL(
+      table_view({expected}), read_orc_buffer(buffer, /*ignore_timezone=*/true, ms).tbl->view());
+  };
+
+  // Cover timezone offsets of both signs.
+  agrees_whether_timezone_ignored("Asia/Shanghai", shanghai_offset);
+  agrees_whether_timezone_ignored("America/Phoenix", phoenix_offset);
 }
 
 TEST_F(OrcWriterTest, WriterTimezoneFractionalOffset)
@@ -1885,7 +1924,8 @@ TEST_F(OrcReaderTest, NestedEmptyStructColumnSelection)
     cudf::test::detail::make_null_mask(validity.begin(), validity.end());
 
   std::vector<std::unique_ptr<cudf::column>> struct_children;
-  struct_children.emplace_back(cudf::make_structs_column(num_rows, {}, 0, {}));
+  struct_children.emplace_back(cudf::make_structs_column(
+    num_rows, {}, 0, cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED)));
   auto input_column = cudf::make_structs_column(
     num_rows, std::move(struct_children), null_count, std::move(null_mask));
   ASSERT_TRUE(input_column->nullable());
@@ -1908,7 +1948,11 @@ TEST_F(OrcReaderTest, NullableEmptyStructChildColumnSelection)
   std::vector<std::unique_ptr<cudf::column>> struct_children;
   struct_children.emplace_back(
     cudf::make_structs_column(num_rows, {}, null_count, std::move(null_mask)));
-  auto input_column = cudf::make_structs_column(num_rows, std::move(struct_children), 0, {});
+  auto input_column =
+    cudf::make_structs_column(num_rows,
+                              std::move(struct_children),
+                              0,
+                              cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
   ASSERT_FALSE(input_column->nullable());
   ASSERT_TRUE(input_column->child(0).nullable());
   ASSERT_EQ(null_count, input_column->child(0).null_count());
@@ -1959,8 +2003,12 @@ TEST_F(OrcWriterTest, DecimalOptionsNested)
   std::iota(row_offsets.begin(), row_offsets.end(), 0);
   int32_col offsets(row_offsets.begin(), row_offsets.end());
 
-  auto map_list_col = cudf::make_lists_column(
-    num_rows, offsets.release(), std::move(map_struct_col), 0, rmm::device_buffer{});
+  auto map_list_col =
+    cudf::make_lists_column(num_rows,
+                            offsets.release(),
+                            std::move(map_struct_col),
+                            0,
+                            cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
   table_view expected({*map_list_col});
 
@@ -2059,8 +2107,11 @@ TEST_F(OrcMetadataReaderTest, TestNested)
   }
   int32_col offsets(row_offsets.begin(), row_offsets.end());
 
-  auto list_col =
-    cudf::make_lists_column(num_rows, offsets.release(), std::move(s_col), 0, rmm::device_buffer{});
+  auto list_col = cudf::make_lists_column(num_rows,
+                                          offsets.release(),
+                                          std::move(s_col),
+                                          0,
+                                          cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
   table_view expected({*list_col, *list_col});
 
@@ -2399,6 +2450,34 @@ TEST_F(OrcWriterTest, UnorderedDictionary)
   auto const from_unsorted = cudf::io::read_orc(in_opts_unsorted).tbl;
 
   CUDF_TEST_EXPECT_TABLES_EQUAL(*from_sorted, *from_unsorted);
+}
+
+TEST_F(OrcWriterTest, DictionaryMultipleBlocksPerStripe)
+{
+  constexpr cudf::size_type num_rows = 5000;
+
+  // Few distinct values, so dictionary encoding is cheaper than direct encoding and gets enabled
+  std::vector<std::string> const values{
+    "alpha", "beta", "gamma", "delta", "epsilon", "zeta", "eta"};
+  auto const keys = cudf::detail::make_counting_transform_iterator(
+    0, [&](auto i) { return values[i % values.size()]; });
+  auto const validity =
+    cudf::detail::make_counting_transform_iterator(0, [](auto i) { return i % 11 != 0; });
+  str_col col(keys, keys + num_rows, validity);
+
+  table_view expected({col});
+
+  std::vector<char> out_buffer;
+  cudf::io::orc_writer_options out_opts =
+    cudf::io::orc_writer_options::builder(cudf::io::sink_info{&out_buffer}, expected);
+  cudf::io::write_orc(out_opts);
+
+  cudf::io::orc_reader_options in_opts =
+    cudf::io::orc_reader_options::builder(cudf::io::source_info{cudf::host_span<std::byte const>{
+      reinterpret_cast<std::byte const*>(out_buffer.data()), out_buffer.size()}});
+  auto const result = cudf::io::read_orc(in_opts);
+
+  CUDF_TEST_EXPECT_TABLES_EQUAL(expected, result.tbl->view());
 }
 
 TEST_F(OrcStatisticsTest, Empty)

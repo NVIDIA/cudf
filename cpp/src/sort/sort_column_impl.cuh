@@ -23,6 +23,7 @@
 
 #include <cub/device/device_merge_sort.cuh>
 #include <cuda/iterator>
+#include <cuda/std/algorithm>
 #include <cuda/std/bit>
 #include <cuda/std/execution>
 #include <cuda/stream>
@@ -56,7 +57,7 @@ struct string_prefix_extractor {
 
     auto const string = d_column.element<string_view>(row);
     PrefixKey prefix  = 0;
-    auto const bytes  = string.size_bytes() < prefix_bytes ? string.size_bytes() : prefix_bytes;
+    auto const bytes  = cuda::std::min(string.size_bytes(), prefix_bytes);
     // memcpy permits unaligned input and avoids reading beyond short strings or the chars buffer.
     if (bytes != 0) { memcpy(&prefix, string.data(), bytes); }
     return cuda::std::byteswap(prefix);

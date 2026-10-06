@@ -194,6 +194,7 @@ def test_lineariser_backpressures_each_producer(spmd_engine: SPMDEngine) -> None
 def test_structlog_streaming_actor_events_and_ir_types(timeout_seconds: int):
     """Test actor tracing and IR-type logging in one isolated process."""
     pytest.importorskip("structlog")
+    pytest.importorskip("cudf_polars_quent")
     code = textwrap.dedent("""\
     import polars as pl
 
@@ -230,6 +231,7 @@ def test_io_tasks_wait_for_memory_admission(
     tmp_path: pathlib.Path, timeout_seconds: int
 ) -> None:
     pytest.importorskip("structlog")
+    pytest.importorskip("cudf_polars_quent")
 
     source = tmp_path / "data.parquet"
     pl.DataFrame({"x": range(5_000)}).write_parquet(
@@ -307,6 +309,7 @@ def test_parquet_scan_ordering_trace_from_set_sorted(
     tmp_path: pathlib.Path, timeout_seconds: int
 ) -> None:
     pytest.importorskip("structlog")
+    pytest.importorskip("cudf_polars_quent")
 
     source = tmp_path / "data.parquet"
     pl.DataFrame({"x": range(100), "y": range(100)}).write_parquet(
@@ -375,6 +378,7 @@ def test_local_join_prefilter_trace_records_decision_and_effect(
 ) -> None:
     """Trace a direct-input join prefilter selected through the public engine."""
     pytest.importorskip("structlog")
+    pytest.importorskip("cudf_polars_quent")
     cases: list[tuple[str, bool, int, int, str, str, str, int | None, int | None]] = [
         ("bloom", False, 1, 32 * 1024 * 1024, "shuffle", "bloom", "bloom_fits", 1, 10),
         (
@@ -518,6 +522,7 @@ def test_standalone_prefilter_trace_records_decision_and_effect(
 ) -> None:
     """Trace a prefilter pushed below an intervening join."""
     pytest.importorskip("structlog")
+    pytest.importorskip("cudf_polars_quent")
     cases = [
         ("bloom", 1, 32 * 1024 * 1024, "bloom", "bloom_fits", 20),
         ("exact", 64, 0, "broadcast_semi_join", "exact_domain_fits", 20),
@@ -588,6 +593,7 @@ def test_indirect_prefilter_trace_records_decision_and_effect(
 ) -> None:
     """Trace a composite prefilter pushed below an intervening join."""
     pytest.importorskip("structlog")
+    pytest.importorskip("cudf_polars_quent")
     cases = [
         ("bloom", 1, 32 * 1024 * 1024, "bloom", "bloom_fits", 15),
         ("exact", 512, 0, "broadcast_semi_join", "exact_domain_fits", 15),

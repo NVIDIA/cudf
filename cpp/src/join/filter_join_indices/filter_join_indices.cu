@@ -58,7 +58,7 @@ VectorPair full_to_left_join_indices(device_span<size_type const> left_indices,
                                      cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr)
 {
-  auto const keep = [left = left_indices.data()] __device__(std::size_t i) {
+  auto const keep = [left = left_indices.data()] __device__(std::size_t i) -> bool {
     return left[i] != JoinNoMatch;
   };
   auto const begin  = cuda::counting_iterator<std::size_t>{0};

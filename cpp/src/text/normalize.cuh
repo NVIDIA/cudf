@@ -54,19 +54,26 @@ __device__ constexpr uint32_t extract_token_cat(uint32_t metadata)
 /**
  * @brief Return true if category of metadata value specifies the character should be replaced.
  */
-__device__ constexpr bool should_remove_cp(uint32_t metadata, bool lower_case)
+__device__ constexpr bool should_remove_cp(uint32_t metadata, bool lower_case, bool strip_accents)
 {
   auto const cat = extract_token_cat(metadata);
-  return (cat == TOKEN_CAT_REMOVE_CHAR) || (lower_case && (cat == TOKEN_CAT_REMOVE_CHAR_IF_LOWER));
+  return (cat == TOKEN_CAT_REMOVE_CHAR) ||
+         ((lower_case || strip_accents) && (cat == TOKEN_CAT_REMOVE_CHAR_IF_LOWER));
 }
 
 /**
  * @brief Return true if category of metadata value specifies the character should be padded.
+ *
+ * @param lower_case Controls padding of the 4 chars with category TOKEN_CAT_ADD_SPACE_IF_LOWER
+ * @param pad_punctuation Controls padding of punctuation and CJK (TOKEN_CAT_ADD_SPACE)
  */
-__device__ constexpr bool should_add_spaces(uint32_t metadata, bool lower_case)
+__device__ constexpr bool should_add_spaces(uint32_t metadata,
+                                            bool lower_case,
+                                            bool pad_punctuation)
 {
   auto const cat = extract_token_cat(metadata);
-  return (cat == TOKEN_CAT_ADD_SPACE) || (lower_case && (cat == TOKEN_CAT_ADD_SPACE_IF_LOWER));
+  return (pad_punctuation && (cat == TOKEN_CAT_ADD_SPACE)) ||
+         (lower_case && (cat == TOKEN_CAT_ADD_SPACE_IF_LOWER));
 }
 
 /**

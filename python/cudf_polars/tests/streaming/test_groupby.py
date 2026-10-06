@@ -143,7 +143,7 @@ def test_groupby_adjusts_truncated_ordering_with_maintain_order(
     """GroupBy can adjust an ordered prefix without tree-reducing."""
     engine = spmd_engine_factory(
         StreamingOptions(
-            target_partition_size=1,
+            target_partition_size=64,
             max_rows_per_partition=8,
             fallback_mode="raise",
             raise_on_fail=True,

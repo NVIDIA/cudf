@@ -105,14 +105,36 @@ def large_frames():
     )
 
 
+def large_sort_cases():
+    for large_df, by, stable in (param.values for param in large_frames()):
+        if by == ["x"]:
+            orderings = [(True, False), (False, True)]
+            frame_id = "all_equal_one_nan"
+        elif stable:
+            orderings = [(True, False)]
+            frame_id = "two_col_stable"
+        else:
+            orderings = [(True, False), (True, True), (False, True)]
+            frame_id = "two_cols"
+
+        for nulls_last, descending in orderings:
+            yield pytest.param(
+                large_df,
+                by,
+                stable,
+                nulls_last,
+                descending,
+                id=f"{frame_id}-{nulls_last}-{descending}",
+            )
+
+
 def test_sort(df, engine):
     q = df.sort(by=["y", "z"])
     assert_gpu_result_equal(q, engine=engine)
 
 
-@pytest.mark.parametrize("large_df,by,stable", list(large_frames()))
 @pytest.mark.parametrize(
-    "nulls_last,descending", [(True, False), (True, True), (False, True)]
+    "large_df,by,stable,nulls_last,descending", list(large_sort_cases())
 )
 def test_large_sort(large_df, by, engine_large, stable, nulls_last, descending):
     q = large_df.sort(

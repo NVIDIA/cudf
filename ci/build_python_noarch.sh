@@ -25,12 +25,13 @@ export RAPIDS_PACKAGE_VERSION
 source rapids-rattler-channel-string
 
 PARALLEL_OUTPUT_DIR="${RAPIDS_CONDA_BLD_OUTPUT_DIR}-parallel"
-build_pids=()
+builds=()
 for package in dask-cudf cudf-polars custreamz; do
-  build_conda_package "${package}" "${PARALLEL_OUTPUT_DIR}/${package}" &
-  build_pids+=("$!")
+  run_logged_build "${package}-parallel-build.log" \
+    build_conda_package "${package}" "${PARALLEL_OUTPUT_DIR}/${package}" &
+  builds+=("$!" "${package}-parallel-build.log")
 done
-wait_for_builds "${build_pids[@]}"
+wait_for_builds "${builds[@]}"
 collect_conda_packages "${PARALLEL_OUTPUT_DIR}"/*
 
 # remove build_cache directory

@@ -49,4 +49,6 @@ collect_conda_packages() {
       cp "${package_file}" "${RAPIDS_CONDA_BLD_OUTPUT_DIR}/${subdir}/"
     done
   done
+  # Consumers download this directory as a channel, so its index must include all collected packages.
+  conda index "${RAPIDS_CONDA_BLD_OUTPUT_DIR}"
 }

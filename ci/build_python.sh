@@ -37,14 +37,15 @@ RATTLER_CHANNELS=("--channel" "${RAPIDS_CONDA_BLD_OUTPUT_DIR}" "${RATTLER_CHANNE
 
 # Stable build prefixes preserve sccache hits across CI runs.
 PARALLEL_OUTPUT_DIR="${RAPIDS_CONDA_BLD_OUTPUT_DIR}-parallel"
-build_pids=()
+builds=()
 packages=(cudf cudf_kafka cudf_streaming)
 for index in "${!packages[@]}"; do
   SCCACHE_SERVER_PORT=$((4227 + index)) \
-    build_conda_package "${packages[index]}" "${PARALLEL_OUTPUT_DIR}/${packages[index]}" &
-  build_pids+=("$!")
+    run_logged_build "${packages[index]}-parallel-build.log" \
+      build_conda_package "${packages[index]}" "${PARALLEL_OUTPUT_DIR}/${packages[index]}" &
+  builds+=("$!" "${packages[index]}-parallel-build.log")
 done
-wait_for_builds "${build_pids[@]}"
+wait_for_builds "${builds[@]}"
 collect_conda_packages "${PARALLEL_OUTPUT_DIR}"/*
 
 # remove build_cache directory

@@ -107,6 +107,7 @@ finalize_package_wheel \
 
 add_wheel_constraint pylibcudf "${RAPIDS_WHEEL_BLD_OUTPUT_DIR}/pylibcudf_*.whl"
 (
+  setup_build_log cudf-parallel-build.log
   export SCCACHE_SERVER_PORT=4227
   build_package_wheel cudf cudf python/cudf --stable
 
@@ -121,6 +122,7 @@ add_wheel_constraint pylibcudf "${RAPIDS_WHEEL_BLD_OUTPUT_DIR}/pylibcudf_*.whl"
 cudf_pid=$!
 
 (
+  setup_build_log cudf-streaming-parallel-build.log
   export SCCACHE_SERVER_PORT=4228
   build_package_wheel \
     cudf_streaming \
@@ -139,4 +141,4 @@ cudf_pid=$!
     "$(rapids-artifact-name wheel_python cudf-streaming cudf --stable --cuda "${RAPIDS_CUDA_VERSION}")"
 ) &
 streaming_pid=$!
-wait_for_builds "${cudf_pid}" "${streaming_pid}"
+wait_for_builds "${cudf_pid}" cudf-parallel-build.log "${streaming_pid}" cudf-streaming-parallel-build.log

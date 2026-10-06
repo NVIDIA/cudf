@@ -536,11 +536,11 @@ metadata::metadata(datasource* source, bool read_page_indexes)
     std::ranges::any_of(schema, [](auto const& elem) { return elem.type == Type::BYTE_ARRAY; });
 
   // Column indexes are only used alongside offset indexes, skip if there are no offset indexes
-auto const has_offset_index = [this] {
-  return std::ranges::any_of(
-    row_groups | std::views::transform(&RowGroup::columns) | std::views::join,
-    [](auto const& col) { return col.offset_index_offset > 0 and col.offset_index_length > 0; });
-};
+  auto const has_offset_index = [this] {
+    return std::ranges::any_of(
+      row_groups | std::views::transform(&RowGroup::columns) | std::views::join,
+      [](auto const& col) { return col.offset_index_offset > 0 and col.offset_index_length > 0; });
+  };
 
   if (read_page_indexes and has_strings and has_offset_index()) {
     auto const page_index_range = page_index_byte_range();

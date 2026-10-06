@@ -188,8 +188,9 @@ void BM_parquet_reader_construction(nvbench::state& state)
 // Benchmark to measure parquet column selection time
 void BM_parquet_column_selection(nvbench::state& state)
 {
-  auto const num_cols    = static_cast<cudf::size_type>(state.get_int64("num_cols"));
-  auto const source_type = retrieve_io_type_enum(state.get_string("io_type"));
+  auto const num_cols       = static_cast<cudf::size_type>(state.get_int64("num_cols"));
+  auto const source_type    = retrieve_io_type_enum(state.get_string("io_type"));
+  auto const select_by_name = state.get_string("selection_method") == "names";
 
   cuio_source_sink_pair source_sink(source_type);
 
@@ -208,9 +209,17 @@ void BM_parquet_column_selection(nvbench::state& state)
   auto constexpr chunk_read_limit = 0;
   auto constexpr pass_read_limit  = 0;
 
-  auto const read_opts = cudf::io::parquet_reader_options::builder(source_sink.make_source_info())
-                           .use_arrow_schema(false)
-                           .build();
+  auto read_opts = cudf::io::parquet_reader_options::builder(source_sink.make_source_info())
+                     .use_arrow_schema(false)
+                     .build();
+  if (select_by_name) {
+    // Without metadata, the writer names the columns _col0.._col{n-1}
+    std::vector<std::string> column_names(num_cols);
+    for (cudf::size_type i = 0; i < num_cols; i++) {
+      column_names[i] = "_col" + std::to_string(i);
+    }
+    read_opts.set_column_names(std::move(column_names));
+  }
   state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().get()));
   auto const mem_stats_logger = cudf::memory_stats_logger();
 
@@ -316,6 +325,7 @@ void BM_parquet_filter_name_resolution(nvbench::state& state)
   read_opts.enable_case_sensitive_names(case_sensitive);
   read_opts.set_filter(filter_expr);
 
+  state.add_element_count(num_cols, "schema_columns");
   state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().get()));
   auto const mem_stats_logger = cudf::memory_stats_logger();
   state.exec(
@@ -336,8 +346,6 @@ void BM_parquet_filter_name_resolution(nvbench::state& state)
       timer.stop();
     });
 
-  auto const time = state.get_summary("nv/cold/time/gpu/mean").get_float64("value");
-  state.add_element_count(static_cast<double>(num_cols) / time, "cols_per_sec");
   // Should be 0, but adding for completeness
   state.add_buffer_size(
     mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
@@ -363,6 +371,7 @@ NVBENCH_BENCH(BM_parquet_column_selection)
   .set_name("parquet_column_selection")
   .set_min_samples(4)
   .add_string_axis("io_type", {"FILEPATH"})
+  .add_string_axis("selection_method", {"none", "names"})
   .add_int64_axis("num_cols", {64, 512, 2048});
 
 NVBENCH_BENCH(BM_parquet_filter_name_resolution)

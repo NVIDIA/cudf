@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 from libc.stdint cimport int32_t
 from libcpp cimport bool
@@ -38,6 +38,8 @@ cdef extern from "cudf/unary.hpp" namespace "cudf" nogil:
         BIT_INVERT
         NOT
         NEGATE
+        NEG_OVERFLOW
+        ABS_OVERFLOW
 
     cdef extern unique_ptr[column] unary_operation(
         column_view input,

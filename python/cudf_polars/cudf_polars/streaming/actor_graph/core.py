@@ -94,8 +94,7 @@ def evaluate_logical_plan(
                     py_executor=engine.py_executor,
                     engine_id=engine_id,
                     worker_id=engine._quent_worker_id,
-                    quent_session=engine._quent_session,
-                    worker_resources=engine._worker_resources,
+                    quent_runtime=engine._quent_runtime,
                 ),
             ),
         )

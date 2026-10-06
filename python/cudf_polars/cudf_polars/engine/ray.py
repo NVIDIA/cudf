@@ -47,10 +47,7 @@ from cudf_polars.engine.persisted_result import (
     PersistedBackend,
     execute_persisted_query,
 )
-from cudf_polars.quent._context import (
-    LocalQuentContext,
-    WorkerResources,
-)
+from cudf_polars.quent._runtime import QuentRuntime
 from cudf_polars.unstable import unstable
 from cudf_polars.utils.config import (
     MemoryResourceConfig,
@@ -74,6 +71,7 @@ if TYPE_CHECKING:
     from cudf_polars.engine.core import T
     from cudf_polars.engine.options import StreamingOptions
     from cudf_polars.engine.persisted_result import PersistedQueryResult
+    from cudf_polars.quent._context import LocalQuentContext
     from cudf_polars.streaming.parallel import ConfigOptions
     from cudf_polars.utils.config import StreamingExecutor
 
@@ -170,18 +168,21 @@ def evaluate_pipeline_ray_mode(
     rank_actors = config_options.executor.ray_context.rank_actors
     actor_config_options = config_options.drop_unserializable()
     quent_context = config_options.executor.quent_context
+    quent_runtime = config_options.executor.ray_context.quent_runtime
     if quent_context is not None:
-        quent_session = config_options.executor.ray_context.quent_session
-        assert quent_session is not None
-        quent_context._emit_query_group_events(quent_session)
-        quent_context._emit_query_events(quent_session, query_id)
+        assert quent_runtime is not None
 
     # Serialize the IR into the Ray object store so actors fetch by reference
     # instead of receiving N copies.
     ir_ref = ray.put(ir)
     # `result` is in actor order, which is NOT rank order, so each actor
     # reports its rank and the partitions are sorted before concatenation.
-    try:
+    query_scope = (
+        quent_runtime.query(query_id)
+        if quent_runtime is not None
+        else contextlib.nullcontext()
+    )
+    with query_scope:
         result: list[tuple[int, pl.DataFrame, list[ChannelMetadata] | None]] = ray.get(
             [
                 rank.evaluate_polars_ir.remote(
@@ -194,11 +195,6 @@ def evaluate_pipeline_ray_mode(
                 for rank in rank_actors
             ]
         )
-    except BaseException as error:
-        if quent_context is not None:
-            assert quent_session is not None
-            quent_context._emit_query_failed_event(quent_session, query_id, error)
-        raise
     ranked: list[tuple[int, pl.DataFrame]] = []
     metadata_collector: list[ChannelMetadata] = []
     for rank, df, md in result:
@@ -208,10 +204,6 @@ def evaluate_pipeline_ray_mode(
     ranked.sort(key=lambda pair: pair[0])
     dfs = [df for _, df in ranked]
 
-    if quent_context is not None:
-        quent_session = config_options.executor.ray_context.quent_session
-        assert quent_session is not None
-        quent_context._emit_query_completed_event(quent_session, query_id)
     return pl.concat(dfs), metadata_collector or None
 
 
@@ -304,11 +296,9 @@ class RankActor:
         self._comm: Communicator | None = None
         self._ctx: Context | None = None
         self._quent_enabled = quent_enabled
-        self._quent_session: cudf_polars.quent._runtime.QuentSession | None = None
+        self._quent_runtime: QuentRuntime | None = None
         self._quent_engine_id = engine_id
         self._worker_id = worker_id
-        # Initialized later in setup_worker once ``comm`` is available.
-        self.worker_resources: WorkerResources | None = None
 
     def setup_root(self) -> bytes:
         """
@@ -335,6 +325,7 @@ class RankActor:
         self,
         root_ucxx_address_as_bytes: bytes,
         collector_address: str | None,
+        quent_context: cudf_polars.quent.QuentContext | None,
     ) -> None:
         """
         Complete communicator bootstrap and create the streaming context.
@@ -350,6 +341,8 @@ class RankActor:
             Serialized UCXX root address returned by :meth:`setup_root`.
         collector_address
             Address of the Quent collector, or ``None`` when tracing is disabled.
+        quent_context
+            Serializable Quent configuration, or ``None`` when tracing is disabled.
         """
         if self._comm is None:
             root_ucxx_address = ucx_api.UCXAddress.create_from_buffer(
@@ -381,32 +374,21 @@ class RankActor:
             assert self._comm is not None
             if not self._quent_enabled:
                 return
-            self._quent_session = cudf_polars.quent._runtime.QuentSession(
-                collector_address
-            )
-            self._quent_session._workers[self._worker_id] = (
-                self._quent_session.context.worker_observer()
-                .handle(self._worker_id)
-                .init(
-                    instance_name=f"RankActor-{self._worker_id.hex[:8]}",
-                    engine=self._quent_engine_id,
-                )
-            )
-            self.worker_resources = WorkerResources.build(
-                instance_suffix=f"RankActor-{self._worker_id.hex[:8]}",
-                engine_id=self._quent_engine_id,
+            assert quent_context is not None
+            self._quent_runtime = QuentRuntime.create(
+                quent_context,
+                collector_address,
                 worker_id=self._worker_id,
                 rank=self._comm.rank,
                 nranks=self._nranks,
+                instance_name=f"RankActor-{self._worker_id.hex[:8]}",
             )
-            self.worker_resources.declare(self._quent_session)
 
     def close_quent(self) -> None:
         """Close this rank's collector client after its Worker exit."""
-        if self._quent_session is None:
+        if self._quent_runtime is None:
             return
-        self._quent_session._workers.pop(self._worker_id).exit()
-        self._quent_session.close()
+        self._quent_runtime.close()
 
     def reset(
         self,
@@ -626,15 +608,8 @@ class RankActor:
         # crosses process boundaries.
         local_quent_context: LocalQuentContext | None = None
         if quent_context is not None:
-            assert self._quent_session is not None
-            assert self.worker_resources is not None
-            local_quent_context = LocalQuentContext(
-                context=quent_context,
-                query_id=query_id,
-                worker_id=self._worker_id,
-                session=self._quent_session,
-                worker_resources=self.worker_resources,
-            )
+            assert self._quent_runtime is not None
+            local_quent_context = self._quent_runtime.local_context(query_id)
         # evaluate_on_rank always collects metadata internally so we can read
         # metadata[-1].duplicated to decide whether to suppress this rank's
         # output. The client concatenates each rank's result, so without this
@@ -862,8 +837,7 @@ class RayEngine(StreamingEngine):
             engine_id = quent_context.engine_id
         else:
             engine_id = uuid.uuid4()
-        self._quent_session = None
-        self._quent_collector = None
+        self._quent_runtime = None
 
         # This engine's store uid, used to key its partitions in each actor's process rank-local store.
         self._store_uid = uuid.uuid4().hex
@@ -941,11 +915,12 @@ class RayEngine(StreamingEngine):
                 "bytes", ray.get(rank_actors[0].setup_root.remote())
             )
             if quent_context is not None:
-                self._quent_collector = cudf_polars.quent._runtime.start_collector(
+                quent_collector = cudf_polars.quent._runtime.start_collector(
                     quent_context.run_root
                 )
-                collector_address = self._quent_collector.address
+                collector_address = quent_collector.address
             else:
+                quent_collector = None
                 collector_address = None
             # Call setup_worker on all actors concurrently, including the root.
             # The root skips communicator creation and proceeds directly to the barrier.
@@ -953,18 +928,20 @@ class RayEngine(StreamingEngine):
             ray.get(
                 [
                     rank.setup_worker.remote(
-                        root_ucxx_address_as_bytes, collector_address
+                        root_ucxx_address_as_bytes,
+                        collector_address,
+                        quent_context,
                     )
                     for rank in rank_actors
                 ]
             )
             if quent_context is not None:
                 assert collector_address is not None
-                self._quent_session = cudf_polars.quent._runtime.QuentSession(
-                    collector_address
-                )
-                quent_context._emit_engine_init_events(
-                    self._quent_session, backend="ray"
+                self._quent_runtime = QuentRuntime.create(
+                    quent_context,
+                    collector_address,
+                    backend="ray",
+                    collector=quent_collector,
                 )
 
             self._rank_actors: list[ActorHandle[RankActor]] | None = rank_actors
@@ -973,7 +950,7 @@ class RayEngine(StreamingEngine):
                 executor_options={
                     **executor_options,
                     "cluster": "ray",
-                    "ray_context": RayContext(rank_actors, self._quent_session),
+                    "ray_context": RayContext(rank_actors, self._quent_runtime),
                 },
                 engine_options=engine_options,
                 exit_stack=exit_stack,
@@ -996,12 +973,6 @@ class RayEngine(StreamingEngine):
         if not isinstance(existing_executor_options, dict):
             existing_executor_options = {}
         existing_quent_context = existing_executor_options.get("quent_context")
-        if (
-            executor_options is not None
-            and "quent_context" in executor_options
-            and executor_options["quent_context"] != existing_quent_context
-        ):
-            raise ValueError("quent_context cannot be changed during reset")
         super()._reset(
             rapidsmpf_options=rapidsmpf_options,
             executor_options=executor_options,
@@ -1055,7 +1026,7 @@ class RayEngine(StreamingEngine):
             executor_options={
                 **executor_options,
                 "cluster": "ray",
-                "ray_context": RayContext(self._rank_actors, self._quent_session),
+                "ray_context": RayContext(self._rank_actors, self._quent_runtime),
             },
             engine_options=engine_options,
             exit_stack=self._exit_stack,
@@ -1203,9 +1174,6 @@ class RayEngine(StreamingEngine):
         if self._rank_actors is None:
             return  # already shut down; idempotent
         exceptions: list[Exception] = []
-        quent_context: cudf_polars.quent.QuentContext | None = self.config[
-            "executor_options"
-        ].get("quent_context")
         try:
             # If Ray is no longer initialized (for example, if ``ray.shutdown()`` was
             # called before ``RayEngine.shutdown()``), the actors are gone as well.
@@ -1214,13 +1182,9 @@ class RayEngine(StreamingEngine):
             if not ray.is_initialized():
                 return
 
-            if quent_context is not None:
+            if self._quent_runtime is not None:
                 ray.get([a.close_quent.remote() for a in self._rank_actors])
-                assert self._quent_session is not None
-                quent_context._emit_engine_exit_events(self._quent_session)
-                self._quent_session.close()
-                assert self._quent_collector is not None
-                self._quent_collector.close()
+                self._quent_runtime.close()
 
             refs: list[ObjectRef[Any]] = [
                 a.shutdown.remote() for a in self._rank_actors

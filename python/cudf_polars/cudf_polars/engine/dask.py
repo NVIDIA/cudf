@@ -52,10 +52,7 @@ from cudf_polars.engine.persisted_result import (
     PersistedBackend,
     execute_persisted_query,
 )
-from cudf_polars.quent._context import (
-    LocalQuentContext,
-    WorkerResources,
-)
+from cudf_polars.quent._runtime import QuentRuntime
 from cudf_polars.unstable import unstable
 from cudf_polars.utils.config import (
     DaskContext,
@@ -77,6 +74,7 @@ if TYPE_CHECKING:
     from cudf_polars.engine.core import T
     from cudf_polars.engine.options import StreamingOptions
     from cudf_polars.engine.persisted_result import PersistedQueryResult
+    from cudf_polars.quent._context import LocalQuentContext
     from cudf_polars.streaming.parallel import ConfigOptions
     from cudf_polars.utils.config import StreamingExecutor
 
@@ -140,12 +138,10 @@ class _WorkerContext:
     ctx: Context | None
     py_executor: ThreadPoolExecutor | None
     base_mr: rmm.mr.DeviceMemoryResource | None
-    quent_session: cudf_polars.quent._runtime.QuentSession | None
-    quent_worker_id: uuid.UUID
+    quent_runtime: QuentRuntime | None
     statistics: Statistics
     mr: RmmResourceAdaptor | None = None  # set after `Context` is built (below).
     kvikio_monitor: kvikio.SummaryMonitor | None = None
-    worker_resources: WorkerResources | None = None
 
 
 def _worker_evaluate_persisted(
@@ -302,8 +298,7 @@ def _setup_root(
             ctx=None,
             py_executor=None,
             base_mr=base_mr,
-            quent_worker_id=worker_id,
-            quent_session=None,
+            quent_runtime=None,
             statistics=statistics,
         ),
     )
@@ -319,7 +314,7 @@ def _setup_worker(
     hardware_binding: HardwareBindingPolicy,
     memory_resource_config: MemoryResourceConfig | None,
     worker_ids: list[uuid.UUID],
-    engine_id: uuid.UUID,
+    quent_context: cudf_polars.quent.QuentContext | None,
     num_py_executors: int,
     kvikio_nthreads: int | None,
     kvikio_statistics: bool,
@@ -357,9 +352,8 @@ def _setup_worker(
     worker_ids
         List of Quent worker UUIDs indexed by rank. Each worker picks
         its own ID after the barrier using ``comm.rank``.
-    engine_id
-        Quent engine UUID that owns this worker.
-        :meth:`cudf_polars.utils.config.MemoryResourceConfig.default`.
+    quent_context
+        Serializable Quent configuration, or ``None`` when tracing is disabled.
     dask_worker
         Injected by ``distributed`` when called via :meth:`distributed.Client.run`.
     num_py_executors
@@ -444,26 +438,17 @@ def _setup_worker(
     )
 
     if quent_collector_address is not None:
-        quent_session = cudf_polars.quent._runtime.QuentSession(quent_collector_address)
-        worker_resources = WorkerResources.build(
-            instance_suffix=f"rank-{comm.rank}",
-            engine_id=engine_id,
+        assert quent_context is not None
+        quent_runtime = QuentRuntime.create(
+            quent_context,
+            quent_collector_address,
             worker_id=worker_id,
             rank=comm.rank,
             nranks=comm.nranks,
+            instance_name=f"rank-{comm.rank}",
         )
-        quent_session._workers[worker_id] = (
-            quent_session.context.worker_observer()
-            .handle(worker_id)
-            .init(
-                instance_name=f"rank-{comm.rank}",
-                engine=engine_id,
-            )
-        )
-        worker_resources.declare(quent_session)
     else:
-        quent_session = None
-        worker_resources = None
+        quent_runtime = None
 
     mp_ctx = _WorkerContext(
         comm=comm,
@@ -471,9 +456,7 @@ def _setup_worker(
         py_executor=py_executor,
         base_mr=base_mr,
         mr=mr,
-        quent_worker_id=worker_id,
-        quent_session=quent_session,
-        worker_resources=worker_resources,
+        quent_runtime=quent_runtime,
         statistics=statistics,
         kvikio_monitor=make_kvikio_monitor(enabled=kvikio_statistics),
     )
@@ -486,10 +469,9 @@ def _close_quent_worker(
     """Close one worker's Quent collector client."""
     assert dask_worker is not None
     mp_ctx: _WorkerContext = getattr(dask_worker, f"_cudf_polars_mp_context_{uid}")
-    if mp_ctx.quent_session is not None:
-        mp_ctx.quent_session._workers.pop(mp_ctx.quent_worker_id).exit()
-        mp_ctx.quent_session.close()
-        mp_ctx.quent_session = None
+    if mp_ctx.quent_runtime is not None:
+        mp_ctx.quent_runtime.close()
+        mp_ctx.quent_runtime = None
 
 
 def _teardown_worker(
@@ -791,15 +773,8 @@ def _worker_evaluate(
         raise RuntimeError("_setup_worker must be called before _worker_evaluate")
     local_quent_context: LocalQuentContext | None = None
     if quent_context is not None:
-        assert mp_ctx.worker_resources is not None
-        assert mp_ctx.quent_session is not None
-        local_quent_context = LocalQuentContext(
-            context=quent_context,
-            query_id=query_id,
-            worker_id=mp_ctx.quent_worker_id,
-            session=mp_ctx.quent_session,
-            worker_resources=mp_ctx.worker_resources,
-        )
+        assert mp_ctx.quent_runtime is not None
+        local_quent_context = mp_ctx.quent_runtime.local_context(query_id)
     # evaluate_on_rank always collects metadata internally so we can read
     # metadata[-1].duplicated to decide whether to suppress this rank's output.
     # The client concatenates each rank's result, so without this dedup an
@@ -866,14 +841,17 @@ def evaluate_pipeline_dask_mode(
     dask_context = config_options.executor.dask_context
 
     quent_context = config_options.executor.quent_context
+    quent_runtime = dask_context.quent_runtime
     if quent_context is not None:
-        quent_session = dask_context.quent_session
-        assert quent_session is not None
-        quent_context._emit_query_group_events(quent_session)
-        quent_context._emit_query_events(quent_session, query_id)
+        assert quent_runtime is not None
 
     worker_config = config_options.drop_unserializable()
-    try:
+    query_scope = (
+        quent_runtime.query(query_id)
+        if quent_runtime is not None
+        else contextlib.nullcontext()
+    )
+    with query_scope:
         result_map = dask_context.client.run(
             functools.partial(_worker_evaluate, uid=dask_context.rapidsmpf_id),
             ir,
@@ -882,11 +860,6 @@ def evaluate_pipeline_dask_mode(
             quent_context=quent_context,
             query_id=query_id,
         )
-    except BaseException as error:
-        if quent_context is not None:
-            assert quent_session is not None
-            quent_context._emit_query_failed_event(quent_session, query_id, error)
-        raise
 
     ranked: list[tuple[int, pl.DataFrame]] = []
     metadata_collector: list[ChannelMetadata] = []
@@ -894,11 +867,6 @@ def evaluate_pipeline_dask_mode(
         ranked.append((rank, df))
         if md is not None:
             metadata_collector.extend(md)
-
-    if quent_context is not None:
-        quent_session = dask_context.quent_session
-        assert quent_session is not None
-        quent_context._emit_query_completed_event(quent_session, query_id)
 
     ranked.sort(key=lambda p: p[0])
     dfs = [df for _, df in ranked]
@@ -1008,8 +976,7 @@ class DaskEngine(StreamingEngine):
         quent_context: cudf_polars.quent.QuentContext | None = executor_options.get(
             "quent_context"
         )
-        self._quent_session = None
-        self._quent_collector = None
+        self._quent_runtime = None
 
         if bootstrap.is_running_with_rrun():
             raise RuntimeError(
@@ -1033,10 +1000,8 @@ class DaskEngine(StreamingEngine):
         if quent_context is not None:
             executor_options.setdefault("quent_context", quent_context)
             rapidsmpf_id = str(quent_context.engine_id)
-            engine_id = quent_context.engine_id
         else:
             rapidsmpf_id = str(uuid.uuid4())
-            engine_id = uuid.UUID(rapidsmpf_id)
 
         owned_cluster: Any = None
         owned_client: distributed.Client | None = None
@@ -1095,11 +1060,12 @@ class DaskEngine(StreamingEngine):
         root_ucxx_address_as_bytes = root_result[root_worker]
 
         if quent_context is not None:
-            self._quent_collector = cudf_polars.quent._runtime.start_collector(
+            quent_collector = cudf_polars.quent._runtime.start_collector(
                 quent_context.run_root
             )
-            quent_collector_address = self._quent_collector.address
+            quent_collector_address = quent_collector.address
         else:
+            quent_collector = None
             quent_collector_address = None
 
         # Phase 2: complete bootstrap on all workers concurrently.
@@ -1112,7 +1078,7 @@ class DaskEngine(StreamingEngine):
                 hardware_binding=hw_binding,
                 memory_resource_config=mr_config,
                 worker_ids=worker_ids,
-                engine_id=engine_id,
+                quent_context=quent_context,
             ),
             root_ucxx_address_as_bytes,
             nranks,
@@ -1130,15 +1096,17 @@ class DaskEngine(StreamingEngine):
         )
         if quent_context is not None:
             assert quent_collector_address is not None
-            self._quent_session = cudf_polars.quent._runtime.QuentSession(
-                quent_collector_address
+            self._quent_runtime = QuentRuntime.create(
+                quent_context,
+                quent_collector_address,
+                backend="dask",
+                collector=quent_collector,
             )
-            quent_context._emit_engine_init_events(self._quent_session, backend="dask")
 
         dask_ctx = DaskContext(
             client=dask_client,
             rapidsmpf_id=rapidsmpf_id,
-            quent_session=self._quent_session,
+            quent_runtime=self._quent_runtime,
             owned_client=owned_client,
             owned_cluster=owned_cluster,
         )
@@ -1167,12 +1135,6 @@ class DaskEngine(StreamingEngine):
         if not isinstance(existing_executor_options, dict):
             existing_executor_options = {}
         existing_quent_context = existing_executor_options.get("quent_context")
-        if (
-            executor_options is not None
-            and "quent_context" in executor_options
-            and executor_options["quent_context"] != existing_quent_context
-        ):
-            raise ValueError("quent_context cannot be changed during reset")
         super()._reset(
             rapidsmpf_options=rapidsmpf_options,
             executor_options=executor_options,
@@ -1343,19 +1305,12 @@ class DaskEngine(StreamingEngine):
         ctx = self._dask_context
         self._dask_context = None
         exceptions: list[Exception] = []
-        quent_context: cudf_polars.quent.QuentContext | None = self.config[
-            "executor_options"
-        ].get("quent_context")
         try:
-            if quent_context is not None:
+            if self._quent_runtime is not None:
                 ctx.client.run(
                     functools.partial(_close_quent_worker, uid=ctx.rapidsmpf_id)
                 )
-                assert self._quent_session is not None
-                quent_context._emit_engine_exit_events(self._quent_session)
-                self._quent_session.close()
-                assert self._quent_collector is not None
-                self._quent_collector.close()
+                self._quent_runtime.close()
             ctx.client.run(functools.partial(_teardown_worker, uid=ctx.rapidsmpf_id))
 
         except Exception as e:

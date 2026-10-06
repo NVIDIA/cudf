@@ -50,8 +50,8 @@ if TYPE_CHECKING:
     from rapidsmpf.streaming.core.context import Context
 
     from cudf_polars.engine.ray import RankActor
-    from cudf_polars.quent._context import QuentContext, WorkerResources
-    from cudf_polars.quent._runtime import QuentSession
+    from cudf_polars.quent._context import QuentContext
+    from cudf_polars.quent._runtime import QuentRuntime
 
 
 __all__ = [
@@ -1001,10 +1001,9 @@ class SPMDContext:
         The active RapidsMPF context.
     py_executor
         Thread-pool executor used to drive the actor network on each rank.
-    worker_resources
-        Engine/worker-scoped Quent resources (device memory, channels, thread
-        pool, processor registry, network topology). ``None`` when Quent is
-        disabled.
+    quent_runtime
+        Process-local Quent controller and worker state. ``None`` when Quent
+        is disabled.
     """
 
     comm: Communicator
@@ -1012,8 +1011,7 @@ class SPMDContext:
     py_executor: ThreadPoolExecutor
     engine_id: uuid.UUID
     worker_id: uuid.UUID
-    quent_session: QuentSession | None
-    worker_resources: WorkerResources | None = None
+    quent_runtime: QuentRuntime | None
 
 
 @dataclasses.dataclass(frozen=True)
@@ -1036,7 +1034,7 @@ class RayContext:
     """
 
     rank_actors: list[ActorHandle[RankActor]]
-    quent_session: QuentSession | None
+    quent_runtime: QuentRuntime | None
 
 
 @dataclasses.dataclass(frozen=True)
@@ -1066,7 +1064,7 @@ class DaskContext:
 
     client: distributed.Client
     rapidsmpf_id: str
-    quent_session: QuentSession | None
+    quent_runtime: QuentRuntime | None
     owned_client: distributed.Client | None = None
     owned_cluster: Any | None = None
 

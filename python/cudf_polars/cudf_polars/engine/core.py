@@ -334,7 +334,7 @@ class StreamingEngine(pl.GPUEngine):
         when :meth:`shutdown` is called. If ``None``, an empty stack is created.
     """
 
-    _quent_session: cudf_polars.quent._runtime.QuentSession | None
+    _quent_runtime: cudf_polars.quent._runtime.QuentRuntime | None
     rapidsmpf_options: rapidsmpf.config.Options
     # Process-wide registry of every live :class:`StreamingEngine`. Used by
     # :class:`DefaultSingletonEngine` to enforce that no other engine is
@@ -533,6 +533,16 @@ class StreamingEngine(pl.GPUEngine):
         executor_options = executor_options or {}
         engine_options = engine_options or {}
         check_reserved_keys(executor_options, engine_options)
+
+        existing_executor_options = self.config.get("executor_options", {})
+        if not isinstance(existing_executor_options, dict):
+            existing_executor_options = {}
+        existing_quent_context = existing_executor_options.get("quent_context")
+        if (
+            "quent_context" in executor_options
+            and executor_options["quent_context"] != existing_quent_context
+        ):
+            raise ValueError("quent_context cannot be changed during reset")
 
         _disallowed_exec = {"num_py_executors"} & executor_options.keys()
         if _disallowed_exec:

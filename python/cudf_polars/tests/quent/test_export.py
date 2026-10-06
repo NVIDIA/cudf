@@ -44,6 +44,7 @@ def _collect_engine_events(root: Path) -> Path:
     )
     session._engines.pop(identifier).exit()
     session.close()
+    session.close()  # idempotence
     collector.close()
     return next(path for path in root.iterdir() if path.is_dir())
 

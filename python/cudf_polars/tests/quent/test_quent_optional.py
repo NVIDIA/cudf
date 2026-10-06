@@ -11,16 +11,8 @@ import sys
 
 def test_imports_without_quent_extension() -> None:
     code = """
-import builtins
-
-original_import = builtins.__import__
-
-def without_quent(name, globals=None, locals=None, fromlist=(), level=0):
-    if name == "cudf_polars_quent":
-        raise ImportError("blocked optional Quent extension")
-    return original_import(name, globals, locals, fromlist, level)
-
-builtins.__import__ = without_quent
+import sys
+sys.modules["cudf_polars_quent"] = None
 
 import cudf_polars.quent
 from cudf_polars.engine.spmd import SPMDEngine

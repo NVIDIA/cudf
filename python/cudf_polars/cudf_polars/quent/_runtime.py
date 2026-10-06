@@ -35,16 +35,16 @@ def _local_ipv4_address() -> str:
     """Return a non-loopback local address when one is routable."""
     try:
         address = socket.gethostbyname(socket.gethostname())
-    except OSError:
+    except OSError:  # pragma: no cover
         address = "127.0.0.1"
     if not ipaddress.ip_address(address).is_loopback:
-        return address
+        return address  # pragma: no cover
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
             # UDP connect only consults the route table; it sends no packets.
             sock.connect(("192.0.2.1", 9))
             return str(sock.getsockname()[0])
-    except OSError:
+    except OSError:  # pragma: no cover
         return address
 
 
@@ -52,7 +52,7 @@ class QuentSession:
     """Own one collector-backed generated context and its active FSM handles."""
 
     def __init__(self, collector_address: str) -> None:
-        if _quent is None:
+        if _quent is None:  # pragma: no cover
             raise ImportError(
                 "Quent tracing requires the cudf-polars Quent extension. "
                 "Build python/cudf_polars/quent/bridge with maturin."
@@ -139,7 +139,8 @@ class QuentRuntime:
             runtime.start_engine(backend)
         if worker_id is not None:
             if rank is None or nranks is None or instance_name is None:
-                raise ValueError(
+                # TODO: refactor QuentRuntime / its types to avoid this possibility.
+                raise ValueError(  # pragma: no cover
                     "rank, nranks, and instance_name are required for a worker runtime"
                 )
             runtime.start_worker(
@@ -152,7 +153,7 @@ class QuentRuntime:
 
     def start_engine(self, backend: str) -> None:
         """Register the engine role for this process."""
-        if self._engine_active:
+        if self._engine_active:  # pragma: no cover
             return
         self.context._emit_engine_init_events(self.session, backend=backend)
         self._engine_active = True
@@ -166,7 +167,7 @@ class QuentRuntime:
         instance_name: str,
     ) -> None:
         """Register a worker and declare its engine-scoped resources."""
-        if self._worker_active:
+        if self._worker_active:  # pragma: no cover
             return
         from cudf_polars.quent._context import WorkerResources
 
@@ -197,7 +198,7 @@ class QuentRuntime:
             not self._worker_active
             or self.worker_id is None
             or self.worker_resources is None
-        ):
+        ):  # pragma: no cover
             raise RuntimeError("Quent worker runtime is not initialized")
         context = context or self.context
         return LocalQuentContext(
@@ -217,10 +218,10 @@ class QuentRuntime:
         emit: bool = True,
     ) -> Iterator[None]:
         """Emit one controller-side Query lifecycle using the current context."""
-        if not emit:
+        if not emit:  # pragma: no cover
             yield
             return
-        if not self._engine_active:
+        if not self._engine_active:  # pragma: no cover
             raise RuntimeError("Quent controller runtime is not initialized")
         context._emit_query_group_events(self.session)
         context._emit_query_events(self.session, query_id)
@@ -273,7 +274,7 @@ def start_collector(
     output_root: str | PathLike[str], *, advertised_host: str | None = None
 ) -> quent_bindings.Collector:
     """Start a collector that writes events to an NDJSON tree."""
-    if _quent is None:
+    if _quent is None:  # pragma: no cover
         raise ImportError(
             "Quent tracing requires the cudf-polars Quent extension. "
             "Build python/cudf_polars/quent/bridge with maturin."

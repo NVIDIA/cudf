@@ -92,7 +92,7 @@ class QuentContext:
         """Return this engine's controller-local Collector output directory."""
         return Path(self.output_root) / str(self.engine_id)
 
-    def _serialize(self) -> bytes:
+    def _serialize(self) -> bytes:  # TODO: coverage
         payload = {
             **dataclasses.asdict(self),
             "engine_id": int(self.engine_id),
@@ -101,7 +101,7 @@ class QuentContext:
         return json.dumps(payload).encode()
 
     @classmethod
-    def _deserialize(cls, data: bytes) -> Self:
+    def _deserialize(cls, data: bytes) -> Self:  # TODO: coverage
         payload = json.loads(data)
         return cls(
             engine_id=uuid.UUID(int=int(payload["engine_id"])),
@@ -223,7 +223,9 @@ class QuentContext:
         error: BaseException | None,
     ) -> None:
         if error is not None:
-            execution_context.session._evaluations.pop(evaluate_id).failed(
+            execution_context.session._evaluations.pop(
+                evaluate_id
+            ).failed(  # TODO: coverage
                 error=str(error)
             )
         else:
@@ -301,7 +303,9 @@ class WorkerResources:
             target=self.device_memory_id,
         )
         for target_rank, channel_id in self.link_channel_ids.items():
-            context.data_channel_observer().handle(channel_id).declared(
+            context.data_channel_observer().handle(
+                channel_id
+            ).declared(  # TODO: coverage
                 instance_name=f"rank-{self.rank} -> rank-{target_rank}",
                 channel_type="inter-rank",
                 worker=self.worker_id,

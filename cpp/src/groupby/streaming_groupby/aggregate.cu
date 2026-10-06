@@ -4,13 +4,17 @@
  */
 
 #include "common.cuh"
-#include "groupby/hash/compute_dense_aggs.hpp"
+#include "groupby/hash/single_pass_functors.cuh"
 
 #include <cudf/table/table_device_view.cuh>
 #include <cudf/table/table_view.hpp>
 #include <cudf/utilities/error.hpp>
 
+#include <rmm/exec_policy.hpp>
+
+#include <cuda/iterator>
 #include <cuda/stream>
+#include <thrust/for_each.h>
 
 #include <limits>
 #include <mutex>
@@ -62,14 +66,14 @@ void streaming_groupby::impl::do_aggregate(table_view const& data, cuda::stream_
   auto const values_view = data.select(_value_col_indices);
   auto const d_values    = table_device_view::create(values_view, stream);
 
+  auto const temp_mr      = cudf::get_current_device_resource_ref();
   auto const num_agg_cols = static_cast<int64_t>(_agg_kinds.size());
-  detail::hash::compute_single_pass_aggs_dense_output(
-    result.target_indices.begin(),
-    _d_agg_kinds->data(),
-    *d_values,
-    *_d_agg_results,
+  thrust::for_each_n(
+    rmm::exec_policy_nosync(stream, temp_mr),
+    cuda::counting_iterator<int64_t>(0),
     static_cast<int64_t>(batch_size) * num_agg_cols,
-    stream);
+    detail::hash::compute_single_pass_aggs_dense_output_fn{
+      result.target_indices.begin(), _d_agg_kinds->data(), *d_values, *_d_agg_results});
 }
 
 }  // namespace cudf::groupby

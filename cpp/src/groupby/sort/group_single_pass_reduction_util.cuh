@@ -5,6 +5,7 @@
 
 #pragma once
 
+#include "groupby/common/value_accessor.cuh"
 #include "reductions/nested_types_extrema_utils.cuh"
 
 #include <cudf/column/column.hpp>
@@ -29,36 +30,6 @@
 namespace cudf {
 namespace groupby {
 namespace detail {
-
-/**
- * @brief Value accessor for column which supports dictionary column too.
- *
- * This is similar to `value_accessor` in `column_device_view.cuh` but with support of dictionary
- * type.
- *
- * @tparam T Type of the underlying column. For dictionary column, type of the key column.
- */
-template <typename T>
-struct value_accessor {
-  column_device_view const col;
-  bool const is_dict;
-
-  value_accessor(column_device_view const& col) : col(col), is_dict(cudf::is_dictionary(col.type()))
-  {
-  }
-
-  __device__ T value(size_type i) const
-  {
-    if (is_dict) {
-      auto keys = col.child(dictionary_column_view::keys_column_index);
-      return keys.element<T>(static_cast<size_type>(col.element<dictionary32>(i)));
-    } else {
-      return col.element<T>(i);
-    }
-  }
-
-  __device__ auto operator()(size_type i) const { return value(i); }
-};
 
 /**
  * @brief Null replaced value accessor for column which supports dictionary column too.

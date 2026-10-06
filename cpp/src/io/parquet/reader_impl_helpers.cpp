@@ -542,11 +542,21 @@ metadata::metadata(datasource* source, bool read_page_indexes)
       [](auto const& col) { return col.offset_index_offset > 0 and col.offset_index_length > 0; });
   };
 
-  if (read_page_indexes and has_strings and has_offset_index()) {
-    auto const page_index_range = page_index_byte_range();
-    CUDF_EXPECTS(
-      std::cmp_less_equal(page_index_range.offset() + page_index_range.size(), source->size()),
-      "Parquet page index range exceeds the source size");
+  // Gather page index byte range info
+  auto const page_index_range = [&]() -> text::byte_range_info {
+    // Don't read page index if not required or if we don't have strings or only have column indexes
+    if (not read_page_indexes or not has_strings or not has_offset_index()) { return {}; }
+    try {
+      auto const range = page_index_byte_range();
+      if (std::cmp_less_equal(range.offset() + range.size(), source->size())) { return range; }
+    } catch (std::invalid_argument const&) {
+      // Page indexes are optional so skip them if their byte range is invalid
+    }
+    return {};
+  }();
+
+  // Setup page indexes if available
+  if (not page_index_range.is_empty()) {
     auto const page_idx_buf = source->host_read(page_index_range.offset(), page_index_range.size());
     setup_page_index({page_idx_buf->data(), page_idx_buf->size()}, page_index_range.offset());
   }
@@ -568,8 +578,9 @@ text::byte_range_info metadata::page_index_byte_range() const
   auto const update_extent = [&](int64_t offset, int32_t length) {
     if (offset <= 0 or length <= 0) { return; }
     auto const sum = cuda::add_overflow<int64_t>(offset, length);
-    CUDF_EXPECTS(
-      not sum.overflow, "Parquet page index range overflows int64", std::invalid_argument);
+    CUDF_EXPECTS(not sum.overflow,
+                 "Encountered an invalid Parquet page index byte range",
+                 std::overflow_error);
     min_offset = std::min(min_offset, offset);
     max_offset = std::max(max_offset, sum.value);
   };

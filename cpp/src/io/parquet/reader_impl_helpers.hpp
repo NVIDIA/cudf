@@ -210,6 +210,8 @@ struct metadata : public FileMetaData {
 
   /**
    * @brief Parses column and offset indexes from the page index bytes starting at `min_offset`
+   *
+   * @throws std::overflow_error if the byte ranges overflow int64_t
    */
   void setup_page_index(cudf::host_span<uint8_t const> page_index_bytes, int64_t min_offset);
 

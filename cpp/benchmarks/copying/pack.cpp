@@ -22,14 +22,10 @@
 
 #include <cstdint>
 #include <memory>
+#include <tuple>
 #include <vector>
 
 namespace {
-
-auto const pack_num_rows_axis      = std::vector<nvbench::int64_t>{4096, 32768, 262144};
-auto const pack_num_cols_axis      = std::vector<nvbench::int64_t>{64, 512, 1024};
-auto const pack_nulls_axis         = std::vector<nvbench::float64_t>{0.0, 0.3};
-auto const pack_access_column_axis = std::vector<nvbench::int64_t>{0, 1};
 
 // Registers the default CUDA stream on `state` and builds the input table
 // from the axis parameters.
@@ -61,8 +57,7 @@ void set_throughput_counters(nvbench::state& state)
 void column_sum(cudf::column_view const& col_view)
 {
   auto sum_agg = cudf::make_sum_aggregation<cudf::reduce_aggregation>();
-  [[maybe_unused]] auto const result =
-    cudf::reduce(col_view, *sum_agg, cudf::data_type{cudf::type_id::INT64});
+  std::ignore  = cudf::reduce(col_view, *sum_agg, cudf::data_type{cudf::type_id::INT64});
 }
 
 // Shared body for the pack benchmarks. `packed_mr` selects the destination of the packed
@@ -73,9 +68,8 @@ void run_pack(nvbench::state& state, rmm::device_async_resource_ref packed_mr)
   auto const table_view = table->view();
   auto stream           = cudf::get_default_stream();
   set_throughput_counters(state);
-  state.exec(nvbench::exec_tag::sync, [&](nvbench::launch&) {
-    [[maybe_unused]] auto packed = cudf::pack(table_view, stream, packed_mr);
-  });
+  state.exec(nvbench::exec_tag::sync,
+             [&](nvbench::launch&) { std::ignore = cudf::pack(table_view, stream, packed_mr); });
 }
 
 // Shared body for the unpack benchmarks. The table is packed once outside the timed region,
@@ -120,6 +114,11 @@ void bench_host_unpack(nvbench::state& state)
 }
 
 }  // namespace
+
+auto const pack_num_rows_axis      = std::vector<nvbench::int64_t>{4096, 32768, 262144};
+auto const pack_num_cols_axis      = std::vector<nvbench::int64_t>{64, 512, 1024};
+auto const pack_nulls_axis         = std::vector<nvbench::float64_t>{0.0, 0.3};
+auto const pack_access_column_axis = std::vector<nvbench::int64_t>{0, 1};
 
 NVBENCH_BENCH(bench_device_pack)
   .set_name("device_pack")

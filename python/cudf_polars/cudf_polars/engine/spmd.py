@@ -514,10 +514,14 @@ class SPMDEngine(StreamingEngine):
             exit_stack.callback(self._cleanup_ctx)
 
             if quent_context is not None:
+                collector_cleanup: contextlib.ExitStack | None = None
                 if comm.rank == 0:
                     quent_collector = cudf_polars.quent._runtime.start_collector(
                         quent_context.run_root
                     )
+                    collector_cleanup = contextlib.ExitStack()
+                    collector_cleanup.callback(quent_collector.close)
+                    exit_stack.enter_context(collector_cleanup)
                     collector_address = quent_collector.address
                 else:
                     quent_collector = None
@@ -540,6 +544,10 @@ class SPMDEngine(StreamingEngine):
                     nranks=comm.nranks,
                     instance_name=f"rank-{comm.rank}",
                 )
+                exit_stack.callback(self._quent_runtime.close)
+                if collector_cleanup is not None:
+                    # The runtime now owns the collector.
+                    collector_cleanup.pop_all()
                 engine_id = quent_context.engine_id
             else:
                 engine_id = uuid.uuid4()
@@ -900,23 +908,38 @@ class SPMDEngine(StreamingEngine):
         # quent traces before that.
         # Clear the references only after shutdown completes.
 
-        if self._quent_runtime is not None:
-            assert self._comm is not None
-            self._quent_runtime.close_worker()
-            if self._comm.rank == 0:
-                self._quent_runtime.close_engine()
-            self._quent_runtime.close_session()
-            if self._comm.nranks > 1:
-                barrier(self._comm)
-            self._quent_runtime.close_collector()
-            if self._comm.nranks > 1:
-                barrier(self._comm)
+        exceptions: list[Exception] = []
 
-        super().shutdown()
+        def close_quent(operation: Callable[[], None]) -> None:
+            try:
+                operation()
+            except Exception as e:
+                exceptions.append(e)
 
-        self._comm = None
-        self._ctx = None
-        self._py_executor = None
+        try:
+            if self._quent_runtime is not None:
+                assert self._comm is not None
+                comm = self._comm
+                runtime = self._quent_runtime
+                close_quent(runtime.close_worker)
+                if comm.rank == 0:
+                    close_quent(runtime.close_engine)
+                close_quent(runtime.close_session)
+                if comm.nranks > 1:
+                    close_quent(lambda: barrier(comm))
+                close_quent(runtime.close_collector)
+                if comm.nranks > 1:
+                    close_quent(lambda: barrier(comm))
+
+            if exceptions:
+                raise ExceptionGroup("Quent shutdown failed", exceptions)
+        finally:
+            try:
+                super().shutdown()
+            finally:
+                self._comm = None
+                self._ctx = None
+                self._py_executor = None
 
     def _run(self, func: Callable[..., T], *args: Any, **kwargs: Any) -> list[T]:
         data = json.dumps(func(*args, **kwargs)).encode()

@@ -224,6 +224,35 @@ TEST_F(StringPrefixSort, PrefixBoundaryAndZeroPaddedTies)
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, result->view());
 }
 
+TEST_F(StringPrefixSort, UnalignedPrefixesAndExactWidthTies)
+{
+  std::vector<std::string> strings;
+  for (int length = 0; length <= 17; ++length) {
+    strings.emplace_back(length, 'a');
+    strings.emplace_back(length, '\0');
+  }
+  strings.insert(strings.end(), {"abcdefgh", std::string{"abcdefgh\0", 9}, "abcdefgh"});
+  auto const input = cudf::test::strings_column_wrapper{strings.begin(), strings.end()};
+
+  for (auto const direction : {cudf::order::ASCENDING, cudf::order::DESCENDING}) {
+    std::vector<cudf::size_type> expected_indices(strings.size());
+    std::iota(expected_indices.begin(), expected_indices.end(), 0);
+    std::stable_sort(expected_indices.begin(), expected_indices.end(), [&](auto lhs, auto rhs) {
+      return direction == cudf::order::ASCENDING ? bytewise_less(strings[lhs], strings[rhs])
+                                                 : bytewise_less(strings[rhs], strings[lhs]);
+    });
+    auto const expected = cudf::test::fixed_width_column_wrapper<cudf::size_type>(
+      expected_indices.begin(), expected_indices.end());
+    auto const stable = cudf::stable_sorted_order(cudf::table_view{{input}}, {direction});
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, stable->view());
+
+    auto const unstable        = cudf::sorted_order(cudf::table_view{{input}}, {direction});
+    auto const actual_values   = cudf::gather(cudf::table_view{{input}}, unstable->view());
+    auto const expected_values = cudf::gather(cudf::table_view{{input}}, expected);
+    CUDF_TEST_EXPECT_TABLES_EQUAL(expected_values->view(), actual_values->view());
+  }
+}
+
 TEST_F(StringPrefixSort, SlicedColumnUsesSliceRelativeIndices)
 {
   std::vector<std::string> const strings{

@@ -22,15 +22,16 @@
 #include <rmm/exec_policy.hpp>
 
 #include <cub/device/device_merge_sort.cuh>
-#include <cuda/buffer>
 #include <cuda/iterator>
+#include <cuda/std/bit>
+#include <cuda/std/execution>
 #include <cuda/stream>
 #include <thrust/gather.h>
 #include <thrust/sequence.h>
 #include <thrust/transform.h>
 
 #include <cstdint>
-#include <limits>
+#include <cstring>
 #include <type_traits>
 
 namespace cudf {
@@ -45,8 +46,7 @@ namespace detail {
 template <typename PrefixKey, bool has_nulls>
 struct string_prefix_extractor {
   static_assert(std::is_unsigned_v<PrefixKey>);
-  static constexpr auto prefix_bytes  = static_cast<size_type>(sizeof(PrefixKey));
-  static constexpr auto bits_per_byte = std::numeric_limits<uint8_t>::digits;
+  static constexpr auto prefix_bytes = static_cast<size_type>(sizeof(PrefixKey));
 
   __device__ PrefixKey operator()(size_type row) const
   {
@@ -56,13 +56,10 @@ struct string_prefix_extractor {
 
     auto const string = d_column.element<string_view>(row);
     PrefixKey prefix  = 0;
-    for (size_type byte = 0; byte < prefix_bytes; ++byte) {
-      prefix <<= bits_per_byte;
-      if (byte < string.size_bytes()) {
-        prefix |= static_cast<PrefixKey>(static_cast<uint8_t>(string.data()[byte]));
-      }
-    }
-    return prefix;
+    auto const bytes  = string.size_bytes() < prefix_bytes ? string.size_bytes() : prefix_bytes;
+    // memcpy permits unaligned input and avoids reading beyond short strings or the chars buffer.
+    if (bytes != 0) { memcpy(&prefix, string.data(), bytes); }
+    return cuda::std::byteswap(prefix);
   }
 
   column_device_view const d_column;
@@ -107,7 +104,7 @@ struct string_prefix_comparator {
     auto const right_element = d_column.element<string_view>(rhs);
     auto const left_size     = left_element.size_bytes();
     auto const right_size    = right_element.size_bytes();
-    if (left_size < prefix_bytes or right_size < prefix_bytes) {
+    if (left_size <= prefix_bytes or right_size <= prefix_bytes) {
       // Equal zero-padded prefixes prove that all bytes in the shorter value match and that any
       // represented bytes beyond it are zero. The shorter value is therefore lexicographically
       // smaller, while equal lengths prove equality without rereading either string.
@@ -164,23 +161,19 @@ struct column_sorted_order_fn {
   template <typename Comparator>
   void merge_sort(mutable_column_view& indices, Comparator comp, cuda::stream_ref stream)
   {
-    auto in_keys   = cuda::counting_iterator<cudf::size_type>{0};
-    auto out_keys  = indices.begin<size_type>();
-    auto tmp_bytes = std::size_t{0};
-    auto sort_keys = [&](void* tmp_stg) {
-      if constexpr (method == sort_method::STABLE) {
-        return cub::DeviceMergeSort::StableSortKeysCopy(
-          tmp_stg, tmp_bytes, in_keys, out_keys, indices.size(), comp, stream.get());
-      } else {
-        return cub::DeviceMergeSort::SortKeysCopy(
-          tmp_stg, tmp_bytes, in_keys, out_keys, indices.size(), comp, stream.get());
-      }
-    };
-
-    CUDF_CUDA_TRY(sort_keys(nullptr));
-    auto tmp_stg = cuda::device_buffer<std::byte>(
-      stream, cudf::get_current_device_resource_ref(), tmp_bytes, cuda::no_init);
-    CUDF_CUDA_TRY(sort_keys(tmp_stg.data()));
+    auto in_keys  = cuda::counting_iterator<cudf::size_type>{0};
+    auto out_keys = indices.begin<size_type>();
+    auto env      = cuda::std::execution::env{
+      cuda::std::execution::prop{cuda::get_stream_t{}, stream},
+      cuda::std::execution::prop{cuda::mr::get_memory_resource_t{},
+                                 cudf::get_current_device_resource_ref()}};
+    if constexpr (method == sort_method::STABLE) {
+      CUDF_CUDA_TRY(
+        cub::DeviceMergeSort::StableSortKeysCopy(in_keys, out_keys, indices.size(), comp, env));
+    } else {
+      CUDF_CUDA_TRY(
+        cub::DeviceMergeSort::SortKeysCopy(in_keys, out_keys, indices.size(), comp, env));
+    }
   }
 
   template <typename PrefixKey, bool has_nulls>

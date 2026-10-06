@@ -27,3 +27,23 @@ def test_dataframe_add_suffix(axis):
     expected = pdf.add_suffix("_item", axis=axis)
 
     assert_eq(got, expected, check_index_type=axis not in (0, "index"))
+
+@pytest.mark.parametrize(
+    ("method", "affix"),
+    [("add_prefix", "item_"), ("add_suffix", "_item")],
+)
+def test_dataframe_add_prefix_suffix_multiindex(method, affix):
+    cdf = cudf.DataFrame(
+        {"A": [1, 2, 3]},
+        index=cudf.MultiIndex.from_arrays(
+            [[1, 1, 2], ["a", "b", "c"]],
+            names=["number", "letter"],
+        ),
+    )
+    pdf = cdf.to_pandas()
+
+    got = getattr(cdf, method)(affix, axis="index")
+    expected = getattr(pdf, method)(affix, axis="index")
+
+    assert_eq(got, expected, check_index_type=False)
+

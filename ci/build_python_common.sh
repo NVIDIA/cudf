@@ -44,7 +44,8 @@ collect_conda_packages() {
   for output_dir in "$@"; do
     for package_file in "${output_dir}"/*/*.conda; do
       [[ -f "${package_file}" ]] || continue
-      subdir="$(basename "$(dirname "${package_file}")")"
+      subdir=${package_file%/*}
+      subdir=${subdir##*/}
       mkdir -p "${RAPIDS_CONDA_BLD_OUTPUT_DIR}/${subdir}"
       cp "${package_file}" "${RAPIDS_CONDA_BLD_OUTPUT_DIR}/${subdir}/"
     done

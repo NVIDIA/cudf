@@ -267,12 +267,14 @@ void generate_depth_remappings(
   return total_pages;
 }
 
-void fill_in_page_info(host_span<ColumnChunkDesc> chunks,
-                       device_span<PageInfo> pages,
-                       cuda::stream_ref stream)
+namespace {
+
+// Build index metadata before parsing so each parser thread can finish its own descriptor.
+auto make_page_index_info(host_span<ColumnChunkDesc> chunks,
+                          size_t num_pages,
+                          cuda::stream_ref stream)
 {
-  auto const num_pages = pages.size();
-  auto page_indexes    = cudf::detail::make_pinned_vector_async<page_index_info>(num_pages, stream);
+  auto page_indexes = cudf::detail::make_pinned_vector_async<page_index_info>(num_pages, stream);
   std::fill(page_indexes.begin(), page_indexes.end(), page_index_info{});
 
   for (size_t c = 0, page_count = 0; c < chunks.size(); c++) {
@@ -297,16 +299,10 @@ void fill_in_page_info(host_span<ColumnChunkDesc> chunks,
     }
   }
 
-  auto d_page_indexes = cudf::detail::make_device_uvector_async(
-    page_indexes, stream, cudf::get_current_device_resource_ref());
-
-  auto iter = cuda::counting_iterator<size_type>{0};
-  thrust::for_each(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-                   iter,
-                   iter + num_pages,
-                   copy_page_info{d_page_indexes, pages});
-  stream.sync();  // ensures the page_indexes is not destroyed before the copy is completed
+  return page_indexes;
 }
+
+}  // namespace
 
 std::string encoding_to_string(Encoding encoding)
 {
@@ -464,6 +460,17 @@ void decode_page_headers_impl(pass_intermediate_data& pass,
                      cpi[i].pages = &unsorted_pages[chunk_page_offsets[i]];
                    });
 
+  // Keep pinned metadata alive through the existing header-error synchronization below.
+  auto const page_indexes = [&] {
+    if constexpr (data_source_type != page_data_source_type::COLUMN_CHUNKS) {
+      return make_page_index_info(pass.chunks, unsorted_pages.size(), stream);
+    } else {
+      return cudf::detail::make_pinned_vector_async<page_index_info>(0, stream);
+    }
+  }();
+  auto const d_page_indexes = cudf::detail::make_device_uvector_async(
+    page_indexes, stream, cudf::get_current_device_resource_ref());
+
   kernel_error error_code(stream);
 
   if constexpr (data_source_type == page_data_source_type::PAGE_SPANS) {
@@ -477,7 +484,8 @@ void decode_page_headers_impl(pass_intermediate_data& pass,
       device_page_data,
       device_span<size_type const>(chunk_page_offsets.data(), chunk_page_offsets.size()),
       error_code.data(),
-      stream);
+      stream,
+      d_page_indexes);
   }
   // If offset index is present, collect data spans for all pages and launch the accelerated decode
   // page headers kernel
@@ -543,7 +551,8 @@ void decode_page_headers_impl(pass_intermediate_data& pass,
       page_data,
       device_span<size_type const>(chunk_page_offsets.data(), chunk_page_offsets.size()),
       error_code.data(),
-      stream);
+      stream,
+      d_page_indexes);
   } else {
     // (Slow) decode page headers, one warp (lane) per pages of a column chunk
     decode_page_headers(
@@ -562,11 +571,6 @@ void decode_page_headers_impl(pass_intermediate_data& pass,
     } else {
       CUDF_FAIL("Parquet header parsing failed with code(s) " + kernel_error::to_string(error));
     }
-  }
-
-  if (data_source_type == page_data_source_type::OFFSET_INDEX or
-      data_source_type == page_data_source_type::PAGE_SPANS) {
-    fill_in_page_info(pass.chunks, unsorted_pages, stream);
   }
 
   // compute max bytes needed for level data

@@ -743,7 +743,29 @@ struct decode_from_page_data_fn {
   cudf::device_span<PageInfo> pages;
   cudf::device_span<cudf::device_span<uint8_t const> const> page_data;
   cudf::device_span<size_type const> chunk_page_offsets;
+  cudf::device_span<page_index_info const> page_indexes;
   kernel_error::pointer error_code;
+
+  __device__ void store_page(PageInfo page, size_type page_idx) const noexcept
+  {
+    if (page_indexes.empty()) {
+      pages[page_idx] = page;
+      return;
+    }
+    auto const& index   = page_indexes[page_idx];
+    page.num_rows       = index.num_rows;
+    page.chunk_row      = index.chunk_row;
+    page.has_value_info = index.has_value_info;
+    page.start_val      = 0;
+    if (page.has_value_info) {
+      page.num_nulls            = index.num_nulls;
+      page.num_valids           = index.num_valids;
+      page.str_bytes_from_index = index.str_bytes;
+      page.str_bytes            = index.str_bytes;
+      page.end_val              = page.num_valids;
+    }
+    pages[page_idx] = page;
+  }
 
   __device__ void operator()(size_type page_idx) const noexcept
   {
@@ -776,12 +798,11 @@ struct decode_from_page_data_fn {
 
     bs.page.chunk_idx      = chunk_idx;
     bs.page.src_col_schema = bs.ck.src_col_schema;
-    // bs.page.chunk_row not computed here and will be filled in later by
-    // `fill_in_page_info()`.
+    // Row positions and available value counts are applied from the index when storing the page.
 
     // Return if empty page span (pruned page)
     if (page_span.empty()) {
-      pages[page_idx] = bs.page;
+      store_page(bs.page, page_idx);
       return;
     }
 
@@ -827,7 +848,7 @@ struct decode_from_page_data_fn {
     bs.page.kernel_mask = kernel_mask_for_page(bs.page, bs.ck);
 
     // Copy over the page info from byte stream
-    pages[page_idx] = bs.page;
+    store_page(bs.page, page_idx);
   }
 };
 
@@ -953,10 +974,13 @@ void decode_page_headers_from_page_data(
   cudf::device_span<cudf::device_span<uint8_t const> const> page_data,
   cudf::device_span<size_type const> chunk_page_offsets,
   kernel_error::pointer error_code,
-  cuda::stream_ref stream)
+  cuda::stream_ref stream,
+  cudf::device_span<page_index_info const> page_indexes)
 {
   CUDF_EXPECTS(chunk_page_offsets.size() == chunks.size() + 1,
                "Chunk page offsets must cover all chunks");
+  CUDF_EXPECTS(page_indexes.empty() || page_indexes.size() == pages.size(),
+               "Page index metadata must cover all pages");
   thrust::for_each(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                    cuda::counting_iterator<cudf::size_type>{0},
                    cuda::counting_iterator{static_cast<cudf::size_type>(pages.size())},
@@ -964,6 +988,7 @@ void decode_page_headers_from_page_data(
                                             .pages              = pages,
                                             .page_data          = page_data,
                                             .chunk_page_offsets = chunk_page_offsets,
+                                            .page_indexes       = page_indexes,
                                             .error_code         = error_code});
 }
 
